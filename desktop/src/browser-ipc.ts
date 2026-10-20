@@ -25,8 +25,7 @@ import { getMainWindow } from "./window";
 import { isTrustedBrowserSender, setupBrowserPageControls, wirePageControlsForPool } from "./browser-page-controls";
 import { setupBrowserDownloadsIPC } from "./browser-downloads-ipc";
 // The trusted-sender guard moved to browser-page-controls.ts in the find/zoom
-// split (this file sits at the 400-LOC ceiling); re-exported so existing
-// consumers keep importing it from here.
+// split; re-exported so existing consumers keep importing it from here.
 export { isTrustedBrowserSender } from "./browser-page-controls";
 import {
 	closeBrowserView,

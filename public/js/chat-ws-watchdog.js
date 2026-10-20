@@ -1,6 +1,6 @@
 // ── Chat WS: stuck-stream watchdog ──
 //
-// Split from chat-ws.js (2026-09-21, 400-LOC gate). chat-ws.js owns the
+// Split from chat-ws.js (2026-09-21). chat-ws.js owns the
 // socket's lifecycle; this file owns the periodic "is anything wedged" scan
 // that rides on top of it. It reads the socket through `window.chatWs` — the
 // accessor chat-ws.js publishes — rather than holding its own reference, so a

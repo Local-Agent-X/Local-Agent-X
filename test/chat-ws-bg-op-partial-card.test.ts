@@ -168,7 +168,7 @@ describe("the CSS carries a partial rule distinct from failed and cancelled", ()
 // the ONE terminal set, isTerminalStatus (chat-agent-feeds-render.js).
 const handlerSource = readFileSync(join(process.cwd(), "public/js/chat-ws-handler.js"), "utf8");
 const wsSource = readFileSync(join(process.cwd(), "public/js/chat-ws.js"), "utf8");
-// The stuck-stream/worker watchdog is its own module (400-LOC gate) and reads
+// The stuck-stream/worker watchdog is its own module and reads
 // the socket through window.chatWs, which chat-ws.js defines — so it has to be
 // evaluated in the same scope, after it, exactly as app.html orders them.
 const watchdogSource = readFileSync(join(process.cwd(), "public/js/chat-ws-watchdog.js"), "utf8");

@@ -1,7 +1,7 @@
 // ── ChatStreamStore: frame admission ──
 //
 // Which frames are allowed to mutate an entry at all. Split from
-// chat-stream-store.js (2026-09-21, 400-LOC gate) — the store core owns the
+// chat-stream-store.js (2026-09-21) — the store core owns the
 // maps and the turn lifecycle, this file owns the two "should this frame
 // count" questions and nothing else. Both are pure over (entry, event).
 //

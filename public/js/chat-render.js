@@ -13,7 +13,7 @@
 // inject) live in chat-render-live.js, which loads AFTER this file and reuses
 // renderMessage / autoScroll / _applyPinBottom from here.
 //
-// Extracted from chat.js as part of the 400-LOC god-file split.
+// Extracted from chat.js.
 //
 // External deps from chat.js / shared.js:
 //   - apiFetch, esc, md, normalizeMd, _fixMd  (shared.js)

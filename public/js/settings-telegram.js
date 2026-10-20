@@ -6,7 +6,7 @@
 // can pick it up without ever round-tripping the plaintext token through
 // settings.json.
 //
-// Extracted from settings.js as part of the 400-LOC god-file split.
+// Extracted from settings.js.
 //
 // External deps from shared.js:
 //   apiJson, apiPost

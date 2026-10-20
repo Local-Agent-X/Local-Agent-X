@@ -1,5 +1,5 @@
-// Apps-tab "build an app" entry points — split out of apps.js (god-file at the
-// 400-LOC gate). The dedicated Apps surface signals serious intent, so the
+// Apps-tab "build an app" entry points — split out of apps.js, the gallery
+// itself. The dedicated Apps surface signals serious intent, so the
 // primary action routes to the GUIDED /app-build skill in a fresh chat
 // (spec-first, asks questions, can go full-stack). ⚡ Quick is the escape hatch
 // for an instant one-shot HTML app in the IDE. Slash expansion + the

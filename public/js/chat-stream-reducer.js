@@ -1,9 +1,8 @@
 // ── ChatStreamStore: WS-event reducer ──
 //
 // The applyEvent switch body — mutates one store entry from a raw WS event.
-// Extracted from chat-stream-store.js so the store core stays under the
-// 400-LOC gate. Pure over the entry: no maps, no subscribers, no notify —
-// the core owns those and calls this, then notifies.
+// Extracted from chat-stream-store.js. Pure over the entry: no maps, no
+// subscribers, no notify — the core owns those and calls this, then notifies.
 //
 // Every text-bearing case updates BOTH representations in lockstep:
 //   - the flat lanes (e.content / e.reasoning) — persistence, TTS, the

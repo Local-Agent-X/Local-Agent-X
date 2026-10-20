@@ -3,7 +3,7 @@
 // Sibling to chat-status-bar.js, carrying the read-only/indicator side of the
 // bottom bar: the context-usage progress bar above the composer and the
 // voice-clone tier/clone probe that feeds the voice picker. Split out of
-// chat-status-bar.js as part of the 400-LOC god-file split. Classic browser
+// chat-status-bar.js, which keeps the pickers. Classic browser
 // script — these symbols stay top-level globals shared with chat-status-bar.js.
 //
 // External deps (runtime callbacks, all original-file-or-shared globals; this

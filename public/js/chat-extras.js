@@ -6,8 +6,7 @@
 //   3. Mood/tone detection indicator (post-message classifier ping)
 //
 // Each is small + independent, so they share one file rather than each
-// owning a 30-LOC module. Extracted from chat.js as part of the 400-LOC
-// god-file split.
+// owning a 30-LOC module. Extracted from chat.js.
 //
 // External deps from chat.js / shared.js:
 //   - apiFetch, esc           (shared.js)

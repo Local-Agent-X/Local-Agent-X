@@ -4,7 +4,7 @@
 // preference → done. Server-side `onboarded` flag in settings.json + a
 // localStorage `lax_onboarded` mirror so port changes don't re-trigger.
 //
-// Extracted from settings.js as part of the 400-LOC god-file split.
+// Extracted from settings.js.
 //
 // External deps:
 //   apiFetch, apiPost   (shared.js)

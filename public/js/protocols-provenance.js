@@ -4,9 +4,9 @@
 // user can tell agent work from their own — archive is the undo, and this is
 // how you know what needs undoing.
 //
-// Split out of protocols.js to stay under the 400-LOC source-hygiene gate, the
-// same reason protocols-archive.js exists. Loads BEFORE protocols-archive.js
-// and protocols.js; both call in at render time, never at load time.
+// Split out of protocols.js, the master/detail editor. Loads BEFORE
+// protocols-archive.js and protocols.js; both call in at render time, never at
+// load time.
 
 // Self-contained ON PURPOSE, and used for text positions here as well as
 // attributes. Three files declare a global esc() — shared-escape.js,

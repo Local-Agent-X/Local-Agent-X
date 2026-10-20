@@ -11,9 +11,8 @@
 import { WebContentsView, type Rectangle, type WebContents } from "electron";
 
 import { getMainWindow } from "./window";
-// The chat overlay moved to browser-chat-overlay.ts (this file sits at the
-// 400-LOC ceiling); its lifetime is driven from here because the pool owns
-// which view is attached.
+// The chat overlay lives in browser-chat-overlay.ts; its lifetime is driven
+// from here because the pool owns which view is attached.
 import { applyChatOverlay, attachChatOverlay, detachChatOverlay, type BrowserChatOverlayState } from "./browser-chat-overlay";
 import { getHardenedPartitionSession, setViewTrustResolver, viewWebPreferences } from "./browser-partition";
 import { viewTrust } from "./browser-download-routing";

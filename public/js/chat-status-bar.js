@@ -3,8 +3,7 @@
 // Bottom-of-chat status bar (provider/model/voice/speed pickers, context
 // usage indicator). Polls the server for provider list, reflects
 // voice-tier changes, classifies model strength so weak models surface a
-// warning chip. Extracted from chat.js as part of the 400-LOC god-file
-// split.
+// warning chip. Extracted from chat.js.
 //
 // External deps from chat.js / shared.js:
 //   - apiFetch, esc                      (shared.js)
@@ -41,8 +40,7 @@ function openDeveloperModeSettings() {
 
 // laxResolveActiveProvider / isProvidersComplete / loadProviderLabels /
 // laxProviderLabel live in the sibling chat-provider-identity.js — "which
-// provider is selected and is it connected" is its own concern, and splitting
-// it keeps this file under the 400-LOC source-hygiene ceiling.
+// provider is selected and is it connected" is its own concern.
 
 async function _primeLaxSettings() {
   try {

@@ -7,7 +7,7 @@
 //   tts_pcm / tts_done → playback worklet feed
 //   error → toast + state reset
 //
-// Split out of chat-voice-mic.js so each file stays under 400 LOC. State
+// Split out of chat-voice-mic.js, which owns voice-mode start/stop. State
 // lives in chat-voice.js (shared script-global lexical env).
 
 // The previous reply's bubble keeps pin-bottom's ~100vh reservation after its

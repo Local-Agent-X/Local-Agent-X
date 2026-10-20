@@ -7,8 +7,8 @@
  * 404s at the static handler), and no frontend dev server was ever
  * registered for the /apps/<id>/ reverse proxy to start.
  *
- * Sibling to build-app-adapter.test.ts (same fixture/report idiom; split
- * file so neither crosses the 400-LOC bar). Seams: the adapter's cliRunner
+ * Sibling to build-app-adapter.test.ts (same fixture/report idiom; this file
+ * holds the framework-completion cases). Seams: the adapter's cliRunner
  * (no CLI subprocess) + finalizeDeps (no dev-server records/ports/processes).
  * finalizeFrameworkBuild's own unit contract lives in
  * src/canonical-loop/adapters/app-build-finalize.test.ts.

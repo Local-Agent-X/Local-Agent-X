@@ -344,7 +344,7 @@ async function doDisconnect() {
 }
 
 
-// Settings split into focused modules for the 400-LOC rule:
+// Settings split into focused modules:
 //   settings-anthropic.js
 //   settings-providers.js
 //   settings-voice-tier4.js

@@ -4,7 +4,7 @@
 // Plus the chat-bar voice picker handler
 // (quickSwitchVoice) and the speed slider handler (quickSwitchSpeed) — both
 // route through window.sendVoiceWsMessage so this module never holds a
-// voiceWS reference. Extracted from chat.js as part of the 400-LOC split.
+// voiceWS reference. Extracted from chat.js.
 //
 // External deps from chat.js / shared.js:
 //   - apiFetch, apiPost, esc, AUTH_TOKEN  (shared.js)

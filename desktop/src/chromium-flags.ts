@@ -4,8 +4,8 @@
  * Chromium reads its command line only at startup, so every one of these MUST
  * be applied before app.ready — that's why they live in one function called at
  * the top of main, not scattered across the ready handler. Kept out of main.ts
- * (a launch orchestrator at the size ceiling) as a cohesive, separately
- * reviewable unit.
+ * (a launch orchestrator that wires the extracted modules together) as a
+ * cohesive, separately reviewable unit.
  */
 import { app } from "electron";
 import { existsSync, readFileSync } from "node:fs";

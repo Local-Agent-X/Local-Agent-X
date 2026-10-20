@@ -5,9 +5,8 @@
  * WebContentsView on the app's own origin, stacked into the main window on
  * top of whichever pool view is currently attached.
  *
- * Split out of browser-views.ts (which sits at the 400-LOC ceiling, same
- * reason as the browser-ipc → browser-page-controls split). The overlay is
- * its own responsibility, but its LIFETIME is coupled to the attached view:
+ * Split out of browser-views.ts: the overlay is its own responsibility, but
+ * its LIFETIME is coupled to the attached view:
  * it is added on attach, removed on detach, and never shown while nothing is
  * attached. The pool owns `attachedId` and passes it in on every call — this
  * module never reaches back into the pool, so the two never co-own it.

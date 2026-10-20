@@ -5,7 +5,7 @@
 // 3s while connecting (auto-stops after 2min so a stuck "scan QR" page
 // doesn't burn a request loop forever).
 //
-// Extracted from settings.js as part of the 400-LOC god-file split.
+// Extracted from settings.js.
 //
 // External deps from shared.js:
 //   apiJson, apiPost, AUTH_TOKEN

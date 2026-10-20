@@ -1,8 +1,8 @@
 /**
  * Page controls for the in-app browser pane: find-in-page + per-view zoom.
  *
- * Split out of browser-ipc.ts (which sits at the 400-LOC ceiling) and
- * registered from setupBrowserIPC. Two surfaces:
+ * Split out of browser-ipc.ts (which keeps the pane's rect, visibility and
+ * nav commands) and registered from setupBrowserIPC. Two surfaces:
  *
  *  - Trusted-sender-gated ipcMain commands (browser-find-start/next/prev/stop,
  *    browser-set-zoom/browser-get-zoom) acting on the SELECTED view — the

@@ -5,7 +5,7 @@
 // across chat-ws.js + chat-send.js). The drift between these maps was the
 // root cause of recurring stream/stop/badge bugs — fix it once at the source.
 //
-// Split across five files to stay under the 400-LOC gate (load order in
+// Split across five files, one job each (load order in
 // app.html): chat-stream-blocks.js (block-timeline helpers) →
 // chat-stream-reducer.js (the applyEvent switch) → THIS file (state maps,
 // turn start, subscriptions) → chat-stream-finalize.js (promote/endTurn) →

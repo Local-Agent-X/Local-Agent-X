@@ -9,8 +9,8 @@ import { describe, it, expect } from "vitest";
  * "disable-features", …), so a careless edit that adds a third disable
  * elsewhere, or drops one here, silently un-hardens the app).
  *
- * The flags now live in chromium-flags.ts (extracted from main.ts, a launch
- * orchestrator at the size ceiling). We keep a SOURCE-LEVEL assertion rather
+ * The flags now live in chromium-flags.ts (extracted from main.ts, the launch
+ * orchestrator). We keep a SOURCE-LEVEL assertion rather
  * than a module-load with a mocked electron: the flags module's import graph
  * still pulls in browser-partition and cdp-endpoint (electron-coupled), and a
  * source assertion catches the exact regression cared about (a feature

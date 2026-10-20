@@ -7,9 +7,8 @@
 // putting machine identifiers in the model's text channel — see
 // test/op-submit-async-self-block.test.ts for why that matters.
 //
-// Extracted from chat.js as part of the 400-LOC god-file split. Functions
-// stay window-scoped (classic script tag) so existing chat.js call sites
-// keep working without a module rewrite.
+// Extracted from chat.js. Functions stay window-scoped (classic script tag)
+// so existing chat.js call sites keep working without a module rewrite.
 //
 // External deps from chat.js:
 //   - window.esc                    (defined in shared.js)

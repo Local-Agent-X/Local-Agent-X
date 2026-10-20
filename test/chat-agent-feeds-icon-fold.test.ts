@@ -30,8 +30,9 @@ let partitionAmbient: (m: Record<string, Rec> | undefined) => {
 };
 
 beforeAll(() => {
-  // partitionAmbient moved to the -ambient sibling (400-LOC split); load both
-  // sources in one scope, mirroring the classic-script global environment.
+  // partitionAmbient lives in the -ambient sibling with the other ambient-op
+  // helpers; load both sources in one scope, mirroring the classic-script
+  // global environment.
   const src =
     readFileSync(join(here, "../public/js/chat-agent-feeds-render.js"), "utf8") +
     "\n" +

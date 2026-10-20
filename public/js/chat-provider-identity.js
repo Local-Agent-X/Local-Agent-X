@@ -1,9 +1,8 @@
 // ── Chat: which provider is selected, is it connected, what is it called ──
 //
-// Split out of chat-status-bar.js (400-LOC source-hygiene ceiling), and a real
-// seam rather than an arbitrary cut: everything here answers "identity of the
-// current provider" and is consumed by the model chip, the cascade menu and the
-// providers-payload freshness check alike.
+// Split out of chat-status-bar.js along a real seam: everything here answers
+// "identity of the current provider" and is consumed by the model chip, the
+// cascade menu and the providers-payload freshness check alike.
 //
 // Loaded BEFORE chat-status-bar.js in app.html. Order is not tight — these are
 // only ever called from inside functions, long after every script has parsed —

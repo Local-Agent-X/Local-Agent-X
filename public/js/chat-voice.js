@@ -12,7 +12,7 @@
 //   isVoiceModeActive()                 → returns whether voice mode is on
 //   feedTTS / flushTTS / stopSpeaking   → top-level fns auto-promoted to window
 //
-// Extracted from chat.js as part of the 400-LOC god-file split.
+// Extracted from chat.js.
 //
 // External deps from chat.js / shared.js / voice-picker.js:
 //   - apiFetch, esc, AUTH_TOKEN, API     (shared.js)
@@ -96,7 +96,7 @@ async function toggleMic() {
 }
 
 
-// Voice mode: split across modules for the 400-LOC rule.
+// Voice mode: split across modules, one job each.
 //   chat-dictate.js           — speech-to-text-only dictate path
 //   chat-voice-mic.js         — voice mode start/stop/cleanup
 //   chat-voice-ws-handler.js  — voice WS message dispatch

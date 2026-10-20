@@ -4,7 +4,7 @@
 // entire safety story for protocols the agent authored on its own initiative,
 // since no confirmation gate precedes those writes.
 //
-// Split out of protocols.js to stay under the 400-LOC source-hygiene gate.
+// Split out of protocols.js, the master/detail editor.
 // MUST load BEFORE protocols.js: that file calls protocolLoadArchived() at load
 // time, and reads archivedList/viewMode declared here (a `let` in a classic
 // script is shared across scripts but is in TDZ until its own script runs).

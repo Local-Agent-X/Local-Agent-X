@@ -4,7 +4,7 @@
 // the "Signed in" confirmation render, the login kickoff, and the
 // paste-the-code exchanges for Anthropic + xAI.
 //
-// Extracted from settings-onboarding.js as part of the 400-LOC god-file split.
+// Extracted from settings-onboarding.js, the wizard shell.
 //
 // Runtime deps on the wizard shell (settings-onboarding.js): reads
 // `_onboardStep` / `_onboardProvider`. Those are referenced only inside

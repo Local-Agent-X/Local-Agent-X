@@ -1,5 +1,5 @@
 // Loud boot-health surfacing for reconcile findings — extracted from
-// reconcile.ts (400-LOC ceiling) when the foreign-package-manager guard
+// reconcile.ts when the foreign-package-manager guard
 // joined the stale-dist warning. ONE mechanism, warn-and-continue (never
 // throws): OS notification + splash hint now, plus a renderer health-banner
 // via the "desktop-build-stale" channel (send → preload onDesktopBuildStale

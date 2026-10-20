@@ -1,7 +1,7 @@
 // ── Chat: Rendering — approval cards ──
 //
 // The live-vs-settled shape decision for approval asks, split out of
-// chat-render-artifacts.js for the 400-LOC budget. One entry point,
+// chat-render-artifacts.js, which calls it. One entry point,
 // renderApproval, returns one of two nodes:
 //   - LIVE (still answerable) — the canonical actionable card from
 //     makeApprovalCard, brought into view on arrival and, whenever the ask

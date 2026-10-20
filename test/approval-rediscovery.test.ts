@@ -153,7 +153,7 @@ function loadOnce() {
 	sendApprovalResponse = (g.window as unknown as { sendApprovalResponse: typeof sendApprovalResponse }).sendApprovalResponse;
 }
 
-// Rediscovery module (split out of chat-ws.js for the 400-LOC gate) — loads
+// Rediscovery module (split out of chat-ws.js) — loads
 // before chat-ws.js in app.html so the onopen hook / onmessage intercept can
 // reference these as bare globals, and AFTER chat-stream-store.js because it
 // binds ChatStreamStore.subscribeAll at LOAD time (that subscription is what

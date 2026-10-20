@@ -21,7 +21,7 @@
  * (in-flight asks re-route to IPC and the per-ask deadline owns final
  * settlement); a reply for an unknown/expired id is ignored; pending pipe asks
  * are bounded — overflow goes straight to IPC. Split out of
- * server-bridge-browser.ts to keep that file within the size budget; IPC
+ * server-bridge-browser.ts because the ask transport is its own concern; IPC
  * replies are routed back here by the bridge dispatcher.
  */
 

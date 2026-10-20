@@ -337,8 +337,8 @@ async function exportApp(id, name) {
   }
 }
 
-// sendAppsChatMessage() + sendAppsChatQuick() live in apps-build-entry.js
-// (split out to keep this file under the 400-LOC hygiene gate).
+// sendAppsChatMessage() + sendAppsChatQuick(), the "build an app" entry points,
+// live in apps-build-entry.js.
 
 function promptCreateApp() {
   const input = document.getElementById('apps-chat-input');

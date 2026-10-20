@@ -1,7 +1,7 @@
 /**
  * Agent input translation and routing for a browser view — the bridge's
- * "lax:browser-input" body, split out of server-bridge-browser.ts (400-LOC
- * gate) because delivering synthetic input correctly is its own concern.
+ * "lax:browser-input" body, split out of server-bridge-browser.ts because
+ * delivering synthetic input correctly is its own concern.
  *
  * The routing rule is the whole reason this file exists:
  *

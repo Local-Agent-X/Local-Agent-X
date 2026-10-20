@@ -1,9 +1,9 @@
 // ── ChatStreamStore: turn finalization ──
 //
 // promoteLiveToMessages + endTurn, attached onto window.ChatStreamStore
-// after the core loads (app.html order); split out of chat-stream-store.js
-// for the 400-LOC gate. Uses the _ChatStreamState handle the core exposes —
-// no state of its own.
+// after the core loads (app.html order); split out of chat-stream-store.js,
+// which keeps the state maps, turn start and subscriptions. Uses the
+// _ChatStreamState handle the core exposes — no state of its own.
 
 (function() {
   const S = window._ChatStreamState;

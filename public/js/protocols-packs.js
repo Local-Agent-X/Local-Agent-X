@@ -6,7 +6,7 @@
 // network: a pack is previewed, installed at a commit, and an update is a diff
 // the user approves here.
 //
-// Split out of protocols.js (400-LOC gate). Loads BEFORE protocols.js, which
+// Split out of protocols.js. Loads BEFORE protocols.js, which
 // calls protocolPacksLoad() from protocolLoad(); the render helpers below call
 // esc() from protocols.js at click time, after every script has loaded.
 

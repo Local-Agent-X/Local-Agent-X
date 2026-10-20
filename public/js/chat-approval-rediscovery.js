@@ -6,8 +6,8 @@
 // half-open reconnect) would otherwise never see the card and the op sits
 // blocked until the ask times out.
 //
-// Split out of chat-ws.js for the 400-LOC gate; loads BEFORE chat-ws.js
-// (same sibling pattern as the chat-ws-handler-* modules) so its connect
+// Split out of chat-ws.js, which owns the socket's lifecycle; loads BEFORE
+// chat-ws.js (same sibling pattern as the chat-ws-handler-* modules) so its connect
 // hook + onmessage intercept can reference these at call time — and AFTER
 // chat-stream-store.js, because the expiry watch at the bottom binds a
 // store subscription at LOAD time (not at call time).

@@ -160,7 +160,7 @@ function resultLinkHtml(rawUrl) {
 //   - a cycle (A→B→A) can't infinite-loop — a `visited` set breaks it.
 // Pure: reads only its `dataMap` argument, touches no DOM/global — so it is
 // unit-testable by loading this file in a Function factory (happy-dom). Lives
-// here (not in chat-agent-feeds.js) so that file stays under the 400-LOC gate.
+// here, with the other pure helpers, rather than in chat-agent-feeds.js.
 function buildAgentFeedTree(dataMap) {
   var map = dataMap || {};
   var ids = Object.keys(map);

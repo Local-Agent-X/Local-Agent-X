@@ -3,7 +3,7 @@
 // navigate, or an active-tab "show" bridge signal), decide whether the
 // renderer's single anchor should FOLLOW the agent (retarget + surface) or just
 // BADGE. Split out (like browser-loopback-policy.ts) so the rule is unit-testable
-// without dragging in electron, and to keep browser-ipc.ts under its LOC cap.
+// without dragging in electron.
 //
 // The rule is STATELESS on purpose. An earlier per-session anchor MAP recorded
 // the viewId each session last surfaced and followed when the anchor matched it —

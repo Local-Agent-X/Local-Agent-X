@@ -11,7 +11,7 @@
 //   - _renderAssistantToolArtifacts — cards, chips, progress, approvals, stop
 //                                    notice (used by live synth + finalized branch)
 //
-// Extracted from chat-render.js to keep that file under the 400-LOC budget.
+// Extracted from chat-render.js, which keeps renderMessage / renderMessages.
 //
 // External deps (resolved at call time, runtime-only):
 //   - md, esc, mdPreviewMode                   (shared.js / chat.js)

@@ -10,7 +10,7 @@
 //   - addMessageEl (the workhorse DOM builder for every message bubble)
 //   - openLightbox (image preview overlay)
 //
-// Extracted from chat.js as part of the 400-LOC god-file split.
+// Extracted from chat.js.
 //
 // External deps from chat.js / shared.js:
 //   - apiFetch, esc, md          (shared.js)

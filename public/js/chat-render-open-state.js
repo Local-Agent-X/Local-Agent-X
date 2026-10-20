@@ -4,7 +4,7 @@
 // (chat-render-live.js), which would wipe any group the user manually
 // expanded and reset every internal scroller. These helpers capture that
 // state off the old node and re-apply it to the fresh one. Split out of
-// chat-render-live.js for the 400-LOC gate; loads BEFORE it (call-time
+// chat-render-live.js, which does the swap itself; loads BEFORE it (call-time
 // resolution either way, but keep the dependency direction obvious).
 
 // Carry expanded/collapsed state across the swap, matching groups/cards by

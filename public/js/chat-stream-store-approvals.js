@@ -1,7 +1,7 @@
 // ── ChatStreamStore: approval + sidebar methods ──
 //
 // Attached onto window.ChatStreamStore after the core loads (app.html
-// order); split out of chat-stream-store.js for the 400-LOC gate. Uses the
+// order); split out of the store core, chat-stream-store.js. Uses the
 // _ChatStreamState handle (entries/ensure/notify) the core exposes — no
 // state of its own.
 

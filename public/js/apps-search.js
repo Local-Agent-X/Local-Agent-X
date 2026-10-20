@@ -1,7 +1,7 @@
 // ── Apps Gallery Search ──
-// Client-side filter for the apps grid + custom pages list. Lives in its own
-// file to keep apps.js under the 400-LOC hygiene gate. apps.js calls
-// applyAppsSearchFilter() after every grid render so the filter survives the
+// Client-side filter for the apps grid + custom pages list, kept apart from
+// the grid rendering in apps.js, which calls applyAppsSearchFilter() after
+// every grid render so the filter survives the
 // 5-second poll rebuilds.
 
 let _appsSearchQuery = '';

@@ -1,7 +1,7 @@
 // ── Chat: Live in-place updates ──
 //
 // The incremental DOM paths that avoid renderMessages()'s full #messages wipe.
-// Split out of chat-render.js to keep both files under the 400-LOC cap; loads
+// Split out of chat-render.js, which owns the full rebuild; loads
 // AFTER chat-render.js (uses renderMessage / autoScroll / _applyPinBottom from
 // it, all resolved at call time). renderMessages() in chat-render.js reads the
 // _liveMessageNodes map defined here — runtime-only, so load order is safe.

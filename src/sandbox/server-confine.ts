@@ -40,7 +40,7 @@ import { join } from "node:path";
 import { createLogger } from "../logger.js";
 import { getLaxDir } from "../lax-data-dir.js";
 import { isSeatbeltAvailable, generateSeatbeltProfile, seatbeltProfileLoads, SANDBOX_EXEC } from "./seatbelt.js";
-import { isBwrapAvailable, generateBwrapArgs, bwrapServerCageRuns } from "./bwrap.js";
+import { isBwrapAvailable, generateBwrapArgs, bwrapServerCageRuns, resolveBwrapPath } from "./bwrap.js";
 
 const logger = createLogger("sandbox.server");
 
@@ -147,7 +147,8 @@ export function maybeReexecServerConfined(): boolean {
       logger.error("[server-sandbox] enabled but bwrap is missing or the cage does not build on this kernel (unprivileged userns disabled?) — booting UNCONFINED.");
       return false;
     }
-    cmd = "bwrap";
+    // The path the probe proved, never a bare name a planted copy could answer to.
+    cmd = resolveBwrapPath()!;
     preArgs = generateBwrapArgs(undefined, "server");
   } else {
     logger.error("[server-sandbox] enabled but no kernel sandbox exists for this platform (Windows is a documented gap) — booting UNCONFINED.");

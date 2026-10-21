@@ -45,11 +45,15 @@
 // --unshare-net with no bridge, and ~/.config shadowed too.
 
 import { execFileSync } from "node:child_process";
-import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { delimiter, isAbsolute, join } from "node:path";
+import { join } from "node:path";
 
+import { createLogger } from "../logger.js";
 import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES, SERVER_SCOPE_EXEMPT_DIRS, GUARDED_SCOPE_EXEMPT_DIRS } from "./validate.js";
+import { resolveTrustedExecutable } from "./trusted-executable.js";
+
+const logger = createLogger("sandbox");
 import { NS_FORWARDER_SOURCE } from "./ns-forwarder-source.js";
 import type { SandboxScope } from "./types.js";
 import { installRootWriteRule, type InstallRootRule } from "../security/layer/install-root.js";
@@ -80,23 +84,19 @@ function bridgeMounted(scope: SandboxScope, net: BwrapNetwork | undefined): NonN
 
 let bwrapPath: string | null | undefined;
 
-/** Resolve once from the host environment before any child-specific env exists. */
+/** Resolve once from the host environment before any child-specific env
+ *  exists. Only a bwrap this user cannot overwrite counts (trusted-executable.ts):
+ *  a copy in a user-writable directory — one the caged shell could have planted
+ *  — is skipped, and the walk goes on to the system's. */
 export function resolveBwrapPath(pathEnv: string | undefined = process.env.PATH): string | null {
   if (pathEnv === process.env.PATH && bwrapPath !== undefined) return bwrapPath;
   if (process.platform !== "linux" || !pathEnv) return null;
-  for (const dir of pathEnv.split(delimiter)) {
-    if (!isAbsolute(dir)) continue;
-    const candidate = join(dir, "bwrap");
-    try {
-      if (!statSync(candidate).isFile()) continue;
-      accessSync(candidate, constants.X_OK);
-      const resolved = realpathSync(candidate);
-      if (pathEnv === process.env.PATH) bwrapPath = resolved;
-      return resolved;
-    } catch { /* keep searching */ }
+  const { path, rejected } = resolveTrustedExecutable("bwrap", pathEnv);
+  if (rejected.length > 0) {
+    logger.warn(`[sandbox] ignoring bwrap at ${rejected.join(", ")}: writable by this user, so not a cage${path ? ` — using ${path}` : ""}`);
   }
-  if (pathEnv === process.env.PATH) bwrapPath = null;
-  return null;
+  if (pathEnv === process.env.PATH) bwrapPath = path;
+  return path;
 }
 
 /** Linux with bwrap on PATH. Bwrap mode is a no-op everywhere else. */

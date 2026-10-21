@@ -2,7 +2,7 @@
 // one throwaway `docker run` per command under the fixed security flags below.
 // Callers reach it through the sandbox facade (index.ts).
 
-import { execSync, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { createLogger } from "../logger.js";
 import type { SandboxConfig } from "./types.js";
 import { validateSandboxConfig } from "./validate.js";
+import { resolveTrustedExecutable } from "./trusted-executable.js";
 const logger = createLogger("sandbox");
 
 /**
@@ -51,10 +52,26 @@ const DEFAULT_CONFIG: SandboxConfig = {
   memoryLimit: "512m",
 };
 
+/**
+ * The docker client to run: on Linux, where the agent's own cage leaves user
+ * directories on PATH writable, only a copy this user cannot overwrite
+ * (trusted-executable.ts); elsewhere the name, resolved by the OS.
+ */
+export function dockerExecutable(): string | null {
+  if (process.platform !== "linux") return "docker";
+  const { path, rejected } = resolveTrustedExecutable("docker");
+  if (rejected.length > 0) {
+    logger.warn(`[sandbox] ignoring docker at ${rejected.join(", ")}: writable by this user, so not a cage${path ? ` — using ${path}` : ""}`);
+  }
+  return path;
+}
+
 /** Check if Docker is available */
 export function isDockerAvailable(): boolean {
+  const docker = dockerExecutable();
+  if (!docker) return false;
   try {
-    execSync("docker info", { stdio: "ignore", timeout: 5000 });
+    execFileSync(docker, ["info"], { stdio: "ignore", timeout: 5000 });
     return true;
   } catch {
     return false;
@@ -119,7 +136,9 @@ export function execInSandbox(
   args.push("/bin/sh", "-c", command);
 
   try {
-    const [cmd, ...cmdArgs] = args;
+    const [, ...cmdArgs] = args;
+    const cmd = dockerExecutable();
+    if (!cmd) throw new Error("docker is not available from a location this user cannot write");
     const stdout = execFileSync(cmd, cmdArgs, {
       encoding: "utf-8",
       timeout: 120_000,

@@ -329,12 +329,16 @@ describe.skipIf(!bwrapHere)("bwrap guarded namespace (live)", () => {
 });
 
 describe("wrapForBwrap", () => {
-  it.skipIf(process.platform !== "linux")("resolves an absolute executable from the host PATH", () => {
+  it.skipIf(process.platform !== "linux")("never takes a bwrap this user could have written — a planted copy is not a cage", () => {
+    // A copy in a directory this user owns is exactly what a caged shell could
+    // plant ahead on PATH (red team round 2, I-H1); the walk skips it.
     const dir = mkdtempSync(join(tmpdir(), "lax-fake-bwrap-"));
     const fake = join(dir, "bwrap");
-    writeFileSync(fake, "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    writeFileSync(fake, "#!/bin/sh\necho RAN; echo NET-BLOCKED\n", { mode: 0o755 });
     try {
-      expect(resolveBwrapPath(dir)).toBe(realpathSync(fake));
+      expect(resolveBwrapPath(dir)).toBeNull();
+      // The system's copy, where there is one, is still found behind it.
+      if (bwrapHere) expect(resolveBwrapPath(`${dir}:${process.env.PATH}`)).toBe(resolveBwrapPath());
     } finally { rmSync(dir, { recursive: true, force: true }); }
   });
 

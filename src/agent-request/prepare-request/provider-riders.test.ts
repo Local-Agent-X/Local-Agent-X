@@ -33,6 +33,19 @@ describe("providerRiderFor", () => {
     // What stays the user's is named, so "do it" never reaches a password or a signature.
     expect(FOLLOW_THROUGH_RIDER).toMatch(/passwords, signatures and legal attestations, payments/);
   });
+
+  // Terminal-Bench 2.0 (2026-10-20): one happy-path run reported as done, and a
+  // setup script handed back unrun, on the same local model another harness
+  // finished by checking every named requirement.
+  it("says done means a check of each named requirement, failure cases included, for every non-Claude model", () => {
+    for (const rider of [FOLLOW_THROUGH_RIDER, FOLLOW_THROUGH_LOCAL]) {
+      expect(rider).toMatch(/done means checked/i);
+      expect(rider).toMatch(/each thing the user asked for/);
+      expect(rider).toMatch(/cancel/);
+      expect(rider).toMatch(/setup|sets something up/);
+    }
+    for (const p of ["anthropic", "anthropic-api"]) expect(providerRiderFor(p), p).not.toMatch(/done means checked/i);
+  });
 });
 
 describe("codexBehaviorRider — a login page is page-scoped (C6)", () => {

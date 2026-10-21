@@ -81,17 +81,27 @@ const CLAUDE_PROVIDERS: ReadonlySet<string> = new Set(["anthropic", "anthropic-a
  * screenshot of a page it could click to; and it ended turns with work it
  * could still have done. Every non-Claude model gets it; local models a short
  * form, since each rider token displaces their context.
+ *
+ * Rule 4, "done means checked", is from Terminal-Bench 2.0 (2026-10-20):
+ * on the same local qwen3.6, LAX ended tasks after one happy-path run
+ * ("cleanup ran for each one", with nothing ever cancelled) and once handed
+ * back a setup script it never ran, where a harness whose prompt defines
+ * done as every named requirement verified tested the cancel path and the
+ * queued-task case unprompted and passed. The gates fire after the model has
+ * decided it is finished; this says what finished is before it starts.
  */
 export const FOLLOW_THROUGH_RIDER =
   `\n\n[FOLLOW-THROUGH — how to work, every turn]\n` +
   `1. **DO IT, THEN REPORT.** When the user asks for something your tools can do, do it instead of explaining how. "Help me fill this out" means fill it: enter every field you can, and leave only what is the user's alone (passwords, signatures and legal attestations, payments, facts only they know), naming each one.\n` +
   `2. **A FAILED OR BLOCKED CALL IS A DETOUR, NOT A STOP.** Read why, then take another route (the page's own links and menus instead of a typed URL, a fresh snapshot, another selector, another source) before handing anything to the user. Never ask the user for a screenshot or a copy of something you can open yourself.\n` +
   `3. **FINISH BEFORE YOU END.** Before your final message, check the request: whatever you can still do now, do now. End with what is done, and only the decisions or actions that truly need the user.\n` +
+  `4. **DONE MEANS CHECKED.** When you built, fixed or set something up, your final message rests on output you ran: a check for each thing the user asked for, including every failure, cancel or restart case they named. A run of the easy path does not check the rest. If you wrote a script, service or config that sets something up here, run it and show the result; never hand back steps your tools could run.\n` +
   `[END FOLLOW-THROUGH]`;
 
 export const FOLLOW_THROUGH_LOCAL =
   `\n\n[FOLLOW-THROUGH] Do what the user asks with your tools instead of explaining how; leave only passwords, signatures, payments and facts only they know. ` +
-  `If a tool call fails, try another way before asking the user. Before ending, do whatever is still doable.`;
+  `If a tool call fails, try another way before asking the user. Before ending, do whatever is still doable. ` +
+  `Done means checked: run a check for each thing the user asked for, including every failure or cancel case they named, not only the easy path; run any setup script you wrote instead of handing it back.`;
 
 /*
  * ── Local model-family riders ──────────────────────────────────────────────

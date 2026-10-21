@@ -88,3 +88,25 @@ export const HUMAN_VERIFICATION_BLOCKED_ACTIONS = sealedTable([
   "emulate",
   "layout_report",
 ]);
+// How the security kernel judges each action: the browser's policy row reads
+// its write list from PAGE_WRITE_ACTIONS (tool-policy/tool-policies.network.ts
+// `ariAction`), so a taint policy that denies writes sees them, and
+// action-tables.test.ts holds every action in the tool's enum to exactly one
+// of these two tables — a new action without a verdict fails the build.
+//
+// A write carries model-chosen bytes into the page or commits state: a click
+// (by ref or by text), a typed or selected value, page script, an `act`
+// instruction, a prompt() answer, a bookmark (the model's title and url into a
+// persistent store), and releasing a download from quarantine onto disk.
+export const PAGE_WRITE_ACTIONS = sealedTable([
+  "click", "click_text", "fill", "select", "evaluate", "act", "dialog_accept", "bookmark_add", "release_download",
+]);
+// A get moves to or reads a page: navigation (the URL still goes through the
+// outbound scans as a GET), every read-only action, a scroll, the download
+// list, and dismissing a dialog (no value reaches the page). emulate is a get
+// on purpose: it re-opens the current URL in a new context, and as a write it
+// would be denied under web taint — right after browsing, the only time a
+// mobile re-render is wanted.
+export const PAGE_GET_ACTIONS = sealedTable([
+  ...RESET_ACTIONS, ...READ_ONLY_ACTIONS, "scroll", "downloads", "dialog_dismiss",
+]);

@@ -144,7 +144,8 @@ describe("outboundIsTaintFree — the predicate", () => {
   });
 
   it("refuses a write whose payload carries the tainted bytes", () => {
-    expect(outboundIsTaintFree(sid, "browser", { action: "type", text: TAINTED_BODY }, ["web"])).toBe(false);
+    // A prompt() answer is a write like a fill: the value reaches the page.
+    expect(outboundIsTaintFree(sid, "browser", { action: "dialog_accept", value: TAINTED_BODY }, ["web"])).toBe(false);
     // The tainted phrase embedded in otherwise-clean text.
     expect(outboundIsTaintFree(sid, "browser", {
       action: "fill", value: "the recovery phrase is velvet-harbor-ninety, please save it somewhere",

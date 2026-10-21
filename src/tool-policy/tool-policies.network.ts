@@ -5,6 +5,7 @@
 // Marketplace), and database tools.
 
 import type { ToolPolicyRow } from "./tool-policies.types.js";
+import { PAGE_WRITE_ACTIONS } from "../tools/browser-tools/action-tables.js";
 
 export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyRow> = {
   // ── Network ──
@@ -15,13 +16,13 @@ export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyRow> = {
     // bursts at the mutex (src/browser/mutex.ts) and stops genuine stuck-loops
     // via no-progress detection (src/browser/progress-tracker.ts), which feeds
     // the circuit breaker. The per-session ceiling below stays as a backstop.
-    // Its kernel writes leave out `emulate`: that re-opens the current URL in
-    // a new context, an http GET, and as a write it would be denied under web
-    // taint — exactly after browsing, the only time a mobile re-render is wanted.
+    // Which actions the kernel judges as writes is the browser's own
+    // classification (browser-tools/action-tables.ts PAGE_WRITE_ACTIONS), never
+    // restated here: every action in the tool's enum is a write or a get there.
     // A scheduled job browses on its own profile (browser/session-owner-registry.ts);
     // an action that would show a person a card parks in the inbox instead
     // (browser-tools/gates.ts, tool-execution/deferred-call.ts).
-    kernel: "http", ariAction: { arg: "action", writes: ["click", "fill", "select", "type", "evaluate", "act"], as: "post" }, risk: "network-read", capabilities: ["egress"], tags: ["web-browse", "voice-fast"], essentialRank: 6, blurb: { say: "open google.com and search for X", does: "Drive a real browser." }, timeoutMs: 30_000, liveState: "poll", externalContent: true, destination: [{ to: "browser-page", arg: "url" }],
+    kernel: "http", ariAction: { arg: "action", writes: [...PAGE_WRITE_ACTIONS], as: "post" }, risk: "network-read", capabilities: ["egress"], tags: ["web-browse", "voice-fast"], essentialRank: 6, blurb: { say: "open google.com and search for X", does: "Drive a real browser." }, timeoutMs: 30_000, liveState: "poll", externalContent: true, destination: [{ to: "browser-page", arg: "url" }],
     // The element a click or fill acts on: the page never receives the ref or selector.
     localArgs: ["action", "ref", "selector"],
     reads: ["session"], killSwitch: "enableBrowser", committing: "commit-button", loop: { spinProne: true }, category: "browser",

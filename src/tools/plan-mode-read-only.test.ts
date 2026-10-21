@@ -32,7 +32,7 @@ describe("plan mode's read-only verdict comes from the row", () => {
   it("a browser navigate reads the web; a click, fill or script writes to a page", () => {
     expect(isReadOnlyCall("browser", { action: "navigate", url: "https://example.com" })).toBe(true);
     expect(isReadOnlyCall("browser", { action: "read" })).toBe(true);
-    for (const action of ["click", "fill", "type", "evaluate", "act"]) expect(isReadOnlyCall("browser", { action }), action).toBe(false);
+    for (const action of ["click", "click_text", "fill", "evaluate", "act", "dialog_accept", "bookmark_add"]) expect(isReadOnlyCall("browser", { action }), action).toBe(false);
   });
 
   it("a send to the user's own device is part of planning: a plan, mockup or diagram may reach them", () => {

@@ -15,7 +15,11 @@ import {
   TRACKED_ACTIONS,
   READ_ONLY_ACTIONS,
   HUMAN_VERIFICATION_BLOCKED_ACTIONS,
+  PAGE_WRITE_ACTIONS,
+  PAGE_GET_ACTIONS,
 } from "./action-tables.js";
+import { BROWSER_TOOL_PARAMETERS } from "./description.js";
+import { TOOL_POLICIES } from "../../tool-policy/tool-policies.js";
 
 const intersect = (a: ActionTable, b: ActionTable) => [...a].filter((x) => b.has(x));
 
@@ -24,7 +28,46 @@ const TABLES: [string, ActionTable][] = [
   ["TRACKED_ACTIONS", TRACKED_ACTIONS],
   ["READ_ONLY_ACTIONS", READ_ONLY_ACTIONS],
   ["HUMAN_VERIFICATION_BLOCKED_ACTIONS", HUMAN_VERIFICATION_BLOCKED_ACTIONS],
+  ["PAGE_WRITE_ACTIONS", PAGE_WRITE_ACTIONS],
+  ["PAGE_GET_ACTIONS", PAGE_GET_ACTIONS],
 ];
+
+/** Every action the model can name — the tool's own schema enum. */
+const ENUM_ACTIONS: readonly string[] = (BROWSER_TOOL_PARAMETERS.properties.action as { enum: readonly string[] }).enum;
+
+describe("the kernel's verdict on every browser action", () => {
+  // The hand list this derives from had drifted: `type` (not an action) was a
+  // write, while click_text, dialog_accept and bookmark_add — each carrying
+  // model-chosen bytes into the page or a store — read as gets, so a preset
+  // that denies tainted writes never saw them (red team 2026-10-13, B6).
+  it("holds every action in the enum in exactly one of PAGE_WRITE / PAGE_GET", () => {
+    const unclassified = ENUM_ACTIONS.filter((a) => !PAGE_WRITE_ACTIONS.has(a) && !PAGE_GET_ACTIONS.has(a));
+    expect(unclassified, "every browser action needs a kernel verdict in action-tables.ts").toEqual([]);
+    expect(intersect(PAGE_WRITE_ACTIONS, PAGE_GET_ACTIONS)).toEqual([]);
+    const notActions = [...PAGE_WRITE_ACTIONS, ...PAGE_GET_ACTIONS].filter((a) => !ENUM_ACTIONS.includes(a));
+    expect(notActions, "a verdict for a name the tool does not accept is dead").toEqual([]);
+  });
+
+  it("pins the writes: every action whose bytes reach the page or commit state", () => {
+    expect([...PAGE_WRITE_ACTIONS].sort()).toEqual(
+      ["act", "bookmark_add", "click", "click_text", "dialog_accept", "evaluate", "fill", "release_download", "select"],
+    );
+  });
+
+  it("judges every read-only action and every context reset as a get", () => {
+    for (const a of [...READ_ONLY_ACTIONS, ...RESET_ACTIONS]) expect(PAGE_GET_ACTIONS.has(a), a).toBe(true);
+    expect(PAGE_WRITE_ACTIONS.has("emulate")).toBe(false);
+  });
+
+  it("is what the browser's policy row hands the kernel, not a second copy", () => {
+    const spec = TOOL_POLICIES.browser.ariAction;
+    expect(typeof spec).toBe("object");
+    const { arg, writes, as } = spec as { arg: string; writes: readonly string[]; as?: string };
+    expect(arg).toBe("action");
+    expect(as).toBe("post");
+    expect([...writes].sort()).toEqual([...PAGE_WRITE_ACTIONS].sort());
+  });
+});
 
 describe("browser action tables", () => {
   it("never tracks progress for a read-only action (a read never 'tries to move the page')", () => {

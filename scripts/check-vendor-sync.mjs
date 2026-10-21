@@ -10,8 +10,8 @@
  *      away). A changed hash fails: change agentxos upstream and re-sync instead.
  *   2. Upstream moving on. When an agentxos checkout is found ($AGENTXOS_DIR, else the
  *      `agentxos` folder next to this repo), each file's code must equal its upstream
- *      file's code, and every module of the protocol package must be vendored: a new
- *      upstream file is part of the contract once index.ts exports it. Without a
+ *      file's code, and every module of the protocol and client packages must be
+ *      vendored: a new upstream file is part of the contract once an index exports it. Without a
  *      checkout (CI) this half is skipped, loudly.
  *   3. A missing module. Every relative import in a vendored file must name a vendored
  *      file, so an index that exports a module the copy lacks fails even without a
@@ -71,10 +71,19 @@ function findUpstream() {
 }
 
 const PROTOCOL_SRC = "packages/protocol/src";
+const CLIENT_SRC = "packages/client/src";
 
-/** The protocol package's modules upstream, other than its index (vendored as protocol.ts). */
-function upstreamProtocolModules(dir) {
-  return readdirSync(join(dir, PROTOCOL_SRC)).filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts") && f !== "index.ts");
+const sourceModules = (dir, src) => readdirSync(join(dir, src)).filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"));
+
+/** Every upstream module that must be vendored, with the file name it takes here: the
+ *  protocol package's modules other than its index (vendored as protocol.ts), and every
+ *  module of the client package. A new upstream file is part of the contract once its
+ *  index exports it, so the copy must grow with upstream. */
+function upstreamModules(dir) {
+  return [
+    ...sourceModules(dir, PROTOCOL_SRC).filter((f) => f !== "index.ts").map((f) => [f, `${PROTOCOL_SRC}/${f}`]),
+    ...sourceModules(dir, CLIENT_SRC).map((f) => [f, `${CLIENT_SRC}/${f}`]),
+  ];
 }
 
 const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
@@ -88,8 +97,8 @@ if (sync) {
     process.exit(1);
   }
   const known = vendoredUpstreams();
-  for (const f of upstreamProtocolModules(upstreamDir)) {
-    if (!known.has(`${PROTOCOL_SRC}/${f}`)) manifest.files[f] = { upstream: `${PROTOCOL_SRC}/${f}`, sha256: "" };
+  for (const [f, upstream] of upstreamModules(upstreamDir)) {
+    if (!known.has(upstream)) manifest.files[f] = { upstream, sha256: "" };
   }
   for (const [file, entry] of Object.entries(manifest.files)) {
     const up = join(upstreamDir, entry.upstream);
@@ -126,8 +135,8 @@ for (const [file] of Object.entries(manifest.files)) {
 
 if (upstreamDir) {
   const known = vendoredUpstreams();
-  for (const f of upstreamProtocolModules(upstreamDir)) {
-    if (!known.has(`${PROTOCOL_SRC}/${f}`)) errors.push(`upstream ${PROTOCOL_SRC}/${f} is not vendored: run --sync`);
+  for (const [, upstream] of upstreamModules(upstreamDir)) {
+    if (!known.has(upstream)) errors.push(`upstream ${upstream} is not vendored: run --sync`);
   }
   for (const [file, entry] of Object.entries(manifest.files)) {
     const up = join(upstreamDir, entry.upstream);

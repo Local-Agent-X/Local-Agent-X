@@ -1,26 +1,27 @@
-// Typed client for the agentxos account API (app.agentxos.ai). The desktop SERVER
-// process calls these to: log in via the device-code flow (RFC 8628), register this
-// machine as a device, request a pairing QR, and discover which phone paired. It can
-// set request headers (unlike a browser/RN client), so authenticated calls send the
-// session token as `Authorization: Bearer` — the routes accept that (require-session.ts).
+// Typed client for the agentxos account API (app.agentxos.ai), shared by the desktop
+// and the phone: device-code login (RFC 8628), device registration, pairing (the desktop
+// issues a QR challenge and can revoke; the phone redeems a scanned one), discovering
+// the paired peer, and session renewal. Authenticated calls send the session token as
+// `Authorization: Bearer` (apps/web/lib/require-session.ts accepts it).
 //
 // Pure over an injected `fetch` + base URL, so it unit-tests offline against a fake
-// fetch. Networked calls only run on the real device. Each method throws an
-// ApiError carrying the route's actionable message (constitution: surface failures,
-// never swallow) so the caller can show it.
+// fetch; networked calls only run on a real device. Each method throws an ApiError
+// carrying the route's actionable message (constitution §16) so the caller can show it.
 
-/** The agentxos account API base. Override via LAX_ACCOUNT_API_URL for staging/dev. */
+/** The agentxos account API base. Each app overrides it for staging/dev. */
 export const DEFAULT_ACCOUNT_API_URL = "https://app.agentxos.ai";
 
-/** A failed API call — carries the HTTP status + the route's machine code + message. */
+/** A failed API call — carries the HTTP status + the route's machine code + message.
+ *  Status 0 is a network/DNS/TLS failure (code `network_error`), worth retrying. */
 export class ApiError extends Error {
-  constructor(
-    readonly status: number,
-    readonly code: string,
-    message: string,
-  ) {
+  readonly status: number;
+  readonly code: string;
+
+  constructor(status: number, code: string, message: string) {
     super(message);
     this.name = "ApiError";
+    this.status = status;
+    this.code = code;
   }
 }
 
@@ -45,11 +46,17 @@ export interface RegisteredDevice {
   created: boolean;
 }
 
+/** A pairing challenge issued to a desktop; it renders `qrPayload` as a QR. */
 export interface IssuedPairing {
   code: string;
   expiresAt: number;
-  /** The JSON string the desktop renders as a QR (qr-payload.ts contract). */
+  /** The JSON string the desktop renders as a QR (packages/data qr-payload contract). */
   qrPayload: string;
+}
+
+/** A challenge redeemed by a phone; `pairingId` names the pairing in listPairings. */
+export interface RedeemedPairing {
+  pairingId: string;
 }
 
 export interface PairingEntry {
@@ -61,7 +68,7 @@ export interface PairingEntry {
   createdAt: number;
 }
 
-/** The fetch surface this client needs (the Node global `fetch` satisfies it). */
+/** The fetch surface this client needs (the Node and React Native globals satisfy it). */
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
 export class AgentxosApiClient {
@@ -84,8 +91,8 @@ export class AgentxosApiClient {
     return this.post<DeviceCodePoll>("/api/device-code/poll", { deviceCode });
   }
 
-  /** Register this machine under the account. `publicKey` is the device's ed25519
-   *  public key; the private key never leaves the machine. Idempotent on publicKey. */
+  /** Register this device under the account. `publicKey` is its public identity; the
+   *  private material never leaves the device. Idempotent on publicKey. */
   registerDevice(
     token: string,
     input: { kind: "desktop" | "phone"; publicKey: string; label: string },
@@ -93,15 +100,25 @@ export class AgentxosApiClient {
     return this.post<RegisteredDevice>("/api/devices/register", input, token);
   }
 
-  /** Request a one-time pairing challenge for this desktop; render `qrPayload` as a QR. */
+  /** Request a one-time pairing challenge for a desktop; it renders `qrPayload` as a QR. */
   requestPairingChallenge(token: string, desktopDeviceId: string): Promise<IssuedPairing> {
     return this.post<IssuedPairing>("/api/pairings/challenge", { desktopDeviceId }, token);
   }
 
-  /** List the account's active pairings — how the desktop discovers its paired phone. */
+  /** Redeem a scanned pairing code. `connectUrl` is the absolute redeem endpoint carried
+   *  in the QR payload — POSTed verbatim so the phone never hardcodes the route. */
+  redeemPairing(
+    token: string,
+    connectUrl: string,
+    input: { code: string; phoneDeviceId: string },
+  ): Promise<RedeemedPairing> {
+    return this.request<RedeemedPairing>(connectUrl, "POST", input, token);
+  }
+
+  /** List the account's active pairings — how each device discovers its paired peer. */
   async listPairings(token: string): Promise<PairingEntry[]> {
-    const data = await this.get<{ pairings: PairingEntry[] }>("/api/pairings", token);
-    return data.pairings;
+    const data = await this.get<{ pairings?: PairingEntry[] }>("/api/pairings", token);
+    return data.pairings ?? [];
   }
 
   /** Swap a still-valid session token for a fresh one. The server renews only for a
@@ -111,34 +128,32 @@ export class AgentxosApiClient {
     return data.token;
   }
 
-  /** Revoke a pairing — the in-app "Disconnect phone" action. Server-side and permanent;
+  /** Revoke a pairing — the desktop's "Disconnect phone" action. Server-side and permanent;
    *  the phone can only rejoin by scanning a new QR (constitution §11, no remote add). */
   async revokePairing(token: string, pairingId: string): Promise<void> {
     await this.post<{ ok: boolean }>("/api/devices/revoke", { pairingId }, token);
   }
 
-  private async post<T>(path: string, body: unknown, token?: string): Promise<T> {
-    return this.request<T>(path, "POST", body, token);
+  private post<T>(path: string, body: unknown, token?: string): Promise<T> {
+    return this.request<T>(this.baseUrl + path, "POST", body, token);
   }
 
-  private async get<T>(path: string, token?: string): Promise<T> {
-    return this.request<T>(path, "GET", undefined, token);
+  private get<T>(path: string, token?: string): Promise<T> {
+    return this.request<T>(this.baseUrl + path, "GET", undefined, token);
   }
 
-  private async request<T>(path: string, method: "GET" | "POST", body: unknown, token?: string): Promise<T> {
+  private async request<T>(url: string, method: "GET" | "POST", body: unknown, token?: string): Promise<T> {
     const headers: Record<string, string> = { accept: "application/json" };
     if (body !== undefined) headers["content-type"] = "application/json";
     if (token) headers["authorization"] = `Bearer ${token}`;
 
+    const init: RequestInit = { method, headers };
+    if (body !== undefined) init.body = JSON.stringify(body);
+
     let res: Response;
     try {
-      res = await this.fetchImpl(this.baseUrl + path, {
-        method,
-        headers,
-        body: body !== undefined ? JSON.stringify(body) : undefined,
-      });
+      res = await this.fetchImpl(url, init);
     } catch (e) {
-      // Network/DNS/TLS failure — surface as an actionable, retryable error.
       throw new ApiError(0, "network_error", `Couldn't reach agentxos: ${(e as Error).message}`);
     }
 

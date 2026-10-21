@@ -1,13 +1,14 @@
-// The device-code login loop (RFC 8628 client side): start a grant, show the user the
-// short code + the URL to approve it at, then poll until approved/expired/denied. Pure
-// orchestration over the api client + an injected clock/sleep, so it unit-tests offline
-// (a fake api that returns pending→approved, a sleep that resolves immediately).
+// The device-code login loop (RFC 8628 client side), shared by the desktop and the
+// phone: start a grant, show the user the short code + the URL to approve it at, then
+// poll until approved/expired/denied. Pure orchestration over the api client + an
+// injected clock/sleep, so it unit-tests offline (a fake api that returns
+// pending→approved, a sleep that resolves immediately).
 //
-// The desktop SERVER process runs this; `onPrompt` is how the surface (an account page,
-// a log line, a tray notice) shows the user what to type and where. On success the
-// caller persists the token + identity and registers the device.
+// `onPrompt` is how the surface (the desktop's account page, the phone's account screen)
+// shows the user what to type and where. On success the caller persists the token and
+// registers the device.
 
-import type { DeviceCodePoll, StartedDeviceCode } from "./api-client.js";
+import type { DeviceCodePoll, StartedDeviceCode } from "./account-api.js";
 
 /** The subset of the api client this loop needs (so tests inject a fake). */
 export interface DeviceCodeApi {
@@ -30,7 +31,7 @@ export interface DeviceCodeLoginDeps {
   sleep: (ms: number) => Promise<void>;
   /** Clock for the overall expiry deadline. */
   now: () => number;
-  /** Optional cancel (user closed the dialog / app shutdown). */
+  /** Optional cancel (user closed the screen / app shutdown). */
   signal?: { readonly aborted: boolean };
 }
 

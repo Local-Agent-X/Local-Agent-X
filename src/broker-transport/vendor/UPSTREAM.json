@@ -51,7 +51,7 @@
     },
     "index.ts": {
       "upstream": "packages/client/src/index.ts",
-      "sha256": "eced5c052cba537b8c031bc1649afe6b7eed84c9bc92184fcc069450b60bd19e"
+      "sha256": "ec42eb9bfd97dd5d60923e091543855ca6c9aa06900637403443bd2c7aeec0ea"
     },
     "chunks.ts": {
       "upstream": "packages/protocol/src/chunks.ts",
@@ -68,6 +68,14 @@
     "inbox.ts": {
       "upstream": "packages/protocol/src/inbox.ts",
       "sha256": "b2b0d4e16cdb327ca6ecbc633e83cfd8707ed7b43cf2cf8318741066a0157fec"
+    },
+    "account-api.ts": {
+      "upstream": "packages/client/src/account-api.ts",
+      "sha256": "7e006a1a61d4cd5745b1e739a7a397b12afaa440b737b2c3a90900b5b8f10ca2"
+    },
+    "device-code-login.ts": {
+      "upstream": "packages/client/src/device-code-login.ts",
+      "sha256": "4c3a962c794fb28ab30623dc70e6a26d8e00b489ad179ebcacb3d332e828326e"
     }
   }
 }

@@ -9,14 +9,14 @@
 // so the whole flow unit-tests offline with fakes. The one stateful thing it owns is the
 // in-flight UI state (loginPrompt / pairing); persisted state lives in storage.ts.
 
-import { deviceCodeLogin, type LoginPrompt } from "./device-code-login.js";
+import { deviceCodeLogin, type LoginPrompt } from "../vendor/index.js";
 import type {
   StartedDeviceCode,
   DeviceCodePoll,
   RegisteredDevice,
   IssuedPairing,
   PairingEntry,
-} from "./api-client.js";
+} from "../vendor/index.js";
 import type { DeviceIdentity } from "./identity.js";
 import type { AccountState } from "./storage.js";
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { ApiError } from "./api-client.js";
+import { ApiError } from "../vendor/index.js";
 import { RENEW_AFTER_MS, renewSessionIfDue, type SessionRenewalDeps } from "./session-renewal.js";
 import type { AccountState } from "./storage.js";
 

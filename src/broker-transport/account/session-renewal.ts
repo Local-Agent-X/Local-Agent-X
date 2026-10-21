@@ -8,7 +8,7 @@
 // A refusal (token already expired, pairing revoked) is terminal and goes to the same
 // handler as the broker's own refusal; a network failure just waits for the next check.
 
-import { ApiError } from "./api-client.js";
+import { ApiError } from "../vendor/index.js";
 import type { AccountState } from "./storage.js";
 
 /** Renew once the token is this old. */

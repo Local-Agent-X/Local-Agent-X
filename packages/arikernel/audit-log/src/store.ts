@@ -79,7 +79,6 @@ export interface PersistentTaintEventRow {
 
 export class AuditStore {
 	private db: Database.Database;
-	private lastHash: string;
 	private insertEvent: Database.Statement;
 	private insertRun: Database.Statement;
 	private insertPersistentTaintEvent: Database.Statement;
@@ -95,8 +94,6 @@ export class AuditStore {
 		this.db.exec(MIGRATION_002_PERSISTENT_TAINT);
 		this.db.exec(MIGRATION_003_META);
 		this.migrateSchema();
-
-		this.lastHash = this.getLastHash();
 
 		this.insertRun = this.db.prepare(`
 			INSERT INTO runs (run_id, principal_id, started_at, config_json, start_previous_hash)
@@ -134,6 +131,14 @@ export class AuditStore {
 		return this.hmacKey;
 	}
 
+	/**
+	 * The chain's current tip, read from the database at every append rather
+	 * than cached per instance: the server and every execution worker it
+	 * starts open the same file, and a tip cached in each process forked the
+	 * chain at the first worker-backed op, so the whole database then failed
+	 * verification. Each append reads the tip and inserts under one immediate
+	 * (write-locked) transaction, so concurrent writers serialize on it.
+	 */
 	private getLastHash(): string {
 		const row = this.db.prepare("SELECT hash FROM events ORDER BY rowid DESC LIMIT 1").get() as
 			| { hash: string }
@@ -141,8 +146,14 @@ export class AuditStore {
 		return row?.hash ?? genesisHash();
 	}
 
+	/** Chain one event onto the current tip and insert it, atomically: the
+	 *  tip is read inside the immediate transaction, under the write lock. */
+	private chained<T>(build: (previousHash: string) => T): T {
+		return this.db.transaction(() => build(this.getLastHash())).immediate();
+	}
+
 	startRun(runId: string, principalId: string, config: Record<string, unknown>): void {
-		this.insertRun.run(runId, principalId, now(), JSON.stringify(config), this.lastHash);
+		this.insertRun.run(runId, principalId, now(), JSON.stringify(config), this.getLastHash());
 	}
 
 	endRun(runId: string): void {
@@ -160,49 +171,49 @@ export class AuditStore {
 		const timestamp = now();
 		const taintSources = decision.taintLabels.map((t) => t.source).join(",");
 
-		const sequence = (
-			this.db
-				.prepare("SELECT COALESCE(MAX(sequence), -1) + 1 as seq FROM events WHERE run_id = ?")
-				.get(toolCall.runId) as { seq: number }
-		).seq;
+		return this.chained((previousHash) => {
+			const sequence = (
+				this.db
+					.prepare("SELECT COALESCE(MAX(sequence), -1) + 1 as seq FROM events WHERE run_id = ?")
+					.get(toolCall.runId) as { seq: number }
+			).seq;
 
-		toolCall.sequence = sequence;
+			toolCall.sequence = sequence;
 
-		const eventData = JSON.stringify({ toolCall, decision, result });
-		const previousHash = this.lastHash;
-		const hash = computeHash(eventData, previousHash, this.hmacKey);
-		this.lastHash = hash;
+			const eventData = JSON.stringify({ toolCall, decision, result });
+			const hash = computeHash(eventData, previousHash, this.hmacKey);
 
-		this.insertEvent.run(
-			id,
-			toolCall.runId,
-			sequence,
-			timestamp,
-			toolCall.principalId,
-			toolCall.toolClass,
-			toolCall.action,
-			JSON.stringify(toolCall),
-			JSON.stringify(decision),
-			result ? JSON.stringify(result) : null,
-			result?.durationMs ?? null,
-			taintSources,
-			decision.verdict,
-			previousHash,
-			hash,
-		);
+			this.insertEvent.run(
+				id,
+				toolCall.runId,
+				sequence,
+				timestamp,
+				toolCall.principalId,
+				toolCall.toolClass,
+				toolCall.action,
+				JSON.stringify(toolCall),
+				JSON.stringify(decision),
+				result ? JSON.stringify(result) : null,
+				result?.durationMs ?? null,
+				taintSources,
+				decision.verdict,
+				previousHash,
+				hash,
+			);
 
-		return {
-			id,
-			runId: toolCall.runId,
-			sequence,
-			timestamp,
-			principalId: toolCall.principalId,
-			toolCall,
-			decision,
-			result,
-			previousHash,
-			hash,
-		};
+			return {
+				id,
+				runId: toolCall.runId,
+				sequence,
+				timestamp,
+				principalId: toolCall.principalId,
+				toolCall,
+				decision,
+				result,
+				previousHash,
+				hash,
+			};
+		});
 	}
 
 	appendSystemEvent(
@@ -215,66 +226,66 @@ export class AuditStore {
 		const id = generateId();
 		const timestamp = now();
 
-		const sequence = (
-			this.db
-				.prepare("SELECT COALESCE(MAX(sequence), -1) + 1 as seq FROM events WHERE run_id = ?")
-				.get(runId) as { seq: number }
-		).seq;
+		return this.chained((previousHash) => {
+			const sequence = (
+				this.db
+					.prepare("SELECT COALESCE(MAX(sequence), -1) + 1 as seq FROM events WHERE run_id = ?")
+					.get(runId) as { seq: number }
+			).seq;
 
-		const toolCall: ToolCall = {
-			id: generateId(),
-			runId,
-			sequence,
-			timestamp,
-			principalId,
-			toolClass: "_system" as unknown as ToolClass,
-			action,
-			parameters: metadata,
-			taintLabels: [],
-		};
+			const toolCall: ToolCall = {
+				id: generateId(),
+				runId,
+				sequence,
+				timestamp,
+				principalId,
+				toolClass: "_system" as unknown as ToolClass,
+				action,
+				parameters: metadata,
+				taintLabels: [],
+			};
 
-		const decision: Decision = {
-			verdict: "deny",
-			matchedRule: null,
-			reason,
-			taintLabels: [],
-			timestamp,
-		};
+			const decision: Decision = {
+				verdict: "deny",
+				matchedRule: null,
+				reason,
+				taintLabels: [],
+				timestamp,
+			};
 
-		const eventData = JSON.stringify({ toolCall, decision });
-		const previousHash = this.lastHash;
-		const hash = computeHash(eventData, previousHash, this.hmacKey);
-		this.lastHash = hash;
+			const eventData = JSON.stringify({ toolCall, decision });
+			const hash = computeHash(eventData, previousHash, this.hmacKey);
 
-		this.insertEvent.run(
-			id,
-			runId,
-			sequence,
-			timestamp,
-			principalId,
-			"_system",
-			action,
-			JSON.stringify(toolCall),
-			JSON.stringify(decision),
-			null,
-			null,
-			"",
-			"deny",
-			previousHash,
-			hash,
-		);
+			this.insertEvent.run(
+				id,
+				runId,
+				sequence,
+				timestamp,
+				principalId,
+				"_system",
+				action,
+				JSON.stringify(toolCall),
+				JSON.stringify(decision),
+				null,
+				null,
+				"",
+				"deny",
+				previousHash,
+				hash,
+			);
 
-		return {
-			id,
-			runId,
-			sequence,
-			timestamp,
-			principalId,
-			toolCall,
-			decision,
-			previousHash,
-			hash,
-		};
+			return {
+				id,
+				runId,
+				sequence,
+				timestamp,
+				principalId,
+				toolCall,
+				decision,
+				previousHash,
+				hash,
+			};
+		});
 	}
 
 	queryRun(runId: string): AuditEvent[] {

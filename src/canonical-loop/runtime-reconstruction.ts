@@ -8,6 +8,7 @@ import { lstatSync, readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import type { CredentialResolution } from "../auth/auth-provider.js";
 import { verifyDurableRecordMac } from "../app-runtime/audit-signing.js";
+import { registerRedactedSecretValue } from "../security/secrets/index.js";
 
 const PROJECTED_CREDENTIAL_DOMAIN = "canonical-container-credential-v1";
 
@@ -92,6 +93,9 @@ export function readProjectedCredential(
     || !verifyDurableRecordMac(PROJECTED_CREDENTIAL_DOMAIN, JSON.stringify(value), sealed.mac)) {
     throw new Error("projected credential identity mismatch");
   }
+  // The worker now holds the key: every outbound scan and the delivery mask
+  // match the value itself from here on, not merely its shape.
+  registerRedactedSecretValue(value.credential, "projected-credential");
   return value as CredentialResolution;
 }
 

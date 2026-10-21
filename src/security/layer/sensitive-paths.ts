@@ -83,12 +83,23 @@ const DIR_SCOPED_FILES: ReadonlyArray<readonly [string, string]> = [
 // mid-path directory, so every adc.json under it slipped through.
 const SENSITIVE_DIR_NAMES: ReadonlySet<string> = new Set([".gnupg", "legacy_credentials"]);
 
+// A browser profile's credential stores: the cookie jar, saved logins and
+// autofill, the state file holding the encryption key, and the DevTools
+// endpoint file. Matched only INSIDE a profile tree — a Chromium `User Data`
+// or a profile folder under it, an Electron `Partitions` tree, or the app's
+// own agent profiles — so a project file that happens to be called `cookies`
+// is untouched. `DevToolsActivePort` is Chromium's own name and matches anywhere.
+const BROWSER_STORE_BASENAMES: ReadonlySet<string> = new Set(["cookies", "login data", "web data", "local state"]);
+const BROWSER_PROFILE_DIR_NAMES: ReadonlySet<string> = new Set(["user data", "partitions", "chrome-profile", "browser-job-profiles"]);
+
 /**
  * Classify a file path as a credential file by SHAPE, using the four structured
  * collections above. Returns true if: the basename is in SENSITIVE_BASENAMES;
  * OR it starts with `.env.` (`.env.local`, `.env.production`, …); OR it ends with
  * a SENSITIVE_EXTENSIONS entry; OR its (parent,basename) is in DIR_SCOPED_FILES;
- * OR any path segment is in SENSITIVE_DIR_NAMES.
+ * OR any path segment is in SENSITIVE_DIR_NAMES; OR it is a browser profile's
+ * credential store inside a profile tree (BROWSER_STORE_BASENAMES under
+ * BROWSER_PROFILE_DIR_NAMES, or DevToolsActivePort anywhere).
  *
  * Does NOT include the app's own at-rest secret basenames — that check is run
  * separately by each caller (see module header).
@@ -117,6 +128,9 @@ export function classifySensitivePath(filePath: string): boolean {
   for (const seg of segsLower) {
     if (SENSITIVE_DIR_NAMES.has(seg)) return true;
   }
+
+  if (base === "devtoolsactiveport") return true;
+  if (BROWSER_STORE_BASENAMES.has(base) && segsLower.some((seg) => BROWSER_PROFILE_DIR_NAMES.has(seg))) return true;
 
   return false;
 }

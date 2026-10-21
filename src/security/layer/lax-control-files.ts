@@ -49,7 +49,7 @@
 
 import { realpathSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
-import { isAppAtRestSecretBasename } from "../secrets/known-secrets.js";
+import { isAppAtRestSecretBasename, isContainerSecretsMountPath, isProjectedSecretsRelPath } from "../secrets/known-secrets.js";
 import { getLaxDir } from "../../lax-data-dir.js";
 import { LAX_DATA_CATALOG, UNLISTED_LAX_NOTE, laxDataEntry } from "./lax-data-catalog.js";
 
@@ -111,6 +111,11 @@ function underLaxDir(segs: string[]): boolean {
 export function isAppAtRestSecretUnderLax(p: string): boolean {
   const segs = p.split(/[\\/]/).filter(Boolean);
   if (segs.length < 2) return false;
+  // A worker's projected credentials: the whole directory is secret material,
+  // under the data dir (`cr/<op>/secrets/`) or at the container's mount.
+  const below = belowDataDir(p);
+  if (below && isProjectedSecretsRelPath(below)) return true;
+  if (isContainerSecretsMountPath(segs)) return true;
   const base = segs[segs.length - 1];
   if (base === undefined || !isAppAtRestSecretBasename(base)) return false;
   return underLaxDir(segs) || belowConfiguredDataDir(p) !== null;

@@ -12,6 +12,11 @@ export {
 	vaultSecretSource,
 	isAppAtRestSecretBasename,
 	APP_AT_REST_SECRET_BASENAMES,
+	isProjectedSecretsRelPath,
+	isContainerSecretsMountPath,
+	PROJECTION_ROOT_DIRNAME,
+	PROJECTION_SECRETS_DIRNAME,
+	CONTAINER_SECRETS_MOUNT,
 } from "./known-secrets.js";
 export { CREDENTIAL_ENV_PREFIXES, CREDENTIAL_KEY_PATTERNS, redact, maskForDisplay, isMaskedDisplay, namesCredential } from "./credential-patterns.js";
 export type { SecretMatch } from "./secret-scanner.js";

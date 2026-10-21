@@ -27,6 +27,7 @@ export {
 } from "./security-config.js";
 export { evaluateShellCommand, detectObfuscation } from "./shell-policy.js";
 export { evaluateShellCommandAndPaths } from "./shell-path-guard.js";
+export { isAppAtRestSecretUnderLax } from "./lax-control-files.js";
 export { registerTrackedShellSessions } from "./kernel-class-policy.js";
 export { shellCommandWritesFiles } from "./shell-write-detector.js";
 export { classifySensitivePath } from "./sensitive-paths.js";

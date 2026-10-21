@@ -54,6 +54,7 @@ const channels = (["telegram", "whatsapp"] as const).map(getMessagingChannelDefi
  */
 function dynamicJoins(files: string[]): Record<string, readonly string[]> {
   return {
+    "canonical-loop/container-runtime-projection.ts: PROJECTION_ROOT_DIRNAME": ["cr"],
     "app-runtime/audit-signing.ts: AUDIT_SEED_BASENAMES[0]": ["audit-key"],
     "app-runtime/audit-signing.ts: AUDIT_SEED_BASENAMES[1]": ["audit-key.enc"],
     "keychain.ts: KEYCHAIN_AT_REST_BASENAMES[0]": ["secrets.salt"],

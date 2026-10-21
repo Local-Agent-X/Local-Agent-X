@@ -6,6 +6,7 @@ import { _resetAuditKeyCacheForTests, computeDurableRecordMac } from "../app-run
 import { RuntimeSurfaceMismatchError } from "./agent-runner/runtime-surface-error.js";
 import { RuntimeIdentityMismatchError } from "./provider-adapter-factory.js";
 import { readProjectedCredential, terminalRuntimeReconstructionCode } from "./runtime-reconstruction.js";
+import { knownSecretValues, unregisterRedactedSecretValue } from "../security/secrets/index.js";
 
 const priorAuditKey = process.env.LAX_AUDIT_KEY;
 let projectedDir: string | null = null;
@@ -31,6 +32,20 @@ describe("runtime reconstruction failure classification", () => {
     writeFileSync(path, JSON.stringify({ credential: { ...credential, credential: "changed" },
       mac: "0".repeat(64) }));
     expect(() => readProjectedCredential(path, descriptor)).toThrow("identity mismatch");
+  });
+
+  it("registers the credential it hands back, so the worker masks the value and not only its shape", () => {
+    process.env.LAX_AUDIT_KEY = "projected-credential-test";
+    _resetAuditKeyCacheForTests();
+    projectedDir = mkdtempSync(join(tmpdir(), "lax-projected-credential-"));
+    const path = join(projectedDir, "credential.json");
+    const secret = "sk-ant-api03-" + "Q7wK9m".repeat(8);
+    const credential = { provider: "anthropic-api" as const, credential: secret, source: "secrets-store" as const };
+    writeFileSync(path, JSON.stringify({ credential,
+      mac: computeDurableRecordMac("canonical-container-credential-v1", JSON.stringify(credential)) }));
+    readProjectedCredential(path, { credentialProvider: "anthropic-api", authSource: "secrets-store" } as never);
+    expect(knownSecretValues()).toContain(secret);
+    unregisterRedactedSecretValue(secret, "projected-credential");
   });
   it("terminalizes deterministic identity and policy mismatches immediately", () => {
     expect(terminalRuntimeReconstructionCode(

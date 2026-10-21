@@ -59,6 +59,30 @@ export function isAppAtRestSecretBasename(basename: string): boolean {
   return APP_AT_REST_SECRET_BASENAMES.has(basename.toLowerCase());
 }
 
+// The directories the app projects a worker's credentials into, as plaintext
+// files the worker needs: the per-op root under the data dir
+// (`<laxDir>/cr/<op>/secrets/`, written by canonical-loop/
+// container-runtime-projection.ts, which imports these names) and its mount
+// inside the container. Every file under either is secret material — the
+// provider key, the audit seed, the bootstrap — whatever it is called, so the
+// gate matches the directory, not a basename list a new file could miss.
+export const PROJECTION_ROOT_DIRNAME = "cr";
+export const PROJECTION_SECRETS_DIRNAME = "secrets";
+export const CONTAINER_SECRETS_MOUNT = "/run/lax-secrets";
+
+/** Whether `rel`, a path's lowercased segments BELOW the data dir, names a
+ *  file under a projection's secrets dir: `cr/<op>/secrets/<file>`. */
+export function isProjectedSecretsRelPath(rel: readonly string[]): boolean {
+  return rel.length > 3 && rel[0] === PROJECTION_ROOT_DIRNAME && rel[2] === PROJECTION_SECRETS_DIRNAME;
+}
+
+/** Whether `segments`, an absolute path's segments, names a file under the
+ *  container's secrets mount. */
+export function isContainerSecretsMountPath(segments: readonly string[]): boolean {
+  const mount = CONTAINER_SECRETS_MOUNT.split("/").filter(Boolean);
+  return segments.length > mount.length && mount.every((s, i) => segments[i]?.toLowerCase() === s);
+}
+
 // In-memory registry of secret plaintext values to detect/scrub from any
 // content heading off-box, each with who vouches for it. A vault entry
 // registers under its own source (`vault:<name>`) and withdraws it when the

@@ -10,7 +10,7 @@
 import { homedir } from "node:os";
 import { scanForSecrets } from "../security/secrets/index.js";
 import { isAppAtRestSecretBasename } from "../security/secrets/index.js";
-import { classifySensitivePath } from "../security/layer/index.js";
+import { classifySensitivePath, isAppAtRestSecretUnderLax } from "../security/layer/index.js";
 import { commandPositions, type CommandPosition } from "../security/layer/shell-command-positions.js";
 import { getLaxDir } from "../lax-data-dir.js";
 
@@ -47,6 +47,9 @@ export function isSensitivePath(filePath: string): boolean {
   // Kept here (not in the shared catalog) because each caller scopes it
   // differently (the file gate requires a `.lax` data-dir segment).
   if (isAppAtRestSecretBasename(base)) return true;
+  // A worker's projected credentials: every file under the projection dirs,
+  // judged by the same scoped rule the file gate refuses them with.
+  if (isAppAtRestSecretUnderLax(filePath)) return true;
 
   return false;
 }

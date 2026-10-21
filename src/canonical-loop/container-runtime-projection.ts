@@ -50,9 +50,13 @@ import {
 } from "./container-runtime-browser-relay.js";
 import { removeOwnedProjectionRoot, reopenReservedProjection, writeProjectionManifest,
   writeProjectionReservation } from "./container-projection-reservation.js";
+import { CONTAINER_SECRETS_MOUNT, PROJECTION_ROOT_DIRNAME, PROJECTION_SECRETS_DIRNAME } from "../security/secrets/index.js";
 
 const CONTAINER_DATA = "/var/lib/lax";
-const CONTAINER_SECRETS = "/run/lax-secrets";
+// The secrets dirs are named by security/secrets/known-secrets.ts, the one
+// place the file gate and the read-taint classifier learn them from: every
+// file projected under them is refused to the file tools and taints a read.
+const CONTAINER_SECRETS = CONTAINER_SECRETS_MOUNT;
 const WORKER_ENTRY = "/opt/lax/dist/canonical-loop/container-worker-entry.js";
 const CREDENTIAL_DOMAIN = "canonical-container-credential-v1";
 
@@ -87,7 +91,7 @@ export async function createContainerRuntimeProjection(
   assertProjectionPaths(descriptor);
   const root = projectionRoot(projectionId);
   const state = join(root, "state");
-  const secrets = join(root, "secrets");
+  const secrets = join(root, PROJECTION_SECRETS_DIRNAME);
   // `root` is `<laxDir>/cr/<uuid>` — kept short (not `container-runtime`)
   // because the browser-relay unix socket lives under it, and AF_UNIX
   // paths are capped at 108 bytes on Linux; a long laxDir + long directory
@@ -175,7 +179,7 @@ async function materializeProjection(
   hasLocalRuntime: boolean,
 ): Promise<ContainerLaunchProjection> {
   const state = join(root, "state");
-  const secrets = join(root, "secrets");
+  const secrets = join(root, PROJECTION_SECRETS_DIRNAME);
   const credentialPath = join(secrets, "runtime-credential.json");
   const auditPath = join(secrets, "audit-key");
   const bootstrapPath = join(secrets, "bootstrap.json");
@@ -279,7 +283,7 @@ function productionMountRoots(): string[] {
 }
 
 function containerStateRoot(): string {
-  return join(getLaxDir(), "cr");
+  return join(getLaxDir(), PROJECTION_ROOT_DIRNAME);
 }
 
 function projectionRoot(projectionId: string): string {

@@ -53,7 +53,7 @@ function notifyTaintChanged(sessionId: string): void {
  * which tainted bytes appear in an outbound payload. The source/target
  * provenance recording is unchanged either way. No plaintext is stored.
  */
-export function recordSensitiveRead(sessionId: string, source: TaintSource, target: string, content?: string): void {
+export function recordSensitiveRead(sessionId: string, source: TaintSource, target: string, content?: string, floorId?: string): void {
   if (!sessionTaint.has(sessionId)) sessionTaint.set(sessionId, []);
   const entries = sessionTaint.get(sessionId)!;
   const fp = content ? computeFingerprints(content) : { fingerprints: [], complete: false };
@@ -69,10 +69,12 @@ export function recordSensitiveRead(sessionId: string, source: TaintSource, targ
   // least as strong (complete → clears only a provably-unrelated payload;
   // incomplete → still blocks). A prior content-BEARING read of the same target
   // is NEVER removed — its distinct bytes were seen and must stay provable.
+  // Only the twin THIS call set (same floorId) collapses: another pipeline's
+  // in-flight floor on the same path is its own to keep until it delivers.
   if (fp.fingerprints.length > 0) {
     for (let i = entries.length - 1; i >= 0; i--) {
       const e = entries[i];
-      if (e.source === source && e.target === target && e.fingerprints.length === 0) entries.splice(i, 1);
+      if (e.source === source && e.target === target && e.fingerprints.length === 0 && e.floorId === floorId) entries.splice(i, 1);
     }
   }
   entries.push({
@@ -82,6 +84,7 @@ export function recordSensitiveRead(sessionId: string, source: TaintSource, targ
     runId: sessionId,
     fingerprints: fp.fingerprints,
     complete: fp.complete,
+    ...(floorId && fp.fingerprints.length === 0 ? { floorId } : {}),
   });
   notifyTaintChanged(sessionId);
 }
@@ -223,16 +226,20 @@ export function clearSessionTaint(sessionId: string): void {
  * the model, and the floor for THAT call is withdrawn here. Only content-LESS
  * entries match — a content-bearing entry records bytes that WERE delivered
  * and is never removed by this path. This is not a declassify: no seen bytes
- * are being released, so no audit event is owed.
+ * are being released, so no audit event is owed. Only the floor THIS call set
+ * (its floorId) is withdrawn: two pipelines reading the same path under one
+ * session id — the MCP bridge, an inbox re-dispatch, a borrowed session —
+ * used to withdraw each other's by (source, target) alone, and the one still
+ * in flight then delivered its bytes with no taint behind them.
  */
-export function retractProvisionalTaint(sessionId: string, pairs: Array<{ source: TaintSource; target: string }>): number {
+export function retractProvisionalTaint(sessionId: string, pairs: Array<{ source: TaintSource; target: string }>, floorId?: string): number {
   const entries = sessionTaint.get(sessionId);
   if (!entries || entries.length === 0 || pairs.length === 0) return 0;
   const keys = new Set(pairs.map(p => `${p.source}:${p.target}`));
   let removed = 0;
   for (let i = entries.length - 1; i >= 0; i--) {
     const e = entries[i];
-    if (e.fingerprints.length === 0 && keys.has(`${e.source}:${e.target}`)) {
+    if (e.fingerprints.length === 0 && e.floorId === floorId && keys.has(`${e.source}:${e.target}`)) {
       entries.splice(i, 1);
       removed++;
     }

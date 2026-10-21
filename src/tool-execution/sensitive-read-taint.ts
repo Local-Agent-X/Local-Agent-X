@@ -17,6 +17,7 @@
 // the model only ever received the stub. Quarantining bytes the model never
 // saw is not security — the invariant is what makes the block trustworthy.
 
+import { randomUUID } from "node:crypto";
 import type { ToolResult } from "../types.js";
 import {
   recordSensitiveRead,
@@ -121,6 +122,8 @@ interface TaintPair {
 }
 
 export interface PreExecuteFloor {
+  /** This call's own floor: the only one its delivery may retract or supersede. */
+  id: string;
   pairs: TaintPair[];
   preTaintedPath: string | null;
 }
@@ -173,7 +176,7 @@ export function setPreExecuteTaintFloor(
   sessionId: string | undefined,
 ): PreExecuteFloor {
   const sid = sessionId || "default";
-  const floor: PreExecuteFloor = { pairs: [], preTaintedPath: null };
+  const floor: PreExecuteFloor = { id: randomUUID(), pairs: [], preTaintedPath: null };
   const isSensitiveReadCap = hasCapability(toolName, "sensitive-read");
   const command = finishedCommandOf(toolName, args);
   if (isSensitiveReadCap && command === undefined && typeof args.path === "string" && args.path) {
@@ -183,13 +186,13 @@ export function setPreExecuteTaintFloor(
     // placeholder-only .env.local never bricks the shell but a real key
     // pasted into it still gets the redaction stub.
     if (isSensitivePath(taintPath) && !isSanctionedWorkRootEnvFile(sessionId, taintPath)) {
-      recordSensitiveRead(sid, "sensitive_file", taintPath);
+      recordSensitiveRead(sid, "sensitive_file", taintPath, undefined, floor.id);
       floor.pairs.push({ source: "sensitive_file", target: taintPath });
       floor.preTaintedPath = taintPath;
     }
   } else if (command !== undefined) {
     for (const p of sensitivePathsReadByCommand(command)) {
-      recordSensitiveRead(sid, "sensitive_file", p);
+      recordSensitiveRead(sid, "sensitive_file", p, undefined, floor.id);
       floor.pairs.push({ source: "sensitive_file", target: p });
     }
   }
@@ -296,7 +299,7 @@ export function applyResultTaintPolicy(
     // declassify — no seen bytes are being released, no audit owed. A secret
     // the model tries to send anyway (from some other channel) is still caught
     // by the outbound egress scan at send time.
-    if (floor.pairs.length > 0) retractProvisionalTaint(sid, floor.pairs);
+    if (floor.pairs.length > 0) retractProvisionalTaint(sid, floor.pairs, floor.id);
     logger.info(`sensitive read fully redacted before delivery — session NOT tainted (${redactReason})`);
     return {
       content:
@@ -319,14 +322,14 @@ export function applyResultTaintPolicy(
   // floor and drop the pending records. (Only gate-authored denials use this
   // status; a mid-read failure is status:"error" and commits below.)
   if (result?.isError && result.status === "blocked") {
-    if (floor.pairs.length > 0) retractProvisionalTaint(sid, floor.pairs);
+    if (floor.pairs.length > 0) retractProvisionalTaint(sid, floor.pairs, floor.id);
     return result;
   }
 
   // No stub — whatever the tool returned (including an errored result's
   // output, which can echo sensitive content) is delivered. Commit the taint.
   if (pending.length > 0) {
-    for (const p of pending) recordSensitiveRead(sid, p.source, p.target, p.content);
+    for (const p of pending) recordSensitiveRead(sid, p.source, p.target, p.content, floor.id);
     logger.warn(
       `${toolName} result delivered without the redaction stub — session tainted for egress (${pending.map(p => p.target.slice(0, 60)).join(", ")})`,
     );

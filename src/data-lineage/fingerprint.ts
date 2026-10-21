@@ -38,6 +38,11 @@ export interface TaintEntry {
   // the parent's taint inherited at bind, a recovery replay — survives.
   // propagateTaint copies entries field by field, so a copy is the host's own.
   forwarded?: true;
+  // The pre-execute floor a content-less entry belongs to (one id per call,
+  // sensitive-read-taint.ts). Only that call's delivery may retract it or
+  // supersede it with content: two pipelines reading the same path under one
+  // session id used to retract each other's floors by (source, target) alone.
+  floorId?: string;
 }
 
 /** Result of fingerprinting a piece of content: the shingle hashes plus whether

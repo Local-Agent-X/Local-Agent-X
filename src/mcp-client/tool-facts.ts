@@ -8,6 +8,15 @@
 
 import type { MCPTool } from "./types.js";
 
+// External MCP-server tools register dynamically (names like
+// mcp_github_create_issue), so they can never appear in the static policy
+// table. They are recognised by the `mcp_` prefix getAllTools() stamps on
+// every server tool (src/mcp-client/index.ts).
+const MCP_TOOL_PREFIX = "mcp_";
+export function isMcpToolName(toolName: string): boolean {
+  return toolName.startsWith(MCP_TOOL_PREFIX);
+}
+
 export interface McpToolFacts {
   readonly serverName: string;
   /** The server marked the tool `readOnlyHint: true`. */

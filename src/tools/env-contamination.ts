@@ -20,6 +20,7 @@
 import { writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DESKTOP_ENV } from "../desktop-contract/env.js";
 
 const HOST_CONTAMINATION_ENV_KEYS = new Set([
   "__CFBundleIdentifier", "__CF_USER_TEXT_ENCODING",
@@ -28,7 +29,7 @@ const HOST_CONTAMINATION_ENV_KEYS = new Set([
   // The in-app browser's debugging port (native driving): a loopback endpoint
   // with no credential that drives every signed-in view. The server holds it;
   // no child it spawns may, or a shell script attaches with the user's cookies.
-  "LAX_ELECTRON_CDP_PORT",
+  DESKTOP_ENV.ELECTRON_CDP_PORT,
 ]);
 const HOST_CONTAMINATION_ENV_PREFIXES = ["ELECTRON_", "__CF"];
 

@@ -21,6 +21,7 @@
 import { createLogger } from "../logger.js";
 import { TOOLS, GATED_KERNEL_CLASSES, type KernelClass } from "../tool-registry.js";
 import { getActivePluginToolMetadata } from "../plugin-system/tool-metadata.js";
+import { isMcpToolName } from "../mcp-client/tool-facts.js";
 
 const logger = createLogger("ari-kernel");
 
@@ -30,14 +31,9 @@ export const TOOL_CLASS_MAP: Record<string, KernelClass> = Object.fromEntries(
 
 export const GATED_CLASSES: ReadonlySet<string> = GATED_KERNEL_CLASSES;
 
-// External MCP-server tools register dynamically (names like
-// mcp_github_create_issue), so they can NEVER appear in the static TOOLS
-// table. Recognize them by the canonical `mcp_` prefix that getAllTools()
-// stamps on every server tool (src/mcp-client/index.ts).
-const MCP_TOOL_PREFIX = "mcp_";
-export function isMcpToolName(toolName: string): boolean {
-  return toolName.startsWith(MCP_TOOL_PREFIX);
-}
+// External MCP-server tools register dynamically and never appear in the
+// static TOOLS table; the name test lives with the MCP tool facts.
+export { isMcpToolName };
 
 // Resolve a tool's kernel class, including dynamic MCP tools. An MCP server is
 // external untrusted I/O reached over a subprocess, so its tools are classified

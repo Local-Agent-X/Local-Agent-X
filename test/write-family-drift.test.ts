@@ -3,7 +3,7 @@ import { TOOL_POLICIES } from "../src/tool-policy/tool-policies.js";
 import { CAPABILITY_CLASS_MEMBERS, callPaths } from "../src/tool-registry.js";
 import { WORKTREE_REQUIRED_TOOLS } from "../src/security/layer/index.js";
 import { createVerifyGateState, noteVerifyEvidence } from "../src/agent-guards/verify-gate.js";
-import { allTools } from "../src/tools/registry-build.js";
+import { collectRuntimeToolNames } from "../src/tools/runtime-tool-names.js";
 import { BUILD_MUTATION_TOOLS } from "../src/ops/tools/delegated-toolset.js";
 
 // A new edit-family tool must join every capability set that gates the write
@@ -18,6 +18,17 @@ import { BUILD_MUTATION_TOOLS } from "../src/ops/tools/delegated-toolset.js";
 const writeFamily = Object.entries(TOOL_POLICIES)
   .filter(([, e]) => e.kernel === "file" && e.risk === "workspace-write")
   .map(([name]) => name);
+
+// A call of the tool that writes `path`: a tool whose row reads the action
+// off an argument (ari_file: action "write") gets that action, so its
+// action-gated path specs count as the write they are.
+function writeCall(name: string, path: string): Record<string, unknown> {
+  const spec = TOOL_POLICIES[name].ariAction;
+  return typeof spec === "object" ? { path, [spec.arg]: spec.writes[0] } : { path };
+}
+
+// Every tool the runtime registers, core and plugin alike.
+const runtimeTools = await collectRuntimeToolNames();
 
 describe("write-family capability-set drift", () => {
   it("policy table actually yields a write family (guards the filter itself)", () => {
@@ -41,7 +52,7 @@ describe("write-family capability-set drift", () => {
     // so a tool joins by its policy row — no list to forget it in.
     const missing = writeFamily.filter((t) => {
       const state = createVerifyGateState();
-      noteVerifyEvidence([{ tool: t, writes: callPaths(t, { path: "src/a.ts" }).writes }], state);
+      noteVerifyEvidence([{ tool: t, writes: callPaths(t, writeCall(t, "src/a.ts")).writes }], state);
       return !state.editedSource;
     });
     expect(missing, `source edits via these tools never nudge a build: ${missing.join(", ")}`).toEqual([]);
@@ -53,13 +64,11 @@ describe("write-family capability-set drift", () => {
   it("every build-worker mutation tool requires worktree isolation for delegated agents", () => {
     const missing = BUILD_MUTATION_TOOLS.filter((t) => !WORKTREE_REQUIRED_TOOLS.has(t));
     expect(missing, `a build worker could mutate ungated via: ${missing.join(", ")}`).toEqual([]);
-    const registered = new Set(allTools.map((t) => t.name));
-    expect(BUILD_MUTATION_TOOLS.filter((t) => !registered.has(t))).toEqual([]);
+    expect(BUILD_MUTATION_TOOLS.filter((t) => !runtimeTools.has(t))).toEqual([]);
   });
 
-  it("every workspace-write file tool is actually registered in allTools", () => {
-    const registered = new Set(allTools.map((t) => t.name));
-    const missing = writeFamily.filter((t) => !registered.has(t));
+  it("every workspace-write file tool is actually registered at runtime", () => {
+    const missing = writeFamily.filter((t) => !runtimeTools.has(t));
     expect(missing, `policy entry exists but tool is not in the registry: ${missing.join(", ")}`).toEqual([]);
   });
 });

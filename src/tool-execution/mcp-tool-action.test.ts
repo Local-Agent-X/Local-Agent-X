@@ -38,9 +38,11 @@ describe("a connected MCP server tool's kernel action and egress class", () => {
     expect(text).toContain("sk-live-example");
   });
 
-  it("a server tool the listing never named has no facts: the kernel's fail-closed default stands", () => {
-    expect(ariActionOf(`mcp_${SERVER}_unlisted`, {})).toBe("exec");
-    expect(hasCapability(`mcp_${SERVER}_unlisted`, "egress")).toBe(false);
+  it("a server tool the listing never named has no facts: it is a write to an external destination, never the shell's exec", () => {
+    // The name alone says where the call goes; "exec" would be rejected by the
+    // kernel's http schema and read as an engine bug, not a judgment.
+    expect(ariActionOf(`mcp_${SERVER}_unlisted`, {})).toBe("post");
+    expect(hasCapability(`mcp_${SERVER}_unlisted`, "egress")).toBe(true);
   });
 });
 

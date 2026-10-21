@@ -30,7 +30,9 @@ describe("Unified dispatcher — F2 final collapse", () => {
     process.env.FILE_EXECUTOR_ROOT = root;
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    const { stopAriKernel } = await import("../../src/ari-kernel/index.js");
+    stopAriKernel();
     if (previousRoot === undefined) delete process.env.FILE_EXECUTOR_ROOT;
     else process.env.FILE_EXECUTOR_ROOT = previousRoot;
     rmSync(root, { recursive: true, force: true });
@@ -47,6 +49,9 @@ describe("Unified dispatcher — F2 final collapse", () => {
   }
 
   it("the AriKernel file executor is callable through the chat-path dispatcher and carries arikernel envelope fields", async () => {
+    // The bridge is a file-class tool: the kernel judges it, so it is up here.
+    const { startAriKernel } = await import("../../src/ari-kernel/index.js");
+    await startAriKernel(join(root, "audit.db"), "workspace-assistant", true);
     const registry = new UnifiedToolRegistry();
     const bridge = createArikernelBridgeTools().find((t) => t.name === "ari_file");
     expect(bridge).toBeDefined();

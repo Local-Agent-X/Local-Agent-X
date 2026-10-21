@@ -4,12 +4,12 @@
 import { createLogger } from "../logger.js";
 import { USER_HINTS } from "../types.js";
 import { isAriRequired } from "./state.js";
-import { kernelClassForTool } from "./tool-class-map.js";
+import { isMcpToolName, kernelClassForTool } from "./tool-class-map.js";
 import { lookupHostGrantId } from "./grants.js";
 import { ensureAriKernelScope, refreshAriKernelScope } from "./lifecycle.js";
 import type { KernelQuarantine } from "../types.js";
 import { readKernelQuarantine } from "./quarantine.js";
-import { policyRowOf } from "../tool-registry.js";
+import { ariActionOf, policyRowOf } from "../tool-registry.js";
 
 const logger = createLogger("ari-kernel");
 
@@ -56,11 +56,15 @@ export async function ariEvaluate(
 
   // A secret-vault tool is judged as its row's fixed action (capture / fill /
   // clipboard) whatever the caller passes, so ARI sees the canonical action in
-  // audit logs and behavioral rules. An MCP server tool's action is derived
-  // like any other (tool-registry ariActionOf): a write unless the server
-  // marked it read-only, so a tainted create or delete is a tainted write.
+  // audit logs and behavioral rules. An MCP server tool has no row, so a
+  // caller that reads the action off the rows hands the shell's "exec"
+  // fallthrough; its action is derived here from the server's own facts
+  // (tool-registry ariActionOf): a write unless the server marked it
+  // read-only, so a tainted create or delete is a tainted write.
   const vaultAction = toolClass === "secret-vault" ? policyRowOf(toolName)?.ariAction : undefined;
-  const effectiveAction = typeof vaultAction === "string" ? vaultAction : action;
+  const effectiveAction = typeof vaultAction === "string" ? vaultAction
+    : isMcpToolName(toolName) ? ariActionOf(toolName, params)
+    : action;
 
   try {
     const execRequest: Record<string, unknown> = {

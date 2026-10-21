@@ -44,8 +44,8 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/agent-request/` | 23 | 15 | L | 3 |
 | `src/app-runtime/` | 23 | 12 | M |  |
 | `src/sandbox/` | 23 | 15 | L | 1 |
+| `src/desktop-contract/` | 21 | 10 | M |  |
 | `src/protocols/` | 21 | 52 | XL |  |
-| `src/desktop-contract/` | 20 | 10 | M |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
 | `src/agents/` | 17 | 13 | L |  |
 | `src/server/` *(entrypoint)* | 16 | 57 | XL | 6 |
@@ -71,9 +71,9 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/agent-guards/` | 8 | 11 | M |  |
 | `src/bridge-voice/` | 8 | 5 | S |  |
 | `src/codex-client/` | 8 | 6 | M |  |
+| `src/mcp-client/` | 8 | 11 | L | 1 |
 | `src/telegram-bridge/` | 8 | 6 | M |  |
 | `src/auto-build/` | 7 | 52 | XL | 3 |
-| `src/mcp-client/` | 7 | 11 | L | 1 |
 | `src/net/` | 7 | 5 | M |  |
 | `src/android/` | 6 | 7 | M |  |
 | `src/app-renderer/` | 6 | 7 | M | 1 |

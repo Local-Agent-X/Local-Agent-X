@@ -1,4 +1,4 @@
-import { basename, isAbsolute, join } from "node:path";
+import { basename, isAbsolute, join, posix, win32 } from "node:path";
 import { homedir } from "node:os";
 import {
   execBasename, splitShellSegments, tokenizeCommand,
@@ -102,10 +102,13 @@ export function detectProtectedEngineMutation(command: string): string | null {
 export function shellMutationTargets(command: string): Array<{ path: string; verb: string }> {
   const home = homedir();
   // Tokens arrive quote-stripped, so a quoted operand with spaces is one word.
+  // A command's path is absolute by its own spelling, not the host's: a
+  // Windows persistence target (`C:\Users\…\Startup\x.cmd`) is one on a
+  // Linux host too, and a POSIX one on Windows.
   const absOperand = (t: string): string | null => {
     if (!t) return null;
     const expanded = expandOperand(t, home);
-    return isAbsolute(expanded) ? expanded : null;
+    return win32.isAbsolute(expanded) || posix.isAbsolute(expanded) ? expanded : null;
   };
   const out: Array<{ path: string; verb: string }> = [];
   const add = (target: string, verb: string): void => {

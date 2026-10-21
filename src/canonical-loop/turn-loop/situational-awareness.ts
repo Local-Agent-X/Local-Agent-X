@@ -10,9 +10,13 @@
  *     succeeded. Sourced from the action ledger (ops/action-ledger.ts), so it
  *     spans the last few CONVERSATION messages, not just the current request's
  *     tool-iteration turns.
- *   - Pace / budget — how deep into the current request we are and roughly how
- *     many tokens it has burned. Lets the model self-pace instead of looping
- *     blind. Stays per-request (per-op).
+ *   - Pace — how deep into the current request we are, in turns. Stays
+ *     per-request (per-op). It used to add the tokens the request had burned:
+ *     the sum of every turn's prompt and output, which on a long task runs far
+ *     past the context window, so "~164k tokens used" read to a local model
+ *     with a 172k window as a window nearly full and a reason to wrap up
+ *     (Terminal-Bench 2.0, 2026-10-20, where LAX stopped early). Spend is the
+ *     harness's to enforce, not the model's to guess at.
  *   - Goal restatement — on long requests the original ask has scrolled far
  *     back; a one-liner keeps it anchored. Skipped early when it's still
  *     visible right above.
@@ -35,8 +39,7 @@
  * have" line would be pure duplication.
  */
 import type { Op } from "../../ops/types.js";
-import { readOpTurns, firstUserMessageText } from "../store.js";
-import type { OpTurnRow } from "../types.js";
+import { firstUserMessageText } from "../store.js";
 import { getSessionForOp } from "../../ops/session-bridge.js";
 import { recentActions, type LedgerAction } from "../../ops/action-ledger.js";
 import { getOpenTasksForSession } from "../../tools/task-tools.js";
@@ -89,7 +92,6 @@ const CLOSE = "[END CONTEXT]";
 export function buildSituationalAwareness(op: Op, turnIdx: number): string | null {
   const sessionId = getSessionForOp(op.id) ?? "";
   const recent = sessionId ? recentActions(sessionId, RECENT_ACTIONS_CAP) : [];
-  const totalTokens = sumTokens(readOpTurns(op.id));
   const restateAfter = goalRestateAfterTurn(resolveOpTier(op));
   const restating = turnIdx >= restateAfter;
   const firstUserText = restating ? firstUserMessageText(op.id) : "";
@@ -107,7 +109,7 @@ export function buildSituationalAwareness(op: Op, turnIdx: number): string | nul
   // ones — losing your place is most likely deep in a long task.
   const openTasks = sessionId ? getOpenTasksForSession(sessionId) : [];
   const digest = composeDigest({
-    turnIdx, totalTokens, recent, firstUserText, successCriteria, constraints, restateAfter, openTasks,
+    turnIdx, recent, firstUserText, successCriteria, constraints, restateAfter, openTasks,
   });
   // Debug seam: the digest is ephemeral (injected into the prompt, never
   // persisted), so this log is the only way to observe what the model actually
@@ -119,7 +121,6 @@ export function buildSituationalAwareness(op: Op, turnIdx: number): string | nul
 /** Pure digest formatter — no IO, so it's unit-testable. */
 export function composeDigest(input: {
   turnIdx: number;
-  totalTokens: number;
   recent: LedgerAction[];
   firstUserText: string;
   successCriteria?: string[];
@@ -131,7 +132,7 @@ export function composeDigest(input: {
    *  survives compaction. */
   openTasks?: { id: string; description: string }[];
 }): string | null {
-  const { turnIdx, totalTokens, recent, firstUserText } = input;
+  const { turnIdx, recent, firstUserText } = input;
   const successCriteria = input.successCriteria ?? [];
   const constraints = input.constraints ?? [];
   const openTasks = input.openTasks ?? [];
@@ -140,7 +141,7 @@ export function composeDigest(input: {
 
   // Pace only earns its line once we're past the first model turn of the
   // request — "Turn 1" is noise.
-  if (turnIdx >= 1) lines.push(paceLine(turnIdx, totalTokens));
+  if (turnIdx >= 1) lines.push(`Turn ${turnIdx + 1} of this request.`);
 
   const recentLine = recentActionsLine(recent);
   if (recentLine) lines.push(recentLine);
@@ -181,23 +182,6 @@ function bulletLine(label: string, items: string[]): string | null {
   const cleaned = items.map(s => s.trim()).filter(Boolean);
   if (cleaned.length === 0) return null;
   return `${label}: ${cleaned.join("; ")}`;
-}
-
-function sumTokens(turns: OpTurnRow[]): number {
-  let total = 0;
-  for (const t of turns) {
-    const p = t.providerState?.providerPayload as
-      | { usageInputTokens?: number; usageOutputTokens?: number }
-      | undefined;
-    if (typeof p?.usageInputTokens === "number") total += p.usageInputTokens;
-    if (typeof p?.usageOutputTokens === "number") total += p.usageOutputTokens;
-  }
-  return total;
-}
-
-function paceLine(turnIdx: number, totalTokens: number): string {
-  const tokenPart = totalTokens > 0 ? ` · ~${Math.round(totalTokens / 1000)}k tokens used so far` : "";
-  return `Turn ${turnIdx + 1} of this request${tokenPart}.`;
 }
 
 function recentActionsLine(recent: LedgerAction[]): string | null {

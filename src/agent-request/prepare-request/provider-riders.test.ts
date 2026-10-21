@@ -106,9 +106,9 @@ describe("modelFamilyRiderFor", () => {
     "TOOL CALLS USE THE NATIVE MECHANISM ONLY",
     "CALL OR ANSWER — NEVER NARRATE",
     "NO CONTROL TOKENS OR REASONING TAGS",
-    "ANSWER ONCE, THEN STOP",
+    "SAY IT ONCE",
   ];
-  const REASONING_RULE = "DELIBERATE BRIEFLY, ANSWER FIRST";
+  const REASONING_RULE = "THINK TO FIT THE ASK";
 
   const BASE_ONLY_MODELS = [
     "gemma3:27b",
@@ -163,5 +163,14 @@ describe("modelFamilyRiderFor", () => {
     for (const model of [...BASE_ONLY_MODELS, ...REASONING_MODELS, "deepseek-r1-distill-qwen-14b"]) {
       expect(modelFamilyRiderFor(model).length).toBeLessThan(2000);
     }
+  });
+
+  // The chat rules were read as "stop sooner" on agent work (Terminal-Bench
+  // 2.0, 2026-10-20): each says it is about text and conversation, not work.
+  it("never tells a model working through a task to stop or to think less", () => {
+    const rider = modelFamilyRiderFor("qwen3.6:27b");
+    expect(rider).toContain("it never means ending work the request still needs");
+    expect(rider).toContain("think as much as each step needs");
+    expect(rider).not.toMatch(/THEN STOP|DELIBERATE BRIEFLY/);
   });
 });

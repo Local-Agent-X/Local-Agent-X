@@ -72,13 +72,13 @@ describe("local model-family rider wiring", () => {
     const prompt = await buildSystemPrompt(inputFor("local", "gemma3:27b"));
     expect(prompt).toContain("[LOCAL MODEL RIDER");
     expect(prompt).toContain("[END LOCAL MODEL RIDER]");
-    expect(prompt).not.toContain("DELIBERATE BRIEFLY");
+    expect(prompt).not.toContain("THINK TO FIT THE ASK");
   });
 
   it("provider local + qwen model → reasoning addition present", async () => {
     const prompt = await buildSystemPrompt(inputFor("local", "qwen3:32b"));
     expect(prompt).toContain("[LOCAL MODEL RIDER");
-    expect(prompt).toContain("DELIBERATE BRIEFLY, ANSWER FIRST");
+    expect(prompt).toContain("THINK TO FIT THE ASK");
   });
 
   it("non-local providers never get the family rider, even for the same model id", async () => {

@@ -127,10 +127,13 @@ const BASE_LOCAL_RIDER =
   `1. **TOOL CALLS USE THE NATIVE MECHANISM ONLY.** Never write tool-call syntax in your reply text — no XML-style tags, bracket blocks, or JSON envelopes (\`<tool_call>\`, \`<execute_tool>\`, \`[TOOL_REQUEST]\`). Typed-out syntax is not a tool call: it is shown to the user as text, or at best salvaged unreliably. If you cannot make a native tool call, say so and ask the user how to proceed.\n` +
   `2. **CALL OR ANSWER — NEVER NARRATE.** "I will now use the web_search tool" is not a tool call. Either actually call the tool, or answer directly. Prose about a tool runs nothing.\n` +
   `3. **NO CONTROL TOKENS OR REASONING TAGS.** Chat-template markers and thinking tags (\`<thought>\`, \`<think>\`, role/end-of-turn tokens) are machinery — they must never appear in your reply.\n` +
-  `4. **ANSWER ONCE, THEN STOP.** One complete, self-contained reply. Do not restate it or loop on the same sentences — when the answer is done, end the message.\n`;
+  `4. **SAY IT ONCE.** Write your reply once: do not restate it or loop on the same sentences. This is about repeating text; it never means ending work the request still needs.\n`;
 
+// Both rules were read as "stop sooner" on agent work, where finishing early
+// is the failure (Terminal-Bench 2.0, 2026-10-20): they say what they were
+// written for, repeated text and conversational turns, and no more.
 const REASONING_FAMILY_ADDITION =
-  `5. **DELIBERATE BRIEFLY, ANSWER FIRST.** In interactive chat and voice, keep internal thinking to a few sentences — never spend the whole reply deliberating. The user only sees or hears the final answer; get to it at conversational length.\n`;
+  `5. **THINK TO FIT THE ASK.** For a conversational question or in voice, keep internal thinking to a few sentences and answer at conversational length; the user only sees or hears the answer. For a task you are carrying out with tools, think as much as each step needs.\n`;
 
 const LOCAL_RIDER_END = `[END LOCAL MODEL RIDER]\n`;
 

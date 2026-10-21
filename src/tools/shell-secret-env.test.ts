@@ -45,6 +45,12 @@ describe("a command that works on a secret's value, judged from its text", () =>
     ['python -c "print(1 + 1)"', null],
     ['echo "deploying" && npx vercel deploy --token "$TOKEN"', null],
     ['test -n "$TOKEN" && echo set', null],
+    ['curl -H "Authorization: Bearer ${TOKEN:-}" https://api.example', null],
+    ['[ -n "${TOKEN:?set TOKEN}" ] && gh auth status', null],
+    ["env GH_TOKEN=$TOKEN gh auth status", null],
+    ["env -i PATH=$PATH FOO=1 gh pr list", null],
+    ["bash -e deploy.sh", null],
+    ['psql "$DATABASE_URL" <<EOF\nselect 1;\nEOF', null],
   ])("hands the value to a program: %s", (command, verdict) => {
     expect(secretManipulation(command, ENV)).toBe(verdict);
   });
@@ -54,12 +60,18 @@ describe("a command that works on a secret's value, judged from its text", () =>
     ["echo ${TOKEN//a/b}", "slices or rewrites $TOKEN"],
     ["echo %TOKEN:~0,4%", "slices or rewrites $TOKEN"],
     ["$env:TOKEN.Substring(0, 4)", "slices or rewrites $TOKEN"],
-    ["echo $TOKEN | rev", "prints $TOKEN"],
-    ['printf "%s" "$TOKEN" | base64', "prints $TOKEN"],
-    ["Write-Host $env:TOKEN", "prints $TOKEN"],
-    ['base64 <<< "$TOKEN"', "prints $TOKEN"],
+    ["echo $TOKEN | rev", "prints or writes out $TOKEN"],
+    ['printf "%s" "$TOKEN" | base64', "prints or writes out $TOKEN"],
+    ["Write-Host $env:TOKEN", "prints or writes out $TOKEN"],
+    ['base64 <<< "$TOKEN"', "prints or writes out $TOKEN"],
     ["X=$TOKEN; echo ${X:2}", "slices or rewrites $X"],
-    ['sh -c "echo $TOKEN | fold -w 4"', "prints $TOKEN"],
+    ['sh -c "echo $TOKEN | fold -w 4"', "prints or writes out $TOKEN"],
+    ["FOO=1 echo $TOKEN", "prints or writes out $TOKEN"],
+    ["env FOO=1 echo $TOKEN", "prints or writes out $TOKEN"],
+    ["env -0", "dumps the environment"],
+    ['cat <<EOF\ntoken: $TOKEN\nEOF', "feeds $TOKEN to a program through a here-document"],
+    ["python - <<'EOF'\nimport os\nprint(os.environ['TOKEN'][::-1])\nEOF", "reads the environment in a here-document program"],
+    ["pwsh -EncodedCommand VwByAGkAdABlAC0ASABvAHMAdAAgACQAZQBuAHYAOgBUAE8ASwBFAE4A", "runs an encoded script the card cannot show"],
     ["env", "dumps the environment"],
     ["printenv TOKEN", "dumps the environment"],
     ["Get-ChildItem env:", "dumps the environment"],
@@ -75,7 +87,7 @@ describe("a command that works on a secret's value, judged from its text", () =>
     const worksOn = resolveSecretEnv(ENV, "echo $TOKEN | rev");
     if ("refusal" in handsOff || "refusal" in worksOn) throw new Error("unexpected refusal");
     expect(handsOff.withheld).toBeNull();
-    expect(worksOn.withheld).toBe("this command prints $TOKEN");
+    expect(worksOn.withheld).toBe("this command prints or writes out $TOKEN");
     expect(resolveSecretEnv(ENV)).toMatchObject({ withheld: null });
   });
 });
@@ -198,7 +210,7 @@ describe("bash with secret_env", () => {
     });
     const shown = JSON.stringify(result);
     expect(result.isError).toBeFalsy();
-    expect(String(result.content)).toMatch(/output withheld from the model: this command prints \$SUPABASE_ACCESS_TOKEN/);
+    expect(String(result.content)).toMatch(/output withheld from the model: this command prints or writes out \$SUPABASE_ACCESS_TOKEN/);
     expect(String(result.content)).toContain("http_request with {{SUPABASE_TOKEN}}");
     expect(result.metadata).toMatchObject({ exit_code: 0, output_withheld: true });
     expect(result.metadata).not.toHaveProperty("stderr");
@@ -208,7 +220,7 @@ describe("bash with secret_env", () => {
     // The user has it, scrubbed as every reader's copy is: the piece is
     // theirs to see, the whole value is still masked.
     expect(inboxItems).toHaveLength(1);
-    expect(inboxItems[0]).toMatchObject({ key: "withheld:call-7", program: "echo", secrets: ["SUPABASE_TOKEN"], reason: "this command prints $SUPABASE_ACCESS_TOKEN", exit: expect.stringMatching(/^exit 0 in \d+ms$/) });
+    expect(inboxItems[0]).toMatchObject({ key: "withheld:call-7", program: "echo", secrets: ["SUPABASE_TOKEN"], reason: "this command prints or writes out $SUPABASE_ACCESS_TOKEN", exit: expect.stringMatching(/^exit 0 in \d+ms$/) });
     expect(inboxItems[0].output.trim()).toBe(piece);
   });
 

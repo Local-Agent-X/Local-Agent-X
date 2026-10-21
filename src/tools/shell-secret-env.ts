@@ -114,12 +114,33 @@ function secretVariables(command: string, names: string[]): string[] {
 // A shell told to run a string runs the same judgment on it: `sh -c 'echo
 // $TOKEN'` prints the value as surely as `echo $TOKEN` does.
 const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish", "pwsh", "powershell", "cmd"]);
-const SHELL_BODY_FLAGS = new Set(["-c", "-command", "/c", "/k", "-e", "-encodedcommand"]);
+const SHELL_BODY_FLAGS = new Set(["-c", "-command", "/c", "/k"]);
+const ENCODED_BODY_FLAGS = new Set(["-e", "-ec", "-encodedcommand"]);
 
 function nestedShellBody(verb: string, tokens: string[]): string | null {
   if (!SHELLS.has(verb)) return null;
   const at = tokens.findIndex((t, i) => i > 0 && SHELL_BODY_FLAGS.has(t.toLowerCase()));
   return at > 0 && tokens[at + 1] !== undefined ? tokens.slice(at + 1).join(" ") : null;
+}
+
+/** A PowerShell body handed over base64-encoded: the card cannot show it. */
+function encodedShellBody(verb: string, tokens: string[]): boolean {
+  return (verb === "pwsh" || verb === "powershell") && tokens.some((t, i) => i > 0 && ENCODED_BODY_FLAGS.has(t.toLowerCase()));
+}
+
+/** The command a segment runs, past its leading `VAR=value` words and an
+ *  `env [-flags] [VAR=value…]` prefix: `GH_TOKEN=$TOKEN gh …` and
+ *  `env FOO=1 echo $TOKEN` are judged as `gh` and `echo`. */
+function effectiveTokens(tokens: string[]): string[] {
+  let i = 0;
+  while (i < tokens.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i])) i++;
+  if (i < tokens.length && execBasename(tokens[i]) === "env") {
+    i++;
+    while (i < tokens.length && (/^-/.test(tokens[i]) || /^[A-Za-z_][A-Za-z0-9_]*=/.test(tokens[i]))) i++;
+    // `env` with nothing left to run prints the environment: keep it as the verb.
+    if (i === tokens.length) return ["env"];
+  }
+  return tokens.slice(i);
 }
 
 function dumpsEnvironment(verb: string, tokens: string[]): boolean {
@@ -128,6 +149,11 @@ function dumpsEnvironment(verb: string, tokens: string[]): boolean {
   if ((verb === "export" || verb === "declare") && tokens.some((t) => t === "-p" || t === "-x")) return true;
   return ["get-childitem", "gci", "dir", "ls", "get-item", "gi"].includes(verb) && tokens.some((t) => /^env:/i.test(t));
 }
+
+// A here-document is command text too (the card shows it), and its lines are
+// the program's input: `cat <<EOF … $TOKEN … EOF` prints the value, and
+// `python - <<EOF … os.environ … EOF` is inline code by another spelling.
+const HEREDOC = /<<-?\s*['"]?\w/;
 
 /**
  * Why a command works on a secret's value in its own text — slicing or
@@ -138,16 +164,24 @@ function dumpsEnvironment(verb: string, tokens: string[]): boolean {
 export function secretManipulation(command: string, secretEnv: SecretEnv): string | null {
   const vars = secretVariables(command, Object.keys(secretEnv));
   for (const v of vars) {
-    const rewritten = new RegExp(`\\$\\{${v}[:#%/^,@]|\\$\\{(?:env:)?${v}\\}\\s*[.\\[]|\\$env:${v}\\s*(?:[.\\[]|-split|-replace|-join)|%${v}:~`, "i");
+    // `${V:-default}`, `${V:?msg}`, `${V:+alt}` and `${V:=default}` test the
+    // value; `${V:0:4}` and the other operators work on it.
+    const rewritten = new RegExp(`\\$\\{${v}(?::(?![-?+=])|[#%/^,@])|\\$\\{(?:env:)?${v}\\}\\s*[.\\[]|\\$env:${v}\\s*(?:[.\\[]|-split|-replace|-join)|%${v}:~`, "i");
     if (rewritten.test(command)) return `this command slices or rewrites $${v}`;
   }
+  if (HEREDOC.test(command)) {
+    const named = vars.find((v) => references(v).test(command));
+    if (named) return `this command feeds $${named} to a program through a here-document`;
+    if (ENV_READERS.test(command)) return "this command reads the environment in a here-document program";
+  }
   for (const segment of shellSegments(command)) {
-    const tokens = tokenizeCommand(segment.text);
+    const tokens = effectiveTokens(tokenizeCommand(segment.text));
     if (tokens.length === 0) continue;
     const verb = execBasename(tokens[0]);
     const named = vars.find((v) => references(v).test(segment.text));
-    if (named && (PRINTERS.has(verb) || /<<</.test(segment.text))) return `this command prints $${named}`;
+    if (named && (PRINTERS.has(verb) || /<<</.test(segment.text))) return `this command prints or writes out $${named}`;
     if (dumpsEnvironment(verb, tokens)) return "this command dumps the environment";
+    if (encodedShellBody(verb, tokens)) return "this command runs an encoded script the card cannot show";
     const body = nestedShellBody(verb, tokens);
     const nested = body === null ? null : secretManipulation(body, Object.fromEntries(vars.map((v) => [v, secretEnv[v] ?? "SECRET"])));
     if (nested) return nested;

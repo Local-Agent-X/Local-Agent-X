@@ -2,7 +2,7 @@
  * Local Agent X — Memory Consolidation
  *
  * Analogous to sleep consolidation in the brain: groups related facts,
- * merges duplicates, detects reinforcement, and updates entity pages.
+ * merges duplicates, and detects reinforcement and contradictions.
  *
  * Runs nightly at 3 AM or on demand. Persists consolidation history to
  * ~/.lax/consolidation-log.json.
@@ -15,6 +15,12 @@
  * there directly via the agent's `remember` tool. `promotedCount` in the
  * report is now a count of recurring-fact clusters surfaced, kept for the
  * reflection-history shape.
+ *
+ * Nor does it write entity pages. It reads today's daily log, which is
+ * transient text that never enters the Facts DB, and an entity page is
+ * rebuilt from the Facts DB alone (updateEntityPage in ../../index-forget.ts),
+ * where every line carries its fact's source label. The pipeline's reflect
+ * stage is the rebuild (consolidation-pipeline.ts).
  */
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
@@ -28,7 +34,6 @@ import {
 import { ensureDirs, jaccardSimilarity, slugify } from "./utils.js";
 import { loadTodayFacts } from "./load-facts.js";
 import { countContradictions, getPromotionCandidates, mergeRelatedFacts } from "./analyze.js";
-import { updateAllEntityPages } from "./write.js";
 
 export type { FactEntry, MergedFact, ConsolidationReport } from "./types.js";
 
@@ -92,13 +97,9 @@ export class MemoryConsolidator {
     const candidates = getPromotionCandidates();
     const promoted = candidates.map((f) => f.content);
 
-    // Update entity pages
-    const entityPagesUpdated = updateAllEntityPages(grouped);
-
     const report: ConsolidationReport = {
       mergedCount: mergedResults.length,
       promotedCount: promoted.length,
-      entityPagesUpdated,
       contradictionsFound,
       timestamp: Date.now(),
     };

@@ -79,7 +79,7 @@ export const allTools: ToolDefinition[] = applyPrompts([
       try {
         const { MemoryConsolidator } = await import("../memory/cognitive/consolidation/index.js");
         const report = MemoryConsolidator.getInstance().consolidate();
-        results.push(`Consolidation: merged=${report.mergedCount} promoted=${report.promotedCount} entities=${report.entityPagesUpdated} contradictions=${report.contradictionsFound}`);
+        results.push(`Consolidation: merged=${report.mergedCount} promoted=${report.promotedCount} contradictions=${report.contradictionsFound}`);
       } catch (e) { results.push(`Consolidation failed: ${(e as Error).message}`); }
       try {
         const { triggerDream } = await import("../memory/dream.js");

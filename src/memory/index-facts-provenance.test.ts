@@ -320,4 +320,24 @@ describe("entity pages written before the source labels are rebuilt once", () =>
     expect(existsSync(join(entitiesDir(), "globex.md"))).toBe(false);
     expect(rebuildEntityPagesOnce(db(), entitiesDir(), () => {}, () => {})).toBe(0);
   });
+
+  it("drops what consolidation appended or created, and keeps what the Facts DB wrote", async () => {
+    const { rebuildEntityPagesOnce } = await import("./index-forget.js");
+    authorizeTestFactMutations(memory);
+    memory.rememberFact("@Acme ships on Fridays", { kind: "world", sourceFile: `${TAINTED_FACT_SOURCE_PREFIX}-user-statement` });
+    const consolidated = "\n\n### Consolidated 2026-10-01\n- has an office in Austin (c=0.80)\n";
+    writeFileSync(join(entitiesDir(), "acme.md"), page("acme") + consolidated);
+    // A page whose facts have left the DB: its own lines stay, the appendix goes.
+    const oldco = "# Oldco\n\n## Facts\n\n- Oldco closed in 2019 — *2019-01-01* [source=retained-fact source_type=legacy trust=unknown]\n";
+    writeFileSync(join(entitiesDir(), "oldco.md"), oldco + consolidated);
+    // A page consolidation created for an entity the Facts DB never held.
+    writeFileSync(join(entitiesDir(), "initech.md"), "# Initech\n\n*Created: 2026-10-01*\n\n### Facts\n- is based in Ohio (c=0.90)\n");
+    db().prepare("DELETE FROM meta WHERE key = 'entity_page_format'").run();
+
+    expect(rebuildEntityPagesOnce(db(), entitiesDir(), () => {}, () => {})).toBeGreaterThanOrEqual(3);
+    expect(page("acme")).toContain("[UNTRUSTED");
+    expect(page("acme")).not.toContain("Austin");
+    expect(page("oldco")).toBe(oldco);
+    expect(existsSync(join(entitiesDir(), "initech.md"))).toBe(false);
+  });
 });

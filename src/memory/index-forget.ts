@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, unlinkSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import type Database from "better-sqlite3";
@@ -189,10 +189,30 @@ export function updateEntityPage(
 /** Format 2 labels each fact's source on the page. A page is otherwise rebuilt
  *  only when one of its facts changes, so pages written before it would keep
  *  showing facts saved from web content without their UNTRUSTED mark. */
-const ENTITY_PAGE_FORMAT = "2";
+/** Format 3 drops what the consolidation pass wrote. It appended
+ *  `### Consolidated <date>` blocks of daily-log lines with no source label, and
+ *  created `### Facts` pages for entities the Facts DB never held. Both ran to
+ *  the end of the file, and this page format uses only `##` headings. */
+const ENTITY_PAGE_FORMAT = "3";
+const CONSOLIDATION_HEADING = /^### (?:Consolidated \d{4}-\d{2}-\d{2}|Facts)$/m;
+
+/** Cut a page with no facts in the DB at its first consolidation heading. A
+ *  page left with no fact lines is removed, as forgetFacts removes a page whose
+ *  last fact is gone. The cut lines came from daily logs, which stay on disk
+ *  and indexed. Returns whether the page changed. */
+function dropConsolidationLines(entityPath: string, setDirty: () => void): boolean {
+  const page = readFileSync(entityPath, "utf-8");
+  const at = page.search(CONSOLIDATION_HEADING);
+  if (at < 0) return false;
+  const kept = page.slice(0, at).trimEnd();
+  if (/^- /m.test(kept)) atomicWriteFileSync(entityPath, `${kept}\n`);
+  else unlinkSync(entityPath);
+  setDirty();
+  return true;
+}
 
 /** Rebuild every existing entity page once per format change. Pages that were
- *  never written stay unwritten. Returns how many were rebuilt. */
+ *  never written stay unwritten. Returns how many were rebuilt or cut. */
 export function rebuildEntityPagesOnce(
   db: InstanceType<typeof Database>,
   entitiesDir: string,
@@ -207,9 +227,12 @@ export function rebuildEntityPagesOnce(
   let rebuilt = 0;
   for (const slug of slugs) {
     const facts = recallByEntity(db, slug, 1);
-    if (facts.length === 0) continue;
-    updateEntityPage(db, entitiesDir, setDirty, reindexEntity, slug, facts);
-    rebuilt++;
+    if (facts.length > 0) {
+      updateEntityPage(db, entitiesDir, setDirty, reindexEntity, slug, facts);
+      rebuilt++;
+    } else if (dropConsolidationLines(join(entitiesDir, `${slug}.md`), setDirty)) {
+      rebuilt++;
+    }
   }
   db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('entity_page_format', ?)").run(ENTITY_PAGE_FORMAT);
   return rebuilt;

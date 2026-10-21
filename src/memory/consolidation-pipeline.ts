@@ -4,9 +4,9 @@
  *
  *   1. extract     — LLM pulls structured facts from recent chunks through the
  *                    dedup/contradiction resolver (runExtraction). Opt-in.
- *   2. consolidate — zero-LLM Jaccard merge + entity-page regen over stored
- *                    facts (MemoryConsolidator).
- *   3. reflect     — refresh entity summary pages + opinion confidence.
+ *   2. consolidate — zero-LLM Jaccard merge + contradiction count over today's
+ *                    daily-log facts (MemoryConsolidator). Writes no pages.
+ *   3. reflect     — rebuild entity pages from the Facts DB + opinion confidence.
  *
  * These were previously invoked from three scattered places (memory-bg, the
  * memory_consolidate tool, the memory_dream tool) with overlapping/duplicated

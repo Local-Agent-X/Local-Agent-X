@@ -23,6 +23,7 @@ import { getMcpExecutionPosture, getMcpSandboxBackend, MCPConnection } from "./c
 import { expandPlaceholdersDeep } from "./placeholders.js";
 import type { MCPConfig, MCPServerConfig } from "./types.js";
 import { isMcpTrustedLocally, setMcpLocalTrust } from "./local-trust.js";
+import { mcpToolName } from "./tool-facts.js";
 import { assessMcpManifest, type MCPManifestTrust } from "./manifest.js";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { isLocalOnlyMode } from "../local-only-policy.js";
@@ -197,7 +198,7 @@ export class MCPManager {
     for (const [serverName, conn] of this.connections) {
       if (!conn.connected) continue;
       for (const mcpTool of conn.getTools()) {
-        const toolName = `mcp_${serverName}_${mcpTool.name}`;
+        const toolName = mcpToolName(serverName, mcpTool.name);
         tools.push({
           name: toolName,
           mcpServerName: serverName,

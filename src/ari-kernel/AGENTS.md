@@ -7,7 +7,7 @@
 ## Invariants
 - `kernelClassForTool` (`tool-class-map.ts`) decides whether a call is checked at all: a gated class (file/http/shell/database/retrieval/secret-vault) goes through `evaluate.ts`; `internal` skips enforcement and is only observed; an unmapped name fails closed (blocked).
 - `TOOL_CLASS_MAP` is a projection of `TOOLS` in `src/tool-registry.ts`, itself derived from the policy fragments' `kernel` field — set a tool's class in `src/tool-policy/`, never here.
-- `mcp_*` names classify as `http`; third-party plugin tools get their class from `src/plugin-system/tool-metadata.ts`.
+- `mcp_*` names classify as `http`, and a connected server tool's action is a write unless the server listed it `readOnlyHint: true` (`src/mcp-client/tool-facts.ts`, read by `ariActionOf`); third-party plugin tools get their class from `src/plugin-system/tool-metadata.ts`.
 - Every gated tool needs a manifest-valid action: its policy row's `ariAction` (required by the row type for every non-`internal` kernel; read by `src/tool-execution/ari-action-map.ts`); `exec` is valid only for shell.
 - Boot warns (`coverage.ts`), runtime blocks: a coverage warning in the server log is a real user-facing block.
 

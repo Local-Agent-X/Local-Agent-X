@@ -44,6 +44,8 @@ export interface MCPTool {
   name: string;
   description?: string;
   inputSchema?: Record<string, unknown>;
+  /** The server's own description of the tool's effect (MCP tool annotations). */
+  annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean; idempotentHint?: boolean; openWorldHint?: boolean };
 }
 
 export interface PendingRequest {

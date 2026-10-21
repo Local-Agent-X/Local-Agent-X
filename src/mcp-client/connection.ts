@@ -14,6 +14,7 @@ import { verifyOrTrust } from "./integrity.js";
 import { assessMcpManifest, mcpRuntimeSourceFingerprint } from "./manifest.js";
 import { buildMcpChildEnv } from "./child-env.js";
 import { buildWindowsMcpSpawn } from "./windows-spawn.js";
+import { forgetMcpServerTools, recordMcpServerTools } from "./tool-facts.js";
 
 export { buildWindowsMcpSpawn, cmdQuote } from "./windows-spawn.js";
 
@@ -215,6 +216,7 @@ export class MCPConnection {
       // Discover tools
       const result = await Promise.race([this.request("tools/list", {}), spawnFailure]) as { tools: MCPTool[] };
       this.tools = result.tools || [];
+      recordMcpServerTools(this.serverName, this.tools);
       this.initializationComplete = true;
       logger.info(`[mcp:${this.serverName}] Connected — ${this.tools.length} tools: ${this.tools.map(t => t.name).join(", ")}`);
     } catch (e) {
@@ -298,6 +300,7 @@ export class MCPConnection {
     this.cleanupProcess();
     this.proc = null;
     this.initializationComplete = false;
+    forgetMcpServerTools(this.serverName);
   }
 
   get connected(): boolean {

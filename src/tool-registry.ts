@@ -23,6 +23,7 @@ import type {
 } from "./tool-policy/tool-policies.types.js";
 import type { ToolTag } from "./tool-policy/tool-tags.js";
 import { getActivePluginToolMetadata } from "./plugin-system/tool-metadata.js";
+import { mcpToolFacts } from "./mcp-client/tool-facts.js";
 import type { CallContext } from "./tool-execution/context.js";
 export type { PathArgSpec } from "./tool-policy/tool-policies.data.js";
 
@@ -172,6 +173,9 @@ export const CAPABILITY_CLASS_MEMBERS: Record<CapabilityClass, readonly string[]
  */
 export function hasCapability(name: string, cls: CapabilityClass, args?: Record<string, unknown>): boolean {
   if (getActivePluginToolMetadata(name)) return cls === "shell";
+  // A server tool's arguments reach a real external API: an egress sink, so
+  // every outbound scan and the taint scope judge them.
+  if (mcpToolFacts(name)) return cls === "egress";
   if (cls === "workspace-write") {
     return pathSpecsForCall(name, args).some((spec) => writesAt(spec) && !(args && spec.whenGiven && args[spec.arg] === undefined));
   }
@@ -207,8 +211,12 @@ export function outputOf(name: string): OutputKind | undefined {
 
 /** The action the Ari kernel judges this call as; "exec" for a tool with no
  *  row (the kernel never sees an internal tool). A spec read off an argument
- *  resolves against the call: a POST or a browser click is a write verb. */
+ *  resolves against the call: a POST or a browser click is a write verb. A
+ *  connected MCP server's tool is a write unless the server marked it
+ *  read-only (mcp-client/tool-facts.ts). */
 export function ariActionOf(name: string, args: Record<string, unknown>): string {
+  const mcp = mcpToolFacts(name);
+  if (mcp) return mcp.readOnly ? "get" : "post";
   const spec = TOOL_POLICIES[name]?.ariAction;
   if (spec === undefined) return "exec";
   if (typeof spec === "string") return spec;

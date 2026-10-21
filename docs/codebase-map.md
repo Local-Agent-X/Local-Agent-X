@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1826 non-test source files · 94 oversized · 242 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1827 non-test source files · 94 oversized · 242 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -73,11 +73,11 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/codex-client/` | 8 | 6 | M |  |
 | `src/telegram-bridge/` | 8 | 6 | M |  |
 | `src/auto-build/` | 7 | 52 | XL | 3 |
+| `src/mcp-client/` | 7 | 11 | L | 1 |
 | `src/net/` | 7 | 5 | M |  |
 | `src/android/` | 6 | 7 | M |  |
 | `src/app-renderer/` | 6 | 7 | M | 1 |
 | `src/credentials/` | 6 | 1 | S |  |
-| `src/mcp-client/` | 6 | 10 | L | 1 |
 | `src/embedding-providers/` | 4 | 8 | M |  |
 | `src/hooks/` | 4 | 3 | M |  |
 | `src/language-intel/` | 4 | 5 | M |  |

@@ -4,7 +4,7 @@
 import { createLogger } from "../logger.js";
 import { USER_HINTS } from "../types.js";
 import { isAriRequired } from "./state.js";
-import { kernelClassForTool, isMcpToolName } from "./tool-class-map.js";
+import { kernelClassForTool } from "./tool-class-map.js";
 import { lookupHostGrantId } from "./grants.js";
 import { ensureAriKernelScope, refreshAriKernelScope } from "./lifecycle.js";
 import type { KernelQuarantine } from "../types.js";
@@ -54,20 +54,13 @@ export async function ariEvaluate(
     };
   }
 
-  // MCP tools resolve to the "http" class but arrive with the dispatcher's
-  // default "exec" action, which is invalid for http. Map them to "get" so they
-  // get the SAME kernel treatment as the agent's existing read-class http tools
-  // (web_fetch / web_search): the default workspace-assistant preset allows them
-  // (allow-http-get) and any taint rules a stricter preset adds apply uniformly.
-  // (A blanket "post" would trip deny-http-write and block every MCP call —
-  // exactly the same limitation the agent's own http_request POST has under that
-  // preset. Whether to permit outbound MCP/http writes is a preset/profile
-  // decision, not something this mapping should silently force.)
   // A secret-vault tool is judged as its row's fixed action (capture / fill /
   // clipboard) whatever the caller passes, so ARI sees the canonical action in
-  // audit logs and behavioral rules.
+  // audit logs and behavioral rules. An MCP server tool's action is derived
+  // like any other (tool-registry ariActionOf): a write unless the server
+  // marked it read-only, so a tainted create or delete is a tainted write.
   const vaultAction = toolClass === "secret-vault" ? policyRowOf(toolName)?.ariAction : undefined;
-  const effectiveAction = typeof vaultAction === "string" ? vaultAction : isMcpToolName(toolName) ? "get" : action;
+  const effectiveAction = typeof vaultAction === "string" ? vaultAction : action;
 
   try {
     const execRequest: Record<string, unknown> = {

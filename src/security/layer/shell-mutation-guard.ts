@@ -1,9 +1,10 @@
-import { isAbsolute, join } from "node:path";
+import { basename, isAbsolute, join } from "node:path";
 import { homedir } from "node:os";
 import {
   execBasename, splitShellSegments, tokenizeCommand,
 } from "./shell-lex.js";
 import { BENIGN_PATHS } from "./shell-path-guard.js";
+import { isLaxControlFile } from "./lax-control-files.js";
 import { isProtectedFile } from "../../config-loader.js";
 import { isLockedBaselinePath } from "../../tools/app-tools/write-guard.js";
 
@@ -57,6 +58,23 @@ function* redirectWriteTargets(words: string[]): Generator<string> {
  * absolute path outside the engine tree, so this never fires on the user's files.
  */
 export function detectProtectedEngineMutation(command: string): string | null {
+  for (const { path, verb } of shellMutationTargets(command)) {
+    const p = isProtectedFile(path);
+    if (p.protected) {
+      return `Blocked: '${verb}' would delete or overwrite a protected engine file (${p.reason}). This is the platform's own core — use the self_edit path, not the shell.`;
+    }
+  }
+  return null;
+}
+
+/**
+ * Every ABSOLUTE (or ~-expanded) file a shell command would delete or overwrite,
+ * with the verb that does it: a redirect target, a mutating verb's operand, a
+ * `dd of=`. The one walk every mutation lock reads, so none can drift on what
+ * counts as a write. Relative operands are left out on purpose — they resolve
+ * under the agent's cwd, and anchoring them here would judge the wrong tree.
+ */
+export function shellMutationTargets(command: string): Array<{ path: string; verb: string }> {
   const home = homedir();
   // Tokens arrive quote-stripped, so a quoted operand with spaces is one word.
   const absOperand = (t: string): string | null => {
@@ -65,11 +83,10 @@ export function detectProtectedEngineMutation(command: string): string | null {
     else if (t.startsWith("~/") || t.startsWith("~\\")) t = join(home, t.slice(2));
     return isAbsolute(t) ? t : null;
   };
-  const hit = (abs: string, verb: string): string | null => {
-    const p = isProtectedFile(abs);
-    return p.protected
-      ? `Blocked: '${verb}' would delete or overwrite a protected engine file (${p.reason}). This is the platform's own core — use the self_edit path, not the shell.`
-      : null;
+  const out: Array<{ path: string; verb: string }> = [];
+  const add = (target: string, verb: string): void => {
+    const abs = absOperand(target);
+    if (abs) out.push({ path: abs, verb });
   };
 
   for (const segment of splitShellSegments(command)) {
@@ -77,22 +94,30 @@ export function detectProtectedEngineMutation(command: string): string | null {
     if (!words.length) continue;
     const verb = execBasename(words[0]);
 
-    // Redirect write targets — an overwrite of the engine regardless of verb.
-    for (const target of redirectWriteTargets(words)) {
-      const abs = absOperand(target);
-      if (abs) { const r = hit(abs, "redirect"); if (r) return r; }
-    }
-
-    for (const target of mutationTargets(words, verb)) {
-      const abs = absOperand(target);
-      if (abs) { const r = hit(abs, verb); if (r) return r; }
-    }
+    // Redirect write targets — an overwrite regardless of verb.
+    for (const target of redirectWriteTargets(words)) add(target, "redirect");
+    for (const target of mutationTargets(words, verb)) add(target, verb);
     if (verb === "dd") {
-      for (const w of words) {
-        if (!w.startsWith("of=")) continue;
-        const abs = absOperand(w.slice(3));
-        if (abs) { const r = hit(abs, "dd"); if (r) return r; }
-      }
+      for (const w of words) if (w.startsWith("of=")) add(w.slice(3), "dd");
+    }
+  }
+  return out;
+}
+
+/**
+ * The shell twin of the file tools' control-file refusal (file-access.ts): a
+ * command that would delete or overwrite one of the security switches in the
+ * data dir is refused in every file-access mode, unrestricted included —
+ * "unrestricted" must not mean "may rewrite my own permissions" from a shell
+ * any more than from `write`. Reads (`cat ~/.lax/settings.json`) are untouched,
+ * and the files that merely get an approval card (hooks, MCP config, plugins)
+ * are the control-file gate's (tool-execution/control-file-gate.ts), not a
+ * refusal here.
+ */
+export function detectControlFileMutation(command: string): string | null {
+  for (const { path, verb } of shellMutationTargets(command)) {
+    if (isLaxControlFile(path)) {
+      return `Blocked: '${verb}' would change ${basename(path)}, a user-owned control file — it defines what you are allowed to do, so it cannot be rewritten from the shell. Ask the user to change it in Settings.`;
     }
   }
   return null;

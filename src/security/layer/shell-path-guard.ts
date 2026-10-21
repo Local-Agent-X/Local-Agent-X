@@ -10,7 +10,7 @@ import { detectScriptWrite } from "./shell-detectors.js";
 import {
   execBasename, isShellReparseFlag, resolveRealArgv0Index, splitShellSegments, tokenizeCommand,
 } from "./shell-lex.js";
-import { detectLockedBaselineMutation, detectProtectedEngineMutation } from "./shell-mutation-guard.js";
+import { detectControlFileMutation, detectLockedBaselineMutation, detectProtectedEngineMutation } from "./shell-mutation-guard.js";
 import { DOS_SWITCH, dosSwitchBlockReason } from "./dos-switch.js";
 
 // ── Best-effort shell file-access confinement (defense in depth) ──
@@ -187,6 +187,11 @@ export function evaluateShellCommandAndPaths(command: string, ctx: ShellPathGuar
   // the engine even in unrestricted mode. Same authority (isProtectedFile).
   const engine = detectProtectedEngineMutation(command);
   if (engine) return { allowed: false, reason: engine, userHint: USER_HINTS.secrets };
+  // ALWAYS-ON (mode-independent) control-file lock: the file tools refuse to
+  // rewrite the data dir's security switches in every mode (file-access.ts),
+  // and so does the shell. Same authority (isLaxControlFile).
+  const control = detectControlFileMutation(command);
+  if (control) return { allowed: false, reason: control, userHint: USER_HINTS.policy };
   // ALWAYS-ON (mode-independent) scaffold-baseline lock: the write/edit tools
   // reject clobbering a harness-generated app skeleton (write-guard.ts), but bash
   // could redirect/cp/mv/rm over the same file. Same manifest is the authority.

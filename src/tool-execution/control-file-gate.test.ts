@@ -153,6 +153,23 @@ describe("a restore that lands on a file the app acts on", () => {
 });
 
 // The app reads back far more of its data dir than any hand-kept list named,
+// A shell command's write targets are judged like a file tool's paths: on an
+// uncaged host bash could install a hook with a redirect and no card (red
+// team 2026-10-13, C2).
+describe("a shell command that writes a file the app acts on", () => {
+  it("is put to the user for a redirect, a copy and a delete, naming the file", () => {
+    expect(reasonFor("bash", { command: `echo '{}' > ${HOOKS}` })).toContain("This bash call changes ~/.lax/hooks.json, which runs commands on every tool call");
+    expect(reasonFor("bash", { command: `cp /tmp/mcp.json ${join(LAX, "mcp.json")}` })).toContain("This bash call changes ~/.lax/mcp.json");
+    expect(reasonFor("bash", { command: `rm -f ${HOOKS}` })).toContain("This bash call deletes ~/.lax/hooks.json");
+  });
+
+  it("asks nothing of a command that reads the file, or writes elsewhere", () => {
+    expect(reasonFor("bash", { command: `cat ${HOOKS}` })).toBeUndefined();
+    expect(reasonFor("bash", { command: "npm test > /tmp/out.log" })).toBeUndefined();
+    expect(reasonFor("bash", { command: "git status" })).toBeUndefined();
+  });
+});
+
 // so the default there is the user's yes, and only the agent's working data
 // is written without one (security/layer/lax-data-catalog.ts).
 describe("everything else in the data dir", () => {

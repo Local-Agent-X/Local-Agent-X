@@ -46,8 +46,12 @@ export const APP_AT_REST_SECRET_BASENAMES: ReadonlySet<string> = new Set([
   "secrets.enc",
   "master.dpapi",
   "master.key",
-  // OAuth/credential tokens persisted under the data dir.
+  // OAuth/credential tokens persisted under the data dir — the generic
+  // envelope and the per-provider ones (secrets-crypto.ts
+  // MASTER_KEY_DEPENDENT_BASENAMES), sealed under the same master key.
   "auth.json",
+  "anthropic-auth.json",
+  "xai-auth.json",
 ]);
 
 /**

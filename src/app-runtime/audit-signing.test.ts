@@ -9,6 +9,7 @@ import {
 } from "../security/secrets/index.js";
 import { AUDIT_SEED_BASENAMES, getAuditHmacKey, _resetAuditKeyCacheForTests } from "./audit-signing.js";
 import { KEYCHAIN_AT_REST_BASENAMES } from "../keychain.js";
+import { MASTER_KEY_DEPENDENT_BASENAMES } from "../secrets-crypto.js";
 import { isSensitivePath } from "../data-lineage/index.js";
 
 // ── Build-time enrollment assertion (R4-04 / R4-05 drift lock) ──
@@ -25,6 +26,15 @@ describe("APP_AT_REST_SECRET_BASENAMES — writer-enrollment lock", () => {
       expect(
         isAppAtRestSecretBasename(base),
         `audit-signing.ts writes ${base} under getLaxDir() but it is NOT enrolled in APP_AT_REST_SECRET_BASENAMES — enroll it in security/known-secrets.ts`,
+      ).toBe(true);
+    }
+  });
+
+  it("contains every file sealed under the master key (secrets-crypto.ts), the per-provider OAuth envelopes included", () => {
+    for (const base of MASTER_KEY_DEPENDENT_BASENAMES) {
+      expect(
+        isAppAtRestSecretBasename(base),
+        `${base} is sealed under the master key but is NOT enrolled in APP_AT_REST_SECRET_BASENAMES — enroll it in security/known-secrets.ts`,
       ).toBe(true);
     }
   });

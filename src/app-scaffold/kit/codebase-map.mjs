@@ -25,11 +25,14 @@
  *                     the size caps, in code lines (code-size.mjs; defaults 400 / 320 / 100 / 60):
  *                     what is over them is listed as oversized, what is in the warning band as nearing
  *   --entry <module>  module reached at runtime, not by import (repeatable; `auth` or `src/auth`)
+ *   --canonical <dir> the source root that owns shared code (repeatable): names re-declared
+ *                     outside it are listed as shadows (canonical-drift.mjs)
  *
  * The output only changes on events worth reviewing — a module added or
  * removed, a new cross-module dependency or cycle, an importer count change, a
  * module going dead, a file or function crossing a size cap or moving ten code
- * lines within the warning band, a size-tier flip — so
+ * lines within the warning band, a size-tier flip, a name declared in a second
+ * root, a file gaining or losing a "mirrors X" comment — so
  * --check can gate the build without failing on trivial edits.
  */
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
@@ -37,6 +40,7 @@ import { dirname, relative, resolve, sep } from "node:path";
 import { defaultRoots, importContext, importTargets, isTestPath, moduleOf, walkSource } from "./project-languages.mjs";
 import { bandOf, limitsFromArgs, measureSource, nearingSection, sizeItems } from "./code-size.mjs";
 import { applyTypeScriptFlag } from "./typescript-api.mjs";
+import { driftFindings, driftSection, scanDeclarations } from "./canonical-drift.mjs";
 
 const args = process.argv.slice(2);
 applyTypeScriptFlag(args);
@@ -53,6 +57,7 @@ const LIMITS = limitsFromArgs(args);
 const ENTRIES = new Set(optAll("--entry"));
 const CHECK = args.includes("--check");
 const DEPS = opt("--deps", null);
+const CANONICAL = optAll("--canonical").map((r) => relative(REPO, resolve(REPO, r)).split(sep).join("/"));
 
 const posix = (p) => relative(REPO, p).split(sep).join("/");
 const isTest = (p) => isTestPath(posix(p));
@@ -191,6 +196,9 @@ const oversized = [...units.values()].flatMap((r) => r.oversized).sort();
 const nearing = nearingSection(sized, LIMITS);
 const loose = units.get(LOOSE)?.files ?? 0;
 const rootsRel = ROOTS.map((r) => `\`${posix(r)}/\``).join(", ");
+const presentRoots = ROOTS.filter(existsSync);
+const drift = scanDeclarations(REPO, presentRoots, { exclude: [/\.generated\./] });
+const findings = presentRoots.length > 1 ? driftFindings(drift, CANONICAL) : [];
 
 const lines = [
 	"# Codebase map (generated — do not edit)",
@@ -203,7 +211,8 @@ const lines = [
 		`*Oversized*: non-test files over ${LIMITS.maxCode} code lines, and functions (\`file#function\`) over ${LIMITS.maxFn} of their own.`,
 	"",
 	`**Totals:** ${rows.length} modules · ${dead.length} with no importer · ${prod.length} non-test source files · ` +
-		`${loose} loose files at the source root · ${oversized.length} oversized · ${nearing.length} nearing the size cap.`,
+		`${loose} loose files at the source root · ${oversized.length} oversized · ${nearing.length} nearing the size cap` +
+		(presentRoots.length > 1 ? ` · ${findings.length} names declared in more than one root.` : "."),
 	"",
 	"## Modules",
 	"",
@@ -242,6 +251,7 @@ const lines = [
 	"",
 	nearing.length ? nearing.join("\n") : "None.",
 	"",
+	...(presentRoots.length > 1 ? driftSection(findings, drift.mirrors) : []),
 ];
 const output = lines.join("\n");
 

@@ -21,10 +21,14 @@ import { join, resolve } from "node:path";
 
 export const TYPESCRIPT_ENV = "STRUCTURE_TYPESCRIPT";
 
-/** `--typescript <dir>` on an entry script's argv, exported for the scripts it spawns. */
+/** `--typescript <dir>` on an entry script's argv, exported for the scripts it
+ *  spawns and removed from `args`, so a script that reads positionals (code-refs
+ *  takes the symbol name) doesn't take the directory for one. */
 export function applyTypeScriptFlag(args) {
 	const i = args.indexOf("--typescript");
-	if (i >= 0 && args[i + 1]) process.env[TYPESCRIPT_ENV] = resolve(args[i + 1]);
+	if (i < 0 || !args[i + 1]) return;
+	process.env[TYPESCRIPT_ENV] = resolve(args[i + 1]);
+	args.splice(i, 2);
 }
 
 export function hasCompilerApi(ts) {

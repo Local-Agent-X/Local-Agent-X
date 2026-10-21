@@ -3,7 +3,8 @@
  * which files are source, which are tests, how an import is written and how
  * it resolves to a file, where the source roots are by default, what a module
  * is, and which folders its builds write. codebase-map.mjs,
- * check-module-owners.mjs, check-doc-paths.mjs and check-structure.mjs import
+ * check-module-owners.mjs, check-doc-paths.mjs, check-structure.mjs and
+ * canonical-drift.mjs import
  * this file, so a project copies it beside them; nothing else reads it.
  * Supporting a language is adding a row here, not a special case there.
  *

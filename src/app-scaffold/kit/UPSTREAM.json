@@ -1,11 +1,11 @@
 {
   "project-languages.mjs": {
     "upstream": "scripts/project-languages.mjs",
-    "sha256": "6e79e38c08993016995b8e721ee753fc595d14a1800f0dbd4eb578b630075e37"
+    "sha256": "ea86ac28d565285ffad58c197d8ce874abe1e2a4b0a6d8347324a090910bbc3e"
   },
   "codebase-map.mjs": {
     "upstream": "scripts/codebase-map.mjs",
-    "sha256": "7bd35dc5dbaf9c7a0a249aceb2138d83d646f479b82a3075b263e48533892534"
+    "sha256": "5a4c267fb12a464de14495a1d531985ca474e65f6328c986d088e1894fc0f611"
   },
   "code-size.mjs": {
     "upstream": "scripts/code-size.mjs",
@@ -33,15 +33,23 @@
   },
   "check-structure.mjs": {
     "upstream": "scripts/check-structure.mjs",
-    "sha256": "c11b08545e1590025158e6287d04a03ff765f7e4012ff4f822e7a83fc60cecca"
+    "sha256": "e087e7c221a109a25218f197be576c4704b4fd24a2337323b5c718829ff61d35"
+  },
+  "check-canonical.mjs": {
+    "upstream": "scripts/check-canonical.mjs",
+    "sha256": "1aeb373c9cb0b4dbb2d141d80b8cc1607ed4fe2f3995c602fbf80e5c61d4fb5d"
+  },
+  "canonical-drift.mjs": {
+    "upstream": "scripts/canonical-drift.mjs",
+    "sha256": "6def495744d76203cd88ef035b85dd4c65134bf348c82b5b968e32ab3b3096c3"
   },
   "code-refs.mjs": {
     "upstream": "scripts/code-refs.mjs",
-    "sha256": "588ccb0b1fc482b258a6c776682468fde7d2de7db983df571098d2594a24c12f"
+    "sha256": "2e76ccfe9e57e8b49a7d83c6d22a8c686531597542ef62f5767446a3412ab09e"
   },
   "typescript-api.mjs": {
     "upstream": "scripts/typescript-api.mjs",
-    "sha256": "2f00f763c1d1fe31cd1096640b8968bab3971cab23aa8f82cc57df5f842303f6"
+    "sha256": "302d0cb32a08f20ff442b477de99c4f9a4561710ee4e97b494abdc7a5e1c245f"
   },
   "module-seals.test.ts.txt": {
     "upstream": "assets/module-seals.test.ts",

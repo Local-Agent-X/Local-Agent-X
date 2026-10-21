@@ -38,6 +38,8 @@ export const KIT_FILES = {
   "check-doc-paths.mjs": "scripts/check-doc-paths.mjs",
   "check-module-owners.mjs": "scripts/check-module-owners.mjs",
   "check-structure.mjs": "scripts/check-structure.mjs",
+  "check-canonical.mjs": "scripts/check-canonical.mjs",
+  "canonical-drift.mjs": "scripts/canonical-drift.mjs",
   "code-refs.mjs": "scripts/code-refs.mjs",
   "typescript-api.mjs": "scripts/typescript-api.mjs",
   "module-seals.test.ts.txt": "assets/module-seals.test.ts",

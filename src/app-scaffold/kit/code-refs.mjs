@@ -29,6 +29,7 @@ import { join, relative, resolve, sep } from "node:path";
 import { applyTypeScriptFlag, loadTypeScript, missingCompilerNote } from "./typescript-api.mjs";
 
 const args = process.argv.slice(2);
+applyTypeScriptFlag(args); // consumes --typescript <dir> before the positionals are read
 const opt = (name, dflt) => {
 	const i = args.indexOf(name);
 	return i >= 0 ? args[i + 1] : dflt;
@@ -45,7 +46,6 @@ if (!QUERY && !DUPLICATES) {
 	process.exit(2);
 }
 
-applyTypeScriptFlag(args);
 const { ts, rejected } = loadTypeScript(REPO);
 if (!ts) {
 	console.error(`code-refs needs the TypeScript compiler API: ${missingCompilerNote(rejected)}`);

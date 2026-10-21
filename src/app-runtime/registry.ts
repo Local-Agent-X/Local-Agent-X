@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 
 import { getLaxDir } from "../lax-data-dir.js";
 import { moveToTrash } from "../safe-delete.js";
+import { pathIsWithin } from "../security/layer/path-within.js";
 import { tombstoneAppEagerly } from "../sync/tombstones.js";
 import { readAuditLog, readGlobalAuditLog, writeAuditEntry } from "./audit.js";
 import { consumeEvents, getUnconsumedEvents, pushEvent, readEvents } from "./events-store.js";
@@ -171,6 +172,15 @@ export class AppRegistry {
     workspace: boolean;
     error?: string;
   }> {
+    // The id names one directory under apps/ and nothing else: an empty id,
+    // "." or "x/.." resolves to the apps folder itself and "../x" to its
+    // sibling, and every step below (the dev-server record, the registry dir,
+    // the trash move) is keyed on it. Judged before any of them runs. Looser
+    // than the id app_create mints, on purpose: a folder a person made by
+    // hand under apps/ is still theirs to delete.
+    if (!id || id === "." || id === ".." || /[\\/]/.test(id)) {
+      return { deleted: false, registry: false, workspace: false, error: `Invalid app id "${id}": an app id is its folder name under apps/` };
+    }
     const def = this.get(id);
     const wsAppDir = opts?.workspaceDir
       ? resolve(opts.workspaceDir, "apps", id)
@@ -178,7 +188,7 @@ export class AppRegistry {
     const wsAppsRoot = opts?.workspaceDir
       ? resolve(opts.workspaceDir, "apps")
       : null;
-    const wsAppExists = !!(wsAppDir && wsAppsRoot && wsAppDir.startsWith(wsAppsRoot) && existsSync(wsAppDir));
+    const wsAppExists = !!(wsAppDir && wsAppsRoot && wsAppDir !== wsAppsRoot && pathIsWithin(wsAppsRoot, wsAppDir) && existsSync(wsAppDir));
 
     if (!def && !wsAppExists) return { deleted: false, registry: false, workspace: false, error: "App not found" };
 

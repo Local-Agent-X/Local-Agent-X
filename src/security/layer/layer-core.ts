@@ -22,6 +22,7 @@ import { loadLocalServicePorts, liveLocalServicePorts, loadFileAccessMode, loadI
 import { EgressPolicyState, updateSecurityJson } from "./egress-policy-state.js";
 import { fingerprintSecurityPolicy, restoreSecurityAllowedPaths, snapshotSecurityRuntime, type SecurityRuntimeIdentity } from "./runtime-state.js";
 import { evaluateDelegatedWorktreeGate } from "./delegated-worktree-gate.js";
+import { selfPort, setSelfPort } from "./loopback-grant.js";
 
 import { createLogger } from "../../logger.js";
 const logger = createLogger("security.layer-core");
@@ -36,8 +37,10 @@ const logger = createLogger("security.layer-core");
  * - Path normalization: realpath before checking
  */
 export class SecurityLayer {
-  /** Port the server is running on — set at startup so SSRF can whitelist self-calls */
-  static _selfPort: string = "7007";
+  /** Port the server is running on — set at startup so SSRF can whitelist
+   *  self-calls. Held by loopback-grant.ts, which the shell rules read too. */
+  static get _selfPort(): string { return selfPort(); }
+  static set _selfPort(port: string) { setSelfPort(port); }
 
   private workspace: string;
   /** The web-access policy (mode + allowlist); its setters persist and every reader shares it. */

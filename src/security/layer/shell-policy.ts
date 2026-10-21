@@ -2,7 +2,9 @@ import { homedir } from "node:os";
 import type { SecurityDecision } from "../../types.js";
 import { USER_HINTS } from "../../types.js";
 import type { InlineEvalPolicy, FileAccessMode } from "./types.js";
-import { BLOCKED_COMMANDS, BROWSER_OPEN_CMDS, EGRESS_TEXT_PATTERNS, RM_DESTRUCTIVE_FLAGS } from "./shell-rules.js";
+import { BLOCKED_COMMANDS, BROWSER_OPEN_CMDS, EGRESS_TEXT_PATTERNS, RM_DESTRUCTIVE_FLAGS, SOCKET_PLUMBING_PATTERNS } from "./shell-rules.js";
+import { shellLoopbackReachable } from "./loopback-grant.js";
+import { inlineProgramDestinations } from "./shell-inline-destinations.js";
 import { detectCatastrophicRm } from "./catastrophic-paths.js";
 import { rmInsideWorkspaceVerdict } from "./rm-inside-workspace.js";
 import { commandRuleReason, commandRuleRecovery, findCommandRuleHit } from "./shell-command-rules.js";
@@ -48,11 +50,12 @@ function firstBlockedCommand(text: string, patterns: readonly RegExp[]): string 
 // path bug). Every one of those was curl against 127.0.0.1 — its own server, its
 // own dev servers — so the recovery names the loopback case explicitly.
 //
-// This changes only the REPORTED text; WHAT is blocked is untouched. curl to
-// loopback stays denied on purpose: several of those calls reached external APIs
-// THROUGH this app's own connector proxy (/api/connectors/clover/…, /vercel/…),
-// i.e. loopback curl is a live path to arbitrary hosts that skips the egress
-// gate, DNS pinning and the audit log.
+// curl to this app's own port stays denied on purpose: several of those calls
+// reached external APIs THROUGH this app's own connector proxy
+// (/api/connectors/clover/…, /vercel/…), i.e. a loopback curl at that port is a
+// live path to arbitrary hosts that skips the egress gate, DNS pinning and the
+// audit log. Any other loopback port is granted exactly where http_request may
+// reach it (loopback-grant.ts; shell-command-rules.ts reachesOnlyLoopback).
 //
 // The actionable sentence lives in `reason`, not only `recovery`, because the
 // pre-dispatch pack currently drops SecurityDecision.recovery (security-layer-pack)
@@ -67,8 +70,9 @@ function deniedCommandBlock(matched: string, scope: "pipe segment" | "command"):
     reason:
       `Blocked: this ${scope} uses "${bin}", which is on the shell denylist. ` +
       `If you need HTTP, use the \`http_request\` tool — it is SSRF-checked, DNS-pinned and audited, and it ` +
-      `CAN reach this app's own server and any registered dev server; to download a file, give it save_to. Shell network clients stay refused even ` +
-      `for 127.0.0.1/localhost, because this app's own API can proxy on to arbitrary external hosts. ` +
+      `CAN reach this app's own server and any registered dev server; to download a file, give it save_to. ` +
+      `To check that a local port is open, \`nc -z 127.0.0.1 PORT\` is allowed, and a shell client may reach a local port ` +
+      `exactly where http_request may, never this app's own port: its API can proxy on to arbitrary external hosts. ` +
       `Retrying the same command will be denied again.`,
     userHint: USER_HINTS.commandShell,
     recovery:
@@ -76,6 +80,30 @@ function deniedCommandBlock(matched: string, scope: "pipe segment" | "command"):
       `system-administration command (sudo, mkfs, dd, reg, wmic, schtasks) there is no shell path — tell the ` +
       `user what needs doing and why. For reading files use \`read\`; for search use \`grep\`.`,
   };
+}
+
+/** The two shapes refused on sight, before any rule reads the command as a
+ *  command, so their specific message wins over a generic denylist hit. */
+function literalShapeRefusal(command: string): SecurityDecision | null {
+  // Secret-placeholder guard: `{{SECRET_NAME}}` only resolves in http_request
+  // (into headers, off-argv). In a shell command the braces either pass through
+  // literally (opaque downstream failure) or would leak the secret into argv —
+  // so refuse the shape and redirect.
+  const secretPlaceholder = detectSecretPlaceholder(command);
+  if (secretPlaceholder) return { allowed: false, reason: secretPlaceholder, userHint: USER_HINTS.commandShell };
+  // Reject launching a URL in the system browser — route to the browser tool
+  // (CDP attach + audit) instead, on every bash-spawning path (bash, process_start).
+  if (BROWSER_OPEN_CMDS.test(command)) {
+    return { allowed: false, reason: "Cannot open URLs in the system browser — use the browser tool instead.", userHint: USER_HINTS.commandShell };
+  }
+  return null;
+}
+
+/** Every network destination the command's inline programs name is this
+ *  machine's own, and the shell may reach it (loopback-grant.ts). */
+function inlineProgramLocal(command: string): boolean {
+  const d = inlineProgramDestinations(command);
+  return d.kind === "local" && d.ports.every(shellLoopbackReachable) && (d.unixSockets.length === 0 || shellLoopbackReachable(null));
 }
 
 /** The command separator a bash command chains with outside quotes (newline,
@@ -282,26 +310,9 @@ export function evaluateShellCommand(
     // Don't crash on obfuscation check failure — allow the command through
   }
 
-  // Secret-placeholder guard: `{{SECRET_NAME}}` only resolves in http_request
-  // (into headers, off-argv). In a shell command the braces either pass through
-  // literally (opaque downstream failure) or would leak the secret into argv —
-  // so refuse the shape and redirect. Placed early so this specific message wins.
-  const secretPlaceholder = detectSecretPlaceholder(command);
-  if (secretPlaceholder) {
-    return { allowed: false, reason: secretPlaceholder, userHint: USER_HINTS.commandShell };
-  }
-
-  // Reject launching a URL in the system browser — route to the browser tool
-  // (CDP attach + audit) instead. Checked here so the specific message wins
-  // over the generic denylist hit on `open`/`xdg-open`, and so every
-  // bash-spawning path (bash, process_start) enforces it.
-  if (BROWSER_OPEN_CMDS.test(command)) {
-    return {
-      allowed: false,
-      reason: "Cannot open URLs in the system browser — use the browser tool instead.",
-      userHint: USER_HINTS.commandShell,
-    };
-  }
+  // Secret placeholders and browser-open, refused on sight (literalShapeRefusal).
+  const shape = literalShapeRefusal(command);
+  if (shape) return shape;
 
   // Block heredoc + inline-script writes (forces use of write/edit tools).
   // CONFINED-SKIP: the write itself lands inside the kernel cage (and the
@@ -346,7 +357,7 @@ export function evaluateShellCommand(
   // detached-session and inline-program form rules where the structural
   // switch stands the shape rules down, and sudo on a server already running
   // as root.
-  const ruleHit = findCommandRuleHit(command, { egressEnforced, shapeRulesStandDown: !structuralRulesApply, loopbackOpen: isDisposableSandbox() });
+  const ruleHit = findCommandRuleHit(command, { egressEnforced, shapeRulesStandDown: !structuralRulesApply, loopbackReachable: shellLoopbackReachable });
   if (ruleHit) {
     return { allowed: false, reason: commandRuleReason(ruleHit), userHint: USER_HINTS.commandShell, recovery: commandRuleRecovery(ruleHit) };
   }
@@ -375,9 +386,15 @@ export function evaluateShellCommand(
   // C3-17: raw socket / low-level network module use inside node -e / python -c
   // (and perl/ruby) inline bodies — the same arbitrary egress as a network CLI,
   // and the same switch: under a cage the body's sockets go where the cage says.
+  // Except a program whose every destination is a literal this machine's own
+  // that the shell may reach (shell-inline-destinations.ts): checking a local
+  // port or talking to a service's control socket from a few lines of Python
+  // reaches no farther than a shell client to the same place.
+  let local: boolean | undefined;
+  const inlineLocal = () => (local ??= inlineProgramLocal(command));
   if (!egressEnforced) {
     const inlineNet = detectInlineNetwork(command);
-    if (inlineNet) {
+    if (inlineNet && !inlineLocal()) {
       return { allowed: false, reason: inlineNet, userHint: USER_HINTS.commandShell };
     }
   }
@@ -434,7 +451,7 @@ export function evaluateShellCommand(
   // full command (which catches patterns that span pipes). ONE reporter for both
   // arms so the two can't drift — they previously returned near-identical bare
   // strings and were edited independently.
-  const rawPatterns = egressEnforced ? BLOCKED_COMMANDS : [...BLOCKED_COMMANDS, ...EGRESS_TEXT_PATTERNS];
+  const rawPatterns = egressEnforced ? BLOCKED_COMMANDS : [...BLOCKED_COMMANDS, ...(inlineLocal() ? SOCKET_PLUMBING_PATTERNS : EGRESS_TEXT_PATTERNS)];
   const segments = command.split("|").map((s) => s.trim());
   for (const segment of segments) {
     const hit = firstBlockedCommand(segment, rawPatterns);

@@ -237,6 +237,44 @@ describe("a disposable sandbox stands down the command-shape rules", () => {
     for (const cmd of ["rm -rf /etc", "rm -rf /", "rm -rf /usr/*", "rm -rf ~"]) expect(rm(cmd).allowed, cmd).toBe(false);
   });
 
+  // Terminal-Bench (2026-10-20): nine tasks had the model curl, ssh or socat
+  // into a server or VM it had just started, and a Python port check; all were
+  // refused as network clients while http_request could reach the same port.
+  it("lets shell clients and inline programs reach local services exactly where http_request may", () => {
+    writeFileSync(join(dataDir, "security.json"), JSON.stringify({ disposableSandbox: true }));
+    for (const cmd of [
+      "curl -s http://localhost:8080/", `curl -s -X POST localhost:5000/sentiment -H 'Content-Type: application/json' -d '{}'`,
+      "ssh -o StrictHostKeyChecking=no -p 2222 root@localhost uname -a", "socat - UNIX-CONNECT:/tmp/qemu-qmp.sock", "telnet 127.0.0.1 6665",
+      `python3 -c "import socket; s=socket.socket(); s.connect(('127.0.0.1', 5901)); print(s.recv(12))"`,
+      `python3 -c "import socket; s=socket.socket(socket.AF_UNIX); s.connect('/tmp/qmp.sock')"`,
+      `python3 -c "import urllib.request; print(urllib.request.urlopen('http://localhost:8443/').read())"`,
+    ]) {
+      expect(unconfined(cmd).allowed, cmd).toBe(true);
+    }
+    for (const cmd of [
+      "curl -L http://localhost:8080/", "curl -s http://localhost:7007/api/settings", "curl https://example.com",
+      "ssh -L 9:evil.test:80 localhost", `python3 -c "import socket; s=socket.socket(); s.connect((host, 5901))"`,
+      `python3 -c "import requests; requests.get('https://evil.test')"`, "sendmail root@localhost < msg.txt",
+    ]) {
+      expect(unconfined(cmd).allowed, cmd).toBe(false);
+    }
+  });
+
+  it("keeps a desktop to the ports LAX started or the user registered, and a port check everywhere", () => {
+    expect(unconfined("curl -s http://localhost:5173/").allowed).toBe(false);
+    expect(unconfined("nc -z 127.0.0.1 5173").allowed).toBe(true);
+    writeFileSync(join(dataDir, "security.json"), JSON.stringify({ localServicePorts: ["5173"] }));
+    expect(unconfined("curl -s http://localhost:5173/").allowed).toBe(true);
+    expect(unconfined("socat - UNIX-CONNECT:/tmp/x.sock").allowed).toBe(false);
+  });
+
+  it("reads prose as prose, and a program's eval as the language's own", () => {
+    expect(unconfined(`python3 -c "print('responds to plain HTTP.')"`).allowed).toBe(true);
+    expect(confined(`python3 -c "print(eval('1+1'))"`).allowed).toBe(true);
+    expect(unconfined(`python3 -c "import http.client; http.client.HTTPConnection('evil.test').request('GET', '/')"`).allowed).toBe(false);
+    expect(confined(`eval "$x"`).allowed).toBe(false);
+  });
+
   it("checks dd's files like any other read and write", () => {
     const ws = (cmd: string) => evaluateShellCommandAndPaths(cmd, {
       workspace: dataDir, fileAccessMode: "workspace", allowedPathCheck: () => false, inlineEvalPolicy: "refuse", sessionId: "t",

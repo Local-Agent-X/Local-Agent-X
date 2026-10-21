@@ -31,13 +31,25 @@ export const BLOCKED_COMMANDS = [
 // a .NET or Python script handed to an interpreter, or the socket plumbing of
 // a reverse shell. Text patterns, so they can only match words; applied, like
 // the network-client rule, only where no kernel cage holds egress.
-export const EGRESS_TEXT_PATTERNS = [
+// HTTP libraries named inside a program. Their destination is the URL the
+// program spells, so for a program whose every destination is a literal this
+// machine's own (shell-inline-destinations.ts) shell-policy skips these: it
+// reaches no farther than a shell client to the same port.
+export const INLINE_HTTP_LIBRARY_PATTERNS: readonly RegExp[] = [
   /\bNet\.WebClient\b/i,                    // .NET web client
   /\bSystem\.Net\.Http/i,                   // .NET HTTP
   /\brequests\.(get|post|put|delete)\b/i,   // Python requests
   /\burllib\.(request|urlopen)\b/i,         // Python urllib
-  /\bhttpx?\./i,                            // Python httpx
+  // Python httpx and http.client, as the module names are spelled, so prose
+  // ("responds to plain HTTP.") is not read as a client.
+  /\bhttpx\.\w/,
+  /\bhttp\.client\b/,
   /\baiohttp\b/i,                           // Python aiohttp
+];
+
+// The socket plumbing of a reverse shell, in shell syntax: no destination a
+// program spells could make it local.
+export const SOCKET_PLUMBING_PATTERNS: readonly RegExp[] = [
   // fd-redirect onto a NON-standard descriptor (>=3): the io-duplication a
   // reverse shell uses to wire stdio onto a pre-opened socket fd (`>&5`, `<&3`,
   // `2>&7`). The socket OPEN itself is caught by the /dev/tcp + `exec N<>` rules
@@ -50,6 +62,8 @@ export const EGRESS_TEXT_PATTERNS = [
   /\bexec\s+\d+<>/i,                        // fd exec redirect (reverse shell)
 ];
 
+export const EGRESS_TEXT_PATTERNS: readonly RegExp[] = [...INLINE_HTTP_LIBRARY_PATTERNS, ...SOCKET_PLUMBING_PATTERNS];
+
 // The command-line forms of these are argv rules now (shell-command-rule-table.ts),
 // which read the command being run instead of matching its words anywhere. Inside
 // an inline PROGRAM (`python -c "…"`, `node -e "…"`, an awk program) the text is
@@ -61,7 +75,8 @@ export const INLINE_CODE_PATTERNS: readonly RegExp[] = [
   /\bmkfs\b/i,
   /\bdd\s+.*of=/i,
   /(?<!-)\bformat\b\s+(\/|\\|[A-Za-z]:)/i,
-  /(?<![\w./\\-])eval\b/i,
+  // `eval` is not here: inside a program it is the language's own eval (a
+  // Python builtin, an evaluator being written), not the shell's.
   /\bperl\s+-e\b/i,
   /\bruby\s+-e\b/i,
   /\bphp\s+-r\b/i,

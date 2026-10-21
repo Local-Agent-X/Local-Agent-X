@@ -307,10 +307,20 @@ describe("raw TCP clients and a loopback port", () => {
     }
   });
 
-  it("allow a session with a loopback port only where loopback is open (a disposable sandbox)", () => {
+  it("allow a session with a loopback port only where the grant admits it", () => {
     expect(ruleOf("telnet 127.0.0.1 6665")).toBe("network-client");
-    expect(findCommandRuleHit("telnet 127.0.0.1 6665", { loopbackOpen: true })).toBeNull();
-    expect(findCommandRuleHit("nc localhost 6379", { loopbackOpen: true })).toBeNull();
+    expect(findCommandRuleHit("telnet 127.0.0.1 6665", { loopbackReachable: () => true })).toBeNull();
+    expect(findCommandRuleHit("nc localhost 6379", { loopbackReachable: () => true })).toBeNull();
+  });
+
+  it("admit curl, ssh and socat to a loopback destination by port, a Unix socket by the null port", () => {
+    const grant = { loopbackReachable: (p: string | null) => p === "8080" };
+    expect(findCommandRuleHit("curl -s http://localhost:8080/health", grant)).toBeNull();
+    expect(ruleOf("curl -s http://localhost:8080/health")).toBe("network-client");
+    expect(findCommandRuleHit("curl -s http://localhost:9090/", grant)?.kind).toBe("rule");
+    expect(findCommandRuleHit("ssh -p 8080 root@localhost id", grant)).toBeNull();
+    expect(findCommandRuleHit("socat - UNIX-CONNECT:/tmp/x.sock", grant)?.kind).toBe("rule");
+    expect(findCommandRuleHit("socat - UNIX-CONNECT:/tmp/x.sock", { loopbackReachable: () => true })).toBeNull();
   });
 
   it("keep refusing other hosts, listening, a program on the socket and a proxy hop", () => {
@@ -319,7 +329,7 @@ describe("raw TCP clients and a loopback port", () => {
       "ncat --sh-exec sh localhost 9", "nc -x proxy.test:1080 -z 127.0.0.1 80", "nc 127.0.0.1 80 evil.test",
     ]) {
       expect(ruleOf(cmd), cmd).toBe("network-client");
-      expect(findCommandRuleHit(cmd, { loopbackOpen: true }), cmd).not.toBeNull();
+      expect(findCommandRuleHit(cmd, { loopbackReachable: () => true }), cmd).not.toBeNull();
     }
   });
 });

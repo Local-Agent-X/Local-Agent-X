@@ -6,7 +6,7 @@
 // themselves live in shell-command-rule-table.ts.
 
 import { commandPositions, MAX_SHELL_NESTING, type CommandPosition } from "./shell-command-positions.js";
-import { isLoopbackHost } from "./ip-classification.js";
+import { loopbackUse } from "./shell-loopback-clients.js";
 import { COMMAND_RULES, type CommandRule } from "./shell-command-rule-table.js";
 
 export { COMMAND_RULES, type CommandRule, type CommandRuleCategory } from "./shell-command-rule-table.js";
@@ -27,35 +27,23 @@ export interface CommandRuleContext {
   /** This server already runs as root, so sudo grants nothing it lacks: the
    *  "privilege" rules stand down. Defaults to the process's own uid. */
   root?: boolean;
-  /** Every loopback service is the operator's (a disposable sandbox): a raw
-   *  TCP client may hold a session with one, not only probe it. */
-  loopbackOpen?: boolean;
+  /** May a shell client reach this loopback destination (loopback-grant.ts
+   *  shellLoopbackReachable)? `null` is a Unix socket. Absent: none may. */
+  loopbackReachable?: (port: string | null) => boolean;
 }
 
-// Raw TCP clients whose target is a host argument. Checking that a local port
-// answers (`nc -z 127.0.0.1 5432`: connect, send nothing) is how anyone sees
-// whether a database or server came up, and no other tool does it; on a
-// disposable sandbox a session with a local port (a VM's serial console on
-// telnet) is the operator's own. Listening, running a program on the socket
-// (-e/-c), a proxy hop and any non-loopback host keep the network rule.
-const RAW_TCP_CLIENTS = new Set(["nc", "ncat", "nc.traditional", "netcat", "telnet"]);
-const REROUTING_FLAG = /^-[a-zA-Z]*[lecxX]|^--(?:listen|exec|sh-exec|lua-exec|proxy)/;
-
-/** "probe" for a connect-only check of a loopback port, "session" for any other
- *  talk with one, null when the client reaches anything else. */
-function loopbackUse(p: CommandPosition): "probe" | "session" | null {
-  if (!RAW_TCP_CLIENTS.has(p.bin)) return null;
-  const args = p.words.slice(p.at + 1);
-  if (args.some((a) => REROUTING_FLAG.test(a))) return null;
-  const hosts = args.filter((a) => !a.startsWith("-") && !/^\d+(?:-\d+)?$/.test(a));
-  if (hosts.length !== 1 || !isLoopbackHost(hosts[0].replace(/^\[|\]$/g, "").toLowerCase())) return null;
-  return args.some((a) => /^-[a-zA-Z]*z/.test(a)) ? "probe" : "session";
-}
-
-const reachesOnlyLoopback = (p: CommandPosition, ctx: CommandRuleContext) => {
+// A network client that names only this machine (shell-loopback-clients.ts)
+// reaches no farther than http_request may, and gets the same grant. A
+// connect-only check (`nc -z 127.0.0.1 5432`) sends nothing, so it may check
+// any port: it is how anyone sees whether a database or server came up.
+function reachesOnlyLoopback(p: CommandPosition, ctx: CommandRuleContext): boolean {
   const use = loopbackUse(p);
-  return use === "probe" || (use === "session" && ctx.loopbackOpen === true);
-};
+  if (!use) return false;
+  if (use.probe) return true;
+  const reachable = ctx.loopbackReachable;
+  if (!reachable) return false;
+  return use.ports.every((port) => reachable(port)) && (use.unixSockets.length === 0 || reachable(null));
+}
 
 const runningAsRoot = () => typeof process.getuid === "function" && process.getuid() === 0;
 
@@ -85,11 +73,11 @@ export function findCommandRuleHit(command: string, ctx: CommandRuleContext = {}
 
 // What the model can do instead, by what kind of thing was refused.
 const WAY_OUT: Record<CommandRule["category"], string> = {
-  network: "For HTTP (including localhost and this app's own API) use `http_request`: it is SSRF-checked, " +
-    "DNS-pinned and audited, and it can reach this app's own server and any registered dev server. " +
-    "To download a file (a tarball, an installer, a dataset), call `http_request` with save_to set to the file's path. " +
-    "To check that a local port is open, `nc -z 127.0.0.1 PORT` is allowed. " +
-    "Other shell network clients stay refused here even for 127.0.0.1, because this app's own API can proxy on to other hosts.",
+  network: "For HTTP use `http_request`: it is SSRF-checked, DNS-pinned and audited, and it can reach this app's own " +
+    "server and any registered dev server. To download a file (a tarball, an installer, a dataset), call `http_request` " +
+    "with save_to set to the file's path. A shell client (curl, ssh, nc, socat) may reach a local port that " +
+    "`http_request` may, never this app's own port, and `nc -z 127.0.0.1 PORT` may check any local port; a proxy, " +
+    "a tunnel or following redirects keeps it refused. Any other host stays refused: this app's own API can proxy on to it.",
   "shell-escape": "Run the command it would run directly, so it can be checked.",
   obfuscation: "Run the decoded command directly, so it can be checked.",
   privilege: "There is no shell path for this: tell the user what needs doing and why.",

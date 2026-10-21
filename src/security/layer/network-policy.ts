@@ -22,7 +22,7 @@ import { resolveAndPinHost } from "./network-dns.js";
 export { resolveAndPinHost } from "./network-dns.js";
 import { manualRuntimeHostPorts, liveLocalServicePorts } from "./security-config.js";
 import { agentOriginPort } from "./agent-origin-port.js";
-import { isDisposableSandbox } from "./disposable-sandbox.js";
+import { loopbackServiceReachable } from "./loopback-grant.js";
 import { endpointHostPort } from "../../local-runtimes/admission.js";
 import { isLocalOnlyMode, isLoopbackUrl, LOCAL_ONLY_BLOCK_MESSAGE } from "../../local-only-policy.js";
 
@@ -119,23 +119,15 @@ export function evaluateWebFetch(
     }
   }
 
-  // On a machine its operator declared disposable (disposable-sandbox.ts) the
-  // services listening on it are the operator's, so every loopback port is
-  // reachable: a daemon the agent set up (nginx forks itself away, so
-  // process_start never tracks it) can be checked like a dev server. Loopback
-  // only; LAN, metadata and DNS-rebinding protection are unchanged.
-  if (isLoopbackHost(host) && isDisposableSandbox()) {
-    return { allowed: true, reason: "Loopback service on a disposable sandbox" };
-  }
-
-  // Allow health-checks to operator-trusted local services (e.g. a bridge or
-  // dev server the agent itself started). Loopback destinations only — a literal
-  // 127.0.0.1/::1 or one of its fixed alias names (isLoopbackHost); no hostname
-  // is ever RESOLVED here, so DNS-rebinding protection is untouched.
-  if (isLoopbackHost(host)) {
-    if (parsed.port && localServicePorts.has(parsed.port)) {
-      return { allowed: true, reason: "Allowed local service" };
-    }
+  // A local service the agent may reach (loopback-grant.ts, the grant the
+  // shell rules read too): an operator-trusted port (a bridge or dev server
+  // the agent started), or on a machine its operator declared disposable, any
+  // port. Loopback destinations only — a literal 127.0.0.1/::1 or one of its
+  // fixed alias names (isLoopbackHost); no hostname is ever RESOLVED here, so
+  // DNS-rebinding protection is untouched.
+  if (isLoopbackHost(host) && loopbackServiceReachable(parsed.port || null, localServicePorts)) {
+    const registered = parsed.port !== "" && localServicePorts.has(parsed.port);
+    return { allowed: true, reason: registered ? "Allowed local service" : "Loopback service on a disposable sandbox" };
   }
 
   // Loopback reached by ALIAS NAME falls out here, and must be denied exactly as

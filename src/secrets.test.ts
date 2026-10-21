@@ -112,6 +112,54 @@ describe("destinationDecision — the ladder", () => {
   });
 });
 
+// A key saved for a site may go to that site or anything under it (Peter,
+// 2026-10-21): the provider's API host sits under the site the key was saved
+// for. A neighbour, the parent, another scheme or port is not under it, and
+// the credential fill keeps the exact origin.
+describe("the origin rung: the saved site or anything under it", () => {
+  const saved = (origin: string) => {
+    const store = new SecretsStore(dir);
+    store.set("KEY", "v", { origin });
+    return store;
+  };
+
+  it("a host under the saved origin is allowed for an API send", () => {
+    expect(saved("https://supabase.com").destinationDecision("KEY", "https://api.supabase.com/v1/projects")).toBe("origin");
+    expect(saved("https://supabase.com").destinationDecision("KEY", "https://a.b.supabase.com")).toBe("origin");
+  });
+
+  it("a neighbour under the same parent is not under it", () => {
+    const store = saved("https://kybhkldvgdezjrwnmmyr.supabase.co");
+    expect(store.destinationDecision("KEY", "https://another-project.supabase.co")).toBe("ask");
+    expect(store.destinationDecision("KEY", "https://kybhkldvgdezjrwnmmyr.supabase.co/rest/v1")).toBe("origin");
+  });
+
+  it("the parent of the saved host is not under it", () => {
+    expect(saved("https://api.example.com").destinationDecision("KEY", "https://example.com")).toBe("ask");
+  });
+
+  it("another scheme or port is not under it", () => {
+    expect(saved("https://supabase.com").destinationDecision("KEY", "http://api.supabase.com")).toBe("ask");
+    expect(saved("https://supabase.com").destinationDecision("KEY", "https://api.supabase.com:8443")).toBe("ask");
+  });
+
+  it("a look-alike that only ends with the same letters is not under it", () => {
+    expect(saved("https://supabase.com").destinationDecision("KEY", "https://evilsupabase.com")).toBe("ask");
+  });
+
+  it("nothing is under a public suffix: only the saved host itself", () => {
+    const store = saved("https://github.io");
+    expect(store.destinationDecision("KEY", "https://someone.github.io")).toBe("ask");
+    expect(store.destinationDecision("KEY", "https://github.io")).toBe("origin");
+  });
+
+  it("exactOrigin (the credential fill) takes only the saved origin itself", () => {
+    const store = saved("https://supabase.com");
+    expect(store.destinationDecision("KEY", "https://supabase.com", { exactOrigin: true })).toBe("origin");
+    expect(store.destinationDecision("KEY", "https://api.supabase.com", { exactOrigin: true })).toBe("ask");
+  });
+});
+
 describe("the record on disk", () => {
   it("is written as approvedDestinations and read back from the old approvedFills name", () => {
     const seed = new SecretsStore(dir);

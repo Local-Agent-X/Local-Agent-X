@@ -99,6 +99,24 @@ describe("requestSecretDestinationApprovals", () => {
     }
   });
 
+  it("the needs-you refusal carries the pairs the inbox's yes will keep, for the item's wording; a one-shot call carries none", async () => {
+    const kept = await requestSecretDestinationApprovals([stripe], base({ ...chat, _callContext: "cron" }));
+    expect(kept.allowed).toBe(false);
+    if (kept.allowed) return;
+    expect(kept.result.metadata?.needsUserGrant).toEqual({ kind: "secret-destination", pairs: [{ name: "STRIPE_KEY", destination: "https://api.stripe.com" }] });
+    const once = await requestSecretDestinationApprovals([stripe], { ...base({ ...chat, _callContext: "cron" }), oneShot: true });
+    expect(once.allowed).toBe(false);
+    if (once.allowed) return;
+    expect(once.result.metadata?.needsUser).toBeTruthy();
+    expect(once.result.metadata?.needsUserGrant).toBeUndefined();
+  });
+
+  it("a one-shot call's inbox yes allows this call and keeps nothing", async () => {
+    const outcome = await requestSecretDestinationApprovals([stripe], { ...base({ ...chat, _callContext: "cron", _userGrant: "grant-1" }), oneShot: true });
+    expect(outcome).toEqual({ allowed: true });
+    expect(store.isDestinationApproved("STRIPE_KEY", "https://api.stripe.com")).toBe(false);
+  });
+
   it("the user's inbox yes to the call grants every pair it named, kept as a card's yes is, with no card", async () => {
     store.set("OTHER_KEY", "v");
     const outcome = await requestSecretDestinationApprovals(

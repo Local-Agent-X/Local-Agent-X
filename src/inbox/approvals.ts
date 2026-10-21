@@ -64,6 +64,17 @@ function linkOf(call: DeferredCallRecord): InboxLink {
   return { ...(call.sessionId ? { sessionId: call.sessionId } : {}), ...(call.opId ? { opId: call.opId } : {}) };
 }
 
+/** What Approve does, in the item's last line: it runs the call once, now,
+ *  and for a vault-secret send also remembers each key at its site (the gate
+ *  keeps the pair on the user's yes, secret-destination-gate.ts). The item
+ *  carries which it is (`grant`); every other approval keeps the plain line. */
+function approveSentence(call: DeferredCallRecord): string {
+  const pairs = call.grant?.kind === "secret-destination" ? call.grant.pairs : [];
+  if (pairs.length === 0) return "Approve runs this exact call once, now. Decline skips it.";
+  const remembered = pairs.map((p) => `${p.name} may go to ${p.destination}`).join(", and that ");
+  return `Approve runs this exact call once, now, and remembers that ${remembered} (Settings → Secrets lists it). Decline skips it and remembers nothing.`;
+}
+
 /** Park a call for the user's yes. Returns the item, or null when the inbox
  *  could not record it (the gate then refuses as it did before parking). */
 export function inboxApprovalRequest(call: DeferredCallRecord): InboxItem | null {
@@ -76,7 +87,7 @@ export function inboxApprovalRequest(call: DeferredCallRecord): InboxItem | null
       "",
       `Why it needs you: ${redactString(clip(call.reason, 600)).redacted}`,
       "",
-      "Approve runs this exact call once, now. Decline skips it.",
+      approveSentence(call),
     ].join("\n"),
     needsYou: true,
     key: approvalKey(call),

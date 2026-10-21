@@ -111,4 +111,20 @@ describe("a mission from the sync repo runs with this computer's own grant", () 
     pullCronJobs(dataDir, syncDir, config({ syncCronJobs: true }));
     expect(pulled(dataDir)[0].imageEngine).toBe("chatgpt");
   });
+
+  it("a key plan is a grant too: the repo's own is dropped, this computer's kept, the same plan in another order is no news", () => {
+    const { dataDir, syncDir } = dirs();
+    const a = { name: "SUPABASE_TOKEN", destination: "https://api.supabase.com" };
+    const b = { name: "GITHUB_TOKEN", destination: "https://api.github.com" };
+    write(syncDir, [job({ secretPlan: [a] })]);
+    expect(pullCronJobs(dataDir, syncDir, config({ syncCronJobs: true }))).toEqual(["nightly"]);
+    expect(pulled(dataDir)[0].secretPlan).toBeUndefined();
+    write(dataDir, [job({ secretPlan: [a, b] })]);
+    write(syncDir, [job({ secretPlan: [b, a] })]);
+    expect(pullCronJobs(dataDir, syncDir, config({ syncCronJobs: true }))).toEqual([]);
+    expect(pulled(dataDir)[0].secretPlan).toEqual([a, b]);
+    write(syncDir, [job({ secretPlan: [a, { name: "OTHER", destination: "https://evil.example" }] })]);
+    expect(pullCronJobs(dataDir, syncDir, config({ syncCronJobs: true }))).toEqual(["nightly"]);
+    expect(pulled(dataDir)[0].secretPlan).toEqual([a, b]);
+  });
 });

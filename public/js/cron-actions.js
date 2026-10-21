@@ -61,6 +61,7 @@ function openMissionModal() {
   pickMissionImageEngine('new-cron-image-engine', '');
   const signedIn = document.getElementById('new-cron-signed-in-browser');
   if (signedIn) signedIn.checked = false;
+  mountCronSecretPlan('new-cron-keys', []);
   // Mount the schedule picker fresh each open (defaults to this device's zone,
   // Daily mode). The picker owns schedule + timezone end-to-end.
   SchedulePicker.mount(document.getElementById('new-cron-sched-picker'), {});
@@ -90,6 +91,8 @@ async function addCronJob() {
   if (sched.tz) body.tz = sched.tz;
   if (imageEngine) body.imageEngine = imageEngine;
   if (document.getElementById('new-cron-signed-in-browser')?.checked) body.useSignedInBrowser = true;
+  const secretPlan = cronSecretPlanOf('new-cron-keys');
+  if (secretPlan.length) body.secretPlan = secretPlan;
   try {
     const data = await apiPost('/api/cron', body);
     if (data.ok && data.job) {
@@ -155,6 +158,7 @@ function editCronJob() {
   pickMissionImageEngine('cron-edit-image-engine', selectedJob.imageEngine || '');
   const signedIn = document.getElementById('cron-edit-signed-in-browser');
   if (signedIn) signedIn.checked = selectedJob.useSignedInBrowser === true;
+  mountCronSecretPlan('cron-edit-keys', selectedJob.secretPlan || []);
   document.getElementById('cron-edit-form').style.display = '';
   document.getElementById('cron-default-actions').style.display = 'none';
   const promptEl = document.getElementById('cron-detail-prompt');
@@ -181,7 +185,8 @@ async function saveCronJobEdits() {
   // Always send tz (even "") so editing a job can CLEAR a timezone back to
   // server local — the server treats an empty tz as "use server local time".
   // Likewise an empty imageEngine clears back to the Settings → Media default
-  // and useSignedInBrowser:false takes the mission off the user's logins.
+  // and useSignedInBrowser:false takes the mission off the user's logins; an
+  // empty secretPlan takes every key off it.
   try {
     const res = await fetch(API + '/api/cron/' + selectedJob.id, {
       method: 'PATCH',
@@ -190,6 +195,7 @@ async function saveCronJobEdits() {
         name, schedule: sched.schedule, prompt, tz: sched.tz || '',
         imageEngine: missionImageEngine('cron-edit-image-engine'),
         useSignedInBrowser: document.getElementById('cron-edit-signed-in-browser')?.checked === true,
+        secretPlan: cronSecretPlanOf('cron-edit-keys'),
       }),
     });
     const data = await res.json();

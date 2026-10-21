@@ -208,6 +208,7 @@ function renderCronDetail() {
   // A mission on the user's signed-in browser has no sign-ins of its own to clear.
   const clearSignInsBtn = document.getElementById('cron-clear-sign-ins-btn');
   if (clearSignInsBtn) clearSignInsBtn.style.display = selectedJob.useSignedInBrowser ? 'none' : '';
+  renderCronSecretPlanDetail(selectedJob);
 
   loadCronReports(selectedJob.id);
   loadCronHistory(selectedJob.id);

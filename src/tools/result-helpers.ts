@@ -1,4 +1,5 @@
 import type { BlockLayer, ToolResult, ToolResultStatus } from "../types.js";
+import type { DeferredGrant } from "../inbox/types.js";
 
 /**
  * Tool-result builders.
@@ -92,16 +93,19 @@ export const BLOCKED_WITHOUT_RECOVERY =
  * needed, in their words. The dispatch pipeline parks such a call in the
  * user's inbox for an unattended run (tool-execution/deferred-call.ts
  * parkNeedsUser) and the run goes on; an attended run keeps the refusal.
+ * `grant` says what the user's yes keeps beyond the one call (the item's
+ * wording); it rides `metadata.needsUserGrant` and goes with the mark.
  */
-export function needsUser(result: ToolResult, reason: string): ToolResult {
-  return { ...result, metadata: { ...result.metadata, needsUser: reason } } as ToolResult;
+export function needsUser(result: ToolResult, reason: string, grant?: DeferredGrant): ToolResult {
+  return { ...result, metadata: { ...result.metadata, needsUser: reason, ...(grant ? { needsUserGrant: grant } : {}) } } as ToolResult;
 }
 
-/** The reason a result says a person is needed, and the result without the mark. */
-export function takeNeedsUser(result: ToolResult): { reason: string; result: ToolResult } | null {
-  const { needsUser: reason, ...metadata } = result.metadata ?? {};
+/** The reason a result says a person is needed, what the user's yes would keep
+ *  (`grant`, for the inbox item's wording), and the result without the mark. */
+export function takeNeedsUser(result: ToolResult): { reason: string; result: ToolResult; grant?: DeferredGrant } | null {
+  const { needsUser: reason, needsUserGrant: grant, ...metadata } = result.metadata ?? {};
   if (typeof reason !== "string" || !reason) return null;
-  return { reason, result: { ...result, metadata } as ToolResult };
+  return { reason, result: { ...result, metadata } as ToolResult, ...(grant ? { grant: grant as DeferredGrant } : {}) };
 }
 
 /** The same result with `extra` merged into its metadata. A merge only adds

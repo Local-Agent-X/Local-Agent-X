@@ -39,6 +39,18 @@ import type { ServerEvent } from "../types.js";
 import { createLogger } from "../logger.js";
 const logger = createLogger("browser-secret-fill");
 
+/** Why a fill was allowed, in the words its result gives the model. */
+const FILL_GATE_EXPLAINED: Record<"account-name" | "asked" | "granted" | Exclude<DestinationDecision, "ask">, string> = {
+  "account-name": "an email address: an account name, not a credential",
+  origin: "approved (the site this secret was saved for)",
+  session: "approved (same session captured this secret)",
+  approved: "approved (user-saved approval for this origin)",
+  asked: "approved by the user just now for this origin",
+  granted: "approved by the user from their inbox, for this fill only",
+  pre_bless: "approved (operation pre-blessed this secret)",
+  planned: "approved (the user named this site for this scheduled job's key)",
+};
+
 function ok(content: string): ToolResult { return { content }; }
 function err(content: string): ToolResult { return { content, isError: true }; }
 
@@ -242,7 +254,9 @@ export function createBrowserSecretFillTool(
       // where it may be typed is not a decision to ask the user about. It still
       // goes only to its own site (above).
       const accountName = secretsStore.holdsEmailAddress(name);
-      const ladder = secretsStore.destinationDecision(name, currentOrigin, { sessionId });
+      // exactOrigin: a page under the saved origin is not the saved origin for
+      // a password; it is asked about below like any other sibling page.
+      const ladder = secretsStore.destinationDecision(name, currentOrigin, { sessionId, exactOrigin: true });
       // A sibling origin is never filled silently: only the user's own yes for
       // that pair skips the ask there.
       const decision = !sameOrigin && (ladder === "session" || ladder === "pre_bless") ? "ask" : ladder;
@@ -256,7 +270,7 @@ export function createBrowserSecretFillTool(
       if (gateOutcome === "ask") {
         const asked = await requestSecretDestinationApprovals(
           [{ name, destination: currentOrigin, purpose: `Fill ${name} into the form on ${currentOrigin}${sameOrigin ? "" : ` (it was saved for ${secretOrigin})`}` }],
-          { store: secretsStore, sessionId, toolName: "browser_fill_from_secret", call: args },
+          { store: secretsStore, sessionId, toolName: "browser_fill_from_secret", call: args, oneShot: true },
         );
         if (!asked.allowed) {
           if (asked.result.status === "declined") auditLog({ event: "fill_denied", secret: name, reason: "user_declined", origin: currentOrigin, session: sessionId });
@@ -319,14 +333,7 @@ export function createBrowserSecretFillTool(
         selectorKind: matchedPattern.label, gate: gateOutcome, pressEnter,
       });
 
-      const gateExplain =
-        gateOutcome === "account-name" ? "an email address: an account name, not a credential" :
-        gateOutcome === "origin" ? "approved (the site this secret was saved for)" :
-        gateOutcome === "session" ? "approved (same session captured this secret)" :
-        gateOutcome === "approved" ? "approved (user-saved approval for this origin)" :
-        gateOutcome === "asked" ? "approved by the user just now for this origin" :
-        gateOutcome === "granted" ? "approved by the user from their inbox, for this fill only" :
-        "approved (operation pre-blessed this secret)";
+      const gateExplain = FILL_GATE_EXPLAINED[gateOutcome];
 
       return ok(
         `Filled ${matchedPattern.label} on ${currentOrigin} with secret "${name}" [${gateExplain}]${verificationNote}. ` +

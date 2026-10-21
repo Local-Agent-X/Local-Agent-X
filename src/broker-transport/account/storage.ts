@@ -14,8 +14,12 @@ export interface AccountState {
   /** The signed-in account's email (for display). */
   email: string;
   /** The agentxos session bearer token (device-code login). Presented to the broker
-   *  + the account API. Short-TTL; re-login when it expires. */
+   *  + the account API. Short-TTL; session-renewal.ts swaps it for a fresh one about
+   *  once a day while paired, so it only lapses if the desktop is off for a week. */
   sessionToken: string;
+  /** When the token was last issued or renewed (epoch ms). Absent on an install that
+   *  predates renewal, which renews at the first check. */
+  sessionRenewedAt?: number;
   /** Server-assigned device id for THIS desktop (POST /api/devices/register). The
    *  broker `device=` on connect; also what a pairing names this machine by. */
   deviceId: string;
@@ -44,6 +48,7 @@ export function loadAccountState(): AccountState | null {
         sessionToken: parsed.sessionToken,
         deviceId: parsed.deviceId,
         pairedPhoneId: typeof parsed.pairedPhoneId === "string" ? parsed.pairedPhoneId : undefined,
+        sessionRenewedAt: typeof parsed.sessionRenewedAt === "number" ? parsed.sessionRenewedAt : undefined,
       };
     }
   } catch {

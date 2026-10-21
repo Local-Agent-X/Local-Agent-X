@@ -92,43 +92,14 @@ export async function indexChunksIdempotent(
   for (const chunk of chunks) {
     chunk.metadata = withChunkProvenance(source, chunk.metadata ?? {});
   }
-  const existing = db
-    .prepare("SELECT id, content_hash, metadata FROM chunks WHERE path = ?")
-    .all(virtualPath) as Array<{ id: number; content_hash: string | null; metadata: string | null }>;
-
-  // One row per distinct chunk: the first row with a hash is kept, any other
-  // row with the same hash is deleted. Keeping every row whose hash was still
-  // incoming let duplicates written by older indexers survive every re-index —
-  // 298 groups (449 extra rows) on one install, each hit shown twice (2026-10-13).
-  const existingByHash = new Map<string, number>();
-  for (const row of existing) {
-    if (row.content_hash && !existingByHash.has(row.content_hash)) existingByHash.set(row.content_hash, row.id);
-  }
-  const incomingHashes = new Set(chunks.map((c) => c.hash));
-
-  const toDelete = existing.filter(
-    (r) => !r.content_hash || !incomingHashes.has(r.content_hash) || existingByHash.get(r.content_hash) !== r.id
-  );
-  const toInsert = chunks.filter((c) => !existingByHash.has(c.hash));
-
-  // Metadata is derived from the source (a session chunk's provenance comes
-  // from its messages' rows), so an unchanged chunk still takes the current
-  // metadata: re-dating a transcript must not need its text to change. Text,
-  // embedding and clock stay as they are.
-  const metadataByHash = new Map(existing.filter((r) => r.content_hash && existingByHash.get(r.content_hash) === r.id).map((r) => [r.content_hash as string, r]));
-  const refresh = db.prepare("UPDATE chunks SET metadata = ?, session_id = ? WHERE id = ?");
-  for (const c of chunks) {
-    const row = metadataByHash.get(c.hash);
-    const next = c.metadata ? JSON.stringify(c.metadata) : null;
-    if (row && row.metadata !== next) refresh.run(next, c.metadata?.session_id ?? null, row.id);
+  const plan = planChunkWrites(db, chunks, virtualPath);
+  if (plan.toDelete.length === 0 && plan.toInsert.length === 0) {
+    refreshChunkMetadata(db, chunks, plan);
+    return { added: 0, removed: 0, unchanged: plan.existingCount };
   }
 
-  if (toDelete.length === 0 && toInsert.length === 0) {
-    return { added: 0, removed: 0, unchanged: existing.length };
-  }
-
-  if (toInsert.length > 0 && embeddingProvider) {
-    try { await embedChunksWithRetry(db, embeddingProvider, config, toInsert); }
+  if (plan.toInsert.length > 0 && embeddingProvider) {
+    try { await embedChunksWithRetry(db, embeddingProvider, config, plan.toInsert); }
     catch { /* keyword search still works without embeddings */ }
   }
 
@@ -153,8 +124,14 @@ export async function indexChunksIdempotent(
     fileSize = st.size;
   } catch { /* virtual path — keep the opaque idempotent stamp */ }
 
+  let written: ChunkWritePlan | null = null;
   try {
     const txn = db.transaction(() => {
+      // Decided again here, not from the read before the embedding await: two
+      // re-indexes of one path in flight both planned the same insert and both
+      // made it, so an entity page came back twice in one search (2026-10-18).
+      const { toDelete, toInsert } = written = planChunkWrites(db, chunks, virtualPath);
+      refreshChunkMetadata(db, chunks, written);
       const delChunk = db.prepare("DELETE FROM chunks WHERE id = ?");
       const delFts = hasFts ? db.prepare("DELETE FROM chunks_fts WHERE rowid = ?") : null;
       const delVec = hasVec ? db.prepare("DELETE FROM chunks_vec WHERE chunk_id = ?") : null;
@@ -191,13 +168,14 @@ export async function indexChunksIdempotent(
     txn();
   } catch (e) {
     logger.error(`[memory] indexChunksIdempotent failed for ${virtualPath}:`, (e as Error).message);
-    return { added: 0, removed: 0, unchanged: existing.length };
+    return { added: 0, removed: 0, unchanged: plan.existingCount };
   }
 
+  const done = written ?? plan;
   return {
-    added: toInsert.length,
-    removed: toDelete.length,
-    unchanged: existing.length - toDelete.length,
+    added: done.toInsert.length,
+    removed: done.toDelete.length,
+    unchanged: done.existingCount - done.toDelete.length,
   };
 }
 
@@ -275,4 +253,46 @@ export function listConversationIdsSince(
        WHERE ingested_at >= ?
        ORDER BY ingested_at DESC`
   ).all(sinceMs) as Array<{ conversation_id: string; source_format: string; ingested_at: number; title: string | null }>;
+}
+
+interface ChunkWritePlan {
+  toDelete: Array<{ id: number }>;
+  toInsert: Chunk[];
+  keptByHash: Map<string, { id: number; metadata: string | null }>;
+  existingCount: number;
+}
+
+/** Which rows of `virtualPath` go and which chunks come in, from the rows as
+ *  they are now. One row per distinct chunk: the first row with a hash is
+ *  kept, any other row with the same hash is deleted. Keeping every row whose
+ *  hash was still incoming let duplicates written by older indexers survive
+ *  every re-index — 298 groups (449 extra rows) on one install, each hit shown
+ *  twice (2026-10-13). */
+function planChunkWrites(db: InstanceType<typeof Database>, chunks: Chunk[], virtualPath: string): ChunkWritePlan {
+  const existing = db
+    .prepare("SELECT id, content_hash, metadata FROM chunks WHERE path = ?")
+    .all(virtualPath) as Array<{ id: number; content_hash: string | null; metadata: string | null }>;
+  const keptByHash = new Map<string, { id: number; metadata: string | null }>();
+  for (const row of existing) {
+    if (row.content_hash && !keptByHash.has(row.content_hash)) keptByHash.set(row.content_hash, row);
+  }
+  const incomingHashes = new Set(chunks.map((c) => c.hash));
+  const toDelete = existing.filter(
+    (r) => !r.content_hash || !incomingHashes.has(r.content_hash) || keptByHash.get(r.content_hash)?.id !== r.id
+  );
+  const toInsert = chunks.filter((c) => !keptByHash.has(c.hash));
+  return { toDelete, toInsert, keptByHash, existingCount: existing.length };
+}
+
+/** Metadata is derived from the source (a session chunk's provenance comes
+ *  from its messages' rows), so an unchanged chunk still takes the current
+ *  metadata: re-dating a transcript must not need its text to change. Text,
+ *  embedding and clock stay as they are. */
+function refreshChunkMetadata(db: InstanceType<typeof Database>, chunks: Chunk[], plan: ChunkWritePlan): void {
+  const refresh = db.prepare("UPDATE chunks SET metadata = ?, session_id = ? WHERE id = ?");
+  for (const c of chunks) {
+    const row = plan.keptByHash.get(c.hash);
+    const next = c.metadata ? JSON.stringify(c.metadata) : null;
+    if (row && row.metadata !== next) refresh.run(next, c.metadata?.session_id ?? null, row.id);
+  }
 }

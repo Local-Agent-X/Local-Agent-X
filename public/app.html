@@ -1371,6 +1371,10 @@
           <span style="color:var(--muted)">Browser profile:</span>
         </div>
         <div id="cron-detail-result" style="margin-bottom:12px;font-family:var(--mono);font-size:.72rem;color:var(--muted);max-height:60px;overflow-y:auto"></div>
+        <div id="cron-detail-keys-wrap" style="margin-bottom:12px">
+          <div class="field-label" style="margin-bottom:6px">Keys this job may use</div>
+          <div id="cron-detail-keys"></div>
+        </div>
         <div id="cron-live-status" style="display:none;margin-bottom:12px;padding:10px;background:var(--bg);border:1px solid var(--accent);border-radius:6px">
           <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
             <span class="secret-dot" style="background:var(--accent);animation:pulse 1.5s infinite"></span>
@@ -1419,6 +1423,11 @@
           <div class="field" style="margin-bottom:8px">
             <label class="field-label" style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="cron-edit-signed-in-browser"/> Use my signed-in browser</label>
             <div class="field-hint">Off: the mission browses on its own profile, with none of your logins. On: it browses as you, signed in to every site you are — only for a mission you trust with your accounts.</div>
+          </div>
+          <div class="field" style="margin-bottom:8px">
+            <label class="field-label">Keys this job may use <span style="color:var(--muted);font-weight:400">— each saved key, and the one site it goes to</span></label>
+            <div id="cron-edit-keys"></div>
+            <div class="field-hint">Saving is your approval: this mission's runs send each key to its site without asking. Any other key or site waits in your inbox.</div>
           </div>
           <div class="btn-row">
             <button class="action-btn primary" onclick="saveCronJobEdits()">Save Changes</button>
@@ -1472,6 +1481,10 @@
         <div class="field">
           <label class="field-label" style="display:flex;align-items:center;gap:8px"><input type="checkbox" id="new-cron-signed-in-browser"/> Use my signed-in browser</label>
           <div class="field-hint">Off: the mission browses on its own profile, with none of your logins. On: it browses as you, signed in to every site you are — only for a mission you trust with your accounts.</div>
+        </div>
+        <div class="field"><label class="field-label">Keys this job may use <span style="color:var(--muted);font-weight:400">— optional; each saved key, and the one site it goes to</span></label>
+          <div id="new-cron-keys"></div>
+          <div class="field-hint">Scheduling is your approval: this mission's runs send each key to its site without asking. Any other key or site waits in your inbox.</div>
         </div>
         <div class="btn-row" style="margin-top:16px;justify-content:flex-end">
           <button class="action-btn secondary" onclick="closeMissionModal()">Cancel</button>
@@ -1862,8 +1875,9 @@
      so it must load first. -->
 <script src="/js/cron.js?v=v2"></script>
 <script src="/js/cron-schedule-picker.js?v=v1"></script>
-<script src="/js/cron-detail.js?v=v1"></script>
-<script src="/js/cron-actions.js?v=v2"></script>
+<script src="/js/cron-detail.js?v=v2"></script>
+<script src="/js/cron-actions.js?v=v3"></script>
+<script src="/js/cron-secret-plan.js?v=v1"></script>
 <!-- Protocols modules. protocols-provenance.js owns escAttr + the authorship
      badges and must load first; protocols-archive.js owns archivedList/viewMode
      (a classic-script `let` is shared but stays in TDZ until its own script

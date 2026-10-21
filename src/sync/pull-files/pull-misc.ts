@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { type SyncConfig } from "../constants.js";
 import { workspaceRoot } from "../../config.js";
 import type { CronJob } from "../../cron/cron-service-types.js";
-import { locallyGrantedAuthority, MISSION_GRANT_FIELDS } from "../../cron/job-authority.js";
+import { carriesForeignGrant, locallyGrantedAuthority, MISSION_GRANT_FIELDS } from "../../cron/job-authority.js";
 import { createLogger } from "../../logger.js";
 import { pullDir } from "../mirror.js";
 import { applyTombstones, tombstonePaths } from "../tombstones.js";
@@ -100,7 +100,7 @@ export function pullCronJobs(dataDir: string, syncDir: string, config: SyncConfi
       const localById = new Map(local.map((j) => [j.id, j]));
       for (const job of jobs) {
         const granted = locallyGrantedAuthority(job, localById.get(job.id));
-        if (MISSION_GRANT_FIELDS.some((f) => job[f] !== undefined && job[f] !== granted[f])) dropped.push(job.name);
+        if (carriesForeignGrant(job, granted)) dropped.push(job.name);
         for (const f of MISSION_GRANT_FIELDS) delete job[f];
         Object.assign(job, granted);
       }

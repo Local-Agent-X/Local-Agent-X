@@ -43,6 +43,11 @@ vi.mock("../../browser/session-owner-registry.js", () => ({
   setJobExistsCheck,
 }));
 vi.mock("../../chat-ws/index.js", () => ({ broadcastAll }));
+const { setJobSecretPlanSource } = vi.hoisted(() => ({ setJobSecretPlanSource: vi.fn() }));
+vi.mock("../../cron/job-secret-plan.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../cron/job-secret-plan.js")>()),
+  setJobSecretPlanSource,
+}));
 vi.mock("../../browser/index.js", () => ({ closeBrowser: vi.fn(async () => undefined) }));
 
 import { registerCronRunner } from "./cron-runner.js";
@@ -152,6 +157,48 @@ describe("scheduled mission prompt telemetry", () => {
   });
 });
 
+// A job's key plan reaches its run as names and sites: the model knows which
+// key to use where, and never sees a value.
+describe("a scheduled run's instructions name its key plan", () => {
+  async function systemPromptFor(job: Record<string, unknown>): Promise<{ systemPrompt: string; ids: string[] }> {
+    const tools = [tool("http_request")];
+    prepareAgentRequest.mockResolvedValueOnce({
+      apiKey: "key", provider: "anthropic", model: "claude-opus-4-6", tools,
+      promptTelemetry: createPromptTelemetry({
+        profile: "full", provider: "anthropic", model: "claude-opus-4-6", prompt: "p", tools,
+        allToolCount: 1, historyMessageCount: 0, sections: [measurePromptSection("core", "static", "p")],
+      }),
+    });
+    let execute: ((jobId: string, prompt: string, context: unknown) => Promise<unknown>) | undefined;
+    registerCronRunner({
+      config: { workspace, maxIterations: 30 } as never, dataDir: workspace, memoryIndex: {} as never, memoryManager: {} as never,
+      secretsStore: {} as never, toolPolicy: {} as never,
+      cronService: { onExecute: vi.fn((h) => { execute = h; }), onChange: vi.fn(), get: vi.fn(() => job), registerRunAbort: vi.fn(), unregisterRunAbort: vi.fn() } as never,
+      integrations: { getAgentContext: () => "" } as never, allAgentTools: tools, bridgeTools: [], cronReportsDir: join(workspace, "reports"),
+      getOrCreateSession: vi.fn(() => ({ id: "s", title: "", messages: [], createdAt: 0, updatedAt: 0 }) as never), saveSession: vi.fn(async () => {}),
+    });
+    await execute!(String(job.id), "check the projects", {});
+    const options = (runAgentViaCanonical.mock.calls[0] as unknown as [string, unknown[], { systemPrompt: string; renderedPromptSections: RenderedPromptSection[] }])[2];
+    return { systemPrompt: options.systemPrompt, ids: options.renderedPromptSections.map((s) => s.id) };
+  }
+
+  it("lists each planned key at its site", async () => {
+    const { systemPrompt, ids } = await systemPromptFor({
+      id: "job-1", name: "Supabase check",
+      secretPlan: [{ name: "SUPABASE_MGMT_TOKEN", destination: "https://api.supabase.com" }],
+    });
+    expect(ids).toEqual(["scheduled-mission", "work-folder", "job-keys"]);
+    expect(systemPrompt).toContain("- SUPABASE_MGMT_TOKEN at https://api.supabase.com");
+    expect(systemPrompt).toContain("Use these keys for these sites");
+  });
+
+  it("says nothing about keys without a plan", async () => {
+    const { systemPrompt, ids } = await systemPromptFor({ id: "job-2", name: "Plain" });
+    expect(ids).toEqual(["scheduled-mission", "work-folder"]);
+    expect(systemPrompt).not.toContain("Keys this job may use");
+  });
+});
+
 // The server's half of "every change to the missions list reaches every open
 // tab": the cron service's change notice becomes the frame tabs redraw from,
 // and a job the service no longer has can never open its browser profile.
@@ -176,5 +223,22 @@ describe("the server's cron wiring", () => {
     expect(exists("job-1")).toBe(true);
     jobs.delete("job-1");
     expect(exists("job-1")).toBe(false);
+  });
+
+  it("gives the vault's ladder each job's key plan, read live from the service", () => {
+    const plan = [{ name: "K", destination: "https://api.example.com" }];
+    const job: { id: string; secretPlan?: typeof plan } = { id: "job-1", secretPlan: plan };
+    const cronService = { onExecute: vi.fn(), onChange: vi.fn(), get: vi.fn((id: string) => (id === "job-1" ? job : null)) };
+    registerCronRunner({
+      config: { workspace } as never, dataDir: workspace, memoryIndex: {} as never, memoryManager: {} as never,
+      secretsStore: {} as never, toolPolicy: {} as never, cronService: cronService as never,
+      integrations: {} as never, allAgentTools: [], bridgeTools: [], cronReportsDir: workspace,
+      getOrCreateSession: vi.fn(), saveSession: vi.fn(async () => {}),
+    });
+    const source = setJobSecretPlanSource.mock.calls[0][0] as (jobId: string) => unknown;
+    expect(source("job-1")).toEqual(plan);
+    job.secretPlan = undefined;
+    expect(source("job-1")).toBeUndefined();
+    expect(source("gone")).toBeUndefined();
   });
 });

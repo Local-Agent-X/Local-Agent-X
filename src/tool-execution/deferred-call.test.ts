@@ -19,6 +19,9 @@ import { clearSessionProfile, setSessionProfile } from "../autonomy/profile-stor
 import { setAriRequired } from "../ari-kernel/state.js";
 import { blocked, needsUser } from "../tools/result-helpers.js";
 import { callContextOf, userGrantOf } from "./internal-args.js";
+import { SecretsStore } from "../secrets.js";
+import { gateSecretDestinations } from "../secret-destination-gate.js";
+import { setJobSecretPlanSource } from "../cron/job-secret-plan.js";
 import type { CallContext, ToolCallContext } from "./context.js";
 import type { ToolDefinition, ToolResult } from "../types.js";
 
@@ -249,6 +252,69 @@ describe("a gate inside the tool that found no one to ask", () => {
     expect(rendered).not.toContain("deferredTo");
     expect(rendered).not.toContain("needsUser");
     expect(parked()).toHaveLength(0);
+  });
+});
+
+// A vault secret's send from a scheduled run, through the real gate
+// (secret-destination-gate.ts) and the real dispatcher: a pair on the job's
+// key plan goes; a pair off it parks, and the item says that Approve runs the
+// call AND remembers the pair, which it then does. Every other approval keeps
+// the plain "runs once" line.
+describe("a scheduled run's vault-secret send", () => {
+  beforeAll(() => setAriRequired(false));
+  afterAll(() => { setAriRequired(true); setJobSecretPlanSource(() => undefined); });
+
+  const session = "cron-supa-1700000000000";
+  // A stub under a registered name (the dispatcher refuses any other) whose
+  // body is what every vault-secret emitter does: run the shared gate.
+  const sendTool = (store: SecretsStore) => ({
+    name: "browser", description: "stub", parameters: { type: "object", properties: {} }, readOnly: false,
+    async execute(a: Record<string, unknown>) {
+      const gate = await gateSecretDestinations(
+        [{ name: String(a.name), destination: String(a.site), purpose: `Send ${String(a.name)} to ${String(a.site)}` }],
+        { store, sessionId: session, toolName: "browser", call: a },
+      );
+      return gate.allowed ? { content: `sent ${String(a.name)}` } : gate.result;
+    },
+  }) as unknown as ToolDefinition;
+  const send = (tool: ToolDefinition, security: SecurityLayer, args: Record<string, unknown>) => executeToolCalls(
+    [{ id: `c-${String(args.name)}`, name: "browser", arguments: JSON.stringify({ action: "secret_send", ...args }) }],
+    new Map([["browser", tool]]), security, undefined, undefined, undefined, undefined, session,
+    undefined, undefined, undefined, undefined, "op_supa_1", "cron",
+  );
+
+  it("sends a planned pair, parks the rest with wording that it will be remembered, and Approve keeps the pair", async () => {
+    const store = new SecretsStore(dir);
+    store.set("SUPABASE_MGMT_TOKEN", "sbp_x");
+    store.set("SUPABASE_FULL_ACCOUNT_TOKEN", "sbp_y");
+    setJobSecretPlanSource((jobId) => (jobId === "supa" ? [{ name: "SUPABASE_MGMT_TOKEN", destination: "https://api.supabase.com" }] : undefined));
+    const tool = sendTool(store);
+    const security = new SecurityLayer(join(dir, "workspace"), "workspace");
+
+    const planned = await send(tool, security, { name: "SUPABASE_MGMT_TOKEN", site: "https://api.supabase.com/v1/projects" });
+    expect(String(planned.find((m) => m.role === "tool")?.content)).toContain("sent SUPABASE_MGMT_TOKEN");
+    expect(parked()).toHaveLength(0);
+
+    const off = await send(tool, security, { name: "SUPABASE_FULL_ACCOUNT_TOKEN", site: "https://kybhkldvgdezjrwnmmyr.supabase.co/rest/v1" });
+    const item = parked()[0];
+    expect(String(off.find((m) => m.role === "tool")?.content)).toContain(`deferredTo="${item.id}"`);
+    expect(String(off.find((m) => m.role === "tool")?.content)).not.toContain("needsUserGrant");
+    expect(item.deferredCall?.grant).toEqual({ kind: "secret-destination", pairs: [{ name: "SUPABASE_FULL_ACCOUNT_TOKEN", destination: "https://kybhkldvgdezjrwnmmyr.supabase.co" }] });
+    expect(item.body).toContain("Approve runs this exact call once, now, and remembers that SUPABASE_FULL_ACCOUNT_TOKEN may go to https://kybhkldvgdezjrwnmmyr.supabase.co");
+    expect(item.body).not.toContain("sbp_");
+
+    const approved = await dispatchApprovedCall(item.deferredCall!, item.id, { tools: [tool], security });
+    expect(approved.status).toBe("ok");
+    expect(store.isDestinationApproved("SUPABASE_FULL_ACCOUNT_TOKEN", "https://kybhkldvgdezjrwnmmyr.supabase.co")).toBe(true);
+    // The plan never wrote the vault: its pair is the job's alone.
+    expect(store.isDestinationApproved("SUPABASE_MGMT_TOKEN", "https://api.supabase.com")).toBe(false);
+  });
+
+  it("any other approval keeps the plain line", async () => {
+    const c = ctx("write", { path: "notes.md", content: "x" }, "cron", undefined, { policyApprovalReason: "needs a yes" });
+    await requireApprovalPhase(c);
+    expect(parked()[0].body).toContain("Approve runs this exact call once, now. Decline skips it.");
+    expect(parked()[0].body).not.toContain("remembers");
   });
 });
 

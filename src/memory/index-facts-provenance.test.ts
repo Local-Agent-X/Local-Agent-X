@@ -341,3 +341,19 @@ describe("entity pages written before the source labels are rebuilt once", () =>
     expect(existsSync(join(entitiesDir(), "initech.md"))).toBe(false);
   });
 });
+
+// memory_search reads this session only; the user's original "Remember this…"
+// was in an earlier one. The page now names the message, which
+// search_past_sessions(message_id) reads — as memory_recall already printed.
+describe("an entity page names the message each fact was saved from", () => {
+  const page = (slug: string) => readFileSync(join(tempDir, "memory", "bank", "entities", `${slug}.md`), "utf8");
+
+  it("prints the message id beside the fact, and nothing for a fact with none", () => {
+    authorizeTestFactMutations(memory);
+    memory.rememberFact("@Odalys texted \"did you sell Merriweather yet\"", { kind: "experience", sourceFile: "agent-tool:user-statement", sourceMessageId: "um-op_chat_turn_a-0-0-1" });
+    memory.rememberFact("@Odalys lives in Port Avila", { kind: "world" });
+    const lines = page("odalys").split("\n");
+    expect(lines.find((l) => l.includes("Merriweather"))).toContain("(from message um-op_chat_turn_a-0-0-1)");
+    expect(lines.find((l) => l.includes("Port Avila"))).not.toContain("from message");
+  });
+});

@@ -5,6 +5,7 @@ import { isEmailAddress, registerRedactedSecretValue, unregisterRedactedSecretVa
 import { deriveOrigin, decryptSecretsFile, encryptSecretsFile } from "./secrets-crypto.js";
 import { atomicWriteFileSync } from "./util/json-store.js";
 import { getActivePreBlessedSecrets } from "./ops/pre-bless.js";
+import { plannedForSession } from "./cron/job-secret-plan.js";
 import { decideDestination, normalizeDestination, type DestinationDecision } from "./secret-destinations.js";
 import {
   SECRETS_FILE_VERSION,
@@ -314,12 +315,18 @@ export class SecretsStore {
     return !!key && !!this.secrets.get(name)?.approvedDestinations?.some((a) => a.origin === key);
   }
 
-  /** The ladder every emitter runs before a secret leaves the machine (ADR 0005); "ask" means the user decides. */
-  destinationDecision(name: string, destination: string, ctx: { sessionId?: string } = {}): DestinationDecision {
+  /** The ladder every emitter runs before a secret leaves the machine (ADR 0005); "ask" means the user decides.
+   *  `exactOrigin`: the origin rung takes only the saved origin, never a host under it (the credential fill). */
+  destinationDecision(name: string, destination: string, ctx: { sessionId?: string; exactOrigin?: boolean } = {}): DestinationDecision {
     const entry = this.secrets.get(name);
     const key = normalizeDestination(destination);
     if (!entry || !key) return "ask";
-    return decideDestination(entry, key, { sessionId: ctx.sessionId, preBlessed: getActivePreBlessedSecrets().has(name) });
+    return decideDestination(entry, key, {
+      sessionId: ctx.sessionId,
+      exactOrigin: ctx.exactOrigin,
+      preBlessed: getActivePreBlessedSecrets().has(name),
+      planned: plannedForSession(ctx.sessionId, name, key),
+    });
   }
 
   /** True once per install: the secrets file predates destination approvals

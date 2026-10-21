@@ -57,6 +57,16 @@ export interface InboxItem {
   actions?: InboxAction[];
 }
 
+/** What an Approve keeps beyond running the call once, so the item can say
+ *  so. "secret-destination": the user's yes to a parked vault-secret send is
+ *  remembered for each pair (secret-destination-gate.ts persists it), so the
+ *  key may go to that site from then on. Absent: the call runs once, and
+ *  nothing else changes. */
+export type DeferredGrant = {
+  kind: "secret-destination";
+  pairs: Array<{ name: string; destination: string }>;
+};
+
 /** A tool call an unattended run parked because it needed a person: enough to
  *  run that exact call later, as the run would have, through the normal
  *  gates. `args` excludes the dispatcher's `_`-prefixed internal keys. */
@@ -75,6 +85,8 @@ export interface DeferredCallRecord {
   sessionId?: string;
   opId?: string;
   runId?: string;
+  /** What the Approve keeps beyond this one run, from the gate that parked it. */
+  grant?: DeferredGrant;
 }
 
 export interface StoredInboxItem extends InboxItem {

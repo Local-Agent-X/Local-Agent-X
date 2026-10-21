@@ -11,6 +11,7 @@ import type { CronService, CronJob } from "./cron-service.js";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { blocked } from "../tools/result-helpers.js";
 import { agentMissionRefusal } from "./job-authority.js";
+import { grantSecretPlanFromChat, SECRET_PLAN_PARAMETER } from "./secret-plan-card.js";
 
 const refused = (reason: string): ToolResult => blocked(reason, {
   layer: "job-authority",
@@ -43,6 +44,7 @@ export function createCronTools(cron: CronService): ToolDefinition[] {
           schedule: { type: "string", description: "Cron expression or interval (e.g., '5m', '1h', '*/30 * * * *')" },
           prompt: { type: "string", description: "The prompt/instruction to execute each run" },
           timezone: { type: "string", description: "Optional IANA timezone the cron expression runs in (e.g. 'America/New_York', 'Europe/London'). Omit for the server's local time. Ignored for fixed intervals. If the user gives a clock time (e.g. '9am daily'), set this to their timezone so it fires at their local time." },
+          secrets: SECRET_PLAN_PARAMETER,
         },
         required: ["name", "schedule", "prompt"],
       },
@@ -55,7 +57,8 @@ export function createCronTools(cron: CronService): ToolDefinition[] {
         if (refusal) return refused(refusal);
         const tz = typeof args.timezone === "string" && args.timezone.trim() ? args.timezone.trim() : undefined;
         const job = cron.create(name, schedule, prompt, undefined, { tz });
-        return { content: `Created job "${job.name}" (${job.id}) — runs every ${job.schedule}${job.tz ? ` (${job.tz})` : ""}` };
+        const keys = await grantSecretPlanFromChat(cron, job, args.secrets, args, "mission_schedule_create");
+        return { content: `Created job "${job.name}" (${job.id}) — runs every ${job.schedule}${job.tz ? ` (${job.tz})` : ""}${keys}` };
       },
     },
     {
@@ -73,7 +76,7 @@ export function createCronTools(cron: CronService): ToolDefinition[] {
     },
     {
       name: "mission_schedule_update",
-      description: "Update an existing scheduled mission. Provide the id (use mission_schedule_list to find it) and any fields to change: name, schedule, prompt, or timezone. Other fields stay the same. When changing the schedule, remember each run is a fresh full-context session billed at the job's model — prefer the longest interval that still meets the need.",
+      description: "Update an existing scheduled mission. Provide the id (use mission_schedule_list to find it) and any fields to change: name, schedule, prompt, timezone, or secrets (saved keys the job may send, each approved by the user). Other fields stay the same. When changing the schedule, remember each run is a fresh full-context session billed at the job's model — prefer the longest interval that still meets the need.",
       parameters: {
         type: "object",
         properties: {
@@ -82,6 +85,7 @@ export function createCronTools(cron: CronService): ToolDefinition[] {
           schedule: { type: "string", description: "New cron expression or interval (optional)" },
           prompt: { type: "string", description: "New prompt that the agent will execute each run (optional)" },
           timezone: { type: "string", description: "New IANA timezone for the cron expression (optional, e.g. 'America/New_York'). Pass an empty string to clear it back to server local time." },
+          secrets: SECRET_PLAN_PARAMETER,
         },
         required: ["id"],
       },
@@ -91,20 +95,21 @@ export function createCronTools(cron: CronService): ToolDefinition[] {
         if (typeof args.schedule === "string") updates.schedule = args.schedule;
         if (typeof args.prompt === "string") updates.prompt = args.prompt;
         if (typeof args.timezone === "string") updates.tz = args.timezone.trim();
-        if (Object.keys(updates).length === 0) {
-          return { content: "No fields to update. Provide name, schedule, prompt, or timezone.", isError: true };
+        if (Object.keys(updates).length === 0 && args.secrets === undefined) {
+          return { content: "No fields to update. Provide name, schedule, prompt, timezone, or secrets.", isError: true };
         }
         const refusal = agentMissionRefusal(updates, cron.get(String(args.id)));
         if (refusal) return refused(refusal);
         let job: CronJob | null;
         try {
-          job = cron.update(String(args.id), updates);
+          job = Object.keys(updates).length > 0 ? cron.update(String(args.id), updates) : cron.get(String(args.id));
         } catch (e) {
           return { content: (e as Error).message, isError: true };
         }
         if (!job) return { content: `Job "${args.id}" not found.`, isError: true };
+        const keys = await grantSecretPlanFromChat(cron, job, args.secrets, args, "mission_schedule_update");
         const changed = Object.keys(updates).map(k => k === "tz" ? "timezone" : k).join(", ");
-        return { content: `Updated mission "${job.name}" (${changed}).` };
+        return { content: `Updated mission "${job.name}"${changed ? ` (${changed})` : ""}.${keys}` };
       },
     },
     {

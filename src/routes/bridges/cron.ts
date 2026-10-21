@@ -4,13 +4,36 @@ import { isProfileName } from "../../autonomy/profiles.js";
 import { agentMissionRefusal } from "../../cron/job-authority.js";
 import { MISSIONS_CHANGED_FRAME } from "../../cron/mission-changes.js";
 import { isImageEngine } from "../../tools/image-tools/image-engine.js";
+import { parseSecretPlan, type SecretPlanPair } from "../../cron/job-secret-plan.js";
+import type { CronJobOptions } from "../../cron/cron-service.js";
 
-/** Why a job body's image engine or browser choice is not one, or null. An
- *  empty engine clears the field back to the Settings → Media default. */
-function missionFieldError(body: { imageEngine?: unknown; useSignedInBrowser?: unknown }): string | null {
+/** Check a job body's image engine, browser choice and key plan, and put each
+ *  in the form the service stores; why one is not valid, or null. An empty
+ *  engine clears the field back to the Settings → Media default, false takes
+ *  the job off the user's logins, and an empty plan removes the job's plan. */
+function normalizeMissionBody(body: Record<string, unknown>): string | null {
   if (body.imageEngine !== undefined && body.imageEngine !== "" && !isImageEngine(body.imageEngine)) return `Invalid imageEngine "${String(body.imageEngine)}": grok or chatgpt`;
   if (body.useSignedInBrowser !== undefined && typeof body.useSignedInBrowser !== "boolean") return "useSignedInBrowser must be true or false";
+  if (body.imageEngine === "") body.imageEngine = undefined;
+  if (body.useSignedInBrowser === false) body.useSignedInBrowser = undefined;
+  if (body.secretPlan === undefined) return null;
+  const parsed = parseSecretPlan(body.secretPlan);
+  if ("error" in parsed) return parsed.error;
+  body.secretPlan = parsed.plan.length > 0 ? parsed.plan : undefined;
   return null;
+}
+
+type MissionBody = { provider?: string; model?: string; profile?: string; imageEngine?: unknown; useSignedInBrowser?: unknown; secretPlan?: unknown };
+
+/** The options a new job is created with, from a checked body. Saving the
+ *  Missions page is the user's approval of its key plan: no card. */
+function missionOptions(body: MissionBody, tz: string | undefined): CronJobOptions {
+  return {
+    provider: body.provider, model: body.model, profile: body.profile as CronJobOptions["profile"], tz,
+    ...(isImageEngine(body.imageEngine) ? { imageEngine: body.imageEngine } : {}),
+    ...(body.useSignedInBrowser === true ? { useSignedInBrowser: true } : {}),
+    ...(Array.isArray(body.secretPlan) ? { secretPlan: body.secretPlan as SecretPlanPair[] } : {}),
+  };
 }
 
 export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx, role) => {
@@ -51,7 +74,7 @@ export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx,
     return true;
   }
   if (method === "POST" && url.pathname === "/api/cron") {
-    const body = await safeParseBody(req) as { name?: string; schedule?: string; prompt?: string; systemJob?: boolean; provider?: string; model?: string; profile?: string; tz?: string; imageEngine?: unknown; useSignedInBrowser?: unknown };
+    const body = await safeParseBody(req) as { name?: string; schedule?: string; prompt?: string; systemJob?: boolean; tz?: string } & MissionBody;
     if (!body.name || !body.schedule || !body.prompt) { json(400, { error: "name, schedule, and prompt are required" }); return true; }
     if (role === "agent") {
       // A name already in use rewrites that mission's schedule and prompt (CronService.create).
@@ -60,15 +83,11 @@ export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx,
       if (refusal) { json(403, { error: refusal }); return true; }
     }
     if (body.profile !== undefined && !isProfileName(body.profile)) { json(400, { error: `Invalid profile "${body.profile}"` }); return true; }
-    const fieldError = missionFieldError(body);
+    const fieldError = normalizeMissionBody(body);
     if (fieldError) { json(400, { error: fieldError }); return true; }
     const tz = typeof body.tz === "string" && body.tz.trim() ? body.tz.trim() : undefined;
     try {
-      const job = ctx.cronService.create(body.name, body.schedule, body.prompt, body.systemJob, {
-        provider: body.provider, model: body.model, profile: body.profile, tz,
-        ...(isImageEngine(body.imageEngine) ? { imageEngine: body.imageEngine } : {}),
-        ...(body.useSignedInBrowser === true ? { useSignedInBrowser: true } : {}),
-      });
+      const job = ctx.cronService.create(body.name, body.schedule, body.prompt, body.systemJob, missionOptions(body, tz));
       json(200, { ok: true, job });
     } catch (e) { json(400, { error: safeErrorMessage(e) }); }
     return true;
@@ -81,11 +100,9 @@ export const handleCronRoutes: RouteHandler = async (method, url, req, res, ctx,
       if (refusal) { json(403, { error: refusal }); return true; }
     }
     if (body.profile !== undefined && !isProfileName(body.profile)) { json(400, { error: "Invalid profile" }); return true; }
-    const fieldError = missionFieldError(body);
+    // "" clears the engine back to the default, false the browser grant, [] the key plan.
+    const fieldError = normalizeMissionBody(body);
     if (fieldError) { json(400, { error: fieldError }); return true; }
-    // "" clears the engine back to the default; false clears the browser grant.
-    if (body.imageEngine === "") body.imageEngine = undefined;
-    if (body.useSignedInBrowser === false) body.useSignedInBrowser = undefined;
     try {
       const job = ctx.cronService.update(id, body);
       if (!job) { json(404, { error: "Job not found" }); return true; }

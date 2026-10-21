@@ -31,13 +31,16 @@ describe("shouldGateInKernel", () => {
     expect(shouldGateInKernel("http_request")).toBe(true);
     expect(shouldGateInKernel("memory_search")).toBe(true);
     expect(shouldGateInKernel("browser_fill_from_secret")).toBe(true);
+    // The kernel bridges run the kernel's own executors — raw disk and
+    // network I/O — so the dispatch gate judges them like read and http_request.
+    expect(shouldGateInKernel("ari_file")).toBe(true);
+    expect(shouldGateInKernel("ari_http")).toBe(true);
   });
 
   it("returns false for explicitly classified internal tools", () => {
     expect(shouldGateInKernel("agent_spawn")).toBe(false);
     expect(shouldGateInKernel("protocol")).toBe(false);
     expect(shouldGateInKernel("mission_schedule_create")).toBe(false);
-    expect(shouldGateInKernel("ari_file")).toBe(false);
   });
 
   it("returns TRUE for unmapped tools (fail-closed posture)", () => {

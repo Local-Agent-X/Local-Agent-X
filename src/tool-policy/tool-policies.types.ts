@@ -160,10 +160,11 @@ type RiskFacts =
  * HOST_CAPABILITY_MANIFEST — `exec` only for shell — or every call throws and
  * blocks under ariRequired. Either one verb, or a verb read off an argument: a
  * value in `writes` (any case) is a write, judged as `as` or as that value
- * lowercased, and anything else as "get" — so a POST or a browser click reads
- * as a write to a preset that denies tainted writes.
+ * lowercased, and anything else as `otherwise` ("get" when unset; a file-class
+ * tool says "read") — so a POST or a browser click reads as a write to a
+ * preset that denies tainted writes.
  */
-export type AriActionSpec = string | { arg: string; writes: readonly string[]; as?: string };
+export type AriActionSpec = string | { arg: string; writes: readonly string[]; as?: string; otherwise?: string };
 
 /** The kernel defense pipeline (feeds TOOLS / TOOL_CLASS_MAP). A tool the
  *  kernel checks must say which action it is judged as; an internal tool

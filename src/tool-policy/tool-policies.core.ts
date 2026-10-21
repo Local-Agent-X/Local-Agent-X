@@ -147,8 +147,11 @@ export const TOOL_POLICIES_CORE: Record<string, ToolPolicyRow> = {
   // The kernel file bridge opens the caller's `path` for its `action`; the
   // action-conditional specs fail closed, so a call must name read or write.
   // The ari_* bridges derive runId/principal from the trusted session
-  // (arikernel-bridge.ts), never from a model-supplied `_runId`.
-  ari_file:    { kernel: "internal", risk: "workspace-write", capabilities: ["sensitive-read"], tags: [], reads: ["session"], pathArgs: [
+  // (arikernel-bridge.ts), never from a model-supplied `_runId`. The bridge
+  // runs the kernel's own file executor, which is raw disk I/O: the dispatch
+  // gate judges it in the kernel like `read` and `write` (the bridge itself
+  // never asked the kernel's policy engine).
+  ari_file:    { kernel: "file", ariAction: { arg: "action", writes: ["write"], otherwise: "read" }, risk: "workspace-write", capabilities: ["sensitive-read"], tags: [], reads: ["session"], pathArgs: [
     { arg: "path", action: "read",  forActions: ["read"] },
     { arg: "path", action: "write", forActions: ["write"] },
   ] },

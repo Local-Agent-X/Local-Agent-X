@@ -222,7 +222,7 @@ export function ariActionOf(name: string, args: Record<string, unknown>): string
   if (typeof spec === "string") return spec;
   const value = String(args?.[spec.arg] ?? "").toLowerCase();
   const write = spec.writes.find((w) => w.toLowerCase() === value);
-  return write ? (spec.as ?? write.toLowerCase()) : "get";
+  return write ? (spec.as ?? write.toLowerCase()) : (spec.otherwise ?? "get");
 }
 
 /** Why this tool is refused in `context`, or undefined when it is not. */

@@ -59,7 +59,8 @@ export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyRow> = {
   },
   // The kernel's own HTTP tool: the same arbitrary request http_request makes,
   // so the HTTP Requests switch covers it too.
-  ari_http: { kernel: "internal", risk: "network-write", capabilities: ["egress"], tags: [], output: "http-body", externalContent: true, offBoxFetch: true, destination: [{ to: "site", arg: "url", allowlisted: true }], reads: ["session"], killSwitch: "enableHttp" },
+  // Its verb is the `action` arg; the kernel judges it like http_request's method.
+  ari_http: { kernel: "http", ariAction: { arg: "action", writes: ["post", "put", "patch", "delete"] }, risk: "network-write", capabilities: ["egress"], tags: [], output: "http-body", externalContent: true, offBoxFetch: true, destination: [{ to: "site", arg: "url", allowlisted: true }], reads: ["session"], killSwitch: "enableHttp" },
   // Reading a page is not an HTTP request in the switch's sense: no killSwitch.
   web_fetch: {
     kernel: "http", ariAction: "get", risk: "network-read", capabilities: ["egress"], tags: ["web-read"], essentialRank: 17, blurb: { say: "summarize https://example.com", does: "Fetch and read a web page." }, timeoutMs: 60_000, output: "http-body", externalContent: true, offBoxFetch: true,

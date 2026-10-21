@@ -5,9 +5,9 @@
 //     Kernel evaluates the call at the dispatch layer (Layer -1 in the
 //     enforce-policy phase) — taint analysis, capability check, audit log.
 //   - "internal"
-//     Tool runs entirely inside LAX state (no raw I/O, or raw I/O that
-//     already routes through a kernel-direct path like arikernel-bridge).
-//     Dispatch skips the kernel for these.
+//     Tool runs entirely inside LAX state (no raw I/O). Dispatch skips the
+//     kernel for these. The ari_* bridges are NOT internal: they run the
+//     kernel's executors, which is raw I/O, so their rows carry a gated class.
 //
 // Unmapped tools fail-closed — shouldGateInKernel returns true so the
 // kernel sees them with no class match and blocks. Adding a tool to

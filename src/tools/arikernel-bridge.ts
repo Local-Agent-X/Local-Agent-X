@@ -139,9 +139,10 @@ export function buildToolCall(cfg: BridgeConfig, args: BridgeArgs): ToolCall {
     action: args.action ?? cfg.defaultAction,
     parameters: executorParameters(cfg, args),
     taintLabels,
-    // Capability grants are minted server-side via a trusted path; the bridge
-    // never reads `_capabilityGrantId` from args. Until that path is wired,
-    // leave grantId undefined and let the kernel's grant gate decide.
+    // The kernel's policy verdict on this call was already given at dispatch:
+    // the bridge's row is a gated class (file / http), so ariKernelGate ran
+    // ariEvaluate with the host grants before execute. This executor call
+    // performs the I/O; it never reads a `_capabilityGrantId` from args.
     grantId: undefined,
   };
 }

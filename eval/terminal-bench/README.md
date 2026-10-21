@@ -12,7 +12,8 @@ the same conditions and the task's own tests decide pass or fail.
 | `drive.mjs` | Runs inside the container: boots a headless LAX on a fresh data dir with the task's working directory as the workspace, sends the instruction as one chat turn, waits, stops the server. |
 | `seed.mjs` | The data dir each task starts from (provider and model, Autonomous profile, unrestricted file access with the disposable-sandbox switch on, inside the throwaway container). Tested by `test/terminal-bench-seed.test.ts`. |
 | `bundle.mjs` | Builds the Linux bundle from one commit, entirely inside a Debian bullseye container: compiled `dist/`, production `node_modules` for linux-x64, and a Node binary. |
-| `policy-scan.mjs` | Runs every statement of each task's reference solution (`<task>/solution/solve.sh`) through LAX's security layer, as a chat turn's shell call would reach it, and groups the refusals by rule. No model. Use it to find classes of over-blocking; justify each fix with a real-user case, never one task's solution. |
+| `policy-scan.mjs` | Runs every statement of each task's reference solution (`<task>/solution/solve.sh`) through LAX's security layer, as a chat turn's shell call would reach it, and groups the refusals by rule. No model. With `--replay <job dir>` it judges the shell commands a finished LAX run's model actually sent instead. Use it to find classes of over-blocking; justify each fix with a real-user case, never one task's solution. |
+| `hermes_pinned.py` | Harbor's Hermes agent, installed from one pinned Hermes release end to end (`-a hermes_pinned:HermesPinned --ak version=v2026.9.24`). Harbor 0.24's own adapter fetches the installer from Hermes' `main` and runs a `hermes version` subcommand that no release has, so it installs nothing (2026-10-20). |
 
 ### Scanning the reference solutions
 

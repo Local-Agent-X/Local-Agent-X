@@ -8,6 +8,11 @@
 // the bundle (bundle.mjs) unpacked, e.g.
 //
 //   node eval/terminal-bench/policy-scan.mjs --tasks /tasks --out /out/scan.json [--desktop]
+//   node eval/terminal-bench/policy-scan.mjs --replay /jobs/<job> --out /out/replay.json
+//
+// --replay judges the shell commands a LAX run's model actually sent (every
+// bash / process_start call in each trial's saved session) instead of the
+// reference solutions: what today's rules would still refuse of real work.
 //
 // Default settings are the benchmark seed's (seed.mjs: unrestricted file
 // access, the disposable-sandbox switch, LAX_SANDBOX=host). --desktop scans
@@ -75,13 +80,48 @@ export function statements(script) {
   return out;
 }
 
-const tasks = readdirSync(tasksDir).filter((t) => existsSync(join(tasksDir, t, "solution", "solve.sh"))).sort();
+/** The shell commands a LAX run actually sent: every bash / process_start call
+ *  in each trial's saved session (lax-data/sessions/*.jsonl). */
+function* sessionCommands(jobDir) {
+  for (const trial of readdirSync(jobDir)) {
+    const sessions = join(jobDir, trial, "agent", "lax-data", "sessions");
+    if (!existsSync(sessions)) continue;
+    for (const f of readdirSync(sessions).filter((n) => n.endsWith(".jsonl") && !n.startsWith("."))) {
+      for (const line of readFileSync(join(sessions, f), "utf8").split("\n")) {
+        let m;
+        try { m = JSON.parse(line); } catch { continue; }
+        for (const tc of (m.message ?? m).tool_calls ?? []) {
+          const name = tc.function?.name ?? tc.name;
+          if (name !== "bash" && name !== "process_start") continue;
+          let args = tc.function?.arguments ?? tc.arguments ?? tc.input;
+          try { if (typeof args === "string") args = JSON.parse(args); } catch { continue; }
+          if (typeof args?.command === "string") yield { task: trial.split("__")[0], toolName: name, command: args.command };
+        }
+      }
+    }
+  }
+}
+
+// --replay <job dir>: judge what a run's model actually ran, not the reference.
+const replayDir = arg("replay", null);
 const results = [];
-for (const task of tasks) {
-  const script = readFileSync(join(tasksDir, task, "solution", "solve.sh"), "utf8");
-  for (const command of statements(script)) {
-    const d = layer.evaluate({ toolName: "bash", args: { command }, sessionId: "scan", callContext: "api" });
+let tasks;
+if (replayDir) {
+  const seen = new Set();
+  for (const { task, toolName, command } of sessionCommands(resolve(replayDir))) {
+    seen.add(task);
+    const d = layer.evaluate({ toolName, args: { command }, sessionId: "scan", callContext: "api" });
     if (!d.allowed) results.push({ task, command: command.slice(0, 400), reason: d.reason });
+  }
+  tasks = [...seen];
+} else {
+  tasks = readdirSync(tasksDir).filter((t) => existsSync(join(tasksDir, t, "solution", "solve.sh"))).sort();
+  for (const task of tasks) {
+    const script = readFileSync(join(tasksDir, task, "solution", "solve.sh"), "utf8");
+    for (const command of statements(script)) {
+      const d = layer.evaluate({ toolName: "bash", args: { command }, sessionId: "scan", callContext: "api" });
+      if (!d.allowed) results.push({ task, command: command.slice(0, 400), reason: d.reason });
+    }
   }
 }
 

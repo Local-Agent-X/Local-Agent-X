@@ -378,7 +378,7 @@ export class RBACManager {
 // manager) can read the token without re-threading it. Same pattern as
 // getSecretsStoreSingleton() in secrets.ts.
 let _internalAgentToken: string | null = null;
-export function setInternalAgentToken(t: string): void {
+export function setInternalAgentToken(t: string | null): void {
   _internalAgentToken = t;
 }
 export function getInternalAgentToken(): string | null {

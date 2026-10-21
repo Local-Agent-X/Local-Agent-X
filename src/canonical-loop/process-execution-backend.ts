@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { fork, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { getRuntimeConfig } from "../config.js";
+import { getInternalAgentToken } from "../rbac.js";
 import type { ExactDelegatedRuntimeDescriptor, Op } from "../ops/types.js";
 import { unifiedRegistry } from "../tools/registry.js";
 import { descriptorOwnerSessionId } from "./provider-adapter-factory.js";
@@ -117,6 +118,8 @@ export class ProcessExecutionBackend implements ExecutionBackend {
         LAX_PROCESS_TARGET_ID: request.placement.targetId,
         LAX_PROCESS_PLACEMENT_REVISION: String(request.placement.revision),
         LAX_PROCESS_HANDOFF_TOKEN: token,
+        // The worker's self-calls carry the agent role, as the server's own do.
+        LAX_INTERNAL_AGENT_TOKEN: getInternalAgentToken() ?? "",
         LAX_OLLAMA_URL: runtimeConfig.ollamaUrl,
         LAX_OLLAMA_CLOUD_URL: runtimeConfig.ollamaCloudUrl,
         LAX_WORKSPACE: runtimeConfig.workspace,

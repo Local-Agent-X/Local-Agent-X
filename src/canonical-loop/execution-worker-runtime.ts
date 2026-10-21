@@ -3,6 +3,7 @@ import { startAriKernel } from "../ari-kernel/index.js";
 import { getRuntimeConfig } from "../config.js";
 import { getLaxDir } from "../lax-data-dir.js";
 import { readOp } from "../ops/op-store.js";
+import { setInternalAgentToken } from "../rbac.js";
 import { getOrInitSecretsStore } from "../secrets.js";
 import { setSessionRelayWriter } from "../ops/session-bridge.js";
 import { buildToolRegistry } from "../tools.js";
@@ -76,6 +77,10 @@ export async function runClaimedExecutionWorker(
     }, 2_000);
     heartbeat.unref?.();
     const config = getRuntimeConfig();
+    // The server's internal agent token, so this worker's self-calls are the
+    // agent's and never the operator's (tools/web-egress.ts selfCallAuthHeader).
+    const internalAgentToken = process.env.LAX_INTERNAL_AGENT_TOKEN;
+    if (internalAgentToken) setInternalAgentToken(internalAgentToken);
     const kernelActive = await startAriKernel(
       join(getLaxDir(), "ari-audit.db"),
       undefined,

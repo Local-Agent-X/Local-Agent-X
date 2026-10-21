@@ -24,6 +24,7 @@ import type { ExactDelegatedRuntimeDescriptor, Op } from "../ops/types.js";
 import { getLocalRuntimeById } from "../local-runtimes/index.js";
 import { verifyDelegatedRuntimeIntegrity } from "./runtime-integrity.js";
 import { loadSettings } from "../settings.js";
+import { getInternalAgentToken } from "../rbac.js";
 import {
   DockerCliExecutionRuntime,
   type DockerContainerSpec,
@@ -260,6 +261,7 @@ async function materializeProjection(
         containerId: container.containerId,
         containerCreatedAt: container.createdAt,
         imageDigest: container.imageId,
+        ...(getInternalAgentToken() ? { internalAgentToken: getInternalAgentToken() as string } : {}),
       }));
     },
     async cleanup(): Promise<void> {

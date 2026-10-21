@@ -79,14 +79,16 @@ describe("selfCallAuthHeader", () => {
     expect(await selfCallAuthHeader(`http://127.0.0.1:${port + 1}/api`)).toBeNull();
   });
 
-  it("falls back to the operator token only when the internal token is unset (null)", async () => {
-    // The internal token is null before server boot. There is no public setter
-    // to null, so mock the rbac accessor to model the pre-boot/subprocess state.
+  it("sends no credential when the internal token is unset — never the operator token", async () => {
+    // The internal token is null before server boot and in a worker the server
+    // did not hand it to. The operator fallback let a worker's model reach the
+    // routes the agent role is denied (red team 2026-10-13, C1).
     vi.resetModules();
     vi.doMock("../rbac.js", () => ({ getInternalAgentToken: () => null }));
     const { selfCallAuthHeader: fresh } = await import("./web-tools.js");
     const h = await fresh(`http://localhost:${port}/api/settings`);
-    expect(h).toEqual({ Authorization: `Bearer ${authToken}` });
+    expect(h).toBeNull();
+    expect(JSON.stringify(h ?? {})).not.toContain(authToken);
     vi.doUnmock("../rbac.js");
     vi.resetModules();
   });

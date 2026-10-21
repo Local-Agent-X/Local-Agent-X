@@ -12,6 +12,10 @@ export interface ContainerBootstrap {
   containerId: string;
   containerCreatedAt: string;
   imageDigest: string;
+  /** The server's internal agent token, so the worker's self-calls carry the
+   *  agent role (tools/web-egress.ts selfCallAuthHeader); absent, they carry
+   *  no credential. Under the record's MAC like every other field. */
+  internalAgentToken?: string;
 }
 
 interface SealedContainerBootstrap { bootstrap: ContainerBootstrap; mac: string }
@@ -38,7 +42,8 @@ function validate(value: unknown): asserts value is ContainerBootstrap {
     || !nonEmpty(b.targetId) || !Number.isSafeInteger(b.placementRevision) || (b.placementRevision as number) < 1
     || !nonEmpty(b.token) || typeof b.containerId !== "string" || !/^[a-f0-9]{64}$/.test(b.containerId)
     || !canonicalIso(b.containerCreatedAt) || typeof b.imageDigest !== "string"
-    || !/^sha256:[a-f0-9]{64}$/.test(b.imageDigest)) throw new Error("invalid container bootstrap");
+    || !/^sha256:[a-f0-9]{64}$/.test(b.imageDigest)
+    || (b.internalAgentToken !== undefined && !nonEmpty(b.internalAgentToken))) throw new Error("invalid container bootstrap");
 }
 
 function nonEmpty(value: unknown): value is string {

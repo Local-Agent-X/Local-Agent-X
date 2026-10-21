@@ -10,6 +10,7 @@ try {
   bootstrap = verifyContainerBootstrap(JSON.parse(readFileSync(bootstrapPath, "utf8")));
   const localRuntime = process.env.LAX_PROJECTED_LOCAL_RUNTIME_FILE;
   if (localRuntime) restoreProjectedLocalRuntime(localRuntime);
+  if (bootstrap.internalAgentToken) process.env.LAX_INTERNAL_AGENT_TOKEN = bootstrap.internalAgentToken;
 } catch {
   process.exit(2);
 }

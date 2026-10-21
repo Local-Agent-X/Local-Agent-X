@@ -158,23 +158,17 @@ export async function reachesOwnServer(url: string): Promise<boolean> {
 }
 
 /** Auth header for a loopback self-call to our own server, or null for any
- *  external URL (so the token never leaks off-box). Uses the least-privilege
- *  internal agent token; falls back to the operator token only when the
- *  internal token is unset (e.g. a subprocess that didn't boot the full
- *  server — it already holds the operator token on disk and runs at full
- *  user trust). In the main server process the internal token is always set,
- *  so the agent loop never wields operator for its own self-calls. */
+ *  external URL (so the token never leaks off-box). Always the least-privilege
+ *  internal agent token: the server mints it at boot and hands it to every
+ *  execution worker it starts (process-execution-backend.ts, the container
+ *  bootstrap). A process that has none sends no credential at all and the
+ *  server refuses the call — never the operator token, which would let the
+ *  model inside that process reach declassify, the tool policy and the
+ *  sandbox switches the agent role is denied. */
 export async function selfCallAuthHeader(url: string): Promise<Record<string, string> | null> {
-  let rc;
-  try {
-    const { getRuntimeConfig } = await import("../config.js");
-    rc = getRuntimeConfig();
-  } catch {
-    return null;
-  }
   if (!(await reachesOwnServer(url))) return null;
-  const token = getInternalAgentToken() ?? rc.authToken;
-  return { Authorization: `Bearer ${token}` };
+  const token = getInternalAgentToken();
+  return token ? { Authorization: `Bearer ${token}` } : null;
 }
 
 /** Callback shape undici's `connect.lookup` invokes — the array form, where a

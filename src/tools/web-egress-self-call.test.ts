@@ -49,4 +49,16 @@ describe("selfCallAuthHeader recognizes every loopback alias of the self port", 
       expect(await selfCallAuthHeader(url), url).toBeNull();
     }
   });
+
+  // A process with no internal token used to fall back to the operator token,
+  // which an execution worker's model could then spend on declassify, the
+  // tool policy and the sandbox switches (red team 2026-10-13, C1).
+  it("a process with no internal token sends no credential at all, never the operator token", async () => {
+    setInternalAgentToken(null);
+    try {
+      expect(await selfCallAuthHeader(`http://127.0.0.1:${port}/api/security/declassify`)).toBeNull();
+    } finally {
+      setInternalAgentToken(INTERNAL);
+    }
+  });
 });

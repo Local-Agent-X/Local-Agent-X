@@ -137,7 +137,9 @@ export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyRow> = {
   // The file-access gate judges the sql_* database path with the call's
   // session (kernel-class-policy.ts); the tool resolves it with the same one.
   sql_query: {
-    kernel: "database", ariAction: "query", risk: "workspace-write", capabilities: ["sensitive-read"], tags: [], readOnlyUnless: { arg: "readonly", value: false }, reads: ["session"],
+    // readonly:false opens the database for writes, so the kernel judges that
+    // call as a mutation; anything else is a query.
+    kernel: "database", ariAction: { arg: "readonly", writes: ["false"], as: "mutate", otherwise: "query" }, risk: "workspace-write", capabilities: ["sensitive-read"], tags: [], readOnlyUnless: { arg: "readonly", value: false }, reads: ["session"],
     prompt: "Read-only by default. Run sql_schema first to see available tables.",
   },
   sql_explain:         { kernel: "database", ariAction: "query", risk: "safe", capabilities: [], tags: [], reads: ["session"] },

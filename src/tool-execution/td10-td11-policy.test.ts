@@ -46,6 +46,12 @@ describe("TD-11 · deriveAriAction — action derived from args, not the static 
     expect(deriveAriAction("browser", {})).toBe("get");
   });
 
+  it("maps sql_query by readonly: a write-mode open is a mutate, everything else a query", () => {
+    expect(deriveAriAction("sql_query", { database: "a.db", query: "DELETE FROM t", readonly: false })).toBe("mutate");
+    expect(deriveAriAction("sql_query", { database: "a.db", query: "SELECT 1", readonly: true })).toBe("query");
+    expect(deriveAriAction("sql_query", { database: "a.db", query: "SELECT 1" })).toBe("query");
+  });
+
   it("falls back to the static ARI_ACTION_MAP for non-arg-derivable tools", () => {
     expect(deriveAriAction("read", {})).toBe("read");
     expect(deriveAriAction("write", {})).toBe("write");

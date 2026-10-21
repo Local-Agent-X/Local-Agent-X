@@ -42,7 +42,7 @@ import { join } from "node:path";
 
 // The phrase list lives in eval/retraction-phrases.mjs, shared with the
 // op-outcomes `noRetraction` check.
-import { RETRACTION } from "./retraction-phrases.mjs";
+import { findRetraction } from "./retraction-phrases.mjs";
 
 /** Rows the harness itself labelled as results — never a guess at content.
  *  Both search tools' envelopes: memory_search (<search_results>) and
@@ -97,19 +97,18 @@ for (const f of readdirSync(dir).filter(n => n.endsWith(".jsonl"))) {
     .reduce((sum, m) => sum + retrievalYield(m.content), 0);
   if (yielded > 0) withRetrieval++;
 
-  const allRetractions = msgs.filter(m => m.role === "assistant" && RETRACTION.some(re => re.test(m.content)));
+  const allRetractions = msgs.filter(m => m.role === "assistant" && findRetraction(m.content));
   const retractions = allRetractions.filter(inWindow);
   if (allRetractions.length > retractions.length) beforeSince++;
   if (retractions.length > 0) withRetraction++;
 
   if (retractions.length > 0 && yielded > 0) {
-    const matched = RETRACTION.find(re => re.test(retractions[0].content));
     findings.push({
       file: f,
       resultsReturned: yielded,
       retractions: retractions.length,
       at: retractions[0].createdAt + (retractions[0].timeUnknown ? " (time unknown)" : ""),
-      quote: (retractions[0].content.match(matched)?.[0] ?? "").slice(0, 80),
+      quote: (findRetraction(retractions[0].content) ?? "").slice(0, 80),
     });
   }
 }

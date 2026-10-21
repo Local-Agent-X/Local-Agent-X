@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync, writeFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
+import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes, scryptSync } from "node:crypto";
 import { hostname, userInfo } from "node:os";
@@ -53,74 +53,62 @@ interface KeychainResult {
 // Windows DPAPI
 // ═══════════════════════════════════════════════════════════════════
 
+// The master key crosses the process boundary only through the child's
+// standard input and output, never as script text or a file. A script body
+// is what PowerShell's ScriptBlock logging records and what AMSI (and with
+// it Defender's sample submission) scans, and a temp file is readable by
+// anything running as the user however its mode is set (0600 is a no-op on
+// Windows). The scripts below are fixed text: the key is a pipe's bytes, and
+// the sealed file's path rides an environment variable, so neither is ever
+// spliced into the script. `[Console]::Out` writes straight to the pipe,
+// past the PowerShell host, so a transcription policy does not capture it.
+const DPAPI_PATH_ENV = "LAX_DPAPI_PATH";
+const DPAPI_SCOPE = "[System.Security.Cryptography.DataProtectionScope]::CurrentUser";
+const DPAPI_PROTECT_SCRIPT = [
+  "$ErrorActionPreference = 'Stop'",
+  "Add-Type -AssemblyName System.Security",
+  "$bytes = [Convert]::FromBase64String([Console]::In.ReadToEnd().Trim())",
+  `$sealed = [System.Security.Cryptography.ProtectedData]::Protect($bytes, $null, ${DPAPI_SCOPE})`,
+  `[IO.File]::WriteAllBytes($env:${DPAPI_PATH_ENV}, $sealed)`,
+].join("; ");
+// $ErrorActionPreference=Stop so a failed Unprotect exits non-zero (so
+// execFileSync throws) instead of printing nothing that we would then parse
+// as 0 bytes of "key material".
+const DPAPI_UNPROTECT_SCRIPT = [
+  "$ErrorActionPreference = 'Stop'",
+  "Add-Type -AssemblyName System.Security",
+  `$sealed = [IO.File]::ReadAllBytes($env:${DPAPI_PATH_ENV})`,
+  `$bytes = [System.Security.Cryptography.ProtectedData]::Unprotect($sealed, $null, ${DPAPI_SCOPE})`,
+  "[Console]::Out.Write([Convert]::ToBase64String($bytes))",
+].join("; ");
+
+function runDpapiScript(script: string, filePath: string, input?: string): string {
+  return execFileSync("powershell.exe", [
+    "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-Command", script,
+  ], {
+    encoding: "utf-8",
+    timeout: 10_000,
+    env: { ...process.env, [DPAPI_PATH_ENV]: filePath },
+    stdio: [input === undefined ? "ignore" : "pipe", "pipe", "pipe"],
+    ...(input === undefined ? {} : { input }),
+    ...HIDDEN,
+  });
+}
+
 /**
  * Store a key using Windows DPAPI (encrypted to current user's login).
- * Exported for keychain-temp-file-perms.test.ts only — not public API.
+ * Exported for keychain-dpapi.test.ts only — not public API.
  */
 export function dpapiStore(data: Buffer, filePath: string): void {
-  const b64 = data.toString("base64");
-  // Unique script suffix per call. Multiple SecretsStore instances run
-  // concurrently on boot (server + self-edit tool + workers + mcp-client);
-  // a fixed shared script/output path lets one process's cleanup unlink
-  // another's file mid-flight, which surfaced as ENOENT master.dpapi.b64
-  // crashes in 2026-05-09 logs.
-  const scriptPath = filePath + "." + randomBytes(6).toString("hex") + ".ps1";
-  const script =
-    `Add-Type -AssemblyName System.Security\n` +
-    `$bytes = [Convert]::FromBase64String('${b64}')\n` +
-    `$encrypted = [System.Security.Cryptography.ProtectedData]::Protect($bytes, $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser)\n` +
-    `[IO.File]::WriteAllBytes('${filePath.replace(/\\/g, "/")}', $encrypted)\n`;
-  // 0o600: the script embeds the base64 plaintext master key — between
-  // write and unlink it must not be readable at default-umask perms.
-  writeFileSync(scriptPath, script, { encoding: "utf-8", mode: 0o600 });
-  try {
-    execFileSync("powershell.exe", [
-      "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
-      "-ExecutionPolicy", "Bypass", "-File", scriptPath
-    ], { timeout: 10_000, stdio: "ignore", ...HIDDEN });
-  } finally {
-    try { unlinkSync(scriptPath); } catch {}
-  }
+  runDpapiScript(DPAPI_PROTECT_SCRIPT, filePath, data.toString("base64"));
 }
 
 /**
  * Retrieve a key using Windows DPAPI.
- * Exported for keychain-temp-file-perms.test.ts only — not public API.
+ * Exported for keychain-dpapi.test.ts only — not public API.
  */
 export function dpapiRetrieve(filePath: string): Buffer {
-  // Unique paths per call — see dpapiStore comment. Without this,
-  // concurrent SecretsStore boots race on the shared `.retrieve.ps1`
-  // + `.b64` filenames; one process's `unlinkSync(outPath)` deletes
-  // another's output before its `readFileSync` runs.
-  const suffix = randomBytes(6).toString("hex");
-  const scriptPath = filePath + "." + suffix + ".retrieve.ps1";
-  const outPath = filePath + "." + suffix + ".b64";
-  // $ErrorActionPreference=Stop so a silent Unprotect failure exits
-  // non-zero (so execFileSync throws) instead of writing an empty .b64
-  // that we later parse as 0 bytes of "key material".
-  const script =
-    `$ErrorActionPreference = 'Stop'\n` +
-    `Add-Type -AssemblyName System.Security\n` +
-    `$encrypted = [IO.File]::ReadAllBytes('${filePath.replace(/\\/g, "/")}')\n` +
-    `$decrypted = [System.Security.Cryptography.ProtectedData]::Unprotect($encrypted, $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser)\n` +
-    `[IO.File]::WriteAllText('${outPath.replace(/\\/g, "/")}', [Convert]::ToBase64String($decrypted))\n`;
-  writeFileSync(scriptPath, script, { encoding: "utf-8", mode: 0o600 });
-  // Pre-create the output file owner-only BEFORE PowerShell writes the
-  // decrypted key into it — WriteAllText truncates in place and keeps the
-  // existing mode, so the plaintext key is never exposed at default-umask
-  // perms between the child's write and our unlink.
-  writeFileSync(outPath, "", { mode: 0o600 });
-  try {
-    execFileSync("powershell.exe", [
-      "-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden",
-      "-ExecutionPolicy", "Bypass", "-File", scriptPath
-    ], { timeout: 10_000, stdio: "ignore", ...HIDDEN });
-    const result = readFileSync(outPath, "utf-8").trim();
-    return Buffer.from(result, "base64");
-  } finally {
-    try { unlinkSync(scriptPath); } catch {}
-    try { unlinkSync(outPath); } catch {}
-  }
+  return Buffer.from(runDpapiScript(DPAPI_UNPROTECT_SCRIPT, filePath).trim(), "base64");
 }
 
 /** Check if DPAPI is available (Windows only) */

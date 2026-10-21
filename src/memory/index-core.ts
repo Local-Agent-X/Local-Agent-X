@@ -201,6 +201,8 @@ export class MemoryIndex extends MemoryFactsBase {
       hasVec: this.hasVec,
       memoryDir: this.memoryDir,
       dataDir: this.dataDir,
+      entitiesDir: this.entitiesDir,
+      reindexEntity: (slug) => this.reindexThroughUniversal("entity", slug),
       sessionDeltas: this.sessionDeltas,
       dirtyRef,
       syncInProgressRef,

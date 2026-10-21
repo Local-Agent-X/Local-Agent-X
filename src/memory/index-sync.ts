@@ -259,6 +259,9 @@ export interface SyncDeps {
   hasVec: boolean;
   memoryDir: string;
   dataDir: string;
+  entitiesDir: string;
+  /** Index one entity page for search. Awaited one page at a time. */
+  reindexEntity: (slug: string) => Promise<void>;
   sessionDeltas: Map<string, { lastSize: number; lastMessageCount: number }>;
   dirtyRef: { value: boolean };
   syncInProgressRef: { value: boolean };
@@ -334,7 +337,11 @@ export async function syncIndex(deps: SyncDeps): Promise<void> {
 
     pruneEmbeddingCache(deps.db, deps.config);
 
-    archiveOldFacts(deps.db, deps.config, deps.hasFts);
+    const rebuilt = archiveOldFacts(deps.db, deps.config, deps.hasFts, deps.entitiesDir,
+      () => { deps.dirtyRef.value = true; });
+    // One page at a time: each re-index embeds the page, and a sweep can touch
+    // many entities at once.
+    for (const slug of rebuilt) await deps.reindexEntity(slug);
   } catch (e) {
     logger.error("[memory] Sync failed:", (e as Error).message);
     deps.dirtyRef.value = true;

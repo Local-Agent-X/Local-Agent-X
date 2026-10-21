@@ -30,16 +30,32 @@ export function forgetFacts(
     try { db.prepare("DELETE FROM embedding_cache WHERE hash = ?").run(hash); } catch {}
     db.prepare("DELETE FROM facts WHERE id = ?").run(f.id);
   }
-  for (const slug of affectedEntities) {
+  refreshEntityPagesAfterDelete(db, entitiesDir, setDirty, reindexEntity, affectedEntities);
+  return facts.length;
+}
+
+/** After facts are deleted, rebuild the page of each entity that named them
+ *  from what the Facts DB still holds, and remove the page of an entity left
+ *  with none. Collect the slugs before the delete: it takes the
+ *  entity_mentions rows with it. */
+export function refreshEntityPagesAfterDelete(
+  db: InstanceType<typeof Database>,
+  entitiesDir: string,
+  setDirty: () => void,
+  reindexEntity: (slug: string) => void,
+  slugs: Iterable<string>
+): void {
+  for (const slug of slugs) {
     const remaining = recallByEntity(db, slug, MAX_FACTS_PER_ENTITY);
     if (remaining.length > 0) {
       updateEntityPage(db, entitiesDir, setDirty, reindexEntity, slug, remaining);
     } else {
       const entityPath = join(entitiesDir, `${slug}.md`);
-      try { unlinkSync(entityPath); } catch {}
+      // Dirty so the next sync drops the removed page's chunks from search.
+      // The unlink throws only when the entity never had a page to remove.
+      try { unlinkSync(entityPath); setDirty(); } catch {}
     }
   }
-  return facts.length;
 }
 
 export function findFacts(

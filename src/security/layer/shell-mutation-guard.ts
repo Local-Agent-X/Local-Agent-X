@@ -21,17 +21,42 @@ import { isLockedBaselinePath } from "../../tools/app-tools/write-guard.js";
 // Shell verbs whose path operand(s) mutate the file there. For rm/shred/unlink/
 // truncate/tee every non-flag operand is a target; for cp/mv/ln only the LAST (the
 // destination) — engine source as a copy SOURCE is not a brick.
-const MUTATOR_ALL_OPERANDS = new Set(["rm", "shred", "unlink", "truncate", "tee"]);
-const MUTATOR_DEST_ONLY = new Set(["cp", "mv", "ln", "install"]);
+const MUTATOR_ALL_OPERANDS = new Set(["rm", "shred", "unlink", "truncate", "tee", "del", "erase", "remove-item", "ri"]);
+// Windows and PowerShell spellings beside the POSIX ones: the destination is
+// the last operand for copy/move/xcopy and for Copy-Item/Move-Item written
+// positionally or as `-Path … -Destination …` (flags fall out as non-operands;
+// `-Destination` conventionally follows `-Path`).
+const MUTATOR_DEST_ONLY = new Set(["cp", "mv", "ln", "install", "copy", "move", "xcopy", "copy-item", "move-item", "cpi", "mi"]);
+// Content writers whose FIRST operand is the file: `Set-Content x`, `Out-File x`,
+// `Set-Content -Path x -Value y`, `Tee-Object -FilePath x`.
+const MUTATOR_FIRST_OPERAND = new Set(["set-content", "add-content", "out-file", "tee-object"]);
+// robocopy's destination is its second operand.
+const MUTATOR_SECOND_OPERAND = new Set(["robocopy"]);
 
 // The operands a mutating verb would WRITE, shared by both mutation detectors so
 // the two can't drift on which operand counts. Flags and redirect tokens are never
 // operands. Yields nothing for a non-mutating verb.
 function* mutationTargets(words: string[], verb: string): Generator<string> {
-  if (!MUTATOR_ALL_OPERANDS.has(verb) && !MUTATOR_DEST_ONLY.has(verb)) return;
-  const operands = words.slice(1).filter((w) => !w.startsWith("-") && !/^\d*(>>|>|<)/.test(w));
+  // A Windows switch (`/Y`, `/E`, `/Q:`) is a short slash token with no further
+  // slash; `/tmp/out` and `/c/gone` are paths.
+  const operands = words.slice(1).filter((w) => !w.startsWith("-") && !/^\/[A-Za-z?][A-Za-z0-9:+-]{0,3}$/.test(w) && !/^\d*(>>|>|<)/.test(w));
   if (MUTATOR_ALL_OPERANDS.has(verb)) yield* operands;
-  else if (operands.length) yield operands[operands.length - 1];
+  else if (MUTATOR_DEST_ONLY.has(verb)) { if (operands.length) yield operands[operands.length - 1]; }
+  else if (MUTATOR_FIRST_OPERAND.has(verb)) { if (operands.length) yield operands[0]; }
+  else if (MUTATOR_SECOND_OPERAND.has(verb)) { if (operands.length > 1) yield operands[1]; }
+}
+
+/** A path operand with its shell's environment references expanded — `~`,
+ *  `%APPDATA%`, `$env:APPDATA`, `$HOME` — so a Windows persistence target
+ *  written the way Windows writes it resolves to the folder it names. */
+function expandOperand(t: string, home: string): string {
+  let out = t;
+  if (out === "~") out = home;
+  else if (out.startsWith("~/") || out.startsWith("~\\")) out = join(home, out.slice(2));
+  out = out.replace(/%([A-Za-z_][A-Za-z0-9_()]*)%/g, (m, name: string) => process.env[name] ?? m);
+  out = out.replace(/\$\{?env:([A-Za-z_][A-Za-z0-9_()]*)\}?/gi, (m, name: string) => process.env[name] ?? m);
+  out = out.replace(/\$HOME\b/g, home);
+  return out;
 }
 
 // Every redirect WRITE target in a token list: `>f`, `>>f`, `2>f`, a bare `>` with
@@ -79,9 +104,8 @@ export function shellMutationTargets(command: string): Array<{ path: string; ver
   // Tokens arrive quote-stripped, so a quoted operand with spaces is one word.
   const absOperand = (t: string): string | null => {
     if (!t) return null;
-    if (t === "~") t = home;
-    else if (t.startsWith("~/") || t.startsWith("~\\")) t = join(home, t.slice(2));
-    return isAbsolute(t) ? t : null;
+    const expanded = expandOperand(t, home);
+    return isAbsolute(expanded) ? expanded : null;
   };
   const out: Array<{ path: string; verb: string }> = [];
   const add = (target: string, verb: string): void => {

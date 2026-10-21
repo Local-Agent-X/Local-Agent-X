@@ -141,7 +141,11 @@ export const COMMAND_RULES: readonly CommandRule[] = [
   binWith("user-accounts", "system-config", "changes Windows user accounts", ["net"], (a) => lower(a[0]) === "user"),
   binWith("registry", "system-config", "reads or changes the Windows registry", ["reg"], (a) => REG_VERBS.has(lower(a[0]))),
   bins("wmi", "system-config", "runs Windows management commands", ["wmic"]),
-  bins("scheduled-task", "persistence", "creates or runs a scheduled task", ["schtasks"]),
+  bins("scheduled-task", "persistence", "creates or runs a scheduled task", ["schtasks", "register-scheduledtask", "set-scheduledtask", "start-scheduledtask"]),
+  // The PowerShell spellings of a Run-key entry: `reg add` above is the only
+  // one the table knew, so a login-time program could be planted with a cmdlet.
+  binWith("run-key", "persistence", "adds a program that runs at login", ["set-itemproperty", "new-itemproperty", "new-item", "sp"],
+    (a) => /CurrentVersion[\\/]+Run(Once)?\b/i.test(a.join(" "))),
 
   // ── macOS automation and persistence ──
   bins("launchd", "persistence", "installs or runs a background job", ["launchctl"]),

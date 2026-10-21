@@ -12,6 +12,21 @@ const ruleOf = (cmd: string) => {
   return hit === null ? null : hit.kind === "too-deep" ? "too-deep" : hit.rule.id;
 };
 
+// A login-time program planted with a cmdlet: `reg add` was the only Run-key
+// spelling the table knew (red team round 2, I-M1).
+describe("refused: Windows persistence through PowerShell", () => {
+  it("a Run or RunOnce key entry, and a scheduled task, by their cmdlets", () => {
+    expect(ruleOf(`Set-ItemProperty -Path "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run" -Name Updater -Value "C:\\x\\evil.exe"`)).toBe("run-key");
+    expect(ruleOf(`New-ItemProperty HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\RunOnce -Name u -Value x`)).toBe("run-key");
+    expect(ruleOf(`Register-ScheduledTask -TaskName lax -Action $a -Trigger $t`)).toBe("scheduled-task");
+    expect(ruleOf(`Set-ScheduledTask -TaskName lax -Action $a`)).toBe("scheduled-task");
+  });
+
+  it("while a property set anywhere else is not a persistence rule", () => {
+    expect(ruleOf(`Set-ItemProperty -Path "HKCU:\\Software\\MyApp" -Name theme -Value dark`)).not.toBe("run-key");
+  });
+});
+
 describe("refused: eval and piping into a shell, at any command position", () => {
   const cases: Array<[string, string]> = [
     [`eval "$X"`, "eval"],

@@ -322,6 +322,22 @@ describe("signed native desktop rolling release contract", () => {
     expect(mac).toContain("electron-builder --mac dmg zip --arm64 --publish never");
   });
 
+  // 2026-10-21: an `npm ci` cut off by a network reset did not stop the
+  // PowerShell step; the build ran without electron and `npx` fetched the
+  // newest electron-builder, which rejected the config.
+  it("stops on a failed native command, retries an install, and runs only the pinned electron-builder", () => {
+    expect(windows).toContain("$PSNativeCommandUseErrorActionPreference = $true");
+    expect(windows).toContain("Invoke-WithRetry { npm --prefix .. ci }");
+    expect(windows).toContain("Invoke-WithRetry { npm ci }");
+    expect(mac).toContain("set -euo pipefail");
+    expect(mac).toContain("retry npm --prefix .. ci");
+    expect(mac).toContain("retry npm ci");
+    for (const job of [windows, mac]) {
+      expect(job).toContain("npx --no-install electron-builder");
+      expect(job).not.toMatch(/npx electron-builder/);
+    }
+  });
+
   it("has electron-builder sign Windows bytes before it creates publishable metadata", () => {
     const build = windows.indexOf("electron-builder --win nsis --x64 --publish never");
     const verify = windows.indexOf("Verify signed Windows desktop package before publishing metadata");

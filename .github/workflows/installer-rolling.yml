@@ -116,10 +116,31 @@ jobs:
         shell: pwsh
         working-directory: desktop
         run: |
-          npm --prefix .. ci
-          npm ci
+          # A native command that fails stops this step. PowerShell otherwise
+          # runs on: an `npm ci` cut off by a network reset left desktop/ half
+          # installed, the build then ran without electron, and `npx` found no
+          # electron-builder to run, so it fetched the newest one, which
+          # rejects this config (2026-10-21).
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
+          # The runner's network resets an install now and then. `npm ci`
+          # starts from an empty node_modules, so a retry is a clean install;
+          # a third failure is not a flake.
+          function Invoke-WithRetry([scriptblock]$Command) {
+            for ($attempt = 1; ; $attempt++) {
+              try { & $Command; return }
+              catch {
+                if ($attempt -ge 3) { throw }
+                Write-Warning "attempt $attempt failed: $($_.Exception.Message); retrying"
+                Start-Sleep -Seconds (15 * $attempt)
+              }
+            }
+          }
+          Invoke-WithRetry { npm --prefix .. ci }
+          Invoke-WithRetry { npm ci }
           npm run build
-          npx electron-builder --win nsis --x64 --publish never `
+          # The project's pinned electron-builder, never one npx downloads.
+          npx --no-install electron-builder --win nsis --x64 --publish never `
             --config.win.azureSignOptions.endpoint="$env:AZURE_SIGN_ENDPOINT" `
             --config.win.azureSignOptions.certificateProfileName="$env:AZURE_SIGN_CERT_PROFILE" `
             --config.win.azureSignOptions.codeSigningAccountName="$env:AZURE_SIGN_ACCOUNT" `
@@ -366,10 +387,24 @@ jobs:
           trap 'rm -f "$API_KEY_PATH"' EXIT
           export APPLE_API_KEY="$API_KEY_PATH"
           export CSC_NAME="${MACOS_SIGN_IDENTITY#Developer ID Application: }"
-          npm --prefix .. ci
-          npm ci
+          # The runner's network resets an install now and then. `npm ci`
+          # starts from an empty node_modules, so a retry is a clean install;
+          # a third failure is not a flake.
+          retry() {
+            for attempt in 1 2 3; do
+              "$@" && return 0
+              if [ "$attempt" -lt 3 ]; then
+                echo "::warning::attempt $attempt of '$*' failed; retrying"
+                sleep $((15 * attempt))
+              fi
+            done
+            return 1
+          }
+          retry npm --prefix .. ci
+          retry npm ci
           npm run build
-          npx electron-builder --mac dmg zip --arm64 --publish never
+          # The project's pinned electron-builder, never one npx downloads.
+          npx --no-install electron-builder --mac dmg zip --arm64 --publish never
 
       - name: Repack macOS update ZIP after signing is finalized
         run: |

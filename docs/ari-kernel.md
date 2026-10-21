@@ -43,9 +43,11 @@ runtime by [`src/ari-kernel/`](../src/ari-kernel/). No tool execution path bypas
   counted like any other denial.
 - **Escalation / quarantine (restricted mode).** Repeated denied actions (default
   threshold 5) put the run into *restricted mode* — only read-only safe actions pass,
-  and even safe GETs are blocked if they look like exfil. The run's state lives on the `Firewall` with no
-  in-place reset, so each op refreshes a stuck run fresh at start
-  (`refreshAriKernelScopeIfStuck`) — a prior op's escalation doesn't brick the next one.
+  and even safe GETs are blocked if they look like exfil. The run's state lives on the `Firewall`
+  with no in-place reset, and every operation (a chat turn, an agent run, a scheduled job) gets
+  its own `Firewall` (`ensureAriKernelScope`) released when the op ends — so a prior op's
+  escalation never bricks the next one, and the next user message starts clean. What does carry
+  across ops is LAX's own session taint, which a child session inherits from its parent at spawn.
 - **Tamper-evident audit trail.** Every decision is logged to a SHA-256/HMAC hash chain.
 
 ## What it's for — and what it is not

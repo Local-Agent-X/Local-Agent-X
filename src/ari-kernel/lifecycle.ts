@@ -66,7 +66,9 @@ function buildAriFirewall(
     // LAX adjudicates data flow on the bytes at every sink (taint-scope.ts,
     // egress-gates.ts), so the kernel stops re-deriving it from run history:
     // history carries no evidence and overruled LAX's per-call clearance.
-    runStatePolicy: { sensitivePath: (p) => isSensitivePath(resolveAgentPath(p)), hostAdjudicatesDataFlow: true },
+    // The preset's own run-state policy (its denied-action threshold) comes
+    // through whole; only the two host-owned signals above are overridden.
+    runStatePolicy: { ...presetConfig.runStatePolicy, sensitivePath: (p) => isSensitivePath(resolveAgentPath(p)), hostAdjudicatesDataFlow: true },
   });
 
   // Manifest-driven grant issuance — the per-call rule engine still evaluates
@@ -199,25 +201,6 @@ export function refreshAriKernelScope(scopeId?: string): boolean {
     logger.warn(`  [ari] Run refresh failed, keeping current firewall: ${(e as Error).message}`);
     return false;
   }
-}
-
-/**
- * Compatibility guard for the default/ad-hoc scope. Canonical operations use
- * dedicated scopes and do not need cross-op refresh.
- */
-export function refreshAriKernelRunIfStuck(): boolean {
-  return refreshAriKernelScopeIfStuck(DEFAULT_ARI_SCOPE);
-}
-
-export function refreshAriKernelScopeIfStuck(scopeId?: string): boolean {
-  const resolvedScope = scopeId || DEFAULT_ARI_SCOPE;
-  const fw = getFirewall(resolvedScope) as (Firewall & { isRestricted?: boolean; quarantineInfo?: unknown }) | null;
-  if (!fw) return false;
-  const restricted = fw.isRestricted === true;
-  const quarantined = fw.quarantineInfo != null;
-  if (!restricted && !quarantined) return false;
-  logger.warn(`  [ari] Firewall in ${restricted ? "restricted" : "quarantine"} mode at op start — refreshing run so a prior op's escalation doesn't brick this one`);
-  return refreshAriKernelScope(resolvedScope);
 }
 
 // Get AriKernel status for the current run.

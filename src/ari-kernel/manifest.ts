@@ -60,13 +60,3 @@ export function buildPrincipalCapabilities(): Capability[] {
   }));
 }
 
-const SESSION_TO_ARI_PRESET: Record<string, string> = {
-  "default": "workspace-assistant",
-  "high-security": "strict",
-  "dev-mode": "research",
-  "read-only": "safe",
-};
-
-export function getAriPresetForSession(sessionPreset: string): string {
-  return SESSION_TO_ARI_PRESET[sessionPreset] || "workspace-assistant";
-}

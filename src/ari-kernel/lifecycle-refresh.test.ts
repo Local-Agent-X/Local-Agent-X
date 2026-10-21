@@ -16,7 +16,6 @@ import {
   startAriKernel,
   stopAriKernel,
   refreshAriKernelRun,
-  refreshAriKernelRunIfStuck,
   releaseAriKernelScope,
 } from "./lifecycle.js";
 import { getFirewallForTest } from "./state.js";
@@ -63,35 +62,16 @@ describe("ARI run refresh — restricted mode does not survive an op boundary", 
     else process.env.LAX_AUDIT_KEY = prevKey;
   });
 
-  it("is a no-op on a healthy kernel (same firewall instance)", () => {
-    const before = getFirewallForTest();
-    expect(before).not.toBeNull();
-    expect(fw()?.isRestricted).not.toBe(true);
-    expect(refreshAriKernelRunIfStuck()).toBe(false);
-    expect(getFirewallForTest()).toBe(before); // untouched
-  });
-
-  it("reproduces the brick, then clears it at the op boundary", async () => {
+  it("a tripped run blocks a file write by restricted mode, and a refresh clears it", async () => {
     await tripRestricted();
     expect(fw()?.isRestricted).toBe(true);
-
-    // Brick reproduced: a file write is blocked SPECIFICALLY by restricted mode.
     const blocked = await ariEvaluate("write", "write", { path: join(dir, "x.txt"), content: "y" });
     expect(blocked.allowed).toBe(false);
     expect(blocked.reason).toMatch(/restricted mode/i);
-
-    // The fix: the op-boundary guard detects the stuck run and refreshes it.
-    const before = getFirewallForTest();
-    expect(refreshAriKernelRunIfStuck()).toBe(true);
-    const after = getFirewallForTest();
-    expect(after).not.toBe(before);        // a fresh Firewall instance
+    expect(refreshAriKernelRun()).toBe(true);
     expect(fw()?.isRestricted).toBe(false);
-    expect(fw()?.restrictedAt ?? null).toBeNull();
-
-    // The restricted-mode block is gone. (The write may still be scope/grant
-    // limited by the preset — that's fine; it just must not be BRICKED anymore.)
-    const after2 = await ariEvaluate("write", "write", { path: join(dir, "x.txt"), content: "y" });
-    expect(after2.reason ?? "").not.toMatch(/restricted mode/i);
+    const after = await ariEvaluate("write", "write", { path: join(dir, "x.txt"), content: "y" });
+    expect(after.reason ?? "").not.toMatch(/restricted mode/i);
   });
 
   it("refreshAriKernelRun replaces the firewall with a fresh run-state", async () => {

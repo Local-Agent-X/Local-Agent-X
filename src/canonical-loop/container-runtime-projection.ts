@@ -16,7 +16,7 @@ import {
   getAuditHmacKey,
 } from "../app-runtime/audit-signing.js";
 import { resolveCredential } from "../auth/resolve.js";
-import { resolveBrowserSessionId } from "../browser/session-owner-registry.js";
+import { bindContainerSessionLineage, releaseContainerSessionLineage } from "./delegated-session-lineage.js";
 import { getRuntimeConfig, workspaceRoot } from "../config.js";
 import { getLaxDir } from "../lax-data-dir.js";
 import { opDir } from "../ops/event-log.js";
@@ -187,15 +187,12 @@ async function materializeProjection(
   const workspace = realpathSync(workspaceRoot());
   const operation = opDir(op.id);
   const projectionManifest = readManifest(root);
-  // Keep the exact execution session for relay authentication and lineage;
-  // view authorization is separately bound to its canonical root chat.
-  const ownerSessionId = op.canonical?.sessionId;
-  if (!ownerSessionId) {
-    throw new Error("container projection is missing its owning session");
-  }
+  // The relay's lineage owner is the exact execution session (the key the
+  // container's registry records); view authorization is separately bound to
+  // the submitting chat's browser session (delegated-session-lineage.ts).
+  const { executionSessionId, browserSessionId } = bindContainerSessionLineage(op);
   const browserRelay = await openProjectionBrowserRelay(root,
-    projectionManifest.mounts.browserRelayToken, ownerSessionId,
-    resolveBrowserSessionId(ownerSessionId));
+    projectionManifest.mounts.browserRelayToken, executionSessionId, browserSessionId);
   return {
     durableId: projectionId,
     buildSpec({ image, placement }): DockerContainerSpec {
@@ -270,6 +267,7 @@ async function materializeProjection(
     },
     async cleanup(): Promise<void> {
       await browserRelay.close();
+      releaseContainerSessionLineage(op);
       readManifest(root);
       rmSync(root, { recursive: true, force: true });
     },

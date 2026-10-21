@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1828 non-test source files · 94 oversized · 242 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1829 non-test source files · 94 oversized · 242 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -27,7 +27,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/workspace/` | 72 | 3 | M |  |
 | `src/providers/` | 68 | 26 | L | 1 |
 | `src/memory/` | 51 | 139 | XL | 7 |
-| `src/browser/` | 48 | 87 | XL | 5 |
+| `src/browser/` | 47 | 87 | XL | 5 |
 | `src/tool-policy/` | 46 | 21 | L |  |
 | `src/data-lineage/` | 43 | 11 | M |  |
 | `src/local-runtimes/` | 41 | 26 | L | 1 |
@@ -43,7 +43,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/context-manager/` | 24 | 13 | M |  |
 | `src/agent-request/` | 23 | 15 | L | 3 |
 | `src/app-runtime/` | 23 | 12 | M |  |
-| `src/sandbox/` | 23 | 14 | L | 1 |
+| `src/sandbox/` | 23 | 15 | L | 1 |
 | `src/protocols/` | 21 | 52 | XL |  |
 | `src/desktop-contract/` | 20 | 10 | M |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
@@ -337,7 +337,7 @@ job. Comments are free: never cut them to fit.
 
 - `src/agency/worktree-recovery.ts` — 340+ code lines (cap 350)
 - `src/browser/downloads.ts` — 340+ code lines (cap 350)
-- `src/canonical-loop/container-runtime-projection.ts` — 340+ code lines (cap 350)
+- `src/canonical-loop/container-runtime-projection.ts` — 330+ code lines (cap 350)
 - `src/canonical-loop/provider-adapter-factory.ts` — 330+ code lines (cap 350)
 - `src/cognition/cross-session-learning/learner.ts` — 330+ code lines (cap 350)
 - `src/memory/index-facts.ts` — 330+ code lines (cap 350)

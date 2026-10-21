@@ -32,6 +32,12 @@ export interface TaintEntry {
   // that the covered HEAD is absent, NOT that the unfingerprinted tail is — so
   // such an entry keeps the hard presence-floor block regardless of payload.
   complete: boolean;
+  // Set on the host for an entry a container worker forwarded over the relay
+  // (taint.ts setForwardedSessionTaint). A container's next full-state delta
+  // replaces only these; what the host itself recorded under the session —
+  // the parent's taint inherited at bind, a recovery replay — survives.
+  // propagateTaint copies entries field by field, so a copy is the host's own.
+  forwarded?: true;
 }
 
 /** Result of fingerprinting a piece of content: the shingle hashes plus whether

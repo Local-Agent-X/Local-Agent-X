@@ -18,7 +18,7 @@
 import { propagateTaint } from "../data-lineage/index.js";
 import { propagateExternalIngestion } from "../data-lineage/external.js";
 import { propagateTaskArtifacts } from "../data-lineage/task-artifacts.js";
-import { clearSessionOwner, registerChildSessionOwner } from "../browser/session-owner-registry.js";
+import { clearSessionOwner, registerChildSessionOwner, resolveBrowserSessionId } from "../browser/session-owner-registry.js";
 import type { Op } from "../ops/types.js";
 import { createLogger } from "../logger.js";
 
@@ -47,6 +47,40 @@ export function inheritSessionLineage(childSessionId: string, parentSessionId: s
   if (taints > 0 || ingested) {
     logger.info(`[lineage] ${parentSessionId} → ${childSessionId}: inherits ${taints} taint label(s), ingestion ${ingested ? "marked" : "clean"}`);
   }
+}
+
+/**
+ * The session an op's tool runtime records taint under: the delegated
+ * descriptor's `sessionId` (the op id, for a delegated worker), else the
+ * op's canonical session. The relay that lands a container's forwarded
+ * taint must be keyed by THIS id — the forwarder sends whatever key the
+ * container's registry recorded — not by the chat that submitted the op.
+ */
+export function executionSessionOf(op: Op): string {
+  const descriptor = op.runtimeDescriptor as { kind?: string; sessionId?: string } | undefined;
+  if (descriptor?.kind === "delegated-op" && descriptor.sessionId) return descriptor.sessionId;
+  return op.canonical?.sessionId ?? op.id;
+}
+
+/**
+ * A container worker's lineage on the host, before its relay opens: its
+ * execution session is the submitting chat's child (so taint it forwards
+ * aggregates into the chat's browser session, as an in-process worker's
+ * does) and starts with the chat's own taint and ingestion. Returns the two
+ * ids the relay is opened with: the execution session that owns forwarded
+ * lineage, and the chat's browser session that owns the views.
+ */
+export function bindContainerSessionLineage(op: Op): { executionSessionId: string; browserSessionId: string } {
+  const chatSessionId = op.canonical?.sessionId;
+  if (!chatSessionId) throw new Error("container projection is missing its owning session");
+  const executionSessionId = executionSessionOf(op);
+  bindDelegatedSessionLineage(executionSessionId, chatSessionId);
+  return { executionSessionId, browserSessionId: resolveBrowserSessionId(chatSessionId) };
+}
+
+export function releaseContainerSessionLineage(op: Op): void {
+  const executionSessionId = executionSessionOf(op);
+  if (executionSessionId !== op.canonical?.sessionId) clearSessionOwner(executionSessionId);
 }
 
 /** Terminal cleanup for an op whose descriptor names a parent session. A

@@ -180,25 +180,30 @@ export function checkEgressTaintWithPayload(
  * session, so the SAME canonical scan now sees them. notifyTaintChanged fires so
  * the off-loop egress worker mirror picks the forwarded taint up too.
  *
- * REPLACE (not merge) is correct and matches the mirror contract: execution for
- * a container-owned session is claimed by the container, so the host never
- * independently taints that session — the container is the sole writer and sends
- * full state each change. Entries are copied defensively (fresh objects, own
- * fingerprint arrays) so the caller's wire array is not retained. Empty → clear.
+ * The container sends full state each change and is the sole writer OF ITS OWN
+ * entries, so a delta replaces the entries forwarded before it — a floor it
+ * retracted is gone here too. It is not the sole writer of the session: the
+ * host records the parent's taint under this key when the op binds
+ * (delegated-session-lineage.ts) and replays persisted taint on recovery, and
+ * those survive every delta. Entries are copied defensively (fresh objects,
+ * own fingerprint arrays) so the caller's wire array is not retained.
  */
 export function setForwardedSessionTaint(sessionId: string, entries: readonly TaintEntry[]): void {
-  if (entries.length === 0) {
-    if (sessionTaint.delete(sessionId)) notifyTaintChanged(sessionId);
-    return;
-  }
-  sessionTaint.set(sessionId, entries.map(e => ({
+  const own = (sessionTaint.get(sessionId) ?? []).filter(e => !e.forwarded);
+  const next = [...own, ...entries.map(e => ({
     source: e.source,
     target: e.target,
     timestamp: e.timestamp,
     runId: e.runId,
     fingerprints: [...e.fingerprints],
     complete: e.complete,
-  })));
+    forwarded: true as const,
+  }))];
+  if (next.length === 0) {
+    if (sessionTaint.delete(sessionId)) notifyTaintChanged(sessionId);
+    return;
+  }
+  sessionTaint.set(sessionId, next);
   notifyTaintChanged(sessionId);
 }
 

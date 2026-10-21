@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { AgentxosAccountManager, type AccountApi, type AccountManagerDeps } from "./account-manager.js";
 import type { AccountState } from "./storage.js";
-import type { DeviceCodePoll, PairingEntry, StartedDeviceCode } from "./api-client.js";
+import type { DeviceCodePoll, PairingEntry, StartedDeviceCode } from "../vendor/index.js";
 
 const STARTED: StartedDeviceCode = {
   deviceCode: "dc", userCode: "ABCD2345", userCodeDisplay: "ABCD-2345",

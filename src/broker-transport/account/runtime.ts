@@ -10,7 +10,7 @@
 // stopBrokerPresence tears it down.
 
 import { hostname } from "node:os";
-import { AgentxosApiClient, DEFAULT_ACCOUNT_API_URL } from "./api-client.js";
+import { AgentxosApiClient, DEFAULT_ACCOUNT_API_URL } from "../vendor/index.js";
 import { AgentxosAccountManager } from "./account-manager.js";
 import { getOrCreateDeviceIdentity } from "./identity.js";
 import { loadAccountState, saveAccountState, updateAccountState, clearAccountState, type AccountState } from "./storage.js";

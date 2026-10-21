@@ -20,6 +20,7 @@ exchange:
 | How a `replace` frame rewrites a turn's timeline | `timeline.ts` |
 | Voice control plane | `voice.ts` |
 | Broker signaling client | `broker-client.ts`, `connect-url.ts`, `parse-server-frame.ts`, `socket-adapter.ts`, `index.ts` |
+| Account API client and device-code login (sign in, register, pair, renew) | `account-api.ts`, `device-code-login.ts` |
 
 ## Changing a contract
 

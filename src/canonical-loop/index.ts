@@ -235,6 +235,9 @@ export {
 export { listActiveCanonicalOps, type ActiveCanonicalOp } from "./active-ops.js";
 export { listLiveWorkers, type LiveWorker } from "./live-workers.js";
 export { awaitCanonicalOp, awaitOpRunning, type AwaitRunningResult } from "./await-op.js";
+// A child session's lineage at spawn: the agency run driver inherits the
+// parent's taint and ingestion through this, as delegated ops do at bind.
+export { inheritSessionLineage } from "./delegated-session-lineage.js";
 
 export {
   runChatViaCanonical,

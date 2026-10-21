@@ -27,6 +27,26 @@ const logger = createLogger("canonical-loop.delegated-session-lineage");
 export function bindDelegatedSessionLineage(runtimeSessionId: string, parentSessionId: string | undefined): void {
   if (!parentSessionId || parentSessionId === runtimeSessionId) return;
   registerChildSessionOwner(runtimeSessionId, parentSessionId);
+  inheritSessionLineage(runtimeSessionId, parentSessionId);
+}
+
+/**
+ * What the parent has read or ingested is the child's too, from the start:
+ * a worker or agent spawned from a tainted session carries the taint (its
+ * fingerprints included, so the child's egress clears what the parent's
+ * would) and the parent's external-ingestion mark. Without this a session
+ * whose own write was refused could hand the same bytes to a fresh child
+ * session and have it sent from there (red team 2026-10-13, A4). The
+ * agency run driver (server/handler-events.ts) calls this for agent runs;
+ * `bind` above does for delegated ops.
+ */
+export function inheritSessionLineage(childSessionId: string, parentSessionId: string | undefined): void {
+  if (!parentSessionId || parentSessionId === childSessionId) return;
+  const taints = propagateTaint(parentSessionId, childSessionId);
+  const ingested = propagateExternalIngestion(parentSessionId, childSessionId);
+  if (taints > 0 || ingested) {
+    logger.info(`[lineage] ${parentSessionId} → ${childSessionId}: inherits ${taints} taint label(s), ingestion ${ingested ? "marked" : "clean"}`);
+  }
 }
 
 /** Terminal cleanup for an op whose descriptor names a parent session. A

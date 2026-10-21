@@ -21,6 +21,7 @@ import type { IntegrationRegistry } from "../integrations/index.js";
 import { createLogger } from "../logger.js";
 import { clearSessionProfile } from "../autonomy/profile-store.js";
 import { registerChildSessionOwner, clearSessionOwner } from "../browser/session-owner-registry.js";
+import { inheritSessionLineage } from "../canonical-loop/index.js";
 import { AgentWorkspaceError, provisionAgentWorkspace, releaseAgentWorkspace, type AgentWorkspace } from "../agency/agent-workspace.js";
 import { requiredPromptPlan } from "../context/system-prompt-builder.js";
 import { OP_TYPE } from "../ops/op-types.js";
@@ -47,6 +48,14 @@ export function buildExecutionRules(platformLine: string, maxIterations: number,
     (requiresWorktree ? `- Save results to workspace/ as you go. For large files use python -c one-liners, not read.\n` : `- Save exports/screenshots/notes to workspace/. Don't edit repo source.\n`) +
     `- Final report: lead with the concrete outcome — what you did or found, and where — in the first sentence. Your parent surfaces only a short preview of your report, so a buried result reads as no result. Details and evidence after.\n`
   );
+}
+
+/** An agent run's tool session becomes the parent chat's child: it drives the
+ *  parent's browser (session-owner registry) and starts with the parent's
+ *  taint and ingestion, as a delegated op does at bind. */
+function adoptChildRunSession(runSessionId: string, parentSessionId: string | undefined, agentId: string): void {
+  registerChildSessionOwner(runSessionId, parentSessionId, { agentId });
+  inheritSessionLineage(runSessionId, parentSessionId);
 }
 
 export function registerHandlerEvents(deps: {
@@ -80,9 +89,7 @@ export function registerHandlerEvents(deps: {
     const { agentId, task, systemPrompt, role, parentSessionId, templateId, tools: invocationTools, modelOverride } = req;
     logger.info(`[handler] Agent ${agentId} (${role}) starting: ${task.slice(0, 80)}...`);
     const runSessionId = req.sessionId ?? `agent-${agentId}`;
-    registerChildSessionOwner(runSessionId, parentSessionId, {
-      agentId: templateId ?? agentId,
-    });
+    adoptChildRunSession(runSessionId, parentSessionId, templateId ?? agentId);
 
     const template = templateId ? agentTemplateStore.get(templateId) : null;
     const projectStore = ProjectStore.getInstance();

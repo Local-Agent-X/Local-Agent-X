@@ -1,4 +1,4 @@
-import { unlinkSync } from "node:fs";
+import { existsSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import type Database from "better-sqlite3";
@@ -6,6 +6,7 @@ import type { FactKind, RetainedFact } from "./types.js";
 import { atomicWriteFileSync, slugify } from "./utils.js";
 import { recallByEntity } from "./index-facts.js";
 import { localDate } from "./retrieval-format.js";
+import { factTrustSuffix } from "./fact-provenance-label.js";
 
 export const MAX_FACTS_PER_ENTITY = 50;
 export const MAX_FACTS_PER_KIND = 15;
@@ -169,7 +170,12 @@ export function updateEntityPage(
       const when = occurred !== null
         ? `*${occurred}*`
         : `*date unknown* (recorded ${recorded})`;
-      lines.push(`- ${fact.content}${conf} — ${when}`);
+      // Each line keeps its source, as core memory and entity context do: this
+      // page is what memory_search returns, and without the label a fact the
+      // user told the agent read as untrusted text the agent could not back up
+      // (qwen3.6-27b, hold-sourced-claim, 2026-10-18: searched, then "you never
+      // said that") — and a fact saved from web content lost its UNTRUSTED mark.
+      lines.push(`- ${fact.content}${conf} — ${when}${factTrustSuffix(fact.sourceFile)}`);
     }
     lines.push("");
   }
@@ -178,4 +184,33 @@ export function updateEntityPage(
   atomicWriteFileSync(entityPath, lines.join("\n"));
   setDirty();
   reindexEntity(slug);
+}
+
+/** Format 2 labels each fact's source on the page. A page is otherwise rebuilt
+ *  only when one of its facts changes, so pages written before it would keep
+ *  showing facts saved from web content without their UNTRUSTED mark. */
+const ENTITY_PAGE_FORMAT = "2";
+
+/** Rebuild every existing entity page once per format change. Pages that were
+ *  never written stay unwritten. Returns how many were rebuilt. */
+export function rebuildEntityPagesOnce(
+  db: InstanceType<typeof Database>,
+  entitiesDir: string,
+  setDirty: () => void,
+  reindexEntity: (slug: string) => void,
+): number {
+  const row = db.prepare("SELECT value FROM meta WHERE key = 'entity_page_format'").get() as { value: string } | undefined;
+  if (row?.value === ENTITY_PAGE_FORMAT) return 0;
+  const slugs = existsSync(entitiesDir)
+    ? readdirSync(entitiesDir).filter((f) => f.endsWith(".md")).map((f) => f.slice(0, -3))
+    : [];
+  let rebuilt = 0;
+  for (const slug of slugs) {
+    const facts = recallByEntity(db, slug, 1);
+    if (facts.length === 0) continue;
+    updateEntityPage(db, entitiesDir, setDirty, reindexEntity, slug, facts);
+    rebuilt++;
+  }
+  db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('entity_page_format', ?)").run(ENTITY_PAGE_FORMAT);
+  return rebuilt;
 }

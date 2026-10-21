@@ -7,7 +7,7 @@
  * recall line omits the origin tag instead of fabricating one.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type Database from "better-sqlite3";
@@ -22,6 +22,7 @@ import { describeMemoryPromotionRequest, stampTrustedUserPromotion } from "./pro
 import { createFactsTools } from "./tools/facts.js";
 import { memoryRecallTool } from "./tools/search/memory-recall.js";
 import { resolveFact } from "./resolver.js";
+import { TAINTED_FACT_SOURCE_PREFIX } from "./fact-provenance-label.js";
 
 let tempDir: string;
 let memory: MemoryIndex;
@@ -276,5 +277,47 @@ describe("extraction does not save a second copy of what the agent saved from th
     vi.mocked(resolveFact).mockResolvedValueOnce({ op: "UPDATE", targetId: slip.id!, reason: "new slip" });
     const { facts } = await memory.retainSmart("- W @Odalys keeps the Kestrel Nine, docked at slip 31 in Port Avila", "auto-extract");
     expect(facts.map((f) => f.content)).toEqual(["Odalys keeps the Kestrel Nine, docked at slip 31 in Port Avila"]);
+  });
+});
+
+// qwen3.6-27b, hold-sourced-claim, 2026-10-18: told "you made that up", the
+// model ran memory_search, got the entity page back with no sign the user had
+// said it, and conceded. Core memory labels every fact's source; the page did not.
+describe("an entity page keeps each fact's source", () => {
+  const page = (slug: string) => readFileSync(join(tempDir, "memory", "bank", "entities", `${slug}.md`), "utf8");
+
+  it("a fact the user told the agent says so on the page, and in memory_search", async () => {
+    authorizeTestFactMutations(memory);
+    memory.rememberFact("@Odalys texted the user's brother \"did you sell Merriweather yet\" in 2014", { kind: "experience", sourceFile: "agent-tool:user-statement" });
+    expect(page("odalys")).toMatch(/Merriweather yet" in 2014 — .*\[reported by user\]/);
+    const hits = await memory.search("Odalys Merriweather", { maxResults: 5, sessionId: "another-chat" });
+    expect(hits.some((h) => h.snippet.includes("[reported by user]"))).toBe(true);
+  });
+
+  it("a fact saved while reading web content keeps its UNTRUSTED mark on the page", () => {
+    authorizeTestFactMutations(memory);
+    memory.rememberFact("@Acme ships on Fridays", { kind: "world", sourceFile: `${TAINTED_FACT_SOURCE_PREFIX}-user-statement` });
+    expect(page("acme")).toContain("[UNTRUSTED");
+  });
+});
+
+describe("entity pages written before the source labels are rebuilt once", () => {
+  const entitiesDir = () => join(tempDir, "memory", "bank", "entities");
+  const page = (slug: string) => readFileSync(join(entitiesDir(), `${slug}.md`), "utf8");
+
+  it("relabels an existing page, creates none, and does not run twice", async () => {
+    const { rebuildEntityPagesOnce } = await import("./index-forget.js");
+    authorizeTestFactMutations(memory);
+    memory.rememberFact("@Acme ships on Fridays", { kind: "world", sourceFile: `${TAINTED_FACT_SOURCE_PREFIX}-user-statement` });
+    memory.rememberFact("@Globex is in Ohio", { kind: "world", sourceFile: "agent-tool:user-statement" });
+    // As a page looked before: the fact, no label. Globex has no page at all.
+    writeFileSync(join(entitiesDir(), "acme.md"), "# Acme\n\n## Facts\n\n- Acme ships on Fridays — *date unknown*\n");
+    rmSync(join(entitiesDir(), "globex.md"));
+    db().prepare("DELETE FROM meta WHERE key = 'entity_page_format'").run();
+
+    expect(rebuildEntityPagesOnce(db(), entitiesDir(), () => {}, () => {})).toBeGreaterThan(0);
+    expect(page("acme")).toContain("[UNTRUSTED");
+    expect(existsSync(join(entitiesDir(), "globex.md"))).toBe(false);
+    expect(rebuildEntityPagesOnce(db(), entitiesDir(), () => {}, () => {})).toBe(0);
   });
 });

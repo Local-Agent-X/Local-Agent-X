@@ -21,6 +21,7 @@ import type { ChildProcess } from "child_process";
 import type { WebContents } from "electron";
 
 import {
+	browserViewTargetId,
 	closeBrowserView,
 	createBrowserView,
 	getBrowserView,
@@ -296,8 +297,10 @@ function requireWebContents(viewId: string): WebContents {
 	return view.webContents;
 }
 
-function lifecycle(msg: BrowserLifecycleRequest): Record<string, unknown> {
+function lifecycle(msg: BrowserLifecycleRequest): Record<string, unknown> | Promise<Record<string, unknown>> {
 	switch (msg.op) {
+		case "target":
+			return browserViewTargetId(msg.viewId).then((targetId) => ({ targetId }));
 		case "create": {
 			// Bridge-created views are always agent-driving. They live on the same
 			// persistent identity as user-owned views unless the server names a

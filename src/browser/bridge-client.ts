@@ -210,7 +210,7 @@ export async function browserLifecycle(
 	// session (browser-surface-policy per-session anchor); ignored by other ops.
 	// partition rides "create": the profile the new view lives on.
 	const reply = await request(`lifecycle:${op}`, viewId, { type: "lax:browser-lifecycle", op, viewId, bounds: opts?.bounds, sessionId: opts?.sessionId, ...(opts?.partition ? { partition: opts.partition } : {}) }, LIFECYCLE_TIMEOUT_MS);
-	return { view: reply.view, views: reply.views, ping: reply.ping };
+	return { view: reply.view, views: reply.views, ping: reply.ping, ...(typeof reply.targetId === "string" ? { targetId: reply.targetId } : {}) };
 }
 
 export async function browserNavigate(viewId: string, url: string, sessionId?: string): Promise<BrowserNavigateResult> {

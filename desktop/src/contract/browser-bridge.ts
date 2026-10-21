@@ -27,7 +27,11 @@ export interface BrowserViewInfo {
  *  resolver treats the view as agent-driven while adopted (downloads →
  *  quarantine, no user-loopback carve-out) — matching the server egress
  *  gate's attribution of adopted-tab requests to the driving session. */
-export type BrowserLifecycleOp = "create" | "show" | "hide" | "close" | "setBounds" | "ping" | "list" | "adopt" | "release";
+/** "target": the CDP target id of the view's page, read by the desktop over
+ *  the webContents debugger. The server's CDP driver maps a viewId to its
+ *  Playwright Page by this id — a page can rewrite its own window.name, it
+ *  cannot change which target it is. */
+export type BrowserLifecycleOp = "create" | "show" | "hide" | "close" | "setBounds" | "ping" | "list" | "adopt" | "release" | "target";
 
 export type BridgeInputModifier = "shift" | "control" | "alt" | "meta";
 export interface BridgeMouseEvent {
@@ -134,6 +138,8 @@ export interface BridgeReply {
   view?: BrowserViewInfo;
   views?: BrowserViewInfo[];
   ping?: BridgePingResult;
+  /** Lifecycle op "target": the view page's CDP target id. */
+  targetId?: string;
   url?: string;
   title?: string;
   result?: unknown;

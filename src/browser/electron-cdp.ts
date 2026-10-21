@@ -98,23 +98,63 @@ export async function connectElectronCdp(): Promise<Browser | null> {
 }
 
 /**
+ * The CDP target id the desktop reports for a view (lifecycle op "target"),
+ * or null when it cannot say: not under the desktop, or DevTools holds the
+ * view's debugger. Injectable so tests never touch the bridge.
+ */
+export type ViewTargetResolver = (viewId: string) => Promise<string | null>;
+
+const defaultTargetResolver: ViewTargetResolver = async (viewId) => {
+  // Resolved at call time: bridge-client reaches this module through the
+  // security config, so a static import would be a cycle.
+  const { browserLifecycle } = await import("./bridge-client.js");
+  try {
+    return (await browserLifecycle("target", viewId)).targetId ?? null;
+  } catch (err) {
+    logger.warn(`desktop could not name the CDP target of ${viewId}: ${(err as Error).message}`);
+    return null;
+  }
+};
+
+let targetResolver: ViewTargetResolver = defaultTargetResolver;
+
+/** A page's own target id over a throwaway CDP session; null if the page went
+ *  away mid-lookup. The session only asks `Target.getTargetInfo` — never Fetch
+ *  (see in-app-driving-page.ts SECURITY). */
+async function pageTargetId(page: Page): Promise<string | null> {
+  const session = await page.context().newCDPSession(page);
+  try {
+    const { targetInfo } = await session.send("Target.getTargetInfo");
+    return targetInfo.targetId;
+  } finally {
+    await session.detach().catch(() => {});
+  }
+}
+
+/**
  * Resolve the Playwright Page for the Electron WebContentsView with this
- * viewId, or null if not found / not connected. The view stamps a per-view
- * marker (window.name === viewId) on its top frame at creation
- * (desktop/src/browser-views.ts); we read it back over CDP to map the id to a
- * Page. Never throws.
+ * viewId, or null if not found / not connected. The page is matched by the
+ * CDP target id the desktop reports for the view — a page can rewrite its
+ * own window.name to claim another view's id, it cannot change which target
+ * it is. Only when the desktop cannot name the target (DevTools holds the
+ * view's debugger) is the window.name stamp the view got at creation
+ * (desktop/src/browser-views.ts) read back instead. Never throws.
  */
 export async function getPageForView(viewId: string): Promise<Page | null> {
   const browser = await connectElectronCdp();
   if (!browser) return null;
+  const targetId = await targetResolver(viewId);
+  if (targetId === null) logger.warn(`getPageForView(${viewId}): matching by window.name — the desktop did not name the view's CDP target`);
   try {
     for (const context of browser.contexts()) {
       for (const page of context.pages()) {
         try {
           // String form (not a function) to avoid a DOM lib dependency — same
           // convention as fingerprintPage/scrollPage in this package.
-          const name = await page.evaluate("window.name");
-          if (name === viewId) return page;
+          const match = targetId !== null
+            ? (await pageTargetId(page)) === targetId
+            : (await page.evaluate("window.name")) === viewId;
+          if (match) return page;
         } catch {
           // A page can navigate or close mid-scan — skip it, don't fail lookup.
         }
@@ -151,4 +191,9 @@ export function _setConnectorForTest(fn: CdpConnector | null): void {
   connector = fn ?? defaultConnector;
   cached = null;
   connecting = null;
+}
+
+/** Test seam: override the desktop's target-id answer (null restores the default). */
+export function _setTargetResolverForTest(fn: ViewTargetResolver | null): void {
+  targetResolver = fn ?? defaultTargetResolver;
 }

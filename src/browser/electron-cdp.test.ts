@@ -1,15 +1,25 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   connectElectronCdp,
   getPageForView,
   closeElectronCdp,
   _setConnectorForTest,
+  _setTargetResolverForTest,
 } from "./electron-cdp.js";
 
 // Fakes standing in for Playwright's Browser/Context/Page — no real socket. Each
-// page's evaluate() resolves its stubbed window.name regardless of the script.
-function fakePage(windowName: string) {
-  return { evaluate: async (_script: unknown) => windowName };
+// page's evaluate() resolves its stubbed window.name regardless of the script,
+// and its throwaway CDP session answers Target.getTargetInfo with its target id.
+function fakePage(windowName: string, targetId = `target-of-${windowName}`) {
+  return {
+    evaluate: async (_script: unknown) => windowName,
+    context: () => ({
+      newCDPSession: async () => ({
+        send: async (_method: string) => ({ targetInfo: { targetId } }),
+        detach: async () => {},
+      }),
+    }),
+  };
 }
 
 function fakeContext(pages: ReturnType<typeof fakePage>[]) {
@@ -25,9 +35,14 @@ function fakeBrowser(contexts: ReturnType<typeof fakeContext>[]) {
   };
 }
 
+// The desktop cannot name a target in these tests unless a test says so: the
+// window.name fallback is what the connection tests exercise.
+beforeEach(() => { _setTargetResolverForTest(async () => null); });
+
 afterEach(async () => {
   await closeElectronCdp();
   _setConnectorForTest(null);
+  _setTargetResolverForTest(null);
   delete process.env.LAX_ELECTRON_CDP_PORT;
 });
 
@@ -101,5 +116,45 @@ describe("getPageForView", () => {
     _setConnectorForTest(async () => browser as never);
 
     expect(await getPageForView("view-b")).toBe(target);
+  });
+});
+
+describe("getPageForView — the desktop's target id, not the page's own word", () => {
+  beforeEach(() => { process.env.LAX_ELECTRON_CDP_PORT = "51234"; });
+
+  it("matches by the CDP target id the desktop names, ignoring a page that claims the viewId in window.name", async () => {
+    // A hostile page can set window.name to another view's id; it cannot
+    // change which CDP target it is.
+    const spoofer = fakePage("view-b", "target-spoofer");
+    const real = fakePage("", "target-real");
+    _setConnectorForTest(async () => fakeBrowser([fakeContext([spoofer, real])]) as never);
+    _setTargetResolverForTest(async (viewId) => (viewId === "view-b" ? "target-real" : null));
+
+    expect(await getPageForView("view-b")).toBe(real);
+  });
+
+  it("returns null, never a window.name match, when no page is the named target", async () => {
+    const spoofer = fakePage("view-b", "target-spoofer");
+    _setConnectorForTest(async () => fakeBrowser([fakeContext([spoofer])]) as never);
+    _setTargetResolverForTest(async () => "target-gone");
+
+    expect(await getPageForView("view-b")).toBeNull();
+  });
+
+  it("skips a page whose session cannot be opened and still finds the target", async () => {
+    const torn = { ...fakePage("", "x"), context: () => ({ newCDPSession: async () => { throw new Error("closed"); } }) };
+    const real = fakePage("", "target-real");
+    _setConnectorForTest(async () => fakeBrowser([fakeContext([torn as never, real])]) as never);
+    _setTargetResolverForTest(async () => "target-real");
+
+    expect(await getPageForView("view-b")).toBe(real);
+  });
+
+  it("falls back to window.name only when the desktop cannot name the target", async () => {
+    const byName = fakePage("view-b", "target-by-name");
+    _setConnectorForTest(async () => fakeBrowser([fakeContext([fakePage("view-a"), byName])]) as never);
+    _setTargetResolverForTest(async () => null);
+
+    expect(await getPageForView("view-b")).toBe(byName);
   });
 });

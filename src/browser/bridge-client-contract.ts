@@ -28,6 +28,8 @@ export interface BrowserLifecycleResult {
 	view?: BrowserViewInfo;
 	views?: BrowserViewInfo[];
 	ping?: BridgePingResult;
+	/** op "target": the view page's CDP target id. */
+	targetId?: string;
 }
 export interface BrowserNavigateResult { url: string; title: string; status?: number }
 export interface UserActiveResult { userActive: true }

@@ -179,8 +179,10 @@ export function createBrowserView(
 	getHardenedPartitionSession(opts.partition);
 	const view = new WebContentsView({ webPreferences: viewWebPreferences(opts.partition) });
 	armCoDrive(viewId, view.webContents);
-	// Stamp a per-view marker on the top frame so the CDP driver (electron-cdp.ts)
-	// can map this viewId back to its Playwright Page via window.name. Fire-and-forget.
+	// Stamp a per-view marker on the top frame: the CDP driver (electron-cdp.ts)
+	// maps a viewId to its Playwright Page by CDP target id (browserViewTargetId)
+	// and reads window.name only when the desktop cannot name the target (DevTools
+	// holds the debugger). Fire-and-forget.
 	view.webContents.executeJavaScript(`window.name=${JSON.stringify(viewId)}`).catch(() => {});
 	// window.open children (popup-mode OAuth lives or dies on these) get the
 	// managed discipline: same-partition webPreferences, per-webContents
@@ -230,6 +232,20 @@ function evictDetachedAgentViewsOverCap(keepId: string): void {
 
 export function getBrowserView(viewId: string): WebContentsView | undefined {
 	return pool.get(viewId)?.view;
+}
+
+/**
+ * The CDP target id of the view's page, read over the webContents debugger.
+ * The server's CDP driver maps the viewId to its Playwright Page by this id:
+ * the window.name stamp above is page-writable, so a hostile page could claim
+ * another view's id and receive that view's secret fills. The debugger stays
+ * attached — detaching would drop the Chrome-identity override riding it.
+ */
+export async function browserViewTargetId(viewId: string): Promise<string> {
+	const wc = requireEntry(viewId).view.webContents;
+	if (!wc.debugger.isAttached()) wc.debugger.attach("1.3");
+	const { targetInfo } = (await wc.debugger.sendCommand("Target.getTargetInfo")) as { targetInfo: { targetId: string } };
+	return targetInfo.targetId;
 }
 
 /** Attach to the main window (detaching whichever view was attached). */

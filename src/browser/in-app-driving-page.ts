@@ -28,8 +28,8 @@
  *     Target.createBrowserContext). A fresh context is an UNHARDENED session
  *     with no egress guard. Only ever reach a Page via getPageForView, which
  *     returns an EXISTING hardened-partition WebContentsView Page.
- *   - The window.name === viewId marker is the id->Page contract getPageForView
- *     relies on; nothing here touches it.
+ *   - The id->Page contract is getPageForView's (the desktop-reported CDP
+ *     target id, window.name only as its fallback); nothing here touches it.
  */
 import type { Page } from "playwright";
 import { createLogger } from "../logger.js";

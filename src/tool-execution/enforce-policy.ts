@@ -39,6 +39,7 @@ import { lookupTool, validateArgs } from "./arg-validation.js";
 export { ARI_ACTION_MAP, deriveAriAction } from "./ari-action-map.js";
 import { deriveAriAction } from "./ari-action-map.js";
 import { learnedProtocolEnvelopeGate } from "./learned-protocol-envelope.js";
+import { isInternalArgKey, withoutInternalArgs } from "./internal-args.js";
 
 // Side-effect-free "what-else-would-block" probe of the gates a kernel-denied
 // egress request would traverse NEXT in the pre-dispatch chain, so their
@@ -381,7 +382,11 @@ export const enforcePolicyPhase: Phase = async (ctx) => {
   outcome = await preToolUseHook(ctx);
   if (outcome.kind !== "continue") return outcome;
   if (ctx.hookRewrittenArgs) {
-    ctx.args = ctx.hookRewrittenArgs;
+    // A rewrite replaces the model's arguments and nothing else: the stamps
+    // the dispatch pipeline put on the call (_sessionId, _cwd, …) stay as they
+    // were, and a `_` key a hook adds is dropped like one the model sent.
+    const stamps = Object.fromEntries(Object.entries(ctx.args).filter(([k]) => isInternalArgKey(k)));
+    ctx.args = { ...stamps, ...withoutInternalArgs(ctx.hookRewrittenArgs) };
     ctx.hookRewrittenArgs = undefined;
     // Hooks are NOT re-fired on the second pass (the rewrite came from them;
     // re-firing would loop), but every security/validation gate re-judges the

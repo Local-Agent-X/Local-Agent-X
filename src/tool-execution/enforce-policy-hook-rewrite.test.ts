@@ -88,6 +88,22 @@ describe("PreToolUse arg rewrite — applied and re-screened", () => {
     expect(calls[1][0].args).toEqual({ path: "redirected.txt", content: "x" });
   });
 
+  // The model's `_` keys are dropped at resolve, before any hook runs; a
+  // rewrite used to be assigned whole, so a hook could re-add them — another
+  // session's id, a different cwd (red team 2026-10-13, C3).
+  it("a rewrite keeps the call's own stamps and never adds a `_` key of its own", async () => {
+    hookEngineReturning(vi.fn(async () => ({
+      continue: true,
+      rewriteArgs: { path: "redirected.txt", content: "x", _sessionId: "someone-else", _cwd: "/elsewhere", _unsafe: true },
+    })));
+    const ctx = ctxFor({ path: "original.txt", content: "x", _sessionId: "s1", _cwd: "/project" });
+
+    const outcome = await enforcePolicyPhase(ctx);
+
+    expect(outcome.kind).toBe("continue");
+    expect(ctx.args).toEqual({ path: "redirected.txt", content: "x", _sessionId: "s1", _cwd: "/project" });
+  });
+
   it("a rewrite that breaks the tool's schema is caught by the re-screen, not executed", async () => {
     // Drops the REQUIRED field — a violation arg-coercion cannot repair.
     hookEngineReturning(vi.fn(async () => ({ continue: true, rewriteArgs: { content: "x" } })));

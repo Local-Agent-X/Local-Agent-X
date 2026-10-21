@@ -7,6 +7,7 @@
 import type { ToolResult } from "../../types.js";
 import type { BrowserBackend, ScreenshotImage, SecretBrowserOps } from "../../browser/index.js";
 import { findSecretOnScreen, secretOnScreenMessage } from "../../browser/secret-on-screen.js";
+import { heldSecretValues, maskHeldSecrets } from "../../browser/evaluate-held-secrets.js";
 import { closeBrowser } from "../../browser/index.js";
 import { evaluateBlockMessage, scanEvaluateScript, sensitivePageStub } from "../../browser/guards.js";
 import { wrapExternalContent } from "../../sanitize.js";
@@ -51,6 +52,7 @@ export async function handleScreenshot(manager: BrowserBackend, secretOps: Secre
 export async function handleEvaluate(
   manager: BrowserBackend,
   args: Record<string, unknown>,
+  secretOps: SecretBrowserOps,
 ): Promise<ToolResult> {
   const sensitive = sensitivePageStub(manager.getCurrentUrl());
   if (sensitive) return withheld(sensitive);
@@ -60,7 +62,10 @@ export async function handleEvaluate(
   if (mutationReason) return err(mutationReason);
   const blockedPattern = scanEvaluateScript(script);
   if (blockedPattern) return err(evaluateBlockMessage(blockedPattern, script));
-  return ok(await manager.evaluate(script));
+  // The script blocklist above is spelling-based; the result guard is not.
+  // What the page holds is read BEFORE the script runs (evaluate-held-secrets.ts).
+  const held = await heldSecretValues(secretOps);
+  return ok(maskHeldSecrets(await manager.evaluate(script), held));
 }
 
 export async function handleInfo(manager: BrowserBackend): Promise<ToolResult> {

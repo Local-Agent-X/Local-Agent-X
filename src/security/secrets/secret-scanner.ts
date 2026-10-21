@@ -127,6 +127,16 @@ export function scanKnownSecretValues(text: string): SecretMatch[] {
   return scanKnownValues(text, buildNormalizedView(text));
 }
 
+/**
+ * The known-value pass over the given values instead of the registry — raw,
+ * encoded or normalized — for secrets that belong to one result only (what a
+ * page holds while an evaluate script runs). `pattern` names the matches.
+ */
+export function scanHeldValues(text: string, held: readonly string[], pattern: string): SecretMatch[] {
+  if (held.length === 0) return [];
+  return scanKnownValues(text, buildNormalizedView(text), held, pattern);
+}
+
 /** Redact all detected secrets from text */
 export function redactSecrets(text: string): string {
   const result = scanForSecrets(text);

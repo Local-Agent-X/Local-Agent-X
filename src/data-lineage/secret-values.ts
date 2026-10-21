@@ -33,6 +33,7 @@
 
 import {
   scanForSecrets,
+  scanHeldValues,
   scanKnownSecretValues,
   registerRedactedSecretValue,
   isSecretShaped,
@@ -193,9 +194,21 @@ export function maskSecretValues(text: string, opts: MaskOptions = {}): MaskedSe
   const tail = text.length > SECRET_SCAN_CAP ? text.slice(SECRET_SCAN_CAP) : "";
 
   const spans = [...(opts.knownOnly ? [] : jsonFieldSpans(head, !!opts.endpoint)), ...scannerSpans(head, opts)];
-  // Earliest start first, longest first on a tie; a span overlapping one
-  // already kept is dropped (the full PEM block wins over its BEGIN line, the
-  // endpoint value over the shape match inside it).
+  const { text: out, kept } = replaceSpans(head, spans);
+  const kinds = new Set<string>();
+  const values = new Set<string>();
+  for (const s of kept) {
+    kinds.add(s.kind);
+    if (s.value !== null) values.add(s.value);
+  }
+  return { text: out + tail, masked: kept.length, kinds: [...kinds], values: [...values] };
+}
+
+/** `text` with each span replaced. Earliest start first, longest first on a
+ *  tie; a span overlapping one already kept is dropped (the full PEM block
+ *  wins over its BEGIN line, the endpoint value over the shape match inside
+ *  it). */
+function replaceSpans(text: string, spans: Span[]): { text: string; kept: Span[] } {
   spans.sort((a, b) => a.start - b.start || b.end - a.end);
   const kept: Span[] = [];
   let coveredTo = -1;
@@ -204,16 +217,25 @@ export function maskSecretValues(text: string, opts: MaskOptions = {}): MaskedSe
     kept.push(s);
     coveredTo = s.end;
   }
+  let out = text;
+  for (const s of [...kept].reverse()) out = out.slice(0, s.start) + s.replacement + out.slice(s.end);
+  return { text: out, kept };
+}
 
-  let out = head;
-  const kinds = new Set<string>();
-  const values = new Set<string>();
-  for (const s of [...kept].reverse()) {
-    out = out.slice(0, s.start) + s.replacement + out.slice(s.end);
-    kinds.add(s.kind);
-    if (s.value !== null) values.add(s.value);
-  }
-  return { text: out + tail, masked: kept.length, kinds: [...kinds], values: [...values] };
+/**
+ * Mask every occurrence of `values` in `text` in place — raw, encoded or
+ * normalized, through the known-value pass — for secrets that belong to one
+ * result only (what a page held while an evaluate script ran). Registers
+ * nothing: they are the page's, not the user's, and would refuse the page's
+ * own traffic at every egress sink.
+ */
+export function maskHeldValues(text: string, values: readonly string[], kind: string): { text: string; masked: number } {
+  if (!text || values.length === 0) return { text, masked: 0 };
+  const spans: Span[] = scanHeldValues(text, values, kind).map((m) => ({
+    start: m.startIndex, end: m.endIndex, replacement: `[redacted-secret:${kind}]`, value: null, kind,
+  }));
+  const { text: out, kept } = replaceSpans(text, spans);
+  return { text: out, masked: kept.length };
 }
 
 /**

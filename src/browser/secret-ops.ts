@@ -71,6 +71,10 @@ export interface SecretBrowserOps {
 	 *  with a selector that reads it back. Host-side only — for the
 	 *  secret-on-screen check; a value never goes into a result. */
 	visibleValues(): Promise<VisibleValue[]>;
+	/** What the page HOLDS and a script could read back: cookies, web storage,
+	 *  password fields. Host-side only — for the evaluate result guard
+	 *  (evaluate-held-secrets.ts); a value never goes into a result. */
+	heldSecrets(): Promise<HeldSecret[]>;
 	/** Mark the element a snapshot ref names (the backend's registry resolves
 	 *  it, recovering a stale ref the way clicks do) and return a selector that
 	 *  reaches it, or null when the ref is gone. */
@@ -135,6 +139,46 @@ export function visibleValuesScript(): string {
 	for (var j = 0; j < code.length && out.length < 400; j++) { var c = code[j]; var t = (c.textContent || '').trim(); if (t && seen(c)) out.push({ value: t.slice(0, 4096), selector: path(c), field: false, names: [], inDialog: false }); }
 	return out;
 })()`;
+}
+
+export interface HeldSecret {
+	value: string;
+	kind: "cookie" | "storage" | "password-field";
+	/** The cookie's name, the storage key, or the field's name / id. */
+	name: string;
+}
+
+/** Everything the page holds that a script could read and return: each
+ *  cookie (raw and percent-decoded, so either rendering is recognised), each
+ *  local/session storage entry, each password field's value. Capped. */
+export function heldSecretsScript(): string {
+	return `(function(){
+	var out = [];
+	var push = function(kind, name, value){ if (value && out.length < 400) out.push({ kind: kind, name: String(name).slice(0, 120), value: String(value).slice(0, 65536) }); };
+	try {
+		document.cookie.split(';').forEach(function(c){
+			var i = c.indexOf('='); if (i <= 0) return;
+			var name = c.slice(0, i).trim(), raw = c.slice(i + 1).trim();
+			push('cookie', name, raw);
+			try { var dec = decodeURIComponent(raw); if (dec !== raw) push('cookie', name, dec); } catch (e) {}
+		});
+	} catch (e) {}
+	[window.localStorage, window.sessionStorage].forEach(function(store){
+		try { for (var i = 0; i < store.length; i++) { var k = store.key(i); push('storage', k, store.getItem(k)); } } catch (e) {}
+	});
+	var pw = document.querySelectorAll('input[type=password]');
+	for (var j = 0; j < pw.length; j++) push('password-field', pw[j].name || pw[j].id || 'password', pw[j].value);
+	return out;
+})()`;
+}
+
+const HELD_KINDS = new Set(["cookie", "storage", "password-field"]);
+
+function asHeldSecrets(raw: unknown): HeldSecret[] {
+	if (!Array.isArray(raw)) return [];
+	return raw.filter((v): v is HeldSecret => !!v && typeof v === "object"
+		&& typeof (v as HeldSecret).value === "string" && typeof (v as HeldSecret).name === "string"
+		&& HELD_KINDS.has((v as HeldSecret).kind));
 }
 
 function asVisibleValues(raw: unknown): VisibleValue[] {
@@ -273,6 +317,9 @@ export function createCdpSecretOps(getPage: () => Promise<Page>, getRegistry: ()
 		async visibleValues() {
 			return asVisibleValues(await (await getPage()).evaluate(visibleValuesScript()));
 		},
+		async heldSecrets() {
+			return asHeldSecrets(await (await getPage()).evaluate(heldSecretsScript()));
+		},
 	};
 }
 
@@ -329,6 +376,9 @@ export function createInAppSecretOps(deps: InAppSecretDeps): SecretBrowserOps {
 		},
 		async visibleValues() {
 			return asVisibleValues(await exec(visibleValuesScript()));
+		},
+		async heldSecrets() {
+			return asHeldSecrets(await exec(heldSecretsScript()));
 		},
 	};
 }

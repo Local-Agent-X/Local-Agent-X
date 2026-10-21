@@ -56,6 +56,7 @@ export {
 export {
   isSecretEndpointUrl,
   maskSecretValues,
+  maskHeldValues,
   withholdSecretValues,
   secretsMaskedNote,
 } from "./secret-values.js";

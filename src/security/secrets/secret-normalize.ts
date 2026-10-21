@@ -146,12 +146,12 @@ function findAllSpans(hay: string, needle: string): Array<{ start: number; end: 
   return spans;
 }
 
-function knownValueMatch(start: number, end: number): SecretMatch {
+function knownValueMatch(start: number, end: number, pattern: string): SecretMatch {
   // Never echo the value: mask is fixed and `value` is empty so the literal
   // secret can't leak through a logged SecretMatch.
   return {
     type: "known-secret-value",
-    pattern: "Known Secret Value",
+    pattern,
     value: "",
     masked: "***",
     startIndex: start,
@@ -164,18 +164,24 @@ function knownValueMatch(start: number, end: number): SecretMatch {
  * encoded-run, or in the normalized view — reusing the SAME decode/normalize
  * machinery the credential passes use. Values are gated by isSecretShaped at
  * registration time, so short/low-entropy values never reach here (no FP).
+ *
+ * `held` scopes the pass to the given values instead of the registry (a
+ * page's own cookies for one evaluate result); the caller gates those the
+ * same way. `pattern` names the match for the masker's note.
  */
 export function scanKnownValues(
   text: string,
-  view: { normalized: string; outToOrig: number[] }
+  view: { normalized: string; outToOrig: number[] },
+  held?: readonly string[],
+  pattern = "Known Secret Value",
 ): SecretMatch[] {
-  if (!hasKnownSecretValues()) return [];
-  const values = knownSecretValues(); // longest-first
+  if (held ? held.length === 0 : !hasKnownSecretValues()) return [];
+  const values = held ? [...held].sort((a, b) => b.length - a.length) : knownSecretValues(); // longest-first
   const out: SecretMatch[] = [];
 
   // 1) Raw occurrences.
   for (const v of values) {
-    for (const s of findAllSpans(text, v)) out.push(knownValueMatch(s.start, s.end));
+    for (const s of findAllSpans(text, v)) out.push(knownValueMatch(s.start, s.end, pattern));
   }
 
   // 2) Encoded views: a value hidden inside a base64/hex/percent run. Attribute
@@ -193,8 +199,11 @@ export function scanKnownValues(
       const run = m[0];
       const index = m.index ?? 0;
       const decodedViews = iterativeRunViews(scheme, run, budget);
-      if (decodedViews.some((d) => values.some((v) => d.includes(v)))) {
-        out.push(knownValueMatch(index, index + run.length));
+      // A value sitting raw inside the run (a cookie with one `%3A`, which
+      // makes the whole line a percent run) is the raw pass's span, not a
+      // reason to attribute the entire run.
+      if (values.some((v) => !run.includes(v) && decodedViews.some((d) => d.includes(v)))) {
+        out.push(knownValueMatch(index, index + run.length, pattern));
       }
     }
   }
@@ -208,7 +217,7 @@ export function scanKnownValues(
         const origStart = outToOrig[s.start] ?? s.start;
         const origEnd =
           s.end - 1 < outToOrig.length ? (outToOrig[s.end - 1] ?? s.end - 1) + 1 : text.length;
-        out.push(knownValueMatch(origStart, origEnd));
+        out.push(knownValueMatch(origStart, origEnd, pattern));
       }
     }
   }

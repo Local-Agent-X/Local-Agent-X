@@ -8,7 +8,7 @@
 // that its `find` filter happened to match nothing.
 
 import { describe, it, expect, afterEach } from "vitest";
-import { maskSecretValues, withholdSecretValues, isSecretEndpointUrl, checkEgressTaint } from "./index.js";
+import { maskSecretValues, maskHeldValues, withholdSecretValues, isSecretEndpointUrl, checkEgressTaint } from "./index.js";
 import { scanForSecrets, unregisterRedactedSecretValue, knownSecretValues } from "../security/secrets/index.js";
 import { egressGuardGate } from "../tool-execution/enforce-policy.js";
 import { makeCtx } from "../tool-execution/capability-class-gates.test-helper.js";
@@ -258,5 +258,28 @@ describe("a lowercase or hex credential is masked by its name, a bare digest is 
   it("leaves a commit id and a content digest alone", () => {
     const text = "commit 3424062b65a5e072cf033eb02872c24db9340c3 (HEAD -> main)\nsha256: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
     expect(maskSecretValues(text).masked).toBe(0);
+  });
+});
+
+describe("maskHeldValues — one result's own values, masked wherever they appear, registered nowhere", () => {
+  const HELD = "s%3A8f3kQm2vZpL9xT4wNb7cRd6yHj1aG0uE";
+
+  it("masks the value raw and encoded and keeps the rest", () => {
+    const { text, masked } = maskHeldValues(`a=${HELD}; b=${Buffer.from(HELD).toString("hex")}; c=keep`, [HELD], "Page-held Secret");
+    expect(masked).toBe(2);
+    expect(text).not.toContain(HELD);
+    expect(text).toContain("c=keep");
+    expect(text).toContain("[redacted-secret:Page-held Secret]");
+  });
+
+  it("registers nothing: the value is the page's, and the registry is the user's", () => {
+    maskHeldValues(`x=${HELD}`, [HELD], "Page-held Secret");
+    expect(knownSecretValues()).not.toContain(HELD);
+    expect(scanForSecrets(HELD).matches.some((m) => m.type === "known-secret-value")).toBe(false);
+  });
+
+  it("is a no-op with nothing held or nothing to scan", () => {
+    expect(maskHeldValues("plain", [], "k")).toEqual({ text: "plain", masked: 0 });
+    expect(maskHeldValues("", [HELD], "k")).toEqual({ text: "", masked: 0 });
   });
 });

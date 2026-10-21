@@ -125,7 +125,10 @@ export async function installRequestGuard(context: BrowserContext): Promise<void
  *   1. Read-into-model-context leaks — a script can read a secret (cookie,
  *      storage, password field) and RETURN it as the evaluate result straight
  *      to the model provider with ZERO network egress. No network gate can see
- *      that channel, so these reads must still be blocked.
+ *      that channel. These patterns refuse the spellings they recognise and
+ *      say why; the guarantee is the RESULT guard (evaluate-held-secrets.ts),
+ *      which masks the values the page holds out of whatever a script returns,
+ *      however the read was spelled.
  *   2. Dynamic code execution — eval / Function / string-timer / indirect-eval /
  *      bracket global access / dynamic import / Reflect.apply / new Proxy. These
  *      manufacture new code contexts the static scanner can't

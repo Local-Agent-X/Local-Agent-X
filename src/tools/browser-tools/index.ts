@@ -177,7 +177,7 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
             case "select": return await handleSelect(manager, args);
             case "extract": return await handleExtract(manager, args);
             case "screenshot": return await handleScreenshot(manager, getSecretBrowserOps(sessionId));
-            case "evaluate": return await handleEvaluate(manager, args);
+            case "evaluate": return await handleEvaluate(manager, args, getSecretBrowserOps(sessionId));
             case "scroll": return await handleScroll(manager, args);
             case "tabs": return await handleTabs(manager);
             case "switch_tab": return await handleSwitchTab(manager, args);

@@ -96,6 +96,7 @@ function buildOps(opts: {
     },
     pressEnter: async () => undefined,
     visibleValues: async () => [],
+    heldSecrets: async () => [],
     markRef: async (id: number) => `[data-lax-ref="${id}"]`,
   };
 }

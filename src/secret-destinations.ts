@@ -48,12 +48,15 @@ export function isUnderOrigin(saved: string, key: string): boolean {
 }
 
 /** Why a secret may go to a destination — the ladder every emitter consults. */
-export type DestinationDecision = "origin" | "session" | "pre_bless" | "approved" | "ask";
+export type DestinationDecision = "origin" | "session" | "pre_bless" | "approved" | "planned" | "ask";
 
 /** What the ladder is judged with, beyond the record and the destination. */
 export interface DestinationContext {
   sessionId?: string;
   preBlessed: boolean;
+  /** The session is one of a scheduled job's runs, and the job's key plan
+   *  names this key for this exact destination (cron/job-secret-plan.ts). */
+  planned?: boolean;
   /** The origin rung takes only the saved origin itself, never a host under
    *  it. The browser credential fill asks for this: a password typed into a
    *  look-alike subdomain page is the phishing case, which an API call to a
@@ -74,7 +77,8 @@ export interface DestinationRecord {
  * had them: a secret captured this session may go to its own site without a
  * card, not to a host the model chose on another site. A secret with no
  * recorded origin (saved by name only) has no site to condition on, so those
- * two rungs apply anywhere for it.
+ * two rungs apply anywhere for it. The planned rung is a scheduled job's key
+ * plan: the user's yes for that job's runs only, never kept in the vault.
  */
 export function decideDestination(
   entry: DestinationRecord,
@@ -86,5 +90,6 @@ export function decideDestination(
   if (ownSite && ctx.sessionId && entry.createdBySession === ctx.sessionId) return "session";
   if (ownSite && ctx.preBlessed) return "pre_bless";
   if (entry.approvedDestinations?.some((a) => a.origin === key)) return "approved";
+  if (ctx.planned) return "planned";
   return "ask";
 }

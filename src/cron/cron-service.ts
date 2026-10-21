@@ -38,6 +38,7 @@ import { runJob } from "./cron-service-execute.js";
 import { MissionChangeNotice } from "./mission-changes.js";
 import type { ProfileName } from "../autonomy/profiles.js";
 import type { ImageEngine } from "../tools/image-tools/image-engine.js";
+import type { SecretPlanPair } from "./job-secret-plan.js";
 
 export type { CronJob, CronSettings, ExecuteResult, ExecuteContext, ExecuteHandler } from "./cron-service-types.js";
 
@@ -49,6 +50,8 @@ export interface CronJobOptions {
   tz?: string;
   imageEngine?: ImageEngine;
   useSignedInBrowser?: boolean;
+  /** Already parsed (job-secret-plan.ts parseSecretPlan). */
+  secretPlan?: SecretPlanPair[];
 }
 
 const logger = createLogger("cron-service");
@@ -248,8 +251,12 @@ export class CronService {
     if (existing) {
       logger.info(`[cron] Updated existing job ${name} instead of creating duplicate`);
       // A timezone given with the re-create applies like the schedule it
-      // qualifies; one not given leaves the job's own in place.
-      return this.update(existing.id, { schedule, prompt, ...(opts?.tz !== undefined ? { tz: opts.tz } : {}) }) || existing;
+      // qualifies; one not given leaves the job's own in place. So does a key plan.
+      return this.update(existing.id, {
+        schedule, prompt,
+        ...(opts?.tz !== undefined ? { tz: opts.tz } : {}),
+        ...(opts?.secretPlan !== undefined ? { secretPlan: opts.secretPlan } : {}),
+      }) || existing;
     }
     const id = `cron_${Date.now().toString(36)}`;
     const job: CronJob = {
@@ -264,6 +271,7 @@ export class CronService {
       ...(opts?.tz ? { tz: opts.tz } : {}),
       ...(opts?.imageEngine ? { imageEngine: opts.imageEngine } : {}),
       ...(opts?.useSignedInBrowser ? { useSignedInBrowser: true } : {}),
+      ...(opts?.secretPlan?.length ? { secretPlan: opts.secretPlan } : {}),
     };
     this.jobs_internal.set(id, job);
     this.saveJobs();

@@ -25,7 +25,7 @@ src/browser/extract-script.ts 355
 src/browser/in-app-resolve-scripts.ts#resolutionScript 210
 src/browser/layout-report.ts#buildLayoutReportScript 308
 src/browser/observation.ts#ObservationRegistry.observeInner 111
-src/browser/secret-fill.ts#withBrowserLock:callback 132
+src/browser/secret-fill.ts#withBrowserLock:callback 125
 src/canonical-loop/adapters/anthropic-transport.ts#stream 107
 src/canonical-loop/adapters/app-build-adapter.ts#CliBuildAdapter.runTurn 104
 src/canonical-loop/adapters/codex.ts#CodexAdapter.runTurn 105
@@ -82,7 +82,7 @@ src/security/layer/kernel-class-policy.ts#evaluateByKernelClass 132
 src/security/layer/shell-policy.ts#evaluateShellCommand 102
 src/self-edit/sandbox.ts#runSelfEditInSandbox 198
 src/self-edit/tool.ts#selfEditTool.execute 117
-src/server/background-jobs/cron-runner.ts#cronService.onExecute:callback 170
+src/server/background-jobs/cron-runner.ts#cronService.onExecute:callback 166
 src/server/background-jobs/index.ts#startBackgroundJobs 106
 src/server/bootstrap-services.ts#initOrRefreshEmbeddingProvider 107
 src/server/handler-events.ts#agentRunDriver 127

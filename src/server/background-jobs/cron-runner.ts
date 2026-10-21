@@ -25,7 +25,9 @@ import { closeBrowser } from "../../browser/index.js";
 import { setSessionImageEngine, clearSessionImageEngine } from "../../tools/image-tools/image-engine.js";
 import { remeasurePromptTelemetry } from "../../prompt-telemetry.js";
 import { toolSchemaFormatForDispatch } from "../../providers/shared/tool-shape.js";
-import { renderPromptSection } from "../../context/system-prompt-builder.js";
+import { renderPromptSection, type RenderedPromptSection } from "../../context/system-prompt-builder.js";
+import type { CronJob } from "../../cron/cron-service-types.js";
+import { secretPlanPromptBlock, setJobSecretPlanSource } from "../../cron/job-secret-plan.js";
 import { OP_TYPE } from "../../ops/op-types.js";
 import { provisionAgentWorkspace, releaseAgentWorkspace } from "../../agency/agent-workspace.js";
 
@@ -35,6 +37,19 @@ const logger = createLogger("server.background-jobs.cron");
 function missionFolder(workspace: string, name: string | undefined, jobId: string): string {
   const slug = (name || jobId).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/-+$/, "");
   return join(resolve(workspace), "missions", slug || jobId);
+}
+
+/** A run's system prompt, by section: the mission frame, its work folder, the
+ *  integrations its tools reach, and the keys its plan lets it send (names and
+ *  sites only, never values). */
+function missionPromptSections(workFolder: string, integrationsContext: string, plan: CronJob["secretPlan"]): RenderedPromptSection[] {
+  const keys = secretPlanPromptBlock(plan);
+  return [
+    renderPromptSection({ id: "scheduled-mission", label: "Scheduled Mission", type: "static", policy: "required", text: CRON_SYSTEM_PROMPT }),
+    renderPromptSection({ id: "work-folder", label: "Work Folder", type: "dynamic", policy: "required", text: workFolder }),
+    ...(integrationsContext ? [renderPromptSection({ id: "integrations", label: "Connected Integrations", type: "dynamic", policy: "degradable", text: integrationsContext })] : []),
+    ...(keys ? [renderPromptSection({ id: "job-keys", label: "Keys This Job May Use", type: "dynamic", policy: "required", text: keys })] : []),
+  ];
 }
 
 // 20-min default — thorough multi-source research (web_search + 3-5
@@ -76,8 +91,11 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
 
   // Every change to the missions list reaches every open tab, and a deleted
   // job's browser profile never opens again (its run may still be stopping).
+  // The vault's ladder reads a job's key plan live, so a deleted job's plan,
+  // or a pair the user removed, stops the next send.
   broadcastMissionChanges(cronService, broadcastAll);
   setJobExistsCheck((jobId) => cronService.get(jobId) !== null);
+  setJobSecretPlanSource((jobId) => cronService.get(jobId)?.secretPlan);
 
   cronService.onExecute(async (jobId, prompt, _ctx) => {
     const missionStartMs = Date.now();
@@ -126,11 +144,7 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
       // The connected integrations the job's tools can reach: the block the
       // prepared (main-chat) prompt carries, which the mission prompt replaces.
       const integrationsContext = integrations.getAgentContext({ reachableWith: new Set(cronTools.map((t) => t.name)) });
-      const renderedPromptSections = [
-        renderPromptSection({ id: "scheduled-mission", label: "Scheduled Mission", type: "static", policy: "required", text: CRON_SYSTEM_PROMPT }),
-        renderPromptSection({ id: "work-folder", label: "Work Folder", type: "dynamic", policy: "required", text: workspace.promptBlock }),
-        ...(integrationsContext ? [renderPromptSection({ id: "integrations", label: "Connected Integrations", type: "dynamic", policy: "degradable", text: integrationsContext })] : []),
-      ];
+      const renderedPromptSections = missionPromptSections(workspace.promptBlock, integrationsContext, jobMeta?.secretPlan);
       const systemPrompt = renderedPromptSections.map((section) => section.text).join("");
       const promptTelemetry = remeasurePromptTelemetry({
         baseline: prepared.promptTelemetry,

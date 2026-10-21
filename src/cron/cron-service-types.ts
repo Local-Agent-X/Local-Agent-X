@@ -8,6 +8,7 @@
 import type { CronRunStatus } from "./run-history.js";
 import type { ProfileName } from "../autonomy/profiles.js";
 import type { ImageEngine } from "../tools/image-tools/image-engine.js";
+import type { SecretPlanPair } from "./job-secret-plan.js";
 
 export interface CronJob {
   id: string;
@@ -34,6 +35,11 @@ export interface CronJob {
    *  the job's own profile. Authority the user grants (job-authority.ts), like
    *  `profile`: the agent may not set it, and sync never carries it in. */
   useSignedInBrowser?: boolean;
+  /** The saved keys this job's runs may send, each to one site: the ladder's
+   *  "planned" rung for this job's sessions only (job-secret-plan.ts). Authority
+   *  the user grants (job-authority.ts), like `profile`: the agent may not set
+   *  it, and sync never carries it in. Undefined or empty = no plan. */
+  secretPlan?: SecretPlanPair[];
   /** Per-job autonomy profile. Overrides the global profile for this job's
    *  unattended run only (see setSessionProfile). Undefined = inherit the
    *  global profile — under which ask-tier actions block unattended. */

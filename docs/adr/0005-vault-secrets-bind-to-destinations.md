@@ -106,3 +106,11 @@ vault's reach at all.
   under it. The browser credential fill asks the ladder for the exact origin
   (`exactOrigin`), so a password is still asked about on a look-alike
   subdomain page.
+- 2026-10-21 — **A scheduled job's key plan.** A job may carry a plan
+  (`CronJob.secretPlan`): the (key, site) pairs the user named for it, on
+  the Missions page or on a card when the job was scheduled from the chat.
+  The ladder's `planned` rung, after `approved`, allows a planned pair for
+  the sessions of that job's runs and the agents and workers they spawn
+  (`src/cron/job-secret-plan.ts`), and for no other session: a plan never
+  writes the vault's approved destinations. Anything off the plan still
+  ends in "ask", which an unattended run parks in the user's inbox.

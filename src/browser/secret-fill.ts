@@ -39,6 +39,18 @@ import type { ServerEvent } from "../types.js";
 import { createLogger } from "../logger.js";
 const logger = createLogger("browser-secret-fill");
 
+/** Why a fill was allowed, in the words its result gives the model. */
+const FILL_GATE_EXPLAINED: Record<"account-name" | "asked" | "granted" | Exclude<DestinationDecision, "ask">, string> = {
+  "account-name": "an email address: an account name, not a credential",
+  origin: "approved (the site this secret was saved for)",
+  session: "approved (same session captured this secret)",
+  approved: "approved (user-saved approval for this origin)",
+  asked: "approved by the user just now for this origin",
+  granted: "approved by the user from their inbox, for this fill only",
+  pre_bless: "approved (operation pre-blessed this secret)",
+  planned: "approved (the user named this site for this scheduled job's key)",
+};
+
 function ok(content: string): ToolResult { return { content }; }
 function err(content: string): ToolResult { return { content, isError: true }; }
 
@@ -321,14 +333,7 @@ export function createBrowserSecretFillTool(
         selectorKind: matchedPattern.label, gate: gateOutcome, pressEnter,
       });
 
-      const gateExplain =
-        gateOutcome === "account-name" ? "an email address: an account name, not a credential" :
-        gateOutcome === "origin" ? "approved (the site this secret was saved for)" :
-        gateOutcome === "session" ? "approved (same session captured this secret)" :
-        gateOutcome === "approved" ? "approved (user-saved approval for this origin)" :
-        gateOutcome === "asked" ? "approved by the user just now for this origin" :
-        gateOutcome === "granted" ? "approved by the user from their inbox, for this fill only" :
-        "approved (operation pre-blessed this secret)";
+      const gateExplain = FILL_GATE_EXPLAINED[gateOutcome];
 
       return ok(
         `Filled ${matchedPattern.label} on ${currentOrigin} with secret "${name}" [${gateExplain}]${verificationNote}. ` +

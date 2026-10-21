@@ -46,6 +46,9 @@ import {
 } from "./openai-compat/types.js";
 import { byteLengthUtf8 } from "./openai-compat/helpers.js";
 import { appendTrailingContext, canonicalToChatParam } from "./openai-compat/canonical-to-chat-param.js";
+import { extendLocalWire, type LocalWireState } from "./openai-compat/local-wire.js";
+import { isLocalModelEndpoint } from "../../local-runtimes/model-endpoint.js";
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { resolveLocalCap } from "./openai-compat/local-cap.js";
 import { streamOnce, applyToolCallTextFallback } from "./openai-compat/stream-once.js";
 import { assessOpenAiCompatPreflight, promptExceedsMeasuredWindow } from "./openai-compat/request-preflight.js";
@@ -92,7 +95,39 @@ export class OpenAICompatAdapter implements Adapter {
   private aborter: AbortController = new AbortController();
   private inflight: Promise<StreamOnceResult> | null = null;
 
+  /** What this op last sent on a local wire (openai-compat/local-wire.ts). */
+  private localWire: LocalWireState | null = null;
+
   constructor(private readonly opts: OpenAICompatAdapterOptions) {}
+
+  /** The round's messages. On a local endpoint each round is a strict
+   *  extension of the last, so a runtime that cannot rewind its cache (a
+   *  hybrid model) reuses all of it; anywhere else, as built. */
+  private wireMessages(input: TurnInput, model: string | undefined): ChatCompletionMessageParam[] {
+    const tools = new Set(input.tools.map(t => t.name));
+    const toChat = (messages: TurnInput["messages"], redirect: TurnInput["pendingRedirect"]) =>
+      canonicalToChatParam(messages, redirect, tools, model ? modelAssistantRowShape(model) : "text-and-tool-calls", model ? modelReplaysReasoning(model) : false);
+    const tailRows = input.ephemeralTailMessages ?? 0;
+    const built = toChat(input.messages, input.pendingRedirect);
+    const full = appendTrailingContext(built, this.opts.trailingContext, tailRows);
+    if (!isLocalModelEndpoint(this.opts.baseURL)) return full;
+    // The durable rows are the history without the digest row the loop
+    // appended; a redirect rides outside `messages`, so nothing is cut then.
+    const durable = toChat(input.messages.slice(0, input.messages.length - (input.pendingRedirect ? 0 : tailRows)), undefined);
+    if (!durable.every((row, i) => JSON.stringify(row) === JSON.stringify(full[i]))) {
+      this.localWire = null;
+      return full;
+    }
+    const { messages, state } = extendLocalWire(this.localWire, {
+      turnIdx: input.turnIdx,
+      durable,
+      tailWithContext: full.slice(durable.length),
+      tailAlone: appendTrailingContext(built, undefined, tailRows).slice(durable.length),
+      redirect: input.pendingRedirect !== undefined,
+    });
+    this.localWire = state;
+    return messages;
+  }
 
   async runTurn(input: TurnInput, report: (r: AdapterReport) => void): Promise<TurnResult> {
     if (this.aborted) {
@@ -128,11 +163,7 @@ export class OpenAICompatAdapter implements Adapter {
       baseURL,
       model,
       systemPrompt: this.opts.systemPrompt ?? "You are a helpful assistant.",
-      messages: appendTrailingContext(
-        canonicalToChatParam(input.messages, input.pendingRedirect, new Set(input.tools.map(t => t.name)), model ? modelAssistantRowShape(model) : "text-and-tool-calls", model ? modelReplaysReasoning(model) : false),
-        this.opts.trailingContext,
-        input.ephemeralTailMessages ?? 0,
-      ),
+      messages: this.wireMessages(input, model),
       tools: input.tools.map(t => ({
         name: t.name,
         description: t.description ?? "",

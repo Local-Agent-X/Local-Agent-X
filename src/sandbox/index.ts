@@ -69,6 +69,7 @@ export function isGuardedUsable(): boolean {
 
 // Runtime override — set via API, persists in memory for this process
 let runtimeMode: SandboxMode | null = null;
+let fallbackLogged = false;
 
 export interface SandboxStatus {
   selectedMode: SandboxMode;
@@ -153,6 +154,13 @@ export function getSandboxStatus(): SandboxStatus {
   } else if (selectedMode === "bwrap" && !isBwrapUsable()) {
     effectiveMode = "host";
     fallbackReason = "bubblewrap is unavailable, so bash fell back to the unconfined host.";
+  }
+
+  // A fallback used to be a Settings badge and, on macOS and Linux, not even
+  // a log line. Said once per process, in the server log, with its reason.
+  if (fallbackReason && !proofPending && !fallbackLogged) {
+    fallbackLogged = true;
+    logger.warn(`[sandbox] selected mode "${selectedMode}" is not in effect — ${fallbackReason}`);
   }
 
   const confined = effectiveMode !== "host";

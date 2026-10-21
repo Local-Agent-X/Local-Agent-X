@@ -17,6 +17,38 @@ export function shellAllowedInContext(callContext: CallContext, sandbox: Sandbox
   return WORKER_CONTEXTS.has(callContext) ? sandbox.delegatedShellAllowed : sandbox.apiShellAllowed;
 }
 
+const hostFallbackNoticed = new Set<string>();
+
+/**
+ * The notice an ATTENDED shell call carries the first time in a session it
+ * runs on a host the cage fell back from — guarded was chosen, the cage is
+ * unusable, and nobody has acknowledged running without it. Host mode was a
+ * state the agent fell into silently: a Settings badge and nothing in the
+ * chat (red team round 2, I-H2). The call still runs — the user is present,
+ * and refusing it on a dev box with no cage would stop real work for a
+ * one-time click — but the chat now says so, once, and the log says why.
+ * Null for a confined cage, a host the user chose or acknowledged, a cage
+ * still proving itself, and every call after the first.
+ */
+export function attendedHostFallbackNotice(
+  sessionId: string,
+  toolName: string,
+  callContext: CallContext,
+  sandbox: SandboxStatus = getSandboxStatus(),
+): string | null {
+  if (callContext !== "local" || !hasCapability(toolName, "shell")) return null;
+  if (sandbox.confined || sandbox.proofPending || sandbox.unconfinedHostAcknowledged || sandbox.selectedMode === "host") return null;
+  if (hostFallbackNoticed.has(sessionId)) return null;
+  hostFallbackNoticed.add(sessionId);
+  return `Shell is running UNCONFINED: ${sandbox.fallbackReason ?? "the selected sandbox is unavailable on this host."} ` +
+    "Commands run with your full user rights. Restore the cage, or acknowledge running without it, in Settings > Security.";
+}
+
+/** Test seam: forget which sessions were told. */
+export function _resetHostFallbackNoticesForTests(): void {
+  hostFallbackNoticed.clear();
+}
+
 export function unattendedShellBlock(
   toolName: string,
   callContext: CallContext,

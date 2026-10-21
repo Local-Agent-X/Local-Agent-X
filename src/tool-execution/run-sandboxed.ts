@@ -21,12 +21,24 @@ import { existsSync } from "node:fs";
 import { checkFreshness, recordFileSeen, unchangedSinceSeen, seenViewFromReadResult } from "../tools/read-state.js";
 import { READ_DEDUP_STUB_LEAD, readContentInView } from "./read-dedup-evidence.js";
 import { getModelView } from "./model-view.js";
-import { unattendedShellBlock } from "./unattended-shell-gate.js";
+import { attendedHostFallbackNotice, unattendedShellBlock } from "./unattended-shell-gate.js";
+import { createLogger } from "../logger.js";
 import { parkNeedsUser, parkOrRefuse, takeUserGrant } from "./deferred-call.js";
 import { createToolRunner } from "./tool-runner.js";
 import { recordTaskArtifact } from "../data-lineage/task-artifacts.js";
 import { CREATE_CLASS, createTargetPath } from "./create-target-path.js";
 import { checkShellDeleteHappened } from "./verify-shell-deletes.js";
+
+const logger = createLogger("tool-execution");
+
+/** An attended shell on a host the cage fell back from runs, and says so in
+ *  the chat the first time this session, never silently. */
+function noticeHostFallback(ctx: Parameters<Phase>[0]): void {
+  const notice = attendedHostFallbackNotice(ctx.sessionId ?? "", ctx.tc.name, ctx.callContext);
+  if (!notice) return;
+  logger.warn(`[sandbox] ${notice}`);
+  ctx.onEvent?.({ type: "tool_progress", toolName: ctx.tc.name, toolCallId: ctx.tc.id, message: notice } as ServerEvent);
+}
 
 
 // CREATE_CLASS + createTargetPath (the per-family tool→output-path mapping the
@@ -79,6 +91,7 @@ export const runSandboxedPhase: Phase = async (ctx) => {
     ctx.result = shellBlock.metadata?.proofPending ? shellBlock : parkOrRefuse(ctx, shellBlock.content, shellBlock);
     return CONTINUE;
   }
+  noticeHostFallback(ctx);
 
   // The user's yes to this exact call, given from the inbox: a gate inside the
   // tool that would ask a person (a sensitive page, a credential fill) reads

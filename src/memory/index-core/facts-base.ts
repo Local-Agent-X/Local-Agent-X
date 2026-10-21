@@ -217,11 +217,18 @@ export abstract class MemoryFactsBase {
     entitiesUpdated: string[];
     opinionsUpdated: number;
   }> {
-    return Reflectx.reflect(
+    // A week of facts can name hundreds of entities. Their pages are re-indexed
+    // one at a time after the rebuild, not as hundreds of concurrent embedding
+    // requests; reflect still returns without waiting for them.
+    const result = await Reflectx.reflect(
       this.db, this.entitiesDir,
       () => { this.dirty = true; },
-      (slug) => { this.reindexThroughUniversal("entity", slug).catch(() => {}); },
+      () => {},
       sinceDays,
     );
+    void (async () => {
+      for (const slug of result.entitiesUpdated) await this.reindexThroughUniversal("entity", slug);
+    })();
+    return result;
   }
 }

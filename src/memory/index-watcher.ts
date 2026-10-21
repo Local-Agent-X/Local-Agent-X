@@ -3,6 +3,7 @@ import { handleWatcherErrors } from "../util/watcher-errors.js";
 import { createHash } from "node:crypto";
 import type Database from "better-sqlite3";
 import type { MemoryConfig } from "./types.js";
+import { refreshEntityPagesAfterDelete } from "./index-forget.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory.index-watcher");
@@ -38,14 +39,21 @@ export function startWatcher(
   }
 }
 
+/** Delete facts past retention and low-confidence opinions, then rebuild the
+ *  entity pages built from them (memory_search serves the pages, not the
+ *  facts table). Returns the slugs whose pages were rewritten, for the caller
+ *  to re-index one at a time. */
 export function archiveOldFacts(
   db: InstanceType<typeof Database>,
   config: MemoryConfig,
-  hasFts: boolean
-): void {
+  hasFts: boolean,
+  entitiesDir: string,
+  setDirty: () => void
+): string[] {
   const cutoffMs =
     Date.now() - config.factRetentionDays * 24 * 60 * 60 * 1000;
   const threshold = config.lowConfidenceThreshold;
+  const affectedEntities = new Set<string>();
 
   const deleted = db.transaction(() => {
     const toDelete = db
@@ -63,6 +71,8 @@ export function archiveOldFacts(
         const hash = createHash("sha256").update(fact.content).digest("hex");
         try { db.prepare("DELETE FROM embedding_cache WHERE hash = ?").run(hash); } catch {}
       }
+      const mentions = db.prepare("SELECT entity_slug FROM entity_mentions WHERE fact_id = ?").all(id) as Array<{ entity_slug: string }>;
+      for (const m of mentions) affectedEntities.add(m.entity_slug);
       db.prepare("DELETE FROM entity_mentions WHERE fact_id = ?").run(id);
       if (hasFts) {
         try {
@@ -84,4 +94,8 @@ export function archiveOldFacts(
   if (deleted > 0) {
     logger.info(`[memory] Archived ${deleted} old/low-confidence facts`);
   }
+
+  const rebuilt: string[] = [];
+  refreshEntityPagesAfterDelete(db, entitiesDir, setDirty, (slug) => rebuilt.push(slug), affectedEntities);
+  return rebuilt;
 }

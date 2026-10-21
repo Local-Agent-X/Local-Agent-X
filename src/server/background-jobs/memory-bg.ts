@@ -31,7 +31,7 @@ export function makeRunMemBg(deps: MemoryBgDeps): () => Promise<void> {
         logger.info(`[memory-bg] Reflect: ${reflection.entitiesUpdated.length} entities, ${reflection.opinionsUpdated} opinions`);
       }
       if (consolidation && (consolidation.mergedCount > 0 || consolidation.promotedCount > 0)) {
-        logger.info(`[memory-bg] Consolidation: merged=${consolidation.mergedCount} promoted=${consolidation.promotedCount} entities=${consolidation.entityPagesUpdated}`);
+        logger.info(`[memory-bg] Consolidation: merged=${consolidation.mergedCount} promoted=${consolidation.promotedCount}`);
       }
     } catch (e) { logger.warn("[memory-bg] Consolidation:", (e as Error).message); }
     try {

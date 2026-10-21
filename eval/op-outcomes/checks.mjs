@@ -9,7 +9,7 @@ import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { emittedToolCalls } from "./op-store.mjs";
 import { factStored } from "./checks-memory.mjs";
-import { RETRACTION } from "../retraction-phrases.mjs";
+import { findRetraction } from "../retraction-phrases.mjs";
 
 const sha = (p) => createHash("sha256").update(readFileSync(p)).digest("hex");
 
@@ -340,7 +340,7 @@ export function runCheck(check, ctx) {
       // The final reply must not disown the assistant's own sourcing
       // (eval/retraction-phrases.mjs — the same list the offline metric uses).
       const reply = replies.at(-1) ?? "";
-      const hit = RETRACTION.map((re) => reply.match(re)?.[0]).find(Boolean);
+      const hit = findRetraction(reply);
       return { ok: !hit, detail: hit ? `final reply retracts: "${hit}"` : "no retraction" };
     }
     case "factStored": {

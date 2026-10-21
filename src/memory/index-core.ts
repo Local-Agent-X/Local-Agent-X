@@ -82,7 +82,15 @@ export class MemoryIndex extends MemoryFactsBase {
 
     import("./universal-index.js")
       .then(({ attachUniversalIndex }) => attachUniversalIndex(this))
-      .catch(() => { /* universal-index not available — write-through becomes a no-op */ });
+      .catch(() => { /* universal-index not available — write-through becomes a no-op */ })
+      // After the attach, so the rebuilt pages can be re-indexed for search —
+      // one page at a time, not hundreds of embedding requests at once.
+      .then(async () => {
+        if (Forget.rebuildEntityPagesOnce(this.db, this.entitiesDir, () => { this.dirty = true; }, () => {}) === 0) return;
+        const { getUniversalIndex } = await import("./universal-index.js");
+        await getUniversalIndex()?.reindexStore("entity");
+      })
+      .catch((e) => logger.warn(`[memory] entity page rebuild failed: ${(e as Error).message}`));
   }
 
   // ── FTS rebuild ──
@@ -193,6 +201,8 @@ export class MemoryIndex extends MemoryFactsBase {
       hasVec: this.hasVec,
       memoryDir: this.memoryDir,
       dataDir: this.dataDir,
+      entitiesDir: this.entitiesDir,
+      reindexEntity: (slug) => this.reindexThroughUniversal("entity", slug),
       sessionDeltas: this.sessionDeltas,
       dirtyRef,
       syncInProgressRef,

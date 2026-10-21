@@ -1,4 +1,4 @@
-import { unlinkSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { createHash } from "node:crypto";
 import type Database from "better-sqlite3";
@@ -6,6 +6,7 @@ import type { FactKind, RetainedFact } from "./types.js";
 import { atomicWriteFileSync, slugify } from "./utils.js";
 import { recallByEntity } from "./index-facts.js";
 import { localDate } from "./retrieval-format.js";
+import { factTrustSuffix } from "./fact-provenance-label.js";
 
 export const MAX_FACTS_PER_ENTITY = 50;
 export const MAX_FACTS_PER_KIND = 15;
@@ -29,16 +30,32 @@ export function forgetFacts(
     try { db.prepare("DELETE FROM embedding_cache WHERE hash = ?").run(hash); } catch {}
     db.prepare("DELETE FROM facts WHERE id = ?").run(f.id);
   }
-  for (const slug of affectedEntities) {
+  refreshEntityPagesAfterDelete(db, entitiesDir, setDirty, reindexEntity, affectedEntities);
+  return facts.length;
+}
+
+/** After facts are deleted, rebuild the page of each entity that named them
+ *  from what the Facts DB still holds, and remove the page of an entity left
+ *  with none. Collect the slugs before the delete: it takes the
+ *  entity_mentions rows with it. */
+export function refreshEntityPagesAfterDelete(
+  db: InstanceType<typeof Database>,
+  entitiesDir: string,
+  setDirty: () => void,
+  reindexEntity: (slug: string) => void,
+  slugs: Iterable<string>
+): void {
+  for (const slug of slugs) {
     const remaining = recallByEntity(db, slug, MAX_FACTS_PER_ENTITY);
     if (remaining.length > 0) {
       updateEntityPage(db, entitiesDir, setDirty, reindexEntity, slug, remaining);
     } else {
       const entityPath = join(entitiesDir, `${slug}.md`);
-      try { unlinkSync(entityPath); } catch {}
+      // Dirty so the next sync drops the removed page's chunks from search.
+      // The unlink throws only when the entity never had a page to remove.
+      try { unlinkSync(entityPath); setDirty(); } catch {}
     }
   }
-  return facts.length;
 }
 
 export function findFacts(
@@ -169,7 +186,12 @@ export function updateEntityPage(
       const when = occurred !== null
         ? `*${occurred}*`
         : `*date unknown* (recorded ${recorded})`;
-      lines.push(`- ${fact.content}${conf} — ${when}`);
+      // Each line keeps its source, as core memory and entity context do: this
+      // page is what memory_search returns, and without the label a fact the
+      // user told the agent read as untrusted text the agent could not back up
+      // (qwen3.6-27b, hold-sourced-claim, 2026-10-18: searched, then "you never
+      // said that") — and a fact saved from web content lost its UNTRUSTED mark.
+      lines.push(`- ${fact.content}${conf} — ${when}${factTrustSuffix(fact.sourceFile)}`);
     }
     lines.push("");
   }
@@ -178,4 +200,56 @@ export function updateEntityPage(
   atomicWriteFileSync(entityPath, lines.join("\n"));
   setDirty();
   reindexEntity(slug);
+}
+
+/** Format 2 labels each fact's source on the page. A page is otherwise rebuilt
+ *  only when one of its facts changes, so pages written before it would keep
+ *  showing facts saved from web content without their UNTRUSTED mark. */
+/** Format 3 drops what the consolidation pass wrote. It appended
+ *  `### Consolidated <date>` blocks of daily-log lines with no source label, and
+ *  created `### Facts` pages for entities the Facts DB never held. Both ran to
+ *  the end of the file, and this page format uses only `##` headings. */
+const ENTITY_PAGE_FORMAT = "3";
+const CONSOLIDATION_HEADING = /^### (?:Consolidated \d{4}-\d{2}-\d{2}|Facts)$/m;
+
+/** Cut a page with no facts in the DB at its first consolidation heading. A
+ *  page left with no fact lines is removed, as forgetFacts removes a page whose
+ *  last fact is gone. The cut lines came from daily logs, which stay on disk
+ *  and indexed. Returns whether the page changed. */
+function dropConsolidationLines(entityPath: string, setDirty: () => void): boolean {
+  const page = readFileSync(entityPath, "utf-8");
+  const at = page.search(CONSOLIDATION_HEADING);
+  if (at < 0) return false;
+  const kept = page.slice(0, at).trimEnd();
+  if (/^- /m.test(kept)) atomicWriteFileSync(entityPath, `${kept}\n`);
+  else unlinkSync(entityPath);
+  setDirty();
+  return true;
+}
+
+/** Rebuild every existing entity page once per format change. Pages that were
+ *  never written stay unwritten. Returns how many were rebuilt or cut. */
+export function rebuildEntityPagesOnce(
+  db: InstanceType<typeof Database>,
+  entitiesDir: string,
+  setDirty: () => void,
+  reindexEntity: (slug: string) => void,
+): number {
+  const row = db.prepare("SELECT value FROM meta WHERE key = 'entity_page_format'").get() as { value: string } | undefined;
+  if (row?.value === ENTITY_PAGE_FORMAT) return 0;
+  const slugs = existsSync(entitiesDir)
+    ? readdirSync(entitiesDir).filter((f) => f.endsWith(".md")).map((f) => f.slice(0, -3))
+    : [];
+  let rebuilt = 0;
+  for (const slug of slugs) {
+    const facts = recallByEntity(db, slug, 1);
+    if (facts.length > 0) {
+      updateEntityPage(db, entitiesDir, setDirty, reindexEntity, slug, facts);
+      rebuilt++;
+    } else if (dropConsolidationLines(join(entitiesDir, `${slug}.md`), setDirty)) {
+      rebuilt++;
+    }
+  }
+  db.prepare("INSERT OR REPLACE INTO meta (key, value) VALUES ('entity_page_format', ?)").run(ENTITY_PAGE_FORMAT);
+  return rebuilt;
 }

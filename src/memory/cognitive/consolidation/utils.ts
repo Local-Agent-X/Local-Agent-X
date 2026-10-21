@@ -1,14 +1,13 @@
 // Tiny shared helpers. ensureDirs guarantees the on-disk layout exists
 // before any reader/writer runs; slugify and todayDateStr are formatting
-// primitives shared by entity-page writers and the consolidation log.
+// primitives shared by the fact readers and the consolidation log.
 
 import { existsSync, mkdirSync } from "node:fs";
-import { join } from "node:path";
 import { tokenizeBasic, jaccardSimilarity as jaccardSim } from "../../text-utils.js";
-import { LAX_DIR, MEMORY_DIR, ENTITIES_DIR } from "./types.js";
+import { LAX_DIR, MEMORY_DIR } from "./types.js";
 
 export function ensureDirs(): void {
-  for (const dir of [LAX_DIR, MEMORY_DIR, join(MEMORY_DIR, "bank"), ENTITIES_DIR]) {
+  for (const dir of [LAX_DIR, MEMORY_DIR]) {
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   }
 }

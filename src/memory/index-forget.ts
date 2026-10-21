@@ -191,7 +191,11 @@ export function updateEntityPage(
       // user told the agent read as untrusted text the agent could not back up
       // (qwen3.6-27b, hold-sourced-claim, 2026-10-18: searched, then "you never
       // said that") — and a fact saved from web content lost its UNTRUSTED mark.
-      lines.push(`- ${fact.content}${conf} — ${when}${factTrustSuffix(fact.sourceFile)}`);
+      // The message it was saved from, as memory_recall prints it:
+      // search_past_sessions(message_id) reads the user's own words there,
+      // which memory_search (this session only) never returns.
+      const from = fact.sourceMessageId ? ` (from message ${fact.sourceMessageId})` : "";
+      lines.push(`- ${fact.content}${conf} — ${when}${factTrustSuffix(fact.sourceFile)}${from}`);
     }
     lines.push("");
   }
@@ -208,8 +212,9 @@ export function updateEntityPage(
 /** Format 3 drops what the consolidation pass wrote. It appended
  *  `### Consolidated <date>` blocks of daily-log lines with no source label, and
  *  created `### Facts` pages for entities the Facts DB never held. Both ran to
- *  the end of the file, and this page format uses only `##` headings. */
-const ENTITY_PAGE_FORMAT = "3";
+ *  the end of the file, and this page format uses only `##` headings. Format 4
+ *  adds the message each fact was saved from. */
+const ENTITY_PAGE_FORMAT = "4";
 const CONSOLIDATION_HEADING = /^### (?:Consolidated \d{4}-\d{2}-\d{2}|Facts)$/m;
 
 /** Cut a page with no facts in the DB at its first consolidation heading. A

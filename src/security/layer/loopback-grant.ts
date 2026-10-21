@@ -14,7 +14,7 @@
  */
 import { isDisposableSandbox } from "./disposable-sandbox.js";
 import { agentOriginPort } from "./agent-origin-port.js";
-import { liveLocalServicePorts } from "./security-config.js";
+import { liveLocalServicePorts, reservedLoopbackPorts } from "./security-config.js";
 
 let ownPort = "7007";
 
@@ -45,6 +45,9 @@ export function isOwnServerPort(port: string): boolean {
  * registered. This server's own ports are the caller's to decide.
  */
 export function loopbackServiceReachable(port: string | null, localServicePorts: ReadonlySet<string>): boolean {
+  // A reserved port (the in-app browser's debugging endpoint) is withheld
+  // even where every other loopback port is open.
+  if (port !== null && reservedLoopbackPorts().has(port)) return false;
   if (isDisposableSandbox()) return true;
   return port !== null && localServicePorts.has(port);
 }

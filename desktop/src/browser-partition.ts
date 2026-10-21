@@ -19,6 +19,7 @@ import { app, session, type DownloadItem, type Session, type WebContents, type W
 import { LAX_DIR, getLAXConfig } from "./config";
 import { contentTypeFromHeaders, noteRequestDone, noteRequestFailed, noteRequestStart } from "./browser-perception";
 import { shouldAllowLocalLoopback, type ViewTrust } from "./browser-loopback-policy";
+import { getLoopbackCdpPort } from "./cdp-endpoint";
 import { isUserDownload, uniqueDownloadPath, type QuarantinedDownload } from "./browser-download-routing";
 import { recordUserDownload, updateUserDownload } from "./browser-user-download-registry";
 import { humanActedLast } from "./in-app-browser";
@@ -60,6 +61,14 @@ export function initBrowserNetworkHardening(): void {
 export type ViewTrustResolver = (webContentsId: number) => ViewTrust | null;
 
 let viewTrustResolver: ViewTrustResolver | null = null;
+
+/** The loopback ports no view may reach through the carve-out: the app's own
+ *  CDP endpoint when native driving opened one. The server withholds the same
+ *  port from every agent path (security-config.ts reservedLoopbackPorts). */
+function reservedLoopbackPorts(): ReadonlySet<string> {
+	const cdp = getLoopbackCdpPort();
+	return cdp === null ? new Set() : new Set([String(cdp)]);
+}
 
 export function setViewTrustResolver(fn: ViewTrustResolver | null): void {
 	viewTrustResolver = fn;
@@ -305,6 +314,7 @@ function hardenSession(sess: Session, partition: string): void {
 					webContentsId: details.webContentsId,
 				},
 				viewTrustResolver,
+				reservedLoopbackPorts(),
 			)
 		) {
 			callback({ cancel: false });

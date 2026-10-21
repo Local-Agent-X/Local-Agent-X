@@ -1,6 +1,7 @@
 import type { SecurityDecision } from "../../types.js";
 import { USER_HINTS } from "../../types.js";
 import { evaluateWebFetch, type EgressMode } from "./network-policy.js";
+import { reservedLoopbackPorts } from "./security-config.js";
 
 export const MAX_NEW_TAB_URLS = 10;
 export const MAX_BROWSER_URL_LENGTH = 2048;
@@ -78,10 +79,15 @@ export function evaluateBrowser(args: Record<string, unknown>, ctx: BrowserEgres
 
 /** Per-URL browser navigation gate: localhost carve-out, then the egress policy. */
 export function evaluateBrowserUrl(browserUrl: string, ctx: BrowserEgressCtx): SecurityDecision {
-  // Allow localhost/127.0.0.1 for browser — user's own dev servers
+  // Allow localhost/127.0.0.1 for browser — user's own dev servers — except
+  // the port reserved for the app's own browser driver, which is withheld
+  // from every agent path (security-config.ts reservedLoopbackPorts).
   try {
-    const host = new URL(browserUrl).hostname;
+    const { hostname: host, port } = new URL(browserUrl);
     if (host === "localhost" || host === "127.0.0.1" || host === "[::1]") {
+      if (reservedLoopbackPorts().has(port)) {
+        return { allowed: false, reason: `Blocked: loopback port ${port} is reserved for the app's own browser driver`, userHint: USER_HINTS.network };
+      }
       return { allowed: true, reason: "Browser navigation to localhost allowed" };
     }
     return evaluateWebFetch(

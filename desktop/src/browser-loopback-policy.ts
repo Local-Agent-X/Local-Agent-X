@@ -53,6 +53,7 @@ const LOOPBACK_SCHEMES = new Set(["http:", "https:", "ws:", "wss:"]);
 export function shouldAllowLocalLoopback(
 	details: LoopbackRequestDetails,
 	resolveTrust: (webContentsId: number) => ViewTrust | null,
+	reservedPorts: ReadonlySet<string> = new Set(),
 ): boolean {
 	let target: URL;
 	try {
@@ -62,6 +63,11 @@ export function shouldAllowLocalLoopback(
 	}
 	if (!LOOPBACK_SCHEMES.has(target.protocol)) return false;
 	if (!isLoopbackHostname(target.hostname)) return false;
+	// A reserved loopback port — the app's own CDP endpoint — is never a local
+	// service a page may reach, whoever owns the view: a loopback-origin page
+	// (an agent-built app on the self-port) could otherwise list, close and
+	// activate every tab through /json/*.
+	if (reservedPorts.has(target.port)) return false;
 	// Unattributable request (no webContents, or one the pool doesn't know —
 	// e.g. a popup) → not ours to open; the strict egress evaluator decides.
 	if (details.webContentsId === undefined) return false;

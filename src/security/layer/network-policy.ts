@@ -20,7 +20,7 @@ import {
 // every existing `from "./network-policy.js"` import site keeps working.
 import { resolveAndPinHost } from "./network-dns.js";
 export { resolveAndPinHost } from "./network-dns.js";
-import { manualRuntimeHostPorts, liveLocalServicePorts } from "./security-config.js";
+import { manualRuntimeHostPorts, liveLocalServicePorts, reservedLoopbackPorts } from "./security-config.js";
 import { agentOriginPort } from "./agent-origin-port.js";
 import { loopbackServiceReachable } from "./loopback-grant.js";
 import { endpointHostPort } from "../../local-runtimes/admission.js";
@@ -100,9 +100,13 @@ export function evaluateWebFetch(
   // user-owned hard boundary: allow every literal loopback port (local apps,
   // Ollama, and the browser proxy remain useful) and reject every other host.
   if (isLocalOnlyMode()) {
-    return isLoopbackUrl(parsed.href)
-      ? { allowed: true, reason: "Loopback allowed by strict local-only mode" }
-      : { allowed: false, reason: LOCAL_ONLY_BLOCK_MESSAGE, userHint: USER_HINTS.network };
+    if (!isLoopbackUrl(parsed.href)) return { allowed: false, reason: LOCAL_ONLY_BLOCK_MESSAGE, userHint: USER_HINTS.network };
+    // "Every loopback port" never includes the reserved ones: the in-app
+    // browser's debugging endpoint is withheld from every agent path.
+    if (reservedLoopbackPorts().has(parsed.port)) {
+      return { allowed: false, reason: `Blocked: loopback port ${parsed.port} is reserved for the app's own browser driver`, userHint: USER_HINTS.network };
+    }
+    return { allowed: true, reason: "Loopback allowed by strict local-only mode" };
   }
 
   // Allow requests to the agent's own server BEFORE any other checks.

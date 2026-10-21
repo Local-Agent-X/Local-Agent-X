@@ -25,6 +25,10 @@ const HOST_CONTAMINATION_ENV_KEYS = new Set([
   "__CFBundleIdentifier", "__CF_USER_TEXT_ENCODING",
   "NODE_CHANNEL_FD", "NODE_CHANNEL_SERIALIZATION_MODE",
   "ELECTRON_RUN_AS_NODE",
+  // The in-app browser's debugging port (native driving): a loopback endpoint
+  // with no credential that drives every signed-in view. The server holds it;
+  // no child it spawns may, or a shell script attaches with the user's cookies.
+  "LAX_ELECTRON_CDP_PORT",
 ]);
 const HOST_CONTAMINATION_ENV_PREFIXES = ["ELECTRON_", "__CF"];
 

@@ -20,7 +20,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 164 | 29 | XL | 1 |
-| `src/security/` | 124 | 53 | XL | 3 |
+| `src/security/` | 126 | 53 | XL | 3 |
 | `src/tools/` | 115 | 217 | XL | 9 |
 | `src/tool-execution/` | 81 | 72 | XL | 2 |
 | `src/canonical-loop/` | 79 | 266 | XL | 14 |
@@ -414,6 +414,7 @@ job. Comments are free: never cut them to fit.
 - `src/routes/bridges/integrations.ts#handleIntegrationsRoutes` — 90+ own code lines (cap 100)
 - `src/routes/chat/run-chat-turn/canonical-run.ts#persistTurnState` — 90+ own code lines (cap 100)
 - `src/screen-stream/signaling-machine.ts#signalingReducer` — 90+ own code lines (cap 100)
+- `src/security/layer/network-policy.ts#evaluateWebFetch` — 90+ own code lines (cap 100)
 - `src/server/inbound-channel-runner.ts#runInboundChannelTurn` — 90+ own code lines (cap 100)
 - `src/tool-execution/run-sandboxed.ts#runSandboxedPhase` — 90+ own code lines (cap 100)
 - `src/tools/read-write-tools.ts#readTool.execute` — 90+ own code lines (cap 100)
@@ -435,7 +436,6 @@ job. Comments are free: never cut them to fit.
 - `src/routes/bridges/secrets.ts#handleSecretsRoutes` — 80+ own code lines (cap 100)
 - `src/routes/chat/delegation-handoff.ts#runDelegationHandoff` — 80+ own code lines (cap 100)
 - `src/routes/workspace-files.ts#handleWorkspaceFilesRoutes` — 80+ own code lines (cap 100)
-- `src/security/layer/network-policy.ts#evaluateWebFetch` — 80+ own code lines (cap 100)
 - `src/server/api-request-router.ts#routeApiRequest` — 80+ own code lines (cap 100)
 - `src/server/background-jobs/dream-check.ts#registerDreamRunner:callback` — 80+ own code lines (cap 100)
 - `src/server/bootstrap-services.ts#bootstrapServices` — 80+ own code lines (cap 100)

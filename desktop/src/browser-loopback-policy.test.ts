@@ -122,6 +122,28 @@ describe("shouldAllowLocalLoopback", () => {
 		)).toBe(false);
 	});
 
+	it("never opens a reserved port — the app's own CDP endpoint — for any view or request kind", () => {
+		const reserved = new Set(["9222"]);
+		for (const [resourceType, initiator, webContentsId] of [
+			["mainFrame", undefined, USER_WC],
+			["mainFrame", "http://127.0.0.1:7007", AGENT_WC],
+			["xhr", "http://127.0.0.1:7007", AGENT_WC],
+			["webSocket", "http://localhost:7007", USER_WC],
+		] as const) {
+			expect(shouldAllowLocalLoopback(
+				{ url: `http://127.0.0.1:9222/json/list`, resourceType, initiator, webContentsId },
+				resolve,
+				reserved,
+			), resourceType).toBe(false);
+		}
+		// The same request to an unreserved port is decided as before.
+		expect(shouldAllowLocalLoopback(
+			{ url: "http://127.0.0.1:3001/@vite/client", resourceType: "script", initiator: "http://127.0.0.1:7007", webContentsId: AGENT_WC },
+			resolve,
+			reserved,
+		)).toBe(true);
+	});
+
 	it("never opens non-loopback targets or non-network schemes", () => {
 		expect(shouldAllowLocalLoopback(
 			{ url: "https://example.com/", resourceType: "mainFrame", webContentsId: USER_WC },

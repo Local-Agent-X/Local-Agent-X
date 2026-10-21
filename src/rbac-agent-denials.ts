@@ -53,6 +53,11 @@ export const AGENT_DENIED_ROUTES: readonly AgentDeniedRoute[] = [
   // operator token) or by the `setting` tool, which asks the user to approve.
   { prefix: "/api/security", place: "Settings → Security" },
   { prefix: "/api/tool-policy", place: "Settings → Security → Tool Policy" },
+  // POST /api/session-policy sets a session's preset — the one that blocks
+  // shell, egress and workspace writes in a high-security or read-only
+  // session — for any session id the body names, with no operator check of
+  // its own. The agent's own leash again: only the user picks a session's preset.
+  { prefix: "/api/session-policy", place: "Settings → Security" },
 
   // The shell cage, the approval profile and the undo log are self-gating the
   // same way, and none of their routes checks for the operator itself. POST

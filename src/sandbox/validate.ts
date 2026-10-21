@@ -12,6 +12,22 @@ import { homedir } from "node:os";
 import { resolve as resolvePath, sep as pathSep, posix as posixPath, win32 as win32Path } from "node:path";
 
 import type { SandboxConfig } from "./types.js";
+import { getLaxDir } from "../lax-data-dir.js";
+
+/**
+ * The data dir the cages must deny beside the home-relative `.lax`: the one
+ * LAX_DATA_DIR relocates it to. Both cages denied the literal `~/.lax` while
+ * the file gate followed the configured dir, so with a relocated data dir a
+ * caged shell could write config.json and turn the cage off (red team round
+ * 2, I-M4). Empty where `.lax` is exempt for the scope, or where the data dir
+ * is the home-relative one the lists already name.
+ */
+export function configuredDataDirDeny(realHome: string, exemptDirs: ReadonlySet<string>): string[] {
+  if (!process.env.LAX_DATA_DIR || exemptDirs.has(".lax")) return [];
+  const canonical = (p: string): string => { try { return realpathSync(p); } catch { return resolvePath(p); } };
+  const configured = canonical(getLaxDir());
+  return configured === canonical(resolvePath(realHome, ".lax")) ? [] : [configured];
+}
 
 // Home-relative directory prefixes that must not be mounted into the sandbox.
 // Each entry is a path relative to homedir() — match is "equal or inside".

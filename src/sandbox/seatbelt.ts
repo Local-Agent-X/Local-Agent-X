@@ -57,7 +57,7 @@ import { existsSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
-import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES, SERVER_SCOPE_EXEMPT_DIRS, GUARDED_SCOPE_EXEMPT_DIRS } from "./validate.js";
+import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES, SERVER_SCOPE_EXEMPT_DIRS, GUARDED_SCOPE_EXEMPT_DIRS, configuredDataDirDeny } from "./validate.js";
 import type { SandboxScope } from "./types.js";
 import { cageLoopbackPorts } from "../net/shell-egress-proxy.js";
 import { installRootWriteRule, type InstallRootRule } from "../security/layer/install-root.js";
@@ -162,7 +162,10 @@ export function generateSeatbeltProfile(home: string = homedir(), scope: Sandbox
     scope === "guarded" ? GUARDED_SCOPE_EXEMPT_DIRS :
     new Set<string>();
   const denyDirs = HOME_RELATIVE_DENY_DIRS.filter((d) => !exemptDirs.has(d));
-  const sensitiveSubpaths = denyDirs.map((d) => canonical(join(realHome, d)));
+  const sensitiveSubpaths = [
+    ...denyDirs.map((d) => canonical(join(realHome, d))),
+    ...configuredDataDirDeny(realHome, exemptDirs),
+  ];
   const sensitiveFiles = HOME_RELATIVE_DENY_FILES.map((f) => canonical(join(realHome, f)));
 
   const persistence = cagePersistenceLocations(realHome);

@@ -1,6 +1,6 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect } from "vitest";
 import { execFile, execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, writeFileSync, rmSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
@@ -18,6 +18,25 @@ const onDarwin = process.platform === "darwin";
 // Mirror seatbelt.ts sb() escaping: on Windows join() yields backslash paths,
 // which the profile generator escapes for the SBPL string literal.
 const sb = (p: string) => p.replace(/\\/g, "\\\\");
+
+describe("a relocated data dir is denied like ~/.lax", () => {
+  // LAX_DATA_DIR moves config.json out from under a deny list that names
+  // only the home-relative `.lax` (red team round 2, I-M4).
+  const prior = process.env.LAX_DATA_DIR;
+  afterEach(() => { if (prior === undefined) delete process.env.LAX_DATA_DIR; else process.env.LAX_DATA_DIR = prior; });
+
+  it("in the shell and guarded scopes, and not in the server scope that owns it", () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "lax-data-")));
+    process.env.LAX_DATA_DIR = dir;
+    try {
+      expect(generateSeatbeltProfile("/Users/test-home", "shell")).toContain(`(subpath "${sb(dir)}")`);
+      expect(generateSeatbeltProfile("/Users/test-home", "guarded")).toContain(`(subpath "${sb(dir)}")`);
+      expect(generateSeatbeltProfile("/Users/test-home", "server")).not.toContain(sb(dir));
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("seatbelt profile generation", () => {
   const home = "/Users/test-home";

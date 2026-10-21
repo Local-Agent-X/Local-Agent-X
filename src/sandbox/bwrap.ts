@@ -50,7 +50,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { createLogger } from "../logger.js";
-import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES, SERVER_SCOPE_EXEMPT_DIRS, GUARDED_SCOPE_EXEMPT_DIRS } from "./validate.js";
+import { HOME_RELATIVE_DENY_DIRS, HOME_RELATIVE_DENY_FILES, SERVER_SCOPE_EXEMPT_DIRS, GUARDED_SCOPE_EXEMPT_DIRS, configuredDataDirDeny } from "./validate.js";
 import { resolveTrustedExecutable } from "./trusted-executable.js";
 
 const logger = createLogger("sandbox");
@@ -170,6 +170,9 @@ export function generateBwrapArgs(home: string = homedir(), scope: SandboxScope 
   const denyDirs = HOME_RELATIVE_DENY_DIRS.filter((d) => !exemptDirs.has(d));
   for (const dir of denyDirs) {
     const p = canonical(join(realHome, dir));
+    if (existsSync(p)) args.push("--tmpfs", p);
+  }
+  for (const p of configuredDataDirDeny(realHome, exemptDirs)) {
     if (existsSync(p)) args.push("--tmpfs", p);
   }
 

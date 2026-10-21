@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { afterEach, describe, it, expect } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -24,6 +24,24 @@ function makeHome(): string {
   writeFileSync(join(home, ".bashrc"), "");
   return home;
 }
+
+describe("a relocated data dir is shadowed like ~/.lax", () => {
+  const prior = process.env.LAX_DATA_DIR;
+  afterEach(() => { if (prior === undefined) delete process.env.LAX_DATA_DIR; else process.env.LAX_DATA_DIR = prior; });
+
+  it("in the shell scope, and not in the server scope that owns it", () => {
+    const home = makeHome();
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "lax-data-")));
+    process.env.LAX_DATA_DIR = dir;
+    try {
+      expect(generateBwrapArgs(home, "shell").join(" ")).toContain(`--tmpfs ${dir}`);
+      expect(generateBwrapArgs(home, "server").join(" ")).not.toContain(`--tmpfs ${dir}`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
 
 describe("bwrap arg generation", () => {
   it("binds the host root RW and unshares the network", () => {

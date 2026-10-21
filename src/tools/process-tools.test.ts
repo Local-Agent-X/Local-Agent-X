@@ -5,7 +5,7 @@
 
 import { describe, it, expect, afterAll, afterEach, beforeEach, vi } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -61,6 +61,9 @@ vi.mock("../secrets.js", async (importOriginal) => ({
 }));
 // A guarded start asks for the egress proxy's route; these tests start no proxy.
 vi.mock("./shell-proxy-env.js", () => ({ shellProxyEnv: async () => ({}), shellProxyEnvSync: () => ({}) }));
+// The user's copy of a withheld output: what the inbox producer was handed.
+const inboxItems = vi.hoisted(() => [] as Array<{ key: string; program: string; secrets: string[]; reason: string; exit: string; output: string }>);
+vi.mock("../inbox/producers.js", () => ({ inboxWithheldOutput: (o: (typeof inboxItems)[number]) => { inboxItems.push(o); } }));
 // The port: who holds it, and what the shared reclaim reports killing. Nothing
 // here binds a real port.
 const port = vi.hoisted(() => ({
@@ -411,8 +414,17 @@ describe("process_* on a proven Windows cage whose grants are still being made",
 // nothing the model reads back about that process carries the value.
 describe("process_start / process_restart with secret_env", () => {
   const VALUE = vault.LAX_TEST_TOKEN;
-  const PRINT = `"${nodeExecutable}" -e "console.log('tok=' + process.env.LAX_T)"`;
-  const PRINT_AND_STAY = `"${nodeExecutable}" -e "console.log('tok=' + process.env.LAX_T); setInterval(()=>{},1000)"`;
+  // Programs on disk that read their own environment: the sanctioned use. An
+  // inline `node -e` that reads it is judged as working on the value, and its
+  // output is withheld (the last test here).
+  const scriptDir = mkdtempSync(join(tmpdir(), "lax-process-secret-"));
+  const printScript = join(scriptDir, "print.js").replace(/\\/g, "/");
+  const stayScript = join(scriptDir, "stay.js").replace(/\\/g, "/");
+  writeFileSync(printScript, "console.log('tok=' + process.env.LAX_T)");
+  writeFileSync(stayScript, "console.log('tok=' + process.env.LAX_T); setInterval(()=>{},1000)");
+  afterAll(() => rmSync(scriptDir, { recursive: true, force: true }));
+  const PRINT = `"${nodeExecutable}" "${printScript}"`;
+  const PRINT_AND_STAY = `"${nodeExecutable}" "${stayScript}"`;
   const SECRET_ENV = { LAX_T: "LAX_TEST_TOKEN" };
 
   async function outputOf(id: string, want: RegExp, timeoutMs = 8000): Promise<ToolResult> {
@@ -470,6 +482,27 @@ describe("process_start / process_restart with secret_env", () => {
     const restart = await processRestartTool.execute({ command: PRINT, secret_env: { LAX_T: "NOT_STORED" } });
     expect(String(restart.content)).toMatch(/NOT_STORED.*Nothing was stopped or started/);
   });
+
+  it("an inline program that reads the environment runs, but its output goes to the inbox, not the model", async () => {
+    inboxItems.length = 0;
+    const reversed = [...VALUE].reverse().join("");
+    const started = await processStartTool.execute({
+      command: `"${nodeExecutable}" -e "console.log('tok=' + process.env.LAX_T.split('').reverse().join(''))"`,
+      secret_env: SECRET_ENV,
+    });
+    const id = sessionIdOf(started);
+    spawned.add(id);
+    const session = SESSIONS.get(id)!;
+    await session.exited;
+    const status = await processStatusTool.execute({ session_id: id });
+    expect(String(status.content)).toMatch(/output withheld from the model: this command reads \$LAX_T in inline code/);
+    expect(JSON.stringify(status)).not.toContain(reversed.slice(0, 12));
+    expect(session.stdout).toMatch(/output withheld/);
+    expect(session.stderr).toBe("");
+    const item = inboxItems.find((i) => i.key === `withheld:${id}`);
+    expect(item).toMatchObject({ secrets: ["LAX_TEST_TOKEN"], reason: "this command reads $LAX_T in inline code", exit: "exit 0" });
+    expect(item?.output).toContain(`tok=${reversed}`);
+  }, 20_000);
 
   it("a malformed secret_env stops the call and says what to fix", async () => {
     const asList = await processStartTool.execute({ command: PRINT, secret_env: ["LAX_TEST_TOKEN"] });

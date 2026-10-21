@@ -5,6 +5,9 @@
 // and video are off (Settings → Media): the shell's proxy cannot see which
 // route a TLS call takes, so the key is kept from the command instead.
 import { describe, it, expect, vi, beforeAll, afterAll, beforeEach } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
 
 const XAI_KEY = "xai-" + "k".repeat(40);
 const VAULT: Record<string, string> = {
@@ -15,13 +18,67 @@ const VAULT: Record<string, string> = {
   GROK_IMAGINE_KEY: XAI_KEY,
 };
 vi.mock("../secrets.js", () => ({ getSecretsStoreSingleton: () => ({ get: (name: string) => VAULT[name] }) }));
+// The user's copy of a withheld output: what the inbox producer was handed.
+const inboxItems = vi.hoisted(() => [] as Array<{ key: string; program: string; secrets: string[]; reason: string; exit: string; output: string }>);
+vi.mock("../inbox/producers.js", () => ({ inboxWithheldOutput: (o: (typeof inboxItems)[number]) => { inboxItems.push(o); } }));
 let settingsBag: Record<string, unknown> = {};
 vi.mock("../settings.js", async (orig) => ({ ...(await orig<typeof import("../settings.js")>()), loadSettings: () => settingsBag }));
 
-const { secretEnvOf, secretEnvProgram, resolveSecretEnv, paidMediaSecretEnvRefusal } = await import("./shell-secret-env.js");
+const { secretEnvOf, secretEnvProgram, resolveSecretEnv, paidMediaSecretEnvRefusal, secretManipulation } = await import("./shell-secret-env.js");
 const { bashTool } = await import("./shell-tool.js");
 
-beforeEach(() => { settingsBag = {}; });
+beforeEach(() => { settingsBag = {}; inboxItems.length = 0; });
+
+// The scrub recognises the whole value. A command that works on the value in
+// its own text can print it in pieces the scrub cannot recognise, so that
+// command's output is the user's, not the model's. A command that hands the
+// value to a program is the sanctioned use and is not judged.
+describe("a command that works on a secret's value, judged from its text", () => {
+  const ENV = { TOKEN: "SUPABASE_TOKEN" };
+
+  it.each([
+    ["npx supabase functions deploy food-search", null],
+    ["gh pr list --repo acme/app", null],
+    ['curl -H "Authorization: Bearer $TOKEN" https://api.example/v1/me', null],
+    ["GH_TOKEN=$TOKEN gh auth status", null],
+    ["python deploy.py --project abc", null],
+    ['python -c "print(1 + 1)"', null],
+    ['echo "deploying" && npx vercel deploy --token "$TOKEN"', null],
+    ['test -n "$TOKEN" && echo set', null],
+  ])("hands the value to a program: %s", (command, verdict) => {
+    expect(secretManipulation(command, ENV)).toBe(verdict);
+  });
+
+  it.each([
+    ["echo ${TOKEN:0:4}", "slices or rewrites $TOKEN"],
+    ["echo ${TOKEN//a/b}", "slices or rewrites $TOKEN"],
+    ["echo %TOKEN:~0,4%", "slices or rewrites $TOKEN"],
+    ["$env:TOKEN.Substring(0, 4)", "slices or rewrites $TOKEN"],
+    ["echo $TOKEN | rev", "prints $TOKEN"],
+    ['printf "%s" "$TOKEN" | base64', "prints $TOKEN"],
+    ["Write-Host $env:TOKEN", "prints $TOKEN"],
+    ['base64 <<< "$TOKEN"', "prints $TOKEN"],
+    ["X=$TOKEN; echo ${X:2}", "slices or rewrites $X"],
+    ['sh -c "echo $TOKEN | fold -w 4"', "prints $TOKEN"],
+    ["env", "dumps the environment"],
+    ["printenv TOKEN", "dumps the environment"],
+    ["Get-ChildItem env:", "dumps the environment"],
+    ['python -c "import os; print(os.environ[\'TOKEN\'][::-1])"', "reads $TOKEN in inline code"],
+    ['node -e "console.log(process.env.TOKEN.split(\'\'))"', "reads $TOKEN in inline code"],
+    ['python3 -c "import os; print(dict(os.environ))"', "reads the environment in inline code"],
+  ])("works on the value: %s", (command, reason) => {
+    expect(secretManipulation(command, ENV)).toBe(`this command ${reason}`);
+  });
+
+  it("resolveSecretEnv carries the verdict for the command the values go to", () => {
+    const handsOff = resolveSecretEnv(ENV, "gh pr list");
+    const worksOn = resolveSecretEnv(ENV, "echo $TOKEN | rev");
+    if ("refusal" in handsOff || "refusal" in worksOn) throw new Error("unexpected refusal");
+    expect(handsOff.withheld).toBeNull();
+    expect(worksOn.withheld).toBe("this command prints $TOKEN");
+    expect(resolveSecretEnv(ENV)).toMatchObject({ withheld: null });
+  });
+});
 
 describe("secret_env arguments", () => {
   it("reads { ENV_VAR: SECRET_NAME } and rejects anything else by name", () => {
@@ -114,14 +171,45 @@ describe("bash with secret_env", () => {
     else process.env.LAX_SANDBOX = prevSandbox;
   });
 
+  // A program that reads its own environment and happens to print the value:
+  // the sanctioned use, with the whole value scrubbed from what the model reads.
+  const scriptDir = mkdtempSync(join(tmpdir(), "lax-secret-env-"));
+  const printScript = join(scriptDir, "print.sh").replace(/\\/g, "/");
+  writeFileSync(printScript, 'echo "set, ${#SUPABASE_ACCESS_TOKEN} chars: $SUPABASE_ACCESS_TOKEN"\n');
+  afterAll(() => rmSync(scriptDir, { recursive: true, force: true }));
+
   it("the command gets the value in its environment; the output never carries it", async () => {
     const result = await bashTool.execute({
-      command: 'test -n "$SUPABASE_ACCESS_TOKEN" && echo "set, ${#SUPABASE_ACCESS_TOKEN} chars: $SUPABASE_ACCESS_TOKEN"',
+      command: `sh "${printScript}"`,
       secret_env: { SUPABASE_ACCESS_TOKEN: "SUPABASE_TOKEN" },
     });
     const text = String(result.content);
     expect(text).toContain(`set, ${VAULT.SUPABASE_TOKEN.length} chars: [secret SUPABASE_TOKEN]`);
     expect(text).not.toContain(VAULT.SUPABASE_TOKEN);
+    expect(inboxItems).toEqual([]);
+  });
+
+  it("a command that works on the value runs, but its output goes to the user's inbox, not the model", async () => {
+    const piece = VAULT.SUPABASE_TOKEN.slice(0, 12);
+    const result = await bashTool.execute({
+      command: 'echo "$SUPABASE_ACCESS_TOKEN" | cut -c1-12',
+      secret_env: { SUPABASE_ACCESS_TOKEN: "SUPABASE_TOKEN" },
+      _toolCallId: "call-7",
+    });
+    const shown = JSON.stringify(result);
+    expect(result.isError).toBeFalsy();
+    expect(String(result.content)).toMatch(/output withheld from the model: this command prints \$SUPABASE_ACCESS_TOKEN/);
+    expect(String(result.content)).toContain("http_request with {{SUPABASE_TOKEN}}");
+    expect(result.metadata).toMatchObject({ exit_code: 0, output_withheld: true });
+    expect(result.metadata).not.toHaveProperty("stderr");
+    expect(result.metadata).not.toHaveProperty("partial_output");
+    expect(shown).not.toContain(piece);
+    expect(shown).not.toContain(VAULT.SUPABASE_TOKEN);
+    // The user has it, scrubbed as every reader's copy is: the piece is
+    // theirs to see, the whole value is still masked.
+    expect(inboxItems).toHaveLength(1);
+    expect(inboxItems[0]).toMatchObject({ key: "withheld:call-7", program: "echo", secrets: ["SUPABASE_TOKEN"], reason: "this command prints $SUPABASE_ACCESS_TOKEN", exit: expect.stringMatching(/^exit 0 in \d+ms$/) });
+    expect(inboxItems[0].output.trim()).toBe(piece);
   });
 
   it("a secret that is not stored stops the call and says how to get it", async () => {

@@ -86,6 +86,25 @@ export function inboxUpdateCurrent(): void {
 /** A one-time notice the app owes the user (a default it changed under them):
  *  recorded durably here, so it is read on whichever screen they open next.
  *  Returns whether the inbox took it. */
+const WITHHELD_OUTPUT_CHARS = 8000;
+
+/**
+ * The output of a command that worked on a vault secret's value in its own
+ * text (tools/shell-secret-env.ts secretManipulation): delivered to the
+ * user here, never to the model, scrubbed as every reader's copy is. `key`
+ * is the call's, so a background process's updates replace its item.
+ */
+export function inboxWithheldOutput(o: { key: string; program: string; secrets: string[]; reason: string; exit: string; output: string }): void {
+  const body = o.output.length > WITHHELD_OUTPUT_CHARS ? `${o.output.slice(0, WITHHELD_OUTPUT_CHARS)}\n[… ${o.output.length - WITHHELD_OUTPUT_CHARS} more characters]` : o.output;
+  postToInbox({
+    kind: "notice",
+    title: `Output of \`${o.program}\` kept from the agent`,
+    body: `${o.reason[0].toUpperCase()}${o.reason.slice(1)} (${o.secrets.join(", ")}), so the agent got only the exit code. ${o.exit}.\n\n${body || "(no output)"}`,
+    needsYou: false,
+    key: o.key,
+  });
+}
+
 export function inboxUserNotice(n: { id: string; text: string }): boolean {
   return postToInbox({ kind: "notice", title: n.text, body: "", needsYou: false, key: `notice:${n.id}` }) !== null;
 }

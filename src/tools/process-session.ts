@@ -20,7 +20,8 @@ import { spawnCagedSync } from "./caged-spawn.js";
 import { registerOwnedProcess, unregisterOwnedProcess } from "./owned-listeners.js";
 import { workspaceRoot } from "../config.js";
 import { resolveAgentPath } from "../workspace/paths.js";
-import type { ResolvedSecretEnv, SecretEnv } from "./shell-secret-env.js";
+import { secretEnvProgram, withheldOutputNote, type ResolvedSecretEnv, type SecretEnv } from "./shell-secret-env.js";
+import { inboxWithheldOutput } from "../inbox/producers.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("tools.process");
@@ -182,8 +183,20 @@ export function startSession(
   let markExited!: () => void;
   // The raw buffers stay in this closure. The session hands out only the
   // scrubbed view, which also masks a value the stream has printed part of.
+  // A command that works on a secret's value in its own text hands out no
+  // output at all: the model reads the note, the user gets the output in
+  // their inbox once the process exits (shell-secret-env.ts).
   const raw = { stdout: "", stderr: "" };
   const view = secrets ? secrets.resolved.scrubOpenEnded : (text: string) => text;
+  const withheld = secrets?.resolved.withheld ?? null;
+  const exitLabel = (): string => session.exitedAt === null ? "running" : `exit ${session.exitCode === null ? "?" : session.exitCode}`;
+  const deliverWithheld = (): void => {
+    if (!withheld || !secrets) return;
+    inboxWithheldOutput({
+      key: `withheld:${sessionId}`, program: secretEnvProgram(command), secrets: [...new Set(Object.values(secrets.names))],
+      reason: withheld, exit: exitLabel(), output: view(raw.stdout) + (raw.stderr ? `\n[stderr]\n${view(raw.stderr)}` : ""),
+    });
+  };
   const session: ProcessSession = {
     sessionId,
     command,
@@ -197,8 +210,8 @@ export function startSession(
     exitCode: null,
     exitSignal: null,
     exited: new Promise<void>((r) => { markExited = r; }),
-    get stdout() { return view(raw.stdout); },
-    get stderr() { return view(raw.stderr); },
+    get stdout() { return withheld && secrets ? withheldOutputNote(withheld, secrets.names, exitLabel()) : view(raw.stdout); },
+    get stderr() { return withheld ? "" : view(raw.stderr); },
     truncated: false,
     totalBytes: 0,
   };
@@ -227,6 +240,7 @@ export function startSession(
     session.exitedAt = Date.now();
     raw.stderr += `\n[spawn error] ${e.message}`;
     unregisterOwnedProcess(child.pid);
+    deliverWithheld();
     markExited();
   });
   child.on("exit", (code, signal) => {
@@ -241,6 +255,7 @@ export function startSession(
     if (code === null && signal) {
       logger.warn(`session ${sessionId} killed by ${signal} after ${Date.now() - session.startedAt}ms: ${command.slice(0, 80)}`);
     }
+    deliverWithheld();
     markExited();
   });
 

@@ -22,6 +22,8 @@
  */
 import { getSecretsStoreSingleton } from "../secrets.js";
 import { registerRedactedSecretValue, vaultSecretSource } from "../security/secrets/known-secrets.js";
+import { execBasename, shellSegments, tokenizeCommand } from "../security/layer/shell-lex.js";
+import { inlinePrograms } from "../security/layer/shell-inline-destinations.js";
 import { TOOL_POLICIES } from "../tool-policy/tool-policies.js";
 import { PAID_MEDIA_KEY_PROVIDERS, paidMediaApisAllowed, paidMediaKeyProvider, paidMediaOffMessage } from "./image-tools/paid-media.js";
 
@@ -68,6 +70,93 @@ export interface ResolvedSecretEnv {
   /** scrub, plus a value cut off at the end of the text: output read while the
    *  process is still writing, or clipped at a buffer cap, can stop mid-value. */
   scrubOpenEnded: (text: string) => string;
+  /** Why the command's output goes to the user instead of the model
+   *  (secretManipulation), or null when the command only hands the secret on. */
+  withheld: string | null;
+}
+
+// ── A command that works ON a secret's value, not one that hands it to a program ──
+//
+// The scrub above recognises the whole value. A command that slices, encodes,
+// reverses or prints the value can put it in its output in pieces the scrub
+// cannot recognise, so "never to the model" cannot be kept by reading the
+// output; it is kept by reading the COMMAND, which the user sees on the card:
+// a command that works on the value in its own text has its output delivered
+// to the user, not the model (shell-tool.ts, process-session.ts). A program
+// that merely receives the value (`gh`, `curl -H "… $TOKEN"`, a leading
+// `VAR=$TOKEN cmd`) is the sanctioned use and runs as before. Not judged here:
+// a script on disk that the command runs, which the card cannot show either.
+
+const PRINTERS = new Set(["echo", "printf", "print", "cat", "write-output", "write-host", "write-information", "write-verbose", "write-warning", "write-error", "out-string", "out-file", "set-content", "add-content"]);
+const ENV_READERS = /\b(?:environ|getenv|process\.env|Deno\.env|Bun\.env|\$ENV\{|ENV\[|GetEnvironmentVariables?)\b/;
+const ASSIGNMENT = /(?:^|[\s;&|(])(?:export\s+|set\s+)?\$?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*("[^"]*"|'[^']*'|\S*)/g;
+
+/** `$V`, `${V}`, `${V...}`, `%V%`, `$env:V`, `${env:V}`, `$Env:V`. */
+function references(variable: string): RegExp {
+  return new RegExp(`\\$\\{?(?:env:)?${variable}\\b|%${variable}(?::|%)`, "i");
+}
+
+/** The secret_env variables plus every variable assigned from one in the
+ *  command (`X=$TOKEN`, `$x = $env:TOKEN`): working on the copy is working on
+ *  the value. */
+function secretVariables(command: string, names: string[]): string[] {
+  const vars = new Set(names);
+  for (let grew = true; grew;) {
+    grew = false;
+    for (const m of command.matchAll(ASSIGNMENT)) {
+      if (vars.has(m[1])) continue;
+      if ([...vars].some((v) => references(v).test(m[2]))) { vars.add(m[1]); grew = true; }
+    }
+  }
+  return [...vars];
+}
+
+// A shell told to run a string runs the same judgment on it: `sh -c 'echo
+// $TOKEN'` prints the value as surely as `echo $TOKEN` does.
+const SHELLS = new Set(["sh", "bash", "zsh", "dash", "ksh", "fish", "pwsh", "powershell", "cmd"]);
+const SHELL_BODY_FLAGS = new Set(["-c", "-command", "/c", "/k", "-e", "-encodedcommand"]);
+
+function nestedShellBody(verb: string, tokens: string[]): string | null {
+  if (!SHELLS.has(verb)) return null;
+  const at = tokens.findIndex((t, i) => i > 0 && SHELL_BODY_FLAGS.has(t.toLowerCase()));
+  return at > 0 && tokens[at + 1] !== undefined ? tokens.slice(at + 1).join(" ") : null;
+}
+
+function dumpsEnvironment(verb: string, tokens: string[]): boolean {
+  if (verb === "env" || verb === "printenv") return true;
+  if (verb === "set" && tokens.length === 1) return true;
+  if ((verb === "export" || verb === "declare") && tokens.some((t) => t === "-p" || t === "-x")) return true;
+  return ["get-childitem", "gci", "dir", "ls", "get-item", "gi"].includes(verb) && tokens.some((t) => /^env:/i.test(t));
+}
+
+/**
+ * Why a command works on a secret's value in its own text — slicing or
+ * rewriting it, printing it, reading the environment in inline code, dumping
+ * the environment — as a sentence naming the variable; null when it only
+ * hands the value to a program.
+ */
+export function secretManipulation(command: string, secretEnv: SecretEnv): string | null {
+  const vars = secretVariables(command, Object.keys(secretEnv));
+  for (const v of vars) {
+    const rewritten = new RegExp(`\\$\\{${v}[:#%/^,@]|\\$\\{(?:env:)?${v}\\}\\s*[.\\[]|\\$env:${v}\\s*(?:[.\\[]|-split|-replace|-join)|%${v}:~`, "i");
+    if (rewritten.test(command)) return `this command slices or rewrites $${v}`;
+  }
+  for (const segment of shellSegments(command)) {
+    const tokens = tokenizeCommand(segment.text);
+    if (tokens.length === 0) continue;
+    const verb = execBasename(tokens[0]);
+    const named = vars.find((v) => references(v).test(segment.text));
+    if (named && (PRINTERS.has(verb) || /<<</.test(segment.text))) return `this command prints $${named}`;
+    if (dumpsEnvironment(verb, tokens)) return "this command dumps the environment";
+    const body = nestedShellBody(verb, tokens);
+    const nested = body === null ? null : secretManipulation(body, Object.fromEntries(vars.map((v) => [v, secretEnv[v] ?? "SECRET"])));
+    if (nested) return nested;
+  }
+  for (const body of inlinePrograms(command)) {
+    const named = vars.find((v) => new RegExp(`\\b${v}\\b`).test(body));
+    if (named || ENV_READERS.test(body)) return `this command reads ${named ? `$${named}` : "the environment"} in inline code`;
+  }
+  return null;
 }
 
 // A cut-off value shorter than this is left alone: a few leading characters say
@@ -95,8 +184,9 @@ export function paidMediaSecretEnvRefusal(secretEnv: SecretEnv): string | null {
 }
 
 /** Read the named secrets from the vault. A refusal names the missing
- *  secrets, or the paid media key the switch keeps from the shell. */
-export function resolveSecretEnv(secretEnv: SecretEnv): ResolvedSecretEnv | { refusal: string } {
+ *  secrets, or the paid media key the switch keeps from the shell. With the
+ *  command, `withheld` says whether its output is the user's, not the model's. */
+export function resolveSecretEnv(secretEnv: SecretEnv, command?: string): ResolvedSecretEnv | { refusal: string } {
   const paidMedia = paidMediaSecretEnvRefusal(secretEnv);
   if (paidMedia) return { refusal: paidMedia };
   const store = getSecretsStoreSingleton();
@@ -121,5 +211,13 @@ export function resolveSecretEnv(secretEnv: SecretEnv): ResolvedSecretEnv | { re
     }
     return t;
   };
-  return { env, scrub, scrubOpenEnded };
+  return { env, scrub, scrubOpenEnded, withheld: command === undefined ? null : secretManipulation(command, secretEnv) };
+}
+
+/** What the model reads in place of a withheld output. */
+export function withheldOutputNote(reason: string, secretEnv: SecretEnv, exit: string): string {
+  const names = [...new Set(Object.values(secretEnv))];
+  return `[${exit} — output withheld from the model: ${reason}, so what it printed could carry the value of ${names.join(", ")} in a form the scrub cannot recognise. ` +
+    `The user has the output in their inbox. For an API call with this secret use http_request with {{${names[0]}}} (filled on the wire); ` +
+    `to use a CLI, hand it the secret and let it read its own environment.]`;
 }

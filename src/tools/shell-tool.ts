@@ -1,13 +1,86 @@
-import type { ServerEvent, ToolDefinition } from "../types.js";
+import type { ServerEvent, ToolDefinition, ToolResult } from "../types.js";
 import { getSandboxMode, execInSandbox, sandboxDenialHint, networkDenialHint } from "../sandbox/index.js";
 import { ok, err, blocked, timeout as timeoutResult } from "./result-helpers.js";
 import { detectTargetShell, translateForShell, powershellCmdletHint, quotedGlobHint, windowsPathHint, workspacePrefixHint } from "./shell-translate.js";
 import { resolveWindowsShell, recordAvSuspectKill, isLikelyAvKill } from "./shell-env.js";
 import { runCaged, type CagedOutput } from "./caged-spawn.js";
 import { workspaceRoot } from "../config.js";
-import { resolveSecretEnv, secretEnvOf } from "./shell-secret-env.js";
+import { resolveSecretEnv, secretEnvOf, secretEnvProgram, withheldOutputNote, type ResolvedSecretEnv, type SecretEnv } from "./shell-secret-env.js";
+import { inboxWithheldOutput } from "../inbox/producers.js";
 import { cwdOf, onEventOf, onProgressOf, toolCallIdOf } from "../tool-execution/internal-args.js";
 import { vendorDriftHint } from "../protocols/vendor-drift.js";
+
+type WithheldRun = { secrets: ResolvedSecretEnv & { withheld: string }; secretEnv: SecretEnv; command: string; key: string };
+
+/** The run, when its output is the user's (shell-secret-env.ts secretManipulation); null otherwise. */
+function withheldRunOf(secrets: ResolvedSecretEnv | null, secretEnv: SecretEnv | null, command: string, args: Record<string, unknown>): WithheldRun | null {
+  if (!secrets?.withheld || !secretEnv) return null;
+  return { secrets: secrets as ResolvedSecretEnv & { withheld: string }, secretEnv, command, key: toolCallIdOf(args) || String(Date.now()) };
+}
+
+/**
+ * The result of a run whose output is the user's, not the model's: the
+ * command worked on a secret's value in its own text (shell-secret-env.ts
+ * secretManipulation). The scrubbed output goes to the inbox; the model gets
+ * the exit and the reason, and no metadata string that could carry a byte of
+ * it (the renderer prints the head of every string field).
+ */
+function withheldRunResult(
+  run: WithheldRun,
+  exit: string, stdout: string, stderr: string, failed: boolean, meta: Record<string, unknown>,
+): ToolResult {
+  inboxWithheldOutput({
+    key: `withheld:${run.key}`, program: secretEnvProgram(run.command), secrets: [...new Set(Object.values(run.secretEnv))],
+    reason: run.secrets.withheld, exit, output: stdout + (stderr ? `\n[stderr]\n${stderr}` : ""),
+  });
+  const note = withheldOutputNote(run.secrets.withheld, run.secretEnv, exit);
+  return failed ? err(note, { ...meta, output_withheld: true }) : ok(note, { ...meta, output_withheld: true });
+}
+
+/**
+ * Tool-progress streaming for one run. Emits a `tool_progress` ServerEvent at
+ * most every 500ms with the latest tail of combined stdout/stderr, so the
+ * chat UI can show live output during long-running commands (winget install,
+ * npm install, model downloads). Without this the bash card sits silent for
+ * the full timeout — agent and user can't distinguish "still working" from
+ * "hung." Live failure (2026-05-07): ollama install via winget hung on UAC
+ * for 5+ minutes; agent retried 11 times and tripped circuit breaker because
+ * there was no progress signal to confirm forward motion. `render` is the
+ * run's own view of a line (scrubbed, or the fixed note of a withheld run).
+ */
+function progressEmitter(
+  onEvent: ((e: ServerEvent) => void) | undefined,
+  toolCallId: ReturnType<typeof toolCallIdOf>,
+  render: (lastLine: string) => string,
+): { onOutput: (captured: CagedOutput) => void } {
+  const INTERVAL_MS = 500;
+  const TAIL_CHARS = 200;
+  let lastEmit = 0;
+  let pending = false;
+  let output: CagedOutput = { stdout: "", stderr: "" };
+  const emit = (): void => {
+    if (!onEvent) return;
+    const now = Date.now();
+    if (now - lastEmit < INTERVAL_MS) {
+      if (!pending) {
+        pending = true;
+        setTimeout(emit, INTERVAL_MS - (now - lastEmit));
+      }
+      return;
+    }
+    pending = false;
+    lastEmit = now;
+    // Tail of combined output, with carriage-return overwrites collapsed
+    // (winget/curl-style "downloading X% \r" updates) so the agent sees
+    // the latest line, not a glob of overwrites.
+    const combined = (output.stdout + output.stderr).slice(-TAIL_CHARS * 4);
+    const lastLine = combined.split(/\r|\n/).filter((l) => l.trim()).slice(-1)[0] || combined.trim();
+    const message = render(lastLine).slice(-TAIL_CHARS);
+    if (!message) return;
+    try { onEvent({ type: "tool_progress", toolName: "bash", toolCallId, message }); } catch { /* best-effort */ }
+  };
+  return { onOutput: (captured) => { output = captured; emit(); } };
+}
 
 export const bashTool: ToolDefinition = {
   name: "bash",
@@ -58,9 +131,10 @@ export const bashTool: ToolDefinition = {
     const onProgress = onProgressOf(args);
     let secretEnv;
     try { secretEnv = secretEnvOf(args); } catch (e) { return err((e as Error).message); }
-    const secrets = secretEnv ? resolveSecretEnv(secretEnv) : null;
+    const secrets = secretEnv ? resolveSecretEnv(secretEnv, command) : null;
     if (secrets && "refusal" in secrets) return err(secrets.refusal);
     const scrub = secrets ? secrets.scrub : (text: string) => text;
+    const withheldRun = withheldRunOf(secrets, secretEnv, command, args);
 
     const isWin = process.platform === "win32";
     // The same (memoized) Windows shell runCaged spawns, so translation and
@@ -114,48 +188,9 @@ export const bashTool: ToolDefinition = {
       // the shell landing a folder above it.
       const cwd = cwdOf(args) || workspaceRoot();
 
-      // Tool-progress streaming. Emits a `tool_progress` ServerEvent at
-      // most every 500ms with the latest tail of combined stdout/stderr,
-      // so the chat UI can show live output during long-running commands
-      // (winget install, npm install, model downloads). Without this the
-      // bash card sits silent for the full timeout — agent and user can't
-      // distinguish "still working" from "hung." Live failure (2026-05-07):
-      // ollama install via winget hung on UAC for 5+ minutes; agent
-      // retried 11 times and tripped circuit breaker because there was no
-      // progress signal to confirm forward motion.
-      // ServerEvent's union already includes tool_progress + av_blocked_warning
-      // (see src/types.ts). Use the broader type so this same callback is
-      // also compatible with recordAvSuspectKill below, which expects
-      // (e: ServerEvent) => void. Narrowing locally to ToolProgressEvent
-      // produced a TS2345 mismatch on the recordAvSuspectKill(onEvent) call.
       const onEvent = onEventOf(args);
-      const toolCallId = toolCallIdOf(args);
-      const PROGRESS_INTERVAL_MS = 500;
-      const PROGRESS_TAIL_CHARS = 200;
-      let lastProgressEmit = 0;
-      let pendingProgress = false;
-      let output: CagedOutput = { stdout: "", stderr: "" };
-      const emitProgress = (): void => {
-        if (!onEvent) return;
-        const now = Date.now();
-        if (now - lastProgressEmit < PROGRESS_INTERVAL_MS) {
-          if (!pendingProgress) {
-            pendingProgress = true;
-            setTimeout(emitProgress, PROGRESS_INTERVAL_MS - (now - lastProgressEmit));
-          }
-          return;
-        }
-        pendingProgress = false;
-        lastProgressEmit = now;
-        // Tail of combined output, with carriage-return overwrites collapsed
-        // (winget/curl-style "downloading X% \r" updates) so the agent sees
-        // the latest line, not a glob of overwrites.
-        const combined = (output.stdout + output.stderr).slice(-PROGRESS_TAIL_CHARS * 4);
-        const lastLine = combined.split(/\r|\n/).filter(s => s.trim()).slice(-1)[0] || combined.trim();
-        const message = scrub(lastLine).slice(-PROGRESS_TAIL_CHARS);
-        if (!message) return;
-        try { onEvent({ type: "tool_progress", toolName: "bash", toolCallId, message }); } catch { /* best-effort */ }
-      };
+      const progress = progressEmitter(onEvent, toolCallIdOf(args), (line) =>
+        withheldRun ? "running — the output goes to your inbox, not the model" : scrub(line));
 
       // Non-zero exits resolve with `code` set; a rejection means nothing ran.
       const outcome = await runCaged(cmd, {
@@ -171,7 +206,7 @@ export const bashTool: ToolDefinition = {
         // A background job (`npm run dev &`) keeps the pipes open after the
         // shell exits; the call returns when the shell does.
         settleOn: "exit",
-        onOutput: (captured) => { output = captured; emitProgress(); },
+        onOutput: progress.onOutput,
       });
 
       // Map structured outcome to a tool-result envelope. metadata carries
@@ -182,6 +217,7 @@ export const bashTool: ToolDefinition = {
       }
       if (outcome.kind === "timeout") {
         const [stdout, stderr] = [scrub(outcome.stdout), scrub(outcome.stderr)];
+        if (withheldRun) return withheldRunResult(withheldRun, `timed out after ${timeout / 1000}s`, stdout, stderr, true, { duration_ms: outcome.durationMs });
         return timeoutResult(
           `Command timed out after ${timeout / 1000}s.`,
           {
@@ -212,6 +248,9 @@ export const bashTool: ToolDefinition = {
       });
       if (avSuspect) recordAvSuspectKill(onEvent);
       const [stdout, stderr] = [scrub(outcome.stdout), scrub(outcome.stderr)];
+      if (withheldRun && !avSuspect) {
+        return withheldRunResult(withheldRun, `exit ${code === null ? "?" : code} in ${durationMs}ms`, stdout, stderr, code !== 0 && code !== null, { exit_code: code, duration_ms: durationMs });
+      }
 
       if (avSuspect) {
         return blocked(

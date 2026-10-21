@@ -39,10 +39,11 @@ const SECRET_ENV_PARAM = {
   description: "Vault secrets for the process as environment variables: { ENV_VAR: SECRET_NAME }, e.g. { \"SUPABASE_ACCESS_TOKEN\": \"SUPABASE_TOKEN\" }. The value goes into the process environment only and is scrubbed from everything process_status returns. Never put a credential in env or the command.",
 };
 
-/** The vault values for a call's secret_env, read now. A string is the refusal. */
-function sessionSecrets(names: SecretEnv | null): { names: SecretEnv; resolved: ResolvedSecretEnv } | undefined | string {
+/** The vault values for a call's secret_env, read now, judged against the
+ *  command they go to. A string is the refusal. */
+function sessionSecrets(names: SecretEnv | null, command: string): { names: SecretEnv; resolved: ResolvedSecretEnv } | undefined | string {
   if (!names) return undefined;
-  const resolved = resolveSecretEnv(names);
+  const resolved = resolveSecretEnv(names, command);
   return "refusal" in resolved ? resolved.refusal : { names, resolved };
 }
 
@@ -70,7 +71,7 @@ export const processStartTool: ToolDefinition = {
     const cwd = typeof args.cwd === "string" ? args.cwd : undefined;
     const env = args.env as Record<string, string> | undefined;
     let secrets;
-    try { secrets = sessionSecrets(secretEnvOf(args)); } catch (e) { return err(`process_start: ${(e as Error).message}`); }
+    try { secrets = sessionSecrets(secretEnvOf(args), command); } catch (e) { return err(`process_start: ${(e as Error).message}`); }
     if (typeof secrets === "string") return err(`process_start: ${secrets}`);
 
     // startSession cannot wait for a Windows cage still proving its fence or
@@ -230,7 +231,7 @@ export const processRestartTool: ToolDefinition = {
     // Only an unchanged respawn reuses the session's secret_env: the user okayed
     // that program with those secrets, so a new command, cwd or env names it again.
     if (old && !secretEnv && !command && cwd === undefined && env === undefined) secretEnv = old.secretEnv ?? null;
-    const secrets = sessionSecrets(secretEnv);
+    const secrets = sessionSecrets(secretEnv, command || old?.command || "");
     if (typeof secrets === "string") return err(`process_restart: ${secrets} Nothing was stopped or started.`);
     if (old) {
       if (!command) command = old.command;

@@ -45,6 +45,12 @@ describe.each(["bash", "process_start", "process_restart"])("secretEnvGate on %s
     expect(requests[0].alwaysAsk).toBeUndefined();
   });
 
+  it("a command that works on the value says so on the card: its output goes to the inbox, not the model", async () => {
+    expect(await secretEnvGate(ctx({ args: { command: "echo $SUPABASE_ACCESS_TOKEN | rev", secret_env: { SUPABASE_ACCESS_TOKEN: "SUPABASE_TOKEN" } } }))).toEqual({ kind: "continue" });
+    expect(requests[0].context).toContain("Note: this command prints $SUPABASE_ACCESS_TOKEN, so its output will go to your inbox, not the model.");
+    expect(requests[0].context).toContain("never to the model");
+  });
+
   it("a no stops the call", async () => {
     state.answer = { approved: false, reason: "declined" };
     expect(await secretEnvGate(ctx())).toEqual({ kind: "denied", reason: "declined" });

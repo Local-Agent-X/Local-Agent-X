@@ -14,7 +14,7 @@
  */
 import { USER_HINTS, type ToolResult } from "../types.js";
 import { decisionDenies, decisionRequiresPrompt, getApprovalManager, getRiskDecision, type ApprovalDenyReason } from "../approval-manager.js";
-import { paidMediaSecretEnvRefusal, SECRET_ENV_TOOLS, secretEnvOf, secretEnvProgram } from "../tools/shell-secret-env.js";
+import { paidMediaSecretEnvRefusal, SECRET_ENV_TOOLS, secretEnvOf, secretEnvProgram, secretManipulation } from "../tools/shell-secret-env.js";
 import { spawnCommandOf } from "../tools/process-session.js";
 import type { ToolCallContext } from "./context.js";
 import { parkOrRefuse, takeUserGrant } from "./deferred-call.js";
@@ -59,6 +59,9 @@ export async function secretEnvGate(ctx: ToolCallContext): Promise<SecretEnvGate
 
   const command = spawnCommandOf(ctx.args);
   const program = secretEnvProgram(command);
+  // A command that works on the value in its own text keeps the promise below
+  // a different way: its output goes to the user's inbox, not the model.
+  const manipulation = secretManipulation(command, secretEnv);
   const outcome = await getApprovalManager().requestApprovalDetailed({
     toolName: SECRET_USE_TOOL,
     toolCallId: ctx.tc.id,
@@ -66,7 +69,9 @@ export async function secretEnvGate(ctx: ToolCallContext): Promise<SecretEnvGate
     context:
       `Let \`${program}\` use ${names.join(", ")}?\n\n${command}\n\n` +
       `The value goes into this command's environment only — never into the command text, and never to the model; ` +
-      `anything the command prints has it removed. "Always allow" covers ${program} with ${names.length === 1 ? "this secret" : "these secrets"} only.`,
+      `anything the command prints has it removed. ` +
+      (manipulation ? `Note: ${manipulation}, so its output will go to your inbox, not the model. ` : "") +
+      `"Always allow" covers ${program} with ${names.length === 1 ? "this secret" : "these secrets"} only.`,
     args: { program, secrets: names },
     opId: ctx.operationId,
     emit: ctx.onEvent,

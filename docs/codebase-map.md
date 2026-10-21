@@ -54,12 +54,12 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/cognition/` | 14 | 35 | XL | 1 |
 | `src/voice/` | 14 | 74 | XL | 1 |
 | `src/cron/` | 13 | 11 | L |  |
+| `src/inbox/` | 13 | 5 | M |  |
 | `src/self-edit/` | 13 | 19 | L | 2 |
 | `src/ari-kernel/` | 12 | 12 | M |  |
 | `src/broker-transport/` | 12 | 39 | XL |  |
 | `src/integrations/` | 12 | 15 | M |  |
 | `src/whatsapp-bridge/` | 12 | 8 | M | 1 |
-| `src/inbox/` | 11 | 5 | M |  |
 | `src/agent-loop/` | 10 | 1 | S |  |
 | `src/app-scaffold/` | 10 | 7 | M |  |
 | `src/autopilot/` | 10 | 14 | L | 1 |

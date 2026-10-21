@@ -104,6 +104,13 @@ export class AgentxosApiClient {
     return data.pairings;
   }
 
+  /** Swap a still-valid session token for a fresh one. The server renews only for a
+   *  device of this account that is still paired, so a revoked pairing ends the chain. */
+  async refreshSession(token: string, deviceId: string): Promise<string> {
+    const data = await this.post<{ token: string }>("/api/session/refresh", { deviceId }, token);
+    return data.token;
+  }
+
   /** Revoke a pairing — the in-app "Disconnect phone" action. Server-side and permanent;
    *  the phone can only rejoin by scanning a new QR (constitution §11, no remote add). */
   async revokePairing(token: string, pairingId: string): Promise<void> {

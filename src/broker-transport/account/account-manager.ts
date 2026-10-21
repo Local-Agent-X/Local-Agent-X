@@ -128,7 +128,12 @@ export class AgentxosAccountManager {
         publicKey: id.publicKey,
         label: this.deps.deviceLabel,
       });
-      const saved: AccountState = { email: result.email, sessionToken: result.token, deviceId: reg.deviceId };
+      const saved: AccountState = {
+        email: result.email,
+        sessionToken: result.token,
+        deviceId: reg.deviceId,
+        sessionRenewedAt: this.deps.now(),
+      };
       this.deps.saveState(saved);
       // A returning user (signed out, then back in) is still paired server-side — sign-out
       // never revokes the pairing. Reconcile so we show "Connected" instead of a QR that

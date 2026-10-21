@@ -18,6 +18,7 @@ import { renderQrDataUrl } from "./qr-render.js";
 import { transportMode } from "../config.js";
 import { startBrokerPresence, type BrokerPresence } from "../broker-presence.js";
 import { startBrokerVoicePresence } from "../broker-voice-presence.js";
+import { startSessionRenewal, type SessionRenewal } from "./session-renewal.js";
 import { createLogger } from "../../logger.js";
 import { isLocalOnlyMode } from "../../local-only-policy.js";
 
@@ -34,6 +35,8 @@ let presencePhoneId: string | null = null;
 /** A SECOND presence in the voice rendezvous (channel=voice), so the phone can start a
  *  voice session on demand without touching the screen/chat peer. */
 let voicePresence: BrokerPresence | null = null;
+/** Renews the session token while presence runs, so the desktop never signs itself out. */
+let renewal: SessionRenewal | null = null;
 
 function accountApiUrl(): string {
   return process.env.LAX_ACCOUNT_API_URL?.trim() || DEFAULT_ACCOUNT_API_URL;
@@ -89,6 +92,15 @@ export function maybeStartBrokerPresence(state: AccountState | null = loadAccoun
   presencePhoneId = state.pairedPhoneId;
   // A second presence for the on-demand voice room (channel=voice). Same gating + token.
   voicePresence = startBrokerVoicePresence(config);
+  const api = new AgentxosApiClient(accountApiUrl());
+  renewal = startSessionRenewal({
+    loadState: loadAccountState,
+    updateState: updateAccountState,
+    refresh: (token, deviceId) => api.refreshSession(token, deviceId),
+    now: () => Date.now(),
+    onRefused: handleBrokerAuthError,
+    log: (message) => logger.warn(message),
+  });
 }
 
 /** A presence dialer hit a terminal broker auth refusal: stop BOTH presences and put
@@ -118,4 +130,6 @@ export function stopBrokerPresence(): void {
   presencePhoneId = null;
   voicePresence?.stop();
   voicePresence = null;
+  renewal?.stop();
+  renewal = null;
 }

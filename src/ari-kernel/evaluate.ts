@@ -4,12 +4,12 @@
 import { createLogger } from "../logger.js";
 import { USER_HINTS } from "../types.js";
 import { isAriRequired } from "./state.js";
-import { isMcpToolName, kernelClassForTool } from "./tool-class-map.js";
+import { kernelClassForTool } from "./tool-class-map.js";
 import { lookupHostGrantId } from "./grants.js";
 import { ensureAriKernelScope, refreshAriKernelScope } from "./lifecycle.js";
 import type { KernelQuarantine } from "../types.js";
 import { readKernelQuarantine } from "./quarantine.js";
-import { ariActionOf, policyRowOf } from "../tool-registry.js";
+import { ariActionOf, isMcpServerTool, policyRowOf } from "../tool-registry.js";
 
 const logger = createLogger("ari-kernel");
 
@@ -63,7 +63,7 @@ export async function ariEvaluate(
   // read-only, so a tainted create or delete is a tainted write.
   const vaultAction = toolClass === "secret-vault" ? policyRowOf(toolName)?.ariAction : undefined;
   const effectiveAction = typeof vaultAction === "string" ? vaultAction
-    : isMcpToolName(toolName) ? ariActionOf(toolName, params)
+    : isMcpServerTool(toolName) ? ariActionOf(toolName, params)
     : action;
 
   try {

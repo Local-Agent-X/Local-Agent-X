@@ -176,7 +176,7 @@ export function hasCapability(name: string, cls: CapabilityClass, args?: Record<
   // A server tool's arguments reach a real external API: an egress sink, so
   // every outbound scan and the taint scope judge them — with or without the
   // listing's facts, since the name alone says where the call goes.
-  if (isMcpToolName(name)) return cls === "egress";
+  if (isMcpServerTool(name)) return cls === "egress";
   if (cls === "workspace-write") {
     return pathSpecsForCall(name, args).some((spec) => writesAt(spec) && !(args && spec.whenGiven && args[spec.arg] === undefined));
   }
@@ -210,6 +210,13 @@ export function outputOf(name: string): OutputKind | undefined {
   return TOOL_POLICIES[name]?.output;
 }
 
+/** A connected MCP server's tool: named with the server prefix and holding
+ *  no policy row of its own. The admin tools that manage servers
+ *  (mcp_add_server, …) carry the prefix too, and their rows say what they are. */
+export function isMcpServerTool(name: string): boolean {
+  return isMcpToolName(name) && TOOL_POLICIES[name] === undefined;
+}
+
 /** The action the Ari kernel judges this call as; "exec" for a tool with no
  *  row (the kernel never sees an internal tool). A spec read off an argument
  *  resolves against the call: a POST or a browser click is a write verb. A
@@ -219,7 +226,7 @@ export function outputOf(name: string): OutputKind | undefined {
 export function ariActionOf(name: string, args: Record<string, unknown>): string {
   const mcp = mcpToolFacts(name);
   if (mcp) return mcp.readOnly ? "get" : "post";
-  if (isMcpToolName(name)) return "post";
+  if (isMcpServerTool(name)) return "post";
   const spec = TOOL_POLICIES[name]?.ariAction;
   if (spec === undefined) return "exec";
   if (typeof spec === "string") return spec;

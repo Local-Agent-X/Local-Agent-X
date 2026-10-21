@@ -38,6 +38,11 @@ describe("a connected MCP server tool's kernel action and egress class", () => {
     expect(text).toContain("sk-live-example");
   });
 
+  it("an admin tool that carries the server prefix keeps its own row: mcp_add_server is not a server tool", () => {
+    expect(ariActionOf("mcp_add_server", {})).toBe("exec");
+    expect(hasCapability("mcp_add_server", "egress")).toBe(false);
+  });
+
   it("a server tool the listing never named has no facts: it is a write to an external destination, never the shell's exec", () => {
     // The name alone says where the call goes; "exec" would be rejected by the
     // kernel's http schema and read as an engine bug, not a judgment.

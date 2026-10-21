@@ -99,10 +99,8 @@ export function extractAgentOutput(messages: Array<{ role: string; content?: unk
   return output;
 }
 
-// Session ID validation: alphanumeric + dash/underscore, max 64 chars
-export function isValidSessionId(id: string): boolean {
-  return /^[a-zA-Z0-9_-]{1,64}$/.test(id);
-}
+// Session ID validation: the pattern the phone mints within (vendored sessions.ts).
+export { isValidSessionId } from "./broker-transport/vendor/index.js";
 
 // Strip file paths, stack traces from error messages sent to clients
 export function safeErrorMessage(err: unknown): string {

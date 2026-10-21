@@ -3,7 +3,8 @@ import { randomBytes } from "node:crypto";
 
 import { appDir, statePath } from "./paths.js";
 import type { RateLimiter } from "./rate-limiter.js";
-import { type AppState, MAX_ACTIONS_QUEUED, MAX_APPLIED_ACTIONS, MAX_STATE_SIZE_BYTES, type QueuedAction } from "./types.js";
+import { type AppState, MAX_ACTIONS_QUEUED, MAX_STATE_SIZE_BYTES, type QueuedAction } from "./types.js";
+import { mergeComponentValues } from "../broker-transport/vendor/index.js";
 import { createLogger } from "../logger.js";
 import type { AuditEntry } from "./types.js";
 
@@ -51,31 +52,19 @@ export function updateComponentValues(
   const state = readState(id);
   if (!state) return { error: "App not found" };
 
-  if (actionId) {
-    const applied = state.appliedActions ?? [];
-    if (applied.includes(actionId)) {
-      // Already applied — no-op, no version bump, no audit churn.
-      return { state, duplicate: true };
-    }
-    applied.push(actionId);
-    // Bound the ledger so a long-lived app's state.json can't grow without limit.
-    state.appliedActions = applied.length > MAX_APPLIED_ACTIONS
-      ? applied.slice(-MAX_APPLIED_ACTIONS)
-      : applied;
-  }
-
-  state.componentValues = { ...state.componentValues, ...values };
-  state.metadata.lastAgentUpdate = Date.now();
-  state.metadata.version++;
-  writeState(id, state);
+  // The same merge the phone runs on its offline copy, so a replay lands identically.
+  const merged = mergeComponentValues(state, values, actor === "user" ? "user" : "agent", Date.now(), actionId);
+  // Already applied — no-op, no version bump, no audit churn.
+  if (merged.duplicate) return { state, duplicate: true };
+  writeState(id, merged.state);
 
   writeAudit(id, actor, "state:update", {
     components: Object.keys(values),
-    version: state.metadata.version,
+    version: merged.state.metadata.version,
     ...(actionId ? { actionId } : {}),
   });
 
-  return { state };
+  return { state: merged.state };
 }
 
 export function queueAction(

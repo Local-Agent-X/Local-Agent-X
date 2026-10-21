@@ -19,7 +19,8 @@ import { resolve, join } from "node:path";
 import { detectFramework } from "../tools/framework-detect.js";
 import { supportsStaticBuild, staticBuildDistDir, writeRunTargetManifest } from "../tools/app-run-target.js";
 import { readDevServerRecord } from "../tools/dev-server.js";
-import { buildAppBundle, type AppBundlePayload } from "./apps-bundle.js";
+import { buildAppBundle } from "./apps-bundle.js";
+import type { AppBundlePayload } from "../broker-transport/vendor/index.js";
 import type { AppRegistry } from "../app-runtime/index.js";
 
 export type OfflineBundleResult =

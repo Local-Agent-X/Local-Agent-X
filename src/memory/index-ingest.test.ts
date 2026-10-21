@@ -15,7 +15,7 @@ import { mkdtempSync, rmSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MemoryIndex } from "./index.js";
-import { indexChunks } from "./index-ingest.js";
+import { indexChunks, indexChunksIdempotent } from "./index-ingest.js";
 import { DEFAULT_MEMORY_CONFIG, type EmbeddingProvider, type Chunk } from "./types.js";
 
 let tempDir: string;
@@ -106,5 +106,33 @@ describe("indexChunks — embedding failure is not swallowed", () => {
       taint_status: "unknown",
       provenance_label: "Local session transcript",
     });
+  });
+});
+
+// Eval DB 2026-10-18: odalys.md held the same chunk twice (same path, same
+// hash, ids 18 and 19) after two re-indexes of the page overlapped, so
+// memory_search returned the page twice.
+describe("indexChunksIdempotent — overlapping re-indexes of one path", () => {
+  it("leave one row per chunk, however the embedding awaits interleave", async () => {
+    const db = memory["db"] as InstanceType<typeof import("better-sqlite3")>;
+    const slow: EmbeddingProvider = {
+      name: "test", model: "slow", dimensions: 4,
+      embed: async () => [0.1, 0.2, 0.3, 0.4],
+      embedBatch: async (texts: string[]) => {
+        await new Promise((r) => setTimeout(r, 20));
+        return texts.map(() => [0.1, 0.2, 0.3, 0.4]);
+      },
+    };
+    const virtualPath = join(tempDir, "memory", "bank", "entities", "odalys.md");
+    const page = (): Chunk[] => [
+      { path: virtualPath, source: "entity", startLine: 1, endLine: 12, text: "# odalys\n- Odalys is the user's cousin", hash: "h-odalys" },
+    ];
+    const run = () => indexChunksIdempotent(
+      db, slow, DEFAULT_MEMORY_CONFIG, memory["hasFts"] as boolean, memory["hasVec"] as boolean,
+      page(), virtualPath, "entity",
+    );
+    await Promise.all([run(), run(), run()]);
+    const rows = db.prepare("SELECT content_hash FROM chunks WHERE path = ?").all(virtualPath);
+    expect(rows).toHaveLength(1);
   });
 });

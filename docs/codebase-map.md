@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1831 non-test source files · 94 oversized · 242 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1831 non-test source files · 94 oversized · 241 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -546,7 +546,6 @@ job. Comments are free: never cut them to fit.
 - `src/mcp-client/integrity.ts#verifyOrTrust` — 60+ own code lines (cap 100)
 - `src/memory/auto-search-context.ts#autoSearchContext` — 60+ own code lines (cap 100)
 - `src/memory/dream.ts#buildDreamPromptForBatch` — 60+ own code lines (cap 100)
-- `src/memory/index-ingest.ts#indexChunksIdempotent` — 60+ own code lines (cap 100)
 - `src/memory/index-search/post-process.ts#postProcess` — 60+ own code lines (cap 100)
 - `src/memory/index-search/vector-search-worker.ts#scanChunks` — 60+ own code lines (cap 100)
 - `src/memory/index-sync.ts#syncIndex` — 60+ own code lines (cap 100)

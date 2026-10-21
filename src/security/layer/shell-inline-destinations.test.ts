@@ -22,6 +22,11 @@ describe("inlineProgramDestinations", () => {
     ["import urllib.request; print(urllib.request.urlopen('http://localhost:8443/').read())", { kind: "local", ports: ["8443"], unixSockets: [] }],
     ["import requests; print(requests.get('http://127.0.0.1:5000/health').status_code)", { kind: "local", ports: ["5000"], unixSockets: [] }],
     ["import socket; socket.create_connection(('localhost', 6379), timeout=2)", { kind: "local", ports: ["6379"], unixSockets: [] }],
+    // Terminal-Bench (2026-10-20): the destination bound to a name first, and
+    // http.client's (host, port) as two arguments.
+    ["import urllib.request; req = urllib.request.Request('https://localhost:8443/', method='GET'); resp = urllib.request.urlopen(req, timeout=5)", { kind: "local", ports: ["8443"], unixSockets: [] }],
+    ["import requests; url = 'http://127.0.0.1:5000/health'; print(requests.get(url).status_code)", { kind: "local", ports: ["5000"], unixSockets: [] }],
+    ["import http.client; conn = http.client.HTTPConnection('127.0.0.1', 6080, timeout=5); conn.request('HEAD', '/')", { kind: "local", ports: ["6080"], unixSockets: [] }],
   ];
   for (const [program, expected] of local) it(`local: ${program.slice(0, 60)}`, () => expect(py(program)).toEqual(expected));
 
@@ -37,6 +42,10 @@ describe("inlineProgramDestinations", () => {
     "import socket; s=socket.socket(); s.connect(('evil.test', 443))",
     "import urllib.request; urllib.request.urlopen(f'http://localhost:{p}/')",
     "import socket; s=socket.socket(); s.connect(('127.0.0.1', 80)); import requests; requests.get(url)",
+    // A name bound twice, or to something other than a literal, is not a literal.
+    "import requests; url = 'http://localhost:1/'; url = input(); requests.get(url)",
+    "import requests; url = base + '/x'; requests.get(url)",
+    "import http.client; conn = http.client.HTTPConnection('evil.test', 80)",
   ];
   for (const program of unknown) it(`unknown: ${program.slice(0, 60)}`, () => expect(py(program)).toEqual({ kind: "unknown" }));
   it("is unknown for node reaching out", () => expect(node("fetch('https://evil.test')")).toEqual({ kind: "unknown" }));

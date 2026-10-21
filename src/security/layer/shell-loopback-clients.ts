@@ -149,6 +149,8 @@ function socatUse(args: string[]): LoopbackUse | null {
     const type = (colon < 0 ? spec : spec.slice(0, colon)).toUpperCase();
     const rest = colon < 0 ? "" : spec.slice(colon + 1);
     if (STDIO_ADDRESS.has(type)) continue;
+    // socat's shorthand: a bare path is a Unix socket to connect to.
+    if (colon < 0 && spec.startsWith("/")) { use.unixSockets.push(spec); continue; }
     if (UNIX_CONNECT.has(type) && rest) { use.unixSockets.push(rest); continue; }
     const m = TCP_CONNECT.has(type) ? /^(\[[^\]]+\]|[^:]+):(\d{1,5})$/.exec(rest) : null;
     if (!m || !loopback(m[1])) return null;

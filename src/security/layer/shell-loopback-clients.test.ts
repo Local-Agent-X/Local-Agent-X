@@ -25,8 +25,9 @@ describe("loopbackUse", () => {
   ];
   for (const [cmd, ports] of local) it(`only this machine: ${cmd}`, () => expect(use(cmd)?.ports).toEqual(ports));
 
-  it("reads a Unix socket as what it is", () => {
+  it("reads a Unix socket as what it is, spelled out or as socat's bare path", () => {
     expect(use("socat - UNIX-CONNECT:/tmp/qemu-qmp.sock")).toEqual({ ports: [], unixSockets: ["/tmp/qemu-qmp.sock"], probe: false });
+    expect(use("socat - /tmp/qemu-qmp.sock")).toEqual({ ports: [], unixSockets: ["/tmp/qemu-qmp.sock"], probe: false });
   });
 
   it("marks a connect-only check", () => {

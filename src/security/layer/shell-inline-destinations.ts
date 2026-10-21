@@ -40,22 +40,43 @@ export function inlinePrograms(command: string): string[] {
 // A call that takes a destination, followed by what it is given. Group 1 is
 // the argument text up to the first close paren of the call.
 const DESTINATION_CALL =
-  /(?:\b(?:connect_ex|connect|create_connection|urlopen|fetch|createConnection|HTTPConnection|HTTPSConnection)|requests\.(?:get|post|put|patch|delete|head|request)|TCPSocket\.(?:new|open))\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g;
+  /(?:\b(?:connect_ex|connect|create_connection|urlopen|fetch|createConnection|HTTPConnection|HTTPSConnection|Request)|requests\.(?:get|post|put|patch|delete|head|request)|TCPSocket\.(?:new|open))\s*\(([^()]*(?:\([^()]*\)[^()]*)*)\)/g;
 const STRING = `(?:'([^'\\\\]*)'|"([^"\\\\]*)")`;
 const TUPLE = new RegExp(`^\\s*\\(\\s*${STRING}\\s*,\\s*(\\d{1,5})\\s*,?\\s*\\)\\s*(?:,|$)`);
 const PORT_HOST = new RegExp(`^\\s*(\\d{1,5})\\s*,\\s*${STRING}`);
+const HOST_PORT = new RegExp(`^\\s*${STRING}\\s*,\\s*(\\d{1,5})\\s*(?:,|$)`);
 const OBJECT = /^\s*\{([^}]*)\}\s*$/;
 const ONLY_STRING = new RegExp(`^\\s*${STRING}\\s*(?:,|$)`);
+const IDENTIFIER = /^\s*([A-Za-z_]\w*)\s*(?:,|$)/;
 const URL_LITERAL = /^[a-z][a-z0-9+.-]*:\/\//i;
 
 const literal = (m: RegExpMatchArray, a: number, b: number) => m[a] ?? m[b];
 const loopback = (host: string) => isLoopbackHost(host.replace(/^\[|\]$/g, "").toLowerCase());
 
+/** A name bound exactly once in the program to a literal or a Request of
+ *  one (`url = 'http://localhost:8080'`, `req = Request('…', method='GET')`),
+ *  so a call handed the name is handed that literal. Bound twice, or to
+ *  anything else: unknown. */
+function bindings(program: string): Map<string, string | null> {
+  const bound = new Map<string, string | null>();
+  for (const m of program.matchAll(/(?:^|[;\n])\s*([A-Za-z_]\w*)\s*=\s*([^\n;]*)/g)) {
+    const [, name, value] = m;
+    const lit = new RegExp(`^\\s*(?:(?:urllib\\.request\\.)?Request\\s*\\(\\s*)?${STRING}`).exec(value);
+    bound.set(name, bound.has(name) || !lit ? null : literal(lit, 1, 2));
+  }
+  return bound;
+}
+
 /** Where one call's argument text points, or null when it cannot be read. */
-function destinationOf(argText: string): { port: string } | { unixSocket: string } | null {
+function destinationOf(argText: string, bound: Map<string, string | null>): { port: string } | { unixSocket: string } | null {
   let m: RegExpMatchArray | null;
+  if ((m = IDENTIFIER.exec(argText))) {
+    const value = bound.get(m[1]);
+    return value ? destinationOf(`'${value}'`, bound) : null;
+  }
   if ((m = TUPLE.exec(argText))) return loopback(literal(m, 1, 2)) ? { port: m[3] } : null;
   if ((m = PORT_HOST.exec(argText))) return loopback(literal(m, 2, 3)) ? { port: m[1] } : null;
+  if ((m = HOST_PORT.exec(argText))) return loopback(literal(m, 1, 2)) ? { port: m[3] } : null;
   if ((m = OBJECT.exec(argText))) {
     const host = /\bhost(?:name)?\s*:\s*(?:'([^']*)'|"([^"]*)")/.exec(m[1]);
     const port = /\bport\s*:\s*(\d{1,5})/.exec(m[1]);
@@ -81,13 +102,14 @@ export function inlineProgramDestinations(command: string): InlineDestinations {
   const unixSockets: string[] = [];
   let calls = 0;
   for (const program of inlinePrograms(command)) {
+    const bound = bindings(program);
     for (const m of program.matchAll(DESTINATION_CALL)) {
       calls++;
-      const d = destinationOf(m[1]);
+      const d = destinationOf(m[1], bound);
       if (!d) return { kind: "unknown" };
       if ("port" in d) ports.push(d.port); else unixSockets.push(d.unixSocket);
     }
   }
   if (calls === 0) return { kind: "none" };
-  return { kind: "local", ports, unixSockets };
+  return { kind: "local", ports: [...new Set(ports)], unixSockets: [...new Set(unixSockets)] };
 }

@@ -33,6 +33,19 @@ describe("providerRiderFor", () => {
     // What stays the user's is named, so "do it" never reaches a password or a signature.
     expect(FOLLOW_THROUGH_RIDER).toMatch(/passwords, signatures and legal attestations, payments/);
   });
+
+  // Terminal-Bench 2.0 (2026-10-20): one happy-path run reported as done, and a
+  // setup script handed back unrun, on the same local model another harness
+  // finished by checking every named requirement.
+  it("says done means a check of each named requirement, failure cases included, for every non-Claude model", () => {
+    for (const rider of [FOLLOW_THROUGH_RIDER, FOLLOW_THROUGH_LOCAL]) {
+      expect(rider).toMatch(/done means checked/i);
+      expect(rider).toMatch(/each thing the user asked for/);
+      expect(rider).toMatch(/cancel/);
+      expect(rider).toMatch(/setup|sets something up/);
+    }
+    for (const p of ["anthropic", "anthropic-api"]) expect(providerRiderFor(p), p).not.toMatch(/done means checked/i);
+  });
 });
 
 describe("codexBehaviorRider — a login page is page-scoped (C6)", () => {
@@ -93,9 +106,9 @@ describe("modelFamilyRiderFor", () => {
     "TOOL CALLS USE THE NATIVE MECHANISM ONLY",
     "CALL OR ANSWER — NEVER NARRATE",
     "NO CONTROL TOKENS OR REASONING TAGS",
-    "ANSWER ONCE, THEN STOP",
+    "SAY IT ONCE",
   ];
-  const REASONING_RULE = "DELIBERATE BRIEFLY, ANSWER FIRST";
+  const REASONING_RULE = "THINK TO FIT THE ASK";
 
   const BASE_ONLY_MODELS = [
     "gemma3:27b",
@@ -150,5 +163,14 @@ describe("modelFamilyRiderFor", () => {
     for (const model of [...BASE_ONLY_MODELS, ...REASONING_MODELS, "deepseek-r1-distill-qwen-14b"]) {
       expect(modelFamilyRiderFor(model).length).toBeLessThan(2000);
     }
+  });
+
+  // The chat rules were read as "stop sooner" on agent work (Terminal-Bench
+  // 2.0, 2026-10-20): each says it is about text and conversation, not work.
+  it("never tells a model working through a task to stop or to think less", () => {
+    const rider = modelFamilyRiderFor("qwen3.6:27b");
+    expect(rider).toContain("it never means ending work the request still needs");
+    expect(rider).toContain("think as much as each step needs");
+    expect(rider).not.toMatch(/THEN STOP|DELIBERATE BRIEFLY/);
   });
 });

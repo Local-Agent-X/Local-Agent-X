@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * The structure checks as one command: the codebase map, module owners, doc
- * paths, the code-size caps. Every check runs even after one fails, so a
+ * paths, the code-size caps, canonical drift. Every check runs even after one fails, so a
  * single run shows everything to fix. For a build or a harness gate that has
  * one slot for "is the structure right"; the individual scripts stay for
  * targeted runs.
@@ -9,6 +9,7 @@
  * Usage:
  *   node check-structure.mjs [--root src]... [--check]
  *        [--max-code 400] [--warn-code 320] [--max-fn 100] [--warn-fn 60] [--ratchet .code-size-ratchet]
+ *        [--canonical <root>]... [--canonical-ratchet .canonical-drift]
  *        [--typescript <dir of a typescript package with the compiler API>]
  *
  * Without --check the map is REGENERATED (the build keeps it current, and the
@@ -40,13 +41,16 @@ const given = args.flatMap((a, i) => (a === "--root" ? [args[i + 1]] : []));
 const roots = (given.length ? given : defaultRoots(process.cwd())).flatMap((r) => ["--root", r]);
 const limits = limitArgs(limitsFromArgs(args));
 const check = args.includes("--check");
+const canonical = args.flatMap((a, i) => (a === "--canonical" ? ["--canonical", args[i + 1]] : []));
+const canonicalRatchet = opt("--canonical-ratchet");
 const here = fileURLToPath(new URL(".", import.meta.url));
 
 const steps = [
-	["codebase-map.mjs", [...roots, ...limits, ...(check ? ["--check"] : [])]],
+	["codebase-map.mjs", [...roots, ...limits, ...canonical, ...(check ? ["--check"] : [])]],
 	["check-module-owners.mjs", [...roots]],
 	["check-doc-paths.mjs", []],
 	["check-code-size.mjs", [...roots, ...limits, ...opt("--ratchet")]],
+	["check-canonical.mjs", [...roots, ...canonical, ...(canonicalRatchet.length ? ["--ratchet", canonicalRatchet[1]] : [])]],
 ];
 
 const failed = [];

@@ -8,25 +8,24 @@ function acts(...pairs: Array<[string, LedgerAction["status"]]>): LedgerAction[]
 
 describe("composeDigest", () => {
   it("returns null when there's nothing useful (turn 0, no recent actions)", () => {
-    expect(composeDigest({ turnIdx: 0, totalTokens: 0, recent: [], firstUserText: "x" })).toBeNull();
+    expect(composeDigest({ turnIdx: 0, recent: [], firstUserText: "x" })).toBeNull();
   });
 
   it("shows recent actions even at turn 0 (fresh message / voice utterance)", () => {
-    const d = composeDigest({ turnIdx: 0, totalTokens: 0, recent: acts(["edit", "ok"]), firstUserText: "" });
+    const d = composeDigest({ turnIdx: 0, recent: acts(["edit", "ok"]), firstUserText: "" });
     expect(d).toContain("Recent actions");
     expect(d).toContain("edit✓");
     expect(d).not.toContain("Turn 1"); // pace suppressed at turn 0
   });
 
   it("includes a pace line once past turn 0", () => {
-    const d = composeDigest({ turnIdx: 1, totalTokens: 0, recent: [], firstUserText: "" });
+    const d = composeDigest({ turnIdx: 1, recent: [], firstUserText: "" });
     expect(d).toContain("Turn 2 of this request");
   });
 
   it("summarizes recent cross-conversation actions with outcome marks", () => {
     const d = composeDigest({
       turnIdx: 2,
-      totalTokens: 0,
       recent: acts(["edit", "ok"], ["bash", "error"], ["web_search", "cancelled"]),
       firstUserText: "",
     });
@@ -39,7 +38,6 @@ describe("composeDigest", () => {
   it("renders widened failure flavors as plain ✗", () => {
     const d = composeDigest({
       turnIdx: 2,
-      totalTokens: 0,
       recent: acts(["bash", "blocked"], ["edit", "declined"], ["web_fetch", "timeout"]),
       firstUserText: "",
     });
@@ -49,14 +47,18 @@ describe("composeDigest", () => {
     expect(d).not.toContain("timeout");
   });
 
-  it("renders the token total in the pace line", () => {
-    const d = composeDigest({ turnIdx: 2, totalTokens: 5000, recent: [], firstUserText: "" });
-    expect(d).toContain("~5k tokens used so far");
+  // A request's summed token spend runs past the context window on any long
+  // task, and a local model read "~164k tokens used" as its window filling up
+  // (Terminal-Bench 2.0, 2026-10-20). The pace line counts turns only.
+  it("paces by turn and never by tokens spent", () => {
+    const d = composeDigest({ turnIdx: 2, recent: [], firstUserText: "" });
+    expect(d).toContain("Turn 3 of this request.");
+    expect(d).not.toMatch(/tokens/i);
   });
 
   it("re-anchors the durable open plan every turn — even at turn 0, before any restate", () => {
     const d = composeDigest({
-      turnIdx: 0, totalTokens: 0, recent: [], firstUserText: "build a todo app",
+      turnIdx: 0, recent: [], firstUserText: "build a todo app",
       openTasks: [
         { id: "t1", description: "scaffold the HTML" },
         { id: "t2", description: "wire up add/remove" },
@@ -71,27 +73,27 @@ describe("composeDigest", () => {
 
   it("caps the plan and notes the overflow", () => {
     const openTasks = Array.from({ length: 15 }, (_, i) => ({ id: `t${i}`, description: `step ${i}` }));
-    const d = composeDigest({ turnIdx: 1, totalTokens: 0, recent: [], firstUserText: "", openTasks })!;
+    const d = composeDigest({ turnIdx: 1, recent: [], firstUserText: "", openTasks })!;
     expect(d).toContain("(+3 more)");
     expect(d).toContain("12. step 11");
     expect(d).not.toContain("13. step 12");
   });
 
   it("omits the plan line when there are no open tasks", () => {
-    const d = composeDigest({ turnIdx: 1, totalTokens: 0, recent: [], firstUserText: "", openTasks: [] });
+    const d = composeDigest({ turnIdx: 1, recent: [], firstUserText: "", openTasks: [] });
     expect(d).not.toContain("Open plan steps");
   });
 
   it("omits the goal restatement until the request has scrolled away", () => {
-    const early = composeDigest({ turnIdx: 2, totalTokens: 0, recent: [], firstUserText: "build the thing" });
+    const early = composeDigest({ turnIdx: 2, recent: [], firstUserText: "build the thing" });
     expect(early).not.toContain("Original request");
-    const late = composeDigest({ turnIdx: 6, totalTokens: 0, recent: [], firstUserText: "build the thing" });
+    const late = composeDigest({ turnIdx: 6, recent: [], firstUserText: "build the thing" });
     expect(late).toContain('Original request: "build the thing"');
   });
 
   it("clips a long goal restatement", () => {
     const long = "a".repeat(300);
-    const d = composeDigest({ turnIdx: 6, totalTokens: 0, recent: [], firstUserText: long });
+    const d = composeDigest({ turnIdx: 6, recent: [], firstUserText: long });
     expect(d).toContain("…");
     // Goal line clips at GOAL_MAX_CHARS(160); the rest is the fixed
     // header/footer + pace line. Bound = clipped goal + ~200 of frame.
@@ -101,7 +103,6 @@ describe("composeDigest", () => {
   it("carries success criteria + hard constraints into the re-grounding block", () => {
     const d = composeDigest({
       turnIdx: 6,
-      totalTokens: 0,
       recent: [],
       firstUserText: "ship the export feature",
       successCriteria: ["CSV downloads", "covered by a test"],
@@ -114,7 +115,6 @@ describe("composeDigest", () => {
   it("omits criteria/constraints before the restate threshold", () => {
     const d = composeDigest({
       turnIdx: 2,
-      totalTokens: 0,
       recent: acts(["edit", "ok"]),
       firstUserText: "ship it",
       successCriteria: ["CSV downloads"],
@@ -132,7 +132,7 @@ describe("composeDigest", () => {
     expect(goalRestateAfterTurn(undefined)).toBe(6);
 
     // At turn 3 a weak model already gets its criteria; a strong model does not.
-    const common = { turnIdx: 3, totalTokens: 0, recent: [] as LedgerAction[], firstUserText: "do X", successCriteria: ["passes CI"] };
+    const common = { turnIdx: 3, recent: [] as LedgerAction[], firstUserText: "do X", successCriteria: ["passes CI"] };
     const weak = composeDigest({ ...common, restateAfter: goalRestateAfterTurn("weak") });
     const strong = composeDigest({ ...common, restateAfter: goalRestateAfterTurn("strong") });
     expect(weak).toContain("Success criteria");

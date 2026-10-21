@@ -63,7 +63,7 @@ src/routes/autopilot.ts#handleAutopilotRoutes 102
 src/routes/bridges/auth/anthropic.ts#handleAnthropicAuthRoutes 103
 src/routes/bridges/auth/core-openai.ts#handleCoreAuthRoutes 101
 src/routes/bridges/auth/xai.ts#handleXaiAuthRoutes 110
-src/routes/bridges/cron.ts#handleCronRoutes 217
+src/routes/bridges/cron.ts#handleCronRoutes 211
 src/routes/bridges/protocols.ts#handleProtocolRoutes 233
 src/routes/bridges/voice-setup/handlers.ts#handleVoiceSetupRoutes 129
 src/routes/chat/run-chat-turn/orchestrator.ts#runChatTurn 154

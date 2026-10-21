@@ -1,3 +1,4 @@
+import { parseStateUpdate } from "../broker-transport/vendor/index.js";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import type { RouteHandler } from "../server-context.js";
@@ -186,14 +187,11 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
     const id = appPath.split("/")[3];
     const body = await safeParseBody(req);
     if (!body) { json(400, { error: "Invalid JSON" }); return true; }
-    // Optional idempotency key: a phone replaying its offline action queue on
-    // reconnect tags each merge with its local actionId so a re-sent action is
-    // applied exactly once (state-store dedups via state.appliedActions). When
-    // body carries an actionId, `values` must be the merge payload (not the
-    // whole body), so the id isn't merged in as a component value.
-    const actionId = typeof body.actionId === "string" ? body.actionId : undefined;
-    const values = (body.values || (actionId ? {} : body)) as Record<string, unknown>;
-    const updated = appReg.updateComponentValues(id, values, "user", actionId);
+    // A phone replaying its offline action queue tags each merge with its actionId so
+    // a re-sent action is applied exactly once (the vendored apps.ts owns the body shape).
+    const update = parseStateUpdate(body);
+    if (!update) { json(400, { error: "Invalid JSON" }); return true; }
+    const updated = appReg.updateComponentValues(id, update.values, "user", update.actionId);
     if (updated.error) { json(updated.state ? 429 : 404, { error: updated.error }); return true; }
     if (!updated.duplicate) ctx.broadcastAll({ type: "app:state", appId: id });
     json(200, { ok: true, duplicate: updated.duplicate === true }); return true;

@@ -23,29 +23,8 @@ import { join, resolve } from "node:path";
 import { confineToDir } from "../security/layer/index.js";
 import { renderApp } from "../app-renderer/index.js";
 import { staticBuildDistDir } from "../tools/app-run-target.js";
-import type { AppRegistry, AppState } from "../app-runtime/index.js";
-
-/** One static file the phone must persist to run the app offline. */
-export interface BundleFile {
-  /** App-relative path, forward-slashed (e.g. "index.html", "css/app.css"). */
-  path: string;
-  /** File contents. Base64 when `encoding` is "base64", else raw UTF-8 text. */
-  content: string;
-  encoding: "utf-8" | "base64";
-}
-
-/** The complete offline payload for one app (mirrors mobile AppBundle). */
-export interface AppBundlePayload {
-  appId: string;
-  /** App version (registry version, or index.html mtime for workspace apps). */
-  version: string;
-  /** Entry document the WebView loads offline. */
-  entry: string;
-  /** Every file the phone persists; `entry` is one of these. */
-  files: BundleFile[];
-  /** Live state snapshot, or null when the app has no registry state. */
-  state: AppState | null;
-}
+import type { AppRegistry } from "../app-runtime/index.js";
+import type { AppBundlePayload, BundleFile } from "../broker-transport/vendor/index.js";
 
 // Keep a single download well-bounded — a bundle is meant for small agent-built
 // apps, not arbitrarily large media trees. Past the cap we omit further assets

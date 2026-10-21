@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1832 non-test source files · 94 oversized · 241 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1834 non-test source files · 94 oversized · 241 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -47,6 +47,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/desktop-contract/` | 21 | 10 | M |  |
 | `src/protocols/` | 21 | 52 | XL |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
+| `src/broker-transport/` | 19 | 42 | XL |  |
 | `src/agents/` | 17 | 13 | L |  |
 | `src/server/` *(entrypoint)* | 16 | 57 | XL | 6 |
 | `src/anthropic-client/` | 15 | 21 | L | 2 |
@@ -57,7 +58,6 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/voice/` | 14 | 74 | XL | 1 |
 | `src/self-edit/` | 13 | 19 | L | 2 |
 | `src/ari-kernel/` | 12 | 12 | M |  |
-| `src/broker-transport/` | 12 | 40 | XL |  |
 | `src/integrations/` | 12 | 15 | M |  |
 | `src/whatsapp-bridge/` | 12 | 8 | M | 1 |
 | `src/agent-loop/` | 10 | 1 | S |  |

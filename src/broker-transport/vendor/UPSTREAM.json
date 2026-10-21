@@ -3,7 +3,7 @@
   "files": {
     "protocol.ts": {
       "upstream": "packages/protocol/src/index.ts",
-      "sha256": "815da713ed2a2a9e058b1d07d096caa15794a3a8b20d04fefb95e8f4f8f217b9"
+      "sha256": "11010a085a0c6a31ba10806d77ec3fb5a2c69bad1aa5c72b95f92dd466911036"
     },
     "guards.ts": {
       "upstream": "packages/protocol/src/guards.ts",
@@ -76,6 +76,14 @@
     "device-code-login.ts": {
       "upstream": "packages/client/src/device-code-login.ts",
       "sha256": "4c3a962c794fb28ab30623dc70e6a26d8e00b489ad179ebcacb3d332e828326e"
+    },
+    "apps.ts": {
+      "upstream": "packages/protocol/src/apps.ts",
+      "sha256": "95c1c4100a02c47314dd9a2173f0dc31e01e6aefe8867082a2fa0ed43a660db6"
+    },
+    "sessions.ts": {
+      "upstream": "packages/protocol/src/sessions.ts",
+      "sha256": "a03b99d2e13855182aa8ea83c5bf9f26ea24c1ce902a1640e1c2c71a77625eda"
     }
   }
 }

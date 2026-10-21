@@ -1,3 +1,4 @@
+import type { SessionSummary } from "../broker-transport/vendor/index.js";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { isHarnessRow } from "../harness-rows.js";
 import { join } from "node:path";
@@ -18,7 +19,8 @@ export const handleSessionRoutes: RouteHandler = async (method, url, req, res, c
     // surfacing one lets the UI adopt it and route a real message into a
     // dry-run turn (silent no-op reported as success).
     const all = ctx.sessionStore.list();
-    const visible = all.filter(s => !isSyntheticSessionId(s.id));
+    // Typed as the phone's row so a renamed field fails here, not in the phone's drawer.
+    const visible: SessionSummary[] = all.filter(s => !isSyntheticSessionId(s.id));
     json(200, visible);
     return true;
   }

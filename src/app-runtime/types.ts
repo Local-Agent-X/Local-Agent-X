@@ -1,5 +1,7 @@
 // ── Components ───────────────────────────────────────────────
 
+import type { AppStateSnapshot } from "../broker-transport/vendor/index.js";
+
 export type ComponentType =
   | "button" | "text" | "input" | "form" | "table" | "chart"
   | "list" | "stat" | "image" | "select" | "toggle" | "custom"
@@ -96,21 +98,11 @@ export interface AppDefinition {
 
 // ── State ────────────────────────────────────────────────────
 
-export interface AppState {
-  componentValues: Record<string, unknown>;
+/** An app's persisted state: the snapshot both devices hold (component values, the
+ *  applied-actions ledger a phone's offline replay dedups on, metadata; the vendored
+ *  apps.ts) plus the desktop's own action queue. */
+export interface AppState extends AppStateSnapshot {
   actionQueue: QueuedAction[];
-  /**
-   * Ids of state-update actions already applied, newest last. Lets a phone
-   * replay its offline queue against POST /state idempotently — a re-sent
-   * action whose id is here is a no-op instead of a duplicate merge. Bounded
-   * to MAX_APPLIED_ACTIONS; absent on legacy state (treated as empty).
-   */
-  appliedActions?: string[];
-  metadata: {
-    lastAgentUpdate: number;
-    lastUserUpdate: number;
-    version: number;
-  };
 }
 
 export interface QueuedAction {
@@ -137,7 +129,6 @@ export interface AppEvent {
 export const MAX_COMPONENTS = 200;
 export const MAX_EVENTS_STORED = 500;
 export const MAX_ACTIONS_QUEUED = 100;
-export const MAX_APPLIED_ACTIONS = 500;
 export const MAX_STATE_SIZE_BYTES = 2 * 1024 * 1024;  // 2MB
 export const MAX_APP_NAME_LENGTH = 128;
 export const MAX_APP_DESC_LENGTH = 1024;

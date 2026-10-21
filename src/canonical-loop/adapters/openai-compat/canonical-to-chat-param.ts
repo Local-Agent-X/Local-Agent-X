@@ -160,8 +160,9 @@ export function canonicalToChatParam(
  *     with an EMPTY reply once in two runs, and the adapter's empty-with-tools
  *     latch then dropped native tools for the rest of the process. Merging
  *     into the ephemeral digest row keeps the `…tool, user` shape 12b ran on
- *     without incident; that row is replaced wholesale next round, so the
- *     merge is a row-boundary change, not a row edit.
+ *     without incident. On a local endpoint that row is not replaced next
+ *     round but kept verbatim (local-wire.ts): a hybrid model cannot rewind
+ *     its cache, so a replaced last row cost it the whole prompt.
  */
 export function appendTrailingContext(
   messages: ChatCompletionMessageParam[],

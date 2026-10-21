@@ -29,7 +29,7 @@ src/browser/secret-fill.ts#withBrowserLock:callback 147
 src/canonical-loop/adapters/anthropic-transport.ts#stream 107
 src/canonical-loop/adapters/app-build-adapter.ts#CliBuildAdapter.runTurn 104
 src/canonical-loop/adapters/codex.ts#CodexAdapter.runTurn 105
-src/canonical-loop/adapters/openai-compat.ts#OpenAICompatAdapter.runTurn 148
+src/canonical-loop/adapters/openai-compat.ts#OpenAICompatAdapter.runTurn 144
 src/canonical-loop/adapters/openai-compat/canonical-to-chat-param.ts#canonicalToChatParam 101
 src/canonical-loop/adapters/openai-compat/stream-once.ts#streamOnce 113
 src/canonical-loop/agent-runner/run.ts#runAgentViaCanonical 106

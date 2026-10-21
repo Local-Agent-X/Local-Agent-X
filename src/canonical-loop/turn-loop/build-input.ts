@@ -184,7 +184,10 @@ export async function buildTurnInput(
       // replaying traced rounds (2026-09-22): a strict row-extension reuses
       // the whole cached prompt; a round that changes one row's bytes reuses
       // nothing, not even the system prompt. Two adjacent user rows cost that
-      // runtime nothing, so the digest is its own row there, always.
+      // runtime nothing, so the digest is its own row there, always — and the
+      // adapter keeps each one it sent verbatim in later rounds rather than
+      // replacing it (openai-compat/local-wire.ts), because on a hybrid model
+      // a replaced last row is a row edit too.
       const appended = [...input.messages, situationalMessage(op.id, turnIdx, digest)];
       input.messages = op.contextPack?.routing?.preferredProvider === "local"
         ? appended

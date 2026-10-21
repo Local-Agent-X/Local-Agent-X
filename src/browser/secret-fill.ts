@@ -59,6 +59,29 @@ const EMAIL_INTO_TEXT_FIELD = {
   test: (el: { tag: string; type?: string }) => el.tag === "input" && ["", "text", "email"].includes(el.type ?? ""),
 };
 
+/** The audited refusal for a fill the page did not land, or null when it did
+ *  (landed, or masked so the page could not confirm). Value-free by
+ *  construction: the outcome never carried one. */
+function refusedFillOutcome(
+  outcome: SecretFillOutcome,
+  ctx: { name: string; currentOrigin: string; sessionId: string; selectorKind: string; targetSelector: string },
+): ToolResult | null {
+  const { name, currentOrigin, sessionId, selectorKind, targetSelector } = ctx;
+  if (outcome.kind === "origin-changed") {
+    auditLog({ event: "fill_denied", secret: name, reason: "origin_changed", origin: currentOrigin, session: sessionId });
+    return err(`Fill refused: the page left ${currentOrigin} before the value was written. Take a new snapshot and retry on the page you mean.`);
+  }
+  if (outcome.kind === "not-found" || outcome.kind === "not-fillable") {
+    auditLog({ event: "fill_failed", secret: name, origin: currentOrigin, session: sessionId, selectorKind, error: outcome.kind });
+    return err(`Fill failed: target ${targetSelector} is ${outcome.kind.replace("-", " ")}.`);
+  }
+  if (outcome.kind === "mismatch") {
+    auditLog({ event: "fill_mismatch", secret: name, origin: currentOrigin, session: sessionId, selectorKind });
+    return err(`Secret fill did not land: ${targetSelector} (value mismatch)`);
+  }
+  return null;
+}
+
 function auditLog(row: Record<string, unknown>): void {
   try {
     logger.warn(`[secret-fill] ${JSON.stringify(row)}`);
@@ -250,13 +273,22 @@ export function createBrowserSecretFillTool(
         return err(`Secret "${name}" disappeared between check and read. Retry or ask the user.`);
       }
 
+      // --- Guardrail 4: redaction BEFORE the write, so a snapshot taken between
+      // the fill and the registration (or after a fill that failed half-way)
+      // can't leak the value back. The value is the user's stored secret
+      // whether or not the write lands; registering it costs nothing real.
+      registerRedactedSecretValue(value, vaultSecretSource(name));
+
       // The write and its verification happen together, inside the page — the
       // outcome that comes back carries no value, so nothing below can echo the
-      // secret even by accident. Verification precedes pressEnter so a
-      // post-submit navigation can't tear the element out from under it.
+      // secret even by accident. The page judges that it is still on the origin
+      // the fill was approved for in the same script, so a navigation during
+      // the approval wait cannot redirect the value. Verification precedes
+      // pressEnter so a post-submit navigation can't tear the element out from
+      // under it.
       let outcome: SecretFillOutcome;
       try {
-        outcome = await ops.fillValue(targetSelector, value);
+        outcome = await ops.fillValue(targetSelector, value, currentOrigin);
       } catch (e) {
         auditLog({
           event: "fill_failed", secret: name, origin: currentOrigin, session: sessionId,
@@ -265,24 +297,9 @@ export function createBrowserSecretFillTool(
         return err(`Fill failed: ${(e as Error).message}`);
       }
 
-      let verificationNote = "";
-      if (outcome.kind === "not-found" || outcome.kind === "not-fillable") {
-        auditLog({
-          event: "fill_failed", secret: name, origin: currentOrigin, session: sessionId,
-          selectorKind: matchedPattern.label, error: outcome.kind,
-        });
-        return err(`Fill failed: target ${targetSelector} is ${outcome.kind.replace("-", " ")}.`);
-      }
-      if (outcome.kind === "mismatch") {
-        auditLog({
-          event: "fill_mismatch", secret: name, origin: currentOrigin, session: sessionId,
-          selectorKind: matchedPattern.label,
-        });
-        return err(`Secret fill did not land: ${targetSelector} (value mismatch)`);
-      }
-      if (outcome.kind === "masked-unverifiable") {
-        verificationNote = " (verification skipped: masked input)";
-      }
+      const refused = refusedFillOutcome(outcome, { name, currentOrigin, sessionId, selectorKind: matchedPattern.label, targetSelector });
+      if (refused) return refused;
+      const verificationNote = outcome.kind === "masked-unverifiable" ? " (verification skipped: masked input)" : "";
 
       if (pressEnter) {
         try {
@@ -295,9 +312,6 @@ export function createBrowserSecretFillTool(
           return err(`Fill failed: ${(e as Error).message}`);
         }
       }
-
-      // --- Guardrail 4: post-fill redaction so value can't leak back via snapshots ---
-      registerRedactedSecretValue(value, vaultSecretSource(name));
 
       // --- Guardrail 5: audit log (success) ---
       auditLog({

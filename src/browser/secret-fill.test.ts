@@ -203,6 +203,41 @@ describe("browser_fill_from_secret — readback never leaks the secret", () => {
     }
   });
 
+  it("origin-changed → refused, audited, nothing claimed as filled", async () => {
+    // The page navigated away from the approved origin while the user was
+    // answering; the in-page check withheld the write.
+    elementDescriptor = { found: true, tag: "input", type: "password", autocomplete: "current-password" };
+    currentOps = buildOps({ outcome: { kind: "origin-changed" } });
+
+    const tool = createBrowserSecretFillTool(buildStore(), () => "test-session");
+    const result = await tool.execute({ name: SECRET_NAME, selector: "#pw" });
+
+    expect(result.isError).toBe(true);
+    expect(result.content).toMatch(/Fill refused: the page left https:\/\/example\.com/);
+    expect(auditCalls.some((l) => l.includes("fill_denied") && l.includes("origin_changed"))).toBe(true);
+    assertNoSecretLeak([result.content, ...auditCalls]);
+  });
+
+  it("hands the page the origin the fill was approved for", async () => {
+    elementDescriptor = { found: true, tag: "input", type: "password", autocomplete: "current-password" };
+    const seen: string[] = [];
+    currentOps = { ...buildOps({ outcome: { kind: "landed" } }), fillValue: async (_s, _v, origin) => { seen.push(origin); return { kind: "landed" }; } };
+
+    await createBrowserSecretFillTool(buildStore(), () => "test-session").execute({ name: SECRET_NAME, selector: "#pw" });
+    expect(seen).toEqual([ORIGIN]);
+  });
+
+  it("registers the value with the redactor BEFORE the write, so a failed fill cannot echo it", async () => {
+    elementDescriptor = { found: true, tag: "input", type: "password", autocomplete: "current-password" };
+    let registeredAtWrite = false;
+    currentOps = { ...buildOps({ outcome: { kind: "landed" } }), fillValue: async () => { registeredAtWrite = redactedRegistrations.includes(SECRET_VALUE); throw new Error("fill failed"); } };
+
+    const result = await createBrowserSecretFillTool(buildStore(), () => "test-session").execute({ name: SECRET_NAME, selector: "#pw" });
+    expect(result.isError).toBe(true);
+    expect(registeredAtWrite).toBe(true);
+    expect(redactedSources).toEqual([`vault:${SECRET_NAME}`]);
+  });
+
   it("a throwing fill reports failure and does not leak", async () => {
     // The write and its verification are one in-page step now, so a throw means
     // the outcome is genuinely unknown — report failure rather than the old

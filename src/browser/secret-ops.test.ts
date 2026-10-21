@@ -22,10 +22,11 @@ import {
 } from "./secret-ops.js";
 
 const SECRET = "super-secret-token-zzzZZZ-1234567890";
+const ORIGIN = "https://example.com";
 
 describe("fillSecretScript", () => {
 	it("decides the verdict in the page, returning no value", () => {
-		const script = fillSecretScript("#pw", SECRET);
+		const script = fillSecretScript("#pw", SECRET, ORIGIN);
 		// Every return path yields a bare { kind: ... } — there is no branch that
 		// hands the value (or the field's actual content) back across the bridge.
 		const returns = script.match(/return \{[^}]*\}/g) ?? [];
@@ -36,7 +37,7 @@ describe("fillSecretScript", () => {
 	});
 
 	it("compares in-page rather than shipping the value back to compare", () => {
-		const script = fillSecretScript("#pw", SECRET);
+		const script = fillSecretScript("#pw", SECRET, ORIGIN);
 		expect(script).toContain(`el.value === ${JSON.stringify(SECRET)}`);
 		expect(script).not.toMatch(/return .*el\.value/);
 	});
@@ -45,19 +46,19 @@ describe("fillSecretScript", () => {
 		// A quote or backslash in a password would otherwise break out of the
 		// string and run as script.
 		const nasty = `"; alert(1); var x="`;
-		const script = fillSecretScript("#pw", nasty);
+		const script = fillSecretScript("#pw", nasty, ORIGIN);
 		expect(script).toContain(JSON.stringify(nasty));
 		expect(JSON.parse(JSON.stringify(nasty))).toBe(nasty);
 	});
 
 	it("focuses the field so a following real Enter lands on it", () => {
-		expect(fillSecretScript("#pw", SECRET)).toContain("el.focus()");
+		expect(fillSecretScript("#pw", SECRET, ORIGIN)).toContain("el.focus()");
 	});
 
 	it("generates syntactically valid JS even for hostile values", () => {
 		// String pins can't catch a template slip that breaks the script itself.
 		const nasty = `a"b\\c'; alert(1); // `;
-		for (const script of [fillSecretScript("#pw", nasty), describeElementScript("#pw"), readValueScript({ selector: "#pw" })]) {
+		for (const script of [fillSecretScript("#pw", nasty, ORIGIN), describeElementScript("#pw"), readValueScript({ selector: "#pw" })]) {
 			expect(() => new Function(`return ${script}`)).not.toThrow();
 		}
 	});
@@ -69,7 +70,7 @@ describe("fillSecretScript", () => {
 		// while reading back as "landed". The native prototype setter bypasses
 		// the instance tracker. Plain assignment must survive only as the
 		// fallback for exotic value-bearing elements.
-		const script = fillSecretScript("#pw", SECRET);
+		const script = fillSecretScript("#pw", SECRET, ORIGIN);
 		expect(script).toContain('Object.getOwnPropertyDescriptor(proto, "value")');
 		expect(script).toContain(`desc.set.call(el, ${JSON.stringify(SECRET)})`);
 		expect(script).toContain("HTMLTextAreaElement.prototype");
@@ -77,12 +78,24 @@ describe("fillSecretScript", () => {
 		const bareAssigns = script.match(/el\.value = /g) ?? [];
 		expect(bareAssigns).toHaveLength(1);
 	});
+
+	it("refuses to write once the page has left the origin the fill was approved for", () => {
+		// The approval was for the origin the page showed BEFORE the user answered.
+		// The check runs in the page, in the same script as the write, so a
+		// navigation in between cannot land the value somewhere else.
+		const script = fillSecretScript("#pw", SECRET, ORIGIN);
+		expect(script.indexOf("location.origin")).toBeLessThan(script.indexOf("document.querySelector"));
+		expect(script).toContain(`if (location.origin !== ${JSON.stringify(ORIGIN)}) return { kind: "origin-changed" };`);
+		const run = (origin: string) => new Function("location", "document", `return ${script}`)({ origin }, { querySelector: () => null });
+		expect(run("https://evil.example")).toEqual({ kind: "origin-changed" });
+		expect(run(ORIGIN)).toEqual({ kind: "not-found" });
+	});
 });
 
 describe("asFillOutcome", () => {
 	it("accepts every known verdict", () => {
 		const kinds: SecretFillOutcome["kind"][] = [
-			"landed", "masked-unverifiable", "mismatch", "not-found", "not-fillable",
+			"landed", "masked-unverifiable", "mismatch", "not-found", "not-fillable", "origin-changed",
 		];
 		for (const kind of kinds) expect(asFillOutcome({ kind })).toEqual({ kind });
 	});

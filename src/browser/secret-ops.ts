@@ -44,7 +44,10 @@ export type SecretFillOutcome =
 	/** Wrote, and the field disagrees. Values withheld on purpose. */
 	| { kind: "mismatch" }
 	| { kind: "not-found" }
-	| { kind: "not-fillable" };
+	| { kind: "not-fillable" }
+	/** Nothing written: the page is no longer on the origin the fill was
+	 *  approved for (it navigated between the approval and the write). */
+	| { kind: "origin-changed" };
 
 /** One of these is set; mirrors the capture tool's three strategies. */
 export interface SecretReadTarget {
@@ -60,7 +63,9 @@ export interface SecretBrowserOps {
 	describeElement(selector: string): Promise<SecretElementDescriptor>;
 	/** Raw plaintext out of the page, or null when the element is missing. */
 	readValue(target: SecretReadTarget): Promise<string | null>;
-	fillValue(selector: string, value: string): Promise<SecretFillOutcome>;
+	/** Writes only while the page is still on `expectedOrigin` — the origin the
+	 *  fill was approved for — judged in the page at the moment of the write. */
+	fillValue(selector: string, value: string, expectedOrigin: string): Promise<SecretFillOutcome>;
 	pressEnter(selector: string): Promise<void>;
 	/** Plaintext the user can SEE: visible field values and code-like text, each
 	 *  with a selector that reads it back. Host-side only — for the
@@ -183,10 +188,15 @@ export function readValueScript(target: SecretReadTarget): string {
  * verdict. The plaintext goes in and never comes back — no readback crosses the
  * process boundary, so nothing downstream can accidentally surface it.
  */
-export function fillSecretScript(selector: string, value: string): string {
+export function fillSecretScript(selector: string, value: string, expectedOrigin: string): string {
 	const sel = JSON.stringify(selector);
 	const val = JSON.stringify(value);
+	const origin = JSON.stringify(expectedOrigin);
+	// The origin check and the write are one script: the approval above was
+	// for the origin the page showed then, and a navigation while the user was
+	// answering must not land the value on whatever origin the page is on now.
 	return `(function(){
+	if (location.origin !== ${origin}) return { kind: "origin-changed" };
 	var el = document.querySelector(${sel});
 	if (!el) return { kind: "not-found" };
 	if (!("value" in el)) return { kind: "not-fillable" };
@@ -209,7 +219,7 @@ export function fillSecretScript(selector: string, value: string): string {
 })()`;
 }
 
-const FILL_OUTCOMES = new Set(["landed", "masked-unverifiable", "mismatch", "not-found", "not-fillable"]);
+const FILL_OUTCOMES = new Set(["landed", "masked-unverifiable", "mismatch", "not-found", "not-fillable", "origin-changed"]);
 
 /** Trust nothing coming back from a page. An unrecognized shape is a mismatch
  *  (the fail-closed direction: the caller reports "did not land"). */
@@ -251,11 +261,11 @@ export function createCdpSecretOps(getPage: () => Promise<Page>, getRegistry: ()
 			const raw = await (await getPage()).evaluate(readValueScript(target));
 			return typeof raw === "string" ? raw : null;
 		},
-		async fillValue(selector, value) {
+		async fillValue(selector, value, expectedOrigin) {
 			// Runs the same in-page verdict script as the in-app path rather than
 			// page.fill + inputValue: one behavior to reason about, and the value
 			// stops at the page boundary instead of being pulled back to compare.
-			return asFillOutcome(await (await getPage()).evaluate(fillSecretScript(selector, value)));
+			return asFillOutcome(await (await getPage()).evaluate(fillSecretScript(selector, value, expectedOrigin)));
 		},
 		async pressEnter(selector) {
 			await (await getPage()).locator(selector).press("Enter");
@@ -299,8 +309,8 @@ export function createInAppSecretOps(deps: InAppSecretDeps): SecretBrowserOps {
 			const raw = await exec(readValueScript(target));
 			return typeof raw === "string" ? raw : null;
 		},
-		async fillValue(selector, value) {
-			return asFillOutcome(await exec(fillSecretScript(selector, value)));
+		async fillValue(selector, value, expectedOrigin) {
+			return asFillOutcome(await exec(fillSecretScript(selector, value, expectedOrigin)));
 		},
 		async pressEnter(selector) {
 			// Real key events, not a synthetic KeyboardEvent: login forms routinely

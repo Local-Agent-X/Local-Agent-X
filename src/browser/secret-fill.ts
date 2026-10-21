@@ -270,7 +270,7 @@ export function createBrowserSecretFillTool(
       if (gateOutcome === "ask") {
         const asked = await requestSecretDestinationApprovals(
           [{ name, destination: currentOrigin, purpose: `Fill ${name} into the form on ${currentOrigin}${sameOrigin ? "" : ` (it was saved for ${secretOrigin})`}` }],
-          { store: secretsStore, sessionId, toolName: "browser_fill_from_secret", call: args },
+          { store: secretsStore, sessionId, toolName: "browser_fill_from_secret", call: args, oneShot: true },
         );
         if (!asked.allowed) {
           if (asked.result.status === "declined") auditLog({ event: "fill_denied", secret: name, reason: "user_declined", origin: currentOrigin, session: sessionId });

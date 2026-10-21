@@ -53,8 +53,8 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/autonomy/` | 15 | 4 | M |  |
 | `src/cognition/` | 14 | 35 | XL | 1 |
 | `src/cron/` | 14 | 13 | L |  |
+| `src/inbox/` | 14 | 5 | M |  |
 | `src/voice/` | 14 | 74 | XL | 1 |
-| `src/inbox/` | 13 | 5 | M |  |
 | `src/self-edit/` | 13 | 19 | L | 2 |
 | `src/ari-kernel/` | 12 | 12 | M |  |
 | `src/broker-transport/` | 12 | 39 | XL |  |

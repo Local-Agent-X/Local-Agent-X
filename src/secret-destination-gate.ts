@@ -28,6 +28,10 @@ export interface SecretDestinationCall {
   /** The tool call's arguments, stamps included: the card's id and event
    *  sink, whether anyone is watching, and the user's yes from the inbox. */
   call: Record<string, unknown>;
+  /** The user's yes from the inbox covers this one call and is not kept: the
+   *  credential fill, where it fills once (secret-fill.ts). The parked item
+   *  then says only that the call runs once. A card's yes is kept either way. */
+  oneShot?: boolean;
 }
 
 export interface SecretDestinationPair {
@@ -49,8 +53,10 @@ export function referencedSecretNames(input: string): string[] {
 const shown = (destination: string): string => normalizeDestination(destination) ?? destination;
 
 /** No card can be raised: the refusal says where the user approves each pair,
- *  marked for the inbox so an unattended run parks the call. */
-function nobodyToAsk(pairs: SecretDestinationPair[]): ToolResult {
+ *  marked for the inbox so an unattended run parks the call, with the pairs
+ *  the inbox's yes will keep (unless it is a one-shot yes) for the item to name. */
+function nobodyToAsk(pairs: SecretDestinationPair[], oneShot: boolean): ToolResult {
+  const kept = oneShot ? undefined : { kind: "secret-destination" as const, pairs: pairs.map((p) => ({ name: p.name, destination: shown(p.destination) })) };
   const named = pairs.map((p) => `secret "${p.name}" at ${shown(p.destination)}`).join(" and ");
   const where = pairs.map((p) => `Settings → Secrets → "${p.name}" and approve "${shown(p.destination)}"`).join(", then ");
   const one = pairs.length === 1;
@@ -58,7 +64,7 @@ function nobodyToAsk(pairs: SecretDestinationPair[]): ToolResult {
     `First-use approval required for ${named}. ` +
     `${one ? "This secret was" : "These secrets were"} not captured by the current session, ${one ? "has" : "have"} not been pre-approved, and this call has no way to ask the user.`,
     { recovery: `Ask the user to open ${where} (one click, persists), or to re-run this from the chat, where it asks.` },
-  ), pairs.map((p) => `${p.purpose}: the first use of "${p.name}" at ${shown(p.destination)} needs the user's yes.`).join(" "));
+  ), pairs.map((p) => `${p.purpose}: the first use of "${p.name}" at ${shown(p.destination)} needs the user's yes.`).join(" "), kept);
 }
 
 /** Whether a person is watching this call to answer a card: a chat turn with
@@ -107,10 +113,10 @@ export async function requestSecretDestinationApprovals(
   if (pairs.length === 0) return { allowed: true };
   const { store, sessionId, toolName, call } = ask;
   if (userGrantOf(call)) {
-    for (const pair of pairs) store.approveDestination(pair.name, pair.destination);
+    if (!ask.oneShot) for (const pair of pairs) store.approveDestination(pair.name, pair.destination);
     return { allowed: true };
   }
-  if (!canAskInChat(call)) return { allowed: false, result: nobodyToAsk(pairs) };
+  if (!canAskInChat(call)) return { allowed: false, result: nobodyToAsk(pairs, ask.oneShot === true) };
   for (const { name, destination, purpose } of pairs) {
     const where = shown(destination);
     const yes = await askSecretDestinationCard({

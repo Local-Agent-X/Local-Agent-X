@@ -33,6 +33,7 @@ import { readOp } from "../ops/op-store.js";
 import { OP_TYPE } from "../ops/op-types.js";
 import { runLabel } from "../inbox/producers.js";
 import { inboxApprovalRequest } from "../inbox/approvals.js";
+import type { DeferredGrant } from "../inbox/types.js";
 import { cronJobIdOf } from "../cron/cron-session.js";
 import { takeNeedsUser } from "../tools/result-helpers.js";
 
@@ -52,7 +53,7 @@ function jobLabel(ctx: ToolCallContext): string {
 /** Park this call in the user's inbox. Returns the item id, or null when
  *  nothing was parked: an attended run (it shows a card instead), a harness
  *  run that is not the user's job, or an inbox that could not record it. */
-export function deferUnattendedCall(ctx: ToolCallContext, reason: string): string | null {
+export function deferUnattendedCall(ctx: ToolCallContext, reason: string, grant?: DeferredGrant): string | null {
   if (ctx.callContext === "local") return null;
   // Harness runs (skill review, dreaming, evals) are not the user's jobs.
   if (ctx.sessionId && isHeadlessSession(ctx.sessionId)) return null;
@@ -69,6 +70,7 @@ export function deferUnattendedCall(ctx: ToolCallContext, reason: string): strin
     ...(ctx.sessionId ? { sessionId: ctx.sessionId } : {}),
     ...(ctx.operationId ? { opId: ctx.operationId } : {}),
     ...(ctx.runId ? { runId: ctx.runId } : {}),
+    ...(grant ? { grant } : {}),
   });
   return item?.id ?? null;
 }
@@ -77,10 +79,11 @@ export function deferUnattendedCall(ctx: ToolCallContext, reason: string): strin
  * The model's result for a call a gate could not run unattended: parked in
  * the inbox when it can be (the gate's own `reason`, then where the call
  * went), else the gate's `refusal` unchanged. `modelNote` is gate detail for
- * the model only (a publish review), kept out of the user's inbox.
+ * the model only (a publish review), kept out of the user's inbox; `grant` is
+ * what the user's yes keeps beyond the call, for the item's wording.
  */
-export function parkOrRefuse(ctx: ToolCallContext, reason: string, refusal: ToolResult, modelNote = ""): ToolResult {
-  const itemId = deferUnattendedCall(ctx, reason);
+export function parkOrRefuse(ctx: ToolCallContext, reason: string, refusal: ToolResult, modelNote = "", grant?: DeferredGrant): ToolResult {
+  const itemId = deferUnattendedCall(ctx, reason, grant);
   if (!itemId) return refusal;
   // The gate's user hint described a refusal ("relax the rule ..."); nothing
   // is refused here, the call is waiting, and the text says so.
@@ -101,7 +104,7 @@ export function parkOrRefuse(ctx: ToolCallContext, reason: string, refusal: Tool
 export function parkNeedsUser(ctx: ToolCallContext, result: ToolResult): ToolResult {
   const marked = takeNeedsUser(result);
   if (!marked) return result;
-  return parkOrRefuse(ctx, marked.reason, marked.result);
+  return parkOrRefuse(ctx, marked.reason, marked.result, "", marked.grant);
 }
 
 /**

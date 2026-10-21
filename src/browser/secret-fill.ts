@@ -242,7 +242,9 @@ export function createBrowserSecretFillTool(
       // where it may be typed is not a decision to ask the user about. It still
       // goes only to its own site (above).
       const accountName = secretsStore.holdsEmailAddress(name);
-      const ladder = secretsStore.destinationDecision(name, currentOrigin, { sessionId });
+      // exactOrigin: a page under the saved origin is not the saved origin for
+      // a password; it is asked about below like any other sibling page.
+      const ladder = secretsStore.destinationDecision(name, currentOrigin, { sessionId, exactOrigin: true });
       // A sibling origin is never filled silently: only the user's own yes for
       // that pair skips the ask there.
       const decision = !sameOrigin && (ladder === "session" || ladder === "pre_bless") ? "ask" : ladder;

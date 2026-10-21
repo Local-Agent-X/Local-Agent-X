@@ -94,3 +94,15 @@ A channel appears that emits a secret to something without an origin (a
 local socket, a CLI subprocess). The gate's key would then need a second
 shape, and that is the moment to decide whether such channels belong in the
 vault's reach at all.
+
+## Amendments
+
+- 2026-10-21 — **The saved site or anything under it.** The origin rung
+  allows a destination whose host is the recorded origin's host or a
+  subdomain of it, with the same scheme and port (`isUnderOrigin` in
+  `src/secret-destinations.ts`): a key saved for supabase.com may go to
+  api.supabase.com. A neighbour (another project's host under the same
+  parent), the parent itself, and anything under a public suffix are not
+  under it. The browser credential fill asks the ladder for the exact origin
+  (`exactOrigin`), so a password is still asked about on a look-alike
+  subdomain page.

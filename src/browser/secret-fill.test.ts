@@ -72,8 +72,15 @@ vi.mock("../security/secrets/index.js", async (importOriginal) => ({
   },
 }));
 
+// The vault's pre-bless rung reads the op store; no operation is running here.
+vi.mock("../ops/pre-bless.js", () => ({ getActivePreBlessedSecrets: () => new Set<string>() }));
+
 // ───────────────────────── imports after mocks ─────────────────────────
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { createBrowserSecretFillTool } from "./secret-fill.js";
+import { SecretsStore as RealSecretsStore } from "../secrets.js";
 import { EMULATION_PRESETS, setSessionEmulation, _resetSessionEmulationForTest } from "./emulation.js";
 import type { DestinationDecision, SecretsStore } from "../secrets.js";
 import type { SecretBrowserOps, SecretFillOutcome } from "./secret-ops.js";
@@ -345,9 +352,30 @@ describe("browser_fill_from_secret — where a login may be filled", () => {
     expect(result.isError).not.toBe(true);
     expect(approvals.asked).toHaveLength(1);
     expect(approvals.asked[0].context).toContain("saved for https://example.com");
-    expect(store.destinationDecision).toHaveBeenCalledWith(SECRET_NAME, "https://login.example.com", { sessionId: "other-session" });
+    expect(store.destinationDecision).toHaveBeenCalledWith(SECRET_NAME, "https://login.example.com", { sessionId: "other-session", exactOrigin: true });
     expect(store.approveDestination).toHaveBeenCalledWith(SECRET_NAME, "https://login.example.com");
     assertNoSecretLeak([result.content, approvals.asked[0].context, ...auditCalls]);
+  });
+
+  // The vault's own ladder, not a stub: an API send may go to a host under the
+  // saved origin, a password is still asked about there (look-alike pages).
+  it("a page under the saved origin is not the saved origin: the fill asks, though an API send would not", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-fill-under-"));
+    try {
+      const store = new RealSecretsStore(dir);
+      store.set(SECRET_NAME, SECRET_VALUE, { url: "https://example.com/login" });
+      expect(store.destinationDecision(SECRET_NAME, "https://login.example.com")).toBe("origin");
+      redactedRegistrations.length = 0; // the vault's own save registers it; the fill is what is under test
+      pageOrigin = "https://login.example.com";
+      approvals.answer = false;
+      currentOps = buildOps({ outcome: { kind: "landed" } });
+      const result = await fill(store);
+      expect(approvals.asked).toHaveLength(1);
+      expect(result.status).toBe("declined");
+      expect(redactedRegistrations).toEqual([]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("fills nothing when the user says no", async () => {

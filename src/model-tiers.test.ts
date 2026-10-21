@@ -138,9 +138,15 @@ describe("shrinkToolsForTier — medium manifest size", () => {
     // Re-measured 2026-10-19: 10,022. http_request gained save_to, the download
     // path the shell's network-client refusals now point a model to, so a
     // medium model needs it on the wire. The ceiling moved 10,000 → 10,100.
+    //
+    // Re-measured 2026-10-21: 10,114. mission_schedule_create gained
+    // `secrets`, the key plan a scheduled job is approved to send (its
+    // descriptions already cut to a few words), so a job scheduled from a
+    // medium model's chat does not stall at run time on a key the user would
+    // have named. The ceiling moved 10,100 → 10,200.
     expect(before).toBeGreaterThan(12_000);
     expect(after).toBeLessThanOrEqual(before / 2);
-    expect(after).toBeLessThanOrEqual(10_100);
+    expect(after).toBeLessThanOrEqual(10_200);
   });
 
   it("shortens parameter descriptions past the cap and leaves shorter ones verbatim", () => {

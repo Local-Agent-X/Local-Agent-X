@@ -43,10 +43,10 @@ export const TOOL_POLICIES_ORCHESTRATION: Record<string, ToolPolicyRow> = {
   // ── Mission schedules ──
   // mission_schedule_* (cron/tools.ts) has a family glob (allow-mission-schedule);
   // the entries below carry each tool's class and risk.
-  mission_schedule_create:  { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["voice-fast"], blurb: { say: "every morning at 8, summarize my unread email", does: "Schedule a recurring mission." } },
+  mission_schedule_create:  { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["voice-fast"], reads: ["session"], blurb: { say: "every morning at 8, summarize my unread email", does: "Schedule a recurring mission." } },
   mission_schedule_delete:  { kernel: "internal", risk: "destructive", capabilities: [], tags: [], undo: { pairedWith: "mission_schedule_create" } },
   mission_schedule_list:    { kernel: "internal", risk: "safe", capabilities: [], tags: ["voice-fast"], blurb: { does: "List scheduled missions." } },
-  mission_schedule_update:  { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["voice-fast"] },
+  mission_schedule_update:  { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["voice-fast"], reads: ["session"] },
   mission_schedule_toggle:  { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["voice-fast"], blurb: { does: "Enable/disable a scheduled mission." } },
   mission_schedule_reports: { kernel: "internal", risk: "safe", capabilities: [], tags: ["voice-fast"] },
 

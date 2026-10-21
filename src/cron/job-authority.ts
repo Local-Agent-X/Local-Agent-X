@@ -9,7 +9,7 @@
  * stands only while that stays what the user saw: the prompt it runs and the
  * model that runs it. A change to either, or to a grant itself, comes from the
  * user (agentMissionRefusal refuses it from the agent; the chat tool adds a
- * key only on the user's yes to a card). A grant
+ * key only on the user's yes to a card, cron/secret-plan-card.ts). A grant
  * belongs to the computer it was made on: a mission arriving from the sync repo
  * runs with the grants this computer gave the same mission, if any, never with
  * the ones the repo carries (sync/pull-files/pull-misc.ts).

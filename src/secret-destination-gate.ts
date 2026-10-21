@@ -61,6 +61,40 @@ function nobodyToAsk(pairs: SecretDestinationPair[]): ToolResult {
   ), pairs.map((p) => `${p.purpose}: the first use of "${p.name}" at ${shown(p.destination)} needs the user's yes.`).join(" "));
 }
 
+/** Whether a person is watching this call to answer a card: a chat turn with
+ *  an event sink, never an unattended run (cron, delegated, api). */
+export function canAskInChat(call: Record<string, unknown>): boolean {
+  return !!onEventOf(call) && !unattendedCall(call);
+}
+
+/**
+ * The one card for a (secret, destination) pair, raised in the chat this call
+ * belongs to; true on the user's yes. `context` is the sentence the user
+ * decides on; `args` are what the card shows and what a decline is
+ * remembered by. The caller decides what a yes is kept as: the vault's
+ * approval here, a scheduled job's key plan in cron/secret-plan-card.ts.
+ */
+export async function askSecretDestinationCard(card: {
+  toolName: string;
+  sessionId: string;
+  call: Record<string, unknown>;
+  context: string;
+  args: { name: string; destination: string } & Record<string, string>;
+}): Promise<boolean> {
+  const onEvent = onEventOf(card.call);
+  if (!onEvent) return false;
+  const asked = await getApprovalManager().requestApprovalDetailed({
+    toolName: card.toolName,
+    toolCallId: toolCallIdOf(card.call) || `secret-destination-${card.args.name}`,
+    sessionId: card.sessionId,
+    context: card.context,
+    args: card.args,
+    alwaysAsk: true,
+    emit: onEvent,
+  });
+  return asked.approved;
+}
+
 /**
  * Get the user's yes for each pair and persist it: their inbox yes to this
  * exact call if it carries one, else a card per pair in the chat (stopping at
@@ -76,20 +110,14 @@ export async function requestSecretDestinationApprovals(
     for (const pair of pairs) store.approveDestination(pair.name, pair.destination);
     return { allowed: true };
   }
-  const onEvent = onEventOf(call);
-  if (!onEvent || unattendedCall(call)) return { allowed: false, result: nobodyToAsk(pairs) };
+  if (!canAskInChat(call)) return { allowed: false, result: nobodyToAsk(pairs) };
   for (const { name, destination, purpose } of pairs) {
     const where = shown(destination);
-    const asked = await getApprovalManager().requestApprovalDetailed({
-      toolName,
-      toolCallId: toolCallIdOf(call) || `secret-destination-${name}`,
-      sessionId,
+    const yes = await askSecretDestinationCard({
+      toolName, sessionId, call, args: { name, destination: where },
       context: `${purpose}. The value goes from the vault straight there; the agent never sees it.`,
-      args: { name, destination: where },
-      alwaysAsk: true,
-      emit: onEvent,
     });
-    if (!asked.approved) {
+    if (!yes) {
       return {
         allowed: false,
         result: declined(

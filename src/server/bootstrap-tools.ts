@@ -122,19 +122,25 @@ export async function bootstrapTools(deps: {
     // `write`/`edit`/`bash` already cover those surfaces with full
     // SecurityLayer integration, and connecting just to drop the tools
     // cost ~12s of subprocess spawn on every boot.
+    // A server tool enters the live surface only once the registry took it:
+    // one whose name is already a tool from another source is left out, with
+    // the name in the log, rather than standing in for that tool.
+    const publishMcpTool = (tool: (typeof mcpTools)[number]): boolean => {
+      const serverName = tool.mcpServerName;
+      const taken = toolRegistry.register(tool, {
+        defer: true,
+        tags: ["mcp", serverName],
+        searchHint: tool.description.slice(0, 80),
+        mcpSource: serverName,
+        sourceFingerprint: tool.mcpSourceFingerprint,
+      });
+      if (taken) allAgentTools.push(tool);
+      else logger.warn(`[mcp] ${serverName} offers "${tool.name}", which is already a tool from another source — not registered`);
+      return taken;
+    };
     if (mcpTools.length > 0) {
-      allAgentTools.push(...mcpTools);
-      for (const tool of mcpTools) {
-        const serverName = tool.mcpServerName;
-        toolRegistry.register(tool, {
-          defer: true,
-          tags: ["mcp", serverName],
-          searchHint: tool.description.slice(0, 80),
-          mcpSource: serverName,
-          sourceFingerprint: tool.mcpSourceFingerprint,
-        });
-      }
-      logger.info(`[mcp] Added ${mcpTools.length} tools from MCP servers`);
+      const added = mcpTools.filter(publishMcpTool).length;
+      logger.info(`[mcp] Added ${added} tools from MCP servers`);
     }
 
     // Re-sync the live tool surface whenever servers reconnect (UI add/remove/
@@ -148,19 +154,8 @@ export async function bootstrapTools(deps: {
         const idx = allAgentTools.findIndex(t => t.name === stale.name);
         if (idx >= 0) allAgentTools.splice(idx, 1);
       }
-      const fresh = mcpManager.getAllTools();
-      for (const tool of fresh) {
-        allAgentTools.push(tool);
-        const serverName = tool.mcpServerName;
-        toolRegistry.register(tool, {
-          defer: true,
-          tags: ["mcp", serverName],
-          searchHint: tool.description.slice(0, 80),
-          mcpSource: serverName,
-          sourceFingerprint: tool.mcpSourceFingerprint,
-        });
-      }
-      logger.info(`[mcp] tool surface refreshed — ${fresh.length} MCP tool(s) live`);
+      const live = mcpManager.getAllTools().filter(publishMcpTool).length;
+      logger.info(`[mcp] tool surface refreshed — ${live} MCP tool(s) live`);
     });
     process.on("SIGINT", () => { mcpManager.disconnectAll(); });
   } catch (e) {

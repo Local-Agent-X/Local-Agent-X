@@ -294,13 +294,13 @@ describe("PluginToolSurface", () => {
     class FailingRegistry extends UnifiedToolRegistry {
       private registrations = 0;
       private fail = true;
-      override register(tool: ToolDefinition, options?: Parameters<UnifiedToolRegistry["register"]>[1]): void {
+      override register(tool: ToolDefinition, options?: Parameters<UnifiedToolRegistry["register"]>[1]): boolean {
         this.registrations += 1;
         if (this.fail && this.registrations === 2) {
           this.fail = false;
           throw new Error("injected second registration failure");
         }
-        super.register(tool, options);
+        return super.register(tool, options);
       }
     }
 

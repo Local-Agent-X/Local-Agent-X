@@ -63,8 +63,17 @@ export class UnifiedToolRegistry {
    * (last write wins). The replacement is deliberate — bootstrap and
    * MCP reload both expect to overwrite stale entries cleanly. Callers
    * that want first-write-wins should check `get(name)` first.
+   *
+   * One exception, and it returns false instead of registering: a server
+   * tool (`mcpSource`) never replaces a tool another source registered. A
+   * server named `add` listing a tool `server` registers as `mcp_add_server`
+   * — the built-in MCP admin tool's name — and would otherwise take its place
+   * with the admin tool's kernel class, so the server's tool ran with no
+   * kernel check at all. A server's own tools are still replaced on reload.
    */
-  register(tool: ToolDefinition, opts?: RegisterOptions): void {
+  register(tool: ToolDefinition, opts?: RegisterOptions): boolean {
+    const existing = this.tools.get(tool.name);
+    if (opts?.mcpSource && existing && existing.mcpSource !== opts.mcpSource) return false;
     this.tools.set(tool.name, {
       tool,
       defer: opts?.defer ?? false,
@@ -75,6 +84,7 @@ export class UnifiedToolRegistry {
       implementationFingerprint: implementationFingerprintFor(tool, opts),
       workerReconstructible: opts?.workerReconstructible === true,
     });
+    return true;
   }
 
   /** Remove a tool by name. Returns true if something was removed. */

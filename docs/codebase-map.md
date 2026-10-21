@@ -20,7 +20,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 164 | 29 | XL | 1 |
-| `src/security/` | 123 | 53 | XL | 3 |
+| `src/security/` | 124 | 53 | XL | 3 |
 | `src/tools/` | 115 | 217 | XL | 9 |
 | `src/tool-execution/` | 81 | 72 | XL | 2 |
 | `src/canonical-loop/` | 79 | 265 | XL | 14 |
@@ -337,7 +337,7 @@ job. Comments are free: never cut them to fit.
 
 - `src/agency/worktree-recovery.ts` — 340+ code lines (cap 350)
 - `src/browser/downloads.ts` — 340+ code lines (cap 350)
-- `src/canonical-loop/container-runtime-projection.ts` — 330+ code lines (cap 350)
+- `src/canonical-loop/container-runtime-projection.ts` — 340+ code lines (cap 350)
 - `src/canonical-loop/provider-adapter-factory.ts` — 330+ code lines (cap 350)
 - `src/cognition/cross-session-learning/learner.ts` — 330+ code lines (cap 350)
 - `src/memory/index-facts.ts` — 330+ code lines (cap 350)
@@ -439,7 +439,6 @@ job. Comments are free: never cut them to fit.
 - `src/server/api-request-router.ts#routeApiRequest` — 80+ own code lines (cap 100)
 - `src/server/background-jobs/dream-check.ts#registerDreamRunner:callback` — 80+ own code lines (cap 100)
 - `src/server/bootstrap-services.ts#bootstrapServices` — 80+ own code lines (cap 100)
-- `src/server/bootstrap-tools.ts#bootstrapTools` — 80+ own code lines (cap 100)
 - `src/threat/threat-engine.ts#ThreatEngine.evaluateToolResult` — 80+ own code lines (cap 100)
 - `src/tools/asset-tools.ts#extractSiteAssetsTool.execute` — 80+ own code lines (cap 100)
 - `src/tools/email-send-tool.ts#emailSend.execute` — 80+ own code lines (cap 100)
@@ -501,6 +500,7 @@ job. Comments are free: never cut them to fit.
 - `src/screen-capture.ts#captureScreen` — 70+ own code lines (cap 100)
 - `src/security/layer/shell-nested-commands.ts#splitNestedCommands` — 70+ own code lines (cap 100)
 - `src/server/background-jobs/skill-review.ts#runSingleReview` — 70+ own code lines (cap 100)
+- `src/server/bootstrap-tools.ts#bootstrapTools` — 70+ own code lines (cap 100)
 - `src/server/request-auth.ts#authorizeRequest` — 70+ own code lines (cap 100)
 - `src/sync/facts-sync.ts#db.transaction:callback` — 70+ own code lines (cap 100)
 - `src/telegram-bridge/bridge.ts#TelegramBridge.handleUpdate` — 70+ own code lines (cap 100)

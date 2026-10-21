@@ -106,23 +106,33 @@ export const handleMcpRoutes: RouteHandler = async (method, url, req, res, ctx, 
       // RBAC, Ari all apply. Caller role is operator (MCP bridge is trusted —
       // only reachable on localhost, authed via LAX auth token).
       const { executeToolCalls } = await import("../tool-execution/index.js");
+      const { releaseAriKernelScope } = await import("../ari-kernel/index.js");
       const toolMap = new Map(ctx.allAgentTools.map(t => [t.name, t]));
-      const results = await executeToolCalls(
-        [{ id: `mcp-${Date.now()}`, name: body.name, arguments: JSON.stringify(args) }],
-        toolMap,
-        ctx.security,
-        ctx.toolPolicy,
-        undefined, // threatEngine
-        ctx.rbac,
-        "operator",
-        sessionId,
-        ctx.getActiveOnEvent(sessionId), // pipe tool_start / tool_end / tool_progress to that session's SSE stream
-        undefined, // signal
-        undefined, // priorMessages
-        undefined, // runId
-        undefined, // operationId
-        "api", // trusted route origin; body.sessionId never affects privilege classification
-      );
+      // Each bridge call is its own kernel run: with no run id every call from
+      // every session shared the process's default scope, so one session's
+      // quarantine restricted every later bridge call until restart.
+      const callId = `mcp-${Date.now()}`;
+      let results: Awaited<ReturnType<typeof executeToolCalls>>;
+      try {
+        results = await executeToolCalls(
+          [{ id: callId, name: body.name, arguments: JSON.stringify(args) }],
+          toolMap,
+          ctx.security,
+          ctx.toolPolicy,
+          undefined, // threatEngine
+          ctx.rbac,
+          "operator",
+          sessionId,
+          ctx.getActiveOnEvent(sessionId), // pipe tool_start / tool_end / tool_progress to that session's SSE stream
+          undefined, // signal
+          undefined, // priorMessages
+          callId, // runId: this call's own kernel scope
+          undefined, // operationId
+          "api", // trusted route origin; body.sessionId never affects privilege classification
+        );
+      } finally {
+        releaseAriKernelScope(callId);
+      }
 
       const content = serializeMcpContent(results as Array<{ role: string; content: unknown }>);
       const toolMsg = results.find((m) => m.role === "tool");

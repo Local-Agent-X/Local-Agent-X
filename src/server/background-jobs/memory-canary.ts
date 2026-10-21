@@ -1,4 +1,5 @@
 import { executeToolCalls } from "../../tool-execution/index.js";
+import { releaseAriKernelScope } from "../../ari-kernel/index.js";
 import type { SecurityLayer } from "../../security/index.js";
 import type { ToolDefinition } from "../../types.js";
 import type { ToolPolicy } from "../../tool-policy/index.js";
@@ -50,19 +51,26 @@ export function makeRunMemoryCanary(deps: {
 
   const dispatch = async (name: string, args: Record<string, unknown>, nonce: string) => {
     const toolMap = new Map(allAgentTools.map((tool) => [tool.name, tool]));
-    const msgs = await executeToolCalls(
-      [{ id: `canary-${name}-${nonce}`, name, arguments: JSON.stringify(args) }],
-      toolMap,
-      security,
-      toolPolicy,
-      undefined, undefined, undefined,
-      MEMORY_CANARY_SESSION,
-      undefined, undefined,
-      [{ role: "user", content: "internal memory write self-test" }],
-      undefined, undefined,
-      "local",
-    );
-    return toolText(msgs);
+    // Its own kernel run, released after: the canary never shares the
+    // process's default scope with the MCP bridge or anything else.
+    const callId = `canary-${name}-${nonce}`;
+    try {
+      const msgs = await executeToolCalls(
+        [{ id: callId, name, arguments: JSON.stringify(args) }],
+        toolMap,
+        security,
+        toolPolicy,
+        undefined, undefined, undefined,
+        MEMORY_CANARY_SESSION,
+        undefined, undefined,
+        [{ role: "user", content: "internal memory write self-test" }],
+        callId, undefined,
+        "local",
+      );
+      return toolText(msgs);
+    } finally {
+      releaseAriKernelScope(callId);
+    }
   };
 
   const record = (failure: string | null) => {

@@ -356,3 +356,32 @@ describe("buildReferences", () => {
     expect(out[out.length - 1]).toBe("<p@q.com>");
   });
 });
+
+describe("judged at send, attachments included", () => {
+  const SID = "email-send-judge";
+  const READ = "AWS_SECRET_ACCESS_KEY=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY and the rest of the private config file";
+
+  it("an attachment carrying bytes the session read from a credential file is refused, and nothing is sent", async () => {
+    const { recordSensitiveRead, clearSessionTaint } = await import("../data-lineage/index.js");
+    const { runInEgressScope } = await import("../net/egress-scope.js");
+    const dir = mkdtempSync(join(tmpdir(), "lax-email-judge-"));
+    try {
+      recordSensitiveRead(SID, "sensitive_file", "/home/u/.aws/credentials", READ);
+      const file = join(dir, "notes.txt");
+      writeFileSync(file, `meeting notes\n${READ}\nend`);
+      const r = await runInEgressScope(SID, () => send({ attachments: JSON.stringify([file]) }));
+      expect(r.status).toBe("blocked");
+      expect(r.metadata).toMatchObject({ layer: "data-lineage", clearable: "declassify" });
+      expect(r.content).not.toContain("wJalrXUtnFEMI");
+      expect(smtp.sent).toHaveLength(0);
+
+      writeFileSync(file, "meeting notes, nothing sensitive");
+      const ok = await runInEgressScope(SID, () => send({ attachments: JSON.stringify([file]) }));
+      expect(ok.isError).toBeFalsy();
+      expect(smtp.sent).toHaveLength(1);
+    } finally {
+      clearSessionTaint(SID);
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

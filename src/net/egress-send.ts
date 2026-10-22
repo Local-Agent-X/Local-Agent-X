@@ -10,7 +10,8 @@
  * the session read (positive overlap, never the presence floor), and a stored
  * secret's value the call was not approved to send. The URL and the body are
  * judged; headers are not, since a provider's key travels there by design and
- * the headers the model wrote were judged at dispatch.
+ * the headers the model wrote were judged at dispatch. Mail is judged the same
+ * way, on the composed message, before SMTP (assertMailSendAllowed).
  */
 import type { FormData } from "undici";
 import { findTaintInPayload } from "../data-lineage/index.js";
@@ -57,21 +58,33 @@ export class EgressPayloadBlocked extends Error {
  *  `approvedSecretValues` are the secrets this call was cleared to send there
  *  (http_request's placeholders); they are removed before judging. */
 export async function assertSendAllowed(url: string, body: string | FormData | undefined, approvedSecretValues: readonly string[] = []): Promise<void> {
-  let text = await payloadText(url, body);
+  let host = "an external host";
+  try { host = new URL(url).host; } catch { /* the transport refuses an unparseable URL first */ }
+  judgeOrThrow(await payloadText(url, body), `the request to ${host}`, approvedSecretValues);
+}
+
+/** The same judgement for a composed email, before it is handed to SMTP:
+ *  envelope, subject, bodies and every attachment's bytes (each judged on its
+ *  head, like a multipart file part). */
+export function assertMailSendAllowed(recipients: string, parts: ReadonlyArray<string | Uint8Array>): void {
+  const text = parts.map((p) => typeof p === "string" ? p : Buffer.from(p.subarray(0, PART_CAP)).toString("utf8")).join("\n");
+  judgeOrThrow(text, `the email to ${recipients}`, []);
+}
+
+function judgeOrThrow(payload: string, what: string, approvedSecretValues: readonly string[]): void {
+  let text = payload;
   for (const value of approvedSecretValues) if (value) text = text.split(value).join("");
   const sessionId = egressSessionId() ?? "";
   const judged = judgeEgress(LIVE, "tool-send", sessionId, text);
-  let host = "an external host";
-  try { host = new URL(url).host; } catch { /* the transport refuses an unparseable URL first */ }
   if (judged.canary) {
     recordCanaryExfilAudit(sessionId, "network-send");
-    throw new EgressPayloadBlocked(`Blocked at send: the request to ${host} carries this session's canary token — definitive exfiltration of protected context. Nothing was sent, and the attempt was recorded.`, "canary");
+    throw new EgressPayloadBlocked(`Blocked at send: ${what} carries this session's canary token — definitive exfiltration of protected context. Nothing was sent, and the attempt was recorded.`, "canary");
   }
   if (judged.knownSecret) {
-    throw new EgressPayloadBlocked(`Blocked at send: the request to ${host} carries a stored secret's value that this call was not approved to send. Nothing was sent. To send a stored secret, use http_request with a {{SECRET_NAME}} placeholder so the user approves where it goes.`, "egress-guard");
+    throw new EgressPayloadBlocked(`Blocked at send: ${what} carries a stored secret's value that this call was not approved to send. Nothing was sent. To send a stored secret, use http_request with a {{SECRET_NAME}} placeholder so the user approves where it goes.`, "egress-guard");
   }
   if (judged.taint) {
     const named = [...new Set(judged.taint.sources.map((t) => `${t.source}:${t.target.slice(0, 40)}`))].join(", ");
-    throw new EgressPayloadBlocked(`Blocked at send: the request to ${host} carries bytes from a sensitive source this session read (${named}). Nothing was sent. Leave that content out, or ask the user to click "Declassify & retry" on this card if sending it is intended.`, "data-lineage", "declassify");
+    throw new EgressPayloadBlocked(`Blocked at send: ${what} carries bytes from a sensitive source this session read (${named}). Nothing was sent. Leave that content out, or ask the user to click "Declassify & retry" on this card if sending it is intended.`, "data-lineage", "declassify");
   }
 }

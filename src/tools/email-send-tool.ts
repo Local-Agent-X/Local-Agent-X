@@ -7,6 +7,8 @@ import { recentlyDone, markDone, fingerprintOf, describeAge } from "./idempotenc
 import { EMAIL_SEND_WINDOW_MS, getSmtpConfig } from "./email-config.js";
 import { resolveAgentPath, sessionIdOf } from "../workspace/paths.js";
 import { htmlToText } from "./email-body-render.js";
+import { EgressPayloadBlocked, assertMailSendAllowed } from "../net/egress-send.js";
+import { blocked } from "./result-helpers.js";
 
 /** A reply prefix already on the subject. Only the `Re:` family is matched:
  *  it is the one this tool generates and the one virtually every client
@@ -215,6 +217,10 @@ export const emailSend: ToolDefinition = {
           }),
         );
       }
+      // What leaves is judged as composed, attachments' bytes included: the
+      // dispatch gate saw the arguments, not the files this tool reads.
+      const files = (mailOpts.attachments as Array<{ content: Buffer }> | undefined) ?? [];
+      assertMailSendAllowed([to, cc, bcc].filter(Boolean).join(", "), [to, cc, bcc, subject, text, html, ...files.map((f) => f.content)]);
       const info = await transport.sendMail(mailOpts);
       markDone("email_send", fp, `messageId=${info.messageId}`);
       return {
@@ -222,6 +228,13 @@ export const emailSend: ToolDefinition = {
         metadata: { messageId: info.messageId, ...(inReplyTo ? { inReplyTo } : {}) },
       };
     } catch (err) {
+      if (err instanceof EgressPayloadBlocked) {
+        return blocked(err.message, {
+          layer: err.layer,
+          recovery: err.clearable ? "Leave the sensitive content out of the email, or ask the user to click \"Declassify & retry\" on this card." : "Remove that content from the email and retry.",
+          ...(err.clearable ? { clearable: err.clearable } : {}),
+        });
+      }
       return { content: `Failed to send email: ${(err as Error).message}`, isError: true };
     }
   },

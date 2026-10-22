@@ -206,8 +206,15 @@ Each phase ships alone, keeps the gate suite green, and runs both benchmarks.
    with the declassify control when taint fired. The destination-aware secret
    SHAPE scan stays at dispatch: at send, shapes would refuse ordinary uploads,
    while registered values are evidence.
-4. **Mail.** Judge the composed message in `src/tools/email-send-tool.ts` and
-   `src/tools/email-compose-tools.ts` before it is handed to the SMTP library.
+4. **Mail.** Done 2026-10-22. `email_send` (`src/tools/email-send-tool.ts`)
+   calls `assertMailSendAllowed` (`src/net/egress-send.ts`) on the composed
+   message right before nodemailer gets it: recipients, subject, both bodies
+   and every attachment's bytes (each judged on its first 256 KB), on the same
+   `tool-send` channel and evidence as HTTP. A refusal is a blocked card with
+   the declassify control when taint fired, and nothing reaches SMTP.
+   `email_setup` (`src/tools/email-compose-tools.ts`) sends no message: it
+   only verifies the login, whose destination the vault's secret-destination
+   gate already approves.
 5. **Proxy.** Per-session proxy credentials; the judge on plain-HTTP requests;
    the destination-only judge on CONNECT.
 6. **Windows MCP servers (G4).** Spawn them under the Windows cage with the

@@ -55,8 +55,8 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/cognition/` | 14 | 35 | XL | 1 |
 | `src/cron/` | 14 | 13 | L |  |
 | `src/inbox/` | 14 | 5 | M |  |
+| `src/net/` | 14 | 8 | M |  |
 | `src/voice/` | 14 | 74 | XL | 1 |
-| `src/net/` | 13 | 8 | M |  |
 | `src/self-edit/` | 13 | 19 | L | 2 |
 | `src/ari-kernel/` | 12 | 12 | M |  |
 | `src/integrations/` | 12 | 15 | M |  |
@@ -417,6 +417,7 @@ job. Comments are free: never cut them to fit.
 - `src/security/layer/network-policy.ts#evaluateWebFetch` — 90+ own code lines (cap 100)
 - `src/server/inbound-channel-runner.ts#runInboundChannelTurn` — 90+ own code lines (cap 100)
 - `src/tool-execution/run-sandboxed.ts#runSandboxedPhase` — 90+ own code lines (cap 100)
+- `src/tools/email-send-tool.ts#emailSend.execute` — 90+ own code lines (cap 100)
 - `src/tools/read-write-tools.ts#readTool.execute` — 90+ own code lines (cap 100)
 - `src/tools/web-fetch.ts#webFetchTool.execute` — 90+ own code lines (cap 100)
 - `src/agent-guards/loop-detection.ts#noteToolResults` — 80+ own code lines (cap 100)
@@ -442,7 +443,6 @@ job. Comments are free: never cut them to fit.
 - `src/server/bootstrap-services.ts#bootstrapServices` — 80+ own code lines (cap 100)
 - `src/threat/threat-engine.ts#ThreatEngine.evaluateToolResult` — 80+ own code lines (cap 100)
 - `src/tools/asset-tools.ts#extractSiteAssetsTool.execute` — 80+ own code lines (cap 100)
-- `src/tools/email-send-tool.ts#emailSend.execute` — 80+ own code lines (cap 100)
 - `src/tools/image-tools/generate-video.ts#generateVideoTool.execute` — 80+ own code lines (cap 100)
 - `src/tools/setting-tool.ts#settingTool.execute` — 80+ own code lines (cap 100)
 - `src/tools/shared/image-binary-meta.ts#parseDimensions` — 80+ own code lines (cap 100)

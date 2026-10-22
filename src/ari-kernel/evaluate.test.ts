@@ -1,7 +1,8 @@
 // A kernel deny is a verdict, not an engine error.
 //
-// The kernel reports a policy deny by throwing ToolCallDeniedError, and
-// ariEvaluate's catch used to treat every throw as "ARI error": blocked when the
+// The kernel delivered a policy deny by throwing ToolCallDeniedError (it now
+// returns one from Firewall.judge), and ariEvaluate's catch used to treat every
+// throw as "ARI error": blocked when the
 // kernel is required, fail-open when it is optional (ariRequired=false, i.e.
 // LAX_ARI_REQUIRED=0). So with an optional kernel a web-tainted email_send or
 // a tainted shell command came back `allowed: true`. A deny must block in both

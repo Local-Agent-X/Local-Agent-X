@@ -1,7 +1,6 @@
 // Evaluate a tool call through AriKernel.
 // Returns { allowed, reason } — same shape as SecurityLayer.evaluate().
 
-import { ToolCallDeniedError } from "@arikernel/core";
 import { createLogger } from "../logger.js";
 import { USER_HINTS } from "../types.js";
 import { isAriRequired } from "./state.js";
@@ -83,10 +82,21 @@ export async function ariEvaluate(
         addedAt: new Date().toISOString().replace(/\.\d{3}Z$/, "Z"),
       }));
     }
-    const result = await firewall.execute(execRequest as unknown as Parameters<typeof firewall.execute>[0]);
+    const judged = await firewall.judge(execRequest as unknown as Parameters<typeof firewall.judge>[0]);
 
-    if (!result.success) {
-      const reason = result.error || "Denied by kernel policy";
+    // Every policy deny, run-rule refusal and quarantine comes back as a
+    // verdict (the kernel tells a refusal from a fault inside its own package),
+    // so it blocks whether or not the kernel is required.
+    if (!judged.allowed) {
+      const detail = oneLine(`Tool call denied: ${judged.decision.reason}`);
+      return quarantineReason(withQuarantine({
+        allowed: false,
+        reason: `[ARI kernel] ${detail}`,
+        userHint: USER_HINTS.kernel,
+      }, scopeId, restrictedBefore), detail);
+    }
+    if (!judged.result.success) {
+      const reason = judged.result.error || "Denied by kernel policy";
       return withQuarantine({
         allowed: false,
         reason: `[ARI kernel] ${reason}`,
@@ -96,48 +106,41 @@ export async function ariEvaluate(
 
     return { allowed: true, reason: "ARI allowed" };
   } catch (e) {
-    const rawDetail = (e as Error).message || String(e);
-    // The kernel delivers every policy deny, run-rule refusal and quarantine by
-    // THROWING ToolCallDeniedError (firewall/execution.ts rethrows it). That is
-    // a verdict, not an engine fault, so it blocks whether or not the kernel is
-    // required. Before this split an optional kernel (ariRequired=false) turned
-    // every deny into the fail-open branch below.
-    const isDeny = isKernelDeny(e);
-    if (!isDeny && !isAriRequired()) {
+    // Only an engine fault reaches here: an optional kernel keeps the
+    // documented fail-open, a required one blocks.
+    if (!isAriRequired()) {
       return { allowed: true, reason: "ARI error (fail-open, built-in security active)" };
     }
-    if (!isDeny) logger.warn(`[ari] Tool call blocked due to ARI error (ariRequired=true): ${rawDetail}`);
+    const rawDetail = (e as Error).message || String(e);
+    logger.warn(`[ari] Tool call blocked due to ARI error (ariRequired=true): ${rawDetail}`);
     // Surface the underlying error IN the result the model sees. The generic
     // "ARI error" alone sent the agent diagnosing tool-policy.json while the
     // actual cause ("Unknown action 'exec' for tool class 'http'" — a missing
-    // ARI_ACTION_MAP entry) sat only in this log. Single-line + capped: zod
-    // errors arrive as multi-line JSON arrays.
-    const detail = rawDetail.replace(/\s+/g, " ").slice(0, 300);
-    const verdict = withQuarantine({
+    // ARI_ACTION_MAP entry) sat only in this log.
+    const detail = oneLine(rawDetail);
+    return quarantineReason(withQuarantine({
       allowed: false,
-      reason: isDeny
-        ? `[ARI kernel] ${detail}`
-        : `[ARI kernel] evaluation error, blocked in ariRequired mode: ${detail}`,
+      reason: `[ARI kernel] evaluation error, blocked in ariRequired mode: ${detail}`,
       userHint: USER_HINTS.kernel,
-    }, scopeId, restrictedBefore);
-    // A quarantine names the rule and its reason instead of the raw deny text.
-    if (verdict.quarantine) {
-      const q = verdict.quarantine;
-      const what = q.trigger === "restricted"
-        ? `run restricted since ${q.restrictedAt} by ${q.rule ?? q.trigger} (${q.reason}); ${detail}`
-        : q.trigger === "behavioral_rule"
-          ? `run rule ${q.rule} refused this call: ${q.reason}. The run continues: ${q.deniedActions} of ${q.threshold} denials before it is restricted to read-only actions.`
-          : `${q.rule ?? q.trigger} fired: ${q.reason}. ${detail}`;
-      verdict.reason = `[ARI kernel] ${what}`;
-    }
-    return verdict;
+    }, scopeId, restrictedBefore), detail);
   }
 }
 
-// instanceof first; the name check covers a second copy of @arikernel/core
-// (vitest aliases, a worktree's own node_modules) whose class identity differs.
-function isKernelDeny(e: unknown): boolean {
-  return e instanceof ToolCallDeniedError || (e as { name?: unknown } | null)?.name === "ToolCallDeniedError";
+// Single-line + capped: zod errors arrive as multi-line JSON arrays.
+function oneLine(text: string): string {
+  return text.replace(/\s+/g, " ").slice(0, 300);
+}
+
+/** A quarantine names the rule and its reason instead of the raw deny text. */
+function quarantineReason(verdict: AriVerdict, detail: string): AriVerdict {
+  const q = verdict.quarantine;
+  if (!q) return verdict;
+  const what = q.trigger === "restricted"
+    ? `run restricted since ${q.restrictedAt} by ${q.rule ?? q.trigger} (${q.reason}); ${detail}`
+    : q.trigger === "behavioral_rule"
+      ? `run rule ${q.rule} refused this call: ${q.reason}. The run continues: ${q.deniedActions} of ${q.threshold} denials before it is restricted to read-only actions.`
+      : `${q.rule ?? q.trigger} fired: ${q.reason}. ${detail}`;
+  return { ...verdict, reason: `[ARI kernel] ${what}` };
 }
 
 function withQuarantine(verdict: AriVerdict, scopeId: string | undefined, restrictedBefore: boolean): AriVerdict {

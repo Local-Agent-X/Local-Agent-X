@@ -6,7 +6,8 @@ import {
   ThreatEngine, THREAT_SCORES,
   getSessionCanaries, isSessionBreached, recoverSessionBreach,
 } from "./threat-engine.js";
-import { _setCanaryAuditTrail } from "./canaries.js";
+import { _setCanaryAuditTrail, recordCanaryExfilAudit } from "./canaries.js";
+import { makeThreatEnginePack } from "../tool-policy/packs/threat-engine-pack.js";
 import { CryptoAuditTrail } from "./audit-trail.js";
 import { _resetAllConsentForTests, getLastBlockedFingerprint } from "./consent-store.js";
 
@@ -187,6 +188,36 @@ describe("ThreatEngine — user-authorized recovery from a confirmed-breach (can
     expect(engine.isRestricted()).toBe(true);
     expect(engine.scorer.snapshot().confirmedBreach).toBe(true);
     expect(isSessionBreached(sessionId)).toBe(true);
+  });
+
+  // A canary caught LEAVING — by the tool dispatch gate, the browser's page
+  // egress or the shared transport at send — reports through
+  // recordCanaryExfilAudit, which holds no engine. It marks the session, and
+  // every engine for that session latches the mark on its next check: outside
+  // calls pause until the user's /approve, exactly as for a canary in output.
+  it("(a2) a canary caught in an outbound request restricts the session's engines until /approve", async () => {
+    const sessionId = "sess-breach-outbound";
+    const engine = freshEngine(sessionId);
+    expect(engine.isRestricted()).toBe(false);
+
+    recordCanaryExfilAudit(sessionId, "network-send");
+    expect(engine.isRestricted()).toBe(true);
+    expect(engine.getRestrictionEvidence()).toEqual({ types: ["canary_tripped"], sinks: [] });
+    // The next turn's engine for the same session is restricted too.
+    expect(freshEngine(sessionId).isRestricted()).toBe(true);
+    // Another session is untouched.
+    expect(freshEngine("sess-breach-bystander").isRestricted()).toBe(false);
+
+    // Outside calls pause; a call that reaches nothing off the machine does not.
+    const pack = makeThreatEnginePack(engine);
+    const ctx = {} as never;
+    expect((await pack.evaluate({ name: "http_request", args: { url: "https://anything.example/x" } } as never, ctx)).allowed).toBe(false);
+    expect((await pack.evaluate({ name: "read", args: { path: "notes.md" } } as never, ctx)).allowed).toBe(true);
+
+    expect(engine.approveRecovery("user checked: a test page echoed the prompt").recovered).toBe(true);
+    expect(engine.isRestricted()).toBe(false);
+    expect(isSessionBreached(sessionId)).toBe(false);
+    expect(freshEngine(sessionId).isRestricted()).toBe(false);
   });
 
   it("(b) approveRecovery clears the latch — isRestricted()==false and confirmedBreach cleared", () => {

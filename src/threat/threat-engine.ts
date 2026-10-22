@@ -26,7 +26,7 @@
 import { registrableDomain } from "../browser/registrable-domain.js";
 import {
   canaryPromptBlock, checkCanaries, adoptSessionCanaries, registerSessionCanaries,
-  rotateCanaries, recordCanaryRecoveryAudit, markSessionBreach, clearSessionBreach,
+  rotateCanaries, recordCanaryRecoveryAudit, markSessionBreach, clearSessionBreach, isSessionBreached,
 } from "./canaries.js";
 import { classifyData, stripExternalUntrusted, type DataLabel } from "./classification.js";
 import { CryptoAuditTrail, getSharedAuditTrail } from "./audit-trail.js";
@@ -329,7 +329,20 @@ export class ThreatEngine {
 
   /** Is the session currently in restricted mode? */
   isRestricted(): boolean {
+    this.latchOutsideBreach();
     return this.scorer.isRestricted();
+  }
+
+  /** A canary caught leaving through a tool, the browser or the shared
+   *  transport is proof the agent was hijacked, but those gates hold no engine:
+   *  they mark the session (canaries.ts recordCanaryExfilAudit). The engine
+   *  latches the mark into its scorer, so the restriction persists with the
+   *  engine's state and names its cause, exactly as a canary in the model's
+   *  own output does. Cleared with the latch by approveRecovery and reset. */
+  private latchOutsideBreach(): void {
+    if (isSessionBreached(this.sessionId) && !this.scorer.snapshot().confirmedBreach) {
+      this.scorer.record("canary_tripped", THREAT_SCORES.canary_tripped, "canary caught in an outbound request");
+    }
   }
 
   /**
@@ -375,6 +388,7 @@ export class ThreatEngine {
    *  uses this to scope the deny to implicated sinks and to tell the user the
    *  true cause instead of a fake network failure. */
   getRestrictionEvidence(): { types: string[]; sinks: string[] } {
+    this.latchOutsideBreach();
     return { types: this.scorer.getEvidenceTypes(), sinks: [...this.implicatedSinks] };
   }
 

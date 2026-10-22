@@ -265,8 +265,15 @@ export function _setCanaryAuditTrail(trail: CryptoAuditTrail | null): void {
  * contain the raw canary value (a canary is a tripwire; revealing it teaches
  * evasion). decision:"block" — an unconditional hard block (the audit schema's
  * deny-class decision, same value the model-output canary trip records under).
+ *
+ * It is also proof the agent is hijacked, so the session is marked breached:
+ * every outbound canary — the tool dispatch gate, the browser's page egress,
+ * the shared transport at send — reports here, and none of them holds the
+ * session's threat engine. The engine latches the mark on its next check
+ * (ThreatEngine.isRestricted), pausing outside calls until the user's /approve.
  */
 export function recordCanaryExfilAudit(sessionId: string, toolName: string): void {
+  markSessionBreach(sessionId);
   getCanaryAuditTrail().record({
     sessionId,
     event: "canary_exfil_detected",

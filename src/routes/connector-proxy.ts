@@ -220,9 +220,13 @@ function pinnedDispatcher(): Agent {
  *  socket to the validated IP (no rebind TOCTOU). A literal-IP upstream never
  *  reaches the dispatcher's lookup, so it is checked synchronously first.
  *
- *  The sanctioned loopback dev carve-out (http://localhost|127.0.0.1) keeps a
- *  plain fetch — the pinning dispatcher would (correctly) refuse a loopback
- *  resolve, but these are operator-started local dev servers. */
+ *  A loopback upstream (http://localhost|127.0.0.1) keeps a plain fetch — the
+ *  pinning dispatcher would refuse a loopback resolve — but answers to the same
+ *  port-aware loopback grant every agent path does (assertLiteralIpEgressAllowed):
+ *  a dev server the harness started, a listener the agent's process owns, a
+ *  port the user registered. connector_create takes its upstream from the
+ *  model, so without the grant any local port was reachable through here,
+ *  the in-app browser's debugging port included. */
 export async function forwardWithTimeout(
   u: string,
   init: ForwardInit,
@@ -234,10 +238,10 @@ export async function forwardWithTimeout(
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
     let response: Response | UndiciResponse;
+    await assertLiteralIpEgressAllowed(u);
     if (isLocalUpstream) {
       response = await fetch(u, { ...init, redirect: "manual", signal: ctrl.signal });
     } else {
-      await assertLiteralIpEgressAllowed(u);
       response = await undiciFetch(u, { ...init, redirect: "manual", signal: ctrl.signal, dispatcher: pinnedDispatcher() });
     }
     if (response.status >= 300 && response.status < 400) {

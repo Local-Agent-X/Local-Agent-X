@@ -7,8 +7,11 @@
  * live; auth-gate coverage for /api/connectors lives in
  * server/request-handler.test.ts.
  */
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import { createServer } from "node:http";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { createServer, type Server } from "node:http";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 // Mock DNS resolution so a public-looking hostname can be made to "resolve" to a
 // private/metadata IP without touching the network — exercising the connect-time
@@ -182,8 +185,13 @@ describe("forwardWithTimeout connect-time SSRF guard", () => {
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     const address = server.address();
+    const dataDir = mkdtempSync(join(tmpdir(), "lax-connector-redirect-"));
+    const prevDir = process.env.LAX_DATA_DIR;
     try {
       if (!address || typeof address === "string") throw new Error("missing test port");
+      // A local upstream answers to the loopback grant; this one is registered.
+      process.env.LAX_DATA_DIR = dataDir;
+      writeFileSync(join(dataDir, "security.json"), JSON.stringify({ localServicePorts: [address.port] }));
       await expect(forwardWithTimeout(
         `http://127.0.0.1:${address.port}/redirect`,
         { method: "GET", headers: { Authorization: "Bearer secret" } },
@@ -191,7 +199,56 @@ describe("forwardWithTimeout connect-time SSRF guard", () => {
         true,
       )).rejects.toThrow(/redirects are disabled/i);
     } finally {
+      if (prevDir === undefined) delete process.env.LAX_DATA_DIR; else process.env.LAX_DATA_DIR = prevDir;
+      rmSync(dataDir, { recursive: true, force: true });
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
+  });
+});
+
+// connector_create takes its upstream from the model, and a local upstream was
+// forwarded with a plain fetch: any loopback port, the in-app browser's
+// debugging port included, was reachable through an agent-built app. A local
+// upstream now answers to the same loopback grant every agent path does.
+describe("forwardWithTimeout: a local upstream answers to the loopback grant", () => {
+  let server: Server;
+  let port: number;
+  let hits: number;
+  let dataDir: string;
+  const prevDir = process.env.LAX_DATA_DIR;
+  beforeEach(async () => {
+    hits = 0;
+    server = createServer((_req, res) => { hits++; res.writeHead(200); res.end("ok"); });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    port = (server.address() as { port: number }).port;
+    dataDir = mkdtempSync(join(tmpdir(), "lax-connector-loopback-"));
+    process.env.LAX_DATA_DIR = dataDir;
+  });
+  afterEach(async () => {
+    delete process.env.LAX_ELECTRON_CDP_PORT;
+    if (prevDir === undefined) delete process.env.LAX_DATA_DIR; else process.env.LAX_DATA_DIR = prevDir;
+    rmSync(dataDir, { recursive: true, force: true });
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  });
+  const register = () => writeFileSync(join(dataDir, "security.json"), JSON.stringify({ localServicePorts: [port] }));
+
+  it("an unregistered local port is refused before anything is sent", async () => {
+    await expect(forwardWithTimeout(`http://127.0.0.1:${port}/json/version`, { method: "GET", headers: {} }, 2000, true)).rejects.toThrow();
+    await expect(forwardWithTimeout(`http://localhost:${port}/json/version`, { method: "GET", headers: {} }, 2000, true)).rejects.toThrow();
+    expect(hits).toBe(0);
+  });
+
+  it("a registered local service is forwarded as before", async () => {
+    register();
+    const r = await forwardWithTimeout(`http://127.0.0.1:${port}/health`, { method: "GET", headers: {} }, 2000, true);
+    expect(r.status).toBe(200);
+    expect(hits).toBe(1);
+  });
+
+  it("the reserved debugging port is refused even when registered", async () => {
+    register();
+    process.env.LAX_ELECTRON_CDP_PORT = String(port);
+    await expect(forwardWithTimeout(`http://127.0.0.1:${port}/json/version`, { method: "GET", headers: {} }, 2000, true)).rejects.toThrow();
+    expect(hits).toBe(0);
   });
 });

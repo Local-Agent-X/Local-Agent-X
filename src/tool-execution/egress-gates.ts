@@ -17,8 +17,9 @@
 // effect.
 
 import { USER_HINTS, type BlockAction, type BlockLayer, type ToolResult } from "../types.js";
-import { checkEgressTaintWithPayload } from "../data-lineage/index.js";
+import { checkEgressTaintWithPayload, findTaintInPayload } from "../data-lineage/index.js";
 import { checkCanariesInPayload, recordCanaryExfilAudit } from "../threat/canaries.js";
+import { judgeEgress, type EgressJudgement } from "../net/egress-judge.js";
 import { destinationSpecsOf, hasCapability } from "../tool-registry.js";
 import { checkOutboundRequest, checkOutboundPayload, checkOutboundEmail, checkAttachmentPaths, isTrustedDestination, recipientFields } from "../tools/http-egress-guard.js";
 import { vouchedFor } from "../browser/site-provenance.js";
@@ -140,17 +141,27 @@ export const DATA_LINEAGE_RECOVERY =
 // overlaps none of them. Pure: reads the session taint map, mutates nothing.
 export function probeDataLineage(ctx: ToolCallContext): EgressBlocker | null {
   if (!hasCapability(ctx.tc.name, "egress")) return null;
+  return lineageBlocker(ctx, judgeCall(ctx));
+}
+
+// The tool channel's judgement of this call's outbound text (net/egress-judge.ts),
+// computed once per probe pass.
+const LIVE_REGISTRIES = { checkCanariesInPayload, findTaintInPayload, checkEgressTaintWithPayload };
+function judgeCall(ctx: ToolCallContext): { text: string; judged: EgressJudgement } {
   const { text } = egressPayload(ctx.tc.name, ctx.args as Record<string, unknown>);
+  return { text, judged: judgeEgress(LIVE_REGISTRIES, "tool-dispatch", ctx.sessionId || "default", text) };
+}
+
+function lineageBlocker(ctx: ToolCallContext, { text, judged }: { text: string; judged: EgressJudgement }): EgressBlocker | null {
   // `computer` is egress ONLY through typed text (action:"type"). A mouse
   // move/click/scroll carries no data, so the sticky presence floor must not
   // gate it — blocking a cursor move because a file was read earlier this
   // session is a pure false positive with nothing to exfil.
   if (ctx.tc.name === "computer" && text === "") return null;
-  const egress = checkEgressTaintWithPayload(ctx.sessionId || "default", text);
-  if (!egress.blocked) return null;
+  if (!judged.taint) return null;
   return {
     layer: "data-lineage", label: "data lineage",
-    reason: egress.reason ?? "The session is tainted by an earlier sensitive read; outbound data is blocked.",
+    reason: judged.taint.reason ?? "The session is tainted by an earlier sensitive read; outbound data is blocked.",
     recovery: DATA_LINEAGE_RECOVERY,
     clearable: "declassify",
     userHint: USER_HINTS.outboundContent,
@@ -158,15 +169,17 @@ export function probeDataLineage(ctx: ToolCallContext): EgressBlocker | null {
 }
 
 // Canary tripwire. A canary token is deterministic PROOF of context
-// exfiltration. This probe only DETECTS the trip (checkCanariesInPayload is
-// pure) — it deliberately does NOT write the tamper-evident audit event; the
-// enforcing caller (canaryEgressGate / egressAggregateGate) records it exactly
-// once. The reason names the SINK only — the raw canary is never echoed.
+// exfiltration. This probe only DETECTS the trip (the judge is pure) — it
+// deliberately does NOT write the tamper-evident audit event; the enforcing
+// caller (canaryEgressGate / egressAggregateGate) records it exactly once. The
+// reason names the SINK only — the raw canary is never echoed.
 export function probeCanary(ctx: ToolCallContext): EgressBlocker | null {
   if (!hasCapability(ctx.tc.name, "egress")) return null;
-  const { text } = egressPayload(ctx.tc.name, ctx.args as Record<string, unknown>);
-  const tripped = checkCanariesInPayload(ctx.sessionId || "default", text);
-  if (!tripped) return null;
+  return canaryBlocker(ctx, judgeCall(ctx).judged);
+}
+
+function canaryBlocker(ctx: ToolCallContext, judged: EgressJudgement): EgressBlocker | null {
+  if (!judged.canary) return null;
   return {
     layer: "canary", label: "canary tripwire",
     reason: `a session canary token was detected in the outbound payload of "${ctx.tc.name}". This is definitive exfiltration of protected context.`,
@@ -220,9 +233,10 @@ export function canaryEgressGate(ctx: ToolCallContext): PhaseOutcome {
 export function probeEgressCohort(ctx: ToolCallContext): { blockers: EgressBlocker[]; canaryTripped: boolean } {
   const blockers: EgressBlocker[] = [];
   if (!hasCapability(ctx.tc.name, "egress")) return { blockers, canaryTripped: false };
-  const lineage = probeDataLineage(ctx);
+  const call = judgeCall(ctx);
+  const lineage = lineageBlocker(ctx, call);
   if (lineage) blockers.push(lineage);
-  const canary = probeCanary(ctx);
+  const canary = canaryBlocker(ctx, call.judged);
   if (canary) blockers.push(canary);
   const guard = probeEgressGuard(ctx);
   if (guard) blockers.push(guard);

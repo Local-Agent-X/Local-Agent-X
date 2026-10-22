@@ -160,10 +160,15 @@ refused, which is the behavior today.
 
 Each phase ships alone, keeps the gate suite green, and runs both benchmarks.
 
-1. **Extract the judge with no behavior change.** Build the function from the
-   browser scan and the dispatch gate's primitives. Point both at it. A
-   contract test feeds the same requests to the old and new paths and requires
-   identical verdicts.
+1. **Extract the judge with no behavior change.** Done 2026-10-21:
+   `src/net/egress-judge.ts` judges canary and taint for both channels, with
+   each channel's taint reading (the floor for tool calls, positive overlap for
+   pages) declared in one table, and session state injected so the browser's
+   egress worker judges against its mirrors. The browser scan and the dispatch
+   probes call it; their existing suites pin the verdicts and wording
+   unchanged. The destination-aware secret scan stays in the dispatch gate
+   until phase 3 gives it a second, send-time consumer; the browser's
+   first-party exemption stays with the browser, as a destination rule.
 2. **Close G2 by moving every direct caller onto the in-process transport.**
    Start with `src/tools/youtube-tool.ts`, the only one with no destination
    check at all. Then the local runtime calls in the image and video tools

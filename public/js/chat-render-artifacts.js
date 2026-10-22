@@ -18,6 +18,7 @@
 //   - appendToolCardGrouped, appendToolChip, toolSummary,
 //     updateToolProgress, attachMediaPreview   (chat-tool-cards.js)
 //   - renderApproval                           (chat-render-approvals.js)
+//   - fileChangesOf, renderFileChangesCard     (chat-file-changes.js)
 
 // Build the in-flight assistant bubble from ChatStreamStore state into `parent`.
 // `parent` is either the live #messages container (renderMessages full-render)
@@ -379,6 +380,10 @@ function _renderAssistantToolArtifacts(bodyEl, data) {
         try { bodyEl.appendChild(renderKernelBlockNotice(blockEnd, (window.activeChat && activeChat.id) || '')); }
         catch (e) { console.error('[chat] block notice render error:', e); }
       }
+      // The files the turn wrote, outside the collapsed group like the notice:
+      // the one thing a coding reply most needs to show.
+      const changed = fileChangesOf(toolEvents);
+      if (changed.length > 0) bodyEl.appendChild(renderFileChangesCard(changed));
     } catch (toolRenderErr) { console.error('[chat] tool card render error:', toolRenderErr); }
   }
   // Chips attach to the last tool card matching the chip's emit time. The

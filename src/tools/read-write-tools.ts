@@ -8,6 +8,7 @@ import { readValidatedFile, writeValidatedFile, FileAccessDeniedError } from "..
 import type { ToolDefinition } from "../types.js";
 import { detectInjection, injectionFinding } from "../sanitize.js";
 import { ok, err, blocked } from "./result-helpers.js";
+import { fileChangeOf } from "./file-change.js";
 import { fileNotFoundError } from "./edit-recovery.js";
 import { binaryContainerRejection, checkEditSyntax, syntaxRejectionMessage } from "./syntax-validate.js";
 import { checkHardcodedHomePath } from "./portable-path-check.js";
@@ -275,7 +276,7 @@ export const writeTool: ToolDefinition = {
       const note = [syntaxNote, portability, guard.warn].filter(Boolean).join("\n\n");
       return ok(
         `Wrote ${filePath}${appUrlHint(filePath)}${servedFileHint(filePath)}`,
-        note ? { recovery: note } : undefined,
+        { ...(note ? { recovery: note } : {}), fileChange: fileChangeOf(filePath, before, toWrite) },
       );
     } catch (e) {
       return err(`Failed to write ${filePath}: ${(e as Error).message}`);

@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1842 non-test source files · 93 oversized · 241 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1844 non-test source files · 93 oversized · 241 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -21,14 +21,14 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 166 | 29 | XL | 1 |
 | `src/security/` | 128 | 53 | XL | 3 |
-| `src/tools/` | 117 | 218 | XL | 9 |
+| `src/tools/` | 117 | 219 | XL | 9 |
 | `src/tool-execution/` | 82 | 72 | XL | 2 |
 | `src/canonical-loop/` | 79 | 267 | XL | 14 |
 | `src/workspace/` | 72 | 3 | M |  |
 | `src/providers/` | 68 | 26 | L | 1 |
 | `src/memory/` | 51 | 138 | XL | 7 |
 | `src/browser/` | 48 | 88 | XL | 5 |
-| `src/data-lineage/` | 46 | 11 | M |  |
+| `src/data-lineage/` | 47 | 11 | M |  |
 | `src/tool-policy/` | 46 | 21 | L |  |
 | `src/local-runtimes/` | 41 | 26 | L | 1 |
 | `src/util/` | 41 | 3 | S |  |
@@ -47,7 +47,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/desktop-contract/` | 21 | 10 | M |  |
 | `src/protocols/` | 21 | 52 | XL |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
-| `src/broker-transport/` | 19 | 42 | XL |  |
+| `src/broker-transport/` | 19 | 43 | XL |  |
 | `src/agents/` | 17 | 13 | L |  |
 | `src/net/` | 17 | 11 | L |  |
 | `src/server/` *(entrypoint)* | 16 | 57 | XL | 6 |
@@ -351,13 +351,13 @@ job. Comments are free: never cut them to fit.
 - `src/cognition/cross-session-learning/types.ts` — 320+ code lines (cap 350)
 - `src/protocols/learned-effectiveness.ts` — 320+ code lines (cap 350)
 - `src/protocols/learned-lifecycle.ts` — 320+ code lines (cap 350)
+- `src/tools/edit-tools.ts` — 320+ code lines (cap 350)
 - `src/auto-build/workflow-resolver.ts` — 310+ code lines (cap 350)
 - `src/cognition/cross-session-learning/service.ts` — 310+ code lines (cap 350)
 - `src/ops/op-store.ts` — 310+ code lines (cap 350)
 - `src/protocols/index.ts` — 310+ code lines (cap 350)
 - `src/security/layer/security-audit.ts` — 310+ code lines (cap 350)
 - `src/tool-execution/side-effect-journal.ts` — 310+ code lines (cap 350)
-- `src/tools/edit-tools.ts` — 310+ code lines (cap 350)
 - `src/tools/spreadsheet-tools.ts` — 310+ code lines (cap 350)
 - `src/whatsapp-bridge/index.ts` — 310+ code lines (cap 350)
 - `src/auto-build/orchestrator/manager.ts` — 300+ code lines (cap 350)

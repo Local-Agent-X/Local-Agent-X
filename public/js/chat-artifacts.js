@@ -10,7 +10,7 @@ var artifactsFilter = 'all';
 var ARTIFACTS_TTL_MS = 15000;
 
 // Each tab is a #side-tab-<name> button and a #<name>-tab-body pane.
-var SIDE_PANEL_TABS = ['agents', 'inbox', 'artifacts', 'browser', 'android', 'terminal'];
+var SIDE_PANEL_TABS = ['agents', 'inbox', 'artifacts', 'changes', 'browser', 'android', 'terminal'];
 
 function switchSidePanelTab(tab) {
   sidePanelTab = tab;
@@ -24,6 +24,7 @@ function switchSidePanelTab(tab) {
   // AUTO (auto-open on agent spawn) only makes sense on the agents tab.
   if (autoBtn) autoBtn.style.display = tab === 'agents' ? '' : 'none';
   if (tab === 'artifacts') loadArtifacts(false);
+  if (tab === 'changes' && typeof renderFileChangesTab === 'function') renderFileChangesTab();
   // An item posted from an out-of-process worker has no live frame here.
   if (tab === 'inbox' && typeof loadInbox === 'function') loadInbox();
   if (typeof applyAgentFeedsTabWidth === 'function') applyAgentFeedsTabWidth(tab);

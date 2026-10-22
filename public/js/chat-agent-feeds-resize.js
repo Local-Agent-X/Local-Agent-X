@@ -74,19 +74,27 @@ function agentFeedsTab(tab) {
   catch (e) { return 'agents'; }
 }
 
+// Tabs that want more room than a list, each remembering its own width: the
+// browser near-fullscreen, a diff (CHANGES) beside the chat it came from.
+var AGENT_FEEDS_WIDE_TABS = {
+  browser: { ratio: AGENT_FEEDS_BROWSER_RATIO, key: AGENT_FEEDS_BROWSER_WIDTH_KEY },
+  changes: { ratio: 0.5, key: 'lax_changes_panel_width' },
+};
+
 function agentFeedsDefaultWidth(tab, viewportWidth, max) {
-  var browser = agentFeedsTab(tab) === 'browser';
+  var wide = AGENT_FEEDS_WIDE_TABS[agentFeedsTab(tab)];
   var vw = parseInt(viewportWidth, 10);
   if (!isFinite(vw) || vw <= 0) {
     try { vw = window.innerWidth || 0; } catch (e) { vw = 0; }
   }
-  var fallback = browser ? AGENT_FEEDS_MAX : AGENT_FEEDS_DEFAULT;
-  var target = vw > 0 ? Math.round(vw * (browser ? AGENT_FEEDS_BROWSER_RATIO : AGENT_FEEDS_DEFAULT_RATIO)) : fallback;
+  var fallback = wide ? AGENT_FEEDS_MAX : AGENT_FEEDS_DEFAULT;
+  var target = vw > 0 ? Math.round(vw * (wide ? wide.ratio : AGENT_FEEDS_DEFAULT_RATIO)) : fallback;
   return clampAgentFeedsWidth(target, max);
 }
 
 function agentFeedsWidthKey(tab) {
-  return agentFeedsTab(tab) === 'browser' ? AGENT_FEEDS_BROWSER_WIDTH_KEY : AGENT_FEEDS_WIDTH_KEY;
+  var wide = AGENT_FEEDS_WIDE_TABS[agentFeedsTab(tab)];
+  return wide ? wide.key : AGENT_FEEDS_WIDTH_KEY;
 }
 
 // The persisted open width (falls back to the tab's responsive default when

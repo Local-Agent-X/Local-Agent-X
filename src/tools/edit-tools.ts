@@ -9,6 +9,7 @@ import { persistenceLocationJudge } from "../security/layer/persistence-location
 import { isProtectedInstallPath } from "../security/layer/install-root.js";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { ok, err } from "./result-helpers.js";
+import { fileChangeOf } from "./file-change.js";
 import { checkEditSyntax, syntaxRejectionMessage } from "./syntax-validate.js";
 import { checkHardcodedHomePath } from "./portable-path-check.js";
 import { checkAppWrite, writeGuardRejectionMessage } from "./app-tools/write-guard.js";
@@ -117,7 +118,7 @@ function commitEdit(filePath: string, updated: string, verb: string, allowSyntax
   const note = [syntaxNote, portability, guard.warn].filter(Boolean).join("\n\n");
   return ok(
     `${verb} ${filePath}${appUrlHint(filePath)}${servedFileHint(filePath)}`,
-    note ? { recovery: note } : undefined,
+    { ...(note ? { recovery: note } : {}), fileChange: fileChangeOf(filePath, before, updated) },
   );
 }
 

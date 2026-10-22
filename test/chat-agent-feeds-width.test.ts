@@ -71,6 +71,7 @@ describe("tab-aware right-panel defaults", () => {
     expect(agentFeedsDefaultWidth("artifacts", 1920, 1560)).toBe(634);
     expect(agentFeedsDefaultWidth("terminal", 1920, 1560)).toBe(634);
     expect(agentFeedsDefaultWidth("browser", 1920, 1560)).toBe(1190);
+    expect(agentFeedsDefaultWidth("changes", 1920, 1560)).toBe(960);
   });
 
   it("keeps manual widths separate between Browser and ordinary tabs", () => {

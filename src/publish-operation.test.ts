@@ -175,6 +175,51 @@ describe("publishOperation — the directory the command publishes from", () => 
   });
 });
 
+describe("publishOperation — an earlier command that changes what the publish reads", () => {
+  const changedBefore = (command: string) => publishOperations("bash", { command, _cwd: BASE }).map((o) => [o.kind, o.repoChangedBefore]);
+
+  it("the commit-then-push shapes from session mobile-mvjn9t8k-e2p544 are marked", () => {
+    expect(changedBefore("cd /c/Users/peter/lax-website && git diff --stat && git config user.email && git commit -qam \"Reword\" && git push -q origin HEAD 2>&1; git log -1"))
+      .toEqual([["git-push", "git commit"]]);
+    expect(changedBefore("cd /c/Users/peter/lax-website && git config user.email \"p@x.com\" && git config user.name \"P M\" && git commit -qam \"Reword\" && git push origin HEAD 2>&1 | tail -3"))
+      .toEqual([["git-push", "git commit"]]);
+    // The deploy uploads the working tree, which the commit does not change.
+    expect(changedBefore("git commit -qam x && git push origin HEAD 2>&1 | tail -1 && npx --yes wrangler@latest pages deploy . --project-name p"))
+      .toEqual([["git-push", "git commit"], ["deploy", undefined]]);
+  });
+
+  it("any git command that moves commits, refs or the remote marks a later push", () => {
+    for (const [command, by] of [
+      ["git merge feature && git push", "git merge"],
+      ["git pull --rebase && git push", "git pull"],
+      ["git checkout release && git push origin HEAD", "git checkout"],
+      ["git tag v1.2.0 && git push --follow-tags", "git tag"],
+      ["git config remote.origin.pushurl https://example.com/x.git && git push", "git config"],
+      ["git remote set-url origin https://example.com/x.git && git push", "git remote"],
+      ["git ci -m x && git push", "git ci"],
+      ["bash -c \"git commit -am x\" && git push", "git commit"],
+      ["git -C . commit -am x; git push", "git commit"],
+    ]) expect(changedBefore(command), command).toEqual([["git-push", by]]);
+  });
+
+  it("reads, staging, listing forms and later commands leave a push reviewable", () => {
+    for (const command of [
+      "git add -A && git status && git diff --stat && git push",
+      "git branch && git tag && git stash list && git remote -v && git config --get user.email && git push",
+      "git config user.email p@x.com && git fetch origin && git push",
+      "git stash && git push",
+      "git push && git commit -am later",
+      "git commit --help && git push",
+    ]) expect(changedBefore(command), command).toEqual([["git-push", undefined]]);
+  });
+
+  it("a deploy is marked only by a command that changes the files it uploads", () => {
+    expect(changedBefore("git pull && vercel --prod")).toEqual([["deploy", "git pull"]]);
+    expect(changedBefore("git stash pop && npm publish")).toEqual([["package-publish", "git stash"]]);
+    expect(changedBefore("git add -A && git commit -m x && vercel --prod")).toEqual([["deploy", undefined]]);
+  });
+});
+
 describe("registered tools with publish-shaped names are classified on purpose", () => {
   it("every deploy/publish/release/push-named tool declares `publish` on its row", () => {
     const shaped = Object.keys(TOOLS).filter((name) => /deploy|publish|release|(^|_)push(_|$)/.test(name));

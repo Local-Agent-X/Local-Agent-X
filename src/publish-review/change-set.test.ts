@@ -166,6 +166,25 @@ describe("computeChangeSet — a push's own git options and environment", () => 
     }
   });
 
+  it("a commit made by the same command before the push is unknown, never 'nothing new would ship'", async () => {
+    // The shape that pushed b9281c4 unreviewed: the dry run ran before the
+    // commit existed, so it saw an up-to-date HEAD.
+    writeFileSync(join(work, "README.md"), "# app\nreworded\n");
+    expect(changeSetIsEmpty(await computeChangeSet(ops("git push origin HEAD")))).toBe(true);
+    const cs = await computeChangeSet(ops("git commit -qam \"Reword\" && git push origin HEAD"));
+    expect(changeSetIsEmpty(cs)).toBe(false);
+    expect(cs.parts).toEqual([]);
+    expect(cs.unknown).toEqual([expect.objectContaining({ label: "git push origin HEAD", reason: expect.stringMatching(/runs git commit before git push origin HEAD.*its own call/) })]);
+  });
+
+  it("the same push before and after a commit in one command is not folded into one review", async () => {
+    commit("a.ts", "1\n", "one");
+    writeFileSync(join(work, "a.ts"), "2\n");
+    const cs = await computeChangeSet(ops("git push origin main && git commit -qam two && git push origin main"));
+    expect(cs.parts.map((p) => p.commits.map((c) => c.subject))).toEqual([["one"]]);
+    expect(cs.unknown.map((u) => u.reason)).toEqual([expect.stringMatching(/git commit/)]);
+  });
+
   it("a second push that differs only in what it runs with is not folded into the first", async () => {
     commit("a.ts", "1\n", "one");
     const cs = await computeChangeSet(ops("git push origin main && GIT_SSH_COMMAND=x git push origin main"));

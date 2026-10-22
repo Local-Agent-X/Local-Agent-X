@@ -14,8 +14,9 @@
  *                     the remote default branch.
  *
  * Anything that cannot be worked out — not a git repository, git missing, a
- * dry run that failed, a PR named by number, a directory set at runtime — is
- * reported as UNKNOWN with its reason. It is never silently passed.
+ * dry run that failed, a PR named by number, a directory set at runtime, a
+ * commit (or checkout, pull, …) the same command makes before it publishes —
+ * is reported as UNKNOWN with its reason. It is never silently passed.
  */
 import { createHash } from "node:crypto";
 import type { PublishOperation } from "../publish-operation.js";
@@ -33,7 +34,7 @@ export async function computeChangeSet(ops: PublishOperation[]): Promise<ChangeS
   const unknown: ChangeSet["unknown"] = [];
   const seen = new Set<string>();
   for (const op of ops) {
-    const key = JSON.stringify([op.kind, op.cwd, op.pushArgs ?? [], op.gitOptions ?? [], op.gitEnv ?? [], op.explicitTarget ?? ""]);
+    const key = JSON.stringify([op.kind, op.cwd, op.pushArgs ?? [], op.gitOptions ?? [], op.gitEnv ?? [], op.explicitTarget ?? "", op.repoChangedBefore ?? ""]);
     if (seen.has(key)) continue;
     seen.add(key);
     const result = await partFor(op);
@@ -49,6 +50,9 @@ export async function computeChangeSet(ops: PublishOperation[]): Promise<ChangeS
 
 async function partFor(op: PublishOperation): Promise<PartResult> {
   if (op.cwdUncertain) return { reason: "the command changes directory through a variable, so which repository it publishes from is only known at run time" };
+  if (op.repoChangedBefore) {
+    return { reason: `the command runs ${op.repoChangedBefore} before ${op.label}, so what it publishes does not exist until that has run; run ${op.repoChangedBefore} in its own call, then publish in the next one and it gets reviewed` };
+  }
   const repo = await repoRootOf(op.cwd);
   if ("reason" in repo) return repo;
   if (op.kind === "git-push") return pushPart(op, repo.root);

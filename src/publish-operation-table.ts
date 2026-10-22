@@ -104,7 +104,8 @@ const GIT_GLOBAL_VALUE_OPTS = new Set([
   "-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env", "--super-prefix", "--attr-source", "--shallow-file",
 ]);
 
-function matchGit(words: string[], at: number): PublishMatch | null {
+/** git's own options before the subcommand, and the index of the subcommand. */
+function gitInvocation(words: string[], at: number): { sub: number; gitOptions: GitOption[]; dirArg?: string } {
   let i = at + 1;
   let dirArg: string | undefined;
   const gitOptions: GitOption[] = [];
@@ -117,6 +118,11 @@ function matchGit(words: string[], at: number): PublishMatch | null {
     gitOptions.push(option);
     i++;
   }
+  return { sub: i, gitOptions, dirArg };
+}
+
+function matchGit(words: string[], at: number): PublishMatch | null {
+  const { sub: i, gitOptions, dirArg } = gitInvocation(words, at);
   if (words[i] !== "push") return null;
   const pushArgs = words.slice(i + 1);
   // A dry run publishes nothing; --help prints a man page.
@@ -126,6 +132,67 @@ function matchGit(words: string[], at: number): PublishMatch | null {
     kind: "git-push", label: ["git push", ...pushArgs].join(" "), pushArgs, dirArg,
     ...(gitOptions.length ? { gitOptions } : {}),
     ...(gitEnv.length ? { gitEnv } : {}),
+  };
+}
+
+/**
+ * What a git command does to the repository a LATER publish in the same call
+ * reads. The review runs before the call does, so it sees the repository as
+ * it was: `git commit -am x && git push` was reviewed as "nothing new would
+ * ship" and then pushed the new commit (session mobile-mvjn9t8k-e2p544,
+ * 2026-10-22).
+ *
+ *   commits  it may add or move commits or refs, or change where a push
+ *            connects: what a push or release sends is not what was reviewed.
+ *   files    it may change the checked-out files a deploy or package uploads.
+ *
+ * Only reads, staging and the listing forms change neither. Every other
+ * subcommand, an alias included, is taken to change both.
+ */
+export interface GitRepoChange { command: string; commits: boolean; files: boolean }
+
+const GIT_CHANGES_NOTHING = new Set([
+  "status", "diff", "log", "show", "shortlog", "whatchanged", "rev-parse", "rev-list", "describe", "name-rev",
+  "ls-files", "ls-remote", "ls-tree", "cat-file", "for-each-ref", "show-ref", "merge-base", "blame", "grep",
+  "check-ignore", "count-objects", "var", "help", "version", "fetch", "push", "add", "rm", "mv",
+]);
+// Record commits or refs, or set where a push connects; the files stay.
+const GIT_CHANGES_COMMITS = new Set([
+  "commit", "tag", "branch", "notes", "update-ref", "symbolic-ref", "replace", "config", "remote",
+]);
+// Change the files; no commit or ref a push sends.
+const GIT_CHANGES_FILES = new Set(["restore", "stash", "clean", "apply"]);
+const GIT_READ_CONFIG = /^(?:--get(?:-all|-regexp|-urlmatch)?|-l|--list)$/;
+const GIT_WRITE_CONFIG = /^(?:--(?:unset(?:-all)?|add|replace-all|rename-section|remove-section|edit)|-e)$/;
+const GIT_INERT_CONFIG_SET = /^user\.(?:name|email)$/i;
+
+function gitConfigReadsOnly(args: string[], named: string[]): boolean {
+  if (named[0] === "get" || named[0] === "list" || args.some((a) => GIT_READ_CONFIG.test(a))) return true;
+  if (args.some((a) => GIT_WRITE_CONFIG.test(a))) return false;
+  return named.length === 1 || GIT_INERT_CONFIG_SET.test(named[0] ?? "");
+}
+
+/** The listing and reading forms of the subcommands that otherwise change something. */
+function gitReadsOnly(sub: string, args: string[]): boolean {
+  const named = positionals(args, 0);
+  if (sub === "branch" || sub === "tag") return named.length === 0;
+  if (sub === "stash") return named[0] === "list" || named[0] === "show";
+  if (sub === "remote") return named.length === 0 || named[0] === "show" || named[0] === "get-url";
+  return sub === "config" && gitConfigReadsOnly(args, named);
+}
+
+/** What the git command at `at` changes for a later publish, or null when it
+ *  is not git or changes nothing a publish reads. */
+export function gitRepoChange(words: string[], at: number): GitRepoChange | null {
+  const bin = normalizeBin(words[at]?.replace(/^.*[\\/]/, "").toLowerCase().replace(/\.exe$/, "") ?? "");
+  if (bin !== "git") return null;
+  const { sub: i } = gitInvocation(words, at);
+  const sub = words[i];
+  if (sub === undefined || GIT_CHANGES_NOTHING.has(sub) || isHelp(words, i + 1) || gitReadsOnly(sub, words.slice(i + 1))) return null;
+  return {
+    command: `git ${sub}`,
+    commits: !GIT_CHANGES_FILES.has(sub),
+    files: !GIT_CHANGES_COMMITS.has(sub),
   };
 }
 

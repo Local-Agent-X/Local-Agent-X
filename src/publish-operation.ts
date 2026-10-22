@@ -27,7 +27,8 @@ import { mapMsysDrivePath } from "./workspace/paths.js";
 import { workspaceRoot } from "./config.js";
 import { publishFactOf, shellCommandOf } from "./tool-registry.js";
 import {
-  assignedNames, matchPublishArgv, normalizeBin, pastAssignments, unwrapPackageRunner, type GitOption, type PublishKind,
+  assignedNames, gitRepoChange, matchPublishArgv, normalizeBin, pastAssignments, unwrapPackageRunner,
+  type GitOption, type PublishKind,
 } from "./publish-operation-table.js";
 import { cwdOf } from "./tool-execution/internal-args.js";
 
@@ -45,6 +46,10 @@ export interface PublishOperation {
   cwd: string;
   /** The directory could not be worked out statically (`cd $DIR`). */
   cwdUncertain?: boolean;
+  /** An earlier command in the same call that changes what this publish
+   *  reads (`git commit` before a push): the repository the review would see
+   *  is not the one it publishes from (publish-operation-table.ts gitRepoChange). */
+  repoChangedBefore?: string;
   /** git-push: the arguments after `push`, verbatim. */
   pushArgs?: string[];
   /** git-push: git's own options before `push` (`-c k=v`, `--git-dir d`), in order. */
@@ -147,6 +152,9 @@ function shellPublishes(tool: string, command: string, start: string, toolEnv: s
   // shell body starts with its parent's, and a `cd` or `export` inside it does
   // not leak back out.
   const bodyAt: Array<{ dir: string; uncertain: boolean; env: string[] }> = [{ dir: start, uncertain: false, env: toolEnv }];
+  // The first earlier git command that changes what a later publish reads,
+  // at any depth: a commit inside `bash -c "…"` lands in the same repository.
+  const earlier: { commits?: string; files?: string } = {};
   let lastDepth = 0;
   for (const pos of commandPositions(command).positions) {
     if (pos.depth > lastDepth) bodyAt[pos.depth] = { ...bodyAt[pos.depth - 1] };
@@ -169,7 +177,13 @@ function shellPublishes(tool: string, command: string, start: string, toolEnv: s
     }
     const at = unwrapPackageRunner(pos.words, cmdAt);
     const match = matchPublishArgv(pos.words, at);
-    if (!match) continue;
+    if (!match) {
+      const change = gitRepoChange(pos.words, cmdAt);
+      if (change?.commits) earlier.commits ??= change.command;
+      if (change?.files) earlier.files ??= change.command;
+      continue;
+    }
+    const changedBefore = match.kind === "git-push" || match.kind === "release" ? earlier.commits : earlier.files;
     const dir = match.dirArg === undefined ? here.dir : resolveDir(here.dir, match.dirArg);
     const gitEnv = match.kind === "git-push" ? [...new Set([...here.env, ...(match.gitEnv ?? [])])] : [];
     found.push({
@@ -179,6 +193,7 @@ function shellPublishes(tool: string, command: string, start: string, toolEnv: s
       command,
       cwd: dir ?? here.dir,
       ...(here.uncertain || dir === null ? { cwdUncertain: true } : {}),
+      ...(changedBefore ? { repoChangedBefore: changedBefore } : {}),
       ...(match.pushArgs ? { pushArgs: match.pushArgs } : {}),
       ...(match.gitOptions ? { gitOptions: match.gitOptions } : {}),
       ...(gitEnv.length ? { gitEnv } : {}),

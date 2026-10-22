@@ -8,6 +8,8 @@
 
 import { asNumber, asRecord, asString } from "./guards.js";
 import { parseApprovalEvent } from "./approval.js";
+import { parseFileChange } from "./file-change.js";
+import type { FileChange } from "./file-change.js";
 import type { ApprovalRequestedEvent, ApprovalResolvedEvent, ApprovalResponseFrame, ApprovalTimeoutEvent } from "./approval.js";
 
 /** How a tool call ended (or that it is still running). */
@@ -48,6 +50,8 @@ export type ToolEndEvent = {
   result: string;
   allowed: boolean;
   status?: ToolResultStatus;
+  /** What a write or edit changed, read from the wire's `metadata.fileChange`. */
+  fileChange?: FileChange;
 };
 /** The turn finished. `opId` names it, so a resubscribe can say it already holds it. */
 export type DoneEvent = { type: "done"; usage: TurnUsage; opId?: string };
@@ -187,6 +191,8 @@ function parseEvent(raw: Record<string, unknown>): ChatServerEvent | null {
       const toolCallId = asString(raw.toolCallId);
       if (toolCallId !== null) ev.toolCallId = toolCallId;
       if (typeof raw.status === "string" && TOOL_STATUSES.includes(raw.status)) ev.status = raw.status as ToolResultStatus;
+      const fileChange = parseFileChange(raw.metadata);
+      if (fileChange !== null) ev.fileChange = fileChange;
       return ev;
     }
     case "done": {

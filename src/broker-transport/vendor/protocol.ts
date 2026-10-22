@@ -26,6 +26,7 @@ export * from "./control.js";
 export * from "./chunks.js";
 export * from "./tunnel.js";
 export * from "./chat.js";
+export * from "./file-change.js";
 export * from "./approval.js";
 export * from "./voice.js";
 export * from "./timeline.js";

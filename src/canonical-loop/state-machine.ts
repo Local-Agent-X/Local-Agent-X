@@ -53,10 +53,13 @@ const TRANSITIONS: Record<CanonicalState, ReadonlySet<CanonicalState>> = {
   // queued → failed covers system-level fast-fail (no adapter configured for
   // the op's lane/provider). Per-turn errors still go via running → failed.
   // queued → cancelled covers pre-lease cancel (op cancelled before a worker
-  // ever leases it).
+  // ever leases it). paused → cancelled is the same case: a paused op has no
+  // worker and nothing in flight. Without it a cancel on a paused op was only
+  // recorded, and since cancels are acted on inside a running turn it waited
+  // forever (phone workers sheet, 2026-10-22).
   queued:     new Set<CanonicalState>(["running", "failed", "cancelled"]),
   running:    new Set<CanonicalState>(["paused", "cancelling", "succeeded", "failed", "queued"]),
-  paused:     new Set<CanonicalState>(["queued"]),
+  paused:     new Set<CanonicalState>(["queued", "cancelled"]),
   cancelling: new Set<CanonicalState>(["cancelled"]),
   cancelled:  new Set<CanonicalState>(),
   succeeded:  new Set<CanonicalState>(),

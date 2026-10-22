@@ -75,14 +75,16 @@ export async function finalizeCancel(op: Op, tracker: CancelTracker): Promise<vo
   safeTransition(op, "cancelled", "adapter_aborted");
 }
 
-export function applyPreLeaseCancel(op: Op): boolean {
+/** Cancel an op no worker holds — queued and not yet leased, or paused — straight
+ *  to cancelled, when a cancel was requested. */
+export function applyPreLeaseCancel(op: Op, reason = "cancel_before_lease"): boolean {
   const fresh = readOp(op.id);
   if (!fresh?.canonical?.cancelRequestedAt) return false;
   if (fresh.canonical) op.canonical = fresh.canonical;
   if (!op.canonical) op.canonical = {};
   op.canonical.cancelRequestedAt = null;
   writeOp(op);
-  safeTransition(op, "cancelled", "cancel_before_lease");
+  safeTransition(op, "cancelled", reason);
   return true;
 }
 

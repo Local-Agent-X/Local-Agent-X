@@ -24,6 +24,7 @@ import { emit } from "./event-emitter.js";
 import { transitionOp } from "./state-machine.js";
 import { enqueueOp, pumpScheduler, wakeQueuedOp } from "./scheduler.js";
 import { publishSignal } from "./signals.js";
+import { applyPreLeaseCancel } from "./cancel-handler.js";
 import { isTerminalState } from "./terminal-states.js";
 
 /**
@@ -313,9 +314,10 @@ export function opCancel(opId: string, actor: string): ControlResult {
   if (isTerminalState(state)) {
     return { ok: false, code: "terminal", message: `op ${opId} is already ${state}` };
   }
-  // Idempotent: cancel already in flight or already pending.
+  // Idempotent: cancel already in flight or already pending. Not for a paused op:
+  // no worker will ever act on its pending cancel, so it is finished below.
   if (state === "cancelling") return { ok: true };
-  if (op.canonical?.cancelRequestedAt) return { ok: true };
+  if (op.canonical?.cancelRequestedAt && state !== "paused") return { ok: true };
 
   const now = new Date().toISOString();
   // OP-9: merge the cancel signal onto the LATEST disk state under the per-op
@@ -325,5 +327,7 @@ export function opCancel(opId: string, actor: string): ControlResult {
   emit(opId, "cancel_requested", { actor });
   publishSignal({ kind: "cancel", opId, actor, ts: now });
   if (state === "queued") wakeQueuedOp(opId, op.lane as CanonicalLane);
+  // A paused op has no worker to read the request: cancel it here.
+  if (state === "paused") applyPreLeaseCancel(op, "cancel_while_paused");
   return { ok: true };
 }

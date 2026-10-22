@@ -3,6 +3,7 @@
 // router keeps only the frame dispatch; behavior unchanged).
 import type { WebSocket } from "ws";
 import { sendFrame } from "./frames.js";
+import { sendWorkersSnapshot } from "./workers-snapshot.js";
 
 // Route by id prefix:
 //   - op_*    → worker-pool op, use canonical opRedirect
@@ -78,4 +79,8 @@ export async function handleAgentControl(ws: WebSocket, agentId: string, action:
   } catch (e) {
     sendFrame(ws, { type: "error", message: `Agent control failed: ${e}` });
   }
+  // The client sees the result at once, whatever it was. A control that worked used
+  // to say nothing, and an op whose events go to another session (a Dream run in its
+  // own dream-* session) never told the phone either, so Cancel looked dead.
+  await sendWorkersSnapshot(ws);
 }

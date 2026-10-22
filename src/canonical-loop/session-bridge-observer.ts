@@ -33,7 +33,7 @@
  */
 import { broadcastToSession, getSessionForOp, getTaskForOp, releaseOpFromSession, proactiveSpeakToSession, getSessionPersister } from "../ops/session-bridge.js";
 import { isHeadlessSession } from "../chat-ws/broadcast.js";
-import { suspendedWorkerStatus, turnProgressLine } from "./live-workers.js";
+import { suspendedWorkerStatus, suspensionLine, turnProgressLine } from "./live-workers.js";
 import { pushPendingNotification } from "../ops/pending-notifications.js";
 import { scheduleIdleNudge } from "../ops/idle-nudge.js";
 import { inboxJobResult, runLabel } from "../inbox/producers.js";
@@ -168,7 +168,7 @@ function recordCanonicalEventWithSink(
             type: "bg_op_progress",
             opId: event.opId,
             status: suspendedWorkerStatus(op),
-            line: op?.canonical?.suspension?.detail || "Operation paused",
+            line: suspensionLine(op),
             resumable: true,
           });
         } else if (to === "succeeded" || to === "failed" || to === "cancelled") {

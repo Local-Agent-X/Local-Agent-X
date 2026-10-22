@@ -20,7 +20,7 @@ afterAll(() => {
   rmSync(dataDir, { recursive: true, force: true });
 });
 
-const { listLiveWorkers, turnProgressLine, suspendedWorkerStatus } = await import("./live-workers.js");
+const { listLiveWorkers, turnProgressLine, suspendedWorkerStatus, suspensionLine } = await import("./live-workers.js");
 const { writeOp } = await import("../ops/op-store.js");
 const { OP_TYPE } = await import("../ops/op-types.js");
 
@@ -77,5 +77,14 @@ describe("the wording the observer streams live", () => {
     expect(suspendedWorkerStatus(withReason("stalled"))).toBe("stalled");
     expect(suspendedWorkerStatus(withReason("user-paused"))).toBe("paused");
     expect(suspendedWorkerStatus(null)).toBe("paused");
+  });
+
+  // The stored detail is also the message streamed into the chat, which opens
+  // with blank lines; a worker's first line showed only "…" on the phone.
+  it("a suspension's line is its reason without the blank lines that open it", () => {
+    const op = mkOp("x", OP_TYPE.appBuild, { state: "paused", flagValue: true, suspension: {
+      reason: "blocked", detail: "\n\nSuspended: remember remained blocked after 5 attempts.", suspendedAt: "" } });
+    expect(suspensionLine(op)).toBe("Suspended: remember remained blocked after 5 attempts.");
+    expect(suspensionLine(null)).toBe("Operation paused");
   });
 });

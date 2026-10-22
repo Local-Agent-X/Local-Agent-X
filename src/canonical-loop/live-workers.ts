@@ -26,6 +26,13 @@ export function suspendedWorkerStatus(op: Op | null | undefined): SuspendedWorke
   return reason === "blocked" ? "blocked" : reason === "stalled" ? "stalled" : "paused";
 }
 
+/** The line a suspended op shows: why it stopped. The stored detail is also the
+ *  message streamed into the chat, which opens with blank lines to set it apart
+ *  there; shown as a worker's first line they left only "…" (phone, 2026-10-22). */
+export function suspensionLine(op: Op | null | undefined): string {
+  return op?.canonical?.suspension?.detail?.trim() || "Operation paused";
+}
+
 /** What a committed turn did: its tool names, each flagged if it failed, or
  *  "thinking" for a turn with no tools. */
 export function turnProgressLine(turnIdx: number, tools: { tool: string; status?: string }[]): string {
@@ -60,7 +67,7 @@ export function listLiveWorkers(): LiveWorker[] {
     const status = active.state === "queued" ? "queued" : active.state === "paused" ? suspendedWorkerStatus(op) : "running";
     let lastLine: string | undefined;
     if (status !== "queued" && status !== "running") {
-      lastLine = op.canonical?.suspension?.detail || "Operation paused";
+      lastLine = suspensionLine(op);
     } else {
       const turn = readLatestOpTurn(active.opId);
       if (turn) lastLine = turnProgressLine(turn.turnIdx, turn.toolCallSummary);

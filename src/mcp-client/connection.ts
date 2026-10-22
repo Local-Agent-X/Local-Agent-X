@@ -131,7 +131,8 @@ export class MCPConnection {
     // process that could reach anything.
     let proxyEnv: Record<string, string> = {};
     if (posture.effective === "sandboxed") {
-      proxyEnv = await shellProxyEnv();
+      // Session-less: one server outlives and serves every session.
+      proxyEnv = await shellProxyEnv(null);
       const bridge = currentShellEgressBridge();
       const wrapped = posture.sandboxBackend === "seatbelt"
         ? wrapForSeatbelt(verdict.resolvedPath, this.config.args || [], undefined, "guarded", true)

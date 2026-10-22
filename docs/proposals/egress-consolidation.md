@@ -215,8 +215,19 @@ Each phase ships alone, keeps the gate suite green, and runs both benchmarks.
    `email_setup` (`src/tools/email-compose-tools.ts`) sends no message: it
    only verifies the login, whose destination the vault's secret-destination
    gate already approves.
-5. **Proxy.** Per-session proxy credentials; the judge on plain-HTTP requests;
-   the destination-only judge on CONNECT.
+5. **Proxy.** Done 2026-10-22. A caged shell's proxy URL carries its
+   session's ticket as the user name (`src/net/egress-proxy-session.ts`,
+   applied in `src/tools/shell-proxy-env.ts` from the tool call's egress
+   scope); the instance token stays the password and still authenticates the
+   route. The ticket is unguessable, so a process cannot pass as another
+   session. The proxy judges a plain-HTTP request's URL and the first 256 KB
+   of its body, and a CONNECT's destination (a canary or a secret spelled into
+   a hostname), on the `tool-send` evidence; a refusal is a 403 and nothing is
+   dialed. A sandboxed MCP server is spawned session-less (it serves every
+   session) and is judged on stored secrets only. Limit, stated: an HTTPS
+   body is inside the tunnel, so the proxy cannot read it; the caged shell's
+   command text is judged at dispatch, and the cage keeps the proxy as its
+   only route.
 6. **Windows MCP servers (G4).** Spawn them under the Windows cage with the
    proxy as their only route, as the POSIX path already does. This depends on
    the Windows cage supporting a long-lived process; until it does, the

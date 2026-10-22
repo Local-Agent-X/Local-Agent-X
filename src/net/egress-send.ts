@@ -74,7 +74,13 @@ export function assertMailSendAllowed(recipients: string, parts: ReadonlyArray<s
 function judgeOrThrow(payload: string, what: string, approvedSecretValues: readonly string[]): void {
   let text = payload;
   for (const value of approvedSecretValues) if (value) text = text.split(value).join("");
-  const sessionId = egressSessionId() ?? "";
+  judgeSendText(egressSessionId() ?? "", text, what);
+}
+
+/** The judging step itself, for a sender that knows the session another way
+ *  (the loopback proxy, from the request's credentials). "" is no session:
+ *  only a stored secret's value can be evidence then. */
+export function judgeSendText(sessionId: string, text: string, what: string): void {
   const judged = judgeEgress(LIVE, "tool-send", sessionId, text);
   if (judged.canary) {
     recordCanaryExfilAudit(sessionId, "network-send");

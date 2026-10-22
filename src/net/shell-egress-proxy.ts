@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { startEgressProxy, type EgressProxy } from "./egress-proxy-core.js";
+import { inspectProxyRequest } from "./egress-proxy-session.js";
 import { shellProxyPortRange } from "./shell-proxy-ports.js";
 import { bridgeSocketPath, startShellEgressBridge, sweepStaleBridgeSockets, type ShellEgressBridge } from "./shell-egress-bridge.js";
 import { loadEgressConfig } from "../security/layer/network-policy.js";
@@ -109,6 +110,7 @@ export function ensureShellEgressProxy(): Promise<ShellEgressProxy> {
       selfPort,
       viaTag: "1.1 lax-shell-egress",
       onPolicyDeny: recordPolicyDeny,
+      inspect: inspectProxyRequest,
     })).then(async (proxy) => {
       if (!teardownRegistered) {
         teardownRegistered = true;

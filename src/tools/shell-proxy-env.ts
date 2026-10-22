@@ -16,6 +16,8 @@ import {
   currentShellEgressProxyUrl,
   ensureShellEgressProxy,
 } from "../net/shell-egress-proxy.js";
+import { proxyUrlForSession } from "../net/egress-proxy-session.js";
+import { egressSessionId } from "../net/egress-scope.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("tools.shell-proxy-env");
@@ -79,6 +81,10 @@ export function proxyEnvFor(url: string, platform: NodeJS.Platform = process.pla
  * Env overlay routing a guarded shell's traffic through the egress proxy.
  * Returns {} for every other sandbox mode, and {} if the proxy cannot start.
  *
+ * The URL's user name is the spawning session's proxy ticket (the tool call's
+ * egress scope; egress-proxy-session.ts), so the proxy judges its requests
+ * against that session. `null` is the session-less credential.
+ *
  * Never throws, and never blocks the bash hot path for longer than
  * PROXY_START_TIMEOUT_MS. The failure branch is NOT a silent-fallback
  * violation: the CAGE is the enforcement layer (once it enforces, off-machine
@@ -86,7 +92,7 @@ export function proxyEnvFor(url: string, platform: NodeJS.Platform = process.pla
  * sanctioned route — so its absence fails CLOSED at the OS, not open. We log the
  * consequence and let the shell run.
  */
-export async function shellProxyEnv(): Promise<Record<string, string>> {
+export async function shellProxyEnv(sessionId: string | null = egressSessionId()): Promise<Record<string, string>> {
   if (getSandboxMode() !== "guarded") return {};
   const starting = ensureShellEgressProxy();
   // On timeout we stop awaiting this start but it keeps warming in the
@@ -105,7 +111,7 @@ export async function shellProxyEnv(): Promise<Record<string, string>> {
       );
       return {};
     }
-    return proxyEnvFor(result.url);
+    return proxyEnvFor(proxyUrlForSession(result.url, sessionId));
   } catch (e) {
     logger.warn(
       `shell egress proxy failed to start; guarded shells run without a sanctioned egress route: ${(e as Error).message}`,
@@ -130,7 +136,7 @@ export async function shellProxyEnv(): Promise<Record<string, string>> {
 export function shellProxyEnvSync(): Record<string, string> {
   if (getSandboxMode() !== "guarded") return {};
   const url = currentShellEgressProxyUrl();
-  if (url) return proxyEnvFor(url);
+  if (url) return proxyEnvFor(proxyUrlForSession(url, egressSessionId()));
   void shellProxyEnv(); // never rejects — see its failure branch
   return {};
 }

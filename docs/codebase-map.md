@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1838 non-test source files · 94 oversized · 240 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1840 non-test source files · 94 oversized · 240 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -55,7 +55,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/cognition/` | 14 | 35 | XL | 1 |
 | `src/cron/` | 14 | 13 | L |  |
 | `src/inbox/` | 14 | 5 | M |  |
-| `src/net/` | 14 | 8 | M |  |
+| `src/net/` | 14 | 10 | M |  |
 | `src/voice/` | 14 | 74 | XL | 1 |
 | `src/self-edit/` | 13 | 19 | L | 2 |
 | `src/ari-kernel/` | 12 | 12 | M |  |
@@ -342,6 +342,7 @@ job. Comments are free: never cut them to fit.
 - `src/cognition/cross-session-learning/learner.ts` — 330+ code lines (cap 350)
 - `src/memory/index-facts.ts` — 330+ code lines (cap 350)
 - `src/memory/tools/facts.ts` — 330+ code lines (cap 350)
+- `src/net/egress-proxy-core.ts` — 330+ code lines (cap 350)
 - `src/update-rollback.ts` — 330+ code lines (cap 350)
 - `src/auto-build/app-build-tool.ts` — 320+ code lines (cap 350)
 - `src/broker-transport/phone-projection.ts` — 320+ code lines (cap 350)
@@ -349,7 +350,6 @@ job. Comments are free: never cut them to fit.
 - `src/canonical-loop/adapters/tool-call-text-corpus.ts` — 320+ code lines (cap 350)
 - `src/canonical-loop/checkpoint.ts` — 320+ code lines (cap 350)
 - `src/cognition/cross-session-learning/types.ts` — 320+ code lines (cap 350)
-- `src/net/egress-proxy-core.ts` — 320+ code lines (cap 350)
 - `src/protocols/learned-effectiveness.ts` — 320+ code lines (cap 350)
 - `src/protocols/learned-lifecycle.ts` — 320+ code lines (cap 350)
 - `src/auto-build/workflow-resolver.ts` — 310+ code lines (cap 350)

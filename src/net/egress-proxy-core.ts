@@ -6,6 +6,7 @@ import {
   evaluateEgressForUrl,
   resolveAndPinHost,
 } from "../security/layer/index.js";
+import { readBodyHead } from "./request-body-head.js";
 
 export interface ProxyDialTarget {
   address: string;
@@ -17,6 +18,10 @@ export interface ProxyDialTarget {
 type DialTarget = (target: ProxyDialTarget) => Promise<Duplex>;
 
 type PolicyDenyListener = (info: { target: string; reason: string }) => void;
+
+/** Judges a request on what the proxy can see of it: the target, and for
+ *  plain HTTP the head of the body. Returns a refusal reason, or null. */
+type RequestCheck = (target: URL, bodyHead: Buffer | null) => string | null;
 
 export interface EgressProxyOptions {
   port?: number;
@@ -44,6 +49,9 @@ export interface EgressProxyOptions {
   viaTag: string;
   /** Observes policy denials (403 class) only — never network errors (502s). */
   onPolicyDeny?: PolicyDenyListener;
+  /** The send-time judgement, given the credentials' user name (which names
+   *  the session; egress-proxy-session.ts). Absent: no payload judgement. */
+  inspect?: (user: string, target: URL, bodyHead: Buffer | null) => string | null;
 }
 
 export interface EgressProxy {
@@ -60,13 +68,20 @@ export function proxyAuthorizationHeader(token: string): string {
   return `Basic ${Buffer.from(`${PROXY_AUTH_USER}:${token}`).toString("base64")}`;
 }
 
-function authorized(request: IncomingMessage, token: string | undefined): boolean {
-  if (token === undefined) return true;
+/** The credentials' user name when the password is the instance token, else
+ *  null. The user name is not a secret check: it names the session. */
+function authorizedUser(request: IncomingMessage, token: string | undefined): string | null {
+  if (token === undefined) return PROXY_AUTH_USER;
   const header = request.headers["proxy-authorization"];
   const value = Array.isArray(header) ? header[0] : header;
-  if (!value) return false;
-  const expected = proxyAuthorizationHeader(token);
-  return value.length === expected.length && timingSafeEqual(Buffer.from(value), Buffer.from(expected));
+  if (!value?.startsWith("Basic ")) return null;
+  const decoded = Buffer.from(value.slice(6), "base64").toString("utf8");
+  const colon = decoded.indexOf(":");
+  if (colon < 0) return null;
+  const password = Buffer.from(decoded.slice(colon + 1));
+  const expected = Buffer.from(token);
+  if (password.length !== expected.length || !timingSafeEqual(password, expected)) return null;
+  return decoded.slice(0, colon);
 }
 
 const PROXY_AUTH_REQUIRED = "Proxy authentication required: this route is for the sandboxed shell, which carries the token in its proxy environment.";
@@ -241,8 +256,12 @@ async function forwardHttp(
   selfPort: () => string,
   viaTag: string,
   onPolicyDeny: PolicyDenyListener | undefined,
+  check: RequestCheck | undefined,
 ): Promise<void> {
   const url = parseHttpTarget(request);
+  const head = check ? await readBodyHead(request) : null;
+  const refused = check?.(url, head);
+  if (refused) throw policyDeny(refused, url.href, onPolicyDeny);
   const target = await resolveDialTarget(url, selfPort, onPolicyDeny);
   const socket = await dial(target);
   // The client can disappear while DNS pinning / dialing is awaiting. In that
@@ -287,6 +306,7 @@ async function forwardHttp(
     // received, the upstream may still be producing a legitimate response.
     if (!request.complete) upstream.destroy();
   });
+  if (head?.length) upstream.write(head);
   request.pipe(upstream);
 }
 
@@ -297,8 +317,11 @@ async function openTunnel(
   dial: DialTarget,
   selfPort: () => string,
   onPolicyDeny: PolicyDenyListener | undefined,
+  check: RequestCheck | undefined,
 ): Promise<void> {
   const url = parseConnectTarget(request.url);
+  const refused = check?.(url, null);
+  if (refused) throw policyDeny(refused, url.href, onPolicyDeny);
   const target = await resolveDialTarget(url, selfPort, onPolicyDeny);
   const upstream = await dial(target);
   // The client may have died during the two awaits above (Chrome SIGKILLed
@@ -345,14 +368,16 @@ async function bind(server: Server, options: EgressProxyOptions): Promise<void> 
 }
 
 export async function startEgressProxy(options: EgressProxyOptions): Promise<EgressProxy> {
-  const { selfPort, viaTag, onPolicyDeny, authToken } = options;
+  const { selfPort, viaTag, onPolicyDeny, authToken, inspect } = options;
+  const checkFor = (user: string): RequestCheck | undefined => inspect && ((target, head) => inspect(user, target, head));
   const dial = options.dial ?? dialPinnedTarget;
   const server = createServer((request, response) => {
-    if (!authorized(request, authToken)) {
+    const user = authorizedUser(request, authToken);
+    if (user === null) {
       writeAuthRequired(response);
       return;
     }
-    void forwardHttp(request, response, dial, selfPort, viaTag, onPolicyDeny)
+    void forwardHttp(request, response, dial, selfPort, viaTag, onPolicyDeny, checkFor(user))
       .catch((error) => writeHttpError(response, error));
   });
   const clientSockets = new Set<Duplex>();
@@ -369,11 +394,12 @@ export async function startEgressProxy(options: EgressProxyOptions): Promise<Egr
     socket.on("error", () => socket.destroy());
   });
   server.on("connect", (request, socket, head) => {
-    if (!authorized(request, authToken)) {
+    const user = authorizedUser(request, authToken);
+    if (user === null) {
       writeSocketAuthRequired(socket);
       return;
     }
-    void openTunnel(request, socket, head, dial, selfPort, onPolicyDeny).catch((error) => writeSocketError(socket, error));
+    void openTunnel(request, socket, head, dial, selfPort, onPolicyDeny, checkFor(user)).catch((error) => writeSocketError(socket, error));
   });
 
   await bind(server, options).catch((error) => {

@@ -397,6 +397,7 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
 .reasoning-summary::before{content:'▸ ';font-size:.65rem}
 .reasoning-block[open] .reasoning-summary::before{content:'▾ '}
 .reasoning-body{margin-top:4px;font-size:.76rem;line-height:1.45;color:var(--muted);white-space:pre-wrap;word-break:break-word;max-height:220px;overflow-y:auto;opacity:.9}
+.reasoning-step+.reasoning-step{margin-top:8px;padding-top:8px;border-top:1px dashed var(--border)}
 /* Block timeline: one .block-text per uninterrupted text run — thinking
    blocks, text, and inline injects render in arrival order instead of the
    old fixed thinking-first layout. */

@@ -35,13 +35,25 @@
 // preserveOpenState can tell a deliberate open/close apart from the
 // auto open-while-streaming / collapse-when-superseded defaults across the
 // per-frame live swaps.
+// `text` is one stretch or several (a run folded into one row, one
+// .reasoning-step each, in order).
 function _makeReasoningDetails(text, open, key) {
+  const stretches = Array.isArray(text) ? text : [text];
   const details = document.createElement('details');
   details.className = 'reasoning-block';
   if (key) details.dataset.key = key;
   details.open = !!open;
-  details.innerHTML = '<summary class="reasoning-summary">Thinking</summary><div class="reasoning-body"></div>';
-  details.querySelector('.reasoning-body').textContent = text;
+  details.innerHTML = '<summary class="reasoning-summary"></summary><div class="reasoning-body"></div>';
+  details.querySelector('.reasoning-summary').textContent =
+    stretches.length > 1 ? 'Thinking · ' + stretches.length + ' steps' : 'Thinking';
+  const body = details.querySelector('.reasoning-body');
+  if (stretches.length === 1) body.textContent = stretches[0];
+  else for (const stretch of stretches) {
+    const step = document.createElement('div');
+    step.className = 'reasoning-step';
+    step.textContent = stretch;
+    body.appendChild(step);
+  }
   details.querySelector('.reasoning-summary').addEventListener('click', () => {
     // The default toggle applies after the click handler returns; read the
     // settled state a tick later.
@@ -62,13 +74,26 @@ function prependReasoningBlock(bodyEl, reasoning, open) {
 // top" render. While live, only the TRAILING reasoning block starts open (it
 // is the thing currently streaming); every earlier one auto-collapses the
 // moment a later block starts, so finished thinking folds down to a one-line
-// "▸ Thinking" chip exactly where it happened in the answer. Injects render
-// as inline user bubbles at the point the user sent them; the agent's next
-// block continues beneath. Returns true when anything was rendered.
+// "▸ Thinking" chip exactly where it happened in the answer. Thinking
+// stretches with nothing shown between them (a tool run splits the lane but
+// draws in the activity group) fold into ONE row, "Thinking · N steps": a long
+// turn otherwise stacked a Thinking line per step. Injects render as inline
+// user bubbles at the point the user sent them; the agent's next block
+// continues beneath. Returns true when anything was rendered.
 function renderTimelineBlocks(bodyEl, blocks, opts) {
   if (!bodyEl || !Array.isArray(blocks) || blocks.length === 0) return false;
   const live = !!(opts && opts.live);
   let rendered = false;
+  let run = null; // { stretches, key, endsAt }
+  const flush = () => {
+    if (!run) return;
+    // Open only while it is the part still streaming. Keyed by its first
+    // stretch, which never changes as the run grows.
+    const open = live && run.endsAt === blocks.length - 1;
+    bodyEl.appendChild(_makeReasoningDetails(run.stretches, open, run.key));
+    run = null;
+    rendered = true;
+  };
   for (let i = 0; i < blocks.length; i++) {
     const b = blocks[i];
     if (!b) continue;
@@ -77,11 +102,14 @@ function renderTimelineBlocks(bodyEl, blocks, opts) {
       // logic; internal formatting is the model's own.
       const text = (b.text || '').replace(/^\s+/, '');
       if (!text) continue;
-      const open = live && i === blocks.length - 1;
-      bodyEl.appendChild(_makeReasoningDetails(text, open, b.id ? 'r:' + b.id : null));
-      rendered = true;
-    } else if (b.type === 'text') {
-      if (!(b.text || '').trim()) continue;
+      if (!run) run = { stretches: [], key: b.id ? 'r:' + b.id : null, endsAt: i };
+      run.stretches.push(text);
+      run.endsAt = i;
+      continue;
+    }
+    if (b.type === 'text' && !(b.text || '').trim()) continue;
+    flush();
+    if (b.type === 'text') {
       const div = document.createElement('div');
       div.className = 'block-text';
       if (b.id) div.dataset.key = 't:' + b.id;
@@ -100,6 +128,7 @@ function renderTimelineBlocks(bodyEl, blocks, opts) {
       rendered = true;
     }
   }
+  flush();
   return rendered;
 }
 

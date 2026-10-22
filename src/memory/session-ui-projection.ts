@@ -10,6 +10,7 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import type { Session, ToolBlockRecord, ToolResultStatus } from "../types.js";
 import { isHarnessRow } from "../harness-rows.js";
 import { parseResultHeader } from "../tools/result-helpers.js";
+import { messageProvenance } from "./session-message-provenance.js";
 import { mediaRefOf, toolMessageBlock, toolMessageMedia, toolMessageMetadata, toolMessageStatus, type ToolEndMedia } from "../tool-execution/tool-message-carry.js";
 
 /**
@@ -42,6 +43,15 @@ export function uiToolResultText(result: string): string {
   return result.length > UI_TOOL_RESULT_MAX_CHARS
     ? result.slice(0, UI_TOOL_RESULT_MAX_CHARS).replace(/[^\n]*$/, "")
     : result;
+}
+
+/** When a message was said, in epoch ms, for the chat's time dividers; absent
+ *  when the log does not know (a row whose recorded time is a later save's). */
+function saidAt(message: object): number | undefined {
+  const known = messageProvenance(message);
+  if (!known?.createdAt || known.timeUnknown) return undefined;
+  const at = Date.parse(known.createdAt);
+  return Number.isFinite(at) ? at : undefined;
 }
 
 /**
@@ -80,7 +90,7 @@ export function projectSessionForUI(session: Session): Session {
   }
 
   type ToolEvent = { type: "start" | "end"; name: string; args?: Record<string, unknown>; result?: string; allowed?: boolean; status?: ToolResultStatus; metadata?: Record<string, unknown>; media?: ToolEndMedia };
-  type UIAssistant = ChatCompletionMessageParam & { _tools?: ToolEvent[] };
+  type UIAssistant = ChatCompletionMessageParam & { _tools?: ToolEvent[]; _at?: number };
 
   const messages: ChatCompletionMessageParam[] = [];
   // One assistant bubble per turn — the SAME shape the live UI persists
@@ -94,13 +104,17 @@ export function projectSessionForUI(session: Session): Session {
   // whole turn and emit exactly one consolidated bubble at the turn boundary.
   let pendingTools: ToolEvent[] = [];
   let pendingText: string[] = [];
+  // The bubble is dated by the turn's first assistant row: when the reply began.
+  let pendingAt: number | undefined;
   const flushTurn = () => {
     if (pendingTools.length === 0 && pendingText.length === 0) return;
     const out: UIAssistant = { role: "assistant", content: pendingText.join("\n\n") };
     if (pendingTools.length > 0) out._tools = pendingTools;
+    if (pendingAt !== undefined) out._at = pendingAt;
     messages.push(out);
     pendingTools = [];
     pendingText = [];
+    pendingAt = undefined;
   };
 
   for (const m of session.messages) {
@@ -113,10 +127,13 @@ export function projectSessionForUI(session: Session): Session {
       // (tools-only turns still emit, as an empty-content assistant with the
       // activity bar) before pushing the prompt.
       flushTurn();
-      messages.push(m);
+      const at = saidAt(m);
+      // A copy: the stored message is what providers are sent.
+      messages.push(at === undefined ? m : ({ ...m, _at: at } as ChatCompletionMessageParam));
       continue;
     }
     if (m.role === "assistant") {
+      if (pendingTools.length === 0 && pendingText.length === 0) pendingAt = saidAt(m);
       const tcalls = (m as unknown as { tool_calls?: Array<{ id: string; function?: { name: string; arguments: string } }> }).tool_calls;
       if (Array.isArray(tcalls)) {
         for (const tc of tcalls) {

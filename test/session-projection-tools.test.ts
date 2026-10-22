@@ -7,6 +7,7 @@
 import { describe, it, expect } from "vitest";
 import { projectSessionForUI } from "../src/memory/session-message-log.js";
 import type { Session } from "../src/types.js";
+import { recordMessageProvenance } from "../src/memory/session-message-provenance.js";
 
 // Minimal message factories (loose typing — the projection only reads role,
 // content, tool_calls, tool_call_id).
@@ -120,5 +121,27 @@ describe("projectSessionForUI — the end event carries the row's metadata and m
     const end = endOf(sess([user("x"), asstCall("c1", "read"), toolResult("c1", "ok")]));
     expect(end.metadata).toBeUndefined();
     expect(end.media).toBeUndefined();
+  });
+});
+
+describe("projectSessionForUI — when each message was said", () => {
+  it("dates a user message and the turn's bubble by their log rows, without touching the stored message", () => {
+    const u = user("hi");
+    const a1 = asstCall("c1", "read");
+    const a2 = asstText("done");
+    recordMessageProvenance(u, { createdAt: "2026-10-22T10:00:00.000Z" });
+    recordMessageProvenance(a1, { createdAt: "2026-10-22T10:00:05.000Z" });
+    recordMessageProvenance(a2, { createdAt: "2026-10-22T10:01:00.000Z" });
+    const out = projectSessionForUI(sess([u, a1, toolResult("c1", "ok"), a2])).messages as Array<{ _at?: number }>;
+    expect(out[0]._at).toBe(Date.parse("2026-10-22T10:00:00.000Z"));
+    expect(out[1]._at).toBe(Date.parse("2026-10-22T10:00:05.000Z"));
+    expect((u as { _at?: number })._at).toBeUndefined();
+  });
+
+  it("leaves a message undated when its recorded time is known to be wrong", () => {
+    const u = user("old");
+    recordMessageProvenance(u, { createdAt: "2026-10-01T00:00:00.000Z", timeUnknown: true });
+    const out = projectSessionForUI(sess([u])).messages as Array<{ _at?: number }>;
+    expect(out[0]._at).toBeUndefined();
   });
 });

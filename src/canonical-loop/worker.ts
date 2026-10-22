@@ -34,7 +34,7 @@ import { acquireLease, releaseLease } from "./lease.js";
 import { startHeartbeat, stopHeartbeat } from "./worker-heartbeat.js";
 export { _pauseHeartbeat } from "./worker-heartbeat.js";
 import { readLatestOpTurn, readOpTurn } from "./store.js";
-import { REPEAT_FAILURE_REASON } from "./middlewares/repeat-failure.js";
+import { applySuspension } from "./worker-suspension.js";
 import { ensureAriKernelScope, releaseAriKernelScope } from "../ari-kernel/index.js";
 import type { Op } from "../ops/types.js";
 import type { Adapter } from "./adapter-contract.js";
@@ -221,14 +221,8 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
       clearAdapterRetryState(op);
 
       if (r.middlewareDirective?.kind === "suspend") {
-        if (!op.canonical) op.canonical = {};
-        op.canonical.suspension = {
-          reason: r.middlewareDirective.reason === REPEAT_FAILURE_REASON ? "blocked" : "stalled",
-          detail: r.middlewareDirective.message ?? r.middlewareDirective.reason,
-          suspendedAt: new Date().toISOString(),
-        };
-        transitionOp(op, "paused", `suspended:${r.middlewareDirective.reason}`);
-        releaseReason = "suspended";
+        const how = applySuspension(op, r.middlewareDirective.reason, r.middlewareDirective.message);
+        releaseReason = how === "ended" ? "suspended_ended" : "suspended";
         break;
       }
 

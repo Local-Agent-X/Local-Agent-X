@@ -64,6 +64,14 @@ export interface VerifyGateState {
   deletedTestPaths: string[];
   /** Fire-once cap for the deleted-test nudge. */
   firedDeletedTest: boolean;
+  /** Source paths written since the last verify verdict, in comparison
+   *  spelling, and the state as it stood before the first of them. Deleting
+   *  every one puts that state back: a scratch script written and deleted is
+   *  not code anyone has to build. A probe script written after the tests
+   *  passed, run, then deleted sent a model back to re-run the whole suite
+   *  (chat-mvfaq00w, 2026-10-21). */
+  pendingEdits: string[];
+  beforePending: { editedSource: boolean; verified: boolean; failed: boolean } | null;
 }
 
 export function createVerifyGateState(): VerifyGateState {
@@ -76,6 +84,8 @@ export function createVerifyGateState(): VerifyGateState {
     failNudges: 0,
     deletedTestPaths: [],
     firedDeletedTest: false,
+    pendingEdits: [],
+    beforePending: null,
   };
 }
 
@@ -147,6 +157,10 @@ export function noteVerifyEvidence(
     // so nudging it is noise.)
     for (const path of a.writes ?? []) {
       if (!isSourceFile(path)) continue;
+      if (state.pendingEdits.length === 0) {
+        state.beforePending = { editedSource: state.editedSource, verified: state.verifiedSinceEdit, failed: state.verifyFailedSinceEdit };
+      }
+      if (!state.pendingEdits.includes(normPath(path))) state.pendingEdits.push(normPath(path));
       state.editedSource = true;
       if (!state.editedPaths.includes(path) && state.editedPaths.length < MAX_EDITED_PATHS) {
         state.editedPaths.push(path);
@@ -173,7 +187,9 @@ export function noteVerifyEvidence(
         state.verifyFailedSinceEdit = true;
         state.verifiedSinceEdit = false;
       }
+      if (verdict === "passed" || verdict === "failed") settlePending(state);
     }
+    for (const path of a.deletes ?? []) dropDeletedEdit(state, path);
     // Test-deletion tripwire: a deleted test path (or a shell `rm` of one).
     // A deleted test is invisible to the build-verify gate — it only runs EDITED
     // tests — so "delete the failing test" would otherwise go green unseen.
@@ -201,6 +217,27 @@ export function recordExternalVerify(state: VerifyGateState, passed: boolean): v
   if (!state.editedSource) return;
   state.verifiedSinceEdit = passed;
   state.verifyFailedSinceEdit = !passed;
+  settlePending(state);
+}
+
+/** A verdict covers every edit before it: nothing is pending any more. */
+function settlePending(state: VerifyGateState): void {
+  state.pendingEdits = [];
+  state.beforePending = null;
+}
+
+/** A source file this op wrote, then deleted, owes no verify of its own, and
+ *  is no longer a place to look for the project to build. */
+function dropDeletedEdit(state: VerifyGateState, path: string): void {
+  const key = normPath(path);
+  state.editedPaths = state.editedPaths.filter((p) => normPath(p) !== key);
+  const before = state.pendingEdits.length;
+  state.pendingEdits = state.pendingEdits.filter((p) => p !== key);
+  if (state.pendingEdits.length === before || state.pendingEdits.length > 0 || !state.beforePending) return;
+  state.editedSource = state.beforePending.editedSource;
+  state.verifiedSinceEdit = state.beforePending.verified;
+  state.verifyFailedSinceEdit = state.beforePending.failed;
+  state.beforePending = null;
 }
 
 /** Evidence adapter for the canonical claim-grounding table. The verify-gate

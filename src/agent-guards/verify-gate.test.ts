@@ -423,3 +423,39 @@ describe("opEditedSourceUnverified — outcome-label verdict", () => {
     expect(opEditedSourceUnverified(clean)).toBe(false);
   });
 });
+
+// chat-mvfaq00w, 2026-10-21: tests passed, then the model wrote a probe script,
+// ran it, and deleted it — and was told it "edited source files but hasn't run
+// the build", so it re-ran the suite for a file that no longer existed.
+describe("a source file written and then deleted owes no verify", () => {
+  const login = "C:\Users\peter\Scan Progress\apps\mobile\app\login.tsx";
+  const probe = "C:\Users\peter\Documents\Local Agent X\workspace\scratch\sp-signup-probe.mjs";
+
+  it("restores the passing verdict once the scratch script is gone", () => {
+    const s = createVerifyGateState();
+    noteVerifyEvidence([edit(login), bash("npm test", "ok")], s);
+    noteVerifyEvidence([{ tool: "write", writes: [probe] }, bash(`node ${probe}`, "ok"), del(probe)], s);
+    expect(checkVerifyGate(s).nudge).toBeNull();
+    expect(opEditedSourceUnverified(s)).toBe(false);
+    expect(s.editedPaths).toEqual([login]);
+  });
+
+  it("an op whose only source edit was deleted edited no source", () => {
+    const s = createVerifyGateState();
+    noteVerifyEvidence([{ tool: "write", writes: [probe] }, del(probe.toLowerCase())], s);
+    expect(checkVerifyGate(s).nudge).toBeNull();
+  });
+
+  it("still nudges for the real edit when only the scratch file went away", () => {
+    const s = createVerifyGateState();
+    noteVerifyEvidence([edit(login), { tool: "write", writes: [probe] }, del(probe)], s);
+    expect(checkVerifyGate(s).nudge).toMatch(/haven't run/i);
+  });
+
+  it("a failed verify stays red after a scratch file is written and deleted", () => {
+    const s = createVerifyGateState();
+    noteVerifyEvidence([edit(login), bash("npm test", "error")], s);
+    noteVerifyEvidence([{ tool: "write", writes: [probe] }, del(probe)], s);
+    expect(checkVerifyGate(s).nudge).toMatch(/FAILED|RED/i);
+  });
+});

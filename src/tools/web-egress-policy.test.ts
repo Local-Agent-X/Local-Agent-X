@@ -4,6 +4,8 @@
 // destination before dialing, so strict mode holds there too, and the error
 // carries the policy's action so the tool can offer "Allow <host> & retry".
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -46,5 +48,55 @@ describe("canonicalFetch applies the web-access policy to its first destination"
 
   it("a cloud-metadata or private literal is still refused, without an action", () => {
     expect(() => assertInitialEgressAllowed("not a url")).toThrow(EgressRedirectBlocked);
+  });
+});
+
+// The operator's configured local image or video server sits on a loopback
+// port the agent's loopback grant does not cover. The tool that owns that
+// service may reach exactly that origin; nothing else changes.
+describe("canonicalFetch reaches an operator-configured local service, and only that", () => {
+  let server: Server;
+  let base: string;
+  let hits: string[];
+  beforeEach(async () => {
+    hits = [];
+    server = createServer((req, res) => {
+      hits.push(req.url ?? "");
+      if (req.url === "/bounce") { res.writeHead(302, { location: "http://127.0.0.1:1/elsewhere" }); res.end(); return; }
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("ok");
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  });
+  afterEach(async () => {
+    delete process.env.LAX_ELECTRON_CDP_PORT;
+    await new Promise<void>((r) => server.close(() => r()));
+  });
+
+  it("without the option the port is outside the loopback grant and is refused before any dial", async () => {
+    await expect(canonicalFetch(`${base}/health`, { timeoutMs: 2_000 })).rejects.toBeInstanceOf(EgressRedirectBlocked);
+    expect(hits).toEqual([]);
+  });
+
+  it("with the option naming that service, the call goes through", async () => {
+    const r = await canonicalFetch(`${base}/health`, { timeoutMs: 2_000, operatorLocalService: base });
+    expect(r.status).toBe(200);
+    expect(hits).toEqual(["/health"]);
+  });
+
+  it("the option covers that origin only: another loopback port is still refused", async () => {
+    await expect(canonicalFetch("http://127.0.0.1:1/health", { timeoutMs: 2_000, operatorLocalService: base })).rejects.toBeInstanceOf(EgressRedirectBlocked);
+  });
+
+  it("a redirect off the service is judged by the full policy", async () => {
+    await expect(canonicalFetch(`${base}/bounce`, { timeoutMs: 2_000, operatorLocalService: base })).rejects.toBeInstanceOf(EgressRedirectBlocked);
+    expect(hits).toEqual(["/bounce"]);
+  });
+
+  it("a reserved port (the in-app browser's debugging port) is never trusted, even when configured", async () => {
+    process.env.LAX_ELECTRON_CDP_PORT = new URL(base).port;
+    await expect(canonicalFetch(`${base}/health`, { timeoutMs: 2_000, operatorLocalService: base })).rejects.toBeInstanceOf(EgressRedirectBlocked);
+    expect(hits).toEqual([]);
   });
 });

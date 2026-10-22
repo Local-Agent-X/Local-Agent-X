@@ -11,6 +11,7 @@ import { tmpdir } from "node:os";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { htmlToText } from "../app-renderer/sanitize.js";
 import { wrapExternalContent } from "../sanitize.js";
+import { BROWSER_ACCEPT_LANGUAGE, BROWSER_USER_AGENT, canonicalFetch, EgressRedirectBlocked, egressBlockedResult } from "./web-egress.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -104,10 +105,15 @@ async function fetchTranscriptYtDlp(videoId: string): Promise<string | null> {
   return null;
 }
 
+// Every fetch below goes through canonicalFetch: the web-access policy on the
+// first hop (strict mode's allowlist), DNS pinning and the private-address
+// block at connect, and every redirect re-checked. The caption URL comes out of
+// the watch page's own JSON, so it is not trusted to name a YouTube host.
+
 /** Fetch transcript via direct caption URL (fallback) */
 async function fetchTranscriptDirect(captionUrl: string): Promise<string | null> {
   try {
-    const res = await fetch(captionUrl, { signal: AbortSignal.timeout(15_000) });
+    const res = await canonicalFetch(captionUrl, { timeoutMs: 15_000 });
     if (!res.ok) return null;
     const xml = await res.text();
     return xml.length > 0 ? parseTranscriptXml(xml) : null;
@@ -119,7 +125,7 @@ async function fetchTranscriptDirect(captionUrl: string): Promise<string | null>
 /** Fetch basic metadata via oEmbed */
 async function fetchOEmbed(videoId: string) {
   const url = `https://www.youtube.com/oembed?url=https://www.youtube.com/watch?v=${videoId}&format=json`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(10_000) });
+  const res = await canonicalFetch(url, { timeoutMs: 10_000 });
   if (!res.ok) return null;
   return await res.json() as { title: string; author_name: string; author_url: string };
 }
@@ -127,12 +133,9 @@ async function fetchOEmbed(videoId: string) {
 /** Fetch full metadata from the watch page */
 async function fetchPageData(videoId: string) {
   const url = `https://www.youtube.com/watch?v=${videoId}`;
-  const res = await fetch(url, {
-    headers: {
-      "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-      "Accept-Language": "en-US,en;q=0.9",
-    },
-    signal: AbortSignal.timeout(15_000),
+  const res = await canonicalFetch(url, {
+    headers: { "User-Agent": BROWSER_USER_AGENT, "Accept-Language": BROWSER_ACCEPT_LANGUAGE },
+    timeoutMs: 15_000,
   });
   if (!res.ok) return null;
   const html = await res.text();
@@ -190,14 +193,21 @@ export const youtubeAnalyzeTool: ToolDefinition = {
       return err(`Could not extract a YouTube video ID from: ${input}`);
     }
 
-    // Fetch metadata + transcript in parallel
+    // Fetch metadata + transcript in parallel. A refusal by web access is kept,
+    // so the user is offered the host to allow instead of "unavailable".
+    let blocked = null as EgressRedirectBlocked | null;
+    const keepBlock = (e: unknown): null => {
+      if (!blocked && e instanceof EgressRedirectBlocked && e.action) blocked = e;
+      return null;
+    };
     const [pageData, oembed, ytdlpTranscript] = await Promise.all([
-      fetchPageData(videoId).catch(() => null),
-      fetchOEmbed(videoId).catch(() => null),
+      fetchPageData(videoId).catch(keepBlock),
+      fetchOEmbed(videoId).catch(keepBlock),
       fetchTranscriptYtDlp(videoId).catch(() => null),
     ]);
 
     if (!pageData && !oembed) {
+      if (blocked) return egressBlockedResult(blocked, "Ask the user for the video's details");
       return err(`Failed to fetch video data for ${videoId}. The video may be private, age-restricted, or unavailable.`);
     }
 

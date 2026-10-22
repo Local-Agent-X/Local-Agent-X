@@ -9,6 +9,7 @@ import type { Protocol } from "../protocols/index.js";
 import { getLaxDir } from "../lax-data-dir.js";
 import type { ToolDefinition } from "../types.js";
 import { loadCustomProtocols, saveCustomProtocols } from "./builder.js";
+import { canonicalFetch } from "../tools/web-egress.js";
 
 const MARKETPLACE_REGISTRY_URL = "https://raw.githubusercontent.com/local-agent-x/protocol-marketplace/main/registry.json";
 const CACHE_PATH = join(getLaxDir(), "marketplace-cache.json");
@@ -50,7 +51,9 @@ export async function fetchRegistry(): Promise<MarketplaceEntry[]> {
   if (cache) return cache.entries;
 
   try {
-    const res = await fetch(MARKETPLACE_REGISTRY_URL);
+    // The hardened transport: web access (strict mode's allowlist), pinning, and
+    // the redirect checks every other off-box read gets.
+    const res = await canonicalFetch(MARKETPLACE_REGISTRY_URL, { timeoutMs: 15_000 });
     if (!res.ok) throw new Error(`Registry fetch failed: ${res.status}`);
     const entries = (await res.json()) as MarketplaceEntry[];
     saveCache({ entries, fetchedAt: Date.now() });

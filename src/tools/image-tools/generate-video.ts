@@ -244,9 +244,7 @@ export const generateVideoTool: ToolDefinition = {
 
     // Check if video server is running
     try {
-      const healthRes = await fetch(`${getVideoServerUrl()}/health`, {
-        signal: AbortSignal.timeout(2000),
-      });
+      const healthRes = await canonicalFetch(`${getVideoServerUrl()}/health`, { timeoutMs: 2000, operatorLocalService: getVideoServerUrl() });
       if (!healthRes.ok) throw new Error("not ok");
     } catch {
       if (!forced && !paidMediaApisAllowed()) return err(noFreeMediaMessage("video"));
@@ -258,11 +256,12 @@ export const generateVideoTool: ToolDefinition = {
     }
 
     try {
-      const res = await fetch(`${getVideoServerUrl()}/generate`, {
+      const res = await canonicalFetch(`${getVideoServerUrl()}/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt, num_frames: numFrames, steps }),
-        signal: AbortSignal.timeout(300_000), // 5 min timeout — video gen is slow
+        timeoutMs: 300_000, // 5 min — video gen is slow
+        operatorLocalService: getVideoServerUrl(),
       });
 
       if (!res.ok) {

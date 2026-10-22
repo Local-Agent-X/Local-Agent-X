@@ -27,6 +27,9 @@ vi.mock("../../settings.js", async (orig) => ({ ...(await orig<typeof import("..
 vi.mock("../web-egress.js", async (orig) => ({
   ...(await orig<typeof import("../web-egress.js")>()),
   canonicalFetch: vi.fn(async (url: string, opts: (typeof fetchCalls)[number]["opts"] = {}) => {
+    // The local image and video servers are configured on a closed port (CLOSED
+    // below): nothing listens there, so the call fails as a real dial would.
+    if (url.startsWith("http://127.0.0.1:9/")) throw new Error("connect ECONNREFUSED 127.0.0.1:9");
     fetchCalls.push({ url, opts });
     const body: unknown = url.includes("/videos/generations") ? { request_id: "r1" } : { data: [{ b64_json: PNG_B64 }] };
     return { ok: true, status: 200, json: async (): Promise<unknown> => body, text: async (): Promise<string> => "" };

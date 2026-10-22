@@ -212,9 +212,7 @@ export const generateImageTool: ToolDefinition = {
     const guidance = Number(args.guidance) || 7.5;
 
     try {
-      const healthRes = await fetch(`${getSDServerUrl()}/health`, {
-        signal: AbortSignal.timeout(2000),
-      });
+      const healthRes = await canonicalFetch(`${getSDServerUrl()}/health`, { timeoutMs: 2000, operatorLocalService: getSDServerUrl() });
       if (!healthRes.ok) throw new Error("not ok");
     } catch {
       if (!forced && !paidMediaApisAllowed()) return err(noFreeMediaMessage("image"));
@@ -226,11 +224,12 @@ export const generateImageTool: ToolDefinition = {
     }
 
     try {
-      const res = await fetch(`${getSDServerUrl()}/generate`, {
+      const res = await canonicalFetch(`${getSDServerUrl()}/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt, width, height, steps, guidance }),
-        signal: AbortSignal.timeout(120_000),
+        timeoutMs: 120_000,
+        operatorLocalService: getSDServerUrl(),
       });
 
       if (!res.ok) {

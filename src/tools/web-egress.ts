@@ -4,6 +4,7 @@ import { getInternalAgentToken } from "../rbac.js";
 import { USER_HINTS, type BlockAction, type ToolResult } from "../types.js";
 import { resolveAndPinHost, evaluateEgressForUrl } from "../security/layer/index.js";
 import { isLoopbackHost, LOOPBACK_HOSTNAMES } from "../security/layer/ip-classification.js";
+import { reservedLoopbackPorts } from "../security/layer/security-config.js";
 
 /** Browser-like identity for agent web fetches. Many commerce/price sites
  *  (PriceCharting, TCGplayer, eBay) reject a non-browser User-Agent with an
@@ -253,6 +254,26 @@ export interface CanonicalFetchOptions {
    *  recognized by this fetch). */
   method?: string;
   body?: string | FormData;
+  /** The base URL of a local service the OPERATOR configured for this tool
+   *  (config.json's image or video server). A request to that exact loopback
+   *  origin is not refused for being outside the agent's loopback grant: the
+   *  grant governs what the model may reach, and the model chose neither this
+   *  service nor its address. Set only from configuration, never from a
+   *  model's argument. A configured URL that is not loopback, a reserved port,
+   *  and every redirect hop get the full policy. */
+  operatorLocalService?: string;
+}
+
+/** Whether `url` is on the operator's configured local service (see
+ *  CanonicalFetchOptions.operatorLocalService). */
+function onOperatorLocalService(url: string, service: string | undefined): boolean {
+  if (!service) return false;
+  let target: URL;
+  let base: URL;
+  try { target = new URL(url); base = new URL(service); } catch { return false; }
+  const host = base.hostname.replace(/^\[/, "").replace(/\]$/, "").toLowerCase();
+  const port = base.port || (base.protocol === "https:" ? "443" : "80");
+  return target.origin === base.origin && isLoopbackHost(host) && !reservedLoopbackPorts().has(port);
 }
 
 /** Schemes a canonicalFetch is allowed to dial. A redirect that bounces to
@@ -320,7 +341,7 @@ export async function canonicalFetch(
   // dispatcher's connect.lookup never fires for a literal IP).
   assertHttpScheme(currentUrl);
   assertInitialEgressAllowed(currentUrl);
-  await assertLiteralIpEgressAllowed(currentUrl);
+  if (!onOperatorLocalService(currentUrl, opts.operatorLocalService)) await assertLiteralIpEgressAllowed(currentUrl);
   let r = await undiciFetch(currentUrl, fetchOpts);
 
   let redirects = 0;

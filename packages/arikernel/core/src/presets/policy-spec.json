@@ -28,7 +28,7 @@
 			"id": "deny-tainted-shell",
 			"name": "Deny shell with untrusted input",
 			"priority": 10,
-			"match": { "toolClass": "shell", "taintSources": ["web", "rag", "email"] },
+			"match": { "toolClass": "shell", "taintSources": ["web", "rag", "email", "credential"] },
 			"decision": "deny",
 			"reason": "Shell execution with untrusted input is forbidden"
 		},
@@ -220,7 +220,7 @@
 					"id": "deny-tainted-http-write",
 					"name": "Deny tainted outbound HTTP writes",
 					"priority": 40,
-					"match": { "toolClass": "http", "action": ["post", "put", "patch", "delete"], "taintSources": ["web", "rag", "email"] },
+					"match": { "toolClass": "http", "action": ["post", "put", "patch", "delete"], "taintSources": ["web", "rag", "email", "credential"] },
 					"decision": "deny",
 					"reason": "Outbound HTTP writes blocked while the session is tainted by web/rag/email content"
 				},
@@ -307,7 +307,7 @@
 					"match": {
 						"toolClass": "http",
 						"action": ["post", "put", "patch", "delete"],
-						"taintSources": ["web", "rag", "email"]
+						"taintSources": ["web", "rag", "email", "credential"]
 					},
 					"decision": "deny",
 					"reason": "Outbound HTTP writes with untrusted taint are forbidden"
@@ -361,7 +361,7 @@
 					"id": "deny-tainted-any-write",
 					"name": "Deny all tainted write actions",
 					"priority": 5,
-					"match": { "taintSources": ["web", "rag", "email"] },
+					"match": { "taintSources": ["web", "rag", "email", "credential"] },
 					"decision": "deny",
 					"reason": "All actions with untrusted taint are forbidden in strict mode"
 				},
@@ -526,7 +526,7 @@
 	"behavioralRules": {
 		"web_taint_sensitive_probe": {
 			"description": "Untrusted web taint followed by sensitive action",
-			"taintSources": ["web", "rag", "email"],
+			"taintSources": ["web", "rag", "email", "credential"],
 			"dangerousFollowups": ["sensitive_read_attempt", "shell_exec", "egress_attempt"]
 		},
 		"denied_capability_then_escalation": {
@@ -552,12 +552,12 @@
 		},
 		"tainted_database_write": {
 			"description": "Untrusted taint followed by database write/mutate action",
-			"taintSources": ["web", "rag", "email"],
+			"taintSources": ["web", "rag", "email", "credential"],
 			"dbWriteActions": ["exec", "write", "insert", "update", "delete", "mutate"]
 		},
 		"tainted_shell_with_data": {
 			"description": "Untrusted taint followed by shell command with long command string",
-			"taintSources": ["web", "rag", "email"],
+			"taintSources": ["web", "rag", "email", "credential"],
 			"shellDataCmdLength": 100
 		}
 	},
@@ -675,6 +675,7 @@
 			"web",
 			"rag",
 			"email",
+			"credential",
 			"retrieved-doc",
 			"user-provided",
 			"content-scan"

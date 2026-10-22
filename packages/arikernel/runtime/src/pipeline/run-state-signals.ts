@@ -1,4 +1,4 @@
-import type { ToolCall } from "@arikernel/core";
+import { type ToolCall, TAINTED_CONTENT_SOURCES } from "@arikernel/core";
 import { SAFE_GET_HEADERS, VALUE_INSPECTED_HEADERS } from "@arikernel/tool-executors";
 import type { RunStateTracker } from "../run-state.js";
 import { isSuspiciousGetExfil, pathDripEncodedBytes, suspiciousHeaderValue } from "../run-state.js";
@@ -10,9 +10,9 @@ function denied(ctx: PipelineContext, toolCall: ToolCall, why: string): never {
 }
 
 /** Taint sources that, like a sensitive read, warrant treating GETs as egress. */
-const EGRESS_TAINT_SOURCES: ReadonlySet<string> = new Set(["web", "rag", "email"]);
+const EGRESS_TAINT_SOURCES: ReadonlySet<string> = new Set(TAINTED_CONTENT_SOURCES);
 
-/** Whether the run carries web/rag/email taint (mirrors the behavioral-rule check). */
+/** Whether the run carries tainted-content taint (mirrors the behavioral-rule check). */
 function hasEgressTaint(runState: RunStateTracker): boolean {
 	if (!runState.tainted) return false;
 	for (const source of runState.taintSources) {

@@ -32,6 +32,7 @@ let UNTRUSTED_SOURCES: readonly string[] = [
 	"web",
 	"rag",
 	"email",
+	"credential",
 	"retrieved-doc",
 	"user-provided",
 	"content-scan",

@@ -24,8 +24,10 @@
  * value, plain or encoded). Nothing here re-derives that from event order.
  */
 
-import { isWriteAction } from "@arikernel/core";
+import { TAINTED_CONTENT_SOURCES, isWriteAction } from "@arikernel/core";
 import type { RuleDenial, RunStateTracker, SecurityEvent } from "./run-state.js";
+
+const TAINTED: ReadonlySet<string> = new Set(TAINTED_CONTENT_SOURCES);
 
 export interface BehavioralRuleMatch {
 	ruleId: string;
@@ -113,11 +115,11 @@ function checkWebTaintSensitiveProbe(
 		events,
 		(e) =>
 			e.type === "taint_observed" &&
-			e.taintSources?.some((s) => s === "web" || s === "rag" || s === "email") === true,
+			e.taintSources?.some((s) => TAINTED.has(s)) === true,
 	);
 	const hasTaintSticky =
 		state.tainted &&
-		[...state.taintSources].some((s) => s === "web" || s === "rag" || s === "email");
+		[...state.taintSources].some((s) => TAINTED.has(s));
 	if (!taintEvent && !hasTaintSticky) return null;
 
 	// If taint event is in window, look for dangerous follow-up after it
@@ -283,11 +285,11 @@ function checkTaintedDatabaseWrite(
 		events,
 		(e) =>
 			e.type === "taint_observed" &&
-			e.taintSources?.some((s) => s === "web" || s === "rag" || s === "email") === true,
+			e.taintSources?.some((s) => TAINTED.has(s)) === true,
 	);
 	const hasTaintSticky =
 		state.tainted &&
-		[...state.taintSources].some((s) => s === "web" || s === "rag" || s === "email");
+		[...state.taintSources].some((s) => TAINTED.has(s));
 	if (!taintEvent && !hasTaintSticky) return null;
 
 	const searchFromIdx = taintEvent ? events.indexOf(taintEvent) : -1;
@@ -322,11 +324,11 @@ function checkTaintedShellWithData(
 		events,
 		(e) =>
 			e.type === "taint_observed" &&
-			e.taintSources?.some((s) => s === "web" || s === "rag" || s === "email") === true,
+			e.taintSources?.some((s) => TAINTED.has(s)) === true,
 	);
 	const hasTaintSticky =
 		state.tainted &&
-		[...state.taintSources].some((s) => s === "web" || s === "rag" || s === "email");
+		[...state.taintSources].some((s) => TAINTED.has(s));
 	if (!taintEvent && !hasTaintSticky) return null;
 
 	const searchFromIdx = taintEvent ? events.indexOf(taintEvent) : -1;

@@ -10,6 +10,7 @@ export {
 	type TaintSource,
 	type TaintLabel,
 	TAINT_SOURCES,
+	TAINTED_CONTENT_SOURCES,
 } from "./taint.js";
 
 export type {

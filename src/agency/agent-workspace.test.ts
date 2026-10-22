@@ -1,5 +1,6 @@
 import { afterAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -83,7 +84,10 @@ describe("provisionAgentWorkspace — a spawned agent can run commands where it 
     const session = "agent-run-repo";
     expect(bash(sec, session).allowed).toBe(false);
 
-    const ws = provisionAgentWorkspace({ agentId: "ws-test-repo", runSessionId: session, security: sec, requiresWorktree: false, workDir: join(repo, "app") });
+    // The worktree lands under the shared system temp base, so a fixed id left
+    // there by a killed run would block every later run's `git worktree add`.
+    const agentId = `ws-test-repo-${randomBytes(4).toString("hex")}`;
+    const ws = provisionAgentWorkspace({ agentId, runSessionId: session, security: sec, requiresWorktree: false, workDir: join(repo, "app") });
     try {
       expect(ws.worktree).not.toBeNull();
       expect(ws.workRoot).toBe(join(ws.worktree!.path, "app"));
@@ -91,7 +95,7 @@ describe("provisionAgentWorkspace — a spawned agent can run commands where it 
       expect(bash(sec, session).allowed).toBe(true);
     } finally {
       releaseAgentWorkspace(ws, sec, session);
-      cleanupWorktree("ws-test-repo");
+      cleanupWorktree(agentId);
     }
     expect(sessionWorkRootOf(session)).toBeUndefined();
     expect(bash(sec, session).allowed).toBe(false);

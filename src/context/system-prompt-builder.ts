@@ -14,6 +14,7 @@ import { readAgentRulesSection } from "./agents-md-section.js";
 import { runtimeSection } from "./runtime-section.js";
 import { resolveWindowsShell } from "../tools/shell-env.js";
 import { workspaceRoot } from "../config.js";
+import { platformRoot } from "../platform-root.js";
 const require = createRequire(import.meta.url);
 
 /** Budget class (prompt-degradation.ts sheds tuning → navigation → facts; safety and
@@ -225,7 +226,7 @@ export function createSystemPromptBuilder(opts: {
   // Static (process-lifetime stable) so it caches with the base prompt.
   builder.addSection({
     id: "runtime-context", label: "Runtime", type: "static", policy: "required", priority: "safety",
-    build: () => runtimeSection(process.platform, process.platform === "win32" ? resolveWindowsShell().kind : null, workspaceRoot()),
+    build: () => runtimeSection(process.platform, process.platform === "win32" ? resolveWindowsShell().kind : null, workspaceRoot(), platformRoot()),
   });
 
   // The agent's and the user's names, in a section no budget can shed. The

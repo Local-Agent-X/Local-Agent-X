@@ -20,12 +20,17 @@ function describeShell(plat: NodeJS.Platform, winShell: WindowsShellKind | null)
   }
 }
 
-export function runtimeSection(plat: NodeJS.Platform, winShell: WindowsShellKind | null, workspace: string): string {
+// The install is named outright because it is NOT derivable from the
+// workspace (platform-root.ts): with the workspace at ~/Documents/Local Agent
+// X/workspace, an agent asked about its own code grepped "<workspace>/../src",
+// a folder that does not exist (session mobile-mvjn9t8k-e2p544, 2026-10-22).
+export function runtimeSection(plat: NodeJS.Platform, winShell: WindowsShellKind | null, workspace: string, install: string): string {
   const friendly = plat === "darwin" ? "macOS" : plat === "win32" ? "Windows" : plat === "linux" ? "Linux" : plat;
   return `## Runtime
 - Platform: ${friendly} (\`process.platform === "${plat}"\`)
 - Shell behind the \`bash\` tool: ${describeShell(plat, winShell)}. ${POSIX_VERBS}
 - Working directory: ${workspace} — the workspace. \`bash\` runs there and every relative path (\`notes/x.md\`) resolves there, so in a shell command never prefix a path with \`workspace/\`: that names a folder INSIDE the workspace and fails.
+- Your own install (the \`src/\`, \`config/\` and \`public/\` this prompt names): ${install}. It is not the workspace's parent folder.
 
 Reminder: file CRUD has native tools — \`read\`, \`write\`, \`edit\`, \`delete_file\`. Prefer those over shell commands. The shell-command guidance above is for the rare case where you actually need bash (process listing, git ops, build/test runs).`;
 }

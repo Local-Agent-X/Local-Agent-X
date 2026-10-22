@@ -264,12 +264,16 @@ Each phase ships alone, keeps the gate suite green, and runs both benchmarks.
    and voice providers, fixed-URL downloads, updates, account, phone and
    channels, the user's mail server, loopback, and inbound servers. It fails
    on an unregistered file, an entry whose file no longer touches the
-   network, and uses that differ from the declaration. Three entries are
-   gaps, registered with a why starting "GAP:" and not fixed here: the
-   connector proxy's upstream bodies are never judged at send, the in-app
-   browser's response-body re-fetch (`page.request.get`) bypasses the egress
-   worker, and the headless Chromium the app-build smoke gate and scenario
-   scorer load agent-built apps in has no egress routing.
+   network, and uses that differ from the declaration. It found three gaps,
+   all closed the same day with the same evidence-only judge: the connector
+   proxy judges an app's URL and body head before the dial (a browser page has
+   no session, so the evidence is a stored secret's value; the connector's own
+   secrets are cleared), the in-app browser's response-body re-fetch judges
+   every hop against the calling tool's session and follows redirects by hand
+   (`src/browser/cdp-network.ts`), and the headless Chromium of the app-build
+   smoke gate routes every request an agent-built app makes through the judge
+   before TLS, against the build's session (`src/auto-build/scenario-scorer/smoke.ts`).
+   A future gap is registered under GAPS until it is fixed.
 8. **Retire the duplicates.** Done 2026-10-22. The kernel's string
    exfiltration heuristics (query length and value size, base64/hex alphabet,
    path-segment entropy, the per-host encoded-path drip budget, encoded GET

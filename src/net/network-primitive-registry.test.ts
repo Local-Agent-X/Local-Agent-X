@@ -26,6 +26,9 @@ interface Registered {
 
 /** Where the egress judge runs: the code that is the boundary. */
 const ENFORCEMENT_POINTS: readonly Registered[] = [
+  { file: "src/routes/connector-proxy.ts", uses: ["outbound"], why: "forwards an agent-built app's requests to the connector's pinned upstream; the URL and body head are judged at send (assertSendAllowed) before the dial" },
+  { file: "src/browser/cdp-network.ts", uses: ["outbound"], why: "the response-body re-fetch: each hop passes the web-access policy and the send-time judge against the calling tool's session, redirects followed by hand" },
+  { file: "src/auto-build/scenario-scorer/smoke.ts", uses: ["browser"], why: "the smoke and scenario-scorer Chromium routes every request an agent-built app makes through the send-time judge, before TLS" },
   { file: "src/tools/web-egress.ts", uses: ["outbound"], why: "canonicalFetch, the in-process transport: destination policy and DNS pinning on every hop, and the send-time judge (assertSendAllowed) on the bytes" },
   { file: "src/net/egress-proxy-core.ts", uses: ["outbound", "server"], why: "the loopback proxy, the caged shell's and sandboxed MCP servers' only route out: judges each request, then dials" },
   { file: "src/net/shell-egress-bridge.ts", uses: ["outbound", "server"], why: "relays a Linux cage's namespace to the proxy's loopback port (and sanctioned local-service ports) over a unix socket" },
@@ -157,11 +160,7 @@ const SERVERS: readonly Registered[] = [
 
 /** Agent-reachable traffic that should answer to the egress judge and does
  *  not yet. Each is a finding, not a ruling. */
-const GAPS: readonly Registered[] = [
-  { file: "src/routes/connector-proxy.ts", uses: ["outbound"], why: "GAP: forwards an agent-built app's requests to the connector's upstream (connector_create takes it from the model); destination-checked and pinned, but the bodies are never judged at send" },
-  { file: "src/browser/cdp-network.ts", uses: ["outbound"], why: "GAP: the response-body re-fetch sends page.request.get(url) for a model-chosen URL with the page's cookies; it passes the web-access policy but bypasses the browser egress worker, so the URL is not judged at send" },
-  { file: "src/auto-build/scenario-scorer/smoke.ts", uses: ["browser"], why: "GAP: the smoke and scenario-scorer Chromium loads agent-built apps with no egress routing, so the app's own requests leave unjudged" },
-];
+const GAPS: readonly Registered[] = [];
 
 const SECTIONS: Record<string, readonly Registered[]> = {
   ENFORCEMENT_POINTS, MODEL_PROVIDERS, VOICE_PROVIDERS, DOWNLOADS, UPDATES,

@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1840 non-test source files · 94 oversized · 240 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1841 non-test source files · 94 oversized · 240 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -55,7 +55,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/cognition/` | 14 | 35 | XL | 1 |
 | `src/cron/` | 14 | 13 | L |  |
 | `src/inbox/` | 14 | 5 | M |  |
-| `src/net/` | 14 | 10 | M |  |
+| `src/net/` | 14 | 11 | L |  |
 | `src/voice/` | 14 | 74 | XL | 1 |
 | `src/self-edit/` | 13 | 19 | L | 2 |
 | `src/ari-kernel/` | 12 | 12 | M |  |

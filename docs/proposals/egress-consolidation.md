@@ -248,6 +248,28 @@ Each phase ships alone, keeps the gate suite green, and runs both benchmarks.
    client). Each registered exception carries its reason. With this test,
    "everything goes through the judge" is enforced by the build instead of by
    review.
+   Done 2026-10-22. `src/net/network-primitives.ts` reads every non-test file
+   under `src/` with the compiler's syntax tree and reports what it does with
+   the network: `outbound` (dials), `server` (listens) or `browser` (loads
+   the browser engine). It sees static, dynamic and `createRequire` loads of
+   the socket modules and of every network client in `dependencies` (undici,
+   ws, nodemailer, imapflow, openai, baileys, msedge-tts, werift, kokoro-js,
+   playwright and its request context), and the global `fetch`, `WebSocket`
+   and `EventSource` where no local binding shadows them; a type-only import
+   or a script inside a string is not a use. `dns` is not scanned (a lookup
+   carries a hostname only; DNS is a side channel, below).
+   `src/net/network-primitive-registry.test.ts`, run by `npm run build` as
+   `check:network-primitives`, registers 97 files, each with its uses and why,
+   grouped by where the traffic goes: the enforcement points themselves, model
+   and voice providers, fixed-URL downloads, updates, account, phone and
+   channels, the user's mail server, loopback, and inbound servers. It fails
+   on an unregistered file, an entry whose file no longer touches the
+   network, and uses that differ from the declaration. Three entries are
+   gaps, registered with a why starting "GAP:" and not fixed here: the
+   connector proxy's upstream bodies are never judged at send, the in-app
+   browser's response-body re-fetch (`page.request.get`) bypasses the egress
+   worker, and the headless Chromium the app-build smoke gate and scenario
+   scorer load agent-built apps in has no egress routing.
 8. **Retire the duplicates.** Done 2026-10-22. The kernel's string
    exfiltration heuristics (query length and value size, base64/hex alphabet,
    path-segment entropy, the per-host encoded-path drip budget, encoded GET

@@ -33,6 +33,7 @@ const fits: { [T in PhoneReads]: Fits<T> } = {
   approval_timeout: true,
   inject_queued: true,
   inject_consumed: true,
+  op_heartbeat: true,
 };
 
 type Same<A, B> = [A] extends [B] ? ([B] extends [A] ? true : false) : false;

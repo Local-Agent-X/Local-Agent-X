@@ -170,12 +170,25 @@ Each phase ships alone, keeps the gate suite green, and runs both benchmarks.
    until phase 3 gives it a second, send-time consumer; the browser's
    first-party exemption stays with the browser, as a destination rule.
 2. **Close G2 by moving every direct caller onto the in-process transport.**
-   Start with `src/tools/youtube-tool.ts`, the only one with no destination
-   check at all. Then the local runtime calls in the image and video tools
-   (loopback, through the transport's loopback branch), the connector proxy's
-   local branch, and `src/protocols/marketplace.ts`. Then fold the inline
-   transports in `src/tools/http-request-transport.ts` and `src/tools/web-fetch.ts`
-   into `canonicalFetch`, so one transport remains.
+   Done 2026-10-22. `src/tools/youtube-tool.ts` (watch page, oEmbed, the
+   page's caption URL), the protocol registry in `src/protocols/marketplace.ts`,
+   and the local image and video servers go through `canonicalFetch`. Those
+   servers are operator-configured on loopback ports outside the agent's
+   loopback grant, so the transport takes `operatorLocalService`: the tool names
+   its configured base URL and that exact loopback origin is not refused for
+   being outside the grant, while the grant itself is unchanged. The inline
+   redirect loops in `http_request` and `web_fetch` are folded into the
+   transport, which now carries a `beforeCrossOriginRedirect` hook (a bound
+   secret not approved at the new origin stops the hop) and turns a 303 into a
+   GET. One transport remains.
+
+   Found on the way: the connector proxy forwarded a local upstream with a
+   plain fetch and no loopback check, and `connector_create` takes its upstream
+   from the model, so an agent-built app could reach any loopback port, the
+   in-app browser's debugging port included. A local upstream now answers to
+   the same loopback grant as every other agent path. The connector proxy keeps
+   its own fetch (it streams arbitrary methods and bodies); it is on the phase 7
+   exception list with that reason.
 3. **Judge at send in the transport (closes G1 for HTTP).** `canonicalFetch`
    calls the judge on the final URL, headers and body, multipart file parts
    included. Bodies over the scan cap (`SECRET_SCAN_CAP` in

@@ -100,3 +100,70 @@ describe("canonicalFetch reaches an operator-configured local service, and only 
     expect(hits).toEqual([]);
   });
 });
+
+// The shared transport carries every redirect rule http_request and web_fetch
+// used to implement by hand: a 303 continues as a GET without the body,
+// credential headers do not cross origins, the caller can stop a cross-origin
+// hop before anything reaches it, and the response names the URL it came from.
+describe("canonicalFetch redirects", () => {
+  type Seen = { method: string; auth?: string; body: string };
+  let a: Server, b: Server;
+  let aBase: string, bBase: string;
+  let seenA: Seen[], seenB: Seen[];
+  const listen = async (seen: Seen[], handle: (url: string, res: import("node:http").ServerResponse) => boolean) => {
+    const srv = createServer((req, res) => {
+      let body = "";
+      req.on("data", (c) => { body += c; });
+      req.on("end", () => {
+        seen.push({ method: req.method ?? "", auth: req.headers.authorization, body });
+        if (!handle(req.url ?? "", res)) { res.writeHead(200); res.end("final"); }
+      });
+    });
+    await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+    return srv;
+  };
+  beforeEach(async () => {
+    seenA = []; seenB = [];
+    b = await listen(seenB, () => false);
+    bBase = `http://127.0.0.1:${(b.address() as AddressInfo).port}`;
+    a = await listen(seenA, (url, res) => {
+      const to = url === "/see-other" ? [303, `${bBase}/landed`] : url === "/same" ? [302, "/final"] : url === "/cross" ? [302, `${bBase}/landed`] : null;
+      if (!to) return false;
+      res.writeHead(to[0] as number, { location: to[1] as string });
+      res.end();
+      return true;
+    });
+    aBase = `http://127.0.0.1:${(a.address() as AddressInfo).port}`;
+    // Both are local services the user registered, so the loopback grant admits them.
+    writeFileSync(join(dir, "security.json"), JSON.stringify({ localServicePorts: [new URL(aBase).port, new URL(bBase).port].map(Number) }));
+  });
+  afterEach(async () => {
+    await new Promise<void>((r) => a.close(() => r()));
+    await new Promise<void>((r) => b.close(() => r()));
+  });
+
+  it("a 303 continues as a GET without the body", async () => {
+    const r = await canonicalFetch(`${aBase}/see-other`, { method: "POST", body: "payload", timeoutMs: 3_000 });
+    expect(r.status).toBe(200);
+    expect(seenA).toEqual([{ method: "POST", auth: undefined, body: "payload" }]);
+    expect(seenB).toEqual([{ method: "GET", auth: undefined, body: "" }]);
+  });
+
+  it("a credential header stays on its origin: kept on a same-origin hop, dropped on a cross-origin one", async () => {
+    await canonicalFetch(`${aBase}/same`, { headers: { Authorization: "Bearer t" }, timeoutMs: 3_000 });
+    expect(seenA.map((s) => s.auth)).toEqual(["Bearer t", "Bearer t"]);
+    await canonicalFetch(`${aBase}/cross`, { headers: { Authorization: "Bearer t" }, timeoutMs: 3_000 });
+    expect(seenB.map((s) => s.auth)).toEqual([undefined]);
+  });
+
+  it("the caller can stop a cross-origin hop before anything reaches the new origin", async () => {
+    const stop = new Error("not approved there");
+    await expect(canonicalFetch(`${aBase}/cross`, { timeoutMs: 3_000, beforeCrossOriginRedirect: () => { throw stop; } })).rejects.toBe(stop);
+    expect(seenB).toEqual([]);
+  });
+
+  it("the response names the URL it finally came from", async () => {
+    expect((await canonicalFetch(`${aBase}/cross`, { timeoutMs: 3_000 })).url).toBe(`${bBase}/landed`);
+    expect((await canonicalFetch(`${aBase}/same`, { timeoutMs: 3_000 })).url).toBe(`${aBase}/final`);
+  });
+});

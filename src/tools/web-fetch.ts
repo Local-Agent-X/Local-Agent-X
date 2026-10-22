@@ -1,4 +1,3 @@
-import { fetch as undiciFetch } from "undici";
 import type { ToolDefinition } from "../types.js";
 import { wrapExternalContent } from "../sanitize.js";
 import { findInBody } from "./paginate-body.js";
@@ -9,10 +8,8 @@ import { formatMissingPageLeads, gatherMissingPageLeads, isMissingPageStatus } f
 import { withholdSecretValues, secretsMaskedNote, isSecretEndpointUrl } from "../data-lineage/index.js";
 import {
   EgressRedirectBlocked,
-  assertRedirectEgressAllowed,
-  assertLiteralIpEgressAllowed,
+  canonicalFetch,
   selfCallAuthHeader,
-  createPinningDispatcher,
   BROWSER_USER_AGENT,
   BROWSER_ACCEPT_LANGUAGE,
 } from "./web-egress.js";
@@ -60,59 +57,28 @@ export const webFetchTool: ToolDefinition = {
     const url = String(args.url);
     const startMs = Date.now();
 
-    // Combine the turn's cancellation signal (from tool-runner, so a user STOP
-    // aborts the in-flight fetch) with a fresh per-hop wall-clock ceiling.
-    // AbortSignal.any fires on whichever trips first — including an already-
-    // aborted incoming signal, which aborts immediately.
-    const hopSignal = () =>
-      signal ? AbortSignal.any([signal, AbortSignal.timeout(30_000)]) : AbortSignal.timeout(30_000);
-
-    const dispatcher = createPinningDispatcher();
     try {
-      let currentUrl = url;
-      // Loopback self-call auth (least-privilege internal token). Dropped on any
-      // cross-origin redirect so the token never leaves this server.
-      let selfAuth = await selfCallAuthHeader(url);
-      const doFetch = async () => {
-        // Pre-connect literal-IP SSRF check (undici's connect.lookup, where the
-        // pinning dispatcher validates, never fires for a literal IP).
-        await assertLiteralIpEgressAllowed(currentUrl);
-        let r = await undiciFetch(currentUrl, {
-          headers: { ...FETCH_HEADERS, ...selfAuth },
-          signal: hopSignal(),
-          redirect: "manual",
-          dispatcher,
-        });
-        let redirects = 0;
-        while (r.status >= 300 && r.status < 400 && r.headers.get("location") && redirects < 5) {
-          const location = new URL(r.headers.get("location")!, currentUrl).toString();
-          // Re-check the egress policy on a cross-host redirect: the pre-dispatch
-          // gate only validated the initial URL, so an allowlisted host could
-          // 302 to a non-allowlisted host in strict mode. Fail closed.
-          assertRedirectEgressAllowed(currentUrl, location);
-          // Literal-IP SSRF on every hop, same-host included (a 302 to a literal
-          // private/metadata/NAT64/6to4 IP bypasses the pinning dispatcher).
-          await assertLiteralIpEgressAllowed(location);
-          if (selfAuth && new URL(currentUrl).origin !== new URL(location).origin) selfAuth = null;
-          currentUrl = location;
-          r = await undiciFetch(currentUrl, {
-            headers: { ...FETCH_HEADERS, ...selfAuth },
-            signal: hopSignal(),
-            redirect: "manual",
-            dispatcher,
-          });
-          redirects++;
-        }
-        return r;
-      };
-
-      const res = await doFetch();
+      // Loopback self-call auth (least-privilege internal token). The shared
+      // transport strips it on any cross-origin redirect, so the token never
+      // leaves this server; it also re-checks the policy and the literal-IP
+      // guard on every hop. The chain's ceiling sits under the tool's own
+      // timeout, so a slow chain returns this tool's error instead of being
+      // abandoned; the turn's cancellation signal aborts it too.
+      const selfAuth = await selfCallAuthHeader(url);
+      const res = await canonicalFetch(url, {
+        headers: { ...FETCH_HEADERS, ...selfAuth },
+        timeoutMs: 55_000,
+        ...(signal ? { signal } : {}),
+      });
+      const currentUrl = res.url || url;
+      // Still this server's own page: a self call that never left its origin.
+      const stillSelf = selfAuth !== null && new URL(currentUrl).origin === new URL(url).origin;
 
       const durationMs = Date.now() - startMs;
       if (!res.ok && !(res.status >= 300 && res.status < 400)) {
         // A missing page usually moved: hand back the site's own links toward
         // its replacement instead of a generic "search the web".
-        if (isMissingPageStatus(res.status) && !selfAuth) {
+        if (isMissingPageStatus(res.status) && !stillSelf) {
           const leads = formatMissingPageLeads(await gatherMissingPageLeads(currentUrl, await res.text().catch(() => null)));
           if (leads) {
             return err(
@@ -206,8 +172,6 @@ export const webFetchTool: ToolDefinition = {
         return err(e.message, { url, blocked_url: e.blockedUrl, duration_ms: Date.now() - startMs });
       }
       return err(`Fetch failed: ${(e as Error).message}`, { url, duration_ms: Date.now() - startMs });
-    } finally {
-      await dispatcher.close().catch(() => {});
     }
   },
 };

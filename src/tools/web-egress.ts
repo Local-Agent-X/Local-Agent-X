@@ -262,6 +262,10 @@ export interface CanonicalFetchOptions {
    *  model's argument. A configured URL that is not loopback, a reserved port,
    *  and every redirect hop get the full policy. */
   operatorLocalService?: string;
+  /** Called with the target before a redirect to another origin is followed;
+   *  throw to stop there, so nothing is sent to that origin (http_request: a
+   *  secret the request carries is not approved at the new origin). */
+  beforeCrossOriginRedirect?: (location: string) => void;
 }
 
 /** Whether `url` is on the operator's configured local service (see
@@ -354,11 +358,18 @@ export async function canonicalFetch(
     assertRedirectEgressAllowed(currentUrl, location);
     await assertLiteralIpEgressAllowed(location);
     // A provider's bearer (an image API key, a subscription token) is for the
-    // origin it was sent to: a hop to another origin goes without it.
+    // origin it was sent to: a hop to another origin goes without it, and the
+    // caller may refuse the hop outright first.
     if (new URL(location).origin !== new URL(currentUrl).origin) {
+      opts.beforeCrossOriginRedirect?.(location);
       fetchOpts.headers = Object.fromEntries(
         Object.entries(fetchOpts.headers as Record<string, string>).filter(([name]) => !isCredentialHeader(name)),
       );
+    }
+    // 303 See Other: the next hop is a GET, without the body.
+    if (r.status === 303) {
+      fetchOpts.method = "GET";
+      fetchOpts.body = undefined;
     }
     currentUrl = location;
     r = await undiciFetch(currentUrl, fetchOpts);

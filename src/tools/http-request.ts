@@ -1,4 +1,3 @@
-import type { RequestInit as UndiciRequestInit } from "undici";
 import type { ToolDefinition } from "../types.js";
 import { wrapExternalContent } from "../sanitize.js";
 import { findInBody } from "./paginate-body.js";
@@ -11,10 +10,10 @@ import { checkOutboundRequest } from "./http-egress-guard.js";
 import { vouchedFor } from "../browser/site-provenance.js";
 import { formatMissingPageLeads, gatherMissingPageLeads, isMissingPageStatus } from "./missing-page-leads.js";
 import { withholdSecretValues, secretsMaskedNote, isSecretEndpointUrl } from "../data-lineage/index.js";
-import { EgressRedirectBlocked, createPinningDispatcher } from "./web-egress.js";
+import { EgressRedirectBlocked, canonicalFetch } from "./web-egress.js";
 import { sessionIdOf } from "../tool-execution/internal-args.js";
 import { paidMediaApisAllowed, paidMediaEndpointKind, paidMediaOffMessage } from "./image-tools/paid-media.js";
-import { SecretRedirectStopped, fetchFollowingRedirects, startingHeaders } from "./http-request-transport.js";
+import { SecretRedirectStopped, startingHeaders } from "./http-request-transport.js";
 import { saveResponseBody } from "./http-download.js";
 import { resolveAgentPath } from "../workspace/paths.js";
 
@@ -135,31 +134,29 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
         headers["Idempotency-Key"] = String(args.idempotency_key);
       }
 
-      // Combine the turn's cancellation signal (from tool-runner, so a user
-      // STOP aborts the in-flight request) with the self-bound wall-clock
-      // ceiling. AbortSignal.any fires on whichever trips first — including an
-      // already-aborted incoming signal, which aborts immediately.
-      const httpTimeout = AbortSignal.timeout(timeout);
-      const fetchSignal = signal ? AbortSignal.any([signal, httpTimeout]) : httpTimeout;
-
-      const dispatcher = createPinningDispatcher();
-      const fetchOpts: UndiciRequestInit = {
-        method,
-        headers,
-        signal: fetchSignal,
-        redirect: "manual",
-        dispatcher,
-      };
-
-      if (bodyStr && method !== "GET" && method !== "HEAD") {
-        fetchOpts.body = bodyStr;
-        if (!headers["Content-Type"] && !headers["content-type"]) {
-          headers["Content-Type"] = "application/json";
-        }
+      const sendsBody = Boolean(bodyStr) && method !== "GET" && method !== "HEAD";
+      if (sendsBody && !headers["Content-Type"] && !headers["content-type"]) {
+        headers["Content-Type"] = "application/json";
       }
 
       try {
-        const { res, url: currentUrl } = await fetchFollowingRedirects(url, fetchOpts, headers, method, unapprovedAt);
+        // The one hardened transport (web-egress.ts canonicalFetch): the policy
+        // and the literal-IP guard on every hop, credential headers stripped
+        // across origins, 303 as a GET. The turn's cancellation signal and the
+        // self-bound ceiling both apply. A redirect to an origin where a bound
+        // secret is not approved is never sent.
+        const res = await canonicalFetch(url, {
+          method,
+          headers,
+          ...(sendsBody ? { body: bodyStr } : {}),
+          timeoutMs: timeout,
+          ...(signal ? { signal } : {}),
+          beforeCrossOriginRedirect: (location) => {
+            const unapproved = unapprovedAt(location);
+            if (unapproved.length > 0) throw new SecretRedirectStopped(location, unapproved);
+          },
+        });
+        const currentUrl = res.url || url;
 
         const statusLine = `${res.status} ${res.statusText}`;
 
@@ -183,7 +180,7 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
         if (saveTo && res.ok) {
           // Resolved as the pre-dispatch file-access gate resolved it (pathArgs).
           const path = resolveAgentPath(saveTo, sessionIdOf(args));
-          const bytes = await saveResponseBody(res, path, fetchSignal);
+          const bytes = await saveResponseBody(res, path, signal);
           const type = res.headers.get("content-type");
           return ok(`HTTP ${statusLine}\n\nSaved ${bytes} bytes${type ? ` (${type})` : ""} to ${path}.${droppedNote}`, {
             url: currentUrl, method, status: res.status, duration_ms: durationMs, bytes, saved_to: path, ...droppedMeta,
@@ -299,8 +296,6 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
           duration_ms: Date.now() - startMs,
           ...droppedMeta,
         });
-      } finally {
-        await dispatcher.close().catch(() => {});
       }
     },
   };

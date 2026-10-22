@@ -94,7 +94,7 @@ src/tool-execution/require-approval.ts#requireApprovalPhase 186
 src/tools/app-tools/app-template.ts#renderStarterHtml 119
 src/tools/build-app.ts#buildAppTool.execute 131
 src/tools/email-mutate-tools.ts#withSession:callback 111
-src/tools/http-request.ts#tool.execute 181
+src/tools/http-request.ts#tool.execute 176
 src/tools/image-tools/generate-video.ts#generateViaXaiVideo 109
 src/tools/project-tools.ts#createProjectTools 110
 src/tools/read-imports.ts#buildImportAppendix 108

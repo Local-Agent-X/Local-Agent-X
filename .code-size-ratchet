@@ -39,7 +39,7 @@ src/canonical-loop/process-relay-journal.ts 376
 src/canonical-loop/runtime-failover.ts 379
 src/canonical-loop/session-bridge-observer.ts#recordCanonicalEventWithSink 162
 src/canonical-loop/turn-loop/decide-outcome.ts#decideTurnOutcome 112
-src/canonical-loop/worker.ts#drive 190
+src/canonical-loop/worker.ts#drive 184
 src/cognition/cross-session-learning/service.ts#CrossSessionLearningService.reconcile 152
 src/config.ts#loadConfig 133
 src/context/system-prompt-builder.ts#createSystemPromptBuilder 132

@@ -1,4 +1,5 @@
 export { Firewall, createFirewall } from "./firewall.js";
+export type { Judgement } from "./firewall/execution.js";
 export type { FirewallOptions, SecurityMode } from "./config.js";
 export type { FirewallHooks } from "./hooks.js";
 export { CapabilityIssuer, setUntrustedSources, getUntrustedSources } from "./issuer.js";

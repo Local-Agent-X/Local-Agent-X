@@ -25,7 +25,7 @@ import {
 	quarantineExternal,
 	revokeDelegationsFromPrincipal,
 } from "./firewall/delegation.js";
-import { execute as executeRequest } from "./firewall/execution.js";
+import { type Judgement, execute as executeRequest, judge as judgeRequest } from "./firewall/execution.js";
 import { type RequestOptions, requestCapabilityLocal } from "./firewall/issuance.js";
 import {
 	type Observation,
@@ -87,6 +87,12 @@ export class Firewall {
 
 	async execute(request: ToolCallRequest): Promise<ToolResult> {
 		return executeRequest({ pipeline: this.pipeline }, request);
+	}
+
+	/** Run a call through the pipeline and return its verdict: a refusal is a
+	 *  value, not an exception. Only an engine fault throws. */
+	async judge(request: ToolCallRequest): Promise<Judgement> {
+		return judgeRequest({ pipeline: this.pipeline }, request);
 	}
 
 	/**

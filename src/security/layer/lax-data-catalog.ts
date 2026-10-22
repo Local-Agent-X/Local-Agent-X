@@ -130,6 +130,9 @@ export const LAX_DATA_CATALOG: readonly LaxDataEntry[] = [
     "run-traces", "sync-state", "telemetry", "tool-rag-cache.json", "tool-stats.json", "usage-log.json", "user-notices.json",
     "voice-timeline"),
   ...at("card", RUNNING, "run", "cr", "server.pid", ".doctor-check", ".startup-test-probe"),
+  // tools/read-state-store.ts: an entry here lets an edit through the
+  // stale-read guard without a re-read, so a forged one would skip it.
+  ...at("card", "records which files each chat has read, and lets the agent edit them without reading them again", "read-state"),
 
   // The agent's working data: stored, served, shown or played, never acted on.
   ...at("data", "the agent's workspace, where it keeps one inside the data folder: its everyday write zone", "workspace"),

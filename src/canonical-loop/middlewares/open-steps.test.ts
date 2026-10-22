@@ -207,6 +207,13 @@ describe("interactive build plan-seed (reactive, afterModelCall)", () => {
     const res = await fire(ictx({ toolNames: new Set(["write"]) }));
     expect(res.kind).toBe("continue");
   });
+
+  // chat-mvfaq00w, 2026-10-21: three steps created and completed, then
+  // "no plan on record", and the model repeated its whole report.
+  it("does not fire when this op laid out a plan and finished it — no open steps is how a done plan looks", async () => {
+    const res = await fire(ictx({ toolsCalledThisOp: new Set(["write", "task_create", "task_update"]) }));
+    expect(res.kind).toBe("continue");
+  });
 });
 
 describe("openStepsTerminationWarning", () => {

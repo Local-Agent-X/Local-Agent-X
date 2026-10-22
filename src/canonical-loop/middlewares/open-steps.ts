@@ -146,6 +146,10 @@ function interactiveBuildPlanSeed(ctx: CanonicalLoopContext): CanonicalMiddlewar
   // pdf / http_request, which is why mid-turn-stale stopped reading it.
   const wroteFiles = [...ctx.committingToolsThisOp].some((t) => hasCapability(t, "workspace-write"));
   if (!wroteFiles) return { kind: "continue" };
+  // A plan that was laid out and finished is a plan on record: no open steps
+  // is how a completed list looks too. Told "no plan on record" after three
+  // created-and-completed tasks, a model repeated its whole report (2026-10-21).
+  if ([...ctx.toolsCalledThisOp].some(isLedgerTool)) return { kind: "continue" };
 
   const flag = getMiddlewareState<SeedFlag>(ctx.op.id, "interactive-build-seed", () => ({ fired: false }));
   if (flag.fired) return { kind: "continue" };

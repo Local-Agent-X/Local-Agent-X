@@ -67,7 +67,6 @@ src/routes/bridges/cron.ts#handleCronRoutes 211
 src/routes/bridges/protocols.ts#handleProtocolRoutes 233
 src/routes/bridges/voice-setup/handlers.ts#handleVoiceSetupRoutes 129
 src/routes/chat/run-chat-turn/orchestrator.ts#runChatTurn 154
-src/routes/connector-proxy.ts#handleConnectorProxyRoutes 107
 src/routes/memory.ts#handleMemoryRoutes 263
 src/routes/security.ts#handleSecurityRoutes 163
 src/routes/sessions.ts#handleSessionRoutes 175

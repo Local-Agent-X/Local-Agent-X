@@ -41,6 +41,8 @@ import { type SignedAuthConfig, validateSignedAuth, signRequest } from "./connec
 import { wakeDevServer } from "../tools/dev-server-access.js";
 import { createPinningDispatcher, assertLiteralIpEgressAllowed } from "../tools/web-egress.js";
 import { isLocalOnlyMode, isLoopbackUrl, LOCAL_ONLY_BLOCK_MESSAGE } from "../local-only-policy.js";
+import { EgressPayloadBlocked, assertSendAllowed } from "../net/egress-send.js";
+import { REQUEST_BODY_HEAD_CAP } from "../net/request-body-head.js";
 
 const logger = createLogger("routes.connector-proxy");
 const DEFAULT_TIMEOUT_MS = 20_000;
@@ -253,6 +255,60 @@ export async function forwardWithTimeout(
   }
 }
 
+/** Sign a request for a "signed" connector: the signature's headers are added
+ *  to `headers`, and the forwarded search string comes back (a signature may
+ *  append a query param). A missing vault secret or a signing failure comes
+ *  back as the status and error to answer with. */
+function signForUpstream(
+  name: string, manifest: ConnectorManifest, cfg: SignedAuthConfig, method: string,
+  upstreamPath: string, upstreamSearch: string, body: Buffer | undefined, headers: Record<string, string>,
+): { search: string } | { status: number; error: string } {
+  const store = getSecretsStoreSingleton();
+  const keyMaterial = store?.get(cfg.secret);
+  if (!keyMaterial) return { status: 401, error: `Vault secret "${cfg.secret}" is not configured — add it before using connector "${name}".` };
+  const vault: Record<string, string> = {};
+  for (const tmpl of Object.values(cfg.headers ?? {})) {
+    for (const ref of tmpl.matchAll(/\{vault:([^}]+)\}/g)) {
+      const nm = ref[1];
+      if (vault[nm] !== undefined) continue;
+      const v = store?.get(nm);
+      if (!v) return { status: 401, error: `Vault secret "${nm}" required by connector "${name}" is not configured.` };
+      vault[nm] = v;
+    }
+  }
+  try {
+    const signed = signRequest({
+      config: cfg, keyMaterial, vault,
+      method, path: upstreamPath, query: upstreamSearch.replace(/^\?/, ""),
+      host: new URL(manifest.upstream).hostname, body,
+      now: new Date(), nonce: randomUUID(),
+    });
+    Object.assign(headers, signed.headers);
+    if (!signed.queryAppend) return { search: upstreamSearch };
+    const sep = upstreamSearch ? "&" : "?";
+    return { search: `${upstreamSearch}${sep}${encodeURIComponent(signed.queryAppend.name)}=${encodeURIComponent(signed.queryAppend.value)}` };
+  } catch (e) {
+    return { status: 500, error: `Connector "${name}" signing failed: ${safeErrorMessage(e)}` };
+  }
+}
+
+/** What an app sends through a connector is judged before it leaves
+ *  (src/net/egress-send.ts): the refusal's message, or null. A browser page
+ *  has no session, so the evidence is a stored secret's value; the
+ *  connector's own secrets ride in headers and signatures by design and are
+ *  cleared to go. */
+async function sendRefusalFor(manifest: ConnectorManifest, upstreamUrl: string, body: Buffer | undefined): Promise<string | null> {
+  const store = getSecretsStoreSingleton();
+  const ownSecrets = referencedSecrets(manifest.auth).map((n) => store?.get(n) ?? "");
+  try {
+    await assertSendAllowed(upstreamUrl, body?.subarray(0, REQUEST_BODY_HEAD_CAP).toString("utf8"), ownSecrets);
+    return null;
+  } catch (e) {
+    if (e instanceof EgressPayloadBlocked) return e.message;
+    throw e;
+  }
+}
+
 export const handleConnectorProxyRoutes: RouteHandler = async (method, url, req, res) => {
   const json = (s: number, d: unknown) => jsonResponse(res, s, d, req);
 
@@ -337,41 +393,18 @@ export const handleConnectorProxyRoutes: RouteHandler = async (method, url, req,
   // forwarded search string is mutable from here. See connector-signing.ts.
   let upstreamSearch = url.search || "";
   if (manifest.auth.type === "signed") {
-    const cfg = manifest.auth;
-    const store = getSecretsStoreSingleton();
-    const keyMaterial = store?.get(cfg.secret);
-    if (!keyMaterial) { json(401, { error: `Vault secret "${cfg.secret}" is not configured — add it before using connector "${name}".` }); return true; }
-    const vault: Record<string, string> = {};
-    for (const tmpl of Object.values(cfg.headers ?? {})) {
-      for (const ref of tmpl.matchAll(/\{vault:([^}]+)\}/g)) {
-        const nm = ref[1];
-        if (vault[nm] !== undefined) continue;
-        const v = store?.get(nm);
-        if (!v) { json(401, { error: `Vault secret "${nm}" required by connector "${name}" is not configured.` }); return true; }
-        vault[nm] = v;
-      }
-    }
-    try {
-      const signed = signRequest({
-        config: cfg, keyMaterial, vault,
-        method, path: upstreamPath, query: upstreamSearch.replace(/^\?/, ""),
-        host: new URL(manifest.upstream).hostname, body,
-        now: new Date(), nonce: randomUUID(),
-      });
-      Object.assign(headers, signed.headers);
-      if (signed.queryAppend) {
-        const sep = upstreamSearch ? "&" : "?";
-        upstreamSearch += `${sep}${encodeURIComponent(signed.queryAppend.name)}=${encodeURIComponent(signed.queryAppend.value)}`;
-      }
-    } catch (e) {
-      json(500, { error: `Connector "${name}" signing failed: ${safeErrorMessage(e)}` });
-      return true;
-    }
+    const signed = signForUpstream(name, manifest, manifest.auth, method, upstreamPath, upstreamSearch, body, headers);
+    if ("error" in signed) { json(signed.status, { error: signed.error }); return true; }
+    upstreamSearch = signed.search;
   }
+
+  const upstreamUrl = manifest.upstream + upstreamPath + upstreamSearch;
+  const refused = await sendRefusalFor(manifest, upstreamUrl, body);
+  if (refused) { json(403, { error: refused, code: "EGRESS_BLOCKED" }); return true; }
 
   try {
     const up = await forwardWithTimeout(
-      manifest.upstream + upstreamPath + upstreamSearch,
+      upstreamUrl,
       { method, headers, ...(body !== undefined ? { body: new Uint8Array(body) } : {}) },
       manifest.timeoutMs ?? DEFAULT_TIMEOUT_MS,
       LOCAL_UPSTREAM_RE.test(manifest.upstream),

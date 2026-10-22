@@ -89,3 +89,40 @@ describe("connector proxy — bindings that predate the gate are carried over on
     expect(store.destinationDecision("OLD_KEY", "https://api.old.example")).toBe("approved");
   });
 });
+
+// An agent-built app's request through a connector is judged before it leaves:
+// a body carrying another stored secret's value is refused and nothing is
+// forwarded; the connector's own secret, which it injects itself, and an
+// ordinary body go through.
+describe("connector proxy — the body is judged at send", () => {
+  const OTHER = "sk_live_51HxQ2pZ9vR7tY3mK8nL4wJ6";
+
+  async function post(name: string, body: string): Promise<{ status: number; body: string }> {
+    const { Readable } = await import("node:stream");
+    const req = Object.assign(Readable.from([Buffer.from(body)]), { headers: { "content-type": "application/json" } });
+    const res = { statusCode: 0, body: "", setHeader() {}, writeHead(s: number) { res.statusCode = s; return res; }, end(c?: Buffer | string) { if (c) res.body = String(c); return res; } };
+    await handleConnectorProxyRoutes("POST", new URL(`http://127.0.0.1/api/connectors/${name}/0/private/Order`), req as never, res as never, {} as never, "operator");
+    return { status: res.statusCode, body: res.body };
+  }
+
+  it("refuses a body carrying another stored secret's value, forwarding nothing; a clean body goes", async () => {
+    const { registerRedactedSecretValue, unregisterRedactedSecretValue } = await import("../security/secrets/index.js");
+    writeFileSync(join(dir, "connectors", "trade.json"), JSON.stringify({ upstream: "https://api.kraken.com", auth: { type: "bearer", secret: "KRAKEN_KEY" }, allow: ["POST /0/private/*"] }));
+    registerRedactedSecretValue(OTHER, "vault:STRIPE_KEY");
+    registerRedactedSecretValue("kraken-key-value-0123456789", "vault:KRAKEN_KEY");
+    try {
+      const leak = await post("trade", `{"note":"${OTHER}"}`);
+      expect(leak.status).toBe(403);
+      expect(leak.body).toContain("EGRESS_BLOCKED");
+      expect(leak.body).not.toContain(OTHER);
+      expect(forwarded.urls).toEqual([]);
+
+      const ok = await post("trade", '{"pair":"XBTUSD","volume":"0.01"}');
+      expect(ok.status).toBe(200);
+      expect(forwarded.urls).toEqual(["https://api.kraken.com/0/private/Order"]);
+    } finally {
+      unregisterRedactedSecretValue(OTHER, "vault:STRIPE_KEY");
+      unregisterRedactedSecretValue("kraken-key-value-0123456789", "vault:KRAKEN_KEY");
+    }
+  });
+});

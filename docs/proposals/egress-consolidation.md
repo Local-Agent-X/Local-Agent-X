@@ -248,12 +248,16 @@ Each phase ships alone, keeps the gate suite green, and runs both benchmarks.
    client). Each registered exception carries its reason. With this test,
    "everything goes through the judge" is enforced by the build instead of by
    review.
-8. **Retire the duplicates.** The browser's scan state and the kernel's string
-   exfiltration heuristics (entropy, alphabet, drip budget, in
-   `packages/arikernel/runtime/src/run-state/exfil-detection.ts` and
-   `packages/arikernel/runtime/src/run-state/egress-accounting.ts`) are deleted.
-   The kernel keeps its policy table and audit chain and reads the judge's
-   verdict.
+8. **Retire the duplicates.** Done 2026-10-22. The kernel's string
+   exfiltration heuristics (query length and value size, base64/hex alphabet,
+   path-segment entropy, the per-host encoded-path drip budget, encoded GET
+   header values) and its per-host egress accounting are deleted from
+   `packages/arikernel/runtime/src/run-state/`. A write method is still egress
+   and feeds the behavioral rules, and restricted mode still allows only read
+   actions and budgets parameterized GETs. The containment red-team
+   (`bench/exfil-redteam/redteam.ts`) measured the same before and after.
+   The browser keeps its egress worker's copy of the session's canaries and
+   taint: that is the judge's input on another thread, not a second judge.
 
 ## Outside the boundary, on purpose
 

@@ -12,7 +12,10 @@ vi.mock("../ari-kernel/index.js", () => ({
   ariObserve: vi.fn(),
 }));
 vi.mock("../session/policy.js", () => ({ checkSessionPolicy: vi.fn(() => null) }));
-vi.mock("../data-lineage/index.js", () => ({ getKernelTaintSources: vi.fn(() => []) }));
+vi.mock("../data-lineage/index.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../data-lineage/index.js")>();
+  return { ...actual, getKernelTaintSources: vi.fn(() => []) };
+});
 vi.mock("../tool-registry.js", async (importOriginal) => {
   const actual = await importOriginal<typeof import("../tool-registry.js")>();
   return { ...actual, hasCapability: vi.fn(() => false) };

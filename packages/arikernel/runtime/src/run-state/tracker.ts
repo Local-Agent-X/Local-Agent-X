@@ -321,7 +321,7 @@ export class RunStateTracker {
 	/**
 	 * Check if an HTTP action is a true egress (outbound write) attempt.
 	 * Only write methods are egress. GET/HEAD are ingress (content fetch).
-	 * Suspicious GET-based exfil is detected separately by isSuspiciousGetExfil().
+	 * What any request carries out is judged by the host on its bytes.
 	 */
 	isEgressAction(action: string): boolean {
 		return isEgressAction(action);

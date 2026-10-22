@@ -348,3 +348,44 @@ describe("seenViewFromReadResult", () => {
     });
   });
 });
+
+// chat-mvfaq00w, 2026-10-21: LAX restarted 23 s before "DO IT", and the edit of
+// a file the chat had read 4.5 h earlier was refused as unread.
+describe("a chat's reads survive a server restart", () => {
+  it("a file read before the restart is still read after it, while its bytes are unchanged", async () => {
+    const { _restartForTest } = await import("./read-state.js");
+    const f = tmpFile("login.tsx", "export const a = 1;\n");
+    recordFileSeen("chat-restart-1", f);
+    _restartForTest();
+    expect(checkFreshness("chat-restart-1", f)).toBe("ok");
+  });
+
+  it("a file changed while LAX was down is stale, and the next sweep reports it without a diff", async () => {
+    const { _restartForTest } = await import("./read-state.js");
+    const f = tmpFile("login.tsx", "export const a = 1;\n");
+    recordFileSeen("chat-restart-2", f);
+    _restartForTest();
+    writeFileSync(f, "export const a = 2;\n", "utf-8");
+    utimesSync(f, new Date(), new Date(Date.now() + 5_000));
+    expect(checkFreshness("chat-restart-2", f)).toBe("stale");
+    const [change] = sweepExternalChanges("chat-restart-2");
+    expect(change).toMatchObject({ before: undefined, after: undefined });
+  });
+
+  it("a restored read never dedups: the chat may no longer hold those bytes", async () => {
+    const { _restartForTest } = await import("./read-state.js");
+    const f = tmpFile("notes.ts", "export const b = 1;\n");
+    recordFileSeen("chat-restart-3", f);
+    expect(unchangedSinceSeen("chat-restart-3", f)).toBe(true);
+    _restartForTest();
+    expect(unchangedSinceSeen("chat-restart-3", f)).toBe(false);
+  });
+
+  it("the shared default session is not carried across a restart", async () => {
+    const { _restartForTest } = await import("./read-state.js");
+    const f = tmpFile("shared.ts", "export const c = 1;\n");
+    recordFileSeen(undefined, f);
+    _restartForTest();
+    expect(checkFreshness(undefined, f)).toBe("unseen");
+  });
+});

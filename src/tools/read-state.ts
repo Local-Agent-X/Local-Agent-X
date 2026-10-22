@@ -31,6 +31,7 @@ import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
 import { realpathDeep } from "../security/layer/index.js";
 import { createLogger } from "../logger.js";
+import { loadStoredReads, saveStoredReads } from "./read-state-store.js";
 
 const logger = createLogger("read-state");
 
@@ -86,6 +87,40 @@ const seen = new Map<string, Map<string, SeenEntry>>(); // sessionId -> (canonic
 
 function sid(sessionId: string | undefined): string {
   return sessionId || "default";
+}
+
+/** Sessions this process has looked up on disk (found or not). */
+const loaded = new Set<string>();
+
+/** "default" is every caller with no chat; a stored record of it would let one
+ *  run's read clear another run's edit after a restart. */
+const persisted = (key: string): boolean => key !== "default";
+
+/** The session's reads, with those a previous server run stored restored on
+ *  first use (read-state-store.ts). A restored entry is partial and has no
+ *  snapshot: it satisfies the edit gate when the bytes still match, but never
+ *  read-dedup — the chat's copy may since have been trimmed from its context. */
+function sessionReads(sessionId: string | undefined): Map<string, SeenEntry> | undefined {
+  const key = sid(sessionId);
+  if (!loaded.has(key)) {
+    loaded.add(key);
+    if (persisted(key) && !seen.has(key)) {
+      const stored = loadStoredReads(key);
+      if (stored.size > 0) {
+        seen.set(key, new Map([...stored].map(([path, e]) => [path, {
+          hash: e.hash, mtimeMs: e.mtimeMs, notifiedHash: e.notifiedHash,
+          partial: true, lastSeenAt: 0, missingSweeps: 0,
+        }])));
+      }
+    }
+  }
+  return seen.get(key);
+}
+
+function persist(sessionId: string | undefined): void {
+  const key = sid(sessionId);
+  const m = seen.get(key);
+  if (m && persisted(key)) saveStoredReads(key, m);
 }
 
 // Key the freshness map by the CANONICAL path — following junctions/symlinks at
@@ -148,7 +183,7 @@ function evictSnapshotsOverCap(m: Map<string, SeenEntry>): void {
 export function recordFileSeen(sessionId: string | undefined, path: string, view?: SeenView): void {
   const disk = readDisk(path);
   if (disk === null) return;
-  let m = seen.get(sid(sessionId));
+  let m = sessionReads(sessionId);
   if (!m) { m = new Map(); seen.set(sid(sessionId), m); }
   const redacted = view?.redacted === true;
   m.set(canonKey(path), {
@@ -164,6 +199,7 @@ export function recordFileSeen(sessionId: string | undefined, path: string, view
     missingSweeps: 0,
   });
   evictSnapshotsOverCap(m);
+  persist(sessionId);
 }
 
 /** Derive the SeenView for a successful `read` result from its envelope
@@ -194,7 +230,7 @@ export type Freshness = "ok" | "stale" | "unseen";
  *  - stale:  on-disk content changed since this session last saw it
  *  - ok:     this session has seen the current bytes */
 export function checkFreshness(sessionId: string | undefined, path: string): Freshness {
-  const known = seen.get(sid(sessionId))?.get(canonKey(path));
+  const known = sessionReads(sessionId)?.get(canonKey(path));
   if (known === undefined) return "unseen";
   const disk = readDisk(path);
   if (disk === null) return "ok"; // missing file is the edit tool's problem to report, not ours
@@ -208,7 +244,7 @@ export function checkFreshness(sessionId: string | undefined, path: string): Fre
  *  because the hash is the decider (mtime alone proves nothing). Partial views
  *  never dedup. A hit refreshes the entry's snapshot-LRU recency. */
 export function unchangedSinceSeen(sessionId: string | undefined, path: string): boolean {
-  const entry = seen.get(sid(sessionId))?.get(canonKey(path));
+  const entry = sessionReads(sessionId)?.get(canonKey(path));
   if (entry === undefined || entry.partial) return false;
   try {
     // Round to match how mtimeMs was stored (readDisk / sweepExternalChanges).
@@ -249,8 +285,9 @@ export function sweepExternalChanges(
   sessionId: string | undefined,
   exemptPaths: Iterable<string> = [],
 ): ExternalChange[] {
-  const m = seen.get(sid(sessionId));
+  const m = sessionReads(sessionId);
   if (!m || m.size === 0) return [];
+  let changed = false;
   const exempt = new Set<string>();
   for (const p of exemptPaths) exempt.add(canonKey(p));
   const changes: ExternalChange[] = [];
@@ -264,7 +301,7 @@ export function sweepExternalChanges(
       const code = (e as NodeJS.ErrnoException).code;
       if (code === "ENOENT") {
         entry.missingSweeps += 1;
-        if (entry.missingSweeps >= ENOENT_SWEEPS_TO_EVICT) m.delete(key);
+        if (entry.missingSweeps >= ENOENT_SWEEPS_TO_EVICT) { m.delete(key); changed = true; }
       } else {
         logger.debug(`sweep: stat ${key} failed (${code ?? "unknown"}) — skipped, not evicted (transient by policy)`);
       }
@@ -279,7 +316,7 @@ export function sweepExternalChanges(
       continue; // race between stat and read — next sweep settles it
     }
     const diskHash = hash(content);
-    if (diskHash === entry.hash) { entry.mtimeMs = mtimeMs; continue; } // no-op rewrite
+    if (diskHash === entry.hash) { entry.mtimeMs = mtimeMs; changed = true; continue; } // no-op rewrite
     if (diskHash === entry.notifiedHash) continue; // this exact state was already surfaced
     const diffable = entry.content !== undefined && Buffer.byteLength(content) <= MAX_SNAPSHOT_BYTES;
     changes.push({
@@ -290,6 +327,7 @@ export function sweepExternalChanges(
       diskMtimeMs: mtimeMs,
     });
   }
+  if (changed) persist(sessionId);
   return changes;
 }
 
@@ -305,7 +343,7 @@ export function resolveExternalChange(
   change: ExternalChange,
   shownInFull: boolean,
 ): void {
-  const m = seen.get(sid(sessionId));
+  const m = sessionReads(sessionId);
   const entry = m?.get(change.path);
   if (!m || !entry) return;
   if (shownInFull && change.after !== undefined) {
@@ -320,11 +358,19 @@ export function resolveExternalChange(
   } else {
     entry.notifiedHash = change.diskHash;
   }
+  persist(sessionId);
 }
 
 /** Drop a session's tracking (call on session end to bound the map). */
 export function forgetSessionReads(sessionId: string): void {
   seen.delete(sid(sessionId));
+}
+
+/** Test-only: what a server restart does to this module — the in-memory
+ *  record is gone, the stored one is not. */
+export function _restartForTest(): void {
+  seen.clear();
+  loaded.clear();
 }
 
 /** Test-only: raw entry access for snapshot/counter assertions. */

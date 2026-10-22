@@ -13,7 +13,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from "node:
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { activeWorktrees, logger, MAX_CONCURRENT_WORKTREES, worktreeSlotAvailable, type WorktreeEntry } from "./worktree-core.js";
+import { activeWorktrees, logger, MAX_CONCURRENT_WORKTREES, WORKTREE_BASE, worktreeSlotAvailable, type WorktreeEntry } from "./worktree-core.js";
 import { createWorktree, createNamedWorktree, cleanupWorktree, mergeWorktree } from "./worktree-lifecycle.js";
 import { pruneMergedAgentBranches } from "./worktree-junctions.js";
 import { getMergeDeltaDiff, getMergeDeltaFiles, securitySensitiveChangedFiles, commitInWorktree } from "./worktree-state.js";
@@ -572,6 +572,46 @@ describe("createNamedWorktree stale-branch preflight (C17)", () => {
       expect(branches).toContain("autobuild/c2");
       expect(branches).toContain("feature/keep");
     } finally {
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});
+
+// A crashed run can strand a directory at a worktree's target path, and
+// `git worktree add` refuses it. The branch cut just before must not outlive
+// the failed attempt.
+describe("a refused worktree add leaves no branch behind", () => {
+  function blockPath(name: string): string {
+    const path = join(WORKTREE_BASE, name);
+    mkdirSync(path, { recursive: true });
+    writeFileSync(join(path, ".git"), "gitdir: stale\n");
+    return path;
+  }
+
+  it("createWorktree", () => {
+    const { repo, g } = initRepo();
+    const id = `refused-add-${Date.now().toString(36)}`;
+    const blocked = blockPath(id);
+    try {
+      expect(createWorktree(id, repo)).toBeNull();
+      expect(activeWorktrees.has(id)).toBe(false);
+      expect(g(["branch", "--list", `agent/${id}`])).toBe("");
+    } finally {
+      rmSync(blocked, { recursive: true, force: true });
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("createNamedWorktree", () => {
+    const { repo, g } = initRepo();
+    const name = `refused-named-${Date.now().toString(36)}`;
+    const blocked = blockPath(name);
+    try {
+      expect(createNamedWorktree(name, `autobuild/${name}`, repo)).toBeNull();
+      expect(activeWorktrees.has(name)).toBe(false);
+      expect(g(["branch", "--list", `autobuild/${name}`])).toBe("");
+    } finally {
+      rmSync(blocked, { recursive: true, force: true });
       rmSync(repo, { recursive: true, force: true });
     }
   });

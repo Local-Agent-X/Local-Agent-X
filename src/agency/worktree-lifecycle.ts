@@ -11,6 +11,21 @@ import { activeWorktrees, git, logger, MAX_CONCURRENT_WORKTREES, WORKTREE_BASE, 
 import { linkDirectoryInto, listCheckedOutBranches, unlinkSharedJunctions } from "./worktree-junctions.js";
 import { claimRecoveredWorktree, forgetWorktreeOwnership, ownsWorktree, registerWorktreeOwnership } from "./worktree-recovery.js";
 
+/** Cut `branch` at HEAD and check it out at `wtPath`. When the checkout is
+ *  refused (a crashed run left a directory at the path), the branch just cut
+ *  is deleted again, so a failed attempt leaves nothing behind. */
+function addWorktreeOnNewBranch(repoRoot: string, wtPath: string, branch: string): void {
+  git(["branch", branch, "HEAD"], repoRoot);
+  try {
+    git(["worktree", "add", wtPath, branch], repoRoot);
+  } catch (e) {
+    // `-d`, never `-D`: the branch sits at HEAD, so only a branch that gained
+    // commits in between survives, and the add's error is the one reported.
+    try { git(["branch", "-d", branch], repoRoot); } catch { /* kept: it carries commits */ }
+    throw e;
+  }
+}
+
 /** Create an isolated worktree for an agent, of `repoDir`'s repository (a
  *  user project the agent was sent to) or, by default, of the repo the app
  *  runs from. */
@@ -37,9 +52,7 @@ export function createWorktree(agentId: string, repoDir?: string): { path: strin
   }
   try {
     const wtPath = join(WORKTREE_BASE, agentId);
-
-    git(["branch", branch, "HEAD"], repoRoot);
-    git(["worktree", "add", wtPath, branch], repoRoot);
+    addWorktreeOnNewBranch(repoRoot, wtPath, branch);
 
     const entry = registerWorktreeOwnership(agentId, {
       path: wtPath, branch, baseBranch, repoRoot, runId: agentId, mergedSuccessfully: false,
@@ -333,8 +346,7 @@ export function createNamedWorktree(
     // A leftover branch of this name from an earlier run must not fail the
     // whole creation — reuse the name if merged, side-step it if not.
     const branch = resolveStaleBranchName(branchName, resolvedRoot);
-    git(["branch", branch, "HEAD"], resolvedRoot);
-    git(["worktree", "add", wtPath, branch], resolvedRoot);
+    addWorktreeOnNewBranch(resolvedRoot, wtPath, branch);
 
     // Share node_modules + ari kernel package node_modules with the parent.
     // Autopilot edits source; the build needs deps that aren't tracked.

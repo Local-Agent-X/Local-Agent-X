@@ -154,6 +154,10 @@ export type ServerEvent =
   // them and the user did not name them (tool-execution/unnamed-delete-gate.ts).
   // The chat shows them with an Undo; `files` are absolute original paths.
   | { type: "delete_notice"; files: string[]; toolCallIds: string[] }
+  // A publish ran with pre-publish review findings (tool-execution/
+  // publish-review-gate.ts announcePublishReview). The chat keeps them under
+  // the reply, so the user has them whether or not the model repeats them.
+  | { type: "review_notice"; toolCallId: string; status: "RED" | "AMBER" | "GREEN"; summary: string; findings: Array<{ severity: "red" | "amber" | "yellow"; location: string; problem: string; fix: string }> }
   // The post-turn review fork proposed a learned procedure from this session
   // (protocols/learned-review-drafting.ts). The chat shows "Learned a
   // workflow" with Keep (activate versionId) and Discard (reject when

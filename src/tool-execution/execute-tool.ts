@@ -18,7 +18,7 @@ import { announceNoticedDeletes, preauthorizeUnnamedDeletes } from "./unnamed-de
 import { captureRollbackPhase } from "./capture-rollback.js";
 import { emitTraceStartPhase, emitTraceCompletePhase } from "./emit-trace.js";
 import { runSandboxedPhase } from "./run-sandboxed.js";
-import { attachPublishReviewNote } from "./publish-review-gate.js";
+import { announcePublishReview, attachPublishReviewNote } from "./publish-review-gate.js";
 import { auditPhase } from "./audit-tool-call.js";
 import { hasCapability, pathSpecsForCall } from "../tool-registry.js";
 import { createLogger } from "../logger.js";
@@ -111,6 +111,7 @@ async function executeSingleTool(
     await emitTraceStartPhase(ctx);
     await runSandboxedPhase(ctx);
     attachPublishReviewNote(ctx);
+    announcePublishReview(ctx);
     await emitTraceCompletePhase(ctx);
     // Record the successful execution AFTER sandbox so a subsequent
     // identical call within the TTL window short-circuits in

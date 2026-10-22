@@ -384,7 +384,7 @@ function _renderAssistantToolArtifacts(bodyEl, data) {
   // Delete and learning notices sit beside the approvals, outside the
   // collapsible activity block: a notice scrolled away inside it is no notice.
   for (const n of (data.notices || [])) {
-    try { bodyEl.appendChild(n.kind === 'learning' ? renderLearningNotice(n) : renderDeleteNotice(n)); }
+    try { bodyEl.appendChild(n.kind === 'learning' ? renderLearningNotice(n) : n.kind === 'review' ? renderReviewNotice(n) : renderDeleteNotice(n)); }
     catch (noticeRenderErr) { console.error('[chat] delete notice render error:', noticeRenderErr); }
   }
   const stopNote = data.stopNote;

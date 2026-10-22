@@ -54,6 +54,24 @@
   // arm/disarm rule and the reducer's write rule can never drift apart.
   window._chatApprovalBeatsExpiry = beatsExpiry;
 
+  // Notices the turn keeps on its row (chat-render-notices.js), each once —
+  // a replayed event must not show twice.
+  //   delete_notice — deleted without a card because this request created
+  //                   them; shown with Undo. Keyed by its call ids.
+  //   review_notice — a publish ran with pre-publish review findings, so the
+  //                   user has them whether or not the agent repeats them.
+  function addNotice(e, event) {
+    let notice = null;
+    if (event.type === 'delete_notice' && Array.isArray(event.files) && event.files.length) {
+      notice = { id: 'dn-' + (event.toolCallIds || []).join('-'), files: event.files.slice(), restored: false };
+    } else if (event.type === 'review_notice' && Array.isArray(event.findings) && event.findings.length) {
+      notice = { id: 'rn-' + (event.toolCallId || ''), kind: 'review', status: event.status, summary: event.summary || '', findings: event.findings.slice() };
+    }
+    if (!notice) return;
+    const notices = e.notices || (e.notices = []);
+    if (!notices.some(n => n.id === notice.id)) notices.push(notice);
+  }
+
   window._chatStreamReduce = function(e, event, now, helpers) {
     const B = window._ChatBlocks;
     switch (event.type) {
@@ -271,12 +289,8 @@
         e.lastActivityMs = now;
         break;
       case 'delete_notice':
-        // Deleted without a card because this request created them; shown with
-        // Undo (chat-render-notices.js). Idempotent by call ids for replays.
-        if (Array.isArray(event.files) && event.files.length) {
-          const id = 'dn-' + (event.toolCallIds || []).join('-');
-          if (!(e.notices || (e.notices = [])).some(n => n.id === id)) e.notices.push({ id, files: event.files.slice(), restored: false });
-        }
+      case 'review_notice':
+        addNotice(e, event);
         break;
       case 'approval_timeout': {
         // Two independent sources drive this case — the server's broadcast

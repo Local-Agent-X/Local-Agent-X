@@ -43,6 +43,7 @@ import { changeSetIsEmpty, type ChangeSet } from "../publish-review/change-set-t
 import type { PublishReview, PublishReviewRequest, PublishReviewRun } from "../canonical-loop/public/publish-review.js";
 import type { ToolCallContext } from "./context.js";
 import { needsOverride, reviewCardContext, reviewNoteForModel, reviewPreview, stopText } from "./publish-review-text.js";
+import { statusOf } from "../tools/result-helpers.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("tool-execution.publish-review-gate");
@@ -223,6 +224,26 @@ function recordOverride(ctx: ToolCallContext, op: PublishOperation, review: Publ
 export function attachPublishReviewNote(ctx: ToolCallContext): void {
   if (!ctx.publishReview || !ctx.result) return;
   ctx.result = { ...ctx.result, content: `${reviewNoteForModel(ctx.publishReview)}\n\n${ctx.result.content}` };
+}
+
+/** After a publish ran: show the user what its review found, under the reply.
+ *  The note above asks the model to tell them, and a model that pushed past an
+ *  AMBER review never did (chat-mvfaq00w, 2026-10-21) — the findings must not
+ *  depend on that. Shown even when a card asked first: the card closes once
+ *  answered, and this stays as the record of what shipped. */
+export function announcePublishReview(ctx: ToolCallContext): void {
+  const review = ctx.publishReview;
+  if (!review || review.findings.length === 0 || !ctx.result || statusOf(ctx.result) !== "ok" || !ctx.onEvent) return;
+  if (review.status !== "RED" && review.status !== "AMBER" && review.status !== "GREEN") return;
+  try {
+    ctx.onEvent({
+      type: "review_notice",
+      toolCallId: ctx.tc.id,
+      status: review.status,
+      summary: review.summary,
+      findings: review.findings.map(({ severity, location, problem, fix }) => ({ severity, location, problem, fix })),
+    });
+  } catch { /* a dead emitter must not fail the publish that already ran */ }
 }
 
 /** Test-only: replace the change-set / review / recall seams. */

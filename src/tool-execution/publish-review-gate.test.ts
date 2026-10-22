@@ -406,3 +406,41 @@ describe("the review wait is not the tool's time", () => {
     expect(lines).toContain("Pre-publish review: GREEN");
   });
 });
+
+// chat-mvfaq00w, 2026-10-21: an AMBER push ran, the note told the model to
+// tell the user, and its reply never mentioned the findings.
+describe("announcePublishReview — the user sees the findings without the model", () => {
+  it("a publish that ran over AMBER findings posts them to the chat", async () => {
+    const { announcePublishReview } = await import("./publish-review-gate.js");
+    fake(AMBER);
+    const events: ServerEvent[] = [];
+    const c = ctx({ sessionId: session("Power"), events });
+    expect((await requireApprovalPhase(c)).kind).toBe("continue");
+    c.result = { content: "pushed" };
+    announcePublishReview(c);
+    const notice = events.find((e) => e.type === "review_notice");
+    expect(notice).toMatchObject({
+      type: "review_notice", status: "AMBER",
+      findings: [{ severity: "amber", location: "src/dedupe.ts:40", problem: "24h check then insert is racy", fix: "unique constraint" }],
+    });
+  });
+
+  it("nothing when the review found nothing, or when the publish itself failed", async () => {
+    const { announcePublishReview } = await import("./publish-review-gate.js");
+    fake(GREEN);
+    const clean: ServerEvent[] = [];
+    const g = ctx({ sessionId: session("Power"), events: clean });
+    await requireApprovalPhase(g);
+    g.result = { content: "pushed" };
+    announcePublishReview(g);
+    expect(clean.some((e) => e.type === "review_notice")).toBe(false);
+
+    fake(AMBER, "fp-failed-push");
+    const failed: ServerEvent[] = [];
+    const a = ctx({ sessionId: session("Power"), events: failed });
+    await requireApprovalPhase(a);
+    a.result = { content: "rejected: non-fast-forward", isError: true };
+    announcePublishReview(a);
+    expect(failed.some((e) => e.type === "review_notice")).toBe(false);
+  });
+});

@@ -151,7 +151,7 @@ describe("the notice attaches to the saved conversation, once", () => {
 
 	it("renders through the row notice list beside delete notices", () => {
 		const artifacts = src("chat-render-artifacts.js");
-		expect(artifacts).toContain("n.kind === 'learning' ? renderLearningNotice(n) : renderDeleteNotice(n)");
+		expect(artifacts).toContain("n.kind === 'learning' ? renderLearningNotice(n) : n.kind === 'review' ? renderReviewNotice(n) : renderDeleteNotice(n)");
 		const handler = src("chat-ws-handler.js");
 		expect(handler).toContain("attachLearningNotices(msg.sessionId, [msg.event])");
 		expect(handler).toContain("attachLearningNotices(sessionId, msg.learningNotices)");

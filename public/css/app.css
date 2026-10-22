@@ -435,6 +435,14 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
 .learning-notice{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;margin:8px 0;padding:8px 12px;border-radius:8px;border:1px solid var(--accent);background:color-mix(in srgb, var(--accent) 8%, var(--surface));color:var(--text);font-size:.82rem}
 .learning-notice.settled{border-color:var(--border);background:var(--surface)}
 .learning-notice-text{flex:1 1 240px}
+.review-notice{margin:8px 0;padding:8px 12px;border-radius:8px;border:1px solid var(--info);background:color-mix(in srgb, var(--info) 8%, var(--surface));color:var(--text);font-size:.82rem}
+.review-notice-amber{border-color:var(--warn);background:color-mix(in srgb, var(--warn) 8%, var(--surface))}
+.review-notice-red{border-color:var(--danger);background:color-mix(in srgb, var(--danger) 8%, var(--surface))}
+.review-notice-list{margin:6px 0 0;padding-left:18px}
+.review-notice-finding{margin:4px 0}
+.review-notice-severity{font-weight:600;text-transform:uppercase;font-size:.72rem}
+.review-notice-location{font-family:var(--mono);font-size:.78rem}
+.review-notice-fix{color:var(--muted);margin-top:2px}
 .learning-notice-name{font-weight:600}
 .learning-notice-keep,.learning-notice-discard{padding:4px 12px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-size:.8rem;font-weight:600}
 .learning-notice-keep:hover:not(:disabled){border-color:var(--ok);color:var(--ok)}

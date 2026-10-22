@@ -138,3 +138,28 @@ function renderLearningNotice(n) {
   paint();
   return el;
 }
+
+// Review notices — a publish ran and its pre-publish review found something
+// (src/tool-execution/publish-review-gate.ts announcePublishReview). Shown here
+// so the findings reach the user whether or not the agent repeats them.
+//
+// Exposes (global): renderReviewNotice(notice)
+
+function renderReviewNotice(n) {
+  const el = document.createElement('div');
+  const status = String(n.status || '').toLowerCase();
+  el.className = 'review-notice review-notice-' + status;
+  el.setAttribute('data-id', n.id || '');
+  const findings = Array.isArray(n.findings) ? n.findings : [];
+  const head = 'Pre-publish review: ' + esc(n.status || '') + ' — ' + findings.length + ' finding'
+    + (findings.length === 1 ? '' : 's') + (n.summary ? ' in ' + esc(n.summary) : '') + '. It shipped; worth a look:';
+  const items = findings.map(f =>
+    '<li class="review-notice-finding review-notice-' + esc(f.severity || '') + '">'
+    + '<span class="review-notice-severity">' + esc(f.severity || '') + '</span> '
+    + '<span class="review-notice-location">' + esc(f.location || '') + '</span> '
+    + esc(f.problem || '')
+    + (f.fix ? '<div class="review-notice-fix">Fix: ' + esc(f.fix) + '</div>' : '')
+    + '</li>').join('');
+  el.innerHTML = '<div class="review-notice-text">' + head + '</div><ul class="review-notice-list">' + items + '</ul>';
+  return el;
+}

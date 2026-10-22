@@ -6,7 +6,7 @@ desktop/src/main.ts#app.on:callback@53 119
 desktop/src/reconcile.ts#runReconcile 132
 desktop/src/splash.ts#buildSplashDataUrl 142
 public/js/chat-status-bar.js#updateStatusBar 114
-public/js/chat-stream-reducer.js#window._chatStreamReduce 178
+public/js/chat-stream-reducer.js#window._chatStreamReduce 176
 public/js/chat-voice-mic.js#startVoiceMode 139
 public/js/chat-voice-ws-handler.js#handleVoiceWsMessage 190
 src/agent-request/prepare-request.ts#prepareAgentRequest 180

@@ -96,7 +96,6 @@ export function recordExecutionOutcome(
 		const path = String(toolCall.parameters.path ?? "");
 		if (runState.isSensitivePath(path)) {
 			runState.confirmSensitiveFileRead();
-			ctx.persistentTaint?.recordSensitiveRead(path);
 		}
 	}
 

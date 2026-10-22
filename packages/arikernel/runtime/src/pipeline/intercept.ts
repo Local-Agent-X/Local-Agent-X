@@ -20,7 +20,6 @@ import type { TaintTracker } from "@arikernel/taint-tracker";
 import type { ExecutorRegistry } from "@arikernel/tool-executors";
 import type { SecurityMode } from "../config.js";
 import type { FirewallHooks } from "../hooks.js";
-import type { PersistentTaintRegistry } from "../persistent-taint-registry.js";
 import type { RunStateTracker } from "../run-state.js";
 import type { ITokenStore } from "../token-store.js";
 import { enforceCapabilityToken } from "./capability-tokens.js";
@@ -49,7 +48,6 @@ export class Pipeline {
 		runState?: RunStateTracker,
 		signingKey?: SigningKey,
 		securityMode: SecurityMode = "dev",
-		persistentTaint?: PersistentTaintRegistry,
 	) {
 		this.ctx = {
 			runId,
@@ -63,7 +61,6 @@ export class Pipeline {
 			runState,
 			signingKey,
 			securityMode,
-			persistentTaint,
 		};
 	}
 

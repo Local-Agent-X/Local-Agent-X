@@ -3,7 +3,7 @@
  *
  * This test demonstrates a known limitation: capability grants are protected
  * against replay within a single ITokenStore instance (atomic consume()),
- * but if two sidecar replicas hold independent stores and both receive a
+ * but if two replicas hold independent stores and both receive a
  * copy of the same signed grant, each store will independently accept and
  * consume it. There is no cross-store coordination.
  *
@@ -11,7 +11,7 @@
  * to back all replicas with a shared ITokenStore implementation (e.g. a
  * shared SQLite file, Redis, or Postgres) so that consume() is globally
  * atomic. The ITokenStore interface already supports this; the built-in
- * TokenStore and SqliteTokenStore are local-only implementations.
+ * TokenStore is a local-only implementation.
  */
 
 import type { CapabilityGrant } from "@arikernel/core";

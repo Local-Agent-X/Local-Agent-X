@@ -40,7 +40,6 @@ export function buildRunFirewall(preset = "workspace-assistant"): RunFirewall {
       capabilities: buildPrincipalCapabilities(),
     },
     policies: presetConfig.policies,
-    mode: "embedded",
     tokenStore,
     hooks: { onApprovalRequired: async () => true },
   });

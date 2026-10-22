@@ -40,9 +40,6 @@ export function trackPreExecutionSignals(ctx: PipelineContext, toolCall: ToolCal
 
 	if (toolCall.taintLabels.length > 0) {
 		runState.accumulateTaintLabels(toolCall.taintLabels);
-		for (const label of toolCall.taintLabels) {
-			ctx.persistentTaint?.recordTaintObserved(label.source);
-		}
 		runState.pushEvent({
 			timestamp: toolCall.timestamp,
 			type: "taint_observed",
@@ -121,7 +118,6 @@ function trackHttpSignals(ctx: PipelineContext, toolCall: ToolCall): void {
 
 	if (isWriteEgress || isGetExfil || isSensitiveGetExfil || isPathDripExfil) {
 		runState.recordEgressAttempt();
-		ctx.persistentTaint?.recordEgress(httpUrl);
 		runState.pushEvent({
 			timestamp: toolCall.timestamp,
 			type: "egress_attempt",

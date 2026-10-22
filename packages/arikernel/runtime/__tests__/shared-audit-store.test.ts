@@ -21,7 +21,6 @@ describe("shared audit store", () => {
         principal: { name, capabilities: [] },
         policies: [],
         auditStore: store,
-        mode: "embedded",
       });
       const a = make("scope-a");
       const b = make("scope-b");

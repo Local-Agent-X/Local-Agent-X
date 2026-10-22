@@ -17,7 +17,7 @@ import { PolicyEngine } from "@arikernel/policy-engine";
 import { TaintTracker } from "@arikernel/taint-tracker";
 import type { ToolExecutor } from "@arikernel/tool-executors";
 import { ExecutorRegistry } from "@arikernel/tool-executors";
-import type { EnforcementMode, FirewallOptions } from "./config.js";
+import type { FirewallOptions } from "./config.js";
 import { type AuditOptions, audit as auditCall } from "./firewall/audit.js";
 import { constructFirewall } from "./firewall/construct.js";
 import {
@@ -26,11 +26,7 @@ import {
 	revokeDelegationsFromPrincipal,
 } from "./firewall/delegation.js";
 import { execute as executeRequest } from "./firewall/execution.js";
-import {
-	type RequestOptions,
-	requestCapabilityAsync,
-	requestCapabilitySync,
-} from "./firewall/issuance.js";
+import { type RequestOptions, requestCapabilityLocal } from "./firewall/issuance.js";
 import {
 	type Observation,
 	injectExternalTaint,
@@ -38,7 +34,6 @@ import {
 } from "./firewall/observation.js";
 import type { FirewallHooks } from "./hooks.js";
 import { CapabilityIssuer } from "./issuer.js";
-import { PersistentTaintRegistry } from "./persistent-taint-registry.js";
 import { Pipeline } from "./pipeline.js";
 import {
 	type QuarantineInfo,
@@ -46,7 +41,6 @@ import {
 	type RunStateCounters,
 	RunStateTracker,
 } from "./run-state.js";
-import { SidecarHttpClient } from "./sidecar-proxy.js";
 import { type ITokenStore, TokenStore } from "./token-store.js";
 
 export class Firewall {
@@ -61,10 +55,6 @@ export class Firewall {
 	private tokenStore: ITokenStore;
 	private _hooks: FirewallHooks;
 	private _runState: RunStateTracker;
-	private _persistentTaint: PersistentTaintRegistry | null = null;
-	private readonly _mode: EnforcementMode;
-	private readonly _sidecarOptions?: import("./config.js").SidecarConnectionOptions;
-	private readonly _sidecarClient?: SidecarHttpClient;
 	readonly runId: string;
 
 	constructor(options: FirewallOptions) {
@@ -81,71 +71,22 @@ export class Firewall {
 		this.tokenStore = c.tokenStore;
 		this._hooks = c.hooks;
 		this._runState = c.runState;
-		this._persistentTaint = c.persistentTaint;
-		this._mode = c.mode;
-		this._sidecarOptions = c.sidecarOptions;
-		this._sidecarClient = c.sidecarClient;
 	}
 
-	/**
-	 * Request a capability grant.
-	 *
-	 * **Sidecar mode (compatibility-only):** Returns a synthetic, non-authoritative
-	 * grant immediately. This grant is NEVER used as an enforcement decision —
-	 * the real allow/deny comes from the sidecar when `execute()` is called.
-	 * The synthetic grant exists solely for backward compatibility with callers
-	 * that expect a synchronous return value. No code path can use this grant
-	 * to bypass sidecar authority because `execute()` routes directly to the
-	 * sidecar and never consults the local token store.
-	 *
-	 * Prefer `requestCapabilityAsync()` in sidecar mode for a real sidecar decision.
-	 *
-	 * **Embedded mode:** Evaluates policy locally and returns synchronously.
-	 */
+	/** Request a capability grant. Evaluates policy locally and returns synchronously. */
 	requestCapability(
 		capabilityClass: CapabilityClass,
 		options?: RequestOptions,
 	): IssuanceDecision {
-		return requestCapabilitySync(this._issuanceCtx(), capabilityClass, options);
-	}
-
-	/**
-	 * Request a capability grant asynchronously.
-	 *
-	 * In sidecar mode, routes to the sidecar `/request-capability` endpoint.
-	 * The sidecar is the authoritative decision source.
-	 *
-	 * In embedded mode, delegates to the synchronous local evaluator.
-	 */
-	async requestCapabilityAsync(
-		capabilityClass: CapabilityClass,
-		options?: RequestOptions,
-	): Promise<IssuanceDecision> {
-		return requestCapabilityAsync(this._issuanceCtx(), capabilityClass, options);
+		return requestCapabilityLocal(this._issuanceCtx(), capabilityClass, options);
 	}
 
 	registerExecutor(executor: ToolExecutor): void {
-		if (this._mode === "sidecar") {
-			throw new Error(
-				"Cannot register local executors in sidecar mode. " +
-					"Tool execution is delegated to the sidecar process. " +
-					"Register executors on the sidecar server instead.",
-			);
-		}
 		this.executorRegistry.register(executor);
 	}
 
 	async execute(request: ToolCallRequest): Promise<ToolResult> {
-		return executeRequest(
-			{
-				principal: this.principal,
-				runId: this.runId,
-				pipeline: this.pipeline,
-				hooks: this._hooks,
-				sidecarClient: this._sidecarClient,
-			},
-			request,
-		);
+		return executeRequest({ pipeline: this.pipeline }, request);
 	}
 
 	/**
@@ -306,8 +247,6 @@ export class Firewall {
 				policyEngine: this.policyEngine,
 				hooks: this._hooks,
 				runState: this._runState,
-				mode: this._mode,
-				sidecarOptions: this._sidecarOptions,
 				auditStore: this.auditStore,
 				runId: this.runId,
 			},
@@ -330,23 +269,12 @@ export class Firewall {
 		this.principal.capabilities = revokeDelegationsFromPrincipal(this.principal, principalId);
 	}
 
-	/** The enforcement mode this firewall is operating in. */
-	get enforcementMode(): EnforcementMode {
-		return this._mode;
-	}
-
 	/** The principal bound to this firewall instance. */
 	get principalInfo(): Readonly<Principal> {
 		return this.principal;
 	}
 
-	/** The persistent taint registry, if cross-run tracking is enabled. */
-	get persistentTaintRegistry(): PersistentTaintRegistry | null {
-		return this._persistentTaint;
-	}
-
 	close(): void {
-		this._persistentTaint?.purgeExpired();
 		this.auditStore.endRun(this.runId);
 		if (this.ownsAuditStore) this.auditStore.close();
 	}
@@ -360,7 +288,6 @@ export class Firewall {
 			tokenStore: this.tokenStore,
 			runId: this.runId,
 			hooks: this._hooks,
-			sidecarClient: this._sidecarClient,
 		};
 	}
 }

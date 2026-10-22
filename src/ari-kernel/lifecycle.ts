@@ -56,7 +56,6 @@ function buildAriFirewall(
     },
     policies: presetConfig.policies,
     auditStore,
-    mode: "embedded",
     tokenStore,
     hooks,
     // The kernel's sensitive-read signals (rule 3, the sticky read flag, the

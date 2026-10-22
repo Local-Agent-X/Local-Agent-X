@@ -146,26 +146,6 @@ export class RunStateTracker {
 		this._escalationDeniedClasses.add(toolClass);
 	}
 
-	// ── Cross-run seeder methods (NF-05) ──────────────────────────────
-	// Called by PersistentTaintRegistry.initializeRunState() to propagate
-	// sticky flags from prior runs without unsafe (as any) casts.
-
-	/** Seed sensitive-read sticky flag from a prior persistent run. */
-	seedSensitiveRead(): void {
-		this._sensitiveReadObserved = true;
-	}
-
-	/** Seed secret-access sticky flag from a prior persistent run. */
-	seedSecretAccess(): void {
-		this._secretAccessObserved = true;
-		this._sensitiveReadObserved = true;
-	}
-
-	/** Seed egress-observed sticky flag from a prior persistent run. */
-	seedEgress(): void {
-		this._egressObserved = true;
-	}
-
 	/** Mark the run as tainted by an external source. Sticky — never resets. */
 	markTainted(source: string): void {
 		this._tainted = true;

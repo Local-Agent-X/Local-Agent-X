@@ -14,7 +14,6 @@ import type { ExecutorRegistry } from "@arikernel/tool-executors";
 import { applyBehavioralRule, evaluateBehavioralRules, ruleDenialText } from "../behavioral-rules.js";
 import type { SecurityMode } from "../config.js";
 import type { FirewallHooks } from "../hooks.js";
-import type { PersistentTaintRegistry } from "../persistent-taint-registry.js";
 import type { RuleDenial, RunStateTracker } from "../run-state.js";
 import type { ITokenStore } from "../token-store.js";
 
@@ -30,7 +29,6 @@ export interface PipelineContext {
 	runState?: RunStateTracker;
 	signingKey?: SigningKey;
 	securityMode: SecurityMode;
-	persistentTaint?: PersistentTaintRegistry;
 }
 
 export function logEvent(

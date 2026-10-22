@@ -35,8 +35,8 @@ repo-root Commons Clause `LICENSE`; no separate license file ships in
 
 `src/ari-kernel/` is the Local Agent X-side wrapper (public surface in
 `src/ari-kernel/index.ts`; sealed by `src/module-seals.test.ts`). It imports
-`@arikernel/runtime` and builds firewalls with `createFirewall({ ..., mode:
-"embedded" })` in `lifecycle.ts`: once for the server at `startAriKernel`
+`@arikernel/runtime` and builds firewalls with `createFirewall({ ... })` in
+`lifecycle.ts`: once for the server at `startAriKernel`
 (also in worker processes), and again per scope on demand
 (`ensureAriKernelScope` / `refreshAriKernelScope`). The tool executor calls
 `ariEvaluate()` / `isAriActive()`. If you need to change Ari's behavior,

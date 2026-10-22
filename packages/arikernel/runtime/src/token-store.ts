@@ -14,12 +14,12 @@ export interface StoredToken {
 }
 
 /**
- * Common interface for token stores. Both the in-memory TokenStore and
- * the SQLite-backed SqliteTokenStore implement this interface.
+ * Common interface for token stores. The in-memory TokenStore implements
+ * this interface; a host may pass its own through FirewallOptions.tokenStore.
  *
  * **Multi-instance scope:** Grant consumption (`consume()`) is atomic within
  * a single ITokenStore instance. In horizontally scaled deployments where
- * multiple sidecar replicas each have their own store, the same signed grant
+ * multiple replicas each have their own store, the same signed grant
  * can be consumed independently on each replica (double-spend). To prevent
  * this, back all replicas with a shared ITokenStore implementation (shared
  * SQLite WAL file, Redis, Postgres) so that `consume()` is globally atomic.

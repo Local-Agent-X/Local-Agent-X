@@ -7,7 +7,7 @@ import type {
 } from "@arikernel/core";
 import { createDelegatedPrincipal, generateId, now, revokeDelegationsFrom } from "@arikernel/core";
 import type { PolicyEngine } from "@arikernel/policy-engine";
-import type { EnforcementMode, FirewallOptions } from "../config.js";
+import type { FirewallOptions } from "../config.js";
 import type { FirewallHooks } from "../hooks.js";
 import type { QuarantineInfo, RunStateTracker } from "../run-state.js";
 
@@ -16,8 +16,6 @@ export interface DelegationContext {
 	policyEngine: PolicyEngine;
 	hooks: FirewallHooks;
 	runState: RunStateTracker;
-	mode: EnforcementMode;
-	sidecarOptions?: import("../config.js").SidecarConnectionOptions;
 	auditStore: AuditStore;
 	runId: string;
 }
@@ -57,8 +55,6 @@ export function delegateToChild<F>(
 		auditStore: ctx.auditStore,
 		hooks: ctx.hooks,
 		runStatePolicy: ctx.runState.policy,
-		mode: ctx.mode,
-		sidecar: ctx.sidecarOptions,
 	});
 
 	// Override the generated principal to preserve parentId and delegation metadata

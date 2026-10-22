@@ -77,6 +77,18 @@ function judgeOrThrow(payload: string, what: string, approvedSecretValues: reado
   judgeSendText(egressSessionId() ?? "", text, what);
 }
 
+/** judgeSendText as a value, for a sender that refuses in its own way (a 403,
+ *  an aborted browser request): the refusal's message, or null. */
+export function sendRefusal(sessionId: string, text: string, what: string): string | null {
+  try {
+    judgeSendText(sessionId, text, what);
+    return null;
+  } catch (e) {
+    if (e instanceof EgressPayloadBlocked) return e.message;
+    throw e;
+  }
+}
+
 /** The judging step itself, for a sender that knows the session another way
  *  (the loopback proxy, from the request's credentials). "" is no session:
  *  only a stored secret's value can be evidence then. */

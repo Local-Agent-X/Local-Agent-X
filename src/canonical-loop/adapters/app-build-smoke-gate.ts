@@ -51,6 +51,9 @@ export interface AppSmokeGateSpec {
   /** strict: console errors fail (static builds). hard-signals: only
    *  pageerrors / mount / interaction fail; console errors go to the judge. */
   mode: "strict" | "hard-signals";
+  /** The build's session: the app's requests are judged against its taint
+   *  and canary (scenario-scorer/smoke.ts). */
+  sessionId?: string;
 }
 
 export interface AppSmokeGateOutcome {
@@ -220,6 +223,7 @@ export const runAppSmokeGate: AppSmokeGateRunner = async (spec) => {
   let smoke;
   try {
     smoke = await smokeUrl(target, SMOKE_LOAD_TIMEOUT_MS, undefined, {
+      sessionId: spec.sessionId,
       screenshotPath,
       interact: { screenshotPath: interactionScreenshotPath },
     });

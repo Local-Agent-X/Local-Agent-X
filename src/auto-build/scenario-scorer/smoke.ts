@@ -15,7 +15,10 @@
  * {@link smokeUrl}.
  */
 
-import type { Browser, BrowserContext, Page, ConsoleMessage } from "playwright";
+import type { Browser, BrowserContext, Page, ConsoleMessage, Route } from "playwright";
+import { sendRefusal } from "../../net/egress-send.js";
+import { egressSessionId } from "../../net/egress-scope.js";
+import { REQUEST_BODY_HEAD_CAP } from "../../net/request-body-head.js";
 
 export interface OpenedPage {
   browser: Browser;
@@ -30,17 +33,45 @@ export interface OpenedPage {
 }
 
 /**
+ * An agent-built app runs here unattended, so every request it makes is judged
+ * on what it carries before it leaves (src/net/egress-send.ts): the session's
+ * canary, bytes from a sensitive source the session read, a stored secret's
+ * value. Routing happens before TLS, so HTTPS is judged too. A refusal aborts
+ * that one request and is reported as a page error, so the gate fails with the
+ * reason instead of passing an app that tried to send it.
+ */
+async function judgeAppRequest(route: Route, sessionId: string, errors: string[], pageErrors: string[]): Promise<void> {
+  const request = route.request();
+  const url = request.url();
+  if (url.startsWith("data:") || url.startsWith("blob:")) return route.continue();
+  const body = request.postDataBuffer();
+  const text = body ? `${url}\n${body.subarray(0, REQUEST_BODY_HEAD_CAP).toString("utf8")}` : url.slice(0, REQUEST_BODY_HEAD_CAP);
+  let host = "a local file";
+  try { host = new URL(url).host || host; } catch { /* the browser only routes parseable URLs */ }
+  const refused = sendRefusal(sessionId, text, `the app's request to ${host}`);
+  if (!refused) return route.continue();
+  const entry = `egress blocked: ${refused.slice(0, 200)}`;
+  errors.push(entry);
+  pageErrors.push(entry);
+  return route.abort("blockedbyclient");
+}
+
+/**
  * Launch headless chromium, open a page, and wire console-error + pageerror
  * capture into the returned `errors` array. Caller owns navigation and MUST
  * call `close()` (a finally block). Kept low-level so driver.ts can layer its
- * per-step bucketing on top via the same page object.
+ * per-step bucketing on top via the same page object. `sessionId` is the
+ * session the app was built in, whose taint and canary its requests are
+ * judged against; absent, the running tool call's, else stored secrets only.
  */
-export async function openPageWithConsoleCapture(): Promise<OpenedPage> {
+export async function openPageWithConsoleCapture(sessionId?: string): Promise<OpenedPage> {
   const errors: string[] = [];
   const pageErrors: string[] = [];
   const { chromium } = await import("playwright");
   const browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const judgedSession = sessionId ?? egressSessionId() ?? "";
+  await context.route("**/*", (route) => judgeAppRequest(route, judgedSession, errors, pageErrors));
   const page = await context.newPage();
   page.on("console", (msg: ConsoleMessage) => {
     if (msg.type() === "error") errors.push(msg.text().slice(0, 200));
@@ -130,6 +161,8 @@ export interface SmokeOptions {
    *  for rAF/canvas paint, and re-observe. Skipped when the initial load
    *  already failed — phase 2 evidence would just repeat phase 1's. */
   interact?: { screenshotPath?: string };
+  /** The session the app was built in (openPageWithConsoleCapture). */
+  sessionId?: string;
 }
 
 /**
@@ -139,7 +172,7 @@ export interface SmokeOptions {
  */
 export async function smokeUrl(url: string, loadTimeoutMs = 30_000, signal?: AbortSignal, opts?: SmokeOptions): Promise<SmokeResult> {
   if (signal?.aborted) return { consoleErrors: [], pageErrors: [], rootMounted: false, loadError: "aborted" };
-  const opened = await openPageWithConsoleCapture();
+  const opened = await openPageWithConsoleCapture(opts?.sessionId);
   const capture = async (): Promise<string | undefined> => {
     if (!opts?.screenshotPath) return undefined;
     try {

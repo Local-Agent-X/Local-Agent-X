@@ -16,7 +16,7 @@
  */
 import { randomBytes } from "node:crypto";
 import { PROXY_AUTH_USER } from "./egress-proxy-core.js";
-import { EgressPayloadBlocked, judgeSendText } from "./egress-send.js";
+import { sendRefusal } from "./egress-send.js";
 import { REQUEST_BODY_HEAD_CAP } from "./request-body-head.js";
 
 const TICKET_PREFIX = "s.";
@@ -53,11 +53,5 @@ export function proxyUrlForSession(url: string, sessionId: string | null): strin
 /** The refusal reason for a proxied request, or null when it may go. */
 export function inspectProxyRequest(user: string, target: URL, bodyHead: Buffer | null): string | null {
   const text = bodyHead ? `${target.href}\n${bodyHead.subarray(0, REQUEST_BODY_HEAD_CAP).toString("utf8")}` : target.href;
-  try {
-    judgeSendText(sessionOfProxyUser(user), text, `the request to ${target.host}`);
-    return null;
-  } catch (e) {
-    if (e instanceof EgressPayloadBlocked) return e.message;
-    throw e;
-  }
+  return sendRefusal(sessionOfProxyUser(user), text, `the request to ${target.host}`);
 }

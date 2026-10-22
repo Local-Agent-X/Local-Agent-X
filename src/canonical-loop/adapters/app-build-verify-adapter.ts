@@ -64,6 +64,7 @@ import { finalizeFrameworkBuild, type FinalizeFrameworkDeps } from "./app-build-
 import { emitFailureEvidence, emitStructureNote, emitUnverifiedNote, emitVerifiedNote } from "./app-build-unverified-note.js";
 import { runAppStructureGate, type StructureGateRunner } from "./app-build-structure-gate.js";
 import { extractText } from "../turn-loop/content-extract.js";
+import { getSessionForOp } from "../../ops/session-bridge.js";
 import {
   runAppSmokeGate,
   runAppVisionJudge,
@@ -276,7 +277,7 @@ export class AppBuildVerifyAdapter implements Adapter {
       }
       url = resolved;
     }
-    const smoke = await this.smokeGate({ appDir: this.appDir, url, mode });
+    const smoke = await this.smokeGate({ appDir: this.appDir, url, mode, sessionId: getSessionForOp(input.opId) });
     const shots = [smoke.screenshotPath, smoke.interactionScreenshotPath];
     if (smoke.verdict === "fail") {
       const detail = smoke.detail ?? "smoke failed";

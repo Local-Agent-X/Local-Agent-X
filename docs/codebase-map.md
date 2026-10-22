@@ -13,13 +13,13 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1841 non-test source files · 94 oversized · 240 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1841 non-test source files · 93 oversized · 241 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 164 | 29 | XL | 1 |
+| `src/ops/` | 165 | 29 | XL | 1 |
 | `src/security/` | 128 | 53 | XL | 3 |
 | `src/tools/` | 117 | 218 | XL | 9 |
 | `src/tool-execution/` | 82 | 72 | XL | 2 |
@@ -49,13 +49,13 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/orchestrator/` | 20 | 24 | L |  |
 | `src/broker-transport/` | 19 | 42 | XL |  |
 | `src/agents/` | 17 | 13 | L |  |
+| `src/net/` | 17 | 11 | L |  |
 | `src/server/` *(entrypoint)* | 16 | 57 | XL | 6 |
 | `src/anthropic-client/` | 15 | 21 | L | 2 |
 | `src/autonomy/` | 15 | 4 | M |  |
 | `src/cognition/` | 14 | 35 | XL | 1 |
 | `src/cron/` | 14 | 13 | L |  |
 | `src/inbox/` | 14 | 5 | M |  |
-| `src/net/` | 14 | 11 | L |  |
 | `src/voice/` | 14 | 74 | XL | 1 |
 | `src/self-edit/` | 13 | 19 | L | 2 |
 | `src/ari-kernel/` | 12 | 12 | M |  |
@@ -65,7 +65,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/app-scaffold/` | 10 | 7 | M |  |
 | `src/autopilot/` | 10 | 14 | L | 1 |
 | `src/persistence/` | 10 | 2 | S |  |
-| `src/routes/` | 10 | 93 | XL | 19 |
+| `src/routes/` | 10 | 93 | XL | 18 |
 | `src/sync/` | 10 | 21 | L | 1 |
 | `src/plugin-system/` | 9 | 10 | L | 1 |
 | `src/screen-stream/` | 9 | 11 | L |  |
@@ -292,7 +292,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/routes/bridges/protocols.ts#handleProtocolRoutes`
 - `src/routes/bridges/voice-setup/handlers.ts#handleVoiceSetupRoutes`
 - `src/routes/chat/run-chat-turn/orchestrator.ts#runChatTurn`
-- `src/routes/connector-proxy.ts#handleConnectorProxyRoutes`
 - `src/routes/memory.ts#handleMemoryRoutes`
 - `src/routes/security.ts#handleSecurityRoutes`
 - `src/routes/sessions.ts#handleSessionRoutes`
@@ -365,6 +364,7 @@ job. Comments are free: never cut them to fit.
 - `src/browser/manager.ts` — 300+ code lines (cap 350)
 - `src/canonical-loop/process-execution-backend.ts` — 300+ code lines (cap 350)
 - `src/cron/cron-service.ts` — 300+ code lines (cap 350)
+- `src/routes/connector-proxy.ts` — 300+ code lines (cap 350)
 - `src/tools/document-tools.ts` — 300+ code lines (cap 350)
 - `src/tools/presentation-tools.ts` — 300+ code lines (cap 350)
 - `src/api-docs.ts` — 290+ code lines (cap 350)
@@ -383,7 +383,6 @@ job. Comments are free: never cut them to fit.
 - `src/memory/index-core.ts` — 280+ code lines (cap 350)
 - `src/memory/tools/save.ts` — 280+ code lines (cap 350)
 - `src/protocols/builder.ts` — 280+ code lines (cap 350)
-- `src/routes/connector-proxy.ts` — 280+ code lines (cap 350)
 - `src/screen-capture.ts` — 280+ code lines (cap 350)
 - `src/test-suite.ts` — 280+ code lines (cap 350)
 - `src/tools/build-app-spawn.ts` — 280+ code lines (cap 350)
@@ -437,6 +436,7 @@ job. Comments are free: never cut them to fit.
 - `src/providers/adapters/openai-http.ts#call:callback` — 80+ own code lines (cap 100)
 - `src/routes/bridges/secrets.ts#handleSecretsRoutes` — 80+ own code lines (cap 100)
 - `src/routes/chat/delegation-handoff.ts#runDelegationHandoff` — 80+ own code lines (cap 100)
+- `src/routes/connector-proxy.ts#handleConnectorProxyRoutes` — 80+ own code lines (cap 100)
 - `src/routes/workspace-files.ts#handleWorkspaceFilesRoutes` — 80+ own code lines (cap 100)
 - `src/server/api-request-router.ts#routeApiRequest` — 80+ own code lines (cap 100)
 - `src/server/background-jobs/dream-check.ts#registerDreamRunner:callback` — 80+ own code lines (cap 100)

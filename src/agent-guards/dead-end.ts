@@ -2,6 +2,10 @@
 // row. Instead of grinding the same wrong approach forever (grep 50 files,
 // 0 matches, grep 50 more files, 0 matches...), nudge the agent to step
 // back and reconsider which tool matches the goal.
+//
+// Different queries, paths and search tools count toward one streak on
+// purpose: the spin this breaks is the varied one (more files, another
+// pattern, grep then glob). An exact repeat is loop-detection's job.
 
 export interface DeadEndState { consecutive: number; lastWasEmpty: boolean }
 
@@ -41,16 +45,21 @@ export function checkDeadEnd(
     state.lastWasEmpty = false;
   }
 
-  // After 3 empty results in a row, force a rethink
+  // After 3 empty results in a row, force a rethink. The nudge changes the
+  // approach, never ends the work: "You're going down the wrong path. STOP"
+  // read as "give up", and a model that had been ruling places out handed the
+  // question back to the user one call before `gh repo list` found the
+  // source (session mobile-mvjn9t8k-e2p544, 2026-10-22).
   if (state.consecutive >= 3) {
     state.consecutive = 0; // reset so we don't spam the same nudge
     return {
       nudge:
-        `SYSTEM: Your last 3 tool calls returned no results. You're going down the wrong path. ` +
-        `STOP, reconsider the goal, and pick a DIFFERENT tool or approach. ` +
-        `If you were searching files, maybe you need an API call. ` +
-        `If you were using ${toolName}, try tool_search to discover alternatives. ` +
-        `Do NOT repeat the same approach.`,
+        `SYSTEM: Your last 3 tool calls returned no results. ` +
+        `If you were confirming that something is absent, that is your answer: use it. ` +
+        `If you are still looking for something, it is not where you have been looking, so change the approach instead of repeating it: ` +
+        `look in a different place it could live (another repository, the remote or service it is published from, a config that names its source), ` +
+        `change the query, or use a different tool (with ${toolName} coming up empty, tool_search can find alternatives). ` +
+        `Empty results are not a reason to stop: keep working on the request, and ask the user only for what you cannot find or do yourself.`,
     };
   }
   return { nudge: null };

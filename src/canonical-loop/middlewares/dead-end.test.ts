@@ -38,9 +38,24 @@ describe("dead-end middleware", () => {
     const r = await turn(op, "interactive", result("Searched 120 files, 0 results"));
     expect(r).toMatchObject({ kind: "nudge", reason: "dead-end" });
     if (r.kind === "nudge") {
-      expect(r.message).toMatch(/DIFFERENT tool/);
+      expect(r.message).toMatch(/different tool/);
       expect(r.message).toContain("grep"); // names the spinning tool
     }
+  });
+
+  it("pushes to a different approach, never to ending the turn (session mobile-mvjn9t8k-e2p544)", async () => {
+    // Three deliberate absence checks across candidate repositories, then the
+    // nudge; the agent stopped and asked the user although the source was
+    // one `gh repo list` away.
+    const op = opId();
+    await turn(op, "interactive", result("No matches found."), result("No matches found."));
+    const r = await turn(op, "interactive", result("No matches found."));
+    expect(r.kind).toBe("nudge");
+    if (r.kind !== "nudge") return;
+    expect(r.message).not.toMatch(/\bSTOP\b|wrong path/);
+    expect(r.message).toMatch(/not a reason to stop: keep working/);
+    expect(r.message).toMatch(/confirming that something is absent, that is your answer/);
+    expect(r.message).toMatch(/published from/);
   });
 
   it("counts a single batched turn's empty results toward the strike total", async () => {

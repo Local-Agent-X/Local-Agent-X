@@ -43,7 +43,10 @@ const logger = createLogger("sandbox");
 // Docker Desktop's default file-sharing paths across platforms.
 const DEFAULT_WORKSPACE_PATH = join(tmpdir(), "lax-sandbox-workspace");
 
-const DEFAULT_CONFIG: SandboxConfig = {
+/** What execInSandbox runs with when the caller overrides nothing (the only
+ *  real caller passes no override). Exported so its validity is testable
+ *  without starting Docker. */
+export const DEFAULT_CONFIG: Readonly<SandboxConfig> = {
   mode: "host",
   image: "node:22-alpine",
   workspacePath: DEFAULT_WORKSPACE_PATH,

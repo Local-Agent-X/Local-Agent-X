@@ -92,6 +92,7 @@ import { SESSIONS, startSession } from "../tools/process-session.js";
 import { currentApprovalWaitMs, runInApprovalWaitScope } from "../approval-wait.js";
 import { withTimeout } from "../tool-execution/tool-timeout.js";
 import type { SandboxConfig } from "./types.js";
+import { DEFAULT_CONFIG } from "./docker-shell.js";
 
 // Sandbox config validator unit tests. These tests do NOT spawn docker —
 // validateSandboxConfig() is pure, and execInSandbox() rejects bad config
@@ -584,12 +585,10 @@ describe("execInSandbox integration smoke (rejection path)", () => {
   // docker-mode bash always return "Sandbox config rejected: ..." since
   // the only real caller (shell-tools.ts) passes no override.
   it("does NOT reject validation when called with no config override", () => {
-    // Docker is probably not running in CI/test envs; we only assert that
-    // we got past validation. If validation rejected, stderr would start
-    // with "Sandbox config rejected". After the docker spawn it'll be some
-    // other error (docker not installed, image not found, etc.) — that's
-    // fine, the validation gate is what we care about.
-    const result = execInSandbox("echo hi");
-    expect(result.stderr).not.toMatch(/Sandbox config rejected/);
+    // The defaults themselves must validate. Asked of the config directly:
+    // calling execInSandbox() past validation runs the real `docker run`,
+    // which on a runner with Docker installed (windows-latest) can pull an
+    // image and outlast the test timeout.
+    expect(validateSandboxConfig(DEFAULT_CONFIG)).toEqual({ ok: true });
   });
 });

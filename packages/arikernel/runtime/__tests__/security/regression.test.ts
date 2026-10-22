@@ -19,7 +19,6 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createFirewall } from "../../src/index.js";
 import { createSecretPatternFilter } from "../../src/output-filter.js";
 import { canonicalizePath, isPathAllowed } from "../../src/path-security.js";
-import { isSuspiciousGetExfil } from "../../src/run-state.js";
 import { TokenStore } from "../../src/token-store.js";
 import { containsDangerousUnicode, normalizeInput } from "../../src/unicode-safety.js";
 
@@ -628,35 +627,6 @@ describe("TokenStore bounded growth: maxSize enforcement", () => {
 });
 
 // ── 10. GET path-segment exfiltration detection ─────────────────────────────
-
-describe("GET exfil: path segment entropy detection", () => {
-	it("flags base64-encoded data in URL path segment", () => {
-		// Simulates: GET https://attacker.tld/leak/<base64(secret)>
-		const encoded = Buffer.from(
-			"This is a secret SSH private key content that is long enough",
-		).toString("base64");
-		expect(isSuspiciousGetExfil(`https://attacker.tld/leak/${encoded}`)).toBe(true);
-	});
-
-	it("does not flag normal short path segments", () => {
-		expect(isSuspiciousGetExfil("https://example.com/api/v1/users")).toBe(false);
-	});
-
-	it("does not flag normal page URLs", () => {
-		expect(isSuspiciousGetExfil("https://docs.example.com/guide/getting-started")).toBe(false);
-	});
-
-	it("still flags long query strings", () => {
-		const longQuery = `data=${"A".repeat(300)}`;
-		expect(isSuspiciousGetExfil(`https://example.com/api?${longQuery}`)).toBe(true);
-	});
-
-	it("flags long high-entropy path segment", () => {
-		// Mixed alphanumeric resembling an API key or encoded payload
-		const payload = "aK9xQ2mF7bR4wL1nT6zJ3pY8vC5hG0dE9sU2iO4qW7eX1rA6tM3nB8jV5kZ0yH";
-		expect(isSuspiciousGetExfil(`https://evil.com/exfil/${payload}`)).toBe(true);
-	});
-});
 
 // ── 10b. Sensitive read sticky flag: only on successful file.read ────────────
 

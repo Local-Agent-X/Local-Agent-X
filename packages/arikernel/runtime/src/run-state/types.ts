@@ -7,12 +7,10 @@ export interface RunStatePolicy {
 	maxDeniedSensitiveActions?: number;
 	/** Whether behavioral sequence rules are enabled. Default: true */
 	behavioralRules?: boolean;
-	/** Hostnames exempted from post-sensitive-read egress tightening. */
-	egressAllowHosts?: string[];
 	/**
 	 * The host's own credential-file classifier. When given it replaces the
 	 * built-in catalog for every sensitive-path decision (rule 3, the sticky
-	 * read flag, the post-read GET header check), so the kernel and the host
+	 * read flag), so the kernel and the host
 	 * can never disagree on what a credential file is. The path is NFKC-
 	 * normalized before it is handed over.
 	 */
@@ -100,13 +98,4 @@ export interface QuarantineInfo {
 	countersSnapshot: RunStateCounters;
 	matchedEvents?: SecurityEvent[];
 	timestamp: string;
-}
-
-// ── Cumulative egress tracking ─────────────────────────────────────
-
-export interface HostnameEgressRecord {
-	totalQueryBytes: number;
-	/** Cumulative encoded-looking URL-path bytes sent to this host (H11 drip). */
-	totalPathPayloadBytes: number;
-	requestCount: number;
 }

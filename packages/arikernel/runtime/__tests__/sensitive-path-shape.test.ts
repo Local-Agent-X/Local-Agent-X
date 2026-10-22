@@ -128,7 +128,7 @@ describe("isSensitivePath: a name is not a credential file", () => {
 	});
 });
 
-describe("rule 3 and the post-read header check judge the path by shape", () => {
+describe("rule 3 judges the path by shape", () => {
 	it("02:51Z — a write of set-unsub-secret.mjs followed by a POST is allowed", async () => {
 		const fw = makeFirewall("write-then-post");
 		await file(fw, "write", SCRIPT);
@@ -155,13 +155,6 @@ describe("rule 3 and the post-read header check judge the path by shape", () => 
 		expect(await denied(http(fw, "post", POST))).toMatch(/run rule sensitive_read_then_egress/);
 		expect(fw.lastRuleDenial?.ruleId).toBe("sensitive_read_then_egress");
 		expect(fw.isRestricted).toBe(false);
-		fw.close();
-	});
-
-	it("a read of .env followed by a GET with an Authorization header is still denied", async () => {
-		const fw = makeFirewall("env-then-auth-get");
-		await file(fw, "read", ENV);
-		expect(await denied(http(fw, "get", AUTH_GET))).toMatch(/Custom headers/);
 		fw.close();
 	});
 

@@ -20,9 +20,8 @@ export const MAX_EVENT_WINDOW = 20;
  * Uses the canonical action taxonomy from @arikernel/core so new actions
  * that aren't explicitly registered as "read" are blocked (fail-closed).
  *
- * HTTP GET/HEAD are allowed for content ingress (fetching pages to read).
- * Suspicious GET exfil patterns (large query strings, data-bearing params)
- * are caught separately by isSuspiciousGetExfil() in the pipeline.
+ * HTTP GET/HEAD are allowed for content ingress (fetching pages to read);
+ * restricted mode caps parameterized GETs separately (restricted-gate.ts).
  *
  * True egress methods (POST/PUT/PATCH/DELETE) are always blocked in quarantine.
  */
@@ -32,8 +31,8 @@ export function isSafeReadOnlyAction(toolClass: string, action: string): boolean
 
 /**
  * Check if an HTTP action is a true egress (outbound write) attempt.
- * Only write methods are egress. GET/HEAD are ingress (content fetch).
- * Suspicious GET-based exfil is detected separately by isSuspiciousGetExfil().
+ * Only write methods are egress. GET/HEAD are ingress (content fetch); what
+ * any request carries out is judged by the host on its bytes.
  */
 export function isEgressAction(action: string): boolean {
 	// Lowercase defensively so an un-canonicalized action (e.g. "POST") can't slip

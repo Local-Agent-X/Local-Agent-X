@@ -9,12 +9,10 @@
  */
 
 import { type TaintLabel, type TaintState } from "@arikernel/core";
-import * as egress from "./egress-accounting.js";
 import { isSafeReadOnlyAction, isEgressAction, MAX_EVENT_WINDOW, TOOL_CLASS_RISK_MAP } from "./safe-actions.js";
 import { isSensitivePath } from "./sensitive-paths.js";
 import { normalizeInput } from "../unicode-safety.js";
 import type {
-	HostnameEgressRecord,
 	QuarantineInfo,
 	RuleDenial,
 	RunStateCounters,
@@ -50,8 +48,6 @@ export class RunStateTracker {
 	private _escalationDeniedObserved = false;
 	private _escalationDeniedClasses: Set<string> = new Set();
 	private _quarantineGetCount = 0;
-	private readonly _egressByHostname = new Map<string, HostnameEgressRecord>();
-	private readonly _egressAllowHosts: ReadonlySet<string>;
 	private readonly threshold: number;
 	readonly behavioralRulesEnabled: boolean;
 	/** See RunStatePolicy.hostAdjudicatesDataFlow. */
@@ -64,7 +60,6 @@ export class RunStateTracker {
 		this.threshold = policy?.maxDeniedSensitiveActions ?? 5;
 		this.behavioralRulesEnabled = policy?.behavioralRules !== false;
 		this.hostAdjudicatesDataFlow = policy?.hostAdjudicatesDataFlow === true;
-		this._egressAllowHosts = new Set(policy?.egressAllowHosts ?? []);
 	}
 
 	get restricted(): boolean {
@@ -190,8 +185,7 @@ export class RunStateTracker {
 
 	/**
 	 * Maximum HTTP GETs with query parameters allowed after quarantine.
-	 * Prevents slow-drip exfiltration via small GET requests that individually
-	 * pass isSuspiciousGetExfil() thresholds.
+	 * Prevents slow-drip exfiltration via small parameterized GET requests.
 	 */
 	static readonly MAX_QUARANTINE_GETS_WITH_PARAMS = 3;
 
@@ -206,42 +200,6 @@ export class RunStateTracker {
 		// After sensitive read, budget is 0 — block ALL parameterized GETs
 		if (this._sensitiveReadObserved) return true;
 		return this._quarantineGetCount > RunStateTracker.MAX_QUARANTINE_GETS_WITH_PARAMS;
-	}
-
-	static readonly MAX_ENCODED_PATH_BYTES_PER_REQUEST = egress.MAX_ENCODED_PATH_BYTES_PER_REQUEST;
-	static readonly MAX_ENCODED_PATH_BYTES_PER_HOST = egress.MAX_ENCODED_PATH_BYTES_PER_HOST;
-
-	/** Record cumulative HTTP GET egress bytes for a hostname. */
-	recordHttpGetEgress(url: string): void {
-		egress.recordHttpGetEgress(this._egressByHostname, url);
-	}
-
-	/**
-	 * Record encoded-looking URL-path bytes for a GET/HEAD to a non-allowlisted
-	 * host and decide whether the request must be blocked as path-drip exfil.
-	 */
-	recordEncodedPathEgress(url: string, strict = false): boolean {
-		return egress.recordEncodedPathEgress(
-			this._egressByHostname,
-			url,
-			(h) => this.isAllowlistedHost(h),
-			strict,
-		);
-	}
-
-	/** Get cumulative egress record for a hostname. */
-	getCumulativeEgress(hostname: string): HostnameEgressRecord | undefined {
-		return this._egressByHostname.get(hostname);
-	}
-
-	/** Check if a hostname is in the egress allowlist. */
-	isAllowlistedHost(hostname: string): boolean {
-		return this._egressAllowHosts.has(hostname);
-	}
-
-	/** Total cumulative query-string bytes across all hostnames. */
-	get totalEgressQueryBytes(): number {
-		return egress.totalEgressQueryBytes(this._egressByHostname);
 	}
 
 	/** Check if an action is allowed in restricted mode. */

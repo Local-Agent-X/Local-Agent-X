@@ -3,16 +3,10 @@ export type { Judgement } from "./firewall/execution.js";
 export type { FirewallOptions, SecurityMode } from "./config.js";
 export type { FirewallHooks } from "./hooks.js";
 export { CapabilityIssuer, setUntrustedSources, getUntrustedSources } from "./issuer.js";
-export {
-	RunStateTracker,
-	isSuspiciousGetExfil,
-	pathDripEncodedBytes,
-	hasEncodedPayload,
-} from "./run-state.js";
+export { RunStateTracker } from "./run-state.js";
 export type {
 	RunStatePolicy,
 	RunStateCounters,
-	HostnameEgressRecord,
 	QuarantineInfo,
 	QuarantineTrigger,
 	RuleDenial,

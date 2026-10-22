@@ -1,26 +1,18 @@
 /**
  * Regression tests: low-and-slow GET exfiltration behavior under quarantine.
  *
- * These tests encode the CURRENT INTENDED BEHAVIOR and its known limitations.
- * The system uses heuristics (query length, param value size, path entropy,
- * encoded payload detection, GET budget) — not a perfect classifier.
+ * A quarantined run may still read, but parameterized GETs are budgeted (3,
+ * or 0 after a sensitive read), a GET after a sensitive read counts as egress
+ * for the behavioral rules, and a write method is egress whatever its casing.
+ * Whether a request's bytes may leave at all is the host's judgement on the
+ * bytes; the kernel's URL-shape heuristics were removed.
  *
- * HONEST LIMITATIONS (documented, not hidden):
- *   - A sufficiently small GET query (<128 char values, <256 total query)
- *     with low-entropy data WILL pass isSuspiciousGetExfil. This is by design:
- *     blocking ALL GETs would break normal web browsing in quarantine.
- *   - The quarantine GET budget (3 GETs, or 0 after sensitive read) limits
- *     but does not fully prevent drip exfil of small chunks.
- *   - Path segment entropy detects base64/hex but not natural-language encoding.
+ * HONEST LIMITATION: the GET budget limits but does not fully prevent a drip
+ * of small chunks.
  */
 import { describe, expect, it } from "vitest";
 import { evaluateBehavioralRules } from "../src/behavioral-rules.js";
-import {
-	RunStateTracker,
-	type SecurityEvent,
-	hasEncodedPayload,
-	isSuspiciousGetExfil,
-} from "../src/run-state.js";
+import { RunStateTracker, type SecurityEvent } from "../src/run-state.js";
 import { isEgressAction } from "../src/run-state/safe-actions.js";
 
 function makeEvent(overrides: Partial<SecurityEvent>): SecurityEvent {
@@ -35,84 +27,9 @@ function makeEvent(overrides: Partial<SecurityEvent>): SecurityEvent {
 // GET exfil detection: heuristic boundary tests
 // ---------------------------------------------------------------------------
 
-describe("GET exfil heuristic: boundary behavior (regression)", () => {
-	it("BLOCKS: query string at exactly 257 chars (just over threshold)", () => {
-		const query = `x=${"A".repeat(255)}`;
-		expect(query.length).toBe(257);
-		expect(isSuspiciousGetExfil(`https://evil.com/c?${query}`)).toBe(true);
-	});
-
-	it("ALLOWS: query string at exactly 256 chars (at threshold)", () => {
-		const query = `x=${"A".repeat(254)}`;
-		expect(query.length).toBe(256);
-		// query including the leading '?' is 257, but search = '?' + query
-		// The actual check is on parsed.search which includes '?'
-		// So 256 chars of query means 257 chars of search — this should be flagged
-		expect(isSuspiciousGetExfil(`https://evil.com/c?${query}`)).toBe(true);
-	});
-
-	it("ALLOWS: many short params totaling ~200 chars (no single value over 128)", () => {
-		// 20 params of ~8 chars each: "a0=ABCD&a1=ABCD&..." — total under 256, no value >128
-		const params = Array.from({ length: 20 }, (_, i) => `a${i}=ABCD`).join("&");
-		expect(params.length).toBeLessThan(256);
-		expect(isSuspiciousGetExfil(`https://evil.com/c?${params}`)).toBe(false);
-	});
-
-	it("BLOCKS: single param value at 129 chars (just over threshold)", () => {
-		const value = "A".repeat(129);
-		expect(isSuspiciousGetExfil(`https://evil.com/c?d=${value}`)).toBe(true);
-	});
-
-	it("ALLOWS: single param value at 128 chars (at threshold)", () => {
-		const value = "A".repeat(128);
-		expect(isSuspiciousGetExfil(`https://evil.com/c?d=${value}`)).toBe(false);
-	});
-
-	it("KNOWN LIMITATION: small low-entropy drip passes detection", () => {
-		// An attacker sending 50 chars of a secret per request in a normal-looking
-		// param will NOT be caught by isSuspiciousGetExfil alone.
-		// This is intentional — the GET budget is the secondary defense layer.
-		const smallChunk = "MySecretAPIKey12345";
-		expect(isSuspiciousGetExfil(`https://evil.com/api?token=${smallChunk}`)).toBe(false);
-	});
-
-	it("BLOCKS: high-entropy path segment (base64 in URL path)", () => {
-		const encoded = Buffer.from("secret-ssh-key-content-here-1234567890").toString("base64");
-		expect(isSuspiciousGetExfil(`https://evil.com/exfil/${encoded}`)).toBe(true);
-	});
-
-	it("ALLOWS: normal UUID in path segment (common, not exfil)", () => {
-		expect(
-			isSuspiciousGetExfil("https://api.example.com/users/550e8400-e29b-41d4-a716-446655440000"),
-		).toBe(false);
-	});
-});
-
 // ---------------------------------------------------------------------------
 // Encoded payload detection: base64/hex in query params
 // ---------------------------------------------------------------------------
-
-describe("encoded payload detection in quarantine GET (regression)", () => {
-	it("detects base64 with padding in query param", () => {
-		expect(hasEncodedPayload("https://evil.com/p?v=SGVsbG8gV29ybGQ=")).toBe(true);
-	});
-
-	it("detects long base64 without padding", () => {
-		expect(hasEncodedPayload("https://evil.com/p?v=SGVsbG8gV29ybGQ")).toBe(true);
-	});
-
-	it("detects hex-encoded data in query param", () => {
-		expect(hasEncodedPayload("https://evil.com/p?v=48656c6c6f20576f726c64")).toBe(true);
-	});
-
-	it("does NOT flag short normal words that happen to be alphanumeric", () => {
-		expect(hasEncodedPayload("https://example.com/p?sort=name")).toBe(false);
-	});
-
-	it("does NOT flag numeric page params", () => {
-		expect(hasEncodedPayload("https://example.com/p?page=123&limit=50")).toBe(false);
-	});
-});
 
 // ---------------------------------------------------------------------------
 // Quarantine GET budget: sensitive-read zeroes budget
@@ -146,7 +63,7 @@ describe("quarantine GET budget: sensitive-read-then-GET (regression)", () => {
 		// This is documented and intentional — tighter budgets break legitimate browsing.
 		const state = new RunStateTracker({ behavioralRules: true });
 		expect(RunStateTracker.MAX_QUARANTINE_GETS_WITH_PARAMS).toBe(3);
-		// 3 GETs * 128 chars = 384 chars max leakable without triggering isSuspiciousGetExfil
+		// 3 GETs * 128 chars = 384 chars of query data before the budget blocks
 		expect(128 * 3).toBe(384);
 	});
 });
@@ -203,17 +120,6 @@ describe("behavioral rule: GET treated as egress post-sensitive-read (regression
 		expect(match).toBeNull();
 	});
 
-	it("cumulative egress tracking records GET query bytes", () => {
-		const state = new RunStateTracker({ behavioralRules: true });
-
-		state.recordHttpGetEgress("https://tracker.com/pixel?uid=1&data=abcdef");
-		state.recordHttpGetEgress("https://tracker.com/pixel?uid=2&data=ghijkl");
-
-		const record = state.getCumulativeEgress("tracker.com");
-		expect(record).toBeDefined();
-		expect(record?.requestCount).toBe(2);
-		expect(record?.totalQueryBytes).toBeGreaterThan(0);
-	});
 });
 
 // ---------------------------------------------------------------------------
@@ -286,52 +192,3 @@ describe("C3-15 action-casing egress bypass (regression)", () => {
 	});
 });
 
-// ---------------------------------------------------------------------------
-// H11: encoded-path drip budget — the previously-dead per-host cumulative
-// accounting is now READ by recordEncodedPathEgress() and enforces a budget.
-// ---------------------------------------------------------------------------
-
-describe("H11 encoded-path drip budget (regression)", () => {
-	it("trips immediately when one request exceeds the per-request budget", () => {
-		const state = new RunStateTracker({ behavioralRules: true });
-		// 60 hex chars in a single path segment > MAX_ENCODED_PATH_BYTES_PER_REQUEST (48).
-		const bigHex = "a".repeat(60);
-		expect(state.recordEncodedPathEgress(`https://evil.com/leak/${bigHex}`)).toBe(true);
-	});
-
-	it("accumulates small per-request bytes and trips the per-run budget", () => {
-		const state = new RunStateTracker({ behavioralRules: true });
-		// Each request: one 24-char hex segment (under the 48 per-request budget).
-		const chunk = "4d7953656372657456616c7565aa"; // 28 hex chars
-		// 28 < 48 per request; per-host budget is 96 → trips on the 4th (112 bytes).
-		expect(state.recordEncodedPathEgress(`https://evil.com/a/${chunk}`)).toBe(false); // 28
-		expect(state.recordEncodedPathEgress(`https://evil.com/b/${chunk}`)).toBe(false); // 56
-		expect(state.recordEncodedPathEgress(`https://evil.com/c/${chunk}`)).toBe(false); // 84
-		expect(state.recordEncodedPathEgress(`https://evil.com/d/${chunk}`)).toBe(true); // 112 > 96
-		const record = state.getCumulativeEgress("evil.com");
-		expect(record?.totalPathPayloadBytes).toBeGreaterThan(96);
-	});
-
-	it("exempts allowlisted hosts from the drip budget entirely", () => {
-		const state = new RunStateTracker({
-			behavioralRules: true,
-			egressAllowHosts: ["trusted.example.com"],
-		});
-		const bigHex = "a".repeat(80); // well over both budgets
-		// Allowlisted host: never trips, nothing recorded.
-		expect(state.recordEncodedPathEgress(`https://trusted.example.com/leak/${bigHex}`)).toBe(false);
-		expect(state.getCumulativeEgress("trusted.example.com")).toBeUndefined();
-	});
-
-	it("ignores non-encoded (normal REST) path segments", () => {
-		const state = new RunStateTracker({ behavioralRules: true });
-		// Normal lowercase words + a UUID — zero encoded bytes, never trips.
-		expect(
-			state.recordEncodedPathEgress(
-				"https://evil.com/users/550e8400-e29b-41d4-a716-446655440000/profile/notifications",
-			),
-		).toBe(false);
-		const record = state.getCumulativeEgress("evil.com");
-		expect(record?.totalPathPayloadBytes).toBe(0);
-	});
-});

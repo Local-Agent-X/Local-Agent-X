@@ -58,8 +58,8 @@ function buildAriFirewall(
     auditStore,
     tokenStore,
     hooks,
-    // The kernel's sensitive-read signals (rule 3, the sticky read flag, the
-    // post-read GET header check) judge paths with LAX's own anchored
+    // The kernel's sensitive-read signals (rule 3, the sticky read flag) judge
+    // paths with LAX's own anchored
     // credential-file classifier, so the two can never disagree on what a
     // credential file is. Its built-in catalog is the standalone default only.
     // LAX adjudicates data flow on the bytes at every sink (taint-scope.ts,

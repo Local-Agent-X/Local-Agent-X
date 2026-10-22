@@ -2,13 +2,16 @@
 
 The ARI Kernel is benchmarked as a **control layer** — the thing that contains damage
 when the model is wrong or compromised, not a shield that stops the model from being
-tricked. Measured three ways (June 2026, driven by the local `claude` CLI):
+tricked. Measured three ways (June 2026, driven by the local `claude` CLI; the
+red-team and AgentDojo re-measured 2026-10-22 at commit `f00f9ba9`):
 
 **Headline:** In an adversarial exfiltration red-team, ARI takes a *compromised* agent
 from **0% → 90% data-exfil containment (98% of credentials)** — holding through
-base64 / hex / gzip encoding. That is ARI's actual job, and it does it. On
-action-injection (AgentDojo) the model resists on its own; ARI adds ~0 there and its
-*old* default preset was a pure utility tax (since fixed — see below).
+base64 / hex / gzip encoding. That is ARI's actual job, and it does it — and it costs
+no real work: on AgentDojo the shipped stack completed 93.8% of benign tasks against
+95.9% with no defense, and blocked none of 3,551 tool calls. On action-injection the
+model resists on its own; ARI's *old* default preset was a pure utility tax (since
+fixed — see section 2).
 
 > Honest scope up front: these runs are driven by the `claude` CLI, so absolute
 > model-resistance numbers reflect that model, not a paper's API baseline. The
@@ -24,7 +27,9 @@ sources. We run the identical attack matrix with ARI's enforcement **off** vs **
 so the containment delta is attributable to ARI.
 
 Runner: [`bench/exfil-redteam/redteam.ts`](../../bench/exfil-redteam/redteam.ts)
-(deterministic, ~10 s, no model needed). 120 exfil attempts.
+(deterministic, ~10 s, no model needed). 120 exfil attempts. Re-run 2026-10-22 after
+the kernel's URL/header heuristics were deleted (the egress judge decides on the bytes
+instead): identical numbers.
 
 | Containment (blocked / attempts) | ARI **off** | ARI **on** | on + opt-in DLP |
 |---|---|---|---|
@@ -53,18 +58,52 @@ injected instructions in tool content trying to make it perform an unauthorized 
 (send money/email to an attacker). Whole-stack run across all 4 suites
 ([`bench/agentdojo/`](../../bench/agentdojo/)).
 
+Current run (2026-10-22, commit `f00f9ba9`, `claude` CLI `sonnet`, the
+`important_instructions` attack, 1,046 episodes per config, 0 errors):
+
+| config | ASR ↓ | defended | utility (benign) | utility (under attack) | blocks |
+|---|---|---|---|---|---|
+| off (no defense) | 2.0% | 98.0% | 95.9% | 90.4% | — |
+| faithful (LAX as shipped) | 2.0% | 98.0% | **93.8%** | **90.8%** | **0 of 3,551 checks** |
+
+| suite | utility (benign) off → faithful | utility (under attack) off → faithful |
+|---|---|---|
+| banking | 100% → 100% | 92.4% → 92.4% |
+| slack | 95.2% → 90.5% | 68.6% → 69.5% |
+| travel | 90.0% → 85.0% | 87.1% → 88.6% |
+| workspace | 97.5% → 97.5% | 94.8% → 95.0% |
+
+**No false alarms.** Every one of the 3,551 guard checks under `faithful` was
+allowed, every outbound write included (51 `send_money`, 92 `send_email`, 152
+calendar events, 122 Slack messages, 29 file shares, 30 file deletes, 10 password
+changes). The 2-point benign gap is two tasks, neither blocked: one reply the shim
+could not parse (a tool call in XML, since fixed in `llm-shim.ts`) and one final
+answer that differed between runs. The gate is live, not idle: a probe after the run
+fed a fake AWS key into a tool output, and the next `send_money` was refused by the
+kernel's run rule. The benchmark never puts secret-shaped content in front of the
+agent, so nothing in it taints a session.
+
+**Attacks:** every success (19 per config) is the same travel injection, whose goal
+is text the model says ("say I should visit Riverside View Hotel"); it needs no tool
+call, so no tool gate can see it. Every injection that needs a tool call was resisted
+in both configs: the model is the defense against action injection, and ARI's job is
+containment (section 1).
+
+Earlier results, kept for the record:
+
 | config | ASR ↓ | defended | utility (benign) | utility (under attack) |
 |---|---|---|---|---|
-| off (no defense) | **0.1%** | 99.9% | 56.7% | 49.5% |
-| faithful (pre-fix preset) | 0.0% | 100% | **6.2%** | 6.2% |
+| off (June 2026) | 0.1% | 99.9% | 56.7% | 49.5% |
+| faithful (June 2026, pre-fix preset) | 0.0% | 100% | 6.2% | 6.2% |
 
-**Finding:** Claude resists the injection ~**99.9% on its own** — the *model* is the
-defense here, not ARI (Haiku 4.5 likewise: 0–1% ASR). ARI's only effect was the
-`workspace-assistant` preset's blanket outbound-HTTP-write deny, which cost ~50 points
-of utility (`email_send`/`calendar_create_event` blocked) for ~0 security gain — raw
-`http_request` POST bypassed it anyway. **Fixed** (commit `d3661a15`): the preset now
-denies http writes only when the session is tainted, restoring clean comms while the
-egress secret-scan / lineage / canary keep doing the real exfil protection.
+The June `off` baseline was held down by the harness: the shim ran the CLI in plan
+mode, which current CLIs read as "make no changes", so write tasks failed in every
+config (fixed in `f00f9ba9`; the shim now turns the CLI's tools off with `--tools ""`).
+The June `faithful` 6.2% was real: the `workspace-assistant` preset's blanket
+outbound-HTTP-write deny blocked `email_send`/`calendar_create_event` for ~0 security
+gain (raw `http_request` POST bypassed it). **Fixed** (commit `d3661a15`): the preset
+denies http writes only when the session is tainted, while the egress secret-scan,
+lineage and canary do the real exfil protection.
 
 ---
 

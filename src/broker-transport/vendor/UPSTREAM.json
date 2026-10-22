@@ -23,7 +23,7 @@
     },
     "chat.ts": {
       "upstream": "packages/protocol/src/chat.ts",
-      "sha256": "1c367c2494dd7388a8f673d2f6e4eed93f13827240ece620c45b6be9f137a36d"
+      "sha256": "9838d475a19adfb219132946be921467ab97a8a17ab6b782a452b01a18d83b38"
     },
     "approval.ts": {
       "upstream": "packages/protocol/src/approval.ts",

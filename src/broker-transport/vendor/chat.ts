@@ -58,6 +58,11 @@ export type ChatErrorEvent = { type: "error"; message: string };
 export type InjectQueuedEvent = { type: "inject_queued"; injectId: string };
 /** The running turn took it in. On a replay, `message` carries its text. */
 export type InjectConsumedEvent = { type: "inject_consumed"; injectId: string; message?: string };
+/** The desktop's proof of life: sent every 20 s while a turn is in flight, so a client
+ *  can tell a long silent step (a build, a slow tool) from a desktop that went quiet.
+ *  When the desktop knows, it says what the turn is in: `phase` is a lane name
+ *  ("stream", "reasoning", "tool") and `activeTool` the tool still running. */
+export type OpHeartbeatEvent = { type: "op_heartbeat"; opId?: string; phase?: string; activeTool?: string };
 
 export type ChatServerEvent =
   | StreamDeltaEvent
@@ -74,7 +79,8 @@ export type ChatServerEvent =
   | ApprovalResolvedEvent
   | ApprovalTimeoutEvent
   | InjectQueuedEvent
-  | InjectConsumedEvent;
+  | InjectConsumedEvent
+  | OpHeartbeatEvent;
 
 /** The envelope every chat event arrives in. */
 export type ChatEventFrame = { type: "event"; sessionId: string; event: ChatServerEvent };
@@ -211,9 +217,24 @@ function parseEvent(raw: Record<string, unknown>): ChatServerEvent | null {
       const message = asString(raw.message);
       return message === null ? null : { type: "error", message };
     }
+    case "op_heartbeat":
+      return parseHeartbeat(raw);
     default:
       return null;
   }
+}
+
+/** A heartbeat keeps only the fields a client may show; anything else it carries
+ *  (`iteration`, `seq`) is dropped. */
+function parseHeartbeat(raw: Record<string, unknown>): OpHeartbeatEvent {
+  const ev: OpHeartbeatEvent = { type: "op_heartbeat" };
+  const opId = asString(raw.opId);
+  if (opId !== null) ev.opId = opId;
+  const phase = asString(raw.phase);
+  if (phase !== null) ev.phase = phase;
+  const activeTool = asString(raw.activeTool);
+  if (activeTool !== null) ev.activeTool = activeTool;
+  return ev;
 }
 
 /** An inbound chat frame for `sessionId`, or null for any other frame type, another

@@ -157,8 +157,13 @@ function spawnClaude(systemPrompt: string, userPrompt: string): Promise<string> 
     const args = [
       CLAUDE_CLI,
       "-p", "--model", MODEL, "--output-format", "json",
-      "--no-session-persistence", "--permission-mode", "plan", "--system-prompt", systemPrompt,
-      "--disallowed-tools", "Bash,Read,Write,Edit,MultiEdit,Glob,Grep,WebFetch,WebSearch,TodoWrite,Task,NotebookEdit,AskUserQuestion,Skill",
+      // The CLI is the model only: AgentDojo's tools come back as text the shim
+      // parses. `--tools ""` turns off every built-in tool and
+      // --strict-mcp-config every MCP server, so nothing can run in-process.
+      // Plan mode was used for that before, and current CLIs read it as "make
+      // no changes": the model refused every write task, and the benchmark
+      // scored the refusal instead of LAX's defenses.
+      "--no-session-persistence", "--tools", "", "--strict-mcp-config", "--system-prompt", systemPrompt,
     ];
     const proc = spawn(process.execPath, args, { stdio: ["pipe", "pipe", "pipe"], env: npmAugmentedEnv(), shell: false });
     let out = "";

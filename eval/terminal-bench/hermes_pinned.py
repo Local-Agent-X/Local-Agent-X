@@ -6,8 +6,10 @@ release does not have, and it then runs `hermes version`, a subcommand no
 Hermes release has (the flag is `hermes --version`), so neither the latest
 Hermes nor a pinned one installs (2026-10-20). This fetches install.sh from
 the same tag it checks out and asks for the version with the flag, so a
-pinned release installs as it shipped. Everything else is Harbor's adapter,
-unchanged.
+pinned release installs as it shipped. It fetches install.sh with the
+retries Harbor's OpenClaw adapter fetches its installer with (GitHub answered
+429 on four tasks, 2026-10-21), and takes apt_fallback's setup fallback.
+Everything else is Harbor's adapter, unchanged.
 
     harbor run ... -a hermes_pinned:HermesPinned --ak version=v2026.9.24 -m openai/<model>
 """
@@ -17,8 +19,10 @@ from typing import override
 from harbor.agents.installed.hermes import Hermes
 from harbor.environments.base import BaseEnvironment
 
+from apt_fallback import AptSecurityFallback
 
-class HermesPinned(Hermes):
+
+class HermesPinned(AptSecurityFallback, Hermes):
     @override
     def get_version_command(self) -> str | None:
         return 'export PATH="$HOME/.local/bin:$PATH"; hermes --version'
@@ -35,7 +39,8 @@ class HermesPinned(Hermes):
             environment,
             command=(
                 "set -euo pipefail; "
-                f"curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/{tag}/scripts/install.sh"
+                "retry_all=$(curl --help all 2>/dev/null | grep -q -- '--retry-all-errors' && echo '--retry-all-errors' || true); "
+                f"curl -fsSL --retry 5 --retry-delay 2 $retry_all https://raw.githubusercontent.com/NousResearch/hermes-agent/{tag}/scripts/install.sh"
                 f" | bash -s -- --skip-setup --branch {tag} && "
                 'export PATH="$HOME/.local/bin:$PATH" && '
                 'export HERMES_HOME="${HERMES_HOME:-/tmp/hermes}" && '

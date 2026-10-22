@@ -38,7 +38,10 @@ describe("runtimeSection — the prompt tells the truth about the shell and the 
     const s = runtimeSection("win32", "bash", WS, INSTALL);
     expect(s).toContain(`- Working directory: ${WS} — the workspace.`);
     expect(s).toContain("never prefix a path with `workspace/`");
-    expect(s).not.toContain(process.cwd());
+    // The working directory never names the server's cwd. Only that line: the
+    // install line may well be the cwd (a dev checkout runs from it).
+    const workingDir = s.split("\n").find((l) => l.startsWith("- Working directory:"));
+    expect(workingDir).not.toContain(process.cwd());
   });
 
   it("names the install outright, since a relocated workspace's parent is not it (session mobile-mvjn9t8k-e2p544)", () => {

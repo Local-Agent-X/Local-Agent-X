@@ -23,9 +23,10 @@ function fakeSession(getBody: { body: string; base64Encoded: boolean }) {
 	};
 }
 
-function fakeResponse(contentType: string, text: string) {
+function fakeResponse(contentType: string, text: string, status = 200, location?: string) {
 	return {
-		headers: () => ({ "content-type": contentType }),
+		status: () => status,
+		headers: () => ({ "content-type": contentType, ...(location ? { location } : {}) }),
 		text: async () => text,
 	};
 }
@@ -220,5 +221,44 @@ describe("readResponseBody — H2: a recycled viewId is served the previous view
 		expect(out).toContain("is not a data endpoint");
 		expect(out).toContain("image/png");
 		expect(out).not.toContain(json);
+	});
+});
+
+// ── The re-fetch is judged at send, every hop ────────────────────────────
+describe("readResponseBody — the re-fetch is judged at send", () => {
+	const SESSION = "cdp-refetch-test";
+	const CANARY = "laxcanary9c2e1b7f3a";
+
+	it("a URL carrying the session's canary is refused and never sent", async () => {
+		const { registerSessionCanaries, clearSessionCanaries } = await import("../threat/canaries.js");
+		const { runInEgressScope } = await import("../net/egress-scope.js");
+		registerSessionCanaries(SESSION, [CANARY]);
+		try {
+			let fetched = 0;
+			const s = fakeSession({ body: "", base64Encoded: false });
+			const page = fakePage(s.session, () => { fetched++; return fakeResponse("application/json", "{}"); });
+			_setPageProviderForTest(async () => page as never);
+			_setRefetchGateForTest(() => ({ allowed: true, reason: "Web fetch allowed" }));
+			const out = await runInEgressScope(SESSION, () => readResponseBody("view-1", `https://x.test/api?ref=${CANARY}`));
+			expect(fetched).toBe(0);
+			expect(out).toMatch(/canary/);
+			expect(out).not.toContain("[re-fetched");
+		} finally {
+			clearSessionCanaries(SESSION);
+		}
+	});
+
+	it("a redirect is followed by hand, and the hop it lands on is gated before it is sent", async () => {
+		const asked: string[] = [];
+		const s = fakeSession({ body: "", base64Encoded: false });
+		const page = fakePage(s.session, (url) => {
+			asked.push(url);
+			return url.startsWith("https://x.test/") ? fakeResponse("text/html", "", 302, "https://evil.test/collect") : fakeResponse("application/json", "{}");
+		});
+		_setPageProviderForTest(async () => page as never);
+		_setRefetchGateForTest((url) => url.includes("evil.test") ? { allowed: false, reason: "Blocked: evil.test is not allowed." } : { allowed: true, reason: "Web fetch allowed" });
+		const out = await readResponseBody("view-1", "https://x.test/api");
+		expect(asked).toEqual(["https://x.test/api"]);
+		expect(out).toContain("refused by the web-access policy");
 	});
 });

@@ -32,6 +32,8 @@ import type { SecurityDecision } from "../types.js";
 import { createLogger } from "../logger.js";
 import { getRuntimeConfig } from "../config.js";
 import { evaluateEgressForUrl } from "../security/layer/index.js";
+import { sendRefusal } from "../net/egress-send.js";
+import { egressSessionId } from "../net/egress-scope.js";
 import { getPageForView } from "./electron-cdp.js";
 import { isDataEndpoint, type BridgeNetworkEntry } from "./bridge-perception.js";
 
@@ -158,10 +160,13 @@ async function tryGetResponseBody(session: CDPSession, requestId: string): Promi
 	}
 }
 
-/** Session-sharing re-fetch (Playwright APIRequestContext carries the context's
- *  cookies), gated by the web-access policy before it leaves. Labeled as a
- *  re-fetch; content-type gated on the response header. */
-async function reFetch(page: Page, url: string): Promise<string> {
+/** Redirect hops a re-fetch follows, each judged like the first. */
+const MAX_REFETCH_HOPS = 5;
+
+/** Why this hop may not be sent, or null: the web-access policy, then the
+ *  send-time judge on the URL against the calling tool's session (a canary,
+ *  bytes the session read, a stored secret's value). */
+function refetchRefusal(url: string): string | null {
 	const decision = refetchGate(url);
 	if (!decision.allowed) {
 		return (
@@ -169,10 +174,32 @@ async function reFetch(page: Page, url: string): Promise<string> {
 			(decision.recovery ? `\nRecovery: ${decision.recovery}` : "")
 		);
 	}
-	const resp = await page.request.get(url);
-	const refusal = refuseIfNotData(url, resp.headers()["content-type"], undefined);
-	if (refusal) return refusal;
-	return REFETCH_PREFIX + bound(await resp.text());
+	let host = "the page's host";
+	try { host = new URL(url).host; } catch { /* the policy refuses an unparseable URL first */ }
+	const judged = sendRefusal(egressSessionId() ?? "", url, `the re-fetch to ${host}`);
+	return judged ? `The response body is no longer buffered and re-fetching it was refused. ${judged}` : null;
+}
+
+/** Session-sharing re-fetch (Playwright APIRequestContext carries the context's
+ *  cookies). Redirects are followed here, not by Playwright, so every hop is
+ *  judged before it leaves. Labeled as a re-fetch; content-type gated on the
+ *  response header. */
+async function reFetch(page: Page, url: string): Promise<string> {
+	let current = url;
+	for (let hop = 0; hop <= MAX_REFETCH_HOPS; hop++) {
+		const refused = refetchRefusal(current);
+		if (refused) return refused;
+		const resp = await page.request.get(current, { maxRedirects: 0 });
+		const location = resp.status() >= 300 && resp.status() < 400 ? resp.headers()["location"] : undefined;
+		if (location) {
+			current = new URL(location, current).href;
+			continue;
+		}
+		const refusal = refuseIfNotData(current, resp.headers()["content-type"], undefined);
+		if (refusal) return refusal;
+		return REFETCH_PREFIX + bound(await resp.text());
+	}
+	return `The response body for ${url} is no longer buffered, and re-fetching it redirected more than ${MAX_REFETCH_HOPS} times. No body was read.`;
 }
 
 /**

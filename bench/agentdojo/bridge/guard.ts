@@ -63,7 +63,8 @@ export function endRun(runId: string): void {
 // deny" from "injection-triggered deny" — the load-bearing distinction.
 function ariStage(reason: string): string {
   if (/preset/i.test(reason)) return "preset-policy";
-  if (/behavioral|quarantin/i.test(reason)) return "taint-behavioral";
+  // A kernel run rule (web_taint_sensitive_probe, ...) arrives as "run rule <id> refused this call".
+  if (/behavioral|quarantin|run rule/i.test(reason)) return "taint-behavioral";
   if (/grant|capability|not allowed/i.test(reason)) return "arikernel-policy";
   return "arikernel";
 }

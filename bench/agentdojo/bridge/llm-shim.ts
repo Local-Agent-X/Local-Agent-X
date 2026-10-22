@@ -188,7 +188,7 @@ interface ParsedCall { name: string; arguments?: Record<string, unknown> }
 
 // Extract {"tool_calls":[...]} from the reply (fenced ```json or bare), else treat
 // the whole thing as plain assistant text.
-function parseReply(raw: string): { content: string; toolCalls: ParsedCall[] } {
+export function parseReply(raw: string): { content: string; toolCalls: ParsedCall[] } {
   const fence = raw.match(/```(?:json)?\s*(\{[\s\S]*?\})\s*```/);
   const candidate = fence ? fence[1] : extractBalanced(raw);
   if (candidate) {
@@ -203,9 +203,37 @@ function parseReply(raw: string): { content: string; toolCalls: ParsedCall[] } {
           return { content, toolCalls: calls };
         }
       }
-    } catch { /* fall through to plain text */ }
+    } catch { /* fall through to the XML form, then plain text */ }
   }
+  const xml = parseXmlCalls(raw);
+  if (xml.length > 0) return { content: "", toolCalls: xml };
   return { content: raw.trim(), toolCalls: [] };
+}
+
+// The model sometimes answers in its native tool-call form instead of the JSON
+// asked for: <invoke name="t"><parameter name="k">v</parameter></invoke>, one
+// or more. Read as plain text it ended the episode with no call (0.85% of
+// replies in the 2026-10-22 run). A value stays a string unless it is a JSON
+// array or object, or a boolean: AgentDojo's schemas coerce "100" to a number
+// but refuse a number where a string is declared.
+function parseXmlCalls(raw: string): ParsedCall[] {
+  const calls: ParsedCall[] = [];
+  for (const inv of raw.matchAll(/<invoke name="([^"]+)">([\s\S]*?)<\/invoke>/g)) {
+    const args: Record<string, unknown> = {};
+    for (const p of inv[2].matchAll(/<parameter name="([^"]+)">([\s\S]*?)<\/parameter>/g)) {
+      args[p[1]] = xmlParamValue(p[2].trim());
+    }
+    calls.push({ name: inv[1], arguments: args });
+  }
+  return calls;
+}
+
+function xmlParamValue(v: string): unknown {
+  if (v === "true" || v === "false") return v === "true";
+  if (v.startsWith("[") || v.startsWith("{")) {
+    try { return JSON.parse(v); } catch { /* not JSON after all: keep the text */ }
+  }
+  return v;
 }
 
 // Find the first balanced {...} object that contains "tool_calls".

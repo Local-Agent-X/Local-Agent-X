@@ -232,6 +232,15 @@ Each phase ships alone, keeps the gate suite green, and runs both benchmarks.
    proxy as their only route, as the POSIX path already does. This depends on
    the Windows cage supporting a long-lived process; until it does, the
    uncaged posture is shown in the MCP settings and named in the threat model.
+   Status 2026-10-22: not built. The cage does run long-lived processes
+   (dev servers through `spawnCagedSync`), but every caged spawn starts with
+   stdin closed (`src/tools/caged-spawn.ts` `launch`), and an MCP server
+   speaks over stdin; whether the `srt-win` helper can relay a child's stdin
+   has to be proven on a machine with the helper installed, which the
+   development box is not. The fallback is in place: Settings → MCP says a
+   server runs only as a trusted host process on Windows
+   (`public/js/settings-mcp.js`), and THREAT-MODEL.md names it (known
+   limitation 7).
 7. **The structural guarantee.** A build test, in the style of
    `src/tools/tool-list-registry.test.ts`, parses `src/` and fails when a file
    outside a short registered list imports a network primitive (`fetch`,

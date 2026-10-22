@@ -11,7 +11,7 @@ function createFirewall(capabilities: any[]) {
 	return new Firewall({
 		principal: { name: "test-agent", capabilities },
 		policies: [
-			{ id: "allow-all", name: "Allow all", priority: 100, match: {}, decision: "allow" as const },
+			{ id: "allow-all", name: "Allow all", priority: 100, match: {}, decision: "allow" as const, reason: "test: allow all" },
 		],
 		auditLog: ":memory:",
 	});

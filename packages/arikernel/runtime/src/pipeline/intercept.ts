@@ -94,13 +94,12 @@ export class Pipeline {
 
 		this.ctx.hooks.onDecision?.(toolCall, decision);
 
-		// Step 4: Enforce decision
-		if (decision.verdict === "deny") {
-			this.handleDeny(toolCall, decision);
-		}
-
+		// Step 4: Enforce decision. Closed: only "allow" runs unconditionally,
+		// so a verdict this switch does not know is a deny, never a pass.
 		if (decision.verdict === "require-approval") {
 			await this.handleApproval(toolCall, decision);
+		} else if (decision.verdict !== "allow") {
+			this.handleDeny(toolCall, decision);
 		}
 
 		// Step 4.5: Emit metadata for behavioral rules AFTER policy allowed

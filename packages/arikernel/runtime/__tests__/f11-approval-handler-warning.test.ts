@@ -42,6 +42,7 @@ describe("F-11: approval handler warning", () => {
 			policies: [
 				{
 					id: "approval-required-test",
+					name: "Approval required",
 					priority: 1,
 					match: { toolClass: "http", action: "get" },
 					decision: "require-approval",
@@ -100,6 +101,7 @@ describe("F-11: approval handler warning", () => {
 			policies: [
 				{
 					id: "approval-required-test",
+					name: "Approval required",
 					priority: 1,
 					match: { toolClass: "http", action: "get" },
 					decision: "require-approval",

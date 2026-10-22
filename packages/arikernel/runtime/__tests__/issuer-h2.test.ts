@@ -41,7 +41,7 @@ const userProvidedTaint: TaintLabel[] = [
 describe("H2: http.write denied when tainted", () => {
 	it("denies http.write with untrusted taint", () => {
 		const policy = new PolicyEngine([
-			{ id: "allow-all", name: "Allow all", priority: 100, match: {}, decision: "allow" as const },
+			{ id: "allow-all", name: "Allow all", priority: 100, match: {}, decision: "allow" as const, reason: "test: allow all" },
 		]);
 		const taint = new TaintTracker();
 		const store = new TokenStore();
@@ -54,7 +54,7 @@ describe("H2: http.write denied when tainted", () => {
 
 	it("allows http.write without taint", () => {
 		const policy = new PolicyEngine([
-			{ id: "allow-all", name: "Allow all", priority: 100, match: {}, decision: "allow" as const },
+			{ id: "allow-all", name: "Allow all", priority: 100, match: {}, decision: "allow" as const, reason: "test: allow all" },
 		]);
 		const taint = new TaintTracker();
 		const store = new TokenStore();
@@ -66,7 +66,7 @@ describe("H2: http.write denied when tainted", () => {
 
 	it("allows http.read even with taint (not in sensitive list)", () => {
 		const policy = new PolicyEngine([
-			{ id: "allow-all", name: "Allow all", priority: 100, match: {}, decision: "allow" as const },
+			{ id: "allow-all", name: "Allow all", priority: 100, match: {}, decision: "allow" as const, reason: "test: allow all" },
 		]);
 		const taint = new TaintTracker();
 		const store = new TokenStore();
@@ -78,7 +78,7 @@ describe("H2: http.write denied when tainted", () => {
 
 	it("denies shell.exec with content-scan taint (injection detected)", () => {
 		const policy = new PolicyEngine([
-			{ id: "allow-all", name: "Allow all", priority: 100, match: {}, decision: "allow" as const },
+			{ id: "allow-all", name: "Allow all", priority: 100, match: {}, decision: "allow" as const, reason: "test: allow all" },
 		]);
 		const taint = new TaintTracker();
 		const store = new TokenStore();
@@ -92,7 +92,7 @@ describe("H2: http.write denied when tainted", () => {
 
 	it("denies http.write with content-scan taint", () => {
 		const policy = new PolicyEngine([
-			{ id: "allow-all", name: "Allow all", priority: 100, match: {}, decision: "allow" as const },
+			{ id: "allow-all", name: "Allow all", priority: 100, match: {}, decision: "allow" as const, reason: "test: allow all" },
 		]);
 		const taint = new TaintTracker();
 		const store = new TokenStore();
@@ -105,7 +105,7 @@ describe("H2: http.write denied when tainted", () => {
 
 	it("denies file.write with user-provided taint", () => {
 		const policy = new PolicyEngine([
-			{ id: "allow-all", name: "Allow all", priority: 100, match: {}, decision: "allow" as const },
+			{ id: "allow-all", name: "Allow all", priority: 100, match: {}, decision: "allow" as const, reason: "test: allow all" },
 		]);
 		const taint = new TaintTracker();
 		const store = new TokenStore();

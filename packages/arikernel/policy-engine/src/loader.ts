@@ -25,16 +25,23 @@ export function loadPolicyFile(filePath: string): PolicyRule[] {
 	return result.data.rules;
 }
 
+/** Inline rules (a preset's, a host's) pass the same schema as a file's: a
+ *  rule whose decision is misspelled would otherwise be neither "deny" nor
+ *  "require-approval", and the call it matched would run. */
 export function loadPolicies(source: string | PolicyRule[]): PolicyRule[] {
 	if (Array.isArray(source)) {
-		const regexErrors = validatePolicyRegexSafety(source);
+		const result = policySetSchema.shape.rules.safeParse(source);
+		if (!result.success) {
+			throw new PolicyValidationError("Invalid inline policy rules", result.error.errors);
+		}
+		const regexErrors = validatePolicyRegexSafety(result.data);
 		if (regexErrors.length > 0) {
 			throw new PolicyValidationError(
 				"Inline policy rules contain unsafe regex patterns",
 				regexErrors.map((msg) => ({ message: msg, path: [], code: "custom" })),
 			);
 		}
-		return source;
+		return result.data;
 	}
 	return loadPolicyFile(source);
 }

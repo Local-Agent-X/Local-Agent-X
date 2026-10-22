@@ -13,6 +13,7 @@ const ALLOW_ALL_POLICY = {
 	priority: 100,
 	match: {} as const,
 	decision: "allow" as const,
+	reason: "test rule",
 };
 
 describe("Secure mode capability token enforcement", () => {

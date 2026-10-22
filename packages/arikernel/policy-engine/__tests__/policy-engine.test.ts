@@ -545,3 +545,23 @@ describe("checkRegexSafety — overlapping-alternation ReDoS (H9)", () => {
 		);
 	});
 });
+
+describe("inline policy validation", () => {
+	const rule = (over: Record<string, unknown> = {}) => ({
+		id: "r1",
+		name: "allow reads",
+		priority: 10,
+		match: { toolClass: "file", action: "read" },
+		decision: "allow",
+		reason: "reads are fine",
+		...over,
+	});
+
+	it("a misspelled decision is refused at load, not run as an allow", () => {
+		expect(() => new PolicyEngine([rule({ decision: "dney" }) as unknown as PolicyRule])).toThrow(/Invalid inline policy rules/);
+	});
+
+	it("well-formed inline rules load", () => {
+		expect(loadPolicies([rule() as unknown as PolicyRule])).toHaveLength(1);
+	});
+});

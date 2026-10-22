@@ -244,6 +244,7 @@ describe("requestCapability with unknown capability class", () => {
 					priority: 10,
 					match: { toolClass: "http" as const },
 					decision: "allow" as const,
+					reason: "test rule",
 				},
 			],
 			auditLog: ":memory:",

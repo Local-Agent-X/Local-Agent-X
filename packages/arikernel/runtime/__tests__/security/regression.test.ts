@@ -33,7 +33,7 @@ describe("constraint intersection: narrowing invariant", () => {
 		return createFirewall({
 			principal: { name: "test", capabilities },
 			policies: [
-				{ id: "allow-all", name: "Allow", priority: 100, match: {}, decision: "allow" as const },
+				{ id: "allow-all", name: "Allow", priority: 100, match: {}, decision: "allow" as const, reason: "test: allow all" },
 			],
 			auditLog: ":memory:",
 		});
@@ -286,6 +286,7 @@ describe("database constraint: substring bypass prevention", () => {
 					priority: 100,
 					match: { toolClass: "database" as const },
 					decision: "allow" as const,
+					reason: "test rule",
 				},
 			],
 			auditLog: ":memory:",
@@ -667,7 +668,7 @@ describe("sensitive read sticky flag: gated on file.read + success", () => {
 				capabilities: [{ toolClass: "file", actions: ["read", "write"], constraints: {} }],
 			},
 			policies: [
-				{ id: "allow-all", name: "Allow", priority: 100, match: {}, decision: "allow" as const },
+				{ id: "allow-all", name: "Allow", priority: 100, match: {}, decision: "allow" as const, reason: "test: allow all" },
 			],
 			auditLog: ":memory:",
 		});

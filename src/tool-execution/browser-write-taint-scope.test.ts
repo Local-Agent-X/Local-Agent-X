@@ -24,7 +24,7 @@ import type { ToolCallContext } from "./context.js";
 
 // The tainted content: a webmail message the agent read while scoping the task.
 // Recorded as "web" — the kernel label a content read actually produces
-// (KERNEL_TAINT_SOURCE maps memory/sensitive_file/secret to "rag" instead).
+// (KERNEL_TAINT_SOURCE maps memory to "rag", sensitive_file/secret to "credential").
 const TAINTED_BODY = "Your verification code is 84213-QX and the recovery phrase is velvet-harbor-ninety.";
 
 // The tool must BE a tool: lookupTool settles the name before any security

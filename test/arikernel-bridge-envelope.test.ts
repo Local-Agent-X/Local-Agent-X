@@ -115,9 +115,9 @@ describe("bridge injects runtime session taint (Chunk 4 seam)", () => {
   it("a sensitive-file read taints the bridge ToolCall so the kernel sees non-empty taint", () => {
     recordSensitiveRead(SID, "sensitive_file", "/Users/x/.aws/credentials");
     const tc = buildToolCall(cfg, { path: "notes.txt", _sessionId: SID });
-    // sensitive_file maps onto a kernel untrusted-content source (rag), which
+    // sensitive_file maps onto a kernel tainted-content source (credential), which
     // the kernel's taint rules recognize.
-    expect(tc.taintLabels.map(l => l.source)).toContain("rag");
+    expect(tc.taintLabels.map(l => l.source)).toContain("credential");
   });
 
   it("stays [] when the session has no taint and the model forges _taintLabels", () => {

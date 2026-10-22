@@ -65,7 +65,7 @@ describe("two concurrent pipelines reading one sensitive path under one session"
     expect(ctxB.result?.content).toContain("IdentityFile");
     expect(getTaintSummary(SID).count).toBe(1);
     expect(checkEgressTaint(SID).blocked).toBe(true);
-    expect(getKernelTaintSources(SID)).toEqual(["rag"]);
+    expect(getKernelTaintSources(SID)).toEqual(["credential"]);
   });
 
   it("a single call still clears its own floor when its result is stubbed", async () => {

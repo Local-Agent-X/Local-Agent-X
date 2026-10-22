@@ -27,7 +27,7 @@ describe("a child session inherits its parent's lineage at spawn", () => {
 
     inheritSessionLineage(CHILD, PARENT);
 
-    expect(getKernelTaintSources(CHILD)).toEqual(["rag"]);
+    expect(getKernelTaintSources(CHILD)).toEqual(["credential"]);
     expect(hasExternalIngestion(CHILD)).toBe(true);
     // The child's egress clears exactly what the parent's would: the secret is
     // refused, a payload with none of it is not.
@@ -46,7 +46,7 @@ describe("a child session inherits its parent's lineage at spawn", () => {
   it("happens when a delegated op binds to its parent", () => {
     recordSensitiveRead(PARENT, "sensitive_file", "/home/u/.env", SECRET);
     bindDelegatedSessionLineage(CHILD, PARENT);
-    expect(getKernelTaintSources(CHILD)).toEqual(["rag"]);
+    expect(getKernelTaintSources(CHILD)).toEqual(["credential"]);
   });
 });
 
@@ -71,7 +71,7 @@ describe("a container worker's lineage on the host", () => {
     expect(bound.executionSessionId).toBe(CHILD);
     expect(bound.browserSessionId).toBe(resolveBrowserSessionId(PARENT));
     expect(getSessionOwner(CHILD)?.browserSessionId).toBe(resolveBrowserSessionId(PARENT));
-    expect(getKernelTaintSources(CHILD)).toEqual(["rag"]);
+    expect(getKernelTaintSources(CHILD)).toEqual(["credential"]);
     releaseContainerSessionLineage(op);
     expect(getSessionOwner(CHILD)).toBeUndefined();
   });

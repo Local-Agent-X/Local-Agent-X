@@ -4,6 +4,7 @@
 // ari-taint-shell-contract.test.ts (the tainted-shell pre-gate against the live
 // kernel) and blocked-self-verify.test.ts.
 
+import { TAINTED_CONTENT_SOURCES } from "@arikernel/core";
 import { USER_HINTS, type ToolResult } from "../types.js";
 import { hasCapability } from "../tool-registry.js";
 import { findTaintInPayload, detectSecretsInOutput } from "../data-lineage/index.js";
@@ -11,14 +12,15 @@ import { scanForSecrets } from "../security/secrets/index.js";
 import { storedSecretRoute } from "./stored-secret-route.js";
 
 // Kernel taint sources that @arikernel/core's deny-tainted-shell rule treats as
-// untrusted content (its `match.taintSources`). Mirrored here so LAX can PRE-EMPT
+// tainted content (its `match.taintSources`, the kernel's one shared list). Read
+// here so LAX can PRE-EMPT
 // the shell denial before the kernel observes the taint+shell event — see
 // taintedShellBlockReason. Kept in lockstep with the real rule by
 // ari-taint-shell-contract.test.ts (drives the live kernel against this helper).
 // Exported so the enforce-policy call site can strip these sources from the labels
 // it hands the kernel for a shell call the payload-evidence gate has CLEARED (so
 // the kernel's temporal deny-tainted-shell can't re-deny the benign command).
-export const SHELL_TAINT_DENY_SOURCES: ReadonlySet<string> = new Set(["web", "rag", "email"]);
+export const SHELL_TAINT_DENY_SOURCES: ReadonlySet<string> = new Set(TAINTED_CONTENT_SOURCES);
 
 /** Collect the shell command TEXT from a tool call's args, for payload-evidence
  *  scanning. Joins the primary `command` with any other string arg values (a

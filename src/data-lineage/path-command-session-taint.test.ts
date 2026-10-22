@@ -326,7 +326,7 @@ describe("sticky session taint — no decay window", () => {
     // Sticky semantics: the session is STILL tainted; egress stays blocked.
     expect(checkEgressTaint("sticky-session").blocked).toBe(true);
     // And the kernel still receives the taint source.
-    expect(getKernelTaintSources("sticky-session")).toContain("rag");
+    expect(getKernelTaintSources("sticky-session")).toContain("credential");
   });
 
   it("propagated taint also persists past the old window", () => {

@@ -99,7 +99,7 @@ describe("getKernelTaintSources — LAX → kernel taint mapping", () => {
     expect(getKernelTaintSources("clean-1")).toEqual([]);
   });
 
-  it("maps web → web, memory → rag, sensitive_file/secret → rag, user_data → user-provided", () => {
+  it("maps web → web, memory → rag, sensitive_file/secret → credential, user_data → user-provided", () => {
     const sid = "map-1";
     clearSessionTaint(sid);
     recordSensitiveRead(sid, "web", "http://x");
@@ -110,7 +110,7 @@ describe("getKernelTaintSources — LAX → kernel taint mapping", () => {
     const sources = getKernelTaintSources(sid).sort();
     // web/memory/sensitive_file/secret all land in the kernel deny-set
     // (web/rag); user_data maps to user-provided (intentionally NOT denied).
-    expect(sources).toEqual(["rag", "user-provided", "web"]);
+    expect(sources).toEqual(["credential", "rag", "user-provided", "web"]);
     clearSessionTaint(sid);
   });
 
@@ -142,7 +142,7 @@ describe("propagateTaint — parent ← child sub-agent propagation", () => {
     expect(moved).toBe(1);
     expect(checkEgressTaint(parent).blocked).toBe(true);
     // And the parent now hands the kernel non-empty taint on its next gated call.
-    expect(getKernelTaintSources(parent)).toContain("rag");
+    expect(getKernelTaintSources(parent)).toContain("credential");
 
     clearSessionTaint(child);
     clearSessionTaint(parent);
@@ -211,7 +211,7 @@ describe("Handler completion → taint propagation from the child's ACTUAL sessi
     handler.finalizeExternalRun(agentId, { result: "phase done", success: true });
 
     expect(checkEgressTaint(parent).blocked).toBe(true);
-    expect(getKernelTaintSources(parent)).toContain("rag");
+    expect(getKernelTaintSources(parent)).toContain("credential");
 
     clearSessionTaint(parent);
     clearSessionTaint(borrowed);

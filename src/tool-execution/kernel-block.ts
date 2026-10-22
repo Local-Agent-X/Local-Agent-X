@@ -11,11 +11,12 @@
 // what the kernel judged; a run-rule quarantine says what fired, that nothing
 // needs clicking, and that the next message starts clean.
 
+import { TAINTED_CONTENT_SOURCES } from "@arikernel/core";
 import { USER_HINTS, type KernelQuarantine, type ToolResult } from "../types.js";
 import { TAINT_KEYED_KERNEL_RULES, type AriVerdict } from "../ari-kernel/index.js";
 import type { EgressBlocker } from "./egress-gates.js";
 
-const UNTRUSTED_TAINT: ReadonlySet<string> = new Set(["web", "rag", "email"]);
+const UNTRUSTED_TAINT: ReadonlySet<string> = new Set(TAINTED_CONTENT_SOURCES);
 
 export const KERNEL_TAINT_RECOVERY =
   "The kernel policy denies this outbound action because the session carries untrusted-input taint from an earlier web/email/file read. To clear the taint, ask the user to click \"Declassify & retry\" on this blocked card in the chat — that button is the only declassify control. Do not just retry the same call.";

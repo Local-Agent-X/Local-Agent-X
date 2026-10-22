@@ -19,14 +19,14 @@ import { deriveAriAction } from "./ari-action-map.js";
 import { egressPayload } from "./egress-payload.js";
 
 /**
- * The kernel's taint vocabulary is only "web" | "rag" | "user-provided"
- * (KERNEL_TAINT_SOURCE in data-lineage/taint.ts), and it is lossy: a web read
- * arrives as "web", while memory, sensitive-file AND SECRET reads all arrive
- * as "rag". So clearing "rag" clears a secret read too — which is why a payload
- * carrying secret-shaped content is refused outright below, the same way the
- * shell gate refuses one.
+ * The labels LAX hands the kernel (KERNEL_TAINT_SOURCE in data-lineage/taint.ts):
+ * a web read arrives as "web", a memory read as "rag", and a sensitive-file or
+ * secret read as "credential". A payload proven free of every tainted byte
+ * clears all three, credential included — which is why a payload carrying
+ * secret-shaped content is refused outright below, the same way the shell gate
+ * refuses one.
  */
-const UNTRUSTED_CONTENT_SOURCES: ReadonlySet<string> = new Set(["web", "rag"]);
+const UNTRUSTED_CONTENT_SOURCES: ReadonlySet<string> = new Set(["web", "rag", "credential"]);
 
 /**
  * May the kernel judge this outbound call WITHOUT the session's
@@ -67,8 +67,8 @@ export function outboundIsTaintFree(
   // a short secret lives in (a 2FA code, a recovery token). Keep the block: the
   // user can still authorize it on the card.
   if (payloadFingerprints(text).size === 0) return false;
-  // Secret-shaped content never clears, whatever its provenance: "rag" covers
-  // secret reads, and a payload that looks like a credential is not something
+  // Secret-shaped content never clears, whatever its provenance: a secret read
+  // is cleared with the rest, and a payload that looks like a credential is not something
   // to wave through on the strength of a fingerprint miss.
   if (detectSecretsInOutput(text).structured) return false;
   return !checkEgressTaintWithPayload(sessionId, text).blocked;

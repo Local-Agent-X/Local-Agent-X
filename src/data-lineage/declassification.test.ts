@@ -91,7 +91,7 @@ describe("declassification — deliberate, audited untaint (T2)", () => {
 
     // Secret-derived taint remains → egress STILL blocked.
     expect(checkEgressTaint(sid).blocked).toBe(true);
-    expect(getKernelTaintSources(sid)).toEqual(["rag"]);
+    expect(getKernelTaintSources(sid)).toEqual(["credential"]);
 
     // Now release the secret too → clean.
     declassifyTaintSource(sid, "secret", { reason: "secret rotated", authorizedBy: "user" });

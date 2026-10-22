@@ -272,21 +272,24 @@ export function _removeTaintEntries(sessionId: string, source?: TaintSource): Ta
 }
 
 // LAX → AriKernel taint-source mapping. The kernel's behavioral deny rules
-// (deny-tainted-shell / deny-tainted-http-write) key on the kernel's untrusted-
-// content sources ["web","rag","email"]; the kernel also recognizes
-// "user-provided" (NOT in the deny set — the user's own input is trusted).
+// (deny-tainted-shell / deny-tainted-http-write) key on its tainted-content
+// sources (TAINTED_CONTENT_SOURCES: web, rag, email, credential); the kernel
+// also recognizes "user-provided" (NOT in the deny set — the user's own input
+// is trusted).
 //
 // LAX's taint model is COARSER than the kernel's: "the session touched sensitive
 // bytes" rather than a fine-grained provenance lattice. So every LAX source that
 // represents untrusted-or-sensitive content the model has now seen maps onto a
 // kernel source the deny rules recognize, so a sensitive read here lights up the
-// kernel's tainted-shell / tainted-egress enforcement. `user_data` is the one
-// trusted source and maps to "user-provided" (intentionally outside the deny set).
+// kernel's tainted-shell / tainted-egress enforcement. A credential file or a
+// stored secret maps to "credential", so the kernel's audit and rules can tell
+// it from a memory read. `user_data` is the one trusted source and maps to
+// "user-provided" (intentionally outside the deny set).
 const KERNEL_TAINT_SOURCE: Record<TaintSource, string> = {
   web: "web",
   memory: "rag",
-  sensitive_file: "rag",
-  secret: "rag",
+  sensitive_file: "credential",
+  secret: "credential",
   user_data: "user-provided",
 };
 

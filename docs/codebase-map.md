@@ -13,14 +13,14 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1836 non-test source files · 94 oversized · 240 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1838 non-test source files · 94 oversized · 240 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 164 | 29 | XL | 1 |
-| `src/security/` | 127 | 53 | XL | 3 |
+| `src/security/` | 128 | 53 | XL | 3 |
 | `src/tools/` | 117 | 218 | XL | 9 |
 | `src/tool-execution/` | 82 | 72 | XL | 2 |
 | `src/canonical-loop/` | 79 | 266 | XL | 14 |
@@ -28,11 +28,11 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/providers/` | 68 | 26 | L | 1 |
 | `src/memory/` | 51 | 138 | XL | 7 |
 | `src/browser/` | 48 | 88 | XL | 5 |
+| `src/data-lineage/` | 46 | 11 | M |  |
 | `src/tool-policy/` | 46 | 21 | L |  |
-| `src/data-lineage/` | 45 | 11 | M |  |
 | `src/local-runtimes/` | 41 | 26 | L | 1 |
 | `src/util/` | 41 | 3 | S |  |
-| `src/threat/` | 39 | 13 | L |  |
+| `src/threat/` | 40 | 13 | L |  |
 | `src/auth/` | 37 | 11 | L |  |
 | `src/session/` | 36 | 7 | M |  |
 | `src/chat-ws/` | 32 | 23 | L |  |
@@ -56,6 +56,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/cron/` | 14 | 13 | L |  |
 | `src/inbox/` | 14 | 5 | M |  |
 | `src/voice/` | 14 | 74 | XL | 1 |
+| `src/net/` | 13 | 8 | M |  |
 | `src/self-edit/` | 13 | 19 | L | 2 |
 | `src/ari-kernel/` | 12 | 12 | M |  |
 | `src/integrations/` | 12 | 15 | M |  |
@@ -66,7 +67,6 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/persistence/` | 10 | 2 | S |  |
 | `src/routes/` | 10 | 93 | XL | 19 |
 | `src/sync/` | 10 | 21 | L | 1 |
-| `src/net/` | 9 | 6 | M |  |
 | `src/plugin-system/` | 9 | 10 | L | 1 |
 | `src/screen-stream/` | 9 | 11 | L |  |
 | `src/agent-guards/` | 8 | 11 | M |  |
@@ -418,6 +418,7 @@ job. Comments are free: never cut them to fit.
 - `src/server/inbound-channel-runner.ts#runInboundChannelTurn` — 90+ own code lines (cap 100)
 - `src/tool-execution/run-sandboxed.ts#runSandboxedPhase` — 90+ own code lines (cap 100)
 - `src/tools/read-write-tools.ts#readTool.execute` — 90+ own code lines (cap 100)
+- `src/tools/web-fetch.ts#webFetchTool.execute` — 90+ own code lines (cap 100)
 - `src/agent-guards/loop-detection.ts#noteToolResults` — 80+ own code lines (cap 100)
 - `src/ari-kernel/evaluate.ts#ariEvaluate` — 80+ own code lines (cap 100)
 - `src/auth/index.ts#createServer:callback` — 80+ own code lines (cap 100)
@@ -446,7 +447,6 @@ job. Comments are free: never cut them to fit.
 - `src/tools/image-tools/generate-video.ts#generateVideoTool.execute` — 80+ own code lines (cap 100)
 - `src/tools/setting-tool.ts#settingTool.execute` — 80+ own code lines (cap 100)
 - `src/tools/shared/image-binary-meta.ts#parseDimensions` — 80+ own code lines (cap 100)
-- `src/tools/web-fetch.ts#webFetchTool.execute` — 80+ own code lines (cap 100)
 - `src/update-extracted-validation.ts#validateExtractedUpdate` — 80+ own code lines (cap 100)
 - `src/agent-guards/loop-detection.ts#checkToolLoops` — 70+ own code lines (cap 100)
 - `src/agents/escalation-core.ts#performEscalation` — 70+ own code lines (cap 100)

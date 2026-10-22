@@ -5,6 +5,7 @@ import { USER_HINTS, type BlockAction, type ToolResult } from "../types.js";
 import { resolveAndPinHost, evaluateEgressForUrl } from "../security/layer/index.js";
 import { isLoopbackHost, LOOPBACK_HOSTNAMES } from "../security/layer/ip-classification.js";
 import { reservedLoopbackPorts } from "../security/layer/security-config.js";
+import { assertSendAllowed } from "../net/egress-send.js";
 
 /** Browser-like identity for agent web fetches. Many commerce/price sites
  *  (PriceCharting, TCGplayer, eBay) reject a non-browser User-Agent with an
@@ -266,6 +267,10 @@ export interface CanonicalFetchOptions {
    *  throw to stop there, so nothing is sent to that origin (http_request: a
    *  secret the request carries is not approved at the new origin). */
   beforeCrossOriginRedirect?: (location: string) => void;
+  /** The stored secrets' values this call was approved to send (http_request's
+   *  {{SECRET_NAME}} placeholders, cleared by the destination ladder). The
+   *  send-time judge does not count them as a secret leaving. */
+  approvedSecretValues?: readonly string[];
 }
 
 /** Whether `url` is on the operator's configured local service (see
@@ -346,6 +351,8 @@ export async function canonicalFetch(
   assertHttpScheme(currentUrl);
   assertInitialEgressAllowed(currentUrl);
   if (!onOperatorLocalService(currentUrl, opts.operatorLocalService)) await assertLiteralIpEgressAllowed(currentUrl);
+  // The bytes themselves, judged before they leave (net/egress-send.ts).
+  await assertSendAllowed(currentUrl, fetchOpts.body as string | FormData | undefined, opts.approvedSecretValues);
   let r = await undiciFetch(currentUrl, fetchOpts);
 
   let redirects = 0;
@@ -372,6 +379,7 @@ export async function canonicalFetch(
       fetchOpts.body = undefined;
     }
     currentUrl = location;
+    await assertSendAllowed(currentUrl, fetchOpts.body as string | FormData | undefined, opts.approvedSecretValues);
     r = await undiciFetch(currentUrl, fetchOpts);
     redirects++;
   }

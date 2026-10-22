@@ -189,11 +189,23 @@ Each phase ships alone, keeps the gate suite green, and runs both benchmarks.
    the same loopback grant as every other agent path. The connector proxy keeps
    its own fetch (it streams arbitrary methods and bodies); it is on the phase 7
    exception list with that reason.
-3. **Judge at send in the transport (closes G1 for HTTP).** `canonicalFetch`
-   calls the judge on the final URL, headers and body, multipart file parts
-   included. Bodies over the scan cap (`SECRET_SCAN_CAP` in
-   `src/data-lineage/paths.ts`) are judged on their head and on sampled
-   fingerprint windows, and the cap is a test.
+3. **Judge at send in the transport (closes G1 for HTTP).** Done 2026-10-22.
+   `canonicalFetch` calls `assertSendAllowed` (`src/net/egress-send.ts`) on
+   the URL and body before every hop is dialed, multipart parts included (a
+   file part is judged on its first 256 KB). The session comes from an egress
+   scope the tool runner opens around every tool's execute
+   (`src/net/egress-scope.ts`, `src/tool-execution/tool-runner.ts`), the
+   same session the dispatch gates judged. The `tool-send` channel refuses on
+   evidence only: the session's canary (recorded), bytes from a sensitive
+   source the session read (positive overlap; the floor was already applied at
+   dispatch to what the model wrote), and a stored secret's value the call was
+   not cleared to send (`http_request` passes the values its placeholders were
+   approved for). Headers are not judged: a provider's key travels there by
+   design, and the headers the model wrote were judged at dispatch.
+   `http_request` and `web_fetch` render a send-time block as a blocked card,
+   with the declassify control when taint fired. The destination-aware secret
+   SHAPE scan stays at dispatch: at send, shapes would refuse ordinary uploads,
+   while registered values are evidence.
 4. **Mail.** Judge the composed message in `src/tools/email-send-tool.ts` and
    `src/tools/email-compose-tools.ts` before it is handed to the SMTP library.
 5. **Proxy.** Per-session proxy credentials; the judge on plain-HTTP requests;

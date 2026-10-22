@@ -105,6 +105,20 @@ describe("http_request — a secret goes only where its ladder allows", () => {
     expect(sent.calls[0].body).toContain(KEY);
   });
 
+  // The vault registers every stored value, so the approved placeholder above
+  // reaching the wire is the proof that the send-time judge (net/egress-send.ts)
+  // does not count a cleared secret as leaking. A second stored value written
+  // raw into the body is refused before anything is sent — here by the tool's
+  // own argument guard, with the send-time judge behind it.
+  it("a stored secret's raw value the call was never cleared to send is refused, and nothing is sent", async () => {
+    const other = "rk_live_" + "Zz98".repeat(8);
+    store.set("OTHER_KEY", other, { service: "Other" });
+    const res = await call({ url: "https://hooks.example/in", method: "POST", body: `{"token":"{{STRIPE_KEY}}","other":"${other}"}` });
+    expect(res.isError).toBe(true);
+    expect(String(res.content)).not.toContain("Zz98");
+    expect(sent.calls).toEqual([]);
+  });
+
   it("the session that captured a secret is not asked", async () => {
     store.set("CAPTURED", "captured-value-0123456789", { origin: "https://app.example.com", createdBySession: "chat-1" });
     const res = await call({ url: "https://api.example.com/x", headers: { "X-Api-Key": "{{CAPTURED}}" } });

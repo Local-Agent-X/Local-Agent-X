@@ -6,6 +6,7 @@ import { isRetryable, retrySignalForToolResult } from "../resilience-policy.js";
 import { createRetryCallSnapshot } from "./retry-call.js";
 import { createJournaledExecution } from "./journaled-execution.js";
 import { currentApprovalWaitMs, runInApprovalWaitScope } from "../approval-wait.js";
+import { runInEgressScope } from "../net/egress-scope.js";
 
 export interface ToolRunner {
   /** True when the side-effect journal satisfied this call without executing
@@ -61,13 +62,15 @@ export function createToolRunner(input: {
       args._onProgress = input.onProgress;
       // One wait scope per attempt: an approval card raised anywhere inside
       // this execute is the user's time, not the tool's, and the timeout
-      // excludes it (approval-wait.ts).
-      return await runInApprovalWaitScope(async () => {
+      // excludes it (approval-wait.ts). The egress scope names the session a
+      // request the tool sends belongs to, for the send-time judge
+      // (net/egress-scope.ts) — the same session the dispatch gates judged.
+      return await runInEgressScope(input.sessionId || "default", () => runInApprovalWaitScope(async () => {
         const execution = input.tool.execute(args, input.signal);
         return await (ms > 0
           ? withTimeout(execution, ms, input.toolName, currentApprovalWaitMs)
           : execution);
-      });
+      }));
     });
     const retrySignal = journal.replayed ? null : retrySignalForToolResult(result, call.effect);
     if (retrySignal) throw retrySignal;

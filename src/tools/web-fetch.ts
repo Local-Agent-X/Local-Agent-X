@@ -1,7 +1,8 @@
 import type { ToolDefinition } from "../types.js";
 import { wrapExternalContent } from "../sanitize.js";
 import { findInBody } from "./paginate-body.js";
-import { ok, err } from "./result-helpers.js";
+import { ok, err, blocked } from "./result-helpers.js";
+import { EgressPayloadBlocked } from "../net/egress-send.js";
 import { capWithSpill } from "./result-spill.js";
 import { extractFromHtml } from "./html-extract.js";
 import { formatMissingPageLeads, gatherMissingPageLeads, isMissingPageStatus } from "./missing-page-leads.js";
@@ -168,6 +169,13 @@ export const webFetchTool: ToolDefinition = {
         ...maskedMeta,
       });
     } catch (e) {
+      if (e instanceof EgressPayloadBlocked) {
+        return blocked(e.message, {
+          layer: e.layer, url, duration_ms: Date.now() - startMs,
+          recovery: e.clearable ? "Leave the sensitive content out of the URL, or ask the user to click \"Declassify & retry\" on this card." : "Remove that content from the URL and retry.",
+          ...(e.clearable ? { clearable: e.clearable } : {}),
+        });
+      }
       if (e instanceof EgressRedirectBlocked) {
         return err(e.message, { url, blocked_url: e.blockedUrl, duration_ms: Date.now() - startMs });
       }

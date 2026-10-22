@@ -1,16 +1,17 @@
-import type { ToolDefinition } from "../types.js";
+import type { ToolDefinition, ToolResult } from "../types.js";
 import { wrapExternalContent } from "../sanitize.js";
 import { findInBody } from "./paginate-body.js";
 import type { SecretsStore } from "../secrets.js";
 import type { ServerEvent } from "../types.js";
 import { gateSecretDestinations, referencedSecretNames } from "../secret-destination-gate.js";
-import { ok, err } from "./result-helpers.js";
+import { ok, err, blocked } from "./result-helpers.js";
 import { capWithSpill } from "./result-spill.js";
 import { checkOutboundRequest } from "./http-egress-guard.js";
 import { vouchedFor } from "../browser/site-provenance.js";
 import { formatMissingPageLeads, gatherMissingPageLeads, isMissingPageStatus } from "./missing-page-leads.js";
 import { withholdSecretValues, secretsMaskedNote, isSecretEndpointUrl } from "../data-lineage/index.js";
 import { EgressRedirectBlocked, canonicalFetch } from "./web-egress.js";
+import { EgressPayloadBlocked } from "../net/egress-send.js";
 import { sessionIdOf } from "../tool-execution/internal-args.js";
 import { paidMediaApisAllowed, paidMediaEndpointKind, paidMediaOffMessage } from "./image-tools/paid-media.js";
 import { SecretRedirectStopped, startingHeaders } from "./http-request-transport.js";
@@ -139,6 +140,10 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
         headers["Content-Type"] = "application/json";
       }
 
+      // The secrets this call was cleared to send: the send-time judge does not
+      // count them as a stored secret leaving.
+      const approvedSecretValues = secrets ? boundNames.map((name) => secrets.get(name) ?? "") : [];
+
       try {
         // The one hardened transport (web-egress.ts canonicalFetch): the policy
         // and the literal-IP guard on every hop, credential headers stripped
@@ -155,6 +160,7 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
             const unapproved = unapprovedAt(location);
             if (unapproved.length > 0) throw new SecretRedirectStopped(location, unapproved);
           },
+          approvedSecretValues,
         });
         const currentUrl = res.url || url;
 
@@ -271,33 +277,37 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
         };
         return res.ok ? ok(output, meta) : err(output, meta);
       } catch (e) {
-        if (e instanceof SecretRedirectStopped) {
-          return err(`${e.message}${droppedNote}`, {
-            url,
-            method,
-            blocked_url: e.location,
-            duration_ms: Date.now() - startMs,
-            recovery: `Re-issue the request against ${e.location} if that host should have ${e.names.map((n) => `{{${n}}}`).join(", ")}; the user is asked once and a yes is kept.`,
-            ...droppedMeta,
-          });
-        }
-        if (e instanceof EgressRedirectBlocked) {
-          return err(`${e.message}${droppedNote}`, {
-            url,
-            method,
-            blocked_url: e.blockedUrl,
-            duration_ms: Date.now() - startMs,
-            ...droppedMeta,
-          });
-        }
-        return err(`HTTP request failed: ${(e as Error).message}${droppedNote}`, {
-          url,
-          method,
-          duration_ms: Date.now() - startMs,
-          ...droppedMeta,
-        });
+        return requestFailedResult(e, { url, method, startMs, droppedNote, droppedMeta });
       }
     },
   };
   return tool;
+}
+
+/** The result for a request the transport refused or that failed on the wire:
+ *  a redirect a bound secret may not follow, bytes refused at send (a blocked
+ *  card, with the declassify control when taint fired), a destination the
+ *  policy refused, or a plain network failure. */
+function requestFailedResult(
+  e: unknown,
+  c: { url: string; method: string; startMs: number; droppedNote: string; droppedMeta: Record<string, unknown> },
+): ToolResult {
+  const base = { url: c.url, method: c.method, duration_ms: Date.now() - c.startMs, ...c.droppedMeta };
+  if (e instanceof SecretRedirectStopped) {
+    return err(`${e.message}${c.droppedNote}`, {
+      ...base,
+      blocked_url: e.location,
+      recovery: `Re-issue the request against ${e.location} if that host should have ${e.names.map((n) => `{{${n}}}`).join(", ")}; the user is asked once and a yes is kept.`,
+    });
+  }
+  if (e instanceof EgressPayloadBlocked) {
+    return blocked(`${e.message}${c.droppedNote}`, {
+      ...base,
+      layer: e.layer,
+      recovery: e.clearable ? "Leave the sensitive content out of the request, or ask the user to click \"Declassify & retry\" on this card." : "Remove that content from the request and retry.",
+      ...(e.clearable ? { clearable: e.clearable } : {}),
+    });
+  }
+  if (e instanceof EgressRedirectBlocked) return err(`${e.message}${c.droppedNote}`, { ...base, blocked_url: e.blockedUrl });
+  return err(`HTTP request failed: ${(e as Error).message}${c.droppedNote}`, base);
 }

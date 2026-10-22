@@ -25,7 +25,7 @@ function state(over: Partial<DispatchEgressState> = {}): DispatchEgressState & {
 
 describe("judgeEgress", () => {
   it("each channel's taint reading is declared in one table", () => {
-    expect(EGRESS_CHANNEL_TAINT).toEqual({ "tool-dispatch": "floor", "browser-page": "overlap" });
+    expect(EGRESS_CHANNEL_TAINT).toEqual({ "tool-dispatch": "floor", "browser-page": "overlap", "tool-send": "overlap" });
   });
 
   it("a clean payload carries no evidence on either channel", () => {

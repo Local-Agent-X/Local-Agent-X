@@ -18,7 +18,7 @@
  */
 import type { TaintSource } from "../data-lineage/index.js";
 
-export type EgressChannel = "tool-dispatch" | "browser-page";
+export type EgressChannel = "tool-dispatch" | "browser-page" | "tool-send";
 
 /**
  * How each channel reads the session's taint.
@@ -31,10 +31,14 @@ export type EgressChannel = "tool-dispatch" | "browser-page";
  * - "overlap": only a payload that actually carries tainted bytes is refused.
  *   A page makes hundreds of requests (CDN assets, analytics, its own API);
  *   the floor would stop every page from rendering after one sensitive read.
+ *   The bytes a tool puts on the wire (tool-send) are judged the same way: the
+ *   floor was already applied, at dispatch, to what the model wrote, so at
+ *   send only evidence refuses — bytes the tool added that carry what was read.
  */
 export const EGRESS_CHANNEL_TAINT: Readonly<Record<EgressChannel, "floor" | "overlap">> = {
   "tool-dispatch": "floor",
   "browser-page": "overlap",
+  "tool-send": "overlap",
 };
 
 type TaintHit = { source: TaintSource; target: string };
@@ -50,18 +54,29 @@ export interface DispatchEgressState extends PageEgressState {
   checkEgressTaintWithPayload(sessionId: string, payload: string): { blocked: boolean; reason?: string; evidence: TaintHit[] };
 }
 
+/** At send, a stored secret's value is evidence too: the bytes are what the
+ *  tool built, so a value the model never wrote can be among them. The caller
+ *  removes the values this call was approved to send before judging. */
+export interface SendEgressState extends PageEgressState {
+  containsKnownSecretValue(payload: string): boolean;
+}
+
 export interface EgressJudgement {
   /** The session's canary is in the payload: proof of exfiltration. */
   canary: boolean;
   /** The payload is refused for taint, with the floor's reason when the
    *  channel reads the floor and the overlapping sources when there are any. */
   taint: { reason?: string; sources: TaintHit[] } | null;
+  /** tool-send only: a stored secret's value the call was not approved to send. */
+  knownSecret?: boolean;
 }
 
 export function judgeEgress(state: DispatchEgressState, channel: "tool-dispatch", sessionId: string, payload: string): EgressJudgement;
 export function judgeEgress(state: PageEgressState, channel: "browser-page", sessionId: string, payload: string): EgressJudgement;
-export function judgeEgress(state: PageEgressState | DispatchEgressState, channel: EgressChannel, sessionId: string, payload: string): EgressJudgement {
+export function judgeEgress(state: SendEgressState, channel: "tool-send", sessionId: string, payload: string): EgressJudgement;
+export function judgeEgress(state: PageEgressState | DispatchEgressState | SendEgressState, channel: EgressChannel, sessionId: string, payload: string): EgressJudgement {
   const canary = state.checkCanariesInPayload(sessionId, payload) !== null;
+  const knownSecret = channel === "tool-send" ? (state as SendEgressState).containsKnownSecretValue(payload) : undefined;
   let taint: EgressJudgement["taint"] = null;
   if (EGRESS_CHANNEL_TAINT[channel] === "floor") {
     const floor = (state as DispatchEgressState).checkEgressTaintWithPayload(sessionId, payload);
@@ -70,5 +85,5 @@ export function judgeEgress(state: PageEgressState | DispatchEgressState, channe
     const sources = state.findTaintInPayload(sessionId, payload);
     if (sources.length > 0) taint = { sources };
   }
-  return { canary, taint };
+  return knownSecret === undefined ? { canary, taint } : { canary, taint, knownSecret };
 }

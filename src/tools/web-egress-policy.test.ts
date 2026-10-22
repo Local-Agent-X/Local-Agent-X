@@ -10,6 +10,9 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { assertInitialEgressAllowed, canonicalFetch, EgressRedirectBlocked } from "./web-egress.js";
+import { runInEgressScope } from "../net/egress-scope.js";
+import { EgressPayloadBlocked } from "../net/egress-send.js";
+import { recordSensitiveRead, clearSessionTaint } from "../data-lineage/index.js";
 
 let dir: string;
 const prev = process.env.LAX_DATA_DIR;
@@ -165,5 +168,40 @@ describe("canonicalFetch redirects", () => {
   it("the response names the URL it finally came from", async () => {
     expect((await canonicalFetch(`${aBase}/cross`, { timeoutMs: 3_000 })).url).toBe(`${bBase}/landed`);
     expect((await canonicalFetch(`${aBase}/same`, { timeoutMs: 3_000 })).url).toBe(`${aBase}/final`);
+  });
+});
+
+// The transport judges the bytes it sends before dialing (net/egress-send.ts):
+// a tool call's request that carries what its session read never reaches the
+// server; the same session's clean request does.
+describe("canonicalFetch judges the bytes it sends", () => {
+  let srv: Server;
+  let base: string;
+  let bodies: string[];
+  const SESSION = "web-egress-send-test";
+  const READ = "PRIVATE_KEY=-----BEGIN-OPENSSH-PRIVATE-KEY-----b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAE and more of the key file";
+  beforeEach(async () => {
+    bodies = [];
+    srv = createServer((req, res) => { let b = ""; req.on("data", (c) => { b += c; }); req.on("end", () => { bodies.push(b); res.writeHead(200); res.end("ok"); }); });
+    await new Promise<void>((r) => srv.listen(0, "127.0.0.1", r));
+    base = `http://127.0.0.1:${(srv.address() as AddressInfo).port}`;
+    writeFileSync(join(dir, "security.json"), JSON.stringify({ localServicePorts: [Number(new URL(base).port)] }));
+    recordSensitiveRead(SESSION, "sensitive_file", "/home/u/.ssh/id_ed25519", READ);
+  });
+  afterEach(async () => {
+    clearSessionTaint(SESSION);
+    await new Promise<void>((r) => srv.close(() => r()));
+  });
+
+  it("a body carrying the session's sensitive read is refused before anything is sent", async () => {
+    const e = await runInEgressScope(SESSION, () => canonicalFetch(`${base}/upload`, { method: "POST", body: `{"note":"${READ}"}`, timeoutMs: 3_000 })).catch((x) => x);
+    expect(e).toBeInstanceOf(EgressPayloadBlocked);
+    expect(bodies).toEqual([]);
+  });
+
+  it("the same session's clean request goes through", async () => {
+    const r = await runInEgressScope(SESSION, () => canonicalFetch(`${base}/upload`, { method: "POST", body: '{"note":"hello"}', timeoutMs: 3_000 }));
+    expect(r.status).toBe(200);
+    expect(bodies).toEqual(['{"note":"hello"}']);
   });
 });

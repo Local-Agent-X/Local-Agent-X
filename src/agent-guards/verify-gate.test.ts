@@ -442,6 +442,15 @@ describe("a source file written and then deleted owes no verify", () => {
 
   it("an op whose only source edit was deleted edited no source", () => {
     const s = createVerifyGateState();
+    noteVerifyEvidence([{ tool: "write", writes: [probe] }, del(probe)], s);
+    expect(checkVerifyGate(s).nudge).toBeNull();
+  });
+
+  // normPath folds case only where the filesystem does (build-command.ts): on
+  // Linux Probe.mjs and probe.mjs are two files, and deleting one leaves the
+  // other edited.
+  it.runIf(process.platform === "win32" || process.platform === "darwin")("on a case-insensitive filesystem the delete may spell the path in another case", () => {
+    const s = createVerifyGateState();
     noteVerifyEvidence([{ tool: "write", writes: [probe] }, del(probe.toLowerCase())], s);
     expect(checkVerifyGate(s).nudge).toBeNull();
   });

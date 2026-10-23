@@ -22,6 +22,7 @@ import { applyCapabilityAwarePromptDegradation } from "./prompt-degradation.js";
 import { allRules, deliveredChannels, includedPartIds, type RuleId } from "./rule-registry.js";
 import { loadSystemPrompt } from "../config-loader.js";
 import type { LocalModelCapabilityProfile } from "../local-runtimes/index.js";
+import type { ChatMode } from "../session/mode.js";
 
 function localProfile(model: string, tier: "medium" | "weak", contextWindow: number): LocalModelCapabilityProfile {
   return {
@@ -36,10 +37,14 @@ function localProfile(model: string, tier: "medium" | "weak", contextWindow: num
 }
 
 /** The three targets that matter: a cloud turn, and the two local windows we ship against. */
-const PROFILES: ReadonlyArray<{ name: string; profile: LocalModelCapabilityProfile | null }> = [
-  { name: "cloud (no local profile — nothing is shed)", profile: null },
-  { name: "local medium, 65,536-token window", profile: localProfile("qwen3-coder:30b", "medium", 65_536) },
-  { name: "local weak, 32,768-token window", profile: localProfile("gemma3:12b", "weak", 32_768) },
+const PROFILES: ReadonlyArray<{ name: string; profile: LocalModelCapabilityProfile | null; mode: ChatMode }> = [
+  { name: "cloud (no local profile — nothing is shed)", profile: null, mode: "chat" },
+  { name: "local medium, 65,536-token window", profile: localProfile("qwen3-coder:30b", "medium", 65_536), mode: "chat" },
+  { name: "local weak, 32,768-token window", profile: localProfile("gemma3:12b", "weak", 32_768), mode: "chat" },
+  // A code session carries fewer base-prompt parts (context/prompt-mode.ts);
+  // every rule must still reach the model there.
+  { name: "code session, cloud", profile: null, mode: "code" },
+  { name: "code session, local medium, 65,536-token window", profile: localProfile("qwen3-coder:30b", "medium", 65_536), mode: "code" },
 ];
 
 /**
@@ -61,13 +66,13 @@ const KNOWN_GAPS: Readonly<Record<string, readonly RuleId[]>> = {
   "local weak, 32,768-token window": ["terminal-work-is-never-a-handoff", "never-act-on-your-own-offer"],
 };
 
-async function realPromptSections(): Promise<RenderedPromptSection[]> {
+async function realPromptSections(mode: ChatMode = "chat"): Promise<RenderedPromptSection[]> {
   // The real base prompt, split at its headings by basePromptSections(), plus
   // the builder-owned sections every path gets (runtime-context, agent-rules,
   // recall-reflex, app-manifest). Per-turn dynamic sections are deliberately
   // absent — no rule claims one, and they only ADD pressure, so leaving them
   // out makes this the optimistic case: what survives here is an upper bound.
-  const builder = createSystemPromptBuilder({ basePrompt: loadSystemPrompt(), providerHint: "" });
+  const builder = createSystemPromptBuilder({ basePrompt: loadSystemPrompt(), providerHint: "", mode });
   return (await builder.buildWithTelemetry()).renderedSections;
 }
 
@@ -96,10 +101,10 @@ describe("behavioural rule coverage across prompt profiles", () => {
     }
   });
 
-  for (const { name, profile } of PROFILES) {
+  for (const { name, profile, mode } of PROFILES) {
     describe(name, () => {
       it("every rule keeps at least one delivered channel", async () => {
-        const included = includedFor(await realPromptSections(), profile);
+        const included = includedFor(await realPromptSections(mode), profile);
         const undelivered: RuleId[] = [];
         const table: string[] = [];
         for (const rule of allRules()) {

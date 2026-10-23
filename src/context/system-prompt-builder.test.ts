@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { createSystemPromptBuilder, SystemPromptBuilder } from "./system-prompt-builder.js";
 import { applyCapabilityAwarePromptDegradation } from "./prompt-degradation.js";
 import { loadSystemPrompt } from "../config-loader.js";
+import { basePromptForMode } from "./prompt-mode.js";
 
 const MOCK_INPUTS = {
   basePrompt: "You are a personal AI companion.",
@@ -77,9 +78,13 @@ describe("Context Builder", () => {
   // fits in) the assembled string must be byte-identical to what the single
   // section produced: basePrompt, then every other section, same "" joiner.
   it("golden: the real base prompt split per heading assembles byte-identically to the single-section output", async () => {
-    const basePrompt = loadSystemPrompt();
-    expect(basePrompt.length).toBeGreaterThan(10_000); // the shipped file, not a fixture
-    const result = await createSystemPromptBuilder({ ...MOCK_INPUTS, basePrompt }).buildWithTelemetry();
+    const file = loadSystemPrompt();
+    expect(file.length).toBeGreaterThan(10_000); // the shipped file, not a fixture
+    const result = await createSystemPromptBuilder({ ...MOCK_INPUTS, basePrompt: file }).buildWithTelemetry();
+    // A chat carries every part but the code-mode one (context/prompt-mode.ts),
+    // in file order, so the base prompt it sees is the file minus that part.
+    const basePrompt = basePromptForMode(file, "chat");
+    expect(basePrompt.length).toBeLessThan(file.length);
 
     const coreParts = result.renderedSections.filter((section) => section.id.startsWith("core-identity/"));
     const rest = result.renderedSections.filter((section) => !section.id.startsWith("core-identity/"));

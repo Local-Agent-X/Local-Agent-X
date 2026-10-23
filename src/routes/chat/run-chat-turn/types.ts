@@ -2,6 +2,7 @@ import type { ServerContext } from "../../../server-context.js";
 import type { Role } from "../../../rbac.js";
 import type { ServerEvent } from "../../../types.js";
 import type { ChannelKind } from "../../../agent-request/types.js";
+import type { ChatMode } from "../../../session/mode.js";
 
 // Directive verbs that signal "the user is explicitly directing this
 // attachment to a destination" — when paired with attachments, this is
@@ -43,6 +44,9 @@ export interface RunChatTurnArgs {
   skipMemory?: boolean;
   maxHistory?: number;
   sessionTitle?: string;
+  /** The mode a NEW session is created in (session/mode.ts). Read on the
+   *  session's first message only; a later frame cannot change it. */
+  mode?: ChatMode;
   /** Stable provider receipt identity for idempotent pre-op effects. */
   ingressKey?: string;
 }

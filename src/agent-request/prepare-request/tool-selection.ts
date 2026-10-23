@@ -10,6 +10,7 @@
 
 import type { ToolDefinition } from "../../types.js";
 import type { ChannelKind } from "../types.js";
+import type { ChatMode } from "../../session/mode.js";
 import { filterToolsForMessage } from "../tool-filter.js";
 import { isSlashCommandExpansion } from "../../slash-commands.js";
 import { createLogger } from "../../logger.js";
@@ -31,6 +32,8 @@ export interface ToolSelectionInput {
   message: string;
   sessionId: string;
   channel: ChannelKind;
+  /** The session's mode; "code" loads the code session kit (session/mode.ts). */
+  mode?: ChatMode;
   allAgentTools: ToolDefinition[];
   bridgeTools: ToolDefinition[];
   resolvedProvider: string;
@@ -125,6 +128,25 @@ export function _resetSessionToolsForTests(): void {
   sessionToolNames.clear();
 }
 
+/**
+ * A code session's tools (session/mode.ts): the code session kit, not the
+ * per-message keyword filter and index picks, so the set is the same on every
+ * message and the prompt prefix stays cached. Tools the model loaded through
+ * tool_search earlier in the session stay (the session's union), and the
+ * tier's description compaction applies at the set's own size.
+ */
+async function codeSessionTools(input: ToolSelectionInput, tier: Tier): Promise<ToolDefinition[]> {
+  const { selectTools: selectKit, CODE_SESSION_KIT } = await import("../../tools/tool-kits.js");
+  const { shrinkToolsForTier } = await import("../../tools/tier-tool-set.js");
+  const { withUndoCounterparts } = await import("../../tools/undo-pairs.js");
+  const names = new Set([...selectKit(CODE_SESSION_KIT), ...(sessionToolNames.get(input.sessionId) ?? [])]);
+  let tools = withUndoCounterparts(input.allAgentTools.filter((t) => names.has(t.name)), input.allAgentTools);
+  if (tier !== "strong") tools = shrinkToolsForTier(tools, tier, input.allAgentTools, tools.length);
+  rememberSessionTools(input.sessionId, tools.map((t) => t.name));
+  logger.info(`[tools] code session: ${tools.length} for ${tier} model ${input.resolvedModel} (${tools.map((t) => t.name).join(",")})`);
+  return tools;
+}
+
 export async function selectTools(input: ToolSelectionInput): Promise<ToolSelectionResult> {
   const isBridge = input.channel === "telegram" || input.channel === "whatsapp";
 
@@ -195,6 +217,8 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
   let tools: ToolDefinition[];
   if (isBridge) {
     tools = input.bridgeTools;
+  } else if (input.mode === "code") {
+    tools = await codeSessionTools(input, tier);
   } else {
     tools = filterToolsForMessage(input.allAgentTools, input.message);
     // EXP-18/EXP-24: "essentials" = the tier's essential set plus the message's

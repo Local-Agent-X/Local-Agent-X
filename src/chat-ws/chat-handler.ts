@@ -4,6 +4,7 @@
 // frame. Lives outside state.ts so the buffer/replay state stays one concern.
 
 import type { ChannelId } from "../channel-context.js";
+import type { ChatMode } from "../session/mode.js";
 
 /** Per-message metadata the router derives from the frame (beyond the payload). */
 export interface ChatFrameMeta {
@@ -14,6 +15,8 @@ export interface ChatFrameMeta {
    *  Absent when the frame carried none (the phone, the App IDE): the session keeps
    *  the project it has. */
   projectId?: string | null;
+  /** The mode a new session is created in; ignored once it has messages. */
+  mode?: ChatMode;
 }
 
 export type ChatHandler = (sessionId: string, message: string, attachments: unknown[], meta?: ChatFrameMeta) => void;

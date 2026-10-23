@@ -10,6 +10,7 @@ import { handleEvalCompactRoute } from "./chat/eval-compact-route.js";
 import { handleRetractRoute } from "./chat/retract-route.js";
 import { handleTrashRestoreRoute } from "./chat/trash-restore-route.js";
 import { runChatTurn } from "./chat/run-chat-turn.js";
+import { parseChatMode } from "../session/mode.js";
 import { markDryRunSession, unmarkDryRunSession } from "../tool-execution/index.js";
 
 const logger = createLogger("routes.chat");
@@ -38,6 +39,8 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
     const attachments = parsed.data.attachments!;
     const sessionId = parsed.data.sessionId!;
     const projectId = (raw as Record<string, unknown>).projectId;
+    // A new session's mode, as the WS frame carries it (session/mode.ts).
+    const mode = parseChatMode((raw as Record<string, unknown>).mode);
 
     res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive", ...corsHeaders(req) });
 
@@ -62,6 +65,7 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
         ctx,
         requestRole,
         sseSink,
+        mode,
       });
     } finally {
       clearInterval(heartbeat);

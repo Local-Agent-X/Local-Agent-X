@@ -32,11 +32,11 @@ export const TOOL_POLICIES_CORE: Record<string, ToolPolicyRow> = {
   },
   // The file-access gate judges process_start/_restart's cwd with the call's
   // session (kernel-class-policy.ts); the tool resolves it with the same one.
-  process_start:    { kernel: "shell", ariAction: "exec",    risk: "shell", capabilities: ["egress", "shell"], tags: [], liveState: "poll", shellCommand: { arg: "command" }, secretEnv: true, output: "command", reads: ["session"] },
-  process_status:   { kernel: "shell", ariAction: "exec",    risk: "safe", capabilities: [], tags: [], liveState: "poll", output: "command", runControl: true },
-  process_kill:     { kernel: "shell", ariAction: "exec",    risk: "destructive", capabilities: [], tags: [], liveState: "poll", undo: { pairedWith: "process_start" }, runControl: true },
-  process_restart:  { kernel: "shell", ariAction: "exec",    risk: "destructive", capabilities: ["egress", "shell"], tags: [], liveState: "poll", shellCommand: { arg: "command" }, secretEnv: true, output: "command", undo: { pairedWith: "process_start" }, reads: ["session"] },
-  process_list:     { kernel: "shell", ariAction: "exec",    risk: "safe", capabilities: [], tags: [], liveState: "poll", output: "command", runControl: true },
+  process_start:    { kernel: "shell", ariAction: "exec",    risk: "shell", capabilities: ["egress", "shell"], tags: ["process"], liveState: "poll", shellCommand: { arg: "command" }, secretEnv: true, output: "command", reads: ["session"] },
+  process_status:   { kernel: "shell", ariAction: "exec",    risk: "safe", capabilities: [], tags: ["process"], liveState: "poll", output: "command", runControl: true },
+  process_kill:     { kernel: "shell", ariAction: "exec",    risk: "destructive", capabilities: [], tags: ["process"], liveState: "poll", undo: { pairedWith: "process_start" }, runControl: true },
+  process_restart:  { kernel: "shell", ariAction: "exec",    risk: "destructive", capabilities: ["egress", "shell"], tags: ["process"], liveState: "poll", shellCommand: { arg: "command" }, secretEnv: true, output: "command", undo: { pairedWith: "process_start" }, reads: ["session"] },
+  process_list:     { kernel: "shell", ariAction: "exec",    risk: "safe", capabilities: [], tags: ["process"], liveState: "poll", output: "command", runControl: true },
 
   // ── Raw filesystem ──
   read: {

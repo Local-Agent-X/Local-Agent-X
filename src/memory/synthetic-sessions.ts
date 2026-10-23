@@ -49,9 +49,9 @@ const INTERNAL_SCRATCH_PREFIXES: readonly string[] =
 //
 // Derived (INTERNAL_SCRATCH_PREFIXES) as the synthetic list minus `ide-`: ide- chats are live
 // user-facing chats over the chat WS (the IDE panel) — they keep their live
-// badge and stay searchable, while remaining synthetic for memory ingestion
-// and the persisted sidebar list (/api/sessions filters the full synthetic
-// set above; deliberate — IDE chats have their own surface).
+// badge, stay searchable and are listed by /api/sessions as code sessions
+// (the sidebar's Code side, session/mode.ts), while remaining synthetic for
+// memory ingestion.
 //
 // This predicate must NEVER feed interrupt suppression. That is the other
 // concern — chat-ws/broadcast.ts isHeadlessSession (eval_/skill-review-/

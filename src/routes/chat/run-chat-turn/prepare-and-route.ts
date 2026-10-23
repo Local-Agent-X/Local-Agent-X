@@ -3,6 +3,7 @@ import type { ServerContext } from "../../../server-context.js";
 import type { ServerEvent } from "../../../types.js";
 import type { PreparedAgentRequest } from "../../../agent-request/types.js";
 import type { ChannelKind } from "../../../agent-request/types.js";
+import type { ChatMode } from "../../../session/mode.js";
 import { createLogger } from "../../../logger.js";
 import { hiddenFrom } from "../../../tool-registry.js";
 
@@ -21,6 +22,8 @@ export interface PrepareInput {
   /** The session's stored checkpoint, so the old part of the conversation is
    *  sent as the SAME summary bytes every message. */
   compactionCheckpoint?: { summary: string; coversThrough: number };
+  /** The session's mode (session/mode.ts). */
+  mode?: ChatMode;
 }
 
 export async function preparePerTurnRequest(input: PrepareInput): Promise<PreparedAgentRequest> {
@@ -39,6 +42,7 @@ export async function preparePerTurnRequest(input: PrepareInput): Promise<Prepar
     skipMemory: input.skipMemory,
     maxHistory: input.maxHistory,
     compactionCheckpoint: input.compactionCheckpoint,
+    mode: input.mode,
   });
   logger.info(`[timing] prepareAgentRequest ${Date.now() - prepStart}ms (sess=${sessionId.slice(0, 16)})`);
   console.log(`[chat-diag] prepared sess=${sessionId.slice(-8)} provider=${prepared.provider} model=${prepared.model || "EMPTY"} hasKey=${!!prepared.apiKey}`);

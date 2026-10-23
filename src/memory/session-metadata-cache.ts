@@ -11,6 +11,7 @@
 import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Session } from "../types.js";
+import { sessionModeOf } from "../session/mode.js";
 import { atomicWriteFileSync } from "./utils.js";
 import { readSessionLog, listSessionIds } from "./session-message-log.js";
 import { createLogger } from "../logger.js";
@@ -24,6 +25,9 @@ export interface SessionMetadata {
   updatedAt: number;
   messageCount: number;
   projectId?: string;
+  /** "code" for a code session (session/mode.ts); absent = chat. The sidebar
+   *  lists each mode's sessions separately. */
+  mode?: "code";
 }
 
 /** A journal row: a metadata upsert, or a tombstone for a removed session. */
@@ -54,6 +58,7 @@ export function metadataOf(session: Session): SessionMetadata {
     updatedAt: session.updatedAt,
     messageCount: session.messages.length,
     projectId: session.projectId,
+    ...(sessionModeOf(session) === "code" ? { mode: "code" as const } : {}),
   };
 }
 

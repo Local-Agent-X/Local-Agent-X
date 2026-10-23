@@ -13,6 +13,7 @@ import type { TargetPin } from "../ops/types.js";
 import type { ProviderSwitch } from "./resolve-provider.js";
 
 import type { ChannelId } from "../channel-context.js";
+import type { ChatMode } from "../session/mode.js";
 
 /** Alias of the canonical channel union (src/channel-context.ts). */
 export type ChannelKind = ChannelId;
@@ -30,6 +31,9 @@ export interface AgentRequestInput {
   compactionCheckpoint?: { summary: string; coversThrough: number };
   /** Session ID for the agent run */
   sessionId: string;
+  /** The session's mode (session/mode.ts). "code" selects the code prompt
+   *  profile and the coding tool kit; absent = chat, unchanged. */
+  mode?: ChatMode;
   /** App config */
   config: LAXConfig;
   /** Data directory (~/.lax) */

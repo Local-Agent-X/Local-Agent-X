@@ -14,6 +14,7 @@ import { runCanonicalChat } from "./canonical-run.js";
 import { PROVIDERS } from "../../../providers/registry.js";
 import { PROVIDER_IDS, type ProviderId } from "../../../providers/provider-ids.js";
 import type { ChannelKind } from "../../../agent-request/types.js";
+import { sessionModeOf } from "../../../session/mode.js";
 
 const logger = createLogger("routes.chat.run-turn");
 
@@ -104,6 +105,8 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
   const session = ctx.getOrCreateSession(sessionId);
   if (session.messages.length === 0) {
     session.title = args.sessionTitle ?? (message.slice(0, 60) + (message.length > 60 ? "..." : ""));
+    // The mode is fixed here, on the session's first message (session/mode.ts).
+    if (args.mode === "code") session.mode = "code";
   }
 
   // Persist the chat→project link onto the durable session so it survives
@@ -173,6 +176,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
       channel, bridgeContext: args.bridgeContext,
       skipMemory: args.skipMemory, maxHistory: args.maxHistory,
       compactionCheckpoint: session.compactionCheckpoint,
+      mode: sessionModeOf({ id: sessionId, mode: session.mode }),
     });
     // A checkpoint computed for THIS request is stored on the session so every
     // later message reuses the same summary bytes — recomputing it per message

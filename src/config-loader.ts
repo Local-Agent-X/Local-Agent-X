@@ -98,6 +98,10 @@ const BASE_PROMPT_PART_CLASS: Readonly<Record<string, PromptPriority>> = {
   "memory": "navigation", // "Memory — relational …" is the recall behaviour, not the facts
   "background-operations": "navigation",
   "how-to-work": "tuning",
+  // The coding "How to work", code mode only (context/prompt-mode.ts). It is
+  // short and carries the checks a coding task is judged on, so it is shed
+  // after tuning, not with it.
+  "code-mode": "navigation",
   "coding-discipline": "tuning",
   "delegation": "tuning",
   "browser": "tuning",
@@ -138,6 +142,12 @@ export function basePromptSections(prompt: string): PromptSection[] {
       build: () => part.text,
     };
   });
+}
+
+/** The heading slug of a base-prompt section id (`core-identity/<slug>`, or
+ *  `<slug>-2` for a repeated heading), as classifySystemPromptPart made it. */
+export function basePartSlug(id: string): string {
+  return id.replace(/^core-identity\//, "").replace(/-\d+$/, "");
 }
 
 /** Load the protected files list from config/protected-files.json. */

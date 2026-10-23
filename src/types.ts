@@ -1,4 +1,5 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
+import type { ChatMode } from "./session/mode.js";
 
 // ── Agent Types ──
 
@@ -254,6 +255,12 @@ export interface Session {
    * its per-project model override. Absent = not in a project.
    */
   projectId?: string;
+  /**
+   * Chat or code (session/mode.ts), fixed when the session is created. Absent
+   * = chat. Read it through `sessionModeOf`, which also knows the App IDE's
+   * sessions are code sessions.
+   */
+  mode?: ChatMode;
   /**
    * Compaction lives as a leading `{role:"system", content:"[COMPACTED CONTEXT — …]"}`
    * entry in `messages` (round-tripped through a `summary` row in the

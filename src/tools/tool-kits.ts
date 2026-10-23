@@ -46,6 +46,17 @@ export const CODING_KIT: readonly string[] = toolsTagged(...CODING_KIT_TAGS);
  *  the generic Worker template, which build against live references. */
 export const BUILDER_KIT: readonly string[] = toolsTagged(...CODING_KIT_TAGS, "web-read", "web-search", "image-view");
 
+/** What a code session (session/mode.ts) loads up front: the coding kit, the
+ *  long-running processes a task's server or watcher needs, its step list, the
+ *  web for docs, HTTP for APIs and downloads (the shell's own curl/wget to the
+ *  internet stays refused; http_request's save_to is the download path),
+ *  deleting and restoring files, and tool_search, through which every other
+ *  tool stays loadable when a task needs it. */
+export const CODE_SESSION_KIT: ToolSelection = {
+  tags: [...CODING_KIT_TAGS, "process", "tasks", "web-read", "web-search", "http-api", "file-delete", "image-view"],
+  plus: { tool_search: "loads any other tool by name or purpose; without it the rest of the catalog is out of reach" },
+};
+
 /** The Office umbrella tools (each covers create/edit/read actions). A worker
  *  delegated a deck/doc/sheet/pdf task needs them: its bash is denied in a
  *  delegated session, so without these it has no route to the file at all. */

@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1845 non-test source files · 93 oversized · 241 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1847 non-test source files · 93 oversized · 241 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -28,18 +28,18 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/providers/` | 68 | 26 | L | 1 |
 | `src/memory/` | 51 | 138 | XL | 7 |
 | `src/browser/` | 48 | 88 | XL | 5 |
+| `src/session/` | 48 | 8 | M |  |
 | `src/data-lineage/` | 47 | 11 | M |  |
 | `src/tool-policy/` | 46 | 21 | L |  |
 | `src/local-runtimes/` | 41 | 26 | L | 1 |
 | `src/util/` | 41 | 3 | S |  |
 | `src/threat/` | 40 | 13 | L |  |
 | `src/auth/` | 37 | 11 | L |  |
-| `src/session/` | 36 | 7 | M |  |
 | `src/chat-ws/` | 32 | 23 | L |  |
 | `src/agency/` | 27 | 20 | L |  |
 | `src/agent-store/` | 26 | 7 | M | 1 |
 | `src/classifiers/` | 24 | 16 | L |  |
-| `src/context/` | 24 | 8 | M | 1 |
+| `src/context/` | 24 | 9 | M | 1 |
 | `src/context-manager/` | 24 | 13 | M |  |
 | `src/agent-request/` | 23 | 15 | L | 3 |
 | `src/app-runtime/` | 23 | 12 | M |  |

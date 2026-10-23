@@ -13,6 +13,7 @@ export const TOOL_TAGS = [
   "file-delete",       // deletes a file, or restores one a delete removed
   "file-search",       // finds files by name or by content
   "shell",             // runs a command and returns its output
+  "process",           // starts, checks, restarts or stops a long-running command (a server, a watcher)
   "web-search",        // searches the web
   "web-read",          // fetches and reads a web page
   "http-api",          // sends a raw HTTP request to an API

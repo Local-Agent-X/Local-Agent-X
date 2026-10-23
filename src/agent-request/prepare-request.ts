@@ -132,6 +132,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
       message: input.message,
       sessionId: input.sessionId,
       channel: input.channel,
+      mode: input.mode,
       allAgentTools: input.allAgentTools,
       bridgeTools: input.bridgeTools,
       resolvedProvider: resolved.provider,
@@ -193,6 +194,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   end = stepStart("buildSystemPrompt");
   const promptBuild = await buildSystemPromptWithTelemetry({
     channel: input.channel,
+    mode: input.mode,
     message: input.message,
     sessionId: input.sessionId,
     config: input.config,

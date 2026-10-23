@@ -106,32 +106,45 @@ export const RULES: Record<RuleId, Rule> = {
   //   error-message: src/tools/shell-tool.ts — the timeout recovery line
   //     "use process_start for long-running commands". This is what actually
   //     reaches a local model.
+  //   prompt-part: config/system-prompt.md `## Code mode — how to work`
+  //     ("anything that keeps running … with `process_start`"), a code
+  //     session's part in place of `## How to work` (context/prompt-mode.ts).
   "long-running-process-uses-process-start": {
     id: "long-running-process-uses-process-start",
     summary: "Start long-running processes with process_start, never a blocking bash call.",
     channels: [
       { kind: "prompt-part", part: "core-identity/how-to-work" },
+      { kind: "prompt-part", part: "core-identity/code-mode" },
       { kind: "error-message", source: "src/tools/shell-tool.ts bash timeout recovery" },
     ],
   },
 
-  // prompt-part ONLY: config/system-prompt.md, inside `## How to work`.
+  // prompt-part ONLY: config/system-prompt.md, inside `## How to work`, and in
+  // a code session inside `## Code mode — how to work` ("Never hand back a
+  // script … Terminal work is yours").
   // Searched src/canonical-loop, src/agent-request and src/routes/chat for a
   // hand-off detector — browser-handoff.ts covers the BROWSER case, nothing
   // covers "run this command yourself". No tool description or error says it.
   "terminal-work-is-never-a-handoff": {
     id: "terminal-work-is-never-a-handoff",
     summary: "Never tell the user to run a command — you have bash and process_start.",
-    channels: [{ kind: "prompt-part", part: "core-identity/how-to-work" }],
+    channels: [
+      { kind: "prompt-part", part: "core-identity/how-to-work" },
+      { kind: "prompt-part", part: "core-identity/code-mode" },
+    ],
   },
 
   // prompt-part ONLY: config/system-prompt.md ("Never act on your own
-  // offer"), inside `## How to work`. Grepped src/**/*.ts and config/*.md —
-  // this text exists in exactly one place.
+  // offer"), inside `## How to work`, and in a code session inside `## Code
+  // mode — how to work` ("A question ends the turn … Never act on your own
+  // offer"). Grepped src/**/*.ts and config/*.md — those are its two places.
   "never-act-on-your-own-offer": {
     id: "never-act-on-your-own-offer",
     summary: "A question you ended your reply with ends the turn — wait for the answer.",
-    channels: [{ kind: "prompt-part", part: "core-identity/how-to-work" }],
+    channels: [
+      { kind: "prompt-part", part: "core-identity/how-to-work" },
+      { kind: "prompt-part", part: "core-identity/code-mode" },
+    ],
   },
 
   // Commit 7e80bec6 — glob/grep with no path used to search process.cwd().

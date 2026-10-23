@@ -14,6 +14,7 @@ import type { WebSocket } from "ws";
 import { createLogger } from "../logger.js";
 import { getApprovalManager } from "../approval-manager.js";
 import { getChatHandler } from "./chat-handler.js";
+import { parseChatMode } from "../session/mode.js";
 import { getLearningNoticesForSession, getMessageCountForSession } from "./state.js";
 import { broadcastToSession, terminateChat } from "./broadcast.js";
 import { sendFrame } from "./frames.js";
@@ -264,7 +265,10 @@ async function handleChat(ctx: RouterContext, sessionId: string, msg: Record<str
   // arbitrary origin claims from other clients are dropped, not trusted.
   const { parseFrameOrigin } = await import("../channel-context.js");
   const origin = parseFrameOrigin(msg.origin);
-  if (handler) handler(sessionId, _msgText, _atts, { ...(origin ? { channel: origin } : {}), ...projectMeta });
+  // A new session's mode (session/mode.ts); the turn reads it only when the
+  // session has no messages yet.
+  const mode = parseChatMode(msg.mode);
+  if (handler) handler(sessionId, _msgText, _atts, { ...(origin ? { channel: origin } : {}), ...projectMeta, ...(mode ? { mode } : {}) });
 }
 
 async function handleApprovalResponse(ws: WebSocket, msg: Record<string, unknown>): Promise<void> {

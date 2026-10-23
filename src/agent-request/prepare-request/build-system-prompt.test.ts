@@ -11,6 +11,7 @@ import { harnessNotice, renderPromptSection } from "../../context/system-prompt-
 import { loadFileAccessMode } from "../../security/layer/index.js";
 import { modelFamilyRiderFor, providerRiderFor } from "./provider-riders.js";
 import { loadSystemPrompt } from "../../config-loader.js";
+import { basePromptForMode } from "../../context/prompt-mode.js";
 
 describe("fileAccessGroundingBlock", () => {
   it("unrestricted tells the model it can read ANY file", () => {
@@ -395,7 +396,8 @@ describe("stableSystemPrefixLength", () => {
     // file into core-identity/* parts must not have shortened it by a byte.
     // No tools are loaded here, so no tool-guidance stops the walk and the
     // byte-stable recall-reflex joins the head too.
-    const basePrompt = loadSystemPrompt();
+    // A chat's parts of the file: all but the code-mode one (context/prompt-mode.ts).
+    const basePrompt = basePromptForMode(loadSystemPrompt(), "chat");
     const runtime = turn1.renderedSections.find((section) => section.id === "runtime-context")!;
     expect(turn1.prompt.startsWith(basePrompt)).toBe(true);
     const stableSections = ["app-manifest", "agent-rules", "provider-hint", "recall-reflex"]

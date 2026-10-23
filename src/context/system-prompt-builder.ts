@@ -8,7 +8,9 @@
 
 import { createRequire } from "node:module";
 import { measurePromptSection, type PromptSectionTelemetry } from "../prompt-telemetry.js";
-import { basePromptSections } from "../config-loader.js";
+import { basePartSlug, basePromptSections } from "../config-loader.js";
+import { promptPartInMode } from "./prompt-mode.js";
+import type { ChatMode } from "../session/mode.js";
 import { snapshotForSession } from "./session-prompt-snapshot.js";
 import { readAgentRulesSection } from "./agents-md-section.js";
 import { runtimeSection } from "./runtime-section.js";
@@ -206,6 +208,8 @@ export function createSystemPromptBuilder(opts: {
   /** Which surface this turn arrived on + its limitations — rendered by
    *  channelContextBlock (src/channel-context.ts). */
   channelContext?: string;
+  /** The session's mode (session/mode.ts); absent = chat. */
+  mode?: ChatMode;
 }): SystemPromptBuilder {
   const builder = new SystemPromptBuilder();
 
@@ -213,7 +217,11 @@ export function createSystemPromptBuilder(opts: {
 
   // One section PER `## ` heading of the base prompt (config-loader.ts) so a small
   // local window can shed tuning before facts; same "" joiner ⇒ same bytes/prefix.
-  for (const part of basePromptSections(opts.basePrompt)) builder.addSection(part);
+  // The session's mode picks which parts it carries (prompt-mode.ts).
+  const mode = opts.mode ?? "chat";
+  for (const part of basePromptSections(opts.basePrompt)) {
+    if (promptPartInMode(basePartSlug(part.id), mode)) builder.addSection(part);
+  }
 
   // Runtime context — tells the model WHICH OS / shell it's actually on and
   // WHERE relative paths land, so it stops reaching for PowerShell verbs and

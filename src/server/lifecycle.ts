@@ -134,6 +134,7 @@ export function wireWsChat(deps: {
         // The broker bridge stamps phone frames origin:"mobile" (validated in
         // message-router); desktop/IDE clients carry no origin → "web".
         channel: meta?.channel ?? "web",
+        mode: meta?.mode,
       });
     } catch (e) {
       const msg = (e as Error).message;

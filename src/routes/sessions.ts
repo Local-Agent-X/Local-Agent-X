@@ -7,7 +7,7 @@ import type { RouteHandler } from "../server-context.js";
 import { isValidSessionId, safeErrorMessage, readBody, safeParseBody, jsonResponse } from "../server-utils.js";
 import { exportSession, importSession } from "../session/export.js";
 import { loadSessionPage } from "../progressive-loader.js";
-import { isExcludedFromSessionSummaries, isHiddenFromChatLists, isSyntheticSessionId } from "../memory/synthetic-sessions.js";
+import { isExcludedFromSessionSummaries, isHiddenFromChatLists } from "../memory/synthetic-sessions.js";
 
 export const handleSessionRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
@@ -18,9 +18,12 @@ export const handleSessionRoutes: RouteHandler = async (method, url, req, res, c
     // sidebar. Eval sessions are dry-run throwaways from /api/eval/run —
     // surfacing one lets the UI adopt it and route a real message into a
     // dry-run turn (silent no-op reported as success).
+    // App IDE chats (ide-<appId>) are listed: they are code sessions, and the
+    // sidebar's Code side shows them under their app (session/mode.ts). Their
+    // `mode` says which side; the chat side never shows them.
     const all = ctx.sessionStore.list();
     // Typed as the phone's row so a renamed field fails here, not in the phone's drawer.
-    const visible: SessionSummary[] = all.filter(s => !isSyntheticSessionId(s.id));
+    const visible: SessionSummary[] = all.filter(s => !isHiddenFromChatLists(s.id));
     json(200, visible);
     return true;
   }

@@ -19,6 +19,7 @@ import {
 } from "../../context/system-prompt-builder.js";
 import { channelContextBlock } from "../../channel-context.js";
 import type { ChannelKind } from "../types.js";
+import type { ChatMode } from "../../session/mode.js";
 
 const logger = createLogger("agent-request.prepare-request.sysprompt");
 
@@ -121,6 +122,8 @@ export function stableSystemPrefixLength(
 export interface BuildSystemPromptInput {
   /** Which surface this turn arrived on — drives the channel-context section. */
   channel: ChannelKind;
+  /** The session's mode: which base-prompt parts it carries (context/prompt-mode.ts). */
+  mode?: ChatMode;
   message: string;
   sessionId: string;
   config: LAXConfig;
@@ -301,6 +304,7 @@ export async function buildSystemPromptWithTelemetry(
       notificationHint,
       channelContext: channelContextBlock(input.channel),
       bridgeContext: input.bridgeContext,
+      mode: input.mode,
     });
   }
 

@@ -9,6 +9,7 @@
  */
 import { readFileSync } from "node:fs";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
+import type { ChatMode } from "../session/mode.js";
 
 export interface SessionMetaRow {
   kind: "meta";
@@ -17,6 +18,8 @@ export interface SessionMetaRow {
   createdAt: number;
   updatedAt: number;
   projectId?: string;
+  /** Absent = chat (session/mode.ts). */
+  mode?: ChatMode;
 }
 
 export interface SessionMessageRow {

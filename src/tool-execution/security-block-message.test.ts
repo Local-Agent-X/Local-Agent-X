@@ -10,6 +10,7 @@ import { probeUpstreamEgressBlockers } from "./enforce-policy.js";
 import { makeSecurityLayerPack, securityDenyRecovery } from "../tool-policy/packs/security-layer-pack.js";
 import type { PackDecision } from "../tool-policy/evaluator.js";
 import { USER_HINTS } from "../types.js";
+import { BLOCKED_CALL_RULE } from "../tools/result-helpers.js";
 import type { SecurityLayer } from "../security/index.js";
 import type { ToolCallContext } from "./context.js";
 
@@ -70,25 +71,44 @@ describe("securityDenyRecovery — one canonical recovery for both security-bloc
     expect(deny.recovery).toBe(blockers[0].recovery);
   });
 
-  it("keeps the boundary guidance and adds the escalation instruction", () => {
+  it("keeps the boundary guidance and carries the one blocked-call rule", () => {
     const msg = securityDenyRecovery();
     expect(msg).toMatch(/workspace and security boundaries/);
-    expect(msg).toMatch(/stop and tell the user/i);
-    // Escalation, not silent workaround: the false-positive path is "surface
-    // the block", never "find another way around it".
-    expect(msg).toMatch(/do not look for a workaround/i);
-    expect(msg).toMatch(/adjust settings or approve another path/i);
+    expect(msg).toContain(BLOCKED_CALL_RULE);
   });
 
-  it("defers to an alternative the block itself names, before telling the model to stop", () => {
+  // The rule is drawn on the refused EFFECT. The incident that made this
+  // message: an agent hit a false-positive block and hand-patched build
+  // artifacts past it, silently. Every route to the same effect is named.
+  it("forbids reaching the refused effect by any other route, even past a block the model thinks is wrong", () => {
+    for (const route of ["another command or spelling", "an interpreter", "a script file", "an encoding", "writing its output by hand"]) {
+      expect(BLOCKED_CALL_RULE).toContain(route);
+    }
+    expect(BLOCKED_CALL_RULE).toMatch(/even if you think the refusal is a mistake/);
+  });
+
+  // password-recovery (Terminal-Bench 2.0, 2026-10-23): an optional `mount`
+  // listing was blocked and "do not look for a workaround — stop" ended the
+  // whole task, though the disk could be searched without it.
+  it("lets the model keep working on the user's request by an approach that doesn't need the refused effect", () => {
+    expect(BLOCKED_CALL_RULE).toMatch(/keep working on the user's request by an approach that doesn't need what was refused/);
+    expect(securityDenyRecovery()).not.toMatch(/do not look for a workaround|stop and tell/i);
+  });
+
+  it("always tells the user what was refused, why it was needed, and whether it looks like a mistake", () => {
+    expect(BLOCKED_CALL_RULE).toMatch(/tell the user exactly what was refused, why you needed it, and whether it looks like a mistake/);
+    expect(BLOCKED_CALL_RULE).toMatch(/change the setting or approve another path/);
+  });
+
+  it("defers to an alternative the block itself names, before the general rule", () => {
     // The inline-eval block's reason is "write a script file and run that
-    // instead". An unconditional "stop" ahead of it told the model to abandon a
+    // instead". A general instruction ahead of it told the model to abandon a
     // coding task whose sanctioned path was one line further down.
     const msg = securityDenyRecovery();
     const named = msg.search(/names a safe alternative, use exactly that/i);
-    const stop = msg.search(/do not look for a workaround/i);
+    const rule = msg.indexOf(BLOCKED_CALL_RULE);
     expect(named).toBeGreaterThanOrEqual(0);
-    expect(named, "the named-alternative rule must come first").toBeLessThan(stop);
+    expect(named, "the named-alternative rule must come first").toBeLessThan(rule);
   });
 
   it("never suggests the failure is transient", () => {

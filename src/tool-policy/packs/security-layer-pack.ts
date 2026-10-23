@@ -5,6 +5,7 @@
 import type { SecurityLayer } from "../../security/index.js";
 import { CONTEXT_RESTRICTED_TOOLS, WORKER_CONTEXTS, WORKTREE_REQUIRED_TOOLS } from "../../security/layer/index.js";
 import { USER_HINTS } from "../../types.js";
+import { BLOCKED_CALL_RULE } from "../../tools/result-helpers.js";
 import type { PolicyCall, PolicyEvalCtx, PackDecision, RulePack, RulePackRule } from "../evaluator.js";
 
 const PACK_ID = "security-layer";
@@ -24,12 +25,18 @@ const PACK_PRIORITY = 10;
  *  "write a script file and run that instead" — the sanctioned route for a
  *  coding task. Read top-down, an unconditional "do not look for a workaround —
  *  stop" told the model to abandon the task before it reached that line. A
- *  named alternative is not a workaround; an improvised one still is. */
+ *  named alternative is not a workaround; an improvised one still is.
+ *
+ *  What "otherwise" means is BLOCKED_CALL_RULE, shared with the turn-end
+ *  failure nudge so the two cannot give opposite instructions again: no route
+ *  to the refused effect, any approach to the user's request that doesn't need
+ *  it, and the user always told. The old "stop" ended whole tasks over one
+ *  optional step. */
 export function securityDenyRecovery(): string {
   return (
-    "Adjust the call to stay within the workspace and security boundaries — retrying the same args will be denied again. " +
+    "Stay within the workspace and security boundaries — retrying the same args will be denied again. " +
     "If the block reason below names a safe alternative, use exactly that. " +
-    "Otherwise, if this block is stopping a legitimate task, do not look for a workaround — stop and tell the user exactly what was blocked and why you needed it, so they can adjust settings or approve another path."
+    `Otherwise: ${BLOCKED_CALL_RULE}`
   );
 }
 

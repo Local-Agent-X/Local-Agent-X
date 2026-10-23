@@ -108,8 +108,11 @@ export const USER_HINTS = {
   kernel:
     "The security kernel blocked this tool call — this is an engine-level gate, not your settings. The reason below names the cause; if it mentions a missing mapping or grant, that's an app bug to report (or update the app), not something to fix in ~/.lax.",
   /** Shell metacharacters, heredoc + script writes, dangerous patterns, obfuscation. */
+  // Relayed to the user by the model (result-helpers.ts renders it first in
+  // the result). It used to ask the user what they were trying to do, which a
+  // model read as its own next line and stopped a task to ask it.
   commandShell:
-    "I can't run that shell command — tell me what you're trying to do and I'll find a safer way (often a dedicated tool exists).",
+    "A security rule blocked that shell command. I'll carry on with what doesn't need it and tell you exactly what was blocked.",
   /** Plan mode is on — only read-only tools allowed. */
   planMode:
     "I'm in plan mode and can only read right now — say \"exit plan mode\" when you want me to start making changes.",

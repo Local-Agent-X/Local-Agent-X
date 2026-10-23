@@ -21,7 +21,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 166 | 29 | XL | 1 |
 | `src/security/` | 128 | 53 | XL | 3 |
-| `src/tools/` | 117 | 219 | XL | 9 |
+| `src/tools/` | 118 | 219 | XL | 9 |
 | `src/tool-execution/` | 82 | 72 | XL | 2 |
 | `src/canonical-loop/` | 79 | 267 | XL | 14 |
 | `src/workspace/` | 72 | 3 | M |  |

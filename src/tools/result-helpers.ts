@@ -82,9 +82,29 @@ export function parseStatusHeader(rendered: string): ToolResultStatus {
   return (m?.[1] as ToolResultStatus | undefined) ?? "ok";
 }
 
+/**
+ * What every refused call means for the model's next step: the one source for
+ * the security block's recovery, the fallback below, and the turn-end failure
+ * nudge, which told the model opposite things (stop / try another way) and a
+ * local model quit a recoverable task on the contradiction (Terminal-Bench
+ * 2.0, password-recovery, 2026-10-23).
+ *
+ * The line is drawn on what the refused call would have DONE, not on which
+ * command ran. Getting that effect by another route is the workaround this
+ * rule exists for (an agent once hand-patched build output past a false-
+ * positive block, silently); pursuing the user's request by an approach that
+ * never needs the refused effect is ordinary work. Telling the user what was
+ * refused is unconditional, so a refusal is never hidden whichever path the
+ * model takes next.
+ */
+export const BLOCKED_CALL_RULE =
+  "Don't get what the refused call would have done by any other route — another command or spelling of it, an interpreter, a script file, an encoding, or writing its output by hand. That is a workaround, even if you think the refusal is a mistake. " +
+  "You may keep working on the user's request by an approach that doesn't need what was refused. " +
+  "Finish what you can, then tell the user exactly what was refused, why you needed it, and whether it looks like a mistake, so they can change the setting or approve another path.";
+
 /** What a refusal that named no next step tells the model. */
 export const BLOCKED_WITHOUT_RECOVERY =
-  "This was refused and named no next step. Do not retry it unchanged; tell the user what you were trying to do, and continue with the rest of the request.";
+  `This was refused and named no next step. Do not retry it unchanged. ${BLOCKED_CALL_RULE}`;
 
 /**
  * A refusal from a gate inside a tool that would have shown a person a card

@@ -52,7 +52,7 @@
 //     on every turn.
 
 import type { CommitTurnMessage } from "../checkpoint.js";
-import { withoutResultHeader } from "../../tools/result-helpers.js";
+import { BLOCKED_CALL_RULE, withoutResultHeader } from "../../tools/result-helpers.js";
 import { extractToolResultText, toolResultStatus } from "./content-extract.js";
 import { isMutationTool } from "../../tool-mutation-check.js";
 import { isLedgerTool } from "../../committing-tool-check.js";
@@ -70,8 +70,12 @@ export interface ToolFailureSummary {
    * still a failure (the call didn't run, the model must not claim done),
    * but the nudge wording differs: a human said no to that specific call,
    * so "retry with the recovery hint" is exactly the wrong instruction.
+   * `blocked: true` marks a refusal (status "blocked"): the nudge states
+   * BLOCKED_CALL_RULE for it, the rule its own recovery line carries, rather
+   * than "where another way is open, try it", which a model can read as
+   * license to reach the refused effect by another route.
    */
-  failures: { tool: string; reason: string; declined?: boolean }[];
+  failures: { tool: string; reason: string; declined?: boolean; blocked?: boolean }[];
   /**
    * QUESTION A — "were this turn's failures followed by a real change, so a
    * 'done' claim is iteration rather than gaslighting?"
@@ -199,7 +203,9 @@ export function collectToolFailures(
     const firstLine = withoutResultHeader(text).split("\n")[0].slice(0, 200);
     failures.push(status === "declined"
       ? { tool: toolName, reason: firstLine, declined: true }
-      : { tool: toolName, reason: firstLine });
+      : status === "blocked"
+        ? { tool: toolName, reason: firstLine, blocked: true }
+        : { tool: toolName, reason: firstLine });
   }
   return { failures, hadSuccessfulMutation, hadTerminatingMutation };
 }
@@ -357,12 +363,16 @@ export function formatFailureNudgeForModel(summary: ToolFailureSummary, opId?: s
   const lines = [
     allDeclined
       ? `[automatic check] ${n} tool ${noun} in your last turn ${n === 1 ? "was" : "were"} declined by the user. Do NOT claim the task is done, and do NOT retry the declined ${noun} as-is — adjust your approach or ask the user what they'd prefer.`
-      : `[automatic check] ${n} tool ${noun} in your last turn returned a non-ok status. Do NOT claim the task is done. Follow the recovery hint already in each tool_result: where another way is open, try it before handing anything back; where it needs the user, tell them exactly what and keep going with the rest. Report something as broken only after that.`,
-    "",
-    "Failed calls:",
+      : `[automatic check] ${n} tool ${noun} in your last turn returned a non-ok status. Do NOT claim the task is done. Follow the recovery hint already in each tool_result: a call that errored can be fixed and retried, or its goal reached another way, before handing anything back; where it needs the user, tell them exactly what and keep going with the rest. Report something as broken only after that.`,
   ];
+  if (summary.failures.some((f) => f.blocked)) {
+    lines.push("", `A call marked "blocked" was refused, not broken. ${BLOCKED_CALL_RULE}`);
+  }
+  lines.push("", "Failed calls:");
   for (const f of summary.failures) {
-    lines.push(f.declined ? `• ${f.tool} — declined by the user: ${f.reason}` : `• ${f.tool} — ${f.reason}`);
+    lines.push(f.declined
+      ? `• ${f.tool} — declined by the user: ${f.reason}`
+      : f.blocked ? `• ${f.tool} — blocked: ${f.reason}` : `• ${f.tool} — ${f.reason}`);
   }
   if (summary.failures.some((f) => f.declined)) {
     lines.push(

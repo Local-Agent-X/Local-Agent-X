@@ -107,7 +107,7 @@ export function formatConstraintReminder(
   if (crossed.length === 0) return "";
   const lines = [
     "",
-    "Standing constraints — you have hit these before in this task, so they are deterministic, not flaky. Retrying an identical call will fail identically. Satisfy the constraint, take a different route, or tell the user it blocks you:",
+    "Standing constraints — you have hit these before in this task, so they are deterministic, not flaky. Retrying an identical call will fail identically. Satisfy the constraint, take an approach that doesn't need what was refused (never the same effect by another route), or tell the user it blocks you:",
   ];
   for (const c of crossed) {
     const reason = c.reason.length > MAX_REASON_CHARS

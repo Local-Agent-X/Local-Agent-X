@@ -10,6 +10,8 @@ import { isLedgerTool } from "../src/committing-tool-check.js";
 import { _resetMiddlewareStates } from "../src/canonical-loop/middlewares/state.js";
 import { isMutationTool } from "../src/tool-mutation-check.js";
 import { TOOLS, isMemoryWrite, toolsWhere } from "../src/tool-registry.js";
+import { BLOCKED_CALL_RULE, BLOCKED_WITHOUT_RECOVERY } from "../src/tools/result-helpers.js";
+import { securityDenyRecovery } from "../src/tool-policy/packs/security-layer-pack.js";
 
 const MEMORY_WRITE_TOOLS = toolsWhere((row) => row.memoryWrite === true);
 
@@ -252,7 +254,7 @@ describe("formatFailureNudgeForModel", () => {
       ],
       hadSuccessfulMutation: false,
     });
-    expect(msg).toMatch(/try it before handing anything back/);
+    expect(msg).toMatch(/can be fixed and retried, or its goal reached another way, before handing anything back/);
     expect(msg).toMatch(/declined by the user/);
   });
 
@@ -280,6 +282,41 @@ describe("formatFailureNudgeForModel", () => {
     // user-facing and has no place in a nudge addressed to the model.
     expect(msg).not.toMatch(/model's claims/);
     expect(msg).not.toMatch(/⚠/);
+  });
+
+  // password-recovery (Terminal-Bench 2.0, 2026-10-23): the block's recovery
+  // said "do not look for a workaround — stop", this nudge then said "where
+  // another way is open, try it", and the model quit on the contradiction. A
+  // blocked call now gets the one rule its recovery line carries.
+  it("tags a blocked call and states the blocked-call rule for it", () => {
+    const summary = collectToolFailures(
+      [tm('[blocked, layer="security"]\nBLOCKED by security: Blocked: "mount" reaches the system')],
+      [{ tool: "bash" }],
+    );
+    expect(summary.failures[0].blocked).toBe(true);
+    const msg = formatFailureNudgeForModel(summary);
+    expect(msg).toContain(BLOCKED_CALL_RULE);
+    expect(msg).toMatch(/• bash — blocked: /);
+    expect(msg).not.toMatch(/where another way is open/);
+  });
+
+  it("an errored call keeps the retry guidance and gets no blocked-call rule", () => {
+    const msg = formatFailureNudgeForModel(collectToolFailures(
+      [tm("[error] old_string found 2 times")], [{ tool: "edit" }],
+    ));
+    expect(msg).toMatch(/can be fixed and retried/);
+    expect(msg).not.toContain(BLOCKED_CALL_RULE);
+  });
+
+  // Cross-seam: three texts speak about one refusal. None may contradict.
+  it("the block recovery, the no-next-step fallback and this nudge state the same rule", () => {
+    const nudge = formatFailureNudgeForModel(collectToolFailures(
+      [tm('[blocked, layer="security"]\nBLOCKED by security: no')], [{ tool: "bash" }],
+    ));
+    for (const text of [securityDenyRecovery(), BLOCKED_WITHOUT_RECOVERY, nudge]) {
+      expect(text).toContain(BLOCKED_CALL_RULE);
+      expect(text).not.toMatch(/do not look for a workaround|stop and tell|where another way is open/i);
+    }
   });
 });
 

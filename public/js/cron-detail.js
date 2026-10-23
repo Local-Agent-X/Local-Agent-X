@@ -238,9 +238,14 @@ async function loadCronHistory(jobId) {
         ? ` <span onclick="viewCronTranscript('${esc(r.sessionId)}')" title="Open this run's full transcript (read-only)" style="cursor:pointer;color:var(--accent);font-size:.65rem">transcript</span>`
         : '';
       const note = r.errorMessage ? `<div style="color:#e07b5a;font-size:.7rem;margin-top:2px;margin-left:14px">${esc(r.errorMessage)}</div>` : '';
+      // What this run had refused (src/cron/run-blocks.ts), shown even on a
+      // successful run so a stopped step is never hidden behind "done".
+      const blocked = Array.isArray(r.blocked) && r.blocked.length
+        ? `<div style="color:var(--muted);font-size:.7rem;margin-top:2px;margin-left:14px">Blocked ${r.blocked.length === 1 ? 'call' : 'calls'}: ${r.blocked.map(b => `${esc(b.tool)} — ${esc(b.reason)}`).join('; ')}</div>`
+        : '';
       return `<div style="padding:6px 8px;border-bottom:1px solid var(--border);font-size:.75rem">
         <div>${tag} <span>${esc(when)}${esc(dur)}</span>${manual}${transcript}</div>
-        ${note}
+        ${note}${blocked}
       </div>`;
     }).join('');
   } catch { el.innerHTML = ''; }

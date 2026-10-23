@@ -49,6 +49,9 @@ export interface CronRunRecord {
   sessionId?: string;
   /** Failure / error / skip reason (single line). */
   errorMessage?: string;
+  /** The calls this run had refused (run-blocks.ts), so a run that ends
+   *  "done" still shows what was stopped. Absent when none were. */
+  blocked?: Array<{ tool: string; reason: string }>;
   provider?: string;
   model?: string;
 }

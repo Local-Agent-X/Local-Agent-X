@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1851 non-test source files · 93 oversized · 241 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1852 non-test source files · 93 oversized · 241 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -26,7 +26,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/canonical-loop/` | 79 | 269 | XL | 14 |
 | `src/workspace/` | 75 | 3 | M |  |
 | `src/providers/` | 68 | 26 | L | 1 |
-| `src/memory/` | 51 | 138 | XL | 7 |
+| `src/memory/` | 52 | 138 | XL | 7 |
 | `src/browser/` | 48 | 88 | XL | 5 |
 | `src/session/` | 48 | 9 | M |  |
 | `src/data-lineage/` | 47 | 11 | M |  |
@@ -54,7 +54,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/anthropic-client/` | 15 | 21 | L | 2 |
 | `src/autonomy/` | 15 | 4 | M |  |
 | `src/cognition/` | 14 | 35 | XL | 1 |
-| `src/cron/` | 14 | 13 | L |  |
+| `src/cron/` | 14 | 14 | L |  |
 | `src/inbox/` | 14 | 5 | M |  |
 | `src/voice/` | 14 | 74 | XL | 1 |
 | `src/self-edit/` | 13 | 19 | L | 2 |
@@ -389,6 +389,7 @@ job. Comments are free: never cut them to fit.
 - `src/agency/handler-tools.ts#createHandlerTools` — 100+ own code lines (cap 100)
 - `src/agent-request/prepare-request/build-system-prompt.ts#buildSystemPromptWithTelemetry` — 100+ own code lines (cap 100)
 - `src/auto-build/workflow-resolver.ts#candidateFromEvidence` — 100+ own code lines (cap 100)
+- `src/cron/cron-service-execute.ts#runJob` — 100+ own code lines (cap 100)
 - `src/anthropic-client/stream-cli.ts#streamViaColdSpawn` — 90+ own code lines (cap 100)
 - `src/app-renderer/components.ts#renderComponent` — 90+ own code lines (cap 100)
 - `src/auto-build/orchestrator/manager.ts#startOrchestration` — 90+ own code lines (cap 100)
@@ -402,7 +403,6 @@ job. Comments are free: never cut them to fit.
 - `src/canonical-loop/checkpoint.ts#projectTurnCommit` — 90+ own code lines (cap 100)
 - `src/chat-ws/message-router.ts#ws.on:callback` — 90+ own code lines (cap 100)
 - `src/codex-client/stream-parse.ts#processCodexEvent` — 90+ own code lines (cap 100)
-- `src/cron/cron-service-execute.ts#runJob` — 90+ own code lines (cap 100)
 - `src/local-runtimes/certification-runner.ts#runExclusive:callback` — 90+ own code lines (cap 100)
 - `src/memory/extract.ts#runExtraction` — 90+ own code lines (cap 100)
 - `src/memory/index-facts.ts#retain` — 90+ own code lines (cap 100)

@@ -12,6 +12,7 @@
 
 import { createLogger } from "../logger.js";
 import { newRunId, summarize } from "./run-history.js";
+import { blockedCallsOfRun } from "./run-blocks.js";
 import {
   classifyStatus,
   extractErrorMessage,
@@ -99,6 +100,7 @@ export async function runJob(
       errorMessage: status === "success" ? undefined : (result.errorMessage || extractErrorMessage(result.output)),
       provider: result.provider,
       model: result.model,
+      blocked: blockedCallsOfRun(result.sessionId),
     });
 
     postCronOutcome(job, status === "success" ? summarize(result.output) : (job.lastErrorMessage || status), status === "success", result.sessionId);

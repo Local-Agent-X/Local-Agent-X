@@ -1597,6 +1597,16 @@ body.agent-feeds-resizing .agent-feeds{transition:none!important}
 .terminal-host .xterm{height:100%}
 .terminal-unavailable{position:absolute;inset:34px 0 0;display:grid;place-items:center;padding:24px;color:var(--muted);font-family:var(--mono);font-size:.72rem;text-align:center}
 .browser-toolbar{display:flex;align-items:center;gap:6px;padding:8px;background:var(--bg);border-bottom:1px solid var(--border);flex-shrink:0}
+/* Preview tab (preview-tab.js): the Preview / Code switch, the live app frame,
+   and the app's file tree and read-only viewer (the App IDE's file rows). */
+.preview-view-switch{display:flex;gap:2px}
+.preview-view-switch .artifact-filter.active{color:var(--accent);border-color:var(--accent)}
+.preview-tab-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:.7rem;color:var(--muted)}
+.preview-tab-frame{flex:1;min-height:0;width:100%;border:0;background:#fff}
+.preview-tab-files{flex:1;min-height:0;overflow:auto}
+.preview-tab-viewer{flex-direction:column;min-height:0;height:100%}
+.preview-file-header{display:flex;align-items:center;gap:8px;padding:6px 8px;border-bottom:1px solid var(--border);font-family:var(--mono);font-size:.72rem;color:var(--muted)}
+#preview-tab-file-content{flex:1;margin:0;padding:10px 12px;overflow:auto;font-family:var(--mono);font-size:.72rem;line-height:1.5;white-space:pre;color:var(--text)}
 /* Find-in-page bar (browser-find.js): a normal-flow row between toolbar and
    anchor — never an overlay, since the native view paints above the DOM and
    anything covering the anchor trips the occlusion probe. */

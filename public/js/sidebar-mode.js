@@ -98,6 +98,23 @@ function renderCodeSidebar(el) {
   el.innerHTML = html.join('');
 }
 
+/**
+ * Edit on an app: open its code session (`ide-<appId>`, the App IDE's own, so
+ * the history carries on) in the main chat, on the code side, with the right
+ * panel on Preview. The server anchors the session at the app's folder from
+ * its id (src/session/ide-work-root.ts).
+ */
+function openAppCodeSession(appId, name) {
+  const id = `ide-${appId}`;
+  if (!chats.some(c => c.id === id)) {
+    chats.unshift({ id, title: name || appId, mode: 'code', messages: [], createdAt: Date.now(), updatedAt: Date.now(), _needsHydrate: true });
+  }
+  if (sidebarMode !== 'code') setSidebarMode('code');
+  selectChat(id);
+  if (typeof agentFeedsOpen !== 'undefined' && !agentFeedsOpen && typeof toggleAgentFeeds === 'function') toggleAgentFeeds();
+  if (typeof switchSidePanelTab === 'function') switchSidePanelTab('preview');
+}
+
 /** A project whose folder code sessions work in (POST /api/projects with `workspace`). */
 async function addProjectFolder() {
   const folder = (prompt('Path of the project folder (for example C:\\Users\\you\\my-app):') || '').trim();

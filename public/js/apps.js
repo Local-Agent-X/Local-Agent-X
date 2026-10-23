@@ -129,7 +129,7 @@ async function loadApps() {
         </div>
         <div class="app-card-actions" onclick="event.stopPropagation()">
           <button class="app-action-btn" onclick="openApp('${esc(a.url || '/apps/' + a.id)}')" title="Open in new tab">Open</button>
-          <button class="app-action-btn edit" onclick="enterIdeView('${esc(a.id)}','${esc(a.name)}','${esc(a.url || '/apps/' + a.id)}')" title="Edit in IDE">Edit</button>
+          <button class="app-action-btn edit" onclick="openAppCodeSession('${esc(a.id)}','${esc(a.name)}')" title="Edit in a code session">Edit</button>
           <button class="app-action-btn" onclick="exportApp('${esc(a.id)}','${esc(a.name)}')" title="Export as standalone HTML">Export</button>
           ${a.status === 'active'
             ? `<button class="app-action-btn" onclick="suspendApp('${esc(a.id)}','${esc(a.name)}')" title="Suspend app">Suspend</button>`

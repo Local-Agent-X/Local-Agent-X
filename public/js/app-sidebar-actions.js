@@ -192,6 +192,7 @@ function newChat(projectId, mode) {
   // Bind the browser panel to the new chat (no view yet — panel stays as-is
   // until the agent opens a page in it).
   try { if (window.laxBrowserSessionBind) window.laxBrowserSessionBind.bindSession(activeChat.id); } catch {}
+  try { if (window.laxPreviewTab) window.laxPreviewTab.onChatChanged(); } catch {}
   if (window.renderMessages) renderMessages();
   // New chat is never streaming — reset UI
   const stopBtn = document.getElementById('stop-btn');
@@ -252,6 +253,8 @@ function selectChat(id) {
   // Bind the browser panel to this chat so its own agent view is surfaced (and
   // the previous chat's browser stays alive, detached, in the pool).
   try { if (window.laxBrowserSessionBind) window.laxBrowserSessionBind.bindSession(id); } catch {}
+  // The Preview tab shows this chat's app, if it is a code session on one.
+  try { if (window.laxPreviewTab) window.laxPreviewTab.onChatChanged(); } catch {}
   focusChatInput();
   // Lazy hydration: if the sidebar handed us a metadata stub (or a known-stale
   // local copy), fetch the full session JSON now. One fetch per click instead

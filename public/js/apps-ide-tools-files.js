@@ -134,26 +134,32 @@ function _ideDoRefresh() {
 // one. Waiting for the agent origin keeps the preview off the redirect, which
 // would land it with no origin, where the picker's origin check refuses it.
 function ideLoadPreview(frame) {
-  const appId = _ideAppId;
-  window._ideAppUrl = `/apps/${appId}/index.html`;
+  window._ideAppUrl = `/apps/${_ideAppId}/index.html`;
+  // The new document starts with the picker off; turn it back on if the
+  // user left it on.
+  loadAppPreview(frame, _ideAppId, (appId) => appId === _ideAppId, _ideOnPreviewLoad);
+}
+
+// The preview loader, file tree and file viewer of one app, shared by the App
+// IDE and the right panel's Preview tab (preview-tab.js) so there is one way
+// to show an agent-built app. `stillWanted(appId)` drops a load the user has
+// moved on from.
+function loadAppPreview(frame, appId, stillWanted, onLoad) {
+  const url = `/apps/${appId}/index.html`;
   laxAgentReady.then(() => {
-    if (appId !== _ideAppId) return;
-    const target = agentFrameTarget(window._ideAppUrl);
+    if (!stillWanted(appId)) return;
+    const target = agentFrameTarget(url);
     if (!target) return;
     frame.sandbox.toggle('allow-same-origin', target.ownOrigin);
-    // The new document starts with the picker off; turn it back on if the
-    // user left it on.
-    frame.addEventListener('load', _ideOnPreviewLoad, { once: true });
+    if (onLoad) frame.addEventListener('load', onLoad, { once: true });
     frame.src = target.src;
   });
 }
 
-// ── File tree ──
-async function ideLoadFiles() {
-  const tree = document.getElementById('ide-file-tree');
-  if (!tree || !_ideAppId) return;
+/** One app's file list into `tree`, each row calling `pick(name)` (a global function's name). */
+async function loadAppFileTree(tree, appId, pick) {
   try {
-    const r = await fetch(`${API}/api/apps/${_ideAppId}/files`, {
+    const r = await fetch(`${API}/api/apps/${appId}/files`, {
       headers: { Authorization: `Bearer ${AUTH_TOKEN}` }
     });
     if (!r.ok) { tree.innerHTML = '<div class="ide-file-empty">No files yet</div>'; return; }
@@ -165,7 +171,7 @@ async function ideLoadFiles() {
     tree.innerHTML = files.map(f => {
       const ext = f.split('.').pop() || '';
       const icon = { html: '&#128196;', css: '&#127912;', js: '&#9881;', ts: '&#9881;', json: '&#128203;', md: '&#128221;', png: '&#128444;', svg: '&#128444;' }[ext] || '&#128196;';
-      return `<div class="ide-file-item" onclick="ideViewFile('${esc(f)}')" title="${esc(f)}">
+      return `<div class="ide-file-item" onclick="${pick}('${esc(f)}')" title="${esc(f)}">
         <span class="icon">${icon}</span><span class="name">${esc(f)}</span>
       </div>`;
     }).join('');
@@ -174,25 +180,37 @@ async function ideLoadFiles() {
   }
 }
 
+/** One app file's text, or null when it could not be read. */
+async function fetchAppFile(appId, filename) {
+  try {
+    const r = await fetch(`${API}/api/apps/${appId}/files/${encodeURIComponent(filename)}`, {
+      headers: { Authorization: `Bearer ${AUTH_TOKEN}` }
+    });
+    return r.ok ? await r.text() : null;
+  } catch {
+    return null;
+  }
+}
+
+// ── File tree ──
+async function ideLoadFiles() {
+  const tree = document.getElementById('ide-file-tree');
+  if (!tree || !_ideAppId) return;
+  await loadAppFileTree(tree, _ideAppId, 'ideViewFile');
+}
+
 async function ideViewFile(filename) {
   const tree = document.getElementById('ide-file-tree');
   const viewer = document.getElementById('ide-file-viewer');
   const nameEl = document.getElementById('ide-file-viewer-name');
   const contentEl = document.getElementById('ide-file-viewer-content');
   if (!viewer || !contentEl) return;
-  try {
-    const r = await fetch(`${API}/api/apps/${_ideAppId}/files/${encodeURIComponent(filename)}`, {
-      headers: { Authorization: `Bearer ${AUTH_TOKEN}` }
-    });
-    if (!r.ok) throw new Error('Failed to fetch');
-    const text = await r.text();
-    if (nameEl) nameEl.textContent = filename;
-    contentEl.textContent = text;
-    if (tree) tree.style.display = 'none';
-    viewer.style.display = 'flex';
-  } catch {
-    contentEl.textContent = 'Failed to load file';
-  }
+  const text = await fetchAppFile(_ideAppId, filename);
+  if (text === null) { contentEl.textContent = 'Failed to load file'; return; }
+  if (nameEl) nameEl.textContent = filename;
+  contentEl.textContent = text;
+  if (tree) tree.style.display = 'none';
+  viewer.style.display = 'flex';
 }
 
 function ideCloseFileViewer() {

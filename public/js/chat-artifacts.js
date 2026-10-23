@@ -10,7 +10,7 @@ var artifactsFilter = 'all';
 var ARTIFACTS_TTL_MS = 15000;
 
 // Each tab is a #side-tab-<name> button and a #<name>-tab-body pane.
-var SIDE_PANEL_TABS = ['agents', 'inbox', 'artifacts', 'changes', 'browser', 'android', 'terminal'];
+var SIDE_PANEL_TABS = ['agents', 'preview', 'inbox', 'artifacts', 'changes', 'browser', 'android', 'terminal'];
 
 function switchSidePanelTab(tab) {
   sidePanelTab = tab;
@@ -38,6 +38,10 @@ function switchSidePanelTab(tab) {
     else window.laxBrowserTab.onTabHidden();
   }
   if (tab === 'terminal' && window.laxTerminalPanel) window.laxTerminalPanel.onTabShown();
+  if (window.laxPreviewTab) {
+    window.laxPreviewTab.rememberTab(tab);
+    if (tab === 'preview') window.laxPreviewTab.onTabShown();
+  }
   if (window.laxAndroidTab) {
     if (tab === 'android') window.laxAndroidTab.onTabShown();
     else window.laxAndroidTab.onTabHidden();

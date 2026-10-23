@@ -62,8 +62,12 @@ export function ideAppDir(appId: unknown): string | null {
  *
  * @returns the anchored dir, or null when the session was left unanchored.
  */
-export function stampIdeWorkRoot(sessionId: string, appId: unknown): string | null {
+export function stampIdeWorkRoot(sessionId: string, frameAppId: unknown): string | null {
   if (!sessionId) return null;
+  // An App IDE session (`ide-<appId>`) names its app in its own id, so it
+  // anchors at the app's folder from any surface: the main chat, where Edit
+  // now opens it as a code session (session/mode.ts), sends no appId.
+  const appId = frameAppId ?? (sessionId.startsWith("ide-") ? sessionId.slice("ide-".length) : undefined);
 
   if (appId === undefined || appId === null || appId === "") {
     clearSessionWorkRoot(sessionId);

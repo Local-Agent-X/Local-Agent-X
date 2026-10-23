@@ -94,6 +94,15 @@ describe("stampIdeWorkRoot", () => {
     expect(stampIdeWorkRoot(SESSION, "other-app")).toBe(other);
     expect(sessionWorkRootOf(SESSION)).toBe(other);
   });
+
+  // Edit on an app page opens `ide-<appId>` in the main chat, whose frames
+  // carry no appId: the session's id names the app.
+  it("an App IDE session anchors at the app its id names when the frame carries no appId", () => {
+    expect(stampIdeWorkRoot("ide-todo-app", undefined)).toBe(APP_DIR);
+    expect(sessionWorkRootOf("ide-todo-app")).toBe(APP_DIR);
+    expect(stampIdeWorkRoot("ide-../../..", undefined)).toBeNull();
+    expect(sessionWorkRootOf("ide-../../..")).toBeUndefined();
+  });
 });
 
 describe("cross-seam: the anchor reaches glob's default search base", () => {

@@ -51,6 +51,9 @@ function toggleAgentFeeds() {
     var openW = mobile ? AGENT_FEEDS_MOBILE : getAgentFeedsWidth();
     Spring.animate(panel, 'width', openW, { from: 0, preset: 'stiff', unit: 'px', onUpdate: function(v) { panel.style.minWidth = v + 'px'; }, onDone: function() { panel.style.overflow = 'visible'; panel.style.transition = ''; if (mobile) { panel.style.width = ''; panel.style.minWidth = ''; } else { panel.style.width = openW + 'px'; panel.style.minWidth = openW + 'px'; } } });
     if (typeof refreshSideButtons === 'function') refreshSideButtons();
+    // A code session opens on its remembered tab, Preview by default (preview-tab.js).
+    var openingTab = window.laxPreviewTab && window.laxPreviewTab.openingTab();
+    if (openingTab && typeof switchSidePanelTab === 'function') switchSidePanelTab(openingTab);
   } else {
     // Drop the body class SYNCHRONOUSLY, before the refresh below reads it —
     // it used to be cleared in the spring's onDone, so refreshSideButtons()

@@ -12,7 +12,7 @@ import {
   INTERP_EVAL_FLAGS,
   RENAME_ESCAPE_EVAL_FLAGS,
 } from "./shell-rules.js";
-import { execBasename, resolveRealArgv0, splitShellSegments, stripQuotedSpans, tokenizeCommand } from "./shell-lex.js";
+import { execBasename, resolveRealArgv0, resolveRealArgv0Index, splitShellSegments, stripQuotedSpans, tokenizeCommand } from "./shell-lex.js";
 import { realpathDeep } from "./file-access.js";
 import type { InlineEvalPolicy } from "./types.js";
 import { DECODE_EXEC_REFUSAL, ENCODED_PAYLOAD_REFUSAL, NESTED_COMMAND_WAY_OUT } from "./shell-refusals.js";
@@ -220,12 +220,34 @@ export function detectNestedCommandExecution(command: string): string | null {
 // `env host`), not just pipe segments and not just tokens[0].
 export function detectDangerousInvokeBin(command: string): string | null {
   for (const segment of splitShellSegments(command)) {
-    const bin = resolveRealArgv0(tokenizeCommand(segment));
+    const tokens = tokenizeCommand(segment);
+    const at = resolveRealArgv0Index(tokens);
+    const bin = at === null ? null : execBasename(tokens[at]);
+    if (bin === "mount" && mountOnlyLists(tokens.slice(at! + 1))) continue;
     if (bin && DANGEROUS_INVOKE_BINS.has(bin)) {
       return `Blocked: '${bin}' is a restricted network/system command. (If you only named it as an argument, rephrase — the block is on INVOKING it, not mentioning it.)`;
     }
   }
   return null;
+}
+
+/**
+ * `mount` with nothing to attach only prints the mount table, as readable as
+ * `df` or `lsblk`, which are allowed (Terminal-Bench 2.0 password-recovery,
+ * 2026-10-23, began with `mount | grep`). It attaches a filesystem only when
+ * given a device or target, `-a` (everything in fstab), or a remount option, so
+ * the listing forms are the bare command, `-l`, and a `-t` type filter; any
+ * other word keeps the refusal.
+ */
+function mountOnlyLists(args: string[]): boolean {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "-l") continue;
+    if (a === "-t" || a === "--types") { if (++i >= args.length) return false; continue; }
+    if (/^-t[\w,]+$/.test(a) || /^--types=[\w,]+$/.test(a)) continue;
+    return false;
+  }
+  return true;
 }
 
 // ── C3-17: raw-socket / network module use in node -e / python -c bodies ──

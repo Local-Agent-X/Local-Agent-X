@@ -206,6 +206,22 @@ describe("evaluateShellCommand — argv[0]-aware dangerous binaries (benign-pipe
       expect(evaluateShellCommand(cmd).allowed).toBe(false);
     });
   }
+
+  // `mount` that attaches nothing only prints the mount table (Terminal-Bench
+  // 2.0 password-recovery, 2026-10-23, was refused at `mount | grep /app`).
+  for (const cmd of ["mount", "mount | grep /app", "mount -l", "mount -t ext4", "mount -l -t ext4,xfs", "mount --types=tmpfs"]) {
+    it(`ALLOWS the read-only listing \`${cmd}\``, () => {
+      expect(evaluateShellCommand(cmd).allowed).toBe(true);
+    });
+  }
+
+  // Anything that names a source or target, mounts the fstab, or remounts
+  // still attaches a filesystem, and so is refused as before.
+  for (const cmd of ["mount -a", "mount /dev/sdb1", "mount -t ext4 /dev/sdb1 /mnt", "mount -o remount,rw /", "mount --bind /etc /tmp/x", "mount -t", "sudo mount -l /dev/x", "umount /mnt"]) {
+    it(`still BLOCKS \`${cmd}\` (attaches or detaches a filesystem)`, () => {
+      expect(evaluateShellCommand(cmd).allowed).toBe(false);
+    });
+  }
 });
 
 describe("evaluateShellCommand — platform-specific metacharacter rules", () => {

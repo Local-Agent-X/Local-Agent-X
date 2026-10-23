@@ -113,6 +113,28 @@ function replaceAssistantText(messages: CommitTurnMessage[], text: string): Comm
 }
 
 /**
+ * The turns that produced nothing usable, each re-driven with its own nudge:
+ *  - a reply the output limit cut off (cut-off-turn.ts) is re-driven to act,
+ *    or ends honestly once the re-drives are spent; either way only its tail
+ *    goes into history (the caller trims it when `cutOff` is set);
+ *  - a tool call the runtime could not parse ran nothing (malformed-tool-call.ts).
+ * `redriven` re-opens the turn.
+ */
+function redriveUnusableTurn(
+  in_: DecideOutcomeInput,
+  terminalReason: "done" | "error" | null,
+  middlewareAborted: boolean,
+  middlewareSuspended: boolean,
+): { cutOff: "redrive" | "exhausted" | null; redriven: boolean } {
+  const { op, turnIdx, toolCalls, adapterError } = in_;
+  const cutOff = evaluateCutOffTurn({ op, turnIdx, providerStop: in_.providerStop, toolCalls,
+    terminalReason, middlewareAborted, middlewareSuspended });
+  const malformed = evaluateMalformedToolCall({ op, turnIdx, adapterError, toolCalls,
+    middlewareAborted, middlewareSuspended });
+  return { cutOff, redriven: cutOff === "redrive" || malformed === "redrive" };
+}
+
+/**
  * Decide the turn's terminal reason + assemble its commit-message list.
  * Async because the render-verify gate may await the preview iframe.
  */
@@ -149,17 +171,8 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
       ? null
       : (adapterTerminalReason ?? (adapterError ? "error" : null));
 
-  // A reply the output limit cut off is not an answer (cut-off-turn.ts): it is
-  // re-driven to act, or ends honestly once the re-drives are spent. Either
-  // way only its tail goes into history.
-  const cutOff = evaluateCutOffTurn({ op, turnIdx, providerStop: in_.providerStop, toolCalls,
-    terminalReason, middlewareAborted, middlewareSuspended });
+  const { cutOff, redriven } = redriveUnusableTurn(in_, terminalReason, middlewareAborted, middlewareSuspended);
   if (cutOff) allMessages = replaceAssistantText(allMessages, trimCutOffText(assistantText));
-  // A tool call the runtime could not parse ran nothing (malformed-tool-call.ts).
-  const malformed = evaluateMalformedToolCall({ op, turnIdx, adapterError, toolCalls,
-    middlewareAborted, middlewareSuspended });
-  // Either re-drive queued its own nudge and re-opens the turn.
-  const redriven = cutOff === "redrive" || malformed === "redrive";
   if (redriven) terminalReason = null;
 
   // Two questions, two fields (tool-failure-summary.ts) — see mutationCommitted.

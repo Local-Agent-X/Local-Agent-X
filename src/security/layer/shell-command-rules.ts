@@ -88,7 +88,8 @@ const WAY_OUT: Record<CommandRule["category"], string> = {
   background: "To keep a server or watcher running, start it with the process_start tool: it stays up, " +
     "process_status reads its output, and process_stop ends it.",
   credential: "There is no shell path for this: tell the user what needs doing and why.",
-  "local-server": "Start the project's own dev server (its dev script) with process_start instead.",
+  "local-server": "LAX already serves every workspace file: open http://127.0.0.1:<LAX's port>/files/<its path inside the workspace> " +
+    "in the browser tool (a write or edit names the exact address). For a project, start its own dev server (its dev script) with process_start.",
   opener: "To show a web page use the browser tool; for a file, tell the user where it is.",
 };
 

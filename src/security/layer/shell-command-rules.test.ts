@@ -292,6 +292,20 @@ describe("detached sessions", () => {
   });
 });
 
+// chat-mvk9jq7d (2026-10-23): the agent started `python -m http.server --bind
+// 127.0.0.1` to look at a page it wrote; the refusal said the server "could be
+// reached from other machines", which a loopback bind is not, and named no way
+// to see the page. LAX serves workspace files itself at /files/.
+describe("an ad-hoc web server", () => {
+  it("is refused even on loopback, with a true reason and the /files way to see a page", () => {
+    const hit = findCommandRuleHit("python -m http.server 8765 --bind 127.0.0.1", { root: false })!;
+    expect(hit.kind === "rule" ? hit.rule.id : null).toBe("local-server");
+    const reason = commandRuleReason(hit);
+    expect(reason).toMatch(/by default every machine on the network can reach/);
+    expect(reason).toContain("/files/");
+  });
+});
+
 // Terminal-Bench password-recovery (2026-10-20): carving bytes out of a disk
 // image was refused as a raw disk write.
 describe("dd: a disk device is refused, a file is a file write", () => {

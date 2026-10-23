@@ -175,9 +175,13 @@ export const COMMAND_RULES: readonly CommandRule[] = [
   binWith("raw-tls", "network", "opens a raw TLS connection to any host", ["openssl"],
     (a) => lower(a[0]) === "s_client" || lower(a[0]) === "s_server"),
 
-  // ── Servers reachable from outside ──
-  binWith("local-server", "local-server", "starts a server other machines could reach", ["python"],
+  // ── Ad-hoc web servers (python -m http.server and kin) ──
+  // Refused even with --bind 127.0.0.1: a page the agent wrote is already served
+  // by LAX (/files/), and a project has its own dev script. The reason says the
+  // default, so it stays true when a command binds loopback (chat-mvk9jq7d told
+  // the user a loopback-bound server "could be reached from other machines").
+  binWith("local-server", "local-server", "starts a web server of its own, which by default every machine on the network can reach", ["python"],
     (a) => a.some((x, i) => x === "-m" && (a[i + 1] === "http.server" || a[i + 1] === "smtpd"))),
-  binWith("local-server", "local-server", "starts a server other machines could reach", ["php"], (a) => a.includes("-S")),
-  binWith("local-server", "local-server", "starts a server other machines could reach", ["npx"], (a) => a[0] === "serve"),
+  binWith("local-server", "local-server", "starts a web server of its own, which by default every machine on the network can reach", ["php"], (a) => a.includes("-S")),
+  binWith("local-server", "local-server", "starts a web server of its own, which by default every machine on the network can reach", ["npx"], (a) => a[0] === "serve"),
 ];

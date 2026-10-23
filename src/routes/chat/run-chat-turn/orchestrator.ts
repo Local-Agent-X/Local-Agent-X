@@ -15,6 +15,7 @@ import { PROVIDERS } from "../../../providers/registry.js";
 import { PROVIDER_IDS, type ProviderId } from "../../../providers/provider-ids.js";
 import type { ChannelKind } from "../../../agent-request/types.js";
 import { sessionModeOf } from "../../../session/mode.js";
+import { stampCodeSessionWorkRoot } from "../../../session/code-work-root.js";
 import type { Session } from "../../../types.js";
 
 const logger = createLogger("routes.chat.run-turn");
@@ -77,6 +78,8 @@ function applyRequestToSession(session: Session, args: RunChatTurnArgs, message:
     const pid = typeof args.projectId === "string" && args.projectId ? args.projectId : undefined;
     if (session.projectId !== pid) { session.projectId = pid; void args.ctx.saveSession(session); }
   }
+  // A code session works in its project's folder (session/code-work-root.ts).
+  stampCodeSessionWorkRoot({ id: args.sessionId, mode: session.mode, projectId: session.projectId });
 }
 
 export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {

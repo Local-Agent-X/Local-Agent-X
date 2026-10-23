@@ -26,6 +26,7 @@ import type { ContextPack, FileSnapshot, MemoryHit, OpBudget, OpLane, ProviderCa
 import type { CredentialSource } from "../auth/auth-provider.js";
 
 import { createLogger } from "../logger.js";
+import { collectAgentsMd } from "../context/agents-md-files.js";
 const logger = createLogger("workers.context-pack");
 
 // ── Public API ─────────────────────────────────────────────────────────────
@@ -182,44 +183,12 @@ function relativeFromRoot(abs: string): string {
 // ── Section 3: AGENTS.md rules ─────────────────────────────────────────────
 
 /**
- * Walk up from scopeHint looking for AGENTS.md files; concatenate them
- * root-first so subtree rules listed last visually override. Same shape
- * as self-edit-tool's collectSubtreeRules so workers see identical
- * architectural guidance.
+ * The AGENTS.md files from LAX's repo root down to scopeHint, root first, so
+ * workers see the same architectural guidance self_edit does
+ * (context/agents-md-files.ts).
  */
 async function collectAgentsRules(scopeHint?: string): Promise<string> {
-  try {
-    const startPath = scopeHint
-      ? (isAbsolute(scopeHint) ? scopeHint : resolve(LAX_REPO_ROOT, scopeHint))
-      : LAX_REPO_ROOT;
-
-    const dirs: string[] = [];
-    let cur = existsSync(startPath) ? startPath : dirname(startPath);
-    if (existsSync(startPath) && !statSync(startPath).isDirectory()) cur = dirname(startPath);
-
-    while (true) {
-      dirs.push(cur);
-      if (cur === LAX_REPO_ROOT || !cur.startsWith(LAX_REPO_ROOT)) break;
-      const parent = dirname(cur);
-      if (parent === cur) break;
-      cur = parent;
-    }
-    if (!dirs.includes(LAX_REPO_ROOT)) dirs.push(LAX_REPO_ROOT);
-
-    const parts: string[] = [];
-    for (const d of dirs.reverse()) {
-      const p = join(d, "AGENTS.md");
-      if (existsSync(p)) {
-        const rel = relativeFromRoot(p);
-        const body = readFileSync(p, "utf-8").trim();
-        parts.push(`--- ${rel} ---\n${body}`);
-      }
-    }
-    return parts.join("\n\n");
-  } catch (e) {
-    logger.warn(`[pack] failed to collect AGENTS.md: ${(e as Error).message}`);
-    return "";
-  }
+  return collectAgentsMd(LAX_REPO_ROOT, scopeHint);
 }
 
 // ── Section 4: memory hits ────────────────────────────────────────────────

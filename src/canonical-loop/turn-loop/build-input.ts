@@ -166,7 +166,7 @@ export async function buildTurnInput(
   // tells the transport to put the breakpoint BELOW the volatile tail.
   let digestAppended = false;
   if (op.lane === "interactive" || op.lane === "agent" || op.lane === "background") {
-    const digest = buildSituationalAwareness(op, turnIdx);
+    const digest = await buildSituationalAwareness(op, turnIdx);
     if (digest) {
       // Cloud lanes run the append back through collapseAdjacentUserMessages.
       // When the history already ENDS on a user row (a fresh user turn, a

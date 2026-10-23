@@ -20,6 +20,8 @@ import {
 import { channelContextBlock } from "../../channel-context.js";
 import type { ChannelKind } from "../types.js";
 import type { ChatMode } from "../../session/mode.js";
+import { projectAgentsMd } from "../../context/project-agents-md.js";
+import { sessionWorkRootOf } from "../../workspace/paths.js";
 
 const logger = createLogger("agent-request.prepare-request.sysprompt");
 
@@ -318,6 +320,13 @@ export async function buildSystemPromptWithTelemetry(
   ] as const) {
     if (!text) continue;
     contextBuilder.addSection({ id, label, type: "dynamic", policy, build: () => text });
+  }
+
+  // A code session's project rules (context/project-agents-md.ts). Static, so
+  // the file's unchanged bytes stay in the cached prefix turn after turn.
+  const projectRules = input.mode === "code" ? projectAgentsMd(sessionWorkRootOf(input.sessionId)) : "";
+  if (projectRules) {
+    contextBuilder.addSection({ id: "project-rules", label: "Project Rules", type: "static", policy: "degradable", priority: "navigation", build: () => projectRules });
   }
 
   // Explicit build route only: the background op owns the build and this

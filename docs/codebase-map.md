@@ -13,22 +13,22 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1847 non-test source files · 93 oversized · 241 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1851 non-test source files · 93 oversized · 241 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 167 | 29 | XL | 1 |
+| `src/ops/` | 167 | 29 | L | 1 |
 | `src/security/` | 128 | 53 | XL | 3 |
 | `src/tools/` | 118 | 219 | XL | 9 |
 | `src/tool-execution/` | 82 | 72 | XL | 2 |
-| `src/canonical-loop/` | 79 | 268 | XL | 14 |
-| `src/workspace/` | 72 | 3 | M |  |
+| `src/canonical-loop/` | 79 | 269 | XL | 14 |
+| `src/workspace/` | 75 | 3 | M |  |
 | `src/providers/` | 68 | 26 | L | 1 |
 | `src/memory/` | 51 | 138 | XL | 7 |
 | `src/browser/` | 48 | 88 | XL | 5 |
-| `src/session/` | 48 | 8 | M |  |
+| `src/session/` | 48 | 9 | M |  |
 | `src/data-lineage/` | 47 | 11 | M |  |
 | `src/tool-policy/` | 46 | 21 | L |  |
 | `src/local-runtimes/` | 41 | 26 | L | 1 |
@@ -37,9 +37,9 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/auth/` | 37 | 11 | L |  |
 | `src/chat-ws/` | 32 | 23 | L |  |
 | `src/agency/` | 27 | 20 | L |  |
-| `src/agent-store/` | 26 | 7 | M | 1 |
+| `src/agent-store/` | 27 | 7 | M | 1 |
+| `src/context/` | 26 | 11 | M | 1 |
 | `src/classifiers/` | 24 | 16 | L |  |
-| `src/context/` | 24 | 9 | M | 1 |
 | `src/context-manager/` | 24 | 13 | M |  |
 | `src/agent-request/` | 23 | 15 | L | 3 |
 | `src/app-runtime/` | 23 | 12 | M |  |
@@ -81,8 +81,8 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/embedding-providers/` | 4 | 8 | M |  |
 | `src/hooks/` | 4 | 3 | M |  |
 | `src/language-intel/` | 4 | 5 | M |  |
+| `src/publish-review/` | 4 | 8 | M |  |
 | `src/routing/` | 4 | 6 | M |  |
-| `src/publish-review/` | 3 | 8 | M |  |
 | `src/conversation/` | 2 | 3 | M |  |
 | `src/llm-dispatch/` | 2 | 2 | M |  |
 | `src/manifest-generator/` | 2 | 8 | M |  |
@@ -387,8 +387,8 @@ job. Comments are free: never cut them to fit.
 - `src/test-suite.ts` — 280+ code lines (cap 350)
 - `src/tools/build-app-spawn.ts` — 280+ code lines (cap 350)
 - `src/agency/handler-tools.ts#createHandlerTools` — 100+ own code lines (cap 100)
+- `src/agent-request/prepare-request/build-system-prompt.ts#buildSystemPromptWithTelemetry` — 100+ own code lines (cap 100)
 - `src/auto-build/workflow-resolver.ts#candidateFromEvidence` — 100+ own code lines (cap 100)
-- `src/agent-request/prepare-request/build-system-prompt.ts#buildSystemPromptWithTelemetry` — 90+ own code lines (cap 100)
 - `src/anthropic-client/stream-cli.ts#streamViaColdSpawn` — 90+ own code lines (cap 100)
 - `src/app-renderer/components.ts#renderComponent` — 90+ own code lines (cap 100)
 - `src/auto-build/orchestrator/manager.ts#startOrchestration` — 90+ own code lines (cap 100)

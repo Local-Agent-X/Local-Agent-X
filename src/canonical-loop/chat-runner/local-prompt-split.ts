@@ -53,6 +53,7 @@ export const HEAD_SECTION_IDS: ReadonlySet<string> = new Set([
   "recall-reflex",
   "project-catalog",
   "integrations",
+  "project-rules", // a code session's AGENTS.md (context/project-agents-md.ts): the file's bytes, unchanged turn to turn
   "channel-context",
   "bridge-context",
   "canary",

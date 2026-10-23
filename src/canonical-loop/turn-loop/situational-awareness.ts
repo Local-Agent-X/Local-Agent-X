@@ -46,6 +46,8 @@ import { getOpenTasksForSession } from "../../tools/task-tools.js";
 import { resolveOpModel } from "../op-model.js";
 import { classifyModel, type ModelTier } from "../../model-tiers.js";
 import { createLogger } from "../../logger.js";
+import { sessionWorkRootOf } from "../../workspace/paths.js";
+import { workRootGitLine } from "./work-root-git.js";
 
 const logger = createLogger("canonical-loop.situational-awareness");
 
@@ -89,8 +91,10 @@ const CLOSE = "[END CONTEXT]";
  * Build the digest block for `op` at `turnIdx`, or null when there is nothing
  * worth saying. Does the disk reads, then defers to the pure `composeDigest`.
  */
-export function buildSituationalAwareness(op: Op, turnIdx: number): string | null {
+export async function buildSituationalAwareness(op: Op, turnIdx: number): Promise<string | null> {
   const sessionId = getSessionForOp(op.id) ?? "";
+  // A session working in a repository sees its git state each turn (work-root-git.ts).
+  const gitStatus = await workRootGitLine(sessionWorkRootOf(sessionId));
   const recent = sessionId ? recentActions(sessionId, RECENT_ACTIONS_CAP) : [];
   const restateAfter = goalRestateAfterTurn(resolveOpTier(op));
   const restating = turnIdx >= restateAfter;
@@ -110,6 +114,7 @@ export function buildSituationalAwareness(op: Op, turnIdx: number): string | nul
   const openTasks = sessionId ? getOpenTasksForSession(sessionId) : [];
   const digest = composeDigest({
     turnIdx, recent, firstUserText, successCriteria, constraints, restateAfter, openTasks,
+    gitStatus: gitStatus ?? undefined,
   });
   // Debug seam: the digest is ephemeral (injected into the prompt, never
   // persisted), so this log is the only way to observe what the model actually
@@ -131,6 +136,8 @@ export function composeDigest(input: {
   /** Open steps from the durable task list — re-anchored every turn so the plan
    *  survives compaction. */
   openTasks?: { id: string; description: string }[];
+  /** The session's repository state, one line (work-root-git.ts). */
+  gitStatus?: string;
 }): string | null {
   const { turnIdx, recent, firstUserText } = input;
   const successCriteria = input.successCriteria ?? [];
@@ -145,6 +152,7 @@ export function composeDigest(input: {
 
   const recentLine = recentActionsLine(recent);
   if (recentLine) lines.push(recentLine);
+  if (input.gitStatus) lines.push(input.gitStatus);
 
   const planLine = openStepsLine(openTasks);
   if (planLine) lines.push(planLine);

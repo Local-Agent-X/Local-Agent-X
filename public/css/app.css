@@ -1608,7 +1608,7 @@ body.agent-feeds-resizing .agent-feeds{transition:none!important}
 .fc-counts{font-family:var(--mono);font-size:.72rem;white-space:nowrap}
 .fc-add{color:var(--ok)}
 .fc-del{color:var(--danger)}
-.diff-panel{overflow:auto;padding:8px}
+.diff-panel{flex:1;min-height:0;overflow:auto;padding:8px;scrollbar-width:thin;scrollbar-color:var(--scroll-thumb) transparent}
 .diff-file{margin-bottom:14px;border:1px solid var(--border);border-radius:8px;overflow:hidden}
 .diff-file-head{position:sticky;top:-8px;z-index:1;display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--panel);border-bottom:1px solid var(--border)}
 .diff-path{flex:1;min-width:0;font-family:var(--mono);font-size:.72rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}

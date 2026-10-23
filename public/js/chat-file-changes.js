@@ -128,7 +128,7 @@ function _unifiedText(file) {
 }
 
 function renderFileChangesTab() {
-  const body = document.getElementById('changes-tab-body');
+  const body = document.getElementById('changes-list');
   if (!body) return;
   body.innerHTML = '';
   if (!fileChangesView || fileChangesView.files.length === 0) {

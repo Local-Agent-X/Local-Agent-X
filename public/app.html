@@ -354,7 +354,10 @@
         <div id="artifacts-filters" class="artifacts-filters"></div>
         <div id="artifacts-list" class="artifacts-list"></div>
       </div>
-      <div id="changes-tab-body" class="side-tab-body diff-panel" style="display:none"></div>
+      <!-- Changes tab: the diff of a reply's changed files (chat-file-changes.js renders #changes-list). -->
+      <div id="changes-tab-body" class="side-tab-body" style="display:none">
+        <div id="changes-list" class="diff-panel"></div>
+      </div>
       <!-- Browser tab: the page itself is a native WebContentsView overlay drawn
            by Electron main; #browser-view-anchor only reserves space and
            browser-tab.js reports its rect + visibility over window.desktop.browser. -->

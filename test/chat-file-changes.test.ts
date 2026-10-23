@@ -34,7 +34,7 @@ const EDIT_2 = {
 const CREATED = { path: "/repo/docs/b.md", created: true, added: 3, removed: 0, hunks: [{ oldStart: 1, newStart: 1, lines: ["+1", "+2", "+3"] }] };
 
 beforeEach(() => {
-  document.body.innerHTML = '<button id="side-tab-changes" style="display:none"></button><div id="changes-tab-body"></div>';
+  document.body.innerHTML = '<button id="side-tab-changes" style="display:none"></button><div id="changes-tab-body"><div id="changes-list"></div></div>';
   const g = globalThis as unknown as Record<string, unknown>;
   g.esc = (s: string) => String(s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c] as string);
   switchedTo = null;
@@ -75,7 +75,7 @@ describe("the files a reply changed", () => {
     (card.querySelector(".file-change-row") as HTMLElement).click();
     expect(switchedTo).toBe("changes");
     expect((document.getElementById("side-tab-changes") as HTMLElement).style.display).toBe("");
-    const body = document.getElementById("changes-tab-body")!;
+    const body = document.getElementById("changes-list")!;
     const gaps = [...body.querySelectorAll(".diff-gap")].map((g) => g.textContent);
     expect(gaps).toEqual(["⋯ 9 unmodified lines", "⋯ 39 unmodified lines"]);
     expect([...body.querySelectorAll(".diff-edit-sep")].map((s) => s.textContent)).toEqual(["Edit 1 of 2", "Edit 2 of 2"]);
@@ -88,6 +88,20 @@ describe("the files a reply changed", () => {
     expect(cells(rows[1]!)).toEqual(["11", ""]); // removed
     expect(cells(rows[2]!)).toEqual(["", "11"]); // added
     expect(cells(rows[3]!)).toEqual(["12", "12"]);
+  });
+
+  it("the diff scrolls in a list of its own, not in the flex-column tab body", () => {
+    // Sections in a flex column with overflow hidden shrink to fit instead of overflowing,
+    // so nothing scrolled: the tab body must wrap a plain scrolling list.
+    const html = readFileSync(join(here, "../public/app.html"), "utf8");
+    const css = readFileSync(join(here, "../public/css/app.css"), "utf8");
+    const page = new DOMParser().parseFromString(html, "text/html");
+    const tabBody = page.getElementById("changes-tab-body")!;
+    const list = page.getElementById("changes-list")!;
+    expect(list.parentElement).toBe(tabBody);
+    expect(tabBody.classList.contains("diff-panel")).toBe(false);
+    expect(list.classList.contains("diff-panel")).toBe(true);
+    expect(css).toMatch(/\.diff-panel\{[^}]*overflow:auto/);
   });
 
   it("a change with no hunks says why instead of drawing nothing", () => {

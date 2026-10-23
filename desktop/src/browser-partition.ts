@@ -287,12 +287,6 @@ function hardenSession(sess: Session, partition: string): void {
 		// side keys in-flight on an unsettled-id SET, so per-hop re-entry here
 		// (load-bearing for egress) can't drift the count.
 		noteRequestStart(partition, details.id);
-		// Chromium's own PDF viewer: files inside the app, never network egress
-		// (browser-builtin-viewer.ts). Without it a PDF draws an empty box.
-		if (isBuiltInPdfViewerRequest(details.url)) {
-			callback({ cancel: false });
-			return;
-		}
 		// Local loopback carve-out (browser-loopback-policy.ts): a user's own tab
 		// may reach literal-loopback services (their ComfyUI, their dev server) the
 		// way Chrome allows — top-level navs + loopback-initiated subresources — and
@@ -310,6 +304,13 @@ function hardenSession(sess: Session, partition: string): void {
 			requester = details.frame?.url || details.referrer || undefined;
 		} catch {
 			requester = undefined;
+		}
+		// Chromium's own PDF viewer: its pages and the chrome://resources code it
+		// loads are files inside the app, never network egress
+		// (browser-builtin-viewer.ts). Without them a PDF never draws.
+		if (isBuiltInPdfViewerRequest(details.url, requester)) {
+			callback({ cancel: false });
+			return;
 		}
 		if (
 			viewTrustResolver &&

@@ -19,6 +19,7 @@ import { app, session, type DownloadItem, type Session, type WebContents, type W
 import { LAX_DIR, getLAXConfig } from "./config";
 import { contentTypeFromHeaders, noteRequestDone, noteRequestFailed, noteRequestStart } from "./browser-perception";
 import { shouldAllowLocalLoopback, type ViewTrust } from "./browser-loopback-policy";
+import { isBuiltInPdfViewerRequest } from "./browser-builtin-viewer";
 import { getLoopbackCdpPort } from "./cdp-endpoint";
 import { isUserDownload, uniqueDownloadPath, type QuarantinedDownload } from "./browser-download-routing";
 import { recordUserDownload, updateUserDownload } from "./browser-user-download-registry";
@@ -286,6 +287,12 @@ function hardenSession(sess: Session, partition: string): void {
 		// side keys in-flight on an unsettled-id SET, so per-hop re-entry here
 		// (load-bearing for egress) can't drift the count.
 		noteRequestStart(partition, details.id);
+		// Chromium's own PDF viewer: files inside the app, never network egress
+		// (browser-builtin-viewer.ts). Without it a PDF draws an empty box.
+		if (isBuiltInPdfViewerRequest(details.url)) {
+			callback({ cancel: false });
+			return;
+		}
 		// Local loopback carve-out (browser-loopback-policy.ts): a user's own tab
 		// may reach literal-loopback services (their ComfyUI, their dev server) the
 		// way Chrome allows — top-level navs + loopback-initiated subresources — and

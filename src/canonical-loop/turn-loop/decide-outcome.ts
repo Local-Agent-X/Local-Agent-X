@@ -34,6 +34,7 @@ import type { GuardFire } from "./guard-fire.js";
 import { appendEmptyTurnTerminal, appendHonestTerminal, evaluateEmptyInteractiveTurn, redriveAnnouncedOnlyTurn } from "./empty-turn-termination.js";
 import { appendMissingToolResults } from "./orphan-tool-results.js";
 import { CUT_OFF_TERMINAL, evaluateCutOffTurn, trimCutOffText } from "./cut-off-turn.js";
+import { evaluateMalformedToolCall } from "./malformed-tool-call.js";
 import { createLogger } from "../../logger.js";
 import { recordP1Outcome } from "./p1-metrics.js";
 import { narrationPromisesFollowup } from "./p1-followup-detector.js";
@@ -154,7 +155,12 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   const cutOff = evaluateCutOffTurn({ op, turnIdx, providerStop: in_.providerStop, toolCalls,
     terminalReason, middlewareAborted, middlewareSuspended });
   if (cutOff) allMessages = replaceAssistantText(allMessages, trimCutOffText(assistantText));
-  if (cutOff === "redrive") terminalReason = null;
+  // A tool call the runtime could not parse ran nothing (malformed-tool-call.ts).
+  const malformed = evaluateMalformedToolCall({ op, turnIdx, adapterError, toolCalls,
+    middlewareAborted, middlewareSuspended });
+  // Either re-drive queued its own nudge and re-opens the turn.
+  const redriven = cutOff === "redrive" || malformed === "redrive";
+  if (redriven) terminalReason = null;
 
   // Two questions, two fields (tool-failure-summary.ts) — see mutationCommitted.
   const failureSummary = collectToolFailures(toolMessages, toolSummary);
@@ -240,7 +246,7 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
     terminalReason === null &&
     !middlewareAborted &&
     !middlewareSuspended &&
-    !announcedOnlyRedrive && cutOff !== "redrive" &&
+    !announcedOnlyRedrive && !redriven &&
     (modelSignaledDone || silentTerminates || noTools || mutationTerminates) &&
     assistantText.trim().length > 0
   ) {
@@ -253,8 +259,9 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   // A fully-empty interactive turn the main gate left null gets ONE bounded silent
   // re-drive, then an honest terminal whose MESSAGE is deferred to after the
   // continuation guard + gate chain settle so a re-opened turn never shows it.
-  // A cut-off re-drive already queued its nudge; the empty-turn one would be a second.
-  const emptyEval = cutOff === "redrive" ? { terminalReason, emptyInteractiveTerminal: null } : evaluateEmptyInteractiveTurn({
+  // A cut-off or malformed-call re-drive already queued its nudge; the
+  // empty-turn one would be a second.
+  const emptyEval = redriven ? { terminalReason, emptyInteractiveTerminal: null } : evaluateEmptyInteractiveTurn({
     op, turnIdx, assistantText, toolCalls, hasReasoning,
     terminalReason, middlewareAborted, middlewareSuspended, modelSignaledDone,
     providerStop: in_.providerStop,

@@ -85,6 +85,7 @@ import { appendNudgeAsUserMessage } from "./nudges.js";
 import { failedCallNudge } from "./failed-call-gate.js";
 import { REASONING_ONLY_NUDGE } from "./empty-turn-termination.js";
 import { CUT_OFF_KEPT_CHARS, CUT_OFF_NUDGE, CUT_OFF_REDRIVE_LIMIT, CUT_OFF_TERMINAL } from "./cut-off-turn.js";
+import { MALFORMED_TOOL_CALL_REDRIVE_LIMIT } from "./malformed-tool-call.js";
 import { createLogger } from "../../logger.js";
 
 const op = { id: "op-test", type: "chat_turn", ownerId: "local-user" } as unknown as Op;
@@ -1952,5 +1953,38 @@ describe("decideTurnOutcome — a reply the output limit cut off", () => {
     const r = await decideTurnOutcome(cutOffTurn({ providerStop: "stop", modelSignaledDone: true, modelWantsToContinue: false }));
     expect(r.terminalReason).toBe("done");
     expect(vi.mocked(appendNudgeAsUserMessage)).not.toHaveBeenCalledWith("op-test", 1, CUT_OFF_NUDGE, expect.anything());
+  });
+});
+
+describe("decideTurnOutcome — a tool call the runtime could not parse", () => {
+  // Terminal-Bench 2.0 (2026-10-23): Ollama failed a Qwen response on its
+  // tool-call XML and the op ended on the transport error one step from the
+  // answer (mteb-leaderboard). Nothing ran, so the turn is re-driven.
+  const parseFailed = (over: Partial<DecideOutcomeInput> = {}) => input({
+    finalized: [], toolMessages: [], toolSummary: [], toolCalls: [], assistantText: "",
+    hasReasoning: true, adapterTerminalReason: undefined,
+    adapterError: { code: "transport_error", message: "XML syntax error on line 4: element <function> closed by </parameter>" },
+    ...over,
+  });
+
+  beforeEach(() => { vi.clearAllMocks(); _resetMiddlewareStates(); });
+
+  it("re-opens the turn with a nudge instead of ending the op on the error", async () => {
+    const r = await decideTurnOutcome(parseFailed());
+    expect(r.terminalReason).toBeNull();
+    expect(vi.mocked(appendNudgeAsUserMessage)).toHaveBeenCalledWith(
+      "op-test", 1, expect.stringMatching(/could not be parsed/), expect.objectContaining({ name: "malformed-tool-call" }));
+  });
+
+  it("ends on the error once the re-drives are spent", async () => {
+    for (let i = 0; i < MALFORMED_TOOL_CALL_REDRIVE_LIMIT; i++) {
+      expect((await decideTurnOutcome(parseFailed({ turnIdx: i }))).terminalReason).toBeNull();
+    }
+    expect((await decideTurnOutcome(parseFailed({ turnIdx: MALFORMED_TOOL_CALL_REDRIVE_LIMIT }))).terminalReason).toBe("error");
+  });
+
+  it("still ends on any other transport error", async () => {
+    const r = await decideTurnOutcome(parseFailed({ adapterError: { code: "transport_error", message: "socket hang up" } }));
+    expect(r.terminalReason).toBe("error");
   });
 });

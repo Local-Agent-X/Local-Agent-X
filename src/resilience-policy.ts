@@ -17,6 +17,7 @@ export type ErrorCategory =
   | "overload"
   | "contentFilter"
   | "contextOverflow"
+  | "malformedToolCall"
   | "unknown";
 
 // ── Circuit-breaker thresholds (the state machine in circuit-breaker.ts
@@ -95,6 +96,20 @@ const SIGNALS: CategorySignals[] = [
     phrases: [
       /\beconnrefused\b|\beconnreset\b|\benotfound\b|\beai_again\b|\bgetaddrinfo\b|\bsocket hang up\b|\bfetch failed\b|\bnetworkerror\b/i,
       /\bnetwork (?:error|failure|unreachable|is unreachable|request failed|connection)\b|\bdns (?:lookup|resolution|error|failure)\b/i,
+    ],
+  },
+  {
+    // The runtime could not parse the model's own tool-call text and failed
+    // the response (Ollama on Qwen: "XML syntax error on line 4: element
+    // <function> closed by </parameter>"; llama.cpp / vLLM: "failed to parse
+    // tool call …"). Not retryable as sent at the transport: the turn loop
+    // re-drives the model with the error (turn-loop/malformed-tool-call.ts).
+    // Ahead of overload, whose bare "500" a runtime's message may also carry.
+    category: "malformedToolCall",
+    phrases: [
+      /\bXML syntax error\b/i,
+      /\b(?:fail(?:ed)?|unable|error)\b.{0,20}\bpars(?:e|ing)\b.{0,40}\b(?:tool|function)[ _-]?calls?\b/i,
+      /\b(?:tool|function)[ _-]?calls?\b.{0,40}\b(?:malformed|invalid json|could not be parsed|parse error)\b/i,
     ],
   },
   {

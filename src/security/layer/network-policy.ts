@@ -85,7 +85,13 @@ export function evaluateWebFetch(
 
   // Only allow http and https
   if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
-    return { allowed: false, reason: `Blocked: protocol ${parsed.protocol} not allowed (only http/https)`, userHint: USER_HINTS.network };
+    // A local file is what the agent most often means: name the address that
+    // opens one, or the refusal reads as "it can't be viewed" and the agent stops
+    // (chat-mvk9jq7d, 2026-10-23: it wrote loogle.html and never saw it).
+    const instead = parsed.protocol === "file:"
+      ? ` A file in the workspace is served at http://127.0.0.1:${selfPort || "7007"}/files/<its path inside the workspace> — open that instead.`
+      : "";
+    return { allowed: false, reason: `Blocked: protocol ${parsed.protocol} not allowed (only http/https).${instead}`, userHint: USER_HINTS.network };
   }
 
   const host = canonicalizeHost(parsed.hostname);

@@ -7,7 +7,8 @@
 // change (and on the installed app that restart can hang).
 
 import { describe, it, expect } from "vitest";
-import { appIdFromPath, servedFileHint, type ServedFileHintDeps } from "./file-hints.js";
+import { join, sep } from "node:path";
+import { appIdFromPath, appUrlHint, servedFileHint, type ServedFileHintDeps } from "./file-hints.js";
 
 const APP_FRONTEND = "C:\\Users\\x\\.lax\\workspace\\apps\\todo\\index.html";
 const APP_SRC = "C:\\Users\\x\\.lax\\workspace\\apps\\todo\\src\\Sidebar.tsx";
@@ -83,5 +84,29 @@ describe("servedFileHint — non-app files keep the original behavior", () => {
 
   it("is empty with no matching session", () => {
     expect(servedFileHint(PLAIN, deps())).toBe("");
+  });
+});
+
+// The address a written file can be looked at. A page written to the workspace
+// root (loogle.html, chat-mvk9jq7d 2026-10-23) got none, the agent tried
+// file://, was refused, and never saw the page.
+describe("appUrlHint — where to look at what was written", () => {
+  // Built with the host's own separators: the hint resolves paths the way the
+  // write tool hands them over on that platform.
+  const WS = join(sep, "Users", "x", "Documents", "Local Agent X", "workspace");
+
+  it("an installed app's file names the app's address", () => {
+    expect(appUrlHint(join(WS, "apps", "todo", "index.html"), WS)).toContain("/apps/todo/index.html");
+  });
+
+  it("a page in the workspace names its /files address, path encoded", () => {
+    const hint = appUrlHint(join(WS, "pages", "loogle home.html"), WS);
+    expect(hint).toMatch(/http:\/\/127\.0\.0\.1:\d+\/files\/pages\/loogle%20home\.html/);
+    expect(hint).toContain("file://");
+  });
+
+  it("source a browser would not show, or a file outside the workspace, gets nothing", () => {
+    expect(appUrlHint(join(WS, "script.js"), WS)).toBe("");
+    expect(appUrlHint(join(sep, "Users", "x", "projects", "site", "index.html"), WS)).toBe("");
   });
 });

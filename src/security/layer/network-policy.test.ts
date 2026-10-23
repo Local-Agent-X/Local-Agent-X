@@ -236,6 +236,23 @@ describe("evaluateWebFetch — trailing-dot host canonicalization (R4-17)", () =
   });
 });
 
+// A file:// address is refused, but the refusal names the address that does
+// open a workspace file. With only "only http/https", the agent took a written
+// page as unviewable and stopped (chat-mvk9jq7d, 2026-10-23).
+describe("evaluateWebFetch — a file:// address names the way to open the file", () => {
+  it("refuses file:// and points at the workspace /files address on its own port", () => {
+    const decision = evaluateWebFetch(new Set(), false, "7123", "file:///C:/Users/x/Documents/Local%20Agent%20X/workspace/loogle.html");
+    expect(decision.allowed).toBe(false);
+    expect(decision.reason).toContain("http://127.0.0.1:7123/files/");
+  });
+
+  it("names no such address for another refused scheme", () => {
+    const decision = evaluateWebFetch(new Set(), false, "7123", "ftp://example.com/x");
+    expect(decision.allowed).toBe(false);
+    expect(decision.reason).not.toContain("/files/");
+  });
+});
+
 // ── C7: operator-added local runtime host:port carve-out ──────────────────
 // settings.localRuntimes entries are the operator's exact-host:port statement
 // "LAX may talk to this inference endpoint". The admission gate consumes them

@@ -1,3 +1,5 @@
+import { isAbsolute, relative } from "node:path";
+import { workspaceRoot } from "../config.js";
 import { runningSessionsForPath } from "./process-tools.js";
 import { readDevServerRecord, type DevServerRecord } from "./dev-server.js";
 
@@ -5,12 +7,31 @@ import { readDevServerRecord, type DevServerRecord } from "./dev-server.js";
  *  hint with the app's served URL. Without this, models routinely answer
  *  "Built it at workspace/apps/foo/index.html" — a workspace path the
  *  user can't click. The hint nudges the model to surface a real URL. */
-export function appUrlHint(absoluteFilePath: string): string {
-  const appId = appIdFromPath(absoluteFilePath);
-  if (!appId) return "";
+export function appUrlHint(absoluteFilePath: string, workspace: string = workspaceRoot()): string {
   const port = process.env.LAX_PORT ?? "7007";
-  const appUrl = `http://127.0.0.1:${port}/apps/${appId}/index.html`;
-  return ` — App URL: ${appUrl} (include this URL verbatim in your reply to the user so it renders as a clickable link).`;
+  const appId = appIdFromPath(absoluteFilePath);
+  if (appId) {
+    const appUrl = `http://127.0.0.1:${port}/apps/${appId}/index.html`;
+    return ` — App URL: ${appUrl} (include this URL verbatim in your reply to the user so it renders as a clickable link).`;
+  }
+  const fileUrl = workspaceFileUrl(absoluteFilePath, workspace, port);
+  return fileUrl
+    ? ` — View it at ${fileUrl} (open this in the browser tool to see it rendered; a file:// address is refused. Include it verbatim in your reply so it renders as a clickable link).`
+    : "";
+}
+
+/** A page a browser shows, as opposed to source it would only download or print. */
+const VIEWABLE_EXTS = new Set(["html", "htm", "svg", "pdf", "png", "jpg", "jpeg", "gif", "webp"]);
+
+/** The address LAX serves a workspace file at (/files/<path inside the workspace>;
+ *  server/agent-origin.ts), or null for a file outside the workspace or one a
+ *  browser would not show. The browser tool adds the access key the route asks for. */
+function workspaceFileUrl(absoluteFilePath: string, workspace: string, port: string): string | null {
+  const rel = relative(workspace, absoluteFilePath);
+  if (!rel || rel.startsWith("..") || isAbsolute(rel)) return null;
+  const ext = (rel.split(".").pop() ?? "").toLowerCase();
+  if (!VIEWABLE_EXTS.has(ext)) return null;
+  return `http://127.0.0.1:${port}/files/${rel.split(/[/\\]/).map(encodeURIComponent).join("/")}`;
 }
 
 /** The file name a path argument names, for a one-line card (describeCall). */

@@ -35,6 +35,7 @@ const { sessionWorkRootOf, clearSessionWorkRoot } = await import("../workspace/p
 const { setChatHandler } = await import("./chat-handler.js");
 
 const SESSION = "ide-todo-app";
+const CHAT = "chat-plain";
 const APP_DIR = resolve(TMP_WS, "apps", "todo-app");
 
 beforeAll(() => {
@@ -44,7 +45,7 @@ beforeAll(() => {
   setChatHandler(() => {});
 });
 
-afterEach(() => clearSessionWorkRoot(SESSION));
+afterEach(() => { clearSessionWorkRoot(SESSION); clearSessionWorkRoot(CHAT); });
 
 function makeRouter() {
   let onMessage: ((data: Buffer) => unknown) | null = null;
@@ -67,17 +68,24 @@ describe("chat frame → IDE work root", () => {
     expect(sessionWorkRootOf(SESSION)).toBe(APP_DIR);
   });
 
-  it("a frame with no appId leaves the session unanchored (plain chat is unaffected)", async () => {
-    await makeRouter().dispatch(chatFrame({}));
-    expect(sessionWorkRootOf(SESSION)).toBeUndefined();
+  it("a chat's frame with no appId leaves it unanchored (plain chat is unaffected)", async () => {
+    await makeRouter().dispatch({ ...chatFrame({}), sessionId: CHAT });
+    expect(sessionWorkRootOf(CHAT)).toBeUndefined();
   });
 
-  it("a later non-IDE frame clears a previously anchored session", async () => {
+  it("a later non-IDE frame clears a chat a frame had anchored", async () => {
     const r = makeRouter();
-    await r.dispatch(chatFrame({ appId: "todo-app" }));
+    await r.dispatch({ ...chatFrame({ appId: "todo-app" }), sessionId: CHAT });
+    expect(sessionWorkRootOf(CHAT)).toBe(APP_DIR);
+    await r.dispatch({ ...chatFrame({}), sessionId: CHAT });
+    expect(sessionWorkRootOf(CHAT)).toBeUndefined();
+  });
+
+  // Edit on an app opens `ide-<appId>` in the main chat, whose frames carry no
+  // appId: the session's id names the app (session/ide-work-root.ts).
+  it("an App IDE session's frame with no appId anchors at the app its id names", async () => {
+    await makeRouter().dispatch(chatFrame({}));
     expect(sessionWorkRootOf(SESSION)).toBe(APP_DIR);
-    await r.dispatch(chatFrame({}));
-    expect(sessionWorkRootOf(SESSION)).toBeUndefined();
   });
 
   it("a traversal appId from a hostile client does not anchor outside the workspace", async () => {

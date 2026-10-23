@@ -47,6 +47,8 @@ describe("classifySystemPromptPart", () => {
       "how-to-control-your-own-app": "navigation",
       "identity": "identity",
       "how-to-work": "tuning",
+      // A code session's How to work (context/prompt-mode.ts), shed after tuning.
+      "code-mode": "navigation",
       "coding-discipline": "tuning",
       "delegation": "tuning",
       "background-operations": "navigation",

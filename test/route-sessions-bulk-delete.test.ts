@@ -45,7 +45,9 @@ describe("DELETE /api/sessions — aliased to sidebar_clear", () => {
 });
 
 describe("GET /api/sessions — hides system sessions from the sidebar", () => {
-  it("filters dream-/cron-/ide-/eval_/skill-review- prefixes, keeps regular + bridge sessions", async () => {
+  // App IDE sessions (ide-) are listed: they are code sessions, which the
+  // sidebar's Code side shows under their app (src/session/mode.ts).
+  it("filters dream-/cron-/eval_/skill-review- prefixes, keeps regular, bridge and App IDE sessions", async () => {
     const list = [
       { id: "chat-aaa", title: "regular", updatedAt: 1, messageCount: 2 },
       { id: "wa-111", title: "whatsapp", updatedAt: 1, messageCount: 2 },
@@ -67,7 +69,7 @@ describe("GET /api/sessions — hides system sessions from the sidebar", () => {
     expect(handled).toBe(true);
     expect(cap.status).toBe(200);
     const ids = (JSON.parse(cap.body) as Array<{ id: string }>).map(s => s.id);
-    expect(ids).toEqual(["chat-aaa", "wa-111"]);
+    expect(ids).toEqual(["chat-aaa", "wa-111", "ide-hhh"]);
   });
 });
 

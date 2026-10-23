@@ -13,7 +13,7 @@ src/agent-request/prepare-request.ts#prepareAgentRequest 180
 src/agent-request/prepare-request/tool-selection.ts#selectTools 112
 src/agent-request/resolve-provider.ts#resolveProvider 114
 src/agent-store/template-defaults.ts#builtInTemplateDefaults 170
-src/anthropic-client/stream-api.ts#streamViaAPI 213
+src/anthropic-client/stream-api.ts#streamViaAPI 210
 src/anthropic-client/stream-cli/stream-parse.ts#processStreamLine 106
 src/app-renderer/client-script.ts#renderClientScript 137
 src/auto-build/app-build-tool.ts#finalize_app_build.execute 129

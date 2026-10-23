@@ -34,6 +34,33 @@ export const SIGN_IN_AGAIN_MESSAGE =
   "Your Claude sign-in is no longer accepted by Anthropic (401), and refreshing it did not help. " +
   "Open Settings → Anthropic Authentication and click \"Sign in with Claude subscription\" to reconnect, then send your message again.";
 
+type ForcedToolChoice = { type: "tool"; name: string } | { type: "any" };
+
+/**
+ * The tool_choice a request carries, and whether it must turn thinking off to
+ * carry it. Anthropic takes a forced tool_choice ("tool" / "any") only with
+ * thinking off, so a forced turn sends thinking off; on a model whose thinking
+ * cannot be turned off (always-on) the force is dropped and the turn's
+ * directive still says what to call. Sending both was a 400 that ended the turn
+ * ("tool_choice ... not supported for this model", Opus 5.5, 2026-10-23).
+ */
+function planToolChoice(
+  model: string,
+  toolNames: readonly string[],
+  forcedToolName: string | undefined,
+  toolChoice: StreamOptions["toolChoice"],
+): { toolChoice?: ForcedToolChoice; thinkingOff: boolean } {
+  const wanted: ForcedToolChoice | undefined = forcedToolName && toolNames.includes(forcedToolName)
+    ? { type: "tool", name: forcedToolName }
+    : toolChoice === "required" && toolNames.length > 0 ? { type: "any" } : undefined;
+  if (!wanted) return { thinkingOff: false };
+  if (anthropicThinkingOffMode(model) === "always-on") {
+    logger.warn(`${model} cannot take a forced tool_choice (its thinking is always on) — sending tool_choice auto`);
+    return { thinkingOff: false };
+  }
+  return { toolChoice: wanted, thinkingOff: true };
+}
+
 export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<StreamEvent> {
   const { token, model, messages, systemPrompt, tools, maxTokens, toolChoice, forcedToolName, signal, temperature, disableThinking, effort, systemStablePrefixLen, cacheConversation, ephemeralTailMessages } = options;
   // Subscription OAuth tokens reach the Messages API only when the request wears
@@ -54,7 +81,8 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
   // Thinking + effort are ONE decision, resolved per model (planAnthropicReasoning
   // is the single source of truth). Deciding them apart is what put a voice turn
   // on the legacy budget_tokens arm at max_tokens 600 — an unconditional 400.
-  const plan = planAnthropicReasoning(resolvedModel, { effort, disableThinking });
+  const force = planToolChoice(resolvedModel, (tools ?? []).map(t => t.name), forcedToolName, toolChoice);
+  const plan = planAnthropicReasoning(resolvedModel, { effort, disableThinking: disableThinking || force.thinkingOff });
   const thinkingOff = plan.thinkingOff ? anthropicThinkingOffMode(resolvedModel) : null;
   if (thinkingOff === "always-on" && !warnedThinkingAlwaysOn.has(resolvedModel)) {
     warnedThinkingAlwaysOn.add(resolvedModel);
@@ -203,12 +231,8 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
     // (build-system-prompt.ts) names the rest, so this cached block — and its
     // cold-write — is sized to the tools actually loaded this turn.
     body.tools = anthropicTools;
-    const forcedWireName = forcedToolName && oauth ? toOAuthWireName(forcedToolName) : forcedToolName;
-    if (forcedWireName && anthropicTools.some(t => t.name === forcedWireName)) {
-      body.tool_choice = { type: "tool", name: forcedWireName };
-    } else if (toolChoice === "required") {
-      body.tool_choice = { type: "any" };
-    }
+    const forced = force.toolChoice;
+    if (forced) body.tool_choice = forced.type === "tool" && oauth ? { ...forced, name: toOAuthWireName(forced.name) } : forced;
   }
 
   // Connect timeout (60s) bounds ONLY the request/headers phase; it is cleared

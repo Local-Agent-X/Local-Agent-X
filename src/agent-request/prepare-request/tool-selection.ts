@@ -368,7 +368,9 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
     tools,
     tier,
     productBuildTurn,
-    forcedToolName: productBuildTurn?.targetTool,
+    // Only a workflow the user chose explicitly (/app-build) pins a tool. A
+    // continuation is matched from wording, which is a guess (product-build-routing.ts).
+    forcedToolName: productBuildTurn?.kind === "methodology" ? productBuildTurn.targetTool : undefined,
     isBridge,
   };
 }

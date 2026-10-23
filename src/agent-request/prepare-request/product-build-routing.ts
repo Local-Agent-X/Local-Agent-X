@@ -36,6 +36,13 @@ export function isProductBuildContinuationRequest(message: string): boolean {
     && (CONTINUATION_ACTION_RE.test(message) || BUILD_STATUS_RE.test(message));
 }
 
+// A continuation is matched from wording (isProductBuildContinuationRequest),
+// and wording is a guess: a question about adding an order button in "Scan
+// Progress" for "the nutrishop app" matched "progress" + "app" (2026-10-23). So
+// the turn tells the model what the durable build is and what continuing it
+// calls, the model decides, and nothing pins its tool (tool-selection.ts).
+const ONLY_IF_ASKED = "This was matched from the message's wording, so first decide whether the user is actually asking to continue or check that Product Build.";
+
 function projectArg(projectDir: string | undefined): string {
   return projectDir ? ` with project_dir="${projectDir.replace(/\\/g, "/")}"` : "";
 }
@@ -54,7 +61,9 @@ function continuationTurn(resolution: AppBuildContinuationResolution): ProductBu
       kind: "ambiguous",
       action: null,
       reason: "Multiple durable Product Build candidates matched this continuation request.",
-      directive: `Do not call a build tool and do not guess. Ask exactly one question: ${question}`,
+      directive:
+        `${ONLY_IF_ASKED} If they are, do not call a build tool and do not guess: ask exactly one question: ${question} ` +
+        "If they are not, answer the message normally.",
     };
   }
 
@@ -72,7 +81,8 @@ function continuationTurn(resolution: AppBuildContinuationResolution): ProductBu
       reason: candidate.reason,
       directive:
         `Product Build continuation resolved to action=conversation${projectArg(candidate.projectDir)}. ` +
-        `Reason: ${candidate.reason} ${instruction} Do not call build_app or build inline.`,
+        `Reason: ${candidate.reason} ${ONLY_IF_ASKED} If they are: ${instruction} Do not call build_app or build inline. ` +
+        "If they are not, answer the message normally.",
     };
   }
 
@@ -84,8 +94,8 @@ function continuationTurn(resolution: AppBuildContinuationResolution): ProductBu
     reason: candidate.reason,
     directive:
       `Product Build continuation resolved to action=${action}${projectArg(candidate.projectDir)}. ` +
-      `Reason: ${candidate.reason} Call ${action}${projectArg(candidate.projectDir)} now. ` +
-      "Do not call build_app and do not build the app inline.",
+      `Reason: ${candidate.reason} ${ONLY_IF_ASKED} If they are, call ${action}${projectArg(candidate.projectDir)}; ` +
+      "do not call build_app and do not build the app inline. If they are not, answer the message normally and call no build tool.",
   };
 }
 

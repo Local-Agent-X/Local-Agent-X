@@ -169,12 +169,16 @@ describe("canonical tool selection routing", () => {
     expect(names).toContain("write");
   });
 
-  it("resolves a continuation request and forces status", async () => {
+  // Matched from wording, so it informs and never pins: a Nutrishop question
+  // naming "Scan Progress" and "the app" pinned build_plan_resume, and with
+  // thinking on, Anthropic refused the forced tool outright (2026-10-23).
+  it("resolves a continuation request, offers status, and pins no tool", async () => {
     const result = await selection({
       message: "what is the build status",
       continuationResolver: () => resolved("build_plan_status"),
     });
-    expect(result.forcedToolName).toBe("build_plan_status");
+    expect(result.forcedToolName).toBeUndefined();
+    expect(result.productBuildTurn?.directive).toContain("first decide whether the user is actually asking");
     expect(result.tools.map(item => item.name)).toContain("build_plan_status");
     expect(result.tools.map(item => item.name)).not.toContain("build_app");
     expect(result.productBuildTurn?.directive).toContain('project_dir="C:/apps/crm"');

@@ -776,3 +776,35 @@ describe("401 on the direct-OAuth path", () => {
     expect(err?.error).toMatch(/^Anthropic 401/);
   });
 });
+
+// Anthropic takes a forced tool_choice only with thinking off. Sending both was
+// a 400 that ended the turn ("tool_choice: type \"tool\" and \"any\" are not
+// supported for this model", Opus 5.5, 2026-10-23).
+describe("streamViaAPI — a forced tool and thinking never go out together", () => {
+  const done = sse([
+    { type: "content_block_delta", delta: { type: "text_delta", text: "x" } },
+    { type: "message_delta", usage: { output_tokens: 1 }, delta: { stop_reason: "end_turn" } },
+  ]);
+  const tools = [{ name: "build_plan_resume", description: "resume", parameters: { type: "object", properties: {} } }];
+
+  it("a model that can turn thinking off: forces the tool and sends thinking disabled", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({ model: "claude-opus-5", tools, forcedToolName: "build_plan_resume" } as Partial<StreamOptions>);
+    expect(cap.calls[0].body.tool_choice).toEqual({ type: "tool", name: "build_plan_resume" });
+    expect(cap.calls[0].body.thinking).toEqual({ type: "disabled" });
+  });
+
+  it("a model whose thinking is always on: drops the force and keeps thinking", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({ model: "claude-opus-5-5", tools, forcedToolName: "build_plan_resume", toolChoice: "required" } as Partial<StreamOptions>);
+    expect(cap.calls[0].body.tool_choice).toBeUndefined();
+    expect((cap.calls[0].body.thinking as { type: string }).type).toBe("adaptive");
+  });
+
+  it("an unforced turn keeps thinking on", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({ model: "claude-opus-5", tools } as Partial<StreamOptions>);
+    expect(cap.calls[0].body.tool_choice).toBeUndefined();
+    expect((cap.calls[0].body.thinking as { type: string }).type).toBe("adaptive");
+  });
+});

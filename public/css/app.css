@@ -183,13 +183,24 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
 /* Brand row — AGENT X logo + New Chat button on a single line below the
    traffic-light spacer. Logo flexes to fill so the button sits hard
    against the right edge. */
-#sidebar-brand{display:flex;align-items:center;gap:10px;padding:10px 16px;border-bottom:1px solid var(--border);min-height:63px;overflow:hidden}
+/* Brand row — the Chat / Code toggle (sidebar-mode.js) with the New row
+   under it. */
+#sidebar-brand{display:flex;flex-direction:column;align-items:stretch;gap:6px;padding:10px 12px 8px;border-bottom:1px solid var(--border);overflow:hidden}
 #sidebar.collapsed #sidebar-brand{display:none}
-/* Logo gives up space first (shrinks + ellipsizes) so the New Chat button
-   stays inside the sidebar when it's dragged narrow. */
-#logo{font-family:var(--mono);font-size:.85rem;color:var(--accent);letter-spacing:2px;text-transform:uppercase;text-shadow:0 0 10px var(--accent-dim);flex:1 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;cursor:pointer;white-space:nowrap}
-#new-chat-btn{flex-shrink:0;background:transparent;border:1px solid var(--accent);color:var(--accent);border-radius:8px;padding:7px 12px;font-size:.75rem;cursor:pointer;font-family:var(--mono);transition:all .2s;white-space:nowrap}
-#new-chat-btn:hover{background:var(--accent);color:var(--bg);box-shadow:0 0 12px var(--accent-dim)}
+#sidebar-mode-toggle{display:flex;gap:2px;padding:3px;border:1px solid var(--border);border-radius:9px;background:var(--hover)}
+.sidebar-mode-btn{flex:1 1 0;min-width:0;background:transparent;border:1px solid transparent;border-radius:7px;padding:5px 8px;font-size:.74rem;font-family:var(--mono);color:var(--muted);cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;transition:background .15s,color .15s}
+.sidebar-mode-btn:hover{color:var(--text)}
+.sidebar-mode-btn.active{background:var(--bg);color:var(--accent);border-color:var(--border)}
+.sidebar-mode-btn:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+#new-chat-btn{display:flex;align-items:center;gap:8px;background:transparent;border:none;color:var(--text);border-radius:6px;padding:6px 8px;font-size:.76rem;cursor:pointer;font-family:var(--mono);text-align:left;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#new-chat-btn:hover{background:var(--hover);color:var(--accent)}
+.hidden-in-code-mode{display:none!important}
+/* The code side: one group per project folder, Apps, and the add-folder row. */
+.code-group{padding:6px 0 4px}
+.code-group-header{padding:0 12px}
+.code-group-empty{padding:4px 12px 6px 22px;font-size:.7rem;color:var(--muted)}
+.code-add-folder{margin:8px 12px;padding:6px 8px;font-size:.74rem;font-family:var(--mono);color:var(--muted);border:1px dashed var(--border);border-radius:6px;cursor:pointer}
+.code-add-folder:hover{color:var(--accent);border-color:var(--accent)}
 #pinned-section{padding:8px 0;border-bottom:1px solid var(--border)}
 .pinned-item{display:flex;align-items:center;gap:8px;padding:5px 12px;cursor:pointer;color:var(--fg);border-radius:4px;margin:1px 6px;transition:background .15s}
 .pinned-item:hover{background:var(--hover)}

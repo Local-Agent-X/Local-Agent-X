@@ -66,7 +66,7 @@ function toggleProject(id) {
   renderSidebar();
 }
 
-function projectChatsCount(pid) { return chats.filter(c => c.projectId === pid).length; }
+function projectChatsCount(pid) { return chats.filter(c => c.projectId === pid && chatModeOf(c) === 'chat').length; }
 
 function toggleProjectsSection(e) {
   // Collapse-button click on the + is suppressed via stopPropagation in the
@@ -172,9 +172,11 @@ function moveChat(chatId, projectId, e) {
 // interaction). The agent now greets the user as part of its FIRST real
 // LLM reply — see the "First-turn identity ask" rule in config/system-prompt.md.
 // Identity-extract pipeline on the user's reply is unchanged.
-function newChat(projectId) {
-  activeChat = { id: 'chat-' + uid(), title: 'New Chat', messages: [], createdAt: Date.now(), updatedAt: Date.now() };
+function newChat(projectId, mode) {
+  activeChat = { id: 'chat-' + uid(), title: mode === 'code' ? 'New code session' : 'New Chat', messages: [], createdAt: Date.now(), updatedAt: Date.now() };
   if (projectId) activeChat.projectId = projectId;
+  // A code session (src/session/mode.ts); the server fixes it on the first message.
+  if (mode === 'code') activeChat.mode = 'code';
   try { window.activeChat = activeChat; } catch {}
   chats.unshift(activeChat);
   // Expand the project the new chat lives under so the user can see it.

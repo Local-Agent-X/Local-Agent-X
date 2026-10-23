@@ -11,7 +11,7 @@ async function _sendMessageHttp(ctx) {
     const res = await fetch(`${API}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${AUTH_TOKEN}` },
-      body: JSON.stringify({ message: finalText, sessionId: streamSessionId, attachments: msgAttachments || [], projectId: streamChat.projectId || null }),
+      body: JSON.stringify({ message: finalText, sessionId: streamSessionId, attachments: msgAttachments || [], projectId: streamChat.projectId || null, ...(streamChat.mode === 'code' ? { mode: 'code' } : {}) }),
     });
     const reader = res.body.getReader();
     const decoder = new TextDecoder();

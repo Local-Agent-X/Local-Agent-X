@@ -12,6 +12,8 @@ function _sendMessageWs(ctx) {
     message: finalText,
     attachments: msgAttachments || [],
     projectId: streamChat.projectId || null,
+    // Read by the server on a session's first message only (src/session/mode.ts).
+    ...(streamChat.mode === 'code' ? { mode: 'code' } : {}),
   }));
 
   // No mid-stream save tick — the live row lives in ChatStreamStore until

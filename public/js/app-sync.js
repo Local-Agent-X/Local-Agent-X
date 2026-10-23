@@ -45,6 +45,8 @@ async function syncChatsFromServer() {
         // sync that dropped it) from the server's now-durable value. Local is
         // at-or-newer, so don't overwrite an existing local projectId.
         if (srv.projectId && !local.projectId) local.projectId = srv.projectId;
+        // The server fixed the mode on the session's first message (src/session/mode.ts).
+        if (srv.mode === 'code') local.mode = 'code';
         merged.push(local);
       } else {
         // Server is newer or session is server-only. Build a metadata stub —
@@ -64,6 +66,7 @@ async function syncChatsFromServer() {
         // it. This is the fix for the sync-drops-projectId bug that silently
         // unscoped project chats.
         stub.projectId = srv.projectId || (local && local.projectId) || undefined;
+        if (srv.mode === 'code' || (local && local.mode === 'code')) stub.mode = 'code';
         if (local) {
           stub.compactedAt = local.compactedAt;
           if (local.archived) stub.archived = true;
@@ -107,8 +110,9 @@ async function syncProjectsFromServer() {
     if (!r.ok) return;
     const list = await r.json();
     if (!Array.isArray(list)) return;
-    // Server returns the full Project record; sidebar only needs id + name.
-    projects = list.map(p => ({ id: p.id, name: p.name, createdAt: p.createdAt }));
+    // Server returns the full Project record; the sidebar needs id + name, and
+    // the code side the folder its sessions work in (sidebar-mode.js).
+    projects = list.map(p => ({ id: p.id, name: p.name, createdAt: p.createdAt, ...(p.workspace ? { workspace: p.workspace } : {}) }));
     try { window.projects = projects; } catch {}
     saveProjects();
     renderSidebar();

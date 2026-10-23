@@ -37,7 +37,7 @@
 <link rel="preload" href="/hero-master.png" as="image"/>
 <link rel="icon" type="image/x-icon" href="/favicon.ico"/>
 <link rel="icon" type="image/png" sizes="192x192" href="/favicon.png"/>
-<link rel="stylesheet" href="/css/app.css?v=vb37"/>
+<link rel="stylesheet" href="/css/app.css?v=vb38"/>
 <link rel="stylesheet" href="/css/browser-workspace.css?v=v2"/>
 <link rel="stylesheet" href="/vendor/xterm/xterm.css?v=v1"/>
 <link rel="stylesheet" href="/css/voice-sphere.css?v=vb2"/>
@@ -103,9 +103,13 @@
 <!-- ═══ SIDEBAR (persists across all pages) ═══ -->
 <div id="sidebar" role="navigation" aria-label="Sidebar navigation">
   <div id="sidebar-header"></div>
+  <!-- Chat / Code toggle (sidebar-mode.js) and the New row it labels. -->
   <div id="sidebar-brand">
-    <span id="logo" onclick="navigate('chat')" role="button" tabindex="0" aria-label="Go to chat">Agent X</span>
-    <button id="new-chat-btn" onclick="newChat()">+ New Chat</button>
+    <div id="sidebar-mode-toggle" role="group" aria-label="Chat or code sessions">
+      <button id="sidebar-mode-chat" class="sidebar-mode-btn active" onclick="setSidebarMode('chat')" aria-pressed="true">Chat</button>
+      <button id="sidebar-mode-code" class="sidebar-mode-btn" onclick="setSidebarMode('code')" aria-pressed="false">Code</button>
+    </div>
+    <button id="new-chat-btn" onclick="newFromSidebar()"><span aria-hidden="true">+</span> <span id="new-chat-label">New chat</span></button>
   </div>
 
   <div id="pinned-section" style="display:none">
@@ -1727,9 +1731,10 @@
      app.js runs the top-level boot last, so it must come after all
      function-defining modules. -->
 <script src="/js/app-state.js?v=v1"></script>
-<script src="/js/app-sync.js?v=v2"></script>
-<script src="/js/app-sidebar-actions.js?v=v2"></script>
-<script src="/js/app-sidebar-render.js?v=v1"></script>
+<script src="/js/sidebar-mode.js?v=v2"></script>
+<script src="/js/app-sync.js?v=v3"></script>
+<script src="/js/app-sidebar-actions.js?v=v3"></script>
+<script src="/js/app-sidebar-render.js?v=v2"></script>
 <script src="/js/app.js?v=va7"></script>
 <script src="/js/home-launcher.js?v=v1"></script>
 <script type="module" src="/js/voice-sphere.js?v=vb8"></script>
@@ -1827,8 +1832,8 @@
 <script src="/js/chat-render-live.js?v=v3"></script>
 <!-- chat-send split: dispatch modules must load before chat-send.js so
      sendMessage()'s wsHealthy check can reach _sendMessageWs/_sendMessageHttp. -->
-<script src="/js/chat-send-ws.js?v=v3"></script>
-<script src="/js/chat-send-http.js?v=v4"></script>
+<script src="/js/chat-send-ws.js?v=v4"></script>
+<script src="/js/chat-send-http.js?v=v5"></script>
 <script src="/js/chat-send.js?v=v11"></script>
 <script src="/js/chat-uploads.js?v=v3"></script>
 <script src="/js/chat.js?v=vd5"></script>

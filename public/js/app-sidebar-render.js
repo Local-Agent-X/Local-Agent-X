@@ -14,7 +14,7 @@ function projectSortKey(p) {
 function renderProjectRow(p) {
   const expanded = expandedProjects.has(p.id);
   const count = projectChatsCount(p.id);
-  const pChats = chats.filter(c => c.projectId === p.id);
+  const pChats = chats.filter(c => c.projectId === p.id && chatModeOf(c) === 'chat');
   return `
     <div class="project-item ${expanded ? 'expanded' : ''}" onclick="toggleProject('${p.id}')">
       <span class="project-arrow">&#9654;</span>
@@ -64,8 +64,10 @@ function renderProjects() {
 function renderChatList() {
   const el = document.getElementById('chat-list');
   if (!el) return;
+  // The code side lists code sessions by folder (sidebar-mode.js).
+  if (typeof sidebarMode !== 'undefined' && sidebarMode === 'code') { renderCodeSidebar(el); return; }
 
-  let unassigned = chats.filter(c => !c.projectId && !c.archived);
+  let unassigned = chats.filter(c => !c.projectId && !c.archived && chatModeOf(c) === 'chat');
 
   // Apply search filter
   if (chatSearchQuery) {
@@ -161,7 +163,7 @@ function renderChatList() {
   html += renderGroup('Older', groups.older);
 
   // Archived section — collapsed by default, click label to toggle visibility
-  const archivedChats = chats.filter(c => c.archived && !c.id?.startsWith('wa-') && !c.id?.startsWith('tg-'));
+  const archivedChats = chats.filter(c => c.archived && chatModeOf(c) === 'chat' && !c.id?.startsWith('wa-') && !c.id?.startsWith('tg-'));
   if (archivedChats.length > 0) {
     const isOpen = localStorage.getItem('lax_archived_open') === '1';
     html += `<div class="chat-group-label" style="cursor:pointer;user-select:none" onclick="toggleArchivedSection()">${isOpen ? '&#9662;' : '&#9656;'} Archived (${archivedChats.length})</div>`;

@@ -55,6 +55,47 @@ export function shouldForceRecallSearch(opts: {
   );
 }
 
+/** This turn's tools: none for a lean prep (its caller ships its own belt),
+ *  otherwise the per-turn selection (prepare-request/tool-selection.ts). */
+async function selectTurnTools(
+  input: AgentRequestInput,
+  resolved: { provider: string; model: string },
+  cleanHistory: readonly { role: string; content?: unknown }[],
+  protocolSuggestion: ReturnType<typeof getLearnedProtocolSuggestion>,
+  stepStart: (label: string) => () => void,
+): Promise<ToolSelectionResult> {
+  if (input.leanPrep) {
+    const { classifyModel } = await import("../model-tiers.js");
+    return {
+      tools: [],
+      tier: classifyModel(resolved.model) as ToolSelectionResult["tier"],
+      productBuildTurn: null,
+      isBridge: false,
+    };
+  }
+  // A slash-command methodology (e.g. /app-build) runs across MANY turns, but
+  // only its FIRST turn carries the marker. Treat the whole session as
+  // methodology-active once ANY prior user turn was a slash-command expansion.
+  const priorMethodology = cleanHistory.some(
+    (m) => m.role === "user" && typeof m.content === "string" && isSlashCommandExpansion(m.content),
+  );
+  const end = stepStart("selectTools");
+  const toolSel = await selectTools({
+    message: input.message,
+    sessionId: input.sessionId,
+    channel: input.channel,
+    mode: input.mode,
+    allAgentTools: input.allAgentTools,
+    bridgeTools: input.bridgeTools,
+    resolvedProvider: resolved.provider,
+    resolvedModel: resolved.model,
+    priorMethodology,
+    protocolSuggestion,
+  });
+  end();
+  return toolSel;
+}
+
 export async function prepareAgentRequest(input: AgentRequestInput): Promise<PreparedAgentRequest> {
   // Per-step timing logs. Added 2026-05-27 after IDE-mode chat turns wedged
   // somewhere inside this pipeline with zero breadcrumbs: only the entry
@@ -111,37 +152,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   // be in the schema) and build-context (the nudge text itself).
   const protocolSuggestion = input.leanPrep ? null : getLearnedProtocolSuggestion(input.message);
 
-  let toolSel: ToolSelectionResult;
-  if (input.leanPrep) {
-    const { classifyModel } = await import("../model-tiers.js");
-    toolSel = {
-      tools: [],
-      tier: classifyModel(resolved.model) as ToolSelectionResult["tier"],
-      productBuildTurn: null,
-      isBridge: false,
-    };
-  } else {
-    // A slash-command methodology (e.g. /app-build) runs across MANY turns, but
-    // only its FIRST turn carries the marker. Treat the whole session as
-    // methodology-active once ANY prior user turn was a slash-command expansion.
-    const priorMethodology = cleanHistory.some(
-      (m) => m.role === "user" && typeof m.content === "string" && isSlashCommandExpansion(m.content),
-    );
-    end = stepStart("selectTools");
-    toolSel = await selectTools({
-      message: input.message,
-      sessionId: input.sessionId,
-      channel: input.channel,
-      mode: input.mode,
-      allAgentTools: input.allAgentTools,
-      bridgeTools: input.bridgeTools,
-      resolvedProvider: resolved.provider,
-      resolvedModel: resolved.model,
-      priorMethodology,
-      protocolSuggestion,
-    });
-    end();
-  }
+  const toolSel = await selectTurnTools(input, resolved, cleanHistory, protocolSuggestion, stepStart);
 
   // 4. Build per-turn memory + context (skip heavy parts for bridges/cron).
   // The memory pipeline runs for every provider — the orchestrator's

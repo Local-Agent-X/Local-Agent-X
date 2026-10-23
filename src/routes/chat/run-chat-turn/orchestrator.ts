@@ -15,6 +15,7 @@ import { PROVIDERS } from "../../../providers/registry.js";
 import { PROVIDER_IDS, type ProviderId } from "../../../providers/provider-ids.js";
 import type { ChannelKind } from "../../../agent-request/types.js";
 import { sessionModeOf } from "../../../session/mode.js";
+import type { Session } from "../../../types.js";
 
 const logger = createLogger("routes.chat.run-turn");
 
@@ -59,6 +60,25 @@ const reconnectHint = (channel: ChannelKind, label: string): string =>
  * finally-block cleanup. The only thing not owned here is HTTP-specific
  * setup (writeHead, heartbeat, res.end) — that stays at the route boundary.
  */
+/** The request's durable facts onto the session it addresses. */
+function applyRequestToSession(session: Session, args: RunChatTurnArgs, message: string): void {
+  if (session.messages.length === 0) {
+    session.title = args.sessionTitle ?? (message.slice(0, 60) + (message.length > 60 ? "..." : ""));
+    // The mode is fixed here, on the session's first message (session/mode.ts).
+    if (args.mode === "code") session.mode = "code";
+  }
+
+  // Persist the chat→project link onto the durable session so it survives
+  // client-side sync and seeds future cold loads. The in-memory map (set
+  // above) is the live read surface; this is its durable backing. Mirror the
+  // request exactly — a chat moved out of a project clears it; a request that
+  // carried no project leaves it.
+  if (args.projectId !== undefined) {
+    const pid = typeof args.projectId === "string" && args.projectId ? args.projectId : undefined;
+    if (session.projectId !== pid) { session.projectId = pid; void args.ctx.saveSession(session); }
+  }
+}
+
 export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
   const { sessionId, attachments, projectId, ctx, requestRole, sseSink } = args;
   const channel = args.channel ?? "web";
@@ -103,21 +123,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
   // turn from history. flushSession is a no-op when nothing is pending.
   await ctx.flushSession(sessionId);
   const session = ctx.getOrCreateSession(sessionId);
-  if (session.messages.length === 0) {
-    session.title = args.sessionTitle ?? (message.slice(0, 60) + (message.length > 60 ? "..." : ""));
-    // The mode is fixed here, on the session's first message (session/mode.ts).
-    if (args.mode === "code") session.mode = "code";
-  }
-
-  // Persist the chat→project link onto the durable session so it survives
-  // client-side sync and seeds future cold loads. The in-memory map (set
-  // above) is the live read surface; this is its durable backing. Mirror the
-  // request exactly — a chat moved out of a project clears it; a request that
-  // carried no project leaves it.
-  if (projectId !== undefined) {
-    const pid = typeof projectId === "string" && projectId ? projectId : undefined;
-    if (session.projectId !== pid) { session.projectId = pid; void ctx.saveSession(session); }
-  }
+  applyRequestToSession(session, args, message);
 
   let doneEmitted = false;
   let lockHeld = false;

@@ -182,6 +182,35 @@ export class SystemPromptBuilder {
 }
 
 /**
+ * One section PER `## ` heading of the base prompt (config-loader.ts) so a small
+ * local window can shed tuning before facts; same "" joiner ⇒ same bytes/prefix.
+ * The session's mode picks which parts it carries (prompt-mode.ts).
+ */
+function addBasePromptParts(builder: SystemPromptBuilder, basePrompt: string, mode: ChatMode): void {
+  for (const part of basePromptSections(basePrompt)) {
+    if (promptPartInMode(basePartSlug(part.id), mode)) builder.addSection(part);
+  }
+}
+
+/**
+ * Runtime context — tells the model WHICH OS / shell it's actually on and
+ * WHERE relative paths land, so it stops reaching for PowerShell verbs and
+ * stops prefixing `workspace/` in shell commands. Both facts come from the
+ * same sources the bash tool spawns with (resolveWindowsShell, workspaceRoot):
+ * until 2026-09-25 this section said "PowerShell … Use PowerShell verbs" on
+ * win32 while the tool ran Git Bash, and named the SERVER's cwd as the working
+ * directory while bash and every file tool anchor at the workspace — the
+ * model followed the prompt and every shell path failed (op-outcomes EXP-20).
+ * Static (process-lifetime stable) so it caches with the base prompt.
+ */
+function runtimeContextSection(): PromptSection {
+  return {
+    id: "runtime-context", label: "Runtime", type: "static", policy: "required", priority: "safety",
+    build: () => runtimeSection(process.platform, process.platform === "win32" ? resolveWindowsShell().kind : null, workspaceRoot(), platformRoot()),
+  };
+}
+
+/**
  * Single builder factory for ALL paths — web chat, bridge, cron, sub-agents.
  * Callers pass what they have; empty strings are auto-skipped.
  */
@@ -215,27 +244,9 @@ export function createSystemPromptBuilder(opts: {
 
   // ── Static sections (cacheable across turns) ──
 
-  // One section PER `## ` heading of the base prompt (config-loader.ts) so a small
-  // local window can shed tuning before facts; same "" joiner ⇒ same bytes/prefix.
-  // The session's mode picks which parts it carries (prompt-mode.ts).
-  const mode = opts.mode ?? "chat";
-  for (const part of basePromptSections(opts.basePrompt)) {
-    if (promptPartInMode(basePartSlug(part.id), mode)) builder.addSection(part);
-  }
+  addBasePromptParts(builder, opts.basePrompt, opts.mode ?? "chat");
 
-  // Runtime context — tells the model WHICH OS / shell it's actually on and
-  // WHERE relative paths land, so it stops reaching for PowerShell verbs and
-  // stops prefixing `workspace/` in shell commands. Both facts come from the
-  // same sources the bash tool spawns with (resolveWindowsShell, workspaceRoot):
-  // until 2026-09-25 this section said "PowerShell … Use PowerShell verbs" on
-  // win32 while the tool ran Git Bash, and named the SERVER's cwd as the working
-  // directory while bash and every file tool anchor at the workspace — the
-  // model followed the prompt and every shell path failed (op-outcomes EXP-20).
-  // Static (process-lifetime stable) so it caches with the base prompt.
-  builder.addSection({
-    id: "runtime-context", label: "Runtime", type: "static", policy: "required", priority: "safety",
-    build: () => runtimeSection(process.platform, process.platform === "win32" ? resolveWindowsShell().kind : null, workspaceRoot(), platformRoot()),
-  });
+  builder.addSection(runtimeContextSection());
 
   // The agent's and the user's names, in a section no budget can shed. The
   // first-turn identity ask (config/system-prompt.md) keys on them; they also

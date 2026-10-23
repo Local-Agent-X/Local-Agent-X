@@ -214,12 +214,10 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
   // from fail-open to fail-closed, and every one of those branches would need
   // its own proof that it cannot drop a usable tool. If that is ever wanted, it
   // is one deliberate change with its own test matrix, not a line added here.
-  let tools: ToolDefinition[];
-  if (isBridge) {
-    tools = input.bridgeTools;
-  } else if (input.mode === "code") {
-    tools = await codeSessionTools(input, tier);
-  } else {
+  // A bridge ships its slim set and a code session its kit; a chat selects per message below.
+  const perMessage = !isBridge && input.mode !== "code";
+  let tools: ToolDefinition[] = isBridge ? input.bridgeTools : perMessage ? [] : await codeSessionTools(input, tier);
+  if (perMessage) {
     tools = filterToolsForMessage(input.allAgentTools, input.message);
     // EXP-18/EXP-24: "essentials" = the tier's essential set plus the message's
     // picks, undo-paired; "catalog" pins every main-chat tool. An unprofiled

@@ -102,6 +102,10 @@ describe("the files a reply changed", () => {
     expect(tabBody.classList.contains("diff-panel")).toBe(false);
     expect(list.classList.contains("diff-panel")).toBe(true);
     expect(css).toMatch(/\.diff-panel\{[^}]*overflow:auto/);
+    // The panel scrolls sideways too, so its bar sits at the panel's bottom edge; a per-file
+    // scroller would put the bar under the file's last line, out of sight until the end.
+    expect(css).not.toMatch(/\.diff-lines\{[^}]*overflow/);
+    expect(css).toMatch(/\.diff-file\{[^}]*width:max-content/);
   });
 
   it("a change with no hunks says why instead of drawing nothing", () => {

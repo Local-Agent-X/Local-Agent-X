@@ -1608,13 +1608,16 @@ body.agent-feeds-resizing .agent-feeds{transition:none!important}
 .fc-counts{font-family:var(--mono);font-size:.72rem;white-space:nowrap}
 .fc-add{color:var(--ok)}
 .fc-del{color:var(--danger)}
-.diff-panel{flex:1;min-height:0;overflow:auto;padding:8px;scrollbar-width:thin;scrollbar-color:var(--scroll-thumb) transparent}
-.diff-file{margin-bottom:14px;border:1px solid var(--border);border-radius:8px;overflow:hidden}
-.diff-file-head{position:sticky;top:-8px;z-index:1;display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--panel);border-bottom:1px solid var(--border)}
+/* The panel scrolls both ways, so the sideways bar sits at its bottom edge instead of
+   under each file's lines; a file grows to its widest line, and its header stays pinned
+   to the visible width (overflow:clip keeps the corners without making it a scroller). */
+.diff-panel{flex:1;min-height:0;overflow:auto;padding:8px;scrollbar-width:thin;scrollbar-color:var(--scroll-thumb) transparent;container-type:inline-size}
+.diff-file{margin-bottom:14px;border:1px solid var(--border);border-radius:8px;overflow:clip;width:max-content;min-width:100%}
+.diff-file-head{position:sticky;top:-8px;left:0;z-index:1;width:100cqw;display:flex;align-items:center;gap:8px;padding:6px 10px;background:var(--panel);border-bottom:1px solid var(--border)}
 .diff-path{flex:1;min-width:0;font-family:var(--mono);font-size:.72rem;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;direction:rtl;text-align:left}
 .diff-copy{background:transparent;border:1px solid var(--border);border-radius:5px;color:var(--muted);font-size:.68rem;padding:1px 7px;cursor:pointer}
 .diff-copy:hover{color:var(--text)}
-.diff-lines{font-family:var(--mono);font-size:.72rem;line-height:1.5;overflow-x:auto}
+.diff-lines{font-family:var(--mono);font-size:.72rem;line-height:1.5}
 .diff-line{display:grid;grid-template-columns:3.2em 3.2em 1.2em 1fr;min-width:max-content}
 .diff-line.add{background:color-mix(in srgb,var(--ok) 14%,transparent)}
 .diff-line.del{background:color-mix(in srgb,var(--danger) 14%,transparent)}

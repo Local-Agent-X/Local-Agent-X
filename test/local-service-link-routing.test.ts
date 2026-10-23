@@ -139,10 +139,28 @@ describe("chat-link click routing", () => {
 		expect(h.newTab).not.toHaveBeenCalled();
 	});
 
-	it("file-download links stay owned by the file handler, never the browser", () => {
+	// 2026-10-23: a page the agent wrote opened in a separate Electron window
+	// that hid behind the app; it opens in the in-app browser now, once.
+	it("a viewable file link opens once, in the in-app browser, through the file handler", () => {
+		const h = loadSharedDom({ feedsOpen: false });
+		dispatch(h, "/files/loogle.html", ["md-link", "file-download"]);
+		expect(h.newTab).toHaveBeenCalledTimes(1);
+		expect(h.newTab).toHaveBeenCalledWith(`${APP_ORIGIN}/files/loogle.html`);
+		expect(h.switchTab).toHaveBeenCalledWith("browser");
+		expect(h.win.open).not.toHaveBeenCalled();
+	});
+
+	it("a link to an app LAX serves opens in the in-app browser", () => {
 		const h = loadSharedDom();
-		dispatch(h, `${APP_ORIGIN}/files/report.md`, ["md-link", "file-download"]);
-		expect(h.newTab).not.toHaveBeenCalled();
+		expect(dispatch(h, `${APP_ORIGIN}/apps/loogle/index.html`)).toBe(true);
+		expect(h.newTab).toHaveBeenCalledWith(`${APP_ORIGIN}/apps/loogle/index.html`);
+	});
+
+	it("an Office file still goes to its own app, never the browser", () => {
+		const openFile = vi.fn();
+		const h = loadSharedDom({ desktop: { isDesktop: true, openFile, browser: { newTab: vi.fn() } } });
+		dispatch(h, "/files/report.docx", ["md-link", "file-download"]);
+		expect(openFile).toHaveBeenCalledWith("workspace/report.docx");
 	});
 
 	it("plain browser (no desktop bridge) stands down — target=_blank works there", () => {

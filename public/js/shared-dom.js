@@ -24,6 +24,11 @@ function openFileLink(href) {
 
   if (isElectron && window.desktop?.openFile && !inlineable.includes(ext)) {
     if (path.startsWith('/files/')) window.desktop.openFile('workspace/' + path.slice('/files/'.length));
+  } else if (isElectron && window.desktop.browser?.newTab) {
+    // A file a browser shows opens in the in-app browser, beside the chat and
+    // where the agent looks at it too, not in a separate window that hides
+    // behind this one (2026-10-23).
+    openInAppBrowser(new URL(agentFilesHref(href), location.origin).href);
   } else {
     // Browser, or an inlineable file in Electron: open the /files/ URL so the
     // content renders instead of launching an external editor. The opened page
@@ -53,18 +58,37 @@ function isLocalServiceLink(href, appOrigin) {
 }
 window.isLocalServiceLink = isLocalServiceLink;
 
+// A page LAX serves of what the agent made: an app, a dashboard or a workspace
+// file on this origin (the server hands each to the agent origin), or the agent
+// origin itself. Opened in the in-app browser like a local service, so the user
+// sees it where the agent does; a /files link carries its capability.
+function laxPageUrl(href, appOrigin) {
+  let url;
+  try { url = new URL(href, appOrigin); } catch { return null; }
+  const agentOrigin = typeof laxAgent !== 'undefined' ? laxAgent.origin : '';
+  if (agentOrigin && url.origin === agentOrigin) return url.href;
+  if (url.origin !== new URL(appOrigin).origin || !/^\/(apps|dashboards|files)\//.test(url.pathname)) return null;
+  return url.pathname.startsWith('/files/') ? new URL(agentFilesHref(url.pathname + url.search), appOrigin).href : url.href;
+}
+
+// A fresh USER tab in the in-app browser, with the BROWSER panel surfaced: the
+// right rail opened if it's collapsed, then flipped to BROWSER (which pokes
+// laxBrowserTab.onTabShown to attach the native view).
+function openInAppBrowser(url) {
+  window.desktop.browser.newTab(url);
+  if (typeof agentFeedsOpen !== 'undefined' && !agentFeedsOpen && typeof toggleAgentFeeds === 'function') toggleAgentFeeds();
+  if (typeof switchSidePanelTab === 'function') switchSidePanelTab('browser');
+}
+
 document.addEventListener('click', (e) => {
   if (e.defaultPrevented) return;
   const link = e.target.closest?.('a[href]');
   if (!link || link.classList.contains('file-download')) return;
   if (!window.desktop?.isDesktop || !window.desktop.browser?.newTab) return;
-  if (!isLocalServiceLink(link.href, location.origin)) return;
+  const target = isLocalServiceLink(link.href, location.origin) ? link.href : laxPageUrl(link.href, location.origin);
+  if (!target) return;
   e.preventDefault();
-  window.desktop.browser.newTab(link.href);
-  // Surface the new tab: open the right rail if it's collapsed, then flip it
-  // to BROWSER (which pokes laxBrowserTab.onTabShown to attach the native view).
-  if (typeof agentFeedsOpen !== 'undefined' && !agentFeedsOpen && typeof toggleAgentFeeds === 'function') toggleAgentFeeds();
-  if (typeof switchSidePanelTab === 'function') switchSidePanelTab('browser');
+  openInAppBrowser(target);
 });
 
 // Apply syntax highlighting to code blocks (runs after md() output is inserted into DOM)

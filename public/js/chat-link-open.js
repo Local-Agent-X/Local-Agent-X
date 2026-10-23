@@ -6,10 +6,10 @@
 // escape hatch. In a plain browser (no window.desktop.browser) this module
 // no-ops and the default target=_blank behavior stands.
 //
-// Scope: PUBLIC web links only. Loopback/app-origin links (dev-server
-// previews, /files/ downloads, doc links) keep the audited main-process
-// window-open path — the in-app pane's egress guard SSRF-blocks loopback, so
-// diverting them would render a blocked page instead of the file/app.
+// Scope: PUBLIC web links only. Loopback links are routed by shared-dom.js:
+// a local service and a page LAX serves (/apps, /dashboards, /files) open in
+// the in-app browser too, an Office file in its own app. A USER tab may
+// navigate to loopback (desktop/src/browser-loopback-policy.ts).
 // Modified clicks (Ctrl/Cmd/Shift/Alt) also keep the default path.
 (function () {
 	var bridge = window.desktop && window.desktop.browser;

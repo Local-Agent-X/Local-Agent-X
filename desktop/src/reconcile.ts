@@ -171,7 +171,7 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
   // dist/ frozen forever (reconcile only watched lockfiles + desktop/src) —
   // the server then booted via the tsx-staleness fallback every launch:
   // correct code, but the slow path, and one fallback away from serving
-  // stale builds. Runs `npm run build` (the canonical pipeline — build:ari
+  // stale builds. Runs `npm run build:runtime` (the canonical compile — build:ari
   // first, so workspace package .d.ts can't strand tsc) with the same
   // backup → validate → rollback contract as the desktop build below.
   //
@@ -194,7 +194,10 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
       cpSync(rootDist, rootBackup, { recursive: true });
     }
     try {
-      await runStep("npm", ["run", "build"], projectRoot, 480_000);
+      // build:runtime: the compile alone. The developer checks in front of
+      // `build` assume a git checkout, which an installed copy is not, and CI
+      // ran them on this commit before the updater offered it.
+      await runStep("npm", ["run", "build:runtime"], projectRoot, 480_000);
       const bad = firstUnparseableJs(rootDist);
       if (bad) throw new Error(`${relative(projectRoot, bad.file)} — ${bad.error}`);
       ranSteps.push("server build");

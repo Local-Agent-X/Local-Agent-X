@@ -13,6 +13,7 @@ oversized files). When a number in prose disagrees with the map, the map wins.
 | Task | Command |
 |---|---|
 | Build, with every static check in front of it | `npm run build` |
+| Compile only, what an install or update runs on a user's machine (no git there) | `npm run build:runtime` |
 | Unit tests (vitest; use PowerShell on Windows) | `npm run test:unit` |
 | Regenerate the codebase map after adding or moving a module | `npm run docs:map` |
 | Who imports a file or module, file by file | `npm run deps -- <path>` |

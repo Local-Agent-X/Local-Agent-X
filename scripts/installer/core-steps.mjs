@@ -60,9 +60,13 @@ export function scaffoldSettings(context, ollamaModelReady) {
 
 async function buildServer({ reporter, processes }) {
   if (!reporter.step("build", "tsc + arikernel (1-2 min)")) return;
-  reporter.log("Building server (npm run build)…");
-  const result = await processes.runStreaming("npm", ["run", "build"]);
-  if (result.status !== 0) reporter.fail("npm run build failed. Fix the build errors above before re-running install — the runtime refuses to boot when its security layer (AriKernel pre-dispatch gate) can't wire.");
+  // build:runtime, not build: the developer checks in front of `build` keep the
+  // repo tidy (doc links, size caps, the codebase map) and assume a git
+  // checkout, which an installed copy is not; CI ran them on this commit before
+  // it was offered. One of them failing aborted fresh installs (2026-10-23).
+  reporter.log("Building server (npm run build:runtime)…");
+  const result = await processes.runStreaming("npm", ["run", "build:runtime"]);
+  if (result.status !== 0) reporter.fail("npm run build:runtime failed. Fix the build errors above before re-running install — the runtime refuses to boot when its security layer (AriKernel pre-dispatch gate) can't wire.");
   reporter.ok("Server build complete");
   reporter.stepDone("build");
 }

@@ -29,6 +29,23 @@ const REPO = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 // whole Documents folder, and a leftover worktree whose workspace link pointed
 // at itself stopped the build with ELOOP (2026-10-13, two machines).
 // vendor/ and third_party/ docs are someone else's — their paths point into their own repos.
+// An installed copy is unpacked from a source archive and has no .git: it has
+// no repo files to list and no ignore rules to read, and the doc it would check
+// was already checked in CI before the build was offered. Failing here aborted
+// every fresh install and rebuild (2026-10-23), so this check stands down.
+function isGitCheckout() {
+	try {
+		execFileSync("git", ["rev-parse", "--is-inside-work-tree"], { cwd: REPO, stdio: "ignore" });
+		return true;
+	} catch {
+		return false;
+	}
+}
+if (!isGitCheckout()) {
+	console.log("check-doc-paths: skipped (not a git checkout — an installed copy; CI checks the docs)");
+	process.exit(0);
+}
+
 function repoFiles() {
 	const out = execFileSync("git", ["ls-files", "-z", "--cached", "--others", "--exclude-standard"], { cwd: REPO, encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
 	return out.split("\0").filter((p) => p && !/^(vendor|third_party)\//.test(p)).map((p) => join(REPO, p));

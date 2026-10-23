@@ -160,13 +160,20 @@ describe("durable dependency scheduling", () => {
     await expectStarts(backend, [root.id]);
     transitionOp(readOp(root.id)!, "succeeded", "test_done");
     backend.finish(root.id);
-    await expectStarts(backend, [root.id, left.id, right.id]);
+    // The two siblings wake together and each start is async, so either may
+    // start first; the contract is only that both follow the root (CI swapped
+    // them once, 2026-10-23).
+    const started = () => backend.starts.mock.calls.map(([request]) => request.op.id);
+    await vi.waitFor(() => expect(started().length).toBe(3));
+    expect(started()[0]).toBe(root.id);
+    expect(started().slice(1).sort()).toEqual([left.id, right.id].sort());
     transitionOp(readOp(left.id)!, "succeeded", "test_done");
     backend.finish(left.id);
-    expect(backend.starts.mock.calls.some(([request]) => request.op.id === joinOp.id)).toBe(false);
+    expect(started()).not.toContain(joinOp.id);
     transitionOp(readOp(right.id)!, "succeeded", "test_done");
     backend.finish(right.id);
-    await expectStarts(backend, [root.id, left.id, right.id, joinOp.id]);
+    await vi.waitFor(() => expect(started()).toHaveLength(4));
+    expect(started()[3]).toBe(joinOp.id);
   });
 
   it("rebuilds waiters after restart without double-launching", async () => {

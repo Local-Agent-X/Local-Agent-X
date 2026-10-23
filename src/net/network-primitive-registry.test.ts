@@ -173,10 +173,12 @@ const sameUses = (a: readonly NetworkUse[], b: readonly NetworkUse[]) => [...a].
 describe("every file that touches a network primitive is registered with why", () => {
   let found: NetworkPrimitiveUser[];
 
+  // Reads every source file: ~2 s alone, but past the 15 s unit-test default on
+  // a contended CI runner with the rest of the suite (ubuntu, 2026-10-23).
   it("scans the source tree", () => {
     found = scanNetworkPrimitiveUsers(process.cwd());
     expect(found.length).toBeGreaterThan(50);
-  });
+  }, 120_000);
 
   it("a file the scan finds is registered", () => {
     const unregistered = found.filter((u) => !REGISTRY.some((r) => r.file === u.file)).map((u) => `${u.file}: ${u.evidence.join("; ")}`);

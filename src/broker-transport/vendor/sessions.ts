@@ -5,13 +5,16 @@
 
 import { asNumber, asRecord, asString } from "./guards.js";
 
-/** One conversation in the list. `projectId` is set when it is filed under a project. */
+/** One conversation in the list. `projectId` is set when it is filed under a project,
+ *  `mode` when it is a code session (a chat leaves it out), so each side of a client's
+ *  list shows its own. */
 export type SessionSummary = {
   id: string;
   title: string;
   updatedAt: number;
   messageCount: number;
   projectId?: string;
+  mode?: "code";
 };
 
 /** Session ids are path and file-name safe on both devices: alphanumeric, dash and
@@ -39,6 +42,7 @@ export function parseSessionSummaries(raw: unknown): SessionSummary[] {
       updatedAt: asNumber(r.updatedAt) ?? 0,
       messageCount: asNumber(r.messageCount) ?? 0,
       ...(projectId !== null && projectId !== "" ? { projectId } : {}),
+      ...(r.mode === "code" ? { mode: "code" as const } : {}),
     });
   }
   return out;

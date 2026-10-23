@@ -110,7 +110,15 @@ export type ChatSendFrame = {
   message: string;
   attachments: ChatAttachment[];
   projectId?: string | null;
+  /** The mode a NEW session is created in: a chat, or a code session (fewer prompt
+   *  parts, the coding tools up front). The desktop reads it on a session's first
+   *  message only and fixes it there; a client may send it on every message. Left
+   *  out, the session is a chat. */
+  mode?: SessionMode;
 };
+
+/** A session's mode, fixed when it is created. */
+export type SessionMode = "chat" | "code";
 
 /** Subscribe to a session's events. The optional fields say what the client already
  *  holds, so the desktop's replay skips a finished turn instead of sending it twice:

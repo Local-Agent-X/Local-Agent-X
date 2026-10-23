@@ -23,7 +23,7 @@
     },
     "chat.ts": {
       "upstream": "packages/protocol/src/chat.ts",
-      "sha256": "27c4d4824a5c47ec8db10600eab15f053512e1ae83db7f1d58386dd0b558353d"
+      "sha256": "f7f0250b568f76e420736cce1021bce00de0aaaa073f2e603c4eb444453e5d9b"
     },
     "approval.ts": {
       "upstream": "packages/protocol/src/approval.ts",
@@ -83,7 +83,7 @@
     },
     "sessions.ts": {
       "upstream": "packages/protocol/src/sessions.ts",
-      "sha256": "a03b99d2e13855182aa8ea83c5bf9f26ea24c1ce902a1640e1c2c71a77625eda"
+      "sha256": "c69279f6b4ffec5a4c14a4ae47c2542972d943ba381c98bdf31a1cd2c187eb86"
     },
     "file-change.ts": {
       "upstream": "packages/protocol/src/file-change.ts",

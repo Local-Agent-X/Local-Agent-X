@@ -10,9 +10,13 @@
  * IDE's sessions (`ide-<appId>`) are code sessions by their id, so an IDE chat
  * created before modes existed is one too.
  *
- * Leaf: no local imports, so the Session type can import it.
+ * Leaf: only a type import, so the Session type can import it.
  */
-export type ChatMode = "chat" | "code";
+import type { SessionMode } from "../broker-transport/vendor/chat.js";
+
+/** The protocol's session mode (agentxos packages/protocol chat.ts), which the
+ *  phone sends too, so the two cannot drift. */
+export type ChatMode = SessionMode;
 
 /** A frame's or request's mode field, or undefined when it names none. */
 export function parseChatMode(value: unknown): ChatMode | undefined {

@@ -46,8 +46,8 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/sandbox/` | 23 | 15 | L | 1 |
 | `src/desktop-contract/` | 21 | 10 | M |  |
 | `src/protocols/` | 21 | 52 | XL |  |
+| `src/broker-transport/` | 20 | 43 | XL |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
-| `src/broker-transport/` | 19 | 43 | XL |  |
 | `src/agents/` | 17 | 13 | L |  |
 | `src/net/` | 17 | 11 | L |  |
 | `src/server/` *(entrypoint)* | 16 | 57 | XL | 6 |

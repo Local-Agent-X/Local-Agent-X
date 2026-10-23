@@ -383,10 +383,12 @@ export function isReasoningModel(id: ProviderId, model: string): boolean {
 }
 
 /**
- * Model to use for cheap/fast background work on a provider. Returns the
- * provider's `backgroundModel` when set, else `fallback` (typically the
- * caller's resolved default model). Use for non-load-bearing jobs — memory
- * dream, etc. — that shouldn't run on a flagship reasoner.
+ * A provider's declared fast tier: its `backgroundModel` when set, else
+ * `fallback`. Background work (classifiers, dream) no longer runs on it — it
+ * runs on the chat model (providers/background-model.ts), because a declared
+ * tier may not be served to the user's account (a ChatGPT plan refuses
+ * gpt-5.4-mini, 2026-10-23). The spoken voice turn (server/voice-model.ts)
+ * still asks for it, and text dispatch (llm-dispatch.ts) still defaults to it.
  */
 export function backgroundModelFor(id: ProviderId, fallback: string): string {
   return PROVIDERS[id]?.backgroundModel || fallback;

@@ -86,6 +86,9 @@ export async function resolveProviderCall(input: ProviderCallInput): Promise<Pro
         systemPrompt,
         temperature: 0,
         disableThinking: true,
+        // A routing verdict runs on the chat model, and Opus 5.5 / Fable 5 think
+        // whatever disableThinking says: low effort keeps it inside the budget.
+        ...(role === "review" ? {} : { effort: "low" as const }),
         signal: linkedSignal,
       });
       let acc = "";

@@ -7,7 +7,6 @@ import type { SecretsStore } from "../../secrets.js";
 import type { ToolPolicy } from "../../tool-policy/index.js";
 import { createLogger } from "../../logger.js";
 import { DREAM_SYSTEM_PROMPT, DREAM_TOOL_NAMES } from "./prompts.js";
-import type { ProviderId } from "../../providers/provider-ids.js";
 import { registerDreamRunner, type DreamRunResult } from "../../memory/dream.js";
 import { renderPromptSection } from "../../context/system-prompt-builder.js";
 import { OP_TYPE } from "../../ops/op-types.js";
@@ -53,10 +52,10 @@ export function registerDreamRunnerForServer(deps: DreamCheckDeps): void {
     try {
       const { resolveProvider: rp } = await import("../../agent-request/index.js");
       const { provider, apiKey, model } = await rp(config, secretsStore, dataDir);
-      const { backgroundModelFor } = await import("../../providers/registry.js");
-      // Dream is background memory consolidation — a cheap, non-reasoning
-      // model per provider, not the user's flagship default.
-      const dreamModel = backgroundModelFor(provider as ProviderId, model);
+      // Dream runs on the model the user is on (owner, 2026-09-23): the
+      // provider's cheap tier wrote memories on a weaker model, and may not be
+      // served to the account at all (a ChatGPT plan refuses gpt-5.4-mini).
+      const dreamModel = model;
       const dreamSession: Session = { id: `dream-${Date.now()}`, title: "Memory Dream", messages: [], createdAt: Date.now(), updatedAt: Date.now() };
       const dreamTools = allAgentTools.filter(t => (DREAM_TOOL_NAMES as readonly string[]).includes(t.name));
 

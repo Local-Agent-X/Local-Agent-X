@@ -61,15 +61,13 @@ describe("classify-with-llm model selection", () => {
     expect(dispatchMock.mock.calls[0][0]).toMatchObject({ provider: "xai", xaiModel: "grok-4.3" });
   });
 
-  it("runs on the provider's background model, not the user's reasoning chat model", async () => {
-    // Regression for 2026-06-26: classifiers inherited grok-4.3 (a reasoner)
-    // and timed out every call, so the give-up verdict never ran on Grok.
+  // A provider's declared fast tier is a model the account may not serve: a
+  // ChatGPT plan refuses gpt-5.4-mini, and every routing classifier on Codex did
+  // nothing (2026-10-23). Side work runs on the model the user is on.
+  it("a routing call runs on the user's chat model too, never the provider's fast tier", async () => {
     await classifyYesNo({ category: "test", role: "routing", systemPrompt: "s", userPrompt: "u", timeoutMs: 2000 });
     expect(dispatchMock).toHaveBeenCalledTimes(1);
-    expect(dispatchMock.mock.calls[0][0]).toMatchObject({
-      provider: "xai",
-      xaiModel: "grok-4.20-0309-non-reasoning",
-    });
+    expect(dispatchMock.mock.calls[0][0]).toMatchObject({ provider: "xai", xaiModel: "grok-4.3" });
   });
 
   it("honors an explicit per-call model override", async () => {
@@ -255,17 +253,17 @@ describe("classify-with-llm codex branch", () => {
     expect(params.signal?.aborted).toBe(true);
   });
 
-  it("background tier (default) runs the registry background model at low effort", async () => {
-    // gpt-5.4-mini authoring a yes/no verdict inside a seconds-long budget:
-    // the client's chat default "medium" is a reasoning pass for nothing —
-    // and the latency that pushed calls past the wallclock to begin with.
+  it("a routing call runs the chat model at low effort", async () => {
+    // A yes/no verdict inside a seconds-long budget: the client's chat default
+    // "medium" is a reasoning pass for nothing — and the latency that pushed
+    // calls past the wallclock to begin with.
     codexMock.streamCodexResponse.mockImplementationOnce(() => yieldText("NO"));
     const out = await classifyWithLLM({
       category: "test", role: "routing", systemPrompt: "s", userPrompt: "u", timeoutMs: 2000, parse,
     });
     expect(out).toBe("NO");
     const params: CodexCallParams = codexMock.streamCodexResponse.mock.calls[0][0];
-    expect(params.model).toBe("gpt-5.4-mini");
+    expect(params.model).toBe("gpt-5.5");
     expect(params.reasoningEffort).toBe("low");
   });
 
@@ -278,14 +276,14 @@ describe("classify-with-llm codex branch", () => {
     expect(params.reasoningEffort).toBe("low");
   });
 
-  it("a long budget keeps the client's default effort even on the background tier", async () => {
+  it("a long budget keeps the client's default effort on a routing call", async () => {
     // Long-budget callers pass no tier but bought the time for a considered
     // answer (scenario-judge 20s, compaction 30s — whose summary is persisted
     // over history). Budget is the only signal they give; honor it.
     codexMock.streamCodexResponse.mockImplementationOnce(() => yieldText("YES"));
     await classifyWithLLM({ category: "test", role: "routing", systemPrompt: "s", userPrompt: "u", timeoutMs: 20_000, parse });
     const params: CodexCallParams = codexMock.streamCodexResponse.mock.calls[0][0];
-    expect(params.model).toBe("gpt-5.4-mini");
+    expect(params.model).toBe("gpt-5.5");
     expect(params.reasoningEffort).toBeUndefined();
   });
 

@@ -264,11 +264,15 @@ describe("resolveBackgroundModel — precedence", () => {
     }
   });
 
-  it("leaves every declared-backgroundModel provider untouched", async () => {
+  // A declared fast tier may not be served to the account (a ChatGPT plan
+  // refuses gpt-5.4-mini, 2026-10-23), and side work runs on the model the user
+  // is on: every cloud provider answers with the chat model.
+  it("a cloud provider's background work runs on the chat model, never its declared fast tier", async () => {
     const { resolveBackgroundModel } = await import("../src/providers/background-model.js");
-    expect(await resolveBackgroundModel("xai", "grok-4.3")).toEqual({ model: "grok-4.20-0309-non-reasoning" });
-    expect(await resolveBackgroundModel("anthropic", "claude-opus-4-8")).toEqual({ model: "claude-haiku-4-5" });
-    expect(await resolveBackgroundModel("openai", "o3-pro")).toEqual({ model: PROVIDERS.openai.backgroundModel });
+    expect(await resolveBackgroundModel("xai", "grok-4.3")).toEqual({ model: "grok-4.3" });
+    expect(await resolveBackgroundModel("anthropic", "claude-opus-4-8")).toEqual({ model: "claude-opus-4-8" });
+    expect(await resolveBackgroundModel("codex", "gpt-6-astra")).toEqual({ model: "gpt-6-astra" });
+    expect(await resolveBackgroundModel("openai", "o3-pro")).toEqual({ model: "o3-pro" });
   });
 
   it("honors the localClassifierModel setting above everything else", async () => {

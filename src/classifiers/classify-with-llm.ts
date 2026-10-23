@@ -4,13 +4,15 @@
  * Pattern: regex (cheap) decides obvious yes/no. Maybe-cases escalate here for
  * an LLM second opinion.
  *
- * **Provider policy (revised 2026-05-06):** uses the user's CURRENTLY-SELECTED
- * provider — whatever they're chatting on — but the provider's BACKGROUND
- * (non-reasoning) model, not their chat model. A yes/no classifier must not
- * burn a flagship reasoner's chain-of-thought: on xAI the chat model grok-4.3
- * reasons by default and timed out EVERY classifier call (2026-06-26), so the
- * give-up verdict silently never ran. backgroundModelFor() drops to the
- * provider's fast tier (registry `backgroundModel`). Still no cross-provider
+ * **Provider policy (revised 2026-10-23):** uses the user's CURRENTLY-SELECTED
+ * provider AND model — whatever they're chatting on. It used to drop to the
+ * provider's fast tier (registry `backgroundModel`) so a yes/no verdict would
+ * not burn a reasoner's chain-of-thought (grok-4.3 timed out every call,
+ * 2026-06-26), but that tier is a model the account may not serve: a ChatGPT
+ * plan refuses gpt-5.4-mini, and every classifier on Codex did nothing
+ * (2026-10-23). Side work runs on the model the user is on (owner, 2026-09-23);
+ * a routing call keeps its reasoning low instead (the Codex branch's effort
+ * "low", Anthropic's thinking off where the model allows). Still no cross-provider
  * fallback (no Haiku/Sonnet on a Codex turn) — that broke the multi-user-app
  * guarantee and produced the dark-mode-freeze bug (5+ Anthropic-only
  * classifier calls fired on a Codex turn, hanging the UI for tens of seconds
@@ -26,8 +28,8 @@
  * Reading the active provider: delegated to the shared
  * `resolveProviderContext` helper (src/providers/), the single source of
  * truth for "settings → provider + credential" that the chat seam also
- * routes through. Model defaulting stays here (see MODEL_FALLBACKS) because
- * classifiers deliberately use a cheaper model floor than chat. Each
+ * routes through. Model defaulting stays here (see MODEL_FALLBACKS), for a
+ * provider context that names no model. Each
  * classifier call re-resolves at firing time so a provider switch in the UI
  * takes effect on the next classifier invocation.
  */
@@ -78,8 +80,8 @@ export interface ClassifyOptions<T> {
    *   model doing the work, never a smaller one; a review that cannot run
    *   returns null and the caller skips the check.
    * - "routing": cheap triage whose mistake cannot block or mislead the work
-   *   (memory writes, recall filtering, intent tags). It runs on the
-   *   provider's background model.
+   *   (memory writes, recall filtering, intent tags). It runs on the chat
+   *   model too, with its reasoning kept low where the provider allows.
    */
   role: ClassifierRole;
   /** Stop reading the stream after this many chars (cheap circuit-break for runaway responses). Default 800. */
@@ -201,12 +203,9 @@ export async function classifyWithLLM<T>(opts: ClassifyOptions<T>): Promise<T | 
     return null;
   }
   const { provider, apiKey } = ctx;
-  // Model precedence: explicit per-call override > tier request > the cheaper
-  // floor. "active" = the user's selected chat model (a probe author wants the
-  // reasoning tier; the call site owns a long timeout). Default "background"
-  // stays on a fast non-reasoning model — a yes/no verdict must not burn a
-  // reasoner's chain-of-thought (grok-4.3 EVERY call, 2026-06-26; qwen3.6:27b,
-  // 2026-07-15). Never cross-provider. Which model: background-model.ts.
+  // Model precedence: explicit per-call override > the user's chat model (a
+  // local pin for a local provider). Never cross-provider, never a smaller
+  // model the account may not serve. Which model: background-model.ts.
   const legacyFallbackModel = ctx.model || MODEL_FALLBACKS[provider] || "";
   const explicitModel = opts.model || (opts.role === "review" && ctx.model) || "";
   const background = explicitModel

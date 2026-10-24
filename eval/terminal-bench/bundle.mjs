@@ -55,7 +55,11 @@ try {
     // tool failed in every task ("Executable doesn't exist at
     // /root/.cache/ms-playwright/...", mteb-leaderboard, 2026-10-24).
     "export PLAYWRIGHT_BROWSERS_PATH=/lax/.ms-playwright",
-    "node node_modules/playwright/cli.js install --with-deps chromium-headless-shell",
+    // Bullseye's security suite left deb.debian.org (the files 404), so its
+    // packages install from archive.debian.org, as apt_fallback.py does for
+    // the agents' setup.
+    "(node node_modules/playwright/cli.js install-deps chromium-headless-shell || (sed -i -E 's#^deb (https?://)(deb|security)\\.debian\\.org/debian-security#deb \\1archive.debian.org/debian-security#' /etc/apt/sources.list && apt-get update -qq && node node_modules/playwright/cli.js install-deps chromium-headless-shell))",
+    "node node_modules/playwright/cli.js install chromium-headless-shell",
     "mkdir -p .ms-playwright/lib",
     "shell=$(ls .ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell | head -1)",
     "ldd \"$shell\" | awk '/=> \//{print $3}' | grep -vE '/(libc|libm|libdl|libpthread|librt|libresolv|libstdc\+\+|libgcc_s|ld-linux[^/]*)\.so' | xargs -r -I{} cp -L {} .ms-playwright/lib/",

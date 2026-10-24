@@ -26,17 +26,23 @@ function load(state: { chats: Chat[]; projects: Project[]; stored?: string }) {
       set innerHTML(v: string) { e.innerHTML = v; },
     };
   };
-  const document = { getElementById: el };
+  const listeners: Array<{ type: string; fn: (e: unknown) => void; capture: boolean }> = [];
+  const document = {
+    getElementById: el,
+    addEventListener: (type: string, fn: (e: unknown) => void, capture?: boolean) => listeners.push({ type, fn, capture: !!capture }),
+  };
   const store = new Map<string, string>(state.stored ? [["lax_sidebar_mode", state.stored]] : []);
   const localStorage = { getItem: (k: string) => store.get(k) ?? null, setItem: (k: string, v: string) => store.set(k, v) };
   const esc = (s: string) => s;
   const renders: string[] = [];
   const renderSidebar = () => renders.push("sidebar");
+  const selected: string[] = [];
+  const selectChat = (id: string) => selected.push(id);
   // eslint-disable-next-line no-new-func
-  const api = new Function("document", "localStorage", "window", "chats", "projects", "activeChat", "esc", "renderSidebar",
+  const api = new Function("document", "localStorage", "window", "chats", "projects", "activeChat", "esc", "renderSidebar", "selectChat",
     `${src}; return { chatModeOf, inSidebarMode, setSidebarMode, renderCodeSidebar, get mode() { return sidebarMode; } };`,
-  )(document, localStorage, {}, state.chats, state.projects, null, esc, renderSidebar);
-  return { api, els, store, renders };
+  )(document, localStorage, {}, state.chats, state.projects, null, esc, renderSidebar, selectChat);
+  return { api, els, store, renders, listeners, selected };
 }
 
 describe("sidebar-mode.js", () => {
@@ -89,5 +95,27 @@ describe("sidebar-mode.js", () => {
     expect(html).not.toContain(">old<");
     expect(html).not.toContain("<span>no folder</span>");
     expect(html).toContain("Add a project folder");
+  });
+
+  it("Open in Code on an app's result opens that app's code session, and stops the click there", () => {
+    const chats: Chat[] = [];
+    const { api, listeners, selected } = load({ chats, projects: [] });
+    const click = listeners.find((l) => l.type === "click")!;
+    expect(click.capture).toBe(true);
+    const btn = { getAttribute: (k: string) => (k === "data-open-code" ? "todo" : null) };
+    let stopped = false;
+    click.fn({ target: { closest: (sel: string) => (sel === "[data-open-code]" ? btn : null) }, preventDefault() {}, stopPropagation() { stopped = true; } });
+    expect(selected).toEqual(["ide-todo"]);
+    expect(chats[0]).toMatchObject({ id: "ide-todo", mode: "code" });
+    expect(api.mode).toBe("code");
+    expect(stopped).toBe(true);
+  });
+
+  it("leaves every other click alone", () => {
+    const { listeners, selected } = load({ chats: [], projects: [] });
+    let stopped = false;
+    listeners[0].fn({ target: { closest: () => null }, preventDefault() {}, stopPropagation() { stopped = true; } });
+    expect(selected).toEqual([]);
+    expect(stopped).toBe(false);
   });
 });

@@ -1602,6 +1602,9 @@ body.agent-feeds-resizing .agent-feeds{transition:none!important}
 .preview-view-switch{display:flex;gap:2px}
 .preview-view-switch .artifact-filter.active{color:var(--accent);border-color:var(--accent)}
 #preview-picker-btn.active{color:var(--accent);border-color:var(--accent)}
+/* "Open in Code" beside an app build's result link (chat-agent-feeds-render.js resultLinkHtml). */
+.result-open-code{margin-left:.4rem;padding:.05rem .4rem;font:inherit;font-size:.7rem;color:var(--accent);background:none;border:1px solid var(--border);border-radius:4px;cursor:pointer}
+.result-open-code:hover{border-color:var(--accent)}
 .preview-tab-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:.7rem;color:var(--muted)}
 .preview-tab-frame{flex:1;min-height:0;width:100%;border:0;background:#fff}
 .preview-tab-files{flex:1;min-height:0;overflow:auto}

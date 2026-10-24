@@ -134,7 +134,17 @@ function resultLinkHtml(rawUrl) {
   var authedUrl = (needsAuth && token && rawUrl.indexOf('token=') === -1)
     ? rawUrl + (rawUrl.indexOf('?') === -1 ? '?' : '&') + 'token=' + encodeURIComponent(token)
     : (agentContent ? agentFilesHref(rawUrl) : rawUrl);
-  return '<a href="' + esc(authedUrl) + '" target="_blank" rel="noopener" style="color:var(--accent,#3a7);text-decoration:none">↗ Open: ' + esc(rawUrl) + '</a>';
+  var link = '<a href="' + esc(authedUrl) + '" target="_blank" rel="noopener" style="color:var(--accent,#3a7);text-decoration:none">↗ Open: ' + esc(rawUrl) + '</a>';
+  // An app's result also opens its code session with the app in Preview
+  // (sidebar-mode.js handles the click).
+  var appId = appIdOfResultUrl(rawUrl);
+  return appId ? link + ' <button type="button" class="result-open-code" data-open-code="' + esc(appId) + '">Open in Code</button>' : link;
+}
+
+// The app a result URL opens (/apps/<id>/…, on the UI or the agent origin), or null.
+function appIdOfResultUrl(rawUrl) {
+  var m = /^(?:https?:\/\/[^/]+)?\/apps\/([A-Za-z0-9_-]+)(?:[/?#]|$)/.exec(rawUrl || '');
+  return m ? m[1] : null;
 }
 
 // ── C6: run-lineage tree build (PURE) ──

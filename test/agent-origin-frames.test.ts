@@ -149,6 +149,27 @@ describe("every /files link the UI opens carries the files-link capability, neve
 		expect(hrefOf(`${location.origin}/api/status`)).toContain(`token=${OP_TOKEN}`);
 	});
 
+	it("an app's result link also offers Open in Code for that app, and no other link does", () => {
+		const { resultLinkHtml } = new Function(
+			"AUTH_TOKEN", "agentFilesHref",
+			`${read("js/shared-escape.js")}
+${read("js/chat-agent-feeds-render.js")}
+return { resultLinkHtml };`,
+		)(OP_TOKEN, (u: string) => u) as { resultLinkHtml: (url: string) => string };
+		const openCodeOf = (url: string) => {
+			const host = document.createElement("div");
+			host.innerHTML = resultLinkHtml(url);
+			return host.querySelector("[data-open-code]")?.getAttribute("data-open-code") ?? null;
+		};
+		expect(openCodeOf("http://127.0.0.1:7007/apps/demo/")).toBe("demo");
+		expect(openCodeOf("http://127.0.0.1:62044/apps/my-app/index.html")).toBe("my-app");
+		expect(openCodeOf("/apps/notes")).toBe("notes");
+		expect(openCodeOf("/dashboards/board")).toBeNull();
+		expect(openCodeOf("/files/out.html")).toBeNull();
+		expect(openCodeOf("http://evil.test/x/apps/demo/")).toBeNull();
+		expect(openCodeOf('/apps/a"onclick="x/')).toBeNull();
+	});
+
 	// The artifacts panel opens workspace files with the chat link's opener
 	// (shared-dom.js openFileLink): a viewable file renders with the
 	// capability, and on the desktop an Office file goes to desktop.openFile,

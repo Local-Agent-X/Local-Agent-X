@@ -115,6 +115,17 @@ function openAppCodeSession(appId, name) {
   if (typeof switchSidePanelTab === 'function') switchSidePanelTab('preview');
 }
 
+// "Open in Code" on an app build's result (chat-agent-feeds-render.js
+// resultLinkHtml), on its Agents card or inbox item. Captured, so the card's
+// or row's own click does not also run.
+document.addEventListener('click', (e) => {
+  const btn = e.target.closest && e.target.closest('[data-open-code]');
+  if (!btn) return;
+  e.preventDefault();
+  e.stopPropagation();
+  openAppCodeSession(btn.getAttribute('data-open-code'));
+}, true);
+
 /** A project whose folder code sessions work in (POST /api/projects with `workspace`). */
 async function addProjectFolder() {
   const folder = (prompt('Path of the project folder (for example C:\\Users\\you\\my-app):') || '').trim();

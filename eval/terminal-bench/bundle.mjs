@@ -62,7 +62,7 @@ try {
     "node node_modules/playwright/cli.js install chromium-headless-shell",
     "mkdir -p .ms-playwright/lib",
     "shell=$(ls .ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell | head -1)",
-    "ldd \"$shell\" | awk '/=> \//{print $3}' | grep -vE '/(libc|libm|libdl|libpthread|librt|libresolv|libstdc\+\+|libgcc_s|ld-linux[^/]*)\.so' | xargs -r -I{} cp -L {} .ms-playwright/lib/",
+    "ldd \"$shell\" | awk '$3 ~ /^\\// {print $3}' | grep -vE '/(libc|libm|libdl|libpthread|librt|libresolv|libstdc\\+\\+|libgcc_s|ld-linux[^/]*)\\.so' | xargs -r -I{} cp -L {} .ms-playwright/lib/",
     "test -z \"$(LD_LIBRARY_PATH=/lax/.ms-playwright/lib ldd \"$shell\" | grep 'not found')\"",
     "mkdir -p .node/bin && cp \"$(command -v node)\" .node/bin/node",
     `tar -czf /out/${basename(out)} -C /lax .`,

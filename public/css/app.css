@@ -1601,6 +1601,7 @@ body.agent-feeds-resizing .agent-feeds{transition:none!important}
    and the app's file tree and read-only viewer (the App IDE's file rows). */
 .preview-view-switch{display:flex;gap:2px}
 .preview-view-switch .artifact-filter.active{color:var(--accent);border-color:var(--accent)}
+#preview-picker-btn.active{color:var(--accent);border-color:var(--accent)}
 .preview-tab-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--mono);font-size:.7rem;color:var(--muted)}
 .preview-tab-frame{flex:1;min-height:0;width:100%;border:0;background:#fff}
 .preview-tab-files{flex:1;min-height:0;overflow:auto}

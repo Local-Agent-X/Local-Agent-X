@@ -37,7 +37,7 @@
 <link rel="preload" href="/hero-master.png" as="image"/>
 <link rel="icon" type="image/x-icon" href="/favicon.ico"/>
 <link rel="icon" type="image/png" sizes="192x192" href="/favicon.png"/>
-<link rel="stylesheet" href="/css/app.css?v=vb39"/>
+<link rel="stylesheet" href="/css/app.css?v=vb40"/>
 <link rel="stylesheet" href="/css/browser-workspace.css?v=v2"/>
 <link rel="stylesheet" href="/vendor/xterm/xterm.css?v=v1"/>
 <link rel="stylesheet" href="/css/voice-sphere.css?v=vb2"/>
@@ -359,6 +359,7 @@
             <button type="button" id="preview-view-code" class="artifact-filter" onclick="setPreviewView('code')" aria-pressed="false">Code</button>
           </div>
           <span id="preview-tab-title" class="preview-tab-title"></span>
+          <button type="button" id="preview-picker-btn" class="artifact-filter" onclick="togglePicker('preview')" title="Select an element on the page to change" aria-pressed="false" style="display:none">Select</button>
           <button type="button" class="artifact-filter" onclick="refreshPreviewTab()" title="Reload">&#8635;</button>
         </div>
         <div id="preview-tab-empty" class="artifacts-empty" style="display:none"></div>
@@ -1936,8 +1937,8 @@
 <script src="/js/apps-ide.js?v=v5"></script>
 <script src="/js/apps-ide-ws.js?v=v2"></script>
 <script src="/js/apps-ide-tools-files.js?v=v2"></script>
-<script src="/js/preview-tab.js?v=v2"></script>
-<script src="/js/apps-ide-picker.js?v=v1"></script>
+<script src="/js/preview-tab.js?v=v3"></script>
+<script src="/js/apps-ide-picker.js?v=v2"></script>
 <script src="/js/apps-error-pipe-core.js?v=v1"></script>
 <script src="/js/apps-ide-errors.js?v=v1"></script>
 <script src="/js/apps-ide-agents.js"></script>

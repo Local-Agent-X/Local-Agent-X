@@ -294,29 +294,40 @@ describe("app.js pins load agent content off the shell's origin", () => {
 	});
 });
 
-// The shell half: apps-ide-picker.js + apps-ide-errors.js, against a stand-in
-// preview frame whose window the test controls.
+// The shell half: apps-ide-picker.js + apps-ide-errors.js, against stand-in
+// preview frames whose windows the test controls: the App IDE's, and the right
+// panel's Preview tab, whose picks go into the main chat's composer.
 function loadIdeShell() {
 	const previewWindow = { postMessage: vi.fn() };
+	const tabWindow = { postMessage: vi.fn() };
 	const input = document.createElement("textarea");
+	const composer = document.createElement("textarea");
 	const messages = document.createElement("div");
+	const frames: Record<string, unknown> = {
+		"ide-preview-frame": { contentWindow: previewWindow },
+		"preview-tab-frame": { contentWindow: tabWindow },
+		"ide-chat-input": input,
+		"msg-input": composer,
+		"ide-chat-messages": messages,
+	};
 	const handlers: Array<(e: unknown) => void> = [];
 	const doc = {
-		getElementById: (id: string) => (id === "ide-preview-frame" ? { contentWindow: previewWindow } : id === "ide-chat-input" ? input : id === "ide-chat-messages" ? messages : null),
+		getElementById: (id: string) => frames[id] ?? null,
 		querySelector: () => null,
 		createElement: (tag: string) => document.createElement(tag),
 	};
 	const win = { addEventListener: (type: string, fn: (e: unknown) => void) => { if (type === "message") handlers.push(fn); } };
 	const api = new Function(
 		"document", "window", "laxAgent", "chatWs", "_ideSessionId",
-		`${read("js/apps-ide-picker.js")}\n${read("js/apps-ide-errors.js")}\nreturn { ideTogglePicker, ideMessageFromPreview, ideDrainErrorsForAgent };`,
+		`${read("js/apps-ide-picker.js")}\n${read("js/apps-ide-errors.js")}\nreturn { ideTogglePicker, togglePicker, ideMessageFromPreview, ideDrainErrorsForAgent };`,
 	)(doc, win, { origin: AGENT, filesLinkToken: "ft" }, undefined, undefined) as {
 		ideTogglePicker: () => void;
+		togglePicker: (surface: string, on?: boolean) => void;
 		ideMessageFromPreview: (e: unknown) => boolean;
 		ideDrainErrorsForAgent: () => string;
 	};
 	const deliver = (data: unknown, origin: string, source: unknown) => { for (const h of handlers) h({ data, origin, source }); };
-	return { api, previewWindow, input, messages, deliver };
+	return { api, previewWindow, tabWindow, input, composer, messages, deliver };
 }
 
 describe("the shell takes IDE messages only from the preview frame at the agent origin", () => {
@@ -342,6 +353,25 @@ describe("the shell takes IDE messages only from the preview frame at the agent 
 		deliver(pick, "null", previewWindow);
 		deliver(pick, AGENT, { postMessage: () => {} }); // a pinned app, or a frame nested in the preview
 		expect(input.value).toBe("");
+	});
+
+	it("the Preview tab's picker posts to its own frame, and its pick fills the main composer", () => {
+		const { api, previewWindow, tabWindow, input, composer, deliver } = loadIdeShell();
+		api.togglePicker("preview");
+		expect(tabWindow.postMessage).toHaveBeenCalledWith({ type: "lax-ide-picker", on: true }, AGENT);
+		expect(previewWindow.postMessage).not.toHaveBeenCalled();
+		deliver(pick, AGENT, tabWindow);
+		expect(composer.value).toContain("`#buy`");
+		expect(input.value).toBe("");
+		// A pick turns the picker off.
+		expect(tabWindow.postMessage).toHaveBeenLastCalledWith({ type: "lax-ide-picker", on: false }, AGENT);
+	});
+
+	it("the Preview tab's frame is not the App IDE's for its errors", () => {
+		const { api, tabWindow, messages, deliver } = loadIdeShell();
+		expect(api.ideMessageFromPreview({ data: error, origin: AGENT, source: tabWindow })).toBe(false);
+		deliver(error, AGENT, tabWindow);
+		expect(messages.children.length).toBe(0);
 	});
 
 	it("runtime errors are taken only from the preview at the agent origin", () => {

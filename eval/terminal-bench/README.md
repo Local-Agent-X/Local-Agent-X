@@ -9,7 +9,7 @@ the same conditions and the task's own tests decide pass or fail.
 | File | What it does |
 |---|---|
 | `lax_agent.py` | The Harbor agent (`lax_agent:LaxAgent`). Copies the bundle into the container and calls `drive.mjs`. |
-| `drive.mjs` | Runs inside the container: boots a headless LAX on a fresh data dir with the task's working directory as the workspace, sends the instruction as one chat turn, waits, stops the server. |
+| `drive.mjs` | Runs inside the container: boots a headless LAX on a fresh data dir with the task's working directory as the workspace, sends the instruction as one chat turn (a code session when `LAX_TB_MODE=code` is set on the host; `lax_agent.py` forwards it), waits, stops the server. |
 | `seed.mjs` | The data dir each task starts from (provider and model, Autonomous profile, unrestricted file access with the disposable-sandbox switch on, inside the throwaway container). Tested by `test/terminal-bench-seed.test.ts`. |
 | `bundle.mjs` | Builds the Linux bundle from one commit, entirely inside a Debian bullseye container: compiled `dist/`, production `node_modules` for linux-x64, and a Node binary. |
 | `policy-scan.mjs` | Runs every statement of each task's reference solution (`<task>/solution/solve.sh`) through LAX's security layer, as a chat turn's shell call would reach it, and groups the refusals by rule. No model. With `--replay <job dir>` it judges the shell commands a finished LAX run's model actually sent instead. Use it to find classes of over-blocking; justify each fix with a real-user case, never one task's solution. |

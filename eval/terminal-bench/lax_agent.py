@@ -29,7 +29,7 @@ LOGS = "/logs/agent"
 DEFAULT_BUNDLE = Path.home() / ".cache" / "lax-terminal-bench" / "lax-linux-x64.tgz"
 
 # Passed through to drive.mjs when set on the host.
-FORWARDED_ENV = ("LAX_TB_LOCAL_URL",)
+FORWARDED_ENV = ("LAX_TB_LOCAL_URL", "LAX_TB_MODE")
 
 
 class LaxAgent(BaseInstalledAgent):

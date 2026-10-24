@@ -7,6 +7,10 @@
 //     --instruction-file /installed-agent/instruction.txt \
 //     --out /logs/agent/lax-result.json --server-log /logs/agent/lax-server.log
 //
+// `--mode code` (or LAX_TB_MODE=code on the host, which lax_agent.py forwards)
+// opens the turn as a code session (src/session/mode.ts): the coding prompt and
+// tool kit, as a coding task gets in the product. Unset, it is a chat.
+//
 // It boots a headless LAX server on a fresh data dir with the task's working
 // directory as the workspace, sends the instruction as ONE chat turn (the way
 // a user types it), waits for the turn to end, and stops the server. Harbor
@@ -71,6 +75,7 @@ async function main() {
   // Unset: the runtime's default address for the model's prefix (seed.mjs).
   const localUrl = arg("local-url", process.env.LAX_TB_LOCAL_URL || undefined);
   const timeoutMs = Number(arg("timeout-ms", DEFAULT_TURN_TIMEOUT_MS));
+  const mode = arg("mode", process.env.LAX_TB_MODE || "chat") === "code" ? "code" : "chat";
   if (!modelName || !instructionFile) {
     console.error("usage: drive.mjs --model <provider>/<model> --instruction-file <path> [--out <json>] [--server-log <path>]");
     process.exit(2);
@@ -108,7 +113,7 @@ async function main() {
   child.stdout.pipe(log, { end: false });
   child.stderr.pipe(log, { end: false });
 
-  const result = { model: modelName, workspace, startedAt: new Date().toISOString() };
+  const result = { model: modelName, mode, workspace, startedAt: new Date().toISOString() };
   let exitCode = 0;
   try {
     const bootError = await waitHealthy(baseUrl, headers, child);
@@ -117,7 +122,7 @@ async function main() {
       exitCode = 3;
     } else {
       const sessionId = `tb-${randomBytes(6).toString("hex")}`;
-      const turn = await driveChat(instruction, sessionId, timeoutMs, { baseUrl, headers });
+      const turn = await driveChat(instruction, sessionId, timeoutMs, { baseUrl, headers }, { mode: mode === "code" ? "code" : undefined });
       Object.assign(result, { sessionId, secs: turn.secs, toolCalls: turn.tools.length, tools: turn.tools, err: turn.err || null, recovered: turn.recovered, reply: turn.text });
     }
   } finally {

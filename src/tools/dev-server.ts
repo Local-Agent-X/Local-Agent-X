@@ -127,6 +127,11 @@ const DEV_SERVER_BIND_GRACE_MS = 30_000;
 export const DEV_SERVER_IDLE_MS = 15 * 60_000;
 /** How often the sweeper checks for idle backends. */
 const DEV_SERVER_SWEEP_MS = 2 * 60_000;
+/** At most this many dev servers run at once: starting another stops the least
+ *  recently used (record kept, so reopening it wakes it). Enough to move between
+ *  a couple of projects without a restart each time, few enough that a session
+ *  of opening apps one after another doesn't pile up servers for 15 minutes. */
+export const MAX_RUNNING_DEV_SERVERS = 3;
 
 /** The dev connector points at the app's own localhost backend; the allow-list
  *  is broad on purpose — it's the user's own API, gated only to that one port. */
@@ -185,6 +190,7 @@ export function registerDevServer(
   if (kind === "frontend" && refreshOwnedViteConfig(cwd, appId)) {
     logger.info(`[dev-server] ${appId}: refreshed harness-owned vite.config to the current template`);
   }
+  makeRoomForDevServer(appId, d);
   const started = dd.start(command, cwd, frontendEnv(kind, port));
   if ("error" in started) return { ok: false, error: started.error };
 
@@ -250,6 +256,7 @@ export function ensureDevServerRunning(appId: string, d: DevServerDeps = {}): En
   if ((rec.kind ?? "backend") === "frontend" && refreshOwnedViteConfig(appDir, appId)) {
     logger.info(`[dev-server] ${appId}: refreshed harness-owned vite.config to the current template`);
   }
+  makeRoomForDevServer(appId, d);
   const started = dd.start(restartCmd, rec.cwd || undefined, frontendEnv(rec.kind ?? "backend", rec.port));
   if ("error" in started) { logger.warn(`[dev-server] ${appId}: restart failed: ${started.error}`); return { status: "error", error: started.error }; }
   const updated: DevServerRecord = { ...rec, sessionId: started.session.sessionId };
@@ -293,6 +300,31 @@ export function stopIdleDevServers(idleMs: number, now: number, d: DevServerDeps
     stopDevServer(appId, d);          // kill process, keep record for a later wake
     forgetDevServerAccess(appId);     // drop from the active set until reopened
     stopped.push(appId);
+  }
+  return stopped;
+}
+
+/**
+ * Before `appId`'s server starts: while MAX_RUNNING_DEV_SERVERS others are
+ * running, stop the one used least recently. Like an idle stop, the record is
+ * kept and the next open of that app restarts it. Returns the appIds stopped.
+ */
+export function makeRoomForDevServer(appId: string, d: DevServerDeps = {}): string[] {
+  const dd = deps(d);
+  const running = [...devServerActivity()]
+    .filter(([id]) => {
+      if (id === appId) return false;
+      const rec = readDevServerRecord(id);
+      return !!(rec?.sessionId && dd.isAlive(rec.sessionId));
+    })
+    .sort((a, b) => a[1] - b[1]);
+  const stopped: string[] = [];
+  while (running.length >= MAX_RUNNING_DEV_SERVERS) {
+    const [oldest] = running.shift()!;
+    stopDevServer(oldest, d);
+    forgetDevServerAccess(oldest);
+    stopped.push(oldest);
+    logger.info(`[dev-server] ${oldest}: stopped to start ${appId} (at most ${MAX_RUNNING_DEV_SERVERS} run at once; reopening it restarts it)`);
   }
   return stopped;
 }

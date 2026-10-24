@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { EventEmitter } from "node:events";
 import type { ChildProcess } from "node:child_process";
 import { mkdtempSync, rmSync, readFileSync, existsSync, writeFileSync } from "node:fs";
@@ -10,6 +10,8 @@ import {
   stopDevServer,
   stopIdleDevServers,
   stopAllDevServers,
+  makeRoomForDevServer,
+  MAX_RUNNING_DEV_SERVERS,
   readDevServerRecord,
   devConnectorName,
   formatStartupFailure,
@@ -344,6 +346,62 @@ describe("idle auto-stop + shutdown cleanup (so a backend doesn't run forever)",
     expect(sessions.get(a.ok ? a.sessionId : "")).toBe(false);
     expect(sessions.get(b.ok ? b.sessionId : "")).toBe(false);
     expect(devServerActivity().size).toBe(0);
+  });
+});
+
+describe("at most MAX_RUNNING_DEV_SERVERS run at once", () => {
+  afterEach(() => { vi.useRealTimers(); });
+
+  // Registers each app a second apart, so their last use is in that order.
+  function registerApart(deps: DevServerDeps, ids: string[]): Record<string, string> {
+    vi.useFakeTimers();
+    vi.setSystemTime(1_000_000);
+    const sessionOf: Record<string, string> = {};
+    ids.forEach((id, i) => {
+      vi.setSystemTime(1_000_000 + i * 1000);
+      const r = registerDevServer({ appId: id, command: "vite", port: 5300 + i, cwd: "/tmp/x" }, deps);
+      sessionOf[id] = r.ok ? r.sessionId : "";
+    });
+    return sessionOf;
+  }
+
+  it("starting a fourth stops the least recently used, and keeps its record", () => {
+    const { deps, sessions } = fakeDeps();
+    const s = registerApart(deps, ["a", "b", "c", "d"]);
+    expect(MAX_RUNNING_DEV_SERVERS).toBe(3);
+    expect(sessions.get(s.a)).toBe(false);
+    for (const id of ["b", "c", "d"]) expect(sessions.get(s[id])).toBe(true);
+    expect(readDevServerRecord("a")).not.toBeNull();
+    expect(devServerActivity().has("a")).toBe(false);
+  });
+
+  it("an app used since it started is kept over one left alone", () => {
+    const { deps, sessions } = fakeDeps();
+    const s = registerApart(deps, ["a", "b", "c"]);
+    vi.setSystemTime(1_010_000);
+    expect(ensureDevServerRunning("a", deps).status).toBe("running");   // the user went back to a
+    vi.setSystemTime(1_011_000);
+    registerDevServer({ appId: "d", command: "vite", port: 5310, cwd: "/tmp/x" }, deps);
+    expect(sessions.get(s.a)).toBe(true);
+    expect(sessions.get(s.b)).toBe(false);
+  });
+
+  it("reopening a stopped app restarts it and stops the next least recently used", () => {
+    const { deps, sessions } = fakeDeps();
+    const s = registerApart(deps, ["a", "b", "c", "d"]);
+    vi.setSystemTime(1_020_000);
+    expect(ensureDevServerRunning("a", deps).status).toBe("started");
+    expect(sessions.get(s.b)).toBe(false);
+    for (const id of ["c", "d"]) expect(sessions.get(s[id])).toBe(true);
+  });
+
+  it("an already-running app's own server never counts against it, and a dead one makes no room", () => {
+    const { deps, sessions } = fakeDeps();
+    const s = registerApart(deps, ["a", "b", "c"]);
+    expect(makeRoomForDevServer("c", deps)).toEqual([]);
+    sessions.set(s.a, false);                                             // a crashed on its own
+    expect(makeRoomForDevServer("d", deps)).toEqual([]);
+    expect(sessions.get(s.b)).toBe(true);
   });
 });
 

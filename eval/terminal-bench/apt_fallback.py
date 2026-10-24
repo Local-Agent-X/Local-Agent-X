@@ -72,6 +72,20 @@ class OpenClawNode24AptFallback(OpenClawAptFallback):
     async def exec_as_agent(self, environment: BaseEnvironment, command: str, *args, **kwargs):
         return await super().exec_as_agent(environment, _on_node24(command), *args, **kwargs)
 
+    def _normalize_provider_models_schema(self, cfg: dict) -> None:
+        """OpenClaw offers thinking levels only for a model its catalog marks
+        `reasoning`, and the entry Harbor writes for the selected model holds
+        only its id and name, so `--thinking medium` failed before the first
+        turn ("Use one of: off, ultra", qwen3.8, 2026-10-24). A run that asks
+        for thinking marks the selected model as reasoning."""
+        super()._normalize_provider_models_schema(cfg)
+        if self.options.thinking in (None, "off"):
+            return
+        provider_cfg = cfg.get("models", {}).get("providers", {}).get(self._model_provider() or "", {})
+        for model in provider_cfg.get("models", []):
+            if model.get("id") == self.model_name:
+                model.setdefault("reasoning", True)
+
 
 class CodexAptFallback(AptSecurityFallback, Codex):
     pass

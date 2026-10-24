@@ -26,7 +26,7 @@ import { getLearnedProtocolSuggestion } from "../protocols/learned-suggestion.js
 import { isSlashCommandExpansion } from "../slash-commands.js";
 import { detectAndBoostCurate } from "./prepare-request/curate-nudge.js";
 import { buildSystemPromptWithTelemetry } from "./prepare-request/build-system-prompt.js";
-import { createPromptTelemetry } from "../prompt-telemetry.js";
+import { createPromptTelemetry, logPromptTelemetry } from "../prompt-telemetry.js";
 import { appendSystemPromptSection } from "../context/system-prompt-builder.js";
 
 const logger = createLogger("agent-request.prepare-request");
@@ -265,7 +265,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     text: fileAttachmentNote,
   });
   const { systemPrompt, renderedPromptSections } = sectionAwarePrompt;
-  const promptTelemetry = createPromptTelemetry({
+  const promptTelemetry = logPromptTelemetry(input.sessionId, createPromptTelemetry({
     profile: "full",
     provider: resolved.provider,
     model: resolved.model,
@@ -275,7 +275,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     allToolCount: input.allAgentTools.length,
     historyMessageCount: cleanHistory.length,
     sections: renderedPromptSections.map((section) => section.measurement),
-  });
+  }));
 
   // 8. tool_choice pin for an EXPLICIT build route only (/app-build kickoff,
   // a resolved Product Build continuation action). Nothing guessed from the

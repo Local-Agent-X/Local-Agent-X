@@ -15,6 +15,30 @@ export function readOps(dataDir) {
   return ops;
 }
 
+/** What the run's CHAT turns cost: model calls, input tokens (uncached, cache
+ *  reads, cache writes), output tokens, and the first call's prompt size. */
+export function chatUsageIn(dataDir) {
+  const u = { turns: 0, inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0, firstPromptTokens: 0 };
+  for (const { dir, op } of readOps(dataDir)) {
+    if (op.type !== "chat_turn") continue;
+    const turnsDir = join(dir, "op-turns");
+    const files = existsSync(turnsDir) ? readdirSync(turnsDir).sort((a, b) => parseInt(a, 10) - parseInt(b, 10)) : [];
+    for (const f of files) {
+      try {
+        const p = JSON.parse(readFileSync(join(turnsDir, f), "utf8")).turn?.providerState?.providerPayload ?? {};
+        const input = p.usageInputTokens ?? 0, read = p.cacheReadTokens ?? 0, write = p.cacheCreateTokens ?? 0;
+        if (u.turns === 0) u.firstPromptTokens = input + read + write;
+        u.turns += 1;
+        u.inputTokens += input;
+        u.cacheReadTokens += read;
+        u.cacheWriteTokens += write;
+        u.outputTokens += p.usageOutputTokens ?? 0;
+      } catch { /* partial write */ }
+    }
+  }
+  return u;
+}
+
 /** The mode a session ran in, from its log's meta row (src/memory/session-log-rows.ts;
  *  absent = chat), or null when the server never wrote the session. */
 export function sessionModeIn(dataDir, sessionId) {

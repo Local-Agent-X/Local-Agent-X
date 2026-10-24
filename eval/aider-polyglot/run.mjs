@@ -44,7 +44,7 @@ import {
 } from "./lib.mjs";
 import { CURATED } from "./curated.mjs";
 import { assertDistMatchesSource, startIsolatedServer } from "../op-outcomes/isolated.mjs";
-import { chatModelsIn, opTurnCount, sessionModeIn, toolCalls, toolResultText } from "../op-outcomes/op-store.mjs";
+import { chatModelsIn, chatUsageIn, opTurnCount, sessionModeIn, toolCalls, toolResultText } from "../op-outcomes/op-store.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..", "..");
@@ -169,6 +169,7 @@ async function runExercise(slug, target, args, evidenceDir) {
     // The mode is what the run measures: a session the server opened in the
     // other mode got the other prompt and tool kit.
     const ranAs = sessionModeIn(server.dataDir, sessionId);
+    const usage = chatUsageIn(server.dataDir);
     const wrongMode = ranAs !== args.mode ? `session ran in ${ranAs ?? "no recorded"} mode, expected ${args.mode}` : null;
 
     const claimed = claimsDone(drive.text) && !admitsIncomplete(drive.text);
@@ -211,7 +212,7 @@ async function runExercise(slug, target, args, evidenceDir) {
     keep = args.keep && result !== "PASS";
     return {
       row: {
-        slug, result, mode: ranAs, pass: score.ok, passAt1, attempts: second ? 2 : 1, secs: drive.secs, tools: drive.tools,
+        slug, result, mode: ranAs, usage, pass: score.ok, passAt1, attempts: second ? 2 : 1, secs: drive.secs, tools: drive.tools,
         changed, falseDone, err: drive.err, recovered: drive.recovered, harness,
         reply: drive.text.slice(0, 1200),
         testOutput: score.ok ? "" : (score.results.find((r) => !r.ok)?.output || "").slice(-2000),
@@ -272,7 +273,7 @@ async function main() {
   if (args.limit > 0) slugs = slugs.slice(0, args.limit);
 
   console.log(`\n=== Aider polyglot (python) · model=${model} · ${args.mode} mode · ${slugs.length} exercises ===\n`);
-  console.log(`${pad("exercise", 18)} ${pad("result", 8)} ${pad("secs", 6)} ${pad("tools", 6)} note`);
+  console.log(`${pad("exercise", 18)} ${pad("result", 8)} ${pad("secs", 6)} ${pad("tools", 6)} ${pad("calls", 6)} ${pad("in-tok", 8)} note`);
   console.log("-".repeat(72));
 
   const rows = [];
@@ -302,7 +303,8 @@ async function main() {
     }
     rows.push(out.row);
     save();
-    console.log(`${pad(slug, 18)} ${pad(out.row.result, 8)} ${pad(out.row.secs, 6)} ${pad(out.row.tools.length, 6)} ${out.notes.join(" ")}`);
+    const u = out.row.usage;
+    console.log(`${pad(slug, 18)} ${pad(out.row.result, 8)} ${pad(out.row.secs, 6)} ${pad(out.row.tools.length, 6)} ${pad(u ? u.turns : "-", 6)} ${pad(u ? `${Math.round((u.inputTokens + u.cacheReadTokens + u.cacheWriteTokens) / 1000)}k` : "-", 8)} ${out.notes.join(" ")}`);
   }
 
   const { passed, passedAt1, scored, falseDones } = tally();

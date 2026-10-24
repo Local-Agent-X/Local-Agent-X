@@ -10,6 +10,9 @@ import {
   type ToolSchemaFormat,
 } from "./providers/shared/tool-shape.js";
 import { isAnthropicCliTransportEnabled } from "./anthropic-client/cli-transport.js";
+import { createLogger } from "./logger.js";
+
+const logger = createLogger("prompt-telemetry");
 
 type PromptTelemetryTool = Pick<ToolDefinition, "name" | "description" | "parameters">;
 
@@ -165,6 +168,24 @@ export function createPromptTelemetry(input: {
     sections: input.sections,
     ...(input.degradation ? { degradation: input.degradation } : {}),
   };
+}
+
+/** One server-log line per request: what the prompt and the tool schemas cost,
+ *  and the largest sections, so a prompt's size is read, not reconstructed. */
+export function formatPromptTelemetry(sessionId: string, t: PromptTelemetry): string {
+  const largest = [...t.sections]
+    .sort((a, b) => b.estimatedTokens - a.estimatedTokens)
+    .slice(0, 6)
+    .map((s) => `${s.id.replace(/^core-identity\//, "")} ${s.estimatedTokens}`)
+    .join(", ");
+  return `[prompt] sess=${sessionId.slice(0, 24)} ~${t.estimatedTokens} tok system + ~${t.toolSchemaEstimatedTokens ?? "?"} tok tools ` +
+    `(${t.loadedToolCount} loaded, ${t.deferredToolCount} deferred) · largest: ${largest}`;
+}
+
+/** Log the request's prompt telemetry and hand it back unchanged. */
+export function logPromptTelemetry(sessionId: string, t: PromptTelemetry): PromptTelemetry {
+  logger.info(formatPromptTelemetry(sessionId, t));
+  return t;
 }
 
 export function remeasurePromptTelemetry(input: {

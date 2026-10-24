@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createPromptTelemetry,
+  formatPromptTelemetry,
   measurePromptSection,
   remeasurePromptTelemetry,
 } from "./prompt-telemetry.js";
@@ -211,5 +212,27 @@ describe("prompt telemetry", () => {
     expect(telemetry.historyMessageCount).toBe(5);
     expect(telemetry.sections.at(-1)?.id).toBe("chat-augmentations");
     expect(JSON.stringify(telemetry)).not.toContain(appended);
+  });
+
+  it("formats one log line: system and tool costs, counts, and the largest sections by size, no content", () => {
+    const secret = "do not log this prompt text";
+    const telemetry = createPromptTelemetry({
+      profile: "full",
+      provider: "anthropic",
+      model: "claude-opus-5-5",
+      prompt: secret + "x".repeat(700),
+      tools: [{ name: "read", description: "Read a file", parameters: {} }],
+      allToolCount: 10,
+      historyMessageCount: 1,
+      sections: [
+        measurePromptSection("core-identity/delegation", "static", "d".repeat(700)),
+        measurePromptSection("tool-guidance", "static", "t".repeat(1400)),
+        measurePromptSection("file-access", "dynamic", secret),
+      ],
+    });
+    const line = formatPromptTelemetry("aider-grade-school", telemetry);
+    expect(line).toMatch(/^\[prompt\] sess=aider-grade-school ~\d+ tok system \+ ~\d+ tok tools \(1 loaded, 9 deferred\)/);
+    expect(line).toContain(`largest: tool-guidance ${estimateTokens("t".repeat(1400))}, delegation ${estimateTokens("d".repeat(700))}`);
+    expect(line).not.toContain(secret);
   });
 });

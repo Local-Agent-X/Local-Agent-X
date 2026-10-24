@@ -60,7 +60,9 @@ export async function activeModel() {
  *  emits a recovery notice ("context exceeded — compacting and retrying") as an
  *  error event, and recording it as `err` made a completed attempt read as one
  *  the harness killed (two-bucket, 2026-09-17). */
-export async function driveChat(message, sessionId, timeoutMs, target = LIVE()) {
+// `mode` ("code") opens the session as a code session (src/session/mode.ts);
+// a session's mode is fixed by its first turn.
+export async function driveChat(message, sessionId, timeoutMs, target = LIVE(), { mode } = {}) {
   let text = "", err = "";
   const tools = [];
   const recovered = [];
@@ -69,7 +71,7 @@ export async function driveChat(message, sessionId, timeoutMs, target = LIVE()) 
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   const t0 = Date.now();
   try {
-    const res = await fetch(`${target.baseUrl}/api/chat`, { method: "POST", headers: target.headers, body: JSON.stringify({ message, sessionId }), signal: ac.signal });
+    const res = await fetch(`${target.baseUrl}/api/chat`, { method: "POST", headers: target.headers, body: JSON.stringify({ message, sessionId, ...(mode ? { mode } : {}) }), signal: ac.signal });
     if (!res.ok) { err = `HTTP ${res.status}`; }
     else {
       let buf = "";

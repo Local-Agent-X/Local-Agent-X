@@ -15,6 +15,20 @@ export function readOps(dataDir) {
   return ops;
 }
 
+/** The mode a session ran in, from its log's meta row (src/memory/session-log-rows.ts;
+ *  absent = chat), or null when the server never wrote the session. */
+export function sessionModeIn(dataDir, sessionId) {
+  let text;
+  try { text = readFileSync(join(dataDir, "sessions", `${sessionId}.jsonl`), "utf8"); } catch { return null; }
+  for (const line of text.split("\n")) {
+    try {
+      const row = JSON.parse(line);
+      if (row && row.kind === "meta") return row.mode === "code" ? "code" : "chat";
+    } catch { /* a partial last line */ }
+  }
+  return null;
+}
+
 /** Models the run's CHAT turns were actually served by. A result that ran on a
  *  different model than the one configured (a silent provider fallback) says
  *  nothing about the model under test. */

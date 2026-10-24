@@ -11,6 +11,7 @@
 //   npx tsx eval/aider-polyglot/run.mjs --limit 5            # first N of the set
 //   npx tsx eval/aider-polyglot/run.mjs --timeout 1800000    # per-exercise drive cap
 //   npx tsx eval/aider-polyglot/run.mjs --keep               # keep failed exercise dirs
+//   npx tsx eval/aider-polyglot/run.mjs --mode code          # run each exercise as a code session
 //
 // Verdicts: PASS, FAIL, HARNESS, or CONTAMINATED (passed after seeing the
 // hidden tests, or after searching the disk outside its workspace — unscored). Web tools are denied. Hitting the time cap is a FAIL
@@ -43,13 +44,13 @@ import {
 } from "./lib.mjs";
 import { CURATED } from "./curated.mjs";
 import { assertDistMatchesSource, startIsolatedServer } from "../op-outcomes/isolated.mjs";
-import { chatModelsIn, opTurnCount, toolCalls, toolResultText } from "../op-outcomes/op-store.mjs";
+import { chatModelsIn, opTurnCount, sessionModeIn, toolCalls, toolResultText } from "../op-outcomes/op-store.mjs";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = resolve(HERE, "..", "..");
 
 function parseArgs(argv) {
-  const a = { timeout: 1_800_000, keep: false, slugs: null, all: false, limit: 0, provider: "muse" };
+  const a = { timeout: 1_800_000, keep: false, slugs: null, all: false, limit: 0, provider: "muse", mode: "chat" };
   for (let i = 0; i < argv.length; i++) {
     const k = argv[i];
     if (k === "--all") a.all = true;
@@ -57,6 +58,7 @@ function parseArgs(argv) {
     else if (k === "--timeout") a.timeout = parseInt(argv[++i], 10);
     else if (k === "--limit") a.limit = parseInt(argv[++i], 10);
     else if (k === "--provider") a.provider = argv[++i];
+    else if (k === "--mode") a.mode = argv[++i] === "code" ? "code" : "chat";
     else if (k === "--slugs") a.slugs = argv[++i].split(",").map((s) => s.trim()).filter(Boolean);
   }
   return a;
@@ -138,7 +140,8 @@ async function runExercise(slug, target, args, evidenceDir) {
   try {
     const work = makeExerciseProject(ex, server.workspace);
     const sessionId = `aider-${slug}`;
-    const first = await driveChat(buildPrompt(work, ex), sessionId, args.timeout, server);
+    const driveOpts = { mode: args.mode === "code" ? "code" : undefined };
+    const first = await driveChat(buildPrompt(work, ex), sessionId, args.timeout, server, driveOpts);
     let score = scoreExercise(work, ex);
     const passAt1 = score.ok;
     // Aider's protocol: a failed first attempt is shown the test errors and
@@ -147,7 +150,7 @@ async function runExercise(slug, target, args, evidenceDir) {
     let second = null;
     if (!score.ok && !score.harness && !server.exitedOnItsOwn()
       && !/HARNESS-ERROR|^HTTP \d|ECONNREFUSED|fetch failed/i.test(first.err)) {
-      second = await driveChat(buildRetryPrompt(ex, score), sessionId, args.timeout, server);
+      second = await driveChat(buildRetryPrompt(ex, score), sessionId, args.timeout, server, driveOpts);
       score = scoreExercise(work, ex);
     }
     const last = second ?? first;
@@ -163,6 +166,10 @@ async function runExercise(slug, target, args, evidenceDir) {
     const models = chatModelsIn(server.dataDir);
     const wrongModel = models.length > 0 && !models.every((m) => m === target.model)
       ? `chat ran on ${models.join(", ")}, expected ${target.model}` : null;
+    // The mode is what the run measures: a session the server opened in the
+    // other mode got the other prompt and tool kit.
+    const ranAs = sessionModeIn(server.dataDir, sessionId);
+    const wrongMode = ranAs !== args.mode ? `session ran in ${ranAs ?? "no recorded"} mode, expected ${args.mode}` : null;
 
     const claimed = claimsDone(drive.text) && !admitsIncomplete(drive.text);
     const falseDone = !score.ok && claimed;
@@ -172,7 +179,7 @@ async function runExercise(slug, target, args, evidenceDir) {
     // nothing about capability, and is reported, never scored.
     const timedOut = /(^|; )timeout /.test(drive.err);
     const harness = died ? `server exited mid-run (code ${died.code}, signal ${died.signal})`
-      : score.harness ?? wrongModel
+      : score.harness ?? wrongModel ?? wrongMode
       ?? (/HARNESS-ERROR|^HTTP \d|ECONNREFUSED|fetch failed/i.test(drive.err) ? drive.err : null)
       // A timeout is the model's failure only if the harness held up. Any other
       // failure is too: a server that froze for 15s at a time (poker, run 16)
@@ -204,7 +211,7 @@ async function runExercise(slug, target, args, evidenceDir) {
     keep = args.keep && result !== "PASS";
     return {
       row: {
-        slug, result, pass: score.ok, passAt1, attempts: second ? 2 : 1, secs: drive.secs, tools: drive.tools,
+        slug, result, mode: ranAs, pass: score.ok, passAt1, attempts: second ? 2 : 1, secs: drive.secs, tools: drive.tools,
         changed, falseDone, err: drive.err, recovered: drive.recovered, harness,
         reply: drive.text.slice(0, 1200),
         testOutput: score.ok ? "" : (score.results.find((r) => !r.ok)?.output || "").slice(-2000),
@@ -256,7 +263,7 @@ async function main() {
     .providers.find((p) => p.label === args.provider);
   if (!target) { console.error(`no provider "${args.provider}" in eval/op-outcomes/providers.json`); process.exit(2); }
   const model = `${target.provider}/${target.model}`;
-  console.error(`[aider] ${model} · scoring with ${python} · one isolated server per exercise`);
+  console.error(`[aider] ${model} · ${args.mode} mode · scoring with ${python} · one isolated server per exercise`);
 
   let slugs = args.all ? allSlugs() : (args.slugs || CURATED);
   const known = new Set(allSlugs());
@@ -264,7 +271,7 @@ async function main() {
   if (missing.length) { console.error(`Unknown slugs: ${missing.join(", ")}`); process.exit(2); }
   if (args.limit > 0) slugs = slugs.slice(0, args.limit);
 
-  console.log(`\n=== Aider polyglot (python) · model=${model} · ${slugs.length} exercises ===\n`);
+  console.log(`\n=== Aider polyglot (python) · model=${model} · ${args.mode} mode · ${slugs.length} exercises ===\n`);
   console.log(`${pad("exercise", 18)} ${pad("result", 8)} ${pad("secs", 6)} ${pad("tools", 6)} note`);
   console.log("-".repeat(72));
 
@@ -272,7 +279,7 @@ async function main() {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const outDir = join(homedir(), ".cache", "aider-polyglot-reports");
   mkdirSync(outDir, { recursive: true });
-  const outPath = join(outDir, `${model.replace(/[/:]/g, "_")}-${stamp}.json`); // written as .json.gz
+  const outPath = join(outDir, `${model.replace(/[/:]/g, "_")}${args.mode === "code" ? "-code" : ""}-${stamp}.json`); // written as .json.gz
   const tally = () => {
     const scoredRows = rows.filter((r) => r.result === "PASS" || r.result === "FAIL");
     return {
@@ -284,7 +291,7 @@ async function main() {
   };
   // Written after EVERY exercise: a run that is stopped halfway still leaves
   // its results and the evidence paths behind.
-  const save = () => writeSealed(outPath, JSON.stringify({ model, stamp, ...tally(), total: rows.length, rows }, null, 2));
+  const save = () => writeSealed(outPath, JSON.stringify({ model, mode: args.mode, stamp, ...tally(), total: rows.length, rows }, null, 2));
   for (const slug of slugs) {
     let out;
     try {
@@ -301,7 +308,7 @@ async function main() {
   const { passed, passedAt1, scored, falseDones } = tally();
   const unscored = rows.filter((r) => r.result === "HARNESS" || r.result === "CONTAMINATED");
   console.log("-".repeat(72));
-  console.log(`\nRESULT: pass@1 ${passedAt1}/${scored} · pass@2 ${passed}/${scored} · ${falseDones} false-done · model=${model}`);
+  console.log(`\nRESULT: pass@1 ${passedAt1}/${scored} · pass@2 ${passed}/${scored} · ${falseDones} false-done · model=${model} · ${args.mode} mode`);
   if (unscored.length) {
     console.log(`NOT SCORED (${unscored.length}) — these say nothing about the model: ${unscored.map((r) => `${r.slug} (${r.harness ?? "saw the hidden tests or searched outside its workspace"})`).join("; ")}`);
   }

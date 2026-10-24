@@ -168,6 +168,37 @@ describe("checkVerifyGate — Python stdlib unittest is a real verify", () => {
     expect(opEditedSourceUnverified(s)).toBe(true);
   });
 
+  it("credits exercising the edited module from inline code or a check script", () => {
+    const py = "C:/Users/me/AppData/Local/Programs/Python/Python312/python.exe";
+    for (const cmd of [
+      `"${py}" -c "from grade_school import School; s = School(); s.add_student('Anna', 1); print(s.roster())"`,
+      `cd C:/work && python3 - <<'EOF'\nfrom grade_school import School\nprint(School().roster())\nEOF`,
+      "python3 check_poker.py",
+      "python poker_test.py",
+    ]) {
+      const s = createVerifyGateState();
+      noteVerifyEvidence([edit("C:/work/grade_school.py"), edit("poker.py"), bash(cmd, "ok")], s);
+      expect(checkVerifyGate(s).nudge, cmd).toBeNull();
+    }
+    const js = createVerifyGateState();
+    noteVerifyEvidence([edit("src/slugify.js"), bash(`node -e "const s = require('./src/slugify'); console.log(s('A b'))"`, "ok")], js);
+    expect(checkVerifyGate(js).nudge).toBeNull();
+  });
+
+  it("a crash while exercising the edited module is a failed check (sharp nudge)", () => {
+    const s = createVerifyGateState();
+    noteVerifyEvidence([edit("grade_school.py"), bash(`python -c "from grade_school import School; School().roster()"`, "error")], s);
+    expect(checkVerifyGate(s).nudge).toMatch(/FAILED/);
+  });
+
+  it("reading the file, or inline code that never names it, is not a check", () => {
+    for (const cmd of ["cat grade_school.py", `python -c "print(1 + 1)"`, "type grade_school.py", "python -m pip list"]) {
+      const s = createVerifyGateState();
+      noteVerifyEvidence([edit("grade_school.py"), bash(cmd, "ok")], s);
+      expect(checkVerifyGate(s).nudge, cmd).toMatch(/haven't run/i);
+    }
+  });
+
   it("also credits `python -m pytest` and the `py` launcher / trailing flags", () => {
     for (const cmd of ["python3 -m pytest", "py -m unittest", "python -m unittest -v"]) {
       const s = createVerifyGateState();

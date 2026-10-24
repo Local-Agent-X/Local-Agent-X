@@ -25,6 +25,8 @@ import { readOpTurns } from "../store.js";
 import { setOpLedger } from "../instruction-ledger/index.js";
 import { _resetOpLedgers } from "../instruction-ledger/ledger.js";
 import { makeCanonicalLoopContext, type CanonicalLoopContextOverrides } from "./ctx.test-helper.js";
+import { getMiddlewareState } from "./state.js";
+import { createVerifyGateState, noteVerifyEvidence, type VerifyGateState } from "../../agent-guards/index.js";
 
 const mockSession = vi.mocked(getSessionForOp);
 const mockOpenTasks = vi.mocked(getOpenTasksForSession);
@@ -213,6 +215,22 @@ describe("interactive build plan-seed (reactive, afterModelCall)", () => {
   it("does not fire when this op laid out a plan and finished it — no open steps is how a done plan looks", async () => {
     const res = await fire(ictx({ toolsCalledThisOp: new Set(["write", "task_create", "task_update"]) }));
     expect(res.kind).toBe("continue");
+  });
+
+  // The 2026-10-24 Aider run: every exercise was pushed here after the model had
+  // run its solution, and answered by repeating its report.
+  it("does not fire when a check passed after the last edit, and does while the edit is unchecked", async () => {
+    const checked = ictx();
+    noteVerifyEvidence([
+      { tool: "write", writes: ["grade_school.py"], status: "ok" },
+      { tool: "bash", command: `python -c "from grade_school import School; print(School().roster())"`, status: "ok" },
+    ], getMiddlewareState<VerifyGateState>(checked.op.id, "verify-gate", createVerifyGateState));
+    expect((await fire(checked)).kind).toBe("continue");
+
+    const unchecked = ictx();
+    noteVerifyEvidence([{ tool: "write", writes: ["grade_school.py"], status: "ok" }],
+      getMiddlewareState<VerifyGateState>(unchecked.op.id, "verify-gate", createVerifyGateState));
+    expect((await fire(unchecked)).kind).toBe("nudge");
   });
 });
 

@@ -53,6 +53,13 @@ export function opEditedSourceUnverified(opId: string): boolean {
   );
 }
 
+/** The op edited source and a check passed after its last edit: the evidence a
+ *  "verify it before you finish" push asks for is already on record. */
+export function opSourceCheckedSinceLastEdit(opId: string): boolean {
+  const state = getMiddlewareState<VerifyGateState>(opId, "verify-gate", createVerifyGateState);
+  return state.editedSource && state.verifiedSinceEdit;
+}
+
 /** Source-file paths the op edited (insertion-ordered). The orchestrator
  *  build-verify gate uses these to locate the project to build. */
 export function opEditedSourcePaths(opId: string): string[] {

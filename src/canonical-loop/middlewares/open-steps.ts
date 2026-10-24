@@ -26,6 +26,7 @@ import { getMiddlewareState } from "./state.js";
 import { hasCapability } from "../../tool-registry.js";
 import { capabilityForbiddenForOp, opForbidsCapability, planModeForbidsCapability } from "../instruction-ledger/index.js";
 import { isLedgerTool, opCommittedSubstantiveWork } from "../../committing-tool-check.js";
+import { opSourceCheckedSinceLastEdit } from "./verify-gate.js";
 
 /**
  * Last open-task set we already nudged about, per session. Keyed by SESSION
@@ -150,6 +151,11 @@ function interactiveBuildPlanSeed(ctx: CanonicalLoopContext): CanonicalMiddlewar
   // is how a completed list looks too. Told "no plan on record" after three
   // created-and-completed tasks, a model repeated its whole report (2026-10-21).
   if ([...ctx.toolsCalledThisOp].some(isLedgerTool)) return { kind: "continue" };
+  // The push asks for a plan or proof it runs. A check that passed after the
+  // last edit is that proof, so the push would only cost a full round trip:
+  // it fired on every exercise of the 2026-10-24 Aider run after the model had
+  // run its solution, and the model answered by repeating its report.
+  if (opSourceCheckedSinceLastEdit(ctx.op.id)) return { kind: "continue" };
 
   const flag = getMiddlewareState<SeedFlag>(ctx.op.id, "interactive-build-seed", () => ({ fired: false }));
   if (flag.fired) return { kind: "continue" };

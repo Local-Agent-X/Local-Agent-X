@@ -120,6 +120,40 @@ const VERIFY_CMD_RE =
 const HTTP_SMOKE_CMD_RE =
   /\b(curl(?:\.exe)?|wget|Invoke-WebRequest|iwr)\b[\s\S]*(\/apps\/|\/api\/connectors\/)/i;
 
+/** A runtime or runner that executes code, in a command word's place (after a
+ *  separator, quote or path slash; `.exe` allowed), so `cat grade_school.py`
+ *  or `node_modules/x` is not a run. */
+const RUN_CMD_RE = /(?:^|[\s"'/\\;&|(])(?:python[0-9.]*|py|node|deno|bun|ruby|php|perl|java|go\s+run|cargo\s+run|dotnet\s+run)(?:\.exe)?(?=[\s"']|$)/i;
+
+/** An inline program: `python -c`, `node -e`/`-p`, `ruby -e`, `perl -e`, or a heredoc. */
+const INLINE_PROGRAM_RE = /(?:^|\s)(?:-c|-e|-p|--eval)\s|<<-?\s*['"]?\w/;
+
+/** A script named as a test or a check of other code: `test_poker.py`,
+ *  `poker_test.py`, `check.py`, `verify_cipher.js`. */
+const CHECK_SCRIPT_RE = /(?:^|[\s"'/\\])(?:(?:test|check|verify)[\w-]*|[\w-]+[_-](?:test|check))\.[a-z]+(?=[\s"']|$)/i;
+
+/**
+ * Exercising the edited code is a check: an interpreter running inline code
+ * that names an edited module (`python -c "from grade_school import School; …"`,
+ * `node -e "require('./app')…"`), or running a test- or check-named script.
+ * Exit 0 means it ran; a crash is a failed check, as a red test is. A model that
+ * wrote a module and called it on the examples had verified it, and the gate
+ * sent it round again: two extra full-prompt turns on every exercise of the
+ * 2026-10-24 Aider run. Running the module itself (`python poker.py`) still is
+ * not one: a file that only defines functions exits 0 having exercised nothing.
+ * A project's build and suite count as before, and where a manifest names one
+ * the orchestrator runs it itself (build-verify.ts), whose verdict overrides.
+ */
+export function runsEditedCode(command: string, editedPaths: readonly string[]): boolean {
+  if (!RUN_CMD_RE.test(command)) return false;
+  if (CHECK_SCRIPT_RE.test(command)) return true;
+  if (!INLINE_PROGRAM_RE.test(command)) return false;
+  return editedPaths.some((path) => {
+    const stem = (normPath(path).split("/").pop() ?? "").replace(/\.[^.]+$/, "");
+    return stem.length > 0 && new RegExp(`(^|[^\\w-])${stem.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}([^\\w-]|$)`, "i").test(command);
+  });
+}
+
 export function isSourceFile(filePath: string): boolean {
   return SOURCE_EXT_RE.test(filePath);
 }
@@ -173,8 +207,9 @@ export function noteVerifyEvidence(
     if (
       a.command &&
       state.editedSource &&
-      (VERIFY_CMD_RE.test(a.command) || HTTP_SMOKE_CMD_RE.test(a.command)) &&
-      verifyTargetsEditedApp(a.command, state.editedPaths)
+      (((VERIFY_CMD_RE.test(a.command) || HTTP_SMOKE_CMD_RE.test(a.command)) &&
+        verifyTargetsEditedApp(a.command, state.editedPaths)) ||
+        runsEditedCode(a.command, state.editedPaths))
     ) {
       // A check that never ran (blocked, declined, cancelled) or ran without an
       // answer (timeout) is no verdict: the work stays unverified, but it is not

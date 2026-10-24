@@ -21,7 +21,7 @@
 // a task container has neither.
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { cpSync, createWriteStream, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -67,6 +67,17 @@ async function stopServer(child) {
   if (child.exitCode === null) child.kill("SIGKILL");
 }
 
+/** Where the bundle's headless Chromium and its libraries are, when it carries them. */
+function browserEnv(repoRoot) {
+  const dir = join(repoRoot, ".ms-playwright");
+  if (!existsSync(dir)) return {};
+  const lib = join(dir, "lib");
+  return {
+    PLAYWRIGHT_BROWSERS_PATH: dir,
+    LD_LIBRARY_PATH: [lib, process.env.LD_LIBRARY_PATH].filter(Boolean).join(":"),
+  };
+}
+
 async function main() {
   const modelName = arg("model");
   const instructionFile = arg("instruction-file");
@@ -105,6 +116,8 @@ async function main() {
       LAX_PORT: String(port),
       LAX_AUTH_TOKEN: token,
       LAX_BROWSER_HEADLESS: "1",
+      // The bundle's headless Chromium and the libraries it links (bundle.mjs).
+      ...browserEnv(repoRoot),
       // The bundle's node_modules are rebuilt for Linux, so its file hashes
       // differ from the Windows build's integrity manifest.
       LAX_INTEGRITY_WARN_ONLY: "1",

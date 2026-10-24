@@ -48,6 +48,18 @@ try {
     `echo ${commit} > dist/.builtref`,
     "npm prune --omit=dev --ignore-scripts --no-audit --no-fund",
     "npm rebuild --foreground-scripts",
+    // The browser tool's headless Chromium, and every shared library it links
+    // that a task image may lack (nss, atk, gbm, ...). glibc and libstdc++ stay
+    // the image's own: node needs them too, and two copies in one process
+    // would clash. drive.mjs points the server at both. Without it the browser
+    // tool failed in every task ("Executable doesn't exist at
+    // /root/.cache/ms-playwright/...", mteb-leaderboard, 2026-10-24).
+    "export PLAYWRIGHT_BROWSERS_PATH=/lax/.ms-playwright",
+    "node node_modules/playwright/cli.js install --with-deps chromium-headless-shell",
+    "mkdir -p .ms-playwright/lib",
+    "shell=$(ls .ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell | head -1)",
+    "ldd \"$shell\" | awk '/=> \//{print $3}' | grep -vE '/(libc|libm|libdl|libpthread|librt|libresolv|libstdc\+\+|libgcc_s|ld-linux[^/]*)\.so' | xargs -r -I{} cp -L {} .ms-playwright/lib/",
+    "test -z \"$(LD_LIBRARY_PATH=/lax/.ms-playwright/lib ldd \"$shell\" | grep 'not found')\"",
     "mkdir -p .node/bin && cp \"$(command -v node)\" .node/bin/node",
     `tar -czf /out/${basename(out)} -C /lax .`,
   ].join(" && ");

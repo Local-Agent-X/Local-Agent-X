@@ -14,6 +14,7 @@ setup that works is untouched, so every harness gets the same task
 environment it got before.
 
     harbor run ... -a apt_fallback:OpenClawAptFallback --ak version=2026.8.35 -m openai/<model>
+    harbor run ... -a apt_fallback:OpenClawNode24AptFallback --ak version=2026.10.7 -m openai/<model>
     harbor run ... -a apt_fallback:CodexAptFallback -m openai/<model>
 """
 
@@ -49,6 +50,27 @@ class AptSecurityFallback:
 
 class OpenClawAptFallback(AptSecurityFallback, OpenClaw):
     pass
+
+
+def _on_node24(command: str) -> str:
+    return command.replace("nvm install 22", "nvm install 24").replace("nvm use 22", "nvm use 24")
+
+
+class OpenClawNode24AptFallback(OpenClawAptFallback):
+    """OpenClaw from 2026.9 needs Node >= 24.22.1, and Harbor's adapter installs
+    and runs it on Node 22 (`nvm install 22`, `nvm use 22`), so the race ran
+    2026.8.35, the newest that starts on 22. Every command it sends through
+    exec_as_agent, the agent's own run included, gets Node 24 instead.
+
+        harbor run ... -a apt_fallback:OpenClawNode24AptFallback --ak version=2026.10.7 --ak thinking=medium -m openai/<model>
+    """
+
+    def get_version_command(self) -> str | None:
+        command = super().get_version_command()
+        return _on_node24(command) if command else command
+
+    async def exec_as_agent(self, environment: BaseEnvironment, command: str, *args, **kwargs):
+        return await super().exec_as_agent(environment, _on_node24(command), *args, **kwargs)
 
 
 class CodexAptFallback(AptSecurityFallback, Codex):

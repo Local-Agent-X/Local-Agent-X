@@ -1308,6 +1308,57 @@ describe("browser panel ↔ chat session binding", () => {
     await flush();
     expect(switchView).toHaveBeenCalledWith("view-chat-C-work");
   });
+
+  // The switch itself pokes views-changed; re-surfacing the chat's view on
+  // that poke snapped the user's click straight back (the tab "flashes").
+  it("keeps a tab the user picks outside the chat, through the views-changed its switch causes", async () => {
+    let viewsChangedCb: (() => void) | null = null;
+    const views = [
+      { viewId: "foreground", url: "file:///C:/docs/report.pdf" },
+      { viewId: "view-chat-E-work", url: "https://e" },
+    ];
+    const switchView = vi.fn().mockImplementation((id: string) => Promise.resolve({ viewId: id }));
+    reload({
+      listViews: vi.fn(() => Promise.resolve(views)),
+      switchView,
+      onViewsChanged: (cb: () => void) => { viewsChangedCb = cb; },
+    });
+    bind("chat-E");
+    await flush();
+    expect(switchView).toHaveBeenLastCalledWith("view-chat-E-work");
+    switchView.mockClear();
+    window.laxBrowserTab.switchTo("foreground"); // the user clicks the PDF tab
+    await flush();
+    viewsChangedCb!(); // main reports the attach flip
+    await flush();
+    expect(switchView.mock.calls).toEqual([["foreground"]]);
+    expect(window.laxBrowserTab.getSelectedViewId()).toBe("foreground");
+  });
+
+  it("still surfaces a new tab the agent opens after the user picked another", async () => {
+    let viewsChangedCb: (() => void) | null = null;
+    let views = [
+      { viewId: "foreground", url: "file:///C:/docs/report.pdf" },
+      { viewId: "view-chat-E-work", url: "https://e" },
+    ];
+    const switchView = vi.fn().mockImplementation((id: string) => Promise.resolve({ viewId: id }));
+    reload({
+      listViews: vi.fn(() => Promise.resolve(views)),
+      switchView,
+      onViewsChanged: (cb: () => void) => { viewsChangedCb = cb; },
+    });
+    bind("chat-E");
+    await flush();
+    window.laxBrowserTab.switchTo("foreground");
+    await flush();
+    viewsChangedCb!();
+    await flush();
+    switchView.mockClear();
+    views = [...views, { viewId: "view-chat-E-t2", url: "https://e2" }];
+    viewsChangedCb!();
+    await flush();
+    expect(switchView).toHaveBeenCalledWith("view-chat-E-t2");
+  });
 });
 
 declare global {

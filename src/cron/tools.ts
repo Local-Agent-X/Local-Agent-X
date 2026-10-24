@@ -18,6 +18,27 @@ const refused = (reason: string): ToolResult => blocked(reason, {
   recovery: "Only the user can make this change, on the Missions page. Tell them exactly what to change; to add a separate mission instead, create one under a new name.",
 });
 
+/**
+ * A mission by its id, or by its exact name when one mission has it. A
+ * scheduled run is told its own mission's name ("then delete this mission"),
+ * and passing that to an id-only lookup answered "Job not found": the reminder
+ * stayed scheduled, and the run reported it had cleaned up (2026-10-24).
+ */
+function findJob(cron: CronService, ref: unknown): CronJob | null {
+  const key = String(ref ?? "").trim();
+  if (!key) return null;
+  const byId = cron.get(key);
+  if (byId) return byId;
+  const named = cron.list().filter((j) => j.name.toLowerCase() === key.toLowerCase());
+  return named.length === 1 ? named[0] : null;
+}
+
+/** A miss is an error, so neither the model nor the outcome check reads it as done. */
+const notFound = (ref: unknown): ToolResult => ({
+  content: `No mission with id or name "${String(ref ?? "")}". mission_schedule_list shows each mission's id and name.`,
+  isError: true,
+});
+
 export function createCronTools(cron: CronService): ToolDefinition[] {
   return [
     {
@@ -63,15 +84,16 @@ export function createCronTools(cron: CronService): ToolDefinition[] {
     },
     {
       name: "mission_schedule_delete",
-      description: "Delete a scheduled mission by ID",
+      description: "Delete a scheduled mission by its ID or exact name",
       parameters: {
         type: "object",
-        properties: { id: { type: "string", description: "Job ID" } },
+        properties: { id: { type: "string", description: "Job ID or exact mission name" } },
         required: ["id"],
       },
       async execute(args) {
-        const deleted = await cron.delete(String(args.id));
-        return { content: deleted ? "Job deleted." : "Job not found." };
+        const job = findJob(cron, args.id);
+        if (!job || !(await cron.delete(job.id))) return notFound(args.id);
+        return { content: `Deleted mission "${job.name}" (${job.id}).` };
       },
     },
     {
@@ -80,7 +102,7 @@ export function createCronTools(cron: CronService): ToolDefinition[] {
       parameters: {
         type: "object",
         properties: {
-          id: { type: "string", description: "Job ID (from mission_schedule_list)" },
+          id: { type: "string", description: "Job ID or exact mission name (from mission_schedule_list)" },
           name: { type: "string", description: "New name (optional)" },
           schedule: { type: "string", description: "New cron expression or interval (optional)" },
           prompt: { type: "string", description: "New prompt that the agent will execute each run (optional)" },
@@ -98,15 +120,17 @@ export function createCronTools(cron: CronService): ToolDefinition[] {
         if (Object.keys(updates).length === 0 && args.secrets === undefined) {
           return { content: "No fields to update. Provide name, schedule, prompt, timezone, or secrets.", isError: true };
         }
-        const refusal = agentMissionRefusal(updates, cron.get(String(args.id)));
+        const found = findJob(cron, args.id);
+        if (!found) return notFound(args.id);
+        const refusal = agentMissionRefusal(updates, found);
         if (refusal) return refused(refusal);
         let job: CronJob | null;
         try {
-          job = Object.keys(updates).length > 0 ? cron.update(String(args.id), updates) : cron.get(String(args.id));
+          job = Object.keys(updates).length > 0 ? cron.update(found.id, updates) : found;
         } catch (e) {
           return { content: (e as Error).message, isError: true };
         }
-        if (!job) return { content: `Job "${args.id}" not found.`, isError: true };
+        if (!job) return notFound(args.id);
         const keys = await grantSecretPlanFromChat(cron, job, args.secrets, args, "mission_schedule_update");
         const changed = Object.keys(updates).map(k => k === "tz" ? "timezone" : k).join(", ");
         return { content: `Updated mission "${job.name}"${changed ? ` (${changed})` : ""}.${keys}` };
@@ -117,12 +141,13 @@ export function createCronTools(cron: CronService): ToolDefinition[] {
       description: "Enable or disable a scheduled mission",
       parameters: {
         type: "object",
-        properties: { id: { type: "string", description: "Job ID" } },
+        properties: { id: { type: "string", description: "Job ID or exact mission name" } },
         required: ["id"],
       },
       async execute(args) {
-        const job = cron.toggle(String(args.id));
-        if (!job) return { content: "Job not found." };
+        const found = findJob(cron, args.id);
+        const job = found ? cron.toggle(found.id) : null;
+        if (!job) return notFound(args.id);
         return { content: `Job "${job.name}" is now ${job.enabled ? "enabled" : "disabled"}.` };
       },
     },

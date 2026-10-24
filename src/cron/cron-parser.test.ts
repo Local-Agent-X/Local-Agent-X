@@ -126,6 +126,36 @@ describe("msUntilNextCron — schedule matching", () => {
     expect(msUntilNextCron("5m")).toBeNull();
     expect(msUntilNextCron("not a schedule")).toBeNull();
   });
+
+  // A reminder set for 2pm on Oct 24, 2026: after 2pm the search used to give
+  // up at 48h and answer "24h from now", so it ran again every day.
+  it("a date whose time has passed this year lands on that date next year, not tomorrow", () => {
+    const tz = "America/Chicago";
+    const now = new Date("2026-10-24T19:07:49Z"); // 2:07pm in Chicago
+    const ms = msUntilNextCron("0 14 24 10 *", tz, now);
+    const next = new Date(now.getTime() + (ms as number));
+    expect(getCronFields(next, tz)).toMatchObject({ month: 10, day: 24, hour: 14, minute: 0 });
+    expect(next.getUTCFullYear()).toBe(2027);
+  });
+
+  it("finds a date months away, and Feb 29 in the next leap year", () => {
+    const now = new Date("2026-10-24T12:00:00Z");
+    const march = new Date(now.getTime() + (msUntilNextCron("30 8 15 3 *", "UTC", now) as number));
+    expect(march.toISOString()).toBe("2027-03-15T08:30:00.000Z");
+    const leap = new Date(now.getTime() + (msUntilNextCron("0 0 29 2 *", "UTC", now) as number));
+    expect(leap.toISOString()).toBe("2028-02-29T00:00:00.000Z");
+  });
+
+  it("a date that never comes (Feb 30) is null, never a daily fallback", () => {
+    expect(msUntilNextCron("0 12 30 2 *", "UTC", new Date("2026-10-24T12:00:00Z"))).toBeNull();
+  });
+
+  it("still finds the next minute and the next hour exactly", () => {
+    const now = new Date("2026-10-24T12:00:00Z");
+    expect(msUntilNextCron("* * * * *", "UTC", now)).toBe(60_000);
+    expect(msUntilNextCron("0 * * * *", "UTC", now)).toBe(3600_000);
+    expect(msUntilNextCron("0 9 * * 1", "UTC", now)).toBe(45 * 3600_000); // Sat noon → Mon 9am
+  });
 });
 
 describe("msUntilNextRun + getIntervalMs — tz is ignored for intervals", () => {

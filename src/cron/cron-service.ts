@@ -10,6 +10,7 @@
  * Execution + retry machine: src/cron/cron-service-execute.ts
  */
 
+import { randomBytes } from "node:crypto";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, statSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { ToolDefinition } from "../types.js";
@@ -55,6 +56,9 @@ export interface CronJobOptions {
 }
 
 const logger = createLogger("cron-service");
+
+/** The longest one cron timer waits before recomputing (setTimeout's ceiling is ~24.8 days). */
+export const MAX_TIMER_WAIT_MS = 20 * 24 * 3600_000;
 
 export class CronService {
   private jobs_internal: Map<string, CronJob> = new Map();
@@ -214,10 +218,15 @@ export class CronService {
   private scheduleCronRun(job: CronJob): void {
     const ms = msUntilNextCron(job.schedule, job.tz);
     if (!ms) return;
-    const timer = setTimeout(async () => {
-      await this.executeJob(job, { manual: false });
-      if (job.enabled) this.scheduleCronRun(job);
-    }, ms);
+    // A run further out than one timer can wait wakes partway, recomputes and
+    // waits again: setTimeout fires at once for a delay past 2^31-1 ms (~24.8
+    // days), and a date schedule's next run can be a year away.
+    const timer = ms > MAX_TIMER_WAIT_MS
+      ? setTimeout(() => this.scheduleCronRun(job), MAX_TIMER_WAIT_MS)
+      : setTimeout(async () => {
+        await this.executeJob(job, { manual: false });
+        if (job.enabled) this.scheduleCronRun(job);
+      }, ms);
     this.timers_internal.set(job.id, timer as unknown as ReturnType<typeof setInterval>);
     const nextRun = new Date(Date.now() + ms);
     logger.info(`[cron] ${job.name}: next run at ${nextRun.toLocaleString()} (${Math.round(ms / 60000)}m from now)`);
@@ -258,7 +267,9 @@ export class CronService {
         ...(opts?.secretPlan !== undefined ? { secretPlan: opts.secretPlan } : {}),
       }) || existing;
     }
-    const id = `cron_${Date.now().toString(36)}`;
+    // The millisecond alone collided: two missions made in one millisecond (a
+    // turn's parallel calls) shared an id, and the second replaced the first.
+    const id = `cron_${Date.now().toString(36)}${randomBytes(3).toString("hex")}`;
     const job: CronJob = {
       id, name, schedule, prompt,
       enabled: true,

@@ -166,19 +166,33 @@ function cronMatchesAt(
   );
 }
 
-/** Calculate ms until the next cron match, evaluated in `tz`. Null for non-cron. */
+/** How far ahead the next match is looked for: past every Feb 29 a date can name. */
+const NEXT_CRON_HORIZON_MIN = 8 * 366 * 24 * 60;
+
+/**
+ * Calculate ms until the next cron match, evaluated in `tz`. Null for a
+ * non-cron, and for one that never matches (Feb 30). Candidates stay whole
+ * minutes from `now`; a day (or hour) that cannot match is skipped whole, so a
+ * date months away costs a few hundred steps. The search used to stop at 48h
+ * and answer "24h from now": a date schedule whose day had passed ("0 14 24 10
+ * *" after 2pm on Oct 24) then ran again every day (a reminder set for one
+ * afternoon, 2026-10-24).
+ */
 export function msUntilNextCron(schedule: string, tz?: string, now: Date = new Date()): number | null {
   const parts = schedule.trim().split(/\s+/);
   if (parts.length !== 5) return null;
   const [min, hour, dom, mon, dow] = parts;
 
-  for (let offset = 1; offset <= 2880; offset++) {
-    const candidate = new Date(now.getTime() + offset * 60_000);
-    if (cronMatchesAt(candidate, { min, hour, dom, mon, dow }, tz)) {
-      return offset * 60_000;
-    }
+  let offset = 1;
+  while (offset <= NEXT_CRON_HORIZON_MIN) {
+    const f = getCronFields(new Date(now.getTime() + offset * 60_000), tz);
+    const dayMatches = cronFieldMatches(dom, f.day, 31) && cronFieldMatches(mon, f.month, 12) && cronFieldMatches(dow, f.dow, 6);
+    if (!dayMatches) offset += 24 * 60 - (f.hour * 60 + f.minute);
+    else if (!cronFieldMatches(hour, f.hour, 23)) offset += 60 - f.minute;
+    else if (!cronFieldMatches(min, f.minute, 59)) offset += 1;
+    else return offset * 60_000;
   }
-  return 24 * 3600_000;
+  return null;
 }
 
 /** How long ago the most recent matching cron time was, in `tz`. Null if none. */

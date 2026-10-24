@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -84,5 +84,58 @@ describe("mission_schedule_update", () => {
     const plain = cron.create("b", "1h", "p");
     expect((await run("mission_schedule_update", { id: plain.id, prompt: "q" })).isError).toBeFalsy();
     expect(cron.get(plain.id)?.prompt).toBe("q");
+  });
+});
+
+// A scheduled run is told its own mission's name; an id-only lookup answered
+// "Job not found." as a success, and the run reported it had cleaned up
+// while the reminder stayed scheduled (2026-10-24).
+describe("finding a mission by id or name", () => {
+  it("deletes by exact name (any case), and by id", async () => {
+    const a = cron.create("feed-dog-reminder-2026-10-24", "0 14 24 10 *", "send it");
+    const b = cron.create("Wash Car Reminder", "30 14 * * *", "send it");
+    expect((await run("mission_schedule_delete", { id: "feed-dog-reminder-2026-10-24" })).isError).toBeFalsy();
+    expect((await run("mission_schedule_delete", { id: "wash car reminder" })).content).toContain(b.id);
+    expect(cron.list()).toHaveLength(0);
+    const c = cron.create("again", "1h", "x");
+    expect((await run("mission_schedule_delete", { id: c.id })).isError).toBeFalsy();
+    expect(a.id).not.toBe(c.id);
+  });
+
+  it("a miss is an error naming the list tool, never a quiet success", async () => {
+    const r = await run("mission_schedule_delete", { id: "no-such-mission" });
+    expect(r.isError).toBe(true);
+    expect(r.content).toMatch(/mission_schedule_list/);
+  });
+
+  it("does not guess between two missions with the same name", async () => {
+    cron.create("Reminder", "1h", "x");
+    cron.create("reminder", "2h", "y");
+    expect((await run("mission_schedule_delete", { id: "Reminder" })).isError).toBe(true);
+    expect(cron.list()).toHaveLength(2);
+  });
+
+  it("toggle and update find a mission by name the same way", async () => {
+    const job = cron.create("Wash Car Reminder", "30 14 * * *", "send it");
+    expect((await run("mission_schedule_toggle", { id: "Wash Car Reminder" })).content).toMatch(/disabled/);
+    expect(cron.get(job.id)?.enabled).toBe(false);
+    expect((await run("mission_schedule_update", { id: "Wash Car Reminder", schedule: "0 9 * * *" })).isError).toBeFalsy();
+    expect(cron.get(job.id)?.schedule).toBe("0 9 * * *");
+    expect((await run("mission_schedule_toggle", { id: "nope" })).isError).toBe(true);
+  });
+});
+
+describe("mission ids", () => {
+  it("missions made in the same millisecond keep their own ids", () => {
+    const now = Date.now();
+    const spy = vi.spyOn(Date, "now").mockReturnValue(now);
+    try {
+      const a = cron.create("first", "1h", "x");
+      const b = cron.create("second", "1h", "y");
+      expect(a.id).not.toBe(b.id);
+      expect(cron.list().map((j) => j.name).sort()).toEqual(["first", "second"]);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

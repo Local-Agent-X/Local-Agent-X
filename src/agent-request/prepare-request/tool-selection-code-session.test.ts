@@ -24,7 +24,7 @@ function tool(name: string): ToolDefinition {
 
 const KIT = kits.selectTools(kits.CODE_SESSION_KIT);
 function catalog(): ToolDefinition[] {
-  const all = [...new Set([...KIT, "email_send", "browser", "memory_search", "pptx_create"])].map(tool);
+  const all = [...new Set([...KIT, "email_send", "browser", "memory_search", "memory_save", "self_edit", "http_request", "pptx_create"])].map(tool);
   applyAudiences(all);
   return all;
 }
@@ -69,6 +69,14 @@ describe("selectTools — a code session", () => {
     await turn("set up the repo");
     rememberSessionTools("code-session", ["memory_search"]);
     expect(names(await turn("what package manager do I use?"))).toContain("memory_search");
+  });
+
+  // Terminal-Bench smoke, 2026-10-24: qwen3.6's code session got browser,
+  // self_edit, memory_save and memory_search in place of grep, glob and the
+  // task tools, from the tier's essentials list.
+  it("a local model's code session gets the same kit, only compacted", async () => {
+    const local = await turn("fix the failing test", "local-code", "code", "qwen3.6:27b-172k");
+    expect(names(local)).toEqual([...KIT].sort());
   });
 
   it("a chat keeps the per-message selection", async () => {

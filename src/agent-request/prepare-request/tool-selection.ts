@@ -141,7 +141,11 @@ async function codeSessionTools(input: ToolSelectionInput, tier: Tier): Promise<
   const { withUndoCounterparts } = await import("../../tools/undo-pairs.js");
   const names = new Set([...selectKit(CODE_SESSION_KIT), ...(sessionToolNames.get(input.sessionId) ?? [])]);
   let tools = withUndoCounterparts(input.allAgentTools.filter((t) => names.has(t.name)), input.allAgentTools);
-  if (tier !== "strong") tools = shrinkToolsForTier(tools, tier, input.allAgentTools, tools.length);
+  // Compaction only, at the set's own size. Handing it the catalog made it
+  // fill the set from the tier's essentials instead: a local model's code
+  // session got browser, self_edit and memory in place of grep, glob and the
+  // task tools (Terminal-Bench smoke, 2026-10-24).
+  if (tier !== "strong") tools = shrinkToolsForTier(tools, tier, undefined, tools.length);
   rememberSessionTools(input.sessionId, tools.map((t) => t.name));
   logger.info(`[tools] code session: ${tools.length} for ${tier} model ${input.resolvedModel} (${tools.map((t) => t.name).join(",")})`);
   return tools;

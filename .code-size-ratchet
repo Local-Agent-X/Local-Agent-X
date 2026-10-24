@@ -42,7 +42,7 @@ src/canonical-loop/turn-loop/decide-outcome.ts#decideTurnOutcome 111
 src/canonical-loop/worker.ts#drive 184
 src/cognition/cross-session-learning/service.ts#CrossSessionLearningService.reconcile 152
 src/config.ts#loadConfig 133
-src/context/system-prompt-builder.ts#createSystemPromptBuilder 130
+src/context/system-prompt-builder.ts#createSystemPromptBuilder 126
 src/local-runtimes/certification-runner.ts 360
 src/mcp-client/manifest.ts#assessMcpManifest 118
 src/memory/auto-extract.ts#autoExtractAndSave 183

@@ -20,7 +20,10 @@ import { basePartSlug, basePromptSections } from "../config-loader.js";
 /** The coding "How to work": in code mode only. */
 export const CODE_MODE_PART = "code-mode";
 
-/** Parts a code session leaves out. */
+/** Parts a code session leaves out. `delegation` (~1.75k tokens) is the craft
+ *  of handing work to teammates through agent_spawn, which a code session does
+ *  not load; when a task calls for a worker, the tool's own description carries
+ *  its use (measured against Hermes on the same model, 2026-10-24). */
 const LEFT_OUT_OF_CODE_MODE: ReadonlySet<string> = new Set([
   "how-to-control-your-own-app",
   "how-to-work",
@@ -30,6 +33,7 @@ const LEFT_OUT_OF_CODE_MODE: ReadonlySet<string> = new Set([
   "personality",
   "self-modification",
   "self-repair-and-self-extension",
+  "delegation",
 ]);
 
 /** Does a session in `mode` carry the base-prompt part with this slug? */

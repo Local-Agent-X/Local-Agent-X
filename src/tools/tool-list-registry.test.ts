@@ -31,6 +31,7 @@ const REGISTRY: readonly Registered[] = [
   { file: "src/agency/agent-roles.ts", owner: ".plus" },
   { file: "src/rbac.ts", owner: ".plus" },
   { file: "src/agent-request/prepare-request/tool-selection.ts", owner: "ALSO_BUILDS" },
+  { file: "src/tools/tool-kits.ts", owner: "CODE_SESSION_KIT" },
   // Outside formats and test data: names as another system spells them.
   { file: "src/anthropic-client/oauth-direct.ts", owner: "CLASSIFIER_FINGERPRINT_TOOLS" },
   { file: "src/canonical-loop/adapters/tool-call-text-corpus.ts", owner: "CORPUS_TOOL_NAMES" },

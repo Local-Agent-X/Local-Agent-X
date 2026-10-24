@@ -1,7 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { basePartSlug, basePromptSections, loadSystemPrompt } from "../config-loader.js";
 import { CODE_MODE_PART, basePromptForMode, promptPartInMode } from "./prompt-mode.js";
 import { createSystemPromptBuilder } from "./system-prompt-builder.js";
+
+// A real App Map needs a generated manifest on disk; a stand-in shows which
+// modes carry the section at all.
+vi.mock("../manifest-generator/index.js", () => ({ getManifestSummary: () => "## App Map (stand-in)" }));
 
 const file = loadSystemPrompt();
 const slugs = basePromptSections(file).map((part) => basePartSlug(part.id));
@@ -22,7 +26,7 @@ describe("prompt parts per chat mode, against the shipped config/system-prompt.m
   it("every part a code session leaves out is a heading of the shipped prompt", () => {
     const leftOut = slugs.filter((slug) => !promptPartInMode(slug, "code"));
     expect(leftOut.sort()).toEqual([
-      "apps-pages", "browser", "how-to-control-your-own-app", "how-to-work", "memory",
+      "apps-pages", "browser", "delegation", "how-to-control-your-own-app", "how-to-work", "memory",
       "personality", "self-modification", "self-repair-and-self-extension",
     ]);
   });
@@ -43,5 +47,12 @@ describe("prompt parts per chat mode, against the shipped config/system-prompt.m
       const core = built.renderedSections.filter((s) => s.id.startsWith("core-identity/")).map((s) => s.text).join("");
       expect(core, mode).toBe(basePromptForMode(file, mode));
     }
+  });
+
+  it("a code session leaves out the App Map, a chat keeps it", async () => {
+    const ids = async (mode: "chat" | "code") =>
+      (await createSystemPromptBuilder({ basePrompt: file, providerHint: "", mode }).buildWithTelemetry()).renderedSections.map((s) => s.id);
+    expect(await ids("chat")).toContain("app-manifest");
+    expect(await ids("code")).not.toContain("app-manifest");
   });
 });

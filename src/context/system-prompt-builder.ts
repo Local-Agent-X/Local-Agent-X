@@ -211,6 +211,26 @@ function runtimeContextSection(): PromptSection {
 }
 
 /**
+ * App manifest — the agent's map of its own body (auto-generated catalog),
+ * frozen per session (session-prompt-snapshot.ts). A code session leaves it out
+ * (~2.5k tokens), as it leaves out the matching "How to control your own app"
+ * part (prompt-mode.ts): it works in a project folder, not on LAX's pages,
+ * settings and routes.
+ */
+function appManifestSection(sessionId: string | undefined, mode: ChatMode): PromptSection {
+  return {
+    id: "app-manifest", label: "App Map", type: "static", policy: "degradable", priority: "navigation",
+    shouldInclude: () => mode !== "code",
+    build: () => snapshotForSession(sessionId, "app-manifest", async () => {
+      try {
+        const { getManifestSummary } = await import("../manifest-generator/index.js");
+        return getManifestSummary() || "";
+      } catch { return ""; }
+    }),
+  };
+}
+
+/**
  * Single builder factory for ALL paths — web chat, bridge, cron, sub-agents.
  * Callers pass what they have; empty strings are auto-skipped.
  */
@@ -261,16 +281,7 @@ export function createSystemPromptBuilder(opts: {
     });
   }
 
-  // App manifest — the agent's map of its own body (auto-generated catalog)
-  builder.addSection({
-    id: "app-manifest", label: "App Map", type: "static", policy: "degradable", priority: "navigation",
-    build: () => snapshotForSession(opts.sessionId, "app-manifest", async () => {
-      try {
-        const { getManifestSummary } = await import("../manifest-generator/index.js");
-        return getManifestSummary() || "";
-      } catch { return ""; }
-    }),
-  });
+  builder.addSection(appManifestSection(opts.sessionId, opts.mode ?? "chat"));
 
   // config/agent-rules.md — the product agent's invariants (three-lane
   // routing, workspace/ vs public/, self_edit gating, secret placeholders).

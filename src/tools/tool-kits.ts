@@ -46,15 +46,22 @@ export const CODING_KIT: readonly string[] = toolsTagged(...CODING_KIT_TAGS);
  *  the generic Worker template, which build against live references. */
 export const BUILDER_KIT: readonly string[] = toolsTagged(...CODING_KIT_TAGS, "web-read", "web-search", "image-view");
 
-/** What a code session (session/mode.ts) loads up front: the coding kit, the
- *  long-running processes a task's server or watcher needs, its step list, the
- *  web for docs, HTTP for APIs and downloads (the shell's own curl/wget to the
- *  internet stays refused; http_request's save_to is the download path),
- *  deleting and restoring files, and tool_search, through which every other
- *  tool stays loadable when a task needs it. */
+/** What a code session (session/mode.ts) loads up front: read, find, change and
+ *  run code, a step list, and tool_search. Everything else (processes, the web,
+ *  HTTP, deleting files, images, structural search) is one tool_search away, is
+ *  named in the prompt's deferred-tool list, and stays loaded for the rest of the
+ *  session once loaded. Every loaded schema is re-sent on every model call: the
+ *  23-tool kit cost ~6.2k tokens a call, most of it tools a coding turn rarely
+ *  touches (the 2026-10-24 Aider run, against Hermes's lean set on the same
+ *  model). Undo counterparts still join the tools they undo (undo-pairs.ts). */
 export const CODE_SESSION_KIT: ToolSelection = {
-  tags: [...CODING_KIT_TAGS, "process", "tasks", "web-read", "web-search", "http-api", "file-delete", "image-view"],
-  plus: { tool_search: "loads any other tool by name or purpose; without it the rest of the catalog is out of reach" },
+  tags: CODING_KIT_TAGS,
+  except: { structural_search: "grep and glob find code; an AST query is a tool_search away" },
+  plus: {
+    tool_search: "loads any other tool by name or purpose; without it the rest of the catalog is out of reach",
+    task_create: "a multi-step change keeps its steps on record; the open-steps gate reads them",
+    task_update: "marks those steps done as the work lands",
+  },
 };
 
 /** The Office umbrella tools (each covers create/edit/read actions). A worker

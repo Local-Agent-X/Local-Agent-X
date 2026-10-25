@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, sep } from "node:path";
 
-import { networkDenialHint, sandboxDenialHint } from "./index.js";
+import { loopbackRefusalHint, networkDenialHint, sandboxDenialHint } from "./index.js";
 import { installRootDenialHint } from "./denial-hints.js";
 import { INSTALL_CHANGE_ROUTE, installRootWriteRule } from "../security/layer/install-root.js";
 
@@ -347,5 +347,64 @@ describe("installRootDenialHint — a write the install-root rule refused", () =
     const target = join(live.root, "config", "system-prompt.md");
     const refusal = process.platform === "win32" ? "Permission denied" : process.platform === "linux" ? "Read-only file system" : "Operation not permitted";
     expect(sandboxDenialHint("guarded", `bash: ${target}: ${refusal}\n`)).toContain(INSTALL_CHANGE_ROUTE);
+  });
+});
+
+// A refused loopback connect from inside the Windows or Linux cage is the
+// kernel's answer for a port the cage does not pass through, and it reads
+// exactly like a dead port. The hint fires only when the host says the port
+// IS listening, so a genuinely dead database is never blamed on the sandbox.
+const NODE_LOOPBACK_REFUSED = "Error: connect ECONNREFUSED 127.0.0.1:5432\n    at TCPConnectWrap.afterConnect [as oncomplete] (node:net:1555:16)\n";
+const PSQL_LOOPBACK_REFUSED = 'psql: error: connection to server at "localhost" (127.0.0.1), port 5432 failed: Connection refused\n';
+const BASH_LOOPBACK_REFUSED = "/bin/bash: connect: Connection refused\n/bin/bash: /dev/tcp/127.0.0.1/11434: Connection refused\n";
+const CURL_LOOPBACK_REFUSED = "curl: (7) Failed to connect to localhost port 11434 after 0 ms: Connection refused\n";
+const NODE_REMOTE_REFUSED = "Error: connect ECONNREFUSED 192.0.2.1:80\n";
+const listening = () => true;
+const dead = () => false;
+const unknown = () => null;
+
+describe("loopbackRefusalHint — fire cases", () => {
+  it("guarded on Windows: a refused loopback port that is listening names the cage, the proxy route and the raw-TCP limit", () => {
+    const hint = loopbackRefusalHint("guarded", NODE_LOOPBACK_REFUSED, listening, "win32");
+    expect(hint).toContain("port 5432");
+    expect(hint).toContain('mode "guarded"');
+    expect(hint).toMatch(/HTTP_PROXY\/HTTPS_PROXY/);
+    expect(hint).toMatch(/raw TCP/);
+    expect(hint).toMatch(/not the service being down/);
+    expect(hint).toMatch(/LAX_SANDBOX=host/);
+  });
+
+  it("guarded on Linux: names the namespace and the localServicePorts registration", () => {
+    const hint = loopbackRefusalHint("guarded", PSQL_LOOPBACK_REFUSED, listening, "linux");
+    expect(hint).toContain("port 5432");
+    expect(hint).toMatch(/network namespace/);
+    expect(hint).toMatch(/localServicePorts/);
+  });
+
+  it("reads the port from bash's /dev/tcp pair and from curl", () => {
+    expect(loopbackRefusalHint("guarded", BASH_LOOPBACK_REFUSED, listening, "win32")).toContain("port 11434");
+    expect(loopbackRefusalHint("guarded", CURL_LOOPBACK_REFUSED, listening, "win32")).toContain("port 11434");
+  });
+});
+
+describe("loopbackRefusalHint — null cases (never lie)", () => {
+  it("a port nobody listens on is a real refusal, and an unanswered lookup is not a yes", () => {
+    expect(loopbackRefusalHint("guarded", NODE_LOOPBACK_REFUSED, dead, "win32")).toBeNull();
+    expect(loopbackRefusalHint("guarded", NODE_LOOPBACK_REFUSED, unknown, "win32")).toBeNull();
+  });
+
+  it("a refused off-machine port is never the cage's doing", () => {
+    expect(loopbackRefusalHint("guarded", NODE_REMOTE_REFUSED, listening, "win32")).toBeNull();
+  });
+
+  it("stays silent outside guarded on Windows/Linux: macOS guarded reaches registered loopback directly, host and strict modes have other answers", () => {
+    expect(loopbackRefusalHint("guarded", NODE_LOOPBACK_REFUSED, listening, "darwin")).toBeNull();
+    expect(loopbackRefusalHint("host", NODE_LOOPBACK_REFUSED, listening, "win32")).toBeNull();
+    expect(loopbackRefusalHint("seatbelt", NODE_LOOPBACK_REFUSED, listening, "darwin")).toBeNull();
+    expect(loopbackRefusalHint("bwrap", NODE_LOOPBACK_REFUSED, listening, "linux")).toBeNull();
+  });
+
+  it("the port must sit in a refused-connect line, not anywhere in the output", () => {
+    expect(loopbackRefusalHint("guarded", "listening on 127.0.0.1:5432\nConnection refused\n", listening, "win32")).toBeNull();
   });
 });

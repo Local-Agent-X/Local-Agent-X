@@ -221,3 +221,55 @@ export function networkDenialHint(
     : "it runs the shell in an isolated network namespace (--unshare-net), so nothing off-machine and no host loopback service is reachable";
   return `[sandbox: connection blocked by the bash network cage (mode "${mode}") — ${confinement}; this is the sandbox, not the remote host being down. No proxy route exists in this strict mode; use the native http_request tool for HTTP(S). If the user needs shell network, they can change the sandbox mode in Settings → Security (or LAX_SANDBOX=host); offer that rather than disabling it yourself.]`;
 }
+
+// A refused connect to a LOOPBACK port, with the port: node/libuv's errno line,
+// bash's /dev/tcp pair, psql/libpq's "connection to server … port N failed",
+// and curl's "Failed to connect to <host> port N". Only loopback hosts: a
+// refused off-machine port is never the cage's doing.
+const LOOPBACK = String.raw`(?:127\.0\.0\.1|\[?::1\]?|localhost)`;
+const LOOPBACK_REFUSED_RES = [
+  new RegExp(String.raw`\bECONNREFUSED ${LOOPBACK}:(\d{1,5})\b`),
+  new RegExp(String.raw`connect: connection refused\n[^\n]*/dev/tcp/${LOOPBACK}/(\d{1,5})\b`, "i"),
+  new RegExp(String.raw`connection to server at "${LOOPBACK}"[^\n]{0,40}, port (\d{1,5}) failed: connection refused`, "i"),
+  new RegExp(String.raw`failed to connect to ${LOOPBACK} port (\d{1,5})\b[^\n]{0,80}(?:connection refused|couldn't connect)`, "i"),
+];
+
+function refusedLoopbackPort(output: string): number | null {
+  for (const re of LOOPBACK_REFUSED_RES) {
+    const m = re.exec(output);
+    if (m) return Number(m[1]);
+  }
+  return null;
+}
+
+/**
+ * When a guarded shell on Windows or Linux was REFUSED a loopback port that a
+ * service is listening on outside the cage, return a notice naming the cage
+ * and the ways through; null otherwise. On those platforms the cage reaches
+ * the host's loopback only through the egress proxy (Windows) or the bridged
+ * registered ports (Linux), and the kernel answers a raw connect to anything
+ * else with ECONNREFUSED — the same answer a dead port gives, so the bare error
+ * sends the agent restarting a database that is fine.
+ *
+ * Truthfulness gates:
+ *  - Only guarded on win32/linux: macOS guarded reaches registered loopback
+ *    directly and denies the rest with EPERM (networkDenialHint); strict
+ *    modes claim no route at all.
+ *  - Only when `listening(port)` answers true, from the host's own view: a
+ *    port nobody listens on is a real refusal, and an unanswered lookup
+ *    (null) is not a yes.
+ */
+export function loopbackRefusalHint(
+  mode: SandboxMode,
+  output: string,
+  listening: (port: number) => boolean | null,
+  platform: NodeJS.Platform = process.platform,
+): string | null {
+  if (mode !== "guarded" || (platform !== "win32" && platform !== "linux")) return null;
+  const port = refusedLoopbackPort(output);
+  if (port === null || listening(port) !== true) return null;
+  const route = platform === "win32"
+    ? "the Windows cage lets a shell reach loopback only through the injected HTTP_PROXY/HTTPS_PROXY egress proxy, so an HTTP API is reachable with a client that honors the proxy env (curl/npm do) or with the native http_request tool, and a raw TCP connection (a database, Redis, Ollama's own port) cannot cross the cage today"
+    : "the guarded shell runs in its own network namespace and only registered local service ports are bridged into it; the user can add the port to \"localServicePorts\" in their security settings (~/.lax/security.json) — you cannot edit that file — or you can use the native http_request tool for an HTTP API";
+  return `[sandbox: loopback port ${port} refused inside the bash network cage (mode "guarded") — a service IS listening on it on this machine; ${route}. This is the sandbox, not the service being down. If the user needs the shell to reach it directly, they can change the sandbox mode in Settings → Security (or LAX_SANDBOX=host); offer that rather than disabling it yourself.]`;
+}

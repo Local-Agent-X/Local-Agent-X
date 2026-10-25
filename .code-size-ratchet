@@ -97,7 +97,7 @@ src/tools/image-tools/generate-video.ts#generateViaXaiVideo 109
 src/tools/project-tools.ts#createProjectTools 110
 src/tools/read-imports.ts#buildImportAppendix 108
 src/tools/secret-tools.ts#createSecretTools 111
-src/tools/shell-tool.ts#bashTool.execute 126
+src/tools/shell-tool.ts#bashTool.execute 120
 src/update-pipeline.ts#applyGitUpdate 130
 src/voice/voice-session/model-init.ts#initializeVoiceStack 124
 src/whatsapp-bridge/message-handler.ts#handleMessagesUpsert 179

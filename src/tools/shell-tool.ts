@@ -1,5 +1,7 @@
 import type { ServerEvent, ToolDefinition, ToolResult } from "../types.js";
-import { getSandboxMode, execInSandbox, sandboxDenialHint, networkDenialHint } from "../sandbox/index.js";
+import type { SandboxMode } from "../sandbox/types.js";
+import { getSandboxMode, execInSandbox, sandboxDenialHint, networkDenialHint, loopbackRefusalHint } from "../sandbox/index.js";
+import { isPortBound } from "./process-session.js";
 import { ok, err, blocked, timeout as timeoutResult } from "./result-helpers.js";
 import { detectTargetShell, translateForShell, powershellCmdletHint, quotedGlobHint, windowsPathHint, workspacePrefixHint } from "./shell-translate.js";
 import { resolveWindowsShell, recordAvSuspectKill, isLikelyAvKill } from "./shell-env.js";
@@ -80,6 +82,43 @@ function progressEmitter(
     try { onEvent({ type: "tool_progress", toolName: "bash", toolCallId, message }); } catch { /* best-effort */ }
   };
   return { onOutput: (captured) => { output = captured; emit(); } };
+}
+
+/**
+ * What a failed command's output does not say for itself, one line per
+ * finding, in the order the agent should read them. Each hint names a real
+ * cause the bare error hides: a cmdlet fired into bash, a Windows path, the
+ * workspace/ prefix, a cage denial (file, then network, then a refused
+ * loopback port that is listening on the host), and a vendor CLI that moved
+ * past its pinned skill.
+ */
+function failureNotices(run: {
+  sandboxMode: SandboxMode; stdout: string; stderr: string; out: string; cwd: string; command: string; code: number | null;
+}): string {
+  const { sandboxMode, stderr, out, cwd, command, code } = run;
+  return [
+    // A PowerShell cmdlet fired into POSIX bash surfaces only as "command not
+    // found" (exit 127) — name the mistake so the agent switches tools instead
+    // of re-emitting the same cmdlet (it did this 3× in one session).
+    powershellCmdletHint(stderr),
+    windowsPathHint(stderr),
+    // `workspace/x` in a command is `<workspace>/workspace/x` — the file tools
+    // forgive that prefix, bash cannot; say so instead of "No such file".
+    workspacePrefixHint(stderr, cwd, undefined, command) ?? quotedGlobHint(command),
+    // If the kernel cage (guarded/seatbelt/bwrap) denied a credential dir, the
+    // bare "Operation not permitted" reads as a mystery — name the sandbox + the
+    // off switch so the agent reports it right instead of flailing.
+    sandboxDenialHint(sandboxMode, out),
+    // Same seam for NETWORK denials: the cage's connect-EPERM otherwise reads
+    // as "host is down" and the agent reports a lie. File hint first, then net.
+    networkDenialHint(sandboxMode, out),
+    // A refused loopback port that is listening on the host is the cage too
+    // (Windows, Linux): otherwise the agent restarts a database that is fine.
+    loopbackRefusalHint(sandboxMode, out, isPortBound),
+    // A vendor CLI that fails may have moved past the pinned skill that
+    // told the agent to run it (protocols/vendor-drift.ts).
+    vendorDriftHint(command, code, stderr),
+  ].filter(Boolean).join("\n");
 }
 
 export const bashTool: ToolDefinition = {
@@ -285,25 +324,7 @@ export const bashTool: ToolDefinition = {
       }
 
       const out = [stdout, stderr].filter(Boolean).join("\n");
-      // If the kernel cage (guarded/seatbelt/bwrap) denied a credential dir, the
-      // bare "Operation not permitted" reads as a mystery — name the sandbox + the
-      // off switch so the agent reports it right instead of flailing.
-      const cageNotice = sandboxDenialHint(sandboxMode, out);
-      // Same seam for NETWORK denials: the cage's connect-EPERM otherwise reads
-      // as "host is down" and the agent reports a lie. File hint first, then net.
-      const netNotice = networkDenialHint(sandboxMode, out);
-      // A PowerShell cmdlet fired into POSIX bash surfaces only as "command not
-      // found" (exit 127) — name the mistake so the agent switches tools instead
-      // of re-emitting the same cmdlet (it did this 3× in one session).
-      const cmdletNotice = powershellCmdletHint(stderr);
-      const pathNotice = windowsPathHint(stderr);
-      // `workspace/x` in a command is `<workspace>/workspace/x` — the file tools
-      // forgive that prefix, bash cannot; say so instead of "No such file".
-      const prefixNotice = workspacePrefixHint(stderr, cwd, undefined, command) ?? quotedGlobHint(command);
-      // A vendor CLI that fails may have moved past the pinned skill that
-      // told the agent to run it (protocols/vendor-drift.ts).
-      const driftNotice = vendorDriftHint(command, code, stderr);
-      const notices = [cmdletNotice, pathNotice, prefixNotice, cageNotice, netNotice, driftNotice].filter(Boolean).join("\n");
+      const notices = failureNotices({ sandboxMode, stdout, stderr, out, cwd, command, code });
       return err((notices ? notices + "\n" : "") + (out || `Exit code: ${code}`), {
         exit_code: code,
         duration_ms: durationMs,

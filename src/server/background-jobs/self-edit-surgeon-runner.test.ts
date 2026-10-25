@@ -58,7 +58,13 @@ vi.mock("../../canonical-loop/index.js", () => ({ runAgentViaCanonical: mocks.ru
 vi.mock("../../security/index.js", () => ({
   SecurityLayer: class { addAllowedPath(): void {} removeAllowedPath(): void {} },
 }));
-vi.mock("../../security/layer/index.js", () => ({ loadFileAccessModeAtLeast: () => "common" }));
+// Only the access-mode read is stubbed: the shell tool's process sessions
+// register with this layer at import, so a one-export stand-in would fail
+// the import of everything that reaches a shell.
+vi.mock("../../security/layer/index.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../security/layer/index.js")>()),
+  loadFileAccessModeAtLeast: () => "common",
+}));
 vi.mock("../../agent-request/index.js", () => ({
   resolveProvider: async () => ({ provider: "anthropic", apiKey: "key", model: "claude-opus-4-6" }),
 }));

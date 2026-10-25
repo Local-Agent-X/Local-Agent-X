@@ -23,7 +23,7 @@ export { validateSandboxConfig } from "./validate.js";
 // Denial→truthful-notice mapping lives in denial-hints.ts (split when the
 // network hint landed); re-exported so callers keep importing from the sandbox
 // facade.
-export { sandboxDenialHint, networkDenialHint } from "./denial-hints.js";
+export { sandboxDenialHint, networkDenialHint, loopbackRefusalHint } from "./denial-hints.js";
 
 // Memoized: whether seatbelt is usable on THIS host (macOS + sandbox-exec
 // present + our generated profile actually loads). Deterministic per process,

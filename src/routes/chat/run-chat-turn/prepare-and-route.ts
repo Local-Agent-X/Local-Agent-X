@@ -46,6 +46,12 @@ export async function preparePerTurnRequest(input: PrepareInput): Promise<Prepar
   });
   logger.info(`[timing] prepareAgentRequest ${Date.now() - prepStart}ms (sess=${sessionId.slice(0, 16)})`);
   console.log(`[chat-diag] prepared sess=${sessionId.slice(-8)} provider=${prepared.provider} model=${prepared.model || "EMPTY"} hasKey=${!!prepared.apiKey}`);
+  // A chat on a cloud model frees the local model the last local chat held
+  // (another local model moves the hold itself, in resolve-target).
+  if (prepared.provider !== "local") {
+    const { endChatModelResidency } = await import("../../../local-runtimes/residency.js");
+    endChatModelResidency();
+  }
   return prepared;
 }
 

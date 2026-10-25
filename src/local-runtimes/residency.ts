@@ -254,14 +254,14 @@ export const CHAT_RESIDENCY_IDLE_MS = 30 * 60_000;
 // One hold at a time, matching "the user's current local chat model". Moving
 // the hold on a model switch lets the runtime evict the old model instead of
 // two 17GB models fighting for VRAM — the exact thrash this exists to end.
-let heldChat: { key: string; timer: ReturnType<typeof setInterval>; lastUsedAt: number } | null = null;
+let heldChat: { key: string; base: string; model: string; timer: ReturnType<typeof setInterval>; lastUsedAt: number } | null = null;
 
 /**
  * Keep `model` resident on the Ollama-native runtime at `baseUrl` while chat
  * keeps using it: called on every local chat turn, each call renews the hold,
  * and it ends after CHAT_RESIDENCY_IDLE_MS without one or when it moves to
- * another model. Idempotent per (baseUrl, model); switching targets releases
- * the previous hold. Fire-and-forget like warmModel — a failed re-up is
+ * another model. Idempotent per (baseUrl, model); switching targets unloads
+ * the previous model. Fire-and-forget like warmModel — a failed re-up is
  * debug-noise and the next real call surfaces any genuine outage.
  * Ollama-native only (rides /api/generate); OpenAI-compat-only runtimes
  * (LM Studio, vLLM) manage their own TTLs.
@@ -273,14 +273,35 @@ export function holdChatModelResidency(baseUrl: string, model: string): void {
     heldChat.lastUsedAt = Date.now();
     return;
   }
-  if (heldChat) clearInterval(heldChat.timer);
+  endChatModelResidency();
   warmModel(base, model);
   const timer = setInterval(() => {
     if (heldChat && Date.now() - heldChat.lastUsedAt >= CHAT_RESIDENCY_IDLE_MS) releaseChatModelResidency();
     else warmModel(base, model);
   }, CHAT_RESIDENCY_REUP_MS);
   timer.unref?.();
-  heldChat = { key, timer, lastUsedAt: Date.now() };
+  heldChat = { key, base, model, timer, lastUsedAt: Date.now() };
+}
+
+/**
+ * A chat turn went to a different model: drop the hold and unload the held
+ * model now (keep_alive 0), so its VRAM is free for whatever runs next instead
+ * of sitting out the runtime's keep_alive. Fire-and-forget; no hold, no call.
+ */
+export function endChatModelResidency(): void {
+  if (!heldChat) return;
+  const { base, model } = heldChat;
+  releaseChatModelResidency();
+  invalidateResidencyCache(base);
+  void fetch(`${base}/api/generate`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ model, keep_alive: 0 }),
+    signal: AbortSignal.timeout(WARM_TIMEOUT_MS),
+  }).then(
+    (res) => logger.debug(res.ok ? `unloaded (model=${model})` : `unload failed: HTTP ${res.status} (model=${model})`),
+    (err) => logger.debug(`unload failed (model=${model}): ${err instanceof Error ? err.message : String(err)}`),
+  );
 }
 
 /** Drop the current hold (model switch away from local, shutdown, tests). */

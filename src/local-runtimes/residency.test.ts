@@ -13,6 +13,7 @@ import {
   warmModel,
   holdChatModelResidency,
   releaseChatModelResidency,
+  endChatModelResidency,
   CHAT_RESIDENCY_IDLE_MS,
   dispatchNumCtx,
   DISPATCH_MODEL_MAX_BYTES,
@@ -269,6 +270,40 @@ describe("holdChatModelResidency", () => {
     const before = spy.mock.calls.length;
     await vi.advanceTimersByTimeAsync(8 * 60_000);
     expect(spy.mock.calls.length).toBeGreaterThan(before); // still re-upped at 80+ minutes
+  });
+
+  const unloads = (spy: ReturnType<typeof okFetch>) => spy.mock.calls
+    .map(c => JSON.parse(String(c[1]?.body)) as { model: string; keep_alive: unknown })
+    .filter(b => b.keep_alive === 0)
+    .map(b => b.model);
+
+  it("a chat on another model unloads the held one now and stops re-upping it", async () => {
+    vi.useFakeTimers();
+    const spy = okFetch();
+    holdChatModelResidency(BASE, "qwen3.6:27b");
+    await settled();
+    endChatModelResidency();
+    await settled();
+    expect(unloads(spy)).toEqual(["qwen3.6:27b"]);
+    const after = spy.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(30 * 60_000);
+    expect(spy.mock.calls.length).toBe(after);
+  });
+
+  it("moving the hold to another local model unloads the previous one", async () => {
+    vi.useFakeTimers();
+    const spy = okFetch();
+    holdChatModelResidency(BASE, "qwen3.6:27b");
+    holdChatModelResidency(BASE, "qwen3.8:27b");
+    await settled();
+    expect(unloads(spy)).toEqual(["qwen3.6:27b"]);
+  });
+
+  it("with no hold, ending it calls nothing", async () => {
+    const spy = okFetch();
+    endChatModelResidency();
+    await settled();
+    expect(spy).not.toHaveBeenCalled();
   });
 
   it("release stops the re-up loop", async () => {

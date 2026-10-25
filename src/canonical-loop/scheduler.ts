@@ -93,7 +93,10 @@ const active = new Map<string, ExecutionHandle>();
 // guard during adapter construction, so a re-enqueue (mid-turn inject / a new
 // message for the same op) slips past and the op is launched twice: two lane
 // increments, one decrement, one permanently leaked slot.
-const launching = new Set<string>();
+// Each reservation is owned by the launch that made it (the token), so an
+// earlier launch of the same op settling late — evicted by recovery and
+// already relaunched — cannot erase the relaunch's reservation.
+const launching = new Map<string, symbol>();
 const inFlightCount = (): number => active.size + launching.size;
 const activeByLane = new Map<CanonicalLane, number>();
 // Resource locks held by each committed slot, keyed by opId. The source of
@@ -231,12 +234,13 @@ export function pumpScheduler(): void {
       // re-pumps and retries it. No-op for every op without resourceLocks.
       if (anyHeld(op.resourceLocks)) { i++; continue; }
       activeByLane.set(q.lane, inUse + 1);
-      launching.add(q.opId);
+      const reservation = Symbol(q.opId);
+      launching.set(q.opId, reservation);
       const heldLocks = op.resourceLocks ? [...op.resourceLocks] : undefined;
       acquire(heldLocks); // hold the resource for THIS committed slot
       activeLocks.set(op.id, heldLocks); // record for disk-free release
       queue.splice(i, 1);
-      void launch(op, factory, backend, placement, heldLocks);
+      void launch(op, factory, backend, placement, heldLocks, reservation);
     }
   } finally {
     pumping = false;
@@ -249,8 +253,10 @@ async function launch(
   backend: ExecutionBackend,
   placement: NonNullable<NonNullable<Op["canonical"]>["executionPlacement"]>,
   heldLocks: string[] | undefined,
+  reservation: symbol,
 ): Promise<void> {
   const lane = op.lane as CanonicalLane;
+  const releaseReservation = () => { if (launching.get(op.id) === reservation) launching.delete(op.id); };
   let handle: ExecutionHandle | null = null;
   let launchError: Error | null = null;
   let launchPhase: "factory" | "backend" = "factory";
@@ -265,13 +271,13 @@ async function launch(
       handle = backend.start({ op, adapter, placement });
     }
     active.set(op.id, handle);
-    launching.delete(op.id); // now tracked via `active`
+    releaseReservation(); // now tracked via `active`
     await handle.done;
   } catch (error) {
     launchError = error as Error;
     logger.error(`execution launch failed for ${op.id}: ${launchError.message}`);
   } finally {
-    launching.delete(op.id);
+    releaseReservation();
     // Match every reserved lane slot unless recovery already evicted this
     // handle and installed a replacement owner.
     const stillOurs = handle !== null && active.get(op.id) === handle;

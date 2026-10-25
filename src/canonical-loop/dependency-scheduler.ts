@@ -42,8 +42,11 @@ export class DependencySchedulerCoordinator {
     return "settled";
   }
 
+  /** A prerequisite reached a terminal state: re-gate the ops waiting on it.
+   *  The waiter index is kept by every submission (entry, batch) and every
+   *  gate in this process, so this reads only the waiters, never every op on
+   *  disk; `rebuild` is the boot-time scan that seeds the index. */
   terminal(prerequisiteId: string): void {
-    rebuildDependencyWaiterIndex();
     for (const dependentId of dependencyWaitersFor(prerequisiteId)) {
       const dependent = readOp(dependentId);
       if (!dependent || dependent.canonical?.state !== "queued") continue;

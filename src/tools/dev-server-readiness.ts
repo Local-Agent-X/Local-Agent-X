@@ -38,7 +38,7 @@ const CRASH_DRAIN_MS = 300;
 /** Is something bound to `port`? Async so a caller can swap in a probe that
  *  does not block; the default is the synchronous OS lookup. */
 export type BindProbe = (port: number) => Promise<boolean>;
-const pidBindProbe: BindProbe = async (port) => pidsOnPort(port).length > 0;
+const pidBindProbe: BindProbe = async (port) => (pidsOnPort(port) ?? []).length > 0;
 
 /** Human descriptor for how a process died — a signal name when killed by one
  *  (the "code null" case), else the numeric exit code. One formatter so the
@@ -175,7 +175,7 @@ function trackedSessionPids(): Set<number> {
  * in reclaimTargets hold for both. Returns the pids killed.
  */
 export function reclaimPort(port: number, self = process.pid, parent = process.ppid): number[] {
-  const holders = pidsOnPort(port);
+  const holders = pidsOnPort(port) ?? [];
   if (holders.length === 0) return [];
   let procs: Proc[] = [];
   try {
@@ -262,7 +262,7 @@ export async function verifyDevServerStartup(appId: string, sessionId: string, p
     persistDevServerStartupFailure(appId, formatBoundThenDied(appId, sessionId, port, {
       code: s.exitCode, signal: s.exitSignal,
       output: tailLines(s.stderr || s.stdout || "", 20).trim(),
-      portStillBound: pidsOnPort(port).length > 0,
+      portStillBound: (pidsOnPort(port) ?? []).length > 0,
     }));
     return;
   }

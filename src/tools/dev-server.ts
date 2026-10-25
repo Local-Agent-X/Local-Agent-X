@@ -26,7 +26,7 @@
  */
 import { existsSync, rmSync } from "node:fs";
 import { workspacePath } from "../config.js";
-import { SESSIONS, startSession, killSession, pidsOnPort } from "./process-session.js";
+import { SESSIONS, startSession, killSession, isPortBound } from "./process-session.js";
 import { stripRedundantInstall, frontendEnv } from "./dev-server-command.js";
 import { refreshOwnedViteConfig } from "./framework-scaffold-run.js";
 import { reclaimPort, verifyDevServerStartup } from "./dev-server-readiness.js";
@@ -81,8 +81,9 @@ export interface DevServerDeps {
   isAlive?: (sessionId: string) => boolean;
   kill?: (sessionId: string) => void;
   /** Is something actually listening on the dev port? Verified alongside the
-   *  session flag so a stale session (process gone) is healed by a restart. */
-  portBound?: (port: number) => boolean;
+   *  session flag so a stale session (process gone) is healed by a restart.
+   *  Null when the OS lookup gave no answer; only a clear "no" heals. */
+  portBound?: (port: number) => boolean | null;
   /** Fire-and-forget check that a lazily-restarted dev server actually bound its
    *  port; on a crash/never-bind it persists the child's captured output. The
    *  real impl polls live SESSIONS, so tests inject a no-op. */
@@ -102,7 +103,7 @@ function deps(d: DevServerDeps): Required<DevServerDeps> {
     start: d.start ?? ((command, cwd, env) => startSession(command, cwd, env)),
     isAlive: d.isAlive ?? ((sid) => { const s = SESSIONS.get(sid); return !!s && !s.exitedAt; }),
     kill: d.kill ?? ((sid) => { const s = SESSIONS.get(sid); if (s) killSession(s); }),
-    portBound: d.portBound ?? ((port) => pidsOnPort(port).length > 0),
+    portBound: d.portBound ?? isPortBound,
     verifyStartup: d.verifyStartup ?? ((appId, sessionId, port) => { void verifyDevServerStartup(appId, sessionId, port); }),
     sessionStartedAt: d.sessionStartedAt ?? ((sid) => { const s = SESSIONS.get(sid); return s ? s.startedAt : null; }),
     reclaimPort: d.reclaimPort ?? reclaimPort,
@@ -118,6 +119,29 @@ function deps(d: DevServerDeps): Required<DevServerDeps> {
 // loop. Only a server that's been alive-yet-unbound PAST this window is genuinely
 // stuck and gets restarted.
 const DEV_SERVER_BIND_GRACE_MS = 30_000;
+
+// How long a session's "port is bound" answer is trusted before the OS is asked
+// again. Every request to an app passes through ensureDevServerRunning (the
+// proxy, each HTML page), and the lookup reads the whole socket table
+// synchronously; a dead port is still noticed within this window.
+const PORT_BOUND_TRUST_MS = 5_000;
+const portBoundAt = new Map<string, number>();
+
+/** Test seam: forget every trusted answer (fake sessions reuse their ids). */
+export function _resetPortTrustForTest(): void {
+  portBoundAt.clear();
+}
+
+/** Whether the live session's port is listening: a recent yes is trusted, an
+ *  OS lookup with no answer is "unknown", never "dead". */
+function livePortState(sessionId: string, port: number, dd: Required<DevServerDeps>): "bound" | "unbound" | "unknown" {
+  const seen = portBoundAt.get(sessionId);
+  if (seen !== undefined && Date.now() - seen < PORT_BOUND_TRUST_MS) return "bound";
+  const bound = dd.portBound(port);
+  if (bound === null) return "unknown";
+  if (bound) portBoundAt.set(sessionId, Date.now());
+  return bound ? "bound" : "unbound";
+}
 
 // The port-readiness check + the app_serve_* tools that use it live in
 // dev-server-tools.ts.
@@ -222,7 +246,10 @@ export function ensureDevServerRunning(appId: string, d: DevServerDeps = {}): En
   // returns "running", the proxy connects, ECONNREFUSED. Verifying the port
   // makes this self-healing.
   const alive = !!(rec.sessionId && dd.isAlive(rec.sessionId));
-  if (alive && dd.portBound(rec.port)) return { status: "running", record: rec };
+  // An unanswered lookup never kills a live session: the proxy's own connect
+  // reports a dead port, while a kill here would restart a healthy server.
+  const port = alive ? livePortState(rec.sessionId!, rec.port, dd) : "unbound";
+  if (alive && port !== "unbound") return { status: "running", record: rec };
   if (alive) {
     // Alive but not yet listening. Distinguish STILL BOOTING from genuinely stuck:
     // a dev server spawned moments ago hasn't bound its port yet — that's a normal

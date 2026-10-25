@@ -16,6 +16,7 @@ import {
   devConnectorName,
   formatStartupFailure,
   persistDevServerStartupFailure,
+  _resetPortTrustForTest,
   type DevServerDeps,
 } from "./dev-server.js";
 import { formatBoundThenDied, waitForBackend } from "./dev-server-readiness.js";
@@ -60,6 +61,7 @@ beforeEach(() => {
   prevDataDir = process.env.LAX_DATA_DIR;
   process.env.LAX_DATA_DIR = tmpLax;
   clearDevServerActivity();   // the activity map is module-level — isolate tests
+  _resetPortTrustForTest();   // so is the trusted-port memo, keyed by (reused) fake session ids
 });
 afterEach(() => {
   if (prevDataDir === undefined) delete process.env.LAX_DATA_DIR;
@@ -177,6 +179,38 @@ describe("ensureDevServerRunning — lazy start-on-access", () => {
     if (res.status === "started") expect(res.record.sessionId).toBe(sid);  // SAME session — not restarted
     expect(starts).toHaveLength(1);        // only the original register; NO kill+restart
     expect(sessions.get(sid)).toBe(true);  // the booting session was NOT killed
+  });
+
+  it("an unanswered port lookup never kills a live session, however old", () => {
+    // netstat timed out on a loaded box: nobody knows who holds the port. That
+    // used to read as "nothing listening" and restart a healthy dev server.
+    const { deps, sessions, startTimes, starts } = fakeDeps();
+    const reg = registerDevServer({ appId: "unknown", command: "vite", port: 5212, cwd: "/tmp/x" }, deps);
+    const sid = reg.ok ? reg.sessionId : "";
+    startTimes.set(sid, Date.now() - 60_000);
+    const probeFailed = { ...deps, portBound: () => null };
+
+    const res = ensureDevServerRunning("unknown", probeFailed);
+    expect(res.status).toBe("running");
+    expect(starts).toHaveLength(1);
+    expect(sessions.get(sid)).toBe(true);
+  });
+
+  it("asks the OS once per trust window for a live session, and afresh for a restarted one", () => {
+    // Every request to an app passes through here; the lookup reads the whole
+    // socket table synchronously, so a recent "bound" is trusted for a while.
+    const { deps, sessions } = fakeDeps();
+    const portBound = vi.fn(() => true);
+    const probed = { ...deps, portBound };
+    const reg = registerDevServer({ appId: "busy", command: "vite", port: 5213, cwd: "/tmp/x" }, probed);
+    for (let i = 0; i < 5; i++) expect(ensureDevServerRunning("busy", probed).status).toBe("running");
+    expect(portBound).toHaveBeenCalledTimes(1);
+
+    // The session dies and is restarted: the new session has no trusted answer.
+    sessions.set(reg.ok ? reg.sessionId : "", false);
+    expect(ensureDevServerRunning("busy", probed).status).toBe("started");
+    expect(ensureDevServerRunning("busy", probed).status).toBe("running");
+    expect(portBound).toHaveBeenCalledTimes(2);
   });
 
   // Regression for the silent-502 bug: the idle-sweep kills a dev server, the

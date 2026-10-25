@@ -4,7 +4,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { jsonResponse } from "../server-utils.js";
 import { staticBuildDistDir } from "../tools/app-run-target.js";
 import { ensureDevServerRunning, readDevServerRecord, registerDevServer, listDevServerRecords } from "../tools/dev-server.js";
-import { pidsOnPort } from "../tools/process-session.js";
+import { isPortBound } from "../tools/process-session.js";
 import { registerFrameworkDevServerFromDisk } from "../canonical-loop/public/build-adapters.js";
 import { deriveConnectorCapability } from "./app-connector-auth.js";
 import { APP_CONTENT_TYPES, WORKSPACE_APP_HTML_HEADERS, connectorBootstrapScript, resolveAppStaticFile } from "./app-serving-policy.js";
@@ -30,7 +30,7 @@ const DEFAULT_DEPS: AppServingDeps = {
     registerFrameworkDevServerFromDisk(appDir, appId, laxPort, {
       registerDevServer,
       listDevServerRecords,
-      portBound: (port) => pidsOnPort(port).length > 0,
+      portBound: isPortBound,
     });
   },
 };

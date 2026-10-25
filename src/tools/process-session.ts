@@ -282,11 +282,14 @@ export function killSession(session: ProcessSession): void {
 /**
  * Find every PID currently listening on a TCP port, cross-platform and
  * self-contained (the voice-setup pidOnPort is Windows-only and lives in a
- * route module — coupling here would be wrong). Returns integer PIDs; on any
- * failure returns []. Used by reclaimPort (dev-server-readiness.ts) to free a
- * port held by a stale/orphaned process before starting fresh.
+ * route module — coupling here would be wrong). Returns integer PIDs, or null
+ * when the OS lookup itself failed (timed out, tool missing): "no answer" is
+ * not "nothing listening", and a caller that kills or restarts on an empty
+ * answer must not act on a missing one. Used by reclaimPort
+ * (dev-server-readiness.ts) to free a port held by a stale/orphaned process
+ * before starting fresh.
  */
-export function pidsOnPort(port: number): number[] {
+export function pidsOnPort(port: number): number[] | null {
   if (!Number.isInteger(port) || port <= 0) return [];
   try {
     if (process.platform === "win32") {
@@ -307,9 +310,16 @@ export function pidsOnPort(port: number): number[] {
       if (Number.isInteger(n) && n > 0) pids.add(n);
     }
     return [...pids];
-  } catch {
-    return [];
+  } catch (e) {
+    logger.warn(`port ${port} listener lookup failed; who holds it is unknown: ${(e as Error).message}`);
+    return null;
   }
+}
+
+/** Is something listening on `port`? Null when the OS could not say. */
+export function isPortBound(port: number): boolean | null {
+  const pids = pidsOnPort(port);
+  return pids === null ? null : pids.length > 0;
 }
 
 /**

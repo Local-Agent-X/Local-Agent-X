@@ -5,7 +5,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const seam = vi.hoisted(() => ({
-  holders: [] as number[],
+  holders: [] as number[] | null,
   procs: [] as Array<{ pid: number; ppid: number }>,
   tableFails: false,
   killed: [] as number[],
@@ -90,6 +90,13 @@ describe("reclaimPort", () => {
   it("does not read the process table when nothing holds the port", () => {
     seam.holders = [];
     seam.tableFails = true;
+    expect(reclaimPort(5180, SELF, PARENT)).toEqual([]);
+    expect(seam.killed).toEqual([]);
+  });
+
+  it("kills nothing when the OS could not say who holds the port", () => {
+    seam.holders = null;
+    seam.procs = TABLE;
     expect(reclaimPort(5180, SELF, PARENT)).toEqual([]);
     expect(seam.killed).toEqual([]);
   });

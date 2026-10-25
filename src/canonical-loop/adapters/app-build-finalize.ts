@@ -59,7 +59,8 @@ export interface FinalizeFrameworkDeps {
     appId: string; command: string; port: number; cwd?: string; kind?: DevServerKind;
   }) => RegisterResult;
   listDevServerRecords?: () => DevServerRecord[];
-  portBound?: (port: number) => boolean;
+  /** Null when the OS could not say; the port walk then stops probing. */
+  portBound?: (port: number) => boolean | null;
   /** Run the framework's production build → static dist/ (static-build target). */
   runStaticBuild?: (appDir: string, framework: DetectedFramework) => Promise<StaticBuildResult>;
   /** Forget the app's dev-server record after a static build so the static serve
@@ -196,13 +197,13 @@ async function resolveDeps(d: FinalizeFrameworkDeps): Promise<ResolvedFinalizeDe
     return { ...d, awaitCage: d.awaitCage ?? noCageToWaitFor } as ResolvedFinalizeDeps;
   }
   const devServer = await import("../../tools/dev-server.js");
-  const { pidsOnPort } = await import("../../tools/process-session.js");
+  const { isPortBound } = await import("../../tools/process-session.js");
   const { runStaticBuild } = await import("../../tools/static-build-run.js");
   const { awaitDevServerCage } = await import("../../tools/dev-server-tools.js");
   return {
     registerDevServer: d.registerDevServer ?? devServer.registerDevServer,
     listDevServerRecords: d.listDevServerRecords ?? devServer.listDevServerRecords,
-    portBound: d.portBound ?? ((port) => pidsOnPort(port).length > 0),
+    portBound: d.portBound ?? isPortBound,
     runStaticBuild: d.runStaticBuild ?? ((appDir, framework) => runStaticBuild(appDir, framework)),
     stopDevServer: d.stopDevServer ?? ((appId, opts) => devServer.stopDevServer(appId, {}, opts)),
     awaitCage: d.awaitCage ?? (d.registerDevServer ? noCageToWaitFor : () => awaitDevServerCage()),
@@ -219,7 +220,10 @@ function pickDevPort(appName: string, laxPort: number, d: FrameworkServeDeps): n
   const taken = new Set(records.map((r) => r.port));
   let port = DEFAULT_BASE_PORT;
   for (let probes = 0; probes < MAX_PORT_PROBES; probes++) {
-    if (!taken.has(port) && port !== laxPort && !d.portBound(port)) return port;
+    if (taken.has(port) || port === laxPort) { port += 1; continue; }
+    // No OS answer: take this candidate rather than paying the failed lookup
+    // on every port; a real collision surfaces in the dev server's startup check.
+    if (d.portBound(port) !== true) return port;
     port += 1;
   }
   return port;

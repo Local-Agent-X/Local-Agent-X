@@ -252,8 +252,8 @@ export const processRestartTool: ToolDefinition = {
     if (port !== undefined && port > 0) {
       const killed = reclaimPort(port);
       const deadline = Date.now() + (killed.length > 0 ? 5000 : 0);
-      while (pidsOnPort(port).length > 0 && Date.now() < deadline) await sleep(200);
-      const held = pidsOnPort(port);
+      while ((pidsOnPort(port) ?? []).length > 0 && Date.now() < deadline) await sleep(200);
+      const held = pidsOnPort(port) ?? [];
       if (held.length > 0) {
         return err(
           `process_restart: port ${port} is still held by pid(s) ${held.join(", ")}` +
@@ -276,7 +276,7 @@ export const processRestartTool: ToolDefinition = {
       while (Date.now() < deadline) {
         // A grandchild (e.g. node under bash) holds the port, not necessarily
         // session.pid itself — so "non-empty" is the signal we want.
-        if (pidsOnPort(port).length > 0) { boundPort = true; break; }
+        if ((pidsOnPort(port) ?? []).length > 0) { boundPort = true; break; }
         await sleep(200);
       }
       listenCheck = boundPort ? `listening on ${port}` : `NOT yet listening on ${port} (process may still be starting)`;

@@ -80,7 +80,7 @@ interface DepCalls {
 
 function fakeDeps(opts: {
   records?: DevServerRecord[];
-  bound?: (port: number) => boolean;
+  bound?: (port: number) => boolean | null;
   registerResult?: RegisterResult;
   /** static-build result the injected runStaticBuild returns (default: ok, dist/). */
   staticResult?: StaticBuildResult;
@@ -277,6 +277,19 @@ describe("finalizeFrameworkBuild — dev-port allocation", () => {
     expect(calls.register).toHaveLength(1);
     expect(calls.register[0].port).toBe(DEFAULT_BASE_PORT + 20);
     expect(calls.register[0].command).toContain(`--port ${DEFAULT_BASE_PORT + 20}`);
+  });
+
+  it("an unanswered OS probe takes the first free candidate instead of walking every port", async () => {
+    // netstat failing on a loaded box must not cost MAX_PORT_PROBES failed
+    // lookups (each up to its timeout) per build.
+    const dir = makeDir("unknown-probe");
+    writeNextScaffold(dir);
+    let probes = 0;
+    const { deps, calls } = fakeDeps({ records: [record("other-app", DEFAULT_BASE_PORT)], bound: () => { probes++; return null; } });
+    await finalizeFrameworkBuild(input(dir), deps);
+    expect(calls.register).toHaveLength(1);
+    expect(calls.register[0].port).toBe(DEFAULT_BASE_PORT + 1);
+    expect(probes).toBe(1);
   });
 
   it("a rebuild reuses its own record's port even when the probe reports it bound", async () => {

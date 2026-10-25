@@ -12,6 +12,7 @@ import { getToolsForOp, getOpBaselineTokens } from "../runtime.js";
 import { readOp } from "../../ops/op-store.js";
 import { resolveOpModel } from "../op-model.js";
 import { classifyStepEffort } from "../step-effort.js";
+import { cutOffRedrivesInARow } from "./cut-off-turn.js";
 import { buildSituationalAwareness } from "./situational-awareness.js";
 import { compactHistory } from "./compact-history.js";
 import { opMessageRowToChatParam } from "../chat-runner/message-convert.js";
@@ -145,6 +146,8 @@ export async function buildTurnInput(
   // makes `start === messages.length` in step-effort.ts and every mechanical
   // continuation silently classifies "standard".
   if (classifyStepEffort(input) === "mechanical") input.stepEffortHint = "mechanical";
+  const cutOffRedrives = cutOffRedrivesInARow(op.id);
+  if (cutOffRedrives > 0) input.cutOffRedrives = cutOffRedrives;
 
   // Ephemeral situational-awareness digest — goal/constraint re-anchoring +
   // the durable open-plan, recomputed each turn and APPENDED as its own

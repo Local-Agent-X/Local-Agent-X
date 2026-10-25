@@ -71,6 +71,23 @@ describe("clampLocalMaxTokens", () => {
   });
 });
 
+describe("clampLocalMaxTokens after a cut-off reply", () => {
+  it("each re-drive in a row doubles the default, so a long thought gets room to finish", () => {
+    expect(base({ cutOffRedrives: 1 }).maxTokens).toBe(LOCAL_DEFAULT_MAX_TOKENS * 2);
+    expect(base({ cutOffRedrives: 2 }).maxTokens).toBe(LOCAL_DEFAULT_MAX_TOKENS * 4);
+  });
+
+  it("never beyond what the measured window has left", () => {
+    expect(base({ cutOffRedrives: 2, windowTokens: 40_000 }).maxTokens).toBe(40_000 - 3_000 - OUTPUT_RESERVE_TOKENS);
+  });
+
+  it("a guessed window or a cloud endpoint is unchanged; an explicit cap is never raised", () => {
+    expect(base({ cutOffRedrives: 2, windowProvenance: "floor" })).toEqual({ maxTokens: undefined, omitDefault: false });
+    expect(base({ cutOffRedrives: 2, isLocalEndpoint: false })).toEqual({ maxTokens: undefined, omitDefault: false });
+    expect(base({ cutOffRedrives: 2, explicitMaxTokens: 512 }).maxTokens).toBe(512);
+  });
+});
+
 describe("resolveLocalCap (seam wrapper)", () => {
   const fit = (over: Partial<RequestFit> = {}): RequestFit => ({
     verdict: "fits",

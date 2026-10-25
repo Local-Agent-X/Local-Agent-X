@@ -24,7 +24,7 @@
  *                               documented anti-pattern. The engine's own
  *                               server-side clamp covers the gap until a
  *                               probe sweep learns the real window.
- *   measured (probed / exact) → cap = min(explicit ?? default,
+ *   measured (probed / exact) → cap = min(explicit ?? default × 2^redrives,
  *                               window − promptEstimate − OUTPUT_RESERVE);
  *                               if that budget is under
  *                               MIN_USEFUL_COMPLETION_TOKENS, send NO cap at
@@ -34,6 +34,12 @@
  *                               would truncate replies into fragments.
  *
  * An explicit caller cap is never RAISED — only clamped by the same rule.
+ *
+ * The default doubles for each cut-off re-drive in a row (TurnInput.
+ * cutOffRedrives, turn-loop/cut-off-turn.ts): a thinking model's reasoning
+ * counts against the cap, and a reply cut off before its first tool call
+ * needs more room, not the same room again. Only on a measured window, where
+ * the doubled cap can be held to what the window has left.
  */
 import { LOCAL_DEFAULT_MAX_TOKENS } from "../../../providers/adapter/types.js";
 import { OUTPUT_RESERVE_TOKENS, type RequestFit } from "../../../context-manager/request-fit.js";
@@ -60,6 +66,8 @@ export function clampLocalMaxTokens(args: {
   windowProvenance: ContextWindowResolution["provenance"];
   /** Estimated tokens of the request as it will actually ship. */
   promptTokensEstimate: number;
+  /** Cut-off re-drives in a row this request follows (absent = 0). */
+  cutOffRedrives?: number;
 }): LocalCapDecision {
   const passthrough: LocalCapDecision = { maxTokens: args.explicitMaxTokens, omitDefault: false };
   if (!args.isLocalEndpoint) return passthrough;
@@ -71,7 +79,8 @@ export function clampLocalMaxTokens(args: {
   // very budget that reserve exists to protect.
   const available = args.windowTokens - args.promptTokensEstimate - OUTPUT_RESERVE_TOKENS;
   if (available < MIN_USEFUL_COMPLETION_TOKENS) return { maxTokens: undefined, omitDefault: true };
-  return { maxTokens: Math.min(args.explicitMaxTokens ?? LOCAL_DEFAULT_MAX_TOKENS, available), omitDefault: false };
+  const cap = args.explicitMaxTokens ?? LOCAL_DEFAULT_MAX_TOKENS * 2 ** (args.cutOffRedrives ?? 0);
+  return { maxTokens: Math.min(cap, available), omitDefault: false };
 }
 
 /**
@@ -85,6 +94,7 @@ export function resolveLocalCap(args: {
   explicitMaxTokens: number | undefined;
   window: ContextWindowResolution;
   fit: RequestFit;
+  cutOffRedrives?: number;
 }): LocalCapDecision {
   return clampLocalMaxTokens({
     isLocalEndpoint: isLocalModelEndpoint(args.baseURL),
@@ -92,5 +102,6 @@ export function resolveLocalCap(args: {
     windowTokens: args.window.tokens,
     windowProvenance: args.window.provenance,
     promptTokensEstimate: args.fit.requestTokens,
+    cutOffRedrives: args.cutOffRedrives,
   });
 }

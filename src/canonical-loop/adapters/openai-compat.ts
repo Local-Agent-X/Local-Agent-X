@@ -213,6 +213,7 @@ export class OpenAICompatAdapter implements Adapter {
       explicitMaxTokens: this.opts.maxTokens,
       window: preflight.window,
       fit: preflight.fit,
+      cutOffRedrives: input.cutOffRedrives,
     });
     req.maxTokens = cap.maxTokens;
     if (cap.omitDefault) req.omitDefaultMaxTokens = true;

@@ -13,6 +13,14 @@
  * down to its tail: the next request carries the whole history, and a
  * runaway draft fed back in full would fill the window again. Past the limit
  * the turn ends with an honest terminal instead of a silent "done".
+ *
+ * Each re-drive also gets twice the output room of the reply before it
+ * (cutOffRedrivesInARow → TurnInput.cutOffRedrives → local-cap.ts). A local
+ * thinking model's reasoning counts against the output cap, and qwen3.8 on
+ * hard derivations thinks past 16k tokens before its first tool call: with the
+ * same cap and its reasoning gone, every re-drive started the same thought
+ * over and was cut at the same place, 4-5 times in a row (6 of 37
+ * Terminal-Bench tasks, 2026-10-25).
  */
 import { getMiddlewareState } from "../middlewares/state.js";
 import type { Op } from "../../ops/types.js";
@@ -67,6 +75,12 @@ export function evaluateCutOffTurn(in_: CutOffTurnInput): "redrive" | "exhausted
     { name: "cut-off-turn", reason: "cut-off-turn", outcome: "nudge" });
   state.consecutive += 1;
   return "redrive";
+}
+
+/** How many cut-off re-drives in a row the op's next turn follows; 0 when its
+ *  last turn was not cut off. */
+export function cutOffRedrivesInARow(opId: string): number {
+  return getMiddlewareState(opId, CUT_OFF_TURN_KEY, () => ({ consecutive: 0 })).consecutive;
 }
 
 /** The tail of a cut-off draft, marked as such, for the committed history. */

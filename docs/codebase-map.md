@@ -20,15 +20,15 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 167 | 29 | L | 1 |
-| `src/security/` | 128 | 53 | XL | 3 |
+| `src/security/` | 129 | 53 | XL | 3 |
 | `src/tools/` | 118 | 219 | XL | 9 |
 | `src/tool-execution/` | 82 | 72 | XL | 2 |
 | `src/canonical-loop/` | 79 | 269 | XL | 14 |
-| `src/workspace/` | 75 | 3 | M |  |
+| `src/workspace/` | 76 | 3 | M |  |
 | `src/providers/` | 68 | 26 | L | 1 |
 | `src/memory/` | 52 | 138 | XL | 7 |
+| `src/data-lineage/` | 49 | 11 | M |  |
 | `src/browser/` | 48 | 88 | XL | 5 |
-| `src/data-lineage/` | 48 | 11 | M |  |
 | `src/session/` | 48 | 9 | M |  |
 | `src/tool-policy/` | 46 | 21 | L |  |
 | `src/local-runtimes/` | 42 | 26 | L | 1 |
@@ -412,6 +412,7 @@ job. Comments are free: never cut them to fit.
 - `src/routes/agents/history.ts#handleAgentHistoryRoutes` — 90+ own code lines (cap 100)
 - `src/routes/bridges/integrations.ts#handleIntegrationsRoutes` — 90+ own code lines (cap 100)
 - `src/routes/chat/run-chat-turn/canonical-run.ts#persistTurnState` — 90+ own code lines (cap 100)
+- `src/routes/workspace-files.ts#handleWorkspaceFilesRoutes` — 90+ own code lines (cap 100)
 - `src/screen-stream/signaling-machine.ts#signalingReducer` — 90+ own code lines (cap 100)
 - `src/security/layer/network-policy.ts#evaluateWebFetch` — 90+ own code lines (cap 100)
 - `src/server/inbound-channel-runner.ts#runInboundChannelTurn` — 90+ own code lines (cap 100)
@@ -437,7 +438,6 @@ job. Comments are free: never cut them to fit.
 - `src/routes/bridges/secrets.ts#handleSecretsRoutes` — 80+ own code lines (cap 100)
 - `src/routes/chat/delegation-handoff.ts#runDelegationHandoff` — 80+ own code lines (cap 100)
 - `src/routes/connector-proxy.ts#handleConnectorProxyRoutes` — 80+ own code lines (cap 100)
-- `src/routes/workspace-files.ts#handleWorkspaceFilesRoutes` — 80+ own code lines (cap 100)
 - `src/server/api-request-router.ts#routeApiRequest` — 80+ own code lines (cap 100)
 - `src/server/background-jobs/dream-check.ts#registerDreamRunner:callback` — 80+ own code lines (cap 100)
 - `src/server/bootstrap-services.ts#bootstrapServices` — 80+ own code lines (cap 100)

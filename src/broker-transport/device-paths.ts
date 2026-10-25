@@ -12,12 +12,14 @@
 // paired phone already reaches further than this (it drives the agent, which
 // reads the workspace, and Live Screen drives the desktop). Credential files are
 // still refused here, so a phone never pulls a key or .env out of the workspace.
+// /api/workspace/browse lists a workspace folder for the phone's file explorer;
+// it lists no credential file and follows no link out (routes/workspace-files.ts).
 // The broker phone is NOT an operator: nothing else on the operator API is in.
 
 import { isSensitivePath } from "../data-lineage/index.js";
 
 /** Endpoints the broker http-tunnel may proxy to loopback. */
-export const DEVICE_HTTP_PREFIXES = ["/api/apps", "/apps/", "/api/sessions", "/api/providers", "/uploads/", "/videos/", "/images/", "/files/"];
+export const DEVICE_HTTP_PREFIXES = ["/api/apps", "/apps/", "/api/sessions", "/api/providers", "/uploads/", "/videos/", "/images/", "/files/", "/api/workspace/browse"];
 
 export function isDeviceAllowedPath(pathname: string): boolean {
   if (!DEVICE_HTTP_PREFIXES.some((p) => pathname === p || pathname.startsWith(p))) return false;

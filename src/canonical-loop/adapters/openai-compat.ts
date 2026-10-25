@@ -49,7 +49,7 @@ import { appendTrailingContext, canonicalToChatParam } from "./openai-compat/can
 import { extendLocalWire, type LocalWireState } from "./openai-compat/local-wire.js";
 import { isLocalModelEndpoint } from "../../local-runtimes/model-endpoint.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
-import { resolveLocalCap } from "./openai-compat/local-cap.js";
+import { applyLocalCap } from "./openai-compat/local-cap.js";
 import { streamOnce, applyToolCallTextFallback } from "./openai-compat/stream-once.js";
 import { assessOpenAiCompatPreflight, promptExceedsMeasuredWindow } from "./openai-compat/request-preflight.js";
 import { buildTurnTrace } from "./openai-compat/turn-trace.js";
@@ -208,15 +208,8 @@ export class OpenAICompatAdapter implements Adapter {
     // against max_model_len, so on a MEASURED window the local default (and
     // any explicit cap) clamps down to the real completion budget — or is
     // omitted entirely when none is left. See local-cap.ts for the policy.
-    const cap = resolveLocalCap({
-      baseURL,
-      explicitMaxTokens: this.opts.maxTokens,
-      window: preflight.window,
-      fit: preflight.fit,
-      cutOffRedrives: input.cutOffRedrives,
-    });
-    req.maxTokens = cap.maxTokens;
-    if (cap.omitDefault) req.omitDefaultMaxTokens = true;
+    applyLocalCap(req, { baseURL, explicitMaxTokens: this.opts.maxTokens, window: preflight.window,
+      fit: preflight.fit, cutOffRedrives: input.cutOffRedrives });
 
     this.inflight = this.runStreamOnce(req, report);
     let result = await this.inflight;

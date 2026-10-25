@@ -41,7 +41,7 @@
  * needs more room, not the same room again. Only on a measured window, where
  * the doubled cap can be held to what the window has left.
  */
-import { LOCAL_DEFAULT_MAX_TOKENS } from "../../../providers/adapter/types.js";
+import { LOCAL_DEFAULT_MAX_TOKENS, type ProviderRequest } from "../../../providers/adapter/types.js";
 import { OUTPUT_RESERVE_TOKENS, type RequestFit } from "../../../context-manager/request-fit.js";
 import type { ContextWindowResolution } from "../../../context-manager/model-windows.js";
 import { isLocalModelEndpoint } from "../../../local-runtimes/model-endpoint.js";
@@ -104,4 +104,14 @@ export function resolveLocalCap(args: {
     promptTokensEstimate: args.fit.requestTokens,
     cutOffRedrives: args.cutOffRedrives,
   });
+}
+
+/** Put resolveLocalCap's decision on the request the transport sends. */
+export function applyLocalCap(
+  req: Pick<ProviderRequest, "maxTokens" | "omitDefaultMaxTokens">,
+  args: Parameters<typeof resolveLocalCap>[0],
+): void {
+  const cap = resolveLocalCap(args);
+  req.maxTokens = cap.maxTokens;
+  if (cap.omitDefault) req.omitDefaultMaxTokens = true;
 }

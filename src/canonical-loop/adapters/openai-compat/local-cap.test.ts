@@ -4,7 +4,7 @@
 // while guesses (floor/heuristic windows) and cloud endpoints change nothing.
 
 import { describe, it, expect } from "vitest";
-import { clampLocalMaxTokens, resolveLocalCap, MIN_USEFUL_COMPLETION_TOKENS } from "./local-cap.js";
+import { applyLocalCap, clampLocalMaxTokens, resolveLocalCap, MIN_USEFUL_COMPLETION_TOKENS } from "./local-cap.js";
 import { LOCAL_DEFAULT_MAX_TOKENS } from "../../../providers/adapter/types.js";
 import { OUTPUT_RESERVE_TOKENS, type RequestFit } from "../../../context-manager/request-fit.js";
 
@@ -68,6 +68,23 @@ describe("clampLocalMaxTokens", () => {
     expect(base({ explicitMaxTokens: 16_000, windowTokens: 8_192 }).maxTokens).toBe(
       8_192 - 3_000 - OUTPUT_RESERVE_TOKENS, // 4168 < 16000 — clamped
     );
+  });
+});
+
+describe("applyLocalCap", () => {
+  const args = {
+    baseURL: "http://127.0.0.1:11434/v1", explicitMaxTokens: undefined,
+    window: { tokens: 131_072, provenance: "probed" as const },
+    fit: { requestTokens: 3_000 } as RequestFit,
+  };
+
+  it("puts the decided cap on the request, and the omit flag only when there is no room", () => {
+    const req: { maxTokens?: number; omitDefaultMaxTokens?: boolean } = {};
+    applyLocalCap(req, { ...args, cutOffRedrives: 1 });
+    expect(req).toEqual({ maxTokens: LOCAL_DEFAULT_MAX_TOKENS * 2 });
+    const full: { maxTokens?: number; omitDefaultMaxTokens?: boolean } = {};
+    applyLocalCap(full, { ...args, window: { tokens: 3_100, provenance: "probed" as const } });
+    expect(full).toEqual({ maxTokens: undefined, omitDefaultMaxTokens: true });
   });
 });
 

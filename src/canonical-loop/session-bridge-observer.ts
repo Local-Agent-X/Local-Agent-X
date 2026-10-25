@@ -39,11 +39,14 @@ import { scheduleIdleNudge } from "../ops/idle-nudge.js";
 import { inboxJobResult, runLabel } from "../inbox/producers.js";
 
 import { toSpokenCompletion, redirectAppliedRow, isSidebarSuppressedOpType } from "./session-bridge-extractors.js";
+import { recordCorrectionEvent, recordVerificationEvent } from "./session-bridge-verification.js";
+import { CORRECTION_OP_TYPE } from "./verification-correct.js";
 import { readOp } from "../ops/op-store.js";
 import { VERIFICATION_OP_TYPE } from "./verification-spend.js";
 import { resolveTerminalOpStatus, type TerminalOpStatus } from "./checkpoint-stop.js";
 import { extractFinalAssistantText, resultUrlOfOp } from "./session-bridge-extractors.js";
 import type { ServerEvent } from "../types.js";
+import type { Op } from "../ops/types.js";
 import type { CanonicalEvent } from "./types.js";
 
 import { createLogger } from "../logger.js";
@@ -98,6 +101,26 @@ export function collectCanonicalBrowserEvents(
   return targetSessionId ? { sessionId: targetSessionId, events } : null;
 }
 
+/**
+ * Ops the user never sees as workers. Sidebar-suppressed types surface
+ * elsewhere or are headless (isSidebarSuppressedOpType); the harness checking
+ * and correcting its own work is routed to session-bridge-verification.ts.
+ * Either way the session→op binding MUST still be released on terminal
+ * state: skipping it leaks every past chat_turn into listOpsForSession
+ * forever, which poisons the system prompt with phantom "[PARALLEL CONTEXT]"
+ * workers — exactly the leak releaseOpFromSession's doc warns about.
+ */
+function routedOffTheWorkerSurfaces(event: CanonicalEvent, core: boolean, sessionId: string, op: Op): boolean {
+  if (op.type === VERIFICATION_OP_TYPE) { recordVerificationEvent(event, core, sessionId, op); return true; }
+  if (op.type === CORRECTION_OP_TYPE) { recordCorrectionEvent(event, core, sessionId, op); return true; }
+  if (!op.type || !isSidebarSuppressedOpType(op.type)) return false;
+  if (event.type === "state_changed") {
+    const to = (event.body as Record<string, unknown> | undefined)?.to;
+    if (core && (to === "succeeded" || to === "failed" || to === "cancelled")) releaseOpFromSession(event.opId);
+  }
+  return true;
+}
+
 function recordCanonicalEventWithSink(
   event: CanonicalEvent,
   core: boolean,
@@ -109,21 +132,7 @@ function recordCanonicalEventWithSink(
     if (!sessionId) return; // op wasn't submitted by a chat session — nothing to surface
 
     const op = readOp(event.opId);
-    if (op?.type && isSidebarSuppressedOpType(op.type)) {
-      // Suppressed from the AGENTS sidebar (these surface elsewhere, or are
-      // headless — see isSidebarSuppressedOpType), but the session→op
-      // binding MUST still be released on terminal state. Skipping it leaks
-      // every past chat_turn into listOpsForSession forever, which poisons the
-      // system prompt with phantom "[PARALLEL CONTEXT]" workers. Exactly the
-      // leak releaseOpFromSession's doc warns about.
-      if (event.type === "state_changed") {
-        const to = (event.body as Record<string, unknown> | undefined)?.to;
-        if (core && (to === "succeeded" || to === "failed" || to === "cancelled")) {
-          releaseOpFromSession(event.opId);
-        }
-      }
-      return;
-    }
+    if (op && routedOffTheWorkerSurfaces(event, core, sessionId, op)) return;
 
     const task = getTaskForOp(event.opId) ?? op?.task ?? "";
     const b = (event.body ?? {}) as Record<string, unknown>;
@@ -183,11 +192,6 @@ function recordCanonicalEventWithSink(
           // "completed" with the worker's last text as the result.
           const resolved = resolveTerminalOpStatus(event.opId, to);
           const status: TerminalCardStatus = resolved.status;
-          // Failed/cancelled/partial verification pass = harness noise (the
-          // class the skill-review quieting purged): AGENTS card + logs only —
-          // no toast, notification, spoken line, or nudge. A verdict keeps
-          // full surfacing.
-          const quietVerifyFailure = op?.type === VERIFICATION_OP_TYPE && status !== "completed";
           // Surface the worker's ACTUAL final message, not a bare "task
           // completed". On completed, the final assistant text IS the result
           // the parent asked for; on failure preserve the durable failure fact
@@ -214,8 +218,7 @@ function recordCanonicalEventWithSink(
             // is GLOBAL, and it must still flow (it's what flips the ambient
             // dock card out of "dreaming" + arms its prune) — but the browser
             // reads this stamp to skip the OS toast + fallback FAILED card.
-            // A failed verification pass borrows the stamp (card, no toast).
-            ...(isHeadlessSession(sessionId) || quietVerifyFailure ? { headless: true } : {}),
+            ...(isHeadlessSession(sessionId) ? { headless: true } : {}),
           });
           if (emitBrowser) emitBrowser(sessionId, {
             type: "worker_done",
@@ -224,7 +227,7 @@ function recordCanonicalEventWithSink(
             summary,
           });
 
-          if (core && !quietVerifyFailure) pushPendingNotification(sessionId, {
+          if (core) pushPendingNotification(sessionId, {
             opId: event.opId,
             status,
             summary: persistedSummary,
@@ -235,7 +238,7 @@ function recordCanonicalEventWithSink(
           // If the user is in a live voice session, speak the result at the next
           // turn boundary (no-op otherwise — the chat nudge below still fires).
           // The turn machine queues it so it never cuts off an in-flight reply.
-          if (core && !quietVerifyFailure) {
+          if (core) {
             proactiveSpeakToSession(
               sessionId,
               status === "partial" ? toSpokenPartial(task) : toSpokenCompletion(task, summary, status, op?.type),
@@ -243,9 +246,9 @@ function recordCanonicalEventWithSink(
             scheduleIdleNudge(sessionId, task);
           }
           // The user's inbox. A scheduled mission is posted by the cron
-          // executor, which alone knows its quality-gate verdict; verification
-          // passes and headless harness runs are not the user's jobs.
-          if (core && !isHeadlessSession(sessionId) && op?.type !== OP_TYPE.scheduledMission && op?.type !== VERIFICATION_OP_TYPE) {
+          // executor, which alone knows its quality-gate verdict; headless
+          // harness runs are not the user's jobs.
+          if (core && !isHeadlessSession(sessionId) && op?.type !== OP_TYPE.scheduledMission) {
             inboxJobResult({ label: runLabel("Background task", task), outcome: status, summary: persistedSummary, key: `op:${event.opId}`, link: { sessionId, opId: event.opId, ...(resultUrl ? { url: resultUrl } : {}) } });
           }
           if (core) {
@@ -332,3 +335,4 @@ function recordCanonicalEventWithSink(
     warnOnce(`event hook failed: ${(e as Error).message}`);
   }
 }
+

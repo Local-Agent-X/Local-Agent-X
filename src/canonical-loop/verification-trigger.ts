@@ -44,13 +44,15 @@
  * submit, so a blocked delta survives. Pinned in
  * verification-trigger-chat.test.ts.
  *
- * The verification op is a NORMAL background op, deliberately NOT in
- * session-bridge-extractors.ts's SIDEBAR_SUPPRESSED_OP_TYPES: it nests under its
- * parent in the AGENTS panel (parentOpId), and a SUCCEEDED verdict rides the
- * ordinary bg_op_completed → pending-notifications channel so the agent
- * narrates it next turn (spoken as a headline, not a table — see
- * session-bridge-extractors.toSpokenCompletion). A FAILED verification is
- * quieted — harness noise, not a user-facing event.
+ * The verification op is a NORMAL background op for the runtime, but the
+ * user never sees it as one: session-bridge-observer.ts routes it apart from
+ * every worker surface (no AGENTS card, no progress, no inbox item, no "that
+ * op just finished"). A DISCREPANCIES verdict submits a correction
+ * (verification-correct.ts) whose landing the user hears as one line; only a
+ * correction that cannot be made reaches the agent as a rework instruction.
+ * Confirmed, unverifiable and failed passes are logged and nothing more. The
+ * corrected file is a changed deliverable, so it is re-verified; that second
+ * pass never corrects again (session-bridge-verification.ts).
  *
  * Guard order, cheapest discriminator first (the non-terminal-event path is
  * exactly ONE property check):

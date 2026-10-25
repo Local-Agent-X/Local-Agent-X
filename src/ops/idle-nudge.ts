@@ -152,6 +152,16 @@ function fireNudge(sessionId: string): void {
 }
 
 function composeNudgeText(items: PendingNotification[]): string {
+  // The harness's own re-check of a deliverable: the user hears the finding
+  // in the agent's words, never that an op finished.
+  const checks = items.filter(i => i.verification);
+  if (checks.length === items.length) {
+    const mismatched = checks.reduce((a, i) => a + (i.verification?.mismatched ?? 0), 0);
+    const count = mismatched > 0 ? `${mismatched} figure${mismatched === 1 ? "" : "s"}` : "some figures";
+    return checks.every(i => i.verification?.corrected)
+      ? `Heads up — I re-checked the figures in what I built against their sources and corrected ${count} that didn't match.`
+      : `Heads up — I re-checked the figures in what I built against their sources; ${count} don't match and I couldn't correct them automatically. Want me to go through them?`;
+  }
   if (items.length === 1) {
     const n = items[0];
     const taskPreview = n.task.slice(0, 80).trim() + (n.task.length > 80 ? "…" : "");

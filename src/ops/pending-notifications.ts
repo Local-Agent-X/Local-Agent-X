@@ -63,6 +63,12 @@ export interface PendingNotification {
   // block point the parent at agent_output(agent_id=...) for the full result
   // (there is no real op behind a sub-agent notification's opId).
   agentId?: string;
+  // Set when the op was the harness's own check of a deliverable. Corrected:
+  // the follow-up correction landed and `summary` says what changed. Not
+  // corrected: `summary` holds the verifier's table and the agent is told to
+  // correct the deliverable itself. Never "a task finished"; the history
+  // dedup ignores it (its `task` is the parent's).
+  verification?: { mismatched: number; checked: number; corrected: boolean };
 }
 
 const queues = new Map<string, PendingNotification[]>();
@@ -88,7 +94,7 @@ export function pushPendingNotification(sessionId: string, n: PendingNotificatio
   // agent name, and matching new op tasks against it produces false BLOCKs.
   // So does a PARTIAL stop: the way to continue it IS a follow-up op naming
   // the same task, which the "already completed" guard would block.
-  if (!n.subAgent && n.status !== "partial") {
+  if (!n.subAgent && !n.verification && n.status !== "partial") {
     let h = completionHistory.get(sessionId);
     if (!h) { h = []; completionHistory.set(sessionId, h); }
     h.push(n);
@@ -188,6 +194,43 @@ const SUMMARY_PREVIEW_CHARS = 180;
 /** Format pending notifications as a system-prompt-injectable block. */
 export function formatNotificationsForSystemPrompt(notifications: PendingNotification[]): string {
   if (notifications.length === 0) return "";
+  const reworks = notifications.filter(n => n.verification);
+  const finished = notifications.filter(n => !n.verification);
+  const reworkBlock = reworks.length ? formatVerificationRework(reworks) : "";
+  if (finished.length === 0) return reworkBlock;
+  return formatFinishedOps(finished) + (reworkBlock ? `\n\n${reworkBlock}` : "");
+}
+
+/** The harness re-checked the agent's last deliverable against its sources.
+ *  Either the correction already landed (say what changed, in a line, if it
+ *  comes up) or it could not be made and the agent corrects the work itself. */
+function formatVerificationRework(items: PendingNotification[]): string {
+  const corrected = items.filter(n => n.verification!.corrected);
+  const toCorrect = items.filter(n => !n.verification!.corrected);
+  const parts: string[] = [];
+  if (corrected.length) {
+    parts.push(harnessNotice("FIGURES IN YOUR DELIVERABLE WERE CORRECTED",
+      `An independent re-check of your last deliverable found figures that did not match their sources, and a correction has already been applied to the file. Nothing is left to do.\n` +
+      `- If the user has not been told (no ALREADY ANNOUNCED mark below), add ONE sentence at the end of your reply saying which figures were corrected.\n` +
+      `- If they ask, say what changed from the list below in a sentence or two. Never paste it.\n` +
+      `- Do not re-check, re-run or re-submit anything.\n\n` +
+      corrected.map(n => `For: "${n.task.slice(0, 160)}${n.task.length > 160 ? "..." : ""}" — corrected ${n.verification!.mismatched} of ${n.verification!.checked} checked values.\n${n.summary}` +
+        (n.surfacedViaNudge ? `\n   [ALREADY ANNOUNCED to the user in a heads-up. Do not repeat it unless asked.]` : "")).join("\n\n")));
+  }
+  if (toCorrect.length) {
+    parts.push(harnessNotice("YOUR DELIVERABLE HAS DISCREPANCIES",
+      `An independent re-check of the figures in your last deliverable against their sources found values that do not match, and no automatic correction could be made. This is your own work to correct, not a task that finished.\n` +
+      `- Correct each mismatched value in the deliverable from the independent source in the table (edit the file; re-fetch the source if the table is not enough).\n` +
+      `- Then tell the user in ONE sentence what you corrected. Never paste the table.\n` +
+      `- If a value cannot be settled (sources disagree, or the source is gone), say which and ask the user which to keep.\n` +
+      `- Do not re-run the whole task, and do not submit a new op for it.\n\n` +
+      toCorrect.map(n => `For: "${n.task.slice(0, 160)}${n.task.length > 160 ? "..." : ""}" — ${n.verification!.mismatched} of ${n.verification!.checked} checked values do not match.\n${n.summary}` +
+        (n.surfacedViaNudge ? `\n   [ALREADY ANNOUNCED: the user was told these could not be corrected automatically and asked whether to go through them. If their message accepts, correct the deliverable now; if it declines, leave it.]` : "")).join("\n\n")));
+  }
+  return parts.join("\n\n");
+}
+
+function formatFinishedOps(notifications: PendingNotification[]): string {
   const lines = notifications.map(n => {
     const partial = n.status === "partial";
     const statusEmoji = n.status === "completed" ? "✓" : partial ? "◐" : n.status === "failed" ? "✗" : "⊘";

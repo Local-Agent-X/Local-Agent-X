@@ -19,6 +19,7 @@ const mkNote = (over: Partial<PendingNotification> = {}): PendingNotification =>
   filesChanged: over.filesChanged ?? [],
   task: over.task ?? "do the thing please now",
   completedAt: over.completedAt ?? Date.now(),
+  ...(over.verification ? { verification: over.verification } : {}),
 });
 
 afterEach(() => {
@@ -417,5 +418,44 @@ describe("formatNotificationsForSystemPrompt", () => {
     const out = formatNotificationsForSystemPrompt([mkNote({ filesChanged: files })]);
     expect(out).toContain("changed 12 files: file0.ts, file1.ts, file2.ts, file3.ts, file4.ts");
     expect(out).not.toContain("file5.ts");
+  });
+});
+
+// The harness's own re-check of a deliverable is never "a task finished": a
+// landed correction is reported as such, and one that could not be made is an
+// instruction to correct the work, with the verifier's table.
+describe("formatNotificationsForSystemPrompt — the verification tier", () => {
+  const table = "VERDICT: DISCREPANCIES\n| value | deliverable says | independent source says | match? |\n| a | 1 | 2 | no |";
+
+  it("a landed correction: say what changed in a line, never re-run", () => {
+    const out = formatNotificationsForSystemPrompt([mkNote({ task: "build the sheet", summary: "CORRECTED: 1 values\n- a: 1 -> 2", verification: { mismatched: 1, checked: 2, corrected: true } })]);
+    expect(out).toContain("FIGURES IN YOUR DELIVERABLE WERE CORRECTED");
+    expect(out).toContain("corrected 1 of 2 checked values");
+    expect(out).toContain("CORRECTED: 1 values");
+    expect(out).not.toContain("BACKGROUND COMPLETIONS");
+    expect(out).not.toContain("The work IS DONE");
+  });
+
+  it("a correction that could not be made: the agent corrects the deliverable itself", () => {
+    const out = formatNotificationsForSystemPrompt([mkNote({ task: "build the sheet", summary: table, verification: { mismatched: 1, checked: 2, corrected: false } })]);
+    expect(out).toContain("YOUR DELIVERABLE HAS DISCREPANCIES");
+    expect(out).toContain("Correct each mismatched value");
+    expect(out).toContain("| a | 1 | 2 | no |");
+    expect(out).not.toContain("BACKGROUND COMPLETIONS");
+  });
+
+  it("alongside an ordinary finished op, the ordinary block comes first and the check follows", () => {
+    const out = formatNotificationsForSystemPrompt([
+      mkNote({ task: "research the market" }),
+      mkNote({ task: "build the sheet", summary: table, verification: { mismatched: 1, checked: 2, corrected: false } }),
+    ]);
+    expect(out.indexOf("BACKGROUND COMPLETIONS")).toBeLessThan(out.indexOf("YOUR DELIVERABLE HAS DISCREPANCIES"));
+  });
+
+  it("stays out of the re-delegation history: its task is the parent's", () => {
+    const sid = "sess-verify-history";
+    pushPendingNotification(sid, mkNote({ task: "build the sheet", verification: { mismatched: 1, checked: 2, corrected: true } }));
+    expect(findRecentCompletionMatching(sid, "build the sheet")).toBeNull();
+    drainPendingNotifications(sid);
   });
 });

@@ -13,6 +13,7 @@ import { getBus, streamChannel } from "./bus.js";
 import type { CanonicalEvent } from "./types.js";
 import { inboxStore } from "../inbox/index.js";
 import { VERIFICATION_OP_TYPE } from "./verification-spend.js";
+import { attemptDeliverableCorrection, correctionContextOf } from "./verification-correct.js";
 
 // Spy-wrap the two side-channel sinks the observer feeds on terminal state so
 // the headless-job cases below can prove "no notification, no nudge". The real
@@ -21,6 +22,11 @@ vi.mock("../ops/idle-nudge.js", async (importOriginal) => {
   const real = await importOriginal<typeof import("../ops/idle-nudge.js")>();
   return { ...real, scheduleIdleNudge: vi.fn(real.scheduleIdleNudge) };
 });
+vi.mock("./verification-correct.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./verification-correct.js")>()),
+  attemptDeliverableCorrection: vi.fn(async () => false),
+  correctionContextOf: vi.fn(),
+}));
 vi.mock("../ops/pending-notifications.js", async (importOriginal) => {
   const real = await importOriginal<typeof import("../ops/pending-notifications.js")>();
   return { ...real, pushPendingNotification: vi.fn(real.pushPendingNotification) };
@@ -438,67 +444,134 @@ describe("session-bridge-observer — headless sessions stamp bg_op_completed", 
   });
 });
 
-// Verification-invariants campaign: verify_deliverable is a HARNESS-spawned
-// audit op. A succeeded pass carries the verdict — the product — and keeps
-// full surfacing. A failed/cancelled pass (provider hiccup, deadline cancel)
-// is exactly the noise class the skill-review quieting purged: keep the
-// AGENTS card update (bg_op_completed still flows, stamped headless so the
-// browser skips the OS toast + fallback FAILED card) but no pending
-// notification and no idle nudge.
-describe("session-bridge-observer — verify_deliverable failures are quiet, verdicts are not", () => {
+// The verification tier is the harness checking and correcting its own work.
+// Nothing of it is a worker in front of the user: no card, no progress line,
+// no "that op just finished". A DISCREPANCIES verdict submits a correction;
+// only when none can be submitted does the agent get a rework instruction and
+// the user an idle-time line. A finished correction tells both what changed.
+describe("session-bridge-observer — the verification tier is internal", () => {
+  const CONFIRMED = "VERDICT: CONFIRMED\n| value | deliverable says | independent source says | match? |\n|---|---|---|---|\n| a | 1 | 1 | yes |";
+  const DISCREPANCIES = "VERDICT: DISCREPANCIES\n| value | deliverable says | independent source says | match? |\n|---|---|---|---|\n| a | 1 | 2 | no |\n| b | 3 | 3 | yes |";
+
   beforeEach(() => {
     vi.mocked(scheduleIdleNudge).mockClear();
     vi.mocked(pushPendingNotification).mockClear();
+    vi.mocked(attemptDeliverableCorrection).mockReset();
+    vi.mocked(attemptDeliverableCorrection).mockResolvedValue(false);
+    vi.mocked(correctionContextOf).mockReset();
   });
 
-  it.each(["failed", "cancelled"] as const)(
-    "a %s verify op updates the card quietly — no notification, no nudge",
-    (to) => {
-      const sessionId = `sess-obs-verify-quiet-${to}`;
-      const opId = `op_verify_deliverable_quiet_${to}`;
-      writeOp({ id: opId, type: "verify_deliverable", status: "running", lastFailureReason: "provider 500" } as never);
-      created.push(opId);
-      trackOpForSession(opId, sessionId, "Verification pass: build the sheet");
-      const broadcast = vi.fn();
-      setSessionBroadcaster(broadcast);
-
-      recordCanonicalEvent(stateChanged(opId, to));
-
-      // Card visibility kept: the terminal event still flows, toast-quieted…
-      expect(broadcast).toHaveBeenCalledWith(sessionId, expect.objectContaining({
-        type: "bg_op_completed", status: to, headless: true,
-      }));
-      // …but nothing user-interrupting fires.
-      expect(pushPendingNotification).not.toHaveBeenCalled();
-      expect(scheduleIdleNudge).not.toHaveBeenCalled();
-      expect(listOpsForSession(sessionId)).toEqual([]);
-    },
-  );
-
-  it("a SUCCEEDED verify op keeps full surfacing — the verdict is the product", () => {
-    const sessionId = "sess-obs-verify-verdict";
-    const opId = "op_verify_deliverable_verdict_1";
+  function verifyOp(opId: string, finalText?: string): void {
     makeOp(opId, "verify_deliverable");
-    appendOpMessage({
-      opId, messageId: "verdict-msg", turnIdx: 0, seqInTurn: 0,
-      role: "assistant", content: { text: "VERDICT: CONFIRMED\nall values matched" }, createdAt: new Date().toISOString(),
+    if (finalText) appendOpMessage({
+      opId, messageId: `${opId}-final`, turnIdx: 0, seqInTurn: 0,
+      role: "assistant", content: { text: finalText }, createdAt: new Date().toISOString(),
     });
+  }
+
+  function bgEventsFor(broadcast: ReturnType<typeof vi.fn>, opId: string): string[] {
+    return broadcast.mock.calls
+      .map(([, event]) => event as Record<string, unknown>)
+      .filter((event) => event.opId === opId)
+      .map((event) => String(event.type));
+  }
+
+  it.each(["queued", "running", "succeeded", "failed", "cancelled"] as const)("a verification op reaching %s shows the user nothing", (to) => {
+    const sessionId = `sess-obs-verify-silent-${to}`;
+    const opId = `op_verify_deliverable_silent_${to}`;
+    verifyOp(opId, CONFIRMED);
+    trackOpForSession(opId, sessionId, "Verification pass: build the sheet");
+    const broadcast = vi.fn();
+    setSessionBroadcaster(broadcast);
+
+    recordCanonicalEvent({ type: "state_changed", opId, body: { from: to === "queued" ? null : "running", to } } as unknown as CanonicalEvent);
+    recordCanonicalEvent({ type: "turn_committed", opId, body: { turnIdx: 0, tools: [] } } as unknown as CanonicalEvent);
+
+    expect(bgEventsFor(broadcast, opId)).toEqual([]);
+    expect(pushPendingNotification).not.toHaveBeenCalled();
+    expect(scheduleIdleNudge).not.toHaveBeenCalled();
+    if (to !== "queued" && to !== "running") expect(listOpsForSession(sessionId)).toEqual([]);
+  });
+
+  it("DISCREPANCIES submits a correction and, once submitted, says nothing itself", async () => {
+    const sessionId = "sess-obs-verify-correct";
+    const opId = "op_verify_deliverable_correct_1";
+    verifyOp(opId, DISCREPANCIES);
+    trackOpForSession(opId, sessionId, "Verification pass: build the sheet");
+    vi.mocked(attemptDeliverableCorrection).mockResolvedValue(true);
+    const broadcast = vi.fn();
+    setSessionBroadcaster(broadcast);
+
+    recordCanonicalEvent(stateChanged(opId, "succeeded"));
+    await vi.waitFor(() => expect(attemptDeliverableCorrection).toHaveBeenCalledTimes(1));
+    expect(attemptDeliverableCorrection).toHaveBeenCalledWith({ verificationOpId: opId, sessionId, verdictText: expect.stringContaining("VERDICT: DISCREPANCIES"), mismatched: 1, checked: 2 });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(bgEventsFor(broadcast, opId)).toEqual([]);
+    expect(pushPendingNotification).not.toHaveBeenCalled();
+    expect(scheduleIdleNudge).not.toHaveBeenCalled();
+  });
+
+  it("when no correction can be submitted, the agent is told to correct the work and the user hears one idle-time line", async () => {
+    const sessionId = "sess-obs-verify-rework";
+    const opId = "op_verify_deliverable_rework_1";
+    verifyOp(opId, DISCREPANCIES);
     trackOpForSession(opId, sessionId, "Verification pass: build the sheet");
     const broadcast = vi.fn();
     setSessionBroadcaster(broadcast);
 
     recordCanonicalEvent(stateChanged(opId, "succeeded"));
-
-    const completedEvent = broadcast.mock.calls
-      .map(([, event]) => event as Record<string, unknown>)
-      .find((event) => event.type === "bg_op_completed");
-    expect(completedEvent).toMatchObject({ status: "completed", summary: expect.stringContaining("VERDICT: CONFIRMED") });
-    expect(completedEvent).not.toHaveProperty("headless");
+    await vi.waitFor(() => expect(pushPendingNotification).toHaveBeenCalledTimes(1));
     expect(pushPendingNotification).toHaveBeenCalledWith(sessionId, expect.objectContaining({
-      opId, status: "completed", summary: expect.stringContaining("VERDICT: CONFIRMED"),
+      opId, task: "Verification pass: build the sheet", summary: expect.stringContaining("| a | 1 | 2 | no |"),
+      verification: { mismatched: 1, checked: 2, corrected: false },
     }));
     expect(scheduleIdleNudge).toHaveBeenCalledWith(sessionId, "Verification pass: build the sheet");
+    expect(bgEventsFor(broadcast, opId)).toEqual([]);
+    cancelIdleNudge(sessionId);
+  });
+
+  it("a finished correction tells the agent and the user what was corrected, with no card", () => {
+    const sessionId = "sess-obs-correct-done";
+    const opId = "op_correct_deliverable_done_1";
+    makeOp(opId, "correct_deliverable");
+    appendOpMessage({
+      opId, messageId: "corrected", turnIdx: 0, seqInTurn: 0,
+      role: "assistant", content: { text: "CORRECTED: 1 values\n- a: 1 -> 2" }, createdAt: new Date().toISOString(),
+    });
+    vi.mocked(correctionContextOf).mockReturnValue({ parentTask: "build the sheet", deliverables: ["/w/sheet.xlsx"], table: DISCREPANCIES, mismatched: 1, checked: 2 });
+    trackOpForSession(opId, sessionId, "Correcting figures: build the sheet");
+    const broadcast = vi.fn();
+    setSessionBroadcaster(broadcast);
+
+    recordCanonicalEvent(stateChanged(opId, "succeeded"));
+
+    expect(bgEventsFor(broadcast, opId)).toEqual([]);
+    expect(pushPendingNotification).toHaveBeenCalledWith(sessionId, expect.objectContaining({
+      opId, task: "build the sheet", summary: expect.stringContaining("CORRECTED: 1 values"),
+      verification: { mismatched: 1, checked: 2, corrected: true },
+    }));
+    expect(scheduleIdleNudge).toHaveBeenCalledWith(sessionId, "build the sheet");
     expect(listOpsForSession(sessionId)).toEqual([]);
+    cancelIdleNudge(sessionId);
+  });
+
+  it("a correction that did not finish falls back to the rework instruction, with the verifier's table", () => {
+    const sessionId = "sess-obs-correct-failed";
+    const opId = "op_correct_deliverable_failed_1";
+    writeOp({ id: opId, type: "correct_deliverable", status: "running", lastFailureReason: "provider 500" } as never);
+    created.push(opId);
+    vi.mocked(correctionContextOf).mockReturnValue({ parentTask: "build the sheet", deliverables: ["/w/sheet.xlsx"], table: DISCREPANCIES, mismatched: 1, checked: 2 });
+    trackOpForSession(opId, sessionId, "Correcting figures: build the sheet");
+    const broadcast = vi.fn();
+    setSessionBroadcaster(broadcast);
+
+    recordCanonicalEvent(stateChanged(opId, "failed"));
+
+    expect(bgEventsFor(broadcast, opId)).toEqual([]);
+    expect(pushPendingNotification).toHaveBeenCalledWith(sessionId, expect.objectContaining({
+      opId, summary: DISCREPANCIES, verification: { mismatched: 1, checked: 2, corrected: false },
+    }));
+    expect(scheduleIdleNudge).toHaveBeenCalledTimes(1);
     cancelIdleNudge(sessionId);
   });
 });

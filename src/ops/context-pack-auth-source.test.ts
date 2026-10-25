@@ -40,6 +40,7 @@ const EXPECTED_SITES = [
   "canonical-loop/agent-runner/run.ts",
   "canonical-loop/chat-runner/create-op.ts",
   "canonical-loop/publish-review-submit.ts",
+  "canonical-loop/verification-correct.ts",
   "canonical-loop/verification-submit.ts",
   "ops/tools/shared.ts",
   "routes/chat/delegation-handoff.ts",

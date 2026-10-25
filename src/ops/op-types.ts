@@ -39,6 +39,8 @@ export const OP_TYPE = {
   reviewPublish: "review_publish",
   /** The fresh-context check of a deliverable (canonical-loop/verification-submit.ts). */
   verifyDeliverable: "verify_deliverable",
+  /** The correction that follows a DISCREPANCIES verdict (canonical-loop/verification-correct.ts). */
+  correctDeliverable: "correct_deliverable",
 } as const;
 
 export type HarnessOpType = (typeof OP_TYPE)[keyof typeof OP_TYPE];

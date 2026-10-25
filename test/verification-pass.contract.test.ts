@@ -47,7 +47,7 @@
 import { describe, it, expect, vi, afterAll } from "vitest";
 import { existsSync, mkdtempSync, readdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Adapter, AdapterReport, TurnInput, TurnResult } from "../src/canonical-loop/adapter-contract.js";
 import type { CanonicalEvent } from "../src/canonical-loop/types.js";
 import type { Op } from "../src/ops/types.js";
@@ -90,6 +90,7 @@ const { canonicalLoopEntry, registerAdapterForOp, awaitCanonicalOp, resetCanonic
 const { projectCanonicalEvent } = await import("../src/canonical-loop/event-emitter.js");
 const { VERIFICATION_OP_TYPE, _resetVerificationTriggerForTests, _setVerificationDebounceMsForTests } = await import("../src/canonical-loop/verification-trigger.js");
 const { buildVerificationOp, verificationRuntimeSessionId } = await import("../src/canonical-loop/verification-submit.js");
+const { CORRECTION_OP_TYPE } = await import("../src/canonical-loop/verification-correct.js");
 const { isWorkerScopedSession } = await import("../src/canonical-loop/trash-scope-observer.js");
 const { writeOp, readOp } = await import("../src/ops/op-store.js");
 const { trackOpForSession, releaseOpFromSession, listOpsForSession, setSessionBroadcaster } = await import("../src/ops/session-bridge.js");
@@ -238,6 +239,11 @@ function terminalEvent(opId: string, to: "succeeded" | "failed"): CanonicalEvent
 	return { opId, seq: ++seq, type: "state_changed", ts: new Date().toISOString(), body: { from: "running", to, reason: "e2e" } };
 }
 
+function correctionOpDirs(): string[] {
+	const root = join(laxDir, "operations");
+	return existsSync(root) ? readdirSync(root).filter((d) => d.startsWith(`op_${CORRECTION_OP_TYPE}`)) : [];
+}
+
 function verifyOpDirs(): string[] {
 	try {
 		return readdirSync(join(laxDir, "operations")).filter((d) => d.startsWith(`op_${VERIFICATION_OP_TYPE}`));
@@ -295,22 +301,34 @@ describe("verification pass — the end-to-end contract", () => {
 		expect(submitted.task).toContain("url: https://example.com/gan-2026-report"); // the claimed sources, from the sidecar
 		expect(submitted.task).toContain("ref: table 3");
 
-		// LEG 3 — the verifier reports DISCREPANCIES; the verdict rides
-		// bg_op_completed into the parent session's pending queue.
+		// LEG 3 — the verifier reports DISCREPANCIES. The user sees no worker
+		// for it; the harness submits ONE correction (build lane, the
+		// deliverable's folder as work root, the verifier's table in its brief).
 		expect((await awaitCanonicalOp(verifyOpId, 10_000))?.status).toBe("completed");
-		const completed = await waitFor(
-			() => wsEvents.find((e) => e.event.type === "bg_op_completed" && e.event.opId === verifyOpId),
-			"verify bg_op_completed",
-		);
-		expect(completed.sessionId).toBe(SESSION);
-		expect(completed.event.status).toBe("completed");
-		expect(String(completed.event.summary)).toContain("VERDICT: DISCREPANCIES");
-		expect(completed.event.headless).toBeUndefined(); // a verdict is user-facing — full surfacing
+		const correctionOpId = await waitFor(() => correctionOpDirs()[0], "correction op submission");
+		expect(correctionOpDirs()).toHaveLength(1);
+		const correction = readOp(correctionOpId)!;
+		expect(correction.type).toBe(CORRECTION_OP_TYPE);
+		expect(correction.lane).toBe("build");
+		expect(correction.parentOpId).toBe(parent.id);
+		expect(correction.taskProvenance).toBe("harness");
+		expect(correction.contextPack.routing.workRoot).toBe(dirname(DELIVERABLE));
+		expect(correction.task).toContain(DELIVERABLE);
+		expect(correction.task).toContain("VERDICT: DISCREPANCIES");
 
-		const verdictNote = drainPendingNotifications(SESSION).find((n) => n.opId === verifyOpId);
-		expect(verdictNote?.status).toBe("completed");
-		expect(verdictNote?.summary).toContain("VERDICT: DISCREPANCIES");
-		expect(verdictNote?.task).toBe(`Verification pass: ${PARENT_TASK}`);
+		// The correction lands (the scripted adapter answers); the user hears
+		// that figures were corrected, the agent is told so, and NEITHER op was
+		// ever a card: no bg_op event names them.
+		expect((await awaitCanonicalOp(correctionOpId, 10_000))?.status).toBe("completed");
+		const notes = await waitFor(() => {
+			const all = drainPendingNotifications(SESSION);
+			return all.some((n) => n.opId === correctionOpId) ? all : undefined;
+		}, "corrected notification");
+		expect(notes.find((n) => n.opId === verifyOpId)).toBeUndefined();
+		expect(notes.find((n) => n.opId === correctionOpId)).toMatchObject({
+			status: "completed", task: PARENT_TASK, verification: { mismatched: 1, checked: 1, corrected: true },
+		});
+		expect(wsEvents.filter((e) => String(e.event.type).startsWith("bg_op") && (e.event.opId === verifyOpId || e.event.opId === correctionOpId))).toEqual([]);
 		cancelIdleNudge(SESSION);
 
 		// Fingerprint recorded: a second identical terminal → no second spend
@@ -324,7 +342,7 @@ describe("verification pass — the end-to-end contract", () => {
 		state.verifyOpId = verifyOpId;
 	}, 30_000);
 
-	it("quiet failure: a FAILED verify op is headless-stamped, queues no notification, arms no nudge", async () => {
+	it("quiet failure: a FAILED verify op shows nothing, queues no notification, arms no nudge", async () => {
 		const op = await buildVerificationOp({
 			parentOp: { id: "op_parent_quiet", type: "freeform", task: PARENT_TASK } as never,
 			sessionId: QUIET_SESSION,
@@ -337,13 +355,8 @@ describe("verification pass — the end-to-end contract", () => {
 		canonicalLoopEntry(op, { sessionId: QUIET_SESSION, confirmRunning: false });
 		expect((await awaitCanonicalOp(op.id, 10_000))?.status).toBe("failed");
 
-		const completed = await waitFor(
-			() => wsEvents.find((e) => e.event.type === "bg_op_completed" && e.event.opId === op.id),
-			"quiet bg_op_completed",
-		);
-		expect(completed.sessionId).toBe(QUIET_SESSION);
-		expect(completed.event.status).toBe("failed");
-		expect(completed.event.headless).toBe(true); // the borrowed stamp: AGENTS card, no toast
+		// Not a worker in front of the user: no bg_op event ever names it.
+		expect(wsEvents.filter((e) => e.event.opId === op.id)).toEqual([]);
 		expect(drainPendingNotifications(QUIET_SESSION)).toEqual([]); // nothing queued for the agent to narrate
 
 		// No idle nudge armed — pinned synchronously under fake timers (see
@@ -456,22 +469,21 @@ describe("verification pass — the CHAT-TURN parent", () => {
 		clearTaskArtifacts(runtimeSession);
 		clearExternalIngestion(runtimeSession);
 
-		// THE INTERACTIVE-PARENT NOTIFICATION PATH: the verdict rides the same
-		// bg_op_completed → pending-notifications channel a delegated parent
-		// uses, addressed to the CHAT session — which is where the user is
-		// sitting, so the agent narrates it on their very next turn.
+		// THE INTERACTIVE-PARENT PATH: the verdict corrects the deliverable,
+		// and the correction's landing is what reaches the CHAT session's
+		// notification queue — where the user is sitting — as one line, never a
+		// worker card for either op.
 		expect((await awaitCanonicalOp(verifyOpId, 10_000))?.status).toBe("completed");
-		const completed = await waitFor(
-			() => wsEvents.find((e) => e.event.type === "bg_op_completed" && e.event.opId === verifyOpId),
-			"chat-turn verify bg_op_completed",
-		);
-		expect(completed.sessionId).toBe(CHAT_SESSION);
-		expect(completed.event.headless).toBeUndefined(); // a verdict is user-facing on the chat surface too
-		const notes = drainPendingNotifications(CHAT_SESSION);
-		const verdictNote = notes.find((n) => n.opId === verifyOpId);
-		expect(verdictNote?.status).toBe("completed");
-		expect(verdictNote?.summary).toContain("VERDICT: DISCREPANCIES");
-		expect(verdictNote?.task).toBe(`Verification pass: ${CHAT_USER_MESSAGE}`);
+		const correctionOpId = await waitFor(() => correctionOpDirs().find((d) => readOp(d)?.parentOpId === chatTurn.id), "correction for the chat turn");
+		expect(readOp(correctionOpId)?.task).toContain(CHAT_DELIVERABLE);
+		expect((await awaitCanonicalOp(correctionOpId, 10_000))?.status).toBe("completed");
+		const notes = await waitFor(() => {
+			const all = drainPendingNotifications(CHAT_SESSION);
+			return all.some((n) => n.opId === correctionOpId) ? all : undefined;
+		}, "chat-turn corrected notification");
+		expect(notes.find((n) => n.opId === verifyOpId)).toBeUndefined();
+		expect(notes.find((n) => n.opId === correctionOpId)).toMatchObject({ task: CHAT_USER_MESSAGE, verification: { corrected: true } });
+		expect(wsEvents.filter((e) => String(e.event.type).startsWith("bg_op") && (e.event.opId === verifyOpId || e.event.opId === correctionOpId))).toEqual([]);
 		cancelIdleNudge(CHAT_SESSION);
 
 		// The next conversational turn — nothing on disk changed, so the

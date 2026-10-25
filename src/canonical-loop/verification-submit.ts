@@ -89,6 +89,16 @@ export const VERIFICATION_OP_BUDGET: OpBudget = {
 	maxSelfEditCalls: 0,
 };
 
+/** What each submitted pass checked, kept for the correction that a
+ *  DISCREPANCIES verdict submits (verification-correct.ts). In memory only: a
+ *  restart loses it, and the verdict then goes to the agent as a rework
+ *  instruction instead of correcting automatically. */
+const TARGETS = new Map<string, { deliverables: string[]; parentOp: Op }>();
+
+export function verificationTargetOf(opId: string): { deliverables: string[]; parentOp: Op } | undefined {
+	return TARGETS.get(opId);
+}
+
 /** The verifier's borrowed worker-scoped runtime session (see SESSION SPLIT
  *  in the module header). isWorkerScopedSession() recognizes the `agent-`
  *  prefix, so the trash-scope observer treats it as machine-run too. */
@@ -173,6 +183,7 @@ export async function submitVerificationOp(input: VerificationSubmitInput): Prom
 		// Runtime before visibility (agent-runner/run.ts posture): a failed
 		// credential/endpoint/surface must not leave a ghost operation.
 		await configureVerificationRuntime(op, verificationRuntimeSessionId(op.id));
+		TARGETS.set(op.id, { deliverables: [...input.deliverables], parentOp: input.parentOp });
 		canonicalLoopEntry(op, { sessionId: input.sessionId, confirmRunning: false });
 		trackOpForSession(op.id, input.sessionId, panelLabel(input.parentOp.task));
 		armVerificationDeadline(op.id, VERIFICATION_OP_BUDGET.maxWallTimeMs);

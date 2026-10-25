@@ -398,3 +398,31 @@ describe("scheduleIdleNudge — broadcaster + persister payload", () => {
     expect(text).toContain("1 failed");
   });
 });
+
+// The user hears the harness's re-check in the agent's words — corrected, or
+// could not be corrected — never that an op finished.
+describe("idle nudge — the verification tier's one line", () => {
+  beforeEach(() => { vi.useFakeTimers(); });
+  afterEach(() => { vi.useRealTimers(); });
+
+  function nudgeTextFor(verification: { mismatched: number; checked: number; corrected: boolean }): string {
+    const s = sid(`verify-${verification.corrected}-${verification.mismatched}`);
+    let text = "";
+    setIdleNudgeBroadcaster((_session, event) => { text = String((event as { text?: string }).text ?? ""); });
+    pushPendingNotification(s, { opId: "op-v", task: "build the GaN market sheet from the two reports", status: "completed", completedAt: Date.now(), filesChanged: [], summary: "", verification });
+    scheduleIdleNudge(s);
+    vi.advanceTimersByTime(130_000);
+    drainPendingNotifications(s);
+    return text;
+  }
+
+  it("a landed correction", () => {
+    expect(nudgeTextFor({ mismatched: 2, checked: 3, corrected: true }))
+      .toBe("Heads up — I re-checked the figures in what I built against their sources and corrected 2 figures that didn't match.");
+  });
+
+  it("a correction that could not be made asks whether to go through them", () => {
+    expect(nudgeTextFor({ mismatched: 1, checked: 3, corrected: false }))
+      .toBe("Heads up — I re-checked the figures in what I built against their sources; 1 figure don't match and I couldn't correct them automatically. Want me to go through them?");
+  });
+});

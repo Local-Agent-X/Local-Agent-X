@@ -191,7 +191,7 @@ export const CONTROL_SETTINGS: ReadonlyArray<FlippableSetting> = [
     validate: z.boolean(),
     runtime: true,
     broadcast: true,
-    description: "Independent verification pass when a deliverable is built from external data (a report, spreadsheet, chart) — a background model re-checks the result against its sources. Covers work done in a chat turn as well as delegated tasks. On by default; it waits until you have stopped editing, then runs ONCE over everything that changed since the last check, so iterating on a file costs one verification and not one per save (unchanged files are never re-checked, and only one verification runs per chat at a time)",
+    description: "Independent verification pass when a deliverable is built from external data (a report, spreadsheet, chart) — a background model re-checks the result against its sources, and figures that do not match are corrected in the file, after which the agent tells you in a line what it corrected. Nothing is shown while it checks; a check that confirms the figures says nothing. Covers work done in a chat turn as well as delegated tasks. On by default; it waits until you have stopped editing, then runs ONCE over everything that changed since the last check, so iterating on a file costs one verification and not one per save (unchanged files are never re-checked, and only one verification runs per chat at a time)",
   },
   {
     field: "regressionAuditProvider",

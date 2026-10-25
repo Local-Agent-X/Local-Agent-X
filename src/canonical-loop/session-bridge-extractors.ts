@@ -62,14 +62,24 @@ function isMismatchRow(row: string): boolean {
  * The table is what the text surfaces are for; voice gets the verdict word
  * and how many values moved, and the user can ask for the rest.
  */
-function toSpokenVerdict(summary: string): string {
+export type VerificationVerdict = "CONFIRMED" | "DISCREPANCIES" | "UNVERIFIABLE";
+
+/** The verifier's first-line verdict and its per-value table, read from its
+ *  final text. `verdict` is null when the text carries no verdict line (a pass
+ *  that stopped early); `mismatched` counts the rows whose match column says no. */
+export function verificationReport(summary: string): { verdict: VerificationVerdict | null; checked: number; mismatched: number } {
   const lines = (summary || "").split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
   const verdictLine = lines.find((l) => /VERDICT\s*:/i.test(l)) ?? "";
-  const verdict = (verdictLine.match(/VERDICT\s*:\s*([A-Za-z]+)/i)?.[1] ?? "").toUpperCase();
+  const word = (verdictLine.match(/VERDICT\s*:\s*([A-Za-z]+)/i)?.[1] ?? "").toUpperCase();
+  const verdict = word === "CONFIRMED" || word === "DISCREPANCIES" || word === "UNVERIFIABLE" ? word : null;
   // Per-value rows: pipe-delimited, minus the header row and any `---`
   // separator rendered under it (the row that made this sound like morse).
   const rows = lines.filter((l) => l.includes("|") && !/^[|\s:-]+$/.test(l)).slice(1);
-  const checked = rows.length;
+  return { verdict, checked: rows.length, mismatched: rows.filter(isMismatchRow).length };
+}
+
+function toSpokenVerdict(summary: string): string {
+  const { verdict, checked, mismatched } = verificationReport(summary);
   const noun = `${checked} checked value${checked === 1 ? "" : "s"}`;
   if (verdict === "CONFIRMED") {
     return checked > 0
@@ -77,7 +87,6 @@ function toSpokenVerdict(summary: string): string {
       : "Verification finished: confirmed.";
   }
   if (verdict === "DISCREPANCIES") {
-    const mismatched = rows.filter(isMismatchRow).length;
     return mismatched > 0 && checked > 0
       ? `Verification finished: discrepancies on ${mismatched} of ${noun}.`
       : "Verification finished: discrepancies found. The details are in the chat.";

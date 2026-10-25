@@ -460,3 +460,31 @@ describe("the framed page talks only to the shell's origins", () => {
 		}
 	});
 });
+
+// 2026-10-24: the agent wrote this app's own address in full,
+// [resume](http://127.0.0.1:7007/files/resume-agency/resume.pdf), and the
+// document-link rule took any link ending in .pdf for a workspace path, so the
+// link became /files/http://127.0.0.1:7007/files/… and opened "File not found".
+describe("document links written as full addresses", () => {
+	function render(markdown: string): string {
+		const lib = new Function(
+			"AUTH_TOKEN", "fetch", "location",
+			`${read("js/shared-escape.js")}\n${read("js/shared-md.js")}\nreturn { md };`,
+		)(OP_TOKEN, () => new Promise(() => {}), { origin: UI, href: `${UI}/` }) as { md: (s: string) => string };
+		const host = document.createElement("div");
+		host.innerHTML = lib.md(markdown);
+		return host.querySelector("a")!.getAttribute("href")!;
+	}
+
+	it("this app's own /files/ address is the /files/ link it names", () => {
+		expect(render(`[resume](${UI}/files/resume-agency/resume.pdf)`)).toBe("/files/resume-agency/resume.pdf");
+	});
+
+	it("a PDF on another site stays a link to that site", () => {
+		expect(render("[paper](https://example.com/papers/paper.pdf)")).toBe("https://example.com/papers/paper.pdf");
+	});
+
+	it("a workspace-relative document is still a /files/ link", () => {
+		expect(render("[report](reports/q3.pdf)")).toBe("/files/reports/q3.pdf");
+	});
+});

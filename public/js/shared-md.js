@@ -210,6 +210,13 @@ function md(s) {
     if (wsMatch) {
       return ph(`<a href="${attr(filesUrl(wsMatch[1]))}" target="_blank" rel="noopener noreferrer" class="md-link file-download">${esc(text)}</a>`);
     }
+    // This app's own /files/ address written out in full (a write or edit hands
+    // the agent http://127.0.0.1:<port>/files/<path> to put in its reply) is the
+    // same link as the bare path.
+    const ownFiles = normalizedUrl.match(/^https?:\/\/[^/]+(\/files\/.+)$/);
+    if (ownFiles) {
+      try { if (new URL(normalizedUrl).origin === location.origin) normalizedUrl = ownFiles[1]; } catch { /* not a URL: left as written */ }
+    }
     // /files/ links (already resolved by LLM or tool output) → add the files-link capability
     if (/^\/files\/./.test(normalizedUrl)) {
       return ph(`<a href="${attr(agentFilesHref(normalizedUrl))}" class="md-link file-download">${esc(text)}</a>`);
@@ -226,8 +233,10 @@ function md(s) {
       const url = path + existingQS + (token ? sep + 'token=' + token : '');
       return ph(`<a href="${attr(url)}" target="_blank" rel="noopener noreferrer" class="md-link">${esc(text)}</a>`);
     }
-    // Relative paths to document files → convert to /files/ route
-    const docMatch = normalizedUrl.match(/^[^\/].*\.(docx?|xlsx?|pptx?|pdf|csv)$/i);
+    // Relative paths to document files → convert to /files/ route. Never an
+    // address with a scheme: http://…/report.pdf became /files/http://…, a file
+    // that cannot exist (2026-10-24).
+    const docMatch = normalizedUrl.match(/^(?![a-z][a-z0-9+.-]*:)[^\/].*\.(docx?|xlsx?|pptx?|pdf|csv)$/i);
     if (docMatch) {
       return ph(`<a href="${attr(filesUrl(normalizedUrl.replace(/^\.\//, '')))}" class="md-link file-download">${esc(text)}</a>`);
     }

@@ -13,6 +13,7 @@ import {
   warmModel,
   holdChatModelResidency,
   releaseChatModelResidency,
+  CHAT_RESIDENCY_IDLE_MS,
   dispatchNumCtx,
   DISPATCH_MODEL_MAX_BYTES,
   DISPATCH_NUM_CTX,
@@ -245,6 +246,29 @@ describe("holdChatModelResidency", () => {
       .map(c => (JSON.parse(String(c[1]?.body)) as { model: string }).model);
     expect(modelsWarmedAfterSwitch.length).toBeGreaterThan(0);
     expect(modelsWarmedAfterSwitch.every(m => m === "qwen3.6:27b")).toBe(true);
+  });
+
+  it("lets go after 30 minutes without a chat turn, so the runtime can unload the model", async () => {
+    vi.useFakeTimers();
+    const spy = okFetch();
+    holdChatModelResidency(BASE, "qwen3.6:27b");
+    await vi.advanceTimersByTimeAsync(CHAT_RESIDENCY_IDLE_MS + 5 * 60_000);
+    const warmsWhileHeld = spy.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(3 * 60 * 60_000);
+    expect(spy.mock.calls.length).toBe(warmsWhileHeld);
+  });
+
+  it("each chat turn on the model keeps the hold going", async () => {
+    vi.useFakeTimers();
+    const spy = okFetch();
+    holdChatModelResidency(BASE, "qwen3.6:27b");
+    for (let i = 0; i < 4; i++) {
+      await vi.advanceTimersByTimeAsync(20 * 60_000);
+      holdChatModelResidency(BASE, "qwen3.6:27b"); // a turn every 20 minutes
+    }
+    const before = spy.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(8 * 60_000);
+    expect(spy.mock.calls.length).toBeGreaterThan(before); // still re-upped at 80+ minutes
   });
 
   it("release stops the re-up loop", async () => {

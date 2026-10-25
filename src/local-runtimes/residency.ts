@@ -236,33 +236,51 @@ const inflightWarms = new Map<string, Promise<void>>();
  * so a /v1 chat request resets the model's expiry to that 5m default no
  * matter what an earlier warm asked for. Chat with a discovered Ollama now
  * rides native /api/chat carrying MODEL_KEEP_ALIVE, but the hold still
- * serves the undiscovered config.ollamaUrl path (still /v1) and keeps the
- * model loaded past 30 idle minutes. 4m lands inside every 5m window.
+ * serves the undiscovered config.ollamaUrl path (still /v1). 4m lands inside
+ * every 5m window.
  */
 const CHAT_RESIDENCY_REUP_MS = 4 * 60_000;
+
+/**
+ * The hold lets go once no chat turn has used the model for this long; the
+ * runtime then unloads it MODEL_KEEP_ALIVE after the last warm. With no end,
+ * one local chat kept its model pinned in VRAM until the app restarted: a user
+ * who moved on to a cloud model kept a 24GB qwen3.6 re-warmed every 4 minutes,
+ * evicting the model a benchmark on the same GPU was using 45 times in three
+ * hours (2026-10-24).
+ */
+export const CHAT_RESIDENCY_IDLE_MS = 30 * 60_000;
 
 // One hold at a time, matching "the user's current local chat model". Moving
 // the hold on a model switch lets the runtime evict the old model instead of
 // two 17GB models fighting for VRAM — the exact thrash this exists to end.
-let heldChat: { key: string; timer: ReturnType<typeof setInterval> } | null = null;
+let heldChat: { key: string; timer: ReturnType<typeof setInterval>; lastUsedAt: number } | null = null;
 
 /**
- * Keep `model` resident on the Ollama-native runtime at `baseUrl` until the
- * hold moves to another model. Idempotent per (baseUrl, model); switching
- * targets releases the previous hold. Fire-and-forget like warmModel — a
- * failed re-up is debug-noise and the next real call surfaces any genuine
- * outage. Ollama-native only (rides /api/generate); OpenAI-compat-only
- * runtimes (LM Studio, vLLM) manage their own TTLs.
+ * Keep `model` resident on the Ollama-native runtime at `baseUrl` while chat
+ * keeps using it: called on every local chat turn, each call renews the hold,
+ * and it ends after CHAT_RESIDENCY_IDLE_MS without one or when it moves to
+ * another model. Idempotent per (baseUrl, model); switching targets releases
+ * the previous hold. Fire-and-forget like warmModel — a failed re-up is
+ * debug-noise and the next real call surfaces any genuine outage.
+ * Ollama-native only (rides /api/generate); OpenAI-compat-only runtimes
+ * (LM Studio, vLLM) manage their own TTLs.
  */
 export function holdChatModelResidency(baseUrl: string, model: string): void {
   const base = baseUrl.replace(/\/+$/, "");
   const key = `${base}|${model}`;
-  if (heldChat?.key === key) return;
+  if (heldChat?.key === key) {
+    heldChat.lastUsedAt = Date.now();
+    return;
+  }
   if (heldChat) clearInterval(heldChat.timer);
   warmModel(base, model);
-  const timer = setInterval(() => warmModel(base, model), CHAT_RESIDENCY_REUP_MS);
+  const timer = setInterval(() => {
+    if (heldChat && Date.now() - heldChat.lastUsedAt >= CHAT_RESIDENCY_IDLE_MS) releaseChatModelResidency();
+    else warmModel(base, model);
+  }, CHAT_RESIDENCY_REUP_MS);
   timer.unref?.();
-  heldChat = { key, timer };
+  heldChat = { key, timer, lastUsedAt: Date.now() };
 }
 
 /** Drop the current hold (model switch away from local, shutdown, tests). */

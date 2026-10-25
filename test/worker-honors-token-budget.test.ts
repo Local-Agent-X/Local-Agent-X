@@ -44,7 +44,6 @@ import {
   resetScheduler,
   awaitIdle,
   resetBus,
-  setLeaseConfig,
   resetLeaseConfig,
   setToolDispatcher,
   readCanonicalEvents,
@@ -67,7 +66,6 @@ const PER_TURN = IN_PER_TURN + OUT_PER_TURN; // 600
 
 beforeEach(() => {
   process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "1";
-  setLeaseConfig({ leaseDurationMs: 100, heartbeatIntervalMs: 25 });
 });
 
 afterEach(async () => {

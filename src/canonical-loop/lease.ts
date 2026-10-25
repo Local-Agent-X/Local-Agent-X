@@ -58,6 +58,10 @@ const DEFAULT_LEASE_CONFIG: LeaseConfig = {
 let CONFIG: LeaseConfig = { ...DEFAULT_LEASE_CONFIG };
 type LeaseRacePoint = "before_acquire_lock" | "before_recovery_lock";
 let raceHook: ((point: LeaseRacePoint) => void) | null = null;
+// The clock every lease expiry is stamped and judged by. A test drives expiry
+// by moving it; a lease shortened under the real clock instead expires on any
+// stall longer than the lease, which a slow CI runner produces routinely.
+let leaseNow: () => number = Date.now;
 
 export function getLeaseConfig(): LeaseConfig {
   return { ...CONFIG };
@@ -70,6 +74,12 @@ export function setLeaseConfig(partial: Partial<LeaseConfig>): void {
 export function resetLeaseConfig(): void {
   CONFIG = { ...DEFAULT_LEASE_CONFIG };
   raceHook = null;
+  leaseNow = Date.now;
+}
+
+/** Test seam: the clock leases are stamped and judged by (reset by resetLeaseConfig). */
+export function setLeaseClock(now: () => number): void {
+  leaseNow = now;
 }
 
 /** Test-only deterministic seam for changing the row between observation and lock. */
@@ -214,7 +224,7 @@ export function isLeaseExpired(op: Op | null | undefined): boolean {
   const expiresAt = op?.canonical?.leaseExpiresAt;
   if (!expiresAt) return leaseClaimFromOp(op) !== null;
   const ms = Date.parse(expiresAt);
-  return !Number.isFinite(ms) || ms <= Date.now();
+  return !Number.isFinite(ms) || ms <= leaseNow();
 }
 
 function persistedGeneration(op: Op | null | undefined): number {
@@ -229,5 +239,5 @@ function sameClaim(a: LeaseClaim | null, b: LeaseClaim | null): boolean {
 }
 
 function newExpiry(): string {
-  return new Date(Date.now() + CONFIG.leaseDurationMs).toISOString();
+  return new Date(leaseNow() + CONFIG.leaseDurationMs).toISOString();
 }

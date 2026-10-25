@@ -28,7 +28,6 @@ import {
   resetScheduler,
   awaitIdle,
   resetBus,
-  setLeaseConfig,
   resetLeaseConfig,
   setToolDispatcher,
 } from "../src/canonical-loop/index.js";
@@ -76,7 +75,6 @@ function installTaskScriptedAdapters(): void {
 
 beforeEach(() => {
   process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "1";
-  setLeaseConfig({ leaseDurationMs: 100, heartbeatIntervalMs: 25 });
   setMiddlewareStack([loopDetectionMiddleware]);
   // Decide the stop by evidence alone — the spend ceiling reads the real
   // ~/.lax ledger (see test/worker-honors-iteration-budget.test.ts).

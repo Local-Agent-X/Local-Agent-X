@@ -35,7 +35,6 @@ import {
   resetScheduler,
   awaitIdle,
   resetBus,
-  setLeaseConfig,
   resetLeaseConfig,
   opCancel,
   readCanonicalEvents,
@@ -53,7 +52,6 @@ const track = <T extends string>(id: T): T => { tracked.push(id); return id; };
 
 beforeEach(() => {
   process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "1";
-  setLeaseConfig({ leaseDurationMs: 200, heartbeatIntervalMs: 50 });
 });
 
 afterEach(async () => {

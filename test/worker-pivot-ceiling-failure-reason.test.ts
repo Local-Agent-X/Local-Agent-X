@@ -32,7 +32,6 @@ import {
   resetScheduler,
   awaitIdle,
   resetBus,
-  setLeaseConfig,
   resetLeaseConfig,
   setToolDispatcher,
 } from "../src/canonical-loop/index.js";
@@ -47,7 +46,6 @@ const ORIGINAL_CONFIG = getRuntimeConfig();
 
 beforeEach(() => {
   process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "1";
-  setLeaseConfig({ leaseDurationMs: 100, heartbeatIntervalMs: 25 });
   setMiddlewareStack([loopDetectionMiddleware]);
   // The spend ceiling reads the real ~/.lax ledger; the outcome here must be
   // decided by the loop guard alone (see worker-honors-iteration-budget).

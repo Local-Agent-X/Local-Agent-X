@@ -28,7 +28,6 @@ import {
   resetScheduler,
   awaitIdle,
   resetBus,
-  setLeaseConfig,
   resetLeaseConfig,
   schedulerSnapshot,
   evictWorker,
@@ -49,7 +48,6 @@ beforeEach(() => {
   process.env.LAX_CANONICAL_LOOP_BUILD = "1";
   process.env.LAX_CANONICAL_LOOP_BACKGROUND = "1";
   process.env.LAX_CANONICAL_LOOP_IDE = "1";
-  setLeaseConfig({ leaseDurationMs: 500, heartbeatIntervalMs: 100 });
 });
 
 afterEach(async () => {

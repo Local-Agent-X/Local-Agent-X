@@ -52,7 +52,6 @@ import {
   resetScheduler,
   awaitIdle,
   resetBus,
-  setLeaseConfig,
   resetLeaseConfig,
   setToolDispatcher,
   readCanonicalEvents,
@@ -91,7 +90,6 @@ const TURN_FLOOR_MS = 50;
 
 beforeEach(() => {
   process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "1";
-  setLeaseConfig({ leaseDurationMs: 100, heartbeatIntervalMs: 25 });
   setMiddlewareStack([loopDetectionMiddleware]);
   // The spend ceiling reads the real ~/.lax ledger; the outcome here must be
   // decided by the wall clock alone (see worker-honors-iteration-budget).

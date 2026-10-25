@@ -53,7 +53,6 @@ import {
   resetScheduler,
   awaitIdle,
   resetBus,
-  setLeaseConfig,
   resetLeaseConfig,
   setToolDispatcher,
   readCanonicalEvents,
@@ -71,9 +70,6 @@ const track = <T extends string>(id: T): T => { tracked.push(id); return id; };
 
 beforeEach(() => {
   process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "1";
-  // Compress the lease cycle (same as the Issue-08 suite) so a hung/failed
-  // worker doesn't hold real wall-clock leases.
-  setLeaseConfig({ leaseDurationMs: 100, heartbeatIntervalMs: 25 });
 });
 
 afterEach(async () => {

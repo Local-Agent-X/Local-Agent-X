@@ -37,7 +37,6 @@ import {
   resetScheduler,
   awaitIdle,
   resetBus,
-  setLeaseConfig,
   resetLeaseConfig,
   setToolDispatcher,
   readCanonicalEvents,
@@ -60,7 +59,6 @@ const ORIGINAL_CONFIG = getRuntimeConfig();
 
 beforeEach(() => {
   process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "1";
-  setLeaseConfig({ leaseDurationMs: 100, heartbeatIntervalMs: 25 });
   // The dry-checkpoint condition reads loop-detection's novelty counter.
   // Install the REAL middleware (only that one — the full default stack would
   // nudge/abort the scripted adapter for unrelated reasons) so the evidence

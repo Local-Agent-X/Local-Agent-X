@@ -39,7 +39,6 @@ import {
   resetScheduler,
   awaitIdle,
   resetBus,
-  setLeaseConfig,
   resetLeaseConfig,
   opCancel,
   opPause,
@@ -69,7 +68,6 @@ const track = <T extends string>(id: T): T => { tracked.push(id); return id; };
 
 beforeEach(() => {
   process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "1";
-  setLeaseConfig({ leaseDurationMs: 200, heartbeatIntervalMs: 50 });
   // No-op dispatcher: pause/redirect scenarios keep the loop going by having
   // the first turn request a (non-silent) tool. Only fires when a script
   // emits a tool call.

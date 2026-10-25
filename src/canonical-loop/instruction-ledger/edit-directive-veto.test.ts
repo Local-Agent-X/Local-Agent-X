@@ -58,6 +58,50 @@ describe("an edit directive vetoes a whole-workspace write ban", () => {
   });
 });
 
+describe("read-only said of named inputs is not a no-edit session", () => {
+  // The task that lost its only write (2026-10-24): the local confirm model was
+  // not loaded, so the deterministic tier decided.
+  const SCHEDULING = [
+    "Find a 1-hour meeting slot for Alice, Bob, and Carol.",
+    "",
+    "Output: Create `/app/meeting_scheduled.ics` with a 1-hour \"Team Planning Meeting\".",
+    "",
+    "Input Integrity:",
+    "- Treat the provided calendar files as read-only. Do not modify",
+    "  `/app/alice_calendar.ics`, `/app/bob_calendar.ics`, or `/app/carol_calendar.ics`.",
+  ].join("\n");
+
+  it("the scheduling task keeps its write on both tiers", async () => {
+    expect((await extractConstraints(SCHEDULING, offline)).prohibitions).not.toContain("workspace-write");
+    expect((await extractConstraints(SCHEDULING, bansWrites)).prohibitions).not.toContain("workspace-write");
+  });
+
+  it("covers the everyday phrasings of the same request", async () => {
+    for (const msg of [
+      "Treat the originals as read-only and write the cleaned rows to out.csv.",
+      "The fixtures are read-only. Don't modify them; add a new test file instead.",
+      "Keep data/raw as read-only. Create a summary in report.md.",
+      "Task: fix the parser. Do not modify the vendored files, they are read-only.",
+    ]) {
+      for (const confirm of [offline, bansWrites]) {
+        const ledger = await extractConstraints(msg, confirm);
+        expect(ledger.prohibitions, msg).not.toContain("workspace-write");
+      }
+    }
+  });
+
+  it("read-only said of the work itself still bans writes", async () => {
+    for (const msg of [
+      "Treat this as read-only: don't modify anything, write nothing, just tell me what's wrong.",
+      "This session is read-only. Don't change the code; add your notes to the reply.",
+      "Treat everything as read-only and don't edit the code. Fix suggestions go in your answer.",
+    ]) {
+      const ledger = await extractConstraints(msg, bansWrites);
+      expect(ledger.prohibitions, msg).toContain("workspace-write");
+    }
+  });
+});
+
 describe("a real no-edit session still gets its ban", () => {
   it("diagnose-only requests keep workspace-write", async () => {
     for (const msg of [

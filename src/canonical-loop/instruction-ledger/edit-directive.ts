@@ -6,10 +6,22 @@
 import type { CapabilityClass } from "../../tool-registry.js";
 
 // An explicit instruction to change code: an imperative edit verb opening a
-// sentence or clause ("Fix the code in x.py", "…, and fix the parser"). A
-// message that says this is, by its own words, not a no-edit session.
+// sentence or clause ("Fix the code in x.py", "…, and fix the parser",
+// "Output: create report.csv"). A message that says this is, by its own words,
+// not a no-edit session.
 const EDIT_DIRECTIVE =
-  /(?:^|[.!?\n]\s*|[,;]\s*(?:and\s+|then\s+)?|\b(?:please|now|then|and)\s+)(?:fix|edit|implement|update|modify|change|refactor|rename|add|remove|delete|write|rewrite|create|replace|correct|patch)\b(?!\s+(?:nothing|no\s+changes)\b)/im;
+  /(?:^|[.!?\n:]\s*|[,;]\s*(?:and\s+|then\s+)?|\b(?:please|now|then|and)\s+)(?:fix|edit|implement|update|modify|change|refactor|rename|add|remove|delete|write|rewrite|create|replace|correct|patch)\b(?!\s+(?:nothing|no\s+changes)\b)/im;
+
+// "read-only" said of named things — "treat the input files as read-only",
+// "the fixtures are read-only" — keeps the agent off those things, not off
+// every file. Removed before the diagnose-only test. A subject that is the work
+// itself ("this", "it", "everything", "this session") stays a diagnose-only cue.
+const THE_WORK = String.raw`(?:this|it|everything|anything|session|mode|task|request|review|work|chat|turn)\b`;
+const READ_ONLY_OF_NAMED_THINGS = new RegExp(
+  String.raw`\b(?:treat|keep|leave|mark|consider)\s+(?!${THE_WORK})[^.?!\n]{1,80}?\s+as\s+read[- ]?only\b` +
+    String.raw`|\b(?!${THE_WORK})\w+\s+(?:is|are)\s+read[- ]?only\b`,
+  "gi",
+);
 
 // Diagnose-only cues that stand on their own. Deliberately NOT the generic
 // "don't change/edit X" negation: that is exactly the scoped carve-out ("don't
@@ -32,14 +44,21 @@ const DIAGNOSE_ONLY =
  * "edit X" and "edit nothing" cannot both hold, so the ban survives only beside
  * an unambiguous diagnose-only cue ("read-only", "just tell me why", "don't
  * edit any files").
+ *
+ * "Treat the provided calendar files as read-only. Do not modify alice.ics …
+ * Output: create /app/meeting_scheduled.ics" came back as a whole-workspace ban
+ * on the deterministic tier (the local confirm model was not loaded, so it was
+ * skipped): the label colon hid the directive and the read-only said of the
+ * inputs read as diagnose-only. The model worked out the answer and its one
+ * write was refused (2026-10-24).
  */
 export function vetoWriteBanOnEditDirective(prohibitions: readonly CapabilityClass[], userMessage: string): CapabilityClass[] {
   if (!prohibitions.includes("workspace-write")) return [...prohibitions];
-  if (!EDIT_DIRECTIVE.test(userMessage) || DIAGNOSE_ONLY.test(userMessage)) return [...prohibitions];
+  if (!directsAnEdit(userMessage)) return [...prohibitions];
   return prohibitions.filter((c) => c !== "workspace-write");
 }
 
 /** Exported for direct tests. */
 export function directsAnEdit(userMessage: string): boolean {
-  return EDIT_DIRECTIVE.test(userMessage) && !DIAGNOSE_ONLY.test(userMessage);
+  return EDIT_DIRECTIVE.test(userMessage) && !DIAGNOSE_ONLY.test(userMessage.replace(READ_ONLY_OF_NAMED_THINGS, " "));
 }

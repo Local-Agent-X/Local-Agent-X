@@ -44,6 +44,7 @@ import {
   type AnthropicTransport,
   type TransportEvent,
 } from "../src/canonical-loop/index.js";
+import { awaitOpState } from "./canonical-loop/harness.js";
 import { readOp, newOpId } from "../src/ops/op-store.js";
 import type { Op } from "../src/ops/types.js";
 import {
@@ -107,18 +108,6 @@ function mkOp(label: string, lane: Op["lane"] = "interactive"): Op {
   };
 }
 
-async function awaitState(opId: string, target: "succeeded" | "failed" | "cancelled", timeoutMs = 3_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const op = readOp(opId);
-    if (op?.canonical?.state === target) return;
-    if (Date.now() > deadline) {
-      const events = readCanonicalEvents(opId).map(e => e.type).join(",");
-      throw new Error(`awaitState(${target}) timed out for ${opId} — events=[${events}], state=${op?.canonical?.state}`);
-    }
-    await new Promise(r => setTimeout(r, 5));
-  }
-}
 
 function bodyOf<T = Record<string, unknown>>(e: CanonicalEvent): T {
   return (e.body ?? {}) as T;
@@ -377,7 +366,7 @@ describe("Issue 09 — no secrets in event bodies or persisted artifacts", () =>
     const op = mkOp("redact-e2e");
     registerAdapterForOp(op.id, () => adapter);
     canonicalLoopEntry(op);
-    await awaitState(op.id, "failed", 3_000);
+    await awaitOpState(op.id, "failed");
 
     const events = readCanonicalEvents(op.id);
     for (const e of events) {
@@ -402,7 +391,7 @@ describe("Issue 09 — adapter integrated with canonical-loop runtime", () => {
     registerAdapterForOp(op.id, () => adapter);
 
     canonicalLoopEntry(op);
-    await awaitState(op.id, "succeeded");
+    await awaitOpState(op.id, "succeeded");
 
     const events = readCanonicalEvents(op.id);
     const types = events.map(e => e.type);
@@ -437,7 +426,7 @@ describe("Issue 09 — adapter integrated with canonical-loop runtime", () => {
     registerAdapterForOp(op.id, () => adapter);
 
     canonicalLoopEntry(op);
-    await awaitState(op.id, "failed");
+    await awaitOpState(op.id, "failed");
 
     const events = readCanonicalEvents(op.id);
     const errEvents = events.filter(e => e.type === "error");
@@ -464,7 +453,7 @@ describe("Issue 09 — adapter integrated with canonical-loop runtime", () => {
     const r = opCancel(op.id, "test-actor");
     expect(r.ok).toBe(true);
 
-    await awaitState(op.id, "cancelled", 2_000);
+    await awaitOpState(op.id, "cancelled");
 
     const events = readCanonicalEvents(op.id);
     expect(events.some(e => e.type === "turn_committed")).toBe(false);

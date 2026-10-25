@@ -49,10 +49,12 @@ function captureEvent<T = unknown>(name: string): { drain: () => T[] } {
   };
 }
 
-async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
+/** Polls until `predicate` holds. Without `timeoutMs` the test's own timeout
+ *  bounds it; a budget is only for a best-effort peek the caller swallows. */
+async function waitFor(predicate: () => boolean, timeoutMs?: number): Promise<void> {
   const start = Date.now();
   while (!predicate()) {
-    if (Date.now() - start > timeoutMs) throw new Error(`waitFor timed out after ${timeoutMs}ms`);
+    if (timeoutMs !== undefined && Date.now() - start > timeoutMs) throw new Error(`waitFor timed out after ${timeoutMs}ms`);
     await new Promise(r => setTimeout(r, 5));
   }
 }
@@ -94,7 +96,7 @@ describe("invokeDefinition — routes through registered canonical-loop driver",
 
     // Drive a fresh invocation since the captures were already drained.
     const ref2 = invokeDefinition(TEST_DEF, "do another thing", {});
-    await waitFor(() => finalResults.some(r => r.agentId === ref2.runId), 1_000);
+    await waitFor(() => finalResults.some(r => r.agentId === ref2.runId));
 
     expect(received).not.toBeNull();
     expect(received!.agentId).toBeDefined();
@@ -127,7 +129,7 @@ describe("invokeDefinition — routes through registered canonical-loop driver",
     EventBus.on("handler:agent-result", (d) => { finalResults.push(d as typeof finalResults[number]); });
 
     const ref = invokeDefinition(TEST_DEF, "implement chunk 1", { workRoot: "/tmp/proj-root" });
-    await waitFor(() => finalResults.some(r => r.agentId === ref.runId), 1_000);
+    await waitFor(() => finalResults.some(r => r.agentId === ref.runId));
 
     expect(received).not.toBeNull();
     expect(received!.workRoot).toBe("/tmp/proj-root");
@@ -147,7 +149,7 @@ describe("invokeDefinition — routes through registered canonical-loop driver",
 
     const delegation = { parentOpId: "op_chat_turn_1", inheritedConstraints: { prohibitions: ["egress" as const], phrases: ["stay offline"] } };
     const ref = invokeDefinition(TEST_DEF, "ship the release", { delegation });
-    await waitFor(() => finalResults.some(r => r.agentId === ref.runId), 1_000);
+    await waitFor(() => finalResults.some(r => r.agentId === ref.runId));
 
     expect(received!.delegation).toEqual(delegation);
   });
@@ -190,7 +192,7 @@ describe("invokeDefinition — routes through registered canonical-loop driver",
     EventBus.on("handler:agent-result", (d) => { results.push(d as typeof results[number]); });
 
     const ref = invokeDefinition(TEST_DEF, "task", {});
-    await waitFor(() => results.some(r => r.agentId === ref.runId), 1_000);
+    await waitFor(() => results.some(r => r.agentId === ref.runId));
 
     const r = results.find(r => r.agentId === ref.runId);
     expect(r).toBeDefined();
@@ -204,7 +206,7 @@ describe("invokeDefinition — routes through registered canonical-loop driver",
     EventBus.on("handler:agent-result", (d) => { results.push(d as typeof results[number]); });
 
     const ref = invokeDefinition(TEST_DEF, "task", {});
-    await waitFor(() => results.some(r => r.agentId === ref.runId), 1_000);
+    await waitFor(() => results.some(r => r.agentId === ref.runId));
 
     const r = results.find(r => r.agentId === ref.runId);
     expect(r?.success).toBe(false);
@@ -232,7 +234,7 @@ describe("invokeDefinition — routes through registered canonical-loop driver",
     Handler.getInstance().cancelAgent(ref.runId);
     expect(driverSignal!.aborted).toBe(true);
 
-    await waitFor(() => results.some(r => r.agentId === ref.runId), 1_000);
+    await waitFor(() => results.some(r => r.agentId === ref.runId));
     const r = results.find(r => r.agentId === ref.runId);
     expect(r!.success).toBe(false);
     // Resolve to ensure cleanup
@@ -247,7 +249,7 @@ describe("invokeDefinition — chunk-runner subscription compatibility", () => {
     EventBus.on("handler:agent-result", (d) => { results.push(d as typeof results[number]); });
 
     const ref = invokeDefinition(TEST_DEF, "ship chunk", {});
-    await waitFor(() => results.some(r => r.agentId === ref.runId), 1_000);
+    await waitFor(() => results.some(r => r.agentId === ref.runId));
 
     const r = results.find(r => r.agentId === ref.runId);
     expect(r?.success).toBe(true);

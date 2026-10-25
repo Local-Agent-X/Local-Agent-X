@@ -65,7 +65,7 @@ interface Counter { inFlight: number; max: number; }
 class CountingAdapter implements Adapter {
   readonly name = "batch-counting";
   readonly version = "1";
-  constructor(private readonly ctx: { counter: Counter; holdMs: number }) {}
+  constructor(private readonly ctx: { counter: Counter; hold: () => Promise<void> }) {}
 
   async runTurn(input: TurnInput, report: (r: AdapterReport) => void): Promise<TurnResult> {
     this.ctx.counter.inFlight++;
@@ -75,7 +75,7 @@ class CountingAdapter implements Adapter {
         .filter(m => m.role === "user")
         .map(m => ((m.content as { text?: string } | null)?.text ?? ""))
         .join(" ");
-      await new Promise(r => setTimeout(r, this.ctx.holdMs));
+      await this.ctx.hold();
       if (userText.includes("PLEASE_FAIL")) {
         report({ kind: "error", code: "intentional_failure", message: "task was scripted to fail", retryable: false });
         return { providerState: mkState(), terminalReason: "error" };
@@ -94,15 +94,37 @@ class CountingAdapter implements Adapter {
 }
 
 function installCountingLaneAdapter(holdMs: number): Counter {
+  return installLaneAdapter(() => new Promise(r => setTimeout(r, holdMs))).counter;
+}
+
+/** A pool whose turns wait at a gate until the test opens it. The test sees
+ *  the pool fill (`inFlight`) and only then lets turns finish, so the peak it
+ *  asserts is the pool's bound, not how far two timers overlapped on this box. */
+function installGatedLaneAdapter(): { counter: Counter; release: (n?: number) => void } {
+  const waiting: Array<() => void> = [];
+  let open = false;
+  const { counter } = installLaneAdapter(() => new Promise<void>((r) => { if (open) r(); else waiting.push(r); }));
+  return {
+    counter,
+    release: (n) => {
+      if (n === undefined) open = true;
+      for (const r of waiting.splice(0, n ?? waiting.length)) r();
+    },
+  };
+}
+
+function installLaneAdapter(hold: () => Promise<void>): { counter: Counter } {
   const counter: Counter = { inFlight: 0, max: 0 };
   // Tasks run on the "interactive" lane (cap 10), so the BATCH concurrency —
   // not the lane cap — is the binding bound in these tests.
   runtimeFixture.configure.mockImplementation(async (op: { id: string; model?: string }) => {
     op.model = "batch-test-model";
-    registerAdapterForOp(op.id, () => new CountingAdapter({ counter, holdMs }));
+    registerAdapterForOp(op.id, () => new CountingAdapter({ counter, hold }));
   });
-  return counter;
+  return { counter };
 }
+
+const poolFilledTo = (counter: Counter, n: number) => vi.waitFor(() => expect(counter.inFlight).toBe(n));
 
 /** A single batch task, pinned to the interactive lane + a non-codex provider. */
 function task(desc: string) {
@@ -164,10 +186,13 @@ describe("op_submit_batch — fan-out launcher", () => {
   });
 
   it("(b) never runs more than `concurrency` ops in flight at once", async () => {
-    const counter = installCountingLaneAdapter(40); // hold long enough that the pool saturates
+    const { counter, release } = installGatedLaneAdapter();
     const tasks = [1, 2, 3, 4, 5, 6].map(n => task(`bounded parallel task ${n}`));
 
-    const { meta } = await runBatch(tasks, 2);
+    const batch = runBatch(tasks, 2);
+    await poolFilledTo(counter, 2);
+    release();
+    const { meta } = await batch;
 
     expect(meta.total).toBe(6);
     expect(meta.succeeded).toBe(6);
@@ -178,14 +203,16 @@ describe("op_submit_batch — fan-out launcher", () => {
   });
 
   it("(b') a clamped-high concurrency still bounds in flight to the ceiling", async () => {
-    const counter = installCountingLaneAdapter(30);
+    const { counter, release } = installGatedLaneAdapter();
     const tasks = [1, 2, 3, 4, 5].map(n => task(`clamp task ${n}`));
 
     // 99 clamps to 12; only 5 tasks exist, so peak in-flight is min(12,5)=5.
-    const { meta } = await runBatch(tasks, 99);
+    const batch = runBatch(tasks, 99);
+    await poolFilledTo(counter, 5);
+    release();
+    const { meta } = await batch;
     expect(meta.concurrency).toBe(12);
-    expect(counter.max).toBeLessThanOrEqual(5);
-    expect(counter.max).toBeGreaterThanOrEqual(2);
+    expect(counter.max).toBe(5);
   });
 
   it("(c) one failing task does not sink the batch — aggregate reports it", async () => {
@@ -219,7 +246,7 @@ describe("op_submit_batch — fan-out launcher", () => {
   });
 
   it("translates stable batch task keys to durable dependency ids before persistence", async () => {
-    const counter = installCountingLaneAdapter(20);
+    const { counter, release } = installGatedLaneAdapter();
     const tasks = [
       { ...task("dependency root"), task_key: "root" },
       { ...task("dependency left"), task_key: "left", depends_on: ["root"] },
@@ -227,7 +254,13 @@ describe("op_submit_batch — fan-out launcher", () => {
       { ...task("dependency join"), task_key: "join", depends_on: ["left", "right"] },
     ];
 
-    const { meta } = await runBatch(tasks, 4);
+    // The diamond: root alone, then left and right together, then join.
+    const batch = runBatch(tasks, 4);
+    await poolFilledTo(counter, 1);
+    release(1);
+    await poolFilledTo(counter, 2);
+    release();
+    const { meta } = await batch;
     expect(meta.succeeded).toBe(4);
     const byTask = new Map(meta.results.map((result) => [result.task, result.opId!]));
     expect(readOp(byTask.get("dependency left")!)?.dependsOn)

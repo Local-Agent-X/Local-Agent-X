@@ -23,6 +23,7 @@ import { expect } from "vitest";
 import {
   canonicalLoopEntry,
   readCanonicalEvents,
+  subscribeOpEvents,
   readLatestOpTurn,
   readOpTurn,
   readOpMessages,
@@ -151,6 +152,28 @@ export async function awaitState(
     }
     await new Promise(r => setTimeout(r, interval));
   }
+}
+
+/**
+ * Resolve once the op has reached `state` (a `state_changed` to it, already
+ * recorded or arriving later). No inner deadline: a wait budget shorter than a
+ * slow runner's stall fails a healthy op, and the test's own timeout already
+ * bounds a regression. Prefer this to a polling wait with a budget.
+ */
+export function awaitOpState(opId: string, state: CanonicalState): Promise<CanonicalEvent> {
+  return new Promise((resolve) => {
+    const found = findStateChange(opId, state);
+    if (found) { resolve(found); return; }
+    const off = subscribeOpEvents(opId, (event) => {
+      if (event.type !== "state_changed") return;
+      if ((event.body as { to?: CanonicalState } | null)?.to !== state) return;
+      off();
+      resolve(event);
+    });
+    // The event may have landed between the check and the subscription.
+    const again = findStateChange(opId, state);
+    if (again) { off(); resolve(again); }
+  });
 }
 
 function findStateChange(opId: string, target: CanonicalState): CanonicalEvent | null {

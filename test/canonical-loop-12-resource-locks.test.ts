@@ -32,6 +32,7 @@ import {
   schedulerSnapshot,
   evictWorker,
 } from "../src/canonical-loop/index.js";
+import { awaitOpState } from "./canonical-loop/harness.js";
 import { anyHeld } from "../src/canonical-loop/resource-locks.js";
 import { readOp, newOpId } from "../src/ops/op-store.js";
 import { bootstrapProviderMatrix, resourceLocksForProvider } from "../src/ops/provider-matrix.js";
@@ -188,20 +189,7 @@ describe("a lock-free op is not gated by a held resource lock", () => {
     canonicalLoopEntry(gpu);
     canonicalLoopEntry(free);
 
-    const bothRunning = async (timeoutMs = 2_500): Promise<void> => {
-      const deadline = Date.now() + timeoutMs;
-      for (;;) {
-        const sg = readOp(gpu.id)?.canonical?.state;
-        const sf = readOp(free.id)?.canonical?.state;
-        if (sg === "running" && sf === "running") return;
-        if (Date.now() > deadline) {
-          throw new Error(`both not running — gpu=${sg} free=${sf}`);
-        }
-        await new Promise(r => setTimeout(r, 5));
-      }
-    };
-
-    await bothRunning();
+    await Promise.all([awaitOpState(gpu.id, "running"), awaitOpState(free.id, "running")]);
     expect(readOp(gpu.id)?.canonical?.state).toBe("running");
     expect(readOp(free.id)?.canonical?.state).toBe("running");
   });
@@ -258,8 +246,14 @@ describe("evicting a resource-lock holder releases the lock (recovery path)", ()
     const b = mkOp("evB", { resourceLocks: ["gpu:0"] });
     registerAdapterForOp(a.id, () =>
       new FakeAdapter({ script: [scriptLongStreamingTurn({ chunkIntervalMs: 15, maxChunks: 40 })] }));
-    registerAdapterForOp(b.id, () =>
-      new FakeAdapter({ script: [scriptLongStreamingTurn({ chunkIntervalMs: 15, maxChunks: 25 })] }));
+    // B's launch is the handoff's one observable moment: the adapter factory
+    // runs with B's slot reserved, so the count then is B plus anything that
+    // still holds gpu:0 — a double-hold would read 2.
+    let activeAtLaunchB = -1;
+    registerAdapterForOp(b.id, () => {
+      activeAtLaunchB = schedulerSnapshot().activeCount;
+      return new FakeAdapter({ script: [scriptLongStreamingTurn({ chunkIntervalMs: 15, maxChunks: 25 })] });
+    });
 
     canonicalLoopEntry(a);
     await awaitRunning(a.id);
@@ -275,17 +269,10 @@ describe("evicting a resource-lock holder releases the lock (recovery path)", ()
     // a real recovery had deleted the dir (the null-readOp path).
     expect(evictWorker(a.id)).toBe(true);
 
-    // Sample the handoff: activeCount must never exceed 1 (no double-hold of the
-    // single GPU), and B must launch (proving release + re-pump fired).
-    let maxActive = 0;
-    const deadline = Date.now() + 4_000;
-    while (Date.now() < deadline && readOp(b.id)?.canonical?.state !== "running") {
-      maxActive = Math.max(maxActive, schedulerSnapshot().activeCount);
-      await new Promise(r => setTimeout(r, 3));
-    }
-    maxActive = Math.max(maxActive, schedulerSnapshot().activeCount);
-    expect(readOp(b.id)?.canonical?.state, "B never launched — lock leaked or no re-pump").toBe("running");
-    expect(maxActive, `double-hold: ${maxActive} gpu:0 holders active at once`).toBeLessThanOrEqual(1);
+    // B must launch (release + re-pump fired), and at that moment nothing else
+    // may hold gpu:0 (no double-hold of the single GPU).
+    await awaitOpState(b.id, "running");
+    expect(activeAtLaunchB, `double-hold: ${activeAtLaunchB} gpu:0 holders active at B's launch`).toBe(1);
 
     await awaitTerminal(b.id);
     expect(readOp(b.id)?.canonical?.state).toBe("succeeded");

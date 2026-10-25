@@ -50,15 +50,17 @@ describe("recallRecentFacts candidate-window sizing", () => {
   it("surfaces a high-confidence old fact past hundreds of recent low-confidence facts", () => {
     const now = Date.now();
 
-    // 250 low-confidence recent observations. Spread over the past 7 days
-    // so last_updated values are distinct and ordered, mimicking a real DB.
-    for (let i = 0; i < 250; i++) {
+    // 40 low-confidence recent observations: more than the old 3×limit window
+    // (30 at limit 10) held, few enough to write quickly. Spread over the past
+    // 7 days so last_updated values are distinct and ordered, like a real DB.
+    const NOISE = 40;
+    for (let i = 0; i < NOISE; i++) {
       const r = memory.rememberFact(`noise observation number ${i}`, {
         kind: "observation",
         confidence: 0.5,
       });
       expect(r.ok).toBe(true);
-      const ts = now - Math.floor((i / 250) * 7 * DAY_MS);
+      const ts = now - Math.floor((i / NOISE) * 7 * DAY_MS);
       setFactClock(r.fact!.id!, ts, ts);
     }
 
@@ -76,7 +78,7 @@ describe("recallRecentFacts candidate-window sizing", () => {
     setFactClock(oldFactId, fifteenDaysAgo, fifteenDaysAgo);
 
     const result = memory.recallRecentFacts({
-      limit: 60,
+      limit: 10,
       kinds: ["observation", "world"],
     });
 

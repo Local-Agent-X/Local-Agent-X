@@ -38,6 +38,7 @@ import {
   readLatestOpTurn,
   type CanonicalEvent,
 } from "../src/canonical-loop/index.js";
+import { awaitOpState } from "./canonical-loop/harness.js";
 import { readOp, newOpId } from "../src/ops/op-store.js";
 import type { Op, OpLane } from "../src/ops/types.js";
 import type { LAXConfig } from "../src/types.js";
@@ -240,20 +241,7 @@ describe("interactive lane runs multiple sessions concurrently", () => {
     canonicalLoopEntry(a, { sessionId: "chat-session-A" });
     canonicalLoopEntry(b, { sessionId: "chat-session-B" });
 
-    const bothRunning = async (timeoutMs = 2_000): Promise<void> => {
-      const deadline = Date.now() + timeoutMs;
-      for (;;) {
-        const sa = readOp(a.id)?.canonical?.state;
-        const sb = readOp(b.id)?.canonical?.state;
-        if (sa === "running" && sb === "running") return;
-        if (Date.now() > deadline) {
-          throw new Error(`both ops not running — A=${sa} B=${sb}`);
-        }
-        await new Promise(r => setTimeout(r, 5));
-      }
-    };
-
-    await bothRunning();
+    await Promise.all([awaitOpState(a.id, "running"), awaitOpState(b.id, "running")]);
     expect(readOp(a.id)?.canonical?.state).toBe("running");
     expect(readOp(b.id)?.canonical?.state).toBe("running");
   });

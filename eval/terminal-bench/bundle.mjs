@@ -11,7 +11,7 @@
 // (glibc 2.31) keeps the native addons loadable on the Ubuntu 20.04+ /
 // Debian 11+ images most tasks use; a musl (Alpine) task image cannot run them.
 import { execFileSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -28,9 +28,21 @@ const out = resolve(arg("out", join(homedir(), ".cache", "lax-terminal-bench", "
 const image = arg("image", "node:24-bullseye");
 const commit = execFileSync("git", ["-C", repoRoot, "rev-parse", "--verify", `${ref}^{commit}`], { encoding: "utf8" }).trim();
 
+// Stands in for the headless Chromium binary and hands it the bundle's
+// libraries, so they reach the browser alone. Exported to the server, they
+// reached every shell command the agent ran: the bundle's bullseye liblzma
+// broke dpkg-deb in build-pmars (2026-10-24).
+const CHROMIUM_WRAPPER = [
+  "#!/bin/sh",
+  'lib="$(cd "$(dirname "$0")/../.." && pwd)/lib"',
+  'LD_LIBRARY_PATH="$lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" exec "$0.bin" "$@"',
+  "",
+].join("\n");
+
 const stage = mkdtempSync(join(tmpdir(), "lax-tb-bundle-"));
 try {
   execFileSync("git", ["-C", repoRoot, "archive", "--format=tar", "-o", join(stage, "src.tar"), commit]);
+  writeFileSync(join(stage, "chromium-wrapper.sh"), CHROMIUM_WRAPPER);
   mkdirSync(dirname(out), { recursive: true });
   // Built in the container's own filesystem, not on the bind mount: an npm
   // install over a Windows mount is many times slower.
@@ -51,7 +63,8 @@ try {
     // The browser tool's headless Chromium, and every shared library it links
     // that a task image may lack (nss, atk, gbm, ...). glibc and libstdc++ stay
     // the image's own: node needs them too, and two copies in one process
-    // would clash. drive.mjs points the server at both. Without it the browser
+    // would clash. The libraries reach only the browser, through
+    // CHROMIUM_WRAPPER in front of its binary. Without it the browser
     // tool failed in every task ("Executable doesn't exist at
     // /root/.cache/ms-playwright/...", mteb-leaderboard, 2026-10-24).
     "export PLAYWRIGHT_BROWSERS_PATH=/lax/.ms-playwright",
@@ -64,6 +77,9 @@ try {
     "shell=$(ls .ms-playwright/chromium_headless_shell-*/chrome-headless-shell-linux64/chrome-headless-shell | head -1)",
     "ldd \"$shell\" | awk '$3 ~ /^\\// {print $3}' | grep -vE '/(libc|libm|libdl|libpthread|librt|libresolv|libstdc\\+\\+|libgcc_s|ld-linux[^/]*)\\.so' | xargs -r -I{} cp -L {} .ms-playwright/lib/",
     "test -z \"$(LD_LIBRARY_PATH=/lax/.ms-playwright/lib ldd \"$shell\" | grep 'not found')\"",
+    "mv \"$shell\" \"$shell.bin\" && cp /stage/chromium-wrapper.sh \"$shell\" && chmod 755 \"$shell\"",
+    // The wrapper starts the browser with no LD_LIBRARY_PATH of its own.
+    "env -u LD_LIBRARY_PATH \"$shell\" --version",
     "mkdir -p .node/bin && cp \"$(command -v node)\" .node/bin/node",
     `tar -czf /out/${basename(out)} -C /lax .`,
   ].join(" && ");

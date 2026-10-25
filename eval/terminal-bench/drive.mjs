@@ -67,15 +67,13 @@ async function stopServer(child) {
   if (child.exitCode === null) child.kill("SIGKILL");
 }
 
-/** Where the bundle's headless Chromium and its libraries are, when it carries them. */
+/** Where the bundle's headless Chromium is, when it carries one. Its libraries
+ *  reach only the browser, through the wrapper bundle.mjs puts in front of it:
+ *  an LD_LIBRARY_PATH here reached every shell command the agent ran, and the
+ *  bundle's liblzma broke dpkg-deb (build-pmars, 2026-10-24). */
 function browserEnv(repoRoot) {
   const dir = join(repoRoot, ".ms-playwright");
-  if (!existsSync(dir)) return {};
-  const lib = join(dir, "lib");
-  return {
-    PLAYWRIGHT_BROWSERS_PATH: dir,
-    LD_LIBRARY_PATH: [lib, process.env.LD_LIBRARY_PATH].filter(Boolean).join(":"),
-  };
+  return existsSync(dir) ? { PLAYWRIGHT_BROWSERS_PATH: dir } : {};
 }
 
 async function main() {
@@ -116,7 +114,7 @@ async function main() {
       LAX_PORT: String(port),
       LAX_AUTH_TOKEN: token,
       LAX_BROWSER_HEADLESS: "1",
-      // The bundle's headless Chromium and the libraries it links (bundle.mjs).
+      // The bundle's headless Chromium (bundle.mjs).
       ...browserEnv(repoRoot),
       // The bundle's node_modules are rebuilt for Linux, so its file hashes
       // differ from the Windows build's integrity manifest.

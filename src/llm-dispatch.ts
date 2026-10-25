@@ -28,7 +28,8 @@
  */
 
 import { resolveProviderContext } from "./providers/resolve-provider-context.js";
-import { backgroundModelFor, PROVIDERS } from "./providers/registry.js";
+import { isReasoningModel, PROVIDERS } from "./providers/registry.js";
+import { anthropicThinkingOffMode } from "./anthropic-models.js";
 import { resolveBackgroundModel } from "./providers/background-model.js";
 import type { ProviderId } from "./providers/provider-ids.js";
 import type { ProviderRequest } from "./providers/adapter/types.js";
@@ -124,26 +125,40 @@ const DEFAULTS = {
 const DISPATCH_REGISTRY_ID: Record<RegistryDispatchProvider, ProviderId> = {
   anthropic: "anthropic", "anthropic-api": "anthropic-api", openai: "openai", xai: "xai", codex: "codex",
 };
-const DISPATCH_MODEL_FALLBACK: Record<RegistryDispatchProvider, string> = {
-  anthropic: "claude-haiku-4-5", "anthropic-api": "claude-haiku-4-5", openai: "gpt-4o-mini",
-  xai: "grok-4.20-0309-non-reasoning", codex: "gpt-5.4-mini",
-};
-/** Background (cheap/fast) model for a dispatch provider, read from the registry
- *  (backgroundModelFor) so dispatch can't drift from the canonical per-provider
- *  background model. Falls back to a local literal only if the registry lacks one.
- *  xAI's entry is non-reasoning so a short single-shot completion isn't consumed
- *  by hidden chain-of-thought (which returns empty → null). */
-export function dispatchBackgroundModel(provider: RegistryDispatchProvider): string {
-  return backgroundModelFor(DISPATCH_REGISTRY_ID[provider], DISPATCH_MODEL_FALLBACK[provider]);
+/** The provider's DEFAULT (chat) model, from the registry: what a dispatch runs on
+ *  when the user is not chatting on this provider, so no model of ours is known. */
+export function dispatchDefaultModel(provider: RegistryDispatchProvider): string {
+  return PROVIDERS[DISPATCH_REGISTRY_ID[provider]]?.defaultModel || "";
 }
 
-/** The provider's DEFAULT (chat) model — the multimodal one actually in play for
- *  a user's work. Used for vision dispatches (images present) instead of the
- *  cheap background model, because a provider's background pick isn't uniformly
- *  vision-capable (xAI's is a non-reasoning text model). Single source of truth:
- *  the registry's defaultModel. */
-export function dispatchDefaultModel(provider: RegistryDispatchProvider): string {
-  return PROVIDERS[DISPATCH_REGISTRY_ID[provider]]?.defaultModel || DISPATCH_MODEL_FALLBACK[provider];
+/**
+ * The model a hosted dispatch runs on when the caller names none: the user's chat
+ * model when they are chatting on this provider, else the provider's default. It
+ * used to be the provider's declared fast tier (claude-haiku-4-5, gpt-5.4-mini, a
+ * non-reasoning grok), a model the account may not serve (a ChatGPT plan refuses
+ * gpt-5.4-mini) and that answers worse than the one the user chose; the protocol
+ * curator's whole report was lost that way (2026-10-25). Side work runs on the model
+ * the user is on (owner, 2026-09-23): providers/background-model.ts is the one
+ * place that answers which model that is.
+ */
+export async function dispatchModel(provider: RegistryDispatchProvider): Promise<string> {
+  const id = DISPATCH_REGISTRY_ID[provider];
+  const ctx = await resolveProviderContext().catch(() => null);
+  const chat = ctx && ctx.provider === id ? (ctx as { model?: string }).model ?? "" : "";
+  return (await resolveBackgroundModel(id, chat || dispatchDefaultModel(provider))).model;
+}
+
+/**
+ * A thinking model spends its output budget thinking first, and on Fable 5 / Opus
+ * 5.5 thinking cannot be turned off: a caller's 80-token cap (the memory resolver's
+ * one OP= line) would be gone before the answer began. The cap is a guard against
+ * runaway output, not a spend, so on such a model it is raised to this floor; every
+ * other model gets thinking off and keeps the caller's cap.
+ */
+export const THINKING_HEADROOM_TOKENS = 4096;
+export function dispatchMaxTokens(provider: RegistryDispatchProvider, model: string, requested: number): number {
+  const anthropic = provider === "anthropic" || provider === "anthropic-api";
+  return anthropic && anthropicThinkingOffMode(model) === "always-on" ? Math.max(requested, THINKING_HEADROOM_TOKENS) : requested;
 }
 
 /** Whether a dispatch provider's registry entry advertises wire-level
@@ -257,32 +272,21 @@ export async function dispatch(opts: DispatchOptions): Promise<string | null> {
       temp, maxTokens, timeout, undefined, target.apiKey, undefined, opts.think === false ? "none" : undefined,
     );
   }
-  // A screenshot riding along (vision) grades with the model the user is
-  // ACTIVELY on — subscription plans make that free, and a provider's cheap
-  // background model isn't uniformly vision-capable (xAI's is a non-reasoning
-  // text model). The active model comes from the resolved provider context;
-  // falls back to the provider's default chat model. Text dispatches keep the
-  // cheap background model unchanged, and never touch resolveProviderContext.
-  const hasImages = (opts.images?.length ?? 0) > 0;
-  const modelFor = async (p: RegistryDispatchProvider, pinned: string | undefined): Promise<string> => {
-    if (pinned) return pinned;
-    if (!hasImages) return dispatchBackgroundModel(p);
-    // Anthropic's background model (Haiku) is already vision-capable, so keep it
-    // — and skip the provider-context resolve (it would also consume a
-    // credential the caller may have mocked). openai/xai backgrounds are NOT
-    // vision-capable (xAI's is a non-reasoning text model), so grade with the
-    // user's ACTIVE model when the resolved provider matches this one (the vision
-    // judge dispatches "auto", so it does), else the provider's default.
-    if (p === "anthropic" || p === "anthropic-api") return dispatchBackgroundModel(p);
-    const ctx = await resolveProviderContext().catch(() => null);
-    const active = ctx && ctx.provider === p ? (ctx as { model?: string }).model : undefined;
-    return active || dispatchDefaultModel(p);
-  };
+  // The caller's model, else the user's (dispatchModel). A screenshot riding
+  // along (vision) is fine either way: the chat model sees images.
+  const pinned = provider === "anthropic" || provider === "anthropic-api" ? opts.anthropicModel
+    : provider === "openai" ? opts.openaiModel : provider === "xai" ? opts.xaiModel : opts.codexModel;
+  const model = pinned || (await dispatchModel(provider));
+  if (!model) return null;
+  // A short answer, not a reasoning pass: thinking off where the model allows,
+  // low effort where it does not (dispatchMaxTokens says why the cap moves).
+  const cap = dispatchMaxTokens(provider, model, maxTokens);
   if (provider === "anthropic" || provider === "anthropic-api") {
-    return callAnthropic(provider, opts.prompt, await modelFor(provider, opts.anthropicModel), temp, maxTokens, timeout, opts.rejectOAuth ?? false, opts.images);
+    return callAnthropic(provider, opts.prompt, model, temp, cap, timeout, opts.rejectOAuth ?? false, opts.images);
   }
-  if (provider === "openai") return callOpenAI(opts.prompt, await modelFor("openai", opts.openaiModel), temp, maxTokens, timeout, opts.images, dispatchStructuredOutputEnabled("openai") ? opts.responseFormat : undefined);
-  if (provider === "xai") return callXai(opts.prompt, await modelFor("xai", opts.xaiModel), temp, maxTokens, timeout, opts.images, dispatchStructuredOutputEnabled("xai") ? opts.responseFormat : undefined);
-  if (provider === "codex") return callCodex(opts.prompt, await modelFor("codex", opts.codexModel), temp, timeout, opts.images);
+  const lowEffort = (id: ProviderId): "low" | undefined => (isReasoningModel(id, model) ? "low" : undefined);
+  if (provider === "openai") return callOpenAI(opts.prompt, model, temp, cap, timeout, opts.images, dispatchStructuredOutputEnabled("openai") ? opts.responseFormat : undefined, lowEffort("openai"));
+  if (provider === "xai") return callXai(opts.prompt, model, temp, cap, timeout, opts.images, dispatchStructuredOutputEnabled("xai") ? opts.responseFormat : undefined, lowEffort("xai"));
+  if (provider === "codex") return callCodex(opts.prompt, model, temp, timeout, opts.images);
   return null;
 }

@@ -387,8 +387,8 @@ export function isReasoningModel(id: ProviderId, model: string): boolean {
  * `fallback`. Background work (classifiers, dream) no longer runs on it — it
  * runs on the chat model (providers/background-model.ts), because a declared
  * tier may not be served to the user's account (a ChatGPT plan refuses
- * gpt-5.4-mini, 2026-10-23). The spoken voice turn (server/voice-model.ts)
- * still asks for it, and text dispatch (llm-dispatch.ts) still defaults to it.
+ * gpt-5.4-mini, 2026-10-23). Text dispatch (llm-dispatch.ts) followed on
+ * 2026-10-25. The spoken voice turn (server/voice-model.ts) is its one caller.
  */
 export function backgroundModelFor(id: ProviderId, fallback: string): string {
   return PROVIDERS[id]?.backgroundModel || fallback;

@@ -51,7 +51,9 @@ Be terse. Be concrete. No filler.`;
     provider: "auto",
     rejectOAuth: false,
     temperature: 0,
-    maxTokens: 800,
+    // A report over the whole catalog, not a verdict: room for every cluster and
+    // gap. At 800 the answer was cut off and the whole report lost (2026-10-25).
+    maxTokens: 2000,
     timeoutMs: 30_000,
   });
 

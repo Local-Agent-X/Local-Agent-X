@@ -17,7 +17,8 @@
  */
 
 import { resolveCredential } from "../auth/resolve.js";
-import { anthropicUsesAdaptiveThinking, normalizeAnthropicModel, usesAnthropicSubscriptionAuth } from "../anthropic-models.js";
+import { anthropicThinkingOffMode, anthropicUsesAdaptiveThinking, normalizeAnthropicModel, planAnthropicReasoning, usesAnthropicSubscriptionAuth } from "../anthropic-models.js";
+import { isMaxTokensRejection } from "../providers/adapters/openai-param-rejections.js";
 import type { ProviderId } from "../providers/provider-ids.js";
 import type { ProviderRequest } from "../providers/adapter/types.js";
 import { createLogger } from "../logger.js";
@@ -86,7 +87,7 @@ export async function callAnthropic(provider: "anthropic" | "anthropic-api", pro
       // same predicate the CLI-proxy leg gates on in stream-api.ts, and it
       // resolves aliases itself (api mode, which is this path's auth mode).
       // Legacy models keep the byte-identical body, key order included.
-      body: JSON.stringify({ model: wireModel, max_tokens: maxTokens, ...(anthropicUsesAdaptiveThinking(wireModel) ? {} : { temperature }), messages: [{ role: "user", content }] }),
+      body: JSON.stringify({ model: wireModel, max_tokens: maxTokens, ...(anthropicUsesAdaptiveThinking(wireModel) ? {} : { temperature }), ...shortAnswerShape(wireModel), messages: [{ role: "user", content }] }),
       signal: AbortSignal.timeout(timeoutMs),
     });
     if (!res.ok) {
@@ -99,6 +100,21 @@ export async function callAnthropic(provider: "anthropic" | "anthropic-api", pro
     logger.warn(`anthropic call threw: ${(e as Error).message}`);
     return null;
   }
+}
+
+/**
+ * A dispatch wants the answer, not a reasoning pass: thinking off in this model's
+ * own off-shape, and low effort where thinking stays on (Fable 5 / Opus 5.5).
+ * Omitting the field is not "off" on Opus 5 / Sonnet 5 (it runs adaptive), which
+ * would spend an 80-token cap thinking. The same two rules stream-api.ts applies;
+ * a legacy model (Haiku 4.5) gets nothing added, so its body is as before.
+ */
+function shortAnswerShape(wireModel: string): Record<string, unknown> {
+  const plan = planAnthropicReasoning(wireModel, { effort: "low", disableThinking: true });
+  return {
+    ...(anthropicThinkingOffMode(wireModel) === "disabled-block" ? { thinking: { type: "disabled" } } : {}),
+    ...(plan.effort ? { output_config: { effort: plan.effort } } : {}),
+  };
 }
 
 /** Single-shot completion over the canonical Anthropic client for
@@ -128,6 +144,9 @@ async function callAnthropicViaCliProxy(token: string, prompt: string, model: st
         // caps (200 for classifiers/rerank) and the subscription leg must
         // honor them the same as the raw leg's max_tokens.
         token, model, temperature, maxTokens,
+        // The answer, not a reasoning pass (shortAnswerShape says why); the client
+        // applies both per model.
+        disableThinking: true, effort: "low",
         messages: [{ role: "user", content } as never],
         systemPrompt: "", tools: [], signal: ac.signal,
       })) {
@@ -173,8 +192,10 @@ export async function callOpenAICompatible(
   /** "none" asks a thinking model to answer without a reasoning pass. LM Studio
    *  honours it (qwen3.6-27b: 19 tokens in 0.5s instead of 80 tokens of thinking
    *  and an empty answer, 2026-10-18); chat_template_kwargs.enable_thinking it
-   *  ignores. Absent → the body is byte-identical to before. */
-  reasoningEffort?: "none",
+   *  ignores. "low" is the least a hosted reasoning model (gpt-5.x, grok-4) takes,
+   *  now a dispatch runs on the chat model. Absent → the body is byte-identical
+   *  to before. */
+  reasoningEffort?: "none" | "low",
 ): Promise<string | null> {
   try {
     const resolved = credentialProvider ? await resolveCredential(credentialProvider) : null;
@@ -189,12 +210,12 @@ export async function callOpenAICompatible(
           { type: "text" as const, text: prompt },
         ]
       : prompt;
-    const send = (rf: ProviderRequest["responseFormat"]) =>
+    const send = (rf: ProviderRequest["responseFormat"], withMaxTokens = true) =>
       fetch(`${baseURL}/chat/completions`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
         body: JSON.stringify({
-          model, temperature, max_tokens: maxTokens,
+          model, temperature, ...(withMaxTokens ? { max_tokens: maxTokens } : {}),
           messages: [{ role: "user", content: userContent }],
           ...(reasoningEffort ? { reasoning_effort: reasoningEffort } : {}),
           // Structured output on the OpenAI wire shape. Absent → the body is
@@ -216,6 +237,13 @@ export async function callOpenAICompatible(
         ...(credentialProvider === null ? { redirect: "manual" as const } : {}),
       });
     let res = await send(responseFormat);
+    if (!res.ok && res.status === 400 && isMaxTokensRejection(await res.clone().text().catch(() => ""))) {
+      // Newer OpenAI models take max_completion_tokens and 400 the whole request
+      // on max_tokens. The cap is a guard rail, so retry once without it, as the
+      // chat adapter does (providers/adapters/openai-http.ts).
+      logger.info(`${label} ${model} rejected max_tokens — retrying once without it`);
+      res = await send(responseFormat, false);
+    }
     if (!res.ok && res.status === 400 && responseFormat) {
       // A 400 with response_format on board is very likely about it (param
       // unsupported, or the caller's schema). Structured output is documented
@@ -238,18 +266,18 @@ export async function callOpenAICompatible(
   }
 }
 
-export function callOpenAI(prompt: string, model: string, temperature: number, maxTokens: number, timeoutMs: number, images?: string[], responseFormat?: ProviderRequest["responseFormat"]): Promise<string | null> {
-  return callOpenAICompatible("openai", "openai", "https://api.openai.com/v1", prompt, model, temperature, maxTokens, timeoutMs, responseFormat, undefined, images);
+export function callOpenAI(prompt: string, model: string, temperature: number, maxTokens: number, timeoutMs: number, images?: string[], responseFormat?: ProviderRequest["responseFormat"], reasoningEffort?: "low"): Promise<string | null> {
+  return callOpenAICompatible("openai", "openai", "https://api.openai.com/v1", prompt, model, temperature, maxTokens, timeoutMs, responseFormat, undefined, images, reasoningEffort);
 }
 
-export function callXai(prompt: string, model: string, temperature: number, maxTokens: number, timeoutMs: number, images?: string[], responseFormat?: ProviderRequest["responseFormat"]): Promise<string | null> {
+export function callXai(prompt: string, model: string, temperature: number, maxTokens: number, timeoutMs: number, images?: string[], responseFormat?: ProviderRequest["responseFormat"], reasoningEffort?: "low"): Promise<string | null> {
   // xAI exposes an OpenAI-compatible endpoint at api.x.ai/v1; the OpenAI body
   // works unchanged. Auth comes from env XAI_API_KEY or the secrets store (the
   // chat path stores it there). Without this, every background classifier
   // (identity-extract, claim-verify, intent-classifier, …) silently no-ops for
   // xAI users — classify-with-llm hits the xAI fallback that returns null
   // before reaching this dispatcher.
-  return callOpenAICompatible("xai", "xai", "https://api.x.ai/v1", prompt, model, temperature, maxTokens, timeoutMs, responseFormat, undefined, images);
+  return callOpenAICompatible("xai", "xai", "https://api.x.ai/v1", prompt, model, temperature, maxTokens, timeoutMs, responseFormat, undefined, images, reasoningEffort);
 }
 
 export async function callCodex(prompt: string, model: string, temperature: number, timeoutMs: number, images?: string[]): Promise<string | null> {
@@ -276,6 +304,9 @@ export async function callCodex(prompt: string, model: string, temperature: numb
       let acc = "";
       for await (const event of streamCodexResponse({
         token: resolved.credential, model, temperature,
+        // A short answer: the client's chat default "medium" is a reasoning pass
+        // for nothing (the classifier's Codex leg says the same).
+        reasoningEffort: "low",
         messages: [{ role: "user", content } as never],
         systemPrompt: "", tools: [], signal: ac.signal,
       })) {

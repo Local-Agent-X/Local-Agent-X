@@ -27,7 +27,8 @@ vi.mock("./settings.js", async (importOriginal) => {
   };
 });
 
-import { dispatch, dispatchBackgroundModel, dispatchStructuredOutputEnabled } from "./llm-dispatch.js";
+import { dispatch, dispatchMaxTokens, dispatchModel, dispatchStructuredOutputEnabled, THINKING_HEADROOM_TOKENS } from "./llm-dispatch.js";
+import { isReasoningModel } from "./providers/registry.js";
 import { resolveCredential } from "./auth/resolve.js";
 import { streamAnthropicResponse } from "./anthropic-client/index.js";
 import { streamCodexResponse } from "./codex-client/index.js";
@@ -77,26 +78,44 @@ vi.mock("./codex-client/index.js", () => ({
   }),
 }));
 
-// Never invokes dispatch(); asserts the helper reads the canonical registry,
-// so the per-provider background model can't silently drift away from
-// backgroundModelFor().
-describe("dispatchBackgroundModel reads the canonical registry", () => {
-  it("resolves each dispatch provider via backgroundModelFor (no hardcoded drift)", () => {
+// A dispatch runs on the model the user is on. The provider's declared fast tier
+// (claude-haiku-4-5, gpt-5.4-mini) is a model the account may not serve, and the
+// protocol curator's whole report was lost on it (2026-10-25).
+describe("dispatchModel — the user's chat model, never the fast tier", () => {
+  it("is the chat model when the user is chatting on this provider", async () => {
+    providerContext = { provider: "anthropic", apiKey: "k", model: "claude-opus-5-5" };
+    expect(await dispatchModel("anthropic")).toBe("claude-opus-5-5");
+    providerContext = { provider: "codex", apiKey: "k", model: "gpt-6-astra" };
+    expect(await dispatchModel("codex")).toBe("gpt-6-astra");
+  });
+
+  it("is the provider's default model when the user is chatting elsewhere", async () => {
+    providerContext = { provider: "local", apiKey: "", model: "qwen3.6:27b" };
     for (const p of ["xai", "openai", "codex", "anthropic"] as const) {
-      expect(dispatchBackgroundModel(p)).toBe(backgroundModelFor(p, ""));
+      expect(await dispatchModel(p)).toBe(PROVIDERS[p].defaultModel);
+      expect(await dispatchModel(p)).not.toBe(backgroundModelFor(p, ""));
     }
   });
 
-  // The anthropic default rides the no-thinking dispatch path (classifiers,
-  // rerank) straight onto the wire. Repo convention is GA alias ids, never
-  // dated snapshots (registry.ts: "GA aliases, not dated … snapshots (those get
-  // retired → 404)"), so the pin is: the default is a registered catalog id
-  // that normalization passes through byte-identical — a real runtime id, not a
-  // phantom and not an alias needing a rewrite.
-  it("the anthropic no-thinking default resolves to a real registered runtime id", () => {
-    const model = dispatchBackgroundModel("anthropic");
+  // The defaults ride the raw wire. Repo convention is GA alias ids, never dated
+  // snapshots (registry.ts), so the pin is: a registered catalog id that
+  // normalization passes through byte-identical.
+  it("the anthropic default resolves to a real registered runtime id", async () => {
+    providerContext = { provider: "local", apiKey: "", model: "qwen3.6:27b" };
+    const model = await dispatchModel("anthropic");
     expect(PROVIDERS.anthropic.models).toContain(model);
     expect(normalizeAnthropicModel(model)).toBe(model);
+  });
+
+  // A thinking model spends the cap thinking first; on one whose thinking cannot
+  // be turned off, an 80-token cap (the memory resolver) would never reach the
+  // answer. The cap is a guard, not a spend.
+  it("raises a tight cap to the headroom floor only on a model whose thinking is always on", () => {
+    expect(dispatchMaxTokens("anthropic", "claude-opus-5-5", 80)).toBe(THINKING_HEADROOM_TOKENS);
+    expect(dispatchMaxTokens("anthropic", "claude-fable-5", 8000)).toBe(8000);
+    expect(dispatchMaxTokens("anthropic", "claude-opus-5", 80)).toBe(80);
+    expect(dispatchMaxTokens("anthropic", "claude-haiku-4-5", 80)).toBe(80);
+    expect(dispatchMaxTokens("openai", "gpt-5.6-sol", 80)).toBe(80);
   });
 });
 
@@ -156,10 +175,24 @@ describe("dispatch request shape (fetch stubbed — no network)", () => {
   // Fable 5 / Opus 5 / Opus 4.7+ / Sonnet 5 return 400 "`temperature` is
   // deprecated for this model" — forwarding the classifier's 0 nulled every
   // API-key call. toEqual on the parsed wire body: absent key = never sent.
-  const ADAPTIVE = ["claude-fable-5", "claude-opus-5", "claude-opus-4-7", "claude-opus-4-8", "claude-sonnet-5"];
-  it.each(ADAPTIVE)("anthropic adaptive model %s: raw API-key body carries NO temperature (rest byte-identical)", async (model) => {
+  // The dispatch wants the answer, not a reasoning pass. Omitting `thinking` is
+  // not "off" on these models (it runs adaptive and spends the cap), so the body
+  // carries the model's own off-shape: an explicit disabled block where the model
+  // takes one, and low effort. Fable 5 cannot turn thinking off, so it gets low
+  // effort and the headroom cap instead.
+  const DISABLED_BLOCK = ["claude-opus-5", "claude-opus-4-7", "claude-opus-4-8", "claude-sonnet-5"];
+  it.each(DISABLED_BLOCK)("anthropic adaptive model %s: raw API-key body carries NO temperature, thinking disabled, low effort", async (model) => {
     await dispatch({ prompt: "ping", provider: "anthropic", anthropicModel: model });
-    expect(sentBody()).toEqual({ model, max_tokens: 200, messages: [{ role: "user", content: "ping" }] });
+    expect(sentBody()).toEqual({
+      model, max_tokens: 200, thinking: { type: "disabled" }, output_config: { effort: "low" }, messages: [{ role: "user", content: "ping" }],
+    });
+  });
+
+  it("anthropic always-on model claude-fable-5: NO temperature, no thinking block, low effort, the headroom cap", async () => {
+    await dispatch({ prompt: "ping", provider: "anthropic", anthropicModel: "claude-fable-5" });
+    expect(sentBody()).toEqual({
+      model: "claude-fable-5", max_tokens: THINKING_HEADROOM_TOKENS, output_config: { effort: "low" }, messages: [{ role: "user", content: "ping" }],
+    });
   });
 
   it("anthropic WITH images prepends base64 PNG blocks before the text block", async () => {
@@ -176,10 +209,34 @@ describe("dispatch request shape (fetch stubbed — no network)", () => {
     ]);
   });
 
-  it("anthropic with an EMPTY images array behaves as if images were absent (default = registry background model)", async () => {
+  it("anthropic with an EMPTY images array behaves as if images were absent (default = the provider's default model)", async () => {
     await dispatch({ prompt: "ping", provider: "anthropic", images: [] });
-    expect(sentBody().model).toBe(dispatchBackgroundModel("anthropic"));
+    expect(sentBody().model).toBe(PROVIDERS.anthropic.defaultModel);
     expect(sentBody().messages).toEqual([{ role: "user", content: "ping" }]);
+  });
+
+  it("anthropic with no model named runs on the user's chat model when that is Anthropic", async () => {
+    providerContext = { provider: "anthropic", apiKey: "k", model: "claude-opus-5" };
+    try {
+      await dispatch({ prompt: "ping", provider: "anthropic" });
+      expect(sentBody().model).toBe("claude-opus-5");
+    } finally {
+      providerContext = { provider: "local", apiKey: "", model: "qwen3.6:27b" };
+    }
+  });
+
+  // Newer OpenAI models take max_completion_tokens and 400 the whole request on
+  // max_tokens; the cap is a guard rail, so the leg retries once without it.
+  it("openai: a 400 naming max_tokens as unsupported retries once without the cap", async () => {
+    fetchSpy
+      .mockResolvedValueOnce(new Response("Unsupported parameter: 'max_tokens' is not supported with this model. Use 'max_completion_tokens' instead.", { status: 400 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ choices: [{ message: { content: "capless-reply" } }] }), { status: 200 }));
+    const out = await dispatch({ prompt: "ping", provider: "openai", openaiModel: "gpt-5.6-sol" });
+    expect(out).toBe("capless-reply");
+    expect(fetchSpy).toHaveBeenCalledTimes(2);
+    const retried = JSON.parse(requestCalls()[1][1].body as string) as Record<string, unknown>;
+    expect(retried.model).toBe("gpt-5.6-sol");
+    expect("max_tokens" in retried).toBe(false);
   });
 
   it("openai WITH images carries image_url blocks and grades with the given (non-background) model", async () => {
@@ -256,13 +313,15 @@ describe("dispatch request shape (fetch stubbed — no network)", () => {
     });
   });
 
-  it("openai WITHOUT responseFormat sends the exact pre-structured-output body", async () => {
+  it("openai WITHOUT responseFormat sends the plain body: the provider's default model, low effort if it reasons", async () => {
     await dispatch({ prompt: "ping", provider: "openai" });
+    const model = PROVIDERS.openai.defaultModel;
     expect(sentBody()).toEqual({
-      model: dispatchBackgroundModel("openai"),
+      model,
       temperature: 0,
       max_tokens: 200,
       messages: [{ role: "user", content: "ping" }],
+      ...(isReasoningModel("openai", model) ? { reasoning_effort: "low" } : {}),
     });
   });
 

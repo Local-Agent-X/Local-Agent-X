@@ -21,6 +21,10 @@ const mocks = vi.hoisted(() => ({
 }));
 vi.mock("../auth/resolve.js", () => ({ resolveCredential: mocks.resolveCredential }));
 vi.mock("../anthropic-client/index.js", () => ({ streamAnthropicResponse: mocks.streamAnthropicResponse }));
+// The user's chat: a dispatch with no model named runs on their chat model.
+vi.mock("../providers/resolve-provider-context.js", () => ({
+  resolveProviderContext: vi.fn(async () => ({ provider: "anthropic", apiKey: "sk-ant-api-test", model: "claude-opus-5-5" })),
+}));
 
 function result(snippet: string): MemorySearchResult {
   return { snippet, score: 0.5 } as MemorySearchResult;
@@ -102,9 +106,15 @@ describe("rerankWithLLM anthropic leg rides the canonical dispatch (fetch stubbe
     expect("temperature" in body).toBe(false);
   });
 
-  it("no model pinned: defaults to the registry background model on the wire", async () => {
+  // The user's chat model, not the provider's fast tier (2026-10-25). Opus 5.5
+  // cannot turn thinking off, so the 200-token cap rises to the headroom floor
+  // and the request asks for low effort; the answer still comes first.
+  it("no model pinned: runs on the user's chat model, with room to think", async () => {
     await rerankWithLLM("q", [result("a"), result("b")], { provider: "anthropic" });
-    expect(sentBody().model).toBe("claude-haiku-4-5");
+    const body = sentBody();
+    expect(body.model).toBe("claude-opus-5-5");
+    expect(body.max_tokens).toBe(4096);
+    expect(body.output_config).toEqual({ effort: "low" });
   });
 
   it("oauth: credential NEVER touches the raw wire — routed through the canonical client, token unstripped", async () => {

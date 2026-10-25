@@ -198,9 +198,21 @@ async function hydrateChat(chat, opts) {
     if (activeChat && activeChat.id === chat.id && window.renderMessages) {
       const streaming = typeof ChatStreamStore !== 'undefined' && ChatStreamStore.isStreaming(chat.id);
       const mode = _hydrateRepaintMode(keptLocal, localMsgs, serverMsgs, streaming);
+      // The fetch that follows opening a chat is part of opening it: the entry
+      // render drew a stub (no messages, or a stale copy) and spent its "land on
+      // the latest message" on that, so this repaint held the old position and
+      // the chat opened at its top (2026-10-24). An entry hydrate lands at the end.
+      const entry = !!(opts && opts.entry);
       if (mode === 'append') {
-        if (!(typeof appendMessagesInPlace === 'function' && appendMessagesInPlace(localMsgs.length))) renderMessages();
+        if (!(typeof appendMessagesInPlace === 'function' && appendMessagesInPlace(localMsgs.length))) {
+          if (entry) window._chatScrollBottomNext = true;
+          renderMessages();
+        } else if (entry) {
+          const el = document.getElementById('messages');
+          if (el) requestAnimationFrame(() => { el.scrollTop = el.scrollHeight; });
+        }
       } else if (mode === 'full') {
+        if (entry) window._chatScrollBottomNext = true;
         renderMessages();
       }
     }

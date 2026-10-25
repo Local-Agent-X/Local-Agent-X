@@ -66,3 +66,32 @@ describe("_hydrateRepaintMode", () => {
     expect(repaintMode(false, thread, server, true)).toBe("full");
   });
 });
+
+// 2026-10-24: opening a chat that still needed its messages fetched drew the stub,
+// spent "land on the latest message" on it, and the fetch's repaint then held the
+// stub's position: the chat opened at its top. The fetch that follows an open is
+// part of the open.
+describe("hydrateChat after opening a chat", () => {
+  async function hydrate(opts?: { entry?: boolean }): Promise<boolean[]> {
+    const src = readFileSync(join(here, "../public/js/app-sync.js"), "utf8");
+    const chat = { id: "c1", messages: [] as Msg[], updatedAt: 1, _needsHydrate: true };
+    const win: Record<string, unknown> = {};
+    const flags: boolean[] = [];
+    win.renderMessages = () => { flags.push(!!win._chatScrollBottomNext); win._chatScrollBottomNext = false; };
+    const session = { id: "c1", updatedAt: 2, messages: thread };
+    // eslint-disable-next-line no-new-func
+    const hydrateChat = new Function("window", "API", "AUTH_TOKEN", "fetch", "activeChat", "saveChats", "renderMessages", "document",
+      `${src}; return hydrateChat;`,
+    )(win, "", "tok", async () => ({ ok: true, json: async () => session }), chat, () => {}, win.renderMessages, { getElementById: () => null });
+    await hydrateChat(chat, opts);
+    return flags;
+  }
+
+  it("an entry hydrate repaints landing at the end", async () => {
+    expect(await hydrate({ entry: true })).toEqual([true]);
+  });
+
+  it("a background hydrate repaints holding the reader's place", async () => {
+    expect(await hydrate()).toEqual([false]);
+  });
+});

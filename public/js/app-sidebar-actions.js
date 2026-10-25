@@ -264,7 +264,7 @@ function selectChat(id) {
   // snapshot and clobber the in-flight turn.
   const isThisChatActive = !!(typeof window.isActive === 'function' && window.isActive(id));
   if (activeChat && activeChat._needsHydrate && !isThisChatActive) {
-    hydrateChat(activeChat).catch(e => console.warn('[hydrate] failed:', e?.message));
+    hydrateChat(activeChat, { entry: true }).catch(e => console.warn('[hydrate] failed:', e?.message));
   }
 }
 

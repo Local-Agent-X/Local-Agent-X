@@ -116,11 +116,6 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
         broadcastAll({ type: "settings_changed", settings: broadcastBody });
       } catch {}
     }
-    if ("developer_mode" in body) {
-      const { haltAutopilotsIfDeveloperModeOff } = await import("../../autopilot/loop.js");
-      haltAutopilotsIfDeveloperModeOff();
-    }
-
     // Port is special: lives in config.json (read at boot, env-overridable)
     // but never read via getRuntimeConfig() — separate persistence path.
     if (body.port) {

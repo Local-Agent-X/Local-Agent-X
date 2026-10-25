@@ -117,6 +117,20 @@ describe("runCommandInWorktreeAsync", () => {
     expect(r.durationMs).toBeLessThan(30_000);
   });
 
+  it("kills the child when the caller's signal aborts and reports it", async () => {
+    const { name } = registerWorktree();
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 150);
+    const r = await runCommandInWorktreeAsync(name, {
+      command: `node -e "setTimeout(function () {}, 60000)"`,
+      timeoutMs: 30_000,
+      signal: controller.signal,
+    });
+    expect(r.ok).toBe(false);
+    expect(r.stderr).toContain("command stopped");
+    expect(r.durationMs).toBeLessThan(30_000);
+  });
+
   it("passes the caller's env through to the child", async () => {
     const { name } = registerWorktree();
     const r = await runCommandInWorktreeAsync(name, {

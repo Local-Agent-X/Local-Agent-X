@@ -9,7 +9,7 @@
 import { writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { autopilotRecord, type Operation } from "./operation-types.js";
-import { AUTOPILOT_DONE_MARKER, type AutopilotState, type BootProof, type RoundResult } from "./types.js";
+import { AUTOPILOT_DONE_MARKER, type AutopilotConfig, type AutopilotState, type BootProof, type RoundResult } from "./types.js";
 import { runAutopilotRound } from "./round-agent.js";
 import { validateRound, partitionByScope } from "./validate.js";
 import { commitRound } from "./commit.js";
@@ -17,7 +17,7 @@ import { buildRunSummary, renderSummaryMarkdown } from "./summary.js";
 import { runEndOfShiftBootProof } from "./boot-proof.js";
 import { releaseLock } from "./lock.js";
 import { broadcastStarted, broadcastProgress, broadcastCompleted } from "./sidebar-broadcast.js";
-import { getSetting } from "../settings.js";
+import { getSetting, onSettingsSaved } from "../settings.js";
 import type { StartAutopilotDeps } from "./start.js";
 
 import { createLogger } from "../logger.js";
@@ -65,23 +65,28 @@ export function listActiveAutopilotOps(): Operation[] {
 // Rounds edit and build this install's own source, which needs developer_mode.
 // The loop re-reads the setting before each round, before validating (the
 // build runs the round's code) and before committing. Turning the setting off
-// also cancels the round in flight through its canonical op, so it stops
-// editing the worktree now rather than when the round would have ended.
+// also aborts the shift's signal, which the round in flight (through its
+// canonical op), a validation build or test, and the end-of-shift boot proof
+// all run under, so whatever is running stops now rather than when it would
+// have ended.
 
-const roundAborts = new Map<string, AbortController>();
+const shiftAborts = new Map<string, AbortController>();
 
 function developerModeOff(): boolean {
   return getSetting("developer_mode") !== true;
 }
 
-/** Called by every path that writes developer_mode, right after the write. */
+/** Stops every running shift when developer_mode is off. Runs after every
+ *  settings write (the one seam both Settings and the `setting` tool use). */
 export function haltAutopilotsIfDeveloperModeOff(): void {
   if (!developerModeOff()) return;
-  for (const [opId, controller] of roundAborts) {
-    logger.info(`[autopilot.loop] developer_mode off — cancelling the running round of ${opId}`);
+  for (const [opId, controller] of shiftAborts) {
+    if (controller.signal.aborted) continue;
+    logger.info(`[autopilot.loop] developer_mode off — stopping the shift of ${opId}`);
     controller.abort();
   }
 }
+onSettingsSaved(() => haltAutopilotsIfDeveloperModeOff());
 
 // ── Main loop ─────────────────────────────────────────────────────────────
 
@@ -107,6 +112,8 @@ export async function runAutopilotLoop(op: Operation, deps: StartAutopilotDeps):
   let lastRound: { outcome: string; summary: string; buildError?: string } | undefined;
 
   let finalState: AutopilotState = "running";
+  const shiftAbort = new AbortController();
+  shiftAborts.set(op.id, shiftAbort);
 
   try {
     while (true) {
@@ -156,8 +163,6 @@ export async function runAutopilotLoop(op: Operation, deps: StartAutopilotDeps):
 
       // Spawn the round agent
       let agentResult;
-      const roundAbort = new AbortController();
-      roundAborts.set(op.id, roundAbort);
       try {
         agentResult = await runAutopilotRound(
           {
@@ -176,7 +181,7 @@ export async function runAutopilotLoop(op: Operation, deps: StartAutopilotDeps):
             selfEditUsed: totalSelfEditCalls,
             lastRound,
             wallClockMs: roundBudgetMs,
-            signal: roundAbort.signal,
+            signal: shiftAbort.signal,
           },
         );
       } catch (e) {
@@ -198,8 +203,6 @@ export async function runAutopilotLoop(op: Operation, deps: StartAutopilotDeps):
         // Don't increment noop counter — agent error is a different failure mode.
         // Just continue to next round; if it keeps failing, max-rounds will stop it.
         continue;
-      } finally {
-        roundAborts.delete(op.id);
       }
 
       totalSelfEditCalls += agentResult.selfEditCallsThisRound;
@@ -210,7 +213,11 @@ export async function runAutopilotLoop(op: Operation, deps: StartAutopilotDeps):
       }
 
       // Validate (the AUTOPILOT_DONE round too: its final changes still land)
-      const validation = await validateRound(config.worktreeName, config);
+      const validation = await validateRound(config.worktreeName, config, shiftAbort.signal);
+      if (validation.outcome === "stopped") {
+        finalState = haltedByDeveloperMode(op, `round ${round}'s ${validation.detail}; nothing from it was committed`);
+        break;
+      }
       const partitioned = partitionByScope(validation.filesChanged, config.scope);
       const agentSummary = extractAgentSummary(agentResult.output);
 
@@ -279,28 +286,7 @@ export async function runAutopilotLoop(op: Operation, deps: StartAutopilotDeps):
     finalState = "error";
     addOpEvent(op, "error", `Loop crashed: ${(e as Error).message}`);
   } finally {
-    // End-of-shift boot proof. Per-round validation only proves the code
-    // BUILDS; this proves it BOOTS. Run it once, only when there's committed
-    // work to boot (passed rounds), a build gate is configured, and the run
-    // ended naturally — skip on interrupt (user wants out fast), on
-    // developer_mode off (the proof boots the branch's code) and on error
-    // (loop state is unreliable). Autopilot never auto-merges to main, so a
-    // failed boot proof is a human-merge warning, not a brick.
-    let bootProof: BootProof | undefined;
-    const passedCount = (op.autopilotRounds || []).filter(r => r.outcome === "passed").length;
-    const naturalEnd = finalState !== "interrupted" && finalState !== "error" && finalState !== "developer-mode-off";
-    if (passedCount > 0 && config.buildCommand !== null && naturalEnd) {
-      try {
-        void broadcastProgress(op.id, "🔌 Boot proof: launching server + smoke check…");
-        bootProof = await runEndOfShiftBootProof(config);
-        logger.info(`[autopilot.loop] boot proof: ${bootProof.status} (${bootProof.durationMs}ms)`);
-        addOpEvent(op, bootProof.status === "passed" ? "info" : "error",
-          `Boot proof ${bootProof.status}: ${bootProof.detail.slice(0, 200)}`);
-      } catch (e) {
-        logger.warn(`[autopilot.loop] boot proof threw: ${(e as Error).message}`);
-        bootProof = { status: "failed", detail: `Boot proof error: ${(e as Error).message}`, durationMs: 0 };
-      }
-    }
+    const bootProof = await proveShiftBoots(op, config, finalState, shiftAbort.signal);
 
     // Build summary, persist, update Operation status
     const summary = buildRunSummary({
@@ -341,6 +327,7 @@ export async function runAutopilotLoop(op: Operation, deps: StartAutopilotDeps):
     }
 
     activeOps.delete(op.id);
+    shiftAborts.delete(op.id);
     clearStopRequest(op.id);
     releaseLock(op.id);
 
@@ -349,6 +336,38 @@ export async function runAutopilotLoop(op: Operation, deps: StartAutopilotDeps):
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────
+
+/**
+ * End-of-shift boot proof. Per-round validation only proves the code BUILDS;
+ * this proves it BOOTS. Run once, only when there's committed work to boot
+ * (passed rounds), a build gate is configured, and the run ended naturally —
+ * skipped on interrupt (user wants out fast), on developer_mode off (the proof
+ * boots the branch's code) and on error (loop state is unreliable). Autopilot
+ * never auto-merges to main, so a failed boot proof is a human-merge warning,
+ * not a brick. The shift's signal stops a proof in flight.
+ */
+async function proveShiftBoots(
+  op: Operation,
+  config: AutopilotConfig,
+  finalState: AutopilotState,
+  signal: AbortSignal,
+): Promise<BootProof | undefined> {
+  const passedCount = (op.autopilotRounds || []).filter(r => r.outcome === "passed").length;
+  const naturalEnd = finalState !== "interrupted" && finalState !== "error" && finalState !== "developer-mode-off";
+  if (passedCount === 0 || config.buildCommand === null || !naturalEnd) return undefined;
+  try {
+    void broadcastProgress(op.id, "🔌 Boot proof: launching server + smoke check…");
+    let bootProof = await runEndOfShiftBootProof(config, signal);
+    if (signal.aborted) bootProof = { ...bootProof, status: "failed", detail: "Boot proof stopped: developer_mode was turned off." };
+    logger.info(`[autopilot.loop] boot proof: ${bootProof.status} (${bootProof.durationMs}ms)`);
+    addOpEvent(op, bootProof.status === "passed" ? "info" : "error",
+      `Boot proof ${bootProof.status}: ${bootProof.detail.slice(0, 200)}`);
+    return bootProof;
+  } catch (e) {
+    logger.warn(`[autopilot.loop] boot proof threw: ${(e as Error).message}`);
+    return { status: "failed", detail: `Boot proof error: ${(e as Error).message}`, durationMs: 0 };
+  }
+}
 
 function haltedByDeveloperMode(op: Operation, detail: string): AutopilotState {
   logger.info(`[autopilot.loop] op ${op.id} stopped: developer_mode is off — ${detail}`);

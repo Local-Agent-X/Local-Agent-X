@@ -19,11 +19,11 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 167 | 29 | L | 1 |
+| `src/ops/` | 168 | 29 | L | 1 |
 | `src/security/` | 129 | 53 | XL | 3 |
 | `src/tools/` | 118 | 219 | XL | 9 |
 | `src/tool-execution/` | 82 | 72 | XL | 2 |
-| `src/canonical-loop/` | 79 | 269 | XL | 13 |
+| `src/canonical-loop/` | 80 | 269 | XL | 13 |
 | `src/workspace/` | 76 | 3 | M |  |
 | `src/providers/` | 68 | 26 | L | 1 |
 | `src/memory/` | 52 | 138 | XL | 7 |
@@ -63,13 +63,13 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/whatsapp-bridge/` | 12 | 8 | M | 1 |
 | `src/agent-loop/` | 10 | 1 | S |  |
 | `src/app-scaffold/` | 10 | 7 | M |  |
-| `src/autopilot/` | 10 | 14 | L | 1 |
 | `src/persistence/` | 10 | 2 | S |  |
 | `src/routes/` | 10 | 93 | XL | 18 |
 | `src/sync/` | 10 | 21 | L | 1 |
 | `src/plugin-system/` | 9 | 10 | L | 1 |
 | `src/screen-stream/` | 9 | 11 | L |  |
 | `src/agent-guards/` | 8 | 11 | M |  |
+| `src/autopilot/` | 8 | 14 | L | 1 |
 | `src/bridge-voice/` | 8 | 5 | S |  |
 | `src/codex-client/` | 8 | 6 | M |  |
 | `src/mcp-client/` | 8 | 11 | L | 1 |
@@ -360,6 +360,7 @@ job. Comments are free: never cut them to fit.
 - `src/tools/spreadsheet-tools.ts` — 310+ code lines (cap 350)
 - `src/whatsapp-bridge/index.ts` — 310+ code lines (cap 350)
 - `src/auto-build/orchestrator/manager.ts` — 300+ code lines (cap 350)
+- `src/autopilot/loop.ts` — 300+ code lines (cap 350)
 - `src/browser/manager.ts` — 300+ code lines (cap 350)
 - `src/canonical-loop/process-execution-backend.ts` — 300+ code lines (cap 350)
 - `src/cron/cron-service.ts` — 300+ code lines (cap 350)
@@ -368,7 +369,6 @@ job. Comments are free: never cut them to fit.
 - `src/tools/presentation-tools.ts` — 300+ code lines (cap 350)
 - `src/api-docs.ts` — 290+ code lines (cap 350)
 - `src/auth/storage.ts` — 290+ code lines (cap 350)
-- `src/autopilot/loop.ts` — 290+ code lines (cap 350)
 - `src/canonical-loop/turn-commit-store.ts` — 290+ code lines (cap 350)
 - `src/mcp-client/manifest.ts` — 290+ code lines (cap 350)
 - `src/memory/index-schema-migrations.ts` — 290+ code lines (cap 350)
@@ -444,7 +444,6 @@ job. Comments are free: never cut them to fit.
 - `src/threat/threat-engine.ts#ThreatEngine.evaluateToolResult` — 80+ own code lines (cap 100)
 - `src/tools/asset-tools.ts#extractSiteAssetsTool.execute` — 80+ own code lines (cap 100)
 - `src/tools/image-tools/generate-video.ts#generateVideoTool.execute` — 80+ own code lines (cap 100)
-- `src/tools/setting-tool.ts#settingTool.execute` — 80+ own code lines (cap 100)
 - `src/tools/shared/image-binary-meta.ts#parseDimensions` — 80+ own code lines (cap 100)
 - `src/update-extracted-validation.ts#validateExtractedUpdate` — 80+ own code lines (cap 100)
 - `src/agent-guards/loop-detection.ts#checkToolLoops` — 70+ own code lines (cap 100)
@@ -512,6 +511,7 @@ job. Comments are free: never cut them to fit.
 - `src/tools/image-tools/generate-image.ts#generateImageTool.execute` — 70+ own code lines (cap 100)
 - `src/tools/issue-tools/agent-whoami.ts#agentWhoAmITool.execute` — 70+ own code lines (cap 100)
 - `src/tools/ocr-tool.ts#recognizeText` — 70+ own code lines (cap 100)
+- `src/tools/setting-tool.ts#settingTool.execute` — 70+ own code lines (cap 100)
 - `src/voice/gpu-session.ts#createGpuSession` — 70+ own code lines (cap 100)
 - `src/voice/tts-model-fetch.ts#doDownload` — 70+ own code lines (cap 100)
 - `src/voice/voice-session/turn-runner.ts#handleFinalTranscript` — 70+ own code lines (cap 100)

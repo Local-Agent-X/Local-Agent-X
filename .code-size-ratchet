@@ -19,7 +19,7 @@ src/app-renderer/client-script.ts#renderClientScript 137
 src/auto-build/app-build-tool.ts#finalize_app_build.execute 129
 src/auto-build/kickoff.ts#createBuildPlanKickoff:returned 112
 src/auto-build/loop/run.ts#runBuildLoop 136
-src/autopilot/loop.ts#runAutopilotLoop 211
+src/autopilot/loop.ts#runAutopilotLoop 200
 src/benchmark-longmemeval.ts#main 102
 src/browser/extract-script.ts 355
 src/browser/in-app-resolve-scripts.ts#resolutionScript 210
@@ -71,7 +71,7 @@ src/routes/security.ts#handleSecurityRoutes 163
 src/routes/sessions.ts#handleSessionRoutes 175
 src/routes/settings/diagnostics.ts#handleDiagnosticsRoutes 105
 src/routes/settings/local-runtimes.ts#handleLocalRuntimesRoutes 122
-src/routes/settings/preferences.ts#handlePreferencesRoutes 193
+src/routes/settings/preferences.ts#handlePreferencesRoutes 189
 src/routes/settings/providers.ts#handleProvidersRoutes 130
 src/routes/settings/system.ts#handleSystemRoutes 129
 src/sandbox/docker-execution-runtime.ts 363

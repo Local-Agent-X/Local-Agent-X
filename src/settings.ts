@@ -57,9 +57,26 @@ export function getSetting<T = unknown>(key: string): T | undefined {
   return loadSettings()[key] as T | undefined;
 }
 
+export type SettingsSavedObserver = (next: Record<string, unknown>, prev: Record<string, unknown>) => void;
+const savedObservers = new Set<SettingsSavedObserver>();
+
+/** Called after every settings write with the new and previous settings, so a
+ *  module whose running work depends on a setting (an autopilot shift, a CLI
+ *  build) hears the change from the one place it is written, not from each
+ *  caller that writes it. Returns the unsubscribe. */
+export function onSettingsSaved(observer: SettingsSavedObserver): () => void {
+  savedObservers.add(observer);
+  return () => { savedObservers.delete(observer); };
+}
+
 export function saveSettings(settings: Record<string, unknown>): void {
+  const prev = loadSettings();
   atomicWriteFileSync(settingsPath(), JSON.stringify(settings, null, 2), { mode: 0o600 });
   _cache = settings;
+  for (const observer of savedObservers) {
+    try { observer(settings, prev); }
+    catch (e) { logger.warn(`[settings] observer failed: ${(e as Error).message}`); }
+  }
 }
 
 export function setSetting(key: string, value: unknown): void {

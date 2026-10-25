@@ -216,6 +216,9 @@ interface BuildOptions {
   /** Env for the command. Defaults to the credential-scrubbed child env (see
    *  runProcess). */
   env?: NodeJS.ProcessEnv;
+  /** Kills the command's process tree when it aborts; the result is a failure
+   *  that says so. */
+  signal?: AbortSignal;
 }
 
 interface BuildResult {
@@ -283,7 +286,7 @@ const RUNNER_OUTPUT_CAP = 10 * 1024 * 1024;
  */
 function runProcess(
   command: string,
-  opts: { cwd: string; timeoutMs: number; env?: NodeJS.ProcessEnv },
+  opts: { cwd: string; timeoutMs: number; env?: NodeJS.ProcessEnv; signal?: AbortSignal },
 ): Promise<BuildResult> {
   const start = Date.now();
   return new Promise(resolveRun => {
@@ -302,14 +305,19 @@ function runProcess(
     let stdout = "";
     let stderr = "";
     let timedOut = false;
+    let stopped = false;
     let settled = false;
     const finish = (ok: boolean, note: string) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      opts.signal?.removeEventListener("abort", stop);
       resolveRun({ ok, durationMs: Date.now() - start, stdout, stderr: stderr + note });
     };
     const timer = setTimeout(() => { timedOut = true; killProcessTree(child, "SIGKILL"); }, opts.timeoutMs);
+    const stop = () => { stopped = true; killProcessTree(child, "SIGKILL"); };
+    opts.signal?.addEventListener("abort", stop, { once: true });
+    if (opts.signal?.aborted) stop();
     // setEncoding decodes across chunk boundaries; appending Buffers decodes
     // each 64 KiB read on its own and mangles any multi-byte character split
     // between two of them. Unlike gitAsync (whose output is parsed, so an
@@ -321,8 +329,8 @@ function runProcess(
     child.stderr?.on("data", (c: string) => { stderr = (stderr + c).slice(-RUNNER_OUTPUT_CAP); });
     child.once("error", (e: Error) => finish(false, e.message));
     child.once("exit", code => finish(
-      code === 0 && !timedOut,
-      timedOut ? `command timed out after ${opts.timeoutMs}ms` : "",
+      code === 0 && !timedOut && !stopped,
+      timedOut ? `command timed out after ${opts.timeoutMs}ms` : stopped ? "command stopped" : "",
     ));
   });
 }
@@ -355,5 +363,5 @@ export async function runDesktopTscBuildAsync(repoRoot: string, timeoutMs: numbe
 export async function runCommandInWorktreeAsync(name: string, opts: BuildOptions): Promise<BuildResult> {
   const wt = activeWorktrees.get(name);
   if (!wt) throw new Error(`No worktree found for ${name}`);
-  return runProcess(opts.command, { cwd: wt.path, timeoutMs: opts.timeoutMs, env: opts.env });
+  return runProcess(opts.command, { cwd: wt.path, timeoutMs: opts.timeoutMs, env: opts.env, signal: opts.signal });
 }

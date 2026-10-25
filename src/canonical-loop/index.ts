@@ -266,7 +266,7 @@ export * from "./public/plan-ledger.js";
 export * from "./public/verify-bridge.js";
 
 // Leaf op facts (isDispatchFailure and the op types are exported above).
-export type { TerminalState } from "./terminal-states.js";
+export { isTerminalState, type TerminalState } from "./terminal-states.js";
 export { resolveTerminalOpStatus, type TerminalOpResolution, type TerminalOpStatus } from "./checkpoint-stop.js";
 export { isEmbeddingModel } from "./model-capabilities.js";
 

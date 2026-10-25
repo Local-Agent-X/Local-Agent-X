@@ -26,9 +26,9 @@ const mocks = vi.hoisted(() => {
       // assertion below instead of the test timeout.
       setTimeout(() => end("end_turn"), 1_500);
     })),
-    validateRound: vi.fn(async () => ({ outcome: "passed", filesChanged: ["src/cron/x.ts"], detail: "", oversizedFiles: [] })),
+    validateRound: vi.fn(async (_name: string, _config: unknown, _signal?: AbortSignal) => ({ outcome: "passed", filesChanged: ["src/cron/x.ts"], detail: "", oversizedFiles: [] })),
     commitRound: vi.fn(() => "abc12345"),
-    runEndOfShiftBootProof: vi.fn(async () => ({ status: "passed", detail: "ok", durationMs: 1 })),
+    runEndOfShiftBootProof: vi.fn(async (_config: unknown, _signal?: AbortSignal) => ({ status: "passed", detail: "ok", durationMs: 1 })),
     broadcastAll: vi.fn(() => 1),
   };
 });
@@ -148,6 +148,41 @@ describe("autopilot stops when developer_mode turns off", () => {
     expect(mocks.commitRound).not.toHaveBeenCalled();
     expect(mocks.runAutopilotRound).toHaveBeenCalledTimes(1);
     expect(op.status).toBe("cancelled");
+  });
+
+  it("turned off while the round's build runs, the build is told to stop and nothing is committed", async () => {
+    setSetting("developer_mode", true);
+    let buildSignal: AbortSignal | undefined;
+    mocks.validateRound.mockImplementationOnce(async (_name, _config, signal) => {
+      buildSignal = signal;
+      setSetting("developer_mode", false);
+      // The real validation returns "stopped" once its command dies on the signal.
+      return { outcome: signal?.aborted ? "stopped" : "passed", filesChanged: [], detail: "build stopped", oversizedFiles: [] };
+    });
+    const { op, done } = startRun();
+    await done;
+
+    expect(buildSignal?.aborted).toBe(true);
+    expect(mocks.commitRound).not.toHaveBeenCalled();
+    expect(mocks.runEndOfShiftBootProof).not.toHaveBeenCalled();
+    expect(op.status).toBe("cancelled");
+    expect(op.events.some((e) => e.message.includes("build stopped"))).toBe(true);
+  });
+
+  it("turned off during the boot proof, the proof is told to stop and the summary says so", async () => {
+    setSetting("developer_mode", true);
+    let proofSignal: AbortSignal | undefined;
+    mocks.runEndOfShiftBootProof.mockImplementationOnce(async (_config, signal) => {
+      proofSignal = signal;
+      setSetting("developer_mode", false);
+      return { status: "failed", detail: "aborted", durationMs: 1 };
+    });
+    const { op, done } = startRun(1);
+    await done;
+
+    expect(proofSignal?.aborted).toBe(true);
+    expect(mocks.commitRound).toHaveBeenCalledTimes(1);
+    expect(op.events.some((e) => e.message.includes("Boot proof stopped: developer_mode was turned off"))).toBe(true);
   });
 
   it("already off, no round starts", async () => {

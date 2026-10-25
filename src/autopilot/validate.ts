@@ -28,7 +28,10 @@ import { createLogger } from "../logger.js";
 const logger = createLogger("autopilot.validate");
 
 export interface ValidationResult {
-  outcome: RoundOutcome;
+  /** "stopped": the shift was halted (developer_mode off) while a command ran;
+   *  the worktree is left as the round made it, and nothing is recorded as a
+   *  build or test verdict. */
+  outcome: RoundOutcome | "stopped";
   filesChanged: string[];
   /** Diagnostic detail for failure (build error, oversize file, etc.). Empty on pass/noop. */
   detail: string;
@@ -67,6 +70,7 @@ function headText(worktreePath: string, relPath: string): string {
 export async function validateRound(
   worktreeName: string,
   config: AutopilotConfig,
+  signal?: AbortSignal,
 ): Promise<ValidationResult> {
   // Gate 1: any changes at all?
   const status = getWorktreeStatus(worktreeName);
@@ -82,7 +86,9 @@ export async function validateRound(
     const buildResult = await runCommandInWorktreeAsync(worktreeName, {
       command: config.buildCommand,
       timeoutMs: config.buildTimeoutMs,
+      signal,
     });
+    if (signal?.aborted) return { outcome: "stopped", filesChanged, detail: "build stopped", oversizedFiles: [] };
     if (!buildResult.ok) {
       const errSnippet = (buildResult.stderr || buildResult.stdout || "").slice(-2000);
       logger.warn(`[autopilot.validate] build failed in ${buildResult.durationMs}ms`);
@@ -130,7 +136,9 @@ export async function validateRound(
     const testResult = await runCommandInWorktreeAsync(worktreeName, {
       command: config.testCommand,
       timeoutMs: config.testTimeoutMs,
+      signal,
     });
+    if (signal?.aborted) return { outcome: "stopped", filesChanged, detail: "tests stopped", oversizedFiles: [] };
     if (!testResult.ok) {
       const errSnippet = (testResult.stderr || testResult.stdout || "").slice(-2000);
       logger.warn(`[autopilot.validate] tests failed in ${testResult.durationMs}ms`);

@@ -11,7 +11,10 @@
  * a retry, a restore after restart). Refusing, never quietly building
  * in-canonical instead: the template says CLI, so the user decides.
  */
-import { getSetting } from "../settings.js";
+import { getSetting, onSettingsSaved } from "../settings.js";
+import { listOps } from "../ops/op-store.js";
+import { OP_TYPE } from "../ops/op-types.js";
+import { isTerminalState } from "../canonical-loop/index.js";
 
 /** The refusal to return instead of running a CLI build, or null when developer_mode is on. */
 export function cliBuildDeveloperModeRefusal(provider: string): string | null {
@@ -26,3 +29,23 @@ export function cliBuildDeveloperModeRefusal(provider: string): string | null {
     "Tell them the trade-off: with developer_mode on, a CLI build has the same unrestricted reach over this machine as self_edit."
   );
 }
+
+/** Every CLI build still queued or running: a cancel reaches its adapter, which
+ *  kills the CLI's process tree. Returns the ids cancelled. */
+export async function cancelCliBuildsIfDeveloperModeOff(): Promise<string[]> {
+  if (getSetting("developer_mode") === true) return [];
+  const { opCancel } = await import("../canonical-loop/index.js");
+  const cancelled: string[] = [];
+  for (const op of listOps()) {
+    const descriptor = op.runtimeDescriptor;
+    if (op.type !== OP_TYPE.appBuild || descriptor?.kind !== "app-build" || descriptor.strategy !== "cli-subprocess") continue;
+    if (isTerminalState(op.canonical?.state)) continue;
+    if (opCancel(op.id, "developer_mode_off").ok) cancelled.push(op.id);
+  }
+  return cancelled;
+}
+
+// Only the flip itself is acted on: the sweep reads every persisted op.
+onSettingsSaved((next, prev) => {
+  if (prev.developer_mode === true && next.developer_mode !== true) void cancelCliBuildsIfDeveloperModeOff();
+});

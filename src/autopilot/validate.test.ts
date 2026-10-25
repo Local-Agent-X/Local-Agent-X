@@ -2,7 +2,7 @@
 // are whatever the round's agent created, so the read must never hand one to a
 // shell: a name carrying $( ) or backticks would run as a command on the host.
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
@@ -38,6 +38,28 @@ function config(repo: string, name: string, fileSizeLimit: number): AutopilotCon
     buildCommand: null, buildTimeoutMs: 1_000, testCommand: "", testTimeoutMs: 1_000, fileSizeLimit,
   };
 }
+
+describe("validateRound under the shift's signal", () => {
+  it("a build stopped by the signal is 'stopped', not a failed build, and the round's edits stay", async () => {
+    const repo = repoWith({ "a.ts": lines(1) });
+    writeFileSync(join(repo, "a.ts"), lines(3));
+    git(repo, "add", "-A");
+    const name = `validate-${process.pid}-${Date.now()}-stop`;
+    activeWorktrees.set(name, { path: repo, branch: "main", baseBranch: "main", repoRoot: repo, mergedSuccessfully: false });
+    cleanups.push(() => activeWorktrees.delete(name));
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 150);
+
+    const result = await validateRound(name, {
+      ...config(repo, name, 400),
+      buildCommand: `node -e "setTimeout(function () {}, 60000)"`,
+      buildTimeoutMs: 30_000,
+    }, controller.signal);
+
+    expect(result.outcome).toBe("stopped");
+    expect(readFileSync(join(repo, "a.ts"), "utf-8")).toBe(lines(3));
+  });
+});
 
 describe("validateRound size gate", () => {
   it("measures a file named with $( ) and backticks at HEAD without running either as a command", async () => {

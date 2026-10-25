@@ -254,7 +254,7 @@ function finalizeLiveMessageInPlace(sessionId, finalizedMsg) {
   // A tools-only turn (no text) leaves _buildLiveAssistantInto's "thinking"
   // placeholder in the body; the finalized bubble must not look like it's
   // still working. Matches the full-render output (no dots).
-  fresh.querySelectorAll('.msg-body .thinking').forEach(t => t.remove());
+  fresh.querySelectorAll('.msg-body .thinking, .msg-body .still-working').forEach(t => t.remove());
   const footer = fresh.querySelector('.msg-footer');
   if (footer && finalizedMsg.timestamp && typeof formatMsgTime === 'function') {
     footer.innerHTML = `<span class="msg-time">${formatMsgTime(finalizedMsg.timestamp)}</span>`;

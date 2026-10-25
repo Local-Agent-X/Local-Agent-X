@@ -192,6 +192,21 @@ function _buildLiveAssistantInto(parent, store) {
       if (reasoning) prependReasoningBlock(bodyEl, reasoning, true);
     }
   }
+  // The model wrote something and moved on to tools (a question it chose to
+  // keep working past, a plan before the work): without this the text reads
+  // as the finished answer while the stop button alone says otherwise. Sits
+  // right under the last text, not at the row's end, because that is where
+  // the reader stopped. finalizeLiveMessageInPlace removes it.
+  if (bodyEl && contentIdle) {
+    const texts = bodyEl.querySelectorAll('.block-text');
+    const lastText = texts[texts.length - 1];
+    if (lastText) {
+      const note = document.createElement('div');
+      note.className = 'still-working';
+      note.textContent = 'Still working — this isn’t the final answer yet.';
+      lastText.insertAdjacentElement('afterend', note);
+    }
+  }
   const toolEvents = store ? (store.toolEvents || []) : [];
   _renderAssistantToolArtifacts(bodyEl || div, {
     toolEvents,
@@ -276,6 +291,28 @@ function _updateActivityLatest(group, toolEvents, ends, live) {
     // is the only thing that MOVES between two frames of the same loop.
     tick.textContent = running ? '⚙' : '✓';
     tick.style.transform = running ? `rotate(${(starts.length * 30) % 360}deg)` : '';
+  }
+}
+
+// The turn's notices. Learning and review notices sit beside the approvals,
+// outside the collapsible activity block: a notice scrolled away inside it is
+// no notice. A delete notice is different: it names a file this request
+// created and then removed — the agent's own scratch, which the gate already
+// let go without a card. That is a line of agent activity with an Undo, so it
+// joins the activity group (outside it only when the turn ran no other tool).
+function _renderRowNotices(bodyEl, notices) {
+  const activityBody = bodyEl.querySelector('.activity-group .activity-group-body');
+  for (const n of notices) {
+    try {
+      if (n.kind === 'learning') bodyEl.appendChild(renderLearningNotice(n));
+      else if (n.kind === 'review') bodyEl.appendChild(renderReviewNotice(n));
+      else {
+        const notice = renderDeleteNotice(n);
+        if (activityBody) { notice.classList.add('in-activity'); activityBody.appendChild(notice); }
+        else bodyEl.appendChild(notice);
+      }
+    }
+    catch (noticeRenderErr) { console.error('[chat] delete notice render error:', noticeRenderErr); }
   }
 }
 
@@ -415,12 +452,7 @@ function _renderAssistantToolArtifacts(bodyEl, data) {
     try { bodyEl.appendChild(renderApproval(ap)); }
     catch (approvalRenderErr) { console.error('[chat] approval card render error:', approvalRenderErr); }
   }
-  // Delete and learning notices sit beside the approvals, outside the
-  // collapsible activity block: a notice scrolled away inside it is no notice.
-  for (const n of (data.notices || [])) {
-    try { bodyEl.appendChild(n.kind === 'learning' ? renderLearningNotice(n) : n.kind === 'review' ? renderReviewNotice(n) : renderDeleteNotice(n)); }
-    catch (noticeRenderErr) { console.error('[chat] delete notice render error:', noticeRenderErr); }
-  }
+  _renderRowNotices(bodyEl, data.notices || []);
   const stopNote = data.stopNote;
   if (stopNote) {
     const note = document.createElement('div');

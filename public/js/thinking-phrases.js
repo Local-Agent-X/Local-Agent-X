@@ -133,6 +133,14 @@
     }
     var store = ChatStreamStore.get(sid);
     if (!store) return { state: 'flowing', label: 'STREAMING', activity: null };
+    // Blocked on the reader beats every other state: the card may sit below
+    // text that reads as finished, and it expires on its own.
+    var ask = (store.approvals || []).find(function (a) { return (!a.status || a.status === 'pending') && !a.historical; });
+    if (ask) {
+      var left = typeof ask.expiresAt === 'number' ? Math.max(0, Math.round((ask.expiresAt - Date.now()) / 1000)) : null;
+      var clock = left === null ? '' : ' · ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0');
+      return { state: 'waiting', label: 'WAITING FOR YOUR APPROVAL' + clock, activity: null, approvalId: ask.id };
+    }
     // isContentIdle is chat-render-artifacts.js's — the same predicate that
     // decides whether the live bubble shows its idle indicator, so the chip,
     // the phrase and the bubble can never disagree about what "nothing is

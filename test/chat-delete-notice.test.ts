@@ -25,7 +25,7 @@ describe("the delete notice on a turn", () => {
 
 	it("names each file and offers Undo", () => {
 		const el = loadNoticeRenderer()({ id: "dn-r1", files: ["C:\\w\\ns_tmp.json", "C:\\w\\ns_tmp.txt"], restored: false });
-		expect(el.textContent).toContain("Deleted 2 files");
+		expect(el.textContent).toContain("Deleted 2 files it created this turn");
 		expect(el.textContent).toContain("ns_tmp.json");
 		expect(el.textContent).toContain("in the trash");
 		expect(el.querySelector(".delete-notice-undo")).not.toBeNull();

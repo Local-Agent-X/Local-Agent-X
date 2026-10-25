@@ -270,18 +270,24 @@ function _paintStreamSignal(ind, sig) {
   ind.dataset.signal = sig.state;
   if (labelEl) labelEl.textContent = sig.label;
   const silent = sig.state === 'silent';
+  const waiting = sig.state === 'waiting';
   // The pulsing dot is the chip's only moving part; when the stream has
   // stopped moving, so must it. Inline animation only — clearing the value
   // hands the dot straight back to .chat-dot.active-pulse in app.css.
   const dot = ind.querySelector('.chat-dot');
   if (dot) dot.style.animation = silent ? 'none' : '';
-  ind.style.color = silent ? 'var(--muted)' : 'var(--accent)';
-  ind.style.borderColor = silent ? 'var(--border)' : 'var(--accent-dim)';
+  ind.style.color = silent ? 'var(--muted)' : waiting ? 'var(--warn)' : 'var(--accent)';
+  ind.style.borderColor = silent ? 'var(--border)' : waiting ? 'var(--warn)' : 'var(--accent-dim)';
+  ind.style.cursor = waiting ? 'pointer' : '';
+  // A click on the waiting chip goes to the card it speaks for.
+  ind.dataset.approvalId = waiting && sig.approvalId ? sig.approvalId : '';
   ind.title = silent
     ? 'No output and no heartbeat from the running turn — it may be wedged. Send still injects into it.'
-    : (sig.activity
-      ? 'Running ' + sig.activity + ' — nothing on screen yet. The send button will inject into the running turn.'
-      : 'A turn is in flight. The send button will inject into the running turn.');
+    : waiting
+      ? 'The turn is waiting for you to approve or deny an action. Click to go to the card; it expires on its own.'
+      : (sig.activity
+        ? 'Running ' + sig.activity + ' — nothing on screen yet. The send button will inject into the running turn.'
+        : 'A turn is in flight. The send button will inject into the running turn.');
 }
 
 // Single source of truth for "is a turn in flight for the chat I'm looking at"
@@ -289,6 +295,19 @@ function _paintStreamSignal(ind, sig) {
 // Subscribed to ChatStreamStore so every store mutation re-evaluates the
 // active-chat UI; concurrent streams (main chat + IDE chat) each get correct
 // UI for their own active view because the predicate is per-session.
+// The waiting chip is a link to its card (chat-render-approvals.js owns the
+// scroll + flash). Bound once; the chip element is permanent.
+(function bindWaitingChip() {
+  if (typeof document === 'undefined') return;
+  const ind = document.getElementById('stream-indicator');
+  if (!ind || ind.dataset.waitBound) return;
+  ind.dataset.waitBound = '1';
+  ind.addEventListener('click', () => {
+    const id = ind.dataset.approvalId;
+    if (id && typeof announceApproval === 'function') announceApproval(id);
+  });
+})();
+
 function updateStreamUI() {
   try {
     const active = (typeof window !== 'undefined' && window.activeChat) ? window.activeChat : null;

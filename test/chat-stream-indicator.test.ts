@@ -284,15 +284,13 @@ describe("stream indicator ↔ real stream signal", () => {
 
 	it("reports NO SIGNAL on a turn adopted mid-flight that then went quiet", () => {
 		// The reload-because-it-looked-stuck path. A tab that never ran startTurn
-		// learns the turn from chat_op_started (and, on durable-approval
-		// rediscovery, approval_requested) — both bump lastActivityMs and neither
-		// bumps lastContentMs, so the entry has NO content clock at all. That is
+		// learns the turn from chat_op_started, which bumps lastActivityMs and
+		// not lastContentMs, so the entry has NO content clock at all. That is
 		// the strongest form of "nothing is arriving", not a reason to keep
 		// claiming STREAMING: the tab the user opened to diagnose a wedge is
-		// exactly the tab that must be able to say NO SIGNAL.
+		// exactly the tab that must be able to say NO SIGNAL. (A rediscovered
+		// approval also adopts a turn, but a live ask reads WAITING — below.)
 		ChatStreamStore.applyEvent(sessionId, { type: "chat_op_started", opId: "op-1" });
-		ChatStreamStore.applyEvent(sessionId,
-			{ type: "approval_requested", approvalId: "a1", toolName: "bash" });
 		ChatStreamStore.adoptTurn(sessionId, 0);
 		expect(ChatStreamStore.get(sessionId).lastContentMs).toBe(0);
 
@@ -355,6 +353,33 @@ describe("stream indicator ↔ real stream signal", () => {
 		expect(chipState()).toBe("flowing");
 		expect(chipLabel()).toBe("STREAMING");
 		expect(chipDotStill()).toBe(false);
+	});
+});
+
+describe("stream indicator ↔ a turn blocked on the reader", () => {
+	it("reads WAITING FOR YOUR APPROVAL, with the card's clock, ahead of every other state", () => {
+		ChatStreamStore.startTurn(sessionId, 0);
+		ChatStreamStore.applyEvent(sessionId, { type: "stream", delta: "Want me to go ahead?" });
+		ageContent(30_000);
+		ChatStreamStore.applyEvent(sessionId,
+			{ type: "approval_requested", approvalId: "a1", toolName: "bash", context: "rm -rf .tmp", argsPreview: "", expiresAt: Date.now() + 150_000 });
+		vi.advanceTimersByTime(SIGNAL_TICK_MS);
+
+		expect(chipState()).toBe("waiting");
+		expect(chipLabel()).toMatch(/^WAITING FOR YOUR APPROVAL · 2:[0-9]{2}$/);
+		expect(chip().dataset.approvalId).toBe("a1");
+	});
+
+	it("goes back to the ordinary signal once the ask is settled", () => {
+		ChatStreamStore.startTurn(sessionId, 0);
+		ChatStreamStore.applyEvent(sessionId, { type: "stream", delta: "on it" });
+		ChatStreamStore.applyEvent(sessionId,
+			{ type: "approval_requested", approvalId: "a2", toolName: "bash", context: "x", argsPreview: "", expiresAt: Date.now() + 60_000 });
+		ChatStreamStore.applyEvent(sessionId, { type: "approval_timeout", approvalId: "a2", toolName: "bash" });
+		ChatStreamStore.applyEvent(sessionId, { type: "stream", delta: " still here" });
+		vi.advanceTimersByTime(SIGNAL_TICK_MS);
+
+		expect(chipState()).toBe("flowing");
 	});
 });
 

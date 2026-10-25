@@ -1,9 +1,10 @@
 // Delete notices — files the agent deleted to the trash WITHOUT a card, because
 // this request created them and the user did not name them
-// (src/tool-execution/unnamed-delete-gate.ts). The trade for skipping the card
-// is that the user sees exactly what went, and can put it back in one click.
-// Rendered outside the collapsible activity block by chat-render-artifacts.js;
-// saved on the row by chat-stream-finalize.js, so Undo survives a reload.
+// (src/tool-execution/unnamed-delete-gate.ts): its own scratch. The trade for
+// skipping the card is that what went is on record with an Undo — as a line
+// inside the activity group (chat-render-artifacts.js), since cleaning up its
+// own probe file is agent activity, not an alert. Saved on the row by
+// chat-stream-finalize.js, so Undo survives a reload.
 //
 // Exposes (global): renderDeleteNotice(notice), renderLearningNotice(notice)
 
@@ -27,8 +28,8 @@ function renderDeleteNotice(n) {
       return;
     }
     el.innerHTML =
-      '<span class="delete-notice-text">Deleted ' + count + ' this request created, which you didn’t name: '
-      + names + '. They’re in the trash.</span>'
+      '<span class="delete-notice-text">Deleted ' + count + ' it created this turn: '
+      + names + ' — in the trash.</span>'
       + '<button class="delete-notice-undo" type="button">Undo</button>'
       + (n.error ? '<div class="delete-notice-error">' + esc(n.error) + '</div>' : '');
     el.querySelector('.delete-notice-undo').addEventListener('click', undo);

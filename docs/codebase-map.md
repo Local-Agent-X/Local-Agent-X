@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1852 non-test source files · 93 oversized · 241 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1852 non-test source files · 92 oversized · 242 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -23,7 +23,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/security/` | 129 | 53 | XL | 3 |
 | `src/tools/` | 118 | 219 | XL | 9 |
 | `src/tool-execution/` | 82 | 72 | XL | 2 |
-| `src/canonical-loop/` | 79 | 269 | XL | 14 |
+| `src/canonical-loop/` | 79 | 269 | XL | 13 |
 | `src/workspace/` | 76 | 3 | M |  |
 | `src/providers/` | 68 | 26 | L | 1 |
 | `src/memory/` | 52 | 138 | XL | 7 |
@@ -257,7 +257,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/canonical-loop/adapters/openai-compat.ts#OpenAICompatAdapter.runTurn`
 - `src/canonical-loop/adapters/openai-compat/canonical-to-chat-param.ts#canonicalToChatParam`
 - `src/canonical-loop/adapters/openai-compat/stream-once.ts#streamOnce`
-- `src/canonical-loop/agent-runner/run.ts#runAgentViaCanonical`
 - `src/canonical-loop/chat-runner/event-pump.ts#subscribeOpEvents:callback`
 - `src/canonical-loop/container-execution-backend.ts`
 - `src/canonical-loop/process-relay-journal.ts`
@@ -423,6 +422,7 @@ job. Comments are free: never cut them to fit.
 - `src/agent-guards/loop-detection.ts#noteToolResults` — 80+ own code lines (cap 100)
 - `src/auth/index.ts#createServer:callback` — 80+ own code lines (cap 100)
 - `src/auto-build/chunk-review/gate-build-exec.ts#runBuildExecGate` — 80+ own code lines (cap 100)
+- `src/canonical-loop/agent-runner/run.ts#runAgentViaCanonical` — 80+ own code lines (cap 100)
 - `src/canonical-loop/soak-metrics.ts#finalize` — 80+ own code lines (cap 100)
 - `src/classifiers/classify-with-llm.ts#classifyWithLLM` — 80+ own code lines (cap 100)
 - `src/codex-client/index.ts#streamCodexResponse` — 80+ own code lines (cap 100)

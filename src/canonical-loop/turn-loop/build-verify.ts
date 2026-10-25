@@ -150,8 +150,8 @@ interface CheckRun {
 
 /** Run the detected command. We never round a non-zero or aborted build up to
  *  green, and never call one that didn't run (blocked, timed out) red. */
-async function defaultExec(command: string, cwd: string, opId: string): Promise<CheckRun> {
-  const r = await executeHarnessCommand({ command, cwd, timeoutMs: BUILD_TIMEOUT_MS, purpose: "build-verify", opId });
+async function defaultExec(command: string, cwd: string, opId: string, signal?: AbortSignal): Promise<CheckRun> {
+  const r = await executeHarnessCommand({ command, cwd, timeoutMs: BUILD_TIMEOUT_MS, purpose: "build-verify", opId, signal });
   return { ok: r.ok, status: r.status, exitCode: r.exitCode, output: r.output };
 }
 
@@ -253,7 +253,9 @@ export interface BuildVerifyOptions {
   /** Override the filesystem probe (default: node:fs). */
   probe?: FsProbe;
   /** Override the command runner (default: bashTool in the sandbox cage). */
-  exec?: (command: string, cwd: string) => Promise<CheckRun>;
+  exec?: (command: string, cwd: string, signal?: AbortSignal) => Promise<CheckRun>;
+  /** Aborts the build when the op is cancelled; a Stop never waits on a build. */
+  signal?: AbortSignal;
 }
 
 const NO_RETRY: BuildVerifyGateResult = { nudge: "", shouldRetry: false, capReached: false, verifiedClean: false, confirmation: "" };
@@ -322,7 +324,8 @@ export async function runBuildVerifyGate(op: Op, opts: BuildVerifyOptions = {}):
     return NO_RETRY;
   }
 
-  const exec = opts.exec ?? ((command: string, cwd: string) => defaultExec(command, cwd, op.id));
+  const run = opts.exec ?? ((command: string, cwd: string, signal?: AbortSignal) => defaultExec(command, cwd, op.id, signal));
+  const exec = (command: string, cwd: string) => run(command, cwd, opts.signal);
 
   // 1. Type-check (fast, side-effect-free). The broken-reference class fails here.
   const build = await exec(detected.command, detected.cwd);

@@ -77,7 +77,7 @@ describe("runBuildVerifyGate", () => {
   it("on a RED build: injects errors, asks to retry, records the verdict as failed", async () => {
     const exec = vi.fn(RED);
     const r = await runBuildVerifyGate(op, { editedPaths: ["/proj/src/a.ts"], probe, exec });
-    expect(exec).toHaveBeenCalledWith("npm run typecheck", PROJ);
+    expect(exec).toHaveBeenCalledWith("npm run typecheck", PROJ, undefined);
     expect(r.shouldRetry).toBe(true);
     expect(r.capReached).toBe(false);
     expect(r.nudge).toContain("npm run typecheck");
@@ -166,11 +166,19 @@ describe("runBuildVerifyGate", () => {
     expect(exec).not.toHaveBeenCalled();
   });
 
+  it("hands its signal to every command it runs", async () => {
+    const signal = new AbortController().signal;
+    const exec = vi.fn(async (_command: string, _cwd: string, _signal?: AbortSignal) => ({ ok: true, output: "" }));
+    await runBuildVerifyGate(op, { editedPaths: ["/proj/src/foo.test.ts"], probe: probeWithVitest, exec, signal });
+    expect(exec).toHaveBeenCalledTimes(2);
+    for (const call of exec.mock.calls) expect(call[2]).toBe(signal);
+  });
+
   it("edited test that FAILS: type-check passes but the test is red → nudge + retry, records partial", async () => {
     const exec = byCommand(true, false);
     const r = await runBuildVerifyGate(op, { editedPaths: ["/proj/src/foo.test.ts"], probe: probeWithVitest, exec });
-    expect(exec).toHaveBeenCalledWith("npm run typecheck", PROJ);
-    expect(exec).toHaveBeenCalledWith("node_modules/.bin/vitest run src/foo.test.ts", PROJ);
+    expect(exec).toHaveBeenCalledWith("npm run typecheck", PROJ, undefined);
+    expect(exec).toHaveBeenCalledWith("node_modules/.bin/vitest run src/foo.test.ts", PROJ, undefined);
     expect(r.shouldRetry).toBe(true);
     expect(r.verifiedClean).toBe(false);
     expect(r.nudge).toMatch(/test you touched is FAILING/i);
@@ -194,7 +202,7 @@ describe("runBuildVerifyGate", () => {
     expect(r.shouldRetry).toBe(true);
     expect(r.nudge).toContain("TS2339");
     expect(exec).toHaveBeenCalledTimes(1); // type-check only; test pass skipped while red
-    expect(exec).not.toHaveBeenCalledWith("node_modules/.bin/vitest run src/foo.test.ts", PROJ);
+    expect(exec).not.toHaveBeenCalledWith("node_modules/.bin/vitest run src/foo.test.ts", PROJ, undefined);
   });
 });
 
@@ -255,7 +263,7 @@ describe("runBuildVerifyGate — outstanding introduced type errors (LSP fail-fa
     vi.mocked(opOutstandingIntroducedErrors).mockResolvedValueOnce([]);
     const exec = vi.fn(GREEN);
     const r = await runBuildVerifyGate(op, { editedPaths: ["/proj/src/a.ts"], probe, exec });
-    expect(exec).toHaveBeenCalledWith("npm run typecheck", PROJ);
+    expect(exec).toHaveBeenCalledWith("npm run typecheck", PROJ, undefined);
     expect(r.verifiedClean).toBe(true);
     expect(recordOrchestratorVerify).toHaveBeenCalledWith("op-bv", true);
   });
@@ -271,7 +279,7 @@ describe("runBuildVerifyGate — outstanding introduced type errors (LSP fail-fa
     expect(first.shouldRetry).toBe(true);
     expect(exec).not.toHaveBeenCalled();
     const second = await runBuildVerifyGate(op, { editedPaths: ["/proj/src/a.ts"], probe, exec });
-    expect(exec).toHaveBeenCalledWith("npm run typecheck", PROJ);
+    expect(exec).toHaveBeenCalledWith("npm run typecheck", PROJ, undefined);
     expect(second.shouldRetry).toBe(false);
     expect(second.verifiedClean).toBe(true);
     expect(recordOrchestratorVerify).toHaveBeenLastCalledWith("op-bv", true);
@@ -370,7 +378,7 @@ describe("runBuildVerifyGate — relative edited-path resolution", () => {
       const exec = vi.fn(GREEN);
       const sessionOp = { id: "op-bv", sessionId: "sess-bv" } as unknown as Op;
       const r = await runBuildVerifyGate(sessionOp, { editedPaths: ["src/a.ts"], probe: workRootProbe, exec });
-      expect(exec).toHaveBeenCalledWith("npm run typecheck", dir);
+      expect(exec).toHaveBeenCalledWith("npm run typecheck", dir, undefined);
       expect(r.verifiedClean).toBe(true);
     } finally {
       clearSessionWorkRoot("sess-bv");
@@ -394,7 +402,7 @@ describe("runBuildVerifyGate — relative edited-path resolution", () => {
     };
     const exec = vi.fn(GREEN);
     const r = await runBuildVerifyGate(op, { editedPaths: ["/uploads/a.ts"], probe: uploadsProbe, exec });
-    expect(exec).toHaveBeenCalledWith("npm run typecheck", uploads);
+    expect(exec).toHaveBeenCalledWith("npm run typecheck", uploads, undefined);
     expect(r.verifiedClean).toBe(true);
   });
 
@@ -412,7 +420,7 @@ describe("runBuildVerifyGate — relative edited-path resolution", () => {
       };
       const exec = vi.fn(GREEN);
       const r = await runBuildVerifyGate(op, { editedPaths: [`${msys}/src/a.ts`], probe: msysProbe, exec });
-      expect(exec).toHaveBeenCalledWith("npm run typecheck", dir);
+      expect(exec).toHaveBeenCalledWith("npm run typecheck", dir, undefined);
       expect(r.verifiedClean).toBe(true);
     } finally {
       rmSync(dir, { recursive: true, force: true });

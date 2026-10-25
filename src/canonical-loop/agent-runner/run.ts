@@ -97,20 +97,17 @@ export function createAgentOperation(args: {
   };
 }
 
-export async function runAgentViaCanonical(
+/** The provider, prompt and context pack the op will run with, resolved
+ *  before any op exists. Null when the caller's signal aborted meanwhile: a
+ *  Stop during setup has no op to cancel yet, so nothing is created. */
+async function prepareAgentSubmission(
   userMessage: string,
   history: ChatCompletionMessageParam[],
   options: CanonicalAgentOptions,
-): Promise<AgentTurn> {
-  if (getActiveMiddlewareStack().length === 0) {
-    enableDefaultMiddlewareStack();
-  }
-
-  const opType = options.opType ?? "agent_turn";
-  const lane: OpLane = options.lane ?? "background";
-  const wallClockMs = options.wallClockMs ?? DEFAULT_WALL_CLOCK_MS;
-  const sessionId = options.sessionId ?? `agent-${randomUUID().slice(0, 8)}`;
-
+  lane: OpLane,
+  wallClockMs: number,
+): Promise<{ preparedRuntime: Awaited<ReturnType<typeof resolveAgentProviderRuntime>>; contextPack: Op["contextPack"] } | null> {
+  if (options.signal?.aborted) return null;
   const preparedRuntime = await resolveAgentProviderRuntime(options);
   await prepareCanonicalAgentPrompt(
     options,
@@ -137,6 +134,36 @@ export async function runAgentViaCanonical(
     },
   });
   contextPack.promptTelemetry = options.promptTelemetry;
+  if (options.signal?.aborted) return null;
+  return { preparedRuntime, contextPack };
+}
+
+function abortedBeforeSubmit(): AgentTurn {
+  return {
+    messages: [],
+    usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    stopReason: "abort",
+    committedWork: false,
+  };
+}
+
+export async function runAgentViaCanonical(
+  userMessage: string,
+  history: ChatCompletionMessageParam[],
+  options: CanonicalAgentOptions,
+): Promise<AgentTurn> {
+  if (getActiveMiddlewareStack().length === 0) {
+    enableDefaultMiddlewareStack();
+  }
+
+  const opType = options.opType ?? "agent_turn";
+  const lane: OpLane = options.lane ?? "background";
+  const wallClockMs = options.wallClockMs ?? DEFAULT_WALL_CLOCK_MS;
+  const sessionId = options.sessionId ?? `agent-${randomUUID().slice(0, 8)}`;
+
+  const prepared = await prepareAgentSubmission(userMessage, history, options, lane, wallClockMs);
+  if (!prepared) return abortedBeforeSubmit();
+  const { preparedRuntime, contextPack } = prepared;
 
   const op = createAgentOperation({
     opType, userMessage, contextPack, lane, sessionId,

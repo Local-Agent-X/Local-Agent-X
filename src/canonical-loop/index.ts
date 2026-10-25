@@ -13,7 +13,7 @@
  *     never write canonical state directly.
  */
 import type { Op } from "../ops/types.js";
-import { writeOp } from "../ops/op-store.js";
+import { persistOpKeepingSignals } from "./op-persist.js";
 import { resourceLocksForProvider } from "../ops/provider-matrix.js";
 import { emit } from "./event-emitter.js";
 import { resolveAdapterFactory } from "./runtime.js";
@@ -297,7 +297,9 @@ export {
  * Behavior:
  *   - Mutates `op` to set `canonical.flagValue=true`, `canonical.state="queued"`,
  *     and the additive PRD §9 columns to their initial values (mostly null).
- *   - Persists the op via writeOp.
+ *   - Persists the op, keeping any control signal (a cancel, pause or
+ *     redirect) already recorded on disk: a Stop that lands between the
+ *     caller's writeOp and this entry must reach the pre-lease check.
  *   - Emits exactly one `state_changed` event with body
  *     `{ from: null, to: "queued", reason: "submitted" }`.
  *   - If an adapter factory has been registered for this op (per-op or
@@ -340,7 +342,7 @@ export function canonicalLoopEntry(
     if (locks.length) op.resourceLocks = locks;
   }
 
-  writeOp(op);
+  persistOpKeepingSignals(op);
   registerDependencyWaiter(op);
 
   const body: StateChangedBody = { from: null, to: "queued", reason: "submitted" };

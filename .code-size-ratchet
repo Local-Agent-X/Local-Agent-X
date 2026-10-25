@@ -32,7 +32,6 @@ src/canonical-loop/adapters/codex.ts#CodexAdapter.runTurn 105
 src/canonical-loop/adapters/openai-compat.ts#OpenAICompatAdapter.runTurn 144
 src/canonical-loop/adapters/openai-compat/canonical-to-chat-param.ts#canonicalToChatParam 101
 src/canonical-loop/adapters/openai-compat/stream-once.ts#streamOnce 113
-src/canonical-loop/agent-runner/run.ts#runAgentViaCanonical 106
 src/canonical-loop/chat-runner/event-pump.ts#subscribeOpEvents:callback 122
 src/canonical-loop/container-execution-backend.ts 351
 src/canonical-loop/process-relay-journal.ts 376

@@ -101,9 +101,9 @@ export const renderVerifyGate: CompletionGate = {
  */
 export const buildVerifyGate: CompletionGate = {
   name: "build-verify",
-  async evaluate({ op, turnIdx }) {
+  async evaluate({ op, turnIdx, signal }) {
     if (!opEditedSourceUnverified(op.id)) return CONTINUE;
-    const gate = await runBuildVerifyGate(op);
+    const gate = await runBuildVerifyGate(op, { signal });
     if (gate.shouldRetry) {
       if (!appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("build-verify", "nudge"))) return CONTINUE;
       return { reopen: true };

@@ -184,8 +184,11 @@ export function routeUiAgentPaths(method: string, url: URL, req: IncomingMessage
       jsonResponse(res, 401, { error: "Authentication required" }, req);
       return true;
     }
+    let rel: string;
+    try { rel = decodeURIComponent(url.pathname.slice("/files/".length)); }
+    catch { jsonResponse(res, 400, { error: "The file path is not valid URL encoding." }, req); return true; }
     const target = new URL(url.pathname, agentOrigin());
-    target.searchParams.set("sig", signAgentFilePath(config.authToken, decodeURIComponent(url.pathname.slice("/files/".length))));
+    target.searchParams.set("sig", signAgentFilePath(config.authToken, rel));
     redirect(res, target.href);
     return true;
   }

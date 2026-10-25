@@ -161,6 +161,12 @@ describe("the UI origin refuses agent paths", () => {
     expect(location).not.toContain(ft);
   });
 
+  it("answers 400, not silence, for a /files path that is not valid URL encoding", async () => {
+    const ft = deriveFilesLinkCapability(OP_TOKEN);
+    const res = await ui(`/files/reports/%E0%A4%A.html?ft=${ft}`);
+    expect(res.status).toBe(400);
+  });
+
   it("tells only the operator where the agent origin is", async () => {
     const res = await ui("/api/agent-origin");
     expect(res.status).toBe(200);

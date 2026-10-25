@@ -1733,7 +1733,7 @@
 <script src="/js/shared-theme.js?v=v2"></script>
 <script src="/js/shared-desktop.js?v=v1"></script>
 <script src="/js/shared-escape.js?v=v1"></script>
-<script src="/js/shared-md.js?v=v4"></script>
+<script src="/js/shared-md.js?v=v5"></script>
 <script src="/js/shared-dom.js?v=v3"></script>
 <script src="/js/shared-api.js?v=v1"></script>
 <!-- ChatStreamStore must load before app.js's top-level boot (renderSidebar →
@@ -1840,7 +1840,7 @@
      chat-ws.js so its onopen hook + onmessage intercept can reference
      rediscoverPendingApprovals / handleDurableApprovalReply. -->
 <script src="/js/chat-approval-rediscovery.js?v=v1"></script>
-<script src="/js/chat-ws.js?v=v5"></script>
+<script src="/js/chat-ws.js?v=v6"></script>
 <!-- The stuck-stream watchdog reads window.chatWs, so it loads AFTER the
      module that publishes it. -->
 <script src="/js/chat-ws-watchdog.js?v=v1"></script>

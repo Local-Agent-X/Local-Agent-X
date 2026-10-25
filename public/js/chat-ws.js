@@ -143,6 +143,8 @@ function connectChatWs() {
     clearTimeout(connectDeadline);
     if (chatWs !== ws) return;
     console.log('[ws] Chat WebSocket connected');
+    // The server may have restarted: the agent origin is a fresh port then.
+    if (typeof refreshLaxAgent === 'function') refreshLaxAgent();
     startChatWsHeartbeat();
     if (activeChat) ws.send(JSON.stringify({ type: 'subscribe', sessionId: activeChat.id }));
     // Reconnect-resume: for any chat ops in flight when the socket dropped,

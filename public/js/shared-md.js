@@ -54,13 +54,19 @@ function isWebLink(href) {
 // this UI's (src/server/agent-origin.ts), so nothing they run can reach the
 // shell. laxAgent holds where that is and the files-link capability: /files
 // links carry it to this origin's /files redirect in place of the operator
-// token. Fetched once at load; until it lands, /apps frames load through this
-// origin's redirect and /files links get the capability only when clicked.
+// token. Fetched at load and again on every chat reconnect: the agent origin
+// is a fresh port each server start, and a page that outlives a restart would
+// otherwise keep pinning to the old one. Until the first answer lands, /apps
+// frames load through this origin's redirect and /files links get the
+// capability only when clicked.
 var laxAgent = { origin: '', filesLinkToken: '' };
-const laxAgentReady = fetch('/api/agent-origin', { headers: { Authorization: 'Bearer ' + AUTH_TOKEN } })
-  .then(r => (r.ok ? r.json() : null))
-  .then(d => { if (d) laxAgent = d; })
-  .catch(() => {});
+function refreshLaxAgent() {
+  return fetch('/api/agent-origin', { headers: { Authorization: 'Bearer ' + AUTH_TOKEN } })
+    .then(r => (r.ok ? r.json() : null))
+    .then(d => { if (d) laxAgent = d; })
+    .catch(() => {});
+}
+const laxAgentReady = refreshLaxAgent();
 
 // Where a frame showing agent content loads it, and whether the frame may keep
 // the origin it lands on. /apps and /dashboards go straight to the agent
@@ -84,11 +90,16 @@ function agentFrameTarget(href) {
 
 // Every /files link this UI opens carries the files-link capability, never the
 // operator token; the server trades it for a one-file signature on the agent
-// origin. Only a path on this origin: an agent's absolute link may name another host.
+// origin. Only this origin's /files, as a path or as this UI's full address:
+// an agent's absolute link may name another host.
 function agentFilesHref(url) {
   const ft = laxAgent.filesLinkToken;
-  if (!ft || !url.startsWith('/files/') || /[?&]ft=/.test(url)) return url;
-  return url + (url.includes('?') ? '&' : '?') + 'ft=' + ft;
+  if (!ft) return url;
+  let parsed;
+  try { parsed = new URL(url, location.origin); } catch { return url; }
+  if (parsed.origin !== location.origin || !parsed.pathname.startsWith('/files/') || parsed.searchParams.has('ft')) return url;
+  parsed.searchParams.set('ft', ft);
+  return url.startsWith('/') ? parsed.pathname + parsed.search + parsed.hash : parsed.href;
 }
 
 // Relabels program links in sanitized markup. It reads each href from the

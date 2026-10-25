@@ -100,6 +100,36 @@ describe("every /files link the UI opens carries the files-link capability, neve
 		expect(md.agentFilesHref("/apps/demo/")).toBe("/apps/demo/");
 	});
 
+	it("agentFilesHref adds it to this UI's own full /files address too (a bare one returned 401)", async () => {
+		const md = loadSharedMd({ origin: AGENT, filesLinkToken: "ft-cap" });
+		await md.ready;
+		expect(md.agentFilesHref(`${UI}/files/a.html`)).toBe(`${UI}/files/a.html?ft=ft-cap`);
+		expect(md.agentFilesHref(`${UI}/files/Invoice%20%2342.docx?x=1`)).toBe(`${UI}/files/Invoice%20%2342.docx?x=1&ft=ft-cap`);
+		expect(md.agentFilesHref(`${AGENT}/files/a.html`)).toBe(`${AGENT}/files/a.html`);
+	});
+
+	it("refreshLaxAgent picks up a new agent origin, and the chat socket asks for it on every (re)connect", async () => {
+		const answers = [
+			{ origin: AGENT, filesLinkToken: "ft-1" },
+			{ origin: "http://127.0.0.1:51999", filesLinkToken: "ft-2" },
+		];
+		const lib = new Function(
+			"AUTH_TOKEN", "fetch", "location",
+			`${read("js/shared-escape.js")}\n${read("js/shared-md.js")}\nreturn { refreshLaxAgent, ready: laxAgentReady, agent: () => laxAgent };`,
+		)(OP_TOKEN, () => Promise.resolve({ ok: true, json: () => answers.shift() }), { origin: UI, href: `${UI}/` }) as {
+			refreshLaxAgent: () => Promise<void>; ready: Promise<void>; agent: () => AgentState;
+		};
+		await lib.ready;
+		expect(lib.agent().origin).toBe(AGENT);
+		await lib.refreshLaxAgent();
+		expect(lib.agent()).toEqual({ origin: "http://127.0.0.1:51999", filesLinkToken: "ft-2" });
+
+		// The one place the UI learns the server came back is the chat socket's
+		// open handler; it must refresh there, ahead of anything that frames content.
+		const onopen = read("js/chat-ws.js").match(/ws\.onopen = \(\) => \{([\s\S]*?)\n  \};/)?.[1] ?? "";
+		expect(onopen).toContain("refreshLaxAgent()");
+	});
+
 	it("a chat link rendered before the agent origin was known gets the capability when clicked", async () => {
 		let answer: (value: unknown) => void = () => {};
 		const lookup = new Promise((resolve) => { answer = resolve; });

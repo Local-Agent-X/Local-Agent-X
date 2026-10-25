@@ -50,6 +50,7 @@ import { extendLocalWire, type LocalWireState } from "./openai-compat/local-wire
 import { isLocalModelEndpoint } from "../../local-runtimes/model-endpoint.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { applyLocalCap } from "./openai-compat/local-cap.js";
+import { sendLeavingOutUnreadableImages } from "./openai-compat/unreadable-images.js";
 import { streamOnce, applyToolCallTextFallback } from "./openai-compat/stream-once.js";
 import { assessOpenAiCompatPreflight, promptExceedsMeasuredWindow } from "./openai-compat/request-preflight.js";
 import { buildTurnTrace } from "./openai-compat/turn-trace.js";
@@ -94,6 +95,8 @@ export class OpenAICompatAdapter implements Adapter {
   private aborted = false;
   private aborter: AbortController = new AbortController();
   private inflight: Promise<StreamOnceResult> | null = null;
+  /** Images the runtime refused to load, by content (unreadable-images.ts). */
+  private readonly unreadableImages = new Set<string>();
 
   /** What this op last sent on a local wire (openai-compat/local-wire.ts). */
   private localWire: LocalWireState | null = null;
@@ -367,10 +370,8 @@ export class OpenAICompatAdapter implements Adapter {
   }
 
   private async runStreamOnce(req: ProviderRequest, report: (r: AdapterReport) => void): Promise<StreamOnceResult> {
-    const result = await streamOnce(req, report, {
-      isAborted: () => this.aborted,
-      sessionId: this.opts.sessionId,
-    });
+    const deps = { isAborted: () => this.aborted, sessionId: this.opts.sessionId };
+    const result = await sendLeavingOutUnreadableImages(req, report, (r, rep) => streamOnce(r, rep, deps), this.unreadableImages);
     // Mid-stream inject interrupt: streamOnce broke out of the loop and
     // flagged this on the result. The flag flows through to the caller via
     // result.interruptedByInject — runTurn uses it to skip the empty-

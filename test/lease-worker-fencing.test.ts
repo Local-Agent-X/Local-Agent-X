@@ -10,9 +10,9 @@ import {
   registerAdapterForOp,
   resetBus,
   resetCanonicalRuntime,
+  setLeaseConfig,
   resetLeaseConfig,
   resetScheduler,
-  setLeaseConfig,
 } from "../src/canonical-loop/index.js";
 import { _setStrictOpWriteFailureForTest, newOpId, readOp } from "../src/ops/op-store.js";
 import type { Adapter, TurnResult } from "../src/canonical-loop/adapter-contract.js";
@@ -42,7 +42,9 @@ class AbortCompletesAdapter implements Adapter {
 
 beforeEach(() => {
   process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "1";
-  setLeaseConfig({ leaseDurationMs: 100, heartbeatIntervalMs: 25 });
+  // The fencing proof is the heartbeat noticing its claim is contended, so
+  // only the tick is fast; the lease keeps its default length.
+  setLeaseConfig({ heartbeatIntervalMs: 25 });
   opId = newOpId("worker-fencing");
 });
 

@@ -8,7 +8,6 @@ import {
   recoverStaleOp,
   releaseLease,
   resetLeaseConfig,
-  setLeaseConfig,
   type LeaseClaim,
 } from "../src/canonical-loop/index.js";
 import {
@@ -24,7 +23,6 @@ const injected = Object.assign(new Error("injected strict persistence failure"),
 
 beforeEach(() => {
   ctx = createHarness();
-  setLeaseConfig({ leaseDurationMs: 100, heartbeatIntervalMs: 25 });
 });
 
 afterEach(() => {

@@ -21,7 +21,6 @@ import { createHarness, makeAndPersistOp, type HarnessContext } from "./canonica
 let ctx: HarnessContext;
 
 beforeEach(() => {
-  setLeaseConfig({ leaseDurationMs: 100, heartbeatIntervalMs: 25 });
   ctx = createHarness();
 });
 

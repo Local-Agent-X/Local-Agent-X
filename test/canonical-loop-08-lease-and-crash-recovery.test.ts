@@ -42,6 +42,7 @@ import {
   leaseClaimFromOp,
   isLeaseExpired,
   setLeaseConfig,
+  setLeaseClock,
   resetLeaseConfig,
   getLeaseConfig,
   evictWorker,
@@ -66,14 +67,17 @@ import type { Adapter, AdapterReport, TurnInput, TurnResult } from "../src/canon
 import { FakeAdapter, scriptTurn, scriptMultiTurn } from "./canonical-loop/fake-adapter.js";
 
 const OPS_BASE = join(homedir(), ".lax", "operations");
+// How far ahead of real time the lease clock reads (see beforeEach).
+let leaseSkewMs = 0;
 const tracked: string[] = [];
 const track = <T extends string>(id: T): T => { tracked.push(id); return id; };
 beforeEach(() => {
   process.env.LAX_CANONICAL_LOOP_INTERACTIVE = "1";
-  // Compress the lease cycle so tests run on real wall-clock without
-  // burning a half-minute per scenario. Heartbeat 25ms, lease 100ms —
-  // small enough to expire quickly, big enough for committed turns.
-  setLeaseConfig({ leaseDurationMs: 100, heartbeatIntervalMs: 25 });
+  // Leases run at their default length: a stall longer than a shortened lease
+  // (routine on a slow CI runner) would expire a healthy worker's lease
+  // mid-turn. A test that needs an expired lease moves the lease clock.
+  leaseSkewMs = 0;
+  setLeaseClock(() => Date.now() + leaseSkewMs);
   // No-op dispatcher: multi-turn scenarios keep the loop going by having
   // the first turn request a (non-silent) tool. Only fires when a script
   // emits a tool call.
@@ -263,6 +267,8 @@ describe("heartbeat keeps lease alive while running", () => {
       ]),
     });
     registerAdapterForOp(op.id, () => adapter);
+    // Only the tick is fast here; the lease keeps its default length.
+    setLeaseConfig({ heartbeatIntervalMs: 25 });
 
     canonicalLoopEntry(op);
     // Wait for the worker to be in the middle of streaming.
@@ -850,17 +856,10 @@ describe("PRD acceptance #7 — live crash recovery via heartbeat pause", () => 
     const workerAId = readOp(op.id)!.canonical!.leaseOwner!;
     expect(workerAId).toBeTruthy();
 
-    // Pause worker A's heartbeat — simulates process death. Lease will
-    // expire naturally (leaseDurationMs = 100ms in beforeEach).
+    // Pause worker A's heartbeat — simulates process death — and move the
+    // lease clock past the lease instead of waiting it out.
     expect(_pauseHeartbeat(workerAId)).toBe(true);
-
-    // Wait for the lease to expire.
-    const expireDeadline = Date.now() + getLeaseConfig().leaseDurationMs + 100;
-    while (Date.now() < expireDeadline) {
-      const o = readOp(op.id);
-      if (o && isLeaseExpired(o)) break;
-      await new Promise(r => setTimeout(r, 5));
-    }
+    leaseSkewMs = getLeaseConfig().leaseDurationMs + 1;
     expect(isLeaseExpired(readOp(op.id))).toBe(true);
 
     // Recovery — kicks off worker B.

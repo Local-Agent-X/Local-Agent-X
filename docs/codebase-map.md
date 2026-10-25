@@ -28,8 +28,8 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/providers/` | 68 | 26 | L | 1 |
 | `src/memory/` | 52 | 138 | XL | 7 |
 | `src/browser/` | 48 | 88 | XL | 5 |
+| `src/data-lineage/` | 48 | 11 | M |  |
 | `src/session/` | 48 | 9 | M |  |
-| `src/data-lineage/` | 47 | 11 | M |  |
 | `src/tool-policy/` | 46 | 21 | L |  |
 | `src/local-runtimes/` | 42 | 26 | L | 1 |
 | `src/util/` | 41 | 3 | S |  |
@@ -50,7 +50,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/orchestrator/` | 20 | 24 | L |  |
 | `src/agents/` | 17 | 13 | L |  |
 | `src/net/` | 17 | 11 | L |  |
-| `src/server/` *(entrypoint)* | 16 | 57 | XL | 6 |
+| `src/server/` *(entrypoint)* | 17 | 57 | XL | 6 |
 | `src/anthropic-client/` | 15 | 21 | L | 2 |
 | `src/autonomy/` | 15 | 4 | M |  |
 | `src/cognition/` | 14 | 35 | XL | 1 |

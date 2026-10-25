@@ -4,6 +4,7 @@
 // paths are refused (403) WITHOUT a fetch; the framed response carries status + body.
 
 import { describe, it, expect, vi } from "vitest";
+import { deriveFilesLinkCapability } from "../server/agent-file-links.js";
 import { HttpTunnelBridge } from "./http-tunnel-bridge.js";
 import type { ControlTransport } from "../screen-stream/peer.js";
 
@@ -207,5 +208,33 @@ describe("HttpTunnelBridge", () => {
     t.emit({ t: "req", id: "3", method: "GET", path: "/api/sessions" });
     await flush();
     expect(t.lastRes()).toMatchObject({ id: "3", status: 502 });
+  });
+});
+
+// A workspace file answers to the files-link capability (ft), which the phone
+// never holds; the bridge adds it, and the server hands the request on to the
+// agent origin (2026-10-24).
+describe("HttpTunnelBridge — workspace files", () => {
+  it("adds the files-link capability to a /files request", async () => {
+    const fetchImpl = vi.fn(async () => fakeResponse(200, "ok"));
+    const bridge = new HttpTunnelBridge({ loopback: () => ({ origin: "http://127.0.0.1:7007", token: "op-tok" }), fetchImpl: fetchImpl as unknown as typeof fetch });
+    const t = new FakeTransport();
+    bridge.attach(t);
+    t.emit({ t: "req", id: "f1", method: "GET", path: "/files/resume-agency/resume.pdf" });
+    await flush();
+    const url = new URL(String((fetchImpl.mock.calls[0] as unknown[])[0]));
+    expect(url.pathname).toBe("/files/resume-agency/resume.pdf");
+    expect(url.searchParams.get("ft")).toBe(deriveFilesLinkCapability("op-tok"));
+  });
+
+  it("refuses a credential file in the workspace and never fetches", async () => {
+    const fetchImpl = vi.fn(async () => fakeResponse(200, "SECRET=1"));
+    const bridge = new HttpTunnelBridge({ loopback: () => ({ origin: "http://127.0.0.1:7007", token: "op-tok" }), fetchImpl: fetchImpl as unknown as typeof fetch });
+    const t = new FakeTransport();
+    bridge.attach(t);
+    t.emit({ t: "req", id: "f2", method: "GET", path: "/files/apps/shop/.env" });
+    await flush();
+    expect(t.lastRes()).toMatchObject({ id: "f2", status: 403 });
+    expect(fetchImpl).not.toHaveBeenCalled();
   });
 });

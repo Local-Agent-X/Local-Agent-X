@@ -14,6 +14,7 @@
 
 import type { ControlTransport } from "../screen-stream/peer.js";
 import { isDeviceAllowedPath } from "./device-paths.js";
+import { deriveFilesLinkCapability } from "../server/agent-file-links.js";
 import { TUNNEL_MAX_BODY_BYTES, parseTunnelRequest, splitFramed } from "./vendor/protocol.js";
 import type { TunnelRequest, TunnelResponse } from "./vendor/protocol.js";
 import { createLogger } from "../logger.js";
@@ -103,8 +104,14 @@ export class HttpTunnelBridge implements HttpChannel {
       return { t: "res", id: req.id, status: 403, body: "forbidden" };
     }
     const { origin, token } = this.deps.loopback();
+    // A workspace file answers to the files-link capability, not the bearer
+    // token: the UI origin's /files redirect checks `ft` and hands the request to
+    // the agent origin with a one-file signature (server/agent-origin.ts), and
+    // fetch follows it. The phone never holds the capability; the bridge adds it.
+    const target = new URL(`${origin}${req.path}`);
+    if (pathname.startsWith("/files/")) target.searchParams.set("ft", deriveFilesLinkCapability(token));
     try {
-      const r = await this.fetchImpl(`${origin}${req.path}`, {
+      const r = await this.fetchImpl(target.href, {
         method: req.method,
         // x-lax-tunnel marks a request as coming from the phone over the broker,
         // so the /apps proxy can inject the live-reload poller (the phone can't

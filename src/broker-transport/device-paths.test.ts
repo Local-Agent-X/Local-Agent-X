@@ -9,7 +9,7 @@ import { DEVICE_HTTP_PREFIXES, isDeviceAllowedPath } from "./device-paths.js";
 describe("device allowlist", () => {
   it("is exactly the reviewed set — widening it requires updating this pin", () => {
     expect([...DEVICE_HTTP_PREFIXES].sort()).toEqual(
-      ["/api/apps", "/api/providers", "/api/sessions", "/apps/", "/images/", "/uploads/", "/videos/"].sort(),
+      ["/api/apps", "/api/providers", "/api/sessions", "/apps/", "/files/", "/images/", "/uploads/", "/videos/"].sort(),
     );
   });
 
@@ -30,7 +30,6 @@ describe("device allowlist", () => {
 
   it("refuses the workspace-wide and operator surfaces", () => {
     for (const p of [
-      "/files/anything.xlsx", // whole-workspace reach — deliberately NOT phone-reachable
       "/files/",
       "/api/chat",
       "/api/config",
@@ -40,6 +39,22 @@ describe("device allowlist", () => {
       "/uploadsX/evil",
       "/",
     ]) {
+      expect(isDeviceAllowedPath(p), p).toBe(false);
+    }
+  });
+});
+
+// The owner opened the workspace to the paired phone (2026-10-24) so a reply's
+// workspace link opens there; a credential file stays out, however it is spelled.
+describe("workspace files over the phone tunnel", () => {
+  it("allows a workspace document", () => {
+    for (const p of ["/files/resume-agency/Pedro-Manrique-Resume.pdf", "/files/loogle.html", "/files/reports/q3%20draft.docx"]) {
+      expect(isDeviceAllowedPath(p), p).toBe(true);
+    }
+  });
+
+  it("refuses a credential file, encoded or traversed", () => {
+    for (const p of ["/files/apps/shop/.env", "/files/apps/shop/.env.local", "/files/keys/id_rsa", "/files/a/%2E%2E/.env", "/files/apps%2Fshop%2F.env", "/files/%E0%A4%A"]) {
       expect(isDeviceAllowedPath(p), p).toBe(false);
     }
   });

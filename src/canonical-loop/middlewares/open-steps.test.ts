@@ -53,6 +53,9 @@ function ctx(over: CanonicalLoopContextOverrides = {}): CanonicalLoopContext {
   });
 }
 
+/** An op that opened the steps: it worked the task list (as OK_WORK_TURN). */
+const worked = (over: CanonicalLoopContextOverrides = {}) => ctx({ toolsCalledThisOp: new Set(["task_create", "write"]), ...over });
+
 async function fire(c: CanonicalLoopContext) {
   return openStepsMiddleware.afterModelCall!(c);
 }
@@ -76,12 +79,12 @@ describe("open-steps gate", () => {
 
   it("continues when the op has no resolvable session", async () => {
     mockSession.mockReturnValue(undefined);
-    expect((await fire(ctx())).kind).toBe("continue");
+    expect((await fire(worked())).kind).toBe("continue");
   });
 
   it("continues when the session has no open tasks", async () => {
     mockOpenTasks.mockReturnValue([]);
-    expect((await fire(ctx())).kind).toBe("continue");
+    expect((await fire(worked())).kind).toBe("continue");
   });
 
   it("nudges with the remaining steps named when tasks are left open", async () => {
@@ -90,7 +93,7 @@ describe("open-steps gate", () => {
       { id: "1", description: "Write the parser" },
       { id: "2", description: "Add tests" },
     ]);
-    const res = await fire(ctx());
+    const res = await fire(worked());
     expect(res.kind).toBe("nudge");
     if (res.kind !== "nudge") throw new Error("unreachable");
     expect(res.reason).toBe("open-steps");
@@ -102,8 +105,8 @@ describe("open-steps gate", () => {
   it("does not re-nudge the same open set twice (no-progress guard)", async () => {
     mockSession.mockReturnValue("sess-b");
     mockOpenTasks.mockReturnValue([{ id: "1", description: "Step one" }]);
-    expect((await fire(ctx())).kind).toBe("nudge");
-    expect((await fire(ctx())).kind).toBe("continue");
+    expect((await fire(worked())).kind).toBe("nudge");
+    expect((await fire(worked())).kind).toBe("continue");
   });
 
   it("nudges again once the open set changes (progress was made)", async () => {
@@ -112,9 +115,19 @@ describe("open-steps gate", () => {
       { id: "1", description: "Step one" },
       { id: "2", description: "Step two" },
     ]);
-    expect((await fire(ctx())).kind).toBe("nudge");
+    expect((await fire(worked())).kind).toBe("nudge");
     mockOpenTasks.mockReturnValue([{ id: "2", description: "Step two" }]);
-    expect((await fire(ctx())).kind).toBe("nudge");
+    expect((await fire(worked())).kind).toBe("nudge");
+  });
+
+  // Live 2026-10-26: a plan was handed off to a code session, its steps left open;
+  // the next, unrelated request did real work and was told "4 steps still
+  // open… continue with the next step now".
+  it("leaves steps an earlier request opened to that request: an op that never worked the list is not pushed", async () => {
+    mockSession.mockReturnValue("sess-parked");
+    mockOpenTasks.mockReturnValue([{ id: "tcl-planner", description: "Build the week grid" }]);
+    expect((await fire(ctx({ toolsCalledThisOp: new Set(["protocol", "bash"]) }))).kind).toBe("continue");
+    expect((await fire(ctx({ toolsCalledThisOp: new Set(["protocol", "task_update"]) }))).kind).toBe("nudge");
   });
 });
 
@@ -381,13 +394,13 @@ describe("read-only ops never buy an extra turn", () => {
 
   it("earnedDoneNudge stays silent for it, and the hook fires once work lands", async () => {
     expect(earnedDoneNudge({ id: "op-research", lane: "agent" } as never)).toBeNull();
-    expect((await fire(ctx())).kind).toBe("nudge");
+    expect((await fire(worked())).kind).toBe("nudge");
   });
 
   it("does not burn the one-shot nudge slot on the suppressed turn", async () => {
     mockSession.mockReturnValue("sess-slot");
     expect((await fire(readOnly())).kind).toBe("continue");
-    expect((await fire(ctx())).kind).toBe("nudge");
+    expect((await fire(worked())).kind).toBe("nudge");
   });
 
   it("the hook never re-reads op_turns — host already walked them", async () => {

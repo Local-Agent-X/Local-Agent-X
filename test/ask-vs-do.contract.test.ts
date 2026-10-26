@@ -96,12 +96,16 @@ afterAll(() => { resetScheduler(); resetCanonicalRuntime(); });
 const WRITE: ToolCall = { toolCallId: "w1", tool: "write", args: { path: "dashboard/index.html", content: "<h1>x</h1>" } };
 const ASK: ToolCall = { toolCallId: "q1", tool: "ask_user", args: { question: "What style should the presentation use?" } };
 
+// The op works the plan it opened: only an op that touched the task list is
+// held to its open steps (open-steps.ts).
+const START: ToolCall = { toolCallId: "s1", tool: "task_update", args: { id: "__STEP1__", status: "in_progress" } };
+
 const Q = "Which brokerage do you use, and what country/state are you in?";
 
 describe("a turn that ends by asking the user", () => {
   it("is pushed once over open steps, not again after a ticked-off step, and the repeat breaker does not reopen it", async () => {
     const r = await run("friend", "Build me a trading dashboard", [
-      { text: "Built the learning layer.", calls: [WRITE] },
+      { text: "Built the learning layer.", calls: [START, WRITE] },
       { text: Q },
       { text: Q, calls: [{ toolCallId: "u1", tool: "task_update", args: { id: "__STEP1__", status: "completed" } }] },
       { text: Q },
@@ -112,7 +116,7 @@ describe("a turn that ends by asking the user", () => {
 
   it("is pushed again after real work AND a step done since the last push (keep-going stays)", async () => {
     const r = await run("worked", "Build me a trading dashboard", [
-      { text: "Built the learning layer.", calls: [WRITE] },
+      { text: "Built the learning layer.", calls: [START, WRITE] },
       { text: Q },
       { text: "Built the lessons page too.", calls: [{ ...WRITE, toolCallId: "w2" }, { toolCallId: "u2", tool: "task_update", args: { id: "__STEP1__", status: "completed" } }] },
       { text: Q },

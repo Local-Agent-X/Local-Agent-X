@@ -84,6 +84,12 @@ export const openStepsMiddleware: CanonicalMiddleware = {
 
     const open = getOpenTasksForSession(sessionId);
     if (open.length === 0) return interactiveBuildPlanSeed(ctx);
+    // Steps an EARLIER request left open are not this one's to finish. They may
+    // have been handed off (to a code session, to later); pushing them here
+    // turned an unrelated request into "continue with the week grid now"
+    // (2026-10-26). Same rule as the partial below (opTouchedTaskLedger): only
+    // an op that worked the list is held to it.
+    if (![...ctx.toolsCalledThisOp].some(isLedgerTool)) return { kind: "continue" };
     // The question THIS gate asks: "did the op do work on the USER'S request?"
     // — the completion-gate question, so the task_* calls that opened these
     // very steps are not an answer (that reasoning is circular) and a `pdf read`

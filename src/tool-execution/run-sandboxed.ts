@@ -28,6 +28,7 @@ import { createToolRunner } from "./tool-runner.js";
 import { recordTaskArtifact } from "../data-lineage/task-artifacts.js";
 import { CREATE_CLASS, createTargetPath } from "./create-target-path.js";
 import { checkShellDeleteHappened } from "./verify-shell-deletes.js";
+import { editPinsContent } from "./edit-pins-content.js";
 
 const logger = createLogger("tool-execution");
 
@@ -126,7 +127,9 @@ export const runSandboxedPhase: Phase = async (ctx) => {
     const inPlace = freshnessGuarded.action === "edit";
     const guarded = resolved !== null && (inPlace || existsSync(resolved));
     const fresh = resolved && guarded ? checkFreshness(sessionId, resolved) : "ok";
-    if (resolved && fresh !== "ok") {
+    // An unseen file whose edit quotes unique current text is known well
+    // enough (edit-pins-content.ts); a changed one still needs a re-read.
+    if (resolved && fresh !== "ok" && !(fresh === "unseen" && inPlace && editPinsContent(args, resolved))) {
       const verb = inPlace ? "edit" : "overwrite";
       ctx.result = blocked(
         fresh === "unseen"

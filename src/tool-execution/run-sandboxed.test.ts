@@ -75,12 +75,26 @@ async function run(tool: ToolDefinition, args: Record<string, unknown>, sessionI
 }
 
 describe("stale-read guard (run-sandboxed integration)", () => {
-  it("blocks an edit to a file the session has not read", async () => {
-    const file = tmpFile("hello world\n");
+  it("blocks an edit to a file the session has not read when its quote does not pin one place", async () => {
+    const file = tmpFile("hello world\nhello again\n");
     const res = await run(editTool, { path: file, old_string: "hello", new_string: "HELLO" }, freshSession());
     expect(res.status).toBe("blocked");
     expect(res.content).toMatch(/hasn't read it/);
-    expect(readFileSync(file, "utf-8")).toBe("hello world\n"); // untouched
+    expect(readFileSync(file, "utf-8")).toBe("hello world\nhello again\n"); // untouched
+  });
+
+  // The model had seen the file through `cat` or grep and quoted it exactly;
+  // refusing that cost a read round trip 8 times in two sessions (2026-10-25/26).
+  it("lets an unseen-file edit through when every quote is unique current text, and never a whole-file write", async () => {
+    const file = tmpFile("export const a = 1;\nexport const b = 2;\n");
+    const s = freshSession();
+    const res = await run(editTool, { path: file, old_string: "export const b = 2;", new_string: "export const b = 3;" }, s);
+    expect(res.isError).toBeFalsy();
+    expect(readFileSync(file, "utf-8")).toBe("export const a = 1;\nexport const b = 3;\n");
+    const missing = await run(editTool, { path: tmpFile("x\n"), old_string: "not in the file", new_string: "y" }, freshSession());
+    expect(missing.metadata?.layer).toBe("stale-read-guard");
+    const overwrite = await run(writeTool, { path: tmpFile("keep me\n"), content: "gone" }, freshSession());
+    expect(overwrite.metadata?.layer).toBe("stale-read-guard");
   });
 
   it("allows the edit once the session has read the file", async () => {

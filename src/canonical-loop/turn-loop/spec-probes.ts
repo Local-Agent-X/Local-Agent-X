@@ -147,8 +147,22 @@ export function classifyProbeRun(status: ToolResultStatus, output: string): Prob
   const verdict = checkVerdict(status);
   if (verdict === "passed") return "pass";
   if (verdict === "none") return "invalid";
-  return PROBE_INVALID_RE.test(output) ? "invalid" : "red";
+  return PROBE_INVALID_RE.test(output) || TYPEOF_MISS_RE.test(output) ? "invalid" : "red";
 }
+
+// A wrong-symbol guess that does NOT throw. In JS a missing export is just
+// `undefined`, so a probe that asserts `typeof m.fn === 'function'` turns a
+// guess at where the API lives into an AssertionError — red, for code that
+// exports the function fine (it was imported from a module that re-exports
+// nothing of it). The tell is the asserted value: the STRING 'undefined', the
+// result of `typeof`, against a type name. A function that wrongly RETURNS
+// undefined compares a value (bare `undefined`), not a type name, so it still
+// counts red. Node's diff shape ("+ 'undefined'" over "- 'function'") and its
+// one-line shape ("'undefined' !== 'function'") are both matched.
+const TYPE_NAME = "(?:function|object|number|string|boolean|bigint|symbol)";
+const TYPEOF_MISS_RE = new RegExp(
+  `\\+ ?'undefined'\\s*[\\r\\n]+\\s*- ?'${TYPE_NAME}'|- ?'${TYPE_NAME}'\\s*[\\r\\n]+\\s*\\+ ?'undefined'|'undefined' !== '${TYPE_NAME}'`,
+);
 
 /**
  * Write the probe INTO the solution directory (a unique dotfile), run it there,

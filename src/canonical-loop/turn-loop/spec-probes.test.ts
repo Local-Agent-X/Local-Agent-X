@@ -57,6 +57,21 @@ describe("classifyProbeRun — the anti-false-nag validity filter", () => {
     expect(classifyProbeRun("error", "sh: ./run: No such file or directory")).toBe("invalid");
   });
 
+  // Live 2026-10-25: the probe asserted `typeof recipes.mapRecipeIngredientRow
+  // === 'function'` against a module that did not re-export it. The function
+  // existed and 860 tests passed; the probe nagged twice and the model added a
+  // default export and a re-export to satisfy it.
+  it("a typeof check that found nothing is a wrong-symbol guess, not a behavior failure", () => {
+    const live = "node:internal/modules/run_main:107\n    triggerUncaughtException(\n    ^\n\n" +
+      "AssertionError [ERR_ASSERTION]: recipes.mapRecipeIngredientRow must be a function\n" +
+      "+ actual - expected\n\n+ 'undefined'\n- 'function'\n\n    at file:///C:/x/.lax-probe-af366dab.mjs:7:10";
+    expect(classifyProbeRun("error", live)).toBe("invalid");
+    expect(classifyProbeRun("error", "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n\n'undefined' !== 'object'\n")).toBe("invalid");
+    // A function that RETURNS undefined is a real miss: the value, not a type name.
+    expect(classifyProbeRun("error", "AssertionError [ERR_ASSERTION]: total\n+ actual - expected\n\n+ undefined\n- 12\n")).toBe("red");
+    expect(classifyProbeRun("error", "AssertionError [ERR_ASSERTION]: Expected values to be strictly equal:\n\nundefined !== 12\n")).toBe("red");
+  });
+
   it("a loader that refused to import the solution is INVALID even when only the message survives", () => {
     // What the probe printed on Windows (its own catch swallowed the ERR_ code).
     expect(classifyProbeRun("error", "Acceptance test failed: Only URLs with a scheme in: file, data, and node are supported by the default ESM loader. On Windows, absolute paths must be valid file:// URLs. Received protocol 'c:'")).toBe("invalid");

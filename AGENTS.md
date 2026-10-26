@@ -38,6 +38,7 @@ Optional for Claude Code: `scripts/refs-hint-hook.mjs` is a PostToolUse hook
 | `src/broker-transport/vendor/` | yes | The phone↔desktop wire contract, copied from agentxos. Never hand-edit: change agentxos, then `scripts/check-vendor-sync.mjs --sync` (`vendor/README.md`). |
 | `desktop/src/contract/` | yes | The server↔desktop contract, copied from `src/desktop-contract/`. Never hand-edit: change the source, then `scripts/check-desktop-contract.mjs --sync`. |
 | `src/app-scaffold/kit/` | yes | The structure kit dropped into every project the agent builds, copied from the `/new-project` skill. Never hand-edit: change the skill, then `scripts/check-kit-sync.mjs --sync`. |
+| `src/protocols/bundled/senior-engineer/`, `src/protocols/bundled/canonical-check/`, `src/protocols/bundled/blast-radius/` | yes | The owner's skills of those names in `~/.claude/skills`, shipped with Claude Code's tool names swapped for LAX's. Never hand-edit: change the skill, then `scripts/check-skill-sync.mjs --sync` (`check:skill-sync`). |
 | `dist/` | no | Build output. Never hand-edit. |
 
 A user page ("build me a calendar") is `workspace/apps/calendar/index.html`

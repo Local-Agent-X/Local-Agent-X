@@ -172,9 +172,15 @@ function gitConfigReadsOnly(args: string[], named: string[]): boolean {
   return named.length === 1 || GIT_INERT_CONFIG_SET.test(named[0] ?? "");
 }
 
-/** The listing and reading forms of the subcommands that otherwise change something. */
+/** The forms of the subcommands that otherwise change something which leave a
+ *  later publish's content alone: listing, reading, deleting a local branch. */
 function gitReadsOnly(sub: string, args: string[]): boolean {
   const named = positionals(args, 0);
+  // Deleting a local branch never adds a commit or ref to what a later push
+  // sends: `git branch -d agent/x && git push origin main` was held as UNKNOWN
+  // (2026-10-26). A rename, copy or force-move (`-m`, `-c`, `-f` without a
+  // delete) still changes a ref, so it still counts.
+  if (sub === "branch" && args.some((a) => a === "--delete" || /^-[a-zA-Z]*[dD][a-zA-Z]*$/.test(a))) return true;
   if (sub === "branch" || sub === "tag") return named.length === 0;
   if (sub === "stash") return named[0] === "list" || named[0] === "show";
   if (sub === "remote") return named.length === 0 || named[0] === "show" || named[0] === "get-url";

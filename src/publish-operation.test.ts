@@ -210,7 +210,19 @@ describe("publishOperation — an earlier command that changes what the publish 
       "git stash && git push",
       "git push && git commit -am later",
       "git commit --help && git push",
+      "cd \"/c/Users/peter/Scan Progress\" && git branch -d agent/field-agent-1-mvohb7r0 && git push origin main 2>&1 | tail -15",
+      "git branch -D old && git push",
+      "git branch --delete --force old && git push",
+      "git branch -df old && git push origin HEAD",
     ]) expect(changedBefore(command), command).toEqual([["git-push", undefined]]);
+  });
+
+  it("a branch rename, copy or force-move still marks a later push", () => {
+    for (const command of [
+      "git branch -m main trunk && git push",
+      "git branch -c main copy && git push",
+      "git branch -f main HEAD~1 && git push",
+    ]) expect(changedBefore(command), command).toEqual([["git-push", "git branch"]]);
   });
 
   it("a deploy is marked only by a command that changes the files it uploads", () => {

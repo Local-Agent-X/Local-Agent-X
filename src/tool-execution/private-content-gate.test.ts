@@ -6,6 +6,7 @@
 import { describe, expect, it } from "vitest";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { homedir } from "node:os";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { recordPrivateReadFromResult } from "./private-read-record.js";
 import { clearPrivateContent, findPrivateContent } from "../data-lineage/private-content.js";
@@ -176,5 +177,24 @@ describe("nothing to ask", () => {
     expect(await verdict(ctx("write", { path: "notes.md", content: STATEMENT }))).toBeUndefined();
     clearPrivateContent(state.sid);
     expect(await verdict(ctx("email_send", { to: "collector@unknown-mail.example", subject: "fwd", body: STATEMENT }))).toBeUndefined();
+  });
+});
+
+// Looking at an image hands it to the chat's own model, as `read` hands it a
+// file: no one new receives it. Declared as `destination: [{ to: "model" }]`,
+// it stopped reading as "an unknown destination" that asked on every
+// screenshot in Pictures, in Autonomous too (2026-10-26). A tool that ships the
+// same file to a service of its own keeps the card.
+describe("a file the model only looks at", () => {
+  const SHOT = join(homedir(), "Pictures", "Screenshots", "bug.png");
+  const CLIP = join(homedir(), "Documents", "lax-gate-test", "standup.m4a");
+
+  it("view_image and read_video_frames of a personal file ask nothing", async () => {
+    expect(await verdict(ctx("view_image", { path: SHOT }, "what's wrong in this screenshot?"))).toBeUndefined();
+    expect(await verdict(ctx("read_video_frames", { path: join(homedir(), "Videos", "demo.mp4") }, "what happens in the demo?"))).toBeUndefined();
+  });
+
+  it("transcribe_media, which ships audio to its own speech-to-text provider, still asks", async () => {
+    expect(await verdict(ctx("transcribe_media", { path: CLIP }, "summarize the standup"))).toContain("an unknown destination");
   });
 });

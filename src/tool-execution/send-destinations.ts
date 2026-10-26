@@ -57,13 +57,15 @@ export type ArgsNamedSpec = Exclude<DestinationSpec, { to: "browser-page" } | { 
 export const isLiveSpec = (spec: DestinationSpec): spec is Exclude<DestinationSpec, ArgsNamedSpec> =>
   spec.to === "browser-page" || spec.to === "foreground-app";
 
-/** Where one args-named spec delivers this call; [] when it reaches only the user. */
+/** Where one args-named spec delivers this call; [] when it reaches only the
+ *  user, or only the chat's own model. */
 export function resolveSpec(spec: ArgsNamedSpec, args: Record<string, unknown>): Destination[] {
   switch (spec.to) {
     case "site": return [siteOf(args[spec.arg]) ?? unknownDestination("an address the check could not read")];
     case "recipients": return recipients(spec.args.map((a) => args[a]));
     case "chat": return [{ kind: "chat", app: spec.app, id: args[spec.arg] == null ? "" : String(args[spec.arg]).trim() }];
     case "user": return [];
+    case "model": return [];
     case "service": return [{ kind: "service", name: spec.name }];
     case "unknown": return [unknownDestination(spec.label)];
   }

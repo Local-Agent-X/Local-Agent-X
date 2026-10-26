@@ -112,6 +112,9 @@ export type OutputKind = "command" | "http-body" | "file-content" | "mailbox";
  *                    pack read it). Plan mode admits either form: a plan or
  *                    mockup sent to the user is part of planning
  *   service        — a fixed third-party service
+ *   model          — the model this chat runs on, as part of the conversation:
+ *                    what `read` hands it already, so no one new receives it
+ *                    (view_image, read_video_frames). Resolves to no destination
  *   browser-page   — the page the session's browser is on, or the sites a
  *                    navigation names (live state); `arg` names the URL a
  *                    navigation opens, when the call carries one
@@ -126,6 +129,7 @@ export type DestinationSpec = (
   | { to: "chat"; app: "Telegram" | "WhatsApp"; arg: string }
   | { to: "user"; message?: true }
   | { to: "service"; name: string }
+  | { to: "model" }
   | { to: "browser-page"; arg?: string }
   | { to: "foreground-app" }
   | { to: "unknown"; label: string }

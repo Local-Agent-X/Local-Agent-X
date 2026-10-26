@@ -25,6 +25,7 @@ import { declaredPaths, hasCapability, pathSpecsForCall, policyRowOf, shellComma
 import { TOOL_POLICIES } from "./tool-policy/tool-policies.js";
 import { declaredDestinations, destinationKey } from "./tool-execution/send-destinations.js";
 import { isDisposableTreeDelete, type TreeDeleteScope } from "./tool-execution/disposable-tree-delete.js";
+import { consentedInChat, type ChatTurn } from "./tool-execution/chat-consent.js";
 
 // Profile name cached 1s — same shape as the prior approvalMode cache.
 // loadProfileName() reads ~/.lax/autonomy-profile.json on miss.
@@ -93,16 +94,15 @@ export function applyIrreversibleFloor(
   decision: Decision,
   toolName: string,
   args: Record<string, unknown>,
-  userText?: string,
+  said?: ChatTurn,
   treeDelete?: TreeDeleteScope,
 ): Decision {
-  if (
-    (decision === "allow" || decision === "allow-with-rollback") &&
-    (approvalShellReason(toolName, args, treeDelete) !== null || irreversibleToolReason(toolName, args, userText) !== null)
-  ) {
-    return "ask";
-  }
-  return decision;
+  if (decision !== "allow" && decision !== "allow-with-rollback") return decision;
+  // A shell op the user already said yes to in the chat, naming its target
+  // (chat-consent.ts), is not asked about a second time.
+  const shell = approvalShellReason(toolName, args, treeDelete) !== null
+    && !consentedInChat(shellCommandOf(toolName, args) ?? "", said);
+  return shell || irreversibleToolReason(toolName, args, said?.user) !== null ? "ask" : decision;
 }
 
 /**

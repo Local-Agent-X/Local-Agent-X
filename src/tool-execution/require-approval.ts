@@ -34,10 +34,11 @@ import {
 import { hasExternalIngestion } from "../data-lineage/external.js";
 import { classifyShellTier, isShellTierTool } from "./shell-approval-tier.js";
 import { getSandboxStatus } from "../sandbox/index.js";
-import { currentHumanText, takeUnnamedDeleteDecision, UNNAMED_DELETE_DECLINED_TEXT, UNNAMED_DELETE_USE_TRASH_TEXT } from "./unnamed-delete-gate.js";
+import { takeUnnamedDeleteDecision, UNNAMED_DELETE_DECLINED_TEXT, UNNAMED_DELETE_USE_TRASH_TEXT } from "./unnamed-delete-gate.js";
 import { secretEnvGate } from "./secret-env-approval.js";
 import { parkOrRefuse, takeUserGrant } from "./deferred-call.js";
 import { publishOperations } from "../publish-operation.js";
+import { chatTurnOf } from "./chat-consent.js";
 import { shellTreeDeleteScope } from "./tree-delete-scope.js";
 import { publishReviewGate } from "./publish-review-gate.js";
 import { reviewCardContext, reviewNoteForModel, reviewPreview } from "./publish-review-text.js";
@@ -90,7 +91,7 @@ export const requireApprovalPhase: Phase = async (ctx) => {
   // truly-unrecoverable shell op (rm -rf, dd, force-push, …) even if the profile
   // would allow it silently. Unattended runs stay governed by the profile.
   if (ctx.callContext === "local") {
-    decision = applyIrreversibleFloor(decision, ctx.tc.name, ctx.args, currentHumanText(ctx.priorMessages), shellTreeDeleteScope(ctx.tc.name, ctx.args, ctx.sessionId));
+    decision = applyIrreversibleFloor(decision, ctx.tc.name, ctx.args, chatTurnOf(ctx.priorMessages), shellTreeDeleteScope(ctx.tc.name, ctx.args, ctx.sessionId));
   }
 
   if (decisionDenies(decision)) {

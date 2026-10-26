@@ -45,14 +45,14 @@ describe("irreversible tools get one confirm", () => {
   it("a hard forget: the preview asks nothing, the confirmed delete asks — unless the user asked for it", () => {
     expect(applyIrreversibleFloor("allow", "memory_forget", { query: "acme" })).toBe("allow");
     expect(applyIrreversibleFloor("allow", "memory_forget", { query: "acme", confirm: true })).toBe("ask");
-    expect(applyIrreversibleFloor("allow", "memory_forget", { query: "acme", confirm: true }, "Forget everything about Acme.")).toBe("allow");
+    expect(applyIrreversibleFloor("allow", "memory_forget", { query: "acme", confirm: true }, { user: "Forget everything about Acme." })).toBe("allow");
     for (const said of ["Drop what you have on Acme.", "Get rid of the Acme notes.", "Scrap that, it's outdated.", "Discard the Acme fact.", "Stop remembering my old address."]) {
-      expect(applyIrreversibleFloor("allow", "memory_forget", { query: "acme", confirm: true }, said), said).toBe("allow");
+      expect(applyIrreversibleFloor("allow", "memory_forget", { query: "acme", confirm: true }, { user: said }), said).toBe("allow");
     }
     // A complaint is not a request to forget: "you made that up" is the phrase
     // a 27B took as one and forgot a TRUE fact (fact-confirmation.ts).
-    expect(applyIrreversibleFloor("allow", "memory_forget", { query: "acme", confirm: true }, "That's wrong, you made that up.")).toBe("ask");
-    expect(applyIrreversibleFloor("allow", "memory_forget_imports", { source: "x", confirm: true }, "What do you know about Acme?")).toBe("ask");
+    expect(applyIrreversibleFloor("allow", "memory_forget", { query: "acme", confirm: true }, { user: "That's wrong, you made that up." })).toBe("ask");
+    expect(applyIrreversibleFloor("allow", "memory_forget_imports", { source: "x", confirm: true }, { user: "What do you know about Acme?" })).toBe("ask");
   });
 
   it("never relaxes a deny or an existing ask", () => {

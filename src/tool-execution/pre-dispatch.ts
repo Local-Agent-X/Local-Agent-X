@@ -31,6 +31,7 @@ import { makeSecurityLayerPack } from "../tool-policy/packs/security-layer-pack.
 import { makeDefaultPolicyPack } from "../tool-policy/packs/default-policy-pack.js";
 import { makeThreatEnginePack } from "../tool-policy/packs/threat-engine-pack.js";
 import { resolvePreDispatchDeps, type PreDispatchDeps } from "./pre-dispatch-deps.js";
+import { shellTreeDeleteScope } from "./tree-delete-scope.js";
 import { formatConstraintSource } from "../canonical-loop/public/plan-ledger.js";
 
 export type { PreDispatchDeps, PreDispatchApprovalManager, PreDispatchRuntimeFlags } from "./pre-dispatch-deps.js";
@@ -339,7 +340,7 @@ export async function assertToolCallAllowed(
     // Same reclassification as tool-execution/require-approval.ts: an
     // irreversible operation is decided by the profile's destructive tier —
     // no confirm floor above the profile table.
-    const destructive = destructiveOperationReason(call.name, call.args);
+    const destructive = destructiveOperationReason(call.name, call.args, shellTreeDeleteScope(call.name, call.args, ctx.sessionId));
     let decision = destructive
       ? d.getRiskDecision("destructive", ctx.sessionId)
       : d.getToolDecision(call.name, ctx.sessionId);
@@ -347,7 +348,7 @@ export async function assertToolCallAllowed(
     // Irreversible-action floor (this block is already local-only): force one
     // confirm before a truly-unrecoverable shell op even if the profile allows
     // it silently. See applyIrreversibleFloor.
-    decision = applyIrreversibleFloor(decision, call.name, call.args);
+    decision = applyIrreversibleFloor(decision, call.name, call.args, undefined, shellTreeDeleteScope(call.name, call.args, ctx.sessionId));
 
     if (decisionDenies(decision)) {
       throw new ToolBlocked({

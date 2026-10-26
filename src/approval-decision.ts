@@ -24,6 +24,7 @@ import { irreversibleToolReason } from "./irreversible-tools.js";
 import { declaredPaths, hasCapability, pathSpecsForCall, policyRowOf, shellCommandOf, TOOL_PATH_ARGS, wholeToolGrant } from "./tool-registry.js";
 import { TOOL_POLICIES } from "./tool-policy/tool-policies.js";
 import { declaredDestinations, destinationKey } from "./tool-execution/send-destinations.js";
+import { isDisposableTreeDelete, type TreeDeleteScope } from "./tool-execution/disposable-tree-delete.js";
 
 // Profile name cached 1s — same shape as the prior approvalMode cache.
 // loadProfileName() reads ~/.lax/autonomy-profile.json on miss.
@@ -93,10 +94,11 @@ export function applyIrreversibleFloor(
   toolName: string,
   args: Record<string, unknown>,
   userText?: string,
+  treeDelete?: TreeDeleteScope,
 ): Decision {
   if (
     (decision === "allow" || decision === "allow-with-rollback") &&
-    (isDestructiveCommand(toolName, args) !== null || irreversibleToolReason(toolName, args, userText) !== null)
+    (approvalShellReason(toolName, args, treeDelete) !== null || irreversibleToolReason(toolName, args, userText) !== null)
   ) {
     return "ask";
   }
@@ -359,6 +361,22 @@ export function isDestructiveCommand(
 }
 
 /**
+ * isDestructiveCommand as the APPROVAL path judges it: a recursive delete whose
+ * every target is provably disposable (generated output beside its manifest,
+ * the OS temp dir, the agent's own files; disposable-tree-delete.ts) is not
+ * destructive there. Only the approval callers pass `treeDelete` — where the
+ * shell runs and for which session. The text-only callers (a skill's install
+ * script, the shell tier) have no disk to look at and keep the plain answer.
+ */
+function approvalShellReason(toolName: string, args: Record<string, unknown>, treeDelete?: TreeDeleteScope): string | null {
+  const reason = isDestructiveCommand(toolName, args);
+  if (reason === null || !treeDelete) return reason;
+  const cmd = withoutInertLiterals(shellCommandOf(toolName, args) ?? "");
+  const trips = (segment: string) => DESTRUCTIVE_COMMAND_PATTERNS.some(({ pattern }) => pattern.test(segment));
+  return isDisposableTreeDelete(cmd, trips, treeDelete) ? null : reason;
+}
+
+/**
  * Detect an irreversible/destructive operation and return a short human
  * reason, or null. The caller RECLASSIFIES a hit to the profile's
  * "destructive" tier and re-decides — the profile table stays the single
@@ -384,8 +402,9 @@ export function isDestructiveCommand(
 export function destructiveOperationReason(
   toolName: string,
   args: Record<string, unknown>,
+  treeDelete?: TreeDeleteScope,
 ): string | null {
-  const shellReason = isDestructiveCommand(toolName, args);
+  const shellReason = approvalShellReason(toolName, args, treeDelete);
   if (shellReason !== null) return shellReason;
   if (classifyToolRisk(toolName) === "destructive") {
     return `destructive tool (${toolName}) — irreversible, confirm before running`;

@@ -38,6 +38,7 @@ import { currentHumanText, takeUnnamedDeleteDecision, UNNAMED_DELETE_DECLINED_TE
 import { secretEnvGate } from "./secret-env-approval.js";
 import { parkOrRefuse, takeUserGrant } from "./deferred-call.js";
 import { publishOperations } from "../publish-operation.js";
+import { shellTreeDeleteScope } from "./tree-delete-scope.js";
 import { publishReviewGate } from "./publish-review-gate.js";
 import { reviewCardContext, reviewNoteForModel, reviewPreview } from "./publish-review-text.js";
 import { rememberApprovedPrivateShares } from "./private-content-gate.js";
@@ -71,7 +72,7 @@ export const requireApprovalPhase: Phase = async (ctx) => {
   // everything except money and secrets") runs it without a prompt. The
   // profile table is the single source of truth; there is no confirm floor
   // above it.
-  const destructive = destructiveOperationReason(ctx.tc.name, ctx.args);
+  const destructive = destructiveOperationReason(ctx.tc.name, ctx.args, shellTreeDeleteScope(ctx.tc.name, ctx.args, ctx.sessionId));
   let decision = destructive
     ? getRiskDecision("destructive", ctx.sessionId)
     : getToolDecision(ctx.tc.name, ctx.sessionId);
@@ -89,7 +90,7 @@ export const requireApprovalPhase: Phase = async (ctx) => {
   // truly-unrecoverable shell op (rm -rf, dd, force-push, …) even if the profile
   // would allow it silently. Unattended runs stay governed by the profile.
   if (ctx.callContext === "local") {
-    decision = applyIrreversibleFloor(decision, ctx.tc.name, ctx.args, currentHumanText(ctx.priorMessages));
+    decision = applyIrreversibleFloor(decision, ctx.tc.name, ctx.args, currentHumanText(ctx.priorMessages), shellTreeDeleteScope(ctx.tc.name, ctx.args, ctx.sessionId));
   }
 
   if (decisionDenies(decision)) {

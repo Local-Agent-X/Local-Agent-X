@@ -125,14 +125,21 @@ async function createCodeFolder(
 ): Promise<void> {
   const folder = codeSessionFolder(typeof body.workspace === "string" ? body.workspace : undefined);
   if (!folder) { json(400, { error: "That is not a folder on this computer." }); return; }
+  json(200, await codeFolderProject(folder, ctx.projectStore));
+}
+
+/** The code-folder project for `folder` (a real directory): the one already on
+ *  the sidebar, or a new one. Shared by the sidebar's add-folder and a chat
+ *  continuing in Code mode on the repo it worked in (sessions-fork.ts). */
+export async function codeFolderProject(folder: string, store: ServerContext["projectStore"]): Promise<Project> {
   const same = (p: Project) => p.codeFolder && p.workspace && resolve(p.workspace).toLowerCase() === resolve(folder).toLowerCase();
-  const existing = ctx.projectStore.list().find(same);
-  if (existing) { json(200, existing); return; }
+  const existing = store.list().find(same);
+  if (existing) return existing;
   const base = basename(folder) || folder;
   let name = base;
-  if (ctx.projectStore.findByName(name)) name = `${base} (${basename(dirname(folder)) || "folder"})`;
-  for (let n = 2; ctx.projectStore.findByName(name); n++) name = `${base} ${n}`;
-  const project = ctx.projectStore.create({ name, description: "", workspace: folder, codeFolder: true, agentIds: [] });
+  if (store.findByName(name)) name = `${base} (${basename(dirname(folder)) || "folder"})`;
+  for (let n = 2; store.findByName(name); n++) name = `${base} ${n}`;
+  const project = store.create({ name, description: "", workspace: folder, codeFolder: true, agentIds: [] });
   await broadcastProjectsChanged();
-  json(200, project);
+  return project;
 }

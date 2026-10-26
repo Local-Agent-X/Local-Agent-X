@@ -58,12 +58,16 @@
   // a replayed event must not show twice.
   //   delete_notice — deleted without a card because this request created
   //                   them; shown with Undo. Keyed by its call ids.
+  //   code_handoff  — the agent offers to continue this work in Code mode;
+  //                   the notice carries the button (chat-render-notices.js).
   //   review_notice — a publish ran with pre-publish review findings, so the
   //                   user has them whether or not the agent repeats them.
   function addNotice(e, event) {
     let notice = null;
     if (event.type === 'delete_notice' && Array.isArray(event.files) && event.files.length) {
       notice = { id: 'dn-' + (event.toolCallIds || []).join('-'), files: event.files.slice(), restored: false };
+    } else if (event.type === 'code_handoff' && event.folder && event.brief) {
+      notice = { id: 'ch-' + (event.toolCallId || ''), kind: 'handoff', folder: event.folder, brief: event.brief, status: 'offered' };
     } else if (event.type === 'review_notice' && Array.isArray(event.findings) && event.findings.length) {
       notice = { id: 'rn-' + (event.toolCallId || ''), kind: 'review', status: event.status, summary: event.summary || '', findings: event.findings.slice() };
     }
@@ -289,7 +293,7 @@
         e.lastActivityMs = now;
         break;
       case 'delete_notice':
-      case 'review_notice':
+      case 'review_notice': case 'code_handoff':
         addNotice(e, event);
         break;
       case 'approval_timeout': {

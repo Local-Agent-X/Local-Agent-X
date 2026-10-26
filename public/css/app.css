@@ -449,9 +449,9 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
 .kernel-block-notice{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;margin:8px 0;padding:8px 12px;border-radius:8px;border:1px solid var(--danger);background:color-mix(in srgb, var(--danger) 8%, var(--surface));color:var(--text);font-size:.82rem}
 .kernel-block-text{flex:1 1 240px}
 .kernel-block-notice .declassify-action{flex-basis:100%;margin-top:0}
-.learning-notice{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;margin:8px 0;padding:8px 12px;border-radius:8px;border:1px solid var(--accent);background:color-mix(in srgb, var(--accent) 8%, var(--surface));color:var(--text);font-size:.82rem}
-.learning-notice.settled{border-color:var(--border);background:var(--surface)}
-.learning-notice-text{flex:1 1 240px}
+.learning-notice,.handoff-notice{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;margin:8px 0;padding:8px 12px;border-radius:8px;border:1px solid var(--accent);background:color-mix(in srgb, var(--accent) 8%, var(--surface));color:var(--text);font-size:.82rem}
+.learning-notice.settled,.handoff-notice.settled{border-color:var(--border);background:var(--surface)}
+.learning-notice-text,.handoff-notice-text{flex:1 1 240px}
 .review-notice{margin:8px 0;padding:8px 12px;border-radius:8px;border:1px solid var(--info);background:color-mix(in srgb, var(--info) 8%, var(--surface));color:var(--text);font-size:.82rem}
 .review-notice-amber{border-color:var(--warn);background:color-mix(in srgb, var(--warn) 8%, var(--surface))}
 .review-notice-red{border-color:var(--danger);background:color-mix(in srgb, var(--danger) 8%, var(--surface))}
@@ -461,10 +461,10 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
 .review-notice-location{font-family:var(--mono);font-size:.78rem}
 .review-notice-fix{color:var(--muted);margin-top:2px}
 .learning-notice-name{font-weight:600}
-.learning-notice-keep,.learning-notice-discard{padding:4px 12px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-size:.8rem;font-weight:600}
-.learning-notice-keep:hover:not(:disabled){border-color:var(--ok);color:var(--ok)}
+.learning-notice-keep,.learning-notice-discard,.handoff-notice-open{padding:4px 12px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-size:.8rem;font-weight:600}
+.learning-notice-keep:hover:not(:disabled),.handoff-notice-open:hover:not(:disabled){border-color:var(--ok);color:var(--ok)}
 .learning-notice-discard:hover:not(:disabled){border-color:var(--danger);color:var(--danger)}
-.learning-notice-keep:disabled,.learning-notice-discard:disabled{opacity:.5;cursor:default}
+.learning-notice-keep:disabled,.learning-notice-discard:disabled,.handoff-notice-open:disabled{opacity:.5;cursor:default}
 .learning-notice-error{flex-basis:100%;color:var(--danger);font-size:.75rem}
 /* Approval cards are fully token-driven: the semantic hue (warn pending / ok
    approved / danger denied) is mixed into the theme's own --surface so the

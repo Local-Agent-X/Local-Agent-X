@@ -164,3 +164,43 @@ function renderReviewNotice(n) {
   el.innerHTML = '<div class="review-notice-text">' + head + '</div><ul class="review-notice-list">' + items + '</ul>';
   return el;
 }
+
+// Handoff notices — the agent offers to continue this chat's coding work in
+// Code mode (src/tools/code-handoff-tool.ts): a session on the repo, starting
+// from the brief it wrote. The button runs the same move the sidebar's
+// "Continue in a code session" does (chat.js continueInCodeSession), with the
+// repo and the brief. Once opened, the notice says so instead of offering again.
+//
+// Exposes (global): renderHandoffNotice(notice)
+
+function renderHandoffNotice(n) {
+  const el = document.createElement('div');
+  el.className = 'handoff-notice';
+  el.setAttribute('data-id', n.id || '');
+  const where = '<code>' + esc(n.folder || '') + '</code>';
+  const paint = () => {
+    if (n.status === 'opened') {
+      el.classList.add('settled');
+      el.innerHTML = '<span class="handoff-notice-text">Moved to Code mode: a session on ' + where + ', starting from ' + esc(n.brief || '') + '.</span>';
+      return;
+    }
+    el.innerHTML =
+      '<span class="handoff-notice-text">This work fits Code mode better: a session on ' + where
+      + ' that starts from the handoff ' + esc(n.brief || '') + '.</span>'
+      + '<button class="handoff-notice-open" type="button">Continue in Code mode</button>'
+      + (n.error ? '<div class="learning-notice-error">' + esc(n.error) + '</div>' : '');
+    el.querySelector('.handoff-notice-open').addEventListener('click', open);
+  };
+  const open = async () => {
+    el.querySelectorAll('button').forEach((b) => { b.disabled = true; });
+    const chatId = (typeof activeChat !== 'undefined' && activeChat) ? activeChat.id : null;
+    const opened = chatId && typeof continueInCodeSession === 'function'
+      ? await continueInCodeSession(chatId, null, { folder: n.folder, brief: n.brief })
+      : false;
+    if (opened) { n.status = 'opened'; delete n.error; } else { n.error = 'Could not open the code session. Try the sidebar\u2019s Code tab.'; }
+    try { if (typeof saveChats === 'function') saveChats(); } catch { /* the notice still shows the outcome */ }
+    paint();
+  };
+  paint();
+  return el;
+}

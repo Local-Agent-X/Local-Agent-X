@@ -72,21 +72,30 @@ async function forkAtMessage(msgIndex) {
  * project folder, compacted first when it is long, so the work goes on with
  * the context the coding needs instead of everything the chat accumulated.
  * A session's mode is fixed at creation, so this is how a chat "switches".
+ *
+ * With a `handoff` ({ folder, brief }, the agent's code_handoff offer) the code
+ * session opens on that repo and starts from the brief instead of the chat, so
+ * there is nothing to compact. Resolves true when the session opened.
  */
-async function continueInCodeSession(chatId, e) {
+async function continueInCodeSession(chatId, e, handoff) {
   if (e) e.stopPropagation();
   const chat = chats.find(c => c.id === chatId);
-  if (!chat || !chat.messages.length) return;
+  if (!chat || !chat.messages.length) return false;
   try {
     const res = await apiFetch('/api/sessions/fork', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId: chat.id, atIndex: chat.messages.length - 1, mode: 'code' }),
+      body: JSON.stringify({ sessionId: chat.id, atIndex: chat.messages.length - 1, mode: 'code', ...(handoff ? { handoff } : {}) }),
     });
     const data = await res.json();
-    if (!data.ok) return;
+    if (!data.ok) return false;
     let messages = chat.messages.map(m => ({ role: m.role, content: m.content }));
-    if (messages.length >= 10) {
+    if (handoff) {
+      try {
+        const fresh = await (await apiFetch(`/api/sessions/${encodeURIComponent(data.forkId)}/messages`)).json();
+        messages = Array.isArray(fresh.messages) ? fresh.messages.map(m => ({ role: m.role, content: m.content })) : [];
+      } catch { messages = []; }
+    } else if (messages.length >= 10) {
       // The same compaction the Compact button runs; the server's transcript is
       // the truth, so the sidebar copy is reloaded from it.
       await apiFetch('/api/compact', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: data.forkId }) });
@@ -100,13 +109,16 @@ async function continueInCodeSession(chatId, e) {
       createdAt: Date.now(), updatedAt: Date.now(),
       forkedFrom: chat.id, forkAtIndex: chat.messages.length - 1,
     };
-    if (chat.projectId) codeChat.projectId = chat.projectId;
+    const projectId = data.projectId || chat.projectId;
+    if (projectId) codeChat.projectId = projectId;
     chats.unshift(codeChat);
     saveChats();
     if (typeof setSidebarMode === 'function') setSidebarMode('code');
     selectChat(data.forkId);
+    return true;
   } catch (err) {
     console.warn('[continue-in-code] Error:', err.message);
+    return false;
   }
 }
 

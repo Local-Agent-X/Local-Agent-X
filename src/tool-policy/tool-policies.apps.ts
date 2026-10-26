@@ -190,6 +190,15 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
     prompt: "Calling ask_user ENDS your turn with that question as your answer — the reply comes back as the user's next message. Reserve it for a fork where guessing wastes real work or is irreversible (prod vs sandbox, which account, an unrecoverable delete). Never for confirmations you can infer, permission for work already assigned, or progress reports.",
     rules: [{ id: "allow-ask-user", decision: "allow", reason: "Ask the user a question and end the turn on it (no I/O sink)", priority: 50 }],
   },
+  // Puts a "Continue in Code mode" button on the chat for a brief the agent
+  // already wrote (tools/code-handoff-tool.ts). Reads two paths it was given,
+  // writes nothing and sends nothing off-box: internal and safe. Deferred (no
+  // audience): the prompt names it for the rare turn that needs it.
+  code_handoff: {
+    kernel: "internal", risk: "safe", capabilities: [], tags: [],
+    pathArgs: [{ arg: "folder", action: "read" }, { arg: "brief", action: "read" }],
+    rules: [{ id: "allow-code-handoff", decision: "allow", reason: "Offer a Code mode handoff on the chat (no I/O sink)", priority: 50 }],
+  },
 
   // ── Structured workspace documents ──
   // kernel:"internal" = no kernel-side taint/grant pipeline; file-access-mode

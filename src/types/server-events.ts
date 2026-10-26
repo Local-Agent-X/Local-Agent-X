@@ -157,6 +157,10 @@ export type ServerEvent =
   // A publish ran with pre-publish review findings (tool-execution/
   // publish-review-gate.ts announcePublishReview). The chat keeps them under
   // the reply, so the user has them whether or not the model repeats them.
+  /** The agent offers to continue this chat's coding work in Code mode
+   *  (tools/code-handoff-tool.ts): a button that forks a code session on
+   *  `folder`, starting from the brief at `brief` (relative to it). */
+  | { type: "code_handoff"; toolCallId: string; folder: string; brief: string }
   | { type: "review_notice"; toolCallId: string; status: "RED" | "AMBER" | "GREEN"; summary: string; findings: Array<{ severity: "red" | "amber" | "yellow"; location: string; problem: string; fix: string }> }
   // The post-turn review fork proposed a learned procedure from this session
   // (protocols/learned-review-drafting.ts). The chat shows "Learned a

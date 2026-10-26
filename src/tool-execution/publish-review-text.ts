@@ -116,6 +116,17 @@ export function stopText(op: PublishOperation, review: PublishReview, how: StopR
   ].join("\n") + unknownTail(review);
 }
 
+/** What the model reads when an AMBER review holds the first publish of a
+ *  request (publish-review-gate.ts holdsForAmber): fix first, then publish once. */
+export function amberHoldText(op: PublishOperation, review: PublishReview): string {
+  return [
+    `NOT RUN YET: the pre-publish review of ${op.label} found problems worth fixing before they ship (${reviewHeadline(review)}).`,
+    ...review.findings.map(findingLine),
+    "Fix the amber findings that are real (for one that is not, say why in your reply), commit, and publish again. " +
+      "That next publish goes out with whatever its review finds and you report those findings to the user; do not start another fix round on them unless the user asks.",
+  ].join("\n") + unknownTail(review);
+}
+
 /** The word on the override button: what the user is overriding — a red
  *  finding ("Push anyway") or the absence of a review ("Push unreviewed"). */
 export function overrideLabel(op: PublishOperation, review: PublishReview): string {

@@ -45,7 +45,7 @@ import type { PublishOperation } from "../publish-operation.js";
 import { changeSetIsEmpty, type ChangeSet } from "../publish-review/change-set-types.js";
 import type { PublishReview, PublishReviewRequest, PublishReviewRun } from "../canonical-loop/public/publish-review.js";
 import type { ToolCallContext } from "./context.js";
-import { needsUserYes, reviewCardContext, reviewNoteForModel, reviewPreview, stopText, type StopReason } from "./publish-review-text.js";
+import { amberHoldText, needsUserYes, reviewCardContext, reviewNoteForModel, reviewPreview, stopText, type StopReason } from "./publish-review-text.js";
 import { statusOf } from "../tools/result-helpers.js";
 import { createLogger } from "../logger.js";
 
@@ -150,8 +150,33 @@ export async function publishReviewGate(ctx: ToolCallContext, ops: PublishOperat
   if (ctx.signal?.aborted) {
     return { kind: "block", result: { content: `NOT RUN: the turn was stopped while ${op.label} was being reviewed.`, isError: true, status: "blocked", metadata: { layer: "approval", userHint: USER_HINTS.policy, recovery: "The user stopped the turn. Do not retry the publish; report what was left unpublished." } } };
   }
+  if (holdsForAmber(ctx, review)) {
+    return { kind: "block", result: { content: amberHoldText(op, review), isError: true, status: "blocked", metadata: { layer: "approval", userHint: USER_HINTS.publishReview, recovery: "Fix the real amber findings, commit, and publish again once." } } };
+  }
   if (!needsUserYes(review, ops)) return { kind: "proceed", review, overridden: false };
   return overrideOutcome(ctx, op, review);
+}
+
+/** Requests whose first AMBER publish was held. */
+const AMBER_HELD = new Set<string>();
+const AMBER_HELD_CAP = 1_000;
+
+/**
+ * AMBER holds the FIRST publish of a request, once. Before, AMBER only
+ * annotated a publish that had already gone out: a template copy that wiped a
+ * member's allergies shipped and was reported afterwards (2026-10-26). Held
+ * every time, it is a treadmill — each fix gets a fresh review with fresh
+ * findings, and four production pushes chased them in one evening
+ * (2026-10-25). Once per request is one fix round: the next publish goes out,
+ * reviewed, with its findings told to the user. No card either way — RED and
+ * an unreviewable publish keep theirs. A dispatch with no request id is never
+ * held: nothing would let its retry through.
+ */
+function holdsForAmber(ctx: ToolCallContext, review: PublishReview): boolean {
+  if (review.status !== "AMBER" || !ctx.operationId || AMBER_HELD.has(ctx.operationId)) return false;
+  if (AMBER_HELD.size >= AMBER_HELD_CAP) AMBER_HELD.clear();
+  AMBER_HELD.add(ctx.operationId);
+  return true;
 }
 
 function blocked(content: string, how: StopReason): PublishGateOutcome {
@@ -263,4 +288,5 @@ export function _setPublishGateDepsForTests(deps: Partial<GateDeps> | null): voi
 export function _resetPublishGateForTests(): void {
   VERDICTS.clear();
   IN_FLIGHT.clear();
+  AMBER_HELD.clear();
 }

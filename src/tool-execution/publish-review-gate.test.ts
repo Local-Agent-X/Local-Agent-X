@@ -171,6 +171,37 @@ describe("AMBER / GREEN — the profile's publish row decides", () => {
     }
   }
 
+  // 2026-10-26: an AMBER push went out and its finding (a template copy wiped
+  // a member's allergies) was reported after it was live. Held every time it
+  // is a treadmill: 4 production pushes chased fresh findings in one evening.
+  it("AMBER holds the first publish of a request once, with the findings, and the next one goes out", async () => {
+    const f = fake(AMBER);
+    const sid = session("Autonomous");
+    const first = { ...ctx({ sessionId: sid }), operationId: "op-amber-1" } as ToolCallContext;
+    expect((await requireApprovalPhase(first)).kind).toBe("halt");
+    expect(lastText(first)).toMatch(/^NOT RUN YET: the pre-publish review/);
+    expect(lastText(first)).toContain("src/dedupe.ts:40");
+    expect(lastText(first)).toContain("publish again");
+
+    // The fix changed what ships: a fresh review, still AMBER, and it runs.
+    f.fingerprint = "fp-after-fix";
+    const second = { ...ctx({ sessionId: sid }), operationId: "op-amber-1" } as ToolCallContext;
+    expect((await requireApprovalPhase(second)).kind).toBe("continue");
+    expect(f.reviews).toBe(2);
+
+    // A later request gets its own one hold; a dispatch with no request id none.
+    f.fingerprint = "fp-next-request";
+    const next = { ...ctx({ sessionId: sid }), operationId: "op-amber-2" } as ToolCallContext;
+    expect((await requireApprovalPhase(next)).kind).toBe("halt");
+    expect((await requireApprovalPhase(ctx({ sessionId: sid }))).kind).toBe("continue");
+  });
+
+  it("GREEN is never held", async () => {
+    fake(GREEN);
+    const c = { ...ctx({ sessionId: session("Autonomous") }), operationId: "op-green" } as ToolCallContext;
+    expect((await requireApprovalPhase(c)).kind).toBe("continue");
+  });
+
   it("unattended + ask: blocked, and the block names the review", async () => {
     fake(AMBER);
     const c = ctx({ sessionId: session("Normal"), callContext: "cron" });

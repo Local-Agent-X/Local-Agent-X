@@ -104,6 +104,37 @@ describe("task_update — resolves the id, never creates", () => {
   });
 });
 
+describe("task ids are names within a session", () => {
+  it("two sessions may each name a step \"read\", and each update lands on its own", async () => {
+    const a = await create.execute({ description: "read the spec", id: "read", _sessionId: "chat-a" });
+    expect(a.isError).toBeFalsy();
+    const b = await create.execute({ description: "read the deliverable", id: "read", _sessionId: "agent-b" });
+    expect(b.isError).toBeFalsy();
+    await update.execute({ id: "read", status: "completed", _sessionId: "agent-b" });
+    expect((await get.execute({ id: "read", _sessionId: "chat-a" })).content).toContain("pending");
+    expect((await get.execute({ id: "read", _sessionId: "agent-b" })).content).toContain("completed");
+    expect((await list.execute({ _sessionId: "agent-b" })).content).toMatch(/^1 tasks/);
+  });
+
+  it("a taken id is still refused inside one session, and a parent resolves inside it", async () => {
+    await create.execute({ description: "first", id: "step", _sessionId: "chat-a" });
+    const dup = await create.execute({ description: "second", id: "step", _sessionId: "chat-a" });
+    expect(dup.isError).toBe(true);
+    await create.execute({ description: "parent", id: "step", _sessionId: "agent-b" });
+    const child = await create.execute({ description: "child", parent_id: "step", _sessionId: "agent-b" });
+    expect(child.content).not.toContain("not found");
+    const detail = await get.execute({ id: "step", _sessionId: "agent-b" });
+    expect(detail.content).toContain("Subtasks:    1");
+  });
+
+  it("another session's task is not found, by id or by prefix", async () => {
+    await create.execute({ description: "theirs", id: "theirs", _sessionId: "chat-a" });
+    expect((await get.execute({ id: "theirs", _sessionId: "agent-b" })).isError).toBe(true);
+    expect((await update.execute({ id: "the", status: "completed", _sessionId: "agent-b" })).isError).toBe(true);
+    expect((await get.execute({ id: "theirs", _sessionId: "chat-a" })).content).toContain("pending");
+  });
+});
+
 describe("task_list — session isolation", () => {
   it("does not leak failed tasks from prior worker sessions", async () => {
     await create.execute({ description: "old failed step", id: "old", _sessionId: "agent-old" });

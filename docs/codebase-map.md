@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1857 non-test source files · 92 oversized · 242 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1858 non-test source files · 92 oversized · 242 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -28,8 +28,8 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/providers/` | 69 | 26 | L | 1 |
 | `src/memory/` | 52 | 138 | XL | 7 |
 | `src/data-lineage/` | 49 | 11 | M |  |
+| `src/session/` | 49 | 9 | M |  |
 | `src/browser/` | 48 | 88 | XL | 5 |
-| `src/session/` | 48 | 9 | M |  |
 | `src/tool-policy/` | 46 | 21 | L |  |
 | `src/local-runtimes/` | 42 | 26 | L | 1 |
 | `src/util/` | 41 | 3 | S |  |
@@ -64,7 +64,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/agent-loop/` | 10 | 1 | S |  |
 | `src/app-scaffold/` | 10 | 7 | M |  |
 | `src/persistence/` | 10 | 2 | S |  |
-| `src/routes/` | 10 | 93 | XL | 18 |
+| `src/routes/` | 10 | 94 | XL | 18 |
 | `src/sync/` | 10 | 21 | L | 1 |
 | `src/plugin-system/` | 9 | 10 | L | 1 |
 | `src/screen-stream/` | 9 | 11 | L |  |

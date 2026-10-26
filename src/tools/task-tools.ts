@@ -25,27 +25,40 @@ const STATUS_ICON: Record<Task["status"], string> =
   { pending: "\u23F3", in_progress: "\uD83D\uDD04", completed: "\u2705", failed: "\u274C" };
 const VALID_STATUSES = new Set(["pending", "in_progress", "completed", "failed"]);
 
-function loadTasks(): Map<string, Task> {
+function loadTasks(): Task[] {
   try {
-    const data = JSON.parse(readFileSync(TASKS_PATH, "utf-8")) as Task[];
-    return new Map(data.map((t) => [t.id, t]));
-  } catch { return new Map(); }
+    return JSON.parse(readFileSync(TASKS_PATH, "utf-8")) as Task[];
+  } catch { return []; }
 }
 
-function saveTasks(tasks: Map<string, Task>): void {
+function saveTasks(tasks: Task[]): void {
   mkdirSync(getLaxDir(), { recursive: true });
-  writeFileSync(TASKS_PATH, JSON.stringify([...tasks.values()], null, 2), "utf-8");
+  writeFileSync(TASKS_PATH, JSON.stringify(tasks, null, 2), "utf-8");
 }
 
 function now(): string { return new Date().toISOString(); }
 
-/** The task `id` names: an exact id, else the one task whose id starts with
- *  it — task_list prints the first 8 characters of a generated UUID, and a
- *  model that passes those back must land on that task, not mint a new one. */
-function resolveTask(tasks: Map<string, Task>, id: string): { task: Task } | { error: string } {
-  const exact = tasks.get(id);
-  if (exact) return { task: exact };
-  const matches = [...tasks.values()].filter((t) => t.id.startsWith(id));
+/** The tasks a call can see: its own session's. The store is one file for
+ *  every session and device, and a task id is a name the model picks
+ *  ("read", "verify"), so two sessions naming the same step must not collide
+ *  — a sub-agent once lost its plan to a finished session's "read". A call
+ *  with no session (a legacy caller) sees every task, as it always did. */
+function inScope(task: Task, sessionId: string): boolean {
+  return !sessionId || task.session_id === sessionId;
+}
+
+function sessionOf(args: Record<string, unknown>): string {
+  return (sessionIdOf(args) ?? "").trim();
+}
+
+/** The task `id` names within the session: an exact id, else the one task
+ *  whose id starts with it — task_list prints the first 8 characters of a
+ *  generated UUID, and a model that passes those back must land on that task,
+ *  not mint a new one. */
+function resolveTask(tasks: Task[], id: string, sessionId: string): { task: Task } | { error: string } {
+  const visible = tasks.filter((t) => inScope(t, sessionId));
+  const exact = visible.filter((t) => t.id === id);
+  const matches = exact.length ? exact : visible.filter((t) => t.id.startsWith(id));
   if (matches.length === 1) return { task: matches[0] };
   if (matches.length === 0) return { error: `No task with id "${id}". Use task_list to see the ids, or task_create to add it.` };
   return { error: `"${id}" matches ${matches.length} tasks: ${matches.map((t) => t.id).join(", ")}. Pass the full id.` };
@@ -70,6 +83,7 @@ const taskCreate: ToolDefinition = {
     const description = args.description as string;
     if (!description) return { content: "Missing required param: description", isError: true };
     const tasks = loadTasks();
+    const sessionId = sessionOf(args);
     // Honor a caller-chosen id — models name their own task ids (a universal
     // to-do-list prior) and then reference them. Fighting that with a
     // server-only random id made every later parent_id / update reference miss
@@ -78,7 +92,7 @@ const taskCreate: ToolDefinition = {
     // A taken id is an error, not a silent swap: a swap left the model holding a
     // name that pointed at someone else's task.
     const requestedId = typeof args.id === "string" && args.id.trim() ? args.id.trim() : undefined;
-    const taken = requestedId ? tasks.get(requestedId) : undefined;
+    const taken = requestedId ? tasks.find((t) => t.id === requestedId && inScope(t, sessionId)) : undefined;
     if (taken) {
       return { content: `Task id "${requestedId}" is already taken by "${taken.description}" (${taken.status}). Use task_update to change that task, or pick another id.`, isError: true };
     }
@@ -87,10 +101,9 @@ const taskCreate: ToolDefinition = {
     // is advisory (the open-steps gate scopes by session + status, not by tree),
     // so a dangling parent must not block the actual work.
     const parentId = args.parent_id as string | undefined;
-    const parent = parentId && tasks.has(parentId) ? parentId : undefined;
+    const parent = parentId && tasks.some((t) => t.id === parentId && inScope(t, sessionId)) ? parentId : undefined;
     const ts = now();
-    const sessionId = sessionIdOf(args);
-    tasks.set(id, { id, description, status: "pending", parent_id: parent, session_id: sessionId, created_at: ts, updated_at: ts });
+    tasks.push({ id, description, status: "pending", parent_id: parent, session_id: sessionId || undefined, created_at: ts, updated_at: ts });
     saveTasks(tasks);
     const note = parentId && !parent ? ` (parent ${parentId} not found — created as a root task)` : "";
     return { content: `Task created: ${id}\nDescription: ${description}${note}`, metadata: { id } };
@@ -120,13 +133,12 @@ const taskUpdate: ToolDefinition = {
     // No upsert: task_list prints 8-character ids, and an update by one of
     // those silently created a second task under the prefix while the real one
     // stayed open (and the open-steps gate kept nagging about it).
-    const found = resolveTask(tasks, id);
+    const found = resolveTask(tasks, id, sessionOf(args));
     if ("error" in found) return { content: found.error, isError: true };
     const { task } = found;
     if (args.status) task.status = args.status as Task["status"];
     if (args.output !== undefined) task.output = args.output as string;
     task.updated_at = now();
-    tasks.set(task.id, task);
     saveTasks(tasks);
     return { content: `Task ${task.id} updated — status: ${task.status}` };
   },
@@ -146,10 +158,10 @@ const taskList: ToolDefinition = {
     },
   },
   async execute(args: Record<string, unknown>): Promise<ToolResult> {
-    let items = [...loadTasks().values()];
-    const sessionId = (sessionIdOf(args) ?? "").trim();
-    if (sessionId && args.all_sessions !== true) {
-      items = items.filter((t) => t.session_id === sessionId);
+    let items = loadTasks();
+    if (args.all_sessions !== true) {
+      const sessionId = sessionOf(args);
+      items = items.filter((t) => inScope(t, sessionId));
     }
     if (args.status) items = items.filter((t) => t.status === args.status);
     if (args.parent_id) items = items.filter((t) => t.parent_id === args.parent_id);
@@ -174,14 +186,11 @@ const taskGet: ToolDefinition = {
   },
   async execute(args: Record<string, unknown>): Promise<ToolResult> {
     const tasks = loadTasks();
-    const found = resolveTask(tasks, String(args.id ?? ""));
+    const sessionId = sessionOf(args);
+    const found = resolveTask(tasks, String(args.id ?? ""), sessionId);
     if ("error" in found) return { content: found.error, isError: true };
     const { task } = found;
-    const sessionId = (sessionIdOf(args) ?? "").trim();
-    if (sessionId && task.session_id && task.session_id !== sessionId) {
-      return { content: `Task ${args.id} not found in this session`, isError: true };
-    }
-    const subs = [...tasks.values()].filter((t) => t.parent_id === task.id);
+    const subs = tasks.filter((t) => t.parent_id === task.id && inScope(t, sessionId));
     const detail = [
       `ID:          ${task.id}`,
       `Description: ${task.description}`,
@@ -205,7 +214,7 @@ export const taskTools: ToolDefinition[] = [taskCreate, taskUpdate, taskList, ta
  *  description so the gate can name the remaining steps in its nudge. */
 export function getOpenTasksForSession(sessionId: string): { id: string; description: string }[] {
   if (!sessionId) return [];
-  return [...loadTasks().values()]
+  return loadTasks()
     .filter((t) => t.session_id === sessionId && (t.status === "pending" || t.status === "in_progress"))
     .map((t) => ({ id: t.id, description: t.description }));
 }

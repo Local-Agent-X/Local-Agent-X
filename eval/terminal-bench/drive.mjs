@@ -67,6 +67,23 @@ async function stopServer(child) {
   if (child.exitCode === null) child.kill("SIGKILL");
 }
 
+const FORENSICS_SNAPSHOT_MS = 60_000;
+/** The data dir's records of what the op did: small, unlike the browser
+ *  profile and the memory database beside them. */
+const FORENSICS = ["operations", "sessions", "action-log", "audit", "logs", "run-traces"];
+
+function copyForensics(dataDir, dest) {
+  for (const sub of FORENSICS) {
+    const from = join(dataDir, sub);
+    if (!existsSync(from)) continue;
+    try {
+      cpSync(from, join(dest, sub), { recursive: true, force: true });
+    } catch (e) {
+      console.error(`could not snapshot ${sub}: ${e.message}`);
+    }
+  }
+}
+
 /** Where the bundle's headless Chromium is, when it carries one. Its libraries
  *  reach only the browser, through the wrapper bundle.mjs puts in front of it:
  *  an LD_LIBRARY_PATH here reached every shell command the agent ran, and the
@@ -126,6 +143,14 @@ async function main() {
 
   const result = { model: modelName, mode, workspace, startedAt: new Date().toISOString() };
   let exitCode = 0;
+  // Harbor kills this process at the task's time limit, before `finally` can
+  // copy the data dir out, so a timed-out trial came back with no forensics
+  // (4 of LAX's losses to Hermes on qwen3.8, 2026-10-25). The op's records are
+  // copied out every minute, and once more on SIGTERM.
+  const forensicsDest = join(dirname(resolve(outPath)), "lax-data");
+  const snapshot = setInterval(() => copyForensics(dataDir, forensicsDest), FORENSICS_SNAPSHOT_MS);
+  snapshot.unref();
+  process.once("SIGTERM", () => { copyForensics(dataDir, forensicsDest); process.exit(143); });
   try {
     const bootError = await waitHealthy(baseUrl, headers, child);
     if (bootError) {
@@ -137,6 +162,7 @@ async function main() {
       Object.assign(result, { sessionId, secs: turn.secs, toolCalls: turn.tools.length, tools: turn.tools, err: turn.err || null, recovered: turn.recovered, reply: turn.text });
     }
   } finally {
+    clearInterval(snapshot);
     await stopServer(child);
     log.end();
     result.endedAt = new Date().toISOString();

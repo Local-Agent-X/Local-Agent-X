@@ -7,7 +7,9 @@
 // persistence-locations.ts), which run outside every cage. A prompt-injected
 // write to either is code execution later. The user can still have the
 // change made by asking: the card names the file and what it controls, and
-// an unattended run, with nobody to ask, is refused (require-approval.ts).
+// an unattended run, with nobody to ask, is refused (require-approval.ts). A
+// file the user named in this turn's message is the change they asked for,
+// and asks nothing while the session has read nothing off-box.
 //
 // The targets are every non-read path the policy table declares for the tool
 // (TOOL_PATH_ARGS, the specs the file-access gate confines, delete included),
@@ -30,6 +32,8 @@ import { persistenceLocationJudge, type PersistenceLocationOf } from "../securit
 import { pathIsWithin } from "../security/layer/file-access.js";
 import { findTrashEntry } from "../trash-journal.js";
 import { restoreRef } from "../tools/restore-file-tool.js";
+import { hasExternalIngestion } from "../data-lineage/external.js";
+import { currentHumanText, userNamedFile } from "./unnamed-delete-gate.js";
 
 function writeTargets(ctx: ToolCallContext): Array<{ path: string; deletes: boolean }> {
   const { name } = ctx.tc;
@@ -71,15 +75,30 @@ function shown(p: string): string {
   return p;
 }
 
+/** What the person at the keyboard wrote this turn, when it can vouch for a
+ *  file: attended runs only, and never once the session has read off-box
+ *  content. "Add an alias to my .bashrc" names the file, but a page read in
+ *  the same session could have written the alias, so the card is what puts
+ *  that content in front of the user. */
+function vouchingText(ctx: ToolCallContext): string {
+  if (ctx.callContext !== "local" || hasExternalIngestion(ctx.sessionId || "default")) return "";
+  return currentHumanText(ctx.priorMessages);
+}
+
 export function controlFileGate(ctx: ToolCallContext): void {
   const targets = writeTargets(ctx);
   // Every tool call passes here, and naming the startup locations on disk
   // costs a few milliseconds that a call writing nothing need not pay.
   if (targets.length === 0) return;
   const startupFileOf = persistenceLocationJudge();
+  const said = vouchingText(ctx);
   for (const target of targets) {
     const file = gatedFile(target.path, startupFileOf);
     if (!file) continue;
+    // The user named this exact file (a folder or a pattern names none): the
+    // card would ask whether they asked for the change they just asked for
+    // (Peter's call, 2026-10-26). Every other gated target still asks.
+    if (said && (userNamedFile(said, target.path) || userNamedFile(said, file.path))) continue;
     const reason = `This ${ctx.tc.name} call ${target.deletes ? "deletes" : "changes"} ${shown(file.path)}, which ${file.controls}. `
       + "Approve it only if you asked for this change.";
     if (!ctx.policyApprovalReason) ctx.policyApprovalReason = reason;

@@ -36,6 +36,7 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { existsSync, statSync } from "node:fs";
 import { basename } from "node:path";
+import { homedir } from "node:os";
 import { resolveAgentPath } from "../workspace/paths.js";
 import { folderFileCount } from "../tools/delete-folder.js";
 import { isHarnessRow } from "../harness-rows.js";
@@ -72,7 +73,11 @@ export function humanMessageCount(priorMessages: readonly ChatCompletionMessageP
   return (priorMessages ?? []).filter(isHumanRow).length;
 }
 
-const normalize = (p: string): string => p.replace(/\\/g, "/").replace(/^\.\//, "").toLowerCase();
+// `~/…` is the home folder on both sides: what the user wrote, and a target the
+// tool resolved to an absolute path (the control-file gate's) or kept as
+// written (a delete's raw argument).
+const normalize = (p: string): string =>
+  p.replace(/\\/g, "/").replace(/^\.\//, "").replace(/^~(?=\/|$)/, () => homedir().replace(/\\/g, "/")).toLowerCase();
 
 /** Path-like tokens the user wrote, normalized; sentence punctuation shed. */
 function writtenTokens(text: string): string[] {

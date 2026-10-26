@@ -16,6 +16,7 @@ import { clearSessionProfile, setSessionProfile } from "../autonomy/profile-stor
 import { appendTrashJournal } from "../trash-journal.js";
 import { getLaxDir } from "../lax-data-dir.js";
 import { platformRoot } from "../platform-root.js";
+import { clearExternalIngestion, recordExternalIngestion } from "../data-lineage/external.js";
 import type { CallContext, ToolCallContext } from "./context.js";
 import type { ServerEvent } from "../types.js";
 
@@ -292,5 +293,41 @@ describe("the approval phase carries the reason out", () => {
       expect(String(c.result?.content)).toContain(s.startsWith("eval_") ? "Run this under the Autonomous profile" : "waiting in the user's inbox");
       expect(String(c.result?.content)).not.toContain("run it from a chat");
     }
+  });
+});
+
+// "Add my hook to ~/.lax/hooks.json" carded the very change it asked for, in
+// Autonomous too (2026-10-26). A file the user named this turn is that change;
+// anything they did not name, a session that read off-box content, and an
+// unattended run keep the card.
+describe("a control file the user named", () => {
+  const said = (name: string, args: Record<string, unknown>, words: string, opts: { callContext?: CallContext; sessionId?: string } = {}) => {
+    const c = { ...ctx(name, args, opts.callContext ?? "local", opts.sessionId), priorMessages: [{ role: "user", content: words }] } as ToolCallContext;
+    controlFileGate(c);
+    return c.policyApprovalReason;
+  };
+
+  it("asks nothing for the file the user named, however they spelled it", () => {
+    expect(said("write", { path: HOOKS, content: "{}" }, "Add a pre-commit hook to ~/.lax/hooks.json")).toBeUndefined();
+    expect(said("write", { path: HOOKS, content: "{}" }, "fix the hook in hooks.json please")).toBeUndefined();
+    expect(said("edit", { path: join(homedir(), ".bashrc"), old_string: "a", new_string: "b" }, "add an alias ll='ls -la' to my .bashrc")).toBeUndefined();
+    expect(said("bash", { command: `echo x > ${HOOKS.replace(/\\/g, "/")}` }, "reset ~/.lax/hooks.json")).toBeUndefined();
+  });
+
+  it("still asks for a file they did not name, or only described", () => {
+    expect(said("write", { path: join(LAX, "mcp.json"), content: "{}" }, "Add a pre-commit hook to ~/.lax/hooks.json")).toContain("~/.lax/mcp.json");
+    expect(said("write", { path: HOOKS, content: "{}" }, "change my hook settings")).toContain("~/.lax/hooks.json");
+    expect(said("write", { path: HOOKS, content: "{}" }, "clean up everything in ~/.lax")).toContain("~/.lax/hooks.json");
+  });
+
+  it("still asks once the session read off-box content: the file is named, the content may not be the user's", () => {
+    const s = `ctl-gate-tainted-${process.hrtime.bigint().toString(36)}`;
+    recordExternalIngestion(s, "a web page");
+    cleanup.push(() => clearExternalIngestion(s));
+    expect(said("write", { path: HOOKS, content: "{}" }, "Add a pre-commit hook to ~/.lax/hooks.json", { sessionId: s })).toContain("~/.lax/hooks.json");
+  });
+
+  it("still asks in an unattended run, whose prompt is not someone at the keyboard", () => {
+    expect(said("write", { path: HOOKS, content: "{}" }, "Add a pre-commit hook to ~/.lax/hooks.json", { callContext: "cron" as CallContext })).toContain("~/.lax/hooks.json");
   });
 });

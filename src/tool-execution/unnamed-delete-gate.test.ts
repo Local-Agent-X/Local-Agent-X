@@ -11,7 +11,7 @@
  * out of the way.
  */
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, it, expect } from "vitest";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
@@ -44,6 +44,13 @@ describe("did the user name THIS file", () => {
     expect(userNamedFile(CLEAR, "client-data/tmp/thumbnail-cache.tmp")).toBe(true);
     expect(userNamedFile(CLEAR, "workspace/client-data/tmp/thumbnail-cache.tmp")).toBe(true);
     expect(userNamedFile(CLEAR, "workspace\\client-data\\tmp\\thumbnail-cache.tmp")).toBe(true);
+  });
+
+  it("`~/` is the home folder, written by the user or resolved by the tool", () => {
+    const said = "delete ~/notes/old-draft.txt";
+    expect(userNamedFile(said, "~/notes/old-draft.txt")).toBe(true);
+    expect(userNamedFile(said, join(homedir(), "notes", "old-draft.txt"))).toBe(true);
+    expect(userNamedFile(said, join(tmpdir(), "notes", "old-draft.txt"))).toBe(false);
   });
 
   it("naming the FOLDER names none of the files in it", () => {

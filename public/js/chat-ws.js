@@ -183,6 +183,13 @@ function connectChatWs() {
         } catch (e) { /* best-effort — watchdog will retry */ }
       }
     }
+    // The live worker set, whole: ends every card whose end this page never
+    // heard and draws any worker that started while it wasn't listening
+    // (reconcileAgentFeeds in chat-agent-feeds.js).
+    if (typeof noteWorkersSnapshotAsked === 'function') {
+      noteWorkersSnapshotAsked();
+      try { ws.send(JSON.stringify({ type: 'workers_list' })); } catch (e) { /* the next connect asks again */ }
+    }
     // Rediscover pending approvals this client never saw the live
     // approval_requested for (page reload, server restart, second device) —
     // GET /api/approvals/pending is the durable source of truth.

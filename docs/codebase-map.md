@@ -36,7 +36,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/threat/` | 40 | 13 | L |  |
 | `src/auth/` | 37 | 11 | L |  |
 | `src/chat-ws/` | 32 | 23 | L |  |
-| `src/agency/` | 28 | 21 | L |  |
+| `src/agency/` | 29 | 21 | L |  |
 | `src/agent-store/` | 27 | 7 | M | 1 |
 | `src/context/` | 26 | 11 | M | 1 |
 | `src/context-manager/` | 25 | 15 | M |  |
@@ -44,9 +44,9 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/agent-request/` | 23 | 15 | L | 3 |
 | `src/app-runtime/` | 23 | 12 | M |  |
 | `src/sandbox/` | 23 | 15 | L | 1 |
+| `src/broker-transport/` | 21 | 43 | XL |  |
 | `src/desktop-contract/` | 21 | 10 | M |  |
 | `src/protocols/` | 21 | 52 | XL |  |
-| `src/broker-transport/` | 20 | 43 | XL |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
 | `src/server/` *(entrypoint)* | 18 | 57 | XL | 6 |
 | `src/agents/` | 17 | 13 | L |  |

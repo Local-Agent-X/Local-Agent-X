@@ -24,5 +24,6 @@ export function buildAgentStatus(agent: FieldAgent): FieldAgentStatus {
     elapsed: Date.now() - agent.startedAt,
     tokensUsed: agent.tokensUsed,
     templateId: agent.templateId,
+    ...(agent.parentSessionId ? { parentSessionId: agent.parentSessionId } : {}),
   };
 }

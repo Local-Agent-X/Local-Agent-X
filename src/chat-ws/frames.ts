@@ -10,6 +10,7 @@
 import type { WebSocket } from "ws";
 import type { ServerEvent } from "../types.js";
 import type { InboxFrame } from "../inbox/types.js";
+import type { WorkersSnapshotFrame } from "../broker-transport/vendor/protocol.js";
 import type { AgentSpawnEvent, AgentResultEvent } from "../server/handler-events-agent-result.js";
 
 export interface SidebarPin { name: string; icon: string; url: string }
@@ -47,7 +48,8 @@ export type GlobalFrame =
   | ({ type: "agent-spawn"; displayName: string; rawName: string; parentSessionId: string; parentAgentId: string | null } & Omit<AgentSpawnEvent, "systemPrompt">)
   | { type: "agent-update"; agentId: string; status?: string; totalTokens?: number; [key: string]: unknown }
   | { type: "agent-output"; agentId: string; output: string }
-  | ({ type: "agent-complete"; displayName: string; sessionId: string; parentAgentId: string | null } & AgentResultEvent);
+  | ({ type: "agent-complete"; displayName: string; sessionId: string; parentAgentId: string | null } & AgentResultEvent)
+  | WorkersSnapshotFrame;
 
 export type GlobalFrameType = GlobalFrame["type"];
 
@@ -57,7 +59,7 @@ export const GLOBAL_FRAME_TYPES = [
   "event", "active_chats", "session_snapshot", "pong", "error", "approval_resolved", "settings_changed", "sidebar_pins_changed",
   "sidebar_clear_chats", "app-files-changed", "app:state", "app:event", "projects_changed", "learning_changed",
   "history_changed", "system_health", "inbox_item", "inbox_changed",
-  "agent-spawn", "agent-update", "agent-output", "agent-complete",
+  "agent-spawn", "agent-update", "agent-output", "agent-complete", "workers_snapshot",
 ] as const satisfies readonly GlobalFrameType[];
 
 type MissingFromList = Exclude<GlobalFrameType, (typeof GLOBAL_FRAME_TYPES)[number]>;

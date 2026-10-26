@@ -44,6 +44,7 @@ describe("workers contract with the phone", () => {
         { opId: "op_ap_1", sessionId: "s1", task: "Improve", status: "paused" },
       ],
       autopilot: () => [{ id: "op_ap_1", topic: "Improve" }, { id: "op_ap_2" }],
+      agents: () => [{ id: "field-agent-1-x", name: "Recipe library", task: "Build the recipe library", sessionId: "s1", startedAt: Date.UTC(2026, 9, 26) }],
     });
     expect(parseWorkersSnapshot(JSON.parse(JSON.stringify(frame)))).toEqual({
       type: "workers_snapshot",
@@ -51,6 +52,8 @@ describe("workers contract with the phone", () => {
         { opId: "op_1", sessionId: "s1", task: "Build", status: "running", opType: "app_build", lastLine: "✓ turn 2 · write", totalTokens: 9000 },
         { opId: "op_ap_1", sessionId: "s1", task: "Improve", status: "paused" },
         { opId: "op_ap_2", sessionId: "autopilot", task: "Autopilot", status: "running" },
+        // A named agent is listed by the id its card carries, so a client can end a card the snapshot leaves out.
+        { opId: "field-agent-1-x", sessionId: "s1", task: "Build the recipe library", status: "running", opType: "agent_spawn", startedAt: "2026-10-26T00:00:00.000Z" },
       ],
     });
   });

@@ -176,7 +176,9 @@ function handleAppFilesChanged(msg) {
 }
 
 function handleAgentFeedEvent(msg) {
-  if (msg.type === 'agent-spawn' && msg.agentId) {
+  if (msg.type === 'workers_snapshot') {
+    if (typeof reconcileAgentFeeds === 'function') reconcileAgentFeeds(msg.workers);
+  } else if (msg.type === 'agent-spawn' && msg.agentId) {
     // parentAgentId rides the agent-spawn event (invoke.ts → handler-events.ts).
     // Stamp it as the card's parentOpId so a child spawned by another card (e.g.
     // an auto-build chunk runner under its orchestrator, whose card id === that
@@ -184,7 +186,12 @@ function handleAgentFeedEvent(msg) {
     // parent) → parentOpId undefined → the card renders as a root, unchanged.
     if (typeof addAgentFeed === 'function') addAgentFeed({ id: msg.agentId, name: msg.name, role: msg.role, status: msg.status || 'working', currentTask: msg.task, parentOpId: msg.parentAgentId || undefined });
   } else if (msg.type === 'agent-update' && msg.agentId) {
-    if (typeof updateAgentFeed === 'function') updateAgentFeed(msg.agentId, msg);
+    // Only what an update carries: the whole frame put its own type,
+    // "agent-update", on the card as the card's type and label.
+    var upd = {};
+    if (msg.status) upd.status = msg.status;
+    if (typeof msg.totalTokens === 'number') upd.totalTokens = msg.totalTokens;
+    if (typeof updateAgentFeed === 'function') updateAgentFeed(msg.agentId, upd);
   } else if (msg.type === 'agent-output' && msg.agentId) {
     if (typeof updateAgentFeed === 'function') updateAgentFeed(msg.agentId, { output: msg.output });
   } else if (msg.type === 'agent-complete' && msg.agentId) {

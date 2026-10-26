@@ -104,6 +104,7 @@ function addAgentFeed(agent) {
     agentFeedsData[agent.id] = agent;
     if (agent.status) _setAgentStatus(agent, agent.status);
   }
+  agentFeedsData[agent.id].seenAt = Date.now();
   // Honor the auto-open preference: the record lands either way, only the
   // open animation is suppressed when AUTO is off.
   if (agentFeedsAutoOpen && !agentFeedsOpen) toggleAgentFeeds();
@@ -117,35 +118,35 @@ function _setAgentStatus(rec, status) {
   if (isTerminalStatus(status) && !rec.endedAt) rec.endedAt = Date.now();
 }
 
+// An update changes a card that exists; it never makes one. Cards come from
+// addAgentFeed (a spawn, a queued or started op) or the workers snapshot. An
+// update that made a card turned a late frame for a finished agent (a token
+// count after its card was cleared) into a nameless "Running" card that nothing
+// ever ended (2026-10-26).
 function updateAgentFeed(agentId, update) {
   var existing = agentFeedsData[agentId];
   var statusChanged = false;
-  if (!existing) {
-    agentFeedsData[agentId] = update;
-    existing = update;
-    if (update.status) _setAgentStatus(existing, update.status);
-    statusChanged = true;
-  } else {
-    if (update.status && update.status !== existing.status) { _setAgentStatus(existing, update.status); statusChanged = true; }
-    // Two streams kept separate so the detail renders them like main chat:
-    //   streamText — the worker's LLM text deltas (worker_stream events)
-    //   output     — tool-call / lifecycle traces (bg_op_progress, queued,
-    //                started, completed)
-    if (update.streamText) existing.streamText = (existing.streamText || '') + update.streamText;
-    if (update.output)     existing.output     = (existing.output     || '') + update.output;
-    if (update.name) existing.name = update.name;
-    if (update.role) existing.role = update.role;
-    if (update.resultUrl) existing.resultUrl = update.resultUrl;
-    // sessionId + lastActivityMs feed the reconnect replay in chat-ws.js and
-    // the stall badge: sessionId is set-once, lastActivityMs bumps per signal.
-    if (update.sessionId && !existing.sessionId) existing.sessionId = update.sessionId;
-    if (update.lastActivityMs) existing.lastActivityMs = update.lastActivityMs;
-    if (update.parentOpId && !existing.parentOpId) existing.parentOpId = update.parentOpId;
-    if (update.type && !existing.type) existing.type = update.type;
-    if (update.startedAt && !existing.startedAt) existing.startedAt = update.startedAt;
-    if (update.model && !existing.model) existing.model = update.model;
-    if (update.totalTokens != null) existing.totalTokens = update.totalTokens;
-  }
+  if (!existing) return;
+  existing.seenAt = Date.now();
+  if (update.status && update.status !== existing.status) { _setAgentStatus(existing, update.status); statusChanged = true; }
+  // Two streams kept separate so the detail renders them like main chat:
+  //   streamText — the worker's LLM text deltas (worker_stream events)
+  //   output     — tool-call / lifecycle traces (bg_op_progress, queued,
+  //                started, completed)
+  if (update.streamText) existing.streamText = (existing.streamText || '') + update.streamText;
+  if (update.output)     existing.output     = (existing.output     || '') + update.output;
+  if (update.name) existing.name = update.name;
+  if (update.role) existing.role = update.role;
+  if (update.resultUrl) existing.resultUrl = update.resultUrl;
+  // sessionId + lastActivityMs feed the reconnect replay in chat-ws.js and
+  // the stall badge: sessionId is set-once, lastActivityMs bumps per signal.
+  if (update.sessionId && !existing.sessionId) existing.sessionId = update.sessionId;
+  if (update.lastActivityMs) existing.lastActivityMs = update.lastActivityMs;
+  if (update.parentOpId && !existing.parentOpId) existing.parentOpId = update.parentOpId;
+  if (update.type && !existing.type) existing.type = update.type;
+  if (update.startedAt && !existing.startedAt) existing.startedAt = update.startedAt;
+  if (update.model && !existing.model) existing.model = update.model;
+  if (update.totalTokens != null) existing.totalTokens = update.totalTokens;
   var card = document.getElementById('agent-card-' + agentId);
   // A status change can move the record to another section or swap the
   // row's mark and controls, so it is a rebuild; everything else is a
@@ -193,6 +194,41 @@ function updateAgentFeed(agentId, update) {
       linkEl.style.display = 'block';
     }
   }
+}
+
+// The server's whole live set (chat-ws workers_snapshot, asked for on every
+// connect). The panel is otherwise built from events, so a card whose end it
+// never heard (the socket was down, the server restarted) read as running
+// forever. A live card the snapshot leaves out has ended, unless this page
+// heard from it after asking; a listed worker with no card started while the
+// page wasn't listening.
+var agentFeedsSnapshotAskedAt = 0;
+function noteWorkersSnapshotAsked() { agentFeedsSnapshotAskedAt = Date.now(); }
+
+function reconcileAgentFeeds(workers) {
+  if (!Array.isArray(workers)) return;
+  var live = {};
+  for (var i = 0; i < workers.length; i++) if (workers[i] && workers[i].opId) live[workers[i].opId] = workers[i];
+  var ids = Object.keys(agentFeedsData);
+  for (var j = 0; j < ids.length; j++) {
+    var rec = agentFeedsData[ids[j]];
+    if (!rec || live[ids[j]] || isTerminalStatus(rec.status)) continue;
+    if ((rec.seenAt || 0) > agentFeedsSnapshotAskedAt) continue;
+    delete agentFeedsData[ids[j]];
+  }
+  var wIds = Object.keys(live);
+  for (var k = 0; k < wIds.length; k++) {
+    var w = live[wIds[k]];
+    if (agentFeedsData[w.opId]) continue;
+    agentFeedsData[w.opId] = {
+      id: w.opId, name: w.task || 'Worker', currentTask: w.task, sessionId: w.sessionId,
+      type: w.opType, parentOpId: w.parentOpId, totalTokens: w.totalTokens,
+      startedAt: w.startedAt ? Date.parse(w.startedAt) : undefined,
+      output: w.lastLine ? w.lastLine + '\n' : '', seenAt: Date.now(),
+    };
+    _setAgentStatus(agentFeedsData[w.opId], w.status === 'running' ? 'working' : w.status);
+  }
+  _renderAgentFeedsList();
 }
 
 function removeAgentFeed(agentId) {

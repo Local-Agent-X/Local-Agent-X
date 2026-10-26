@@ -40,6 +40,8 @@ export interface FieldAgentStatus {
    *  a runId back to the calling agent's template (e.g. agent_escalate
    *  resolving the caller's roster) can do it through the public API. */
   templateId?: string;
+  /** The conversation that spawned the run, when one did. */
+  parentSessionId?: string;
 }
 
 export interface SpawnConfig {

@@ -166,23 +166,49 @@ describe("computeChangeSet — a push's own git options and environment", () => 
     }
   });
 
-  it("a commit made by the same command before the push is unknown, never 'nothing new would ship'", async () => {
+  it("a commit the same command makes before the push is reviewed from the working tree, never 'nothing new would ship'", async () => {
     // The shape that pushed b9281c4 unreviewed: the dry run ran before the
-    // commit existed, so it saw an up-to-date HEAD.
+    // commit existed, so it saw an up-to-date HEAD. Now the review reads what
+    // the commit can contain: every uncommitted and untracked change.
     writeFileSync(join(work, "README.md"), "# app\nreworded\n");
+    writeFileSync(join(work, "new.ts"), "export const n = 1;\n");
     expect(changeSetIsEmpty(await computeChangeSet(ops("git push origin HEAD")))).toBe(true);
-    const cs = await computeChangeSet(ops("git commit -qam \"Reword\" && git push origin HEAD"));
-    expect(changeSetIsEmpty(cs)).toBe(false);
-    expect(cs.parts).toEqual([]);
-    expect(cs.unknown).toEqual([expect.objectContaining({ label: "git push origin HEAD", reason: expect.stringMatching(/runs git commit before git push origin HEAD.*its own call/) })]);
+    for (const command of [
+      "git commit -qam \"Reword\" && git push origin HEAD",
+      "git add -A && git commit -qm \"Reword\" && git push",
+      "git add -A && git commit -qm \"Reword\" && git push -u origin main 2>&1 | tail -5",
+    ]) {
+      const cs = await computeChangeSet(ops(command));
+      expect(cs.unknown, command).toEqual([]);
+      expect(cs.parts, command).toHaveLength(1);
+      expect(cs.parts[0].includesWorkingTree).toBe(true);
+      expect(cs.parts[0].files.map((f) => f.path).sort()).toEqual(["README.md", "new.ts"]);
+      expect(cs.parts[0].baseLabel).toMatch(/git commit this command runs before pushing is not made yet/);
+    }
+  });
+
+  it("a commit before a push of some other ref, or a checkout or pull before a push, stays unknown", async () => {
+    writeFileSync(join(work, "README.md"), "# app\nreworded\n");
+    for (const command of [
+      "git commit -qam x && git push origin side",
+      "git commit -qam x && git push origin HEAD:release",
+      "git commit -qam x && git push --all origin",
+      "git checkout -q -b other && git push origin other",
+      "git commit -qam x && git pull -q && git push",
+    ]) {
+      const cs = await computeChangeSet(ops(command));
+      expect(cs.parts, command).toEqual([]);
+      expect(cs.unknown, command).toEqual([expect.objectContaining({ reason: expect.stringMatching(/before git push.*its own call/) })]);
+    }
   });
 
   it("the same push before and after a commit in one command is not folded into one review", async () => {
     commit("a.ts", "1\n", "one");
     writeFileSync(join(work, "a.ts"), "2\n");
     const cs = await computeChangeSet(ops("git push origin main && git commit -qam two && git push origin main"));
-    expect(cs.parts.map((p) => p.commits.map((c) => c.subject))).toEqual([["one"]]);
-    expect(cs.unknown.map((u) => u.reason)).toEqual([expect.stringMatching(/git commit/)]);
+    expect(cs.unknown).toEqual([]);
+    expect(cs.parts.map((p) => p.includesWorkingTree)).toEqual([false, true]);
+    expect(cs.parts[0].commits.map((c) => c.subject)).toEqual(["one"]);
   });
 
   it("a second push that differs only in what it runs with is not folded into the first", async () => {

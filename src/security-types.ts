@@ -91,6 +91,12 @@ export const USER_HINTS = {
    *  diagnosing the wrong layer (2026-07-20, computer control). */
   killSwitch:
     "That tool category is switched off in Settings → Security — say the word and the agent can request it back on with your approval, or flip the toggle there yourself.",
+  /** The pre-publish review stopped a push/deploy: it found a blocking problem,
+   *  or could not work out what would ship. Distinct from `policy`: nothing in
+   *  tool-policy.json is involved, and pointing at it sent a live agent around
+   *  the same block four times (2026-10-26, a commit-and-push). */
+  publishReview:
+    "The pre-publish review stopped this — the reason above says what it found or why it couldn't review it. Fix that and publish again, or approve it when the review card asks.",
   /** User declined the approval prompt for this specific call. */
   declined:
     "You declined this action — the agent will adjust its approach instead of retrying it.",

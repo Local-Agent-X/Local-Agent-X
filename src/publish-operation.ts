@@ -50,6 +50,10 @@ export interface PublishOperation {
    *  reads (`git commit` before a push): the repository the review would see
    *  is not the one it publishes from (publish-operation-table.ts gitRepoChange). */
   repoChangedBefore?: string;
+  /** git-push: every earlier repo change in the call is a `git commit`, so all
+   *  it can add to the push comes from the working tree, which the review can
+   *  read before the commit exists (publish-review/change-set.ts). */
+  commitsFromWorkingTree?: true;
   /** git-push: the arguments after `push`, verbatim. */
   pushArgs?: string[];
   /** git-push: git's own options before `push` (`-c k=v`, `--git-dir d`), in order. */
@@ -154,7 +158,7 @@ function shellPublishes(tool: string, command: string, start: string, toolEnv: s
   const bodyAt: Array<{ dir: string; uncertain: boolean; env: string[] }> = [{ dir: start, uncertain: false, env: toolEnv }];
   // The first earlier git command that changes what a later publish reads,
   // at any depth: a commit inside `bash -c "…"` lands in the same repository.
-  const earlier: { commits?: string; files?: string } = {};
+  const earlier: { commits?: string; files?: string; onlyCommit?: boolean } = {};
   let lastDepth = 0;
   for (const pos of commandPositions(command).positions) {
     if (pos.depth > lastDepth) bodyAt[pos.depth] = { ...bodyAt[pos.depth - 1] };
@@ -179,7 +183,10 @@ function shellPublishes(tool: string, command: string, start: string, toolEnv: s
     const match = matchPublishArgv(pos.words, at);
     if (!match) {
       const change = gitRepoChange(pos.words, cmdAt);
-      if (change?.commits) earlier.commits ??= change.command;
+      if (change?.commits) {
+        earlier.commits ??= change.command;
+        earlier.onlyCommit = (earlier.onlyCommit ?? true) && change.command === "git commit";
+      }
       if (change?.files) earlier.files ??= change.command;
       continue;
     }
@@ -194,6 +201,7 @@ function shellPublishes(tool: string, command: string, start: string, toolEnv: s
       cwd: dir ?? here.dir,
       ...(here.uncertain || dir === null ? { cwdUncertain: true } : {}),
       ...(changedBefore ? { repoChangedBefore: changedBefore } : {}),
+      ...(changedBefore && match.kind === "git-push" && earlier.onlyCommit ? { commitsFromWorkingTree: true as const } : {}),
       ...(match.pushArgs ? { pushArgs: match.pushArgs } : {}),
       ...(match.gitOptions ? { gitOptions: match.gitOptions } : {}),
       ...(gitEnv.length ? { gitEnv } : {}),

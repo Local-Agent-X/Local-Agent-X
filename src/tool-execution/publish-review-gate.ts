@@ -42,7 +42,7 @@ import type { PublishOperation } from "../publish-operation.js";
 import { changeSetIsEmpty, type ChangeSet } from "../publish-review/change-set-types.js";
 import type { PublishReview, PublishReviewRequest, PublishReviewRun } from "../canonical-loop/public/publish-review.js";
 import type { ToolCallContext } from "./context.js";
-import { needsOverride, reviewCardContext, reviewNoteForModel, reviewPreview, stopText } from "./publish-review-text.js";
+import { needsOverride, reviewCardContext, reviewNoteForModel, reviewPreview, stopText, type StopReason } from "./publish-review-text.js";
 import { statusOf } from "../tools/result-helpers.js";
 import { createLogger } from "../logger.js";
 
@@ -151,7 +151,8 @@ export async function publishReviewGate(ctx: ToolCallContext, ops: PublishOperat
   return overrideOutcome(ctx, op, review);
 }
 
-function blocked(content: string, declined = false): PublishGateOutcome {
+function blocked(content: string, how: StopReason): PublishGateOutcome {
+  const declined = how === "declined";
   return {
     kind: "block",
     result: {
@@ -159,7 +160,8 @@ function blocked(content: string, declined = false): PublishGateOutcome {
       isError: true,
       status: declined ? "declined" : "blocked",
       metadata: {
-        layer: "approval", userHint: declined ? USER_HINTS.declined : USER_HINTS.policy,
+        layer: "approval",
+        userHint: declined ? USER_HINTS.declined : how === "unanswered" ? USER_HINTS.approvalTimeout : USER_HINTS.publishReview,
         recovery: declined
           ? "The user said no to publishing this. Do not push it another way; report what was left unpublished."
           : "Publishing this needs the user's yes after the review. Report what is ready to publish, so they can push it or approve it in a chat.",
@@ -171,8 +173,8 @@ function blocked(content: string, declined = false): PublishGateOutcome {
 // A RED verdict, or no verdict at all: only the user's explicit yes on THIS
 // publish lets it run.
 async function overrideOutcome(ctx: ToolCallContext, op: PublishOperation, review: PublishReview): Promise<PublishGateOutcome> {
-  if (ctx.callContext !== "local") return blocked(stopText(op, review, "unattended"));
-  if (!ctx.onEvent) return blocked(stopText(op, review, "no-channel"));
+  if (ctx.callContext !== "local") return blocked(stopText(op, review, "unattended"), "unattended");
+  if (!ctx.onEvent) return blocked(stopText(op, review, "no-channel"), "no-channel");
   const outcome = await getApprovalManager().requestApprovalDetailed({
     toolName: ctx.tc.name,
     toolCallId: ctx.tc.id,
@@ -188,7 +190,10 @@ async function overrideOutcome(ctx: ToolCallContext, op: PublishOperation, revie
     opId: ctx.operationId,
     emit: ctx.onEvent,
   });
-  if (!outcome.approved) return blocked(stopText(op, review, outcome.reason === "declined" ? "declined" : "unanswered"), outcome.reason === "declined");
+  if (!outcome.approved) {
+    const how: StopReason = outcome.reason === "declined" ? "declined" : "unanswered";
+    return blocked(stopText(op, review, how), how);
+  }
   recordOverride(ctx, op, review, outcome.grantId);
   return { kind: "proceed", review, overridden: true };
 }

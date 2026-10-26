@@ -33,6 +33,7 @@ const { getApprovalManager } = await import("../approval-manager.js");
 const { runInApprovalWaitScope, currentApprovalWaitMs } = await import("../approval-wait.js");
 const { withTimeout } = await import("./tool-timeout.js");
 const { getSharedAuditTrail } = await import("../threat/audit-trail.js");
+const { USER_HINTS } = await import("../security-types.js");
 type ToolCallContext = import("./context.js").ToolCallContext;
 type CallContext = import("./context.js").CallContext;
 type ServerEvent = import("../types.js").ServerEvent;
@@ -338,6 +339,20 @@ describe("RED — blocked unless the user overrides", () => {
       expect(lastText(c)).toContain("unattended run, so nobody can override it");
     });
   }
+
+  // A review stop is not a policy rule: pointing at tool-policy.json sent a
+  // live agent around the same block four times (2026-10-26).
+  it("the block's hint names the review, never the policy file; a no gets the declined hint", async () => {
+    const meta = (c: ToolCallContext) => (c.result?.metadata ?? {}) as { userHint?: string };
+    fake(RED);
+    const unattended = ctx({ sessionId: session("Autonomous"), callContext: "cron" });
+    await requireApprovalPhase(unattended);
+    expect(meta(unattended).userHint).toBe(USER_HINTS.publishReview);
+    expect(meta(unattended).userHint).not.toMatch(/tool-policy/);
+    const declined = ctx({ sessionId: session("Power"), answer: false });
+    await requireApprovalPhase(declined);
+    expect(meta(declined).userHint).toBe(USER_HINTS.declined);
+  });
 });
 
 describe("verdict cache — per (session, fingerprint)", () => {

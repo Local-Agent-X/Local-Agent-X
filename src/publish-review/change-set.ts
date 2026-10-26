@@ -13,10 +13,19 @@
  *                     gh pr merge: the current branch's pushed commits against
  *                     the remote default branch.
  *
+ *   commit, then     `git add -A && git commit … && git push`, the ordinary way to
+ *   push             ship: the commit does not exist yet, but everything it can
+ *                    contain is in the working tree, so the review reads what
+ *                    the branch has not pushed PLUS every uncommitted and
+ *                    untracked change — a superset of what the push sends, the
+ *                    same view a deploy gets. Only for a push of the checked-out
+ *                    branch, and only when every earlier change is a commit.
+ *
  * Anything that cannot be worked out — not a git repository, git missing, a
  * dry run that failed, a PR named by number, a directory set at runtime, a
- * commit (or checkout, pull, …) the same command makes before it publishes —
- * is reported as UNKNOWN with its reason. It is never silently passed.
+ * checkout, pull, rebase or reset the same command makes before it publishes,
+ * or a commit before a push of some other ref — is reported as UNKNOWN with
+ * its reason. It is never silently passed.
  */
 import { createHash } from "node:crypto";
 import type { PublishOperation } from "../publish-operation.js";
@@ -50,11 +59,12 @@ export async function computeChangeSet(ops: PublishOperation[]): Promise<ChangeS
 
 async function partFor(op: PublishOperation): Promise<PartResult> {
   if (op.cwdUncertain) return { reason: "the command changes directory through a variable, so which repository it publishes from is only known at run time" };
-  if (op.repoChangedBefore) {
-    return { reason: `the command runs ${op.repoChangedBefore} before ${op.label}, so what it publishes does not exist until that has run; run ${op.repoChangedBefore} in its own call, then publish in the next one and it gets reviewed` };
-  }
   const repo = await repoRootOf(op.cwd);
   if ("reason" in repo) return repo;
+  if (op.repoChangedBefore) {
+    if (op.commitsFromWorkingTree && await pushesCheckedOutBranch(op, repo.root)) return commitThenPushPart(op, repo.root);
+    return { reason: `the command runs ${op.repoChangedBefore} before ${op.label}, so what it publishes does not exist until that has run; run ${op.repoChangedBefore} in its own call, then publish in the next one and it gets reviewed` };
+  }
   if (op.kind === "git-push") return pushPart(op, repo.root);
   if (op.kind === "release") return releasePart(op, repo.root);
   return workingTreePart(op, repo.root);
@@ -127,6 +137,32 @@ async function workingTreePart(op: PublishOperation, root: string): Promise<Part
     diffTruncated: diff.truncated,
     includesWorkingTree: true,
     identity: `tree|${root}|${head ?? "unborn"}|${base ?? "empty"}|${diff.sha256}|${untracked.identity}`,
+  };
+}
+
+/** Does the push send the checked-out branch, and only it? `git push`,
+ *  `git push origin`, `git push -u origin HEAD` and `git push origin <branch>`
+ *  do; a push naming another ref, a refspec, or --all/--tags/--mirror does
+ *  not, and the commit about to be made says nothing about what that sends. */
+async function pushesCheckedOutBranch(op: PublishOperation, root: string): Promise<boolean> {
+  const args = op.pushArgs ?? [];
+  if (args.some((a) => /^--(?:all|branches|mirror|tags|follow-tags|delete|prune)$/.test(a) || a === "-d")) return false;
+  const positional = args.filter((a) => !a.startsWith("-"));
+  if (positional.length <= 1) return true;
+  if (positional.length > 2) return false;
+  const branch = await currentBranch(root);
+  return positional[1] === "HEAD" || (branch !== null && positional[1] === branch);
+}
+
+/** A push after a commit the same command makes: what the branch has not
+ *  pushed plus every uncommitted and untracked change (see the header). */
+async function commitThenPushPart(op: PublishOperation, root: string): Promise<PartResult> {
+  const part = await workingTreePart(op, root);
+  if ("reason" in part) return part;
+  return {
+    ...part,
+    baseLabel: `${part.baseLabel}, plus every uncommitted and untracked change, because the ${op.repoChangedBefore} this command runs before pushing is not made yet; this is everything that commit could contain`,
+    identity: `commit-then-push|${part.identity}`,
   };
 }
 

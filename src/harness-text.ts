@@ -38,6 +38,20 @@ const escapeRe = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
  */
 export const TOOL_RESULT_ROW_PREFIX = "[tool result]";
 
+/** What stands in for a tool result the context pruner took out of the model's
+ *  view (context-manager/prune-tool-results.ts). The row keeps its call id and
+ *  status, so a reader asking "does the view hold this output" must check for
+ *  this, not for the row. */
+const ELIDED_TOOL_RESULT_LEAD = "[earlier tool result elided — ";
+
+export function elidedToolResultStub(toolName: string, chars: number): string {
+  return `${ELIDED_TOOL_RESULT_LEAD}${toolName}, ${chars} chars. The file or command is still there to read or run again.]`;
+}
+
+export function isElidedToolResult(text: string): boolean {
+  return text.startsWith(ELIDED_TOOL_RESULT_LEAD);
+}
+
 /**
  * The turn boundaries. These live here rather than beside their renderer
  * because the literal is needed in two places that must never drift: the
@@ -119,6 +133,12 @@ export const HARNESS_MARKERS: readonly HarnessMarker[] = [
     pattern: /\[tool result\]/g,
     sample: TOOL_RESULT_ROW_PREFIX,
     emitter: "canonical-loop/turn-loop/compact-history.ts",
+  },
+  {
+    id: "elided-tool-result",
+    pattern: /\[earlier tool result elided — [^\]\n]{0,200}\]?/g,
+    sample: elidedToolResultStub("read", 5000),
+    emitter: "context-manager/prune-tool-results.ts",
   },
   {
     id: "harness-notice",

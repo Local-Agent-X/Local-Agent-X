@@ -24,6 +24,7 @@
  */
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { isHarnessRow } from "../harness-rows.js";
+import { elidedToolResultStub } from "../harness-text.js";
 import { PRUNED_RESULT_KEEP_CHARS } from "./compaction-policy.js";
 
 type Row = ChatCompletionMessageParam & { tool_call_id?: string; tool_calls?: Array<{ id: string; function?: { name?: string } }> };
@@ -35,10 +36,6 @@ export function lastTurnStart(messages: readonly ChatCompletionMessageParam[]): 
     if (messages[i].role === "user" && !isHarnessRow(messages[i])) return i;
   }
   return -1;
-}
-
-function stub(name: string, chars: number): string {
-  return `[earlier tool result elided — ${name}, ${chars} chars. The file or command is still there to read or run again.]`;
 }
 
 /** The history with tool results from turns before the last one stubbed. */
@@ -58,7 +55,7 @@ export function pruneFinishedTurnToolResults(messages: ChatCompletionMessagePara
     if (m.content.length <= PRUNED_RESULT_KEEP_CHARS) return m;
     changed = true;
     const name = names.get((m as Row).tool_call_id ?? "") ?? "tool";
-    return { ...m, content: stub(name, m.content.length) } as ChatCompletionMessageParam;
+    return { ...m, content: elidedToolResultStub(name, m.content.length) } as ChatCompletionMessageParam;
   });
   return changed ? out : messages;
 }

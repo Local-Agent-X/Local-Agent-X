@@ -299,6 +299,16 @@ describe("search relevance gate (F18)", () => {
     }
   });
 
+  // `blast radius` found nothing: the name indexed only as the one token
+  // "blast-radius", and its description never repeats either word. The agent
+  // could not find the bundled protocol and wrote a duplicate (2026-10-26).
+  it("a compound name is findable by the words it is made of", async () => {
+    expect(await searchFor("blast radius")).toContain("blast-radius");
+    expect(await searchFor("canonical check")).toContain("canonical-check");
+    expect(await searchFor("senior engineer")).toContain("senior-engineer");
+    expect(await searchFor("blast-radius")).toContain("blast-radius");
+  });
+
   it("a generic verb is not evidence, even when the protocol really uses it", async () => {
     // `create purchase order` is the natural phrasing of the request that opened
     // this finding. It used to return instagram_post (two body words), and after

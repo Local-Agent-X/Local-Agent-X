@@ -50,11 +50,16 @@ const STOPWORDS = new Set([
   "the","a","an","and","or","of","to","in","is","it","for","on","with","by","at","be","as","this","that","from","you","i",
 ]);
 
+// A compound name ("blast-radius", "send_email") is indexed whole AND as its
+// parts. Whole-only, `blast radius` matched nothing in `blast-radius`, whose
+// description never repeats either word: the bundled protocol was unfindable
+// by its own name, and the agent wrote a duplicate of it (2026-10-26).
 function tokenize(text: string): string[] {
   return text
     .toLowerCase()
     .replace(/[^a-z0-9_\s-]/g, " ")
     .split(/\s+/)
+    .flatMap((t) => (/[-_]/.test(t) ? [t, ...t.split(/[-_]+/)] : [t]))
     .filter((t) => t.length >= 2 && t.length <= 32 && !STOPWORDS.has(t));
 }
 

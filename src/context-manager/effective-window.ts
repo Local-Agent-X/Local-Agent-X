@@ -41,7 +41,8 @@ export const CLI_EFFECTIVE_WINDOW = 200_000;
  * accepted, so compaction thresholds sized against it (60/75/90%) all sit on
  * proven ground. It is deliberately not lifted to the nominal 1M: nothing
  * shows the lane serves that, and an over-sized window is the session death
- * above. Add a row only with an op id whose recorded usage shows the prompt.
+ * above. Add a row only with evidence that the prompt was served: an op id
+ * whose recorded usage shows it, or a probe log with the response usage.
  *
  * Evidence: ~/.lax/operations on the owner's box, scanned 2026-09-27
  * (input + cache_read + cache_create of the recorded round; the op's
@@ -51,7 +52,13 @@ export const CLI_EFFECTIVE_WINDOW = 200_000;
  */
 export const SUBSCRIPTION_PROVEN_WINDOWS: Record<string, number> = {
   "claude-opus-5": 425_000,   // op_chat_turn_03762399d7564b73: 425,357 tokens, 2026-09-03 (oauth)
-  "claude-opus-5-5": 435_000, // op_chat_turn_61aaead1600e4e90 round 37: 435,070 tokens (433,775 cache read), 2026-10-26Z (cli)
+  // Deliberate probe 2026-10-26 (tmp/window-probe.ts through the stream
+  // chokepoint on the subscription credential): 649,385 and 949,073 input
+  // tokens both served (input_tokens in the response usage; the second answer
+  // was a refusal of the nonsense padding, which is a model verdict on an
+  // accepted prompt, not an over-length 400). Chat ops had proven 435,070
+  // (op_chat_turn_61aaead1600e4e90 round 37) before the probe.
+  "claude-opus-5-5": 949_000,
   "claude-opus-4-8": 276_000, // op_chat_turn_f510bef9d1ea4681: 276,715 tokens, 2026-09-07 (oauth)
 };
 

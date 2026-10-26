@@ -112,6 +112,13 @@ export const CHECKPOINT_KEEP_RECENT = 8;
  *  boundary advances every message and the prefix churns again. */
 export const CHECKPOINT_REFRESH_MIN_GROWTH = 12;
 
+// ─── Finished-turn tool results (context-manager/prune-tool-results.ts) ─────
+
+/** A tool result from a turn before the last one is stubbed in the model's
+ *  view unless it is this short: an error line or a one-word answer carries
+ *  more than its stub would, and costs nothing to keep. */
+export const PRUNED_RESULT_KEEP_CHARS = 200;
+
 // ─── Manual compaction keep count (consumed by routes/chat/compact-route.ts) ─
 
 /**

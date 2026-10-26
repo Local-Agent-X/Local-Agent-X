@@ -79,6 +79,24 @@ describe("classifySensitivePage — host authoritative at every level", () => {
 		}
 	});
 
+	// The user's own app in development: testing its auth flow asked on every
+	// read, in Autonomous too (2026-10-26). Loopback only — a LAN address is
+	// someone's machine, and a host signal is never a path signal.
+	it("no path signal classifies on a loopback host, at any level", () => {
+		const paths = ["/forgot-password", "/account-recovery/start", "/settings/ssh-keys", "/private-keys", "/passwords", "/vault", "/settings/api-keys", "/certificates"];
+		for (const level of LEVELS) {
+			state.level = level;
+			for (const origin of ["http://localhost:5173", "http://127.0.0.1:3000", "http://[::1]:8080"]) {
+				for (const path of paths) expect(classifySensitivePage(origin + path), `${level} ${origin}${path}`).toBeNull();
+			}
+			expect(classifySensitivePage("http://192.168.1.20:5173/forgot-password")?.category).toBe("account recovery");
+			expect(classifySensitivePage("https://randomsaas.com/forgot-password")?.category).toBe("account recovery");
+		}
+		state.level = "ask";
+		expect(sensitivePageActionDecision("http://localhost:5173/forgot-password", "snapshot").disposition).toBe("allow");
+		expect(sensitivePageActionDecision("http://localhost:5173/settings/api-keys", "extract").disposition).toBe("allow");
+	});
+
 	// The admin-panel / financial path groups stay dropped at EVERY level.
 	it.each([
 		["billing", "https://randomsaas.com/billing"],

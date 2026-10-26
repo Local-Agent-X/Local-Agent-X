@@ -30,6 +30,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { getRuntimeConfig } from "../config.js";
 import { loadSettings } from "../settings.js";
 import type { BrowserSecrecy } from "../types/lax-config.js";
+import { isLoopbackHost } from "../security/layer/ip-classification.js";
 
 export type SensitivePageCategory =
   | "password manager"
@@ -150,8 +151,10 @@ export function sensitivePageStub(rawUrl: string): string | null {
  *
  * KEPT — HOST (always authoritative): cloud-metadata IPs; password-manager
  *   hosts; cloud consoles; known bank & payment hosts + `bank.`/`banking.`.
- * KEPT — PATH (specific enough on ANY host, every level): account-recovery /
- *   reset-password flows; literal key-material pages (private/ssh/signing keys).
+ * KEPT — PATH (specific enough on any host but loopback, every level):
+ *   account-recovery / reset-password flows; literal key-material pages
+ *   (private/ssh/signing keys). On localhost every PATH signal is off: that is
+ *   the user's own app in development.
  * LEVEL-GATED — PATH (only at "lockdown" and "ask", where the outcome is a
  *   visible prompt or an explicitly-chosen lockdown): /passwords /vault →
  *   password manager; /api-keys /certificates → private key management.
@@ -172,10 +175,15 @@ export function classifySensitivePage(rawUrl: string): { category: SensitivePage
   if (/(^|\.)(1password|bitwarden|lastpass|dashlane)\.(com|eu)$/.test(host) || host.endsWith(".keepersecurity.com")) {
     return { category: "password manager", page: secretPage };
   }
-  if (/\/(recover|recovery|forgot-password|reset-password|account-recovery)(\/|$)/.test(path)) return { category: "account recovery", page: secretPage };
-  if (/\/(private-?keys?|ssh-keys?|signing-keys?)(\/|$)/.test(path)) return { category: "private key management", page: secretPage };
+  // A path word on a loopback host is the user's own app in development (its
+  // /forgot-password flow, its /api-keys screen), not someone's account: each
+  // read of it asked, in Autonomous too (Peter's call, 2026-10-26). The HOST
+  // signals around this still apply; LAX's own UI serves none of these paths.
+  const ownDevApp = isLoopbackHost(host.replace(/^\[|\]$/g, ""));
+  if (!ownDevApp && /\/(recover|recovery|forgot-password|reset-password|account-recovery)(\/|$)/.test(path)) return { category: "account recovery", page: secretPage };
+  if (!ownDevApp && /\/(private-?keys?|ssh-keys?|signing-keys?)(\/|$)/.test(path)) return { category: "private key management", page: secretPage };
   const level = browserSecrecyLevel();
-  if (level === "lockdown" || level === "ask") {
+  if (!ownDevApp && (level === "lockdown" || level === "ask")) {
     if (/\/(passwords?|vault)(\/|$)/.test(path)) return { category: "password manager", page: secretPage };
     if (/\/(api-keys?|certificates?)(\/|$)/.test(path)) return { category: "private key management", page: secretPage };
   }

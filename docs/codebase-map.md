@@ -13,18 +13,18 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1865 non-test source files · 92 oversized · 242 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1866 non-test source files · 92 oversized · 243 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 171 | 29 | XL | 1 |
-| `src/security/` | 131 | 53 | XL | 3 |
-| `src/tools/` | 118 | 219 | XL | 9 |
+| `src/security/` | 132 | 53 | XL | 3 |
+| `src/tools/` | 118 | 220 | XL | 9 |
 | `src/tool-execution/` | 82 | 76 | XL | 2 |
 | `src/canonical-loop/` | 80 | 274 | XL | 13 |
-| `src/workspace/` | 77 | 3 | M |  |
+| `src/workspace/` | 78 | 3 | M |  |
 | `src/providers/` | 69 | 26 | L | 1 |
 | `src/memory/` | 52 | 138 | XL | 7 |
 | `src/data-lineage/` | 51 | 11 | M |  |
@@ -568,6 +568,7 @@ job. Comments are free: never cut them to fit.
 - `src/tools/email-delete-sweep.ts#movePage` — 60+ own code lines (cap 100)
 - `src/tools/email-mutate-tools.ts#emailDelete.execute` — 60+ own code lines (cap 100)
 - `src/tools/grep-context.ts#fallbackSearch` — 60+ own code lines (cap 100)
+- `src/tools/http-request.ts#createHttpRequestTool` — 60+ own code lines (cap 100)
 - `src/tools/image-tools/edit-image.ts#editImageTool.execute` — 60+ own code lines (cap 100)
 - `src/tools/pdf-tools.ts#pdfCreate.execute` — 60+ own code lines (cap 100)
 - `src/tools/process-session.ts#startSession` — 60+ own code lines (cap 100)

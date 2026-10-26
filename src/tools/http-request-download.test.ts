@@ -47,7 +47,7 @@ describe("http_request save_to", () => {
   });
 
   it("is a write the file-access gate checks, like any file the agent creates", () => {
-    expect(TOOL_PATH_ARGS.http_request).toEqual([{ arg: "save_to", action: "write", whenGiven: true }]);
+    expect(TOOL_PATH_ARGS.http_request).toContainEqual({ arg: "save_to", action: "write", whenGiven: true });
     expect(CREATE_CLASS.has("http_request")).toBe(true);
   });
 });

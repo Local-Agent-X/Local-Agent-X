@@ -17,6 +17,7 @@ import { paidMediaApisAllowed, paidMediaEndpointKind, paidMediaOffMessage } from
 import { SecretRedirectStopped, startingHeaders } from "./http-request-transport.js";
 import { saveResponseBody } from "./http-download.js";
 import { resolveAgentPath } from "../workspace/paths.js";
+import { bodyFromFile } from "./http-body-file.js";
 
 export { isCredentialHeader } from "./web-egress.js";
 
@@ -65,6 +66,14 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
           description:
             "Request body as a string. Supports {{SECRET_NAME}} placeholders. For JSON APIs, pass a JSON string and set Content-Type header to application/json.",
         },
+        body_file: {
+          type: "string",
+          description: "Send this file as the body instead of `body` (never retype a file). Its {{SECRET}} text is not resolved.",
+        },
+        body_file_field: {
+          type: "string",
+          description: "With body_file: send {\"<field>\": <file text>} as JSON, e.g. \"query\".",
+        },
         timeout: {
           type: "number",
           description: "Timeout in milliseconds (default: 30000 = 30s, max: 120000 = 2min)",
@@ -97,10 +106,10 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
         });
       }
 
-      const guard = checkOutboundRequest(
-        { url, method, body: args.body, headers: args.headers },
-        vouchedFor("http_request", args, sessionIdOf(args) ?? ""),
-      );
+      const fromFile = bodyFromFile(args, sessionIdOf(args));
+      if (fromFile && "error" in fromFile) return err(fromFile.error, { recovery: "Fix body_file (or pass the body inline) and retry." });
+
+      const guard = checkOutboundRequest({ url, method, body: fromFile ? fromFile.body : args.body, headers: args.headers }, vouchedFor("http_request", args, sessionIdOf(args) ?? ""));
       if (guard) return err(guard.message, guard.meta);
 
       const { headers, modelHeaders: rawHeaders, selfAuth, droppedNote, droppedMeta } = await startingHeaders(url, args.headers);
@@ -128,7 +137,8 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
       const unapprovedAt = (location: string): string[] =>
         boundNames.filter((name) => secrets!.destinationDecision(name, location, { sessionId }) === "ask");
       for (const [key, value] of rawHeaders) headers[key] = secrets ? secrets.resolve(value) : value;
-      if (bodyStr && secrets) bodyStr = secrets.resolve(bodyStr);
+      // A file's {{NAME}} text is sent as written: only the inline body resolves.
+      bodyStr = fromFile ? fromFile.body : bodyStr && secrets ? secrets.resolve(bodyStr) : bodyStr;
       if (args.idempotency_key && !Object.keys(headers).some(key =>
         ["idempotency-key", "x-idempotency-key"].includes(key.toLowerCase()),
       )) {

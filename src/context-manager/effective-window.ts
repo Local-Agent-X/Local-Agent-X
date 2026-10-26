@@ -51,7 +51,7 @@ export const CLI_EFFECTIVE_WINDOW = 200_000;
  */
 export const SUBSCRIPTION_PROVEN_WINDOWS: Record<string, number> = {
   "claude-opus-5": 425_000,   // op_chat_turn_03762399d7564b73: 425,357 tokens, 2026-09-03 (oauth)
-  "claude-opus-5-5": 330_000, // op_chat_turn_7d32a0aa14eb41dd: 330,873 tokens, 2026-09-28Z
+  "claude-opus-5-5": 435_000, // op_chat_turn_61aaead1600e4e90 round 37: 435,070 tokens (433,775 cache read), 2026-10-26Z (cli)
   "claude-opus-4-8": 276_000, // op_chat_turn_f510bef9d1ea4681: 276,715 tokens, 2026-09-07 (oauth)
 };
 

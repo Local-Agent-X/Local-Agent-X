@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1860 non-test source files · 92 oversized · 242 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1861 non-test source files · 92 oversized · 242 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -23,7 +23,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/security/` | 130 | 53 | XL | 3 |
 | `src/tools/` | 118 | 219 | XL | 9 |
 | `src/tool-execution/` | 82 | 72 | XL | 2 |
-| `src/canonical-loop/` | 80 | 273 | XL | 13 |
+| `src/canonical-loop/` | 80 | 274 | XL | 13 |
 | `src/workspace/` | 77 | 3 | M |  |
 | `src/providers/` | 69 | 26 | L | 1 |
 | `src/memory/` | 52 | 138 | XL | 7 |
@@ -39,7 +39,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/agency/` | 29 | 21 | L |  |
 | `src/agent-store/` | 27 | 7 | M | 1 |
 | `src/context/` | 26 | 11 | M | 1 |
-| `src/context-manager/` | 25 | 15 | M |  |
+| `src/context-manager/` | 26 | 15 | M |  |
 | `src/classifiers/` | 24 | 16 | L |  |
 | `src/agent-request/` | 23 | 15 | L | 3 |
 | `src/app-runtime/` | 23 | 12 | M |  |
@@ -474,7 +474,7 @@ job. Comments are free: never cut them to fit.
 - `src/canonical-loop/soak-metrics.ts#recordCanonicalEvent` — 70+ own code lines (cap 100)
 - `src/canonical-loop/state-machine.ts#transitionOp` — 70+ own code lines (cap 100)
 - `src/canonical-loop/turn-loop/build-input.ts#buildTurnInput` — 70+ own code lines (cap 100)
-- `src/canonical-loop/turn-loop/compact-history.ts#compactHistory` — 70+ own code lines (cap 100)
+- `src/canonical-loop/turn-loop/compact-history.ts#summarizeOverThreshold` — 70+ own code lines (cap 100)
 - `src/chat-ws/manager.ts#onEvent` — 70+ own code lines (cap 100)
 - `src/codex-client/stream-parse.ts#finalizeCompleted` — 70+ own code lines (cap 100)
 - `src/codex-message-convert.ts#convertMessagesToInput` — 70+ own code lines (cap 100)

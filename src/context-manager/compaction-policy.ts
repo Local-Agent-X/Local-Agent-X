@@ -30,8 +30,10 @@
 // in a harness with many since-fixed bugs; it did not reproduce.
 //
 // The keep units still differ by lane on purpose:
-//   - the turn loop keeps a token-pressure-tiered COUNT of rows (6/4/2)
-//     because it resizes per turn against the model window;
+//   - the turn loop keeps a token-pressure-tiered COUNT of rows (6/4/2),
+//     widened in the default band to a token budget (TURN_TAIL_WINDOW_SHARE),
+//     because it resizes per turn against the model window; before any of
+//     that it stubs older rounds' tool output (PRUNE_KEEP_TOOL_ROUNDS);
 //   - the chat lane keeps a flat per-channel row count (40 web / 30
 //     otherwise) because it truncates before token sizing ever runs.
 
@@ -92,6 +94,23 @@ export const TURN_KEEP_TIERS = {
  */
 export const TURN_SUMMARY_REFRESH_MIN_GROWTH = 10;
 
+/**
+ * In the default band the turn loop keeps, after a summary, as many recent rows
+ * verbatim as fit in this share of the window — never fewer than the keep
+ * tier's count, and never more than half the conversation's own tokens, so a
+ * summary always frees at least half of it even when the system prompt is the
+ * bulk of the window. Six rows is three tool calls of working memory; a fifth
+ * of a measured window is the recent stretch a coding agent keeps referring
+ * back to. The tight and aggressive tiers, and a forced pass, keep their counts:
+ * there the estimate may already be low.
+ */
+export const TURN_TAIL_WINDOW_SHARE = 0.2;
+
+export function turnTailBudgetTokens(percentage: number, forced: boolean, windowTokens: number, conversationTokens: number): number {
+	if (forced || percentage >= TURN_KEEP_TIERS.tightAtPct) return 0;
+	return Math.floor(Math.min(windowTokens * TURN_TAIL_WINDOW_SHARE, conversationTokens / 2));
+}
+
 export function turnCompactionKeepLast(percentage: number, forced: boolean): number {
 	let keepLast: number = TURN_KEEP_TIERS.default;
 	if (percentage >= TURN_KEEP_TIERS.tightAtPct) keepLast = TURN_KEEP_TIERS.tight;
@@ -131,6 +150,22 @@ export const CHECKPOINT_REFRESH_MIN_GROWTH = 12;
  *  view unless it is this short: an error line or a one-word answer carries
  *  more than its stub would, and costs nothing to keep. */
 export const PRUNED_RESULT_KEEP_CHARS = 200;
+
+// ─── Tool rounds inside one op (canonical-loop/turn-loop/prune-tool-rounds.ts) ─
+
+/**
+ * Inside one long op — a code task, an agent job — every tool call answers the
+ * same user message, so the finished-turn prune above never fires and the raw
+ * output of dozens of rounds stays in view until the summary at "Compact at".
+ * Output older than the newest PRUNE_KEEP_TOOL_ROUNDS rounds is stubbed instead,
+ * in batches: the boundary moves only when moving it takes out at least
+ * PRUNE_BATCH_MIN_RECLAIM_TOKENS, so the view before the old boundary stays
+ * byte-identical and a local runtime re-reads only the stretch after it. A result
+ * no longer than PRUNE_MIN_RESULT_CHARS is kept; it costs less than it says.
+ */
+export const PRUNE_KEEP_TOOL_ROUNDS = 6;
+export const PRUNE_BATCH_MIN_RECLAIM_TOKENS = 16_384;
+export const PRUNE_MIN_RESULT_CHARS = 1_500;
 
 // ─── Manual compaction keep count (consumed by routes/chat/compact-route.ts) ─
 

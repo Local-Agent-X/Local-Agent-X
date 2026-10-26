@@ -14,6 +14,7 @@ DECISIONS: bullet list of choices the user explicitly made or approved (technolo
 CONSTRAINTS: bullet list of "must do" / "must not do" rules the user stated. Preserve every "do NOT use X", "always Y", "must support Z". This is the highest-priority section — never drop a constraint.
 FACTS_ABOUT_USER: bullet list of durable user facts mentioned (preferences, projects they own, tools they use). Skip transient mood.
 OUTSTANDING_ASKS: bullet list of work the user requested that wasn't yet completed. An ask marked "[assistant's reply omitted — it was given at the time]" was answered; list it only if a later message shows it still open.
+WORK_DONE: bullet list of what the agent's tool calls changed or established — files created or edited (by path), commands, builds and tests run and whether they passed, errors still unresolved. Paths, names and pass/fail results exactly as they appear.
 CURRENT_TASK_STATE: one paragraph — what is the agent in the middle of doing right now?
 
 Rules:

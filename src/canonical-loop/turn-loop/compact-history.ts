@@ -13,7 +13,8 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import type { CanonicalMessage } from "../contract-types.js";
 import type { LastTurnUsage } from "../op-usage.js";
 import { getContextStatus } from "../../context-manager/status.js";
-import { turnCompactionKeepLast } from "../../context-manager/compaction-policy.js";
+import { turnCompactionKeepLast, turnTailBudgetTokens } from "../../context-manager/compaction-policy.js";
+import { messageTokens } from "../../context-manager/token-estimation.js";
 import type { AnthropicTransport } from "../../context-manager/effective-window.js";
 import type { TokenAnchor } from "../../context-manager/token-estimation.js";
 import { summarizeOldMessages } from "../../context-manager/compaction.js";
@@ -25,6 +26,7 @@ import {
   recordBreakerSuccess,
 } from "./compact-breaker.js";
 import { opMessageRowToChatParam } from "../chat-runner/message-convert.js";
+import { pruneToolRounds } from "./prune-tool-rounds.js";
 import { extractText, extractToolResultText } from "./content-extract.js";
 import { TOOL_RESULT_ROW_PREFIX } from "../../harness-text.js";
 import { createLogger } from "../../logger.js";
@@ -185,7 +187,27 @@ export interface CompactHistoryResult {
   compacted: boolean;
 }
 
+/**
+ * The view for this turn: older rounds' tool output stubbed in batches
+ * (prune-tool-rounds.ts), then, past "Compact at", the head summarized.
+ * Pruning first is what keeps a long tool loop out of the summarizer: the bulk
+ * of an op is file dumps, and those come back by re-reading, not by summary.
+ */
 export async function compactHistory(
+  messages: CanonicalMessage[],
+  model: string,
+  usage?: LastTurnUsage | null,
+  opId?: string,
+  baselineTokens = 0,
+  sessionBacked = true,
+  transport: AnthropicTransport = "cli",
+): Promise<CompactHistoryResult> {
+  const pruned = pruneToolRounds(messages, opId);
+  const result = await summarizeOverThreshold(pruned.messages, model, usage, opId, baselineTokens, sessionBacked, transport);
+  return { messages: result.messages, compacted: result.compacted || pruned.changed };
+}
+
+async function summarizeOverThreshold(
   messages: CanonicalMessage[],
   model: string,
   // Real usage of the op's last recorded turn (op-usage.ts lastTurnUsage).
@@ -226,7 +248,9 @@ export async function compactHistory(
   // context-manager/compaction-policy.ts owns the values.
   const keepLast = turnCompactionKeepLast(status.percentage, forced);
 
-  const splitIdx = safeSplitIndex(messages, keepLast);
+  const params = toChatParams(messages);
+  const tailBudget = turnTailBudgetTokens(status.percentage, forced, status.maxTokens, params.reduce((sum, p) => sum + messageTokens(p), 0));
+  const splitIdx = Math.min(safeSplitIndex(messages, keepLast), tailBudgetSplit(messages, params, tailBudget));
   if (splitIdx <= 0) return { messages, compacted: false };
 
   // Summary STABILITY (compact-summary-cache.ts): the view is never persisted,
@@ -307,6 +331,7 @@ export async function compactHistory(
   const block = summary
     ? `[Earlier conversation auto-summarized to save context — ${head.length} messages${rangeTag}]\n` +
       `${summary}\n` +
+      (recent.some(isAuthoredUserRow) ? "" : originalRequestLine(head)) +
       hint +
       `[End of summary. It is your own memory of that stretch, not a message from the user: ` +
       `the asks in it were answered when they were made, or are on your task list. ` +
@@ -381,6 +406,31 @@ function originalRequestLine(head: CanonicalMessage[]): string {
     ? `${text.slice(0, ORIGINAL_REQUEST_MAX_CHARS)}… [truncated]`
     : text;
   return `[The original request, verbatim:]\n${kept}\n`;
+}
+
+/** A row the user wrote, not a harness nudge (those carry a `kind`). */
+function isAuthoredUserRow(m: CanonicalMessage): boolean {
+  return m.role === "user" && !(m.content && typeof m.content === "object" && "kind" in m.content);
+}
+
+/**
+ * The earliest safe split whose tail fits in `budget` tokens. After a summary
+ * the tail is the model's working memory, and the keep tier's handful of rows
+ * left a tool loop seeing its last two or three calls. A budget of 0 (the tight
+ * tiers, a forced pass) leaves the tier's count alone.
+ */
+function tailBudgetSplit(messages: CanonicalMessage[], params: ChatCompletionMessageParam[], budget: number): number {
+  if (budget <= 0) return messages.length;
+  let used = 0;
+  let idx = messages.length;
+  while (idx > 0) {
+    const cost = messageTokens(params[idx - 1]);
+    if (used + cost > budget) break;
+    used += cost;
+    idx--;
+  }
+  while (idx < messages.length && (messages[idx].role === "tool_result" || messages[idx].role === "control")) idx++;
+  return idx;
 }
 
 function hasImages(content: unknown): boolean {

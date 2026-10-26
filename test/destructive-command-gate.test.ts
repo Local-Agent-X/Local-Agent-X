@@ -20,6 +20,16 @@ describe("isDestructiveCommand — flags irreversible shell operations", () => {
     ["git clean -fd", "git clean -f"],
     ["git clean -fdx", "git clean -f"],
     ["git branch -D feature", "git force-delete branch"],
+    // A literal that RUNS stays scanned: command substitution in double quotes,
+    // a destructive command beside a message, a body a shell executes.
+    ['git commit -m "$(rm -rf ~/work)"', "rm -rf"],
+    ["git commit -m \"`rm -rf ~/work`\"", "rm -rf"],
+    ['git commit -m "ok" && rm -rf dist', "rm -rf"],
+    ['git commit -m "ok"; git reset --hard HEAD~1', "git reset --hard"],
+    ['grep -rn "x" . && rm -r build', "rm -r"],
+    ['bash -c "rm -rf /tmp/x"', "rm -rf"],
+    ['echo "rm -rf ~" | sh', "rm -rf"],
+    ['grep "$(rm -rf ~)" file', "rm -rf"],
     ["git branch --delete --force feature", "git force-delete branch"],
     ["git branch -d -f feature", "git force-delete branch"],
     ["git branch -df feature", "git force-delete branch"],
@@ -78,6 +88,18 @@ describe("isDestructiveCommand — flags irreversible shell operations", () => {
     "rm -f file.txt",                  // -f on one file is not a tree
     "rm -v file.txt",
     "git rm -r --cached build",        // staged removal, undone from the index
+    // Quoted text no shell runs: a commit or tag message, a search pattern
+    // (both carded until 2026-10-26).
+    'git commit -m "drop the rm -r fallback"',
+    "git commit -qam 'git reset --hard was the wrong call'",
+    'git add -A && git commit -m "fix: rm -rf no longer used" && git push',
+    'git tag -a v1 --message="remove rm -rf from the docs"',
+    'grep -rn "git reset --hard" docs',
+    "rg -n 'rm -rf' src",
+    'grep -e "git push --force" -r .',
+    'Select-String -Path *.md -Pattern "Remove-Item -Recurse"',
+    'git log --oneline --grep="git clean -fd"',
+    'bash -c "git commit -m \'drop rm -rf\'"',
     // -d refuses a branch with unmerged commits, so it loses nothing. Verbatim
     // the cleanup that carded in Autonomous (2026-10-26).
     "cd \"/c/Users/peter/Scan Progress\" && git branch -d agent/field-agent-1-mvohb7r0",

@@ -310,6 +310,31 @@ const DESTRUCTIVE_COMMAND_PATTERNS: Array<{ pattern: RegExp; reason: string }> =
   { pattern: /\b(?:del|erase)\b(?:\s+\/\w+)*\s+\/s\b/i, reason: "del /s" },
 ];
 
+// Quoted text no shell will ever run: a git commit or tag message, and the
+// pattern a search command looks for. The patterns above scan the whole command
+// string on purpose (a `bash -c "rm -rf …"` body must still match, and a
+// quote-aware rewrite of this scan is the one migration the shell-path guard
+// lost coverage to, 2026-07-27). So nothing is parsed: only these two literal
+// shapes are blanked, and only when nothing inside them expands — a `$(…)` or a
+// backtick in a double-quoted string runs, so that string is left to be
+// scanned. `git commit -m "drop the rm -r fallback"` carded as "rm -r" and
+// `grep -rn "git reset --hard" docs` as "git reset --hard" (2026-10-26).
+const SINGLE_QUOTED = String.raw`'[^']*'`;
+const DOUBLE_QUOTED = String.raw`"(?:[^"\\]|\\.)*"`;
+const LITERAL = `(${SINGLE_QUOTED}|${DOUBLE_QUOTED})`;
+const COMMIT_MESSAGE = new RegExp(String.raw`(\bgit\b[^|;&]*?\s(?:commit|tag)\b[^|;&]*?\s(?:-[A-Za-z]*m|--message)(?:\s+|=))` + LITERAL, "g");
+const SEARCH_PATTERN = new RegExp(String.raw`(\b(?:grep|egrep|fgrep|rg|ag|ack|findstr)\b(?:\s+-{1,2}[\w-]+(?:=\S+)?)*\s+|\bSelect-String\b[^|;&]*?\s-Pattern\s+|\bgit\b[^|;&]*?\slog\b[^|;&]*?\s--grep(?:\s+|=))` + LITERAL, "gi");
+
+function runsNothing(literal: string): boolean {
+  return literal.startsWith("'") || !/\$\(|`/.test(literal);
+}
+
+/** The command with every data-only literal above blanked to `""`. */
+export function withoutInertLiterals(command: string): string {
+  const blank = (whole: string, lead: string, literal: string) => (runsNothing(literal) ? `${lead}""` : whole);
+  return command.replace(COMMIT_MESSAGE, blank).replace(SEARCH_PATTERN, blank);
+}
+
 /**
  * If a shell tool call is an irreversible/destructive operation, return a short
  * human reason; otherwise null. Used to force an approval prompt that bypasses
@@ -324,8 +349,9 @@ export function isDestructiveCommand(
   // they spawn the identical shell. Keyed on the tool name, process_start's
   // `git push --force` ran silently while the identical bash forced a confirm,
   // and app_serve_backend's command was never scanned at all.
-  const cmd = shellCommandOf(toolName, args);
-  if (cmd === undefined) return null;
+  const raw = shellCommandOf(toolName, args);
+  if (raw === undefined) return null;
+  const cmd = withoutInertLiterals(raw);
   for (const { pattern, reason } of DESTRUCTIVE_COMMAND_PATTERNS) {
     if (pattern.test(cmd)) return reason;
   }

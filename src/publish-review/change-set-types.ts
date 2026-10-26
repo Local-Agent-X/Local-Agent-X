@@ -57,8 +57,10 @@ export interface ChangeSetPart {
 export interface ChangeSet {
   parts: ChangeSetPart[];
   /** Publishing commands whose change set could not be determined, and why.
-   *  Never silently passed: the gate reports every one. */
-  unknown: Array<{ label: string; cwd: string; reason: string }>;
+   *  Never silently passed: the gate reports every one. `unsafe` marks one
+   *  refused because it could go somewhere or run something the review cannot
+   *  see (push-dry-run.ts), not merely one whose diff could not be computed. */
+  unknown: Array<{ label: string; cwd: string; reason: string; unsafe?: true }>;
   /** sha256 over every part's identity and every unknown reason — the key a
    *  verdict is cached under. A changed diff is a different fingerprint. */
   fingerprint: string;

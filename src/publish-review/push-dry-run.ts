@@ -72,7 +72,9 @@ const INERT_HTTP = new Set(["postbuffer", "lowspeedlimit", "lowspeedtime", "vers
 const GITHUB_TOKEN_HELPER = { key: "credential.https://github.com.helper", value: TOKEN_HELPER };
 const GITHUB_HTTPS = /^https:\/\/(?:[^/@]*@)?github\.com(?::443)?(?:\/|$)/i;
 
-export type DryRunResult = { ok: true; refs: RefUpdate[] } | { ok: false; reason: string };
+/** `unsafe`: refused because the push could go somewhere, send something or
+ *  run a program the review cannot see; a dry run that merely failed is not. */
+export type DryRunResult = { ok: true; refs: RefUpdate[] } | { ok: false; reason: string; unsafe?: true };
 
 /** What the push's command gives git besides its push arguments. */
 export type PushInvocation = Pick<PublishOperation, "gitOptions" | "gitEnv">;
@@ -161,15 +163,15 @@ export function dryRunArgv(passed: string[], helpers: Array<Pick<ConfigEntry, "k
 
 export async function pushDryRun(cwd: string, pushArgs: string[], invocation: PushInvocation): Promise<DryRunResult> {
   const invoked = refusePushInvocation(invocation);
-  if (invoked) return { ok: false, reason: invoked };
+  if (invoked) return { ok: false, reason: invoked, unsafe: true };
   if (pushArgs.some(executesProgram)) {
-    return { ok: false, reason: "the push names a custom --receive-pack/--exec program, which a dry run would execute; not run before approval" };
+    return { ok: false, reason: "the push names a custom --receive-pack/--exec program, which a dry run would execute; not run before approval", unsafe: true };
   }
   const passed = passThroughArgs(pushArgs);
   const refused = await refusePushTransport(cwd, passed);
-  if (refused) return { ok: false, reason: refused };
+  if (refused) return { ok: false, reason: refused, unsafe: true };
   const credentials = await userCredentialHelpers(cwd);
-  if (!credentials.ok) return credentials;
+  if (!credentials.ok) return { ...credentials, unsafe: true };
   const token = await githubTokenFor(cwd, passed, credentials.helpers);
   const helpers = token ? [...credentials.helpers, GITHUB_TOKEN_HELPER] : credentials.helpers;
   const r = await runGit(cwd, dryRunArgv(passed, helpers), {

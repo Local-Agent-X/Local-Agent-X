@@ -12,11 +12,14 @@
  *             records the override in the audit trail. Unattended: no override.
  *   FAILED / UNKNOWN, or AMBER / GREEN with another publish in the call
  *             that could not be reviewed
- *             nothing (or not all of it) was reviewed, and nothing ships
- *             unreviewed in ANY profile without the user's explicit yes (the
- *             owner's rule, 2026-09-28, after a live UNKNOWN under Power let a
- *             push out): the same always-ask card, worded "Push unreviewed",
- *             audited the same way; unattended: blocked.
+ *             nothing (or not all of it) was reviewed. A deploy, package
+ *             publish or release does not ship unreviewed in ANY profile
+ *             without the user's explicit yes (the owner's rule, 2026-09-28):
+ *             the same always-ask card, worded "Deploy unreviewed", audited the
+ *             same way; unattended: blocked. A call that only pushes to git
+ *             goes on to the profile's row like a reviewed one, and the model
+ *             reads that it went out unreviewed: pushing is routine work (the
+ *             owner, 2026-10-26; needsUserYes in publish-review-text.ts).
  *   AMBER / GREEN covering every publish in the call, EMPTY
  *             the profile's "publish" row decides (requireApprovalPhase); a
  *             card, if one is raised, carries the review, and the tool result
@@ -42,7 +45,7 @@ import type { PublishOperation } from "../publish-operation.js";
 import { changeSetIsEmpty, type ChangeSet } from "../publish-review/change-set-types.js";
 import type { PublishReview, PublishReviewRequest, PublishReviewRun } from "../canonical-loop/public/publish-review.js";
 import type { ToolCallContext } from "./context.js";
-import { needsOverride, reviewCardContext, reviewNoteForModel, reviewPreview, stopText, type StopReason } from "./publish-review-text.js";
+import { needsUserYes, reviewCardContext, reviewNoteForModel, reviewPreview, stopText, type StopReason } from "./publish-review-text.js";
 import { statusOf } from "../tools/result-helpers.js";
 import { createLogger } from "../logger.js";
 
@@ -91,7 +94,7 @@ function cached(sessionId: string, fingerprint: string, deps: GateDeps): Publish
 async function reviewFor(ctx: ToolCallContext, changeSet: ChangeSet, deps: GateDeps): Promise<PublishReview> {
   const sessionId = ctx.sessionId || "default";
   const summary = deps.summarize(changeSet);
-  const unknown = changeSet.unknown.map(({ label, reason }) => ({ label, reason }));
+  const unknown = changeSet.unknown.map(({ label, reason, unsafe }) => ({ label, reason, ...(unsafe ? { unsafe } : {}) }));
   const base = { fingerprint: changeSet.fingerprint, summary, unknown };
   if (changeSet.parts.length === 0) {
     return { ...base, status: "UNKNOWN", findings: [], reason: unknown.map((u) => u.reason).join("; ") };
@@ -147,7 +150,7 @@ export async function publishReviewGate(ctx: ToolCallContext, ops: PublishOperat
   if (ctx.signal?.aborted) {
     return { kind: "block", result: { content: `NOT RUN: the turn was stopped while ${op.label} was being reviewed.`, isError: true, status: "blocked", metadata: { layer: "approval", userHint: USER_HINTS.policy, recovery: "The user stopped the turn. Do not retry the publish; report what was left unpublished." } } };
   }
-  if (!needsOverride(review)) return { kind: "proceed", review, overridden: false };
+  if (!needsUserYes(review, ops)) return { kind: "proceed", review, overridden: false };
   return overrideOutcome(ctx, op, review);
 }
 

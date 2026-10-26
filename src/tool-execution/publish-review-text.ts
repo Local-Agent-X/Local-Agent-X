@@ -64,6 +64,21 @@ export function needsOverride(review: PublishReview): boolean {
   return review.status === "RED" || review.status === "FAILED" || review.status === "UNKNOWN" || review.unknown.length > 0;
 }
 
+/**
+ * Whether this publish waits for the user's yes before the profile decides it.
+ * A call that only pushes to git needs one over a RED finding, or a push the
+ * review refused as able to go somewhere or run something it cannot see (a
+ * redirecting -c url.*.insteadOf, a custom --receive-pack): pushing is
+ * routine work (the owner, 2026-10-26, after an unattended push the review could
+ * not cover sat waiting for an approval nobody could give), so a push the review
+ * could not cover goes out and the model reads that it went out unreviewed.
+ * A deploy, package publish or release still needs a yes for anything unreviewed.
+ */
+export function needsUserYes(review: PublishReview, ops: readonly PublishOperation[]): boolean {
+  if (ops.length > 0 && ops.every((op) => op.kind === "git-push")) return review.status === "RED" || review.unknown.some((u) => u.unsafe);
+  return needsOverride(review);
+}
+
 export type StopReason = "unattended" | "declined" | "unanswered" | "no-channel";
 
 /** What the model reads when the review stopped the publish: a RED verdict, a

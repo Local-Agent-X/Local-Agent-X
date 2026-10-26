@@ -59,7 +59,7 @@ export interface PublishReview {
   /** One line: what was reviewed. */
   summary: string;
   /** Publishing commands whose change set could not be determined. */
-  unknown: Array<{ label: string; reason: string }>;
+  unknown: Array<{ label: string; reason: string; unsafe?: true }>;
   /** Served from the per-session cache rather than a fresh review. */
   cached?: boolean;
 }

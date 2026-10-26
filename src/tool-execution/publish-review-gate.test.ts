@@ -195,19 +195,21 @@ describe("AMBER / GREEN — the profile's publish row decides", () => {
 });
 
 // The owner's rule (2026-09-28, after a live UNKNOWN under Power let a push
-// out unreviewed): "even autonomous users don't want unreviewed pushes."
-describe("FAILED / UNKNOWN — nothing ships unreviewed without the user's yes, in any profile", () => {
-  it("FAILED under Autonomous: an always-ask 'Push unreviewed' card; yes runs it and is audited as unreviewed", async () => {
+// out unreviewed) stands for deploys, package publishes and releases. A git
+// push is routine work and asks only when it is tainted (2026-10-26): a RED
+// finding, or a push refused as able to go or run where the review cannot see.
+describe("FAILED / UNKNOWN — a deploy does not ship unreviewed without the user's yes, in any profile", () => {
+  it("FAILED under Autonomous: an always-ask 'Deploy unreviewed' card; yes runs it and is audited as unreviewed", async () => {
     fake(FAILED);
     const events: ServerEvent[] = [];
     const s = session("Autonomous");
-    const c = ctx({ sessionId: s, answer: true, events });
+    const c = ctx({ sessionId: s, command: "vercel --prod", answer: true, events });
     expect((await requireApprovalPhase(c)).kind).toBe("continue");
     const [card] = cards(events);
     expect(card.rememberable).toBe(false);
     expect(card.context).toContain("Nothing was reviewed");
-    expect(card.context).toContain("Push unreviewed");
-    expect(card.preview).toMatchObject({ kind: "publish-review", status: "FAILED", overrideLabel: "Push unreviewed" });
+    expect(card.context).toContain("Deploy unreviewed");
+    expect(card.preview).toMatchObject({ kind: "publish-review", status: "FAILED", overrideLabel: "Deploy unreviewed" });
     const audit = getSharedAuditTrail(laxDir).getRecent(5).find((e) => e.event === "publish_review_overridden" && e.sessionId === s);
     expect(audit?.reason).toContain("could not run (FAILED: the review ran past its 4-minute deadline");
     c.result = { content: "pushed" };
@@ -232,10 +234,10 @@ describe("FAILED / UNKNOWN — nothing ships unreviewed without the user's yes, 
   });
 
   for (const lane of ["cron", "delegated", "api"] as const) {
-    it(`${lane} + Autonomous + FAILED: blocked, no card, no override`, async () => {
+    it(`${lane} + Autonomous + FAILED deploy: blocked, no card, no override`, async () => {
       fake(FAILED);
       const events: ServerEvent[] = [];
-      const c = ctx({ sessionId: session("Autonomous"), callContext: lane, events });
+      const c = ctx({ sessionId: session("Autonomous"), callContext: lane, command: "vercel --prod", events });
       expect((await requireApprovalPhase(c)).kind).toBe("halt");
       expect(cards(events)).toEqual([]);
       expect(c.result?.status).toBe("blocked");
@@ -254,7 +256,7 @@ describe("a publish that could not be reviewed rides along with one that was", (
   const REFUSED = "the command sets git config url.*.pushinsteadof (-c) for the push, which can change where it connects, what it sends or what it runs, and the review cannot apply it; not run before approval";
   const partial = (next: PublishReviewRun): Fake => {
     const f = fake(next);
-    f.set = changeSet(`fp-partial-${seq}`, { unknown: [{ label: SECOND, cwd: "/repo", reason: REFUSED }] });
+    f.set = changeSet(`fp-partial-${seq}`, { unknown: [{ label: SECOND, cwd: "/repo", reason: REFUSED, unsafe: true }] });
     return f;
   };
 
@@ -457,5 +459,41 @@ describe("announcePublishReview — the user sees the findings without the model
     a.result = { content: "rejected: non-fast-forward", isError: true };
     announcePublishReview(a);
     expect(failed.some((e) => e.type === "review_notice")).toBe(false);
+  });
+});
+
+describe("a git push is routine: it asks only when it is tainted", () => {
+  for (const lane of ["local", "cron"] as const) {
+    it(`${lane} + Power + FAILED review: the push runs, no card, and the model reads it went out unreviewed`, async () => {
+      fake(FAILED);
+      const events: ServerEvent[] = [];
+      const c = ctx({ sessionId: session("Power"), callContext: lane, events });
+      expect((await requireApprovalPhase(c)).kind).toBe("continue");
+      expect(cards(events)).toEqual([]);
+      c.result = { content: "pushed" };
+      attachPublishReviewNote(c);
+      expect(lastText(c)).toContain("This publish was NOT reviewed");
+    });
+  }
+
+  it("a push whose change set could not be worked out runs, with no review", async () => {
+    const f = fake(GREEN);
+    f.set = changeSet("fp-benign", { parts: [], unknown: [{ label: "git push origin main", cwd: "/repo", reason: "git push --dry-run failed: could not read Username" }] });
+    const events: ServerEvent[] = [];
+    expect((await requireApprovalPhase(ctx({ sessionId: session("Power"), callContext: "cron", events }))).kind).toBe("continue");
+    expect(f.reviews).toBe(0);
+    expect(cards(events)).toEqual([]);
+  });
+
+  it("a push refused as able to go somewhere the review cannot see still needs the user's yes", async () => {
+    const f = fake(GREEN);
+    f.set = changeSet("fp-unsafe", { parts: [], unknown: [{ label: "git push origin main", cwd: "/repo", reason: "the push names a custom --receive-pack/--exec program, which a dry run would execute; not run before approval", unsafe: true }] });
+    expect((await requireApprovalPhase(ctx({ sessionId: session("Autonomous"), callContext: "cron" }))).kind).toBe("halt");
+    expect(f.reviews).toBe(0);
+  });
+
+  it("a RED finding still blocks it", async () => {
+    fake(RED);
+    expect((await requireApprovalPhase(ctx({ sessionId: session("Autonomous"), callContext: "cron" }))).kind).toBe("halt");
   });
 });

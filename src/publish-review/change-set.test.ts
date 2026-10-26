@@ -114,6 +114,7 @@ describe("computeChangeSet — git push", () => {
     const cs = await computeChangeSet([push(["--receive-pack=touch pwned", "origin", "main"])]);
     expect(cs.parts).toEqual([]);
     expect(cs.unknown[0].reason).toMatch(/receive-pack/);
+    expect(cs.unknown[0].unsafe).toBe(true); // a git push still asks for this one
   });
 
   it("no test's dry run reaches a network remote (test-env.ts GIT_ALLOW_PROTOCOL)", async () => {
@@ -125,6 +126,7 @@ describe("computeChangeSet — git push", () => {
     const cs = await computeChangeSet([push(["no-such-remote", "main"])]);
     expect(cs.parts).toEqual([]);
     expect(cs.unknown[0].reason).toMatch(/dry-run failed/);
+    expect(cs.unknown[0].unsafe).toBeUndefined(); // merely failed: a git push goes on
   });
 
   it("the fingerprint is stable for the same change set and moves when the diff does", async () => {
@@ -151,6 +153,7 @@ describe("computeChangeSet — a push's own git options and environment", () => 
     const cs = await computeChangeSet(ops(`git -c url.${slashes(evil)}.pushInsteadOf=${slashes(remote)} push ${slashes(remote)} main`));
     expect(cs.parts).toEqual([]);
     expect(cs.unknown[0].reason).toMatch(/pushinsteadof/);
+    expect(cs.unknown[0].unsafe).toBe(true);
   });
 
   it("a variable set for the push is unknown, however it is set", async () => {

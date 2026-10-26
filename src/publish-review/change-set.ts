@@ -36,7 +36,7 @@ import {
   pickRemote, previousTag, remoteDefaultRef, repoRootOf, untrackedFiles, upstreamOf,
 } from "./git-queries.js";
 
-type PartResult = ChangeSetPart | { reason: string };
+type PartResult = ChangeSetPart | { reason: string; unsafe?: true };
 
 export async function computeChangeSet(ops: PublishOperation[]): Promise<ChangeSet> {
   const parts: ChangeSetPart[] = [];
@@ -47,7 +47,7 @@ export async function computeChangeSet(ops: PublishOperation[]): Promise<ChangeS
     if (seen.has(key)) continue;
     seen.add(key);
     const result = await partFor(op);
-    if ("reason" in result) unknown.push({ label: op.label, cwd: op.cwd, reason: result.reason });
+    if ("reason" in result) unknown.push({ label: op.label, cwd: op.cwd, reason: result.reason, ...(result.unsafe ? { unsafe: true as const } : {}) });
     else parts.push(result);
   }
   const identity = [
@@ -72,7 +72,7 @@ async function partFor(op: PublishOperation): Promise<PartResult> {
 
 async function pushPart(op: PublishOperation, root: string): Promise<PartResult> {
   const dry = await pushDryRun(op.cwd, op.pushArgs ?? [], op);
-  if (!dry.ok) return { reason: dry.reason };
+  if (!dry.ok) return { reason: dry.reason, ...(dry.unsafe ? { unsafe: true as const } : {}) };
   const remote = await pickRemote(root, op.pushArgs);
   const defaultRef = await remoteDefaultRef(root, remote);
   const refs: RefUpdate[] = [];

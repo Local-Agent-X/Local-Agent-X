@@ -2,12 +2,12 @@ import type { SessionSummary } from "../broker-transport/vendor/index.js";
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { isHarnessRow } from "../harness-rows.js";
 import { join } from "node:path";
-import { randomBytes } from "node:crypto";
 import type { RouteHandler } from "../server-context.js";
-import { isValidSessionId, safeErrorMessage, readBody, safeParseBody, jsonResponse } from "../server-utils.js";
+import { isValidSessionId, safeErrorMessage, safeParseBody, jsonResponse } from "../server-utils.js";
 import { exportSession, importSession } from "../session/export.js";
 import { loadSessionPage } from "../progressive-loader.js";
 import { isExcludedFromSessionSummaries, isHiddenFromChatLists } from "../memory/synthetic-sessions.js";
+import { handleSessionFork } from "./sessions-fork.js";
 
 export const handleSessionRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
@@ -82,34 +82,9 @@ export const handleSessionRoutes: RouteHandler = async (method, url, req, res, c
     return true;
   }
 
-  // Fork session
+  // Fork session (sessions-fork.ts)
   if (method === "POST" && url.pathname === "/api/sessions/fork") {
-    let body: Record<string, unknown>;
-    try { body = JSON.parse(await readBody(req)); } catch { json(400, { error: "Invalid JSON" }); return true; }
-    const sourceId = String(body.sessionId || "");
-    const atIndex = typeof body.atIndex === "number" ? body.atIndex : -1;
-    if (!sourceId || !isValidSessionId(sourceId)) { json(400, { error: "Invalid session ID" }); return true; }
-    // Fork persists a slice of the transcript — flush the bridge so the fork
-    // can't miss the source's last turn.
-    await ctx.flushSession(sourceId);
-    const source = ctx.getOrCreateSession(sourceId);
-    if (atIndex < 0 || atIndex >= source.messages.length) { json(400, { error: "Invalid message index" }); return true; }
-    const forkId = `fork-${randomBytes(8).toString("hex")}`;
-    // Never end a fork on a harness row: a nudge is not a message the user
-    // could have clicked, and a fork ending there would open with the
-    // harness's own instruction as its last turn.
-    let sliceEnd = atIndex + 1;
-    while (sliceEnd > 0 && isHarnessRow(source.messages[sliceEnd - 1])) sliceEnd--;
-    const forkedMessages = source.messages.slice(0, sliceEnd);
-    const forkSession = {
-      id: forkId, title: `Fork: ${source.title}`,
-      messages: JSON.parse(JSON.stringify(forkedMessages)),
-      createdAt: Date.now(), updatedAt: Date.now(),
-      forkedFrom: sourceId,
-      forkAtIndex: atIndex,
-    };
-    ctx.saveSession(forkSession);
-    json(200, { ok: true, forkId, title: forkSession.title, messageCount: forkedMessages.length });
+    await handleSessionFork(req, res, ctx);
     return true;
   }
 

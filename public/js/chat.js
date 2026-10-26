@@ -66,6 +66,50 @@ async function forkAtMessage(msgIndex) {
   }
 }
 
+/**
+ * Continue a chat as a code session: a fork of the whole conversation that is
+ * a code session (fewer prompt parts, the coding kit up front) in the chat's
+ * project folder, compacted first when it is long, so the work goes on with
+ * the context the coding needs instead of everything the chat accumulated.
+ * A session's mode is fixed at creation, so this is how a chat "switches".
+ */
+async function continueInCodeSession(chatId, e) {
+  if (e) e.stopPropagation();
+  const chat = chats.find(c => c.id === chatId);
+  if (!chat || !chat.messages.length) return;
+  try {
+    const res = await apiFetch('/api/sessions/fork', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: chat.id, atIndex: chat.messages.length - 1, mode: 'code' }),
+    });
+    const data = await res.json();
+    if (!data.ok) return;
+    let messages = chat.messages.map(m => ({ role: m.role, content: m.content }));
+    if (messages.length >= 10) {
+      // The same compaction the Compact button runs; the server's transcript is
+      // the truth, so the sidebar copy is reloaded from it.
+      await apiFetch('/api/compact', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: data.forkId }) });
+      try {
+        const fresh = await (await apiFetch(`/api/sessions/${encodeURIComponent(data.forkId)}/messages`)).json();
+        if (Array.isArray(fresh.messages)) messages = fresh.messages.map(m => ({ role: m.role, content: m.content }));
+      } catch {}
+    }
+    const codeChat = {
+      id: data.forkId, title: data.title, mode: 'code', messages,
+      createdAt: Date.now(), updatedAt: Date.now(),
+      forkedFrom: chat.id, forkAtIndex: chat.messages.length - 1,
+    };
+    if (chat.projectId) codeChat.projectId = chat.projectId;
+    chats.unshift(codeChat);
+    saveChats();
+    if (typeof setSidebarMode === 'function') setSidebarMode('code');
+    selectChat(data.forkId);
+  } catch (err) {
+    console.warn('[continue-in-code] Error:', err.message);
+  }
+}
+
 async function showForkTree() {
   if (!activeChat) return;
   const overlay = document.getElementById('fork-tree-overlay');

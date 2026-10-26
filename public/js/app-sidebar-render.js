@@ -98,6 +98,7 @@ function renderChatList() {
         <button class="chat-action-btn" onclick="renameChat('${c.id}',event)" title="Rename" aria-label="Rename chat">&#9998;</button>
         <button class="chat-action-btn" onclick="showMoveMenu('${c.id}',event)" title="Move to project" aria-label="Move chat to project">&#128193;</button>
         <button class="chat-action-btn" onclick="togglePinChat('${c.id}',event)" title="${isPinned ? 'Unpin' : 'Pin'}" aria-label="${isPinned ? 'Unpin chat' : 'Pin chat'}">${isPinned ? '&#128204;' : '&#128392;'}</button>
+        <button class="chat-action-btn" onclick="continueInCodeSession('${c.id}',event)" title="Continue in a code session" aria-label="Continue in a code session">&#9000;</button>
         <button class="chat-action-btn" onclick="exportChat('${c.id}',event)" title="Export" aria-label="Export chat">&#128190;</button>
         <button class="chat-action-btn" onclick="archiveChat('${c.id}',event)" title="${c.archived ? 'Unarchive' : 'Archive'}" aria-label="${c.archived ? 'Unarchive chat' : 'Archive chat'}">${c.archived ? '&#128228;' : '&#128230;'}</button>
         <button class="chat-action-btn delete" onclick="deleteChat('${c.id}',event)" title="Delete" aria-label="Delete chat">&times;</button>

@@ -45,6 +45,10 @@ export function normalizeAnthropicModel(model: string, mode: AnthropicAuthMode =
   // Fable 5 — 1M context. Always-on thinking; the request layer must not send
   // budget_tokens/temperature on this id.
   if (matchesModelRef(lower, ["claude-fable-5", "claude-fable.5"]) || lower === "claude-fable-5[1m]") return "claude-fable-5";
+  // Sonnet 5.5 / Haiku 5.5 (1M context, 128K output). Own ids, matched before
+  // Sonnet 5 so the dotted alias never lands on Sonnet 5's request shape.
+  if (matchesModelRef(lower, ["claude-sonnet-5-5", "claude-sonnet-5.5"]) || lower === "claude-sonnet-5-5[1m]") return "claude-sonnet-5-5";
+  if (matchesModelRef(lower, ["claude-haiku-5-5", "claude-haiku-5.5"])) return "claude-haiku-5-5";
   // Sonnet 5 — Claude 5 balanced tier (1M context). Same adaptive-only request
   // shape as Fable 5: the request layer must not send budget_tokens/temperature.
   if (matchesModelRef(lower, ["claude-sonnet-5", "claude-sonnet.5"]) || lower === "claude-sonnet-5[1m]") return "claude-sonnet-5";
@@ -96,7 +100,9 @@ export function normalizeAnthropicModel(model: string, mode: AnthropicAuthMode =
  */
 export function anthropicUsesAdaptiveThinking(model: string): boolean {
   const m = normalizeAnthropicModel(model).toLowerCase();
-  return /^claude-(fable-5|mythos-5|opus-5-5|opus-5|opus-4-[678]|sonnet-5|sonnet-4-6)/.test(m);
+  // sonnet-5 also covers sonnet-5-5. haiku-5-5 is adaptive-only (a budget or a
+  // non-default temperature is a 400); haiku-4-5 keeps the legacy shape.
+  return /^claude-(fable-5|mythos-5|opus-5-5|opus-5|opus-4-[678]|sonnet-5|sonnet-4-6|haiku-5-5)/.test(m);
 }
 
 export type AnthropicThinkingOffMode = "omit" | "disabled-block" | "always-on";
@@ -130,8 +136,12 @@ export function anthropicThinkingOffMode(model: string): AnthropicThinkingOffMod
   // `claude-opus-5-5`, so without this line Opus 5.5 would inherit Opus 5's
   // "disabled-block" and put `thinking: {type: "disabled"}` on the wire for a
   // model that rejects it outright.
-  if (/^claude-(fable-5|mythos-5|opus-5-5)/.test(m)) return "always-on";
-  if (/^claude-(opus-5|sonnet-5|opus-4-[78])/.test(m)) return "disabled-block";
+  // sonnet-5-5 is here for the same reason: `^claude-sonnet-5` below matches it,
+  // and Sonnet 5.5 rejects `{type: "disabled"}` with a 400. Its own off-switch,
+  // `{type: "between_tools"}`, is not modelled; omitting runs adaptive, so it is
+  // always-on here and a caller lowers effort instead.
+  if (/^claude-(fable-5|mythos-5|opus-5-5|sonnet-5-5)/.test(m)) return "always-on";
+  if (/^claude-(opus-5|sonnet-5|opus-4-[78]|haiku-5-5)/.test(m)) return "disabled-block";
   return "omit";
 }
 
@@ -161,7 +171,7 @@ const EFFORT_NONE: readonly AnthropicEffort[] = [];
  */
 export function anthropicEffortLevels(model: string): readonly AnthropicEffort[] {
   const m = normalizeAnthropicModel(model).toLowerCase();
-  if (/^claude-(fable-5|mythos-5|opus-5-5|opus-5|opus-4-[78]|sonnet-5)/.test(m)) return EFFORT_FULL;
+  if (/^claude-(fable-5|mythos-5|opus-5-5|opus-5|opus-4-[78]|sonnet-5|haiku-5-5)/.test(m)) return EFFORT_FULL;
   if (/^claude-(opus-4-6|sonnet-4-6)/.test(m)) return EFFORT_NO_XHIGH;
   if (/^claude-opus-4-5/.test(m)) return EFFORT_LEGACY;
   return EFFORT_NONE;
@@ -199,8 +209,9 @@ export function resolveAnthropicEffort(
   // disabled block only at effort <= high. On 5.5 thinking cannot be disabled
   // at all, so `thinkingDisabled` never reaches the wire and must not silently
   // cost the caller xhigh/max.
-  const opus5 = /^claude-opus-5(?!-5)/.test(normalizeAnthropicModel(model).toLowerCase());
-  if (thinkingDisabled && opus5 && (effort === "xhigh" || effort === "max")) return undefined;
+  // Haiku 5.5 documents the same rule ("disabled only at high or below").
+  const disabledCeiling = /^claude-(opus-5(?!-5)|haiku-5-5)/.test(normalizeAnthropicModel(model).toLowerCase());
+  if (thinkingDisabled && disabledCeiling && (effort === "xhigh" || effort === "max")) return undefined;
   return effort;
 }
 
@@ -296,7 +307,7 @@ export function anthropicMaxOutputTokens(model: string): number {
   if (
     matchesModelRef(id, [
       "claude-fable-5", "claude-fable-5-1", "claude-mythos-5", "claude-mythos-5-1",
-      "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5",
+      "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-sonnet-5", "claude-haiku-5-5",
       "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-opus-4-5",
       "claude-sonnet-4-6", "claude-sonnet-4-5",
     ])

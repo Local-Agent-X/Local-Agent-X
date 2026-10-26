@@ -438,3 +438,41 @@ describe("Fable 5.1 / Mythos 5.1 — same collision, same rule", () => {
     expect(anthropicMaxOutputTokens("claude-mythos-5-1")).toBe(128_000);
   });
 });
+
+// Sonnet 5.5 and Haiku 5.5 (added 2026-10-26, when the weekly pricing recheck
+// found them upstream). The rules are prefix patterns, so `sonnet-5` already
+// matched `claude-sonnet-5-5` and put Sonnet 5's `thinking: {type: "disabled"}`
+// on the wire — a 400 on Sonnet 5.5 — while Haiku 5.5 matched nothing and got
+// the legacy budget_tokens shape, also a 400.
+describe("Claude Sonnet 5.5 and Haiku 5.5 get their own request shape", () => {
+  it("normalize to their own ids, never to Sonnet 5", () => {
+    expect(normalizeAnthropicModel("claude-sonnet-5.5")).toBe("claude-sonnet-5-5");
+    expect(normalizeAnthropicModel("claude-sonnet-5-5[1m]")).toBe("claude-sonnet-5-5");
+    expect(normalizeAnthropicModel("claude-haiku-5.5")).toBe("claude-haiku-5-5");
+    expect(normalizeAnthropicModel("claude-sonnet-5")).toBe("claude-sonnet-5");
+  });
+
+  it("both are adaptive-only with the full effort dial", () => {
+    for (const m of ["claude-sonnet-5-5", "claude-haiku-5-5"]) {
+      expect(anthropicUsesAdaptiveThinking(m), m).toBe(true);
+      expect(anthropicEffortLevels(m), m).toEqual(["low", "medium", "high", "xhigh", "max"]);
+      expect(anthropicMaxOutputTokens(m), m).toBe(128_000);
+    }
+  });
+
+  it("Sonnet 5.5 never gets a disabled block; Haiku 5.5 does, but only at effort high or below", () => {
+    expect(anthropicThinkingOffMode("claude-sonnet-5-5")).toBe("always-on");
+    expect(anthropicThinkingOffMode("claude-sonnet-5")).toBe("disabled-block");
+    expect(anthropicThinkingOffMode("claude-haiku-5-5")).toBe("disabled-block");
+    expect(resolveAnthropicEffort("claude-haiku-5-5", "max", true)).toBeUndefined();
+    expect(resolveAnthropicEffort("claude-haiku-5-5", "high", true)).toBe("high");
+    expect(resolveAnthropicEffort("claude-haiku-5-5", "max", false)).toBe("max");
+  });
+
+  it("are offered with a window", () => {
+    for (const m of ["claude-sonnet-5-5", "claude-haiku-5-5"]) {
+      expect(PROVIDERS.anthropic.models, m).toContain(m);
+      expect(lookupContextWindow(m), m).toBe(1_000_000);
+    }
+  });
+});

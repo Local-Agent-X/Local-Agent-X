@@ -38,6 +38,13 @@ export const PRICING: Record<string, ModelPricing> = {
   "claude-mythos-5-1": { input: 10, output: 50, cacheRead: 0.025 },
   "claude-mythos-5": { input: 10, output: 50 }, // platform.claude.com models overview 2026-09-27: reads at the standard 10%
   "claude-opus-5-5": { input: 4, output: 20, cacheRead: 0.05 },
+  // platform.claude.com pricing, read 2026-10-26: Sonnet 5.5 reads at 5% of
+  // input ($0.10/MTok), Haiku 5.5 at the standard 10% ($0.01). Haiku 5.5 bills
+  // $0.10/$0.50 up to a 100K-token prompt and $0.50/$2.50 beyond; the table has
+  // one rate per model, so the common short-prompt tier is the row (same
+  // trade-off as GPT-5.6's long-context tier below).
+  "claude-sonnet-5-5": { input: 2, output: 10, cacheRead: 0.05 },
+  "claude-haiku-5-5": { input: 0.1, output: 0.5 },
   "claude-sonnet-5": { input: 2, output: 10 },  // the 2026-08-31 intro rate became the standing rate
   "claude-opus-5": { input: 5, output: 25 },    // drop-in upgrade at Opus 4.8's pricing
   "claude-opus-4-8": { input: 5, output: 25 },
@@ -62,6 +69,7 @@ export const PRICING: Record<string, ModelPricing> = {
   // these numbers, so the cap under-counts on those requests. Do not "fix" this
   // by inflating the base rate — that over-charges the common case; it needs a
   // tiered shape, tracked separately.
+  "gpt-6.1-sol": { input: 2, output: 10, cacheRead: 0.05 },
   "gpt-6-astra": { input: 10, output: 50 },
   "gpt-6-sol": { input: 2, output: 10 },
   "gpt-6-luna": { input: 0.1, output: 0.5 },
@@ -86,11 +94,8 @@ export const PRICING: Record<string, ModelPricing> = {
   "gpt-4o-mini": { input: 0.15, output: 0.6, cacheRead: 0.5 },
   "gpt-4.1": { input: 2, output: 8, cacheRead: 0.25 },
   "gpt-4.1-mini": { input: 0.4, output: 1.6, cacheRead: 0.25 },
-  "gpt-4.1-nano": { input: 0.1, output: 0.4, cacheRead: 0.25 },
-  "o3-mini": { input: 1.1, output: 4.4, cacheRead: 0.5 },
   "o3-pro": { input: 20, output: 80 },
   "o3": { input: 2, output: 8, cacheRead: 0.25 },
-  "o4-mini": { input: 1.1, output: 4.4, cacheRead: 0.25 },
   // xAI (docs.x.ai/docs/models, read 2026-09-27: grok-4.7 / 4.6 / 4.5 $2/$6;
   // grok-4.3 + the 4.20 family $1.25/$2.50, cached $0.20). The undated 4.20
   // ids and grok-code-fast are LiteLLM-only aliases of the dated rows, priced
@@ -112,6 +117,7 @@ export const PRICING: Record<string, ModelPricing> = {
   // Gemini (≤200k context tier — ai.google.dev/gemini-api/docs/pricing, read
   // 2026-09-27). 3.6 / 3.7 / 3.8 Flash are promotional through 2026-12-31 and
   // double on 2027-01-01 — recheck then.
+  "gemini-4-argon": { input: 2, output: 10, cacheRead: 0.05 },
   "gemini-3.1-pro-preview": { input: 2, output: 12 },
   "gemini-2.5-pro": { input: 1.25, output: 10 },
   "gemini-3.8-flash": { input: 0.75, output: 3.75 },

@@ -39,9 +39,11 @@ export function detectObfuscation(command: string): string | null {
   const decodes = /\bbase64\b[^|;&\n]*\s(?:-d|-D|--decode)\b/i.test(command)
     || /\bxxd\b[^|;&\n]*\s-[a-z]*r[a-z]*\b/i.test(command) || bins.includes("rev");
   if (decodes && runs) return DECODE_EXEC_REFUSAL;
-  // String concatenation tricks: a='r'; b='m'; $a$b
-  // We already block $ metacharacter, but check for quoted var assignment patterns
-  if (/\b[a-z]=['"][a-z]{1,3}['"]/i.test(command) && command.split("=").length > 3) {
+  // String concatenation tricks: a='r'; b='m'; $a$b. The trick is the JOIN of
+  // the pieces, so that is what is refused. Short quoted values alone are a
+  // PowerShell hashtable (`@{n='Msg';e={…}}`, LogName='System'): a read-only
+  // Get-WinEvent was refused as obfuscation on that shape (2026-10-19).
+  if (joinsShortPieces(command)) {
     return "Blocked: suspicious variable assignment pattern (possible string concatenation obfuscation)";
   }
   // A long command is ordinary (a full python -c self-test, a JSON body); a
@@ -52,6 +54,20 @@ export function detectObfuscation(command: string): string | null {
   }
 
   return null;
+}
+
+/** Two variables assigned 1-3 letter quoted values, expanded side by side
+ *  (`$a$b`, `${a}${b}`, `$a+$b`, `"$a""$b"`). */
+function joinsShortPieces(command: string): boolean {
+  const names = new Set([...command.matchAll(/(?:^|[\s;&|$(])([a-z_]\w*)=['"][a-z]{1,3}['"]/gi)].map((m) => m[1].toLowerCase()));
+  if (names.size < 2) return false;
+  const refs = [...command.matchAll(/\$\{?([a-z_]\w*)\}?/gi)];
+  return refs.some((ref, i) => {
+    const next = refs[i + 1];
+    if (!next || !names.has(ref[1].toLowerCase()) || !names.has(next[1].toLowerCase())) return false;
+    const between = command.slice(ref.index + ref[0].length, next.index);
+    return /^(?:\s*\+\s*|["']{0,2})$/.test(between);
+  });
 }
 
 /** Commands that would run text handed to them on stdin or as an argument. */

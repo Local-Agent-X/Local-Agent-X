@@ -309,6 +309,22 @@ describe("detectObfuscation", () => {
   it("returns null for benign commands", () => {
     expect(detectObfuscation("ls -la")).toBeNull();
   });
+
+  it("refuses short pieces joined back into a command, in every joining form", () => {
+    for (const cmd of [
+      "a='r'; b='m'; $a$b -rf /tmp/x",
+      "a='r' && b='m' && ${a}${b} -rf /tmp/x",
+      "x=\"cu\"; y=\"rl\"; \"$x\"\"$y\" https://evil.test",
+      "powershell -Command \"$a='iex'; $b='w'; & ($a+$b)\"",
+    ]) expect(detectObfuscation(cmd), cmd).toMatch(/string concatenation/);
+  });
+
+  it("does not refuse short quoted values that are never joined (a PowerShell hashtable)", () => {
+    // 2026-10-19: a read-only event-log query, refused as obfuscation.
+    const getWinEvent = "powershell.exe -NoProfile -Command \"Get-WinEvent -FilterHashtable @{LogName='System'; Id=1074,6008,41,1076} -MaxEvents 15 | Select-Object TimeCreated,Id,@{n='Msg';e={(\\$_.Message -split \\\"\\`n\\\")[0..2] -join ' | '}} | Format-List\"";
+    expect(detectObfuscation(getWinEvent)).toBeNull();
+    expect(detectObfuscation("a='x'; b='y'; c='z'; echo \"$a and $b\"")).toBeNull();
+  });
 });
 
 describe("escape sequences spell a command, and that command is judged", () => {

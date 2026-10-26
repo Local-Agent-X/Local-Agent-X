@@ -13,10 +13,12 @@ import {
   startRecoveryJanitor,
   lostRegistrationAdapterFactory,
   setRenderProbe,
+  registerWorkTreeFingerprint,
   type CanonicalLane,
   type PreviewRuntimeError,
 } from "../canonical-loop/index.js";
 import { reconcileCanonicalLearnedOutcomes } from "../canonical-loop/public/learned-protocols.js";
+import { workTreeFingerprint } from "../agency/work-tree-fingerprint.js";
 import type { LAXConfig } from "../types.js";
 import { createLogger } from "../logger.js";
 import { restorePersistedAppBuildRuntimes } from "../tools/build-app-runtime.js";
@@ -63,6 +65,10 @@ export function bootstrapCanonicalLoop(configReader?: () => LAXConfig): void {
   // (maxInteractiveSessions) take effect and follow hot-reload. Passing the
   // reader in keeps this module free of config.ts's import-time side effects.
   if (configReader) setLaneCapConfigReader(configReader);
+
+  // The work check-in (a worker found stuck by its tree, not a clock) needs a
+  // tree fingerprint; the loop spawns no git itself, so agency's is handed in.
+  registerWorkTreeFingerprint(workTreeFingerprint);
 
   // Wire the headless render probe: when a "done" build touched app files but no
   // open preview reported errors, the render-verify gate loads the app in a

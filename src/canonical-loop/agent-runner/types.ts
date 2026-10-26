@@ -44,6 +44,9 @@ export interface CanonicalAgentOptions extends AgentOptions {
    *  canonical's state machine sees a clean running → cancelling → cancelled
    *  transition. Defaults to 15 min if omitted. */
   wallClockMs?: number;
+  /** The folder the agent's writes are confined to (a worktree or work root).
+   *  Stamped on the op so the worker's check-in can fingerprint it. */
+  workRoot?: string;
   /** Canonical op type tag (drives retry policy + soak metrics buckets).
    *  Defaults to "agent_turn". Bucket-specific values: "autopilot_round",
    *  "scheduled_mission", "memory_consolidation". */

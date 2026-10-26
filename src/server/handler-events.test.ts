@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { buildExecutionRules } from "./handler-events.js";
 import { targetPinForModelOverride } from "../agent-request/target-pin.js";
 
@@ -48,5 +50,18 @@ describe("targetPinForModelOverride", () => {
     expect(targetPinForModelOverride(requested)).toEqual(requested);
     expect(targetPinForModelOverride(requested)).not.toEqual(resolvedFallback);
     expect(targetPinForModelOverride(undefined)).toBeUndefined();
+  });
+});
+
+// A spawned agent runs until done. The five-minute agentTimeoutMs clock ended
+// working agents as surely as stuck ones; a stuck one is found by its progress
+// (canonical-loop/work-check-in.ts), which needs the agent's work root on the op.
+describe("a spawned agent's budget", () => {
+  const src = readFileSync(fileURLToPath(new URL("./handler-events.ts", import.meta.url)), "utf8");
+
+  it("carries no wall clock and hands the loop its work root", () => {
+    expect(src).toContain("wallClockMs: 0,");
+    expect(src).toContain("wallClockMs: 0, workRoot: worktreeInfo?.path ?? workspace.workRoot ?? undefined,");
+    expect(src).not.toContain("config.agentTimeoutMs");
   });
 });

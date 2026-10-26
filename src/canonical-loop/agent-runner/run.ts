@@ -134,6 +134,7 @@ async function prepareAgentSubmission(
     },
   });
   contextPack.promptTelemetry = options.promptTelemetry;
+  if (options.workRoot) contextPack.routing.workRoot = options.workRoot;
   if (options.signal?.aborted) return null;
   return { preparedRuntime, contextPack };
 }

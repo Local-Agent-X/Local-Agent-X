@@ -35,6 +35,16 @@ const logger = createLogger("server.handler-events");
 // report rule keeps the supervisor-side delegation promise: the parent
 // surfaces only a ~180-char preview of the result (ops/pending-notifications
 // SUMMARY_PREVIEW_CHARS), so the outcome must lead, not trail.
+/** The run's result when its changes could not be merged. Says what actually
+ *  stopped the merge — a dirty parent tree is the common case, and "conflicts"
+ *  sent the user looking for the wrong thing — and how to land the branch. */
+function unmergedResult(agentId: string, hasWorktree: boolean, mergeFailure: string, agentOutput: string, opId: string | undefined) {
+  const branchHint = hasWorktree ? `Run: git merge agent/${agentId}` : "File changes may be lost";
+  return { result: `[Agent completed but its changes were not merged — ${mergeFailure || "merge failed"}. ${branchHint}]
+
+${agentOutput}`, success: false, opId };
+}
+
 export function buildExecutionRules(platformLine: string, maxIterations: number, requiresWorktree: boolean): string {
   return (
     `\n\nEXECUTION RULES:\n` +
@@ -177,20 +187,20 @@ export function registerHandlerEvents(deps: {
           : "Windows. bash runs PowerShell — use PowerShell syntax (Get-ChildItem, Select-Object) and Windows paths.";
       }
       const executionRules = buildExecutionRules(platformLine, config.maxIterations, !!(workspace.worktree || workspace.workRoot));
-      // Wall-clock ceiling threaded into canonical via wallClockMs — the
-      // runner issues opCancel on expiry so the state machine transitions
-      // running → cancelling → cancelled cleanly. Replaces the caller-side
-      // setTimeout + AbortController pair the legacy path used (which
-      // aborted via signal — out-of-band from the loop). The
-      // invokeDefinition-supplied AbortSignal also routes through canonical
-      // via this options.signal, so Handler.cancelAgent → opCancel works.
+      // No wall clock: a timer ended working agents as surely as stuck ones
+      // (a feature-sized task cut off mid-exploration with nothing written).
+      // A spawned agent runs until done; the loop finds a stuck one by its
+      // progress — the work check-in over its tree (work-check-in.ts), the
+      // dry-checkpoint rule, the loop and pivot ceilings — and the user can
+      // cancel it (Handler.cancelAgent → opCancel, routed through canonical
+      // via this options.signal).
       const agentSystemPrompt = (systemPrompt || `You are a ${role} agent. Complete the task. STOP if login is needed or after 3 failed attempts. End with a summary.`) + executionRules + identityBlock + parentContext + briefing + workspace.promptBlock;
       const agentResult = await runAgentViaCanonical(task, agentSession.messages, {
         apiKey, model, provider: provider as AgentOptions["provider"], systemPrompt: agentSystemPrompt,
         renderedPromptSections: requiredPromptPlan("spawned-agent", "Spawned Agent", agentSystemPrompt),
         tools: spawnedTools, security, toolPolicy, sessionId: runSessionId, maxIterations: config.maxIterations, temperature: config.temperature, targetPin: targetPinForModelOverride(modelOverride),
         callContext: "delegated",
-        wallClockMs: config.agentTimeoutMs,
+        wallClockMs: 0, workRoot: worktreeInfo?.path ?? workspace.workRoot ?? undefined,
         opType: OP_TYPE.agentSpawn,
         lane: "agent",
         runId: agentId, harnessAuthoredTask: req.harnessAuthoredTask, delegation: req.delegation,
@@ -226,11 +236,12 @@ export function registerHandlerEvents(deps: {
       });
       if (agentResult?.messages) agentSession.messages.push(...agentResult.messages);
 
-      let mergeSuccess = true;
+      let mergeSuccess = true, mergeFailure = "";
       if (worktreeInfo) {
         try {
           const { mergeWorktree } = await import("../agency/worktree.js");
           const mergeResult = mergeWorktree(agentId);
+          if (!mergeResult.merged && mergeResult.error) mergeFailure = mergeResult.error;
           const mergeMsg = mergeResult.merged
             ? (mergeResult.files > 0 ? `[Merged ${mergeResult.files} files back to main]` : "[No file changes]")
             : `[Merge failed: ${mergeResult.error}]`;
@@ -264,8 +275,7 @@ export function registerHandlerEvents(deps: {
         }
         return { result: agentOutput, success: true, opId };
       }
-      const branchHint = worktreeInfo ? `Changes preserved on branch agent/${agentId}. Run: git merge agent/${agentId}` : "File changes may be lost";
-      return { result: `[Agent completed but merge had conflicts — ${branchHint}]\n\n${agentOutput}`, success: false, opId };
+      return unmergedResult(agentId, !!worktreeInfo, mergeFailure, agentOutput, opId);
     } catch (e) {
       // The folder the task named couldn't be isolated: say exactly why — the
       // path is the spawner's own input — so it can pick another.

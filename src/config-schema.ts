@@ -115,6 +115,9 @@ export const configSchema = z.object({
   maxAudioBytes: z.number().int().min(1).default(26214400),
   authMaxFailures: z.number().int().min(1).default(20),
   authLockoutMs: z.number().int().min(1000).default(60000),
+  // No longer a kill: a spawned agent runs until done and is stopped by its
+  // progress (canonical-loop/work-check-in.ts), not by a clock. Kept so an
+  // existing config.json still parses.
   agentTimeoutMs: z.number().int().min(10000).default(300000),
   maxCachedSessions: z.number().int().min(1).default(200),
   // "sovits" was a valid engine until the GPT-SoVITS tier was removed

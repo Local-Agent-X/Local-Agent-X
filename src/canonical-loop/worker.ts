@@ -40,7 +40,8 @@ import type { Op } from "../ops/types.js";
 import type { Adapter } from "./adapter-contract.js";
 import { clearAdapterRetryState, handleAdapterRetry } from "./worker-adapter-retry.js";
 import { reconcileLatestTurnCommit, TurnCommitFenceError } from "./checkpoint.js";
-import { evaluateCheckpointStop, evaluateTokenCeiling } from "./checkpoint-stop.js";
+import { evaluateCheckpointStop } from "./checkpoint-stop.js";
+import { evaluatePerTurnStop } from "./work-check-in.js";
 import { armWallClock, finishOnWallClock, wallClockBudgetMs } from "./worker-wall-clock.js";
 import { createLogger } from "../logger.js";
 
@@ -253,7 +254,9 @@ async function drive(op: Op, adapter: Adapter, workerId: string): Promise<void> 
       // turn commitTurn already transitioned the op to succeeded/failed, so a
       // running → failed here would throw IllegalTransitionError. At this line the
       // op is provably still `running` and mid-loop, so the transition is legal.
-      const tokenStop = evaluateTokenCeiling(op);
+      // The token ceiling, then the work check-in: a worker whose tree has
+      // not changed across its last check-ins is stuck (work-check-in.ts).
+      const tokenStop = evaluatePerTurnStop(op, turnIdx);
       if (tokenStop.stop) {
         // The SAME terminal the cadence branch above takes, not a failure: the
         // op spent what it was given, which for a multi-turn op is an ordinary

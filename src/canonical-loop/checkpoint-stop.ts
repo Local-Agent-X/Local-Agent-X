@@ -74,7 +74,7 @@ import type { CanonicalEvent } from "./types.js";
  *  below — it is the one stop decided against elapsed time rather than at a
  *  reached checkpoint. It rides the SAME record so every partial reader
  *  renders it unchanged. */
-export type CheckpointStopReason = "dry-checkpoints" | "spend-ceiling" | "wall-clock" | "token-ceiling";
+export type CheckpointStopReason = "dry-checkpoints" | "spend-ceiling" | "wall-clock" | "token-ceiling" | "no-change-on-disk";
 
 // ── Reading a stop back ────────────────────────────────────────────────────
 //
@@ -102,7 +102,7 @@ export interface CheckpointStopFacts {
   detail: string | null;
 }
 
-const STOP_REASONS: ReadonlySet<string> = new Set<CheckpointStopReason>(["dry-checkpoints", "spend-ceiling", "wall-clock", "token-ceiling"]);
+const STOP_REASONS: ReadonlySet<string> = new Set<CheckpointStopReason>(["dry-checkpoints", "spend-ceiling", "wall-clock", "token-ceiling", "no-change-on-disk"]);
 
 /** The stop recorded in an op's event log, or null when its latest checkpoint
  *  (if any) continued. A stop is always the LAST checkpoint the op reached. */

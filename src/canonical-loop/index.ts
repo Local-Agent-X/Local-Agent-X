@@ -268,6 +268,7 @@ export * from "./public/verify-bridge.js";
 // Leaf op facts (isDispatchFailure and the op types are exported above).
 export { isTerminalState, type TerminalState } from "./terminal-states.js";
 export { resolveTerminalOpStatus, type TerminalOpResolution, type TerminalOpStatus } from "./checkpoint-stop.js";
+export { registerWorkTreeFingerprint, type WorkTreeFingerprint } from "./work-check-in.js";
 export { isEmbeddingModel } from "./model-capabilities.js";
 
 // Chat/session bridge helpers.

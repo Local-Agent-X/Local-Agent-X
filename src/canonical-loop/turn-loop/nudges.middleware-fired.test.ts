@@ -45,7 +45,7 @@ vi.mock("../middlewares/open-steps.js", async (importOriginal) => ({
   earnedDoneNudge: vi.fn(() => "Finish the open steps or justify stopping."),
   // The epilogue's `endedPartial` switch — the one thing that decides whether
   // build-verify's green line is ever shown, and so whether its fire is earned.
-  openStepsTerminationWarning: vi.fn((): string | null => null),
+  endsWithOpenSteps: vi.fn((): boolean => false),
 }));
 // Partial — spec-audit's entry condition is the only export these tests steer.
 vi.mock("../middlewares/verify-gate.js", async (importOriginal) => ({
@@ -72,7 +72,7 @@ import { makeCanonicalLoopContext } from "../middlewares/ctx.test-helper.js";
 import { emitErrorOnce } from "../event-emitter.js";
 import { insertOpTurn, readCanonicalEvents } from "../store.js";
 import { applyTerminalEpilogue } from "./terminal-epilogue.js";
-import { openStepsTerminationWarning } from "../middlewares/open-steps.js";
+import { endsWithOpenSteps } from "../middlewares/open-steps.js";
 import { finalizeFrameworkBuild } from "../adapters/app-build-finalize.js";
 import { _resetInjectQueues, pushInject } from "../../agent-loop/inject-queue.js";
 import { trackOpForSession } from "../../ops/session-bridge.js";
@@ -677,13 +677,13 @@ describe("middleware_fired — the gate branches that act without speaking", () 
   });
 
   it("SUPPRESSED: a partial-ending op shows no green line, so it banks NO fire", () => {
-    // The loud-partial warning wins: `!endedPartial` is false, the confirmation
-    // is never appended, and the user is never shown it. A fire banked at the
+    // The partial wins: `!endedPartial` is false, the confirmation is never
+    // appended, and the user is never shown it. A fire banked at the
     // gate — where `verifiedClean` was decided — would count this terminal
     // anyway. That miscount is the whole reason this one branch is deferred.
-    vi.mocked(openStepsTerminationWarning).mockReturnValueOnce("Heads up: 2 steps are still open.");
+    vi.mocked(endsWithOpenSteps).mockReturnValueOnce(true);
     const fires: GuardFire[] = [];
-    expect(kinds(runEpilogue(fires))).toEqual(["open-steps-warn"]);
+    expect(kinds(runEpilogue(fires))).toEqual([]);
     expect(fires).toEqual([]);
     bankEarnedFires(opId, 6, fires);
     expect(firesOnDisk(opId)).toHaveLength(0);

@@ -188,32 +188,27 @@ function opTouchedTaskLedger(opId: string): boolean {
 }
 
 /**
- * Loud-partial warning for a turn that is genuinely terminating with steps
- * still open (the give-up moment after the nudge above was spent). Returns
- * null unless THIS op successfully called a task tool — a later chat turn
- * that never touched the list ("thanks!") must not be nagged about steps an
- * earlier op left open.
+ * Does this op end with steps still open on the task list it worked? A turn
+ * that is genuinely terminating this way (the nudge above was spent) is a
+ * PARTIAL, and decide-outcome records it so; nothing about it is shown. The
+ * line it used to append ("⚠️ Not finished yet, 4 planned steps left: …") was
+ * harness bookkeeping in front of the user, beside a reply that had already
+ * said what was left (owner's call, 2026-10-26).
  *
- * Kept terse (<200 chars) so it reads as a status line, not a wall of text.
- * It no longer needs to dodge extractAgentOutput (server-utils.ts) — that now
- * selects the longest assistant message of the turn, so a short trailing
- * warning can't displace the real report regardless of length.
+ * False unless THIS op successfully called a task tool — a later chat turn
+ * that never touched the list ("thanks!") is not a partial of steps an earlier
+ * op left open.
  */
-export function openStepsTerminationWarning(opId: string): string | null {
+export function endsWithOpenSteps(opId: string): boolean {
   // Called from decide-outcome, not through the phase — so the `when` predicate
-  // above doesn't cover it. Same suppression: never nag about unworked steps
-  // when the user forbade doing the work.
-  if (opForbidsCapability(opId, "workspace-write")) return null;
+  // above doesn't cover it. Same suppression: an op the user forbade from doing
+  // the work is not a partial for leaving it undone.
+  if (opForbidsCapability(opId, "workspace-write")) return false;
   const sessionId = getSessionForOp(opId);
-  if (!sessionId) return null;
-  if (planModeForbidsCapability(sessionId, "workspace-write")) return null;
-  const open = getOpenTasksForSession(sessionId);
-  if (open.length === 0) return null;
-  if (!opTouchedTaskLedger(opId)) return null;
-  const names = open.map((t) => t.description).join("; ");
-  const headline = `⚠️ Not finished yet, ${open.length} planned step${open.length === 1 ? "" : "s"} left: `;
-  const budget = 199 - headline.length;
-  return headline + (names.length > budget ? names.slice(0, budget - 1) + "…" : names);
+  if (!sessionId) return false;
+  if (planModeForbidsCapability(sessionId, "workspace-write")) return false;
+  if (getOpenTasksForSession(sessionId).length === 0) return false;
+  return opTouchedTaskLedger(opId);
 }
 
 /**
@@ -228,7 +223,7 @@ export function openStepsTerminationWarning(opId: string): string | null {
  *
  * Returns the nudge to inject (and records the fire), or null when the gate must
  * not bite: interactive lane, already fired once for this op, no open steps, or
- * this op never worked the task list (mirrors openStepsTerminationWarning so a
+ * this op never worked the task list (mirrors endsWithOpenSteps so a
  * later op isn't force-looped over steps an earlier one left open). Bounded to
  * one fire per op; cleared on op terminal via clearEarnedDoneStateForOp.
  */

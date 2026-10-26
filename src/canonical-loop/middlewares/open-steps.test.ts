@@ -13,7 +13,7 @@ vi.mock("../store.js", () => ({
 
 import {
   openStepsMiddleware,
-  openStepsTerminationWarning,
+  endsWithOpenSteps,
   earnedDoneNudge,
   clearEarnedDoneStateForOp,
   _resetEarnedDoneState,
@@ -234,7 +234,7 @@ describe("interactive build plan-seed (reactive, afterModelCall)", () => {
   });
 });
 
-describe("openStepsTerminationWarning", () => {
+describe("endsWithOpenSteps", () => {
   const okTaskTurn = [{ toolCallSummary: [{ tool: "task_create", resultStatus: "ok" }] }] as never;
 
   beforeEach(() => {
@@ -244,37 +244,26 @@ describe("openStepsTerminationWarning", () => {
     mockOpTurns.mockReturnValue(okTaskTurn);
   });
 
-  it("returns the warning when the op used task tools and steps remain open", () => {
-    const w = openStepsTerminationWarning("op-w");
-    expect(w).toContain("Not finished yet, 1 planned step left: ");
-    expect(w).toContain("Finish the report");
+  it("is true when the op used task tools and steps remain open", () => {
+    expect(endsWithOpenSteps("op-w")).toBe(true);
   });
 
-  it("stays under 200 chars so it can never displace a mission report", () => {
-    mockOpenTasks.mockReturnValue(
-      Array.from({ length: 8 }, (_, i) => ({ id: String(i), description: `A very long step description number ${i} with lots of words` })),
-    );
-    const w = openStepsTerminationWarning("op-w");
-    expect(w).not.toBeNull();
-    expect(w!.length).toBeLessThan(200);
-  });
-
-  it("is null when this op never touched the task tools", () => {
+  it("is false when this op never touched the task tools", () => {
     mockOpTurns.mockReturnValue([{ toolCallSummary: [{ tool: "read", resultStatus: "ok" }] }] as never);
-    expect(openStepsTerminationWarning("op-w")).toBeNull();
+    expect(endsWithOpenSteps("op-w")).toBe(false);
   });
 
   it("does not count failed task-tool calls as touching the list", () => {
     mockOpTurns.mockReturnValue([{ toolCallSummary: [{ tool: "task_create", resultStatus: "error" }] }] as never);
-    expect(openStepsTerminationWarning("op-w")).toBeNull();
+    expect(endsWithOpenSteps("op-w")).toBe(false);
   });
 
-  it("is null with no open steps or no session", () => {
+  it("is false with no open steps or no session", () => {
     mockOpenTasks.mockReturnValue([]);
-    expect(openStepsTerminationWarning("op-w")).toBeNull();
+    expect(endsWithOpenSteps("op-w")).toBe(false);
     mockOpenTasks.mockReturnValue([{ id: "1", description: "x" }]);
     mockSession.mockReturnValue(undefined);
-    expect(openStepsTerminationWarning("op-w")).toBeNull();
+    expect(endsWithOpenSteps("op-w")).toBe(false);
   });
 });
 
@@ -354,10 +343,10 @@ describe("instruction-ledger gating (user forbade workspace writes)", () => {
     expect(earnedDoneNudge({ id: "op-ed-free", lane: "agent" } as unknown as Op)).not.toBeNull();
   });
 
-  it("openStepsTerminationWarning is null when workspace-write is forbidden, warns without", () => {
+  it("endsWithOpenSteps is false when workspace-write is forbidden, true without", () => {
     forbidWrites("op-warn-forbid");
-    expect(openStepsTerminationWarning("op-warn-forbid")).toBeNull();
-    expect(openStepsTerminationWarning("op-warn-free")).not.toBeNull();
+    expect(endsWithOpenSteps("op-warn-forbid")).toBe(false);
+    expect(endsWithOpenSteps("op-warn-free")).toBe(true);
   });
 });
 

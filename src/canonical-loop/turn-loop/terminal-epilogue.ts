@@ -14,7 +14,7 @@ import type { ToolCall } from "../contract-types.js";
 import type { CommitTurnMessage } from "../checkpoint.js";
 import type { Op } from "../../ops/types.js";
 import { publishStreamChunk } from "../event-emitter.js";
-import { openStepsTerminationWarning } from "../middlewares/open-steps.js";
+import { endsWithOpenSteps } from "../middlewares/open-steps.js";
 import { opEditedSourceUnverified, opDeletedTestDodge } from "../middlewares/verify-gate.js";
 import { groundTruthSizesNote } from "./build-verify.js";
 import { gateSource } from "./decide-outcome-gate-contract.js";
@@ -48,26 +48,15 @@ export function applyTerminalEpilogue(
 ): OpOutcome | null {
   const { op, turnIdx, terminalReason, assistantText, buildVerifyConfirmation, toolCalls, observedTools } = in_;
 
-  // Loud-partial guarantee: when the op truly ends here but its task list still
-  // has open steps, append a visible warning to the live bubble AND the commit.
-  // We can't force a stuck model to finish — open-steps and earned-done already
-  // spent their nudges — but a partial must never LOOK finished. This and the
-  // two live corrections below publish `delta` (append), NOT `text`: every
-  // subscribeOpStream consumer forwards a chunk only on a non-empty `delta` or
-  // `replace:true`, so a bare `{text}` is dropped and surfaces only on rehydrate.
-  let endedPartial = false;
-  if (terminalReason === "done") {
-    const warning = openStepsTerminationWarning(op.id);
-    if (warning) {
-      endedPartial = true;
-      publishStreamChunk(op.id, { delta: `\n\n${warning}` });
-      allMessages.push({
-        messageId: `open-steps-warn-${op.id}-${turnIdx}-${randomUUID().slice(0, 6)}`,
-        role: "assistant",
-        content: { text: warning },
-      });
-    }
-  }
+  // An op that truly ends here with steps still open on its task list is a
+  // partial: open-steps and earned-done already spent their nudges. It is
+  // recorded so below and keeps the green build line from claiming the job is
+  // done, but nothing is appended for the user — the model's reply says what is
+  // left. The live corrections below publish `delta` (append), NOT `text`:
+  // every subscribeOpStream consumer forwards a chunk only on a non-empty
+  // `delta` or `replace:true`, so a bare `{text}` is dropped and surfaces only
+  // on rehydrate.
+  const endedPartial = terminalReason === "done" && endsWithOpenSteps(op.id);
 
   // Reconcile-on-green: the orchestrator build-verify gate ran the project's
   // build itself and it PASSED, but the model couldn't self-verify (blocked from

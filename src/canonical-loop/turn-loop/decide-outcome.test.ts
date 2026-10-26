@@ -20,7 +20,7 @@ vi.mock("./render-verify.js", () => ({
 }));
 vi.mock("../middlewares/open-steps.js", () => ({
   earnedDoneNudge: vi.fn(() => null),
-  openStepsTerminationWarning: vi.fn(() => null),
+  endsWithOpenSteps: vi.fn(() => false),
 }));
 // Partial: the unresolved-tool-intent gate reads the real WIRE_FORMAT_NUDGE
 // constant from here; only the append is stubbed.
@@ -610,14 +610,11 @@ describe("decideTurnOutcome — live-UI warnings reach the stream (CL-6)", () =>
       (c) => c[1] as { delta?: string; text?: string; replace?: boolean },
     );
 
-  it("publishes the loud-partial warning as a forwardable `delta`, not a dropped `{text}`", async () => {
-    const { openStepsTerminationWarning } = await import("../middlewares/open-steps.js");
-    (openStepsTerminationWarning as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce("⚠️ 1 step still open");
+  it("an op that ends with open steps shows the user nothing extra", async () => {
+    const { endsWithOpenSteps } = await import("../middlewares/open-steps.js");
+    (endsWithOpenSteps as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce(true);
     await decideTurnOutcome(input({ toolCalls: [], toolMessages: [], toolSummary: [] }));
-    const warn = streamCalls().find((c) => (c.delta ?? c.text)?.includes("1 step still open"));
-    expect(warn).toBeDefined();
-    expect(warn!.delta).toContain("1 step still open");
-    expect(warn!.text).toBeUndefined();
+    expect(streamCalls().some((c) => /Not finished yet|still open/.test(c.delta ?? c.text ?? ""))).toBe(false);
   });
 
   it("publishes the ground-truth sizes note as a forwardable `delta`, not a dropped `{text}`", async () => {
@@ -838,8 +835,8 @@ describe("decideTurnOutcome — op-outcome telemetry", () => {
   });
 
   it("records partial when terminal done but open steps remain", async () => {
-    const { openStepsTerminationWarning } = await import("../middlewares/open-steps.js");
-    (openStepsTerminationWarning as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce("⚠️ 1 step still open");
+    const { endsWithOpenSteps } = await import("../middlewares/open-steps.js");
+    (endsWithOpenSteps as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce(true);
     const { recordOpOutcome } = await import("../../tool-tracker.js");
     await decideTurnOutcome(input({ toolCalls: [], toolMessages: [], toolSummary: [] }));
     expect(recordOpOutcome).toHaveBeenCalledWith("coding", "partial", "grok-4.3");

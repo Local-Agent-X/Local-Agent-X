@@ -459,7 +459,7 @@ describe("E2 (c) — build-verify's confirmation is banked only where the user i
     const sessionId = `sess-${op.id}`;
     trackOpForSession(op.id, sessionId);
     // A REAL open step in the REAL task ledger, scoped to this op's session —
-    // the loud-partial warning's own input, not a stubbed predicate.
+    // endsWithOpenSteps's own input, not a stubbed predicate.
     const created = await taskTools.find(t => t.name === "task_create")!
       .execute({ description: "Finish the migration", _sessionId: sessionId });
     expect(created.isError).not.toBe(true);
@@ -468,10 +468,10 @@ describe("E2 (c) — build-verify's confirmation is banked only where the user i
 
     expect(readOp(op.id)?.canonical?.state).toBe("succeeded");
     expect(vi.mocked(runBuildVerifyGate)).toHaveBeenCalled();
-    // `endedPartial` won: the loud-partial warning is the last word and the
-    // green line was never appended...
+    // `endedPartial` won: the green line was never appended, and nothing was
+    // appended in its place — the partial is recorded, not shown...
     const kinds = messageIdKinds(op.id);
-    expect(kinds).toContain("open-steps-warn");
+    expect(kinds).not.toContain("open-steps-warn");
     expect(kinds).not.toContain("build-verify-ok");
     // ...so no fire was earned. A fire banked at the gate — where verifiedClean
     // was decided — would have counted a terminal nobody was shown. This is the

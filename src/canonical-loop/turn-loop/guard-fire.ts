@@ -115,22 +115,21 @@
  *     count one user-visible act twice, so ONLY the silent third branch is
  *     counted here — the same rule that keeps a re-opening GATE's nudge from
  *     also filing a `reopen`.
- *   - THE OTHER FOUR HARNESS-AUTHORED TERMINALS. The harness writes its own
- *     closing assistant message in six places and counts TWO. Uncounted:
+ *   - THE OTHER THREE HARNESS-AUTHORED TERMINALS. The harness writes its own
+ *     closing assistant message in five places and counts TWO. Uncounted:
  *       `empty-turn-*`        empty-turn-termination.ts, a fully-empty
  *                             interactive turn
  *       `ask-user-*`          ask-user-terminal.ts, a trailing question made
  *                             the visible answer
- *       `open-steps-warn-*`   terminal-epilogue.ts, the loud-partial warning
  *       `ground-truth-sizes-* terminal-epilogue.ts, real file sizes over a
  *                             fabricated line count
  *     Only `empty-turn-*` shares the `appendHonestTerminal` writer with the
- *     gate terminal's — that helper has exactly two call sites. The other three
+ *     gate terminal's — that helper has exactly two call sites. The other two
  *     publish and push on their own, so a writer-based search finds neither
  *     them nor any future sibling; `build-verify-ok-*` is counted only because
  *     it was wired by hand. `outcome === "honest-terminal"` is therefore a
  *     census of TWO gates, not of harness-authored terminals — slice it as the
- *     former or four live code paths read as dead, the exact misreading this
+ *     former or three live code paths read as dead, the exact misreading this
  *     event exists to prevent.
  *
  * COUNTED BUT CONFLATED — one distinction the vocabulary does not draw:

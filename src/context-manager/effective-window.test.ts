@@ -61,6 +61,12 @@ describe("effectiveContextWindow", () => {
 
 	// Measured models get the window the lane demonstrably served — still far
 	// under the nominal 1M.
+	// The ChatGPT lane caps INPUT at 922K (measured 2026-10-26: gpt-6-sol served
+	// 921,298 and dropped ~924K), so "Compact at 90%" lands at ~830K, under it.
+	it("sizes gpt-6 by its measured input cap, not the nominal 1.05M", () => {
+		for (const m of ["gpt-6-sol", "gpt-6-astra", "gpt-6-luna"]) expect(effectiveContextWindow(m)).toBe(922_000);
+	});
+
 	it("sizes measured models on the subscription lane by what it has served", () => {
 		expect(effectiveContextWindow("claude-opus-5", "cli")).toBe(425_000);
 		expect(effectiveContextWindow("claude-opus-5-5", "cli")).toBe(949_000);

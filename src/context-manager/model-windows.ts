@@ -16,9 +16,13 @@ const MODEL_CONTEXTS: Record<string, number> = {
   // gpt-6 / gpt-5.6 / gpt-5.4 pages all say "1,050,000 context window,
   // 128,000 max output tokens"; the gpt-5.2 / 5.1 / 5 / 5.4-nano pages
   // "400,000 / 128,000"; o3-pro and o3-mini "200,000 / 100,000".
-  "gpt-6-astra": 1_050_000,
-  "gpt-6-sol": 1_050_000,
-  "gpt-6-luna": 1_050_000,
+  // gpt-6 is sized by its INPUT cap, measured 2026-10-26 over the ChatGPT
+  // subscription: gpt-6-sol served 921,298 input tokens and closed the stream
+  // at ~924K; gpt-6-astra served 900K and closed at 950K. 922,000 = the
+  // 1,050,000 window minus the 128,000 output reservation, which Luna shares.
+  "gpt-6-astra": 922_000,
+  "gpt-6-sol": 922_000,
+  "gpt-6-luna": 922_000,
   "gpt-5.6": 1_050_000,      // bare alias routes to Sol
   "gpt-5.6-sol": 1_050_000,
   "gpt-5.6-terra": 1_050_000,

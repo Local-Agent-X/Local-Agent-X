@@ -39,10 +39,10 @@ describe("getContextStatus with/without anchor", () => {
 
   it("with an anchor sizes from real usage plus the appended estimate", () => {
     const msgs = [u("seed"), a("reply"), u("appended after the response")];
-    const anchor = { anchorTokens: 160_000, estimateFrom: 2 };
+    const anchor = { anchorTokens: 182_000, estimateFrom: 2 };
     const status = getContextStatus(msgs, model, anchor);
     expect(status.usedTokens).toBe(anchoredTotalTokens(msgs, anchor));
-    // 160k of 200k = 80% → compact band; the pure estimate would have been "ok".
+    // 182k of 200k = 91% → compact band; the pure estimate would have been "ok".
     expect(status.shouldCompact).toBe(true);
     expect(status.level).toBe("compact");
     expect(getContextStatus(msgs, model).shouldCompact).toBe(false);

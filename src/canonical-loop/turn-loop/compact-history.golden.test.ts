@@ -44,16 +44,16 @@ beforeEach(() => {
 });
 
 describe("golden: turn-loop keep-last policy bands", () => {
-	it("74% → under the compact trigger, structural no-op", async () => {
+	it("89% → under the compact trigger, structural no-op", async () => {
 		const msgs = history();
-		const out = await compactHistory(msgs, MODEL, null, undefined, pct(74));
+		const out = await compactHistory(msgs, MODEL, null, undefined, pct(89));
 		expect(out.compacted).toBe(false);
 		expect(out.messages).toBe(msgs);
 		expect(mockSummarize).not.toHaveBeenCalled();
 	});
 
-	it("75% → compacts keeping the last 6 rows (summary folds into u4)", async () => {
-		const out = await compactHistory(history(), MODEL, null, undefined, pct(75));
+	it("90% → compacts keeping the last 6 rows (summary folds into u4)", async () => {
+		const out = await compactHistory(history(), MODEL, null, undefined, pct(90));
 		expect(out.compacted).toBe(true);
 		expect(ids(out.messages)).toEqual(["u4", "a4", "u5", "a5", "u6", "a6"]);
 		const folded = (out.messages[0].content as { text: string }).text;

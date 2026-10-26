@@ -11,10 +11,11 @@
 export { estimateTokens, messageTokens, totalTokens } from "./token-estimation.js";
 export { getContextStatus, type ContextStatus } from "./status.js";
 export {
-	compactionTriggersFor,
+	compactionTriggers,
+	compactAtPercent,
 	turnCompactionKeepLast,
-	DEFAULT_TRIGGERS,
-	CODEX_TRIGGERS,
+	DEFAULT_COMPACT_AT,
+	COMPACT_AT_RANGE,
 	TURN_KEEP_TIERS,
 	CHAT_DIGEST_BUDGETS,
 	type CompactionTriggers,

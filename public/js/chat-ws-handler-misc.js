@@ -45,6 +45,12 @@ function handleSettingsChanged(msg) {
     if (typeof updateStatusBar === 'function') updateStatusBar(true);
     if (typeof loadToolPolicyToggles === 'function') loadToolPolicyToggles();
   }
+  // "Compact at" changed (the agent, or Settings in another window): the
+  // Settings field follows so it never shows a value the server isn't using.
+  if ('compactAtPercent' in msg.settings) {
+    const el = document.getElementById('cfg-compact-at');
+    if (el && typeof msg.settings.compactAtPercent === 'number') el.value = msg.settings.compactAtPercent;
+  }
   if ('browserMode' in msg.settings && typeof renderBrowserMode === 'function') {
     renderBrowserMode(msg.settings.browserMode);
   }

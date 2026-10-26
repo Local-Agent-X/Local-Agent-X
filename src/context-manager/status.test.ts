@@ -25,18 +25,16 @@ describe("getContextStatus — transport-aware effective window", () => {
 			.toEqual(getContextStatus(bigConversation, "claude-opus-4-7"));
 	});
 
-	// The core finding: the SAME conversation that never trips compaction on the
-	// 1M-rated window crosses the 75% compact threshold on the subscription
-	// lane's 200k fallback window.
-	it("compacts on the cli transport where it would not on the api transport", () => {
+	// The core finding: the SAME conversation that sits low on the 1M-rated
+	// window is near the top of the subscription lane's 200k fallback window.
+	it("sizes against the cli transport's smaller window where the api transport would not", () => {
 		const api = getContextStatus(bigConversation, "claude-opus-4-7", undefined, "api");
-		expect(api.shouldCompact).toBe(false);
+		expect(api.level).toBe("ok");
 
 		const cli = getContextStatus(bigConversation, "claude-opus-4-7", undefined, "cli");
 		expect(cli.maxTokens).toBe(200_000);
 		expect(cli.percentage).toBe(80);
-		expect(cli.shouldCompact).toBe(true);
-		expect(cli.level).toBe("compact");
+		expect(cli.level).toBe("warning");
 	});
 
 	// A model the subscription lane has been measured on sizes against what it
@@ -79,9 +77,9 @@ describe("getContextStatus — baseline floor", () => {
 		const without = getContextStatus(smallConversation, "claude-opus-4-7", undefined, "cli");
 		expect(without.shouldCompact).toBe(false);
 
-		const withBaseline = getContextStatus(smallConversation, "claude-opus-4-7", undefined, "cli", 150_000);
-		expect(withBaseline.usedTokens).toBe(without.usedTokens + 150_000);
-		expect(withBaseline.percentage).toBe(77); // (4004 + 150k) / 200k
+		const withBaseline = getContextStatus(smallConversation, "claude-opus-4-7", undefined, "cli", 180_000);
+		expect(withBaseline.usedTokens).toBe(without.usedTokens + 180_000);
+		expect(withBaseline.percentage).toBe(92); // (4004 + 180k) / 200k
 		expect(withBaseline.shouldCompact).toBe(true);
 		expect(withBaseline.level).toBe("compact");
 	});

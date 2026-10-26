@@ -8,6 +8,7 @@
  */
 import { z } from "zod";
 import { MIN_MAX_ITERATIONS } from "./types.js";
+import { COMPACT_AT_RANGE, DEFAULT_COMPACT_AT } from "./context-manager/compact-at-range.js";
 import type { FlippableSetting } from "./settings-schema.js";
 
 const TOOL_POLICY = "Settings → Security → Tool Policy";
@@ -69,6 +70,14 @@ export const CONTROL_SETTINGS: ReadonlyArray<FlippableSetting> = [
     validate: z.number().int().min(MIN_MAX_ITERATIONS).max(300),
     runtime: true,
     description: `Max tool calls per chat turn (${MIN_MAX_ITERATIONS}-300)`,
+  },
+  {
+    field: "compactAtPercent",
+    owner: "agent",
+    validate: z.number().int().min(COMPACT_AT_RANGE.min).max(COMPACT_AT_RANGE.max),
+    runtime: false,
+    broadcast: true,
+    description: `Compact at this % of the model's measured context window (${COMPACT_AT_RANGE.min}-${COMPACT_AT_RANGE.max}, default ${DEFAULT_COMPACT_AT}). Between messages the conversation is folded 15 points earlier, so a turn starts with room`,
   },
   {
     field: "maxSubAgents",

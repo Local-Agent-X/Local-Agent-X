@@ -28,7 +28,7 @@ import { pruneFinishedTurnToolResults } from "./prune-tool-results.js";
 import {
   CHECKPOINT_KEEP_RECENT,
   CHECKPOINT_REFRESH_MIN_GROWTH,
-  CONVERSATION_BUDGET_SHARE,
+  conversationBudgetShare,
 } from "./compaction-policy.js";
 import { createLogger } from "../logger.js";
 
@@ -76,7 +76,7 @@ export async function checkpointedHistory(
 ): Promise<CheckpointedHistory> {
   const existing = session.compactionCheckpoint;
   const applied = applyCheckpoint(messages, existing);
-  const budget = Math.floor(modelWindowTokens * CONVERSATION_BUDGET_SHARE);
+  const budget = Math.floor(modelWindowTokens * conversationBudgetShare());
   if (budget <= 0 || totalTokens(applied) <= budget) return { messages: applied };
 
   // Over budget. Re-cut only if the tail has actually grown since the last cut;

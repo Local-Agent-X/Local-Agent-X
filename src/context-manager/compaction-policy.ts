@@ -19,16 +19,24 @@
 // Those decide HOW a lane reshapes its view, never WHEN or HOW MUCH — if a
 // number here changes, both lanes move together.
 //
-// The lanes' values genuinely DIFFER on purpose — do not unify them:
-//   - Trigger bands: Codex compacts far earlier (25/35/55) than the default
-//     lane (60/75/90) because its long-context agentic focus degrades well
-//     before the nominal window (see isCodexModel).
-//   - Keep units: the turn loop keeps a token-pressure-tiered COUNT of rows
-//     (6/4/2) because it resizes per turn against the model window; the chat
-//     lane keeps a flat per-channel row count (40 web / 30 otherwise) because
-//     it truncates before token sizing ever runs.
+// WHEN to compact is one user setting, "Compact at" (compactAtPercent, default
+// 90), and every lane reads it: providers serve the whole measured window, and
+// quality held at every size tested. Measured 2026-10-26 on the owner's two
+// day-to-day models (a long coding transcript with an early constraint, a
+// buried fact, a revised decision; scored by regex, two runs per size):
+// gpt-6-sol and claude-opus-5-5 answered correctly at ~145K, 290K, 435K,
+// 578K, 720K and 860K input tokens. The old Codex lane compacted at 35% on
+// the strength of one 334K run in April that lost its task, on an older model
+// in a harness with many since-fixed bugs; it did not reproduce.
+//
+// The keep units still differ by lane on purpose:
+//   - the turn loop keeps a token-pressure-tiered COUNT of rows (6/4/2)
+//     because it resizes per turn against the model window;
+//   - the chat lane keeps a flat per-channel row count (40 web / 30
+//     otherwise) because it truncates before token sizing ever runs.
 
-import { isCodexModel } from "./model-windows.js";
+import { getSetting } from "../settings.js";
+import { COMPACT_AT_RANGE, DEFAULT_COMPACT_AT } from "./compact-at-range.js";
 
 // ─── Trigger bands (consumed by status.ts) ──────────────────────────────────
 
@@ -41,24 +49,20 @@ export interface CompactionTriggers {
 	criticalAt: number;
 }
 
-/** Default lane (Anthropic + everything that is not Codex). */
-export const DEFAULT_TRIGGERS: CompactionTriggers = { warningAt: 60, compactAt: 75, criticalAt: 90 };
+export { DEFAULT_COMPACT_AT, COMPACT_AT_RANGE };
 
-/**
- * Codex compacts much earlier: its long-context agentic reasoning falls apart
- * well before the nominal limit (a 334k-token turn ended with "I'm missing the
- * actual task context"). Anthropic holds focus and keeps the looser bands.
- */
-// Measured 2026-10-26 (probes over the ChatGPT subscription lane): gpt-6-astra
-// served 650K/800K/850K/900K and was dropped at 950K and 1M; gpt-6-sol served
-// 921,298 input tokens and was dropped at ~924K. A drop is the stream closing
-// with no completion event and no error. So the lane caps INPUT at 922,000 =
-// the nominal 1,050,000 window minus the 128,000 output reservation, and these
-// bands (critical at 55% ≈ 577K) keep every turn well inside it.
-export const CODEX_TRIGGERS: CompactionTriggers = { warningAt: 25, compactAt: 35, criticalAt: 55 };
+/** The user's "Compact at", in percent of the model's measured window. */
+export function compactAtPercent(): number {
+	const v = getSetting<number>("compactAtPercent");
+	return typeof v === "number" && Number.isFinite(v) && v >= COMPACT_AT_RANGE.min && v <= COMPACT_AT_RANGE.max
+		? Math.round(v)
+		: DEFAULT_COMPACT_AT;
+}
 
-export function compactionTriggersFor(model: string): CompactionTriggers {
-	return isCodexModel(model) ? CODEX_TRIGGERS : DEFAULT_TRIGGERS;
+/** The bands, all derived from "Compact at": the UI warns 15 points before,
+ *  and compaction is forced 5 points after (never past 97). */
+export function compactionTriggers(compactAt: number = compactAtPercent()): CompactionTriggers {
+	return { warningAt: compactAt - 15, compactAt, criticalAt: Math.min(97, compactAt + 5) };
 }
 
 // ─── Turn-loop keep tiers (consumed by turn-loop/compact-history.ts) ────────
@@ -105,9 +109,12 @@ export function turnCompactionKeepLast(percentage: number, forced: boolean): num
 // from one message to the next.
 
 /** Share of the model's window the CONVERSATION may occupy before the old part
- *  is checkpointed. Well under the in-turn compaction bands above: this runs
- *  BETWEEN messages, where pre-empting an in-turn compaction is the point. */
-export const CONVERSATION_BUDGET_SHARE = 0.35;
+ *  is checkpointed: the warning line, 15 points under "Compact at". This runs
+ *  BETWEEN messages, so a turn that starts here has a full band of room to
+ *  work before the in-turn compaction at "Compact at" fires. */
+export function conversationBudgetShare(compactAt: number = compactAtPercent()): number {
+	return compactionTriggers(compactAt).warningAt / 100;
+}
 
 /** Messages always kept verbatim after a checkpoint, so the model still sees
  *  the immediate exchange rather than a summary of it. */

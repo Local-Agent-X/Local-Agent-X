@@ -1,6 +1,6 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 
-import { compactionTriggersFor } from "./compaction-policy.js";
+import { compactionTriggers } from "./compaction-policy.js";
 import { effectiveContextWindow, type AnthropicTransport } from "./effective-window.js";
 import { anchoredTotalTokens, totalTokens, type TokenAnchor } from "./token-estimation.js";
 
@@ -53,9 +53,8 @@ export function contextStatusForTokens(
   let shouldCompact = false;
   let forceCompact = false;
 
-  // Per-provider trigger bands — the policy table (compaction-policy.ts) owns
-  // the values and the Codex-vs-default lane split.
-  const { warningAt, compactAt, criticalAt } = compactionTriggersFor(model);
+  // The bands come from the user's "Compact at" (compaction-policy.ts).
+  const { warningAt, compactAt, criticalAt } = compactionTriggers();
 
   if (percentage >= criticalAt) {
     level = "critical";

@@ -64,6 +64,7 @@ function updateContextBar(event) {
       </div>
       <span style="color:${color};white-space:nowrap">${data.percentage}% context${compactedNote}</span>
       <span style="color:var(--muted);white-space:nowrap">${tokensK}K / ${maxK}K</span>
+      <button class="ctx-action" onclick="compactChat()" title="Summarize the older part of this conversation now, to free context" aria-label="Compact context now">Compact</button>
     </div>
   `;
 }

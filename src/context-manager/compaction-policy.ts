@@ -49,6 +49,11 @@ export const DEFAULT_TRIGGERS: CompactionTriggers = { warningAt: 60, compactAt: 
  * well before the nominal limit (a 334k-token turn ended with "I'm missing the
  * actual task context"). Anthropic holds focus and keeps the looser bands.
  */
+// Measured 2026-10-26 (probe over the ChatGPT subscription lane, gpt-6-astra):
+// a 649,512-token prompt was served; at ~950K and 1M the backend closed the
+// stream with no completion event and no error. So the lane's ceiling sits
+// between 650K and 950K of the nominal 1.05M, and these bands (critical at
+// 55% ≈ 577K) keep every turn inside what it has demonstrably served.
 export const CODEX_TRIGGERS: CompactionTriggers = { warningAt: 25, compactAt: 35, criticalAt: 55 };
 
 export function compactionTriggersFor(model: string): CompactionTriggers {

@@ -13,6 +13,9 @@ export interface Project {
   name: string;
   description: string;
   workspace?: string;          // project-specific workspace directory
+  /** Added from the sidebar's Code side: a folder code sessions work in
+   *  (session/code-work-root.ts), listed there and not among chat projects. */
+  codeFolder?: boolean;
   agentIds: string[];          // agent template IDs assigned to this project
   secretKeys?: string[];       // which secrets this project can access
   allowedTools?: string[];     // tool restrictions for this project's agents

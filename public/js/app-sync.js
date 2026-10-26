@@ -112,7 +112,9 @@ async function syncProjectsFromServer() {
     if (!Array.isArray(list)) return;
     // Server returns the full Project record; the sidebar needs id + name, and
     // the code side the folder its sessions work in (sidebar-mode.js).
-    projects = list.map(p => ({ id: p.id, name: p.name, createdAt: p.createdAt, ...(p.workspace ? { workspace: p.workspace } : {}) }));
+    const slim = list.map(p => ({ id: p.id, name: p.name, createdAt: p.createdAt, ...(p.workspace ? { workspace: p.workspace } : {}), ...(p.codeFolder ? { codeFolder: true } : {}) }));
+    projects = slim.filter(p => !p.codeFolder);
+    codeFolders = slim.filter(p => p.codeFolder);
     try { window.projects = projects; } catch {}
     saveProjects();
     renderSidebar();

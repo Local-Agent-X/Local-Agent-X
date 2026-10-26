@@ -199,8 +199,9 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
 .code-group{padding:6px 0 4px}
 .code-group-header{padding:0 12px}
 .code-group-empty{padding:4px 12px 6px 22px;font-size:.7rem;color:var(--muted)}
-.code-add-folder{margin:8px 12px;padding:6px 8px;font-size:.74rem;font-family:var(--mono);color:var(--muted);border:1px dashed var(--border);border-radius:6px;cursor:pointer}
-.code-add-folder:hover{color:var(--accent);border-color:var(--accent)}
+.code-folders-header{margin:8px 0 2px}
+.code-group-header .code-group-name{font-family:var(--font);font-size:.76rem;text-transform:none;letter-spacing:0;color:var(--text);font-weight:600}
+.code-folder-chooser{position:fixed;right:auto}
 #pinned-section{padding:8px 0;border-bottom:1px solid var(--border)}
 .pinned-item{display:flex;align-items:center;gap:8px;padding:5px 12px;cursor:pointer;color:var(--fg);border-radius:4px;margin:1px 6px;transition:background .15s}
 .pinned-item:hover{background:var(--hover)}

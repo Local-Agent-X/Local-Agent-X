@@ -11,10 +11,10 @@ const here = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(join(here, "../public/js/sidebar-mode.js"), "utf8");
 
 type Chat = { id: string; title: string; mode?: string; projectId?: string; archived?: boolean };
-type Project = { id: string; name: string; workspace?: string };
+type Project = { id: string; name: string; workspace?: string; codeFolder?: boolean };
 
 /** The module over a fake DOM: elements by id, each with a class list. */
-function load(state: { chats: Chat[]; projects: Project[]; stored?: string }) {
+function load(state: { chats: Chat[]; projects: Project[]; codeFolders?: Project[]; stored?: string }) {
   const els = new Map<string, { classes: Set<string>; textContent: string; innerHTML: string; attrs: Record<string, string> }>();
   const el = (id: string) => {
     if (!els.has(id)) els.set(id, { classes: new Set(), textContent: "", innerHTML: "", attrs: {} });
@@ -39,9 +39,9 @@ function load(state: { chats: Chat[]; projects: Project[]; stored?: string }) {
   const selected: string[] = [];
   const selectChat = (id: string) => selected.push(id);
   // eslint-disable-next-line no-new-func
-  const api = new Function("document", "localStorage", "window", "chats", "projects", "activeChat", "esc", "renderSidebar", "selectChat",
+  const api = new Function("document", "localStorage", "window", "chats", "projects", "codeFolders", "activeChat", "esc", "renderSidebar", "selectChat",
     `${src}; return { chatModeOf, inSidebarMode, setSidebarMode, renderCodeSidebar, get mode() { return sidebarMode; } };`,
-  )(document, localStorage, {}, state.chats, state.projects, null, esc, renderSidebar, selectChat);
+  )(document, localStorage, {}, state.chats, state.projects, state.codeFolders ?? [], null, esc, renderSidebar, selectChat);
   return { api, els, store, renders, listeners, selected };
 }
 
@@ -72,29 +72,39 @@ describe("sidebar-mode.js", () => {
     expect(els.get("projects-section")!.classes.has("hidden-in-code-mode")).toBe(false);
   });
 
-  it("the code side groups sessions by project folder, then Apps, then sessions with no folder", () => {
+  it("the code side lists your project folders, then Apps, then sessions with no folder", () => {
     const chats: Chat[] = [
       { id: "chat-a", title: "fix the build", mode: "code", projectId: "p1" },
       { id: "chat-b", title: "a chat", projectId: "p1" },
-      { id: "ide-todo", title: "todo app", mode: "code" },
+      { id: "ide-todo", title: "IMPORTANT: You are in IDE mode editing an app...", mode: "code" },
       { id: "chat-c", title: "stray", mode: "code" },
       { id: "chat-d", title: "old", mode: "code", projectId: "p1", archived: true },
     ];
-    const { api } = load({ chats, projects: [{ id: "p1", name: "repo", workspace: "C:/repo" }, { id: "p2", name: "no folder" }] });
+    // p3 is a chat project whose folder points at an app the agent built (the
+    // "Food Truck Tracker" that appeared on the code side): not a code folder.
+    const { api } = load({
+      chats,
+      projects: [{ id: "p2", name: "no folder" }, { id: "p3", name: "Food Truck Tracker", workspace: "workspace/apps/food-truck-tracker" }],
+      codeFolders: [{ id: "p1", name: "repo", workspace: "C:/repo", codeFolder: true }],
+    });
     const target = { innerHTML: "" };
     api.renderCodeSidebar(target);
     const html = target.innerHTML;
     const at = (s: string) => html.indexOf(s);
-    expect(at("<span>repo</span>")).toBeGreaterThan(-1);
-    expect(at("fix the build")).toBeGreaterThan(at("<span>repo</span>"));
-    expect(at("<span>Apps</span>")).toBeGreaterThan(at("fix the build"));
-    expect(at("todo app")).toBeGreaterThan(at("<span>Apps</span>"));
-    expect(at("<span>No folder</span>")).toBeGreaterThan(at("todo app"));
-    expect(at("stray")).toBeGreaterThan(at("<span>No folder</span>"));
+    expect(at("<span>Project folders</span>")).toBeGreaterThan(-1);
+    expect(at('<span class="code-group-name">repo</span>')).toBeGreaterThan(at("<span>Project folders</span>"));
+    expect(at("fix the build")).toBeGreaterThan(at('<span class="code-group-name">repo</span>'));
+    expect(at('<span class="code-group-name">Apps</span>')).toBeGreaterThan(at("fix the build"));
+    // An App IDE session is named after its app, not its instruction block.
+    expect(at(">todo<")).toBeGreaterThan(at('<span class="code-group-name">Apps</span>'));
+    expect(html).not.toContain("IMPORTANT:");
+    expect(at('<span class="code-group-name">No folder</span>')).toBeGreaterThan(at(">todo<"));
+    expect(at("stray")).toBeGreaterThan(at('<span class="code-group-name">No folder</span>'));
     expect(html).not.toContain("a chat");
     expect(html).not.toContain(">old<");
-    expect(html).not.toContain("<span>no folder</span>");
-    expect(html).toContain("Add a project folder");
+    expect(html).not.toContain('<span class="code-group-name">no folder</span>');
+    expect(html).not.toContain("Food Truck Tracker");
+    expect(html).toContain('onclick="addProjectFolder();event.stopPropagation()"');
   });
 
   it("Open in Code on an app's result opens that app's code session, and stops the click there", () => {

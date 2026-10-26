@@ -9,7 +9,12 @@
 try { localStorage.removeItem('lax_chat_tags'); localStorage.removeItem('lax_all_tags'); } catch {}
 
 let chats = loadChatsFromCache(); // Start with cache, then fetch from server
-let projects = loadProjects();
+// One list from the server, two in the UI: chat projects, and the folders the
+// Code side adds (codeFolder, sidebar-mode.js). Split here, where it is loaded,
+// so no chat-side reader (the Projects list, Move to project, the composer's
+// project picker) has to filter it out.
+let projects = loadProjects().filter(p => !p.codeFolder);
+let codeFolders = loadProjects().filter(p => p.codeFolder);
 // Mirror to window so cross-script consumers (chat-status-bar's project
 // selector) can read the live list without redoing the API call.
 try { window.projects = projects; window.activeChat = null; } catch {}
@@ -127,7 +132,7 @@ function loadProjects() {
 function saveProjects() {
   // Cache the latest server snapshot so first paint after reload is
   // populated. Not the source of truth.
-  try { localStorage.setItem('lax_projects_cache_v1', JSON.stringify(projects)); } catch {}
+  try { localStorage.setItem('lax_projects_cache_v1', JSON.stringify([...projects, ...codeFolders])); } catch {}
 }
 
 // Tombstones: track deleted session IDs so sync doesn't resurrect them.

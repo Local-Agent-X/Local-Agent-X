@@ -3,6 +3,8 @@ import { jsonResponse, safeParseBody } from "../../server-utils.js";
 import type { Project } from "../../agent-store/index.js";
 import { seedProjectRosters } from "../../project-rosters.js";
 import { createLogger } from "../../logger.js";
+import { codeSessionFolder } from "../../session/code-work-root.js";
+import { basename, dirname, resolve } from "node:path";
 
 const logger = createLogger("routes.agents.projects");
 
@@ -38,6 +40,7 @@ export const handleProjectRoutes: RouteHandler = async (method, url, req, res, c
   }
   if (method === "POST" && url.pathname === "/api/projects") {
     const body = await safeParseBody(req);
+    if (body?.codeFolder === true) { await createCodeFolder(body, ctx, json); return true; }
     if (!body || !body.name) { json(400, { error: "name required" }); return true; }
     const dup = ctx.projectStore.findByName(body.name as string);
     if (dup) { json(409, { error: `Project name '${body.name}' already exists`, existingId: dup.id, existing: dup }); return true; }
@@ -108,3 +111,28 @@ export const handleProjectRoutes: RouteHandler = async (method, url, req, res, c
 
   return false;
 };
+
+/**
+ * POST /api/projects with `codeFolder: true`: the sidebar's Code side adding a
+ * folder. The folder must be a real directory; adding one that is already a
+ * code folder returns it, and a name another project holds gets the parent
+ * folder's name beside it, so two checkouts called `app` can both be added.
+ */
+async function createCodeFolder(
+  body: Record<string, unknown>,
+  ctx: ServerContext,
+  json: (status: number, data: unknown) => void,
+): Promise<void> {
+  const folder = codeSessionFolder(typeof body.workspace === "string" ? body.workspace : undefined);
+  if (!folder) { json(400, { error: "That is not a folder on this computer." }); return; }
+  const same = (p: Project) => p.codeFolder && p.workspace && resolve(p.workspace).toLowerCase() === resolve(folder).toLowerCase();
+  const existing = ctx.projectStore.list().find(same);
+  if (existing) { json(200, existing); return; }
+  const base = basename(folder) || folder;
+  let name = base;
+  if (ctx.projectStore.findByName(name)) name = `${base} (${basename(dirname(folder)) || "folder"})`;
+  for (let n = 2; ctx.projectStore.findByName(name); n++) name = `${base} ${n}`;
+  const project = ctx.projectStore.create({ name, description: "", workspace: folder, codeFolder: true, agentIds: [] });
+  await broadcastProjectsChanged();
+  json(200, project);
+}

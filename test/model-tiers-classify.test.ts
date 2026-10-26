@@ -16,6 +16,7 @@
 import { describe, expect, it } from "vitest";
 
 import { classifyModel, loopGuardTier } from "../src/model-tiers.js";
+import { PROVIDERS } from "../src/providers/registry.js";
 import {
   toolCapTierForProvider,
   shrinkToolsForTier,
@@ -55,6 +56,24 @@ describe("classifyModel — tier heuristic", () => {
   it("is case-insensitive", () => {
     expect(classifyModel("GROK-4")).toBe("strong");
     expect(classifyModel("Claude-Opus-4-1")).toBe("strong");
+  });
+
+  it("classifies a frontier family's later major versions as strong by number, without a name list", () => {
+    for (const m of ["gpt-6.1-sol", "gpt-6-astra", "gpt-7", "claude-haiku-5-5", "claude-opus-6", "claude-mythos-5-1",
+      "gemini-4-argon", "gemini-5-pro", "grok-5", "grok-4.7"]) {
+      expect(classifyModel(m), m).toBe("strong");
+    }
+    // The exclusions that rode the old names still hold.
+    expect(classifyModel("gpt-5-mini")).toBe("medium");
+    expect(classifyModel("gpt-4o")).toBe("medium");
+    expect(classifyModel("grok-code-fast-1")).toBe("medium");
+    expect(classifyModel("gpt-oss-120b")).toBe("medium");
+  });
+
+  it("rates every cloud provider's default model strong", () => {
+    for (const id of ["anthropic", "anthropic-api", "codex", "openai", "xai", "gemini"] as const) {
+      expect(classifyModel(PROVIDERS[id].defaultModel), id).toBe("strong");
+    }
   });
 
   it("falls through to medium for unknown model names", () => {

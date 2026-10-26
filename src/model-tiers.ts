@@ -48,21 +48,38 @@ export function classifyModel(model: string): ModelTier {
   if (/^grok-3-mini$/.test(m)) return "weak";                    // not the -reasoning variant
   if (/gpt-4o-mini|gpt-3\.5/.test(m)) return "weak";
   if (/gemini-(1|2\.0)-flash/.test(m)) return "weak";
-  if (/haiku(?!-4-5)/.test(m)) return "weak";                    // old haiku, not 4.5
+  if (m.includes("haiku") && !currentHaiku(m)) return "weak";    // 3.x haiku, not 4.5 or 5+
 
   // Strong: flagship tool-use models proven to reason over 100+ tool catalogs.
-  if (/gpt-5(\.\d+)?($|-(?!mini))/.test(m)) return "strong";     // gpt-5.x, not -mini
-  if (/claude-fable-5|claude-mythos-5|claude-opus-5|claude-opus-4|claude-sonnet-5|claude-sonnet-4-[6-9]|claude-sonnet-4-1[0-9]|claude-haiku-4-5/.test(m)) return "strong";
+  // A family's later major versions are strong by number, not by name: listing
+  // names left gpt-6.x (the Codex default), gemini-4 and claude-haiku-5 on the
+  // medium/weak caps for as long as nobody updated the list (2026-10-26).
+  if (atLeastMajor(m, /^gpt-(\d+)(?:\.\d+)?($|-(?!mini))/, 5)) return "strong"; // not -mini
+  if (atLeastMajor(m, /claude-(?:opus|sonnet|haiku|fable|mythos)-(\d+)/, 5)) return "strong";
+  if (/claude-opus-4|claude-sonnet-4-[6-9]|claude-sonnet-4-1[0-9]|claude-haiku-4-5/.test(m)) return "strong";
   if (/^o[34]($|-|\.)/.test(m)) return "strong";                 // o3/o4 family
-  if (/gemini-(2\.5|3)/.test(m)) return "strong";
+  if (/gemini-2\.5/.test(m) || atLeastMajor(m, /gemini-(\d+)/, 3)) return "strong";
   // grok-4 / grok-4-fast — xAI's frontier tier. Earlier comment downgraded
   // it to medium on the theory that tool-use RLHF was thin; in practice the
   // tighter cap was making things worse (silently cut sidebar_clear,
   // model fell back to bash-echo narration). Give it the full catalog;
   // tool_search is in the schema either way for genuine over-50-tool cases.
-  if (/^grok-4(\b|-|$)/.test(m)) return "strong";
+  if (atLeastMajor(m, /^grok-(\d+)(\b|-|\.|$)/, 4)) return "strong";
 
   return "medium";
+}
+
+/** claude-haiku-4-5 or claude-haiku-<5+>. A 3.x id carries its date where the
+ *  version would be (claude-3-5-haiku-20241022), so the major is capped at two digits. */
+function currentHaiku(model: string): boolean {
+  const v = /haiku-(\d{1,2})(?:-(\d+))?(?:\b|-|$)/.exec(model);
+  return !!v && (Number(v[1]) >= 5 || (v[1] === "4" && v[2] === "5"));
+}
+
+/** Whether `pattern` matches with a captured major version of at least `min`. */
+function atLeastMajor(model: string, pattern: RegExp, min: number): boolean {
+  const major = pattern.exec(model)?.[1];
+  return major !== undefined && Number(major) >= min;
 }
 
 export function isWeakModel(model: string): boolean {

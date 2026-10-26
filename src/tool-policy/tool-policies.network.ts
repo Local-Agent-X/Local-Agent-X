@@ -131,7 +131,7 @@ export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyRow> = {
   calendar_create_event:       { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [] },
   marketplace_search:          { kernel: "http", ariAction: "get", risk: "network-read", capabilities: [], tags: [] },
   marketplace_list:            { kernel: "http", ariAction: "get", risk: "network-read", capabilities: [], tags: [] },
-  marketplace_install:         { kernel: "http", ariAction: "get", risk: "destructive", capabilities: [], tags: [], undo: { irreversible: "overwrites a custom protocol record" } },
+  marketplace_install:         { kernel: "http", ariAction: "get", risk: "destructive", capabilities: [], tags: [], undo: { recoverable: "a custom protocol it replaces is kept in the recycle bin first (protocols/marketplace.ts)" } },
 
   // ── Database ──
   // The file-access gate judges the sql_* database path with the call's

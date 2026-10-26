@@ -53,7 +53,7 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   app_action:      { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [] },
   app_query:       { kernel: "internal", risk: "safe", capabilities: [], tags: [] },
   app_list:        { kernel: "internal", risk: "safe", capabilities: [], tags: [], blurb: { does: "List your apps." } },
-  app_delete:      { kernel: "internal", risk: "destructive", capabilities: [], tags: [], undo: { irreversible: "an app's files; the workspace mirror is the recovery path" } },
+  app_delete:      { kernel: "internal", risk: "destructive", capabilities: [], tags: [], undo: { recoverable: "the app's files and its stored state both go to the recycle bin (app-runtime/registry.ts)" } },
   // Every action mutates the app registry — grant/revoke rewrite an app's ACL,
   // suspend/activate/archive flip its lifecycle state. There is no read-only
   // action (app_read/app_query are the readers), so the tier is the sibling

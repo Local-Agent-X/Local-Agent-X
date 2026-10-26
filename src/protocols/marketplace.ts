@@ -10,6 +10,7 @@ import { getLaxDir } from "../lax-data-dir.js";
 import type { ToolDefinition } from "../types.js";
 import { loadCustomProtocols, saveCustomProtocols } from "./builder.js";
 import { canonicalFetch } from "../tools/web-egress.js";
+import { trashRecord } from "../safe-delete.js";
 
 const MARKETPLACE_REGISTRY_URL = "https://raw.githubusercontent.com/local-agent-x/protocol-marketplace/main/registry.json";
 const CACHE_PATH = join(getLaxDir(), "marketplace-cache.json");
@@ -76,6 +77,9 @@ export function installProtocol(entry: MarketplaceEntry): Protocol {
   const protocols = loadCustomProtocols();
   const existing = protocols.findIndex(m => m.name === entry.protocol.name);
   if (existing >= 0) {
+    // The record it replaces goes to the recycle bin first, so an install is
+    // never the end of someone's own protocol (and needs no confirm for it).
+    trashRecord(`protocol-${entry.protocol.name}`, protocols[existing]);
     protocols[existing] = entry.protocol;
   } else {
     protocols.push(entry.protocol);

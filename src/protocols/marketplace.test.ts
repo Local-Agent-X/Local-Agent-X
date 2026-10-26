@@ -15,7 +15,9 @@ vi.mock("../tools/web-egress.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../tools/web-egress.js")>()),
   canonicalFetch: (url: string) => { net.calls.push(url); return net.fn!(url); },
 }));
-const { fetchRegistry } = await import("./marketplace.js");
+const { fetchRegistry, installProtocol } = await import("./marketplace.js");
+const { readTrashRecord } = await import("../safe-delete.js");
+const { loadCustomProtocols } = await import("./builder.js");
 
 beforeEach(() => {
   net.calls.length = 0;
@@ -36,5 +38,19 @@ describe("fetchRegistry", () => {
   it("a refused fetch leaves an empty registry rather than failing the caller", async () => {
     net.fn = async () => { throw new Error("Blocked: raw.githubusercontent.com is not on the web access allowlist (strict mode)."); };
     expect(await fetchRegistry()).toEqual([]);
+  });
+});
+
+// marketplace_install is classed recoverable (no irreversible card) because an
+// install never destroys someone's own protocol: the one it replaces is kept.
+describe("installProtocol", () => {
+  const entry = (description: string) => ({ ...ENTRY, protocol: { name: "deploy-check", description, steps: [] } }) as never;
+
+  it("keeps the protocol it replaces in the recycle bin, and a first install replaces nothing", () => {
+    installProtocol(entry("mine"));
+    expect(readTrashRecord("protocol-deploy-check")).toBeNull();
+    installProtocol(entry("from the marketplace"));
+    expect(readTrashRecord<{ description: string }>("protocol-deploy-check")?.description).toBe("mine");
+    expect(loadCustomProtocols().find((p) => p.name === "deploy-check")?.description).toBe("from the marketplace");
   });
 });

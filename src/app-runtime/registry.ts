@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 
 import { getLaxDir } from "../lax-data-dir.js";
@@ -205,7 +205,10 @@ export class AppRegistry {
     let registryDeleted = false;
     if (def) {
       try {
-        rmSync(appDir(id), { recursive: true, force: true });
+        // The app's stored definition, state and events: to LAX's own recycle
+        // bin (not the OS one, where a folder named after an id is no use),
+        // like its files below, so a delete is undone by restoring both.
+        await moveToTrash(appDir(id), `app_delete:${id}:registry`, { appTrashOnly: true });
         registryDeleted = true;
       } catch (e) {
         logger.warn(`failed to remove registry dir for ${id}: ${(e as Error).message}`);

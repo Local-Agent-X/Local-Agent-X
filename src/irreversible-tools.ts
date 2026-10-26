@@ -9,7 +9,10 @@
  */
 import { policyRowOf } from "./tool-registry.js";
 
-const USER_ASKED_TO_FORGET = /\b(forget|delete|erase|remove|wipe|scrub|purge)\b/i;
+// Plain synonyms only. "That's wrong" is not here on purpose: a 27B told "you
+// made that up" forgot a TRUE fact 2 runs of 3 (fact-confirmation.ts), so a
+// complaint is not a request to forget.
+const USER_ASKED_TO_FORGET = /\b(?:forget|delete|erase|remove|wipe|scrub|purge|drop|discard|scrap|ditch|get rid of|stop remembering|don'?t remember)\b/i;
 
 /** The human's own latest message asks for something to be forgotten. A
  *  forget they asked for is theirs to have, with no second question. */

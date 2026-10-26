@@ -10,7 +10,7 @@ describe("undo pairing covers every destructive tool", () => {
     const unclassified = destructive.filter((n) => !UNDO_PAIRS[n] && !IRREVERSIBLE.has(n) && !RECOVERABLE_WITHOUT_PAIR[n]);
     expect(unclassified, "give each an `undo` on its policy row: pairedWith, recoverable or irreversible").toEqual([]);
     expect(Object.keys(UNDO_PAIRS).sort()).toEqual(["autopilot_stop", "delete_file", "mission_schedule_delete", "process_kill", "process_restart"]);
-    expect(Object.keys(RECOVERABLE_WITHOUT_PAIR).sort()).toEqual(["email_delete", "forget"]);
+    expect(Object.keys(RECOVERABLE_WITHOUT_PAIR).sort()).toEqual(["app_delete", "email_delete", "forget", "marketplace_install"]);
   });
 
   it("no tool is in two lists, and every pair target is a registered tool", () => {

@@ -108,7 +108,7 @@
 
     slashStart = match.index + match[1].length; // index of the `/` itself
     const prefix = match[2].toLowerCase();
-    currentMatches = COMMANDS.filter(c => c.name.toLowerCase().startsWith(prefix));
+    currentMatches = inDisplayOrder(COMMANDS.filter(c => c.name.toLowerCase().startsWith(prefix)));
     if (currentMatches.length === 0) { closePopup(); return; }
 
     highlightedIdx = 0;
@@ -177,6 +177,26 @@
     closePopup();
   }
 
+  // The order rows are SHOWN in, which is also the order highlightedIdx
+  // counts in. Matches are grouped by category (CATEGORY_ORDER first), keeping
+  // the API's order inside a group. Grouping only at render time let the
+  // highlighted row and the selected row differ: `/sen` showed
+  // /senior-engineer (Developer) highlighted on top while Enter picked
+  // currentMatches[0], /send_email, the API's first (2026-10-26).
+  function inDisplayOrder(matches) {
+    const groups = new Map();
+    for (const cmd of matches) {
+      const cat = cmd.category || "General";
+      if (!groups.has(cat)) groups.set(cat, []);
+      groups.get(cat).push(cmd);
+    }
+    const orderedCats = [...groups.keys()].sort((a, b) => {
+      const r = categoryRank(a) - categoryRank(b);
+      return r !== 0 ? r : a.localeCompare(b);
+    });
+    return orderedCats.flatMap((cat) => groups.get(cat));
+  }
+
   function renderPopup() {
     if (!popupEl) {
       popupEl = document.createElement("div");
@@ -192,66 +212,52 @@
     header.textContent = "Slash Commands";
     popupEl.appendChild(header);
 
-    // Group filtered matches by category, then sort categories by
-    // CATEGORY_ORDER. Within each category, preserve the API's incoming
-    // order (already alphabetical from /api/protocols). When only one
-    // category is present (e.g. user typed `/inst` and only matched
-    // Social Media), skip the subheader — it'd be empty chrome.
-    const groups = new Map();
-    for (const cmd of currentMatches) {
+    // currentMatches is already in display order (inDisplayOrder), so a row's
+    // index here is its index for selection. A category header goes in front
+    // of each run of one category; with a single category it would be empty
+    // chrome, so it is skipped.
+    const showCategoryHeaders = new Set(currentMatches.map((c) => c.category || "General")).size > 1;
+    let lastCat = null;
+    currentMatches.forEach((cmd, idx) => {
       const cat = cmd.category || "General";
-      if (!groups.has(cat)) groups.set(cat, []);
-      groups.get(cat).push(cmd);
-    }
-    const orderedCats = [...groups.keys()].sort((a, b) => {
-      const r = categoryRank(a) - categoryRank(b);
-      return r !== 0 ? r : a.localeCompare(b);
-    });
-    const showCategoryHeaders = orderedCats.length > 1;
-
-    let flatIdx = 0;
-    for (const cat of orderedCats) {
-      if (showCategoryHeaders) {
+      if (showCategoryHeaders && cat !== lastCat) {
         const catHeader = document.createElement("div");
         catHeader.className = "slash-popup-category";
         catHeader.textContent = cat;
         popupEl.appendChild(catHeader);
       }
-      for (const cmd of groups.get(cat)) {
-        const idx = flatIdx;
-        const item = document.createElement("div");
-        item.className = "slash-popup-item" + (idx === highlightedIdx ? " active" : "");
-        item.setAttribute("role", "option");
-        item.setAttribute("aria-selected", idx === highlightedIdx ? "true" : "false");
-        item.addEventListener("mousedown", (ev) => {
-          // mousedown (not click) so we beat the textarea blur close.
-          ev.preventDefault();
-          highlightedIdx = idx;
-          selectCurrent();
+      lastCat = cat;
+      const item = document.createElement("div");
+      item.className = "slash-popup-item" + (idx === highlightedIdx ? " active" : "");
+      item.setAttribute("role", "option");
+      item.setAttribute("aria-selected", idx === highlightedIdx ? "true" : "false");
+      item.addEventListener("mousedown", (ev) => {
+        // mousedown (not click) so we beat the textarea blur close.
+        ev.preventDefault();
+        highlightedIdx = idx;
+        selectCurrent();
+      });
+      item.addEventListener("mouseenter", () => {
+        highlightedIdx = idx;
+        // refresh just the active class without rebuilding
+        Array.from(popupEl.querySelectorAll(".slash-popup-item")).forEach((el, i) => {
+          el.classList.toggle("active", i === highlightedIdx);
+          el.setAttribute("aria-selected", i === highlightedIdx ? "true" : "false");
         });
-        item.addEventListener("mouseenter", () => {
-          highlightedIdx = idx;
-          // refresh just the active class without rebuilding
-          Array.from(popupEl.querySelectorAll(".slash-popup-item")).forEach((el, i) => {
-            el.classList.toggle("active", i === highlightedIdx);
-            el.setAttribute("aria-selected", i === highlightedIdx ? "true" : "false");
-          });
-        });
+      });
 
-        const name = document.createElement("div");
-        name.className = "slash-popup-name";
-        name.textContent = `/${cmd.name}`;
-        item.appendChild(name);
+      const name = document.createElement("div");
+      name.className = "slash-popup-name";
+      name.textContent = `/${cmd.name}`;
+      item.appendChild(name);
 
-        const desc = document.createElement("div");
-        desc.className = "slash-popup-desc";
-        desc.textContent = cmd.description;
-        item.appendChild(desc);
+      const desc = document.createElement("div");
+      desc.className = "slash-popup-desc";
+      desc.textContent = cmd.description;
+      item.appendChild(desc);
 
-        popupEl.appendChild(item);
-        flatIdx++;
-      }
-    }
+      popupEl.appendChild(item);
+    });
 
     positionPopup();
     popupEl.style.display = "block";

@@ -88,6 +88,38 @@ describe("userAuthoredRequest round-trips expandSlashCommand", () => {
   });
 });
 
+// The chat popup completes a command mid-sentence, and the server used to
+// expand only a leading one: "keep working until it's done /senior-engineer
+// /blast-radius /canonical-check" reached the model as plain text (2026-10-26).
+describe("commands written anywhere in the message", () => {
+  const live = "keep working until the meal plan is done /senior-engineer /blast-radius /canonical-check handoff.md";
+
+  it("loads every one, the first as the primary, in the order written", () => {
+    const exp = expandSlashCommand(live)!;
+    expect(exp).not.toBeNull();
+    expect(exp.commands).toEqual(["senior-engineer", "blast-radius", "canonical-check"]);
+    expect(exp.command).toBe("senior-engineer");
+    for (const c of exp.commands) expect(exp.agentMessage).toContain(`# /${c} methodology`);
+    expect(exp.argText).toBe("keep working until the meal plan is done handoff.md");
+  });
+
+  it("recovers only what the user asked, never an extra command's methodology", () => {
+    const exp = expandSlashCommand(live)!;
+    expect(userAuthoredRequest(exp.agentMessage)).toBe("/senior-engineer keep working until the meal plan is done handoff.md");
+    const typedFirst = expandSlashCommand("tidy the branches /git_workflow /senior-engineer")!;
+    expect(typedFirst.commands).toEqual(["git_workflow", "senior-engineer"]);
+    expect(typedFirst.agentMessage).toContain("# /senior-engineer methodology");
+    expect(userAuthoredRequest(typedFirst.agentMessage)).toBe("/git_workflow tidy the branches");
+  });
+
+  it("leaves a path, a URL and an unknown /word in the text, and loads a repeated command once", () => {
+    expect(expandSlashCommand("check /usr/bin and https://x.dev/app-build please")).toBeNull();
+    const exp = expandSlashCommand("/no-such-command then /senior-engineer, and /senior-engineer again.")!;
+    expect(exp.commands).toEqual(["senior-engineer"]);
+    expect(exp.argText).toBe("/no-such-command then, and again.");
+  });
+});
+
 describe("userAuthoredRequest on non-expansions", () => {
   it("passes a plain message through byte-identical", () => {
     const msg = "tidy up the grey bar above the nav on mobile";

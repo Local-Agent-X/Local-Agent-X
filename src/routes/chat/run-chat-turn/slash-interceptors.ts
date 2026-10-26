@@ -68,7 +68,7 @@ export async function expandSlash(message: string, sessionId: string): Promise<s
     const { expandSlashCommand } = await import("../../../slash-commands.js");
     const expanded = expandSlashCommand(message);
     if (expanded) {
-      logger.info(`[slash] /${expanded.command} expanded for sess=${sessionId.slice(0, 16)}${expanded.argText ? " (with arg)" : ""}`);
+      logger.info(`[slash] ${expanded.commands.map((c) => `/${c}`).join(" ")} expanded for sess=${sessionId.slice(0, 16)}${expanded.argText ? " (with arg)" : ""}`);
       return expanded.agentMessage;
     }
   } catch (e) {

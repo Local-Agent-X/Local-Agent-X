@@ -29,7 +29,12 @@ import { loadSkillBody } from "./auto-build/skill-bodies.js";
 import { getAllProtocols } from "./protocols/index.js";
 import type { Protocol } from "./protocols/index.js";
 
-const SLASH_COMMAND_RE = /^\/([a-zA-Z][a-zA-Z0-9_-]*)(?:\s+([\s\S]*))?$/;
+// A `/name` the user wrote as a word of its own: at the start or after
+// whitespace, ending at whitespace, sentence punctuation or the end. The chat
+// popup completes commands mid-sentence, so a command is honored wherever it
+// was written, not only first: "keep going /senior-engineer /blast-radius"
+// reached the model as plain text and the skills never loaded (2026-10-26).
+const SLASH_TOKEN_RE = /(^|\s)\/([a-zA-Z][a-zA-Z0-9_-]*)(?=$|[\s.,;:!?)])/g;
 
 // Stable prefix every expanded slash-command message carries (both the SKILL.md
 // body and typed-protocol variants below open with it). Downstream gates key on
@@ -45,8 +50,10 @@ export function isSlashCommandExpansion(message: string): boolean {
 }
 
 export interface SlashExpansion {
-  /** Lowercase command name (e.g., "app-build"). */
+  /** Lowercase command name (e.g., "app-build"): the first one the user wrote. */
   command: string;
+  /** Every command the message invoked, in the order written (the first is `command`). */
+  commands: string[];
   /** Trimmed arg text after the slash command. Empty when bare. */
   argText: string;
   /** Rewritten message the agent receives. */
@@ -55,52 +62,61 @@ export interface SlashExpansion {
   originalMessage: string;
 }
 
+/** A command name resolved to what it loads: a SKILL.md body, or a typed protocol. */
+type Resolved = { command: string; body: string } | { command: string; typed: Protocol };
+
+function resolveCommand(command: string): Resolved | null {
+  // Path 1: SKILL.md body lives in src/protocols/bundled/<name>/. If present,
+  // inline the body so the agent gets the full methodology in-context.
+  try {
+    return { command, body: loadSkillBody(command) };
+  } catch { /* fall through to typed-protocol lookup */ }
+  // Path 2: typed protocol (no SKILL.md body — steps live in code packs
+  // like src/protocols/packs/social.ts). The expansion points the agent at
+  // protocol(action:"get") so it loads the full record then executes.
+  const typed = findProtocolByName(command);
+  return typed ? { command, typed } : null;
+}
+
 /**
- * Try to expand a slash command. Returns:
- *   - SlashExpansion when the message begins with /<name> AND <name>
- *     resolves to a known protocol (either SKILL.md body or typed pack).
- *   - null when no slash command is present OR the command isn't a known
- *     protocol. Callers MUST treat null as "pass through unchanged."
+ * Try to expand slash commands. Returns:
+ *   - SlashExpansion when the message contains a `/<name>` word whose <name>
+ *     resolves to a known protocol (either SKILL.md body or typed pack). Every
+ *     such command is loaded; the first one written is the primary, and the
+ *     argument is the message with the command words taken out.
+ *   - null when no known command is present. Callers MUST treat null as
+ *     "pass through unchanged." An unknown `/word` (a path, a typo) stays in
+ *     the text as written.
  *
  * Never throws. A missing protocol returns null rather than erroring
  * — we'd rather fall through to the agent than block the user's message.
  */
 export function expandSlashCommand(rawMessage: string): SlashExpansion | null {
   const trimmed = (rawMessage || "").trim();
-  if (!trimmed.startsWith("/")) return null;
+  if (!trimmed.includes("/")) return null;
 
-  const match = trimmed.match(SLASH_COMMAND_RE);
-  if (!match) return null;
+  const found: Resolved[] = [];
+  const rest = trimmed.replace(SLASH_TOKEN_RE, (whole, _lead: string, name: string) => {
+    const command = name.toLowerCase();
+    if (found.some((f) => f.command === command)) return "";
+    const resolved = resolveCommand(command);
+    if (!resolved) return whole;
+    found.push(resolved);
+    return "";
+  });
+  if (found.length === 0) return null;
 
-  const command = match[1].toLowerCase();
-  const argText = (match[2] || "").trim();
-
-  // Path 1: SKILL.md body lives in src/protocols/bundled/<name>/. If present,
-  // inline the body so the agent gets the full methodology in-context.
-  try {
-    const body = loadSkillBody(command);
-    return {
-      command,
-      argText,
-      originalMessage: rawMessage,
-      agentMessage: formatBodyExpansion(command, argText, body),
-    };
-  } catch { /* fall through to typed-protocol lookup */ }
-
-  // Path 2: typed protocol (no SKILL.md body — steps live in code packs
-  // like src/protocols/packs/social.ts). Emit a directive that points the
-  // agent at protocol(action:"get") so it loads the full record then executes.
-  const typed = findProtocolByName(command);
-  if (typed) {
-    return {
-      command,
-      argText,
-      originalMessage: rawMessage,
-      agentMessage: formatTypedExpansion(command, argText, typed),
-    };
-  }
-
-  return null;
+  const [primary, ...extras] = found;
+  const argText = rest.trim();
+  return {
+    command: primary.command,
+    commands: found.map((f) => f.command),
+    argText,
+    originalMessage: rawMessage,
+    agentMessage: "body" in primary
+      ? formatBodyExpansion(primary.command, argText, primary.body, extras)
+      : formatTypedExpansion(primary.command, argText, primary.typed, extras),
+  };
 }
 
 function findProtocolByName(name: string): Protocol | undefined {
@@ -118,7 +134,21 @@ function findProtocolByName(name: string): Protocol | undefined {
 // and the delimiter each formatter places right after the arg line). Change a
 // literal in one and slash-commands.test.ts's round-trip goes red.
 
-function formatBodyExpansion(command: string, argText: string, methodology: string): string {
+/** The commands invoked alongside the primary, for its header. */
+function alsoInvoked(extras: Resolved[]): string {
+  return extras.length ? ` (with ${extras.map((x) => `\`/${x.command}\``).join(", ")})` : "";
+}
+
+/** The extra commands' instructions. Placed where userAuthoredRequest never
+ *  reads: after the primary methodology's delimiter, or before the arg line. */
+function extraSections(extras: Resolved[]): string {
+  return extras.map((x) => "body" in x
+    ? `# /${x.command} methodology\n\n${x.body}\n\n---\n\n`
+    : `Also follow \`/${x.command}\`: call \`protocol({action: "get", params: {name: "${x.typed.name}"}})\` and follow its steps.\n\n`,
+  ).join("");
+}
+
+function formatBodyExpansion(command: string, argText: string, methodology: string, extras: Resolved[] = []): string {
   const argLine = argText
     ? `The user's argument: ${argText}\n\n`
     : `The user typed bare \`/${command}\` with no argument. If the methodology requires input, ask the user for it in your next reply.\n\n`;
@@ -128,18 +158,19 @@ function formatBodyExpansion(command: string, argText: string, methodology: stri
     : `## Now begin\n\nAck the user briefly and ask for whatever input the methodology needs to start.`;
 
   return (
-    `${SLASH_COMMAND_MARKER} \`/${command}\`. Follow the methodology body below ` +
+    `${SLASH_COMMAND_MARKER} \`/${command}\`${alsoInvoked(extras)}. Follow the methodology body below ` +
     `for the duration of this task. The body is load-bearing; it defines how you work, what ` +
     `to capture, and what tools to call.\n\n` +
     argLine +
     `---\n\n` +
     `# /${command} methodology\n\n${methodology}\n\n` +
     `---\n\n` +
+    extraSections(extras) +
     closing
   );
 }
 
-function formatTypedExpansion(command: string, argText: string, protocol: Protocol): string {
+function formatTypedExpansion(command: string, argText: string, protocol: Protocol, extras: Resolved[] = []): string {
   const argLine = argText
     ? `The user's argument: ${argText}\n\n`
     : `The user typed bare \`/${command}\` with no argument. Ask for whatever input the protocol needs before starting.\n\n`;
@@ -149,10 +180,11 @@ function formatTypedExpansion(command: string, argText: string, protocol: Protoc
     : `## Now begin\n\nAck the user briefly and ask for whatever input the protocol needs to start.`;
 
   return (
-    `${SLASH_COMMAND_MARKER} \`/${command}\` (typed protocol). ` +
+    `${SLASH_COMMAND_MARKER} \`/${command}\` (typed protocol)${alsoInvoked(extras)}. ` +
     `Call \`protocol({action: "get", params: {name: "${protocol.name}"}})\` to load the full steps and rules, ` +
     `then follow them for the duration of this task.\n\n` +
     `Protocol description: ${protocol.description}\n\n` +
+    extraSections(extras) +
     argLine +
     closing
   );

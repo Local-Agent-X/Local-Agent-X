@@ -76,9 +76,16 @@ describe("expandSlashCommand — known commands", () => {
 });
 
 describe("expandSlashCommand — pass-through cases", () => {
-  it("returns null for plain text without a slash prefix", () => {
+  it("returns null for plain text with no known command in it", () => {
     expect(expandSlashCommand("hello there")).toBeNull();
-    expect(expandSlashCommand("can you /app-build something")).toBeNull();
+    expect(expandSlashCommand("the build output is in /tmp/app-build/dist")).toBeNull();
+  });
+
+  // The popup completes a command mid-sentence, so the server honors it there
+  // too (2026-10-26: "/send_email /blast-radius /canonical-check" at the end
+  // of a message reached the model as plain text).
+  it("expands a known command written mid-sentence", () => {
+    expect(expandSlashCommand("can you /app-build something")?.command).toBe("app-build");
   });
 
   it("returns null for unknown slash commands", () => {

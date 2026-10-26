@@ -23,8 +23,7 @@ import type { Op } from "../../ops/types.js";
 
 import type { MiddlewareDirective } from "./types.js";
 import { appendNudgeAsUserMessage } from "./nudges.js";
-import { collectToolFailures, formatFailureNudgeForModel,
-  resolveTerminatingMutation, shouldNudgeForFailures } from "./tool-failure-summary.js";
+import { collectToolFailures, nudgeForFailures, resolveTerminatingMutation } from "./tool-failure-summary.js";
 import { isSilentToolCall } from "./silent-tool-check.js";
 import { appendQuestionAsAnswer, collectAskedQuestions } from "./ask-user-terminal.js";
 import { applyTerminalEpilogue } from "./terminal-epilogue.js";
@@ -311,12 +310,8 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   // mutation) are NOT gaslighting — the model iterated and changed something on
   // disk. The retry is bounded by the continuation guard below re-opening ONE
   // turn — NOT by a worker turn cap (see tool-failure-summary.ts LOOP SAFETY).
-  let failureNudged = false;
-  if (!middlewareAborted && !middlewareSuspended) {
-    if (shouldNudgeForFailures(failureSummary)) {
-      failureNudged = appendNudgeAsUserMessage(op.id, turnIdx + 1, formatFailureNudgeForModel(failureSummary, op.id), { name: "tool-failure-summary", reason: "tool-failure-summary", outcome: "nudge" });
-    }
-  }
+  const failureNudged = !middlewareAborted && !middlewareSuspended
+    && nudgeForFailures(op.id, turnIdx, failureSummary, terminalReason === "done");
 
   // Fires earned by an effect that actually landed on this turn. Returned, not
   // emitted: everything appended below is in-memory until commitTurn, and

@@ -454,6 +454,28 @@ describe("decideTurnOutcome — nudge-suppression vs termination are separate qu
     expect(r.terminalReason).toBeNull();
   });
 
+  // Mid-loop the model reads each failure in its tool_result before it moves;
+  // a nudge there only spent the op's budget (2026-10-25: 116 of the first
+  // four nudges in LAX's qwen3.8 Terminal-Bench ops were this one).
+  it("a failing turn the model goes on from spends no nudge", async () => {
+    const r = await decideTurnOutcome(input({
+      toolCalls: [failedEdit],
+      toolMessages: [errResult("e1", "grep: no match")],
+      toolSummary: [{ tool: "edit", toolCallId: "e1" }] as unknown as ToolCallSummary[],
+    }));
+    expect(await nudgeMock()).not.toHaveBeenCalled();
+    expect(r.terminalReason).toBeNull();
+  });
+
+  it("a refused call mid-loop still nudges at once: what not to do about it cannot wait", async () => {
+    await decideTurnOutcome(input({
+      toolCalls: [failedEdit],
+      toolMessages: [{ messageId: "tr-e1", role: "tool", content: { toolCallId: "e1", text: "[blocked, layer=\"tool-policy\"]\nrefused" } } as unknown as CommitTurnMessage],
+      toolSummary: [{ tool: "edit", toolCallId: "e1" }] as unknown as ToolCallSummary[],
+    }));
+    expect(await nudgeMock()).toHaveBeenCalled();
+  });
+
   it("CONTROL: failures + a real write suppresses the nudge AND terminates", async () => {
     // Same suppression (question A), opposite termination (question B) — the
     // pair is what proves the two fields are read independently.
@@ -470,12 +492,13 @@ describe("decideTurnOutcome — nudge-suppression vs termination are separate qu
     expect(r.terminalReason).toBe("done");
   });
 
-  it("CONTROL: failures with NO mutation at all still nudge (the nudge path is live in this harness)", async () => {
+  it("CONTROL: a turn ending on failures with NO mutation at all still nudges (the nudge path is live in this harness)", async () => {
     const r = await decideTurnOutcome(input({
       toolCalls: [failedEdit],
       toolMessages: [errResult("e1", "old_string not found")],
       toolSummary: [{ tool: "edit", toolCallId: "e1" }] as unknown as ToolCallSummary[],
       assistantText: "Fixed it.",
+      modelSignaledDone: true,
     }));
     expect(await nudgeMock()).toHaveBeenCalled();
     // The fire's shape, pinned on the 4th argument only: the nudge PROSE is

@@ -58,6 +58,7 @@ import { isMutationTool } from "../../tool-mutation-check.js";
 import { isLedgerTool } from "../../committing-tool-check.js";
 import { isMemoryWrite } from "../../tool-registry.js";
 import { getMiddlewareState } from "../middlewares/state.js";
+import { appendNudgeAsUserMessage } from "./nudges.js";
 import {
   createConstraintLedger, formatConstraintReminder, noteFailures,
 } from "./constraint-ledger.js";
@@ -347,6 +348,35 @@ export function shouldNudgeForFailures(summary: ToolFailureSummary): boolean {
   // and then claim done; nudge still fires there because read isn't a
   // mutation tool.
   return summary.failures.length > 0 && !summary.hadSuccessfulMutation;
+}
+
+/**
+ * Whether the failure nudge is due on this turn. Its job is to stop a "done"
+ * over failed calls, and only a turn about to END can claim one: mid-loop the
+ * model reads each failure in its tool_result before it moves. Nudging every
+ * failing turn spent the op's nudge budget on routine non-zero exits (a grep
+ * with no match, a test about to be fixed) — 116 of the first four nudges in
+ * LAX's qwen3.8 Terminal-Bench ops, 2026-10-25 — and the cut-off re-drive,
+ * open-steps and verify nudges that came later were refused. A refused or
+ * declined call still nudges at once: what not to do about it cannot wait.
+ */
+export function failureNudgeDue(summary: ToolFailureSummary, turnEnding: boolean): boolean {
+  if (!shouldNudgeForFailures(summary)) return false;
+  return turnEnding || summary.failures.some((f) => f.blocked || f.declined);
+}
+
+/**
+ * Append the failure nudge to turn+1 when it is due, and report whether it was
+ * appended. Failures it does not nudge for are noted in the op's constraint
+ * ledger, so a later nudge still names a refusal that keeps recurring.
+ */
+export function nudgeForFailures(opId: string, turnIdx: number, summary: ToolFailureSummary, turnEnding: boolean): boolean {
+  if (!shouldNudgeForFailures(summary)) return false;
+  if (!failureNudgeDue(summary, turnEnding)) {
+    noteFailures(getMiddlewareState(opId, CONSTRAINT_LEDGER_KEY, createConstraintLedger), summary.failures);
+    return false;
+  }
+  return appendNudgeAsUserMessage(opId, turnIdx + 1, formatFailureNudgeForModel(summary, opId), { name: "tool-failure-summary", reason: "tool-failure-summary", outcome: "nudge" });
 }
 
 /** `opId` opts this turn's failures into the per-op standing-constraint ledger

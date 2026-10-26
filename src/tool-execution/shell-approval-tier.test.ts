@@ -147,8 +147,9 @@ describe("classifyShellTier — tier-1 (prompt)", () => {
 
   it("git mutating subcommands are never tier-0 (prompt or destructive-floor)", () => {
     // push (non-force), commit, checkout, merge, rebase, stash, branch-create,
-    // branch-move are tier-1; branch -d is caught by the destructive floor's
-    // case-insensitive -D pattern (tier-2). Either way: NEVER auto-allowed.
+    // branch-move and a safe branch delete (-d refuses unmerged work) are
+    // tier-1: the profile decides. Only a forced delete (-D) is on the
+    // destructive floor. Either way: NEVER tier-0.
     for (const cmd of [
       "git push",
       "git push origin main",
@@ -159,10 +160,11 @@ describe("classifyShellTier — tier-1 (prompt)", () => {
       "git stash",
       "git branch newbranch",
       "git branch -m old new",
+      "git branch -d merged",
     ]) {
       expect(classifyShellTier(cmd, confined), cmd).toBe(1);
     }
-    expect(classifyShellTier("git branch -d merged", confined)).not.toBe(0);
+    expect(classifyShellTier("git branch -D unmerged", confined)).toBe(2);
   });
 
   it("a chain with ANY unsafe segment is not tier-0", () => {

@@ -20,6 +20,10 @@ describe("isDestructiveCommand — flags irreversible shell operations", () => {
     ["git clean -fd", "git clean -f"],
     ["git clean -fdx", "git clean -f"],
     ["git branch -D feature", "git force-delete branch"],
+    ["git branch --delete --force feature", "git force-delete branch"],
+    ["git branch -d -f feature", "git force-delete branch"],
+    ["git branch -df feature", "git force-delete branch"],
+    ["cd \"/c/Users/peter/Scan Progress\" && git branch -D agent/field-agent-1", "git force-delete branch"],
     ["git filter-branch --tree-filter rm", "git history rewrite"],
     ["rm -rf /tmp/build", "rm -rf"],
     ["rm -fr ./dist", "rm -fr"],
@@ -74,6 +78,11 @@ describe("isDestructiveCommand — flags irreversible shell operations", () => {
     "rm -f file.txt",                  // -f on one file is not a tree
     "rm -v file.txt",
     "git rm -r --cached build",        // staged removal, undone from the index
+    // -d refuses a branch with unmerged commits, so it loses nothing. Verbatim
+    // the cleanup that carded in Autonomous (2026-10-26).
+    "cd \"/c/Users/peter/Scan Progress\" && git branch -d agent/field-agent-1-mvohb7r0",
+    "git branch --delete merged",
+    "git branch -d feature -v",
     "npm rm lodash",                   // an uninstall, not a delete
     "rm build-r.txt",                  // a dash inside a name is not a flag
     "find . -name '*.ts'",             // a find that lists

@@ -253,7 +253,12 @@ const DESTRUCTIVE_COMMAND_PATTERNS: Array<{ pattern: RegExp; reason: string }> =
   { pattern: /\bgit\s+push\b[^|;&]*\s(?:--delete\b|:\S)/i, reason: "git delete remote branch" },
   { pattern: /\bgit\s+reset\b[^|;&]*--hard\b/i, reason: "git reset --hard" },
   { pattern: /\bgit\s+clean\b[^|;&]*-\w*f\w*/i, reason: "git clean -f" },
-  { pattern: /\bgit\s+branch\b[^|;&]*\s-D\b/i, reason: "git force-delete branch" },
+  // Case-SENSITIVE, unlike its neighbours: `-D` force-deletes a branch with
+  // unmerged commits; `-d` refuses to, so it can lose nothing and is not on
+  // this floor. Under /i the `-d` form carded every merged-branch cleanup, in
+  // Autonomous too (2026-10-26). The long and split spellings of a forced
+  // delete (`--delete --force`, `-d -f`, `-df`) are the same -D.
+  { pattern: /\bgit\s+branch\b[^|;&]*\s(?:-[A-Za-z]*D[A-Za-z]*\b|-[A-Za-z]*(?:df|fd)[A-Za-z]*\b|(?:--delete|-d)\b[^|;&]*\s(?:--force|-f)\b|(?:--force|-f)\b[^|;&]*\s(?:--delete|-d)\b)/, reason: "git force-delete branch" },
   { pattern: /\bgit\s+filter-branch\b/i, reason: "git history rewrite" },
   { pattern: /\brm\s+-\w*r\w*f\w*\b/i, reason: "rm -rf" },
   { pattern: /\brm\s+-\w*f\w*r\w*\b/i, reason: "rm -fr" },

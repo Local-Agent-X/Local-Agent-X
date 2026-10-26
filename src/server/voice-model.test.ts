@@ -13,7 +13,7 @@ function settings(voiceModel?: string) {
 describe("resolveVoiceModel", () => {
 	it("routes each provider to its OWN declared fast tier by default", () => {
 		const none = settings(undefined);
-		expect(resolveVoiceModel("codex", "gpt-5.6-sol", none)).toBe("gpt-5.4-mini");
+		expect(resolveVoiceModel("codex", "gpt-5.6-sol", none)).toBe("gpt-6-luna");
 		expect(resolveVoiceModel("openai", "gpt-5.6", none)).toBe("gpt-4o-mini");
 		expect(resolveVoiceModel("gemini", "gemini-3.1-pro-preview", none)).toBe("gemini-3.5-flash-lite");
 		expect(resolveVoiceModel("anthropic", "claude-opus-5", none)).toBe("claude-haiku-4-5");
@@ -42,6 +42,6 @@ describe("resolveVoiceModel", () => {
 
 	it("unreadable settings never throw — falls back to the fast tier", () => {
 		const boom = <T,>(_key: string): T | undefined => { throw new Error("settings gone"); };
-		expect(resolveVoiceModel("codex", "gpt-5.6-sol", boom)).toBe("gpt-5.4-mini");
+		expect(resolveVoiceModel("codex", "gpt-5.6-sol", boom)).toBe("gpt-6-luna");
 	});
 });

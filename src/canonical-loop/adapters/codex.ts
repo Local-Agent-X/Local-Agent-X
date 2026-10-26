@@ -20,6 +20,7 @@ import { classifyModelStop } from "./model-stop.js";
 import { withTransportRetry } from "./transport-retry.js";
 import { resolveStepReasoningEffort } from "../step-effort.js";
 import { createLogger } from "../../logger.js";
+import { PROVIDERS } from "../../providers/registry.js";
 
 const logger = createLogger("canonical-loop.codex");
 
@@ -109,7 +110,7 @@ export class CodexAdapter implements Adapter {
     const forcedToolChoice = input.turnIdx === 0 ? this.opts.forcedToolChoice : undefined;
 
     const req: AnthropicTransportRequest & { previousResponseId?: string; reasoningEffort?: ReasoningEffort } = {
-      model: this.opts.model ?? "gpt-5.4-mini",
+      model: this.opts.model ?? PROVIDERS.codex.defaultModel,
       systemPrompt: this.opts.systemPrompt ?? "You are a helpful assistant.",
       messages: canonicalToTransport(input.messages, input.pendingRedirect, new Set(input.tools.map(t => t.name))),
       tools: convertTools(input.tools),
@@ -283,7 +284,7 @@ export class CodexAdapter implements Adapter {
       stopReason: providerStop,
       pendingTools: toolCallIds.length,
       // model is surfaced for soak-metrics' cost lookup (getPricing).
-      model: this.opts.model ?? "gpt-5.4-mini",
+      model: this.opts.model ?? PROVIDERS.codex.defaultModel,
       // Codex CLI surfaces usage as a separate event before `done`;
       // the transport buffers + attaches it. Skip when absent so we
       // don't pollute soak with spurious zeros.

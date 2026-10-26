@@ -185,7 +185,7 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     // Alias: if the user (or agent) asks for "openai" but only OAuth-based
     // Codex is configured, route to codex. Avoids saving a broken
     // provider=openai/model=gpt-5.4 config that dies on every turn.
-    if (provider === "openai" && !hasCreds("openai") && hasCreds("codex")) { provider = "codex"; model = model || "gpt-5.4"; }
+    if (provider === "openai" && !hasCreds("openai") && hasCreds("codex")) { provider = "codex"; model = model || PROVIDERS.codex.defaultModel; }
 
     const settings = { ...loadSettings() };
     // If no model specified, auto-pick the first model for the new provider —

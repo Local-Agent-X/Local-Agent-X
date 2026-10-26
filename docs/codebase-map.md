@@ -66,12 +66,12 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/persistence/` | 10 | 2 | S |  |
 | `src/routes/` | 10 | 94 | XL | 18 |
 | `src/sync/` | 10 | 21 | L | 1 |
+| `src/codex-client/` | 9 | 6 | M |  |
 | `src/plugin-system/` | 9 | 10 | L | 1 |
 | `src/screen-stream/` | 9 | 11 | L |  |
 | `src/agent-guards/` | 8 | 11 | M |  |
 | `src/autopilot/` | 8 | 14 | L | 1 |
 | `src/bridge-voice/` | 8 | 5 | S |  |
-| `src/codex-client/` | 8 | 6 | M |  |
 | `src/mcp-client/` | 8 | 11 | L | 1 |
 | `src/telegram-bridge/` | 8 | 6 | M |  |
 | `src/auto-build/` | 7 | 52 | XL | 3 |

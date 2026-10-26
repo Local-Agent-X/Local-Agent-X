@@ -232,7 +232,7 @@ describe("POST /api/providers/switch — the openai→codex alias uses the same 
     expect(probe("openai", store)).toBe(false);
     const result = await request("POST", "/api/providers/switch", store, { provider: "openai" });
 
-    expect(result).toMatchObject({ status: 200, body: { provider: "codex", model: "gpt-5.4" } });
+    expect(result).toMatchObject({ status: 200, body: { provider: "codex", model: PROVIDERS.codex.defaultModel } });
     expect(savedSettings.at(-1)).toMatchObject({ provider: "codex" });
   });
 

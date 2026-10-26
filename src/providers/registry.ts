@@ -196,9 +196,13 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     transport: "http",
     id: "codex",
     label: "OpenAI Codex",
-    models: ["gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-5.5", "gpt-5.4", "gpt-5.4-mini"],
-    defaultModel: "gpt-5.5",
-    backgroundModel: "gpt-5.4-mini",
+    // What a ChatGPT plan serves, as its /models lists it (2026-10-26); the
+    // runtime catalog (model-catalog.ts) tracks changes between releases.
+    // gpt-5.5, gpt-5.4 and gpt-5.4-mini are refused on a plan ("not supported
+    // when using Codex with a ChatGPT account").
+    models: ["gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
+    defaultModel: "gpt-6.1-sol",
+    backgroundModel: "gpt-6-luna",
     // Codex uses ChatGPT OAuth via getApiKey(); chat-runner routes it
     // through its own adapter, not openai-compat. baseURL here is the
     // direct OpenAI endpoint as a fallback for any HTTP path that does

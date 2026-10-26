@@ -39,6 +39,7 @@ import { resolveProviderContext } from "../providers/resolve-provider-context.js
 import { chatRuntimeFor, resolveBackgroundModel } from "../providers/background-model.js";
 import { resolveProviderCall } from "./classify-with-llm-dispatch.js";
 import type { ProviderId } from "../providers/provider-ids.js";
+import { PROVIDERS } from "../providers/registry.js";
 
 // Aggressive default timeout. These classifiers shape signal quality but
 // aren't load-bearing — every call site already has a regex/heuristic
@@ -117,7 +118,7 @@ export interface ClassifyOptions<T> {
 const MODEL_FALLBACKS: Record<string, string> = {
   anthropic: "claude-sonnet-4-6",
   "anthropic-api": "claude-sonnet-4-6",
-  codex: "gpt-5.5",
+  codex: PROVIDERS.codex.defaultModel,
   openai: "gpt-4o-mini",
   ollama: "llama3:8b",
   local: "llama3:8b",

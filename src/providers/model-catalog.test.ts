@@ -5,17 +5,19 @@ import type { SecretsStore } from "../secrets.js";
 // stubbed fetch: no network, no secrets store, no config file.
 const mocks = vi.hoisted(() => ({
   resolveCredential: vi.fn(),
+  anthropicDirectToken: vi.fn(),
   localOnly: false,
   info: vi.fn(),
 }));
 vi.mock("../auth/resolve.js", () => ({ resolveCredential: mocks.resolveCredential }));
+vi.mock("../auth/anthropic.js", () => ({ getAnthropicDirectToken: mocks.anthropicDirectToken }));
 vi.mock("../config.js", () => ({ getRuntimeConfig: () => ({ ollamaUrl: "http://127.0.0.1:11434", openaiApiKey: undefined }) }));
 vi.mock("../settings.js", () => ({ getSetting: () => undefined }));
 vi.mock("../local-only-policy.js", () => ({ isLocalOnlyMode: () => mocks.localOnly }));
 vi.mock("../logger.js", () => ({ createLogger: () => ({ info: mocks.info, warn: vi.fn(), debug: vi.fn(), error: vi.fn() }) }));
 
 import {
-  CATALOG_PROVIDERS, cachedCatalogModels, catalogStale, hiddenShippedModels, isCatalogChatModel, mergeCatalog, pickerModelsFor,
+  KEY_CATALOG_PROVIDERS, cachedCatalogModels, catalogStale, hiddenShippedModels, isCatalogChatModel, mergeCatalog, pickerModelsFor,
   providerServesModel, refreshProviderCatalog, resetProviderCatalogs, warmProviderCatalogs,
 } from "./model-catalog.js";
 import { chatModelsFor, PROVIDERS } from "./registry.js";
@@ -29,6 +31,7 @@ beforeEach(() => {
   routes = [];
   mocks.localOnly = false;
   mocks.resolveCredential.mockReset();
+  mocks.anthropicDirectToken.mockReset();
   mocks.info.mockReset();
   fetchSpy = vi.fn(async (url: string, init: { headers: Record<string, string> }) => {
     const hit = routes.find(([re]) => re.test(url));
@@ -147,8 +150,67 @@ describe("refreshProviderCatalog", () => {
     key("openai");
     expect((await refreshProviderCatalog("openai")).error).toBe("catalog not available");
     mocks.localOnly = false;
-    expect((await refreshProviderCatalog("anthropic")).error).toBe("catalog not available");
+    expect((await refreshProviderCatalog("local")).error).toBe("catalog not available");
     expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("lists an older Claude model by its alias, not the dated snapshot the API names it by", async () => {
+    key("anthropic-api", "sk-ant");
+    routes.push([/api\.anthropic\.com\/v1\/models/, () => ({ data: [{ id: "claude-opus-5-5" }, { id: "claude-haiku-4-5-20251001" }], has_more: false })]);
+    const state = await refreshProviderCatalog("anthropic-api");
+    expect(state.models).toEqual(["claude-opus-5-5", "claude-haiku-4-5"]);
+    expect(pickerModelsFor("anthropic-api")).toContain("claude-haiku-4-5");
+    expect(pickerModelsFor("anthropic-api")).not.toContain("claude-haiku-4-5-20251001");
+  });
+});
+
+// The sign-in lanes. The weekly pricing check has no sign-in, so before these
+// catalogs nothing noticed a ChatGPT plan drop gpt-5.5 (LAX's default) or add
+// gpt-6.1-sol (2026-10-26).
+describe("subscription catalogs", () => {
+  it("reads the ChatGPT plan's /models as the newest client, skipping hidden entries", async () => {
+    key("codex", "chatgpt-access-token");
+    routes.push([/chatgpt\.com\/backend-api\/codex\/models\?client_version=/, (_u, h) => {
+      expect(h.Authorization).toBe("Bearer chatgpt-access-token");
+      expect(h.originator).toBe("codex_cli_rs");
+      return { models: [{ slug: "gpt-6.1-sol", visibility: "list" }, { slug: "gpt-7-sol", visibility: "list" }, { slug: "codex-auto-review", visibility: "hide" }] };
+    }]);
+    const state = await refreshProviderCatalog("codex");
+    expect(state).toMatchObject({ models: ["gpt-6.1-sol", "gpt-7-sol"], complete: true });
+    expect(pickerModelsFor("codex")).toEqual(["gpt-6.1-sol", "gpt-7-sol"]);
+    expect(hiddenShippedModels("codex")).toContain("gpt-6-astra");
+    expect(providerServesModel("codex", "gpt-7-sol")).toBe(true);
+    expect(providerServesModel("codex", "codex-auto-review")).toBe(false);
+  });
+
+  it("reads the Claude sign-in's /v1/models with its bearer and OAuth headers", async () => {
+    key("anthropic", "oauth:ignored");
+    mocks.anthropicDirectToken.mockResolvedValue("sk-ant-oat01-direct");
+    routes.push([/api\.anthropic\.com\/v1\/models/, (_u, h) => {
+      expect(h.authorization).toBe("Bearer sk-ant-oat01-direct");
+      expect(h["anthropic-beta"]).toContain("oauth-2025-04-20");
+      expect(h["x-api-key"]).toBeUndefined();
+      return { data: [{ id: "claude-opus-5-5" }, { id: "claude-sonnet-4-5-20250929" }], has_more: false };
+    }]);
+    const state = await refreshProviderCatalog("anthropic");
+    expect(state).toMatchObject({ models: ["claude-opus-5-5", "claude-sonnet-4-5"], complete: true });
+    expect(hiddenShippedModels("anthropic")).toContain("claude-mythos-5");
+  });
+
+  it("a sign-in only the CLI can use lists nothing, and the picker is the shipped list", async () => {
+    key("anthropic", "cli");
+    mocks.anthropicDirectToken.mockResolvedValue(null);
+    expect((await refreshProviderCatalog("anthropic")).error).toBe("no direct sign-in token");
+    expect(pickerModelsFor("anthropic")).toEqual(chatModelsFor("anthropic"));
+  });
+
+  it("cold or failed, a sign-in lane runs only what it ships: there is no typed-in model to trust", async () => {
+    expect(providerServesModel("codex", "gpt-5.5")).toBe(false);
+    expect(providerServesModel("codex", PROVIDERS.codex.defaultModel)).toBe(true);
+    key("codex", "t");
+    fetchSpy.mockImplementation(async () => new Response("nope", { status: 403 }));
+    await refreshProviderCatalog("codex");
+    expect(providerServesModel("codex", "gpt-5.5")).toBe(false);
   });
 
 });
@@ -171,9 +233,9 @@ describe("a complete catalog hides shipped models the provider no longer lists",
   });
 
   it("hides nothing for a provider without a catalog", async () => {
-    expect((await refreshProviderCatalog("anthropic")).complete).toBe(false);
-    expect(pickerModelsFor("anthropic")).toEqual(chatModelsFor("anthropic"));
-    expect(hiddenShippedModels("anthropic")).toEqual([]);
+    expect((await refreshProviderCatalog("ollama-cloud")).complete).toBe(false);
+    expect(pickerModelsFor("ollama-cloud")).toEqual(chatModelsFor("ollama-cloud"));
+    expect(hiddenShippedModels("ollama-cloud")).toEqual([]);
   });
 
   it("hides nothing when the page cap cut the list short", async () => {
@@ -212,7 +274,7 @@ describe("providerServesModel — what the request path may run", () => {
     fetchSpy.mockImplementation(async () => new Response("nope", { status: 401 }));
     await refreshProviderCatalog("openai");
     expect(providerServesModel("openai", "gpt-4-turbo")).toBe(true); // failed
-    expect(providerServesModel("anthropic", "claude-sonnet-4")).toBe(false); // no catalog: the shipped list is the lineup
+    expect(providerServesModel("anthropic", "claude-sonnet-4")).toBe(false); // a sign-in lane, cold: the shipped list is the lineup
     expect(providerServesModel("anthropic", "claude-opus-5-5")).toBe(true);
     expect(providerServesModel("custom", "anything")).toBe(true);
     expect(providerServesModel("local", "qwen3:8b")).toBe(true);
@@ -233,6 +295,8 @@ describe("warmProviderCatalogs", () => {
   }
 
   it("refreshes only the providers whose key is saved, and again when a key is saved or removed", async () => {
+    // The sign-in lanes read this machine's real sign-ins; none here.
+    for (const id of ["anthropic", "codex"] as const) vi.spyOn(PROVIDERS[id].auth, "hasCredential").mockReturnValue(false);
     key("gemini", "AIza");
     routes.push([/generativelanguage/, () => ({ models: [{ name: "models/gemini-3.5-flash", supportedGenerationMethods: ["generateContent"] }] })]);
     const s = store({ GEMINI_API_KEY: "AIza" });
@@ -251,7 +315,7 @@ describe("warmProviderCatalogs", () => {
     expect(fetchSpy).toHaveBeenCalledTimes(2);
   });
 
-  it("every catalog provider is a key-based registry entry with a secret name", () => {
-    for (const id of CATALOG_PROVIDERS) expect(PROVIDERS[id].envKey, id).not.toBe("");
+  it("every key catalog provider is a key-based registry entry with a secret name", () => {
+    for (const id of KEY_CATALOG_PROVIDERS) expect(PROVIDERS[id].envKey, id).not.toBe("");
   });
 });

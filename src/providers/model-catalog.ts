@@ -15,6 +15,13 @@
  * the providers route from cache only — never a network round-trip on the
  * provider-list path — and refreshed in the background when stale.
  *
+ * The two subscription lanes (Claude and ChatGPT sign-ins) have catalogs too,
+ * read with the sign-in's own token. Nothing else can watch them: the weekly
+ * pricing check runs without a sign-in, and a ChatGPT plan dropped gpt-5.5 and
+ * gpt-5.4-mini while gpt-6.1-sol arrived, with LAX defaulting to the first
+ * (2026-10-26). Cold or failed, a subscription lane's lineup is the shipped
+ * list, as it was before it had a catalog.
+ *
  * Only the endpoints' model ids are used. Windows and prices stay in their
  * reviewed tables: a catalog-only model sizes by lookupContextWindow's family
  * heuristic and bills at the flagged fallback rate ("≈ est.").
@@ -22,6 +29,10 @@
 import { getRuntimeConfig } from "../config.js";
 import { resolveCredential } from "../auth/resolve.js";
 import { API_BASE as ANTHROPIC_API_BASE } from "../anthropic-client/request.js";
+import { buildOAuthHeaders } from "../anthropic-client/oauth-direct.js";
+import { getAnthropicDirectToken } from "../auth/anthropic.js";
+import { buildAuthHeaders as buildCodexAuthHeaders } from "../codex-client/request.js";
+import { CODEX_BASE_URL } from "../codex-client/types.js";
 import { isLocalOnlyMode } from "../local-only-policy.js";
 import { createLogger } from "../logger.js";
 import type { SecretsStore } from "../secrets.js";
@@ -31,10 +42,13 @@ import { PROVIDERS, chatModelsFor, isHttpProvider, resolveBaseURL } from "./regi
 
 const logger = createLogger("providers.model-catalog");
 
-/** Providers with a key and a list-models endpoint. The subscription entries
- *  (anthropic, codex, xai OAuth) and the discovered catalogs (local,
- *  ollama-cloud) are not here: their lists come from elsewhere. */
-export const CATALOG_PROVIDERS: readonly ProviderId[] = ["anthropic-api", "openai", "gemini", "xai", "cerebras", "custom"];
+/** Providers with a key and a list-models endpoint. */
+export const KEY_CATALOG_PROVIDERS: readonly ProviderId[] = ["anthropic-api", "openai", "gemini", "xai", "cerebras", "custom"];
+/** Sign-in lanes whose backend lists the models the account may call. xAI's
+ *  OAuth shares the `xai` key entry; the discovered catalogs (local,
+ *  ollama-cloud) list themselves elsewhere. */
+export const SUBSCRIPTION_CATALOG_PROVIDERS: readonly ProviderId[] = ["anthropic", "codex"];
+export const CATALOG_PROVIDERS: readonly ProviderId[] = [...KEY_CATALOG_PROVIDERS, ...SUBSCRIPTION_CATALOG_PROVIDERS];
 
 export const CATALOG_TTL_MS = 10 * 60_000;
 const FETCH_TIMEOUT_MS = 8_000;
@@ -67,7 +81,8 @@ const GENERIC_NOT_CHAT = /embed|rerank|whisper|tts/i;
 
 export function isCatalogChatModel(provider: ProviderId, id: string): boolean {
   switch (provider) {
-    case "anthropic-api": return id.startsWith("claude-");
+    case "anthropic-api":
+    case "anthropic": return id.startsWith("claude-");
     case "openai": return OPENAI_CHAT.test(id) && !OPENAI_NOT_CHAT.test(id);
     case "gemini": return id.startsWith("gemini-") && !GEMINI_NOT_CHAT.test(id);
     case "xai": return id.startsWith("grok-") && !XAI_NOT_CHAT.test(id);
@@ -99,20 +114,44 @@ async function getJson(url: string, headers: Record<string, string>): Promise<un
 const ids = (list: unknown): string[] =>
   Array.isArray(list) ? list.map((m) => (m && typeof m === "object" ? (m as { id?: unknown }).id : undefined)).filter((id): id is string => typeof id === "string" && id.length > 0) : [];
 
-/** GET /v1/models, paginated (default page is 20). */
-async function listAnthropic(key: string): Promise<Listing> {
-  const out: string[] = [];
+/** GET /v1/models, paginated (default page is 20). Older models are listed by
+ *  snapshot (claude-haiku-4-5-20251001); the shipped list names their alias,
+ *  which the API serves as that snapshot, so a snapshot counts as its alias. A
+ *  literal read hid claude-haiku-4-5 and offered the dated id beside it. */
+async function listAnthropic(headers: Record<string, string>): Promise<Listing> {
+  const out = new Set<string>();
   let after = "";
   for (let page = 0; page < MAX_PAGES; page++) {
     const data = await getJson(
       `${ANTHROPIC_API_BASE}/v1/models?limit=100${after ? `&after_id=${encodeURIComponent(after)}` : ""}`,
-      { "x-api-key": key, "anthropic-version": "2023-06-01" },
+      headers,
     ) as { data?: unknown; has_more?: boolean; last_id?: string };
-    out.push(...ids(data.data));
-    if (!data.has_more || !data.last_id) return { ids: out, complete: true };
+    for (const id of ids(data.data)) out.add(id.replace(/-\d{8}$/, ""));
+    if (!data.has_more || !data.last_id) return { ids: [...out], complete: true };
     after = data.last_id;
   }
-  return { ids: out, complete: false };
+  return { ids: [...out], complete: false };
+}
+
+/** The Claude sign-in's bearer, as the direct-HTTP chat path sends it. A
+ *  sign-in that only the CLI subprocess can use has no bearer to list with. */
+async function listAnthropicSubscription(): Promise<Listing> {
+  const bearer = await getAnthropicDirectToken();
+  if (!bearer) throw new Error("no direct sign-in token");
+  return listAnthropic(buildOAuthHeaders(bearer));
+}
+
+// The Codex backend leaves out any model whose minimal_client_version is above
+// the asking client's (an old version is shown only codex-auto-review). LAX
+// speaks the current wire, so it asks as the newest client.
+const CODEX_CATALOG_CLIENT_VERSION = "99.0.0";
+
+/** GET {codex}/models: every model the ChatGPT plan serves; `visibility: "hide"`
+ *  marks internal ones (codex-auto-review), which are not for the picker. */
+async function listCodex(token: string): Promise<Listing> {
+  const data = await getJson(`${CODEX_BASE_URL}/models?client_version=${CODEX_CATALOG_CLIENT_VERSION}`, buildCodexAuthHeaders(token)) as { models?: unknown };
+  const listed = Array.isArray(data.models) ? data.models as Array<{ slug?: unknown; visibility?: unknown }> : [];
+  return { ids: listed.filter((m) => m.visibility !== "hide" && typeof m.slug === "string" && m.slug).map((m) => m.slug as string), complete: true };
 }
 
 /** GET {base}/models — the OpenAI wire shape (OpenAI, Cerebras, custom, xAI). */
@@ -154,7 +193,9 @@ async function listGemini(key: string): Promise<Listing> {
 }
 
 async function listFor(provider: ProviderId, key: string): Promise<Listing> {
-  if (provider === "anthropic-api") return listAnthropic(key);
+  if (provider === "anthropic-api") return listAnthropic({ "x-api-key": key, "anthropic-version": "2023-06-01" });
+  if (provider === "anthropic") return listAnthropicSubscription();
+  if (provider === "codex") return listCodex(key);
   if (provider === "gemini") return listGemini(key);
   const meta = PROVIDERS[provider];
   const baseURL = isHttpProvider(meta)
@@ -197,8 +238,9 @@ export function hiddenShippedModels(provider: ProviderId): string[] {
  * saved or pinned model. Shipped ids always can, hidden or not: a chat that
  * was running on a model the catalog dropped since finishes on it. Beyond the
  * shipped list, a complete catalog is the authority; without one (no key, a
- * failed fetch, a provider with no list API) the id is trusted, because the
- * only alternative is refusing a model that may well work. `custom` lists a
+ * failed fetch, a provider with no list API) a key lane trusts the id, because
+ * the only alternative is refusing a model that may well work; a sign-in lane
+ * has no typed-in models, so its shipped list stays the lineup. `custom` lists a
  * placeholder id and the user types the real one, so it always resolves.
  */
 export function providerServesModel(provider: ProviderId, model: string): boolean {
@@ -206,7 +248,7 @@ export function providerServesModel(provider: ProviderId, model: string): boolea
   if (provider === "custom" || shipped.length === 0 || shipped.includes(model)) return true;
   const state = cache.get(provider);
   if (state?.complete) return state.models.includes(model);
-  return CATALOG_PROVIDERS.includes(provider);
+  return KEY_CATALOG_PROVIDERS.includes(provider);
 }
 
 export function invalidateProviderCatalog(provider: ProviderId): void {

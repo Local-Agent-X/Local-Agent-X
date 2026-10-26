@@ -188,9 +188,10 @@ export function pathMatchesProtected(candidate: string, entry: string): boolean 
  * Check if a file path is protected (cannot be modified by the agent). Only the
  * platform's OWN source under PLATFORM_ROOT is protected — a path in any other
  * project is never protected, even when its repo-relative shape is identical
- * (e.g. a user project's own src/index.ts). A relative path is interpreted
- * against the platform root, because that's where the agent's path resolver
- * lands a bare "src/…" edit; an absolute path must fall inside the tree.
+ * (e.g. a user project's own src/index.ts). Callers pass the path the write
+ * will actually land on (resolve-tool.ts resolves it with the session's work
+ * root first); a relative path that still reaches here is read against the
+ * platform root, and an absolute path must fall inside the tree.
  */
 export function isProtectedFile(filePath: string): { protected: boolean; reason?: string } {
   const raw = String(filePath ?? "");

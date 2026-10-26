@@ -22,6 +22,7 @@ import { dispatchOne } from "./dispatch-one.test-helper.js";
 import { createContext } from "./context.js";
 import type { SecurityLayer } from "../security/index.js";
 import { resolveAgentPath, sessionIdOf, setSessionWorkRoot, clearSessionWorkRoot } from "../workspace/paths.js";
+import { platformRoot } from "../platform-root.js";
 import { searchBase } from "../tools/glob-tool.js";
 import { searchRoot } from "../tools/grep-tool.js";
 import { setAriRequired } from "../ari-kernel/state.js";
@@ -183,9 +184,10 @@ async function resolveRaw(name: string, args: Record<string, unknown>, sessionId
 }
 
 describe("protected-file anti-brick gate keys on the edit family, not a name list (TD-5)", () => {
-  // "src/tool-execution/" is a protected engine-core tree (config/protected-files.json),
-  // resolved against PLATFORM_ROOT independent of cwd — so this asserts a real block.
-  const PROTECTED = "src/tool-execution/resolve-tool.ts";
+  // "src/tool-execution/" is a protected engine-core tree (config/protected-files.json).
+  // The gate judges the file the tool will write, so the engine's own copy is
+  // named by its absolute path here.
+  const PROTECTED = join(platformRoot(), "src/tool-execution/resolve-tool.ts");
 
   it("blocks EVERY write-class file tool — including the multi_edit/edit_lines synonyms", async () => {
     // Pre-fix the gate was ["write","edit","delete_file"], so multi_edit and
@@ -208,6 +210,27 @@ describe("protected-file anti-brick gate keys on the edit family, not a name lis
     const userFile = await resolveRaw("multi_edit", { path: "some/user/project/app.ts" });
     expect(userFile.outcome.kind).toBe("continue");
     expect(userFile.ctx.allowed).not.toBe(false);
+  });
+
+  // A relative path lands where the write tool puts it: the session's work root.
+  // Judged at the install root instead, a code session in any other project was
+  // refused its own src/index.ts and src/server/… as "engine core" (2026-10-26).
+  it("a relative engine-shaped path is that project's own file in another project, and the engine's only in the engine", async () => {
+    const project = mkdtempSync(join(tmpdir(), "lax-other-project-"));
+    try {
+      setSessionWorkRoot("sess-other-project", project);
+      for (const path of ["src/index.ts", "src/server/index.ts", "src/tool-execution/resolve-tool.ts"]) {
+        const { outcome } = await resolveRaw("write", { path, content: "x" }, "sess-other-project");
+        expect(outcome.kind, path).toBe("continue");
+      }
+      setSessionWorkRoot("sess-engine", platformRoot());
+      const engine = await resolveRaw("write", { path: "src/tool-execution/resolve-tool.ts", content: "x" }, "sess-engine");
+      expect(engine.outcome.kind).toBe("halt");
+    } finally {
+      clearSessionWorkRoot("sess-other-project");
+      clearSessionWorkRoot("sess-engine");
+      rmSync(project, { recursive: true, force: true });
+    }
   });
 });
 

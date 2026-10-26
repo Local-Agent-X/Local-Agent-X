@@ -14,7 +14,7 @@ import { blocked, ok } from "../tools/result-helpers.js";
 import { toolMessage, toolMessageStatus, type CarriedToolMessage } from "./tool-message-carry.js";
 import { getRiskLevel, buildApprovalContext } from "./approval-context.js";
 import { ARI_ACTION_MAP } from "./enforce-policy.js";
-import { sessionWorkRootOf } from "../workspace/paths.js";
+import { resolveAgentPath, sessionWorkRootOf } from "../workspace/paths.js";
 import { anchorsShellAtCwd, CAPABILITY_CLASS_MEMBERS, readsStamp } from "../tool-registry.js";
 import type { TrustedStamp } from "../tool-policy/tool-policies.types.js";
 import { LIVE_STATE_TOOLS } from "./stateful-tools.js";
@@ -283,7 +283,12 @@ export const resolvePhase: Phase = async (ctx) => {
   if (ARI_ACTION_MAP[tc.name] === "write" && ctx.args.path) {
     try {
       const { isProtectedFile } = await import("../config-loader.js");
-      const check = isProtectedFile(String(ctx.args.path));
+      // Judged as the file the tool will write: a relative path lands at the
+      // session's work root (a code session's project folder) or the workspace,
+      // never the install. Resolved at the install root instead, every code
+      // session's own src/index.ts or src/server/… read as engine core and was
+      // refused outright (2026-10-26).
+      const check = isProtectedFile(resolveAgentPath(String(ctx.args.path), ctx.sessionId));
       if (check.protected) {
         const result = blocked(`BLOCKED: ${check.reason}`, { layer: "protected-files", userHint: USER_HINTS.secrets, recovery: "Leave this engine file as it is; if the task needs it changed, tell the user what change it needs." });
         return terminate(ctx, { rendered: "model", result, allowed: false });

@@ -29,6 +29,7 @@ import { getSessionForOp } from "../../ops/session-bridge.js";
 import { sweepExternalChanges, resolveExternalChange, type ExternalChange } from "../../tools/read-state.js";
 import { resolveAgentPath } from "../../workspace/paths.js";
 import { isSensitivePath, withholdSecretValues, secretsMaskedNote } from "../../data-lineage/index.js";
+import { hasCapability } from "../../tool-registry.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("canonical-loop.external-change-diff");
@@ -62,6 +63,16 @@ function touchedFiles(ctx: CanonicalLoopContext): string[] {
   return out;
 }
 
+/** The same text with only its line endings changed: `git stash pop`,
+ *  autocrlf or a formatter rewrote LF as CRLF. Live 2026-10-25: two
+ *  "changed OUTSIDE your tool calls" nudges carried diffs whose every line was
+ *  identical, and the model spent a turn proving it. Nothing to tell. */
+function lineEndingsOnly(change: ExternalChange): boolean {
+  if (change.before === undefined || change.after === undefined) return false;
+  const lf = (t: string) => t.replace(/\r\n/g, "\n");
+  return lf(change.before) === lf(change.after);
+}
+
 /** Unified-diff body for one change, capped. null when no diff is possible
  *  (missing snapshot). `full` is false when lines were truncated. */
 function fileDiff(change: ExternalChange): { text: string; full: boolean } | null {
@@ -92,7 +103,10 @@ export const externalChangeDiffMiddleware: CanonicalMiddleware = {
     try {
       const sessionId = getSessionForOp(ctx.op.id);
       if (!sessionId) return { kind: "continue" }; // untracked op → no session map to sweep
-      const changes = sweepExternalChanges(sessionId, touchedFiles(ctx));
+      const swept = sweepExternalChanges(sessionId, touchedFiles(ctx));
+      // Adopted as the baseline (full: nothing was hidden) and never reported.
+      for (const change of swept) if (lineEndingsOnly(change)) resolveExternalChange(sessionId, change, true);
+      const changes = swept.filter((c) => !lineEndingsOnly(c));
       if (changes.length === 0) return { kind: "continue" };
 
       const shown = changes.slice(0, MAX_FILES_PER_NUDGE);
@@ -126,11 +140,19 @@ export const externalChangeDiffMiddleware: CanonicalMiddleware = {
       // the operator token).
       const masked = withholdSecretValues(sections.join("\n\n"), { knownOnly: true });
       const maskedNote = masked.masked > 0 ? `\n\n${secretsMaskedNote(masked.masked, masked.kinds)}` : "";
+      // A command this turn ran (git, a build, a formatter) writes files the
+      // file tools never see; calling its effect "outside your own tool calls"
+      // sent the model hunting for another writer.
+      const ranShell = ctx.toolCalls.some((tc) => hasCapability(tc.tool, "shell"));
+      const lead = ranShell
+        ? "Files you read earlier in this session changed on disk during this turn, most likely by a command you ran " +
+          "(git, a build, a formatter), since your file tools did not write them. "
+        : "Files you read earlier in this session have changed on disk OUTSIDE your own tool calls. ";
       return {
         kind: "nudge",
         reason: "external-change-diff",
         message:
-          "Files you read earlier in this session have changed on disk OUTSIDE your own tool calls. " +
+          lead +
           "Your cached view of them is stale — each diff below is what changed (old = what you last saw, new = current disk):\n\n" +
           masked.text +
           maskedNote +

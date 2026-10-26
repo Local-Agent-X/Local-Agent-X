@@ -93,6 +93,32 @@ describe("external-change-diff", () => {
     expect(checkFreshness(session, file)).toBe("ok");
   });
 
+  // Live 2026-10-25: `git stash pop` rewrote LF as CRLF; two nudges carried
+  // diffs whose every line was identical and the model spent a turn proving it.
+  it("a change of line endings only is adopted silently: nothing to report, and the edit gate sees the file as fresh", async () => {
+    const { op, session } = ids();
+    const file = join(dir, "crlf.ts");
+    writeFileSync(file, "export const a = 1;\nexport const b = 2;\n", "utf-8");
+    recordFileSeen(session, file);
+    writeBumped(file, "export const a = 1;\r\nexport const b = 2;\r\n");
+    expect((await fire(op)).kind).toBe("continue");
+    expect(checkFreshness(session, file)).toBe("ok");
+  });
+
+  it("a change during a turn that ran a shell command is put down to that command, not to someone outside", async () => {
+    const { op, session } = ids();
+    const file = join(dir, "formatted.ts");
+    writeFileSync(file, "export const a=1;\n", "utf-8");
+    recordFileSeen(session, file);
+    writeBumped(file, "export const a = 1;\n");
+    const r = await fire(op, { toolCalls: [{ toolCallId: "b1", tool: "bash", args: { command: "npx prettier -w ." } }] });
+    expect(r.kind).toBe("nudge");
+    if (r.kind === "nudge") {
+      expect(r.message).toContain("most likely by a command you ran");
+      expect(r.message).not.toContain("OUTSIDE");
+    }
+  });
+
   it("a truncated diff notes it honestly and keeps the edit gate stale", async () => {
     const { op, session } = ids();
     const file = join(dir, "big-change.ts");

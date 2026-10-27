@@ -60,6 +60,18 @@ function slugToName(id: string): string {
   return id.replace(/-/g, " ").replace(/\b\w/g, c => c.toUpperCase());
 }
 
+/** The page's own <title>, from the head of its index.html, or "" when it has none.
+ *  An app the agent builds names itself there ("Through Her Eyes"); its folder is a
+ *  slug picked before the name was ("blurry-vision"). */
+export function pageTitle(indexPath: string): string {
+  try {
+    const head = readFileSync(indexPath, "utf-8").slice(0, 8192);
+    return head.match(/<title[^>]*>([^<]{1,120})<\/title>/i)?.[1]?.replace(/\s+/g, " ").trim() ?? "";
+  } catch {
+    return "";
+  }
+}
+
 export function buildAppList(deps: AppListDeps): AppListEntry[] {
   const { pins, wsAppsDir, port, now } = deps;
 
@@ -101,7 +113,8 @@ export function buildAppList(deps: AppListDeps): AppListEntry[] {
         const wsName = slugToName(d.name);
         seen.add(d.name);
         list.push({
-          id: d.name, name: wsName,
+          // A sidebar pin may still name the app by its folder, so the icon looks it up by that.
+          id: d.name, name: pageTitle(indexPath) || wsName,
           icon: iconFor(d.name, wsName),
           description: "HTML app", components: 1, layout: "custom",
           url: `http://127.0.0.1:${port}/apps/${d.name}/index.html`,

@@ -88,3 +88,19 @@ describe("buildAppList — full-stack app (pass 3)", () => {
     expect(matches[0].description).toBe("HTML app");  // pass 2 wins
   });
 });
+
+// The agent named the app "Through Her Eyes" in its page and the folder
+// "blurry-vision"; the grid showed the folder, so the user looked for the wrong name.
+describe("buildAppList — a workspace HTML app's name", () => {
+  it("is the page's own title", () => {
+    mkdirSync(join(wsAppsDir, "blurry-vision"), { recursive: true });
+    writeFileSync(join(wsAppsDir, "blurry-vision", "index.html"), "<html><head>\n  <title>\n Through Her Eyes </title></head></html>");
+    expect(buildAppList(baseDeps()).find(a => a.id === "blurry-vision")?.name).toBe("Through Her Eyes");
+  });
+
+  it("is the folder's name when the page has no title", () => {
+    mkdirSync(join(wsAppsDir, "habit-tracker"), { recursive: true });
+    writeFileSync(join(wsAppsDir, "habit-tracker", "index.html"), "<h1>hi</h1><title></title>");
+    expect(buildAppList(baseDeps()).find(a => a.id === "habit-tracker")?.name).toBe("Habit Tracker");
+  });
+});

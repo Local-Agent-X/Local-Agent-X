@@ -29,6 +29,7 @@ import { existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { confineToDir } from "../security/layer/index.js";
 import { FONT_URL_PREFIX } from "../tools/design-fonts.js";
+import { appPermissionsPolicy } from "../broker-transport/vendor/index.js";
 
 /** The CSP part every app document on the agent origin carries, whichever
  *  route renders it (static, dev-server proxy, registry renderer).
@@ -49,6 +50,17 @@ export function connectorBootstrapScript(connectorCapability: string): string {
   return `<script>window.__LAX_CONNECTOR_TOKEN__=${JSON.stringify(connectorCapability)};</script>`;
 }
 
+/** What an app the agent built may ask the browser for, for every way an app is
+ *  served (a workspace page here, a registered app in routes/apps.ts). It comes
+ *  from the phone↔desktop contract (vendor/apps.ts APP_DEVICE_CAPABILITIES), which
+ *  the phone's live and downloaded viewers read too, so an app that works on one
+ *  surface works on the others. The browser or phone still asks the user for each. */
+export const AGENT_APP_PERMISSIONS_POLICY = appPermissionsPolicy();
+
+/** LAX's own pages (static-assets.ts): the voice and screen features use the
+ *  camera and microphone; nothing in the interface asks where you are. */
+export const UI_PAGE_PERMISSIONS_POLICY = "camera=(self), microphone=(self), geolocation=()";
+
 /** Content-Security-Policy for a served workspace app's HTML document.
  *  `connect-src` deliberately admits loopback on any port: apps legitimately
  *  call their own dev server / local sidecars. Everything else off-origin is
@@ -64,7 +76,7 @@ export const WORKSPACE_APP_HTML_HEADERS: Readonly<Record<string, string>> = Obje
   "Content-Security-Policy": WORKSPACE_APP_CSP,
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "no-referrer",
-  "Permissions-Policy": "camera=(self), microphone=(self), geolocation=()",
+  "Permissions-Policy": AGENT_APP_PERMISSIONS_POLICY,
   "Cache-Control": "no-cache, must-revalidate",
   "Pragma": "no-cache",
 });

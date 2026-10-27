@@ -108,7 +108,26 @@ describe("buildAppBundle — workspace HTML app", () => {
 });
 
 describe("buildAppBundle — static-build app (dist/)", () => {
-  it("bundles the built dist/ (not the Vite SOURCE index.html), rooted so /apps/<id>/ asset URLs resolve on the phone", async () => {
+  // The phone opens a bundle from file://…/offline-apps/<id>/, where the build's
+  // baked /apps/<id>/assets/… is the filesystem root: the downloaded Through Her
+  // Eyes was a white page (2026-10-26). The bundle points the base inside itself.
+  it("points the build's /apps/<id>/ base inside the bundle, and leaves the app's /api/apps data calls alone", async () => {
+    const { writeRunTargetManifest } = await import("../tools/app-run-target.js");
+    const appDir = join(workspace, "apps", "eyes");
+    mkdirSync(join(appDir, "dist", "assets"), { recursive: true });
+    writeFileSync(join(appDir, "dist", "index.html"), '<script type="module" src="/apps/eyes/assets/index.js"></script><link href="/apps/eyes/assets/index.css">');
+    writeFileSync(join(appDir, "dist", "assets", "index.js"), 'const icon="/apps/eyes/favicon.svg";fetch("/api/apps/eyes/state");');
+    writeFileSync(join(appDir, "dist", "assets", "index.css"), "@font-face{src:url(/apps/eyes/assets/f.woff2)}");
+    writeRunTargetManifest(appDir, { mode: "static-build", distDir: "dist", framework: "vite" });
+
+    const bundle = buildAppBundle(freshRegistry(), workspace, "eyes", 7007);
+    const content = (p: string) => bundle?.files.find((f) => f.path === p)?.content;
+    expect(content("index.html")).toBe('<script type="module" src="./assets/index.js"></script><link href="./assets/index.css">');
+    expect(content("assets/index.js")).toBe('const icon="./favicon.svg";fetch("/api/apps/eyes/state");');
+    expect(content("assets/index.css")).toBe("@font-face{src:url(../assets/f.woff2)}");
+  });
+
+  it("bundles the built dist/ (not the Vite SOURCE index.html)", async () => {
     const { writeRunTargetManifest } = await import("../tools/app-run-target.js");
     const appDir = join(workspace, "apps", "spa-bundle");
     // A Vite app keeps a SOURCE index.html at its root (points at /src/main.tsx)
@@ -124,8 +143,8 @@ describe("buildAppBundle — static-build app (dist/)", () => {
     expect(bundle).not.toBeNull();
     if (!bundle) return;
     expect(bundle.entry).toBe("index.html");
-    // Paths are relative to dist/ (index.html, assets/app.js) — the phone serves
-    // each at /apps/<id>/<path>, matching the build's baked base.
+    // Paths are relative to dist/ (index.html, assets/app.js): the phone writes
+    // each under its offline-apps/<id>/ folder.
     const paths = bundle.files.map((f) => f.path).sort();
     expect(paths).toEqual(["assets/app.js", "index.html"]);
     // It's the BUILT index (has a <title>), not the source (points at /src).

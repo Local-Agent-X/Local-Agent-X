@@ -8,6 +8,20 @@
 
 import { asNumber, asRecord, asString, type Rec } from "./guards.js";
 
+/** What an app the agent built may ask the device for, on every surface it runs on:
+ *  the desktop serves it with a Permissions-Policy built from this list, and the
+ *  phone's live viewer and its downloaded copy allow the same. Each request still
+ *  asks the user. One list, so an app that works on one surface works on the others
+ *  (a downloaded camera app had none of what the live one allowed, 2026-10-26). */
+export const APP_DEVICE_CAPABILITIES = ["camera", "microphone", "geolocation"] as const;
+export type AppDeviceCapability = (typeof APP_DEVICE_CAPABILITIES)[number];
+
+/** The Permissions-Policy header value for an app's page: each capability for the
+ *  app's own origin only, so a third-party frame inside it gets none. */
+export function appPermissionsPolicy(): string {
+  return APP_DEVICE_CAPABILITIES.map((c) => `${c}=(self)`).join(", ");
+}
+
 /** Cap on the applied-actions ledger, so a long-lived app's state can't grow without limit. */
 export const MAX_APPLIED_ACTIONS = 500;
 

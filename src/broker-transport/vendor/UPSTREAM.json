@@ -79,7 +79,7 @@
     },
     "apps.ts": {
       "upstream": "packages/protocol/src/apps.ts",
-      "sha256": "95c1c4100a02c47314dd9a2173f0dc31e01e6aefe8867082a2fa0ed43a660db6"
+      "sha256": "618ff854dd8955c78fdfe9668f7f708ff144454548923efb4e5ee88982d5e9ec"
     },
     "sessions.ts": {
       "upstream": "packages/protocol/src/sessions.ts",

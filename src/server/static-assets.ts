@@ -7,6 +7,7 @@ import { confineToDir } from "../security/layer/index.js";
 import { getPageBundle, stampAssetTags } from "./static-bundle.js";
 import { verifyAgentFileSignature } from "./agent-file-links.js";
 import type { LAXConfig } from "../types.js";
+import { UI_PAGE_PERMISSIONS_POLICY } from "./app-serving-policy.js";
 
 const UPLOAD_CONTENT_TYPES: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml", bmp: "image/bmp", pdf: "application/pdf", txt: "text/plain", json: "application/json", csv: "text/csv", md: "text/markdown", rtf: "application/rtf", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", doc: "application/msword", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", xls: "application/vnd.ms-excel", pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation", ppt: "application/vnd.ms-powerpoint" };
 const MEDIA_CONTENT_TYPES: Record<string, string> = { mp4: "video/mp4", webm: "video/webm", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml" };
@@ -114,7 +115,7 @@ export function servePublicAsset(method: string, url: URL, req: IncomingMessage,
     // navigates itself here would otherwise sit inside the shell same-origin.
     const framable = page === "account";
     headers["Content-Security-Policy"] = `default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*; media-src 'self' blob: mediastream:; frame-src 'self' http://127.0.0.1:* http://localhost:*; frame-ancestors ${framable ? "'self'" : "'none'"}; object-src 'none'; base-uri 'self'; form-action 'self'`;
-    headers["X-Content-Type-Options"] = "nosniff"; headers["X-Frame-Options"] = framable ? "SAMEORIGIN" : "DENY"; headers["Referrer-Policy"] = "no-referrer"; headers["Permissions-Policy"] = "camera=(self), microphone=(self), geolocation=()";
+    headers["X-Content-Type-Options"] = "nosniff"; headers["X-Frame-Options"] = framable ? "SAMEORIGIN" : "DENY"; headers["Referrer-Policy"] = "no-referrer"; headers["Permissions-Policy"] = UI_PAGE_PERMISSIONS_POLICY;
     headers["Cache-Control"] = "no-cache, must-revalidate"; headers["Pragma"] = "no-cache";
     const raw = readFileSync(file, "utf-8");
     const bundle = getPageBundle(page, publicDir, raw);

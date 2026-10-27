@@ -301,6 +301,10 @@ describe("smoke origin and the real route serve ONE policy", () => {
       // loopback port, so framing is CSP frame-ancestors, never X-Frame-Options.
       expect(WORKSPACE_APP_HTML_HEADERS["Content-Security-Policy"])
         .toContain("frame-ancestors 'self' http://127.0.0.1:* http://localhost:*");
+      // An app the agent builds may ask for the camera, microphone and location
+      // (a camera app's offline copy and a weather app both need them).
+      expect(WORKSPACE_APP_HTML_HEADERS["Permissions-Policy"])
+        .toBe("camera=(self), microphone=(self), geolocation=(self)");
       expect(Object.keys(WORKSPACE_APP_HTML_HEADERS)).toEqual([
         "Content-Security-Policy", "X-Content-Type-Options",
         "Referrer-Policy", "Permissions-Policy", "Cache-Control", "Pragma",

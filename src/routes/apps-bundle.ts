@@ -70,6 +70,22 @@ function collectFiles(appDir: string, dir: string, prefix: string, acc: BundleFi
 }
 
 /**
+ * Point a static build's baked `/apps/<id>/` base inside the bundle, in place. A
+ * stylesheet resolves a URL against its own file, so a CSS file at depth d gets
+ * `../` d times; HTML and scripts resolve against the page (a script's asset and
+ * preload URLs are set on the document), which sits at the bundle root, so they
+ * get `./`. `/api/apps/<id>/…` is left as it is: those are the app's data calls,
+ * which the phone's offline adapter intercepts by that exact path.
+ */
+export function rebaseForOffline(file: BundleFile, appId: string): void {
+  if (file.encoding !== "utf-8") return;
+  const depth = file.path.split("/").length - 1;
+  const prefix = extOf(file.path) === "css" && depth > 0 ? "../".repeat(depth) : "./";
+  const base = new RegExp(`(?<!/api)/apps/${appId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/`, "g");
+  file.content = file.content.replace(base, prefix);
+}
+
+/**
  * Build the offline bundle for `appId`, or null if the app exists in neither the
  * registry nor the workspace. Pure w.r.t. the filesystem + registry passed in,
  * so it's unit-testable without an HTTP server.
@@ -84,11 +100,13 @@ export function buildAppBundle(
   const appDir = resolve(workspaceDir, "apps", appId);
 
   // Finished STATIC BUILD takes precedence — its built dist/ is what LAX serves
-  // at /apps/<id>/, and the phone's offline runtime serves each bundle file at
-  // that same /apps/<id>/<path> base, so the build's baked `/apps/<id>/` asset
-  // URLs resolve. Must run BEFORE the root-index.html check below: a Vite app
-  // also keeps a SOURCE index.html at its root, and bundling that (unbuilt,
-  // pointing at /src/main.tsx) would ship a blank app. See app-run-target.ts.
+  // at /apps/<id>/. Its asset URLs are baked against that base, which the phone
+  // does not have: it opens a bundle from file://…/offline-apps/<id>/, where
+  // `/apps/<id>/assets/x.js` is the root of the phone's filesystem. So the base
+  // is rewritten to point inside the bundle (rebaseForOffline). Must run BEFORE
+  // the root-index.html check below: a Vite app also keeps a SOURCE index.html at
+  // its root, and bundling that (unbuilt, pointing at /src/main.tsx) would ship a
+  // blank app. See app-run-target.ts.
   const distDir = staticBuildDistDir(appDir);
   if (distDir) {
     const files: BundleFile[] = [];
@@ -100,6 +118,7 @@ export function buildAppBundle(
       try { files.unshift({ path: "index.html", content: readFileSync(distIndex, "utf-8"), encoding: "utf-8" }); }
       catch { return null; }
     }
+    for (const f of files) rebaseForOffline(f, appId);
     let version = "1";
     try { version = String(Math.floor(statSync(distIndex).mtimeMs)); } catch { /* keep default */ }
     return { appId, version, entry: "index.html", files, state };

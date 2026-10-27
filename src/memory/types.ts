@@ -240,6 +240,9 @@ export interface ChunkMetadata {
   date_approx?: true;
   source_type?: ChunkSourceType;
   session_id?: string;
+  /** A project document's real file, the path a read of the whole document
+   *  opens (the chunk's own path is the virtual project/<id>/… one). */
+  file_path?: string;
   trust_status?: MemoryTrustStatus;
   taint_status?: MemoryTaintStatus;
   provenance_label?: string;

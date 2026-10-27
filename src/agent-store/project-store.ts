@@ -7,6 +7,7 @@ import { randomBytes } from "node:crypto";
 import { PROJECTS_FILE } from "./paths.js";
 import { ProjectRosterStore, type ProjectRoster } from "../project-rosters.js";
 import { readTrashRecord, trashRecord } from "../safe-delete.js";
+import { EventBus } from "../event-bus.js";
 
 export interface Project {
   id: string;
@@ -48,8 +49,11 @@ export class ProjectStore {
     } catch { this.projects = []; }
   }
 
+  /** Every write of the project list goes through here, so this is the one
+   *  place that announces it. */
   private persist(): void {
     writeFileSync(PROJECTS_FILE, JSON.stringify(this.projects, null, 2), "utf-8");
+    void EventBus.emit("projects:changed", {});
   }
 
   create(project: Omit<Project, "id" | "createdAt" | "updatedAt">): Project {

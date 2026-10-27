@@ -23,6 +23,10 @@ export interface EventTopics {
   "handler:agent-redirect": { agentId: string; newInstruction: string };
   /** A UI event from the agent's browser (browser/bridge-perception.ts). */
   "ui:browser": Record<string, unknown>;
+  /** The project list was written: a project made, edited, deleted or
+   *  restored (agent-store/project-store.ts). Consumer: the project
+   *  documents index (memory/project-docs/service.ts). */
+  "projects:changed": Record<string, never>;
 }
 
 export type EventName = keyof EventTopics;
@@ -33,6 +37,7 @@ export type EventPattern = `${string}:*`;
  *  EventTopics in both directions. */
 export const EVENT_TOPICS = [
   "handler:agent-spawn", "handler:agent-result", "handler:agent-output", "handler:agent-redirect", "ui:browser",
+  "projects:changed",
 ] as const satisfies readonly EventName[];
 type MissingTopic = Exclude<EventName, (typeof EVENT_TOPICS)[number]>;
 const _everyTopicListed: MissingTopic extends never ? true : never = true;

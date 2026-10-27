@@ -379,6 +379,12 @@ export async function bootstrapServices(config: LAXConfig): Promise<Bootstrapped
 
   startWindowsCageProof().catch((e) => logger.warn(`[sandbox] cage proof start failed: ${(e as Error).message}`));
 
+  // Index every chat project's documents and keep them current, so a project
+  // chat can search them (memory/project-docs/).
+  Promise.all([import("../memory/project-docs/service.js"), import("../agent-store/index.js")])
+    .then(([{ startProjectDocsIndex }, { ProjectStore }]) => startProjectDocsIndex(memoryIndex, () => ProjectStore.getInstance().list()))
+    .catch((e) => logger.warn(`[project-docs] start failed: ${(e as Error).message}`));
+
   _t = _bsT("CronService+IntegrationRegistry");
   const cronService = new CronService(dataDir);
   const integrations = new IntegrationRegistry(dataDir, secretsStore);

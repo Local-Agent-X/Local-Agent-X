@@ -13,31 +13,31 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1873 non-test source files · 92 oversized · 243 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1877 non-test source files · 92 oversized · 244 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 171 | 29 | XL | 1 |
-| `src/security/` | 135 | 53 | XL | 3 |
-| `src/tools/` | 120 | 221 | XL | 9 |
+| `src/security/` | 137 | 53 | XL | 3 |
+| `src/tools/` | 121 | 221 | XL | 9 |
 | `src/tool-execution/` | 83 | 78 | XL | 2 |
 | `src/canonical-loop/` | 80 | 274 | XL | 13 |
-| `src/workspace/` | 79 | 3 | M |  |
+| `src/workspace/` | 80 | 3 | M |  |
 | `src/providers/` | 69 | 26 | L | 1 |
-| `src/memory/` | 52 | 141 | XL | 7 |
-| `src/data-lineage/` | 51 | 11 | M |  |
+| `src/data-lineage/` | 52 | 11 | M |  |
+| `src/memory/` | 52 | 145 | XL | 7 |
 | `src/session/` | 50 | 9 | M |  |
 | `src/browser/` | 48 | 88 | XL | 5 |
 | `src/tool-policy/` | 46 | 21 | L |  |
 | `src/local-runtimes/` | 42 | 26 | L | 1 |
-| `src/util/` | 41 | 3 | S |  |
+| `src/util/` | 42 | 3 | S |  |
 | `src/threat/` | 40 | 13 | L |  |
 | `src/auth/` | 37 | 11 | L |  |
 | `src/chat-ws/` | 32 | 23 | L |  |
 | `src/agency/` | 29 | 21 | L |  |
-| `src/agent-store/` | 27 | 7 | M | 1 |
+| `src/agent-store/` | 28 | 7 | M | 1 |
 | `src/context/` | 26 | 11 | M | 1 |
 | `src/context-manager/` | 26 | 15 | M |  |
 | `src/classifiers/` | 24 | 16 | L |  |
@@ -74,9 +74,9 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/bridge-voice/` | 8 | 5 | S |  |
 | `src/mcp-client/` | 8 | 11 | L | 1 |
 | `src/telegram-bridge/` | 8 | 6 | M |  |
+| `src/app-renderer/` | 7 | 7 | M | 1 |
 | `src/auto-build/` | 7 | 52 | XL | 3 |
 | `src/android/` | 6 | 7 | M |  |
-| `src/app-renderer/` | 6 | 7 | M | 1 |
 | `src/credentials/` | 6 | 1 | S |  |
 | `src/embedding-providers/` | 4 | 8 | M |  |
 | `src/hooks/` | 4 | 3 | M |  |
@@ -383,6 +383,7 @@ job. Comments are free: never cut them to fit.
 - `src/memory/tools/save.ts` — 280+ code lines (cap 350)
 - `src/protocols/builder.ts` — 280+ code lines (cap 350)
 - `src/screen-capture.ts` — 280+ code lines (cap 350)
+- `src/server/bootstrap-services.ts` — 280+ code lines (cap 350)
 - `src/test-suite.ts` — 280+ code lines (cap 350)
 - `src/tools/build-app-spawn.ts` — 280+ code lines (cap 350)
 - `src/agency/handler-tools.ts#createHandlerTools` — 100+ own code lines (cap 100)

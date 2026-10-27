@@ -39,6 +39,21 @@ describe("Context Builder", () => {
     expect(JSON.stringify(result.sections)).not.toContain("User works on Local Agent X");
   });
 
+  // A code session adds its static project-rules section after the dynamic
+  // riders (build-system-prompt.ts); every turn of it threw "prompt sections
+  // do not match systemPrompt bytes" in create-op.ts (2026-10-27).
+  it("lists a static section added after a dynamic one where the prompt carries it", async () => {
+    const result = await new SystemPromptBuilder()
+      .addSection({ id: "base", label: "Base", type: "static", policy: "required", build: () => "A" })
+      .addSection({ id: "rider", label: "Rider", type: "dynamic", policy: "required", build: () => "B" })
+      .addSection({ id: "project-rules", label: "Project Rules", type: "static", policy: "degradable", build: () => "C" })
+      .buildWithTelemetry();
+    expect(result.prompt).toBe("ACB");
+    expect(result.renderedSections.map((section) => section.text).join("")).toBe(result.prompt);
+    expect(result.renderedSections.map((section) => section.id)).toEqual(["base", "project-rules", "rider"]);
+    expect(result.sections.map((section) => section.id)).toEqual(["base", "project-rules", "rider"]);
+  });
+
   it("renders the canonical section plan byte-for-byte with stable policy", async () => {
     const builder = createSystemPromptBuilder(MOCK_INPUTS);
     const result = await builder.buildWithTelemetry();

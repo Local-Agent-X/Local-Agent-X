@@ -135,39 +135,35 @@ export class SystemPromptBuilder {
     return (await this.buildWithTelemetry()).prompt;
   }
 
+  /** The sections in the order the prompt carries them: static first, then
+   *  dynamic, each in the order added. `renderedSections` joins to `prompt`
+   *  byte for byte whatever order they were added in; a code session's static
+   *  project-rules section, added after the dynamic riders, made the two
+   *  disagree and every turn of that session threw (2026-10-27). */
   async buildWithTelemetry(): Promise<SystemPromptBuildResult> {
-    const staticParts: string[] = [];
-    const dynamicParts: string[] = [];
-    const metrics: PromptSectionTelemetry[] = [];
-    const renderedSections: RenderedPromptSection[] = [];
+    const staticSections: RenderedPromptSection[] = [];
+    const dynamicSections: RenderedPromptSection[] = [];
 
     for (const section of this.sections) {
       if (section.shouldInclude && !section.shouldInclude()) continue;
       const content = await section.build();
       if (!content) continue;
 
-      const measurement = measurePromptSection(section.id, section.type, content);
-      metrics.push(measurement);
-      renderedSections.push({
+      (section.type === "static" ? staticSections : dynamicSections).push({
         id: section.id,
         label: section.label,
         type: section.type,
         policy: section.policy,
         ...(section.priority ? { priority: section.priority } : {}),
         text: content,
-        measurement,
+        measurement: measurePromptSection(section.id, section.type, content),
       });
-
-      if (section.type === "static") {
-        staticParts.push(content);
-      } else {
-        dynamicParts.push(content);
-      }
     }
 
+    const renderedSections = [...staticSections, ...dynamicSections];
     return {
-      prompt: staticParts.join("") + dynamicParts.join(""),
-      sections: metrics,
+      prompt: renderedSections.map((section) => section.text).join(""),
+      sections: renderedSections.map((section) => section.measurement),
       renderedSections,
     };
   }

@@ -101,6 +101,10 @@ function literalShapeRefusal(command: string): SecurityDecision | null {
 
 /** Every network destination the command's inline programs name is this
  *  machine's own, and the shell may reach it (loopback-grant.ts). */
+/** What a shell client may reach on this machine (loopback-grant.ts): the
+ *  ports and Unix sockets the rules admit a loopback-only client to. */
+const SHELL_LOOPBACK_GRANT = { loopbackReachable: shellLoopbackReachable, unixSocketReachable: shellUnixSocketReachable };
+
 function inlineProgramLocal(command: string): boolean {
   const d = inlineProgramDestinations(command);
   return d.kind === "local" && d.ports.every(shellLoopbackReachable) && d.unixSockets.every(shellUnixSocketReachable);
@@ -357,10 +361,7 @@ export function evaluateShellCommand(
   // detached-session and inline-program form rules where the structural
   // switch stands the shape rules down, and sudo on a server already running
   // as root.
-  const ruleHit = findCommandRuleHit(command, {
-    egressEnforced, shapeRulesStandDown: !structuralRulesApply,
-    loopbackReachable: shellLoopbackReachable, unixSocketReachable: shellUnixSocketReachable,
-  });
+  const ruleHit = findCommandRuleHit(command, { egressEnforced, shapeRulesStandDown: !structuralRulesApply, ...SHELL_LOOPBACK_GRANT });
   if (ruleHit) {
     return { allowed: false, reason: commandRuleReason(ruleHit), userHint: USER_HINTS.commandShell, recovery: commandRuleRecovery(ruleHit) };
   }

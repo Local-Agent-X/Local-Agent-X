@@ -73,3 +73,38 @@ describe("POST /api/projects — a code folder", () => {
     expect(ctx.projects).toHaveLength(0);
   });
 });
+
+async function phone(ctx: ReturnType<typeof store>, method: "GET" | "POST", body?: unknown) {
+  const cap = mockResponse();
+  await handleProjectRoutes(method, new URL("http://test/api/code-folders"), mockJsonRequest(body ?? {}), cap.res, ctx as unknown as ServerContext, "user");
+  return { status: cap.status, body: JSON.parse(cap.body) };
+}
+
+// The phone's Code side: it sees and adds code folders, and no other project field.
+describe("/api/code-folders", () => {
+  it("lists only code folders, as id, name and path", async () => {
+    const ctx = store([
+      { id: "proj-a", name: "Team", workspace: "x", agentIds: ["a1"], secretKeys: ["K"], createdAt: 1, updatedAt: 1 } as Project,
+      { id: "proj-b", name: "app", workspace: repo, codeFolder: true, agentIds: [], secretKeys: ["K"], createdAt: 1, updatedAt: 1 } as Project,
+    ]);
+    const r = await phone(ctx, "GET");
+    expect(r.body).toEqual([{ id: "proj-b", name: "app", workspace: repo }]);
+  });
+
+  it("adds a folder, or returns the one already there", async () => {
+    const ctx = store();
+    const first = await phone(ctx, "POST", { workspace: repo });
+    expect(first.body).toEqual({ id: "proj-1", name: "app", workspace: repo });
+    const again = await phone(ctx, "POST", { workspace: repo });
+    expect(again.body.id).toBe("proj-1");
+    expect(ctx.projects).toHaveLength(1);
+    expect(ctx.projects[0]).toMatchObject({ codeFolder: true });
+  });
+
+  it("refuses a path that is not a folder", async () => {
+    const ctx = store();
+    const r = await phone(ctx, "POST", { workspace: join(root, "missing") });
+    expect(r.status).toBe(400);
+    expect(ctx.projects).toHaveLength(0);
+  });
+});

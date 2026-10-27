@@ -9,7 +9,7 @@ import { DEVICE_HTTP_PREFIXES, isDeviceAllowedPath } from "./device-paths.js";
 describe("device allowlist", () => {
   it("is exactly the reviewed set — widening it requires updating this pin", () => {
     expect([...DEVICE_HTTP_PREFIXES].sort()).toEqual(
-      ["/api/apps", "/api/providers", "/api/sessions", "/api/workspace/browse", "/apps/", "/files/", "/images/", "/uploads/", "/videos/"].sort(),
+      ["/api/apps", "/api/code-folders", "/api/providers", "/api/sessions", "/api/workspace/browse", "/apps/", "/files/", "/images/", "/uploads/", "/videos/"].sort(),
     );
   });
 
@@ -23,6 +23,7 @@ describe("device allowlist", () => {
       "/api/apps",
       "/apps/foo/index.html",
       "/api/providers",
+      "/api/code-folders",
     ]) {
       expect(isDeviceAllowedPath(p), p).toBe(true);
     }
@@ -35,6 +36,8 @@ describe("device allowlist", () => {
       "/api/config",
       "/api/upload",
       "/api/artifacts",
+      "/api/projects", // the phone reaches code folders only, never a project's rosters, secrets or tools
+      "/api/projects/proj-1",
       "/uploads", // no trailing slash → not the served prefix
       "/uploadsX/evil",
       "/",

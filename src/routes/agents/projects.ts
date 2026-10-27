@@ -35,6 +35,18 @@ export const handleProjectRoutes: RouteHandler = async (method, url, req, res, c
     json(200, project); return true;
   }
 
+  // The phone's Code side (broker-transport/device-paths.ts): the code folders,
+  // and adding one, with nothing else of a project in or out.
+  if (method === "GET" && url.pathname === "/api/code-folders") {
+    json(200, ctx.projectStore.list().filter((p) => p.codeFolder).map(codeFolderView)); return true;
+  }
+  if (method === "POST" && url.pathname === "/api/code-folders") {
+    const body = await safeParseBody(req);
+    const folder = codeSessionFolder(typeof body?.workspace === "string" ? body.workspace : undefined);
+    if (!folder) { json(400, { error: "That is not a folder on this computer." }); return true; }
+    json(200, codeFolderView(await codeFolderProject(folder, ctx.projectStore))); return true;
+  }
+
   if (method === "GET" && url.pathname === "/api/projects") {
     json(200, ctx.projectStore.list()); return true;
   }
@@ -126,6 +138,11 @@ async function createCodeFolder(
   const folder = codeSessionFolder(typeof body.workspace === "string" ? body.workspace : undefined);
   if (!folder) { json(400, { error: "That is not a folder on this computer." }); return; }
   json(200, await codeFolderProject(folder, ctx.projectStore));
+}
+
+/** A code folder as /api/code-folders shows it: what a session is filed under. */
+function codeFolderView(p: Project): { id: string; name: string; workspace: string } {
+  return { id: p.id, name: p.name, workspace: p.workspace ?? "" };
 }
 
 /** The code-folder project for `folder` (a real directory): the one already on

@@ -58,6 +58,12 @@ export function createTargetPath(toolName: string, args: Record<string, unknown>
 // line put at that path, which may be the user's bytes.
 const WRITE_REDIRECTS: ReadonlySet<string> = new Set([">", ">|", "&>"]);
 const CD_BINS: ReadonlySet<string> = new Set(["cd", "pushd", "popd", "chdir", "set-location", "sl"]);
+// Commands that only read or print the paths they are given: naming the file
+// cannot put anyone's bytes in it. Their own redirections are read above.
+const READ_ONLY_BINS: ReadonlySet<string> = new Set([
+  "cat", "head", "tail", "less", "more", "wc", "grep", "egrep", "fgrep", "ls", "stat", "file",
+  "md5sum", "sha1sum", "sha256sum", "test", "[", "echo", "printf",
+]);
 const UNPLACEABLE = /[$`*?~{}]/;
 
 /**
@@ -68,9 +74,10 @@ const UNPLACEABLE = /[$`*?~{}]/;
  * counterpart of the pre-stat above, so a script's own log is the agent's on
  * every OS, not only where a birth time proves it new (unnamed-delete-gate.ts).
  *
- * A target that is also a word of any command in the line is left out, since
- * that command may act on the path too (`mv users.csv new.csv && cat new.csv >
- * new.csv`). Relative targets resolve at `cwd`, where the shell runs, and are
+ * A target that is also a word of any other command in the line is left out,
+ * since that command may act on the path too (`mv users.csv new.csv && cat
+ * new.csv > new.csv`), unless the command only reads or prints it (`cat`,
+ * `tail`, `grep`, …: TB2 qemu-alpine-ssh's `… > console.log; cat console.log`). Relative targets resolve at `cwd`, where the shell runs, and are
  * left out after any `cd`, which this cannot follow; an expansion, glob, brace
  * or `~` is left out too. A file a program opens itself (`python gen.py`
  * writing out.csv) is not seen.
@@ -87,6 +94,7 @@ export function shellCreateTargets(command: string, cwd: string): string[] {
     const operands = p.words.slice(p.at + 1);
     const creates = p.bin === "tee" && operands.every((w) => !w.startsWith("-"));
     if (creates) targets.push(...operands);
+    if (READ_ONLY_BINS.has(p.bin)) continue;
     for (const w of creates ? p.words.slice(0, p.at + 1) : p.words) otherWords.add(w);
   }
   const out: string[] = [];

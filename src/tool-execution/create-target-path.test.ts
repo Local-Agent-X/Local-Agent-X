@@ -22,6 +22,12 @@ describe("shellCreateTargets finds what the command's own writes create", () => 
     expect(shellCreateTargets("npm test | tee test.log", cwd)).toEqual([at("test.log")]);
     expect(shellCreateTargets("echo x > /tmp/probe.txt", cwd)).toEqual([resolve("/tmp/probe.txt")]);
   });
+
+  it("a command that only reads or prints the file does not stop it counting", () => {
+    expect(shellCreateTargets("expect setup.exp > /app/vm/console.log 2>&1; sleep 3; cat /app/vm/console.log", cwd))
+      .toEqual([resolve("/app/vm/console.log")]);
+    expect(shellCreateTargets("make > build.log; tail -5 build.log; grep -c error build.log", cwd)).toEqual([at("build.log")]);
+  });
 });
 
 describe("shellCreateTargets leaves out what it cannot prove is the command's output", () => {

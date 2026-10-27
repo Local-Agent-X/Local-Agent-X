@@ -70,6 +70,14 @@ describe("isDestructiveCommand — flags irreversible shell operations", () => {
     ["rmdir /S /Q build", "rd /s"],
     ["del /s /q workspace\client-data\*.tmp", "del /s"],
     ["cmd.exe /c \"del /q /s C:\ws\client-data\"", "del /s"],
+    // A loop that runs the word, hands it on, or a lookup's lookalike, still flags.
+    ["for t in mkfs.ext4; do $t /dev/sdb; done", "filesystem format"],
+    ["for t in mkfs.ext4; do sudo \"$t\" /dev/sdb; done", "filesystem format"],
+    ["for t in mkfs.ext4; do x=$t; $x /dev/sdb; done", "filesystem format"],
+    ["for t in mkfs.ext4; do echo $t | sh; done", "filesystem format"],
+    ["for t in $(echo mkfs.ext4); do command -v $t; done", "filesystem format"],
+    ["command -v mkfs && mkfs.ext4 /dev/sdb", "filesystem format"],
+    ["find . -type f -exec rm -rf {} +", "rm -rf"],
   ];
 
   for (const [cmd, reason] of destructive) {
@@ -120,6 +128,12 @@ describe("isDestructiveCommand — flags irreversible shell operations", () => {
     "ls -r build | Remove-Item",       // the flag belongs to the ls, not to a Remove-Item after the pipe
     "ls -la",
     "echo 'rm -rf is just text here in quotes'".replace(/rm -rf/, "remove"),
+    // A lookup names a program without running it. Verbatim TB2
+    // qemu-alpine-ssh (2026-10-27), carded as a filesystem format.
+    "for t in mkfs.ext4 mkfs.msdos fdisk dd python3; do printf '%-12s ' \"$t\"; command -v $t || echo MISSING; done",
+    "command -v mkfs.ext4",
+    "which mkfs.vfat || echo missing",
+    "if type mkfs >/dev/null 2>&1; then echo ok; fi",
   ];
 
   for (const cmd of benign) {

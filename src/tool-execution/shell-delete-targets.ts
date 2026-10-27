@@ -15,6 +15,7 @@
  * be a second card for one decision. `git rm` is excluded, as it is on the
  * floor: git is its undo.
  */
+import { splitRedirections } from "../security/layer/shell-command-positions.js";
 
 /** Command segments: `a && b`, `a; b`, `a || b`, `a | b`, `a & b`, one per
  *  line. A single `&` (not `2>&1`, `&>`, `|&`) backgrounds its left side and
@@ -68,9 +69,10 @@ function basenameOf(word: string): string {
   return (word.split("/").pop() ?? word).split("\\").pop() ?? word;
 }
 
-/** Targets of one segment, or [] when it is not a single-file delete. */
+/** Targets of one segment, or [] when it is not a single-file delete. Its
+ *  redirections are not operands: `rm -f a 2>/dev/null` deletes `a` only. */
 function segmentTargets(segment: string): string[] {
-  const words = stripEnvAssignments(shellWords(segment));
+  const words = stripEnvAssignments(splitRedirections(shellWords(segment)).words);
   if (words.length === 0) return [];
   // `sudo rm …`, `command rm …`, `powershell -Command "Remove-Item …"`: look
   // through one wrapper.

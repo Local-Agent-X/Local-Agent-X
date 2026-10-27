@@ -96,12 +96,14 @@ function destinationOf(argText: string, bound: Map<string, string | null>): { po
   return null;
 }
 
-/** The destinations every inline program of `command` names (see the header). */
-export function inlineProgramDestinations(command: string): InlineDestinations {
+/** The destinations every inline program of `command` names (see the header),
+ *  and those of `heredocPrograms`, the bodies a heredoc feeds an interpreter
+ *  as its program (shell-source-text.ts `programs`). */
+export function inlineProgramDestinations(command: string, heredocPrograms: readonly string[] = []): InlineDestinations {
   const ports: string[] = [];
   const unixSockets: string[] = [];
   let calls = 0;
-  for (const program of inlinePrograms(command)) {
+  for (const program of [...inlinePrograms(command), ...heredocPrograms]) {
     const bound = bindings(program);
     for (const m of program.matchAll(DESTINATION_CALL)) {
       calls++;

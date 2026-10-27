@@ -274,7 +274,14 @@ describe.skipIf(process.platform === "linux")("files this request created", asyn
 
   it("a shell rm of it asks — a shell delete has no trash to undo from", async () => {
     const p = made("scratch.log");
-    await preauthorizeUnnamedDeletes({ ...scope, toolCalls: [{ id: "r5", name: "bash", arguments: JSON.stringify({ command: `rm "${p}"` }) }] });
+    // The fixture sits in the OS temp dir, where a shell delete asks nothing;
+    // the file under test is a request's, so temp is moved off it.
+    for (const name of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(name, join(dir, "elsewhere"));
+    try {
+      await preauthorizeUnnamedDeletes({ ...scope, toolCalls: [{ id: "r5", name: "bash", arguments: JSON.stringify({ command: `rm "${p}"` }) }] });
+    } finally {
+      vi.unstubAllEnvs();
+    }
     expect(requests).toHaveLength(1);
   });
 });

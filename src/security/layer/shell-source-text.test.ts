@@ -16,7 +16,7 @@ describe("line continuations", () => {
 describe("heredocs", () => {
   it("drops a data body and keeps the operator and its redirect", () => {
     const r = readSourceText("cat <<'EOF' > soln.py\nimport requests\n(a, b) = f()\nEOF\npython3 soln.py");
-    expect(r).toEqual({ command: "cat <<'EOF' > soln.py\npython3 soln.py", scripts: [] });
+    expect(r).toEqual({ command: "cat <<'EOF' > soln.py\npython3 soln.py", scripts: [], programs: [] });
   });
 
   it("hands a body a shell reads back as a script", () => {
@@ -32,6 +32,13 @@ describe("heredocs", () => {
     const r = readSourceText("python3 - <<'PY'\nprint('hi')\nPY");
     expect(r.scripts).toEqual([]);
     expect(r.command).toBe(`python3 - <<'PY' 'print("hi")'\n`);
+    expect(r.programs).toEqual(["print('hi')"]);
+  });
+
+  it("lists as programs only the bodies a language reads, not xargs' or cmd's input", () => {
+    expect(readSourceText("cat <<'EOF' | node\nconsole.log(1)\nEOF").programs).toEqual(["console.log(1)"]);
+    expect(readSourceText("xargs -n1 echo <<'EOF'\na\nEOF").programs).toEqual([]);
+    expect(readSourceText("cat <<'EOF' > a.py\nprint(1)\nEOF").programs).toEqual([]);
   });
 
   it("keeps what an unquoted body expands, and nothing from a quoted one", () => {

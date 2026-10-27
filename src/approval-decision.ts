@@ -331,10 +331,36 @@ function runsNothing(literal: string): boolean {
   return literal.startsWith("'") || !/\$\(|`/.test(literal);
 }
 
+// Two more shapes that name a program without running it. A lookup in command
+// position (`command -v mkfs.ext4`, `which dd`, `if type mkfs …`; never find's
+// `-type f -exec rm …`) prints where a program is. And a `for` loop's word
+// list, when its body only looks the word up or prints it: TB2 qemu-alpine-ssh
+// (2026-10-27) carded `for t in mkfs.ext4 fdisk; do command -v $t; done` as a
+// filesystem format. A body that runs the word (`$t /dev/sdb`), hands it on
+// (an assignment, a pipe, xargs, eval), redirects, or nests a loop keeps the
+// list.
+const LOOKUP = /((?:^|[;&|(\n!]|\b(?:do|then|else|if|elif|while|until)\b)\s*(?:command\s+-[vV]|which|type)\s+)([^;&|()<>\n`]+)/g;
+const FOR_LIST = /(\bfor\s+([A-Za-z_]\w*)\s+in\s+)([^;\n`]*?)(\s*[;\n]\s*do\b)([\s\S]*?\bdone\b)/g;
+const PRINTERS = new Set(["echo", "printf", "which", "type"]);
+
+function onlyLooksUp(name: string, body: string): boolean {
+  if (/`|\$\(|(?<!\|)\|(?!\|)|\b(?:eval|xargs|for|while|until)\b/.test(body)) return false;
+  const ref = new RegExp(String.raw`\$\{?${name}\b`);
+  return body.split(/[;&|\n]+/).every((segment) => {
+    if (!ref.test(segment)) return true;
+    if (/[<>]/.test(segment)) return false;
+    const [head, flag] = segment.trim().replace(/^(?:(?:do|then|else|if|elif|!)\s+)+/, "").split(/\s+/);
+    return PRINTERS.has(head) || (head === "command" && /^-[vV]$/.test(flag ?? ""));
+  });
+}
+
 /** The command with every data-only literal above blanked to `""`. */
 export function withoutInertLiterals(command: string): string {
   const blank = (whole: string, lead: string, literal: string) => (runsNothing(literal) ? `${lead}""` : whole);
-  return command.replace(COMMIT_MESSAGE, blank).replace(SEARCH_PATTERN, blank);
+  return command.replace(COMMIT_MESSAGE, blank).replace(SEARCH_PATTERN, blank)
+    .replace(FOR_LIST, (whole, lead: string, name: string, list: string, open: string, body: string) =>
+      (!list.includes("$(") && onlyLooksUp(name, body) ? `${lead}""${open}${body}` : whole))
+    .replace(LOOKUP, (_whole, lead: string) => `${lead}""`);
 }
 
 /**

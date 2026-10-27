@@ -14,16 +14,22 @@
  *
  * Fail-closed throughout: a segment that trips the floor but is not a plain
  * recursive rm / Remove-Item / rd, a target with an expansion, glob or `~`, a
- * `cd` before a delete other than a plain one opening the command
- * (`enterLeadingCd`), or a target that is not provably disposable keeps the card. Nothing here parses a
- * shell; it reads argv-shaped text.
+ * command before a delete other than an inert one or one plain `cd` opening
+ * the command (shell-prelude.ts), or a target that is not provably disposable
+ * keeps the card. Nothing here parses a shell; it reads argv-shaped text.
+ *
+ * The same proof clears a single-file shell delete for the un-named-delete
+ * gate (`disposableFileDeletes`): a file in the temp dir, or one that is not
+ * there, is nobody's data.
  */
 import { existsSync, lstatSync, readdirSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { isTaskArtifact } from "../data-lineage/task-artifacts.js";
 import { hasExternalIngestion } from "../data-lineage/external.js";
-import { segments, shellWords } from "./shell-delete-targets.js";
+import { splitRedirections } from "../security/layer/shell-command-positions.js";
+import { leadingShellDeleteTargets, segments, shellWords } from "./shell-delete-targets.js";
+import { enterPrelude } from "./shell-prelude.js";
 
 /** Generated-output folders and the manifest beside them that regenerates
  *  them. `null`: a tool's own cache, generated wherever it appears. */
@@ -57,7 +63,7 @@ const EXPANDS = /[$`*?~%]/;
 
 /** A segment that is exactly one recursive delete, or null. */
 function parseTreeDelete(segment: string): TreeDelete | null {
-  const words = shellWords(segment);
+  const words = splitRedirections(shellWords(segment)).words;
   const head = (words[0] ?? "").replace(/\.exe$/i, "").toLowerCase();
   const rest = words.slice(1);
   if (head === "rm" && rest.some((w) => /^-[^-]*[rR]/.test(w) || w === "--recursive")) {
@@ -129,6 +135,21 @@ function generatedOutput(abs: string): boolean {
   return manifests === null || manifests.some((m) => existsSync(join(dirname(abs), m)));
 }
 
+/** A Python virtual environment: `python -m venv`, virtualenv and uv all write
+ *  `pyvenv.cfg` at its root, whatever the folder is called. It holds an
+ *  interpreter link and packages installed from an index; the project's code
+ *  lives outside it. */
+function virtualEnv(abs: string): boolean {
+  try { return lstatSync(join(abs, "pyvenv.cfg")).isFile(); } catch { return false; /* no marker: not a venv */ }
+}
+
+/** A target this cannot place on disk: an expansion, and on Windows a `/x/…`
+ *  or `\\x\…` path, which is Git Bash's mount or a share, not `<drive>:\x\…`.
+ *  Resolved here it would name another path, one that reads as absent. */
+function unplaceable(target: string): boolean {
+  return /[$`~%]/.test(target) || (process.platform === "win32" && /^[\\/]/.test(target));
+}
+
 /** Every file under `abs` (or `abs` itself) was written by this session's
  *  agent with its file tools. Off once the session read untrusted content. */
 function agentCreated(abs: string, isDir: boolean, sessionId: string | undefined): boolean {
@@ -153,7 +174,7 @@ function agentCreated(abs: string, isDir: boolean, sessionId: string | undefined
 }
 
 function disposable(target: string, form: Form, scope: TreeDeleteScope): boolean {
-  if (!target || EXPANDS.test(target)) return false;
+  if (!target || EXPANDS.test(target) || unplaceable(target)) return false;
   const trailingSep = /[\\/]$/.test(target);
   const abs = resolve(scope.cwd, target);
   let stat;
@@ -167,33 +188,15 @@ function disposable(target: string, form: Form, scope: TreeDeleteScope): boolean
   // `rm -rf link/` resolves through the link; the bare link is only unlinked.
   if (stat.isSymbolicLink()) return !trailingSep;
   if (inTempDir(abs, scope.tempDir ?? tmpdir())) return true;
-  if (stat.isDirectory() && generatedOutput(abs)) {
+  if (stat.isDirectory() && (generatedOutput(abs) || virtualEnv(abs))) {
     return (form !== "remove-item" && process.platform !== "win32") || !hasShallowLink(abs);
   }
   return agentCreated(abs, stat.isDirectory(), scope.sessionId);
 }
 
-const CD = /^(?:cd|pushd|popd|chdir|set-location|sl)\b/i;
-const LEADING_CD = /^\s*(?:cd|pushd|set-location|sl)\s+("[^"]*"|'[^']*'|[^\s"';&|]+)\s*&&/i;
-
-/**
- * `cd <dir> && …` opening the command: the rest runs in `dir`, so its targets
- * resolve there (`cd /tmp/alpboot && rm -rf rootfs`, TB2 qemu-startup
- * 2026-10-27, carded a temp folder). Only `&&`, so a cd that fails runs
- * nothing; only an absolute or `./` / `../` dir, since CDPATH can send a bare
- * name anywhere; never across drives, where cmd's `cd` keeps the old drive.
- * The command unchanged when it opens with no cd; null when it opens with one
- * this cannot place.
- */
-function enterLeadingCd(command: string, cwd: string): { command: string; cwd: string } | null {
-  if (!CD.test(command.trimStart())) return { command, cwd };
-  const m = LEADING_CD.exec(command);
-  if (!m) return null;
-  const [dir] = shellWords(m[1]);
-  if (!dir || EXPANDS.test(dir) || dir.startsWith("-")) return null;
-  if (!isAbsolute(dir) && !/^\.\.?(?:[\\/]|$)/.test(dir)) return null;
-  if (/^[a-z]:/i.test(dir) && dir[0].toLowerCase() !== resolve(cwd)[0].toLowerCase()) return null;
-  return { command: command.slice(m[0].length), cwd: resolve(cwd, dir) };
+/** A pipeline or a single `&` runs its parts at once, so no part runs first. */
+function runsConcurrently(command: string): boolean {
+  return /(?:^|[^|])\|(?:[^|]|$)/.test(command) || /(?<![>&|])&(?![&>])/.test(command.replace(/&&/g, ""));
 }
 
 /**
@@ -209,12 +212,13 @@ function enterLeadingCd(command: string, cwd: string): { command: string; cwd: s
  * `&` too (`rm -rf node_modules & mv client-data node_modules`).
  */
 export function isDisposableTreeDelete(command: string, trips: (segment: string) => boolean, scope: TreeDeleteScope): boolean {
-  if (/(?:^|[^|])\|(?:[^|]|$)/.test(command)) return false;
-  if (/(?<![>&|])&(?![&>])/.test(command.replace(/&&/g, ""))) return false;
-  const entered = enterLeadingCd(command, scope.cwd);
+  if (runsConcurrently(command)) return false;
+  const entered = enterPrelude(command, scope.cwd);
   if (!entered) return false;
   scope = { ...scope, cwd: entered.cwd };
   const parts = segments(entered.command);
+  // Inert commands and one `cd` opening the command were stepped past above
+  // (`command -v cpio; cd /tmp && rm -rf …`, TB2 qemu-startup 2026-10-27).
   // Any other `cd` either comes before a delete, which then no longer leads
   // and keeps the card below, or after the last one, where it moves nothing
   // they resolve against (`rm -rf ird && mkdir ird && cd ird && …`, TB2
@@ -230,4 +234,34 @@ export function isDisposableTreeDelete(command: string, trips: (segment: string)
     found = true;
   }
   return found;
+}
+
+const GLOB = /[*?[]/;
+
+/** One single-file delete target that is nobody's data: in the real temp
+ *  dir, or not there at all. A glob counts only in the last segment, under a
+ *  temp folder: whatever it matches is in temp. */
+function disposableFile(target: string, cwd: string | undefined, tempDir: string): boolean {
+  if (!target || unplaceable(target) || (cwd === undefined && !isAbsolute(target))) return false;
+  const abs = resolve(cwd ?? "", target);
+  if (GLOB.test(dirname(abs))) return false;
+  if (GLOB.test(basename(abs))) return inTempDir(join(dirname(abs), "_"), tempDir);
+  try { lstatSync(abs); } catch (err) { return (err as NodeJS.ErrnoException).code === "ENOENT"; }
+  return inTempDir(abs, tempDir);
+}
+
+/**
+ * The targets, as written, of the single-file deletes opening `command` that
+ * are nobody's data (`disposableFile`), for the un-named-delete gate: the
+ * order rule isDisposableTreeDelete applies, past the same prelude. TB2
+ * 2026-10-24 refused `rm -f /tmp/launch.zip`, `cd /tmp && rm -f t.db`, and
+ * `rm -f cparser/Parser*.ml` in a build folder under /tmp, as user files.
+ * With no `cwd` (the caller does not know where the shell runs), a relative
+ * target counts only after a leading `cd` to an absolute folder.
+ */
+export function disposableFileDeletes(command: string, scope: { cwd?: string; tempDir?: string }): string[] {
+  if (runsConcurrently(command)) return [];
+  const entered = enterPrelude(command, scope.cwd);
+  if (!entered) return [];
+  return leadingShellDeleteTargets(entered.command).filter((t) => disposableFile(t, entered.cwd, scope.tempDir ?? tmpdir()));
 }

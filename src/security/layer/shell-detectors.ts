@@ -343,7 +343,11 @@ export function detectInlineNetwork(command: string): string | null {
     /\buse\s+Socket\b/i,                    // perl: use Socket
     /\bTCPSocket\b/i,                       // ruby: TCPSocket
     /\bfetch\s*\(/i,                        // node 18+/deno global fetch()
-    /\.connect\s*\(/i,                      // socket/Socket .connect(...)
+    // socket/Socket .connect(...). Not sqlite3's, which opens a local file:
+    // `sqlite3.connect('main.db')` (TB2 db-wal-recovery, 2026-10-24). duckdb's
+    // stays: `duckdb.connect('md:')` reaches MotherDuck's cloud. An alias
+    // (`import sqlite3 as db`) still reads as network.
+    /(?<!\bsqlite3)\.connect\s*\(/i,
   ];
   if (networkPatterns.some((p) => p.test(command))) {
     return "Blocked: raw socket / network module in inline script — use http_request (SSRF-checked) instead.";

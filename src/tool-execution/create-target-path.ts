@@ -8,6 +8,7 @@ import { isAbsolute, resolve } from "node:path";
 import { resolveAgentPath, sessionIdOf } from "../workspace/paths.js";
 import { declaredPaths, pathSpecsForCall, TOOL_PATH_ARGS } from "../tool-registry.js";
 import { commandPositions } from "../security/layer/shell-command-positions.js";
+import { enterPrelude } from "./shell-prelude.js";
 import { chartOutPath } from "../tools/chart-tools.js";
 import { addSlideOutPath } from "../tools/presentation-tools.js";
 
@@ -58,11 +59,13 @@ export function createTargetPath(toolName: string, args: Record<string, unknown>
 // line put at that path, which may be the user's bytes.
 const WRITE_REDIRECTS: ReadonlySet<string> = new Set([">", ">|", "&>"]);
 const CD_BINS: ReadonlySet<string> = new Set(["cd", "pushd", "popd", "chdir", "set-location", "sl"]);
-// Commands that only read or print the paths they are given: naming the file
-// cannot put anyone's bytes in it. Their own redirections are read above.
-const READ_ONLY_BINS: ReadonlySet<string> = new Set([
+// Commands that only read, print or remove the paths they are given: naming
+// the file cannot put anyone's bytes in it. Their own redirections are read
+// above. A remove before the write leaves the write's bytes; one after leaves
+// no file to enroll.
+const PUTS_NO_BYTES_BINS: ReadonlySet<string> = new Set([
   "cat", "head", "tail", "less", "more", "wc", "grep", "egrep", "fgrep", "ls", "stat", "file",
-  "md5sum", "sha1sum", "sha256sum", "test", "[", "echo", "printf",
+  "md5sum", "sha1sum", "sha256sum", "test", "[", "echo", "printf", "rm", "unlink",
 ]);
 const UNPLACEABLE = /[$`*?~{}]/;
 
@@ -77,12 +80,17 @@ const UNPLACEABLE = /[$`*?~{}]/;
  * A target that is also a word of any other command in the line is left out,
  * since that command may act on the path too (`mv users.csv new.csv && cat
  * new.csv > new.csv`), unless the command only reads or prints it (`cat`,
- * `tail`, `grep`, …: TB2 qemu-alpine-ssh's `… > console.log; cat console.log`). Relative targets resolve at `cwd`, where the shell runs, and are
- * left out after any `cd`, which this cannot follow; an expansion, glob, brace
+ * `tail`, `grep`, `rm`, …: TB2 qemu-alpine-ssh's `… > console.log; cat
+ * console.log`). Relative targets resolve where the shell runs: `cwd`, or the
+ * folder a leading `cd` enters (shell-prelude.ts; TB2 extract-elf's `cd /app &&
+ * rm -f out.json && node extract.js > out.json`), and are left out after any
+ * other `cd`, which this cannot follow; an expansion, glob, brace
  * or `~` is left out too. A file a program opens itself (`python gen.py`
  * writing out.csv) is not seen.
  */
 export function shellCreateTargets(command: string, cwd: string): string[] {
+  const entered = enterPrelude(command, cwd);
+  if (entered) ({ command, cwd } = entered);
   const { positions } = commandPositions(command);
   const cdSeen = positions.some((p) => CD_BINS.has(p.bin));
   const targets: string[] = [];
@@ -94,7 +102,7 @@ export function shellCreateTargets(command: string, cwd: string): string[] {
     const operands = p.words.slice(p.at + 1);
     const creates = p.bin === "tee" && operands.every((w) => !w.startsWith("-"));
     if (creates) targets.push(...operands);
-    if (READ_ONLY_BINS.has(p.bin)) continue;
+    if (PUTS_NO_BYTES_BINS.has(p.bin)) continue;
     for (const w of creates ? p.words.slice(0, p.at + 1) : p.words) otherWords.add(w);
   }
   const out: string[] = [];

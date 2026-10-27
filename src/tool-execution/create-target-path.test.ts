@@ -57,5 +57,19 @@ describe("shellCreateTargets leaves out what it cannot prove is the command's ou
       "echo x > ~/a.txt",
     ]) expect(shellCreateTargets(command, cwd), command).toEqual([]);
     expect(shellCreateTargets("cd out && echo x > /tmp/a.txt", cwd)).toEqual([resolve("/tmp/a.txt")]);
+    expect(shellCreateTargets("cd ../a && cd ../b && echo x > a.txt", cwd)).toEqual([]);
+  });
+});
+
+// TB2 extract-elf, 2026-10-24: `cd /app && rm -f out.json && node extract.js
+// > out.json` wrote the agent's output, which a later `rm -f out.json` was
+// then refused for as a user's file.
+describe("shellCreateTargets follows a leading cd and a remove before the write", () => {
+  it("resolves in the folder a leading cd enters", () => {
+    const app = resolve("/app");
+    const spelled = app.replace(/\\/g, "/");
+    expect(shellCreateTargets(`cd ${spelled} && rm -f out.json && node extract.js ${spelled}/a.out > out.json 2>err.txt`, cwd))
+      .toEqual([join(app, "out.json"), join(app, "err.txt")]);
+    expect(shellCreateTargets("command -v node; cd ./build && make > build.log", cwd)).toEqual([join(cwd, "build", "build.log")]);
   });
 });

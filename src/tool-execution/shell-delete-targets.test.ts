@@ -68,4 +68,11 @@ describe("shellDeleteTargets — the single-file deletes EXP-18 fell through to"
   it("keeps a glob as written — a pattern names no file", () => {
     expect(shellDeleteTargets("rm cleanup/*.tmp")).toEqual(["cleanup/*.tmp"]);
   });
+
+  // TB2 compile-compcert, 2026-10-24: the card listed `2>/dev/null` as a file.
+  it("a redirection is not a target", () => {
+    expect(shellDeleteTargets("rm -f cparser/Parser*.ml 2>/dev/null; make")).toEqual(["cparser/Parser*.ml"]);
+    expect(shellDeleteTargets("rm -f a.log > /dev/null 2>&1")).toEqual(["a.log"]);
+    expect(shellDeleteTargets("rm -f a.log 2> err.txt")).toEqual(["a.log"]);
+  });
 });

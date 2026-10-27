@@ -26,7 +26,14 @@ export interface SourceText {
   command: string;
   /** Heredoc bodies a shell will run, each to be judged as a command. */
   scripts: string[];
+  /** Heredoc bodies a language interpreter runs as its program (`python3 -
+   *  <<'EOF'`): read like a `-c` program's text for the destinations its
+   *  network calls name (shell-inline-destinations.ts). */
+  programs: string[];
 }
+
+/** Interpreters whose stdin program the destination reader can read. */
+const LANGUAGES = new Set(["python", "perl", "ruby", "node", "php", "deno", "bun"]);
 
 interface Heredoc { delimiter: string; quoted: boolean; stripTabs: boolean; body: string }
 
@@ -130,9 +137,10 @@ function walk(text: string): { line: string; heredocs: Heredoc[] } {
 /** What reads each heredoc: the command it is attached to and every command it
  *  pipes into. A shell anywhere in that chain runs it; failing that, an
  *  interpreter does; otherwise it is data. A heredoc whose command cannot be
- *  found is judged as a script. */
-function readers(line: string, count: number): Array<"shell" | "interpreter" | "data"> {
-  const kinds: Array<"shell" | "interpreter" | "data"> = new Array(count).fill("shell");
+ *  found is judged as a script. "program" is an interpreter whose every
+ *  reader in the chain is a language (LANGUAGES), not `xargs` or `cmd`. */
+function readers(line: string, count: number): Array<"shell" | "interpreter" | "program" | "data"> {
+  const kinds: Array<"shell" | "interpreter" | "program" | "data"> = new Array(count).fill("shell");
   const positions = commandPositions(line).positions.filter((p) => p.depth === 0);
   positions.forEach((p, idx) => {
     for (const r of p.redirections) {
@@ -141,8 +149,10 @@ function readers(line: string, count: number): Array<"shell" | "interpreter" | "
       const chain = [p];
       for (let j = idx + 1; j < positions.length && positions[j].piped; j++) chain.push(positions[j]);
       const bins = chain.map((q) => readerBin(q.words));
+      const interpreters = bins.filter((b) => INTERPRETERS.has(b!));
       kinds[Number(m[1])] = bins.some((b) => b === null || SHELLS.has(b)) ? "shell"
-        : bins.some((b) => INTERPRETERS.has(b!)) ? "interpreter" : "data";
+        : interpreters.length === 0 ? "data"
+        : interpreters.every((b) => LANGUAGES.has(b!)) ? "program" : "interpreter";
     }
   });
   return kinds;
@@ -159,17 +169,19 @@ function readerBin(words: string[]): string | null {
 /** Read `command` as bash does before running it (see the header). */
 export function readSourceText(command: string): SourceText {
   const { line, heredocs } = walk(command);
-  if (heredocs.length === 0) return { command: line, scripts: [] };
+  if (heredocs.length === 0) return { command: line, scripts: [], programs: [] };
   const kinds = readers(line, heredocs.length);
   const scripts: string[] = [];
+  const programs: string[] = [];
   const rebuilt = line.replace(/<<LAXHEREDOC(\d+)/g, (_, n: string) => {
     const doc = heredocs[Number(n)];
     const kind = kinds[Number(n)];
     let words = `<<${doc.quoted ? `'${doc.delimiter}'` : doc.delimiter}`;
     if (kind === "shell") scripts.push(doc.body);
-    if (kind === "interpreter") words += ` '${doc.body.replace(/'/g, '"')}'`;
+    if (kind === "program") programs.push(doc.body);
+    if (kind === "interpreter" || kind === "program") words += ` '${doc.body.replace(/'/g, '"')}'`;
     if (!doc.quoted && kind !== "shell") for (const e of expansionsIn(doc.body)) words += ` ${e}`;
     return words;
   });
-  return { command: rebuilt, scripts };
+  return { command: rebuilt, scripts, programs };
 }

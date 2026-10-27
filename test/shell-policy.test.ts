@@ -502,6 +502,12 @@ describe("evaluateShellCommand — C3-17 raw sockets in inline interpreter bodie
   it("does NOT block a benign `python3 -c` that only does math", () => {
     expect(evaluateShellCommand('python3 -c "print(2+2)"').allowed).toBe(true);
   });
+  // TB2 db-wal-recovery, 2026-10-24: sqlite3's connect opens a file.
+  it("does NOT block sqlite3.connect, and still blocks a socket's connect beside it and duckdb's (MotherDuck)", () => {
+    expect(evaluateShellCommand(`python3 -c "import sqlite3; c = sqlite3.connect('main.db'); print(c.execute('select 1').fetchone())"`).allowed).toBe(true);
+    expect(evaluateShellCommand(`python3 -c "import sqlite3; sqlite3.connect('a.db'); s.connect(('evil', 80))"`).allowed).toBe(false);
+    expect(evaluateShellCommand(`python3 -c "import duckdb; duckdb.connect('md:')"`).allowed).toBe(false);
+  });
 });
 
 describe("evaluateShellCommand — legitimate commands stay allowed", () => {

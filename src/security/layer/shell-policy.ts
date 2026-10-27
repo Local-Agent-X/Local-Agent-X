@@ -99,14 +99,15 @@ function literalShapeRefusal(command: string): SecurityDecision | null {
   return null;
 }
 
-/** Every network destination the command's inline programs name is this
- *  machine's own, and the shell may reach it (loopback-grant.ts). */
 /** What a shell client may reach on this machine (loopback-grant.ts): the
  *  ports and Unix sockets the rules admit a loopback-only client to. */
 const SHELL_LOOPBACK_GRANT = { loopbackReachable: shellLoopbackReachable, unixSocketReachable: shellUnixSocketReachable };
 
-function inlineProgramLocal(command: string): boolean {
-  const d = inlineProgramDestinations(command);
+/** Every network destination the command's inline programs name, and those
+ *  of the programs its heredocs feed an interpreter, is this machine's own,
+ *  and the shell may reach it (loopback-grant.ts). */
+function inlineProgramLocal(command: string, heredocPrograms: readonly string[]): boolean {
+  const d = inlineProgramDestinations(command, heredocPrograms);
   return d.kind === "local" && d.ports.every(shellLoopbackReachable) && d.unixSockets.every(shellUnixSocketReachable);
 }
 
@@ -395,7 +396,7 @@ export function evaluateShellCommand(
   // port or talking to a service's control socket from a few lines of Python
   // reaches no farther than a shell client to the same place.
   let local: boolean | undefined;
-  const inlineLocal = () => (local ??= inlineProgramLocal(command));
+  const inlineLocal = () => (local ??= inlineProgramLocal(command, platform === "win32" ? [] : readSourceText(raw).programs));
   if (!egressEnforced) {
     const inlineNet = detectInlineNetwork(command);
     if (inlineNet && !inlineLocal()) {

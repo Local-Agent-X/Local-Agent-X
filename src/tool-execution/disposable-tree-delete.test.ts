@@ -11,7 +11,7 @@ import { join } from "node:path";
 import { applyIrreversibleFloor, destructiveOperationReason, isDestructiveCommand } from "../approval-decision.js";
 import { clearTaskArtifacts, recordTaskArtifact } from "../data-lineage/task-artifacts.js";
 import { clearExternalIngestion, recordExternalIngestion } from "../data-lineage/external.js";
-import { isDisposableTreeDelete, type TreeDeleteScope } from "./disposable-tree-delete.js";
+import { disposableFileDeletes, isDisposableTreeDelete, type TreeDeleteScope } from "./disposable-tree-delete.js";
 
 let root: string;
 let scope: TreeDeleteScope;
@@ -132,7 +132,7 @@ describe("every lookalike keeps the card", () => {
       "rm -rf dist && cd .. && rm -rf node_modules",
       "cd ./x && cd .. && rm -rf node_modules",
       "rm -rf dist && cd client-data && rm -rf build-cache",
-      "command -v cpio; cd .. && rm -rf node_modules",
+      "command -v cpio; cd .. && rm -rf project/client-data",
       "rm -rf ~/node_modules",
       "rm -rf $DIR/node_modules",
       "rm -rf node_*",
@@ -172,5 +172,89 @@ describe("every lookalike keeps the card", () => {
 
   it("finds nothing to exempt when no single segment trips the floor", () => {
     expect(isDisposableTreeDelete("ls && echo ok", () => false, scope)).toBe(false);
+  });
+
+  it("a prelude that writes, renames, runs something or changes PATH", () => {
+    for (const command of [
+      "echo x > node_modules/a; rm -rf node_modules",
+      "export PATH=/x:$PATH; rm -rf node_modules",
+      "command cp -r client-data dist; rm -rf dist",
+      "ls $(mv client-data dist); rm -rf dist",
+      "command -v uv | rm -rf node_modules",
+      "true; mv client-data dist; rm -rf dist",
+    ]) expect(floor(command), command).toBe("ask");
+  });
+
+  it("a folder called venv that is not one", () => {
+    mkdirSync(join(root, "project", "venv"));
+    writeFileSync(join(root, "project", "venv", "notes.md"), "mine");
+    expect(floor("rm -rf venv")).toBe("ask");
+  });
+
+  it.runIf(process.platform === "win32")("on Windows, a Git Bash path, which this cannot place (it would read as absent)", () => {
+    expect(floor("rm -rf /c/Users/nobody/thesis")).toBe("ask");
+    expect(floor("cd /c/Users/nobody && rm -rf thesis")).toBe("ask");
+  });
+});
+
+// TB2 2026-10-24: bn-fit-modify's `rm -rf /app/.venv; command -v uv; …`,
+// qemu-startup's `command -v cpio; cd /tmp && rm -rf …`, and every
+// `rm -rf x 2>/dev/null` carded.
+describe("an inert prelude, a virtual environment, a redirection", () => {
+  it("commands that only look or make an empty folder, before the deletes", () => {
+    for (const command of [
+      "command -v uv; set -e; mkdir -p out && rm -rf node_modules",
+      "command -v cpio; cd ../project && rm -rf dist",
+      "which node && echo start && rm -rf dist",
+    ]) expect(floor(command), command).toBe("allow-with-rollback");
+  });
+
+  it("a Python virtual environment, whatever it is called", () => {
+    for (const name of [".venv", "env-recheck"]) {
+      mkdirSync(join(root, "project", name, "bin"), { recursive: true });
+      writeFileSync(join(root, "project", name, "pyvenv.cfg"), "home = /usr/bin\n");
+      expect(floor(`rm -rf ${name}; command -v uv`), name).toBe("allow-with-rollback");
+    }
+  });
+
+  it("a redirection is not a target", () => {
+    expect(floor("rm -rf node_modules 2>/dev/null")).toBe("allow-with-rollback");
+    expect(floor("rm -rf node_modules > /dev/null 2>&1")).toBe("allow-with-rollback");
+  });
+});
+
+describe("single-file shell deletes that delete nobody's data (disposableFileDeletes)", () => {
+  const posix = (p: string) => p.replace(/\\/g, "/");
+  const files = (command: string, cwd?: string) => disposableFileDeletes(command, { cwd, tempDir: join(root, "os-temp") });
+
+  it("a file in the temp dir, a file that is not there, a glob under a temp folder", () => {
+    const temp = posix(join(root, "os-temp"));
+    writeFileSync(join(root, "os-temp", "launch.zip"), "x");
+    mkdirSync(join(root, "os-temp", "cc", "cparser"), { recursive: true });
+    const gone = posix(join(root, "project", "gone.sock"));
+    expect(files(`rm -f ${temp}/launch.zip\necho done`)).toEqual([`${temp}/launch.zip`]);
+    expect(files(`rm -f ${gone}; qemu-system-x86_64 -serial unix:${gone}`)).toEqual([gone]);
+    const cwd = join(root, "project");
+    expect(files(`cd ${temp} && rm -f t.db && sqlite3 t.db 'select 1'`, cwd)).toEqual(["t.db"]);
+    expect(files(`cd ${temp}/cc && rm -f cparser/pre_parser.* cparser/Parser*.ml 2>/dev/null; make`, cwd))
+      .toEqual(["cparser/pre_parser.*", "cparser/Parser*.ml"]);
+  });
+
+  it("not a user's file, a glob outside temp, a relative path where the shell runs is unknown", () => {
+    writeFileSync(join(root, "project", "users.csv"), "x");
+    expect(files("rm -f users.csv", join(root, "project"))).toEqual([]);
+    expect(files(`rm -f ${posix(join(root, "project"))}/*.csv`)).toEqual([]);
+    expect(files("rm -f gone.txt")).toEqual([]);
+    expect(files("rm -f gone.txt", join(root, "project"))).toEqual(["gone.txt"]);
+  });
+
+  it("never after something that could put a file there, nor beside it", () => {
+    const temp = posix(join(root, "os-temp"));
+    for (const command of [
+      `mv users.csv ${temp}/x && rm -f ${temp}/x`,
+      `mv users.csv ${temp}/x | rm -f ${temp}/x`,
+      `sleep 1 & rm -f ${temp}/x`,
+      `powershell -Command "mv users.csv ${temp}/x; Remove-Item ${temp}/x"`,
+    ]) expect(files(command, join(root, "project")), command).toEqual([]);
   });
 });

@@ -13,7 +13,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 
 process.env.LAX_DATA_DIR = mkdtempSync(join(tmpdir(), "lax-unnamed-delete-"));
@@ -232,16 +232,48 @@ describe("a delete of nothing asks nothing", () => {
   });
 
   it("still asks when anything could put a file there first, or the path is not one this can place", () => {
+    // The fixtures live outside the temp dir the gate sees.
     const dir = mkdtempSync(join(tmpdir(), "lax-absent-rm-"));
-    const gone = join(dir, "a").replace(/\\/g, "/");
-    const there = join(dir, "here.txt");
-    writeFileSync(there, "x");
+    mkdirSync(join(dir, "temp"));
+    for (const name of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(name, join(dir, "temp"));
+    try {
+      const gone = join(dir, "a").replace(/\\/g, "/");
+      const there = join(dir, "here.txt");
+      writeFileSync(there, "x");
+      const sh = (id: string, command: string) => ({ id, name: "bash", arguments: JSON.stringify({ command }) });
+      for (const command of [
+        `mv users.csv ${gone} && rm -f ${gone}`,
+        `mv users.csv ${gone} & rm -f ${gone}`,
+        `cat users.csv | rm -f ${gone}`,
+        `rm -f ${there.replace(/\\/g, "/")}`,
+        `cd ${dir.replace(/\\/g, "/")} && rm -f here.txt`,
+        "rm -f gone-but-relative.txt",
+      ]) expect(unnamedDeletes([sh("c", command)], [user(VAGUE)]), command).toHaveLength(1);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  // TB2 2026-10-24: password-recovery's `rm -f /tmp/launch.zip`,
+  // sqlite-with-gcov's `cd /tmp && rm -f t.db`, compile-compcert's
+  // `rm -f cparser/Parser*.ml 2>/dev/null` in a build folder under /tmp.
+  it("a shell delete in the temp dir asks nothing, globs and a leading cd included", () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-temp-rm-")).replace(/\\/g, "/");
+    writeFileSync(`${dir}/launch.zip`, "x");
+    mkdirSync(`${dir}/cparser`);
+    writeFileSync(`${dir}/cparser/Parser.ml`, "x");
     const sh = (id: string, command: string) => ({ id, name: "bash", arguments: JSON.stringify({ command }) });
-    for (const command of [
-      `mv users.csv ${gone} && rm -f ${gone}`,
-      `mv users.csv ${gone} & rm -f ${gone}`,
-      `cat users.csv | rm -f ${gone}`,
-      `rm -f ${there.replace(/\\/g, "/")}`,
-    ]) expect(unnamedDeletes([sh("c", command)], [user(VAGUE)]), command).toHaveLength(1);
+    const commands = [
+      `rm -f ${dir}/launch.zip\necho "=== final check ==="`,
+      `rm -f ${dir}/cparser/pre_parser.* ${dir}/cparser/Parser*.ml 2>/dev/null; make -j24`,
+      `command -v unzip; rm -f ${dir}/launch.zip`,
+    ];
+    // Where the shell runs is unknown here, and on Windows cmd's `cd D:\x`
+    // keeps the current drive, so a cd to a drive path places nothing there.
+    if (process.platform !== "win32") commands.push(
+      `cd ${dir} && rm -f t.db launch.zip && sqlite3 t.db 'select 1'`,
+      `cd ${dir} && rm -f cparser/pre_parser.* cparser/Parser*.ml 2>/dev/null; make -j24`,
+    );
+    for (const command of commands) expect(unnamedDeletes([sh("t", command)], [user(VAGUE)]), command).toEqual([]);
   });
 });

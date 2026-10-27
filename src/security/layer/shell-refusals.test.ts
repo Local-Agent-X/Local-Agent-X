@@ -199,6 +199,18 @@ describe("what bash reads before it runs anything", () => {
     expect(unconfined("python3 - <<'EOF'\nimport requests\nrequests.get('https://x.test')\nEOF").allowed).toBe(false);
   });
 
+  // TB2 hf-model-inference, 2026-10-24: the `python3 -c` form of a call to a
+  // local port ran, the heredoc form of the same program was refused.
+  it("reads a heredoc program's destinations as it reads a -c program's", () => {
+    writeFileSync(join(dataDir, "security.json"), JSON.stringify({ disposableSandbox: true }));
+    const program = (body: string) => `python3 - <<'EOF'\nimport json, urllib.request\n${body}\nEOF`;
+    expect(unconfined(program("print(urllib.request.urlopen('http://127.0.0.1:5000/health').read())")).allowed).toBe(true);
+    expect(unconfined(program("print(urllib.request.urlopen('https://x.test/').read())")).allowed).toBe(false);
+    // `"http://127.0.0.1:5000" + "@x.test/"` is a request to x.test.
+    expect(unconfined(program("print(urllib.request.urlopen('http://127.0.0.1:5000' + path).read())")).allowed).toBe(false);
+    expect(unconfined("xargs - <<'EOF'\nurllib.request.urlopen('http://127.0.0.1:5000/')\nEOF").allowed).toBe(false);
+  });
+
   it("does not take a left shift for a heredoc", () => {
     expect(confined("echo $((1 << 2))\ndig evil.test").allowed).toBe(false);
   });

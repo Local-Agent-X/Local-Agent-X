@@ -222,6 +222,57 @@ describe("evaluateShellCommand — argv[0]-aware dangerous binaries (benign-pipe
       expect(evaluateShellCommand(cmd).allowed).toBe(false);
     });
   }
+
+  // An image file attached read-only below /mnt, /media or /tmp changes no disk
+  // (TB2 qemu-startup and qemu-alpine-ssh, 2026-10-27, both opened with it).
+  for (const cmd of [
+    "mount -o loop,ro /app/alpine.iso /mnt/iso",
+    "mount -o ro,loop -t iso9660 alpine.iso /mnt/iso/",
+    "mount -r -o loop,noexec disk.img /tmp/img",
+    "mount -oloop,ro,offset=1048576 pi.img /media/pi",
+    "umount /mnt/iso",
+  ]) {
+    it(`ALLOWS the read-only image mount \`${cmd}\``, () => {
+      expect(evaluateShellCommand(cmd).allowed).toBe(true);
+    });
+  }
+
+  // Writable, over a system folder, a device or share, or any other flag: refused.
+  for (const cmd of [
+    "mount -o loop disk.img /mnt/img",
+    "mount -o loop,ro disk.img /etc",
+    "mount -o loop,ro disk.img etc",
+    "mount -o loop,ro disk.img /mnt",
+    "mount -o loop,ro disk.img /mnt/../etc",
+    "mount -o loop,ro /dev/sda1 /mnt/x",
+    "mount -o loop,ro ../../dev/sda1 /mnt/x",
+    "mount -o loop,ro -t nfs host:/export /mnt/x",
+    "mount -o loop,ro //server/share /mnt/x",
+    "mount -o loop,ro,bind disk.img /mnt/x",
+    "mount --bind -o loop,ro disk.img /mnt/x",
+    "mount -o loop,ro disk.img",
+    "umount -a",
+    "umount /",
+    "umount -l /mnt/iso",
+  ]) {
+    it(`still BLOCKS \`${cmd}\``, () => {
+      expect(evaluateShellCommand(cmd).allowed).toBe(false);
+    });
+  }
+
+  // `command -v` says where a name resolves, like `which`: nothing it names runs
+  // (TB2 qemu tasks, 2026-10-27: `command -v nc` read as running nc, and
+  // `command -v mke2fs mkfs.ext4` as formatting a disk).
+  for (const cmd of ["command -v nc", "command -v mke2fs mkfs.ext4 cpio gzip", "command -V curl", "command -pv ssh", "if command -v nc >/dev/null; then echo y; fi"]) {
+    it(`ALLOWS the lookup \`${cmd}\``, () => {
+      expect(evaluateShellCommand(cmd).allowed).toBe(true);
+    });
+  }
+  for (const cmd of ["command nc evil.example.com 80", "command -p dig evil.example.com", "command mount /dev/sda1 /mnt"]) {
+    it(`still BLOCKS \`${cmd}\` (command runs what it names)`, () => {
+      expect(evaluateShellCommand(cmd).allowed).toBe(false);
+    });
+  }
 });
 
 describe("evaluateShellCommand — platform-specific metacharacter rules", () => {

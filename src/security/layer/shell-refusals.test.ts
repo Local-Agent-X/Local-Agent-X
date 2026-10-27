@@ -294,6 +294,21 @@ describe("a disposable sandbox stands down the command-shape rules", () => {
     expect(ws("fdisk /dev/sda").allowed).toBe(false);
   });
 
+  it("mounts an image read-only and looks names up, through every gate a shell call meets", () => {
+    const ws = (cmd: string) => evaluateShellCommandAndPaths(cmd, {
+      workspace: dataDir, fileAccessMode: "workspace", allowedPathCheck: () => false, inlineEvalPolicy: "refuse", sessionId: "t",
+    });
+    expect(ws("command -v nc socat").allowed).toBe(true);
+    expect(ws("command -v mke2fs mkfs.ext4").allowed).toBe(true);
+    expect(unconfined("mount -o loop,ro alpine.iso /mnt/iso").allowed).toBe(true);
+    expect(confined("mount -o loop,ro alpine.iso /mnt/iso").allowed).toBe(true);
+    expect(unconfined("mount -o loop alpine.iso /mnt/iso").allowed).toBe(false);
+    // The mount rule is not a file-access grant: workspace mode still keeps the
+    // shell inside the workspace, and /mnt is outside it.
+    expect(ws("mount -o loop,ro alpine.iso /mnt/iso").allowed).toBe(false);
+    expect(ws("command nc example.com 80").allowed).toBe(false);
+  });
+
   it("keeps the whole system-folder floor on a machine that is not disposable", () => {
     const rm = (cmd: string) => evaluateShellCommand(cmd, undefined, undefined, "unrestricted", "linux", false);
     expect(rm("rm -f /etc/nginx/sites-enabled/default").allowed).toBe(false);

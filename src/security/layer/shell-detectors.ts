@@ -239,7 +239,8 @@ export function detectDangerousInvokeBin(command: string): string | null {
     const tokens = tokenizeCommand(segment);
     const at = resolveRealArgv0Index(tokens);
     const bin = at === null ? null : execBasename(tokens[at]);
-    if (bin === "mount" && mountOnlyLists(tokens.slice(at! + 1))) continue;
+    if (bin === "mount" && (mountOnlyLists(tokens.slice(at! + 1)) || mountsImageReadOnly(tokens.slice(at! + 1)))) continue;
+    if (bin === "umount" && unmountsWorkingMount(tokens.slice(at! + 1))) continue;
     if (bin && DANGEROUS_INVOKE_BINS.has(bin)) {
       return `Blocked: '${bin}' is a restricted network/system command. (If you only named it as an argument, rephrase — the block is on INVOKING it, not mentioning it.)`;
     }
@@ -264,6 +265,58 @@ function mountOnlyLists(args: string[]): boolean {
     return false;
   }
   return true;
+}
+
+// Filesystems an image file holds. A network type (nfs, cifs, sshfs, …) reaches
+// off the box, so it is not among them.
+const IMAGE_FS_TYPES = new Set(["auto", "iso9660", "udf", "ext2", "ext3", "ext4", "vfat", "msdos", "exfat", "ntfs", "ntfs3", "squashfs", "erofs", "xfs", "btrfs"]);
+// The options a read-only loop mount may carry besides `ro` and `loop`.
+const IMAGE_MOUNT_OPTIONS = /^(?:ro|loop|noexec|nosuid|nodev|noatime|offset=\d+|sizelimit=\d+)$/;
+// A device, a kernel tree, a network share (`host:/x`, `//server/share`) or a
+// Windows device path is not an image file.
+const NOT_AN_IMAGE = /^(?:(?:\/|(?:\.\.?\/)+)+(?:dev|proc|sys)(?:\/|$)|\/\/|\\)|:/i;
+
+/** Where an image may be mounted: a folder below /mnt, /media or /tmp. Never
+ *  over a system folder, which a mount would hide (`/etc`, `/usr/bin`), never
+ *  the shared roots themselves, and never a relative path, which from `/` is
+ *  `etc`. */
+function isWorkingMountPoint(target: string): boolean {
+  const t = target.replace(/\/+$/, "");
+  if (/(?:^|\/)\.\.?(?:\/|$)/.test(t) || /[$`~*?]/.test(t)) return false;
+  return /^\/(?:mnt|media|tmp)\/[^/]/.test(t);
+}
+
+/**
+ * `mount -o loop,ro disk.img /mnt/img`: an image file attached read-only so its
+ * files can be read, the first move on a disk-image or ISO task (TB2
+ * qemu-startup and qemu-alpine-ssh, 2026-10-27, both opened with it; refused,
+ * the model spent its time parsing ISO9660 in Python). Read-only and backed by
+ * a file, it changes nothing on any disk. Allowed only in exactly that shape:
+ * `ro` (or `-r`) and `loop` both given, an image filesystem type if any, one
+ * file source and a mount point below /mnt, /media or /tmp. Every other flag
+ * (`--bind`, `--move`, `-a`, remount, rw) keeps the refusal.
+ */
+function mountsImageReadOnly(args: string[]): boolean {
+  const options: string[] = [];
+  const operands: string[] = [];
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "-r" || a === "--read-only") { options.push("ro"); continue; }
+    const opt = a === "-o" || a === "--options" ? args[++i] : /^-o(.+)$/.exec(a)?.[1] ?? /^--options=(.+)$/.exec(a)?.[1];
+    if (opt !== undefined) { options.push(...opt.split(",")); continue; }
+    const type = a === "-t" || a === "--types" ? args[++i] : /^-t(.+)$/.exec(a)?.[1] ?? /^--types=(.+)$/.exec(a)?.[1];
+    if (type !== undefined) { if (!type.split(",").every((t) => IMAGE_FS_TYPES.has(t.toLowerCase()))) return false; continue; }
+    if (a.startsWith("-")) return false;
+    operands.push(a);
+  }
+  if (!options.includes("ro") || !options.includes("loop") || !options.every((o) => IMAGE_MOUNT_OPTIONS.test(o))) return false;
+  return operands.length === 2 && !NOT_AN_IMAGE.test(operands[0]) && isWorkingMountPoint(operands[1]);
+}
+
+/** `umount /mnt/img`: detaching what mountsImageReadOnly may attach, and only
+ *  that — a working mount point, no flags (`-a` and `-l` reach further). */
+function unmountsWorkingMount(args: string[]): boolean {
+  return args.length > 0 && args.every((a) => !a.startsWith("-") && isWorkingMountPoint(a));
 }
 
 // ── C3-17: raw-socket / network module use in node -e / python -c bodies ──

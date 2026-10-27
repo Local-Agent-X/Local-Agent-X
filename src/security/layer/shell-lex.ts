@@ -199,6 +199,9 @@ export function resolveRealArgv0Index(tokens: string[]): number | null {
       i++; // a keyword takes no args; the next token is the command position
       continue;
     }
+    // `command -v nc` / `command -V gcc` only says where a name resolves, like
+    // `which`; the names after it never run, so `command` is the command word.
+    if (base === "command" && commandOnlyLooksUp(tokens.slice(i + 1))) return i;
     if (SHELL_WRAPPER_PREFIXES.has(base)) {
       const valueOpts = WRAPPER_VALUE_OPTIONS[base];
       i++;
@@ -220,6 +223,16 @@ export function resolveRealArgv0Index(tokens: string[]): number | null {
     return i;
   }
   return null;
+}
+
+// The options `command` takes are -p, -v and -V, clustered or not; with -v or
+// -V among those before the first name, it prints instead of running.
+function commandOnlyLooksUp(args: string[]): boolean {
+  for (const a of args) {
+    if (!/^-[pvV]+$/.test(a)) return false;
+    if (/[vV]/.test(a)) return true;
+  }
+  return false;
 }
 
 // argv[0] basename → the flags whose VALUE the shell RE-PARSES as a command

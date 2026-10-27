@@ -131,6 +131,31 @@ describe("checkVerifyGate — verified clean", () => {
 // it's how a model verifies a Python task — but the gate used to be blind to it
 // (only pytest/mypy were recognized). That blindness both punished honest
 // verification and hid real test failures. These pin the language-completeness.
+describe("checkVerifyGate — Node's runner and package-manager flags are real verifies", () => {
+  it("credits the commands models ran on a node --test project", () => {
+    for (const cmd of [
+      "node --test nav-app/test/nav.test.js",
+      "cd nav-app && node --test --test-name-pattern=\"closes\"",
+      "npm --prefix nav-app test",
+      "pnpm -C nav-app test",
+      "npm --silent test",
+      "deno test",
+    ]) {
+      const s = createVerifyGateState();
+      noteVerifyEvidence([edit("nav-app/src/nav.js"), bash(cmd, "ok")], s);
+      expect(checkVerifyGate(s).nudge, cmd).toBeNull();
+    }
+  });
+
+  it("running a module or naming a flag-valued script is not a check", () => {
+    for (const cmd of ["node nav-app/src/nav.js", "npm --prefix nav-app install", "npm run dev"]) {
+      const s = createVerifyGateState();
+      noteVerifyEvidence([edit("nav-app/src/nav.js"), bash(cmd, "ok")], s);
+      expect(checkVerifyGate(s).nudge, cmd).not.toBeNull();
+    }
+  });
+});
+
 describe("checkVerifyGate — Python stdlib unittest is a real verify", () => {
   it("credits a passing `python -m unittest` (no spurious nudge)", () => {
     const s = createVerifyGateState();

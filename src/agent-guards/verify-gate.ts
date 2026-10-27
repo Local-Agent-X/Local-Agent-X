@@ -128,9 +128,12 @@ const SOURCE_EXT_RE =
  *  verifies a Python task. Without it the gate was blind to Python testing:
  *  a passing `python -m unittest` wasn't credited (honest verify → spurious
  *  nudge + partial label) and a FAILING one didn't trip the sharp "build is RED"
- *  nudge (the failure went invisible). `pytest` bare already covers `-m pytest`. */
+ *  nudge (the failure went invisible). `pytest` bare already covers `-m pytest`.
+ *  Node's own runner (`node --test`) and a package manager's flags before the
+ *  script (`npm --prefix app test`) count too: both were run, passed, and drew
+ *  "run the build/tests" (bugfix-with-followup on grok-4.7 and gpt-6.1, 2026-10-26). */
 const VERIFY_CMD_RE =
-  /\b(tsc|vitest|jest|mocha|pytest|mypy|pyright|ruff|eslint|(?:python[0-9.]*|py)\s+-m\s+(?:unittest|pytest)|cargo\s+(build|test|check|clippy)|go\s+(build|test|vet)|gradle|mvn|(npm|pnpm|yarn|bun)\s+(run\s+)?(build|test|typecheck|type-check|lint|check|tsc))\b/i;
+  /\b(tsc|vitest|jest|mocha|pytest|mypy|pyright|ruff|eslint|(?:python[0-9.]*|py)\s+-m\s+(?:unittest|pytest)|node\b[^|;&]*\s--test|deno\s+test|cargo\s+(build|test|check|clippy)|go\s+(build|test|vet)|gradle|mvn|(npm|pnpm|yarn|bun)(?:\s+--?[\w-]+(?:[=\s](?!run\b|test\b)[^\s-]\S*)?)*\s+(run\s+)?(build|test|typecheck|type-check|lint|check|tsc))\b/i;
 
 const HTTP_SMOKE_CMD_RE =
   /\b(curl(?:\.exe)?|wget|Invoke-WebRequest|iwr)\b[\s\S]*(\/apps\/|\/api\/connectors\/)/i;

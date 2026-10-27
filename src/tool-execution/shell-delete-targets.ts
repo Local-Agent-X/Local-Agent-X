@@ -123,21 +123,42 @@ function segmentTargets(segment: string): string[] {
 }
 
 const DELETE_HEADS = new Set(["rm", "unlink", "remove-item", "ri", "del", "erase"]);
+const SEPARATOR = /(\r?\n|&&|\|\||;|\||(?<![>&|])&(?![&>]))/;
+const CONCURRENT: ReadonlySet<string> = new Set(["|", "&"]);
+
+/**
+ * The segments opening `command` that `leads` accepts, in order: the run that
+ * starts before anything else in the command. Null when a pipe or a single
+ * `&` joins one of them to a neighbour, since those run at once and the
+ * neighbour could act while the run does (`rm -rf x & mv client-data x`).
+ * What follows the run starts after it, piped or not: `rm -rf dist && npm run
+ * build 2>&1 | tail` (TB2 rstan-to-pystan, 2026-10-24, carded for its tail).
+ */
+export function leadingRun(command: string, leads: (segment: string) => boolean): string[] | null {
+  const parts = command.split(SEPARATOR);
+  const run: string[] = [];
+  for (let i = 0; i < parts.length; i += 2) {
+    const segment = parts[i].trim();
+    if (!segment) continue;
+    const joined = i > 0 && CONCURRENT.has(parts[i - 1]);
+    if (!leads(segment)) return joined && run.length > 0 ? null : run;
+    if (joined) return null;
+    run.push(segment);
+  }
+  return run;
+}
 
 /** The targets of the deletes that open the command, before anything else in
- *  it runs, or [] when something could run first or alongside: a single `&`
- *  backgrounds its left side, a pipe runs its sides at once, and a wrapper's
- *  body is not read here. What the disk shows before the call is what those
- *  deletes meet, so `mv users.csv a && rm -f a` never qualifies. */
+ *  it runs (`leadingRun`), or [] when something could run first or alongside.
+ *  A wrapper's body is not read here. What the disk shows before the call is
+ *  what those deletes meet, so `mv users.csv a && rm -f a` never qualifies. */
 export function leadingShellDeleteTargets(command: string): string[] {
-  if (/(?<![>&|])&(?![&>])/.test(command.replace(/&&/g, "")) || /(?:^|[^|])\|(?:[^|]|$)/.test(command)) return [];
+  const isDelete = (seg: string) =>
+    DELETE_HEADS.has(basenameOf(stripEnvAssignments(shellWords(seg))[0] ?? "").replace(/\.exe$/i, "").toLowerCase())
+    && segmentTargets(seg).length > 0;
   const out: string[] = [];
-  for (const seg of segments(command)) {
-    const head = basenameOf(stripEnvAssignments(shellWords(seg))[0] ?? "").replace(/\.exe$/i, "").toLowerCase();
-    if (!DELETE_HEADS.has(head)) break;
-    const targets = segmentTargets(seg);
-    if (targets.length === 0) break;
-    for (const p of targets) if (!out.includes(p)) out.push(p);
+  for (const seg of leadingRun(command, isDelete) ?? []) {
+    for (const p of segmentTargets(seg)) if (!out.includes(p)) out.push(p);
   }
   return out;
 }

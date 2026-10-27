@@ -28,7 +28,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve } from "node:pat
 import { isTaskArtifact } from "../data-lineage/task-artifacts.js";
 import { hasExternalIngestion } from "../data-lineage/external.js";
 import { splitRedirections } from "../security/layer/shell-command-positions.js";
-import { leadingShellDeleteTargets, segments, shellWords } from "./shell-delete-targets.js";
+import { leadingRun, leadingShellDeleteTargets, segments, shellWords } from "./shell-delete-targets.js";
 import { enterPrelude } from "./shell-prelude.js";
 
 /** Generated-output folders and the manifest beside them that regenerates
@@ -194,11 +194,6 @@ function disposable(target: string, form: Form, scope: TreeDeleteScope): boolean
   return agentCreated(abs, stat.isDirectory(), scope.sessionId);
 }
 
-/** A pipeline or a single `&` runs its parts at once, so no part runs first. */
-function runsConcurrently(command: string): boolean {
-  return /(?:^|[^|])\|(?:[^|]|$)/.test(command) || /(?<![>&|])&(?![&>])/.test(command.replace(/&&/g, ""));
-}
-
 /**
  * True when `command` opens with recursive deletes of disposable targets only
  * and nothing else trips the floor (`trips`). `command` is the text the floor
@@ -208,13 +203,13 @@ function runsConcurrently(command: string): boolean {
  * deletes: `mv client-data node_modules/ && rm -rf node_modules` would move
  * client work into a folder this proves disposable. The deletes come first;
  * what follows them (`&& npm install`) runs after and changes nothing they hit.
- * A single `|` runs its sides at once, so a pipeline is never proven; a single
- * `&` too (`rm -rf node_modules & mv client-data node_modules`).
+ * A single `|` or `&` runs its sides at once, so one touching a delete or
+ * before it is never proven (`rm -rf node_modules & mv client-data
+ * node_modules`); one after the deletes runs after them (`leadingRun`).
  */
 export function isDisposableTreeDelete(command: string, trips: (segment: string) => boolean, scope: TreeDeleteScope): boolean {
-  if (runsConcurrently(command)) return false;
   const entered = enterPrelude(command, scope.cwd);
-  if (!entered) return false;
+  if (!entered || leadingRun(entered.command, trips) === null) return false;
   scope = { ...scope, cwd: entered.cwd };
   const parts = segments(entered.command);
   // Inert commands and one `cd` opening the command were stepped past above
@@ -260,7 +255,6 @@ function disposableFile(target: string, cwd: string | undefined, tempDir: string
  * target counts only after a leading `cd` to an absolute folder.
  */
 export function disposableFileDeletes(command: string, scope: { cwd?: string; tempDir?: string }): string[] {
-  if (runsConcurrently(command)) return [];
   const entered = enterPrelude(command, scope.cwd);
   if (!entered) return [];
   return leadingShellDeleteTargets(entered.command).filter((t) => disposableFile(t, entered.cwd, scope.tempDir ?? tmpdir()));

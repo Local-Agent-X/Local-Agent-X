@@ -217,6 +217,18 @@ describe("an inert prelude, a virtual environment, a redirection", () => {
     }
   });
 
+  // TB2 rstan-to-pystan: `rm -rf /app/venv; (apt-get install … 2>&1 | tail -2)`.
+  it("a pipe or a background after the deletes, which starts after them", () => {
+    for (const command of [
+      "rm -rf node_modules && npm install 2>&1 | tail -5",
+      "rm -rf dist; (npm run build 2>&1 | tail -2) || echo failed",
+      "rm -rf dist && npm run dev &",
+    ]) expect(floor(command), command).toBe("allow-with-rollback");
+    for (const command of ["rm -rf dist | tee rm.log", "rm -rf dist & npm run build", "ls | rm -rf dist"]) {
+      expect(floor(command), command).toBe("ask");
+    }
+  });
+
   it("a redirection is not a target", () => {
     expect(floor("rm -rf node_modules 2>/dev/null")).toBe("allow-with-rollback");
     expect(floor("rm -rf node_modules > /dev/null 2>&1")).toBe("allow-with-rollback");
@@ -233,6 +245,7 @@ describe("single-file shell deletes that delete nobody's data (disposableFileDel
     mkdirSync(join(root, "os-temp", "cc", "cparser"), { recursive: true });
     const gone = posix(join(root, "project", "gone.sock"));
     expect(files(`rm -f ${temp}/launch.zip\necho done`)).toEqual([`${temp}/launch.zip`]);
+    expect(files(`rm -f ${temp}/launch.zip && unzip -l a.zip | head`)).toEqual([`${temp}/launch.zip`]);
     expect(files(`rm -f ${gone}; qemu-system-x86_64 -serial unix:${gone}`)).toEqual([gone]);
     const cwd = join(root, "project");
     expect(files(`cd ${temp} && rm -f t.db && sqlite3 t.db 'select 1'`, cwd)).toEqual(["t.db"]);
@@ -254,6 +267,7 @@ describe("single-file shell deletes that delete nobody's data (disposableFileDel
       `mv users.csv ${temp}/x && rm -f ${temp}/x`,
       `mv users.csv ${temp}/x | rm -f ${temp}/x`,
       `sleep 1 & rm -f ${temp}/x`,
+      `rm -f ${temp}/x & mv users.csv ${temp}/x`,
       `powershell -Command "mv users.csv ${temp}/x; Remove-Item ${temp}/x"`,
     ]) expect(files(command, join(root, "project")), command).toEqual([]);
   });

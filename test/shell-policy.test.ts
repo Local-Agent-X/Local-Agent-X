@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
-import { homedir } from "node:os";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   evaluateShellCommand,
@@ -223,6 +224,24 @@ describe("evaluateShellCommand — argv[0]-aware dangerous binaries (benign-pipe
     });
   }
 
+  // mount and `command -v` are POSIX, so these judge the Linux shell path on
+  // every OS: on win32 the separator rules below never run, which hid a red
+  // ubuntu lane behind a green Windows one (2026-10-27).
+  const linux = (cmd: string) => evaluateShellCommand(cmd, undefined, undefined, undefined, "linux");
+  // The models' verbatim commands chain with `;`, which an unconfined host
+  // refuses on sight (shell-refusals.ts); TB2 ran them on a disposable sandbox,
+  // where those shape rules stand down, so they are judged there.
+  const onDisposableSandbox = (cmd: string) => {
+    const saved = process.env.LAX_DATA_DIR;
+    const dir = mkdtempSync(join(tmpdir(), "lax-shell-policy-"));
+    writeFileSync(join(dir, "security.json"), JSON.stringify({ disposableSandbox: true }));
+    process.env.LAX_DATA_DIR = dir;
+    try { return linux(cmd); } finally {
+      if (saved === undefined) delete process.env.LAX_DATA_DIR; else process.env.LAX_DATA_DIR = saved;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  };
+
   // An image file attached read-only below /mnt, /media or /tmp changes no disk
   // (TB2 qemu-startup and qemu-alpine-ssh, 2026-10-27, both opened with it).
   for (const cmd of [
@@ -231,12 +250,18 @@ describe("evaluateShellCommand — argv[0]-aware dangerous binaries (benign-pipe
     "mount -r -o loop,noexec disk.img /tmp/img",
     "mount -oloop,ro,offset=1048576 pi.img /media/pi",
     "umount /mnt/iso",
-    // What the models actually typed (TB2 re-smoke, 2026-10-27).
+  ]) {
+    it(`ALLOWS the read-only image mount \`${cmd}\``, () => {
+      expect(linux(cmd).allowed).toBe(true);
+    });
+  }
+  // What the models actually typed (TB2 re-smoke, 2026-10-27).
+  for (const cmd of [
     "mkdir -p /mnt/alpine && mount -o loop,ro /app/alpine.iso /mnt/alpine 2>&1; echo $?",
     "cd /tmp && mount -o loop,ro /app/alpine.iso /mnt 2>&1 && ls /mnt/boot/; umount /mnt 2>/dev/null",
   ]) {
-    it(`ALLOWS the read-only image mount \`${cmd}\``, () => {
-      expect(evaluateShellCommand(cmd).allowed).toBe(true);
+    it(`ALLOWS the read-only image mount \`${cmd}\` on a disposable sandbox`, () => {
+      expect(onDisposableSandbox(cmd).allowed).toBe(true);
     });
   }
 
@@ -260,21 +285,25 @@ describe("evaluateShellCommand — argv[0]-aware dangerous binaries (benign-pipe
     "umount -l /mnt/iso",
   ]) {
     it(`still BLOCKS \`${cmd}\``, () => {
-      expect(evaluateShellCommand(cmd).allowed).toBe(false);
+      expect(linux(cmd).allowed).toBe(false);
     });
   }
 
   // `command -v` says where a name resolves, like `which`: nothing it names runs
   // (TB2 qemu tasks, 2026-10-27: `command -v nc` read as running nc, and
   // `command -v mke2fs mkfs.ext4` as formatting a disk).
-  for (const cmd of ["command -v nc", "command -v mke2fs mkfs.ext4 cpio gzip", "command -V curl", "command -pv ssh", "if command -v nc >/dev/null; then echo y; fi"]) {
+  for (const cmd of ["command -v nc", "command -v mke2fs mkfs.ext4 cpio gzip", "command -V curl", "command -pv ssh"]) {
     it(`ALLOWS the lookup \`${cmd}\``, () => {
-      expect(evaluateShellCommand(cmd).allowed).toBe(true);
+      expect(linux(cmd).allowed).toBe(true);
     });
   }
+  it("ALLOWS the lookup `if command -v nc >/dev/null; then echo y; fi` on a disposable sandbox", () => {
+    expect(onDisposableSandbox("if command -v nc >/dev/null; then echo y; fi").allowed).toBe(true);
+  });
   for (const cmd of ["command nc evil.example.com 80", "command -p dig evil.example.com", "command mount /dev/sda1 /mnt"]) {
     it(`still BLOCKS \`${cmd}\` (command runs what it names)`, () => {
-      expect(evaluateShellCommand(cmd).allowed).toBe(false);
+      expect(linux(cmd).allowed).toBe(false);
+      expect(onDisposableSandbox(cmd).allowed).toBe(false);
     });
   }
 });

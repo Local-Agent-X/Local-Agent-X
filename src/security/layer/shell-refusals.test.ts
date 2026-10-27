@@ -284,6 +284,16 @@ describe("a disposable sandbox stands down the command-shape rules", () => {
     expect(ws("dd if=/etc/shadow of=copy.bin").allowed).toBe(false);
   });
 
+  it("edits a disk image's partition table like any other file, and never a disk", () => {
+    const ws = (cmd: string) => evaluateShellCommandAndPaths(cmd, {
+      workspace: dataDir, fileAccessMode: "workspace", allowedPathCheck: () => false, inlineEvalPolicy: "refuse", sessionId: "t",
+    });
+    expect(ws("parted -s pi.img mklabel msdos").allowed).toBe(true);
+    expect(ws("fdisk -l disk.img").allowed).toBe(true);
+    expect(ws("parted -s /etc/boot.img mklabel msdos").allowed).toBe(false);
+    expect(ws("fdisk /dev/sda").allowed).toBe(false);
+  });
+
   it("keeps the whole system-folder floor on a machine that is not disposable", () => {
     const rm = (cmd: string) => evaluateShellCommand(cmd, undefined, undefined, "unrestricted", "linux", false);
     expect(rm("rm -f /etc/nginx/sites-enabled/default").allowed).toBe(false);

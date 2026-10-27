@@ -118,6 +118,35 @@ describe("the walk", () => {
   });
 });
 
+// A disk image is a file: building a VM or SD-card image edits its partition
+// table the way dd writes its bytes. A disk, however it is named, is refused.
+describe("partition editors: a disk image is a file, a disk is refused", () => {
+  it.each([
+    "fdisk disk.img",
+    "fdisk -l alpine.qcow2.raw",
+    "fdisk -l",
+    "parted -s pi.img mklabel msdos",
+    "parted -a optimal -s out/sd.img mkpart primary 1MiB 100%",
+    "sfdisk build/disk.img < layout.txt",
+    "sgdisk -n 1:0:0 vm.img",
+    "dd if=/dev/zero of=/home/me/dev/disk.img bs=1M count=64",
+  ])("allows %s", (cmd) => expect(ruleOf(cmd)).toBeNull());
+
+  it.each([
+    ["fdisk -l /dev/sda", "partition"],
+    ["fdisk ../../../dev/sda", "partition"],
+    ["parted --script //dev/sdb mklabel gpt", "partition"],
+    ["sfdisk --device=/dev/sdb", "partition"],
+    ["fdisk \\\\.\\PhysicalDrive0", "partition"],
+    // No target: parted and cfdisk open the first disk, gdisk asks for one on stdin.
+    ["parted", "partition"],
+    ["parted -a optimal", "partition"],
+    ["echo /dev/sda | gdisk", "partition"],
+    ["cfdisk", "partition"],
+    ["dd if=x.img of=../../dev/sda", "raw-disk-write"],
+  ])("refuses %s", (cmd, rule) => expect(ruleOf(cmd)).toBe(rule));
+});
+
 // One or more attacks for every raw-string rule these argv rules replace. Each
 // must stay refused once the raw rule is gone; the raw list is not consulted.
 describe("the converted denylist: every former raw rule still has its attacks refused", () => {
@@ -132,6 +161,8 @@ describe("the converted denylist: every former raw rule still has its attacks re
     ["format C: /FS:NTFS", "format-drive"],
     ["fdisk /dev/sda", "partition"],
     ["parted /dev/sda rm 1", "partition"],
+    ["sgdisk --zap-all /dev/nvme0n1", "partition"],
+    ["diskpart /s wipe.txt", "partition"],
     ["perl -e 'system(1)'", "inline-interpreter"],
     ["ruby -e 'exec 1'", "inline-interpreter"],
     ["php -r 'system(1);'", "inline-interpreter"],

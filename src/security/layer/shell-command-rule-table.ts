@@ -36,12 +36,32 @@ export interface CommandRule {
 const argsOf = (p: CommandPosition) => p.words.slice(p.at + 1);
 
 // A path that names a disk or other device rather than a file: anything under
-// /dev but the stream devices, and Windows' raw drive paths.
-const STREAM_DEVICE = /^\/dev\/(?:null|zero|full|u?random|stdout|stderr|tty|fd\/\d+|shm\/.+)$/i;
+// /dev but the stream devices, and Windows' raw drive paths. /dev reached by
+// climbing (`../../dev/sda` from a working folder) is the same disk.
+const DEV_PATH = /^(?:\/|(?:\.\.?\/)+)+dev\/(.+)$/i;
+const STREAM_DEVICE = /^(?:null|zero|full|u?random|stdout|stderr|tty|fd\/\d+|shm\/.+)$/i;
 function isDiskDevice(path: string): boolean {
-  return (/^\/dev\//i.test(path) && !STREAM_DEVICE.test(path)) || /^\\\\[.?]\\/.test(path);
+  const dev = DEV_PATH.exec(path);
+  return (dev !== null && !STREAM_DEVICE.test(dev[1])) || /^\\\\[.?]\\/.test(path);
 }
 const lower = (s: string | undefined) => (s ?? "").toLowerCase();
+
+// The partition editors. diskpart works only on the machine's own disks.
+const PARTITION_BINS = new Set(["fdisk", "sfdisk", "cfdisk", "gdisk", "sgdisk", "parted", "diskpart"]);
+// Those whose `-l` lists every disk's table and exits, writing nothing.
+const LISTS_ALL_DISKS = new Set(["fdisk", "sfdisk", "parted"]);
+
+// Does this partition editor touch only files, never a disk? Like dd above, a
+// disk image (`fdisk disk.img`, `parted -s pi.img mklabel msdos`) is a file
+// write. Any word naming a device refuses it, and so does naming no target at
+// all: parted and cfdisk then open the first disk, gdisk asks on stdin which.
+function partitionsOnlyFiles(bin: string, args: string[]): boolean {
+  if (bin === "diskpart") return false;
+  if (args.some((a) => isDiskDevice(a) || isDiskDevice(a.slice(a.indexOf("=") + 1)))) return false;
+  const operands = args.filter((a, i) => !a.startsWith("-") && !(bin === "parted" && ["-a", "--align"].includes(args[i - 1])));
+  if (operands.length > 0) return true;
+  return LISTS_ALL_DISKS.has(bin) && args.some((a) => a === "-l" || a === "--list");
+}
 
 function bins(id: string, category: CommandRuleCategory, why: string, names: string[]): CommandRule {
   const set = new Set(names);
@@ -134,7 +154,8 @@ export const COMMAND_RULES: readonly CommandRule[] = [
   binWith("raw-disk-write", "disk", "writes raw blocks to a disk device", ["dd"],
     (a) => a.some((x) => lower(x).startsWith("of=") && isDiskDevice(x.slice(3)))),
   binWith("format-drive", "disk", "formats a drive", ["format"], (a) => /^(?:\/|\\|[a-z]:)/i.test(a[0] ?? "")),
-  bins("partition", "disk", "edits a disk's partition table", ["fdisk", "parted", "diskpart"]),
+  { id: "partition", category: "disk", why: "edits a disk's partition table",
+    matches: (p) => PARTITION_BINS.has(p.bin) && !partitionsOnlyFiles(p.bin, argsOf(p)) },
 
   // ── System configuration ──
   binWith("world-writable", "system-config", "makes files writable by every user", ["chmod"], (a) => a.includes("777")),

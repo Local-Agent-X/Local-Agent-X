@@ -202,6 +202,19 @@ export function recordFileSeen(sessionId: string | undefined, path: string, view
   persist(sessionId);
 }
 
+/** A tool that finds its own targets (bulk_replace) rewrote `path` from
+ *  `before` to what is on disk now. If the session's sight of the file was of
+ *  exactly `before`, it knows the new bytes too, so the sight moves forward;
+ *  otherwise the external-change sweep reported the session's own rewrite as
+ *  someone else's (2026-10-26, a getJson→fetchJson rename). A file the session
+ *  never saw, or saw in another version, is left as it was. */
+export function recordOwnRewrite(sessionId: string | undefined, path: string, before: string): void {
+  const prior = sessionReads(sessionId)?.get(canonKey(path));
+  if (!prior || prior.hash !== hash(before)) return;
+  const snapshotless = prior.content === undefined;
+  recordFileSeen(sessionId, path, { partial: prior.partial || snapshotless, range: prior.range, redacted: snapshotless });
+}
+
 /** Derive the SeenView for a successful `read` result from its envelope
  *  metadata: `truncated` means offset/limit actually clipped the view,
  *  `screened` means the injection screener prepended a warning — both are

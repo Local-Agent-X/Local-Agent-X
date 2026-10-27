@@ -10,6 +10,7 @@ import { isProtectedInstallPath } from "../security/layer/install-root.js";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { ok, err } from "./result-helpers.js";
 import { fileChangeOf } from "./file-change.js";
+import { recordOwnRewrite } from "./read-state.js";
 import { checkEditSyntax, syntaxRejectionMessage } from "./syntax-validate.js";
 import { checkHardcodedHomePath } from "./portable-path-check.js";
 import { checkAppWrite, writeGuardRejectionMessage } from "./app-tools/write-guard.js";
@@ -348,6 +349,7 @@ export const bulkReplaceTool: ToolDefinition = {
       if (!dryRun) {
         const res = commitEdit(file, content.split(effOld).join(effNew), "Bulk-replaced in", Boolean(args.allow_syntax_errors), sessionIdOf(args));
         if (res.isError) { failed.push(`${relative(root, file)}: ${res.content}`); continue; }
+        recordOwnRewrite(sessionId, file, content);
       }
       changed.push({ file: relative(root, file) || file, count });
     }

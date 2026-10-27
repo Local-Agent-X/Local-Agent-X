@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { bulkReplaceTool } from "./edit-tools.js";
 import { platformRoot } from "../platform-root.js";
+import { recordFileSeen, sweepExternalChanges } from "./read-state.js";
 
 // End-to-end through the REAL bulk_replace tool: multi-file find/replace with
 // verifiable per-file counts — the tool-native form of `sed -i` over a tree.
@@ -29,6 +30,21 @@ describe("bulkReplaceTool", () => {
     expect(readFileSync(join(dir, "a.txt"), "utf-8")).toBe("omega beta omega\n");
     expect(readFileSync(join(dir, "sub", "b.txt"), "utf-8")).toBe("omega\n");
     expect(readFileSync(join(dir, "c.md"), "utf-8")).toBe("gamma only\n");
+  });
+
+  // 2026-10-26: a getJson→fetchJson rename across files the model had read came
+  // back as "changed on disk OUTSIDE your own tool calls" — its own rewrite.
+  it("a rewrite of a file the session read is the session's own change, not an outside one", async () => {
+    const session = `bulk-seen-${Date.now()}`;
+    recordFileSeen(session, join(dir, "a.txt"));
+    recordFileSeen(session, join(dir, "sub", "b.txt"));
+    writeFileSync(join(dir, "sub", "b.txt"), "alpha changed by someone else\n"); // after the read
+    const r = await bulkReplaceTool.execute({ path: dir, old_string: "alpha", new_string: "omega", _sessionId: session });
+    expect(r.isError).toBeFalsy();
+    const reported = sweepExternalChanges(session).map((c) => c.path);
+    expect(reported.some((p) => p.endsWith("a.txt"))).toBe(false);
+    // The outside edit before the rewrite is still news to the model.
+    expect(reported.some((p) => p.endsWith("b.txt"))).toBe(true);
   });
 
   it("dry_run reports counts without writing", async () => {

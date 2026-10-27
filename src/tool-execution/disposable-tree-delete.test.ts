@@ -61,6 +61,20 @@ describe("recursive deletes that destroy nothing anyone needs run without a card
     }
   });
 
+  // TB2 qemu-startup, 2026-10-27: `cd /tmp/alpboot && rm -rf rootfs && mkdir
+  // rootfs` waited on a card for a temp folder the model had made.
+  it("a plain cd opening the command: the targets resolve in the folder it enters", () => {
+    const work = join(root, "os-temp", "alpboot");
+    mkdirSync(join(work, "rootfs"), { recursive: true });
+    const posix = (p: string) => p.replace(/\\/g, "/");
+    for (const command of [
+      `cd ${posix(work)} && rm -rf rootfs && mkdir rootfs`,
+      `cd "${work}" && rm -rf rootfs`,
+      "cd ../project && rm -rf node_modules dist",
+      "cd ./node_modules && rm -rf left-pad/../../dist",
+    ]) expect(floor(command), command).toBe("allow-with-rollback");
+  });
+
   it("whatever runs after the deletes", () => {
     expect(floor("rm -rf node_modules dist && npm install && npm run build")).toBe("allow-with-rollback");
   });
@@ -106,7 +120,14 @@ describe("every lookalike keeps the card", () => {
   it("a second destructive act, a cd, an expansion, a glob, a wrapper", () => {
     for (const command of [
       "rm -rf node_modules && git reset --hard",
-      "cd .. && rm -rf node_modules",
+      "cd .. && rm -rf project/client-data",
+      "cd client-data && rm -rf build-cache",
+      "cd ./client-data && rm -rf build-cache",
+      "cd node_modules; rm -rf left-pad",
+      "cd $DIR && rm -rf node_modules",
+      "cd - && rm -rf node_modules",
+      "rm -rf dist && cd .. && rm -rf node_modules",
+      "cd ./x && cd .. && rm -rf node_modules",
       "rm -rf ~/node_modules",
       "rm -rf $DIR/node_modules",
       "rm -rf node_*",
@@ -114,6 +135,13 @@ describe("every lookalike keeps the card", () => {
       "find . -name node_modules -exec rm -rf {} +",
       "Remove-Item -Recurse -Filter *.js node_modules",
     ]) expect(floor(command), command).toBe("ask");
+  });
+
+  it("a path into temp through a link that leaves it", () => {
+    symlinkSync(join(root, "project"), join(root, "os-temp", "link"), "junction");
+    const posix = (p: string) => p.replace(/\\/g, "/");
+    expect(floor(`rm -rf ${posix(join(root, "os-temp", "link", "client-data"))}`)).toBe("ask");
+    expect(floor(`cd ${posix(join(root, "os-temp", "link"))} && rm -rf client-data`)).toBe("ask");
   });
 
   it("a folder only partly the agent's", () => {

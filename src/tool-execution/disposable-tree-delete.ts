@@ -14,10 +14,11 @@
  *
  * Fail-closed throughout: a segment that trips the floor but is not a plain
  * recursive rm / Remove-Item / rd, a target with an expansion, glob or `~`, a
- * `cd` anywhere in the command, or a target that is not provably disposable
- * keeps the card. Nothing here parses a shell; it reads argv-shaped text.
+ * `cd` anywhere but a plain one opening the command (`enterLeadingCd`), or a
+ * target that is not provably disposable keeps the card. Nothing here parses a
+ * shell; it reads argv-shaped text.
  */
-import { existsSync, lstatSync, readdirSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { isTaskArtifact } from "../data-lineage/task-artifacts.js";
@@ -112,6 +113,16 @@ function hasShallowLink(dir: string): boolean {
   }
 }
 
+/** The folder `abs` really sits in is under the real temp dir: `/tmp/link/x`
+ *  with `link` pointing at the home folder deletes `~/x`, not temp. */
+function inTempDir(abs: string, tempDir: string): boolean {
+  try {
+    return within(realpathSync(tempDir), join(realpathSync(dirname(abs)), basename(abs)));
+  } catch {
+    return false; /* an unresolvable parent is not proven temp */
+  }
+}
+
 function generatedOutput(abs: string): boolean {
   const manifests = GENERATED[basename(abs)];
   if (manifests === undefined) return false;
@@ -155,11 +166,34 @@ function disposable(target: string, form: Form, scope: TreeDeleteScope): boolean
   try { stat = lstatSync(abs); } catch (err) { return (err as NodeJS.ErrnoException).code === "ENOENT"; }
   // `rm -rf link/` resolves through the link; the bare link is only unlinked.
   if (stat.isSymbolicLink()) return !trailingSep;
-  if (within(scope.tempDir ?? tmpdir(), abs)) return true;
+  if (inTempDir(abs, scope.tempDir ?? tmpdir())) return true;
   if (stat.isDirectory() && generatedOutput(abs)) {
     return (form !== "remove-item" && process.platform !== "win32") || !hasShallowLink(abs);
   }
   return agentCreated(abs, stat.isDirectory(), scope.sessionId);
+}
+
+const CD = /^(?:cd|pushd|popd|chdir|set-location|sl)\b/i;
+const LEADING_CD = /^\s*(?:cd|pushd|set-location|sl)\s+("[^"]*"|'[^']*'|[^\s"';&|]+)\s*&&/i;
+
+/**
+ * `cd <dir> && …` opening the command: the rest runs in `dir`, so its targets
+ * resolve there (`cd /tmp/alpboot && rm -rf rootfs`, TB2 qemu-startup
+ * 2026-10-27, carded a temp folder). Only `&&`, so a cd that fails runs
+ * nothing; only an absolute or `./` / `../` dir, since CDPATH can send a bare
+ * name anywhere; never across drives, where cmd's `cd` keeps the old drive.
+ * The command unchanged when it opens with no cd; null when it opens with one
+ * this cannot place.
+ */
+function enterLeadingCd(command: string, cwd: string): { command: string; cwd: string } | null {
+  if (!CD.test(command.trimStart())) return { command, cwd };
+  const m = LEADING_CD.exec(command);
+  if (!m) return null;
+  const [dir] = shellWords(m[1]);
+  if (!dir || EXPANDS.test(dir) || dir.startsWith("-")) return null;
+  if (!isAbsolute(dir) && !/^\.\.?(?:[\\/]|$)/.test(dir)) return null;
+  if (/^[a-z]:/i.test(dir) && dir[0].toLowerCase() !== resolve(cwd)[0].toLowerCase()) return null;
+  return { command: command.slice(m[0].length), cwd: resolve(cwd, dir) };
 }
 
 /**
@@ -175,9 +209,12 @@ function disposable(target: string, form: Form, scope: TreeDeleteScope): boolean
  */
 export function isDisposableTreeDelete(command: string, trips: (segment: string) => boolean, scope: TreeDeleteScope): boolean {
   if (/(?:^|[^|])\|(?:[^|]|$)/.test(command)) return false;
-  const parts = segments(command);
-  // A `cd` moves the shell away from the cwd the targets are resolved against.
-  if (parts.some((p) => /^(?:cd|pushd|popd|chdir|set-location|sl)\b/i.test(p))) return false;
+  const entered = enterLeadingCd(command, scope.cwd);
+  if (!entered) return false;
+  scope = { ...scope, cwd: entered.cwd };
+  const parts = segments(entered.command);
+  // Any other `cd` moves the shell away from the cwd the targets are resolved against.
+  if (parts.some((p) => CD.test(p))) return false;
   let leading = true;
   let found = false;
   for (const part of parts) {

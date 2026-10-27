@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1868 non-test source files · 93 oversized · 242 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1869 non-test source files · 92 oversized · 243 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -21,8 +21,8 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 171 | 29 | XL | 1 |
 | `src/security/` | 133 | 53 | XL | 3 |
-| `src/tools/` | 118 | 221 | XL | 9 |
-| `src/tool-execution/` | 83 | 76 | XL | 3 |
+| `src/tools/` | 119 | 221 | XL | 9 |
+| `src/tool-execution/` | 83 | 77 | XL | 2 |
 | `src/canonical-loop/` | 80 | 274 | XL | 13 |
 | `src/workspace/` | 79 | 3 | M |  |
 | `src/providers/` | 69 | 26 | L | 1 |
@@ -314,7 +314,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/sync/push-files.ts#copyToSync`
 - `src/tool-execution/pre-dispatch.ts#assertToolCallAllowed`
 - `src/tool-execution/require-approval.ts#requireApprovalPhase`
-- `src/tool-execution/run-sandboxed.ts#runSandboxedPhase`
 - `src/tools/app-tools/app-template.ts#renderStarterHtml`
 - `src/tools/build-app.ts#buildAppTool.execute`
 - `src/tools/email-mutate-tools.ts#withSession:callback`
@@ -416,6 +415,7 @@ job. Comments are free: never cut them to fit.
 - `src/screen-stream/signaling-machine.ts#signalingReducer` — 90+ own code lines (cap 100)
 - `src/security/layer/network-policy.ts#evaluateWebFetch` — 90+ own code lines (cap 100)
 - `src/server/inbound-channel-runner.ts#runInboundChannelTurn` — 90+ own code lines (cap 100)
+- `src/tool-execution/run-sandboxed.ts#runSandboxedPhase` — 90+ own code lines (cap 100)
 - `src/tools/email-send-tool.ts#emailSend.execute` — 90+ own code lines (cap 100)
 - `src/tools/read-write-tools.ts#readTool.execute` — 90+ own code lines (cap 100)
 - `src/tools/web-fetch.ts#webFetchTool.execute` — 90+ own code lines (cap 100)

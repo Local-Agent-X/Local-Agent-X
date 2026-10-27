@@ -13,11 +13,11 @@ import type { Phase } from "./context.js";
 import { CONTINUE } from "./context.js";
 import { RetryableToolResultError } from "../resilience-policy.js";
 import { ToolTimeoutError } from "./tool-timeout.js";
-import { timeout, blocked, ok, statusOf } from "../tools/result-helpers.js";
+import { timeout, blocked, ok } from "../tools/result-helpers.js";
 import { resolveAgentPath } from "../workspace/paths.js";
 import { pathSpecsForCall, shellCommandOf, waitsForShellCommand } from "../tool-registry.js";
 import { isAbsolute } from "node:path";
-import { existsSync, lstatSync } from "node:fs";
+import { existsSync } from "node:fs";
 import { checkFreshness, recordFileSeen, unchangedSinceSeen, seenViewFromReadResult } from "../tools/read-state.js";
 import { READ_DEDUP_STUB_LEAD, readContentInView } from "./read-dedup-evidence.js";
 import { getModelView } from "./model-view.js";
@@ -25,10 +25,7 @@ import { attendedHostFallbackNotice, unattendedShellBlock } from "./unattended-s
 import { createLogger } from "../logger.js";
 import { parkNeedsUser, parkOrRefuse, takeUserGrant } from "./deferred-call.js";
 import { createToolRunner } from "./tool-runner.js";
-import { recordTaskArtifact } from "../data-lineage/task-artifacts.js";
-import { CREATE_CLASS, createTargetPath, shellCreateTargets } from "./create-target-path.js";
-import { cwdOf } from "./internal-args.js";
-import { workspaceRoot } from "../config.js";
+import { enrollCreatedFiles, statCreateTargets } from "./created-files.js";
 import { checkShellDeleteHappened } from "./verify-shell-deletes.js";
 import { editPinsContent } from "./edit-pins-content.js";
 
@@ -44,9 +41,9 @@ function noticeHostFallback(ctx: Parameters<Phase>[0]): void {
 }
 
 
-// CREATE_CLASS + createTargetPath (the per-family tool→output-path mapping the
-// pre-stat below keys on) live in create-target-path.ts — shared with the
-// audit phase's provenance recording, one mapping for both.
+// The task-artifact pre-stat and enrollment live in created-files.ts, over
+// create-target-path.ts's mapping — shared with the audit phase's provenance
+// recording, one mapping for both.
 
 /** The row for a call that threw instead of returning a result. The journal is
  *  always told (a non-idempotent call that was cut off is ambiguous and must
@@ -172,25 +169,8 @@ export const runSandboxedPhase: Phase = async (ctx) => {
     }
   }
 
-  // Task-artifact pre-stat (data-lineage/task-artifacts.ts): remember whether
-  // a create-class target already exists BEFORE execute, so post-success we
-  // enroll only files the agent itself CREATED — an overwrite of a
-  // pre-existing user file must not become a "task artifact". Best-effort like
-  // the freshness guard above: any stat/resolve failure skips recording and
-  // never fails the tool call; non-create tools pay one Set lookup.
-  let createdArtifactTarget: string | null = null;
-  let shellCreated: string[] = [];
-  if (sessionId && CREATE_CLASS.has(tc.name)) {
-    try {
-      const target = createTargetPath(tc.name, args);
-      if (target && !existsSync(target)) createdArtifactTarget = target;
-    } catch { /* lineage is best-effort — never block the call */ }
-  }
-  const shellCommand = sessionId && waitsForShellCommand(tc.name) ? shellCommandOf(tc.name, args) : undefined;
-  if (shellCommand) {
-    // Where shell-tool.ts runs the command.
-    try { shellCreated = shellCreateTargets(shellCommand, cwdOf(args) || workspaceRoot()).filter((p) => !existsSync(p)); } catch { /* lineage is best-effort */ }
-  }
+  // Task-artifact pre-stat (created-files.ts): which targets are absent now.
+  const pendingCreates = statCreateTargets(tc.name, args, sessionId);
 
   const startedAt = Date.now();
   ctx.startedAt = startedAt;
@@ -249,20 +229,7 @@ export const runSandboxedPhase: Phase = async (ctx) => {
     const view = contentKnown.action === "read" ? seenViewFromReadResult(args, result.metadata) : undefined;
     try { recordFileSeen(sessionId, resolveAgentPath(seenPath, sessionId), view); } catch { /* freshness is best-effort */ }
   }
-  if (sessionId && createdArtifactTarget && statusOf(result) === "ok") {
-    // The file did not exist pre-execute and the create-class call succeeded:
-    // the agent created it. SUCCESS-only means envelope status "ok" — not
-    // merely !isError: a `running` (async-started) result has produced no
-    // finished deliverable yet, and a failed call enrolls nothing even if it
-    // left partial bytes behind (like the external-ingestion mark).
-    try { recordTaskArtifact(sessionId, createdArtifactTarget); } catch { /* lineage is best-effort */ }
-  }
-  if (sessionId && shellCreated.length > 0 && statusOf(result) === "ok") {
-    // Absent before the command and a regular file after it: the command made it.
-    for (const p of shellCreated) {
-      try { if (lstatSync(p).isFile()) recordTaskArtifact(sessionId, p); } catch { /* not created: nothing to enroll */ }
-    }
-  }
+  enrollCreatedFiles(sessionId, pendingCreates, result);
   try { recordToolStat(tc.name, sessionId || "default", succeeded, durationMs, result.isError ? result.content?.slice(0, 200) : undefined); } catch { /* tracker should never break the call */ }
   try { recordRateLimit(tc.name, sessionId); } catch { /* same */ }
   if (succeeded) {

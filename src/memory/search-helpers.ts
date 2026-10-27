@@ -72,6 +72,7 @@ const SOURCE_TYPE_DEFAULTS: Record<CanonicalSource, ChunkSourceType> = {
   session: "agent-x-session",
   personality: "memory-file",
   import: "import",
+  "project-doc": "project-file",
 };
 
 const IMPORT_SOURCE_TYPES = new Set<ChunkSourceType>([
@@ -104,6 +105,7 @@ function sourceLabel(source: string, sourceType: string): string {
     "session-summary": "Session summary",
     session: "Local session transcript",
     personality: "Local profile memory",
+    "project-doc": "Project document",
   };
   return labels[source as CanonicalSource]
     ?? `Legacy memory (${source.trim() || "unknown source"})`;
@@ -111,7 +113,7 @@ function sourceLabel(source: string, sourceType: string): string {
 
 function defaultTrust(source: string): MemoryTrustStatus {
   if (source === "session") return "mixed";
-  if (source === "import") return "untrusted";
+  if (source === "import" || source === "project-doc") return "untrusted";
   return "unknown";
 }
 

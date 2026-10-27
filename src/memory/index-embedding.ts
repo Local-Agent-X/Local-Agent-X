@@ -3,6 +3,7 @@ import type { Chunk, EmbeddingProvider, MemoryConfig } from "./types.js";
 import { sleep } from "./utils.js";
 import { decodeEmbedding, encodeEmbedding } from "./embedding-codec.js";
 import { yieldEventLoop } from "./index-embedding-reconcile.js";
+import { embeddableChunksWhere } from "./embedding-reach.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory.index-embedding");
@@ -183,7 +184,7 @@ export async function reembedMissingChunks(
 ): Promise<{ embedded: number; missing: number }> {
   const BATCH = 32;
   const select = db.prepare(
-    "SELECT id, text, hash FROM chunks WHERE embedding IS NULL AND id > ? ORDER BY id LIMIT ?"
+    `SELECT id, text, hash FROM chunks WHERE embedding IS NULL${embeddableChunksWhere(provider)} AND id > ? ORDER BY id LIMIT ?`
   );
   const update = db.prepare("UPDATE chunks SET embedding = ? WHERE id = ?");
   const insVec = hasVec
@@ -223,7 +224,7 @@ export async function reembedMissingChunks(
     // the next boot resumes from whatever is still NULL.
     if (chunks.every((c) => !c.embedding)) {
       missing += (
-        db.prepare("SELECT COUNT(*) AS n FROM chunks WHERE embedding IS NULL AND id > ?").get(afterId) as { n: number }
+        db.prepare(`SELECT COUNT(*) AS n FROM chunks WHERE embedding IS NULL${embeddableChunksWhere(provider)} AND id > ?`).get(afterId) as { n: number }
       ).n;
       break;
     }

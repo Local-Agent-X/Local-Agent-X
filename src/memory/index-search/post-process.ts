@@ -7,6 +7,7 @@ import {
 import { parseDateRange, dateInRange } from "../date-parser.js";
 import { slugify } from "../utils.js";
 import { chunkLocalDay } from "../retrieval-format.js";
+import { projectDocPathPrefix } from "../project-docs/paths.js";
 
 const IMPORT_SOURCE_TYPES = new Set([
   "import", "chatgpt-import", "claude-import", "codex-import", "slack-import",
@@ -18,8 +19,13 @@ export function postProcess(
   results: MemorySearchResult[],
   maxResults: number,
   minScore: number,
-  options?: { since?: Date; entities?: string[]; kind?: FactKind; project?: string; sourceType?: string; dateFrom?: string; dateTo?: string; query?: string; sessionId?: string; crossSession?: boolean }
+  options?: { since?: Date; entities?: string[]; kind?: FactKind; project?: string; sourceType?: string; dateFrom?: string; dateTo?: string; query?: string; sessionId?: string; crossSession?: boolean; projectId?: string }
 ): MemorySearchResult[] {
+  // A project document reaches only a search for its own project, whatever
+  // the session scope (the same rule as index-search/scope-where.ts).
+  const ownProject = options?.projectId ? projectDocPathPrefix(options.projectId) : null;
+  results = results.filter((r) => r.source !== "project-doc" || (!!ownProject && r.path.startsWith(ownProject)));
+
   // Source is the scope authority. Session-scoped rows fail closed unless an
   // exact active-session id is present; metadata cannot relabel them profile.
   if (!options?.crossSession) {
@@ -30,7 +36,7 @@ export function postProcess(
         && (r.source === "import" || r.source === "session")
         && !!importType
         && IMPORT_SOURCE_TYPES.has(importType);
-      if (canonicalImport) return true;
+      if (canonicalImport || r.source === "project-doc") return true;
       if (r.source !== "import" && PROFILE_SOURCES.includes(r.source)) return true;
       return !!sid && r.metadata?.session_id === sid;
     });

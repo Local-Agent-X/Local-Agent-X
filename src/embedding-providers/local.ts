@@ -4,6 +4,7 @@ import type { ExtendedEmbeddingProvider } from "./types.js";
 /** TF-IDF embedding with feature hashing — pure local, zero network, deterministic. */
 export class LocalEmbeddings implements ExtendedEmbeddingProvider {
   readonly name = "local";
+  readonly onBox = true;
   readonly model = "tfidf-256";
   readonly dimensions = 256;
   readonly maxBatchSize = Infinity;

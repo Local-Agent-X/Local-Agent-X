@@ -215,6 +215,31 @@ describe("searchVectorOffThread parity with the synchronous scan", () => {
   }
 });
 
+describe("searchVectorOffThread project scope in the worker", () => {
+  it("returns a project document only to a search for its own project", async () => {
+    const DIMS = 8;
+    const db = new Database(join(tempDir, "project-scope.db"));
+    seedCorpus(db, 40, DIMS, 3);
+    const queryVec = queryVecFor(DIMS, 9);
+    const insert = db.prepare(
+      "INSERT INTO chunks (path, source, start_line, end_line, text, embedding, metadata, session_id, updated_at) VALUES (?, 'project-doc', 1, 1, 'doc', ?, NULL, NULL, 1)",
+    );
+    insert.run("project/proj-a/pricing.md", JSON.stringify(queryVec));
+    insert.run("project/proj-ab/notes.md", JSON.stringify(queryVec));
+    try {
+      const paths = async (sessionFilter: string | null | undefined, projectId?: string) =>
+        (await searchVectorOffThread(db, queryVec, 10, undefined, sessionFilter, projectId))
+          .map((r) => r.path).filter((p) => p.startsWith("project/"));
+      expect(await paths(undefined)).toEqual([]);
+      expect(await paths("current")).toEqual([]);
+      expect(await paths("current", "proj-a")).toEqual(["project/proj-a/pricing.md"]);
+      expect(await paths(undefined, "proj-ab")).toEqual(["project/proj-ab/notes.md"]);
+    } finally {
+      db.close();
+    }
+  });
+});
+
 describe("searchVectorOffThread in-memory fallback", () => {
   it("returns full in-process results for a db a second connection cannot see", async () => {
     const db = new Database(":memory:");

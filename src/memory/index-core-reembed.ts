@@ -145,7 +145,7 @@ export class BackgroundReembed {
       clearTimeout(this.deferredKick);
       this.deferredKick = null;
     }
-    const missing = Embedding.countChunksMissingEmbedding(db);
+    const missing = Embedding.countChunksMissingEmbedding(db, provider);
     if (missing === 0) return;
     const passEpoch = this.epoch;
     this.inProgress = true;

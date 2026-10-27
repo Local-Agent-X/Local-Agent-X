@@ -4,6 +4,7 @@ import type { Chunk, EmbeddingProvider, MemoryConfig } from "./types.js";
 import { embedChunksWithRetry } from "./index-embedding.js";
 import { encodeEmbedding } from "./embedding-codec.js";
 import { withChunkProvenance } from "./search-helpers.js";
+import { mayEmbed } from "./embedding-reach.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory.index-ingest");
@@ -21,6 +22,7 @@ export async function indexChunks(
 ): Promise<void> {
   removeFile(virtualPath);
   if (chunks.length === 0) return;
+  if (embeddingProvider && !mayEmbed(embeddingProvider, source)) embeddingProvider = null;
   for (const chunk of chunks) {
     chunk.metadata = withChunkProvenance(source, chunk.metadata ?? {});
   }
@@ -89,6 +91,7 @@ export async function indexChunksIdempotent(
   virtualPath: string,
   source: string
 ): Promise<{ added: number; removed: number; unchanged: number }> {
+  if (embeddingProvider && !mayEmbed(embeddingProvider, source)) embeddingProvider = null;
   for (const chunk of chunks) {
     chunk.metadata = withChunkProvenance(source, chunk.metadata ?? {});
   }

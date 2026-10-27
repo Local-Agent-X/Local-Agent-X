@@ -17,6 +17,8 @@ export class LocalOnlyEmbeddingGuard implements ExtendedEmbeddingProvider {
     this.maxBatchSize = inner.maxBatchSize;
   }
 
+  get onBox(): boolean | undefined { return this.inner.onBox; }
+
   embed(text: string): Promise<number[]> {
     return isLocalOnlyMode() ? Promise.resolve(emptyVector(this.dimensions)) : this.inner.embed(text);
   }

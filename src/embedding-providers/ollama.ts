@@ -107,6 +107,9 @@ export class OllamaEmbeddings implements ExtendedEmbeddingProvider {
   readonly maxBatchSize = 10;
 
   private baseUrl: string;
+  /** Ollama is on this machine only at a loopback address; a LAN or hosted
+   *  endpoint receives the text like any cloud API. */
+  get onBox(): boolean { return isLoopbackUrl(this.baseUrl); }
   private healthy: boolean | null = null;
   private dimensionsDetected = false;
   /** Set by the first exchange that comes back; retires the cold-start grace. */

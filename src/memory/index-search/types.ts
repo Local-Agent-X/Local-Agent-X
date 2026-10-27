@@ -26,6 +26,12 @@ export interface SearchOptions {
    * true so the model explicitly opts in when it wants historical context.
    */
   crossSession?: boolean;
+  /**
+   * The project this search is for. Its documents (source "project-doc") are
+   * eligible; every other project's are not, cross-session or not. Absent,
+   * no project document is eligible.
+   */
+  projectId?: string;
   hyde?: boolean;
   hydeProvider?: "ollama" | "anthropic" | "openai" | "auto";
   hydeModel?: string;

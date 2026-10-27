@@ -4,6 +4,7 @@ import type Database from "better-sqlite3";
 import type { Chunk } from "../types.js";
 import { createLogger } from "../../logger.js";
 import { scanChunks, type VectorScanRequest } from "./vector-search-worker.js";
+import { scopeWhere } from "./scope-where.js";
 
 const logger = createLogger("memory.vector-search");
 
@@ -19,9 +20,11 @@ export function searchVector(
   queryVec: number[],
   limit: number,
   sources?: string[],
-  sessionFilter?: string | null
+  sessionFilter?: string | null,
+  projectId?: string,
 ): Array<Chunk & { score: number }> {
-  return scanChunks(db, queryVec, limit, sources, sessionFilter);
+  // Same source-authoritative gate as searchKeyword.
+  return scanChunks(db, queryVec, limit, sources, scopeWhere(sessionFilter, projectId));
 }
 
 type WorkerResponse =
@@ -54,16 +57,17 @@ export async function searchVectorOffThread(
   queryVec: number[],
   limit: number,
   sources?: string[],
-  sessionFilter?: string | null
+  sessionFilter?: string | null,
+  projectId?: string,
 ): Promise<Array<Chunk & { score: number }>> {
   // In-memory databases are invisible to a second connection — scan in
   // process (tests and ephemeral indexes only; the freeze was file-backed).
   if (db.memory || !db.name) {
-    return searchVector(db, queryVec, limit, sources, sessionFilter);
+    return searchVector(db, queryVec, limit, sources, sessionFilter, projectId);
   }
 
   try {
-    return await runScanWorker({ dbPath: db.name, queryVec, limit, sources, sessionFilter });
+    return await runScanWorker({ dbPath: db.name, queryVec, limit, sources, scope: scopeWhere(sessionFilter, projectId) });
   } catch (e) {
     // Same results either way — the fallback only re-pays the loop cost, so
     // surface it loudly rather than shipping a memory-less turn.
@@ -71,7 +75,7 @@ export async function searchVectorOffThread(
       "[memory] vector-search worker failed, falling back to in-process scan:",
       (e as Error).message
     );
-    return searchVector(db, queryVec, limit, sources, sessionFilter);
+    return searchVector(db, queryVec, limit, sources, sessionFilter, projectId);
   }
 }
 

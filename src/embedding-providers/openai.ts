@@ -6,6 +6,7 @@ const logger = createLogger("embedding-providers");
 
 export class OpenAIEmbeddings implements ExtendedEmbeddingProvider {
   readonly name = "openai";
+  readonly onBox = false;
   model: string;
   readonly dimensions = 1536;
   readonly maxBatchSize = 2048;

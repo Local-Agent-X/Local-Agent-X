@@ -241,6 +241,10 @@ export class UniversalIndex {
         }
         return added;
       }
+      case "project-doc":
+        // Not a store of this indexer: project documents are walked per
+        // project by project-docs/, which owns their add and removal.
+        return 0;
       case "mind":
         // Retired — kept in the switch only to satisfy the exhaustive type
         // check on CanonicalSource. No new chunks are written.

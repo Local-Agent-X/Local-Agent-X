@@ -20,6 +20,13 @@ import { parentPort, workerData } from "node:worker_threads";
 import Database from "better-sqlite3";
 import type { Chunk } from "../types.js";
 
+/** The scope clause (leading AND) and its params, built on the main thread
+ *  by scope-where.ts: this file may not import it (see the header). */
+export interface ScanScope {
+  sql: string;
+  params: unknown[];
+}
+
 // Local copy of memory/embedding-codec.ts decodeEmbedding — this file cannot
 // import it (see header). embedding-codec.parity.test.ts locks the two
 // implementations together. Reads blobs (current) and legacy JSON text (rows
@@ -62,17 +69,12 @@ export function scanChunks(
   db: InstanceType<typeof Database>,
   queryVec: number[],
   limit: number,
-  sources?: string[],
-  sessionFilter?: string | null
+  sources: string[] | undefined,
+  scope: ScanScope,
 ): Array<Chunk & { score: number }> {
   const BATCH_SIZE = 1000;
   const sourceFilter = sources ? `AND source IN (${sources.map(() => "?").join(",")})` : "";
-  // Same source-authoritative gate as searchKeyword.
-  const sessionWhere = sessionFilter !== undefined
-    ? `AND (source IN ('entity', 'mind', 'personality', 'import')${sessionFilter ? " OR session_id = ?" : ""})`
-    : "";
-  const baseParams: unknown[] = sources ? [...sources] : [];
-  const params = sessionFilter ? [...baseParams, sessionFilter] : baseParams;
+  const params: unknown[] = [...(sources ?? []), ...scope.params];
 
   // Keyset pagination (id > lastId) instead of LIMIT/OFFSET: each batch is
   // its own short read, stable under the concurrent yielding embedding wipes
@@ -80,7 +82,7 @@ export function scanChunks(
   // batches) and avoids the O(n²) rescan cost of growing offsets.
   const batchStmt = db.prepare(
     `SELECT id, path, source, start_line, end_line, text, embedding, metadata, session_id, updated_at
-     FROM chunks WHERE embedding IS NOT NULL ${sourceFilter} ${sessionWhere} AND id > ?
+     FROM chunks WHERE embedding IS NOT NULL ${sourceFilter} ${scope.sql} AND id > ?
      ORDER BY id LIMIT ?`
   );
 
@@ -146,7 +148,7 @@ export interface VectorScanRequest {
   queryVec: number[];
   limit: number;
   sources?: string[];
-  sessionFilter?: string | null;
+  scope: ScanScope;
 }
 
 function isScanRequest(data: unknown): data is VectorScanRequest {
@@ -170,7 +172,7 @@ if (parentPort && isScanRequest(workerData)) {
       request.queryVec,
       request.limit,
       request.sources,
-      request.sessionFilter
+      request.scope,
     );
     parentPort.postMessage({ ok: true, results });
   } catch (e) {

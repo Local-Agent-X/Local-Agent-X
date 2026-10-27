@@ -11,6 +11,7 @@ import { encodeEmbedding } from "./embedding-codec.js";
 import { embedChunksWithRetry, pruneEmbeddingCache } from "./index-embedding.js";
 import { archiveOldFacts } from "./index-watcher.js";
 import { listMemoryFiles, listSessionFiles, extractDateFromPath } from "./index-files.js";
+import { PROJECT_DOC_PATH_ROOT } from "./project-docs/paths.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory.index-sync");
@@ -322,13 +323,15 @@ export async function syncIndex(deps: SyncDeps): Promise<void> {
     // Archived session transcripts are frozen cold storage: never rescanned
     // (listSessionFiles only walks sessions/), so without this exemption the
     // sweep below would delete their repointed chunks on the first sync after
-    // archival — permanently, since nothing re-indexes the archive.
+    // archival — permanently, since nothing re-indexes the archive. Project
+    // documents live outside the memory dir too; project-docs/ removes them.
     const archivePrefix = join(deps.dataDir, "sessions-archive") + sep;
     const dbFiles = deps.db.prepare("SELECT path FROM files").all() as { path: string }[];
     for (const { path } of dbFiles) {
       if (
         !allPaths.has(path) &&
         !path.startsWith("import/") &&
+        !path.startsWith(PROJECT_DOC_PATH_ROOT) &&
         !path.startsWith(archivePrefix)
       ) {
         removeFile(deps.db, deps.hasFts, deps.hasVec, path);

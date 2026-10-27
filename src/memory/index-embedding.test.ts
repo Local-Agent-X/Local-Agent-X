@@ -93,7 +93,7 @@ describe("reconcileEmbeddingSignature", () => {
     ).run(Date.now());
 
     expect(await reconcileEmbeddingSignature(db, prov)).toBe("adopted");
-    expect(countChunksMissingEmbedding(db)).toBe(0);
+    expect(countChunksMissingEmbedding(db, fakeProvider("fake", "m1", 4))).toBe(0);
   });
 
   it("wipes pre-signature vectors when nothing ties them to the current provider", async () => {
@@ -156,7 +156,7 @@ describe("nullDimensionMismatchedEmbeddings (self-heal)", () => {
 
     // Now embedded at the correct dimension — findable again. No human reindex.
     expect(embeddingOf(orphan)).toHaveLength(8);
-    expect(countChunksMissingEmbedding(db)).toBe(0);
+    expect(countChunksMissingEmbedding(db, fakeProvider("fake", "m1", 4))).toBe(0);
   });
 });
 
@@ -204,14 +204,14 @@ describe("nullZeroVectorEmbeddings + purgeZeroVectorEmbeddingCache (degraded-mod
     // The two existing self-heals are both BLIND to it: dims match (4 == 4) and
     // the vector is not NULL.
     expect(await nullDimensionMismatchedEmbeddings(db, prov)).toBe(0);
-    expect(countChunksMissingEmbedding(db)).toBe(0);
+    expect(countChunksMissingEmbedding(db, fakeProvider("fake", "m1", 4))).toBe(0);
 
     // The zero-vector heal catches it, then the standard backfill rebuilds it.
     expect(await nullZeroVectorEmbeddings(db)).toBe(1);
     expect(embeddingOf(poison)).toBeNull();
     await reembedMissingChunks(db, prov, DEFAULT_MEMORY_CONFIG, false);
     expect(embeddingOf(poison)).toEqual([0.25, 0.5, 0.75, 1]);
-    expect(countChunksMissingEmbedding(db)).toBe(0);
+    expect(countChunksMissingEmbedding(db, fakeProvider("fake", "m1", 4))).toBe(0);
   });
 });
 
@@ -231,7 +231,7 @@ describe("reembedMissingChunks", () => {
     expect(embeddingOf(existing)).toEqual([9, 9, 9, 9]);
     expect(embeddingOf(missing1)).toHaveLength(4);
     expect(embeddingOf(missing2)).toHaveLength(4);
-    expect(countChunksMissingEmbedding(db)).toBe(0);
+    expect(countChunksMissingEmbedding(db, fakeProvider("fake", "m1", 4))).toBe(0);
   });
 
   it("stops without spinning when the provider is down, and resumes later", async () => {
@@ -250,7 +250,7 @@ describe("reembedMissingChunks", () => {
 
     const r2 = await reembedMissingChunks(db, fakeProvider("fake", "m1", 4), cfg, false);
     expect(r2.embedded).toBe(1);
-    expect(countChunksMissingEmbedding(db)).toBe(0);
+    expect(countChunksMissingEmbedding(db, fakeProvider("fake", "m1", 4))).toBe(0);
   });
 });
 
@@ -297,7 +297,7 @@ describe("event-loop yielding during heavy sqlite work", () => {
     await probe;
 
     expect(verdict).toBe("wiped");
-    expect(countChunksMissingEmbedding(db)).toBe(ROWS); // same end state as before
+    expect(countChunksMissingEmbedding(db, fakeProvider("fake", "m1", 4))).toBe(ROWS); // same end state as before
     // Deterministic starvation check: the wipe must hand the loop back at
     // least twice mid-flight (12k rows / <=5k batch => >=2 interior yields).
     expect(turns).toBeGreaterThanOrEqual(2);

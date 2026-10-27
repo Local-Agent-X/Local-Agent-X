@@ -6,6 +6,7 @@ const logger = createLogger("embedding-providers");
 
 export class GeminiEmbeddings implements ExtendedEmbeddingProvider {
   readonly name = "gemini";
+  readonly onBox = false;
   model: string;
   readonly dimensions = 768;
   readonly maxBatchSize = 100;

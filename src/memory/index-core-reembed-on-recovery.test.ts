@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { MemoryIndex } from "./index.js";
 import { countChunksMissingEmbedding } from "./index-embedding.js";
 import { BackgroundReembed } from "./index-core-reembed.js";
-import type { MemoryConfig } from "./types.js";
+import type { EmbeddingProvider, MemoryConfig } from "./types.js";
 import {
   recoverableProvider, insertUnembeddedChunk, settle,
 } from "./reembed-recovery.test-helper.js";
@@ -35,7 +35,7 @@ afterEach(() => {
   try { rmSync(tempDir, { recursive: true, force: true }); } catch {}
 });
 
-const missing = () => countChunksMissingEmbedding(memory["db"]);
+const missing = () => countChunksMissingEmbedding(memory["db"], { onBox: true } as EmbeddingProvider);
 
 describe("re-embed on provider recovery", () => {
   it("provider down at attach: recovery triggers exactly one pass; a further recovery with nothing missing is a no-op", async () => {

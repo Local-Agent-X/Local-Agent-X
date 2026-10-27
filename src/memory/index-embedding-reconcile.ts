@@ -11,6 +11,7 @@
  */
 import type Database from "better-sqlite3";
 import type { EmbeddingProvider } from "./types.js";
+import { embeddableChunksWhere } from "./embedding-reach.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory.index-embedding");
@@ -152,9 +153,10 @@ export async function reconcileEmbeddingSignature(
   return "wiped";
 }
 
-export function countChunksMissingEmbedding(db: InstanceType<typeof Database>): number {
+/** Chunks `provider` may embed that have no vector yet (embedding-reach.ts). */
+export function countChunksMissingEmbedding(db: InstanceType<typeof Database>, provider: EmbeddingProvider): number {
   return (
-    db.prepare("SELECT COUNT(*) AS n FROM chunks WHERE embedding IS NULL").get() as { n: number }
+    db.prepare(`SELECT COUNT(*) AS n FROM chunks WHERE embedding IS NULL${embeddableChunksWhere(provider)}`).get() as { n: number }
   ).n;
 }
 

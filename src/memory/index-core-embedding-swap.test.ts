@@ -32,6 +32,7 @@ vi.mock("./index-embedding.js", async (importOriginal) => {
 
 import { MemoryIndex } from "./index.js";
 import { countChunksMissingEmbedding } from "./index-embedding.js";
+import type { EmbeddingProvider } from "./types.js";
 import {
   recoverableProvider, insertUnembeddedChunk, insertEmbeddedChunkAt, settle, DIMS,
 } from "./reembed-recovery.test-helper.js";
@@ -50,7 +51,7 @@ afterEach(() => {
   try { rmSync(tempDir, { recursive: true, force: true }); } catch {}
 });
 
-const missing = () => countChunksMissingEmbedding(memory["db"]);
+const missing = () => countChunksMissingEmbedding(memory["db"], { onBox: true } as EmbeddingProvider);
 
 describe("reentrant setEmbeddingProvider", () => {
   it("a swap that completes while an earlier attach is still awaited wins — the stale tail neither re-subscribes nor kicks", async () => {

@@ -1,6 +1,7 @@
 import type Database from "better-sqlite3";
 import type { Chunk } from "../types.js";
 import { bm25RankToScore, buildFtsAnyQuery, buildFtsQuery } from "../utils.js";
+import { scopeWhere } from "./scope-where.js";
 
 /** "all": every keyword must appear. "any": at least one, bm25-ranked. */
 export type KeywordMatch = "all" | "any";
@@ -19,27 +20,23 @@ export function searchKeyword(
   sources?: string[],
   sessionFilter?: string | null,
   match: KeywordMatch = "all",
+  projectId?: string,
 ): Array<Chunk & { score: number }> {
   const ftsQuery = match === "any" ? buildFtsAnyQuery(query) : buildFtsQuery(query);
   if (!ftsQuery) return [];
 
   try {
-    // Storage-layer cross-session gate (defense-in-depth on top of postProcess).
-    // Scope comes from chunks.source, never nullable or model-authored metadata.
-    const sessionWhere = sessionFilter !== undefined
-      ? `AND (c.source IN ('entity', 'mind', 'personality', 'import')${sessionFilter ? " OR c.session_id = ?" : ""})`
-      : "";
+    // Storage-layer scope gate (defense-in-depth on top of postProcess).
+    const scope = scopeWhere(sessionFilter, projectId, "c.");
     const sql = `SELECT c.id, c.path, c.source, c.start_line, c.end_line, c.text, c.metadata, c.session_id, c.updated_at,
                 bm25(chunks_fts) as rank
          FROM chunks_fts f
          JOIN chunks c ON c.id = f.rowid
          WHERE chunks_fts MATCH ?
-         ${sessionWhere}
+         ${scope.sql}
          ORDER BY rank
          LIMIT ?`;
-    const params: unknown[] = sessionFilter
-      ? [ftsQuery, sessionFilter, limit]
-      : [ftsQuery, limit];
+    const params: unknown[] = [ftsQuery, ...scope.params, limit];
     const rows = db
       .prepare(sql)
       .all(...params) as Array<{

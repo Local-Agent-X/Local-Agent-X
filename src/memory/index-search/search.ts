@@ -34,7 +34,7 @@ export async function searchInIndex(
     : options?.sessionId ?? null;
 
   if (deps.hasFts) {
-    keywordResults = searchKeyword(deps.db, query, candidateLimit, options?.sources, sqlSessionFilter);
+    keywordResults = searchKeyword(deps.db, query, candidateLimit, options?.sources, sqlSessionFilter, "all", options?.projectId);
 
     // Every-word missed: relax to any-word in ONE query. This used to issue a
     // separate synchronous query PER KEYWORD, duplicates included — and
@@ -44,7 +44,7 @@ export async function searchInIndex(
     // 57% of the whole index — and blocked the server 5-8s per turn, starving
     // every other request (2026-09-16).
     if (keywordResults.length === 0) {
-      keywordResults = searchKeyword(deps.db, query, candidateLimit, options?.sources, sqlSessionFilter, "any");
+      keywordResults = searchKeyword(deps.db, query, candidateLimit, options?.sources, sqlSessionFilter, "any", options?.projectId);
     }
   }
 
@@ -57,7 +57,7 @@ export async function searchInIndex(
         if (hyp) embedText = hyp;
       }
       const queryVec = await deps.embeddingProvider.embed(embedText);
-      vectorResults = await searchVectorOffThread(deps.db, queryVec, candidateLimit, options?.sources, sqlSessionFilter);
+      vectorResults = await searchVectorOffThread(deps.db, queryVec, candidateLimit, options?.sources, sqlSessionFilter, options?.projectId);
     } catch (e) {
       logger.warn("[memory] Vector search failed:", (e as Error).message);
     }

@@ -114,6 +114,8 @@ export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
  *   session         — raw session JSON (~/.lax/sessions/<id>.json)
  *   personality     — USER.md / HEART.md / other memory-root files
  *   import          — ChatGPT / Claude / Slack imports
+ *   project-doc     — a document in a project's folder, at the virtual
+ *                     path project/<projectId>/<relative path>
  */
 export type CanonicalSource =
   | "entity"
@@ -122,11 +124,12 @@ export type CanonicalSource =
   | "session-summary"
   | "session"
   | "personality"
-  | "import";
+  | "import"
+  | "project-doc";
 
 export const CANONICAL_SOURCES: readonly CanonicalSource[] = [
   "entity", "daily-log", "mind", "session-summary",
-  "session", "personality", "import",
+  "session", "personality", "import", "project-doc",
 ] as const;
 
 /**
@@ -134,9 +137,10 @@ export const CANONICAL_SOURCES: readonly CanonicalSource[] = [
  * scope content describes the user as a stable entity and is safe to surface
  * in any session. Session-scope content is bound to a specific conversation
  * and must NOT auto-leak across sessions — only via the explicit
- * `search_past_sessions` tool.
+ * `search_past_sessions` tool. Project-scope content belongs to one project
+ * and surfaces only in a search made for that project, cross-session or not.
  */
-export type MemoryScope = "profile" | "session";
+export type MemoryScope = "profile" | "session" | "project";
 
 const SOURCE_SCOPE: Record<CanonicalSource, MemoryScope> = {
   "entity": "profile",
@@ -151,6 +155,7 @@ const SOURCE_SCOPE: Record<CanonicalSource, MemoryScope> = {
   "import": "profile",
   "session-summary": "session",
   "session": "session",
+  "project-doc": "project",
 };
 
 export function scopeOf(source: CanonicalSource): MemoryScope {
@@ -200,6 +205,7 @@ export type ChunkSourceType =
   | "slack-import"
   | "memory-file"
   | "entity-page"
+  | "project-file"
   | "import";
 
 export type MemoryTrustStatus = "trusted" | "untrusted" | "mixed" | "unknown";
@@ -278,6 +284,13 @@ export interface EmbeddingProvider {
    * (index-core-reembed.ts) instead of waiting for the next boot.
    */
   onRecovered?(listener: () => void): () => void;
+  /**
+   * True when the provider runs on this machine (the built-in embedder, or
+   * Ollama at a loopback address), so text given to it never leaves the box.
+   * Absent reads as off-box. Decides whether project documents are embedded
+   * (embedding-reach.ts).
+   */
+  readonly onBox?: boolean;
 }
 
 // ── Facts / entities types ──

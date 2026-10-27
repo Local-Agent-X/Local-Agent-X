@@ -178,8 +178,13 @@ export const CREDENTIAL_PATTERNS: readonly CredentialPattern[] = [
   // The value needs 8 characters that aren't mask characters: a masked display
   // (`gh auth status` prints `Token: gho_****…`) carries only its public prefix,
   // and withholding it hid the whole command's output from the model.
-  { type: "generic", name: "Key-Value Secret", regex: new RegExp(`(?:${CREDENTIAL_KEY_NAMES})\\s*[:=]\\s*["']?(?=(?:[*•]*[^\\s"',*•]){8})([^\\s"',]{12,})`, "gi") },
-  { type: "generic", name: "Base64 Secret Assignment", regex: /(?:private[_-]?key|client[_-]?secret|signing[_-]?key)\s*[:=]\s*["']?([A-Za-z0-9+/=]{40,})/gi },
+  // Key, separator and value share one line: a prompt is not an assignment.
+  // `\s*` let ssh's `root@localhost's password:` take the NEXT line's status
+  // marker as its value, which was then withheld and registered, and every
+  // later command printing that marker was refused (TB2 qemu-alpine-ssh,
+  // 2026-10-27).
+  { type: "generic", name: "Key-Value Secret", regex: new RegExp(`(?:${CREDENTIAL_KEY_NAMES})[ \\t]*[:=][ \\t]*["']?(?=(?:[*•]*[^\\s"',*•]){8})([^\\s"',]{12,})`, "gi") },
+  { type: "generic", name: "Base64 Secret Assignment", regex: /(?:private[_-]?key|client[_-]?secret|signing[_-]?key)[ \t]*[:=][ \t]*["']?([A-Za-z0-9+/=]{40,})/gi },
 ];
 
 /**

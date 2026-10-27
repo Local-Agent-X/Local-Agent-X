@@ -75,6 +75,18 @@ describe("detectSecretsInOutput — positive cases", () => {
     expect(res.kinds).toContain("Key-Value Secret");
   });
 
+  // TB2 qemu-alpine-ssh, 2026-10-27: the model's own `>>FAIL_NO_SHELL` marker,
+  // printed under ssh's password prompt, was withheld as the password and
+  // every later command printing it refused.
+  it("a key and a value on different lines is not an assignment", () => {
+    for (const out of [
+      "root@localhost's password: \n>>FAIL_NO_SHELL\n",
+      "Password:\r\nPermission denied, please try again.\r\n",
+      "client_secret =\n  QUJDREVGR0hJSktMTU5PUFFSU1RVVldYWVphYmNkZWZnaGlqa2w=\n",
+    ]) expect(detectSecretsInOutput(out).matched, out).toBe(false);
+    expect(detectSecretsInOutput("password:\tabcdef1234567890ABCDE").kinds).toContain("Key-Value Secret");
+  });
+
   // S1 convergence: modern keys that exist in the canonical catalog but were
   // ABSENT from the old inline taint set — previously the egress guard caught
   // them leaving while the taint path did NOT (the documented defect). Now the

@@ -84,6 +84,9 @@ export interface VerifyGateState {
   lastFailures: string[];
   /** Fire-once cap for the "these were already failing" note. */
   firedPreexisting: boolean;
+  /** The op's latest call was a check that ran and named what failed: a red
+   *  verdict, which this gate judges, not a call that failed to run. */
+  lastCallNamedFailures: boolean;
 }
 
 export function createVerifyGateState(): VerifyGateState {
@@ -101,6 +104,7 @@ export function createVerifyGateState(): VerifyGateState {
     baselineFailures: [],
     lastFailures: [],
     firedPreexisting: false,
+    lastCallNamedFailures: false,
   };
 }
 
@@ -222,10 +226,16 @@ export function noteVerifyEvidence(
       state.verifiedSinceEdit = false;
       state.verifyFailedSinceEdit = false;
     }
-    if (a.command && !state.editedSource && VERIFY_CMD_RE.test(a.command) && checkVerdict(a.status) === "failed") {
-      for (const name of failingCheckNames(a.output ?? "")) {
-        if (!state.baselineFailures.includes(name)) state.baselineFailures.push(name);
-      }
+    const failures =
+      a.command && checkVerdict(a.status) === "failed" &&
+      (VERIFY_CMD_RE.test(a.command) || runsEditedCode(a.command, state.editedPaths))
+        ? failingCheckNames(a.output ?? "")
+        : [];
+    // The op's latest call as the failed-call gate reads it: a check that ran
+    // and named its failures reached a verdict; it did not fail to run.
+    state.lastCallNamedFailures = failures.length > 0;
+    if (!state.editedSource) {
+      for (const name of failures) if (!state.baselineFailures.includes(name)) state.baselineFailures.push(name);
     }
     if (
       a.command &&
@@ -244,7 +254,7 @@ export function noteVerifyEvidence(
       } else if (verdict === "failed") {
         state.verifyFailedSinceEdit = true;
         state.verifiedSinceEdit = false;
-        state.lastFailures = failingCheckNames(a.output ?? "");
+        state.lastFailures = failures;
       }
       if (verdict === "passed" || verdict === "failed") settlePending(state);
     }

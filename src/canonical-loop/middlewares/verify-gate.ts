@@ -60,6 +60,13 @@ export function opSourceCheckedSinceLastEdit(opId: string): boolean {
   return state.editedSource && state.verifiedSinceEdit;
 }
 
+/** The op's latest call was a check that ran and named its failures: a red
+ *  verdict this gate judges against the failures the op found, so the
+ *  failed-call gate leaves it alone. */
+export function opLastCallNamedFailures(opId: string): boolean {
+  return getMiddlewareState<VerifyGateState>(opId, "verify-gate", createVerifyGateState).lastCallNamedFailures;
+}
+
 /** Source-file paths the op edited (insertion-ordered). The orchestrator
  *  build-verify gate uses these to locate the project to build. */
 export function opEditedSourcePaths(opId: string): string[] {

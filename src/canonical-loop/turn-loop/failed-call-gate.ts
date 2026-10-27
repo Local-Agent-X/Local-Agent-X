@@ -15,7 +15,11 @@
  * naming the tool. A policy outcome ("blocked", "declined") never fires it:
  * those are decisions (a security gate, the user saying no), and pushing for
  * "another way" past one would be the harness steering around its own guard.
- * Their refusals carry the honest next step themselves.
+ * Their refusals carry the honest next step themselves. Nor does a check that
+ * ran and named what failed: that red result is the verify-gate's to judge
+ * against the failures the op found before its edits, and a test run that
+ * fails only on a follow-up the model rightly left alone is the answer, not
+ * a call to route around (bugfix-with-followup, gpt-6.1, 2026-10-26).
  *
  * Once per op: a second failure ends the turn as the model chose, so a call
  * that cannot succeed never loops.
@@ -23,6 +27,7 @@
 import { createLogger } from "../../logger.js";
 import { readOpTurns } from "../store.js";
 import { getMiddlewareState } from "../middlewares/state.js";
+import { opLastCallNamedFailures } from "../middlewares/verify-gate.js";
 import type { ToolCallSummary } from "../types.js";
 import type { CompletionGateContext } from "./decide-outcome-gate-contract.js";
 
@@ -58,6 +63,7 @@ export interface FailedCallGateResult {
 export function runFailedCallGate({ op, turnIdx, toolSummary }: CompletionGateContext): FailedCallGateResult {
   const last = lastToolCall(toolSummary ?? [], op.id, turnIdx);
   if (!last || !OPERATIONAL_FAILURES.has(last.resultStatus)) return { nudge: "", shouldRetry: false };
+  if (opLastCallNamedFailures(op.id)) return { nudge: "", shouldRetry: false };
   const state = getMiddlewareState(op.id, FAILED_CALL_GATE_KEY, () => ({ fires: 0 }));
   state.fires += 1;
   if (state.fires > 1) {

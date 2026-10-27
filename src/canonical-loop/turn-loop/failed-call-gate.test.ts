@@ -18,6 +18,8 @@ import { appendNudgeAsUserMessage } from "./nudges.js";
 import type { CompletionGateContext } from "./decide-outcome-gate-contract.js";
 import type { Op } from "../../ops/types.js";
 import type { ToolCallSummary } from "../types.js";
+import { getMiddlewareState } from "../middlewares/state.js";
+import { createVerifyGateState, noteVerifyEvidence, type VerifyGateState, type VerifyTurnAction } from "../../agent-guards/index.js";
 
 let n = 0;
 function ctx(toolSummary: Array<{ tool: string; resultStatus: string }>, turnIdx = 1): CompletionGateContext {
@@ -75,6 +77,17 @@ describe("what never fires it", () => {
     expect(runFailedCallGate(ctx([], 2)).shouldRetry).toBe(false);
     store.turns = [];
     expect(runFailedCallGate(ctx([])).shouldRetry).toBe(false);
+  });
+
+  it("a test run that ran and named its failures: a verdict, which the verify-gate judges", () => {
+    const testRun = (output: string): VerifyTurnAction => ({ tool: "bash", command: "cd nav-app && npm test", status: "error", output });
+    const named = ctx([call("bash", "error")]);
+    noteVerifyEvidence([testRun("✔ tapping a link closes the menu\n✖ button reads Close (0.3ms)")], getMiddlewareState<VerifyGateState>(named.op.id, "verify-gate", createVerifyGateState));
+    expect(runFailedCallGate(named).shouldRetry).toBe(false);
+    // A run that could not start names nothing: it failed to run, and is still a failed call.
+    const unstarted = ctx([call("bash", "error")]);
+    noteVerifyEvidence([testRun("npm error code ENOENT")], getMiddlewareState<VerifyGateState>(unstarted.op.id, "verify-gate", createVerifyGateState));
+    expect(runFailedCallGate(unstarted).shouldRetry).toBe(true);
   });
 
   it("a cancelled call", () => {

@@ -48,6 +48,32 @@ class AptSecurityFallback:
             await super().ensure_system_dependencies(environment, dependencies)
 
 
+# Would Harbor's install of curl fail on this image? Fetches the packages into
+# a scratch cache it then removes, so nothing is installed and the image is as
+# it was, apart from the package index `apt-get update` refreshes, as Harbor's
+# install refreshes it too. Succeeds without fetching when curl is installed.
+CURL_FETCH_PROBE = (
+    "probe=$(mktemp -d) && mkdir -p $probe/partial && apt-get update -qq "
+    "&& apt-get install -y -qq --download-only -o Dir::Cache::archives=$probe curl; "
+    "rc=$?; rm -rf $probe; exit $rc"
+)
+
+
+async def repoint_where_install_would_fail(environment: BaseEnvironment, logger) -> None:
+    """For an agent that installs nothing with apt (LAX brings its own tools):
+    leave the image's apt sources as every other harness leaves them, so the
+    task's own test.sh, which installs curl with apt before it grades, works
+    for it too. An agent Harbor installs curl for fails that install on an
+    end-of-life image and AptSecurityFallback repoints it; the same failure,
+    probed without installing, repoints this one. A working image is untouched."""
+    probe = await environment.exec(command=CURL_FETCH_PROBE, user="root")
+    if probe.return_code == 0:
+        return
+    moved = await environment.exec(command=SECURITY_TO_ARCHIVE, user="root")
+    if moved.return_code == 0:
+        logger.warning("apt fails on the security mirror; pointed it at archive.debian.org, as the other harnesses' setup does")
+
+
 class OpenClawAptFallback(AptSecurityFallback, OpenClaw):
     pass
 

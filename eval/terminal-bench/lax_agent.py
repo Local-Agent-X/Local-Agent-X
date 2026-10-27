@@ -22,6 +22,8 @@ from harbor.agents.model_connection import ModelConnectionSpec
 from harbor.environments.base import BaseEnvironment
 from harbor.models.agent.context import AgentContext
 
+from apt_fallback import repoint_where_install_would_fail
+
 INSTALL_DIR = "/installed-agent/lax"
 NODE = f"{INSTALL_DIR}/.node/bin/node"
 INSTRUCTION_PATH = "/installed-agent/instruction.txt"
@@ -74,6 +76,10 @@ class LaxAgent(BaseInstalledAgent):
                 f"&& rm /installed-agent/lax.tgz{chown} && {NODE} --version"
             ),
         )
+        # Without this the qemu-* tasks graded 0 whatever LAX did: their test.sh
+        # could not install curl from bullseye's retired security mirror
+        # (2026-10-27), which every other harness's setup had already repointed.
+        await repoint_where_install_would_fail(environment, self.logger)
 
     @override
     def populate_context_post_run(self, context: AgentContext) -> None:

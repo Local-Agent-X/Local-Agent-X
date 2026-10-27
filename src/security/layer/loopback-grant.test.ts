@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { selfPort, setSelfPort, shellLoopbackReachable } from "./loopback-grant.js";
+import { selfPort, setSelfPort, shellLoopbackReachable, shellUnixSocketReachable } from "./loopback-grant.js";
 import { evaluateEgressForUrl } from "./network-policy.js";
 import { setAgentOriginPort } from "./agent-origin-port.js";
 
@@ -34,12 +34,19 @@ describe("the shell and http_request read one grant", () => {
     expect(egress("5173")).toBe(true);
   });
 
-  it("a disposable sandbox: every port, and a Unix socket, for both", () => {
-    expect(shellLoopbackReachable(null)).toBe(false);
+  it("a disposable sandbox: every port, and every Unix socket", () => {
+    const sock = join(dir, "svc.sock");
+    writeFileSync(sock, "");
+    expect(shellUnixSocketReachable(sock)).toBe(false);
     security({ disposableSandbox: true });
     expect(shellLoopbackReachable("9999")).toBe(true);
     expect(egress("9999")).toBe(true);
-    expect(shellLoopbackReachable(null)).toBe(true);
+    expect(shellUnixSocketReachable(sock)).toBe(true);
+  });
+
+  it("elsewhere, a Unix socket only while a process the agent started listens on it", () => {
+    expect(shellUnixSocketReachable("/var/run/docker.sock")).toBe(false);
+    expect(shellUnixSocketReachable(join(dir, "nothing-here.sock"))).toBe(false);
   });
 
   it("this server's own ports: http_request as a self-call, the shell never", () => {

@@ -13,20 +13,29 @@
  * address", with a recovery that told it to edit security.json — a file it
  * may not touch. Ports only, never a host: the loopback-host gate in
  * network-policy still decides WHERE a port may be dialed.
+ *
+ * The Unix sockets those processes listen on are theirs on the same evidence
+ * (ownedUnixSockets): `qemu -serial unix:/tmp/vm.sock,server` started by the
+ * agent is its console, while docker.sock, an ssh-agent or the session bus,
+ * which no process the agent started holds, stay out of reach.
  */
 import { execFileSync } from "node:child_process";
+import { readdirSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
 
 export interface Listener { port: number; pid: number }
 export interface Proc { pid: number; ppid: number }
+export interface SocketListener { path: string; pid: number }
 
 const ownedPids = new Set<number>();
 let cache: { at: number; ports: Set<string> } | null = null;
+let socketCache: { at: number; paths: Set<string> } | null = null;
 const CACHE_MS = 3000;
 
 export function registerOwnedProcess(pid: number | null | undefined): void {
 	if (typeof pid === "number" && pid > 0) {
 		ownedPids.add(pid);
 		cache = null;
+		socketCache = null;
 	}
 }
 
@@ -34,14 +43,15 @@ export function unregisterOwnedProcess(pid: number | null | undefined): void {
 	if (typeof pid === "number") {
 		ownedPids.delete(pid);
 		cache = null;
+		socketCache = null;
 	}
 }
 
-/** The listening ports whose owning process is one of `owned` or descends from one. */
-export function portsOwnedBy(listeners: readonly Listener[], procs: readonly Proc[], owned: ReadonlySet<number>): Set<string> {
+/** Is `pid` one of `owned` or a descendant of one, by the `procs` table? */
+function ownedBy(procs: readonly Proc[], owned: ReadonlySet<number>): (pid: number) => boolean {
 	const parent = new Map<number, number>();
 	for (const p of procs) parent.set(p.pid, p.ppid);
-	const isOwned = (pid: number): boolean => {
+	return (pid) => {
 		const seen = new Set<number>();
 		for (let cur: number | undefined = pid; cur !== undefined && cur > 0 && !seen.has(cur); cur = parent.get(cur)) {
 			if (owned.has(cur)) return true;
@@ -49,6 +59,11 @@ export function portsOwnedBy(listeners: readonly Listener[], procs: readonly Pro
 		}
 		return false;
 	};
+}
+
+/** The listening ports whose owning process is one of `owned` or descends from one. */
+export function portsOwnedBy(listeners: readonly Listener[], procs: readonly Proc[], owned: ReadonlySet<number>): Set<string> {
+	const isOwned = ownedBy(procs, owned);
 	const ports = new Set<string>();
 	for (const l of listeners) {
 		if (Number.isInteger(l.port) && l.port > 0 && l.port <= 65535 && isOwned(l.pid)) ports.add(String(l.port));
@@ -132,4 +147,75 @@ export function ownedLoopbackPorts(): Set<string> {
 	}
 	cache = { at: Date.now(), ports };
 	return ports;
+}
+
+/** The socket paths whose listening process is one of `owned` or descends from one. */
+export function socketsOwnedBy(listeners: readonly SocketListener[], procs: readonly Proc[], owned: ReadonlySet<number>): Set<string> {
+	const isOwned = ownedBy(procs, owned);
+	return new Set(listeners.filter((l) => l.path.startsWith("/") && isOwned(l.pid)).map((l) => l.path));
+}
+
+// /proc/net/unix: `Num RefCount Protocol Flags Type St Inode Path`. Flags
+// 0x10000 (__SO_ACCEPTCON) marks a listening socket; a path starting with `@`
+// is abstract (no file), and an unbound socket has none.
+export function parseProcNetUnix(text: string): Map<string, string> {
+	const byInode = new Map<string, string>();
+	for (const line of text.split("\n").slice(1)) {
+		const f = line.trim().split(/\s+/);
+		if (f.length < 8 || (parseInt(f[3], 16) & 0x10000) === 0 || !f[7].startsWith("/")) continue;
+		byInode.set(f[6], f.slice(7).join(" "));
+	}
+	return byInode;
+}
+
+// `/proc/<pid>/stat` is `pid (comm) state ppid …`; comm may hold spaces and
+// parens, so the fields are read after its LAST `)`.
+export function parseProcStat(stat: string): number | null {
+	const ppid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
+	return Number.isInteger(ppid) ? ppid : null;
+}
+
+/** Linux, from /proc alone: a minimal container has neither lsof nor ps. */
+function querySocketsLinux(): { listeners: SocketListener[]; procs: Proc[] } {
+	const byInode = parseProcNetUnix(readFileSync("/proc/net/unix", "utf-8"));
+	const listeners: SocketListener[] = [];
+	const procs: Proc[] = [];
+	for (const d of readdirSync("/proc")) {
+		if (!/^\d+$/.test(d)) continue;
+		const pid = Number(d);
+		try {
+			const ppid = parseProcStat(readFileSync(`/proc/${d}/stat`, "utf-8"));
+			if (ppid !== null) procs.push({ pid, ppid });
+			for (const fd of readdirSync(`/proc/${d}/fd`)) {
+				const inode = /^socket:\[(\d+)\]$/.exec(readlinkSync(`/proc/${d}/fd/${fd}`))?.[1];
+				const path = inode === undefined ? undefined : byInode.get(inode);
+				if (path) listeners.push({ path, pid });
+			}
+		} catch { /* the process exited or its fds are another user's: no evidence from it */ }
+	}
+	return { listeners, procs };
+}
+
+/**
+ * Unix socket files a process_start session or its descendants listen on,
+ * symlinks resolved. Linux only: /proc marks a LISTENING socket exactly, while
+ * macOS's lsof can show the path a client end connected to (an agent process
+ * talking to docker.sock would read as holding it), so elsewhere there is no
+ * evidence and the set is empty. Read at most once per CACHE_MS; a query
+ * failure yields the empty set: no evidence, no socket.
+ */
+export function ownedUnixSockets(): Set<string> {
+	if (ownedPids.size === 0 || process.platform !== "linux") return new Set();
+	if (socketCache && Date.now() - socketCache.at < CACHE_MS) return socketCache.paths;
+	let paths = new Set<string>();
+	try {
+		const { listeners, procs } = querySocketsLinux();
+		for (const p of socketsOwnedBy(listeners, procs, ownedPids)) {
+			try { paths.add(realpathSync(p)); } catch { /* bound, then unlinked: no file to reach */ }
+		}
+	} catch {
+		paths = new Set();
+	}
+	socketCache = { at: Date.now(), paths };
+	return paths;
 }

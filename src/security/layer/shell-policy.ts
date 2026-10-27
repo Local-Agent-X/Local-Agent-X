@@ -3,7 +3,7 @@ import type { SecurityDecision } from "../../types.js";
 import { USER_HINTS } from "../../types.js";
 import type { InlineEvalPolicy, FileAccessMode } from "./types.js";
 import { BLOCKED_COMMANDS, BROWSER_OPEN_CMDS, EGRESS_TEXT_PATTERNS, RM_DESTRUCTIVE_FLAGS, SOCKET_PLUMBING_PATTERNS } from "./shell-rules.js";
-import { shellLoopbackReachable } from "./loopback-grant.js";
+import { shellLoopbackReachable, shellUnixSocketReachable } from "./loopback-grant.js";
 import { inlineProgramDestinations } from "./shell-inline-destinations.js";
 import { detectCatastrophicRm } from "./catastrophic-paths.js";
 import { rmInsideWorkspaceVerdict } from "./rm-inside-workspace.js";
@@ -103,7 +103,7 @@ function literalShapeRefusal(command: string): SecurityDecision | null {
  *  machine's own, and the shell may reach it (loopback-grant.ts). */
 function inlineProgramLocal(command: string): boolean {
   const d = inlineProgramDestinations(command);
-  return d.kind === "local" && d.ports.every(shellLoopbackReachable) && (d.unixSockets.length === 0 || shellLoopbackReachable(null));
+  return d.kind === "local" && d.ports.every(shellLoopbackReachable) && d.unixSockets.every(shellUnixSocketReachable);
 }
 
 /** The command separator a bash command chains with outside quotes (newline,
@@ -357,7 +357,10 @@ export function evaluateShellCommand(
   // detached-session and inline-program form rules where the structural
   // switch stands the shape rules down, and sudo on a server already running
   // as root.
-  const ruleHit = findCommandRuleHit(command, { egressEnforced, shapeRulesStandDown: !structuralRulesApply, loopbackReachable: shellLoopbackReachable });
+  const ruleHit = findCommandRuleHit(command, {
+    egressEnforced, shapeRulesStandDown: !structuralRulesApply,
+    loopbackReachable: shellLoopbackReachable, unixSocketReachable: shellUnixSocketReachable,
+  });
   if (ruleHit) {
     return { allowed: false, reason: commandRuleReason(ruleHit), userHint: USER_HINTS.commandShell, recovery: commandRuleRecovery(ruleHit) };
   }

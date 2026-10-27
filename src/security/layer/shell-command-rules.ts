@@ -27,9 +27,11 @@ export interface CommandRuleContext {
   /** This server already runs as root, so sudo grants nothing it lacks: the
    *  "privilege" rules stand down. Defaults to the process's own uid. */
   root?: boolean;
-  /** May a shell client reach this loopback destination (loopback-grant.ts
-   *  shellLoopbackReachable)? `null` is a Unix socket. Absent: none may. */
-  loopbackReachable?: (port: string | null) => boolean;
+  /** May a shell client reach this loopback port (loopback-grant.ts
+   *  shellLoopbackReachable)? Absent: none may. */
+  loopbackReachable?: (port: string) => boolean;
+  /** May it reach this Unix socket (shellUnixSocketReachable)? Absent: none may. */
+  unixSocketReachable?: (path: string) => boolean;
 }
 
 // A network client that names only this machine (shell-loopback-clients.ts)
@@ -40,9 +42,9 @@ function reachesOnlyLoopback(p: CommandPosition, ctx: CommandRuleContext): boole
   const use = loopbackUse(p);
   if (!use) return false;
   if (use.probe) return true;
-  const reachable = ctx.loopbackReachable;
-  if (!reachable) return false;
-  return use.ports.every((port) => reachable(port)) && (use.unixSockets.length === 0 || reachable(null));
+  const port = ctx.loopbackReachable ?? (() => false);
+  const socket = ctx.unixSocketReachable ?? (() => false);
+  return use.ports.every((p) => port(p)) && use.unixSockets.every((s) => socket(s));
 }
 
 const runningAsRoot = () => typeof process.getuid === "function" && process.getuid() === 0;

@@ -12,7 +12,9 @@
  * A leaf (no imports from the policy modules) so the gate, the shell rules
  * and the server's bootstrap can all reach it.
  */
+import { realpathSync } from "node:fs";
 import { isDisposableSandbox } from "./disposable-sandbox.js";
+import { ownedUnixSockets } from "../../tools/owned-listeners.js";
 import { agentOriginPort } from "./agent-origin-port.js";
 import { liveLocalServicePorts, reservedLoopbackPorts } from "./security-config.js";
 
@@ -52,13 +54,23 @@ export function loopbackServiceReachable(port: string | null, localServicePorts:
   return port !== null && localServicePorts.has(port);
 }
 
-/**
- * May a shell network client reach this loopback destination? `port` null is
- * a Unix socket on this machine, which has no port to register and is the
- * operator's only where every local service is (a disposable sandbox).
- */
-export function shellLoopbackReachable(port: string | null): boolean {
-  if (port === null) return isDisposableSandbox();
+/** May a shell network client reach this loopback port? */
+export function shellLoopbackReachable(port: string): boolean {
   if (isOwnServerPort(port)) return false;
   return loopbackServiceReachable(port, liveLocalServicePorts());
+}
+
+/**
+ * May a shell client or an inline program reach this Unix socket? Every one
+ * on a disposable sandbox, whose local services are the operator's; elsewhere
+ * one a process the agent started listens on (owned-listeners.ts), as a port
+ * is reachable while the agent's own server holds it. docker.sock, an
+ * ssh-agent or the session bus are no process of the agent's: control of the
+ * machine, the user's keys and the desktop stay out of reach.
+ */
+export function shellUnixSocketReachable(path: string): boolean {
+  if (isDisposableSandbox()) return true;
+  let real: string;
+  try { real = realpathSync(path); } catch { return false; /* nothing there to reach */ }
+  return ownedUnixSockets().has(real);
 }

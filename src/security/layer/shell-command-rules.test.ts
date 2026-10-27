@@ -373,14 +373,15 @@ describe("raw TCP clients and a loopback port", () => {
     expect(findCommandRuleHit("nc localhost 6379", { loopbackReachable: () => true })).toBeNull();
   });
 
-  it("admit curl, ssh and socat to a loopback destination by port, a Unix socket by the null port", () => {
-    const grant = { loopbackReachable: (p: string | null) => p === "8080" };
+  it("admit curl, ssh and socat to a loopback destination by port, a Unix socket by its path", () => {
+    const grant = { loopbackReachable: (p: string) => p === "8080", unixSocketReachable: (s: string) => s === "/tmp/vm.sock" };
     expect(findCommandRuleHit("curl -s http://localhost:8080/health", grant)).toBeNull();
     expect(ruleOf("curl -s http://localhost:8080/health")).toBe("network-client");
     expect(findCommandRuleHit("curl -s http://localhost:9090/", grant)?.kind).toBe("rule");
     expect(findCommandRuleHit("ssh -p 8080 root@localhost id", grant)).toBeNull();
-    expect(findCommandRuleHit("socat - UNIX-CONNECT:/tmp/x.sock", grant)?.kind).toBe("rule");
-    expect(findCommandRuleHit("socat - UNIX-CONNECT:/tmp/x.sock", { loopbackReachable: () => true })).toBeNull();
+    expect(findCommandRuleHit("socat - UNIX-CONNECT:/tmp/vm.sock", grant)).toBeNull();
+    expect(findCommandRuleHit("socat - UNIX-CONNECT:/var/run/docker.sock", grant)?.kind).toBe("rule");
+    expect(findCommandRuleHit("socat - UNIX-CONNECT:/tmp/vm.sock", { loopbackReachable: () => true })?.kind).toBe("rule");
   });
 
   it("keep refusing other hosts, listening, a program on the socket and a proxy hop", () => {

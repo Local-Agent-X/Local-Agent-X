@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import {
-  ownedLoopbackPorts, parseLsof, parsePs, parseWinTable, portsOwnedBy,
-  registerOwnedProcess, unregisterOwnedProcess,
+  ownedLoopbackPorts, ownedUnixSockets, parseLsof, parseProcNetUnix, parseProcStat, parsePs, parseWinTable,
+  portsOwnedBy, registerOwnedProcess, socketsOwnedBy, unregisterOwnedProcess,
 } from "./owned-listeners.js";
 import { evaluateWebFetch } from "../security/layer/network-policy.js";
 
@@ -52,6 +52,56 @@ describe("ownedLoopbackPorts — no live session, no query", () => {
   it("registering a pid that owns no listener yields nothing (and never throws)", () => {
     registerOwnedProcess(424242);
     expect(ownedLoopbackPorts().size).toBe(0);
+  });
+});
+
+// TB2 qemu-alpine-ssh, 2026-10-27: a python one-liner driving the console of
+// the VM the agent had started (`qemu … -serial unix:/tmp/alpine-serial.sock`)
+// was refused as raw network use.
+describe("ownedUnixSockets — a socket is the agent's when a process it started listens on it", () => {
+  const procs = [{ pid: 100, ppid: 1 }, { pid: 300, ppid: 100 }, { pid: 900, ppid: 1 }];
+  const listeners = [{ path: "/tmp/vm.sock", pid: 300 }, { path: "/var/run/docker.sock", pid: 900 }, { path: "@abstract", pid: 300 }];
+
+  it("includes a socket a descendant of the session listens on, never another process's", () => {
+    expect([...socketsOwnedBy(listeners, procs, new Set([100]))]).toEqual(["/tmp/vm.sock"]);
+    expect(socketsOwnedBy(listeners, procs, new Set([555])).size).toBe(0);
+  });
+
+  it("reads only LISTENING, file-backed sockets from /proc/net/unix", () => {
+    const table = [
+      "Num       RefCount Protocol Flags    Type St Inode Path",
+      "0000000000000000: 00000002 00000000 00010000 0001 01 4101 /tmp/vm.sock",
+      "0000000000000000: 00000003 00000000 00000000 0001 03 4102 /var/run/docker.sock",
+      "0000000000000000: 00000002 00000000 00010000 0001 01 4103 @/tmp/.X11-unix/X0",
+      "0000000000000000: 00000002 00000000 00000000 0002 01 4104",
+      "0000000000000000: 00000002 00000000 00010000 0001 01 4105 /tmp/with space.sock",
+    ].join("\n");
+    expect([...parseProcNetUnix(table)]).toEqual([["4101", "/tmp/vm.sock"], ["4105", "/tmp/with space.sock"]]);
+  });
+
+  it("reads the parent pid after the command name, whatever it holds", () => {
+    expect(parseProcStat("300 (qemu-system-x86) S 100 300 1 0")).toBe(100);
+    expect(parseProcStat("301 (a (b) c) S 42 301 1 0")).toBe(42);
+  });
+
+  it.runIf(process.platform === "linux")("finds a socket this process listens on once it is registered", async () => {
+    const { createServer } = await import("node:net");
+    const { mkdtempSync, rmSync } = await import("node:fs");
+    const { tmpdir } = await import("node:os");
+    const { join } = await import("node:path");
+    const dir = mkdtempSync(join(tmpdir(), "lax-owned-sock-"));
+    const path = join(dir, "svc.sock");
+    const server = createServer();
+    await new Promise<void>((done) => server.listen(path, done));
+    try {
+      expect(ownedUnixSockets().has(path)).toBe(false);
+      registerOwnedProcess(process.pid);
+      expect(ownedUnixSockets().has(path)).toBe(true);
+    } finally {
+      unregisterOwnedProcess(process.pid);
+      server.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });
 

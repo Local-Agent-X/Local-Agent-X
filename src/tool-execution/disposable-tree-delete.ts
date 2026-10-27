@@ -14,8 +14,8 @@
  *
  * Fail-closed throughout: a segment that trips the floor but is not a plain
  * recursive rm / Remove-Item / rd, a target with an expansion, glob or `~`, a
- * `cd` anywhere but a plain one opening the command (`enterLeadingCd`), or a
- * target that is not provably disposable keeps the card. Nothing here parses a
+ * `cd` before a delete other than a plain one opening the command
+ * (`enterLeadingCd`), or a target that is not provably disposable keeps the card. Nothing here parses a
  * shell; it reads argv-shaped text.
  */
 import { existsSync, lstatSync, readdirSync, realpathSync } from "node:fs";
@@ -213,8 +213,10 @@ export function isDisposableTreeDelete(command: string, trips: (segment: string)
   if (!entered) return false;
   scope = { ...scope, cwd: entered.cwd };
   const parts = segments(entered.command);
-  // Any other `cd` moves the shell away from the cwd the targets are resolved against.
-  if (parts.some((p) => CD.test(p))) return false;
+  // Any other `cd` either comes before a delete, which then no longer leads
+  // and keeps the card below, or after the last one, where it moves nothing
+  // they resolve against (`rm -rf ird && mkdir ird && cd ird && …`, TB2
+  // qemu-startup 2026-10-27).
   let leading = true;
   let found = false;
   for (const part of parts) {

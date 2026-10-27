@@ -72,6 +72,7 @@ describe("recursive deletes that destroy nothing anyone needs run without a card
       `cd "${work}" && rm -rf rootfs`,
       "cd ../project && rm -rf node_modules dist",
       "cd ./node_modules && rm -rf left-pad/../../dist",
+      `cd ${posix(work)} && rm -rf rootfs && mkdir -p rootfs && cd rootfs && python3 unpack.py`,
     ]) expect(floor(command), command).toBe("allow-with-rollback");
   });
 
@@ -128,6 +129,8 @@ describe("every lookalike keeps the card", () => {
       "cd - && rm -rf node_modules",
       "rm -rf dist && cd .. && rm -rf node_modules",
       "cd ./x && cd .. && rm -rf node_modules",
+      "rm -rf dist && cd client-data && rm -rf build-cache",
+      "command -v cpio; cd .. && rm -rf node_modules",
       "rm -rf ~/node_modules",
       "rm -rf $DIR/node_modules",
       "rm -rf node_*",

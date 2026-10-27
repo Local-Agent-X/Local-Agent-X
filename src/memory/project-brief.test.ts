@@ -14,6 +14,8 @@ import {
   readProjectBrief,
   updateProjectBrief,
   projectBriefPath,
+  briefForContext,
+  BRIEF_CONTEXT_MAX_CHARS,
   _resetProjectBriefLocksForTest,
 } from "./project-brief.js";
 import { createInternalMemoryContext } from "./promotion-gate.js";
@@ -84,5 +86,39 @@ describe("project brief — concurrent multi-writer", () => {
     expect(brief).toContain("launched email campaign");
     expect(brief).toContain("posted 3x this week");
     expect(brief).toContain("restocked protein");
+  });
+});
+
+describe("project brief — as it enters context", () => {
+  const section = (i: number) => `## Section ${i}\n- note ${i}: ${"x".repeat(60)}`;
+  const longBrief = ["# Initech", "- Goal: $1M revenue", ...Array.from({ length: 120 }, (_, i) => section(i))].join("\n\n");
+  const shown = (out: string) => {
+    const [head, rest] = out.split("\n\n[");
+    return { head, tail: rest.slice(rest.indexOf("]\n\n") + 3) };
+  };
+
+  it("passes a brief under the cap through unchanged", () => {
+    expect(briefForContext(PID, "# Initech\n\n- Goal: $1M revenue")).toBe("# Initech\n\n- Goal: $1M revenue");
+  });
+
+  it("keeps the head and the newest sections of a long brief, cut at line breaks, within the cap", () => {
+    expect(longBrief.length).toBeGreaterThan(BRIEF_CONTEXT_MAX_CHARS * 2);
+    const out = briefForContext(PID, longBrief);
+    const { head, tail } = shown(out);
+    expect(head.startsWith("# Initech\n\n- Goal: $1M revenue")).toBe(true);
+    expect(tail.endsWith(section(119))).toBe(true);
+    expect(out).not.toContain("## Section 60\n");
+    expect(head.length + tail.length).toBeLessThanOrEqual(BRIEF_CONTEXT_MAX_CHARS);
+    expect(longBrief.startsWith(head)).toBe(true);
+    expect(longBrief.endsWith(tail)).toBe(true);
+    expect(longBrief[longBrief.length - tail.length - 1]).toBe("\n");
+  });
+
+  it("says how many characters were left out and where the full brief is", () => {
+    const out = briefForContext(PID, longBrief);
+    const { head, tail } = shown(out);
+    const omitted = Number(/\[(\d+) characters of this brief are not shown here/.exec(out)?.[1]);
+    expect(omitted).toBe(longBrief.length - head.length - tail.length);
+    expect(out).toContain(`memory_get path "projects/${PID}/PROJECT.md"`);
   });
 });

@@ -10,14 +10,14 @@
  */
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync, mkdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { MemoryIndex } from "../memory/index.js";
 import { authorizeTestFactMutations } from "./test-promotion.test-helper.js";
 import { buildContextBlock } from "./context.js";
 import { localDate } from "./retrieval-format.js";
-import { updateProjectBrief } from "./project-brief.js";
+import { updateProjectBrief, projectBriefPath } from "./project-brief.js";
 import { createInternalMemoryContext } from "./promotion-gate.js";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -509,6 +509,21 @@ describe("<project_brief> injection", () => {
 
     const block = await buildContextBlock(memory, { skipDailyLog: true });
     expect(block).not.toContain("<project_brief>");
+  });
+
+  it("injects a brief over the cap as its head and newest sections, pointing at the full file", async () => {
+    const pid = "proj-ctx-test3";
+    const sections = Array.from({ length: 100 }, (_, i) => `## Update ${i}\n- shipped item ${i} ${"y".repeat(50)}`);
+    const path = projectBriefPath(pid, memory.getMemoryDir())!;
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, ["# Initech", "- Goal: $1M revenue", ...sections].join("\n\n"));
+
+    const block = await buildContextBlock(memory, { skipDailyLog: true, projectId: pid });
+    const brief = block.slice(block.indexOf("<project_brief>"), block.indexOf("</project_brief>"));
+    expect(brief).toContain("Goal: $1M revenue");
+    expect(brief).toContain("shipped item 99");
+    expect(brief).not.toContain("shipped item 50 ");
+    expect(brief).toContain(`projects/${pid}/PROJECT.md`);
   });
 });
 

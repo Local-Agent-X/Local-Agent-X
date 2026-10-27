@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import type { MemoryIndex } from "./index-core.js";
 import { ensurePersonalityFiles, readPersonalityFile } from "./personality.js";
-import { readProjectBrief } from "./project-brief.js";
+import { readProjectBrief, briefForContext } from "./project-brief.js";
 import type { FactKind } from "./types.js";
 import { factTrustSuffix } from "./fact-provenance-label.js";
 import { safeReadTextFile } from "./utils.js";
@@ -151,7 +151,7 @@ export async function buildContextBlockParts(
       stableSections.push(
         `<project_brief>\n${provenanceHeader("project-brief", "memory-file", "unknown", "clean", "Active project brief")}\n` +
         `(the current state of this project. Weave it in naturally; ` +
-        `record changes via project_brief_update — do not repeat this block verbatim.)\n\n${brief}\n</project_brief>`,
+        `record changes via project_brief_update — do not repeat this block verbatim.)\n\n${briefForContext(opts.projectId, brief)}\n</project_brief>`,
       );
     }
   }

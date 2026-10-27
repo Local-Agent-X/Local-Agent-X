@@ -82,6 +82,29 @@ export async function readProjectBrief(
   return cleaned;
 }
 
+/** The brief rides every turn of a project chat, so a brief that only grows
+ *  would take a larger share of every request. */
+export const BRIEF_CONTEXT_MAX_CHARS = 4000;
+
+/**
+ * The brief as it enters context. Past the cap, the context gets the head
+ * (title, goal) and the tail (sections are kept in first-written order, so
+ * the newest ones are last), cut at line breaks, with the full brief's path
+ * between them. The file itself is never shortened here.
+ */
+export function briefForContext(projectId: string, brief: string, max: number = BRIEF_CONTEXT_MAX_CHARS): string {
+  if (brief.length <= max) return brief;
+  const headEnd = brief.lastIndexOf("\n", Math.floor(max * 0.4));
+  const head = brief.slice(0, headEnd > 0 ? headEnd : Math.floor(max * 0.4));
+  const tailFrom = brief.indexOf("\n", brief.length - (max - head.length));
+  const tail = brief.slice(tailFrom >= 0 ? tailFrom + 1 : brief.length - (max - head.length));
+  const omitted = brief.length - head.length - tail.length;
+  return `${head}\n\n[${omitted} characters of this brief are not shown here. ` +
+    `Read the full brief with memory_get path "projects/${projectId}/PROJECT.md". ` +
+    `It is over ${max} characters: when you next update it, re-record long sections shorter with project_brief_update ` +
+    `(a re-recorded section replaces the old one).]\n\n${tail}`;
+}
+
 // Per-project serialization. chains.get(id) is the tail of the in-flight
 // update chain for that project; each new update appends to it so reads and
 // writes never interleave across agents. The stored chain swallows errors so

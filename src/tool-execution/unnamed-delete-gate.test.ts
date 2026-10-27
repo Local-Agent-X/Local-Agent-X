@@ -153,6 +153,12 @@ describe("a shell delete of an un-named file is the same act", () => {
     expect(unnamedDeletes([sh("r1", "rm -rf workspace/client-data/tmp workspace/client-data/originals")], [user(VAGUE)])).toEqual([]);
   });
 
+  it("a delete after a backgrounded command is still a delete", () => {
+    expect(unnamedDeletes([sh("bg", "sleep 1 & rm client-data/originals/invoice-0042.md")], [user(VAGUE)]))
+      .toEqual([{ id: "bg", path: "client-data/originals/invoice-0042.md" }]);
+    expect(unnamedDeletes([sh("fd", "make > build.log 2>&1 && ls &> /dev/null")], [user(VAGUE)])).toEqual([]);
+  });
+
   it("a shell delete of the file the user named needs no card, and a read-only command never does", () => {
     expect(unnamedDeletes([sh("c1", "rm client-data/tmp/thumbnail-cache.tmp")], [user(CLEAR)])).toEqual([]);
     expect(unnamedDeletes([sh("l1", "ls -la client-data/tmp/ && cat README.md")], [user(VAGUE)])).toEqual([]);
@@ -214,5 +220,28 @@ describe("a delete of nothing asks nothing", () => {
   it("a shell delete of a missing path still asks — its targets can be globs, not files", () => {
     const sh = { id: "s1", name: "bash", arguments: JSON.stringify({ command: "rm workspace/apps/web/src/__loc_probe.ts" }) };
     expect(unnamedDeletes([sh], [user(VAGUE)])).toEqual([{ id: "s1", path: "workspace/apps/web/src/__loc_probe.ts" }]);
+  });
+
+  // TB2 qemu-alpine-ssh, 2026-10-27: `rm -f /tmp/alpine-serial.sock; qemu …`.
+  it("a shell delete of an absolute path that is not there, opening the command, asks nothing", () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-absent-rm-"));
+    const gone = join(dir, "serial.sock").replace(/\\/g, "/");
+    const sh = (id: string, command: string) => ({ id, name: "bash", arguments: JSON.stringify({ command }) });
+    expect(unnamedDeletes([sh("a", `rm -f ${gone}; qemu-system-x86_64 -serial unix:${gone}`)], [user(VAGUE)])).toEqual([]);
+    expect(unnamedDeletes([sh("b", `rm -f ${gone} && rm ${gone}.lock`)], [user(VAGUE)])).toEqual([]);
+  });
+
+  it("still asks when anything could put a file there first, or the path is not one this can place", () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-absent-rm-"));
+    const gone = join(dir, "a").replace(/\\/g, "/");
+    const there = join(dir, "here.txt");
+    writeFileSync(there, "x");
+    const sh = (id: string, command: string) => ({ id, name: "bash", arguments: JSON.stringify({ command }) });
+    for (const command of [
+      `mv users.csv ${gone} && rm -f ${gone}`,
+      `mv users.csv ${gone} & rm -f ${gone}`,
+      `cat users.csv | rm -f ${gone}`,
+      `rm -f ${there.replace(/\\/g, "/")}`,
+    ]) expect(unnamedDeletes([sh("c", command)], [user(VAGUE)]), command).toHaveLength(1);
   });
 });

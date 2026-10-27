@@ -35,13 +35,13 @@
  */
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { existsSync, statSync } from "node:fs";
-import { basename } from "node:path";
+import { basename, isAbsolute } from "node:path";
 import { homedir } from "node:os";
 import { resolveAgentPath } from "../workspace/paths.js";
 import { folderFileCount } from "../tools/delete-folder.js";
 import { isHarnessRow } from "../harness-rows.js";
 import { containsHarnessMarker } from "../harness-text.js";
-import { shellDeleteTargets } from "./shell-delete-targets.js";
+import { leadingShellDeleteTargets, shellDeleteTargets } from "./shell-delete-targets.js";
 import { isTaskArtifact } from "../data-lineage/task-artifacts.js";
 import type { ToolDefinition } from "../types.js";
 import { coerceArgs, repairJson, repairMarkerKeys } from "./arg-repair.js";
@@ -197,6 +197,19 @@ function absent(path: string, sessionId: string | undefined): boolean {
   try { return !existsSync(resolveAgentPath(path, sessionId)); } catch { return false; }
 }
 
+/** A shell delete of a file that is not there deletes nothing either, when the
+ *  delete opens the command (nothing runs first that could put a file there)
+ *  and the path is absolute: a relative one resolves against the shell's cwd,
+ *  which the call's arguments do not carry, and on Windows a POSIX-style
+ *  absolute path (`/tmp/x`) means Git Bash's mount, not the drive root.
+ *  TB2 qemu-alpine-ssh, 2026-10-27: `rm -f /tmp/alpine-serial.sock; qemu …`
+ *  was refused for a socket that did not exist yet. */
+function absentShellTarget(command: string | undefined, path: string, sessionId: string | undefined): boolean {
+  if (command === undefined || /[$`*?~]/.test(path)) return false;
+  const plainAbsolute = process.platform === "win32" ? /^[a-zA-Z]:[\\/]/.test(path) : isAbsolute(path);
+  return plainAbsolute && leadingShellDeleteTargets(command).includes(path) && absent(path, sessionId);
+}
+
 /** Was the file created after `since`? Linux is excluded: where a filesystem has
  *  no birth time, Node may report the change time instead, which would make an
  *  old file edited this request look new. */
@@ -232,8 +245,12 @@ export function unnamedDeletes(
   const noticed: UnnamedDeleteCall[] = [];
   const trusted = !!scope.sessionId && !scope.untrustedSession;
   for (const tc of toolCalls) {
+    const command = tc.name === GATED_DELETE_TOOL
+      ? undefined
+      : shellCommandOf(tc.name, dispatchedArgs(tc.arguments, scope.tools?.get(tc.name)?.parameters as ArgSchema));
     for (const path of deleteTargetsOf(tc, scope.tools)) {
       if (tc.name === GATED_DELETE_TOOL && absent(path, scope.sessionId)) continue;
+      if (absentShellTarget(command, path, scope.sessionId)) continue;
       const folderFiles = tc.name === GATED_DELETE_TOOL ? folderTarget(path, scope.sessionId) : null;
       if (folderFiles !== null) out.push({ id: tc.id, path, folderFiles });
       else if (userNamedFile(userText, path)) continue;

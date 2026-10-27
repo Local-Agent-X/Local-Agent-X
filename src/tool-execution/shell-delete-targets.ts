@@ -16,9 +16,12 @@
  * floor: git is its undo.
  */
 
-/** Command segments: `a && b`, `a; b`, `a || b`, `a | b`, one per line. */
+/** Command segments: `a && b`, `a; b`, `a || b`, `a | b`, `a & b`, one per
+ *  line. A single `&` (not `2>&1`, `&>`, `|&`) backgrounds its left side and
+ *  starts the next command: unsplit, `sleep 1 & rm users.csv` read as one
+ *  `sleep` command and its delete reached no gate. */
 export function segments(command: string): string[] {
-  return command.split(/\r?\n|&&|\|\||;|\|/).map((s) => s.trim()).filter(Boolean);
+  return command.split(/\r?\n|&&|\|\||;|\||(?<![>&|])&(?![&>])/).map((s) => s.trim()).filter(Boolean);
 }
 
 /** A small, quote-aware tokenizer for argv-shaped text. Single quotes, double
@@ -115,6 +118,26 @@ function segmentTargets(segment: string): string[] {
     return paths;
   }
   return [];
+}
+
+const DELETE_HEADS = new Set(["rm", "unlink", "remove-item", "ri", "del", "erase"]);
+
+/** The targets of the deletes that open the command, before anything else in
+ *  it runs, or [] when something could run first or alongside: a single `&`
+ *  backgrounds its left side, a pipe runs its sides at once, and a wrapper's
+ *  body is not read here. What the disk shows before the call is what those
+ *  deletes meet, so `mv users.csv a && rm -f a` never qualifies. */
+export function leadingShellDeleteTargets(command: string): string[] {
+  if (/(?<![>&|])&(?![&>])/.test(command.replace(/&&/g, "")) || /(?:^|[^|])\|(?:[^|]|$)/.test(command)) return [];
+  const out: string[] = [];
+  for (const seg of segments(command)) {
+    const head = basenameOf(stripEnvAssignments(shellWords(seg))[0] ?? "").replace(/\.exe$/i, "").toLowerCase();
+    if (!DELETE_HEADS.has(head)) break;
+    const targets = segmentTargets(seg);
+    if (targets.length === 0) break;
+    for (const p of targets) if (!out.includes(p)) out.push(p);
+  }
+  return out;
 }
 
 /** Every file a command deletes one at a time, in order, deduplicated. Globs

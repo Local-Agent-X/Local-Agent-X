@@ -111,6 +111,8 @@ describe("every lookalike keeps the card", () => {
       "cp -r client-data node_modules; rm -rf node_modules",
       "mv client-data node_modules | rm -rf node_modules",
       "mv client-data node_modules & rm -rf node_modules",
+      "rm -rf node_modules & mv client-data node_modules",
+      "rm -rf not-yet & mv client-data not-yet",
     ]) expect(floor(command), command).toBe("ask");
   });
 

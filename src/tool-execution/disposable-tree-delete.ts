@@ -205,10 +205,12 @@ function enterLeadingCd(command: string, cwd: string): { command: string; cwd: s
  * deletes: `mv client-data node_modules/ && rm -rf node_modules` would move
  * client work into a folder this proves disposable. The deletes come first;
  * what follows them (`&& npm install`) runs after and changes nothing they hit.
- * A single `|` runs its sides at once, so a pipeline is never proven.
+ * A single `|` runs its sides at once, so a pipeline is never proven; a single
+ * `&` too (`rm -rf node_modules & mv client-data node_modules`).
  */
 export function isDisposableTreeDelete(command: string, trips: (segment: string) => boolean, scope: TreeDeleteScope): boolean {
   if (/(?:^|[^|])\|(?:[^|]|$)/.test(command)) return false;
+  if (/(?<![>&|])&(?![&>])/.test(command.replace(/&&/g, ""))) return false;
   const entered = enterLeadingCd(command, scope.cwd);
   if (!entered) return false;
   scope = { ...scope, cwd: entered.cwd };

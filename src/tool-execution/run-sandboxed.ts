@@ -17,7 +17,7 @@ import { timeout, blocked, ok, statusOf } from "../tools/result-helpers.js";
 import { resolveAgentPath } from "../workspace/paths.js";
 import { pathSpecsForCall, shellCommandOf, waitsForShellCommand } from "../tool-registry.js";
 import { isAbsolute } from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, lstatSync } from "node:fs";
 import { checkFreshness, recordFileSeen, unchangedSinceSeen, seenViewFromReadResult } from "../tools/read-state.js";
 import { READ_DEDUP_STUB_LEAD, readContentInView } from "./read-dedup-evidence.js";
 import { getModelView } from "./model-view.js";
@@ -26,7 +26,9 @@ import { createLogger } from "../logger.js";
 import { parkNeedsUser, parkOrRefuse, takeUserGrant } from "./deferred-call.js";
 import { createToolRunner } from "./tool-runner.js";
 import { recordTaskArtifact } from "../data-lineage/task-artifacts.js";
-import { CREATE_CLASS, createTargetPath } from "./create-target-path.js";
+import { CREATE_CLASS, createTargetPath, shellCreateTargets } from "./create-target-path.js";
+import { cwdOf } from "./internal-args.js";
+import { workspaceRoot } from "../config.js";
 import { checkShellDeleteHappened } from "./verify-shell-deletes.js";
 import { editPinsContent } from "./edit-pins-content.js";
 
@@ -177,11 +179,17 @@ export const runSandboxedPhase: Phase = async (ctx) => {
   // the freshness guard above: any stat/resolve failure skips recording and
   // never fails the tool call; non-create tools pay one Set lookup.
   let createdArtifactTarget: string | null = null;
+  let shellCreated: string[] = [];
   if (sessionId && CREATE_CLASS.has(tc.name)) {
     try {
       const target = createTargetPath(tc.name, args);
       if (target && !existsSync(target)) createdArtifactTarget = target;
     } catch { /* lineage is best-effort — never block the call */ }
+  }
+  const shellCommand = sessionId && waitsForShellCommand(tc.name) ? shellCommandOf(tc.name, args) : undefined;
+  if (shellCommand) {
+    // Where shell-tool.ts runs the command.
+    try { shellCreated = shellCreateTargets(shellCommand, cwdOf(args) || workspaceRoot()).filter((p) => !existsSync(p)); } catch { /* lineage is best-effort */ }
   }
 
   const startedAt = Date.now();
@@ -248,6 +256,12 @@ export const runSandboxedPhase: Phase = async (ctx) => {
     // finished deliverable yet, and a failed call enrolls nothing even if it
     // left partial bytes behind (like the external-ingestion mark).
     try { recordTaskArtifact(sessionId, createdArtifactTarget); } catch { /* lineage is best-effort */ }
+  }
+  if (sessionId && shellCreated.length > 0 && statusOf(result) === "ok") {
+    // Absent before the command and a regular file after it: the command made it.
+    for (const p of shellCreated) {
+      try { if (lstatSync(p).isFile()) recordTaskArtifact(sessionId, p); } catch { /* not created: nothing to enroll */ }
+    }
   }
   try { recordToolStat(tc.name, sessionId || "default", succeeded, durationMs, result.isError ? result.content?.slice(0, 200) : undefined); } catch { /* tracker should never break the call */ }
   try { recordRateLimit(tc.name, sessionId); } catch { /* same */ }

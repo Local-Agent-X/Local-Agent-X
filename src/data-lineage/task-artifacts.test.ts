@@ -199,6 +199,35 @@ function creatingTool(name: string, target: string, result?: () => ToolResult): 
 	});
 }
 
+// TB2 qemu-alpine-ssh, 2026-10-27: `rm -f setup.log` was refused as a user
+// file for a log the model's own `> setup.log` had just made.
+describe("runSandboxedPhase — a shell command's own truncating writes enroll the files they create", () => {
+	const shellWriting = (files: string[], result?: () => ToolResult) => fakeTool("bash", async () => {
+		for (const f of files) writeFileSync(f, "log bytes");
+		return result ? result() : ok("done");
+	});
+
+	it("a log the command created is the agent's; a file that was already there is not", async () => {
+		const s = freshSession();
+		const dir = tmpRoot();
+		writeFileSync(join(dir, "users.csv"), "the user's own bytes");
+		await runSandboxedPhase(ctxFor(shellWriting([join(dir, "setup.log"), join(dir, "users.csv")]),
+			{ command: "./setup.sh > setup.log && sort x > users.csv", _cwd: dir }, s));
+		expect(isTaskArtifact(s, join(dir, "setup.log"))).toBe(true);
+		expect(isTaskArtifact(s, join(dir, "users.csv"))).toBe(false);
+		clearTaskArtifacts(s);
+	});
+
+	it("a failed command enrolls nothing, nor a target it never wrote", async () => {
+		const s = freshSession();
+		const dir = tmpRoot();
+		await runSandboxedPhase(ctxFor(shellWriting([join(dir, "a.log")], () => ({ content: "exit 1", isError: true })),
+			{ command: "make > a.log", _cwd: dir }, s));
+		await runSandboxedPhase(ctxFor(shellWriting([]), { command: "make > never.log", _cwd: dir }, s));
+		expect(listTaskArtifacts(s)).toEqual([]);
+	});
+});
+
 describe("runSandboxedPhase — task-artifact recording hook (create-class, did-not-exist-before)", () => {
 	it("a successful write of a NEW file enrolls it (create-then-membership)", async () => {
 		const s = freshSession();

@@ -4,8 +4,10 @@
 // (provenance recording) — extend it HERE, never fork a second
 // tool→target-key table.
 
+import { isAbsolute, resolve } from "node:path";
 import { resolveAgentPath, sessionIdOf } from "../workspace/paths.js";
 import { declaredPaths, pathSpecsForCall, TOOL_PATH_ARGS } from "../tool-registry.js";
+import { commandPositions } from "../security/layer/shell-command-positions.js";
 import { chartOutPath } from "../tools/chart-tools.js";
 import { addSlideOutPath } from "../tools/presentation-tools.js";
 
@@ -49,4 +51,50 @@ export function createTargetPath(toolName: string, args: Record<string, unknown>
   const raw = spec ? (declaredPaths(args, spec) ?? [])[0] : undefined;
   if (typeof raw !== "string" || !raw) return null;
   try { return resolveAgentPath(raw, sessionId); } catch { return null; }
+}
+
+// Only writes that TRUNCATE: what the file holds afterwards is this command's
+// output. An append (`>>`) or a `touch` keeps whatever an earlier step of the
+// line put at that path, which may be the user's bytes.
+const WRITE_REDIRECTS: ReadonlySet<string> = new Set([">", ">|", "&>"]);
+const CD_BINS: ReadonlySet<string> = new Set(["cd", "pushd", "popd", "chdir", "set-location", "sl"]);
+const UNPLACEABLE = /[$`*?~{}]/;
+
+/**
+ * The files a shell command can create, resolved: its truncating
+ * output-redirection targets (`> setup.log`, `&> build.log`, `>&out`) and the
+ * operands of a flag-free `tee`. The caller enrolls only those that did not
+ * exist before the command ran and do after it succeeded — the shell
+ * counterpart of the pre-stat above, so a script's own log is the agent's on
+ * every OS, not only where a birth time proves it new (unnamed-delete-gate.ts).
+ *
+ * A target that is also a word of any command in the line is left out, since
+ * that command may act on the path too (`mv users.csv new.csv && cat new.csv >
+ * new.csv`). Relative targets resolve at `cwd`, where the shell runs, and are
+ * left out after any `cd`, which this cannot follow; an expansion, glob, brace
+ * or `~` is left out too. A file a program opens itself (`python gen.py`
+ * writing out.csv) is not seen.
+ */
+export function shellCreateTargets(command: string, cwd: string): string[] {
+  const { positions } = commandPositions(command);
+  const cdSeen = positions.some((p) => CD_BINS.has(p.bin));
+  const targets: string[] = [];
+  const otherWords = new Set<string>();
+  for (const p of positions) {
+    for (const r of p.redirections) {
+      if (WRITE_REDIRECTS.has(r.op) || (r.op === ">&" && !/^(?:\d+|-)?$/.test(r.target))) targets.push(r.target);
+    }
+    const operands = p.words.slice(p.at + 1);
+    const creates = p.bin === "tee" && operands.every((w) => !w.startsWith("-"));
+    if (creates) targets.push(...operands);
+    for (const w of creates ? p.words.slice(0, p.at + 1) : p.words) otherWords.add(w);
+  }
+  const out: string[] = [];
+  for (const t of targets) {
+    if (!t || UNPLACEABLE.test(t) || otherWords.has(t) || t.startsWith("/dev/")) continue;
+    if (!isAbsolute(t) && cdSeen) continue;
+    const abs = resolve(cwd, t);
+    if (!out.includes(abs)) out.push(abs);
+  }
+  return out;
 }

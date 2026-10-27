@@ -27,6 +27,7 @@ import { hasCapability } from "../../tool-registry.js";
 import { capabilityForbiddenForOp, opForbidsCapability, planModeForbidsCapability } from "../instruction-ledger/index.js";
 import { isLedgerTool, opCommittedSubstantiveWork } from "../../committing-tool-check.js";
 import { opSourceCheckedSinceLastEdit } from "./verify-gate.js";
+import { classifyModel } from "../../model-tiers.js";
 
 /**
  * Last open-task set we already nudged about, per session. Keyed by SESSION
@@ -146,6 +147,12 @@ interface SeedFlag { fired: boolean }
  */
 function interactiveBuildPlanSeed(ctx: CanonicalLoopContext): CanonicalMiddlewareResult {
   if (ctx.op.lane !== "interactive") return { kind: "continue" };
+  // A frontier model does not stop early this way, so on it the push only
+  // costs a round trip: across Oct 2026 it fired 12 times in real chats and 4
+  // times in 8 eval tasks on opus-5-5 and gpt-6.1-sol, every time after a
+  // finished, checked answer, and the model repeated its report or re-ran a
+  // check. It stays for the medium and weak tiers it was built for.
+  if (classifyModel(ctx.model) === "strong") return { kind: "continue" };
   if (!ctx.toolNames.has("task_create")) return { kind: "continue" };
   // The RAW name-only tally, used ONLY as a "can this tool write files" lookup — the one
   // question all three committing tallies answer identically (see types.ts).

@@ -184,6 +184,7 @@ describe("interactive build plan-seed (reactive, afterModelCall)", () => {
     return ctx({
       op: { id: `ibs-${opCounter++}`, lane: "interactive" },
       committingToolsThisOp: new Set(["write"]),
+      model: "qwen3.6:27b",
       ...over,
     });
   }
@@ -205,6 +206,17 @@ describe("interactive build plan-seed (reactive, afterModelCall)", () => {
   it("keys on file writes only — a non-file commit (e.g. scheduling) does not trip it", async () => {
     const res = await fire(ictx({ committingToolsThisOp: new Set(["schedule_task"]) }));
     expect(res.kind).toBe("continue");
+  });
+
+  // Live and eval, Oct 2026: on a frontier model every push followed a finished,
+  // checked answer and only made the model repeat it.
+  it("does not fire on a strong-tier model, and does on medium and weak ones", async () => {
+    for (const model of ["claude-opus-5-5", "gpt-6.1-sol", "grok-4.7", "gemini-4-argon"]) {
+      expect((await fire(ictx({ model }))).kind, model).toBe("continue");
+    }
+    for (const model of ["qwen3.6:27b", "qwen3:8b"]) {
+      expect((await fire(ictx({ model }))).kind, model).toBe("nudge");
+    }
   });
 
   it("fires at most once per op", async () => {

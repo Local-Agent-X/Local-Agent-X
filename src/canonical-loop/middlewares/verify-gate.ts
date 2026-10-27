@@ -164,9 +164,9 @@ export function recordOrchestratorVerify(opId: string, passed: boolean): void {
 
 function buildActions(
   toolCalls: { toolCallId: string; tool: string; args: unknown }[],
-  toolResults: { toolCallId: string; status?: VerifyTurnAction["status"] }[],
+  toolResults: { toolCallId: string; content: string; status?: VerifyTurnAction["status"] }[],
 ): VerifyTurnAction[] {
-  const statusById = new Map(toolResults.map(tr => [tr.toolCallId, tr.status]));
+  const resultById = new Map(toolResults.map(tr => [tr.toolCallId, tr]));
   return toolCalls.map(tc => {
     const args = (tc.args ?? {}) as Record<string, unknown>;
     const { writes, deletes } = callPaths(tc.tool, args);
@@ -177,7 +177,8 @@ function buildActions(
       // A verdict comes only from a command that has exited (its row's
       // shellCommand.waitsForExit): a background `npm test` just started.
       command: waitsForShellCommand(tc.tool) ? shellCommandOf(tc.tool, args) : undefined,
-      status: statusById.get(tc.toolCallId),
+      output: resultById.get(tc.toolCallId)?.content,
+      status: resultById.get(tc.toolCallId)?.status,
     };
   });
 }

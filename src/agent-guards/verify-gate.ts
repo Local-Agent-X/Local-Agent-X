@@ -18,6 +18,7 @@
 import { isTestFile, normPath, workspaceAppSlug } from "./build-command.js";
 import { evaluateClaimGrounding, type EvidenceKind } from "./claim-grounding.js";
 import { checkVerdict } from "../tool-execution/check-verdict.js";
+import { failingCheckNames } from "./failing-checks.js";
 
 /** Normalized view of one tool call + its dispatch outcome for a turn. */
 export interface VerifyTurnAction {
@@ -30,6 +31,8 @@ export interface VerifyTurnAction {
   /** The shell command this call ran to exit (its row's shellCommand with
    *  waitsForExit — bash), when present: a verdict and an `rm` are settled. */
   command?: string;
+  /** The command's output, for the names of the checks it reports failing. */
+  output?: string;
   /** Dispatch status. Mirrors the canonical ToolDispatchStatus union (kept as
    *  a local literal so this pure guard doesn't reach up into canonical-loop). */
   status?: "ok" | "error" | "blocked" | "declined" | "timeout" | "cancelled";
@@ -72,6 +75,15 @@ export interface VerifyGateState {
    *  (chat-mvfaq00w, 2026-10-21). */
   pendingEdits: string[];
   beforePending: { editedSource: boolean; verified: boolean; failed: boolean } | null;
+  /** Failures named by checks that failed before the op's first source edit:
+   *  red the op found, not red it made. A model sent "your edits broke the
+   *  project" over a follow-up test it had rightly left for the next turn
+   *  fixed that test unasked (bugfix-with-followup, 2026-10-26). */
+  baselineFailures: string[];
+  /** Failures named by the most recent failed check after an edit. */
+  lastFailures: string[];
+  /** Fire-once cap for the "these were already failing" note. */
+  firedPreexisting: boolean;
 }
 
 export function createVerifyGateState(): VerifyGateState {
@@ -86,6 +98,9 @@ export function createVerifyGateState(): VerifyGateState {
     firedDeletedTest: false,
     pendingEdits: [],
     beforePending: null,
+    baselineFailures: [],
+    lastFailures: [],
+    firedPreexisting: false,
   };
 }
 
@@ -204,6 +219,11 @@ export function noteVerifyEvidence(
       state.verifiedSinceEdit = false;
       state.verifyFailedSinceEdit = false;
     }
+    if (a.command && !state.editedSource && VERIFY_CMD_RE.test(a.command) && checkVerdict(a.status) === "failed") {
+      for (const name of failingCheckNames(a.output ?? "")) {
+        if (!state.baselineFailures.includes(name)) state.baselineFailures.push(name);
+      }
+    }
     if (
       a.command &&
       state.editedSource &&
@@ -221,6 +241,7 @@ export function noteVerifyEvidence(
       } else if (verdict === "failed") {
         state.verifyFailedSinceEdit = true;
         state.verifiedSinceEdit = false;
+        state.lastFailures = failingCheckNames(a.output ?? "");
       }
       if (verdict === "passed" || verdict === "failed") settlePending(state);
     }
@@ -252,6 +273,7 @@ export function recordExternalVerify(state: VerifyGateState, passed: boolean): v
   if (!state.editedSource) return;
   state.verifiedSinceEdit = passed;
   state.verifyFailedSinceEdit = !passed;
+  state.lastFailures = [];
   settlePending(state);
 }
 
@@ -341,6 +363,24 @@ const NUDGE_BUILD_RED =
   "genuinely cannot make it pass from here, say so plainly and report exactly " +
   "which errors remain — never claim success over a failing build.";
 
+/** The last check failed only on failures that were already failing before the
+ *  first edit, and the edits fixed none of them: either the fix did not work,
+ *  or they are outside the task. The model knows which; the request decides. */
+const nudgePreexistingFailures = (names: readonly string[]): string =>
+  `Your last check still fails, but only on what was already failing before your first edit: ` +
+  `${names.slice(0, 5).join("; ")}${names.length > 5 ? ` (and ${names.length - 5} more)` : ""}. ` +
+  "Your edits added no failures and fixed none of these. If fixing them is part of what was " +
+  "asked, it is not done yet. If it is not, leave them alone and say in your reply which still fail.";
+
+/** How the last failed check's failures stand against the ones the op found
+ *  before its first edit. A failure the baseline lacks, or output that named
+ *  none, is "new": the edits are the suspect, as before there was a baseline. */
+function failuresAgainstBaseline(state: VerifyGateState): "new" | "fewer" | "same" {
+  const { lastFailures: last, baselineFailures: base } = state;
+  if (last.length === 0 || !last.every((name) => base.includes(name))) return "new";
+  return last.length < base.length ? "fewer" : "same";
+}
+
 export const nudgeDeletedTest = (paths: readonly string[]): string =>
   `You deleted test file(s): ${paths.join(", ")}. Deleting or skipping a test to make the ` +
   "suite pass is NOT allowed — the build-verify gate only runs EDITED tests, so a test you " +
@@ -411,6 +451,19 @@ export function checkVerifyGate(
   // Sharp tier: a verify that ran and failed speaks with the exact command's
   // voice, so it wins over the LSP wording; outstanding introduced type errors
   // are its equivalent when no verify ran. Both share one bounded counter.
+  // A failed check whose every failure predates the edits is not one the
+  // edits broke. Fewer than before is progress the model reports; the same
+  // set gets one note that leaves the call to the request.
+  if (state.verifyFailedSinceEdit && !lsp.outstanding) {
+    const standing = failuresAgainstBaseline(state);
+    if (standing === "fewer") return { nudge: null };
+    if (standing === "same") {
+      if (state.firedPreexisting) return { nudge: null };
+      state.firedPreexisting = true;
+      return { nudge: nudgePreexistingFailures(state.lastFailures) };
+    }
+  }
+
   if (state.verifyFailedSinceEdit || lsp.outstanding) {
     if (state.failNudges >= MAX_FAIL_NUDGES) return { nudge: null };
     state.failNudges += 1;

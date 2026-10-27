@@ -247,6 +247,65 @@ describe("checkVerifyGate — verified but FAILED (the ship-broken-and-claim-don
   });
 });
 
+// A check that was already red before the first edit: the gate compares the
+// failures by name, so only what the edits added is blamed on them.
+describe("checkVerifyGate — failures that predate the edits", () => {
+  const run = (output: string, status: "ok" | "error" = "error"): VerifyTurnAction => ({ tool: "bash", command: "npm test", status, output });
+  const red = (...names: string[]) => run(names.map((n) => `✖ ${n} (0.4ms)`).join("\n"));
+
+  it("a check that fixed some of the failures it found and added none is not sent back", () => {
+    const s = createVerifyGateState();
+    noteVerifyEvidence([red("closes on link tap", "label reads Close")], s);
+    noteVerifyEvidence([edit("nav-app/src/nav.js"), red("label reads Close")], s);
+    expect(checkVerifyGate(s).nudge).toBeNull();
+    // Still red, so the outcome is not a clean verify.
+    expect(opEditedSourceUnverified(s)).toBe(true);
+  });
+
+  it("the same failures as before get one note that leaves the call to the request", () => {
+    const s = createVerifyGateState();
+    noteVerifyEvidence([red("unrelated flake")], s);
+    noteVerifyEvidence([edit("src/a.ts"), red("unrelated flake")], s);
+    const r = checkVerifyGate(s);
+    expect(r.nudge).toMatch(/already failing before your first edit: unrelated flake/);
+    expect(r.nudge).not.toMatch(/STOP/);
+    expect(checkVerifyGate(s).nudge).toBeNull();
+  });
+
+  it("a failure the baseline lacks is the edits': the sharp nudge, as before", () => {
+    const s = createVerifyGateState();
+    noteVerifyEvidence([red("label reads Close")], s);
+    noteVerifyEvidence([edit("src/a.ts"), red("label reads Close", "toggle opens")], s);
+    expect(checkVerifyGate(s).nudge).toMatch(/STOP/);
+  });
+
+  it("with no check before the first edit, or output naming no test, a red check is the edits'", () => {
+    const none = createVerifyGateState();
+    noteVerifyEvidence([edit("src/a.ts"), red("label reads Close")], none);
+    expect(checkVerifyGate(none).nudge).toMatch(/STOP/);
+
+    const unnamed = createVerifyGateState();
+    noteVerifyEvidence([run("Segmentation fault")], unnamed);
+    noteVerifyEvidence([edit("src/a.ts"), run("Segmentation fault")], unnamed);
+    expect(checkVerifyGate(unnamed).nudge).toMatch(/STOP/);
+  });
+
+  it("a check that passed before the first edit leaves nothing to excuse", () => {
+    const s = createVerifyGateState();
+    noteVerifyEvidence([run("✔ all good", "ok")], s);
+    noteVerifyEvidence([edit("src/a.ts"), red("toggle opens")], s);
+    expect(checkVerifyGate(s).nudge).toMatch(/STOP/);
+  });
+
+  it("the orchestrator's own red build is not excused by an earlier run's names", () => {
+    const s = createVerifyGateState();
+    noteVerifyEvidence([red("a", "b")], s);
+    noteVerifyEvidence([edit("src/a.ts"), red("a")], s);
+    recordExternalVerify(s, false);
+    expect(checkVerifyGate(s).nudge).toMatch(/STOP/);
+  });
+});
+
 // Language-service signal (fed by the middleware from post-edit-diagnostics'
 // per-op state): outstanding INTRODUCED type errors are strong negative
 // evidence (sharp path, same tier as a failed verify); lsp-clean is weak

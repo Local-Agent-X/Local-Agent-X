@@ -499,14 +499,15 @@ describe("bash-output secret handling (delivery-point invariant)", () => {
     expect(res.metadata?.secrets_masked).toBeUndefined();
   });
 
-  it("a command that names a secrets FILE still gets the whole-result stub, and the stub says the check did not happen", async () => {
+  it("a command that names a secrets FILE still gets the whole-result stub, which says it ran and its output was withheld", async () => {
     const s = freshSession();
     clearSessionTaint(s);
     const res = await run(fakeBash("DB_PASSWORD=hunter22-long-enough-value", false), { command: "cat ~/.aws/credentials" }, s);
     expect(res.status).toBe("blocked");
     expect(res.metadata?.redacted).toBe(true);
     expect(String(res.content)).not.toContain("hunter22");
-    expect(String(res.content)).toMatch(/did NOT complete/);
+    expect(String(res.content)).toMatch(/The command RAN/);
+    expect(String(res.content)).not.toMatch(/did NOT complete/);
     expect(String(res.content)).toMatch(/report it as not checked, never as done/);
     expect(checkEgressTaint(s).blocked).toBe(false);
   });

@@ -301,10 +301,17 @@ export function applyResultTaintPolicy(
     // by the outbound egress scan at send time.
     if (floor.pairs.length > 0) retractProvisionalTaint(sid, floor.pairs, floor.id);
     logger.info(`sensitive read fully redacted before delivery — session NOT tainted (${redactReason})`);
+    // A command has already run by now: whatever it wrote or changed is done,
+    // and only its output is withheld. Telling the model it "did NOT complete"
+    // sent it to redo work that had happened (TB2, 2026-10-27: `openssl req
+    // -keyout /etc/nginx/ssl/x.key` made the key, and the model was told not).
+    const outcome = command !== undefined
+      ? `The command RAN — anything it created or changed is done — but its output was withheld, so whatever you meant to learn from that output is unverified; report it as not checked, never as done. `
+      : `This read did NOT complete: none of this source's content is available to you, so whatever you meant to check with it is unverified — report it as not checked, never as done. `;
     return {
       content:
         `[redacted by data-lineage gate — ${redactReason}. ` +
-        `This read did NOT complete: none of this source's content is available to you, so whatever you meant to check with it is unverified — report it as not checked, never as done. ` +
+        outcome +
         `The raw bytes were withheld from the model context, so nothing sensitive entered this session and no tools are blocked. ` +
         `Do not re-read this source; if a credential is needed, use a {{SECRET_NAME}} placeholder or ask the user.]`,
       isError: false,

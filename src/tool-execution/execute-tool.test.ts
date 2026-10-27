@@ -150,6 +150,7 @@ describe("batcher gate-atomicity (R4-09: no egress + sensitive-read co-batch)", 
     // The read was stubbed (bytes withheld from the model)…
     const readMsg = msgs.find((m) => (m as { tool_call_id?: string }).tool_call_id === "1");
     expect(String(readMsg?.content)).toMatch(/redacted by data-lineage gate/i);
+    expect(String(readMsg?.content)).toMatch(/did NOT complete/);
     expect(String(readMsg?.content)).not.toContain("ok");
     // …so nothing entered context: floor retracted, web_search ran.
     expect(getTaintSummary(session).count).toBe(0);

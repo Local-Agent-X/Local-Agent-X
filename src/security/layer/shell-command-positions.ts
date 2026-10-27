@@ -65,7 +65,7 @@ const REDIRECTION = /^(?:(\d*)(>>|>\||>&|>|<<<|<<|<&|<>|<)|()(&>>|&>))(.*)$/;
  * Quotes are gone by the time words exist, so a quoted operator (`echo ">"`)
  * is read as one too — an argument fewer for the rules to see, never one more.
  */
-function splitRedirections(tokens: string[]): { words: string[]; redirections: Redirection[] } {
+export function splitRedirections(tokens: string[]): { words: string[]; redirections: Redirection[] } {
   const words: string[] = [];
   const redirections: Redirection[] = [];
   for (let i = 0; i < tokens.length; i++) {

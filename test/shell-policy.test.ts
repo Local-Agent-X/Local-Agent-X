@@ -209,7 +209,7 @@ describe("evaluateShellCommand — argv[0]-aware dangerous binaries (benign-pipe
 
   // `mount` that attaches nothing only prints the mount table (Terminal-Bench
   // 2.0 password-recovery, 2026-10-23, was refused at `mount | grep /app`).
-  for (const cmd of ["mount", "mount | grep /app", "mount -l", "mount -t ext4", "mount -l -t ext4,xfs", "mount --types=tmpfs"]) {
+  for (const cmd of ["mount", "mount 2>/dev/null", "mount | grep /app", "mount -l", "mount -t ext4", "mount -l -t ext4,xfs", "mount --types=tmpfs"]) {
     it(`ALLOWS the read-only listing \`${cmd}\``, () => {
       expect(evaluateShellCommand(cmd).allowed).toBe(true);
     });
@@ -217,7 +217,7 @@ describe("evaluateShellCommand — argv[0]-aware dangerous binaries (benign-pipe
 
   // Anything that names a source or target, mounts the fstab, or remounts
   // still attaches a filesystem, and so is refused as before.
-  for (const cmd of ["mount -a", "mount /dev/sdb1", "mount -t ext4 /dev/sdb1 /mnt", "mount -o remount,rw /", "mount --bind /etc /tmp/x", "mount -t", "sudo mount -l /dev/x", "umount /mnt"]) {
+  for (const cmd of ["mount -a", "mount /dev/sdb1", "mount -t ext4 /dev/sdb1 /mnt", "mount -o remount,rw /", "mount --bind /etc /tmp/x", "mount -t", "sudo mount -l /dev/x", "umount -a", "mount /dev/sdb1 /mnt/x 2>&1", ">log mount /dev/sdb1 /mnt/x"]) {
     it(`still BLOCKS \`${cmd}\` (attaches or detaches a filesystem)`, () => {
       expect(evaluateShellCommand(cmd).allowed).toBe(false);
     });
@@ -231,6 +231,9 @@ describe("evaluateShellCommand — argv[0]-aware dangerous binaries (benign-pipe
     "mount -r -o loop,noexec disk.img /tmp/img",
     "mount -oloop,ro,offset=1048576 pi.img /media/pi",
     "umount /mnt/iso",
+    // What the models actually typed (TB2 re-smoke, 2026-10-27).
+    "mkdir -p /mnt/alpine && mount -o loop,ro /app/alpine.iso /mnt/alpine 2>&1; echo $?",
+    "cd /tmp && mount -o loop,ro /app/alpine.iso /mnt 2>&1 && ls /mnt/boot/; umount /mnt 2>/dev/null",
   ]) {
     it(`ALLOWS the read-only image mount \`${cmd}\``, () => {
       expect(evaluateShellCommand(cmd).allowed).toBe(true);
@@ -242,7 +245,8 @@ describe("evaluateShellCommand — argv[0]-aware dangerous binaries (benign-pipe
     "mount -o loop disk.img /mnt/img",
     "mount -o loop,ro disk.img /etc",
     "mount -o loop,ro disk.img etc",
-    "mount -o loop,ro disk.img /mnt",
+    "mount -o loop,ro disk.img /media",
+    "mount -o loop,ro disk.img /tmp",
     "mount -o loop,ro disk.img /mnt/../etc",
     "mount -o loop,ro /dev/sda1 /mnt/x",
     "mount -o loop,ro ../../dev/sda1 /mnt/x",

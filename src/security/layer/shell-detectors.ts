@@ -14,6 +14,7 @@ import {
 } from "./shell-rules.js";
 import { execBasename, resolveRealArgv0, resolveRealArgv0Index, splitShellSegments, stripQuotedSpans, tokenizeCommand } from "./shell-lex.js";
 import { realpathDeep } from "./file-access.js";
+import { splitRedirections } from "./shell-command-positions.js";
 import type { InlineEvalPolicy } from "./types.js";
 import { DECODE_EXEC_REFUSAL, ENCODED_PAYLOAD_REFUSAL, NESTED_COMMAND_WAY_OUT } from "./shell-refusals.js";
 
@@ -236,7 +237,8 @@ export function detectNestedCommandExecution(command: string): string | null {
 // `env host`), not just pipe segments and not just tokens[0].
 export function detectDangerousInvokeBin(command: string): string | null {
   for (const segment of splitShellSegments(command)) {
-    const tokens = tokenizeCommand(segment);
+    // `2>&1` and `> log` are the shell's, not the command's arguments.
+    const tokens = splitRedirections(tokenizeCommand(segment)).words;
     const at = resolveRealArgv0Index(tokens);
     const bin = at === null ? null : execBasename(tokens[at]);
     if (bin === "mount" && (mountOnlyLists(tokens.slice(at! + 1)) || mountsImageReadOnly(tokens.slice(at! + 1)))) continue;
@@ -276,14 +278,15 @@ const IMAGE_MOUNT_OPTIONS = /^(?:ro|loop|noexec|nosuid|nodev|noatime|offset=\d+|
 // Windows device path is not an image file.
 const NOT_AN_IMAGE = /^(?:(?:\/|(?:\.\.?\/)+)+(?:dev|proc|sys)(?:\/|$)|\/\/|\\)|:/i;
 
-/** Where an image may be mounted: a folder below /mnt, /media or /tmp. Never
- *  over a system folder, which a mount would hide (`/etc`, `/usr/bin`), never
- *  the shared roots themselves, and never a relative path, which from `/` is
- *  `etc`. */
+/** Where an image may be mounted: /mnt, which exists for a temporary mount,
+ *  or a folder below /mnt, /media or /tmp. Never over a system folder, which a
+ *  mount would hide (`/etc`, `/usr/bin`), never /media or /tmp themselves
+ *  (they hold the user's drives and everyone's temp files), and never a
+ *  relative path, which from `/` is `etc`. */
 function isWorkingMountPoint(target: string): boolean {
   const t = target.replace(/\/+$/, "");
   if (/(?:^|\/)\.\.?(?:\/|$)/.test(t) || /[$`~*?]/.test(t)) return false;
-  return /^\/(?:mnt|media|tmp)\/[^/]/.test(t);
+  return t === "/mnt" || /^\/(?:mnt|media|tmp)\/[^/]/.test(t);
 }
 
 /**
@@ -293,7 +296,7 @@ function isWorkingMountPoint(target: string): boolean {
  * the model spent its time parsing ISO9660 in Python). Read-only and backed by
  * a file, it changes nothing on any disk. Allowed only in exactly that shape:
  * `ro` (or `-r`) and `loop` both given, an image filesystem type if any, one
- * file source and a mount point below /mnt, /media or /tmp. Every other flag
+ * file source and a working mount point (isWorkingMountPoint). Every other flag
  * (`--bind`, `--move`, `-a`, remount, rw) keeps the refusal.
  */
 function mountsImageReadOnly(args: string[]): boolean {

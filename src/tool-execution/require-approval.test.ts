@@ -540,13 +540,16 @@ describe("requireApprovalPhase — destructive reclassification", () => {
   });
 
   it("bash rm -rf is decided by the destructive tier, not the coarse shell grant", async () => {
+    // A folder that exists and is no one's scratch: a delete of nothing there
+    // destroys nothing and asks nothing. The phase only decides; nothing runs.
+    const kept = process.cwd().replace(/\\/g, "/");
     // Normal: shell=allow but destructive=ask — the reclassification is what
     // makes rm -rf prompt while git status runs silently.
     const s = pinned("Normal");
     const events: ServerEvent[] = [];
     const ctx = makeCtx({
       name: "bash", sessionId: s, callContext: "local",
-      args: { command: "rm -rf /tmp/x" },
+      args: { command: `rm -rf ${kept}` },
       onEvent: (e) => {
         events.push(e);
         if (e.type === "approval_requested") getApprovalManager().resolveApproval(e.approvalId, false);
@@ -562,7 +565,7 @@ describe("requireApprovalPhase — destructive reclassification", () => {
     const events2: ServerEvent[] = [];
     const ctx2 = makeCtx({
       name: "bash", sessionId: s2, callContext: "local",
-      args: { command: "rm -rf /tmp/x" },
+      args: { command: `rm -rf ${kept}` },
       onEvent: (e) => {
         events2.push(e);
         if (e.type === "approval_requested") getApprovalManager().resolveApproval(e.approvalId, false);

@@ -146,9 +146,13 @@ function disposable(target: string, form: Form, scope: TreeDeleteScope): boolean
   const trailingSep = /[\\/]$/.test(target);
   const abs = resolve(scope.cwd, target);
   let stat;
-  // Not there yet is not proven: something in the same command could put it
-  // there first (`mv client-data x && rm -rf x`).
-  try { stat = lstatSync(abs); } catch { return false; }
+  // Nothing there deletes nothing. The deletes are the command's leading
+  // segments (isDisposableTreeDelete), so nothing runs first that could put
+  // something there (`mv client-data x && rm -rf x` is refused for its order);
+  // a dangling link is still found by lstat. TB2 git-multibranch, 2026-10-27:
+  // `rm -rf /tmp/e2e && mkdir /tmp/e2e` waited on a card twice for a folder
+  // that did not exist. An unreadable path is not proven absent.
+  try { stat = lstatSync(abs); } catch (err) { return (err as NodeJS.ErrnoException).code === "ENOENT"; }
   // `rm -rf link/` resolves through the link; the bare link is only unlinked.
   if (stat.isSymbolicLink()) return !trailingSep;
   if (within(scope.tempDir ?? tmpdir(), abs)) return true;

@@ -53,6 +53,14 @@ describe("recursive deletes that destroy nothing anyone needs run without a card
     expect(floor(`rm -rf ${join(root, "os-temp", "build-123").replace(/\\/g, "/")}`)).toBe("allow-with-rollback");
   });
 
+  // TB2 git-multibranch, 2026-10-27: `rm -rf /tmp/e2e && mkdir /tmp/e2e`
+  // carded twice for a folder that was not there.
+  it("a target that is not there: nothing runs before it that could put one there", () => {
+    for (const command of ["rm -rf .next", "rm -rf not-yet && mkdir not-yet", "rm -rf node_modules not-yet"]) {
+      expect(floor(command), command).toBe("allow-with-rollback");
+    }
+  });
+
   it("whatever runs after the deletes", () => {
     expect(floor("rm -rf node_modules dist && npm install && npm run build")).toBe("allow-with-rollback");
   });
@@ -81,9 +89,8 @@ describe("every lookalike keeps the card", () => {
 
   // The disk is read before the command runs: whatever runs first could put
   // client work where the delete will look.
-  it("a target that is not there yet, and anything that runs before the delete", () => {
+  it("anything that runs before the delete", () => {
     for (const command of [
-      "rm -rf .next",
       "mv client-data x && rm -rf x",
       "mv client-data node_modules/ && rm -rf node_modules",
       "cp -r client-data node_modules; rm -rf node_modules",

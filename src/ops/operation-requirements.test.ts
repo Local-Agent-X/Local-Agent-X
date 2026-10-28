@@ -31,7 +31,8 @@ describe("resolveOperationRequirements", () => {
       needsJsonMode: true,
       needsStreaming: true,
     });
-    expect(resolved.requirements.minimumContextTokens).toBeGreaterThan(1_264);
+    expect(resolved.requirements.requestTokens).toBeGreaterThan(240);
+    expect(resolved.requirements.minimumContextTokens).toBeUndefined();
     expect(resolved.evidence).toEqual({
       actualToolUse: true,
       imageInput: true,
@@ -40,15 +41,16 @@ describe("resolveOperationRequirements", () => {
     });
   });
 
-  it("keeps the flat 1,024 output reserve in every op's context floor, cloud included", () => {
-    // output-reserve.ts widens the reserve for LOCAL thinking models inside
-    // their own window; the op requirement matched against every provider
-    // must not move with it.
+  it("records the measured request with no reply reserve — each candidate's own reserve applies at match time", () => {
+    // output-reserve.ts sizes the reserve per model (a local thinking model
+    // keeps 4k..8k), so the requirement, matched against every provider, holds
+    // only the request; targetMeetsRequirements subtracts the candidate's own
+    // reserve, the same budget its preflight refuses against.
     const op = makeOp({
       surfaceTools: ["read"],
       telemetry: { estimatedTokens: 200, toolSchemaEstimatedTokens: 40, loadedToolCount: 1 },
     });
-    expect(resolveOperationRequirements(op, []).requirements.minimumContextTokens).toBe(200 + 40 + 1_024);
+    expect(resolveOperationRequirements(op, []).requirements).toMatchObject({ requestTokens: 200 + 40 });
   });
 
   it("makes a persisted rejection authoritative over contradictory certification", () => {
@@ -152,7 +154,7 @@ describe("resolveOperationRequirements", () => {
       telemetry: { estimatedTokens: 200, toolSchemaEstimatedTokens: 40, loadedToolCount: 2 },
     });
     const resolved = resolveOperationRequirements(op, []);
-    expect(resolved.requirements.minimumContextTokens).toBeUndefined();
+    expect(resolved.requirements.requestTokens).toBeUndefined();
     expect(resolved.evidence.measuredContextFloor).toBe(false);
   });
 

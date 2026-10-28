@@ -1,6 +1,7 @@
 import { resolveCredential } from "../auth/resolve.js";
 import { getRuntimeConfig } from "../config.js";
 import { resolveContextWindow } from "../context-manager/model-windows.js";
+import { resolveOutputReserve } from "../context-manager/output-reserve.js";
 import {
   getBillableCostForModelSince,
   getSessionBillableCost,
@@ -91,6 +92,7 @@ export function targetMeetsRequirements(
   requirements: ProviderCapabilityRequirement,
   capabilities: TargetCapabilitySnapshot,
   certified: boolean,
+  model: string,
 ): boolean {
   if (capabilities.locality === "local" && !certified) return false;
   if (requirements.locality === "local-only" && capabilities.locality !== "local") return false;
@@ -102,6 +104,14 @@ export function targetMeetsRequirements(
   if (requirements.minimumContextTokens && (
     capabilities.contextWindowTokens === null
     || capabilities.contextWindowTokens < requirements.minimumContextTokens
+  )) return false;
+  // The candidate's own reply reserve, as its preflight applies it: a local
+  // thinking model keeps 4k..8k, so a request that fits under the flat 1,024
+  // would be picked here and then refused there.
+  if (requirements.requestTokens && (
+    capabilities.contextWindowTokens === null
+    || capabilities.contextWindowTokens - resolveOutputReserve(model, capabilities.contextWindowTokens)
+      < requirements.requestTokens
   )) return false;
   return true;
 }
@@ -174,7 +184,7 @@ export function validatePersistedFailoverTarget(
   return !resolved.pinnedTarget
     && providerAllowed(descriptor.provider)
     && !!snapshot
-    && targetMeetsRequirements(resolved.requirements, snapshot, exactLocalCertification(descriptor))
+    && targetMeetsRequirements(resolved.requirements, snapshot, exactLocalCertification(descriptor), descriptor.model)
     && liveBudgetAllows(descriptor, op.canonical?.sessionId ?? op.sessionId ?? "")
     && !hasAmbiguousSideEffects(op.id);
 }
@@ -205,7 +215,7 @@ export async function attemptRuntimeFailover(op: Op, reportedCode: string, messa
   const candidates = await enumerateCandidates(persisted, current, attempted);
   const selected = candidates.find(candidate => {
     const snapshot = candidate.descriptor.capabilitySnapshot;
-    return !!snapshot && targetMeetsRequirements(resolved.requirements, snapshot, candidate.certified)
+    return !!snapshot && targetMeetsRequirements(resolved.requirements, snapshot, candidate.certified, candidate.descriptor.model)
       && liveBudgetAllows(candidate.descriptor, persisted.canonical?.sessionId ?? persisted.sessionId ?? "");
   });
   if (!selected) {

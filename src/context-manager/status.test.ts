@@ -2,6 +2,11 @@ import { describe, it, expect } from "vitest";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 
 import { getContextStatus } from "./status.js";
+import { OUTPUT_RESERVE_TOKENS } from "./request-fit.js";
+
+// maxTokens is the request budget: the window less the reply's reserve (the
+// flat 1,024 for every model here), the same budget preflight refuses against.
+const budget = (window: number) => window - OUTPUT_RESERVE_TOKENS;
 
 // ~160k estimated tokens (chars/3.5): 16% of a 1M window (ok), 80% of a 200k
 // window (compact). The gap is exactly the transport-aware behavior under test.
@@ -14,7 +19,7 @@ const bigConversation: ChatCompletionMessageParam[] = [
 describe("getContextStatus — transport-aware effective window", () => {
 	it("omitting transport preserves the nominal 1M window for a 1M-rated model", () => {
 		const s = getContextStatus(bigConversation, "claude-opus-4-7");
-		expect(s.maxTokens).toBe(1_000_000);
+		expect(s.maxTokens).toBe(budget(1_000_000));
 		expect(s.percentage).toBe(16);
 		expect(s.shouldCompact).toBe(false);
 		expect(s.level).toBe("ok");
@@ -32,7 +37,7 @@ describe("getContextStatus — transport-aware effective window", () => {
 		expect(api.level).toBe("ok");
 
 		const cli = getContextStatus(bigConversation, "claude-opus-4-7", undefined, "cli");
-		expect(cli.maxTokens).toBe(200_000);
+		expect(cli.maxTokens).toBe(budget(200_000));
 		expect(cli.percentage).toBe(80);
 		expect(cli.level).toBe("warning");
 	});
@@ -41,17 +46,17 @@ describe("getContextStatus — transport-aware effective window", () => {
 	// served (opus-4-8: 276k), not the fallback — and still not the nominal 1M.
 	it("sizes a measured model on the cli transport by its proven subscription window", () => {
 		const cli = getContextStatus(bigConversation, "claude-opus-4-8", undefined, "cli");
-		expect(cli.maxTokens).toBe(276_000);
+		expect(cli.maxTokens).toBe(budget(276_000));
 		expect(cli.percentage).toBe(58);
 		expect(cli.shouldCompact).toBe(false);
-		expect(getContextStatus(bigConversation, "claude-opus-4-8", undefined, "api").maxTokens).toBe(1_000_000);
+		expect(getContextStatus(bigConversation, "claude-opus-4-8", undefined, "api").maxTokens).toBe(budget(1_000_000));
 	});
 
 	// Base-200k Anthropic models already size against 200k — transport is a no-op.
 	it("is unchanged by transport for a base-200k Anthropic model", () => {
 		const api = getContextStatus(bigConversation, "claude-haiku-4-5", undefined, "api");
 		const cli = getContextStatus(bigConversation, "claude-haiku-4-5", undefined, "cli");
-		expect(api.maxTokens).toBe(200_000);
+		expect(api.maxTokens).toBe(budget(200_000));
 		expect(cli).toEqual(api);
 	});
 
@@ -59,7 +64,7 @@ describe("getContextStatus — transport-aware effective window", () => {
 	// cli transport must not shrink their window.
 	it("never shrinks a non-Anthropic window even on the cli transport", () => {
 		const s = getContextStatus(bigConversation, "gpt-5.5", undefined, "cli");
-		expect(s.maxTokens).toBe(1_050_000);
+		expect(s.maxTokens).toBe(budget(1_050_000));
 	});
 });
 

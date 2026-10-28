@@ -1,4 +1,10 @@
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import { assessRequestFit } from "../context-manager/request-fit.js";
+import { resolveOutputReserve } from "../context-manager/output-reserve.js";
+import { invalidateLocalRuntimes, restoreProjectedLocalRuntime } from "../local-runtimes/cache.js";
 import {
   candidateWithinBudget,
   buildRuntimeFailoverState,
@@ -135,21 +141,53 @@ describe("runtime failover candidate eligibility", () => {
       needsJsonMode: true,
       needsLocalFiles: true,
       minimumContextTokens: 128_000,
-    }, capable, true)).toBe(true);
+    }, capable, true, "m")).toBe(true);
     for (const field of ["tools", "vision", "streaming", "jsonMode", "localFiles"] as const) {
       expect(targetMeetsRequirements({ [`needs${field[0].toUpperCase()}${field.slice(1)}`]: true }, {
         ...capable,
         [field]: "unknown",
-      }, true)).toBe(false);
+      }, true, "m")).toBe(false);
     }
-    expect(targetMeetsRequirements({ minimumContextTokens: 200_001 }, capable, true)).toBe(false);
+    expect(targetMeetsRequirements({ minimumContextTokens: 200_001 }, capable, true, "m")).toBe(false);
+    // The measured request must fit the window less the reply's reserve.
+    expect(targetMeetsRequirements({ requestTokens: 198_976 }, capable, true, "m")).toBe(true);
+    expect(targetMeetsRequirements({ requestTokens: 198_977 }, capable, true, "m")).toBe(false);
+    expect(targetMeetsRequirements({ requestTokens: 1 }, { ...capable, contextWindowTokens: null }, true, "m")).toBe(false);
   });
 
   it("enforces strict local-only and exact local certification", () => {
-    expect(targetMeetsRequirements({ locality: "local-only" }, capable, true)).toBe(false);
+    expect(targetMeetsRequirements({ locality: "local-only" }, capable, true, "m")).toBe(false);
     const local = { ...capable, locality: "local" as const };
-    expect(targetMeetsRequirements({ locality: "local-only" }, local, false)).toBe(false);
-    expect(targetMeetsRequirements({ locality: "local-only" }, local, true)).toBe(true);
+    expect(targetMeetsRequirements({ locality: "local-only" }, local, false, "m")).toBe(false);
+    expect(targetMeetsRequirements({ locality: "local-only" }, local, true, "m")).toBe(true);
+  });
+
+  // Routing used the flat 1,024 reserve while the candidate's preflight keeps
+  // its own (4,096 for a thinking model at 32k), so failover could pick a
+  // model whose first send was then refused.
+  it("never picks a candidate whose own reply reserve makes its preflight refuse", () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-failover-reserve-"));
+    try {
+      const file = join(dir, "runtime.json");
+      writeFileSync(file, JSON.stringify({
+        kind: "ollama", id: "ollama@127.0.0.1:11434", label: "Ollama",
+        endpoint: { baseUrl: "http://127.0.0.1:11434", origin: "auto" }, chatBaseUrl: "http://127.0.0.1:11434/v1",
+        models: [{ id: "qwen3.6:27b", contextWindow: 32_768, tools: true }], refreshedAt: 1,
+      }));
+      restoreProjectedLocalRuntime(file);
+      const local = { ...capable, contextWindowTokens: 32_768, locality: "local" as const };
+      // Fits the window less the flat 1,024, but not less this model's 4,096.
+      const requestTokens = 30_000;
+      expect(assessRequestFit({
+        windowTokens: 32_768, systemPrompt: "x".repeat(requestTokens * 3.5), tools: [], messages: [],
+        outputReserveTokens: resolveOutputReserve("qwen3.6:27b", 32_768),
+      }).verdict).toBe("too_big");
+      expect(targetMeetsRequirements({ requestTokens }, local, true, "qwen3.6:27b")).toBe(false);
+      expect(targetMeetsRequirements({ requestTokens: 28_000 }, local, true, "qwen3.6:27b")).toBe(true);
+    } finally {
+      invalidateLocalRuntimes();
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("rejects learned tool rejection even if older facts claimed support", () => {
@@ -157,7 +195,7 @@ describe("runtime failover candidate eligibility", () => {
       ...capable,
       tools: "unsupported",
       toolsRejected: true,
-    }, true)).toBe(false);
+    }, true, "m")).toBe(false);
   });
 });
 

@@ -5,16 +5,17 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { resolveOutputReserve, thinkingOutputReserve } from "./output-reserve.js";
 import { OUTPUT_RESERVE_TOKENS, assessRequestFit, describeUnfittableRequest } from "./request-fit.js";
 import { toolResultCapChars } from "./tool-result-cap.js";
+import { getContextStatus } from "./status.js";
 import { invalidateLocalRuntimes, restoreProjectedLocalRuntime } from "../local-runtimes/cache.js";
 
 let dir: string;
 
-function serve(models: string[]): void {
+function serve(models: string[], contextWindow = 65_536): void {
   const file = join(dir, "runtime.json");
   writeFileSync(file, JSON.stringify({
     kind: "ollama", id: "ollama@127.0.0.1:11434", label: "Ollama",
     endpoint: { baseUrl: "http://127.0.0.1:11434", origin: "auto" }, chatBaseUrl: "http://127.0.0.1:11434/v1",
-    models: models.map((id) => ({ id, contextWindow: 65_536, tools: true })), refreshedAt: 1,
+    models: models.map((id) => ({ id, contextWindow, tools: true })), refreshedAt: 1,
   }));
   restoreProjectedLocalRuntime(file);
 }
@@ -57,6 +58,23 @@ describe("the reserve reaches the sizing math", () => {
     const thinking = assessRequestFit({ windowTokens: 14_000, ...request, outputReserveTokens: 4_096 });
     expect(thinking.verdict).toBe("too_big");
     expect(describeUnfittableRequest("qwen3:8b", thinking)).toContain("(4,096 reserved for the response)");
+  });
+
+  // A thinking model at 32k: preflight refuses past 32,768 − 4,096 = 28,672
+  // tokens (87.5% of the window). Compaction used to wait for 90% of the WHOLE
+  // window, so every turn in between spent one refused round first.
+  it("compaction fires before preflight would refuse a thinking model's request", () => {
+    serve(["qwen3.6:27b"], 32_768);
+    const reserve = resolveOutputReserve("qwen3.6:27b", 32_768);
+    const refusedAt = 32_768 - reserve + 1;
+    const fit = assessRequestFit({
+      windowTokens: 32_768, systemPrompt: "x".repeat(Math.ceil(refusedAt * 3.5)), tools: [], messages: [], outputReserveTokens: reserve,
+    });
+    expect(fit.verdict).toBe("too_big");
+    expect(getContextStatus([], "qwen3.6:27b", undefined, undefined, fit.requestTokens).forceCompact).toBe(true);
+    const status = getContextStatus([], "qwen3.6:27b", undefined, undefined, Math.floor(refusedAt * 0.9));
+    expect(status.shouldCompact).toBe(true);
+    expect(status.maxTokens).toBe(32_768 - 4_096);
   });
 
   it("tool-result-cap leaves the same reserve out of the message budget", () => {

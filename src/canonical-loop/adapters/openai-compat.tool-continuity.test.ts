@@ -390,7 +390,7 @@ describe("openai-compat tool continuity — the manifest is reserved from the hi
     expect(statusModel).toBe(MODEL);
     expect(statusBaseline).toBe(13_000);
     const status = mockStatus.mock.results[0].value;
-    expect(status.maxTokens).toBe(WINDOW);
+    expect(status.maxTokens).toBe(WINDOW - OUTPUT_RESERVE_TOKENS); // the request budget, as preflight sizes it
     expect(status.usedTokens).toBeGreaterThanOrEqual(13_000);
     expect(status.usedTokens).toBeLessThan(13_000 + 1_000); // one tiny row + the baseline, nothing else
   });

@@ -156,17 +156,26 @@ export function placeCd(dir: string | undefined, cwd: string | undefined): strin
 /** The folder a cd position leaves the next command in. Only `&&` carries it:
  *  after `;`, `||` or a newline the next command runs where a failed cd left
  *  it, and a piped or backgrounded cd runs in a subshell. */
-function afterCd(p: CommandPosition, next: CommandPosition | undefined, cwd: string | null | undefined): string | null | undefined {
+function afterCd(p: CommandPosition, next: CommandPosition | undefined, cwd: string | null | undefined, cdSucceeds?: CdSucceeds): string | null | undefined {
   if (!next || next.depth < p.depth) return cwd;
-  if (CD_UNPLACEABLE.has(p.bin) || cwd === null || next.join !== "&&") return null;
+  if (CD_UNPLACEABLE.has(p.bin) || cwd === null) return null;
   // bash's -P/-L/-e and PowerShell's -Path name no folder; `cd -` does, one placeCd refuses.
-  return placeCd(p.words.slice(p.at + 1).find((w) => !/^-(?:[PLe]|path|literalpath)$/i.test(w)), cwd);
+  const dir = placeCd(p.words.slice(p.at + 1).find((w) => !/^-(?:[PLe]|path|literalpath)$/i.test(w)), cwd);
+  if (next.join === "&&") return dir;
+  return dir !== null && p.depth === 0 && cdSucceeds?.(dir, p.segment) ? dir : null;
 }
+
+/** A caller that reads the disk may prove a top-level `cd` cannot fail (its
+ *  folder exists and nothing before it moves it), so its folder carries past
+ *  `;` and a newline too: `cd /app/vm⏎kill …; rm -f qmp.sock` (TB2
+ *  install-windows-3.11, 2026-10-28). `segment` is the cd's top-level segment. */
+export type CdSucceeds = (dir: string, segment: number) => boolean;
 
 /** Every delete in `command`, in order, with the folder each runs in from
  *  `base` (the shell's folder; undefined when the caller does not know it).
- *  A `cd` inside a shell's body moves only the rest of that body. */
-export function shellDeletes(command: string, base?: string): ShellDelete[] {
+ *  A `cd` inside a shell's body moves only the rest of that body; one a
+ *  caller's `cdSucceeds` proves carries past any separator. */
+export function shellDeletes(command: string, base?: string, cdSucceeds?: CdSucceeds): ShellDelete[] {
   const positions = commandPositions(command).positions;
   const cwds: Array<string | null | undefined> = [base];
   const out: ShellDelete[] = [];
@@ -178,7 +187,7 @@ export function shellDeletes(command: string, base?: string): ShellDelete[] {
     const cwd = cwds[p.depth];
     if (CD_BINS.has(p.bin) || CD_UNPLACEABLE.has(p.bin)) {
       const next = positions.slice(i + 1).find((q) => q.depth <= p.depth);
-      cwds[p.depth] = afterCd(p, next, cwd);
+      cwds[p.depth] = afterCd(p, next, cwd, cdSucceeds);
       return;
     }
     const del = deleteOf(p);
@@ -227,22 +236,6 @@ export function leadingRun(command: string, leads: (segment: string) => boolean)
     run.push(segment);
   }
   return run;
-}
-
-/** The targets of the plain single-file deletes that open the command, before
- *  anything else in it runs (`leadingRun`), or [] when something could run
- *  first or alongside. What the disk shows before the call is what those
- *  deletes meet, so `mv users.csv a && rm -f a` never qualifies. */
-export function leadingShellDeleteTargets(command: string): string[] {
-  const single = (seg: string) => {
-    const del = plainDelete(seg);
-    return del !== null && !del.recursive && del.targets.length > 0;
-  };
-  const out: string[] = [];
-  for (const seg of leadingRun(command, single) ?? []) {
-    for (const p of plainDelete(seg)!.targets) if (!out.includes(p)) out.push(p);
-  }
-  return out;
 }
 
 /** Every file a command deletes one at a time, in order, deduplicated: the

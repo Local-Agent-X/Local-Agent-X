@@ -22,7 +22,7 @@ import { resolveAndPinHost } from "./network-dns.js";
 export { resolveAndPinHost } from "./network-dns.js";
 import { manualRuntimeHostPorts, liveLocalServicePorts, reservedLoopbackPorts } from "./security-config.js";
 import { agentOriginPort } from "./agent-origin-port.js";
-import { loopbackServiceReachable } from "./loopback-grant.js";
+import { isThisMachineHost, loopbackServiceReachable } from "./loopback-grant.js";
 import { endpointHostPort } from "../../local-runtimes/admission.js";
 import { isLocalOnlyMode, isLoopbackUrl, LOCAL_ONLY_BLOCK_MESSAGE } from "../../local-only-policy.js";
 
@@ -132,10 +132,11 @@ export function evaluateWebFetch(
   // A local service the agent may reach (loopback-grant.ts, the grant the
   // shell rules read too): an operator-trusted port (a bridge or dev server
   // the agent started), or on a machine its operator declared disposable, any
-  // port. Loopback destinations only — a literal 127.0.0.1/::1 or one of its
-  // fixed alias names (isLoopbackHost); no hostname is ever RESOLVED here, so
+  // port. This machine's destinations only — a literal 127.0.0.1/::1, one of
+  // its fixed alias names, or a literal address this machine's own interfaces
+  // hold (isThisMachineHost); no hostname is ever RESOLVED here, so
   // DNS-rebinding protection is untouched.
-  if (isLoopbackHost(host) && loopbackServiceReachable(parsed.port || null, localServicePorts)) {
+  if (isThisMachineHost(host) && loopbackServiceReachable(parsed.port || null, localServicePorts)) {
     const registered = parsed.port !== "" && localServicePorts.has(parsed.port);
     return { allowed: true, reason: registered ? "Allowed local service" : "Loopback service on a disposable sandbox" };
   }

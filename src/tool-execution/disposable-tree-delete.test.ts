@@ -80,6 +80,23 @@ describe("recursive deletes that destroy nothing anyone needs run without a card
     expect(floor("rm -rf node_modules dist && npm install && npm run build")).toBe("allow-with-rollback");
   });
 
+  // TB2 2026-10-28: each carded only because something ran before the delete.
+  // Copying, extracting, building and running leave every original where it
+  // was (delete-prefix.ts); only a move or a link relocates data.
+  it("after commands that copy, extract, build or run, but move nothing onto the target", () => {
+    const temp = join(root, "os-temp").replace(/\\/g, "/");
+    mkdirSync(join(root, "os-temp", "CompCert"));
+    for (const command of [
+      "cp -r client-data node_modules; rm -rf node_modules",
+      "echo x > node_modules/a; rm -rf node_modules",
+      "rm -rf dist && cd .. && rm -rf node_modules",
+      `set -e\nexport SSHPASS=password\nrm -rf ${temp}/clonetest\ngit clone git@localhost:/git/project ${temp}/clonetest`,
+      `cd ${temp} && tar xzf compcert.tgz && rm -rf CompCert && mv CompCert-3.13.1 CompCert`,
+      "mkdir -p tests && cp package.json tests/p.json && python3 - <<'EOF'\nimport test_outputs\nprint(1)\nEOF\nrc=$?; rm -rf tests; exit $rc",
+      `ln -sf ${temp}/site.conf ${temp}/enabled-site && rm -rf node_modules`,
+    ]) expect(floor(command), command).toBe("allow-with-rollback");
+  });
+
   it("a folder whose every file this session's agent wrote — until the session reads untrusted content", () => {
     mkdirSync(join(root, "project", "scratch"));
     const f = join(root, "project", "scratch", "probe.ts");
@@ -108,7 +125,12 @@ describe("every lookalike keeps the card", () => {
     for (const command of [
       "mv client-data x && rm -rf x",
       "mv client-data node_modules/ && rm -rf node_modules",
-      "cp -r client-data node_modules; rm -rf node_modules",
+      "ln -sfn client-data build-out && rm -rf build-out/",
+      "python3 -c \"import shutil; shutil.move('client-data', 'out')\"; rm -rf out",
+      "rm() { mv \"$@\" ../keep; }; rm -rf node_modules",
+      "rsync -a --remove-source-files client-data/ node_modules/; rm -rf node_modules",
+      "tar cf node_modules/x.tar --remove-files client-data; rm -rf node_modules",
+      "ls client-data | xargs -I{} mv client-data/{} node_modules; rm -rf node_modules",
       "mv client-data node_modules | rm -rf node_modules",
       "mv client-data node_modules & rm -rf node_modules",
       "rm -rf node_modules & mv client-data node_modules",
@@ -129,8 +151,8 @@ describe("every lookalike keeps the card", () => {
       "cd node_modules; rm -rf left-pad",
       "cd $DIR && rm -rf node_modules",
       "cd - && rm -rf node_modules",
-      "rm -rf dist && cd .. && rm -rf node_modules",
-      "cd ./x && cd .. && rm -rf node_modules",
+      "rm -rf dist && cd .. && rm -rf project/client-data",
+      "cd ./x && cd .. && rm -rf client-data",
       "rm -rf dist && cd client-data && rm -rf build-cache",
       "command -v cpio; cd .. && rm -rf project/client-data",
       "rm -rf ~/node_modules",
@@ -174,11 +196,11 @@ describe("every lookalike keeps the card", () => {
     expect(isDisposableTreeDelete("ls && echo ok", () => false, scope)).toBe(false);
   });
 
-  it("a prelude that writes, renames, runs something or changes PATH", () => {
+  it("a prelude that renames, links, compresses in place or changes PATH", () => {
     for (const command of [
-      "echo x > node_modules/a; rm -rf node_modules",
       "export PATH=/x:$PATH; rm -rf node_modules",
-      "command cp -r client-data dist; rm -rf dist",
+      "command mv client-data dist; rm -rf dist",
+      "gzip -9 client-data/build-cache/original.psd; rm -rf client-data/build-cache/original.psd.gz",
       "ls $(mv client-data dist); rm -rf dist",
       "command -v uv | rm -rf node_modules",
       "true; mv client-data dist; rm -rf dist",
@@ -277,6 +299,38 @@ describe("single-file shell deletes that delete nobody's data (disposableFileDel
     expect(files(`rm -f ${posix(join(root, "project"))}/*.csv`)).toEqual([]);
     expect(files("rm -f gone.txt")).toEqual([]);
     expect(files("rm -f gone.txt", join(root, "project"))).toEqual(["gone.txt"]);
+  });
+
+  // TB2 2026-10-28: install-windows-3.11's `cd /app/win311-vm⏎kill $(cat
+  // qemu.pid); sleep 2⏎rm -f qmp.sock qemu.pid`, git-multibranch's `rm
+  // /etc/nginx/sites-enabled/default`, compile-compcert's `cd /tmp && ccomp -o
+  // cc_test2 cc_test.c && ./cc_test2; rm -f cc_test2`, git-leak-recovery's `rm
+  // -f .git/ORIG_HEAD`, build-pov-ray's `rm -f *.o`.
+  it("after commands that move nothing onto it, and files that hold no data", () => {
+    const vm = join(root, "project", "vm");
+    mkdirSync(vm);
+    writeFileSync(join(vm, "qemu.pid"), "4242\n");
+    // A file link needs privileges on Windows; a folder junction stands in.
+    symlinkSync(join(root, "project", "client-data"), join(vm, "default"), "junction");
+    writeFileSync(join(vm, "pc.c"), "int main(){}");
+    writeFileSync(join(vm, "pc.o"), "\x7fELF");
+    const temp = posix(join(root, "os-temp"));
+    const cwd = join(root, "project");
+    expect(files(`cd ${posix(vm)}\nkill $(cat qemu.pid) 2>/dev/null; sleep 2\nrm -f qemu.pid default`, cwd)).toEqual(["qemu.pid", "default"]);
+    expect(files(`cd ${temp} && ccomp -o cc_test2 cc_test.c && ./cc_test2 1 2 3; echo "exit=$?"; rm -f cc_test2`, cwd)).toEqual(["cc_test2"]);
+    expect(files(`cd ${posix(vm)} && rm -f *.o && make`, cwd)).toEqual(["*.o"]);
+  });
+
+  it("but not a pid-named file holding text, an object file with no source, a link written with a slash, nor a cd that may fail", () => {
+    const vm = join(root, "project", "vm");
+    mkdirSync(vm);
+    writeFileSync(join(vm, "notes.pid"), "my notes");
+    writeFileSync(join(vm, "lib.o"), "\x7fELF");
+    symlinkSync(join(root, "project", "client-data"), join(vm, "data"), "junction");
+    const cwd = join(root, "project");
+    expect(files(`cd ${posix(vm)} && rm -f notes.pid lib.o *.o data/`, cwd)).toEqual([]);
+    expect(files(`cd ${posix(join(root, "project", "nowhere"))}\nrm -f gone.txt`, cwd)).toEqual([]);
+    expect(files(`mv ${posix(join(root, "project", "users.csv"))} ${posix(vm)}/x.pid; rm -f ${posix(vm)}/x.pid`, cwd)).toEqual([]);
   });
 
   it("never after something that could put a file there, nor beside it", () => {

@@ -249,24 +249,27 @@ export const DECLINE_SUPPRESS_MS = 60_000;
 // remembered for the session. The profile decides the *default* posture; this
 // list is a floor under it for the handful of operations that can destroy work
 // or data with no recovery. Patterns stop at the first command separator so a
-// later piped/chained token can't smuggle one in unmatched-by-position.
+// later piped/chained token can't smuggle one in unmatched-by-position. A
+// newline is one too: `rm -f qmp.sock⏎qemu-system-i386 -drive …` carded as
+// `rm -r` (TB2 install-windows-3.11, 2026-10-28). A backslash-newline is not,
+// so the floor scans the command with its continuations joined (floorText).
 const DESTRUCTIVE_COMMAND_PATTERNS: Array<{ pattern: RegExp; reason: string }> = [
-  { pattern: /\bgit\s+push\b[^|;&]*\s(?:--force\b|--force-with-lease\b|-\w*f\w*\b)/i, reason: "git force-push" },
-  { pattern: /\bgit\s+push\b[^|;&]*\s(?:--delete\b|:\S)/i, reason: "git delete remote branch" },
-  { pattern: /\bgit\s+reset\b[^|;&]*--hard\b/i, reason: "git reset --hard" },
-  { pattern: /\bgit\s+clean\b[^|;&]*-\w*f\w*/i, reason: "git clean -f" },
+  { pattern: /\bgit\s+push\b[^|;&\n]*\s(?:--force\b|--force-with-lease\b|-\w*f\w*\b)/i, reason: "git force-push" },
+  { pattern: /\bgit\s+push\b[^|;&\n]*\s(?:--delete\b|:\S)/i, reason: "git delete remote branch" },
+  { pattern: /\bgit\s+reset\b[^|;&\n]*--hard\b/i, reason: "git reset --hard" },
+  { pattern: /\bgit\s+clean\b[^|;&\n]*-\w*f\w*/i, reason: "git clean -f" },
   // Case-SENSITIVE, unlike its neighbours: `-D` force-deletes a branch with
   // unmerged commits; `-d` refuses to, so it can lose nothing and is not on
   // this floor. Under /i the `-d` form carded every merged-branch cleanup, in
   // Autonomous too (2026-10-26). The long and split spellings of a forced
   // delete (`--delete --force`, `-d -f`, `-df`) are the same -D.
-  { pattern: /\bgit\s+branch\b[^|;&]*\s(?:-[A-Za-z]*D[A-Za-z]*\b|-[A-Za-z]*(?:df|fd)[A-Za-z]*\b|(?:--delete|-d)\b[^|;&]*\s(?:--force|-f)\b|(?:--force|-f)\b[^|;&]*\s(?:--delete|-d)\b)/, reason: "git force-delete branch" },
+  { pattern: /\bgit\s+branch\b[^|;&\n]*\s(?:-[A-Za-z]*D[A-Za-z]*\b|-[A-Za-z]*(?:df|fd)[A-Za-z]*\b|(?:--delete|-d)\b[^|;&\n]*\s(?:--force|-f)\b|(?:--force|-f)\b[^|;&\n]*\s(?:--delete|-d)\b)/, reason: "git force-delete branch" },
   { pattern: /\bgit\s+filter-branch\b/i, reason: "git history rewrite" },
   // `git rm` is a staged removal the index can undo (`git rm -rf --cached
   // build` deletes nothing on disk), so no rm pattern matches after `git`.
   { pattern: /(?<!\bgit\s+)\brm\s+-\w*r\w*f\w*\b/i, reason: "rm -rf" },
   { pattern: /(?<!\bgit\s+)\brm\s+-\w*f\w*r\w*\b/i, reason: "rm -fr" },
-  { pattern: /(?<!\bgit\s+)\brm\s+-[rf]\b[^|;&]*\s-[rf]\b/i, reason: "rm -r -f" },
+  { pattern: /(?<!\bgit\s+)\brm\s+-[rf]\b[^|;&\n]*\s-[rf]\b/i, reason: "rm -r -f" },
   // `rm -r` without -f was left off as "not the catastrophic form". Wrong
   // axis: -f only silences prompts and missing-file errors; on a writable
   // tree `rm -r dir` is exactly as unrecoverable as `rm -rf dir`, and it is
@@ -277,8 +280,8 @@ const DESTRUCTIVE_COMMAND_PATTERNS: Array<{ pattern: RegExp; reason: string }> =
   // `git rm -r` is a staged removal the index can undo, so it is excluded.
   // `rm -Recurse` (the PowerShell alias) is caught here too; the entry below
   // that names it precisely is listed first so the reason says what it is.
-  { pattern: /\b(?:rm|ri|rmdir|rd|del|erase)\b[^|;&]*\s-rec\w*\b/i, reason: "Remove-Item -Recurse (alias)" },
-  { pattern: /(?<!\bgit\s+)\brm\b[^|;&]*\s(?:-\w*r\w*|--recursive)\b/i, reason: "rm -r" },
+  { pattern: /\b(?:rm|ri|rmdir|rd|del|erase)\b[^|;&\n]*\s-rec\w*\b/i, reason: "Remove-Item -Recurse (alias)" },
+  { pattern: /(?<!\bgit\s+)\brm\b[^|;&\n]*\s(?:-\w*r\w*|--recursive)\b/i, reason: "rm -r" },
   // A recursive wipe by composition. With `rm -rf` policy-blocked and `rm -r`
   // carded, a 27B ran `find client-data/build-cache -exec rm {} + && rmdir
   // client-data/build-cache` — every file deleted by find's per-file rm, then
@@ -289,10 +292,10 @@ const DESTRUCTIVE_COMMAND_PATTERNS: Array<{ pattern: RegExp; reason: string }> =
   // -ok/-okdir, and rm/unlink/rmdir fed by xargs (which only ever follows a
   // pipe, so it is matched from its own word). A find that lists, or an
   // xargs that counts, is not a delete and stays off.
-  { pattern: /\bfind\b[^|;&]*\s-delete\b/i, reason: "find -delete" },
-  { pattern: /\bfind\b[^|;&]*\s-(?:exec|execdir|ok|okdir)\s+(?:rm|unlink|rmdir)\b/i, reason: "find -exec rm" },
-  { pattern: /\bxargs\b[^|;&]*\s(?:rm|unlink|rmdir)\b/i, reason: "xargs rm" },
-  { pattern: /\bdd\b[^|;&]*\sof=\/dev\//i, reason: "dd to a raw device" },
+  { pattern: /\bfind\b[^|;&\n]*\s-delete\b/i, reason: "find -delete" },
+  { pattern: /\bfind\b[^|;&\n]*\s-(?:exec|execdir|ok|okdir)\s+(?:rm|unlink|rmdir)\b/i, reason: "find -exec rm" },
+  { pattern: /\bxargs\b[^|;&\n]*\s(?:rm|unlink|rmdir)\b/i, reason: "xargs rm" },
+  { pattern: /\bdd\b[^|;&\n]*\sof=\/dev\//i, reason: "dd to a raw device" },
   { pattern: /\bmkfs\b/i, reason: "filesystem format" },
   // Native Windows deletes. Every entry above was Unix-shaped, so on the
   // product's primary platform this floor did not exist: a qwen3:8b run had
@@ -307,7 +310,7 @@ const DESTRUCTIVE_COMMAND_PATTERNS: Array<{ pattern: RegExp; reason: string }> =
   // parameter may be abbreviated (-Rec, -r). The cmdlet's aliases (rm, ri,
   // rmdir, rd, del, erase) take the same parameter — the alias entry above,
   // matched with the PowerShell spelling (-Rec…).
-  { pattern: /\bRemove-Item\b[^|;&]*\s-r(?:ec\w*)?\b/i, reason: "Remove-Item -Recurse" },
+  { pattern: /\bRemove-Item\b[^|;&\n]*\s-r(?:ec\w*)?\b/i, reason: "Remove-Item -Recurse" },
   // cmd.exe: `rd /s` removes a tree; `del /s` deletes across subdirectories.
   // /q only silences the prompt, so /s is the flag that makes it a tree.
   { pattern: /\b(?:rd|rmdir)\b(?:\s+\/\w+)*\s+\/s\b/i, reason: "rd /s" },
@@ -326,8 +329,8 @@ const DESTRUCTIVE_COMMAND_PATTERNS: Array<{ pattern: RegExp; reason: string }> =
 const SINGLE_QUOTED = String.raw`'[^']*'`;
 const DOUBLE_QUOTED = String.raw`"(?:[^"\\]|\\.)*"`;
 const LITERAL = `(${SINGLE_QUOTED}|${DOUBLE_QUOTED})`;
-const COMMIT_MESSAGE = new RegExp(String.raw`(\bgit\b[^|;&]*?\s(?:commit|tag)\b[^|;&]*?\s(?:-[A-Za-z]*m|--message)(?:\s+|=))` + LITERAL, "g");
-const SEARCH_PATTERN = new RegExp(String.raw`(\b(?:grep|egrep|fgrep|rg|ag|ack|findstr)\b(?:\s+-{1,2}[\w-]+(?:=\S+)?)*\s+|\bSelect-String\b[^|;&]*?\s-Pattern\s+|\bgit\b[^|;&]*?\slog\b[^|;&]*?\s--grep(?:\s+|=))` + LITERAL, "gi");
+const COMMIT_MESSAGE = new RegExp(String.raw`(\bgit\b[^|;&\n]*?\s(?:commit|tag)\b[^|;&\n]*?\s(?:-[A-Za-z]*m|--message)(?:\s+|=))` + LITERAL, "g");
+const SEARCH_PATTERN = new RegExp(String.raw`(\b(?:grep|egrep|fgrep|rg|ag|ack|findstr)\b(?:\s+-{1,2}[\w-]+(?:=\S+)?)*\s+|\bSelect-String\b[^|;&\n]*?\s-Pattern\s+|\bgit\b[^|;&\n]*?\slog\b[^|;&\n]*?\s--grep(?:\s+|=))` + LITERAL, "gi");
 
 function runsNothing(literal: string): boolean {
   return literal.startsWith("'") || !/\$\(|`/.test(literal);
@@ -365,6 +368,12 @@ export function withoutInertLiterals(command: string): string {
     .replace(LOOKUP, (_whole, lead: string) => `${lead}""`);
 }
 
+/** The text the floor scans: line continuations joined (a backslash-newline
+ *  continues one command), then the inert literals blanked. */
+function floorText(raw: string): string {
+  return withoutInertLiterals(raw.replace(/\\\r?\n/g, " "));
+}
+
 /**
  * If a shell tool call is an irreversible/destructive operation, return a short
  * human reason; otherwise null. Used to force an approval prompt that bypasses
@@ -381,7 +390,7 @@ export function isDestructiveCommand(
   // and app_serve_backend's command was never scanned at all.
   const raw = shellCommandOf(toolName, args);
   if (raw === undefined) return null;
-  const cmd = withoutInertLiterals(raw);
+  const cmd = floorText(raw);
   for (const { pattern, reason } of DESTRUCTIVE_COMMAND_PATTERNS) {
     if (pattern.test(cmd)) return reason;
   }
@@ -399,7 +408,7 @@ export function isDestructiveCommand(
 function approvalShellReason(toolName: string, args: Record<string, unknown>, treeDelete?: TreeDeleteScope): string | null {
   const reason = isDestructiveCommand(toolName, args);
   if (reason === null || !treeDelete) return reason;
-  const cmd = withoutInertLiterals(shellCommandOf(toolName, args) ?? "");
+  const cmd = floorText(shellCommandOf(toolName, args) ?? "");
   const trips = (segment: string) => DESTRUCTIVE_COMMAND_PATTERNS.some(({ pattern }) => pattern.test(segment));
   return isDisposableTreeDelete(cmd, trips, treeDelete) ? null : reason;
 }

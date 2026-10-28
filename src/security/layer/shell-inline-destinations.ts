@@ -17,8 +17,7 @@
  */
 import { commandPositions } from "./shell-command-positions.js";
 import { INTERP_EVAL_FLAGS } from "./shell-rules.js";
-import { isLoopbackHost } from "./ip-classification.js";
-import { defaultPort } from "./loopback-grant.js";
+import { defaultPort, isThisMachineHost } from "./loopback-grant.js";
 
 export type InlineDestinations =
   | { kind: "none" }
@@ -51,29 +50,58 @@ const IDENTIFIER = /^\s*([A-Za-z_]\w*)\s*(?:,|$)/;
 const URL_LITERAL = /^[a-z][a-z0-9+.-]*:\/\//i;
 
 const literal = (m: RegExpMatchArray, a: number, b: number) => m[a] ?? m[b];
-const loopback = (host: string) => isLoopbackHost(host.replace(/^\[|\]$/g, "").toLowerCase());
+const loopback = isThisMachineHost;
+
+const STRING_LIST = new RegExp(`^\\s*[[(]\\s*((?:${STRING}\\s*,\\s*)*${STRING})\\s*,?\\s*[\\])]`);
+
+/** The literals of a list or tuple of string literals only (`["a", "b"]`), or null. */
+function literalList(text: string): string[] | null {
+  const list = STRING_LIST.exec(text);
+  if (!list) return null;
+  return [...list[1].matchAll(new RegExp(STRING, "g"))].map((s) => literal(s, 1, 2));
+}
 
 /** A name bound exactly once in the program to a literal or a Request of
  *  one (`url = 'http://localhost:8080'`, `req = Request('…', method='GET')`),
- *  so a call handed the name is handed that literal. Bound twice, or to
- *  anything else: unknown. */
-function bindings(program: string): Map<string, string | null> {
-  const bound = new Map<string, string | null>();
+ *  or as the variable of a loop over a list of literals (`for url in
+ *  ["http://127.0.0.1:80/", …]:`, `for (const u of […])`: TB2
+ *  install-windows-3.11, 2026-10-28), so a call handed the name is handed one
+ *  of those literals. Bound twice, or to anything else: unknown. */
+function bindings(program: string): Map<string, string[] | null> {
+  const bound = new Map<string, string[] | null>();
+  const bind = (name: string, values: string[] | null) => bound.set(name, bound.has(name) ? null : values);
   for (const m of program.matchAll(/(?:^|[;\n])\s*([A-Za-z_]\w*)\s*=\s*([^\n;]*)/g)) {
     const [, name, value] = m;
     const lit = new RegExp(`^\\s*(?:(?:urllib\\.request\\.)?Request\\s*\\(\\s*)?${STRING}`).exec(value);
-    bound.set(name, bound.has(name) || !lit ? null : literal(lit, 1, 2));
+    bind(name, lit ? [literal(lit, 1, 2)] : null);
+  }
+  for (const m of program.matchAll(/\bfor\s*\(?\s*(?:(?:const|let|var)\s+)?([A-Za-z_]\w*)\s+(?:in|of)\s+([^\n]*)/g)) {
+    bind(m[1], literalList(m[2]));
   }
   return bound;
 }
 
-/** Where one call's argument text points, or null when it cannot be read. */
-function destinationOf(argText: string, bound: Map<string, string | null>): { port: string } | { unixSocket: string } | null {
-  let m: RegExpMatchArray | null;
-  if ((m = IDENTIFIER.exec(argText))) {
-    const value = bound.get(m[1]);
-    return value ? destinationOf(`'${value}'`, bound) : null;
+type Destination = { port: string } | { unixSocket: string };
+
+/** Where one call's argument text points (every literal a bound name may
+ *  hold), or null when it cannot be read. */
+function destinationsOf(argText: string, bound: Map<string, string[] | null>): Destination[] | null {
+  const m = IDENTIFIER.exec(argText);
+  if (!m) { const d = destinationOf(argText); return d && [d]; }
+  const values = bound.get(m[1]);
+  if (!values) return null;
+  const out: Destination[] = [];
+  for (const value of values) {
+    const d = destinationOf(`'${value}'`);
+    if (!d) return null;
+    out.push(d);
   }
+  return out;
+}
+
+/** Where one call's literal argument text points, or null when it cannot be read. */
+function destinationOf(argText: string): Destination | null {
+  let m: RegExpMatchArray | null;
   if ((m = TUPLE.exec(argText))) return loopback(literal(m, 1, 2)) ? { port: m[3] } : null;
   if ((m = PORT_HOST.exec(argText))) return loopback(literal(m, 2, 3)) ? { port: m[1] } : null;
   if ((m = HOST_PORT.exec(argText))) return loopback(literal(m, 1, 2)) ? { port: m[3] } : null;
@@ -107,9 +135,9 @@ export function inlineProgramDestinations(command: string, heredocPrograms: read
     const bound = bindings(program);
     for (const m of program.matchAll(DESTINATION_CALL)) {
       calls++;
-      const d = destinationOf(m[1], bound);
-      if (!d) return { kind: "unknown" };
-      if ("port" in d) ports.push(d.port); else unixSockets.push(d.unixSocket);
+      const found = destinationsOf(m[1], bound);
+      if (!found) return { kind: "unknown" };
+      for (const d of found) if ("port" in d) ports.push(d.port); else unixSockets.push(d.unixSocket);
     }
   }
   if (calls === 0) return { kind: "none" };

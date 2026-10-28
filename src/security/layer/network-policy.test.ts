@@ -14,6 +14,7 @@ import {
   isPrivateIPv6,
 } from "./ip-classification.js";
 import { setAgentOriginPort } from "./agent-origin-port.js";
+import { _setInterfaceAddressesForTests } from "./loopback-grant.js";
 
 const EMPTY_ALLOWLIST = new Set<string>();
 
@@ -322,8 +323,11 @@ describe("loopback services on a disposable sandbox", () => {
     prev = process.env.LAX_DATA_DIR;
     dir = mkdtempSync(join(tmpdir(), "lax-disposable-net-"));
     process.env.LAX_DATA_DIR = dir;
+    // This machine's own addresses, fixed: the box running the test may hold any LAN address.
+    _setInterfaceAddressesForTests(() => ["127.0.0.1", "::1", "172.28.0.2"]);
   });
   afterEach(() => {
+    _setInterfaceAddressesForTests(null);
     if (prev === undefined) delete process.env.LAX_DATA_DIR;
     else process.env.LAX_DATA_DIR = prev;
     rmSync(dir, { recursive: true, force: true });
@@ -334,6 +338,15 @@ describe("loopback services on a disposable sandbox", () => {
     for (const url of ["http://localhost:8080/", "http://127.0.0.1:5432/", "http://[::1]:6379/"]) {
       expect(evaluateEgressForUrl(url).allowed, url).toBe(true);
     }
+  });
+
+  // TB2 hf-model-inference, 2026-10-28: a server bound to every interface,
+  // checked at the container's own address.
+  it("reaches this machine at its own interface address, as at loopback", () => {
+    writeFileSync(join(dir, "security.json"), JSON.stringify({ disposableSandbox: true }));
+    expect(evaluateEgressForUrl("http://172.28.0.2:5000/sentiment").allowed).toBe(true);
+    writeFileSync(join(dir, "security.json"), JSON.stringify({ disposableSandbox: false }));
+    expect(evaluateEgressForUrl("http://172.28.0.2:5000/sentiment").allowed).toBe(false);
   });
 
   it("still refuses the LAN and cloud metadata there", () => {

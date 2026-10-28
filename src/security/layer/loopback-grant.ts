@@ -13,6 +13,8 @@
  * and the server's bootstrap can all reach it.
  */
 import { realpathSync } from "node:fs";
+import { networkInterfaces } from "node:os";
+import { isLoopbackHost } from "./ip-classification.js";
 import { isDisposableSandbox } from "./disposable-sandbox.js";
 import { ownedUnixSockets } from "../../tools/owned-listeners.js";
 import { agentOriginPort } from "./agent-origin-port.js";
@@ -27,6 +29,31 @@ export function setSelfPort(port: number | string): void {
 
 export function selfPort(): string {
   return ownPort;
+}
+
+const ownInterfaceAddresses = (): string[] =>
+  Object.values(networkInterfaces()).flatMap((list) => (list ?? []).map((a) => a.address.toLowerCase()));
+let interfaceAddresses = ownInterfaceAddresses;
+
+/** Test seam: the addresses this machine's network interfaces hold; null restores the real ones. */
+export function _setInterfaceAddressesForTests(read: (() => string[]) | null): void {
+  interfaceAddresses = read ?? ownInterfaceAddresses;
+}
+
+/**
+ * Is `host` this machine: a loopback name or address, or a literal address one
+ * of its own network interfaces holds (172.28.0.2 inside a container, a
+ * laptop's LAN address). A connection to an interface's own address never
+ * leaves the machine: the kernel delivers it over loopback, to the same
+ * services on the same ports. TB2 hf-model-inference, 2026-10-28: a server
+ * told to listen on every interface was checked at the container's own
+ * address and refused as a private address. A name is never resolved here.
+ */
+export function isThisMachineHost(host: string): boolean {
+  const h = host.replace(/^\[|\]$/g, "").toLowerCase();
+  if (isLoopbackHost(h)) return true;
+  if (!/^\d+\.\d+\.\d+\.\d+$/.test(h) && !h.includes(":")) return false;
+  return interfaceAddresses().includes(h);
 }
 
 /** The port of a URL with none spelled: 443 for https/wss, else 80. */

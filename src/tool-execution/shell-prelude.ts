@@ -1,10 +1,11 @@
 /**
  * What opens a shell command before its first real act: commands that only
  * look (`command -v uv;`, `set -e`, `mkdir -p out`) and one plain `cd <dir>
- * &&`. The approval checks that read the disk before a command runs
- * (disposable-tree-delete.ts) and the shell-write lineage
- * (create-target-path.ts) step past them to the command's first real act, at
- * the folder it runs in.
+ * &&`. The shell-write lineage (create-target-path.ts) steps past them to the
+ * command's first real act, at the folder it runs in: a file it enrolls as the
+ * agent's must hold only this command's bytes, so nothing before the write may
+ * act at all. The delete proofs ask a weaker question, whether anything before
+ * a delete can move data onto its target, and answer it in delete-prefix.ts.
  *
  * Fail-closed: anything not provably inert ends the prelude, and a `cd` this
  * cannot place returns null.

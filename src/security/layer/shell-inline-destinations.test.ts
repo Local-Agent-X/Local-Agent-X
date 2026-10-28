@@ -1,8 +1,9 @@
 // The destinations an inline program spells as literals, and the ones it does
 // not (which fail closed). The local forms are what Terminal-Bench 2.0
 // (2026-10-20) refused: a VM's control socket, a port check in Python.
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { inlineProgramDestinations, inlinePrograms } from "./shell-inline-destinations.js";
+import { _setInterfaceAddressesForTests } from "./loopback-grant.js";
 
 const py = (program: string) => inlineProgramDestinations(`python3 -c "${program}"`);
 const node = (program: string) => inlineProgramDestinations(`node -e "${program}"`);
@@ -53,5 +54,35 @@ describe("inlineProgramDestinations", () => {
   it("names nothing for a program with no destination call", () => {
     expect(py("print(2+2)")).toEqual({ kind: "none" });
     expect(py("import socket; socket.socket()")).toEqual({ kind: "none" });
+  });
+});
+
+// TB2 2026-10-28: install-windows-3.11 checked three pages of its own server in
+// a loop; hf-model-inference checked a server bound to every interface at the
+// container's own address.
+describe("a loop over literals, and this machine's own interface address", () => {
+  afterEach(() => _setInterfaceAddressesForTests(null));
+
+  it("reads every literal a loop variable takes", () => {
+    const loop = 'import urllib.request\nfor url in ["http://127.0.0.1:80/", "http://127.0.0.1:80/vnc.html", "http://localhost:6080/core/rfb.js"]:\n    r = urllib.request.urlopen(url, timeout=5)';
+    expect(inlineProgramDestinations("python3 - <<'EOF' x", [loop])).toEqual({ kind: "local", ports: ["80", "6080"], unixSockets: [] });
+    expect(node("for (const u of ['http://localhost:3000/a', 'http://localhost:3000/b']) fetch(u)")).toEqual({ kind: "local", ports: ["3000"], unixSockets: [] });
+  });
+
+  it("is unknown when the loop's list holds anything but literals, or one off this machine", () => {
+    for (const loop of [
+      'import urllib.request\nfor url in ["http://127.0.0.1/", "https://evil.test/"]:\n    urllib.request.urlopen(url)',
+      'import urllib.request\nfor url in [base + "/a"]:\n    urllib.request.urlopen(url)',
+      'import urllib.request\nfor url in urls:\n    urllib.request.urlopen(url)',
+      'import urllib.request\nurl = "http://127.0.0.1/"\nfor url in ["https://evil.test/"]:\n    urllib.request.urlopen(url)',
+    ]) expect(inlineProgramDestinations("python3 -", [loop]), loop).toEqual({ kind: "unknown" });
+  });
+
+  it("a literal address one of this machine's interfaces holds is this machine; another private address is not", () => {
+    _setInterfaceAddressesForTests(() => ["127.0.0.1", "172.28.0.2", "fe80::1"]);
+    const call = (host: string) => py(`import urllib.request; print(urllib.request.urlopen('http://${host}:5000/sentiment', data=b'x').read())`);
+    expect(call("172.28.0.2")).toEqual({ kind: "local", ports: ["5000"], unixSockets: [] });
+    expect(call("[fe80::1]")).toEqual({ kind: "local", ports: ["5000"], unixSockets: [] });
+    expect(call("172.28.0.3")).toEqual({ kind: "unknown" });
   });
 });

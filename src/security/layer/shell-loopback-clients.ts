@@ -1,7 +1,9 @@
 /**
  * The loopback destination a shell network client reaches, when that is all
  * it reaches: `curl localhost:8080/health`, `ssh -p 2222 root@localhost`,
- * `nc -z 127.0.0.1 5432`, `socat - UNIX-CONNECT:/tmp/qemu.sock`. The network
+ * `nc -z 127.0.0.1 5432`, `socat - UNIX-CONNECT:/tmp/qemu.sock`, `openssl
+ * s_client -connect localhost:8443`. "This machine" includes a literal address
+ * its own interfaces hold (loopback-grant.ts isThisMachineHost). The network
  * rule (shell-command-rule-table.ts) refuses these clients because a host
  * shell can reach any host; a client that names only this machine reaches no
  * farther than http_request may, and the rule lets it through on the same
@@ -14,8 +16,7 @@
  * reaches more than it names, and null is returned.
  */
 import type { CommandPosition } from "./shell-command-positions.js";
-import { isLoopbackHost } from "./ip-classification.js";
-import { defaultPort } from "./loopback-grant.js";
+import { defaultPort, isThisMachineHost } from "./loopback-grant.js";
 
 export interface LoopbackUse {
   /** The loopback ports connected to. */
@@ -39,10 +40,22 @@ export function loopbackUse(p: CommandPosition): LoopbackUse | null {
   if (HTTP_CLIENTS.has(p.bin)) return httpClientUse(p.bin, args);
   if (SSH_CLIENTS.has(p.bin)) return sshClientUse(p.bin, args);
   if (p.bin === "socat") return socatUse(args);
+  if (p.bin === "openssl") return opensslUse(args);
   return null;
 }
 
-const loopback = (host: string) => isLoopbackHost(host.replace(/^\[|\]$/g, "").toLowerCase());
+// ── openssl s_client: `-connect HOST:PORT` ──
+// TB2 git-multibranch, 2026-10-28: `openssl s_client -connect localhost:8443 |
+// openssl x509 -noout -subject`, the certificate check of a server it had set
+// up, refused as a raw TLS connection to any host. A proxy hop reaches past it.
+function opensslUse(args: string[]): LoopbackUse | null {
+  if (args[0]?.toLowerCase() !== "s_client" || args.some((a) => /^-(?:proxy|unix|host|port)$/i.test(a))) return null;
+  const connects = args.flatMap((a, i) => (a === "-connect" ? [args[i + 1] ?? ""] : []));
+  const m = connects.length === 1 ? /^(\[[^\]]+\]|[^:]+):(\d{1,5})$/.exec(connects[0]) : null;
+  return m && loopback(m[1]) ? only([m[2]]) : null;
+}
+
+const loopback = isThisMachineHost;
 const isPort = (s: string) => /^\d{1,5}$/.test(s);
 const only = (ports: string[], probe = false): LoopbackUse => ({ ports, unixSockets: [], probe });
 

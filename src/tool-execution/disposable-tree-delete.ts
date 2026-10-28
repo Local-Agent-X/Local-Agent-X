@@ -14,23 +14,24 @@
  *
  * Fail-closed throughout: a segment that trips the floor but is not a plain
  * recursive rm / Remove-Item / rd, a target with an expansion, glob or `~`, a
- * command before a delete other than an inert one or one plain `cd` opening
- * the command (shell-prelude.ts), or a target that is not provably disposable
- * keeps the card. The deletes are read by the one delete extractor
- * (src/security/layer/shell-delete-targets.ts).
+ * command before a delete that could move data onto its target or change
+ * what the delete runs (delete-prefix.ts), a folder no `cd` rule can place, or
+ * a target that is not provably disposable keeps the card. The deletes are
+ * read by the one delete extractor (src/security/layer/shell-delete-targets.ts).
  *
  * The same proof clears a single-file shell delete for the un-named-delete
- * gate (`disposableFileDeletes`): a file in the temp dir, or one that is not
- * there, is nobody's data.
+ * gate (`disposableFileDeletes`): a file in the temp dir, one that is not
+ * there, or one that holds no data (no-data-paths.ts) is nobody's.
  */
 import { existsSync, lstatSync, readdirSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { isTaskArtifact } from "../data-lineage/task-artifacts.js";
 import { hasExternalIngestion } from "../data-lineage/external.js";
-import { leadingRun, leadingShellDeleteTargets, plainDelete, type DeleteVerb } from "../security/layer/shell-delete-targets.js";
+import { plainDelete, shellDeletes, type DeleteVerb } from "../security/layer/shell-delete-targets.js";
 import { shellSegments } from "../security/layer/shell-lex.js";
-import { enterPrelude } from "./shell-prelude.js";
+import { cdCannotFail, deleteLine, priorRunsLeave, runsAlone } from "./delete-prefix.js";
+import { globHoldsNoData, holdsNoData } from "./no-data-paths.js";
 
 /** Generated-output folders and the manifest beside them that regenerates
  *  them. `null`: a tool's own cache, generated wherever it appears. */
@@ -149,17 +150,17 @@ function agentCreated(abs: string, isDir: boolean, sessionId: string | undefined
 }
 
 function disposable(target: string, verb: DeleteVerb, scope: TreeDeleteScope): boolean {
-  if (tempGlob(target, verb, scope)) return true;
+  if (disposableGlob(target, verb, scope)) return true;
   if (!target || EXPANDS.test(target) || unplaceable(target)) return false;
   const trailingSep = /[\\/]$/.test(target);
   const abs = resolve(scope.cwd, target);
   let stat;
-  // Nothing there deletes nothing. The deletes are the command's leading
-  // segments (isDisposableTreeDelete), so nothing runs first that could put
-  // something there (`mv client-data x && rm -rf x` is refused for its order);
-  // a dangling link is still found by lstat. TB2 git-multibranch, 2026-10-27:
-  // `rm -rf /tmp/e2e && mkdir /tmp/e2e` waited on a card twice for a folder
-  // that did not exist. An unreadable path is not proven absent.
+  // Nothing there deletes nothing. Nothing the command runs before the delete
+  // may put something there (priorRunsLeave: `mv client-data x && rm -rf x`
+  // is refused for its move); a dangling link is still found by lstat. TB2
+  // git-multibranch, 2026-10-27: `rm -rf /tmp/e2e && mkdir /tmp/e2e` waited on
+  // a card twice for a folder that did not exist. An unreadable path is not
+  // proven absent.
   try { stat = lstatSync(abs); } catch (err) { return (err as NodeJS.ErrnoException).code === "ENOENT"; }
   // `rm -rf link/` resolves through the link; the bare link is only unlinked.
   if (stat.isSymbolicLink()) return !trailingSep;
@@ -167,55 +168,58 @@ function disposable(target: string, verb: DeleteVerb, scope: TreeDeleteScope): b
   if (stat.isDirectory() && (generatedOutput(abs) || virtualEnv(abs))) {
     return (verb !== "remove-item" && process.platform !== "win32") || !hasShallowLink(abs);
   }
-  return agentCreated(abs, stat.isDirectory(), scope.sessionId);
+  return holdsNoData(abs, stat, trailingSep) || agentCreated(abs, stat.isDirectory(), scope.sessionId);
 }
 
-/** A glob in the last segment of a target under the real temp dir: whatever
- *  it matches is in temp. TB2 build-pmars (2026-10-27): `cd /tmp && rm -rf
- *  pmars*` waited on a card twice. Never with a trailing separator (the glob
- *  then a slash would follow a matched link out of temp; bare, rm only
- *  unlinks it), and
- *  never for Remove-Item or on Windows, where a recursive delete follows a
- *  junction and the matches are not inspected here. */
-function tempGlob(target: string, verb: DeleteVerb, scope: TreeDeleteScope): boolean {
+/** A glob in the last segment whose every match is disposable: under the real
+ *  temp dir, or what globHoldsNoData proves (a system cache folder's
+ *  contents, `rm -rf /var/lib/apt/lists/*`). TB2 build-pmars (2026-10-27):
+ *  `cd /tmp && rm -rf pmars*` waited on a card twice. Never with a trailing
+ *  separator (the glob then a slash would follow a matched link out of temp;
+ *  bare, rm only unlinks it), and never for Remove-Item or on Windows, where a
+ *  recursive delete follows a junction and the matches are not inspected
+ *  here. */
+function disposableGlob(target: string, verb: DeleteVerb, scope: TreeDeleteScope): boolean {
   if (!target || /[$`~%]/.test(target) || /[\\/]$/.test(target) || unplaceable(target)) return false;
   if (verb === "remove-item" || process.platform === "win32") return false;
   const abs = resolve(scope.cwd, target);
   if (GLOB.test(dirname(abs)) || !GLOB.test(basename(abs))) return false;
-  return inTempDir(join(dirname(abs), "_"), scope.tempDir ?? tmpdir());
+  return inTempDir(join(dirname(abs), "_"), scope.tempDir ?? tmpdir()) || globHoldsNoData(abs);
 }
+
+/** What the command runs before a delete is checked against: the target, or
+ *  for a glob the folder it matches in. */
+const prefixTarget = (abs: string) => (GLOB.test(basename(abs)) ? dirname(abs) : abs);
 
 /**
  * True when `command` opens with recursive deletes of disposable targets only
  * and nothing else trips the floor (`trips`). `command` is the text the floor
  * scanned (inert literals already blanked).
  *
- * The disk is read BEFORE the command runs, so nothing may run before the
- * deletes: `mv client-data node_modules/ && rm -rf node_modules` would move
- * client work into a folder this proves disposable. The deletes come first;
- * what follows them (`&& npm install`) runs after and changes nothing they hit.
- * A single `|` or `&` runs its sides at once, so one touching a delete or
- * before it is never proven (`rm -rf node_modules & mv client-data
- * node_modules`); one after the deletes runs after them (`leadingRun`).
+ * The disk is read BEFORE the command runs, so what runs before a delete must
+ * not be able to put data at its target (delete-prefix.ts `priorRunsLeave`):
+ * `mv client-data node_modules/ && rm -rf node_modules` would move client work
+ * into a folder this proves disposable, while `tar xzf cc.tgz && rm -rf
+ * CompCert` in /tmp extracts copies (TB2 compile-compcert, 2026-10-28). What
+ * follows a delete (`&& npm install`) runs after it and changes nothing it
+ * hits. A single `|` or `&` runs its sides at once, so a delete joined by one
+ * is never proven (`rm -rf node_modules & mv client-data node_modules`). Each
+ * delete's folder is the one its `cd`s place it in (shellDeletes), including a
+ * cd proven not to fail (`cdCannotFail`).
  */
 export function isDisposableTreeDelete(command: string, trips: (segment: string) => boolean, scope: TreeDeleteScope): boolean {
-  const entered = enterPrelude(command, scope.cwd);
-  if (!entered || leadingRun(entered.command, trips) === null) return false;
-  scope = { ...scope, cwd: entered.cwd };
-  const parts = shellSegments(entered.command).map((s) => s.text.trim()).filter(Boolean);
-  // Inert commands and one `cd` opening the command were stepped past above
-  // (`command -v cpio; cd /tmp && rm -rf …`, TB2 qemu-startup 2026-10-27).
-  // Any other `cd` either comes before a delete, which then no longer leads
-  // and keeps the card below, or after the last one, where it moves nothing
-  // they resolve against (`rm -rf ird && mkdir ird && cd ird && …`, TB2
-  // qemu-startup 2026-10-27).
-  let leading = true;
+  const line = deleteLine(command);
+  if (line === null) return false;
+  const cwds = new Map(shellDeletes(line, scope.cwd, cdCannotFail(line)).map((d) => [d.segment, d.cwd]));
   let found = false;
-  for (const part of parts) {
-    if (!trips(part)) { leading = false; continue; }
-    if (!leading) return false;
+  for (const [i, seg] of shellSegments(line).entries()) {
+    const part = seg.text.trim();
+    if (!part || !trips(part)) continue;
     const del = treeDeleteOf(part);
-    if (!del || !del.targets.every((t) => disposable(t, del.verb, scope))) return false;
+    const cwd = cwds.get(i);
+    if (!del || typeof cwd !== "string" || !runsAlone(line, i)) return false;
+    const at = { ...scope, cwd };
+    if (!del.targets.every((t) => disposable(t, del.verb, at) && priorRunsLeave(line, i, prefixTarget(resolve(cwd, t))))) return false;
     found = true;
   }
   return found;
@@ -224,28 +228,43 @@ export function isDisposableTreeDelete(command: string, trips: (segment: string)
 const GLOB = /[*?[]/;
 
 /** One single-file delete target that is nobody's data: in the real temp
- *  dir, or not there at all. A glob counts only in the last segment, under a
- *  temp folder: whatever it matches is in temp. */
+ *  dir, not there at all, or holding no data (no-data-paths.ts: a link, a
+ *  socket, a pid file, a system cache, an object file beside its source). A
+ *  glob counts only in the last segment, under a temp folder or where every
+ *  match holds no data. */
 function disposableFile(target: string, cwd: string | undefined, tempDir: string): boolean {
   if (!target || unplaceable(target) || (cwd === undefined && !isAbsolute(target))) return false;
   const abs = resolve(cwd ?? "", target);
   if (GLOB.test(dirname(abs))) return false;
-  if (GLOB.test(basename(abs))) return inTempDir(join(dirname(abs), "_"), tempDir);
-  try { lstatSync(abs); } catch (err) { return (err as NodeJS.ErrnoException).code === "ENOENT"; }
-  return inTempDir(abs, tempDir);
+  if (GLOB.test(basename(abs))) return inTempDir(join(dirname(abs), "_"), tempDir) || globHoldsNoData(abs);
+  let stat;
+  try { stat = lstatSync(abs); } catch (err) { return (err as NodeJS.ErrnoException).code === "ENOENT"; }
+  return inTempDir(abs, tempDir) || holdsNoData(abs, stat, /[\\/]$/.test(target));
 }
 
 /**
- * The targets, as written, of the single-file deletes opening `command` that
- * are nobody's data (`disposableFile`), for the un-named-delete gate: the
- * order rule isDisposableTreeDelete applies, past the same prelude. TB2
- * 2026-10-24 refused `rm -f /tmp/launch.zip`, `cd /tmp && rm -f t.db`, and
- * `rm -f cparser/Parser*.ml` in a build folder under /tmp, as user files.
- * With no `cwd` (the caller does not know where the shell runs), a relative
- * target counts only after a leading `cd` to an absolute folder.
+ * The targets, as written, of the plain single-file deletes in `command` that
+ * are nobody's data (`disposableFile`), for the un-named-delete gate, by the
+ * order rule isDisposableTreeDelete applies. TB2 2026-10-24 refused `rm -f
+ * /tmp/launch.zip`, `cd /tmp && rm -f t.db`, and `rm -f cparser/Parser*.ml` in
+ * a build folder under /tmp, as user files; 2026-10-28, `rm
+ * /etc/nginx/sites-enabled/default` (a link) and `cd /tmp && ccomp -o cc_test2
+ * cc_test.c && ./cc_test2; rm -f cc_test2`. With no `cwd` (the caller does not
+ * know where the shell runs), a relative target counts only after a `cd` to an
+ * absolute folder.
  */
 export function disposableFileDeletes(command: string, scope: { cwd?: string; tempDir?: string }): string[] {
-  const entered = enterPrelude(command, scope.cwd);
-  if (!entered) return [];
-  return leadingShellDeleteTargets(entered.command).filter((t) => disposableFile(t, entered.cwd, scope.tempDir ?? tmpdir()));
+  const line = deleteLine(command);
+  if (line === null) return [];
+  const segments = shellSegments(line);
+  const out: string[] = [];
+  for (const del of shellDeletes(line, scope.cwd, cdCannotFail(line))) {
+    if (del.wrapped || del.recursive || del.opaque || del.cwd === null) continue;
+    if (!plainDelete(segments[del.segment].text) || !runsAlone(line, del.segment)) continue;
+    for (const t of del.targets) {
+      if (out.includes(t) || !disposableFile(t, del.cwd, scope.tempDir ?? tmpdir())) continue;
+      if (priorRunsLeave(line, del.segment, prefixTarget(resolve(del.cwd ?? "", t)))) out.push(t);
+    }
+  }
+  return out;
 }

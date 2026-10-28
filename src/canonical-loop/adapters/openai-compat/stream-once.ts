@@ -22,9 +22,9 @@ import { markServingChat } from "../../../local-runtimes/residency.js";
 import { createLogger } from "../../../logger.js";
 import { refusalError } from "../model-stop.js";
 import { extractToolCallsFromText } from "../tool-call-text-extractor.js";
+import { parseArgs } from "../tool-call-text-repair.js";
 import { createDegenerateStreamGuard, DEGENERATE_STREAM_STOP_REASON } from "../stream-guards.js";
 import { withTransportRetry } from "../transport-retry.js";
-import { parseArgs } from "./helpers.js";
 import { chatTransportFor } from "./chat-transport.js";
 import type { StreamOnceResult } from "./types.js";
 

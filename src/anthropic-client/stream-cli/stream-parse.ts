@@ -5,7 +5,8 @@
 // is pure(ish) per call — text dedup, suppression, and the
 // emittedNativeTools/firstResponseSeen flags live on the state object.
 
-import { cleanUrls, filterStreamDelta, parseToolCalls, stripToolCallBlocks } from "../parse.js";
+import { cleanUrls, filterStreamDelta, stripToolCallBlocks } from "../parse.js";
+import { extractToolCallsFromText } from "../../canonical-loop/public/tool-call-text.js";
 import { newToolCallId } from "../request.js";
 import { NATIVE_CLI_TOOL_SET } from "./cli-args.js";
 import type { StreamEvent } from "../types.js";
@@ -198,12 +199,16 @@ export function* processStreamLine(
     // native tool_use blocks from the assistant event — prevents duplicate
     // emission when Opus uses native tool_use (which my text parser would
     // also match against the textual representation).
+    //
+    // Text calls go through the canonical extractor, the one parser every
+    // adapter's text rescue uses: offered tool names only, and a truncated
+    // payload never dispatches.
     if (!state.emittedNativeTools) {
-      const toolCalls = parseToolCalls(state.fullText, validToolNames);
+      const toolCalls = extractToolCallsFromText(state.fullText, validToolNames).toolCalls;
       for (const tc of toolCalls) {
-        const redactedArgs = JSON.stringify(tc.arguments).slice(0, 100).replace(/(?:password|secret|token|key|api_key|apiKey|authorization|bearer)["']?\s*[:=]\s*["']?[^"',}\s]{3}[^"',}]*/gi, (m) => m.slice(0, m.indexOf(":") + 4) + "***REDACTED***");
+        const redactedArgs = tc.arguments.slice(0, 100).replace(/(?:password|secret|token|key|api_key|apiKey|authorization|bearer)["']?\s*[:=]\s*["']?[^"',}\s]{3}[^"',}]*/gi, (m) => m.slice(0, m.indexOf(":") + 4) + "***REDACTED***");
         logger.info(`[claude] Tool call: ${tc.name}(${redactedArgs})`);
-        yield { type: "tool_call", id: newToolCallId(tc.name), name: tc.name, arguments: JSON.stringify(tc.arguments) };
+        yield { type: "tool_call", id: newToolCallId(tc.name), name: tc.name, arguments: tc.arguments };
       }
       // Diagnostic: if response CONTAINS "tool_calls" text but parser found
       // nothing, log it — helps catch future CLI output-format changes.
@@ -232,11 +237,11 @@ export function* processLeftoverBuffer(
   state.fullText = typeof ev.result === "string" ? ev.result : state.fullText;
   state.usage = (ev.usage as Record<string, number>) || {};
   if (typeof ev.stop_reason === "string") state.stopReason = ev.stop_reason;
-  const toolCalls = parseToolCalls(state.fullText, validToolNames);
+  const toolCalls = extractToolCallsFromText(state.fullText, validToolNames).toolCalls;
   const clean = stripToolCallBlocks(state.fullText, validToolNames);
   if (clean.trim() && clean.length > state.prevText.length) yield { type: "text", delta: clean.trim() };
   for (const tc of toolCalls) {
-    yield { type: "tool_call", id: newToolCallId(tc.name), name: tc.name, arguments: JSON.stringify(tc.arguments) };
+    yield { type: "tool_call", id: newToolCallId(tc.name), name: tc.name, arguments: tc.arguments };
   }
 }
 

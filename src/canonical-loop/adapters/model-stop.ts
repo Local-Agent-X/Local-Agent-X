@@ -27,17 +27,28 @@ export type ModelStop = "ended" | "continue";
 export const MODEL_REFUSAL_CODE = "model_refusal";
 
 /**
- * A stop the provider uses to say it declined to answer: Anthropic `refusal`,
- * OpenAI-compat `content_filter`. The stream carries no text for it, so
- * without this the turn ended "clean" with nothing to show — the user saw a
- * thinking step and then silence (2026-09-28, four times in one evening).
- * Reported as a non-retryable error, it reaches the chat as the same error
- * boundary any other terminal failure uses.
+ * Stops a provider uses to say it declined to answer: Anthropic `refusal`,
+ * OpenAI-compat `content_filter`, and Gemini's content-policy finishReasons
+ * (`SAFETY`, `RECITATION`, `BLOCKLIST`, `PROHIBITED_CONTENT`, `SPII`,
+ * `IMAGE_SAFETY`; its transport also reports a prompt-level
+ * `promptFeedback.blockReason` here). Gemini's `OTHER`, `LANGUAGE` and
+ * `MALFORMED_FUNCTION_CALL` are not policy refusals and stay out.
+ */
+const REFUSAL_STOPS: ReadonlySet<string> = new Set([
+  "refusal", "content_filter",
+  "safety", "recitation", "blocklist", "prohibited_content", "spii", "image_safety",
+]);
+
+/**
+ * The stream carries no text for a refusal stop, so without this the turn
+ * ended "clean" with nothing to show — the user saw a thinking step and then
+ * silence (2026-09-28, four times in one evening). Reported as a
+ * non-retryable error, it reaches the chat as the same error boundary any
+ * other terminal failure uses.
  */
 export function refusalError(stop: string | undefined | null): { code: string; message: string } | null {
   if (!stop) return null;
-  const s = stop.toLowerCase();
-  if (s !== "refusal" && s !== "content_filter") return null;
+  if (!REFUSAL_STOPS.has(stop.toLowerCase())) return null;
   return {
     code: MODEL_REFUSAL_CODE,
     message: `The model declined this request under its content policy (stop reason "${stop}"); nothing ran. Rephrase the request, or pick another model.`,

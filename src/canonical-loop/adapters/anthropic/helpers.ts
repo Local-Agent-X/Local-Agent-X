@@ -12,11 +12,6 @@ export function convertTools(tools: TurnInput["tools"]): TransportTool[] {
   }));
 }
 
-export function parseArgs(raw: string): unknown {
-  if (!raw) return {};
-  try { return JSON.parse(raw); } catch { return { _raw: raw }; }
-}
-
 export function byteLengthUtf8(s: string): number {
   let len = 0;
   for (let i = 0; i < s.length; i++) {

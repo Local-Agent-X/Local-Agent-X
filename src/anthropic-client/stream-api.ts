@@ -395,11 +395,12 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
       }
     }
 
+    // Diagnostic only: logs why a non-normal response ended. The adapter
+    // (canonical-loop/adapters/anthropic) owns what the loop does about it.
     const { classifyAnthropicResponse, logClassification } = await import("../response-classifier.js");
-    const classification = classifyAnthropicResponse({
+    logClassification("anthropic", resolvedModel, classifyAnthropicResponse({
       hasText: sawText, hasToolCalls: sawToolCall, stopReason, inputTokens, outputTokens, responseText,
-    });
-    logClassification("anthropic", resolvedModel, classification);
+    }));
     // Cache observability: hit ratio = read / (read + creation + input). The
     // three terms partition the full prompt (input_tokens EXCLUDES the cached
     // prefix), so this is "fraction of the prompt served from cache". Debug
@@ -410,7 +411,7 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
       const ratio = total > 0 ? read / total : 0;
       logger.debug(`[cache] model=${resolvedModel} read=${read} created=${cacheCreateTokens ?? 0} uncached=${inputTokens} hit-ratio=${(ratio * 100).toFixed(1)}%`);
     }
-    yield { type: "done", usage: { inputTokens, outputTokens, cacheReadTokens, cacheCreateTokens }, stopReason, classification };
+    yield { type: "done", usage: { inputTokens, outputTokens, cacheReadTokens, cacheCreateTokens }, stopReason };
   } catch (e) {
     yield { type: "error", error: `Anthropic error: ${(e as Error).message?.slice(0, 300)}` };
   } finally {

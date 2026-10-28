@@ -5,9 +5,12 @@
  *
  *   - exact-repeat (loop-detection) needs IDENTICAL args; a flailing model
  *     varies its payload while the error stays the same.
- *   - loop-detection/dead-end are worker-only; the 2026-06-10 runaway was an
- *     interactive chat turn: 19 consecutive presentation_edit errors against
- *     a file the model had just deleted, every ~2.5s until the turn died.
+ *   - dead-end counts EMPTY results, not failures, and on interactive lanes
+ *     loop-detection only nudges, ending the turn only after six ignored
+ *     nudges. Both run on every lane; neither keys on the error. The 2026-06-10
+ *     runaway was an interactive chat turn: 19 consecutive presentation_edit
+ *     errors against a file the model had just deleted, every ~2.5s until the
+ *     turn died.
  *
  * Runs on ALL lanes (no `when`) because a failure spiral is equally wrong in
  * chat and voice — and the nudge/abort text is phrased for any audience.

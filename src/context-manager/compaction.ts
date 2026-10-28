@@ -43,12 +43,15 @@ export async function summarizeOldMessages(
   try {
     const { classifyWithLLM } = await import("../classifiers/classify-with-llm.js");
     // guardedRewrite screens each attempt for degenerate output (looping
-    // text, runaway lines, emptiness) and gives the model ONE structured
-    // retry with the rejection reason before surfacing null — which callers
-    // already treat as a summarize failure (compact-history feeds it into the
-    // circuit breaker). Transport-level nulls (kill-switch, 30s timeout,
-    // provider error) short-circuit inside guardedRewrite without a retry, so
-    // the existing latency and kill-switch behavior is unchanged.
+    // text, runaway lines, emptiness) and for summaryRejection (a transcript
+    // echo, or "nothing notable" over real work), and gives the model ONE
+    // structured retry with the rejection reason before surfacing null —
+    // which callers already treat as a summarize failure (compact-history
+    // feeds it into the circuit breaker; the caller then keeps the longest
+    // tail that fits rather than injecting a summary that says nothing).
+    // Transport-level nulls (kill-switch, 30s timeout, provider error)
+    // short-circuit inside guardedRewrite without a retry, so the existing
+    // latency and kill-switch behavior is unchanged.
     //
     // Live guard branches AT THIS SEAM: only the loop detectors can fire.
     // classifyWithLLM's parse below already maps whitespace-only output to
@@ -56,7 +59,7 @@ export async function summarizeOldMessages(
     // maxResponseChars 6000 makes a >10k-char line unreachable. Both branches
     // stay in the guard because it is a shared primitive — other seams have
     // different parse/limit envelopes.
-    const summary = await guardedRewrite(
+    return await guardedRewrite(
       (_attempt, feedback) =>
         classifyWithLLM<string>({
           category: "compaction",
@@ -75,11 +78,6 @@ export async function summarizeOldMessages(
         }),
       { maxAttempts: 2, validate: (text) => summaryRejection(text, oldMessages) },
     );
-    // guardedRewrite falls back to a candidate that failed only `validate`;
-    // a transcript echo, or "nothing notable" over real work, is never usable,
-    // so it takes the null path instead (the caller then keeps the longest
-    // tail that fits rather than injecting a summary that says nothing).
-    return summary !== null && summaryRejection(summary, oldMessages) === null ? summary : null;
   } catch (e) {
     logger.warn(`[context] LLM compaction call failed: ${(e as Error).message}`);
     return null;

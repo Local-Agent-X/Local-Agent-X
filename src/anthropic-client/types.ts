@@ -17,8 +17,6 @@ export interface StreamEvent {
   error?: string;
   /** Stop reason from the API — populated on done/error */
   stopReason?: string;
-  /** Classification of why the response ended */
-  classification?: import("../response-classifier.js").ClassificationResult;
 }
 
 export interface StreamOptions {

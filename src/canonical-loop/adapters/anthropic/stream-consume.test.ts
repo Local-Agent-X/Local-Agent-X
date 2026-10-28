@@ -66,3 +66,29 @@ describe("streamConsume refusal handling", () => {
     expect(reports.some((r) => r.kind === "error")).toBe(false);
   });
 });
+
+describe("streamConsume tool-call args go through the shared repairing guard", () => {
+  async function argsOf(raw: string): Promise<unknown> {
+    const transport = transportYielding([
+      { type: "tool_call", id: "toolu_1", name: "write", arguments: raw },
+      { type: "done", stopReason: "tool_use" },
+    ] as TransportEvent[]);
+    const reports: AdapterReport[] = [];
+    await streamConsume(transport, makeReq(), (r) => reports.push(r), { isAborted: () => false });
+    const req = reports.find((r) => r.kind === "tool_call_requested");
+    return req && req.kind === "tool_call_requested" ? req.call.args : undefined;
+  }
+
+  it("complete args parse unchanged", async () => {
+    expect(await argsOf('{"path":"a.txt"}')).toEqual({ path: "a.txt" });
+  });
+
+  it("a cosmetic slip (trailing comma) is repaired, as on every other adapter", async () => {
+    expect(await argsOf('{"path":"a.txt",}')).toEqual({ path: "a.txt" });
+  });
+
+  it("args cut off mid-stream (max_tokens inside input_json_delta) stay {_raw} and never complete", async () => {
+    const raw = '{"path":"a.txt","content":"partial';
+    expect(await argsOf(raw)).toEqual({ _raw: raw });
+  });
+});

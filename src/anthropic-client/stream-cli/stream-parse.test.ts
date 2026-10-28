@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { processStreamLine, createCliStreamState } from "./stream-parse.js";
+import { processLeftoverBuffer, processStreamLine, createCliStreamState } from "./stream-parse.js";
 import type { StreamEvent } from "../types.js";
 
 function drain(line: string, valid: Set<string>) {
@@ -114,5 +114,37 @@ describe("stream-parse — an errored result frame is an error, not model text",
     const { events } = drain(JSON.stringify({ type: "result", is_error: false, result: "hello" }), valid);
     expect(events.some((e) => e.type === "text")).toBe(true);
     expect(events.some((e) => e.type === "done")).toBe(true);
+  });
+});
+
+describe("stream-parse — text tool calls dispatch only offered tools", () => {
+  const valid = new Set(["read", "bash"]);
+  const resultOf = (text: string) => JSON.stringify({ type: "result", result: text });
+  const callsIn = (events: StreamEvent[]) =>
+    events.filter((e) => e.type === "tool_call") as Array<StreamEvent & { name: string; arguments: string }>;
+
+  it("a {\"tool_calls\":[…]} envelope naming a tool that was NOT offered does not dispatch", () => {
+    const text = '```json\n{"tool_calls":[{"name":"delete_everything","arguments":{"path":"/"}}]}\n```';
+    expect(callsIn(drain(resultOf(text), valid).events)).toHaveLength(0);
+  });
+
+  it("a raw envelope dispatches only its offered entries", () => {
+    const text = '{"tool_calls":[{"name":"rm_rf","arguments":{}},{"name":"read","arguments":{"path":"a.ts"}}]}';
+    const calls = callsIn(drain(resultOf(text), valid).events);
+    expect(calls.map((c) => c.name)).toEqual(["read"]);
+    expect(JSON.parse(calls[0].arguments)).toEqual({ path: "a.ts" });
+  });
+
+  it("the {\"name\",\"input\"} shape dispatches with its input as the arguments", () => {
+    const calls = callsIn(drain(resultOf('{"name":"bash","input":{"command":"ls"}}'), valid).events);
+    expect(calls).toHaveLength(1);
+    expect(JSON.parse(calls[0].arguments)).toEqual({ command: "ls" });
+  });
+
+  it("the leftover-buffer path holds the same rule", () => {
+    const state = createCliStreamState();
+    const text = '{"tool_calls":[{"name":"delete_everything","arguments":{}}]}';
+    const events = [...processLeftoverBuffer(resultOf(text), state, valid)];
+    expect(callsIn(events)).toHaveLength(0);
   });
 });

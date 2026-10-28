@@ -1,7 +1,7 @@
 /**
  * Low-level machinery for the tool-call-from-text rescue path — leaf
  * module with no local imports so every consumer (the syntax scanners,
- * the extractor, openai-compat's parseArgs) shares ONE implementation
+ * the extractor, every adapter's parseArgs) shares ONE implementation
  * without import cycles.
  *
  * Lives here:
@@ -10,6 +10,8 @@
  *   - repairJsonText: bounded near-miss JSON repair, classified as
  *     cosmetic (complete-but-sloppy) vs structural (truncated — callers
  *     must never execute those).
+ *   - parseArgs: the structured tool-call args guard every adapter
+ *     (openai-compat, anthropic, gemini-native) reports calls through.
  *   - resolveToolName: candidate tool-name resolution against the offered
  *     tool set (normalization ladder + bounded edit distance).
  */
@@ -183,6 +185,44 @@ export function repairJsonText(raw: string): RepairedJson | null {
   closed = trimDanglingComma(closed);
   for (let i = open.length - 1; i >= 0; i--) closed += open[i] === "{" ? "}" : "]";
   return parses(closed) ? { text: closed, kind: "structural" } : null;
+}
+
+/**
+ * Tool-args JSON guard for a structured call's `arguments` string. Valid
+ * JSON passes through untouched (whatever its type). On a parse failure,
+ * run the bounded repair ladder in COSMETIC-only mode: trailing commas and
+ * raw control chars are sloppiness in a complete payload and safe to fix,
+ * but a payload that needs STRUCTURAL completion (unclosed
+ * braces/brackets/strings) is a truncation artifact — finish_reason=length,
+ * Anthropic max_tokens mid-input_json_delta, and kin — and stays `{_raw}`
+ * so the failure is loud. Executing a structurally-completed payload would
+ * run a PARTIAL write or command. Only an OBJECT result is trusted;
+ * over-cap payloads skip the ladder entirely (the cap bounds pathology,
+ * not normal args).
+ *
+ * Per provider: Anthropic's API streams tool_use input as input_json_delta
+ * string fragments (complete JSON unless the stream was cut, which is
+ * structural and stays `{_raw}`); its CLI path and Gemini's functionCall
+ * `args` carry an object their transport JSON.stringifies, which always
+ * parses. So the ladder only changes anything for a string the model
+ * itself wrote sloppily — the OpenAI-compat local-model case.
+ *
+ * NOTE: the structured path has a second, independent repair point
+ * downstream — tool-execution's resolve-tool.ts parseArgs delegates to
+ * arg-repair.ts repairJson (single-quote/bare-key fixes, type coercion).
+ * Two ladders, one seam family; unification is a parked follow-up.
+ */
+export function parseArgs(raw: string): unknown {
+  if (!raw) return {};
+  try { return JSON.parse(raw); } catch { /* repair below */ }
+  if (raw.length <= MAX_ARGS_CHARS) {
+    const r = repairJsonText(raw);
+    if (r !== null && r.kind !== "structural") {
+      const v: unknown = JSON.parse(r.text);
+      if (v && typeof v === "object" && !Array.isArray(v)) return v;
+    }
+  }
+  return { _raw: raw };
 }
 
 /** Canonical comparison form: strips router prefixes (`functions.` /

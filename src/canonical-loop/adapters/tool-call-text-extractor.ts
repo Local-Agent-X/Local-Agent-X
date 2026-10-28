@@ -21,15 +21,20 @@
  *      bounded-edit-distance ladder.
  *
  *   2. **Naked JSON objects:** the full wire envelope
- *      `{"name": "<tool>", "arguments": {...}}` or the browser shorthand
- *      `{"action": "X", "ref": N, ...}`. A bare object is a weaker
- *      signal, so names must match the offered set EXACTLY — no fuzz.
+ *      `{"name": "<tool>", "arguments": {...}}`, the Anthropic tool_use
+ *      shape `{"name": "<tool>", "input": {...}}`, the
+ *      `{"tool_calls": [<envelope>, ...]}` list the Claude CLI prompt asks
+ *      for, or the browser shorthand `{"action": "X", "ref": N, ...}`. A
+ *      bare object is a weaker signal, so names must match the offered set
+ *      EXACTLY — no fuzz — and an entry naming any other tool never
+ *      dispatches.
  *
  * There is deliberately NO prose layer: text that merely DESCRIBES a tool
- * call ("I'll run bash with ls") is never guessed into one. The model MUST
- * have written recognizable call syntax; the loop's completion gate
- * (turn-loop/tool-intent-gate.ts) owns the one nudge for that case, and
- * plain prose stands as the reply.
+ * call ("I'll run bash with ls") is never guessed into one, and nothing
+ * nudges it — the model MUST have written recognizable call syntax, and
+ * plain prose stands as the reply. The loop's completion gate
+ * (turn-loop/tool-intent-gate.ts) nudges only when recognized syntax is
+ * still in the final text, i.e. a call this extractor could not promote.
  *
  * Only fires when `tool_calls` is empty AND the text matches a clear
  * pattern; healthy providers never hit this path, and ambiguous text is
@@ -121,20 +126,43 @@ export function extractToolCallsFromText(
   // an example. Positions line up because the mask is length-preserving.
   for (const obj of findJsonObjects(maskCodeSpans(working))) {
     if (syntaxHits.some((h) => obj.start < h.end && h.start < obj.end)) continue;
-    const synthesized = classify(obj.parsed, validToolNames);
-    if (synthesized) found.push({ start: obj.start, end: obj.end, call: synthesized });
+    for (const call of classifyObject(obj.parsed, validToolNames)) {
+      found.push({ start: obj.start, end: obj.end, call });
+    }
   }
 
   if (found.length === 0) return { toolCalls: [], remainingText: text };
 
-  // Emit calls in source order; excise promoted ranges back-to-front so
-  // indices stay valid.
+  // Emit calls in source order (stable sort keeps an envelope's entries in
+  // their array order); excise promoted ranges back-to-front so indices
+  // stay valid. An envelope's entries share one range — excise it once.
   found.sort((a, b) => a.start - b.start);
   const calls = found.map((f) => f.call);
   for (let i = found.length - 1; i >= 0; i--) {
+    if (i > 0 && found[i - 1].start === found[i].start) continue;
     working = working.slice(0, found[i].start) + working.slice(found[i].end);
   }
   return { toolCalls: calls, remainingText: working.trim() };
+}
+
+/**
+ * The naked-JSON shapes: a `{"tool_calls":[…]}` envelope (the shape the
+ * Claude CLI prompt asks for) yields each entry that classifies on its
+ * own — an entry naming a tool that was not offered is dropped, never
+ * dispatched — and any other object is one candidate call.
+ */
+function classifyObject(obj: Record<string, unknown>, validToolNames: Set<string>): ExtractedToolCall[] {
+  if (!Array.isArray(obj.tool_calls)) {
+    const call = classify(obj, validToolNames);
+    return call ? [call] : [];
+  }
+  const calls: ExtractedToolCall[] = [];
+  for (const entry of obj.tool_calls) {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const call = classifyEnvelope(entry as Record<string, unknown>, validToolNames);
+    if (call) calls.push(call);
+  }
+  return calls;
 }
 
 /**
@@ -142,9 +170,28 @@ export function extractToolCallsFromText(
  * leave it alone if it doesn't match a known pattern.
  */
 function classify(obj: Record<string, unknown>, validToolNames: Set<string>): ExtractedToolCall | null {
-  // Pattern 1: full OpenAI envelope { name: "tool", arguments: {...} }
+  const envelope = classifyEnvelope(obj, validToolNames);
+  if (envelope) return envelope;
+
+  // Pattern 2: browser shorthand { action: "X", ref: N, ... }. The shape
+  // rules live in isBrowserShorthand — shared with the syntax layer so
+  // wrapped shorthand promotes identically. Only fires when "browser" is
+  // in validToolNames.
+  if (validToolNames.has("browser") && isBrowserShorthand(obj)) {
+    return { id: nextId(), name: "browser", arguments: JSON.stringify(obj) };
+  }
+
+  return null;
+}
+
+/**
+ * Pattern 1: a full call envelope `{ name: "tool", arguments: {...} }`, or
+ * the Anthropic tool_use shape `{ name: "tool", input: {...} }` that Claude
+ * drifts to when it ignores the prompted envelope. Exact offered name only.
+ */
+function classifyEnvelope(obj: Record<string, unknown>, validToolNames: Set<string>): ExtractedToolCall | null {
   if (typeof obj.name === "string" && validToolNames.has(obj.name)) {
-    const args = obj.arguments;
+    const args = obj.arguments !== undefined ? obj.arguments : obj.input;
     if (args === undefined || (typeof args === "object" && args !== null)) {
       return {
         id: nextId(),
@@ -158,15 +205,6 @@ function classify(obj: Record<string, unknown>, validToolNames: Set<string>): Ex
       catch { return null; }
     }
   }
-
-  // Pattern 2: browser shorthand { action: "X", ref: N, ... }. The shape
-  // rules live in isBrowserShorthand — shared with the syntax layer so
-  // wrapped shorthand promotes identically. Only fires when "browser" is
-  // in validToolNames.
-  if (validToolNames.has("browser") && isBrowserShorthand(obj)) {
-    return { id: nextId(), name: "browser", arguments: JSON.stringify(obj) };
-  }
-
   return null;
 }
 

@@ -1,13 +1,16 @@
 /**
- * Parse tool calls from Claude's text response — extracts ALL JSON blocks in order.
+ * Display and history hygiene for tool-call text in Claude's replies: the
+ * streaming latch (filterStreamDelta), the post-hoc UI strip
+ * (stripToolCallBlocks) and the history-rebuild marker pass
+ * (sanitizeAssistantTextForRebuild). Turning text into DISPATCHED calls is
+ * not done here — the Claude CLI path uses the canonical extractor
+ * (extractToolCallsFromText, canonical-loop/public/tool-call-text.ts) like
+ * every other adapter.
  *
- * Three shapes catch:
- *   1. ```json {"tool_calls": [...]} ``` — fenced OpenAI envelope (prompt-injected shape)
- *   2. {"tool_calls": [...]} — bare OpenAI envelope (no fence)
- *   3. {"name":"X","input":{...}} — bare Anthropic native tool_use shape, only
- *      matched against `validToolNames` so legitimate example JSON in prose
- *      doesn't get mis-fired. Claude 4.x drifts to native shape when it
- *      ignores the prompt-injected envelope instruction.
+ * The bare Anthropic native tool_use shape {"name":"X","input":{...}} is
+ * only scrubbed against `validToolNames`, so legitimate example JSON in
+ * prose is left alone. Claude 4.x drifts to that shape when it ignores the
+ * prompted {"tool_calls":[…]} envelope.
  */
 import {
   WRAPPER_TAGS,
@@ -16,50 +19,6 @@ import {
   openerRegex,
   scanTextToolCallSyntaxes,
 } from "../canonical-loop/public/tool-call-text.js";
-
-export function parseToolCalls(
-  text: string,
-  validToolNames?: ReadonlySet<string>,
-): Array<{ name: string; arguments: Record<string, unknown> }> {
-  const results: Array<{ name: string; arguments: Record<string, unknown> }> = [];
-
-  // Match ALL ```json tool_calls blocks (Claude sometimes outputs multiple)
-  const fencedRe = /```(?:json)?\s*\n?(\{[\s\S]*?"tool_calls"[\s\S]*?\})\s*\n?```/g;
-  let match: RegExpExecArray | null;
-  while ((match = fencedRe.exec(text)) !== null) {
-    try {
-      const parsed = JSON.parse(match[1]);
-      if (Array.isArray(parsed.tool_calls)) {
-        for (const tc of parsed.tool_calls) {
-          if (tc.name) results.push({ name: tc.name, arguments: tc.arguments || {} });
-        }
-      }
-    } catch {}
-  }
-  if (results.length > 0) return results;
-
-  // Also match raw JSON (no code fence) — Claude sometimes outputs without backticks
-  const rawRe = /\{"tool_calls"\s*:\s*\[[\s\S]*?\]\s*\}/g;
-  while ((match = rawRe.exec(text)) !== null) {
-    try {
-      const parsed = JSON.parse(match[0]);
-      if (Array.isArray(parsed.tool_calls)) {
-        for (const tc of parsed.tool_calls) {
-          if (tc.name) results.push({ name: tc.name, arguments: tc.arguments || {} });
-        }
-      }
-    } catch {}
-  }
-  if (results.length > 0) return results;
-
-  // Anthropic native shape — only when caller provides the valid tool set
-  if (validToolNames && validToolNames.size > 0) {
-    for (const m of findAnthropicShapeCalls(text, validToolNames)) {
-      results.push({ name: m.name, arguments: m.arguments });
-    }
-  }
-  return results;
-}
 
 interface AnthropicShapeMatch {
   name: string;

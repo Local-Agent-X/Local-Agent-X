@@ -111,8 +111,9 @@ export interface GuardedRewriteOptions {
 	maxAttempts?: number;
 	/**
 	 * Extra domain check on a non-degenerate candidate. Return an error string
-	 * (fed back to the next attempt) to reject, or null to accept. A throwing
-	 * hook is treated as a rejection, never propagated.
+	 * (fed back to the next attempt) to reject, or null to accept. A rejected
+	 * candidate is never returned. A throwing hook is treated as a rejection,
+	 * never propagated.
 	 */
 	validate?: (text: string) => string | null;
 }
@@ -125,9 +126,12 @@ const DEFAULT_MAX_ATTEMPTS = 2;
  * Each attempt's output is screened by detectDegenerateRewrite and the
  * optional `validate` hook. A rejection produces a feedback string handed to
  * the next attempt so the prompt can steer the model away from the failure.
- * After maxAttempts, returns the first non-degenerate candidate seen (one
- * that failed only `validate`), else null — never loops, never exceeds
- * maxAttempts calls, and never throws from a rejecting validate hook.
+ * Returns the first candidate that passes both, else null — never loops,
+ * never exceeds maxAttempts calls, and never throws from a rejecting
+ * validate hook. There is no "least bad" fallback: a caller's validate says
+ * what is unusable (compaction: a transcript echo, or "nothing notable" over
+ * real work), so a candidate it rejected is not returned on the last attempt
+ * either.
  *
  * A null from run() means the transport itself declined (kill-switch,
  * timeout, provider error) — feedback can't fix that, so we stop immediately
@@ -144,7 +148,6 @@ export async function guardedRewrite(
 			? Math.max(1, Math.floor(requested))
 			: DEFAULT_MAX_ATTEMPTS;
 	let feedback: string | undefined;
-	let bestCandidate: string | null = null;
 
 	for (let attempt = 1; attempt <= maxAttempts; attempt++) {
 		const output = await run(attempt, feedback);
@@ -165,11 +168,8 @@ export async function guardedRewrite(
 			validationError = `validation failed: ${(e as Error).message}`;
 		}
 		if (validationError === null) return output;
-
-		// Non-degenerate but failed the domain check: usable as a last resort.
-		if (bestCandidate === null) bestCandidate = output;
 		feedback = validationError;
 	}
 
-	return bestCandidate;
+	return null;
 }

@@ -15,7 +15,8 @@ import type { CanonicalMessage, ProviderStateEnvelope } from "../contract-types.
 import type { GeminiNativeTransport, GeminiNativeRequest } from "./gemini-native-transport.js";
 import { canonicalToTransport } from "./canonical-to-transport.js";
 import { hasInjects } from "../../agent-loop/inject-queue.js";
-import { classifyModelStop } from "./model-stop.js";
+import { classifyModelStop, refusalError } from "./model-stop.js";
+import { parseArgs } from "./tool-call-text-repair.js";
 import { withTransportRetry } from "./transport-retry.js";
 
 export const GEMINI_NATIVE_ADAPTER_NAME = "gemini-native";
@@ -114,6 +115,13 @@ export class GeminiNativeAdapter implements Adapter {
           if (ev.type === "done") {
             providerStop = ev.stopReason;
             if (ev.usage) { usageInputTokens = ev.usage.inputTokens; usageOutputTokens = ev.usage.outputTokens; }
+            // A SAFETY / blocked stop carries no text; without this the turn
+            // ended "done" and the user saw silence (model-stop.ts).
+            const refusal = refusalError(ev.stopReason);
+            if (refusal) {
+              if (!firstError) firstError = refusal;
+              report({ kind: "error", ...refusal, retryable: false });
+            }
             continue;
           }
         }
@@ -174,11 +182,6 @@ export class GeminiNativeAdapter implements Adapter {
     }
     return env;
   }
-}
-
-function parseArgs(raw: string): unknown {
-  if (!raw) return {};
-  try { return JSON.parse(raw); } catch { return { _raw: raw }; }
 }
 
 export function createGeminiNativeAdapter(opts: GeminiNativeAdapterOptions): GeminiNativeAdapter {

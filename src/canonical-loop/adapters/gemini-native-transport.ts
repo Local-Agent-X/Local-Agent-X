@@ -179,7 +179,11 @@ export function defaultGeminiNativeTransport(): GeminiNativeTransport {
       let usage: { inputTokens: number; outputTokens: number } | undefined;
 
       const handleFrame = function* (json: string): Generator<GeminiTransportEvent> {
-        let obj: { candidates?: Array<{ content?: { parts?: Part[] }; finishReason?: string }>; usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number } };
+        let obj: {
+          candidates?: Array<{ content?: { parts?: Part[] }; finishReason?: string }>;
+          promptFeedback?: { blockReason?: string };
+          usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number };
+        };
         try { obj = JSON.parse(json); } catch { return; }
         const cand = obj.candidates?.[0];
         for (const part of cand?.content?.parts ?? []) {
@@ -196,6 +200,10 @@ export function defaultGeminiNativeTransport(): GeminiNativeTransport {
           }
         }
         if (cand?.finishReason) stopReason = cand.finishReason;
+        // A prompt blocked before generation comes back with NO candidates,
+        // only promptFeedback.blockReason (SAFETY, PROHIBITED_CONTENT, …).
+        // Report it as the stop so the adapter's refusal mapping sees it.
+        else if (!cand && obj.promptFeedback?.blockReason) stopReason = obj.promptFeedback.blockReason;
         const um = obj.usageMetadata;
         if (um) usage = { inputTokens: um.promptTokenCount ?? 0, outputTokens: um.candidatesTokenCount ?? 0 };
       };

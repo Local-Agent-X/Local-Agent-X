@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
 import {
   classifyAnthropicResponse,
-  classifyOpenAIResponse,
   classifyCodexResponse,
 } from "../src/response-classifier.js";
 
@@ -15,8 +14,6 @@ describe("classifyAnthropicResponse — soft-refusal wiring", () => {
       outputTokens: 12,
     });
     expect(r.type).toBe("content_filter");
-    expect(r.shouldFallback).toBe(true);
-    expect(r.shouldRetry).toBe(false);
     expect(r.meta?.refusalPattern).toBeTruthy();
   });
 
@@ -29,7 +26,6 @@ describe("classifyAnthropicResponse — soft-refusal wiring", () => {
       outputTokens: 10,
     });
     expect(r.type).toBe("completed");
-    expect(r.shouldFallback).toBe(false);
   });
 
   it("does not reclassify when responseText is omitted", () => {
@@ -53,31 +49,6 @@ describe("classifyAnthropicResponse — soft-refusal wiring", () => {
   });
 });
 
-describe("classifyOpenAIResponse — soft-refusal wiring", () => {
-  it("reclassifies stop+refusal text as content_filter", () => {
-    const r = classifyOpenAIResponse({
-      hasText: true,
-      hasToolCalls: false,
-      finishReason: "stop",
-      responseText: "I'm sorry, but I cannot help with that.",
-      outputTokens: 14,
-    });
-    expect(r.type).toBe("content_filter");
-    expect(r.shouldFallback).toBe(true);
-  });
-
-  it("leaves a normal stop answer as completed", () => {
-    const r = classifyOpenAIResponse({
-      hasText: true,
-      hasToolCalls: false,
-      finishReason: "stop",
-      responseText: "Here is the function you asked for.",
-      outputTokens: 9,
-    });
-    expect(r.type).toBe("completed");
-  });
-});
-
 describe("classifyCodexResponse — soft-refusal wiring", () => {
   it("reclassifies hasText+refusal as content_filter", () => {
     const r = classifyCodexResponse({
@@ -88,7 +59,6 @@ describe("classifyCodexResponse — soft-refusal wiring", () => {
       outputTokens: 12,
     });
     expect(r.type).toBe("content_filter");
-    expect(r.shouldFallback).toBe(true);
   });
 
   it("leaves a normal hasText response as completed", () => {

@@ -3,7 +3,8 @@
  * (tool-call-text-syntaxes.ts, public door canonical-loop/public/tool-call-text.ts).
  *
  * Every consumer of the recognizer is held to the same cases:
- *   - extractor        extractToolCallsFromText   (tool-call-text-extractor.ts)
+ *   - extractor        extractToolCallsFromText   (tool-call-text-extractor.ts;
+ *                      every adapter's text rescue AND the Claude CLI stream parser)
  *   - sanitize         sanitizeModelOutput        (providers/output-sanitize.ts)
  *   - rebuild          sanitizeAssistantTextForRebuild (anthropic-client/parse.ts)
  *   - strip            stripToolCallBlocks        (anthropic-client/parse.ts)
@@ -19,7 +20,11 @@
  * Deliberately absent: prose-narration shapes ("I'll run bash …",
  * tree-style `Bash(...)`, `[Calling]` placeholders). Those heuristics are
  * not recognizer syntax and are being removed.
+ *
+ * The naked-JSON cases (the extractor's second layer) live in
+ * tool-call-text-corpus-json.ts and are appended to the corpus below.
  */
+import { NAKED_JSON_CASES } from "./tool-call-text-corpus-json.js";
 
 export interface CorpusExpect {
   /** Count of recognizer ranges over the text with code spans MASKED
@@ -364,4 +369,5 @@ export const TOOL_CALL_TEXT_CORPUS: ReadonlyArray<CorpusCase> = [
       streamLatchesOnFirstLine: false,
     },
   },
+  ...NAKED_JSON_CASES,
 ];

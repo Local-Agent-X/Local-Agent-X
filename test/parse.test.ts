@@ -2,7 +2,6 @@ import { describe, it, expect } from "vitest";
 import {
   filterStreamDelta,
   stripToolCallBlocks,
-  parseToolCalls,
   cleanUrls,
 } from "../src/anthropic-client/parse.js";
 
@@ -189,106 +188,6 @@ describe("stripToolCallBlocks — XML shapes", () => {
   });
 });
 
-// ── parseToolCalls ──────────────────────────────────────────────────────
-
-describe("parseToolCalls", () => {
-  it("returns empty array when no tool_calls present", () => {
-    expect(parseToolCalls("just text")).toEqual([]);
-  });
-
-  it("parses a single fenced tool_calls block", () => {
-    const text =
-      "```json\n" +
-      '{"tool_calls":[{"name":"read","arguments":{"path":"a.ts"}}]}\n' +
-      "```";
-    const calls = parseToolCalls(text);
-    expect(calls).toHaveLength(1);
-    expect(calls[0].name).toBe("read");
-    expect(calls[0].arguments).toEqual({ path: "a.ts" });
-  });
-
-  it("parses multiple fenced tool_calls blocks in order", () => {
-    const text = [
-      "first:",
-      '```json\n{"tool_calls":[{"name":"a","arguments":{}}]}\n```',
-      "second:",
-      '```json\n{"tool_calls":[{"name":"b","arguments":{"x":1}}]}\n```',
-    ].join("\n");
-    const calls = parseToolCalls(text);
-    expect(calls.map((c) => c.name)).toEqual(["a", "b"]);
-    expect(calls[1].arguments).toEqual({ x: 1 });
-  });
-
-  it("falls back to raw JSON when no fenced blocks", () => {
-    const text =
-      'lead-in {"tool_calls":[{"name":"raw","arguments":{"k":"v"}}]} trailing';
-    const calls = parseToolCalls(text);
-    expect(calls).toHaveLength(1);
-    expect(calls[0].name).toBe("raw");
-  });
-
-  it("ignores malformed JSON without throwing", () => {
-    const text = "```json\n{not valid json\n```";
-    expect(() => parseToolCalls(text)).not.toThrow();
-    expect(parseToolCalls(text)).toEqual([]);
-  });
-
-  it("defaults arguments to {} when missing", () => {
-    const text = '```json\n{"tool_calls":[{"name":"noargs"}]}\n```';
-    const calls = parseToolCalls(text);
-    expect(calls[0].arguments).toEqual({});
-  });
-
-  it("skips entries without a name", () => {
-    const text =
-      '```json\n{"tool_calls":[{"arguments":{}},{"name":"keep","arguments":{}}]}\n```';
-    const calls = parseToolCalls(text);
-    expect(calls).toHaveLength(1);
-    expect(calls[0].name).toBe("keep");
-  });
-
-  it("returns ONLY fenced calls when both fenced and raw forms coexist (fenced takes precedence)", () => {
-    // Documents the existing if-results-then-return-early branch: once any
-    // fenced call parses, the raw fallback never runs. Mixed-form replies
-    // (rare but seen) drop the raw entry on purpose.
-    const text =
-      '```json\n{"tool_calls":[{"name":"fenced","arguments":{}}]}\n```' +
-      ' some prose ' +
-      '{"tool_calls":[{"name":"raw","arguments":{}}]}';
-    const calls = parseToolCalls(text);
-    expect(calls.map(c => c.name)).toEqual(["fenced"]);
-  });
-
-  it("extracts multiple tool entries from a single tool_calls array", () => {
-    const text =
-      '```json\n{"tool_calls":[' +
-      '{"name":"first","arguments":{"a":1}},' +
-      '{"name":"second","arguments":{"b":2}},' +
-      '{"name":"third","arguments":{}}' +
-      ']}\n```';
-    const calls = parseToolCalls(text);
-    expect(calls.map(c => c.name)).toEqual(["first", "second", "third"]);
-    expect(calls[0].arguments).toEqual({ a: 1 });
-    expect(calls[1].arguments).toEqual({ b: 2 });
-  });
-
-  it("preserves nested object/array argument shapes", () => {
-    const text =
-      '```json\n{"tool_calls":[{"name":"complex","arguments":' +
-      '{"nested":{"deep":[1,2,{"k":"v"}]},"flag":true}}]}\n```';
-    const calls = parseToolCalls(text);
-    expect(calls[0].arguments).toEqual({
-      nested: { deep: [1, 2, { k: "v" }] },
-      flag: true,
-    });
-  });
-
-  it("returns [] when fenced block is present but its tool_calls is not an array", () => {
-    const text = '```json\n{"tool_calls":"not-an-array"}\n```';
-    expect(parseToolCalls(text)).toEqual([]);
-  });
-});
-
 // ── cleanUrls ───────────────────────────────────────────────────────────
 
 describe("cleanUrls", () => {
@@ -340,56 +239,6 @@ describe("cleanUrls", () => {
   it("does not touch a string with no URLs at all", () => {
     const out = cleanUrls("just normal sentence with a period.");
     expect(out).toBe("just normal sentence with a period.");
-  });
-});
-
-// ── parseToolCalls — Anthropic native shape (the smoke regression) ─────
-
-describe("parseToolCalls — Anthropic native shape {\"name\":..,\"input\":..}", () => {
-  it("extracts a known tool call emitted as bare Anthropic native shape", () => {
-    const text = `{"name":"agent_spawn","input":{"agent":"researcher","task":"what is the capital of France"}}`;
-    const out = parseToolCalls(text, new Set(["agent_spawn"]));
-    expect(out).toEqual([
-      { name: "agent_spawn", arguments: { agent: "researcher", task: "what is the capital of France" } },
-    ]);
-  });
-
-  it("ignores Anthropic-shape JSON for an unknown tool name", () => {
-    const text = `{"name":"made_up_tool","input":{"x":1}}`;
-    const out = parseToolCalls(text, new Set(["agent_spawn", "browser"]));
-    expect(out).toEqual([]);
-  });
-
-  it("returns nothing when no validToolNames are passed", () => {
-    const text = `{"name":"agent_spawn","input":{"agent":"researcher"}}`;
-    const out = parseToolCalls(text);
-    expect(out).toEqual([]);
-  });
-
-  it("handles nested input objects via brace-balanced scan", () => {
-    const text = `{"name":"web_fetch","input":{"url":"https://x.com","headers":{"X-Foo":"bar"}}}`;
-    const out = parseToolCalls(text, new Set(["web_fetch"]));
-    expect(out).toEqual([{ name: "web_fetch", arguments: { url: "https://x.com", headers: { "X-Foo": "bar" } } }]);
-  });
-
-  it("extracts the call when wrapped in prose (model self-correction case)", () => {
-    const text = `{"name":"agent_spawn","input":{"agent":"researcher","task":"x"}}\n\nWait — I need to actually call the tool properly.`;
-    const out = parseToolCalls(text, new Set(["agent_spawn"]));
-    expect(out).toEqual([{ name: "agent_spawn", arguments: { agent: "researcher", task: "x" } }]);
-  });
-
-  it("prefers OpenAI envelope when both shapes appear (envelope wins via early return)", () => {
-    const text = `{"tool_calls":[{"name":"first","arguments":{"x":1}}]}\nAlso: {"name":"second","input":{"y":2}}`;
-    const out = parseToolCalls(text, new Set(["first", "second"]));
-    expect(out).toEqual([{ name: "first", arguments: { x: 1 } }]);
-  });
-
-  it("does not synthesize calls from quoted JSON inside string values", () => {
-    // The whole string is one big quoted value — nothing should match because
-    // the scanner sees an outer `"` first.
-    const text = `Example payload: "{\\"name\\":\\"agent_spawn\\",\\"input\\":{}}"`;
-    const out = parseToolCalls(text, new Set(["agent_spawn"]));
-    expect(out).toEqual([]);
   });
 });
 

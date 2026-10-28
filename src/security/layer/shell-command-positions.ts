@@ -5,7 +5,7 @@
 // forget to look inside a nested shell — the raw-string denylist saw into those
 // bodies only by accident, and matched the words of quoted arguments with them.
 
-import { execBasename, isShellReparseFlag, resolveRealArgv0Index, shellSegments, tokenizeCommand } from "./shell-lex.js";
+import { execBasename, isShellReparseFlag, resolveRealArgv0Index, shellSegments, tokenizeCommand, type SegmentJoin } from "./shell-lex.js";
 
 /** One shell redirection of a command: the operator without its fd digits
  *  (`>`, `>>`, `>|`, `>&`, `<`, `<>`, `<<`, `<<<`, `<&`, `&>`, `&>>`) and its
@@ -28,6 +28,14 @@ export interface CommandPosition {
   piped: boolean;
   /** 0 at top level, +1 per re-parsed shell body. */
   depth: number;
+  /** The separator before this command in its body (null for a body's first):
+   *  what a later command's run depends on (`cd x && rm y` runs rm in x only
+   *  when the cd worked). */
+  join: SegmentJoin | null;
+  /** Index of the top-level segment this command is, or sits in the body of. */
+  segment: number;
+  /** It is a shell running a body of its own (`bash -c "…"`), walked after it. */
+  reparses: boolean;
 }
 
 export interface CommandWalk {
@@ -37,6 +45,8 @@ export interface CommandWalk {
   /** The scripts a shell at the top level re-parses (`bash -c '<script>'`),
    *  verbatim, for a caller that judges each as a whole command. */
   scripts: string[];
+  /** Redirections of segments that run no command (`> out.txt` truncates it). */
+  bareRedirections: Redirection[];
 }
 
 /** Shells within shells past this depth are refused rather than walked. */
@@ -47,7 +57,7 @@ export const MAX_SHELL_NESTING = 3;
 const REST_OF_LINE_SHELLS = new Set(["cmd", "powershell", "pwsh"]);
 
 export function commandPositions(command: string): CommandWalk {
-  const walk: CommandWalk = { positions: [], tooDeep: false, scripts: [] };
+  const walk: CommandWalk = { positions: [], tooDeep: false, scripts: [], bareRedirections: [] };
   visit(command, 0, walk);
   return walk;
 }
@@ -79,23 +89,28 @@ export function splitRedirections(tokens: string[]): { words: string[]; redirect
   return { words, redirections };
 }
 
-function visit(command: string, depth: number, walk: CommandWalk): void {
-  for (const seg of shellSegments(command)) {
+function visit(command: string, depth: number, walk: CommandWalk, outer?: number): void {
+  for (const [index, seg] of shellSegments(command).entries()) {
     const { words, redirections } = splitRedirections(tokenizeCommand(seg.text));
-    if (!words.length) continue;
+    if (!words.length) { walk.bareRedirections.push(...redirections); continue; }
     // Only wrappers and their flags (`sudo -i`, `env`): the first word is what runs.
     const at = resolveRealArgv0Index(words) ?? 0;
     const bin = execBasename(words[at]);
-    walk.positions.push({ words, redirections, at, bin, piped: seg.after === "|" || seg.after === "|&", depth });
+    const segment = outer ?? index;
+    const position: CommandPosition = {
+      words, redirections, at, bin, piped: seg.after === "|" || seg.after === "|&", depth, join: seg.after, segment, reparses: false,
+    };
+    walk.positions.push(position);
     for (let i = at + 1; i < words.length - 1; i++) {
       if (!isShellReparseFlag(bin, words[i])) continue;
+      position.reparses = true;
       if (depth + 1 >= MAX_SHELL_NESTING) {
         walk.tooDeep = true;
         break;
       }
       const script = REST_OF_LINE_SHELLS.has(bin) ? words.slice(i + 1).join(" ") : words[i + 1];
       if (depth === 0) walk.scripts.push(script);
-      visit(script, depth + 1, walk);
+      visit(script, depth + 1, walk, segment);
       break; // a shell takes one command body; the words after it are its arguments
     }
   }

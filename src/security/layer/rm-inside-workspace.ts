@@ -14,11 +14,17 @@
  * becomes reachable.
  *
  * Deliberately strict. Anything the parse cannot prove returns false and the
- * caller keeps the old refusal:
- *  - exactly one command segment (no `;` `&&` `||` `|` `&` newline);
- *  - no expansion or redirection anywhere: `$`, backtick, `<`, `>`, `(`, `)`,
- *    `{`, `}`, `~`;
- *  - argv0 is `rm`; flags only from a fixed set (`--no-preserve-root` and every
+ * caller keeps the old refusal. The deletes are read by the one delete
+ * extractor (shell-delete-targets.ts), every form (rm, Remove-Item, rd /s, …):
+ *  - every destructive delete is one of the plain deletes that open the
+ *    command, before anything else runs (`leadingRun`: no wrapper, no body,
+ *    nothing piped or backgrounded beside them). What follows them runs after
+ *    and is judged by the other rules: `rm -rf node_modules && npm install`,
+ *    which the floor's disposable proof clears, was refused here for its
+ *    chain until 2026-10-27;
+ *  - no expansion or redirection in those deletes: `$`, backtick, `<`, `>`,
+ *    `(`, `)`, `{`, `}`, `~`;
+ *  - an `rm`'s flags only from a fixed set (`--no-preserve-root` and every
  *    other flag refuses);
  *  - no `..` segment in any operand, so a relative operand is always a
  *    descendant of the shell's cwd, whichever approved root that is;
@@ -31,7 +37,7 @@ import { existsSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { realpathDeep, resolveAgentPathFrom } from "../../workspace/paths.js";
 import { pathIsWithin } from "./file-access.js";
-import { execBasename, splitShellSegments, tokenizeCommand } from "./shell-lex.js";
+import { leadingRun, plainDelete, shellDeletes, type DeleteCall } from "./shell-delete-targets.js";
 
 const UNPROVABLE = /[$`<>(){}~\n]/;
 const SHORT_FLAGS = /^-[rRfvd]+$/;
@@ -76,22 +82,15 @@ export type RmInsideVerdict = "inside" | "workspace-prefix" | "unprovable";
 
 export function rmInsideWorkspaceVerdict(command: string, workspace: string | undefined): RmInsideVerdict {
   if (!workspace) return "unprovable";
-  if (UNPROVABLE.test(command)) return "unprovable";
-  const segments = splitShellSegments(command);
-  if (segments.length !== 1) return "unprovable";
-  const tokens = tokenizeCommand(segments[0]);
-  if (tokens.length < 2 || execBasename(tokens[0]) !== "rm") return "unprovable";
-  const operands: string[] = [];
-  let flagsDone = false;
-  for (const tok of tokens.slice(1)) {
-    if (!flagsDone && tok === "--") { flagsDone = true; continue; }
-    if (!flagsDone && tok.startsWith("-")) {
-      if (SHORT_FLAGS.test(tok) || LONG_FLAGS.has(tok)) continue;
-      return "unprovable";
-    }
-    operands.push(tok);
-  }
-  if (operands.length === 0) return "unprovable";
+  const lead = leadingRun(command, (segment) => plainDelete(segment) !== null) ?? [];
+  const deletes = lead.map((segment) => plainDelete(segment)!);
+  const destructive = (d: DeleteCall) => d.recursive || d.forced;
+  // Every destructive delete the command makes is one of those leading ones.
+  if (lead.length === 0 || shellDeletes(command).filter(destructive).length !== deletes.filter(destructive).length) return "unprovable";
+  if (lead.some((segment) => UNPROVABLE.test(segment))) return "unprovable";
+  if (deletes.some((d) => d.verb === "rm" && !d.flags.every((f) => SHORT_FLAGS.test(f) || LONG_FLAGS.has(f)))) return "unprovable";
+  const operands = deletes.flatMap((d) => d.targets);
+  if (deletes.some((d) => d.targets.length === 0)) return "unprovable";
   if (!existsSync(join(workspace, "workspace")) && operands.some((op) => /^(\.\/)?workspace[/\\]/.test(op))) return "workspace-prefix";
   return operands.every((op) => operandInside(workspace, op)) ? "inside" : "unprovable";
 }

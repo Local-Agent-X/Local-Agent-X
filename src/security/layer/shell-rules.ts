@@ -3,12 +3,14 @@
 // network-client basename sets. Consumed by shell-detectors.ts and
 // shell-policy.ts; no logic lives here.
 
-// Destructive `rm` (a -f or -r flag; catches split flags like `rm -a -f`).
-// NOT in BLOCKED_COMMANDS: it is handled explicitly and MODE-AWARE by
-// evaluateShellCommand — blocked outright in workspace/common mode, but in
-// unrestricted mode allowed on the user's own files with only the catastrophic
-// floor (catastrophic-paths.ts) held. A blanket denylist entry here would
-// re-block it regardless of mode, which is exactly the bug this splits out.
+// Destructive `rm` spelled anywhere in the text (a -f or -r flag; catches split
+// flags like `rm -a -f`). The deletes themselves are read by the delete
+// extractor (shell-delete-targets.ts); this is the backstop for the ones it
+// cannot read: a delete in an interpreter's code (`python -c
+// 'os.system("rm -rf /")'`) is no command position. NOT in BLOCKED_COMMANDS:
+// shell-policy.ts refuses it only in the confined modes, where a delete must
+// be proven inside the workspace; a blanket denylist entry would re-block the
+// user's own files in unrestricted mode.
 export const RM_DESTRUCTIVE_FLAGS = /\brm\s+.*(-[a-zA-Z]*f|-[a-zA-Z]*r)\b/i;
 
 // Raw-text patterns over the whole command line: network egress, and the

@@ -1,8 +1,7 @@
 import { basename, isAbsolute, join, posix, win32 } from "node:path";
 import { homedir } from "node:os";
-import {
-  execBasename, splitShellSegments, tokenizeCommand,
-} from "./shell-lex.js";
+import { commandPositions, type CommandPosition, type Redirection } from "./shell-command-positions.js";
+import { deleteOf } from "./shell-delete-targets.js";
 import { BENIGN_PATHS } from "./shell-path-guard.js";
 import { isLaxControlFile } from "./lax-control-files.js";
 import { isProtectedFile } from "../../config-loader.js";
@@ -18,10 +17,12 @@ import { isLockedBaselinePath } from "../../tools/app-tools/write-guard.js";
 // in shell-path-guard.ts, which owns the file-access confinement concern; these
 // locks are independent of fileAccessMode and fire even in unrestricted mode.
 
-// Shell verbs whose path operand(s) mutate the file there. For rm/shred/unlink/
-// truncate/tee every non-flag operand is a target; for cp/mv/ln only the LAST (the
-// destination) — engine source as a copy SOURCE is not a brick.
-const MUTATOR_ALL_OPERANDS = new Set(["rm", "shred", "unlink", "truncate", "tee", "del", "erase", "remove-item", "ri"]);
+// Shell verbs whose path operand(s) mutate the file there. Every delete (rm,
+// del, Remove-Item, …) is read by the one delete extractor (deleteOf,
+// shell-delete-targets.ts); for truncate/tee every non-flag operand is a
+// target; for cp/mv/ln only the LAST (the destination) — engine source as a
+// copy SOURCE is not a brick.
+const MUTATOR_ALL_OPERANDS = new Set(["truncate", "tee"]);
 // Windows and PowerShell spellings beside the POSIX ones: the destination is
 // the last operand for copy/move/xcopy and for Copy-Item/Move-Item written
 // positionally or as `-Path … -Destination …` (flags fall out as non-operands;
@@ -33,10 +34,15 @@ const MUTATOR_FIRST_OPERAND = new Set(["set-content", "add-content", "out-file",
 // robocopy's destination is its second operand.
 const MUTATOR_SECOND_OPERAND = new Set(["robocopy"]);
 
-// The operands a mutating verb would WRITE, shared by both mutation detectors so
-// the two can't drift on which operand counts. Flags and redirect tokens are never
-// operands. Yields nothing for a non-mutating verb.
-function* mutationTargets(words: string[], verb: string): Generator<string> {
+// The operands one command would WRITE, shared by both mutation detectors so the
+// two can't drift on which operand counts: a delete's targets, else a mutating
+// verb's. Flags and redirect tokens are never operands. Yields nothing for a
+// non-mutating command.
+function* mutationTargets(p: CommandPosition): Generator<string> {
+  const del = deleteOf(p);
+  if (del) { yield* del.targets; return; }
+  const verb = p.bin;
+  const words = p.words.slice(p.at);
   // A Windows switch (`/Y`, `/E`, `/Q:`) is a short slash token with no further
   // slash; `/tmp/out` and `/c/gone` are paths.
   const operands = words.slice(1).filter((w) => !w.startsWith("-") && !/^\/[A-Za-z?][A-Za-z0-9:+-]{0,3}$/.test(w) && !/^\d*(>>|>|<)/.test(w));
@@ -59,12 +65,18 @@ function expandOperand(t: string, home: string): string {
   return out;
 }
 
-// Every redirect WRITE target in a token list: `>f`, `>>f`, `2>f`, a bare `>` with
-// the target as the NEXT word, AND the glued mid-token form (`type>package.json`).
-// Starts at index 0 on purpose: once splitShellSegments splits on `; && || &`, a
-// glued redirect is the FIRST token of its own segment, so an i=1 start made it
+// Every redirect WRITE target of one command: the walk's own redirections (`>f`,
+// `>>f`, `2>f`, `> f`, `&>f`), AND the glued mid-token form the walk keeps as a
+// word (`type>package.json`), which can be the command word itself. Starts at
+// index 0 on purpose: an i=1 start made a glued redirect opening its segment
 // invisible to BOTH mutation detectors. The left side is never a write target.
-function* redirectWriteTargets(words: string[]): Generator<string> {
+const WRITE_REDIRECTION = /^(?:>>?|>\||&>>?)$/;
+function* writtenBy(redirections: readonly Redirection[]): Generator<string> {
+  for (const r of redirections) if (WRITE_REDIRECTION.test(r.op) && r.target) yield r.target;
+}
+function* redirectWriteTargets(p: CommandPosition): Generator<string> {
+  yield* writtenBy(p.redirections);
+  const words = p.words;
   for (let i = 0; i < words.length; i++) {
     const m = words[i].match(/^(.*?)(\d*)(>>|>)(.*)$/);
     if (!m) continue;
@@ -116,16 +128,14 @@ export function shellMutationTargets(command: string): Array<{ path: string; ver
     if (abs) out.push({ path: abs, verb });
   };
 
-  for (const segment of splitShellSegments(command)) {
-    const words = tokenizeCommand(segment);
-    if (!words.length) continue;
-    const verb = execBasename(words[0]);
-
+  const walk = commandPositions(command);
+  for (const target of writtenBy(walk.bareRedirections)) add(target, "redirect");
+  for (const p of walk.positions) {
     // Redirect write targets — an overwrite regardless of verb.
-    for (const target of redirectWriteTargets(words)) add(target, "redirect");
-    for (const target of mutationTargets(words, verb)) add(target, verb);
-    if (verb === "dd") {
-      for (const w of words) if (w.startsWith("of=")) add(w.slice(3), "dd");
+    for (const target of redirectWriteTargets(p)) add(target, "redirect");
+    for (const target of mutationTargets(p)) add(target, p.bin);
+    if (p.bin === "dd") {
+      for (const w of p.words) if (w.startsWith("of=")) add(w.slice(3), "dd");
     }
   }
   return out;
@@ -198,19 +208,20 @@ export function detectLockedBaselineMutation(command: string, workspace: string)
     return null;
   };
 
-  for (const segment of splitShellSegments(command)) {
-    const words = tokenizeCommand(segment);
-    if (!words.length) continue;
-    const verb = execBasename(words[0]);
-    if (verb === "cd" && words[1]) { cdDir = words[1]; continue; }
+  const walk = commandPositions(command);
+  for (const target of writtenBy(walk.bareRedirections)) {
+    const r = check(target, "redirect"); if (r) return r;
+  }
+  for (const p of walk.positions) {
+    if (p.bin === "cd" && p.words[p.at + 1]) { cdDir = p.words[p.at + 1]; continue; }
 
     // Redirect write targets — overwrite regardless of verb.
-    for (const target of redirectWriteTargets(words)) {
+    for (const target of redirectWriteTargets(p)) {
       const r = check(target, "redirect"); if (r) return r;
     }
 
-    for (const target of mutationTargets(words, verb)) {
-      const r = check(target, verb); if (r) return r;
+    for (const target of mutationTargets(p)) {
+      const r = check(target, p.bin); if (r) return r;
     }
   }
   return null;

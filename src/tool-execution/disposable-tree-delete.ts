@@ -16,7 +16,8 @@
  * recursive rm / Remove-Item / rd, a target with an expansion, glob or `~`, a
  * command before a delete other than an inert one or one plain `cd` opening
  * the command (shell-prelude.ts), or a target that is not provably disposable
- * keeps the card. Nothing here parses a shell; it reads argv-shaped text.
+ * keeps the card. The deletes are read by the one delete extractor
+ * (src/security/layer/shell-delete-targets.ts).
  *
  * The same proof clears a single-file shell delete for the un-named-delete
  * gate (`disposableFileDeletes`): a file in the temp dir, or one that is not
@@ -27,8 +28,8 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { isTaskArtifact } from "../data-lineage/task-artifacts.js";
 import { hasExternalIngestion } from "../data-lineage/external.js";
-import { splitRedirections } from "../security/layer/shell-command-positions.js";
-import { leadingRun, leadingShellDeleteTargets, segments, shellWords } from "./shell-delete-targets.js";
+import { leadingRun, leadingShellDeleteTargets, plainDelete, type DeleteVerb } from "../security/layer/shell-delete-targets.js";
+import { shellSegments } from "../security/layer/shell-lex.js";
 import { enterPrelude } from "./shell-prelude.js";
 
 /** Generated-output folders and the manifest beside them that regenerates
@@ -56,42 +57,16 @@ export interface TreeDeleteScope {
   tempDir?: string;
 }
 
-type Form = "rm" | "remove-item" | "rd";
-interface TreeDelete { form: Form; targets: string[] }
-
 const EXPANDS = /[$`*?~%]/;
 
-/** A segment that is exactly one recursive delete, or null. */
-function parseTreeDelete(segment: string): TreeDelete | null {
-  const words = splitRedirections(shellWords(segment)).words;
-  const head = (words[0] ?? "").replace(/\.exe$/i, "").toLowerCase();
-  const rest = words.slice(1);
-  if (head === "rm" && rest.some((w) => /^-[^-]*[rR]/.test(w) || w === "--recursive")) {
-    const targets: string[] = [];
-    let flags = true;
-    for (const w of rest) {
-      if (flags && w === "--") { flags = false; continue; }
-      if (flags && w.startsWith("-") && w.length > 1) continue;
-      targets.push(w);
-    }
-    return { form: "rm", targets };
-  }
-  if (["remove-item", "ri", "rm", "del", "erase", "rmdir", "rd"].includes(head) && rest.some((w) => /^-rec\w*$/i.test(w) || /^-r$/i.test(w))) {
-    const targets: string[] = [];
-    for (let i = 0; i < rest.length; i++) {
-      const w = rest[i];
-      if (/^-(path|literalpath)$/i.test(w)) { if (rest[i + 1] === undefined) return null; targets.push(rest[++i]); continue; }
-      if (/^-(force|recurse|rec\w*|r|f)$/i.test(w)) continue;
-      if (/^-erroraction$/i.test(w)) { i++; continue; }
-      if (w.startsWith("-")) return null;            // a parameter not read here: not proven
-      targets.push(w);
-    }
-    return { form: "remove-item", targets: targets.flatMap((t) => t.split(",").map((p) => p.trim())) };
-  }
-  if ((head === "rd" || head === "rmdir") && rest.some((w) => /^\/s$/i.test(w))) {
-    return { form: "rd", targets: rest.filter((w) => !w.startsWith("/")) };
-  }
-  return null;
+/** The targets of a segment that is exactly one recursive delete, by no
+ *  wrapper (a `sudo` or `bash -c` delete is not proven), naming every target
+ *  it removes: a PowerShell filter (`-Filter`, `-Include`) and `del /s`, which
+ *  also deletes same-named files in every subfolder, are not proven. */
+function treeDeleteOf(segment: string): { verb: DeleteVerb; targets: string[] } | null {
+  const del = plainDelete(segment);
+  if (!del || !del.recursive || del.opaque || del.verb === "del" || del.targets.length === 0) return null;
+  return { verb: del.verb, targets: del.targets };
 }
 
 function within(parent: string, child: string): boolean {
@@ -173,7 +148,7 @@ function agentCreated(abs: string, isDir: boolean, sessionId: string | undefined
   }
 }
 
-function disposable(target: string, form: Form, scope: TreeDeleteScope): boolean {
+function disposable(target: string, verb: DeleteVerb, scope: TreeDeleteScope): boolean {
   if (!target || EXPANDS.test(target) || unplaceable(target)) return false;
   const trailingSep = /[\\/]$/.test(target);
   const abs = resolve(scope.cwd, target);
@@ -189,7 +164,7 @@ function disposable(target: string, form: Form, scope: TreeDeleteScope): boolean
   if (stat.isSymbolicLink()) return !trailingSep;
   if (inTempDir(abs, scope.tempDir ?? tmpdir())) return true;
   if (stat.isDirectory() && (generatedOutput(abs) || virtualEnv(abs))) {
-    return (form !== "remove-item" && process.platform !== "win32") || !hasShallowLink(abs);
+    return (verb !== "remove-item" && process.platform !== "win32") || !hasShallowLink(abs);
   }
   return agentCreated(abs, stat.isDirectory(), scope.sessionId);
 }
@@ -211,7 +186,7 @@ export function isDisposableTreeDelete(command: string, trips: (segment: string)
   const entered = enterPrelude(command, scope.cwd);
   if (!entered || leadingRun(entered.command, trips) === null) return false;
   scope = { ...scope, cwd: entered.cwd };
-  const parts = segments(entered.command);
+  const parts = shellSegments(entered.command).map((s) => s.text.trim()).filter(Boolean);
   // Inert commands and one `cd` opening the command were stepped past above
   // (`command -v cpio; cd /tmp && rm -rf …`, TB2 qemu-startup 2026-10-27).
   // Any other `cd` either comes before a delete, which then no longer leads
@@ -223,9 +198,8 @@ export function isDisposableTreeDelete(command: string, trips: (segment: string)
   for (const part of parts) {
     if (!trips(part)) { leading = false; continue; }
     if (!leading) return false;
-    const del = parseTreeDelete(part);
-    if (!del || del.targets.length === 0) return false;
-    if (!del.targets.every((t) => disposable(t, del.form, scope))) return false;
+    const del = treeDeleteOf(part);
+    if (!del || !del.targets.every((t) => disposable(t, del.verb, scope))) return false;
     found = true;
   }
   return found;

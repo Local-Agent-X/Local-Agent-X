@@ -97,6 +97,13 @@ describe("shell task-artifact delete guard — registered files are denied in un
 	it("DENIES a registered target inside a re-parsed `bash -c` body", () => {
 		expectArtifactBlock(`bash -c "rm ${REGISTERED}"`);
 	});
+
+	// Audit 2026-10-27: the rule knew rm/unlink/shred, so the Windows and
+	// PowerShell deletes of the same file walked past it.
+	it("DENIES every delete verb the delete gates know, and every wrapper", () => {
+		for (const cmd of ["del report.md", "erase report.md", "Remove-Item report.md", "ri -Force report.md", "rm -Force report.md",
+			`powershell -Command "Remove-Item report.md"`, "timeout 5 rm report.md", "nohup unlink report.md"]) expectArtifactBlock(cmd);
+	});
 });
 
 describe("shell task-artifact delete guard — every spelling of a registered file resolves to it", () => {
@@ -159,6 +166,20 @@ describe("shell task-artifact delete guard — in-command cd makes relative oper
 		const d = evaluateShellCommandAndPaths("cd out && rm report.md", ctx);
 		expect(d.allowed, d.reason).toBe(true);
 		expect(evaluateShellCommandAndPaths("pushd out && rm report.md", ctx).allowed).toBe(true);
+	});
+
+	// Audit 2026-10-27: only cd/pushd moved the cwd here, so after
+	// `Set-Location out` the user's out/report.md was read as the artifact.
+	it("ALLOWS a relative delete after every cd spelling it cannot place", () => {
+		for (const cmd of ["Set-Location out && rm report.md", "sl out && Remove-Item report.md", "chdir out && del report.md", "Push-Location out && rm report.md"]) {
+			const d = evaluateShellCommandAndPaths(cmd, ctx);
+			expect(d.allowed, `${cmd}: ${d.reason}`).toBe(true);
+		}
+	});
+
+	it("checks a relative delete where a placeable cd put it", () => {
+		expect(evaluateShellCommandAndPaths("cd ./out && rm report.md", ctx).allowed).toBe(true);   // out/report.md is the user's
+		expectArtifactBlock("cd ./out && rm ../report.md");                                       // workspace/report.md is the agent's
 	});
 
 	it("still DENIES an ABSOLUTE artifact spelling after a cd (only relative anchoring is ambiguous)", () => {

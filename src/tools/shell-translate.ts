@@ -18,7 +18,7 @@
 
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import { segments, shellWords } from "../tool-execution/shell-delete-targets.js";
+import { splitShellSegments, tokenizeCommand } from "../security/layer/shell-lex.js";
 
 export type TargetShell = "powershell-51" | "pwsh-7" | "bash";
 
@@ -101,7 +101,7 @@ export function workspacePrefixHint(stderr: string, cwd: string, exists: (p: str
   // leave stderr empty and exit 0, so the failure is invisible there; the
   // command's own word is the signal, when the un-prefixed path really exists.
   const fromCommand = (): string | null => {
-    for (const w of shellWords(command)) {
+    for (const w of tokenizeCommand(command)) {
       const m = w.match(/^(?:\.\/)?workspace[/\\](.+)$/);
       if (m && exists(join(cwd, m[1]))) return m[1];
     }
@@ -127,7 +127,7 @@ export function quotedGlobHint(command: string): string | null {
   // Only the rm step's own arguments, and `$?` / `$*` are parameters, not
   // globs: `rm probe.ts; echo "exit=$?"` once drew "nothing was deleted" for a
   // delete that worked, and the model re-deleted a file that was already gone.
-  const m = segments(command)
+  const m = splitShellSegments(command).map((s) => s.trim())
     .filter((step) => /^(sudo\s+)?rm\s/.test(step))
     .map((step) => /(["'])((?:[^"'$]|\$(?![?*]))*?(?<!\$)[*?][^"']*)\1/.exec(step))
     .find((hit) => hit !== null);

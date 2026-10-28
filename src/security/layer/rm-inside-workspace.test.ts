@@ -59,6 +59,24 @@ describe("rmTargetsAllInsideWorkspace — provably inside, or refused", () => {
     }
   });
 
+  // Audit 2026-10-27: the floor's disposable proof clears `rm -rf
+  // node_modules && npm install`, and this refused it for its chain. What runs
+  // after the deletes cannot change what they meet; the order rule holds.
+  it("allows the deletes that open a command, whatever runs after them", () => {
+    expect(inside("rm -rf client-data/build-cache; echo hi")).toBe(true);
+    expect(inside("rm -rf client-data/build-cache && mkdir client-data/build-cache && npm run build 2>&1 | tail")).toBe(true);
+    expect(inside("rm -rf client-data/build-cache && rm -f client-data/originals/x.md")).toBe(true);
+    expect(inside(`Remove-Item -Recurse -Force client-data/build-cache`)).toBe(true);
+  });
+
+  // Not cleared, though the floor would not card it: a temp folder is outside
+  // the workspace, which these modes confine the shell to. The path guard
+  // refuses the same `/tmp/e2e` operand in these modes (evaluateShellPaths),
+  // so accepting it here would only trade one refusal for another.
+  it("still refuses a temp folder outside the workspace", () => {
+    expect(inside(`rm -rf ${join(root, "outside")} && mkdir ${join(root, "outside")}`)).toBe(false);
+  });
+
   it("refuses the workspace root, however it is spelled", () => {
     for (const cmd of ["rm -rf .", "rm -rf ./", "rm -rf *", "rm -rf ./*", `rm -rf ${ws}`, "rm -rf workspace"]) {
       expect(inside(cmd), cmd).toBe(false);
@@ -74,7 +92,9 @@ describe("rmTargetsAllInsideWorkspace — provably inside, or refused", () => {
       "rm -rf $HOME/x",
       "rm -rf `pwd`/x",
       "rm -rf client-data/build-cache && rm -rf /",
-      "rm -rf client-data/build-cache; echo hi",
+      "mkdir x && rm -rf client-data/build-cache",
+      "rm -rf client-data/build-cache & mv client-data/originals client-data/build-cache",
+      "rm -rf client-data/build-cache && sudo rm -rf client-data/originals",
       "rm -rf client-data/*/chunks",
       "rm -rf client-data/.*",
       "rm -rf --no-preserve-root client-data/build-cache",

@@ -9,10 +9,8 @@
  * Fail-closed: anything not provably inert ends the prelude, and a `cd` this
  * cannot place returns null.
  */
-import { isAbsolute, resolve } from "node:path";
-import { shellWords } from "./shell-delete-targets.js";
-
-const EXPANDS = /[$`*?~%]/;
+import { tokenizeCommand } from "../security/layer/shell-lex.js";
+import { placeCd } from "../security/layer/shell-delete-targets.js";
 
 /** Commands that read or print, or make an empty folder: none can move,
  *  rename or write anyone's bytes. `export` and assignments are not here: a
@@ -25,7 +23,7 @@ const INERT_HEADS: ReadonlySet<string> = new Set([
 /** One segment that only looks: an inert head, no redirection, nothing nested. */
 function inertSegment(segment: string): boolean {
   if (/[<>`]|\$\(/.test(segment)) return false;
-  const words = shellWords(segment);
+  const words = tokenizeCommand(segment);
   const head = (words[0] ?? "").toLowerCase();
   if (head === "command") return /^-[vV]$/.test(words[1] ?? "");
   return INERT_HEADS.has(head);
@@ -52,22 +50,17 @@ const LEADING_CD = /^\s*(?:cd|pushd|set-location|sl)\s+("[^"]*"|'[^']*'|[^\s"';&
  * `cd <dir> && …` opening the command: the rest runs in `dir`, so its targets
  * resolve there (`cd /tmp/alpboot && rm -rf rootfs`, TB2 qemu-startup
  * 2026-10-27, carded a temp folder). Only `&&`, so a cd that fails runs
- * nothing; only an absolute or `./` / `../` dir, since CDPATH can send a bare
- * name anywhere; never across drives, where cmd's `cd` keeps the old drive.
- * The command unchanged when it opens with no cd; null when it opens with one
- * this cannot place. An undefined `cwd` is a folder the caller does not know:
- * only a cd to an absolute folder on no other drive can be placed from it.
+ * nothing. The folder is placed by the one rule every delete check uses
+ * (`placeCd`: no bare name CDPATH could send anywhere, no other drive). The
+ * command unchanged when it opens with no cd; null when it opens with one
+ * this cannot place. An undefined `cwd` is a folder the caller does not know.
  */
 export function enterLeadingCd<C extends string | undefined>(command: string, cwd: C): { command: string; cwd: C | string } | null {
   if (!CD.test(command.trimStart())) return { command, cwd };
   const m = LEADING_CD.exec(command);
   if (!m) return null;
-  const [dir] = shellWords(m[1]);
-  if (!dir || EXPANDS.test(dir) || dir.startsWith("-")) return null;
-  if (!isAbsolute(dir) && (cwd === undefined || !/^\.\.?(?:[\\/]|$)/.test(dir))) return null;
-  if (/^[a-z]:/i.test(dir) && (cwd === undefined || dir[0].toLowerCase() !== resolve(cwd)[0].toLowerCase())) return null;
-  if (process.platform === "win32" && /^[\\/]/.test(dir)) return null;   // Git Bash's `/c/…` is not C:\c\…
-  return { command: command.slice(m[0].length).trimStart(), cwd: resolve(cwd ?? "", dir) };
+  const dir = placeCd(tokenizeCommand(m[1])[0], cwd);
+  return dir === null ? null : { command: command.slice(m[0].length).trimStart(), cwd: dir };
 }
 
 /** The command from its first real act, and the folder that act runs in:

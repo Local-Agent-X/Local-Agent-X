@@ -131,6 +131,18 @@ describe("evaluateShellCommand (posix) — mode-aware rm", () => {
     }
   });
 
+  // Audit 2026-10-27: the floor read only a bare `rm`, split on whitespace.
+  it("unrestricted: the floor holds behind a wrapper and inside a shell's body", () => {
+    for (const cmd of ["timeout 60 rm -rf ~", "nohup rm -rf /", "sudo rm -rf /etc", `bash -c "rm -rf ~"`, "nice -n 5 rm -rf /usr"]) {
+      expect(U(cmd).allowed, cmd).toBe(false);
+    }
+  });
+
+  it("unrestricted: a delete only spelled in quotes, and git rm, are not deletes", () => {
+    expect(U(`git commit -m "rm -rf /"`).allowed).toBe(true);
+    expect(U("git rm -rf --cached /etc").allowed).toBe(true);
+  });
+
   it("unrestricted: STILL refuses system directories even as subpaths", () => {
     for (const cmd of [`rm -rf /etc/passwd`, `rm -rf /usr/bin`, `rm -rf /bin`, `rm -rf /System`, `rm -rf /Library`]) {
       expect(U(cmd).allowed, cmd).toBe(false);
@@ -174,6 +186,16 @@ describe("evaluateShellCommand (win32) — PowerShell semantics", () => {
       expect(UW(cmd).allowed, cmd).toBe(false);
     }
     expect(UW(`rm -rf ~/Downloads`).allowed).toBe(true); // user data stays deletable
+  });
+
+  // Audit 2026-10-27: only `rm` reached the floor; PowerShell and cmd.exe
+  // deletes of the same roots walked past it.
+  it("catastrophic floor holds for Remove-Item, rd /s and del, and behind a wrapper", () => {
+    for (const cmd of [`Remove-Item -Recurse C:\\Users`, `Remove-Item -Recurse -Force C:\\Windows\\System32`, `rd /s /q C:\\Users`,
+      `rmdir /s /q C:\\`, `del /s /f /q C:\\Windows\\x.dll`, `powershell -Command "Remove-Item -Recurse -Force C:\\Users"`, `ri -r ~`]) {
+      expect(UW(cmd).allowed, cmd).toBe(false);
+    }
+    expect(UW(`Remove-Item -Recurse -Force ~/Downloads/old`).allowed).toBe(true);
   });
 });
 

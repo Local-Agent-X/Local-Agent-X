@@ -14,7 +14,7 @@
  */
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { currentHumanText } from "./unnamed-delete-gate.js";
-import { segments, shellWords } from "./shell-delete-targets.js";
+import { splitShellSegments, tokenizeCommand } from "../security/layer/shell-lex.js";
 
 /** What was said around this call: the user's latest message and the
  *  agent's message right before it, the question the user answered. */
@@ -42,9 +42,9 @@ export function chatTurnOf(priorMessages: readonly ChatCompletionMessageParam[] 
 
 /** The words a command acts on: not the program, its git subcommand, or a flag. */
 function targetsOf(command: string): string[] | null {
-  const parts = segments(command);
+  const parts = splitShellSegments(command).map((s) => s.trim()).filter(Boolean);
   if (parts.length !== 1) return null;
-  const words = shellWords(parts[0]).filter((w) => !/^\w+=/.test(w));
+  const words = tokenizeCommand(parts[0]).filter((w) => !/^\w+=/.test(w));
   const program = (words.shift() ?? "").toLowerCase();
   const sub = program === "git" ? words.findIndex((w) => !w.startsWith("-")) : -1;
   if (sub >= 0) words.splice(sub, 1);

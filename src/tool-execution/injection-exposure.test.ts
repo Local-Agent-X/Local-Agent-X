@@ -9,7 +9,8 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import { createContext, type CallContext, type ToolCallContext } from "./context.js";
 import type { SecurityLayer } from "../security/index.js";
 import type { ToolResult } from "../types.js";
-import { auditPhase, budgetResult } from "./audit-tool-call.js";
+import { auditPhase } from "./audit-tool-call.js";
+import { capWithSpill } from "../tools/result-spill.js";
 import { askUserGates } from "./ask-user-gates.js";
 import { requireApprovalPhase } from "./require-approval.js";
 import { _clearInjectionExposureForTests } from "./injection-exposure.js";
@@ -124,7 +125,7 @@ describe("harness text never makes a finding", () => {
 
   it("nor does a wrapped result cut short by the budget", () => {
     const wrapped = wrapExternalContent(`${"The forecast for Tacoma is rain. ".repeat(200)}`, "web_fetch");
-    const cut = budgetResult(wrapped, 600);
+    const cut = capWithSpill(wrapped, 600);
     expect(cut).toContain("TRUNCATED");
     expect(screenUntrustedText(cut).finding).toBeNull();
   });

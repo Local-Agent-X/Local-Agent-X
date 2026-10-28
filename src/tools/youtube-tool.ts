@@ -15,7 +15,6 @@ import { BROWSER_ACCEPT_LANGUAGE, BROWSER_USER_AGENT, canonicalFetch, EgressRedi
 
 const execFileAsync = promisify(execFile);
 
-const MAX_CHARS = 80_000;
 const YT_DLP_INSTALL = "python -m pip install yt-dlp";
 
 function ok(content: string, metadata?: Record<string, unknown>): ToolResult { return { content, metadata }; }
@@ -171,8 +170,8 @@ export const youtubeAnalyzeTool: ToolDefinition = {
   description:
     "ALWAYS use this for any YouTube URL or video ID — never web_fetch the watch page. " +
     "Returns title, channel, duration, view count, description, and the ENGLISH timestamped transcript " +
-    "(manual or auto-generated captions; other languages are not fetched), the whole result capped at " +
-    `${MAX_CHARS.toLocaleString()} characters. ` +
+    "(manual or auto-generated captions; other languages are not fetched). A result too long for the context " +
+    "is cut to fit, with the whole of it saved to a file the result names (grep it, or read it with offset/limit). " +
     "Accepts youtube.com/watch?v=, youtu.be/, youtube.com/shorts/, embeds, or a bare 11-char video ID. " +
     `Transcripts come from yt-dlp when it is installed (${YT_DLP_INSTALL} — this tool never installs it), ` +
     "else from the watch page's own caption URL.",
@@ -245,19 +244,15 @@ export const youtubeAnalyzeTool: ToolDefinition = {
     }
 
     // Title, description and transcript are the uploader's words: wrapped, so a
-    // video that reads out instructions is quoted, not obeyed. The cap applies
-    // to that body; the notes below are this tool's own.
-    let body = parts.join("\n");
-    const truncated = body.length > MAX_CHARS;
-    if (truncated) body = body.slice(0, MAX_CHARS);
-    const notes: string[] = [];
-    if (truncated) notes.push(`[Transcript truncated at ${MAX_CHARS.toLocaleString()} characters]`);
-    if (!ytdlpTranscript && _ytDlpReady === false) {
-      notes.push(`yt-dlp is not installed, so only the watch page's caption URL was tried. For reliable transcripts install it: ${YT_DLP_INSTALL}`);
-    }
-    const wrapped = wrapExternalContent(body, "youtube_analyze", { url: `https://www.youtube.com/watch?v=${videoId}` });
-    return ok(notes.length ? `${wrapped}\n\n${notes.join("\n")}` : wrapped, {
-      videoId, truncated: truncated || undefined, transcript: transcript ? (ytdlpTranscript ? "yt-dlp" : "caption-url") : "none",
+    // video that reads out instructions is quoted, not obeyed. The note is this
+    // tool's own, and leads: the audit phase's cap (the one result limit,
+    // result-spill.ts) cuts a long transcript from the end.
+    const wrapped = wrapExternalContent(parts.join("\n"), "youtube_analyze", { url: `https://www.youtube.com/watch?v=${videoId}` });
+    const note = !ytdlpTranscript && _ytDlpReady === false
+      ? `yt-dlp is not installed, so only the watch page's caption URL was tried. For reliable transcripts install it: ${YT_DLP_INSTALL}\n\n`
+      : "";
+    return ok(note + wrapped, {
+      videoId, transcript: transcript ? (ytdlpTranscript ? "yt-dlp" : "caption-url") : "none",
     });
   },
 };

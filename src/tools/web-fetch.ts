@@ -3,7 +3,6 @@ import { wrapExternalContent } from "../sanitize.js";
 import { findInBody } from "./paginate-body.js";
 import { ok, err, blocked } from "./result-helpers.js";
 import { EgressPayloadBlocked } from "../net/egress-send.js";
-import { capWithSpill } from "./result-spill.js";
 import { extractFromHtml } from "./html-extract.js";
 import { formatMissingPageLeads, gatherMissingPageLeads, isMissingPageStatus } from "./missing-page-leads.js";
 import { withholdSecretValues, secretsMaskedNote, isSecretEndpointUrl } from "../data-lineage/index.js";
@@ -135,14 +134,16 @@ export const webFetchTool: ToolDefinition = {
         endpoint: isSecretEndpointUrl(url) || isSecretEndpointUrl(currentUrl),
       });
       body = secrets.text;
-      const maskedNote = secrets.masked > 0 ? `\n\n${secretsMaskedNote(secrets.masked, secrets.kinds)}` : "";
+      // Ahead of the body: the audit phase's cap (the one result limit,
+      // result-spill.ts) cuts from the end, and the note must survive it.
+      const maskedNote = secrets.masked > 0 ? `${secretsMaskedNote(secrets.masked, secrets.kinds)}\n\n` : "";
       const maskedMeta = secrets.masked > 0 ? { secrets_masked: secrets.masked } : {};
 
       const fullBytes = body.length;
       const find = typeof args.find === "string" ? args.find.trim() : "";
       if (find) {
         const found = findInBody(body, find);
-        return ok(wrapExternalContent(found.text, "web_fetch", { url, status: String(res.status) }) + maskedNote, {
+        return ok(maskedNote + wrapExternalContent(found.text, "web_fetch", { url, status: String(res.status) }), {
           url: currentUrl,
           status: res.status,
           duration_ms: durationMs,
@@ -153,19 +154,11 @@ export const webFetchTool: ToolDefinition = {
         });
       }
 
-      const MAX_CHARS = 50_000;
-      // Spill-on-cap: the full body lands on disk and the note tells the model
-      // how to keep reading past the cut (screened per chunk by `read`).
-      const capped = capWithSpill(body, MAX_CHARS);
-      const truncated = capped.truncated;
-      body = capped.body;
-
-      return ok(wrapExternalContent(body, "web_fetch", { url, status: String(res.status) }) + maskedNote, {
+      return ok(maskedNote + wrapExternalContent(body, "web_fetch", { url, status: String(res.status) }), {
         url: currentUrl,
         status: res.status,
         duration_ms: durationMs,
         bytes: fullBytes,
-        truncated: truncated || undefined,
         ...maskedMeta,
       });
     } catch (e) {

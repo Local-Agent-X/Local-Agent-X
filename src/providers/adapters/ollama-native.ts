@@ -19,12 +19,11 @@
  * in the store both transports share.
  */
 import { BaseAdapter } from "../adapter/base-adapter.js";
-import { LOCAL_DEFAULT_MAX_TOKENS, type ProviderRequest, type StreamChunk } from "../adapter/types.js";
+import type { ProviderRequest, StreamChunk } from "../adapter/types.js";
 import { hasNoToolSupport, markNoToolSupport, hasParamUnsupported, markParamUnsupported } from "../types.js";
 import { isReasoningCapable, resolveReasoningParam } from "./openai-param-support.js";
 import { buildOllamaChatBody } from "./ollama-native-request.js";
 import { parseOllamaChatStream } from "./ollama-native-stream.js";
-import { isLocalModelEndpoint } from "../../local-runtimes/model-endpoint.js";
 import { ollamaProbe } from "../../local-runtimes/ollama-probe.js";
 import { appliedContext } from "../../local-runtimes/context-sizing.js";
 import { observeChatResidency } from "../../local-runtimes/context-sizing-adapt.js";
@@ -63,8 +62,8 @@ export class OllamaNativeAdapter extends BaseAdapter {
     const root = ollamaRootOf(req.baseURL);
     const numCtx = appliedContext(root, req.model);
     const reasoning = resolveReasoningParam({ baseURL: req.baseURL, model: req.model, effort: req.reasoningEffort });
-    const numPredict = req.maxTokens
-      ?? (!req.omitDefaultMaxTokens && isLocalModelEndpoint(root) ? LOCAL_DEFAULT_MAX_TOKENS : undefined);
+    // Exactly the cap the caller decided (local-cap.ts owns it); none → none.
+    const numPredict = req.maxTokens;
     const includeFormat = !!req.responseFormat && !hasParamUnsupported(req.baseURL, req.model, "response_format");
     const build = (flags: Flags) => buildOllamaChatBody(req, {
       useTools: flags.tools,

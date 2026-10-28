@@ -6,9 +6,11 @@
 // after the 2026-10-26 long-context eval (compaction-policy.ts).
 //
 // The baselineTokens arg is used as a precise dial: with an empty message
-// array the used-token count IS the baseline, so percentage = baseline / window
-// exactly (window: claude-haiku-4-5 = 200k nominal, gpt-5.4-mini = 272k,
-// grok-4.3 = 1M).
+// array the used-token count IS the baseline, so percentage = baseline / budget,
+// the budget being the window less the 1,024-token reply reserve (status.ts;
+// window: claude-haiku-4-5 = 200k nominal, gpt-5.4-mini = 272k, grok-4.3 = 1M).
+// Each dial below is a round share of the window and rounds to the same
+// percentage of the budget.
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";

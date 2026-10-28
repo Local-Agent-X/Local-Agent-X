@@ -1,6 +1,5 @@
 import type { OpMessageRow } from "../canonical-loop/index.js";
 import { estimateTokens } from "../context-manager/token-estimation.js";
-import { OUTPUT_RESERVE_TOKENS } from "../context-manager/request-fit.js";
 import { PROVIDER_IDS, type ProviderId } from "../providers/provider-ids.js";
 import { runtimeTargetIdentity } from "./target-identity.js";
 import type {
@@ -70,7 +69,6 @@ export function resolveOperationRequirements(
   const minimumContextTokens = Math.max(
     explicit.minimumContextTokens ?? 0,
     explicit.needsLongContext ? 100_001 : 0,
-    measuredContextFloor ?? 0,
   );
   const locality = descriptor?.capabilities.locality ?? "unknown";
 
@@ -82,6 +80,7 @@ export function resolveOperationRequirements(
     ...(explicit.needsJsonMode ? { needsJsonMode: true } : {}),
     ...(explicit.needsLocalFiles ? { needsLocalFiles: true } : {}),
     ...(minimumContextTokens > 0 ? { minimumContextTokens } : {}),
+    ...(measuredContextFloor !== null ? { requestTokens: measuredContextFloor } : {}),
     ...(explicit.locality === "local-only" || locality === "local"
       ? { locality: "local-only" as const }
       : {}),
@@ -199,7 +198,9 @@ function resolveMeasuredContextFloor(
     if (serialized === null) return null;
     messageTokens += 4 + estimateTokens(serialized);
   }
-  return promptTokens + toolTokens + messageTokens + OUTPUT_RESERVE_TOKENS;
+  // No reply reserve here: it depends on the candidate (output-reserve.ts),
+  // so targetMeetsRequirements applies each candidate's own.
+  return promptTokens + toolTokens + messageTokens;
 }
 
 function normalizeExplicitRequirements(value: unknown): ProviderCapabilityRequirement {

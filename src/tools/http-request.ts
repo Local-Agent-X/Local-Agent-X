@@ -5,7 +5,6 @@ import type { SecretsStore } from "../secrets.js";
 import type { ServerEvent } from "../types.js";
 import { gateSecretDestinations, referencedSecretNames } from "../secret-destination-gate.js";
 import { ok, err, blocked } from "./result-helpers.js";
-import { capWithSpill } from "./result-spill.js";
 import { checkOutboundRequest } from "./http-egress-guard.js";
 import { vouchedFor } from "../browser/site-provenance.js";
 import { formatMissingPageLeads, gatherMissingPageLeads, isMissingPageStatus } from "./missing-page-leads.js";
@@ -238,6 +237,9 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
 
         const fullBytes = body.length;
         const find = typeof args.find === "string" ? args.find.trim() : "";
+        // The notes lead the body: the audit phase's cap (the one result limit,
+        // result-spill.ts) cuts from the end, and they must survive it.
+        const notes = `${leadsNote}${maskedNote}${droppedNote}`;
         if (find) {
           const found = findInBody(body, find);
           const wrapped = wrapExternalContent(found.text, "http_request", {
@@ -245,7 +247,7 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
             method,
             status: statusLine,
           });
-          const output = `HTTP ${statusLine}\n\n${wrapped}${leadsNote}${maskedNote}${droppedNote}`;
+          const output = `HTTP ${statusLine}${notes}\n\n${wrapped}`;
           const meta = {
             url: currentUrl,
             method,
@@ -261,26 +263,18 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
           return res.ok ? ok(output, meta) : err(output, meta);
         }
 
-        const MAX_CHARS = 100_000;
-        // Spill-on-cap: the full body lands on disk and the note tells the model
-        // how to keep reading past the cut (screened per chunk by `read`).
-        const capped = capWithSpill(body, MAX_CHARS);
-        const truncated = capped.truncated;
-        body = capped.body;
-
         const wrapped = wrapExternalContent(body, "http_request", {
           url,
           method,
           status: statusLine,
         });
-        const output = `HTTP ${statusLine}\n\n${wrapped}${leadsNote}${maskedNote}${droppedNote}`;
+        const output = `HTTP ${statusLine}${notes}\n\n${wrapped}`;
         const meta = {
           url: currentUrl,
           method,
           status: res.status,
           duration_ms: durationMs,
           bytes: fullBytes,
-          truncated: truncated || undefined,
           content_type: contentType || undefined,
           ...maskedMeta,
           ...droppedMeta,

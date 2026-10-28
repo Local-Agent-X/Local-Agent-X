@@ -43,12 +43,12 @@ export {
 } from "./lmstudio-autostart.js";
 export {
   getLocalContextWindow,
-  getLocalModel,
   getLocalModelCapabilityProfile,
   getLocalRuntimeById,
   getLocalRuntimes,
   getRuntimeForModel,
   invalidateLocalRuntimes,
+  localModelWindow,
   localRuntimesStale,
   ollamaNativeRootForChatBase,
   refreshLocalRuntimes,

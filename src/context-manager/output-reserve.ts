@@ -32,3 +32,11 @@ export function resolveOutputReserve(model: string, windowTokens: number): numbe
   if (!thinking?.supported || thinking.mode === "off") return OUTPUT_RESERVE_TOKENS;
   return thinkingOutputReserve(windowTokens);
 }
+
+/** The tokens a request may use in `windowTokens`: the window less the reply's
+ *  reserve. The budget the openai-compat preflight refuses against
+ *  (request-fit.ts), so compaction fullness (status.ts) and failover
+ *  (canonical-loop/target-requirements.ts) size against the same number. */
+export function requestBudgetTokens(model: string, windowTokens: number): number {
+  return windowTokens - resolveOutputReserve(model, windowTokens);
+}

@@ -10,15 +10,16 @@ import {
 import { isLocalOnlyMode, localProviderDecision } from "../local-only-policy.js";
 import { getLocalRuntimes, hasPublishedCertification } from "../local-runtimes/index.js";
 import { readOp, tryWithOpLock, writeOpStrict } from "../ops/op-store.js";
-import { resolveOperationRequirements, type TargetCapabilitySnapshot } from "../ops/operation-requirements.js";
+import { resolveOperationRequirements } from "../ops/operation-requirements.js";
 import { resourceLocksForProvider } from "../ops/provider-matrix.js";
 import { runtimeTargetIdentity } from "../ops/target-identity.js";
-import type { ExactDelegatedRuntimeDescriptor, Op, ProviderCapabilityRequirement } from "../ops/types.js";
+import type { ExactDelegatedRuntimeDescriptor, Op } from "../ops/types.js";
 import { PROVIDER_IDS, type ProviderId } from "../providers/provider-ids.js";
 import { PROVIDERS } from "../providers/registry.js";
 import { getSetting } from "../settings.js";
 import { hasAmbiguousSideEffects } from "../tool-execution/side-effect-journal.js";
 import { resolveProviderRuntime } from "./provider-adapter-factory.js";
+import { targetMeetsRequirements } from "./target-requirements.js";
 import { registerAdapterForOp, releaseRuntimeSurfaceForRetry } from "./runtime.js";
 import { createRecoveredAdapterFactory } from "./runtime-reconstruction.js";
 import { sealDelegatedRuntime, verifyDelegatedRuntimeIntegrity } from "./runtime-integrity.js";
@@ -85,25 +86,6 @@ export function normalizeRuntimeFailure(code: string, message = ""): string | nu
   if (/\b(500|502|server[_ -]?error|internal server error|bad gateway|upstream error)\b/.test(haystack)) return "server_error";
   if (/\b(timeout|timed out|econnreset|econnrefused|etimedout|socket hang up|runtime reconstruction unavailable)\b/.test(haystack)) return "timeout";
   return null;
-}
-
-export function targetMeetsRequirements(
-  requirements: ProviderCapabilityRequirement,
-  capabilities: TargetCapabilitySnapshot,
-  certified: boolean,
-): boolean {
-  if (capabilities.locality === "local" && !certified) return false;
-  if (requirements.locality === "local-only" && capabilities.locality !== "local") return false;
-  if (requirements.needsTools && capabilities.tools !== "supported") return false;
-  if (requirements.needsVision && capabilities.vision !== "supported") return false;
-  if (requirements.needsStreaming && capabilities.streaming !== "supported") return false;
-  if (requirements.needsJsonMode && capabilities.jsonMode !== "supported") return false;
-  if (requirements.needsLocalFiles && capabilities.localFiles !== "supported") return false;
-  if (requirements.minimumContextTokens && (
-    capabilities.contextWindowTokens === null
-    || capabilities.contextWindowTokens < requirements.minimumContextTokens
-  )) return false;
-  return true;
 }
 
 export function candidateWithinBudget(
@@ -174,7 +156,7 @@ export function validatePersistedFailoverTarget(
   return !resolved.pinnedTarget
     && providerAllowed(descriptor.provider)
     && !!snapshot
-    && targetMeetsRequirements(resolved.requirements, snapshot, exactLocalCertification(descriptor))
+    && targetMeetsRequirements(resolved.requirements, snapshot, exactLocalCertification(descriptor), descriptor.model)
     && liveBudgetAllows(descriptor, op.canonical?.sessionId ?? op.sessionId ?? "")
     && !hasAmbiguousSideEffects(op.id);
 }
@@ -205,7 +187,7 @@ export async function attemptRuntimeFailover(op: Op, reportedCode: string, messa
   const candidates = await enumerateCandidates(persisted, current, attempted);
   const selected = candidates.find(candidate => {
     const snapshot = candidate.descriptor.capabilitySnapshot;
-    return !!snapshot && targetMeetsRequirements(resolved.requirements, snapshot, candidate.certified)
+    return !!snapshot && targetMeetsRequirements(resolved.requirements, snapshot, candidate.certified, candidate.descriptor.model)
       && liveBudgetAllows(candidate.descriptor, persisted.canonical?.sessionId ?? persisted.sessionId ?? "");
   });
   if (!selected) {

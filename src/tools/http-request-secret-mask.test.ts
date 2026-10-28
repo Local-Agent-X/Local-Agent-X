@@ -17,6 +17,7 @@ vi.mock("undici", async (importActual) => {
 });
 
 const { createHttpRequestTool } = await import("./http-request.js");
+const { capWithSpill } = await import("./result-spill.js");
 const { unregisterRedactedSecretValue, scanForSecrets } = await import("../security/secrets/index.js");
 
 function fakeResponse(status: number, body: string, contentType = "application/json") {
@@ -75,6 +76,22 @@ describe("http_request — secret values are masked before `find`", () => {
     await tool.execute({ url: "https://api.supabase.com/v1/projects/abc/secrets" });
     expect(scanForSecrets(`x=${PASSWORD}`).clean).toBe(false);
     expect(scanForSecrets(`x=${SERVICE_KEY}`).clean).toBe(false);
+  });
+
+  // The audit phase's window-aware cap (tool-result-cap.ts) is the one result
+  // limit. The tool's own 100k cut, re-cut there, spilled twice and lost the
+  // notes that trailed the body; the notes now lead it.
+  it("returns a large body whole, its notes ahead of it, so the one cap never cuts them", async () => {
+    const res = await tool.execute({ url: "https://api.supabase.com/v1/projects/abc/secrets" });
+    expect(res.content.indexOf("secret values masked")).toBeLessThan(res.content.indexOf("<<<EXTERNAL_UNTRUSTED_CONTENT"));
+
+    undiciMock.handler = () => fakeResponse(200, "z".repeat(150_000) + "THE TAIL", "text/plain");
+    const big = await tool.execute({ url: "https://api.supabase.com/v1/projects/abc/functions" });
+    expect(big.content).toContain("THE TAIL");
+    expect(big.metadata?.truncated).toBeUndefined();
+    const delivered = capWithSpill(big.content, 50_000);
+    expect(delivered).not.toContain("THE TAIL");
+    expect(delivered.match(/saved to /g)).toHaveLength(1);
   });
 
   it("a response with no secrets carries no note and no masked count", async () => {

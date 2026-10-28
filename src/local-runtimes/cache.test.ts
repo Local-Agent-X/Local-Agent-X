@@ -111,6 +111,30 @@ describe("local-runtime cache", () => {
     expect(getLocalModelCapabilityProfile("http://127.0.0.1:11434/v1", "mystery:latest").contextWindow).toBeNull();
   });
 
+  // One window for an unloaded model, everywhere: the prompt degrader (which
+  // reads this profile) budgeted qwen3.6:27b at its declared 65,536 while
+  // compaction (resolveContextWindow) sized the same turn at the 8,192 floor.
+  it("an unloaded model gets the same window from the profile and from resolveContextWindow", async () => {
+    const { discoverLocalRuntimes } = await import("./discovery.js");
+    const unloaded: LocalRuntimeInfo = {
+      ...RUNTIME,
+      models: [{ id: "qwen3.6:27b", contextWindow: null, tools: true }, { id: "mystery:latest", contextWindow: null, tools: null }],
+    };
+    vi.mocked(discoverLocalRuntimes).mockResolvedValueOnce([unloaded]);
+    await refreshLocalRuntimes();
+    const { resolveContextWindow, LOCAL_UNKNOWN_CONTEXT } = await import("../context-manager/model-windows.js");
+    const { modelDeclaredContextWindow } = await import("./model-profile.js");
+    const declared = modelDeclaredContextWindow("qwen3.6:27b")!;
+    expect(declared).toBeGreaterThan(LOCAL_UNKNOWN_CONTEXT);
+
+    const profile = getLocalModelCapabilityProfile(unloaded.chatBaseUrl, "qwen3.6:27b");
+    expect(resolveContextWindow("qwen3.6:27b")).toEqual({ tokens: declared, provenance: "declared" });
+    expect(profile.contextWindow).toBe(resolveContextWindow("qwen3.6:27b").tokens);
+    // No declaration: both fall back together — the floor, and an unknown profile.
+    expect(resolveContextWindow("mystery:latest")).toEqual({ tokens: LOCAL_UNKNOWN_CONTEXT, provenance: "floor" });
+    expect(getLocalModelCapabilityProfile(unloaded.chatBaseUrl, "mystery:latest").contextWindow).toBeNull();
+  });
+
   it("coalesces concurrent refreshes into one sweep", async () => {
     const { discoverLocalRuntimes } = await import("./discovery.js");
     vi.mocked(discoverLocalRuntimes).mockClear();

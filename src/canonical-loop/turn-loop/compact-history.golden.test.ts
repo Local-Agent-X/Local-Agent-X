@@ -7,7 +7,8 @@
 // decisions and the same surviving rows.
 //
 // baselineTokens is the fullness dial: 12 tiny messages estimate to exactly 60
-// tokens, so percentage = (baseline + 60) / 200_000 on claude-sonnet-4-6.
+// tokens, so percentage = (baseline + 60) / budget on claude-sonnet-4-6, where
+// budget is its 200k window less the 1,024-token reply reserve (status.ts).
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 vi.mock("../../context-manager/compaction.js", () => ({ summarizeOldMessages: vi.fn() }));
@@ -17,6 +18,7 @@ vi.mock("../../logger.js", () => ({ createLogger: () => loggerMock }));
 
 import { compactHistory, forceCompactNext } from "./compact-history.js";
 import { summarizeOldMessages } from "../../context-manager/compaction.js";
+import { OUTPUT_RESERVE_TOKENS } from "../../context-manager/request-fit.js";
 import type { CanonicalMessage } from "../contract-types.js";
 
 const mockSummarize = vi.mocked(summarizeOldMessages);
@@ -32,9 +34,10 @@ const history = (): CanonicalMessage[] => [
 ];
 
 const MODEL = "claude-sonnet-4-6"; // 200k window on either transport
+const BUDGET = 200_000 - OUTPUT_RESERVE_TOKENS;
 
-// baseline that lands the estimate on an exact percentage of the 200k window.
-const pct = (p: number) => (p / 100) * 200_000 - 60;
+// baseline that lands the estimate on an exact percentage of the request budget.
+const pct = (p: number) => (p / 100) * BUDGET - 60;
 
 const ids = (msgs: CanonicalMessage[]) => msgs.map((m) => m.messageId);
 

@@ -103,8 +103,12 @@ export interface ProviderCapabilityRequirement {
   needsStreaming?: boolean;
   needsJsonMode?: boolean;
   needsLocalFiles?: boolean;
-  /** Explicit hard floor. Effective request sizing may raise it. */
+  /** Explicit hard floor on the candidate's window. */
   minimumContextTokens?: number;
+  /** The measured request (system prompt + tools + messages), no reply
+   *  reserve. A candidate fits when its window less ITS OWN reserve
+   *  (output-reserve.ts) holds it — the budget its preflight refuses against. */
+  requestTokens?: number;
   /** Hard locality boundary; "any" is represented by absence. */
   locality?: "local-only";
 }

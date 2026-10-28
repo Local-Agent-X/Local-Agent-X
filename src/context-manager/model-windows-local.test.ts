@@ -10,11 +10,18 @@ import type { LocalRuntimeInfo } from "../local-runtimes/types.js";
 
 let runtimes: LocalRuntimeInfo[] = [];
 
+let declared: Record<string, number> = {};
+
+// localModelWindow's contract (cache.ts): the reported window, else the
+// declared profile's, else null.
 vi.mock("../local-runtimes/index.js", () => ({
   getRuntimeForModel: (m: string) =>
     runtimes.find(r => r.models.some(x => x.id === m)) ?? null,
-  getLocalModel: (chatBaseUrl: string, m: string) =>
-    runtimes.find(r => r.chatBaseUrl === chatBaseUrl)?.models.find(x => x.id === m) ?? null,
+  localModelWindow: (chatBaseUrl: string, m: string) => {
+    const reported = runtimes.find(r => r.chatBaseUrl === chatBaseUrl)?.models.find(x => x.id === m)?.contextWindow;
+    if (reported != null) return { tokens: reported, provenance: "probed" };
+    return declared[m] != null ? { tokens: declared[m], provenance: "declared" } : null;
+  },
 }));
 
 function rt(models: LocalRuntimeInfo["models"]): LocalRuntimeInfo {
@@ -29,7 +36,7 @@ function rt(models: LocalRuntimeInfo["models"]): LocalRuntimeInfo {
   };
 }
 
-beforeEach(() => { runtimes = []; });
+beforeEach(() => { runtimes = []; declared = {}; });
 
 describe("lookupContextWindow — local runtime truth beats the 128k default", () => {
   it("returns the probed REAL window for a discovered local model", () => {
@@ -78,6 +85,12 @@ describe("resolveContextWindow — provenance separates measurement from guess",
       tokens: 262_144,
       provenance: "probed",
     });
+  });
+
+  it("an unloaded model with a declared profile takes its declared window — still a guess", () => {
+    runtimes = [rt([{ id: "qwen3.6:27b", contextWindow: null, tools: true }])];
+    declared = { "qwen3.6:27b": 65_536 };
+    expect(resolveContextWindow("qwen3.6:27b")).toEqual({ tokens: 65_536, provenance: "declared" });
   });
 
   it("marks the unloaded-model floor as a GUESS, not a measurement", () => {

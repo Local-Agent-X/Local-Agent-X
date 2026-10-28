@@ -31,7 +31,7 @@ vi.mock(import("../../local-runtimes/index.js"), async (importOriginal) => ({
   ...(await importOriginal()),
   getLocalRuntimes: () => [TEST_RUNTIME],
   getRuntimeForModel: () => TEST_RUNTIME,
-  getLocalModel: () => TEST_RUNTIME.models[0],
+  localModelWindow: () => ({ tokens: TEST_RUNTIME.models[0].contextWindow!, provenance: "probed" as const }),
   getLocalModelCapabilityProfile: (baseURL: string, model: string) => ({
     runtimeId: "ollama@test", baseURL, model, tier: "medium", maxTools: 24,
     contextWindow: 8_192,

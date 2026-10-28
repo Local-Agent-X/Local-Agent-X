@@ -165,6 +165,33 @@ export function getLocalContextWindow(chatBaseUrl: string, model: string): numbe
 }
 
 /**
+ * The window a local model will run at, and where the number came from — the
+ * one local answer behind resolveContextWindow (preflight, compaction, the
+ * meter, failover) and the capability profile (the prompt degrader), so the
+ * prompt and the history are never sized against two different windows.
+ *
+ *   "probed"   the runtime's report, or the size LAX applies (getLocalModel)
+ *   "declared" no report yet: the declared model profile's measured window.
+ *              On Ollama the served window only exists in /api/ps once the
+ *              model is LOADED, and the first request of a session is what
+ *              loads it — so that turn used to size its prompt against the
+ *              8,192-token unknown-window floor and shed 16 of 30 sections,
+ *              while every later turn got the full prompt (op-outcomes, 27B,
+ *              2026-09-22: turn 1 at 23.6k chars, turn 2 at 68.6k). It is
+ *              still a guess about THIS install, so nothing refuses on it.
+ *   null       neither: the caller's floor applies.
+ */
+export function localModelWindow(
+  chatBaseUrl: string,
+  model: string,
+): { tokens: number; provenance: "probed" | "declared" } | null {
+  const reported = getLocalModel(chatBaseUrl, model)?.contextWindow;
+  if (reported != null) return { tokens: reported, provenance: "probed" };
+  const declared = modelDeclaredContextWindow(model);
+  return declared != null ? { tokens: declared, provenance: "declared" } : null;
+}
+
+/**
  * Deterministic capability snapshot for one local endpoint/model pair.
  * Derives from the discovery cache, canonical tier classifier, and persistent
  * capability store on every read; it owns no facts and cannot drift from them.
@@ -182,14 +209,8 @@ export function getLocalModelCapabilityProfile(
     model,
     tier,
     maxTools: maxToolsForTier(tier),
-    // The runtime's own number when it has reported one; the declared
-    // profile's measured window until then. On Ollama the served window only
-    // exists in /api/ps once the model is LOADED, and the first request of a
-    // session is what loads it — so that turn used to size its prompt against
-    // the 8,192-token unknown-window floor and shed 16 of 30 sections, while
-    // every later turn got the full prompt (op-outcomes, 27B, 2026-09-22:
-    // turn 1 at 23.6k chars, turn 2 at 68.6k, 0.3% shared prefix).
-    contextWindow: localModel?.contextWindow ?? modelDeclaredContextWindow(model),
+    // The same window compaction and preflight size against (localModelWindow).
+    contextWindow: localModelWindow(chatBaseUrl, model)?.tokens ?? null,
     tools: {
       advertised: localModel?.tools ?? null,
       verified: getToolsVerified(chatBaseUrl, model)?.ok ?? null,

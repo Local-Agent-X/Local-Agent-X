@@ -11,13 +11,12 @@
 
 import OpenAI, { type ClientOptions } from "openai";
 import { BaseAdapter } from "../adapter/base-adapter.js";
-import { LOCAL_DEFAULT_MAX_TOKENS, type ProviderRequest, type StreamChunk } from "../adapter/types.js";
+import type { ProviderRequest, StreamChunk } from "../adapter/types.js";
 import { toOpenAITools } from "../shared/tool-shape.js";
 import { hasNoToolSupport, markNoToolSupport, hasParamUnsupported, markParamUnsupported } from "../types.js";
 import { createLogger } from "../../logger.js";
 import { resolveReasoningParam } from "./openai-param-support.js";
 import { isLocalOnlyMode, isLoopbackUrl } from "../../local-only-policy.js";
-import { isLocalModelEndpoint } from "../../local-runtimes/model-endpoint.js";
 import {
   isReasoningEffortRejection,
   isTemperatureRejection,
@@ -27,12 +26,6 @@ import {
 } from "./openai-param-rejections.js";
 
 const logger = createLogger("providers.adapters.openai-http");
-
-// Runaway guard rail for LOCAL endpoints — see the constant's doc in
-// ../adapter/types.ts (declared there so the window-aware clamp in
-// canonical-loop/adapters/openai-compat/local-cap.ts shares it without
-// loading this module's SDK import). Re-exported for existing consumers.
-export { LOCAL_DEFAULT_MAX_TOKENS } from "../adapter/types.js";
 
 export function strictFetchFor(baseURL: string | undefined): ClientOptions["fetch"] {
   if (!isLocalOnlyMode() || !baseURL || !isLoopbackUrl(baseURL)) return undefined;
@@ -77,17 +70,9 @@ export class OpenAIHttpAdapter extends BaseAdapter {
     // (baseURL, model) hasn't already rejected the param.
     const responseFormatAllowed =
       !!req.responseFormat && !hasParamUnsupported(req.baseURL, req.model, "response_format");
-    // Output-token cap: explicit req.maxTokens wins on any endpoint; local
-    // endpoints (loopback, private-range, or a runtime the operator added by
-    // name — isLocalModelEndpoint) fall back to the
-    // runaway default unless the caller measured the window and found no
-    // completion budget (omitDefaultMaxTokens — see local-cap.ts); cloud
-    // endpoints get NO default. See LOCAL_DEFAULT_MAX_TOKENS for why.
-    const resolvedMaxTokens =
-      req.maxTokens ??
-      (!req.omitDefaultMaxTokens && isLocalModelEndpoint(req.baseURL)
-        ? LOCAL_DEFAULT_MAX_TOKENS
-        : undefined);
+    // Output-token cap: exactly the one the caller decided (local-cap.ts
+    // owns that decision, the local runaway default included); none → none.
+    const resolvedMaxTokens = req.maxTokens;
     const maxTokensAllowed =
       resolvedMaxTokens !== undefined && !hasParamUnsupported(req.baseURL, req.model, "max_tokens");
 

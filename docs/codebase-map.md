@@ -13,17 +13,17 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1879 non-test source files · 91 oversized · 245 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1880 non-test source files · 91 oversized · 245 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 171 | 29 | XL | 1 |
+| `src/ops/` | 172 | 29 | XL | 1 |
 | `src/security/` | 137 | 53 | XL | 3 |
 | `src/tools/` | 121 | 221 | XL | 9 |
 | `src/tool-execution/` | 85 | 78 | XL | 2 |
-| `src/canonical-loop/` | 80 | 274 | XL | 12 |
+| `src/canonical-loop/` | 80 | 275 | XL | 12 |
 | `src/workspace/` | 80 | 3 | M |  |
 | `src/providers/` | 70 | 26 | L | 1 |
 | `src/data-lineage/` | 53 | 11 | M |  |
@@ -31,15 +31,15 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/session/` | 51 | 9 | M |  |
 | `src/browser/` | 48 | 88 | XL | 5 |
 | `src/tool-policy/` | 46 | 21 | L |  |
-| `src/local-runtimes/` | 43 | 26 | L | 1 |
+| `src/local-runtimes/` | 42 | 26 | L | 1 |
 | `src/util/` | 42 | 3 | S |  |
 | `src/threat/` | 40 | 13 | L |  |
 | `src/auth/` | 37 | 11 | L |  |
 | `src/chat-ws/` | 33 | 23 | L |  |
 | `src/agency/` | 29 | 21 | L |  |
 | `src/agent-store/` | 28 | 7 | M | 1 |
+| `src/context-manager/` | 27 | 15 | M |  |
 | `src/context/` | 26 | 11 | M | 1 |
-| `src/context-manager/` | 26 | 15 | M |  |
 | `src/classifiers/` | 24 | 16 | L |  |
 | `src/agent-request/` | 23 | 15 | L | 3 |
 | `src/app-runtime/` | 23 | 12 | M |  |
@@ -419,7 +419,6 @@ job. Comments are free: never cut them to fit.
 - `src/tool-execution/run-sandboxed.ts#runSandboxedPhase` — 90+ own code lines (cap 100)
 - `src/tools/email-send-tool.ts#emailSend.execute` — 90+ own code lines (cap 100)
 - `src/tools/read-write-tools.ts#readTool.execute` — 90+ own code lines (cap 100)
-- `src/tools/web-fetch.ts#webFetchTool.execute` — 90+ own code lines (cap 100)
 - `src/agent-guards/loop-detection.ts#noteToolResults` — 80+ own code lines (cap 100)
 - `src/auth/index.ts#createServer:callback` — 80+ own code lines (cap 100)
 - `src/auto-build/chunk-review/gate-build-exec.ts#runBuildExecGate` — 80+ own code lines (cap 100)
@@ -447,6 +446,7 @@ job. Comments are free: never cut them to fit.
 - `src/tools/asset-tools.ts#extractSiteAssetsTool.execute` — 80+ own code lines (cap 100)
 - `src/tools/image-tools/generate-video.ts#generateVideoTool.execute` — 80+ own code lines (cap 100)
 - `src/tools/shared/image-binary-meta.ts#parseDimensions` — 80+ own code lines (cap 100)
+- `src/tools/web-fetch.ts#webFetchTool.execute` — 80+ own code lines (cap 100)
 - `src/update-extracted-validation.ts#validateExtractedUpdate` — 80+ own code lines (cap 100)
 - `src/agent-guards/loop-detection.ts#checkToolLoops` — 70+ own code lines (cap 100)
 - `src/agents/escalation-core.ts#performEscalation` — 70+ own code lines (cap 100)

@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1881 non-test source files · 91 oversized · 244 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1880 non-test source files · 90 oversized · 245 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -38,8 +38,8 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/chat-ws/` | 33 | 23 | L |  |
 | `src/agency/` | 29 | 21 | L |  |
 | `src/agent-store/` | 28 | 7 | M | 1 |
-| `src/context-manager/` | 27 | 15 | M |  |
-| `src/context/` | 26 | 11 | M | 1 |
+| `src/context-manager/` | 26 | 15 | M |  |
+| `src/context/` | 25 | 10 | M | 1 |
 | `src/classifiers/` | 24 | 16 | L |  |
 | `src/agent-request/` | 23 | 15 | L | 3 |
 | `src/app-runtime/` | 23 | 12 | M |  |
@@ -64,7 +64,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/agent-loop/` | 10 | 1 | S |  |
 | `src/app-scaffold/` | 10 | 7 | M |  |
 | `src/persistence/` | 10 | 2 | S |  |
-| `src/routes/` | 10 | 95 | XL | 18 |
+| `src/routes/` | 10 | 95 | XL | 17 |
 | `src/sync/` | 10 | 21 | L | 1 |
 | `src/codex-client/` | 9 | 6 | M |  |
 | `src/plugin-system/` | 9 | 10 | L | 1 |
@@ -293,7 +293,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/routes/memory.ts#handleMemoryRoutes`
 - `src/routes/security.ts#handleSecurityRoutes`
 - `src/routes/sessions.ts#handleSessionRoutes`
-- `src/routes/settings/diagnostics.ts#handleDiagnosticsRoutes`
 - `src/routes/settings/local-runtimes.ts#handleLocalRuntimesRoutes`
 - `src/routes/settings/preferences.ts#handlePreferencesRoutes`
 - `src/routes/settings/providers.ts#handleProvidersRoutes`
@@ -412,6 +411,7 @@ job. Comments are free: never cut them to fit.
 - `src/routes/agents/history.ts#handleAgentHistoryRoutes` — 90+ own code lines (cap 100)
 - `src/routes/bridges/integrations.ts#handleIntegrationsRoutes` — 90+ own code lines (cap 100)
 - `src/routes/chat/run-chat-turn/canonical-run.ts#persistTurnState` — 90+ own code lines (cap 100)
+- `src/routes/settings/diagnostics.ts#handleDiagnosticsRoutes` — 90+ own code lines (cap 100)
 - `src/routes/workspace-files.ts#handleWorkspaceFilesRoutes` — 90+ own code lines (cap 100)
 - `src/screen-stream/signaling-machine.ts#signalingReducer` — 90+ own code lines (cap 100)
 - `src/security/layer/network-policy.ts#evaluateWebFetch` — 90+ own code lines (cap 100)

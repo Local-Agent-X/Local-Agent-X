@@ -2,7 +2,6 @@ import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse } from "../../server-utils.js";
 import { getToolStats, getToolSuccessRate, getRecentFailures } from "../../tool-tracker.js";
 import { getCrashReport, getTopCrashPatterns } from "../../crash-analytics.js";
-import { getContextUsage } from "../../context/usage.js";
 import { runStartupTests } from "../../startup-test.js";
 
 export const handleDiagnosticsRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
@@ -66,17 +65,6 @@ export const handleDiagnosticsRoutes: RouteHandler = async (method, url, req, re
   // Crashes
   if (method === "GET" && url.pathname === "/api/crashes") {
     json(200, { report: getCrashReport(), topPatterns: getTopCrashPatterns(10) }); return true;
-  }
-
-  // Context usage
-  if (method === "GET" && url.pathname === "/api/context/usage") {
-    const sessionId = url.searchParams.get("sessionId");
-    if (sessionId) {
-      await ctx.flushSession(sessionId);
-      const session = ctx.getOrCreateSession(sessionId);
-      if (session) { json(200, getContextUsage(session.messages as Array<{ role: string; content: string | Array<{ type: string; text?: string }> }>, 128000)); return true; }
-    }
-    json(200, { used: 0, max: 128000, percentage: 0, remaining: 128000 }); return true;
   }
 
   // Startup tests

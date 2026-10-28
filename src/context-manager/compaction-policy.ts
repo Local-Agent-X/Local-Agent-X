@@ -86,8 +86,7 @@ export const TURN_KEEP_TIERS = {
 /**
  * How many rows the summarized HEAD may grow before the turn loop re-runs the
  * summarizer (consumed by turn-loop/compact-summary-cache.ts). Same number and
- * same reason as the chat lane's CHAT_DIGEST_BUDGETS.summaryRefreshMinGrowth:
- * don't re-summarize on every turn. It is load-bearing here for a second
+ * reason as any summary cache: don't re-summarize on every turn. It is load-bearing here for a second
  * reason — the turn loop rebuilds its view from op_messages every turn, so a
  * per-turn re-summarize also rewrites message index 0 every turn and destroys
  * the Anthropic message-tier cache prefix.
@@ -180,32 +179,3 @@ export const PRUNE_MIN_RESULT_CHARS = 1_500;
  */
 export const MANUAL_COMPACT_KEEP_RECENT = 20;
 
-// ─── Chat-lane digest budgets (consumed by providers/sanitize.ts) ───────────
-
-/**
- * Char budgets for the deterministic digest that stands in for truncated chat
- * history (whatever the background LLM summary does not yet cover). User turns
- * are the constraint carriers, so they keep by far the largest slice — head
- * AND tail, because constraints cluster at the start and END of long specs.
- */
-export const CHAT_DIGEST_BUDGETS = {
-	/** Leading chars of an old user message kept verbatim. */
-	userKeepHead: 2000,
-	/** Trailing chars of an old user message kept verbatim. */
-	userKeepTail: 1000,
-	/** Max chars of an old assistant message. */
-	assistantMax: 300,
-	/** Max chars of an old tool result. */
-	toolMax: 200,
-	/**
-	 * Total digest budget, spent newest-first (older turns are likelier
-	 * superseded AND likelier already covered by the LLM summary) — a
-	 * mega-session can never re-bloat the window truncation just reclaimed.
-	 */
-	totalChars: 24_000,
-	/**
-	 * Don't re-summarize on every turn — refresh the background LLM summary
-	 * once the uncovered gap has grown past this many messages.
-	 */
-	summaryRefreshMinGrowth: 10,
-} as const;

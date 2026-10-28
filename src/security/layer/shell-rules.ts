@@ -234,9 +234,12 @@ export const SHELL_WRAPPER_PREFIXES = new Set([
 // and the real bin at the following token would hide. Only consulted for the
 // EXACT `-X` form (a glued `-I{}` / `-n10` / `-oL` carries its own value, and a
 // `-x=v` form is self-contained), so a value-taking flag never eats a real
-// command word. Wrappers absent here (command/exec/nohup/setsid/sudo/doas) take
-// no detached values.
+// command word. Wrappers absent here (command/exec/nohup/setsid) take no
+// detached values. sudo and doas do (`sudo -u postgres rm …`): without them
+// `postgres` read as the command and the rm behind it hid from every rule.
 export const WRAPPER_VALUE_OPTIONS: Record<string, Set<string>> = {
+  sudo: new Set(["-u", "-g", "-C", "-D", "-h", "-p", "-r", "-t", "-U", "-T"]),
+  doas: new Set(["-u", "-C"]),
   xargs: new Set(["-I", "-i", "-a", "-E", "-e", "-L", "-l", "-n", "-P", "-s", "-d"]),
   env: new Set(["-u", "-C", "-S"]),
   timeout: new Set(["-s", "-k"]),

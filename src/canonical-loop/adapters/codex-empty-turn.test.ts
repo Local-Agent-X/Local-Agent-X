@@ -54,6 +54,17 @@ describe("CodexAdapter leaves empty and cut-off turns to the turn loop", () => {
     expect(result.modelStop).toBe("continue");
   });
 
+  it("a reply ended for content policy is a model_refusal error, not silence", async () => {
+    const { reports } = await run([{ type: "done", stopReason: "content_filter" }]);
+    expect(reports.some((r) => r.kind === "error" && r.code === "model_refusal")).toBe(true);
+  });
+
+  it("tool-call arguments go through the shared repair: a trailing comma still parses", async () => {
+    const { reports } = await run([{ type: "tool_call", id: "c1", name: "read", arguments: '{"path":"a.txt",}' }, { type: "done", stopReason: "completed" }]);
+    const call = reports.find((r) => r.kind === "tool_call_requested");
+    expect(call && call.kind === "tool_call_requested" ? call.call.args : undefined).toEqual({ path: "a.txt" });
+  });
+
   it("a turn with text finishes as done", async () => {
     const { transport, result } = await run([{ type: "text", delta: "hello" }, { type: "done", stopReason: "end_turn" }]);
     expect(transport.calls).toBe(1);

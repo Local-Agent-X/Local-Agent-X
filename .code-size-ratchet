@@ -68,7 +68,6 @@ src/routes/chat/run-chat-turn/orchestrator.ts#runChatTurn 149
 src/routes/memory.ts#handleMemoryRoutes 263
 src/routes/security.ts#handleSecurityRoutes 163
 src/routes/sessions.ts#handleSessionRoutes 155
-src/routes/settings/diagnostics.ts#handleDiagnosticsRoutes 105
 src/routes/settings/local-runtimes.ts#handleLocalRuntimesRoutes 122
 src/routes/settings/preferences.ts#handlePreferencesRoutes 189
 src/routes/settings/providers.ts#handleProvidersRoutes 130

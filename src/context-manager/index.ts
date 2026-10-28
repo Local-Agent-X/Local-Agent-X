@@ -17,7 +17,6 @@ export {
 	DEFAULT_COMPACT_AT,
 	COMPACT_AT_RANGE,
 	TURN_KEEP_TIERS,
-	CHAT_DIGEST_BUDGETS,
 	type CompactionTriggers,
 } from "./compaction-policy.js";
 export { effectiveContextWindow, isAnthropicModel, type AnthropicTransport } from "./effective-window.js";

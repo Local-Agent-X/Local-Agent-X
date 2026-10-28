@@ -73,6 +73,7 @@ describe("shellDeleteTargets — the single-file deletes EXP-18 fell through to"
     for (const command of [
       `bash -c "rm -f users.csv"`, "timeout 5 rm users.csv", "nohup rm users.csv", "nice -n 5 rm users.csv",
       `sh -lc 'rm users.csv'`, `cmd /c del users.csv`, `env -u X command rm users.csv`, "shred -u users.csv",
+      "sudo -u postgres rm users.csv", "doas -u www rm users.csv",
     ]) expect(shellDeleteTargets(command), command).toEqual(["users.csv"]);
   });
 

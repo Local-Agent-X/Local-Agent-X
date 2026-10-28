@@ -16,7 +16,8 @@ import { clampNoneForCloud, DEFAULT_REASONING_EFFORT, type ReasoningEffort } fro
 import type { AnthropicTransportRequest } from "./anthropic.js";
 import { canonicalToTransport } from "./canonical-to-transport.js";
 import { hasInjects } from "../../agent-loop/inject-queue.js";
-import { classifyModelStop } from "./model-stop.js";
+import { classifyModelStop, refusalError } from "./model-stop.js";
+import { parseArgs } from "./tool-call-text-repair.js";
 import { withTransportRetry } from "./transport-retry.js";
 import { resolveStepReasoningEffort } from "../step-effort.js";
 import { PROVIDERS } from "../../providers/registry.js";
@@ -166,6 +167,14 @@ export class CodexAdapter implements Adapter {
               usageInputTokens = usage.inputTokens;
               usageOutputTokens = usage.outputTokens;
             }
+            // A reply the API ended for content policy ("content_filter")
+            // carries no text; without this the turn ended "done" and the
+            // user saw silence (model-stop.ts).
+            const refusal = refusalError(providerStop);
+            if (refusal) {
+              if (!firstError) firstError = refusal;
+              report({ kind: "error", ...refusal, retryable: false });
+            }
             continue;
           }
         }
@@ -288,11 +297,6 @@ import type { TransportTool } from "./anthropic.js";
 
 function convertTools(tools: TurnInput["tools"]): TransportTool[] {
   return tools.map(t => ({ name: t.name, description: t.description ?? "", parameters: ((t.inputSchema as Record<string, unknown>) ?? {}) }));
-}
-
-function parseArgs(raw: string): unknown {
-  if (!raw) return {};
-  try { return JSON.parse(raw); } catch { return { _raw: raw }; }
 }
 
 function byteLengthUtf8(s: string): number {

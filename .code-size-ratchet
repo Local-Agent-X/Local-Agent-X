@@ -35,7 +35,7 @@ src/canonical-loop/adapters/openai-compat/stream-once.ts#streamOnce 113
 src/canonical-loop/chat-runner/event-pump.ts#subscribeOpEvents:callback 122
 src/canonical-loop/container-execution-backend.ts 351
 src/canonical-loop/process-relay-journal.ts 376
-src/canonical-loop/runtime-failover.ts 379
+src/canonical-loop/runtime-failover.ts 362
 src/canonical-loop/session-bridge-observer.ts#recordCanonicalEventWithSink 153
 src/canonical-loop/turn-loop/decide-outcome.ts#decideTurnOutcome 107
 src/canonical-loop/worker.ts#drive 184
@@ -55,7 +55,7 @@ src/ops/tools/op-submit-async.ts#opSubmitAsyncTool.execute 114
 src/plugin-system.ts 366
 src/plugin-system.ts#PluginManager.loadPluginAtPath 136
 src/plugin-system/tool-schema.ts#validateSchemaNode 111
-src/providers/adapters/openai-http.ts#OpenAIHttpAdapter.stream 151
+src/providers/adapters/openai-http.ts#OpenAIHttpAdapter.stream 147
 src/routes/agents/templates.ts#handleAgentTemplateRoutes 101
 src/routes/apps.ts#handleAppRoutes 216
 src/routes/autopilot.ts#handleAutopilotRoutes 102

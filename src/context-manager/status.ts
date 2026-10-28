@@ -2,7 +2,7 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 
 import { compactionTriggers } from "./compaction-policy.js";
 import { effectiveContextWindow, type AnthropicTransport } from "./effective-window.js";
-import { resolveOutputReserve } from "./output-reserve.js";
+import { requestBudgetTokens } from "./output-reserve.js";
 import { anchoredTotalTokens, totalTokens, type TokenAnchor } from "./token-estimation.js";
 
 export interface ContextStatus {
@@ -54,8 +54,7 @@ export function contextStatusForTokens(
   model: string,
   transport?: AnthropicTransport,
 ): ContextStatus {
-  const window = effectiveContextWindow(model, transport);
-  const maxTokens = window - resolveOutputReserve(model, window);
+  const maxTokens = requestBudgetTokens(model, effectiveContextWindow(model, transport));
   const percentage = Math.round((usedTokens / maxTokens) * 100);
 
   let level: ContextStatus["level"] = "ok";

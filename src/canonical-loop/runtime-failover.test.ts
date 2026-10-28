@@ -15,8 +15,8 @@ import {
   runtimeFailoverEnabled,
   runtimeFailureFeedsRouting,
   resourceLocksAfterRuntimeFailover,
-  targetMeetsRequirements,
 } from "./runtime-failover.js";
+import { targetMeetsRequirements } from "./target-requirements.js";
 import type { TargetCapabilitySnapshot } from "../ops/operation-requirements.js";
 import { BROADCAST_KEYS, FLIPPABLE_SETTINGS } from "../settings-schema.js";
 import { providerStateAcrossRuntimeBoundary } from "./turn-loop/build-input.js";

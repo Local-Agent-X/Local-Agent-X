@@ -36,7 +36,7 @@ describe("clampLocalMaxTokens", () => {
   });
 
   it("a guessed local window gets the runaway default, never a clamp", () => {
-    for (const windowProvenance of ["floor", "heuristic"] as const) {
+    for (const windowProvenance of ["floor", "declared", "heuristic"] as const) {
       expect(base({ windowTokens: 8_192, windowProvenance, promptTokensEstimate: 50_000 })).toBe(LOCAL_DEFAULT_MAX_TOKENS);
     }
   });

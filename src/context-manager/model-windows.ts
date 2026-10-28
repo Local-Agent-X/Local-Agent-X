@@ -1,4 +1,4 @@
-import { getLocalModel, getRuntimeForModel } from "../local-runtimes/index.js";
+import { getRuntimeForModel, localModelWindow } from "../local-runtimes/index.js";
 
 // Nominal context window per model id — the number the provider rates the
 // model at. Every row is rechecked against LiteLLM's model file by
@@ -131,6 +131,7 @@ export const LOCAL_UNKNOWN_CONTEXT = 8_192;
 export type ContextWindowProvenance =
   | "exact"      // hit in the pinned MODEL_CONTEXTS table
   | "probed"     // measured from a live local runtime — ground truth
+  | "declared"   // local model not loaded yet; its declared profile's window — a GUESS
   | "floor"      // local model, window unknowable right now — a GUESS
   | "heuristic"; // name-pattern / DEFAULT_CONTEXT — also a guess, cloud-side
 
@@ -149,13 +150,11 @@ export function resolveContextWindow(model: string): ContextWindowResolution {
   // (src/local-runtimes/ probes: Ollama /api/ps num_ctx, LM Studio loaded
   // context, vLLM max_model_len, llama.cpp n_ctx). Ground truth beats the
   // name heuristics below — a local "llama3" is not a cloud family member.
+  // Until it loads, its declared profile's window; the floor only without
+  // one. localModelWindow is also what the capability profile (the prompt
+  // degrader) reads, so prompt and history size against one number.
   const rt = getRuntimeForModel(model);
-  if (rt) {
-    const probed = getLocalModel(rt.chatBaseUrl, model)?.contextWindow;
-    return probed != null
-      ? { tokens: probed, provenance: "probed" }
-      : { tokens: LOCAL_UNKNOWN_CONTEXT, provenance: "floor" };
-  }
+  if (rt) return localModelWindow(rt.chatBaseUrl, model) ?? { tokens: LOCAL_UNKNOWN_CONTEXT, provenance: "floor" };
   const lower = model.toLowerCase();
   const heuristic = (tokens: number): ContextWindowResolution => ({ tokens, provenance: "heuristic" });
   // Family guesses for an id the table lacks (a model newer than this file).

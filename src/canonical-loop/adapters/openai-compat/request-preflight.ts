@@ -68,10 +68,12 @@ export function assessOpenAiCompatPreflight(args: {
   // landed six hours after the floor and silently voided the floor's
   // "self-corrects once the model loads" premise — a 262,144-ctx qwen3.6
   // was refused all night against a phantom 8,192. Send it: an engine 400
-  // is recoverable and self-correcting, a refusal loop is neither.
-  if (window.provenance === "floor" && fit.verdict !== "fits") {
+  // is recoverable and self-correcting, a refusal loop is neither. A
+  // "declared" window (the model profile's, until the runtime reports one)
+  // is the same kind of stand-in: a fact about some install, not this one.
+  if ((window.provenance === "floor" || window.provenance === "declared") && fit.verdict !== "fits") {
     logger.info(
-      `${model}: window unknown (model not loaded yet) — the ${window.tokens}-token floor is a placeholder, not a measurement, so preflight is not refusing this send. The runtime will load the model and the next sweep learns its real window. Compaction still sizes history against the floor.`,
+      `${model}: window unknown (model not loaded yet) — the ${window.tokens}-token ${window.provenance} window is a placeholder, not a measurement, so preflight is not refusing this send. The runtime will load the model and the next sweep learns its real window. Compaction still sizes history against the placeholder.`,
     );
     return { kind: "send", window, fit };
   }

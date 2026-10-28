@@ -8,8 +8,8 @@
  *   cloud endpoint            → pass the explicit cap through untouched;
  *                               never invent one (guard rail, not style cap)
  *   local, window is a guess  → explicit cap, else LOCAL_DEFAULT_MAX_TOKENS.
- *   ("floor" / "heuristic")     Unclamped: acting on a guess is this
- *                               preflight's documented anti-pattern, and the
+ *   ("floor" / "declared" /     Unclamped: acting on a guess is this
+ *    "heuristic")               preflight's documented anti-pattern, and the
  *                               engine's own server-side clamp covers the gap
  *                               until a probe sweep learns the real window.
  *   local, measured window    → cap = explicit clamped to the budget, else

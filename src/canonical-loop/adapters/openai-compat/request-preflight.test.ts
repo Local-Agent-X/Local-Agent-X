@@ -54,17 +54,19 @@ describe("assessOpenAiCompatPreflight", () => {
     expect(r.tools).toHaveLength(1);
   });
 
-  it("too big on a FLOOR window → send anyway (a guess is never grounds for refusal)", () => {
-    mockWindow.mockReturnValue({ tokens: 8_192, provenance: "floor" });
-    const r = req([bigTool(36_000)]);
-    const d = assessOpenAiCompatPreflight({ model: "qwen3.6:27b", req: r });
-    expect(d.kind).toBe("send");
-    expect(d.fit.verdict).toBe("too_big");
-    expect(d.window.provenance).toBe("floor");
-    expect(r.tools).toHaveLength(1);
+  it("too big on a FLOOR or DECLARED window → send anyway (a guess is never grounds for refusal)", () => {
+    for (const provenance of ["floor", "declared"] as const) {
+      mockWindow.mockReturnValue({ tokens: 8_192, provenance });
+      const r = req([bigTool(36_000)]);
+      const d = assessOpenAiCompatPreflight({ model: "qwen3.6:27b", req: r });
+      expect(d.kind).toBe("send");
+      expect(d.fit.verdict).toBe("too_big");
+      expect(d.window.provenance).toBe(provenance);
+      expect(r.tools).toHaveLength(1);
+    }
   });
 
-  it("exact and heuristic provenance refuse like probed — only floor is exempt", () => {
+  it("exact and heuristic provenance refuse like probed — only an unloaded local model is exempt", () => {
     for (const provenance of ["exact", "heuristic"] as const) {
       mockWindow.mockReturnValue({ tokens: 8_192, provenance });
       expect(assessOpenAiCompatPreflight({ model: "m", req: req([bigTool(36_000)]) }).kind).toBe("refuse");

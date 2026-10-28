@@ -159,4 +159,19 @@ describe("GeminiNativeAdapter event mapping", () => {
     expect(reports.some(r => r.kind === "error")).toBe(true);
     expect(res.terminalReason).toBe("error");
   });
+
+  it("tool-call args go through the shared repairing guard (cosmetic repaired, truncated kept {_raw})", async () => {
+    const argsFor = async (raw: string) => {
+      const adapter = createGeminiNativeAdapter({
+        model: "gemini-2.5-flash", apiKey: "k",
+        transport: stub([{ type: "tool_call", id: "g1", name: "browser", arguments: raw }, { type: "done", stopReason: "STOP" }]),
+      });
+      const reports: AdapterReport[] = [];
+      await adapter.runTurn(turn, r => reports.push(r));
+      return (reports.find(r => r.kind === "tool_call_requested") as { call: { args: unknown } }).call.args;
+    };
+    expect(await argsFor('{"action":"navigate",}')).toEqual({ action: "navigate" });
+    const cut = '{"action":"navigate","url":"https://x';
+    expect(await argsFor(cut)).toEqual({ _raw: cut });
+  });
 });

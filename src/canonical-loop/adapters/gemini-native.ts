@@ -16,6 +16,7 @@ import type { GeminiNativeTransport, GeminiNativeRequest } from "./gemini-native
 import { canonicalToTransport } from "./canonical-to-transport.js";
 import { hasInjects } from "../../agent-loop/inject-queue.js";
 import { classifyModelStop } from "./model-stop.js";
+import { parseArgs } from "./tool-call-text-repair.js";
 import { withTransportRetry } from "./transport-retry.js";
 
 export const GEMINI_NATIVE_ADAPTER_NAME = "gemini-native";
@@ -174,11 +175,6 @@ export class GeminiNativeAdapter implements Adapter {
     }
     return env;
   }
-}
-
-function parseArgs(raw: string): unknown {
-  if (!raw) return {};
-  try { return JSON.parse(raw); } catch { return { _raw: raw }; }
 }
 
 export function createGeminiNativeAdapter(opts: GeminiNativeAdapterOptions): GeminiNativeAdapter {

@@ -2,6 +2,8 @@ import { existsSync } from "node:fs";
 import type { MemoryIndex } from "./index-core.js";
 import { ensurePersonalityFiles, readPersonalityFile } from "./personality.js";
 import { readProjectBrief, briefForContext } from "./project-brief.js";
+import { isProjectId } from "./project-docs/paths.js";
+import { projectDocsDir } from "./project-docs/folders.js";
 import type { FactKind } from "./types.js";
 import { factTrustSuffix } from "./fact-provenance-label.js";
 import { safeReadTextFile } from "./utils.js";
@@ -119,6 +121,34 @@ async function profileSections(memDir: string): Promise<string[]> {
 }
 
 /**
+ * What a project chat knows about its project: the living brief (the shared,
+ * evolving narrative every agent on the project reads; updates flow back
+ * through project_brief_update) and where its documents are.
+ */
+async function projectSections(projectId: string, memDir: string): Promise<string[]> {
+  const sections: string[] = [];
+  const brief = await readProjectBrief(projectId, memDir);
+  if (brief) {
+    sections.push(
+      `<project_brief>\n${provenanceHeader("project-brief", "memory-file", "unknown", "clean", "Active project brief")}\n` +
+      `(the current state of this project. Weave it in naturally; ` +
+      `record changes via project_brief_update — do not repeat this block verbatim.)\n\n${briefForContext(projectId, brief)}\n</project_brief>`,
+    );
+  }
+  // The documents folder exists once the project-docs index has seen a chat
+  // project (never for a code folder).
+  const docsDir = isProjectId(projectId) ? projectDocsDir(projectId) : null;
+  if (docsDir && existsSync(docsDir)) {
+    sections.push(
+      `<project_documents>\nThis project's documents folder: ${docsDir}\n` +
+      `Its files, and those in a folder the user linked to the project, are indexed: memory_search returns their most relevant passages ` +
+      `with the file each came from, and relevant ones can appear among recalled memories. Save documents made for this project there.\n</project_documents>`,
+    );
+  }
+  return sections;
+}
+
+/**
  * Only the three profile files (identity / heart / user) — local reads, no
  * retrieval. The turn-context wallclock ships this when the full build is
  * wedged on a retrieval dependency, so a slow embedder can't make the agent
@@ -141,20 +171,8 @@ export async function buildContextBlockParts(
 
   const stableSections = await profileSections(memDir);
 
-  // Active project's living brief. Only when this turn is scoped to a
-  // project (set via the session→project map). The brief is the shared,
-  // evolving narrative every agent on the project reads; updates flow back
-  // through project_brief_update.
-  if (opts.projectId) {
-    const brief = await readProjectBrief(opts.projectId, memDir);
-    if (brief) {
-      stableSections.push(
-        `<project_brief>\n${provenanceHeader("project-brief", "memory-file", "unknown", "clean", "Active project brief")}\n` +
-        `(the current state of this project. Weave it in naturally; ` +
-        `record changes via project_brief_update — do not repeat this block verbatim.)\n\n${briefForContext(opts.projectId, brief)}\n</project_brief>`,
-      );
-    }
-  }
+  // Only when this turn is scoped to a project (set via the session→project map).
+  if (opts.projectId) stableSections.push(...await projectSections(opts.projectId, memDir));
 
   // Entities mentioned in this turn's user message. Run BEFORE core_memory
   // rendering so cold facts about those entities get reinforced (last_updated

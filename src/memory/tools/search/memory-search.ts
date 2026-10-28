@@ -3,13 +3,16 @@ import { RETRIEVAL_RESULTS_INSTRUCTION } from "../../../harness-text.js";
 import type { MemoryIndex } from "../../../memory/index.js";
 import { excerptNote } from "../../retrieval-format.js";
 import { sessionIdOf } from "../../../tool-execution/internal-args.js";
+import { getSessionProject } from "../../../session/project.js";
+import { recordProjectDocReads } from "../../project-docs/private-reads.js";
 
 export function memorySearchTool(memory: MemoryIndex) {
   return {
     name: "memory_search",
-    compactDescription: "Keyword/semantic search across long-term memory (facts, knowledge files, entity pages); same-session + profile only, past sessions excluded. Use when the exact entity/file is unknown; else memory_recall or memory_get.",
+    compactDescription: "Keyword/semantic search across long-term memory (facts, knowledge files, entity pages) and, in a project chat, the project's documents; same-session + profile only, past sessions excluded. Use when the exact entity/file is unknown; else memory_recall or memory_get.",
     description:
       "Free-text/keyword search across long-term memory — retained facts, knowledge files, and entity pages. Defaults to same-session + profile-level content only; past sessions are NOT included by default. " +
+      "In a chat that belongs to a project it also searches that project's documents (source=project-doc): the passages most relevant to the query, each with the file it came from, which `read` opens whole. " +
       "Use this when you DON'T know the exact entity name or file path and need a semantic/keyword lookup. " +
       "Siblings — pick the sharper tool when it fits: `memory_recall` for a known entity / date-range / fact-kind (structured Facts DB query), `search_past_sessions` to pull from PRIOR conversations, `memory_get` to read a file whose path you already know, `read_my_logs` for what YOU did this session.",
     parameters: {
@@ -21,7 +24,7 @@ export function memorySearchTool(memory: MemoryIndex) {
           type: "array",
           items: { type: "string" },
           description:
-            "Filter by canonical source. One or more of: entity, daily-log, session-summary, session, personality, import (default: all)",
+            "Filter by canonical source. One or more of: entity, daily-log, session-summary, session, personality, import, project-doc (default: all)",
         },
         entity: {
           type: "string",
@@ -55,6 +58,9 @@ export function memorySearchTool(memory: MemoryIndex) {
       // When present, default behavior is same-session + profile only.
       // Past sessions require the explicit `search_past_sessions` tool.
       const sessionId = sessionIdOf(args);
+      // The project comes from the server's session map, never from the
+      // model: a project's documents reach only that project's chats.
+      const projectId = sessionId ? getSessionProject(sessionId) : undefined;
 
       const results = await memory.search(query, {
         maxResults,
@@ -66,6 +72,7 @@ export function memorySearchTool(memory: MemoryIndex) {
         dateFrom,
         dateTo,
         sessionId,
+        projectId,
       });
 
       if (results.length === 0) {
@@ -89,9 +96,11 @@ export function memorySearchTool(memory: MemoryIndex) {
               (provenance.session_id ? ` session=${provenance.session_id}` : "") +
               ((provenance.when ?? provenance.date) ? ` date=${JSON.stringify(provenance.when ?? provenance.date)}` : "")
             : "";
-          return `[${i + 1}] source=${r.source}${provenanceFields} path=${virtualPath}:${r.startLine}-${r.endLine} score=${r.score.toFixed(2)}${ent}\n${r.snippet}${excerptNote(r)}`;
+          const file = r.source === "project-doc" && r.metadata?.file_path ? ` file=${JSON.stringify(r.metadata.file_path)}` : "";
+          return `[${i + 1}] source=${r.source}${provenanceFields} path=${virtualPath}:${r.startLine}-${r.endLine}${file} score=${r.score.toFixed(2)}${ent}\n${r.snippet}${excerptNote(r)}`;
         })
         .join("\n\n");
+      recordProjectDocReads(sessionId, results, (r) => r.snippet);
 
       // Wrap in XML with a leading instruction so the model treats this as
       // reference material, not draft output. Anthropic/OpenAI models are

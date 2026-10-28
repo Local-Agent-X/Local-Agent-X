@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1877 non-test source files · 92 oversized · 244 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1878 non-test source files · 92 oversized · 244 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -22,13 +22,13 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/ops/` | 171 | 29 | XL | 1 |
 | `src/security/` | 137 | 53 | XL | 3 |
 | `src/tools/` | 121 | 221 | XL | 9 |
-| `src/tool-execution/` | 83 | 78 | XL | 2 |
+| `src/tool-execution/` | 84 | 78 | XL | 2 |
 | `src/canonical-loop/` | 80 | 274 | XL | 13 |
 | `src/workspace/` | 80 | 3 | M |  |
 | `src/providers/` | 69 | 26 | L | 1 |
-| `src/data-lineage/` | 52 | 11 | M |  |
-| `src/memory/` | 52 | 145 | XL | 7 |
-| `src/session/` | 50 | 9 | M |  |
+| `src/data-lineage/` | 53 | 11 | M |  |
+| `src/memory/` | 52 | 146 | XL | 7 |
+| `src/session/` | 51 | 9 | M |  |
 | `src/browser/` | 48 | 88 | XL | 5 |
 | `src/tool-policy/` | 46 | 21 | L |  |
 | `src/local-runtimes/` | 42 | 26 | L | 1 |
@@ -484,6 +484,7 @@ job. Comments are free: never cut them to fit.
 - `src/cognition/milestone-celebrations.ts#buildMilestoneDefs` — 70+ own code lines (cap 100)
 - `src/cron/tools.ts#createCronTools` — 70+ own code lines (cap 100)
 - `src/keychain.ts#getOrCreateMasterKey` — 70+ own code lines (cap 100)
+- `src/memory/auto-search-context.ts#autoSearchContext` — 70+ own code lines (cap 100)
 - `src/memory/tools/search/memory-recall.ts#memory_recall.execute` — 70+ own code lines (cap 100)
 - `src/ops/tools/shared.ts#configureDelegatedRuntime` — 70+ own code lines (cap 100)
 - `src/orchestrator/process-message-impl.ts#processMessageImpl` — 70+ own code lines (cap 100)
@@ -544,7 +545,6 @@ job. Comments are free: never cut them to fit.
 - `src/manifest-generator/summary.ts#getManifestSummary` — 60+ own code lines (cap 100)
 - `src/mcp-bridge.ts#handleRequest` — 60+ own code lines (cap 100)
 - `src/mcp-client/integrity.ts#verifyOrTrust` — 60+ own code lines (cap 100)
-- `src/memory/auto-search-context.ts#autoSearchContext` — 60+ own code lines (cap 100)
 - `src/memory/dream.ts#buildDreamPromptForBatch` — 60+ own code lines (cap 100)
 - `src/memory/index-search/post-process.ts#postProcess` — 60+ own code lines (cap 100)
 - `src/memory/index-search/vector-search-worker.ts#scanChunks` — 60+ own code lines (cap 100)

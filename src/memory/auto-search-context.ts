@@ -27,6 +27,7 @@ import { relativeAge, memoryStaleCaveat } from "./relative-age.js";
 import { extractKeywords } from "./utils.js";
 import { logMemoryRecall } from "./recall-telemetry.js";
 import { createLogger } from "../logger.js";
+import { recordProjectDocReads } from "./project-docs/private-reads.js";
 
 const logger = createLogger("memory.auto-search");
 
@@ -53,6 +54,9 @@ export interface AutoSearchOptions {
    * the bounded cross-session recall addition.
    */
   taskStart?: boolean;
+  /** The chat's project (from the server's session map): its documents are
+   *  candidates alongside memory, within the same snippet budget. */
+  projectId?: string;
 }
 
 /**
@@ -151,6 +155,7 @@ export async function autoSearchContext(
         maxResults: 10,
         minScore: 0.35,
         sessionId: opts.sessionId,
+        projectId: opts.projectId,
       }),
       wantCross
         ? crossSessionCandidates(memory, userMessage, opts.sessionId)
@@ -224,9 +229,11 @@ export async function autoSearchContext(
             ((provenance.when ?? provenance.date) ? `, date: ${provenance.when ?? provenance.date}` : "")
           : "";
         const origin = crossSet.has(r) ? "PAST SESSION — " : "";
+        const file = r.source === "project-doc" && r.metadata?.file_path ? `, file: ${r.metadata.file_path}` : "";
         const ref = recallRef(r);
-        return { ref, text: `[${origin}${r.source}, ref: ${ref}${provenanceFields}${entities}${topic}${ageStr}${score}]${caveat}\n${r.snippet.slice(0, 300)}` };
+        return { ref, text: `[${origin}${r.source}, ref: ${ref}${provenanceFields}${file}${entities}${topic}${ageStr}${score}]${caveat}\n${r.snippet.slice(0, 300)}` };
       });
+    recordProjectDocReads(opts.sessionId, results, (r) => r.snippet.slice(0, 300));
     const recalled: RecalledMemory = { entries, pastSessions: crossInjected > 0 };
 
     if (wantCross) {

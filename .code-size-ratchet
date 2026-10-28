@@ -45,7 +45,7 @@ src/context/system-prompt-builder.ts#createSystemPromptBuilder 126
 src/local-runtimes/certification-runner.ts 360
 src/mcp-client/manifest.ts#assessMcpManifest 118
 src/memory/auto-extract.ts#autoExtractAndSave 183
-src/memory/context.ts#buildContextBlockParts 139
+src/memory/context.ts#buildContextBlockParts 130
 src/memory/date-parser.ts#parseDateRange 102
 src/memory/index-schema-migrations.ts#db.transaction:callback 259
 src/memory/tools/facts.ts#createFactsTools 108

@@ -154,9 +154,11 @@ export interface EmptyInteractiveTurnResult {
  * SAME prompt with no nudge, burning iterations to a maxTurns checkpoint while
  * the app looks hung. This ends that spin HONESTLY, scoped tightly so it can
  * never truncate real work:
- *   - lane === "interactive" only (chat_turn + voice_turn). Worker lanes keep
- *     their existing behavior — their empty-response nudge lives in the
- *     premature-completion middleware (gated when:isWorkerOp), untouched here.
+ *   - lane === "interactive" only (chat_turn + voice_turn). Worker lanes are
+ *     untouched: an empty worker turn keeps terminalReason=null and re-drives
+ *     under the drive loop's maxTurns bound. (premature-completion, the
+ *     worker-only middleware, nudges a TEXT-only turn that committed nothing;
+ *     it passes a fully-empty turn through.)
  *   - "fully empty" is EXACTLY: assistantText.trim() empty AND no tool calls
  *     AND no reasoning. A tool-only turn (toolCalls.length>0) legitimately
  *     continues; a reasoning-only turn (hasReasoning) is the model thinking,

@@ -4,7 +4,7 @@
 // new project gets its folder and watcher, a deleted one's documents leave
 // the index). Passes run one at a time so two never write the same paths.
 
-import { watch, type FSWatcher } from "node:fs";
+import { existsSync, watch, type FSWatcher } from "node:fs";
 import type { MemoryIndex } from "../index-core.js";
 import { EventBus } from "../../event-bus.js";
 import { handleWatcherErrors } from "../../util/watcher-errors.js";
@@ -60,7 +60,10 @@ export function startProjectDocsIndex(
   };
 
   const rewatch = (project: ProjectLike): void => {
-    const dirs = projectDocsFolders(project).map((f) => f.dir).filter(agentMayRead);
+    // A linked folder that does not exist yet (an app not built, a folder
+    // moved away) is left out of the key, so the reconcile after it appears
+    // starts watching it.
+    const dirs = projectDocsFolders(project).map((f) => f.dir).filter((d) => existsSync(d) && agentMayRead(d));
     const key = dirs.join("\n");
     if (watchers.get(project.id)?.key === key) return;
     unwatch(project.id);

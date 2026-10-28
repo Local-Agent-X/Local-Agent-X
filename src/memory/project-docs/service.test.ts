@@ -65,4 +65,22 @@ describe("the project documents index while the server runs", () => {
     await service.idle();
     expect(indexedProjectIds(memory)).not.toContain("proj-svc-b");
   });
+
+  it("waits quietly for a linked folder that does not exist yet, and indexes it once it does", async () => {
+    const warn = vi.spyOn(console, "error");
+    const linked = join(root, "workspace", "apps", "not-built-yet");
+    projects = [{ id: "proj-svc-c", workspace: linked }];
+    void EventBus.emit("projects:changed", {});
+    await service.idle();
+    expect(warn.mock.calls.flat().join(" ")).not.toContain("cannot watch");
+
+    mkdirSync(linked, { recursive: true });
+    writeFileSync(join(linked, "spec.md"), "The truck tracker shows each stop on a map.\n");
+    void EventBus.emit("projects:changed", {});
+    await vi.waitFor(async () => {
+      await service.idle();
+      expect(await found("truck tracker stop map", "proj-svc-c")).toEqual(["project/proj-svc-c/linked/spec.md"]);
+    }, { timeout: 5000, interval: 100 });
+    warn.mockRestore();
+  });
 });

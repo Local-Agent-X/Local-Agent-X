@@ -9,8 +9,9 @@
  * and have the tool executor inject `project_id` into agent_* tool
  * args when one is set for the current session.
  *
- * Storage is in-memory only — projects live in the backend store and
- * the active selection is per-tab/per-session, not durable.
+ * The map is a cache of each saved session's `projectId`: seeded from the
+ * session list at startup and per session when one is loaded, refreshed by
+ * every chat turn.
  */
 
 const currentProjectBySession = new Map<string, string>();
@@ -24,6 +25,13 @@ export function setSessionProject(sessionId: string, projectId: string | null | 
   } else {
     currentProjectBySession.delete(sessionId);
   }
+}
+
+/** Load every saved chat's project at startup, before anything resumes. A
+ *  worker restored after a restart takes its project from its parent chat
+ *  here, and that chat may not be opened again until long after. */
+export function seedSessionProjects(sessions: Iterable<{ id: string; projectId?: string }>): void {
+  for (const s of sessions) if (s.projectId) setSessionProject(s.id, s.projectId);
 }
 
 /** Read the current project for a session. Returns undefined when

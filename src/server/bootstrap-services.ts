@@ -22,6 +22,7 @@ import { DEFAULT_EMBEDDING_PROVIDER } from "../embedding-providers/types.js";
 import type { LAXConfig } from "../types.js";
 
 import { createLogger } from "../logger.js";
+import { seedSessionProjects } from "../session/project.js";
 const logger = createLogger("server.bootstrap-services");
 
 export interface BootstrappedServices {
@@ -293,6 +294,7 @@ export async function bootstrapServices(config: LAXConfig): Promise<Bootstrapped
   _t = _bsT("agentSync+sessionStore");
   const agentSync = new AgentSync(dataDir, () => secretsStoreRef.value?.get("GITHUB_SYNC_TOKEN"));
   const sessionStore = new SessionStore(dataDir);
+  seedSessionProjects(sessionStore.list());
   _t();
   _t = _bsT("MemoryIndex");
   const memoryIndex = new MemoryIndex(dataDir);

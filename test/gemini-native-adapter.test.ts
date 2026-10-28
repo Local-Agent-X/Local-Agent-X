@@ -107,6 +107,13 @@ describe("defaultGeminiNativeTransport SSE parsing", () => {
     expect(evs.some(e => e.type === "tool_call")).toBe(true);
   });
 
+  it("a prompt blocked before generation reports promptFeedback.blockReason as the stop", async () => {
+    mockFetchSSE([JSON.stringify({ promptFeedback: { blockReason: "PROHIBITED_CONTENT" } })], "\r\n\r\n");
+    const evs: GeminiTransportEvent[] = [];
+    for await (const e of defaultGeminiNativeTransport().stream(req)) evs.push(e);
+    expect(evs.find(e => e.type === "done")).toMatchObject({ type: "done", stopReason: "PROHIBITED_CONTENT" });
+  });
+
   it("surfaces an HTTP error body as an error event", async () => {
     vi.stubGlobal("fetch", async () => new Response("quota exceeded", { status: 429 }));
     const evs: GeminiTransportEvent[] = [];
@@ -158,6 +165,28 @@ describe("GeminiNativeAdapter event mapping", () => {
     const res = await adapter.runTurn(turn, r => reports.push(r));
     expect(reports.some(r => r.kind === "error")).toBe(true);
     expect(res.terminalReason).toBe("error");
+  });
+
+  it("a SAFETY stop with no text is a non-retryable model_refusal error, not a clean empty turn", async () => {
+    const adapter = createGeminiNativeAdapter({
+      model: "gemini-2.5-flash", apiKey: "k",
+      transport: stub([{ type: "thinking", delta: "hm" }, { type: "done", stopReason: "SAFETY" }]),
+    });
+    const reports: AdapterReport[] = [];
+    const res = await adapter.runTurn(turn, r => reports.push(r));
+    expect(reports).toContainEqual(expect.objectContaining({ kind: "error", code: "model_refusal", retryable: false }));
+    expect(res.terminalReason).toBe("error");
+  });
+
+  it("an ordinary STOP stays clean", async () => {
+    const adapter = createGeminiNativeAdapter({
+      model: "gemini-2.5-flash", apiKey: "k",
+      transport: stub([{ type: "text", delta: "hi" }, { type: "done", stopReason: "STOP" }]),
+    });
+    const reports: AdapterReport[] = [];
+    const res = await adapter.runTurn(turn, r => reports.push(r));
+    expect(reports.some(r => r.kind === "error")).toBe(false);
+    expect(res.terminalReason).toBe("done");
   });
 
   it("tool-call args go through the shared repairing guard (cosmetic repaired, truncated kept {_raw})", async () => {

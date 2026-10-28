@@ -6,6 +6,7 @@ import { _resetSessionOwnerRegistry, resolveBrowserSessionId } from "../browser/
 import { clearSessionTaint, getTaintSummary, recordSensitiveRead } from "../data-lineage/index.js";
 import { clearExternalIngestion, hasExternalIngestion, recordExternalIngestion } from "../data-lineage/external.js";
 import { clearTaskArtifacts, listTaskArtifacts, recordTaskArtifact } from "../data-lineage/task-artifacts.js";
+import { getSessionProject, setSessionProject } from "../session/project.js";
 
 const WORKER = "op_lineage_worker";
 const PARENT = "chat-lineage-parent";
@@ -47,8 +48,10 @@ describe("delegated session lineage", () => {
     expect(resolveBrowserSessionId(WORKER)).toBe(WORKER);
   });
 
-  it("release: what the worker read, ingested and created follows its result into the parent, and the owner record is dropped", () => {
+  it("release: what the worker read, ingested and created follows its result into the parent, and the owner record and project are dropped", () => {
+    setSessionProject(PARENT, "proj-worker");
     bindDelegatedSessionLineage(WORKER, PARENT);
+    expect(getSessionProject(WORKER)).toBe("proj-worker");
     recordSensitiveRead(WORKER, "sensitive_file", "~/.ssh/id_rsa", "-----BEGIN OPENSSH PRIVATE KEY----- ".repeat(8));
     recordExternalIngestion(WORKER, "an untrusted page the worker fetched, with enough words to fingerprint ".repeat(6), "web");
     const artifact = resolve("ws", "apps", "proj", "index.html");
@@ -61,6 +64,8 @@ describe("delegated session lineage", () => {
     expect(hasExternalIngestion(PARENT)).toBe(true);
     expect(listTaskArtifacts(PARENT)).toEqual([artifact]);
     expect(resolveBrowserSessionId(WORKER)).toBe(WORKER);
+    expect(getSessionProject(WORKER)).toBeUndefined();
+    setSessionProject(PARENT, null);
   });
 
   it("release: a no-op for an op without a parent, and for non-delegated shapes", () => {

@@ -9,6 +9,7 @@ import type { Op } from "../ops/types.js";
 import { clearSessionTaint, getKernelTaintSources, recordSensitiveRead, checkEgressTaintWithPayload } from "../data-lineage/index.js";
 import { clearExternalIngestion, hasExternalIngestion, recordExternalIngestion } from "../data-lineage/external.js";
 import { clearSessionOwner } from "../browser/session-owner-registry.js";
+import { getSessionProject, setSessionProject } from "../session/project.js";
 
 const PARENT = "lineage-parent";
 const CHILD = "lineage-child";
@@ -17,6 +18,8 @@ const SECRET = "the recovery phrase is velvet-harbor-ninety-two, keep it somewhe
 afterEach(() => {
   for (const s of [PARENT, CHILD]) { clearSessionTaint(s); clearExternalIngestion(s); }
   clearSessionOwner(CHILD);
+  setSessionProject(PARENT, null);
+  setSessionProject(CHILD, null);
 });
 
 describe("a child session inherits its parent's lineage at spawn", () => {
@@ -47,6 +50,41 @@ describe("a child session inherits its parent's lineage at spawn", () => {
     recordSensitiveRead(PARENT, "sensitive_file", "/home/u/.env", SECRET);
     bindDelegatedSessionLineage(CHILD, PARENT);
     expect(getKernelTaintSources(CHILD)).toEqual(["credential"]);
+  });
+});
+
+// A worker or agent spawned from a project chat searched memory with no
+// project, so it never saw the project's documents, and its own spawns lost
+// the project's roster.
+describe("a child session works in its parent's project", () => {
+  it("takes the parent chat's project at spawn, and nothing when the parent has none", () => {
+    inheritSessionLineage(CHILD, PARENT);
+    expect(getSessionProject(CHILD)).toBeUndefined();
+
+    setSessionProject(PARENT, "proj-lineage");
+    inheritSessionLineage(CHILD, PARENT);
+    expect(getSessionProject(CHILD)).toBe("proj-lineage");
+  });
+
+  it("keeps the project a borrowed session already names", () => {
+    setSessionProject(PARENT, "proj-lineage");
+    setSessionProject(CHILD, "proj-own");
+    bindDelegatedSessionLineage(CHILD, PARENT);
+    expect(getSessionProject(CHILD)).toBe("proj-own");
+  });
+
+  it("is dropped when a container worker's lineage is released", () => {
+    setSessionProject(PARENT, "proj-lineage");
+    const op = {
+      id: CHILD,
+      canonical: { sessionId: PARENT, state: "queued" },
+      runtimeDescriptor: { kind: "delegated-op", adapter: "provider-exact", sessionId: CHILD },
+    } as unknown as Op;
+    bindContainerSessionLineage(op);
+    expect(getSessionProject(CHILD)).toBe("proj-lineage");
+    releaseContainerSessionLineage(op);
+    expect(getSessionProject(CHILD)).toBeUndefined();
+    expect(getSessionProject(PARENT)).toBe("proj-lineage");
   });
 });
 

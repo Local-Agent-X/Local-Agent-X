@@ -19,6 +19,7 @@ import { propagateTaint } from "../data-lineage/index.js";
 import { propagateExternalIngestion } from "../data-lineage/external.js";
 import { propagateTaskArtifacts } from "../data-lineage/task-artifacts.js";
 import { clearSessionOwner, registerChildSessionOwner, resolveBrowserSessionId } from "../browser/session-owner-registry.js";
+import { getSessionProject, setSessionProject } from "../session/project.js";
 import type { Op } from "../ops/types.js";
 import { createLogger } from "../logger.js";
 
@@ -44,9 +45,21 @@ export function inheritSessionLineage(childSessionId: string, parentSessionId: s
   if (!parentSessionId || parentSessionId === childSessionId) return;
   const taints = propagateTaint(parentSessionId, childSessionId);
   const ingested = propagateExternalIngestion(parentSessionId, childSessionId);
+  inheritSessionProject(childSessionId, parentSessionId);
   if (taints > 0 || ingested) {
     logger.info(`[lineage] ${parentSessionId} → ${childSessionId}: inherits ${taints} taint label(s), ingestion ${ingested ? "marked" : "clean"}`);
   }
+}
+
+/**
+ * A child spawned from a project chat works in that project: its memory
+ * search reaches the project's documents and its own spawns stay on the
+ * project's roster. A session that already names a project (a borrowed one)
+ * keeps it. The release paths below clear what this set.
+ */
+function inheritSessionProject(childSessionId: string, parentSessionId: string): void {
+  const projectId = getSessionProject(parentSessionId);
+  if (projectId && !getSessionProject(childSessionId)) setSessionProject(childSessionId, projectId);
 }
 
 /**
@@ -80,7 +93,10 @@ export function bindContainerSessionLineage(op: Op): { executionSessionId: strin
 
 export function releaseContainerSessionLineage(op: Op): void {
   const executionSessionId = executionSessionOf(op);
-  if (executionSessionId !== op.canonical?.sessionId) clearSessionOwner(executionSessionId);
+  if (executionSessionId !== op.canonical?.sessionId) {
+    clearSessionOwner(executionSessionId);
+    setSessionProject(executionSessionId, null);
+  }
 }
 
 /** Terminal cleanup for an op whose descriptor names a parent session. A
@@ -102,4 +118,5 @@ export function releaseDelegatedSessionLineage(op: Op): void {
     logger.error(`[lineage] propagation failed for ${op.id} → ${parentSessionId}: ${(e as Error).message}`);
   }
   clearSessionOwner(sessionId);
+  setSessionProject(sessionId, null);
 }

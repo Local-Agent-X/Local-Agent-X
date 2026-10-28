@@ -20,6 +20,7 @@ import type { AgentRunStore, AgentTemplateStore } from "../agent-store/index.js"
 import type { IntegrationRegistry } from "../integrations/index.js";
 import { createLogger } from "../logger.js";
 import { clearSessionProfile } from "../autonomy/profile-store.js";
+import { setSessionProject } from "../session/project.js";
 import { registerChildSessionOwner, clearSessionOwner } from "../browser/session-owner-registry.js";
 import { inheritSessionLineage } from "../canonical-loop/index.js";
 import { AgentWorkspaceError, provisionAgentWorkspace, releaseAgentWorkspace, type AgentWorkspace } from "../agency/agent-workspace.js";
@@ -303,7 +304,7 @@ export function registerHandlerEvents(deps: {
       // Tear down any inherited per-session profile override (set at spawn in
       // invoke.ts). Only for the auto-minted per-run session — an explicit
       // req.sessionId is a shared/borrowed session whose lifecycle the caller owns.
-      if (!req.sessionId) { clearSessionProfile(runSessionId); clearSessionOwner(runSessionId); }
+      if (!req.sessionId) { clearSessionProfile(runSessionId); clearSessionOwner(runSessionId); setSessionProject(runSessionId, null); }
     }
   };
   registerAgentRunDriver(agentRunDriver);

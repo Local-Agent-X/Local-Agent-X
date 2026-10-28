@@ -4,6 +4,7 @@ import { handleAgentTemplateRoutes } from "./templates.js";
 import { handleRosterRoutes } from "./rosters.js";
 import { handleInfraRoutes } from "./infra.js";
 import { handleProjectRoutes } from "./projects.js";
+import { handleProjectFileRoutes } from "./project-files.js";
 import { handleChatStatusRoutes } from "./chats.js";
 
 const SUB_HANDLERS: RouteHandler[] = [
@@ -12,6 +13,7 @@ const SUB_HANDLERS: RouteHandler[] = [
   handleRosterRoutes,
   handleInfraRoutes,
   handleProjectRoutes,
+  handleProjectFileRoutes,
   handleChatStatusRoutes,
 ];
 

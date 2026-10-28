@@ -21,9 +21,11 @@ function renderProjectRow(p) {
       <span class="project-name">${esc(p.name)}</span>
       ${count ? `<span class="project-count">${count}</span>` : ''}
       <button class="project-new-chat" onclick="newChatInProject('${p.id}',event)" title="New chat in this project">+</button>
+      <button class="project-add-files" onclick="addProjectFiles('${p.id}',event)" title="Add files to this project's documents">&#128206;</button>
       <button class="project-delete" onclick="deleteProject('${p.id}',event)" title="Delete">&times;</button>
     </div>
     <div class="project-chats">
+      ${expanded && typeof renderProjectDocs === 'function' ? renderProjectDocs(p.id) : ''}
       ${pChats.map(c => `
         <div class="chat-item ${activeChat && activeChat.id === c.id ? 'active' : ''}" onclick="selectChat('${c.id}')">
           <span class="chat-dot${typeof isChatActive==='function'&&isChatActive(c.id)?' active-pulse':''}"></span>

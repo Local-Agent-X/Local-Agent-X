@@ -224,6 +224,15 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
 .project-delete:hover{color:var(--danger);background:var(--danger-bg)}
 .project-new-chat{display:none;background:none;border:none;color:var(--muted);cursor:pointer;font-size:.85rem;line-height:1;padding:1px 6px;border-radius:3px;font-weight:600}
 .project-item:hover .project-new-chat{display:block}
+.project-add-files{display:none;background:none;border:none;color:var(--muted);cursor:pointer;font-size:.72rem;line-height:1;padding:1px 4px;border-radius:3px}
+.project-item:hover .project-add-files{display:block}
+.project-add-files:hover{color:var(--accent);background:var(--accent-dim,color-mix(in srgb, var(--accent) 12%, transparent))}
+.project-docs{padding:4px 8px 6px;margin-bottom:2px;border-bottom:1px solid var(--border)}
+.project-docs-head{display:flex;align-items:center;justify-content:space-between;font-size:.68rem;color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-bottom:2px}
+.project-docs-add{background:none;border:none;color:var(--accent);cursor:pointer;font-size:.68rem;padding:1px 4px;border-radius:3px;text-transform:none;letter-spacing:0}
+.project-docs-add:hover{background:var(--hover)}
+.project-doc{font-size:.72rem;color:var(--text);padding:1px 0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.project-doc.muted{color:var(--muted);white-space:normal}
 .project-new-chat:hover{color:var(--accent);background:var(--accent-dim,color-mix(in srgb, var(--accent) 12%, transparent))}
 .project-chats{display:none;padding:2px 0 4px 20px}
 .project-item.expanded+.project-chats{display:block}

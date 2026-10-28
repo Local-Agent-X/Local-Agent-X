@@ -2,12 +2,16 @@
  * Content-safe provider retry — the missing resilience seam on the per-turn
  * model call.
  *
- * Every provider transport (anthropic / openai-compat / codex / gemini) yields
- * an `error` TransportEvent on a 429 / 5xx / network drop and then `done`,
- * with `retryable` HARDCODED to `false`. The canonical loop turns that single
- * error into a terminal `terminalReason:"error"` → op `failed`. So one
- * transient blip — exactly the failure providers throw routinely under load —
- * kills the whole turn and loses work, with no backoff and no retry.
+ * This is the one in-call retry for a provider request. Every provider
+ * transport (anthropic / openai-compat / codex / gemini) yields an `error`
+ * TransportEvent on a 429 / 5xx / network drop and then `done`, with
+ * `retryable: false`, and makes a single HTTP attempt (the OpenAI SDK's own
+ * retries are off, providers/adapters/openai-http.ts). The adapter forwards
+ * that flag on its error report, and a `retryable: true` report re-queues the
+ * whole op (turn-loop/reported-adapter-recovery.ts), so a transport that said
+ * true was retried here AND re-queued by the worker on top. Without this
+ * wrapper the loop turns the error into `terminalReason:"error"` → op
+ * `failed`: one transient blip kills the turn.
  *
  * `withTransportRetry` wraps a transport stream factory and re-issues the
  * request on transient failures, with three invariants that make it safe:
@@ -20,11 +24,12 @@
  *   2. TRANSIENT-ONLY — retryability + backoff come from `resilience-policy`
  *      (the existing single seam): network / timeout / rateLimit / overload
  *      retry; auth / model / tool / contentFilter do not (retrying won't help).
- *      The transports' hardcoded `retryable:false` is NOT trusted — only an
- *      explicit `true` is a fast-path; otherwise the error message is classified.
- *   3. BOUNDED + ABORTABLE — at most `maxAttempts` total tries, and both the
- *      retry decision and the backoff sleep bail the moment the turn is aborted
- *      (user cancel / inject), so a cancelled turn never sits in backoff.
+ *      A `retryable: false` is not authoritative, so the error message is
+ *      classified; an explicit `true` is taken as is.
+ *   3. BOUNDED + ABORTABLE — at most MAX_TRANSPORT_ATTEMPTS total tries, and
+ *      both the retry decision and the backoff sleep bail the moment the turn
+ *      is aborted (user cancel / inject), so a cancelled turn never sits in
+ *      backoff.
  *
  * Re-issuing a failed LLM request is idempotent — it has no machine
  * side-effects (unlike a `bash`/`edit` retry), so this is the one retry the
@@ -35,13 +40,7 @@ import { createLogger } from "../../logger.js";
 
 const logger = createLogger("canonical-loop.transport-retry");
 
-/** Default total attempts (1 initial + up to N-1 retries). Override with
- * LAX_LLM_RETRY_ATTEMPTS for the rare operator who wants it tighter/off (1). */
-const DEFAULT_MAX_ATTEMPTS = (() => {
-  const raw = process.env.LAX_LLM_RETRY_ATTEMPTS;
-  const n = raw ? Number(raw) : NaN;
-  return Number.isFinite(n) && n >= 1 ? Math.floor(n) : 3;
-})();
+/** Total attempts: 1 initial + up to 2 retries. */
 const MAX_TRANSPORT_ATTEMPTS = 3;
 
 interface ErrorLike {
@@ -58,17 +57,14 @@ export interface TransportRetryOpts {
   signal?: AbortSignal;
   /** Secondary abort probe for transports that expose a flag, not a signal. */
   isAborted?: () => boolean;
-  /** Max total attempts (default 3 → up to 2 retries). */
-  maxAttempts?: number;
   /** Backoff sleep — injectable so tests run without real timers. */
   delay?: (ms: number, signal?: AbortSignal) => Promise<void>;
 }
 
 /**
- * Whether an error EVENT is worth retrying. Transports hardcode
+ * Whether an error EVENT is worth retrying. Transports report
  * `retryable:false` even on 429/5xx, so a `false` is NOT authoritative — we
- * still classify the message. Only an explicit `true` is trusted as a
- * fast-path.
+ * still classify the message. An explicit `true` is trusted as is.
  */
 function errorEventIsRetryable(ev: ErrorLike): boolean {
   if (ev.retryable === true) return true;
@@ -104,10 +100,6 @@ export async function* withTransportRetry<T extends { type: string }>(
   makeStream: () => AsyncIterable<T>,
   opts: TransportRetryOpts,
 ): AsyncIterable<T> {
-  const maxAttempts = Math.min(
-    MAX_TRANSPORT_ATTEMPTS,
-    Math.max(1, opts.maxAttempts ?? DEFAULT_MAX_ATTEMPTS),
-  );
   const delay = opts.delay ?? abortableDelay;
   const aborted = () => opts.signal?.aborted === true || opts.isAborted?.() === true;
 
@@ -120,7 +112,7 @@ export async function* withTransportRetry<T extends { type: string }>(
         if (ev.type === "error") {
           const e = ev as unknown as ErrorLike;
           const canRetry =
-            !emittedContent && attempt < maxAttempts && !aborted() && errorEventIsRetryable(e);
+            !emittedContent && attempt < MAX_TRANSPORT_ATTEMPTS && !aborted() && errorEventIsRetryable(e);
           if (canRetry) {
             retry = {
               category: classify(e.message ?? e.code ?? ""),
@@ -138,7 +130,7 @@ export async function* withTransportRetry<T extends { type: string }>(
     } catch (e) {
       // Some transports throw instead of yielding an error event.
       const canRetry =
-        !emittedContent && attempt < maxAttempts && !aborted() && isRetryable(e);
+        !emittedContent && attempt < MAX_TRANSPORT_ATTEMPTS && !aborted() && isRetryable(e);
       if (!canRetry) throw e;
       retry = { category: classify(e), reason: (e as Error)?.message ?? String(e) };
     }
@@ -147,7 +139,7 @@ export async function* withTransportRetry<T extends { type: string }>(
 
     const wait = backoffMs(attempt, retry.category);
     logger.warn(
-      `[${opts.label}] transient provider failure (${retry.category}) attempt ${attempt}/${maxAttempts}; retrying in ${Math.round(wait)}ms — ${retry.reason.slice(0, 120)}`,
+      `[${opts.label}] transient provider failure (${retry.category}) attempt ${attempt}/${MAX_TRANSPORT_ATTEMPTS}; retrying in ${Math.round(wait)}ms — ${retry.reason.slice(0, 120)}`,
     );
     await delay(wait, opts.signal);
     if (aborted()) return; // cancelled during backoff

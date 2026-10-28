@@ -157,13 +157,17 @@ export function defaultGeminiNativeTransport(): GeminiNativeTransport {
           signal: req.signal,
         });
       } catch (e) {
-        yield { type: "error", code: "transport_exception", message: (e as Error).message, retryable: true };
+        yield { type: "error", code: "transport_exception", message: (e as Error).message, retryable: false };
         yield { type: "done" };
         return;
       }
       if (!res.ok || !res.body) {
+        // retryable:false, as from every transport: transport-retry retries
+        // in the call from the message, which therefore leads with the
+        // status (an HTTP/2 reply has no status text, and the body may be
+        // empty). A true flag would also re-queue the op (transport-retry.ts).
         const text = await res.text().catch(() => "");
-        yield { type: "error", code: `http_${res.status}`, message: text.slice(0, 500) || res.statusText, retryable: res.status >= 500 || res.status === 429 };
+        yield { type: "error", code: `http_${res.status}`, message: `HTTP ${res.status}: ${text.slice(0, 500) || res.statusText}`, retryable: false };
         yield { type: "done" };
         return;
       }
@@ -213,7 +217,7 @@ export function defaultGeminiNativeTransport(): GeminiNativeTransport {
           }
         }
       } catch (e) {
-        yield { type: "error", code: "stream_exception", message: (e as Error).message, retryable: true };
+        yield { type: "error", code: "stream_exception", message: (e as Error).message, retryable: false };
       }
       yield { type: "done", stopReason, ...(usage ? { usage } : {}) };
     },

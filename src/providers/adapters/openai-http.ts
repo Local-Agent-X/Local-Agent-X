@@ -44,12 +44,24 @@ export function strictFetchFor(baseURL: string | undefined): ClientOptions["fetc
   }) as unknown as NonNullable<ClientOptions["fetch"]>;
 }
 
+/**
+ * The client makes one attempt per call and keeps no clock of its own. This
+ * adapter's only caller streams through withTransportRetry
+ * (canonical-loop/adapters/transport-retry.ts), which owns the retry; the SDK's
+ * default 2 retries inside each of its attempts made one 429 up to 9 requests.
+ * The SDK's timeout only bounds the wait for response headers, a wait the
+ * turn loop's idle watchdog (turn-loop/idle-watchdog.ts) already bounds and
+ * an operator can raise; the SDK has no off switch, so it is set to the
+ * longest delay a Node timer takes.
+ */
+const CLIENT_RETRY: Pick<ClientOptions, "maxRetries" | "timeout"> = { maxRetries: 0, timeout: 2_147_483_647 };
+
 export class OpenAIHttpAdapter extends BaseAdapter {
   readonly name: string = "openai-http";
 
   async *stream(req: ProviderRequest): AsyncIterable<StreamChunk> {
     const strictFetch = strictFetchFor(req.baseURL);
-    const client = new OpenAI({ apiKey: req.apiKey, baseURL: req.baseURL, ...(strictFetch ? { fetch: strictFetch } : {}) });
+    const client = new OpenAI({ apiKey: req.apiKey, baseURL: req.baseURL, ...CLIENT_RETRY, ...(strictFetch ? { fetch: strictFetch } : {}) });
     const useTools = !hasNoToolSupport(req.baseURL, req.model);
     // Whether to send reasoning_effort, and with what value — one decision,
     // in openai-param-support.ts. Includes "none" (thinking off) for the

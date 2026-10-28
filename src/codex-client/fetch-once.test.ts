@@ -30,7 +30,6 @@ describe("single provider retry owner", () => {
 
     const events = await collect(withTransportRetry(makeStream, {
       label: "provider",
-      maxAttempts: 3,
       delay: async () => {},
     }));
 

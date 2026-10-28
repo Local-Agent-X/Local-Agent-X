@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import { toGeminiContents, buildGeminiBody, defaultGeminiNativeTransport, type GeminiNativeRequest, type GeminiNativeTransport, type GeminiTransportEvent } from "../src/canonical-loop/adapters/gemini-native-transport.js";
 import { createGeminiNativeAdapter } from "../src/canonical-loop/adapters/gemini-native.js";
+import { withTransportRetry } from "../src/canonical-loop/adapters/transport-retry.js";
 import type { TransportMessage } from "../src/canonical-loop/adapters/anthropic/types.js";
 import type { AdapterReport, TurnInput } from "../src/canonical-loop/adapter-contract.js";
 
@@ -112,6 +113,30 @@ describe("defaultGeminiNativeTransport SSE parsing", () => {
     const evs: GeminiTransportEvent[] = [];
     for await (const e of defaultGeminiNativeTransport().stream(req)) evs.push(e);
     expect(evs.find(e => e.type === "error")).toMatchObject({ type: "error", code: "http_429" });
+  });
+
+  // Like every other transport, Gemini's error events say retryable:false.
+  // The adapter forwards the flag, and a true one re-queued the whole op on
+  // top of transport-retry's own attempts (about 12 tries for one 429).
+  // transport-retry still retries it, from the status in the message.
+  it("an HTTP 503 with no body is reported not-retryable, and transport-retry still retries it", async () => {
+    let calls = 0;
+    vi.stubGlobal("fetch", async () => {
+      calls += 1;
+      if (calls === 1) return new Response("", { status: 503 });
+      const sse = `data: ${JSON.stringify({ candidates: [{ content: { parts: [{ text: "hi" }] }, finishReason: "STOP" }] })}\r\n\r\n`;
+      return new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } });
+    });
+    const first: GeminiTransportEvent[] = [];
+    for await (const e of defaultGeminiNativeTransport().stream(req)) first.push(e);
+    expect(first.find(e => e.type === "error")).toMatchObject({ code: "http_503", retryable: false });
+
+    calls = 0;
+    const evs: GeminiTransportEvent[] = [];
+    for await (const e of withTransportRetry(() => defaultGeminiNativeTransport().stream(req), { label: "gemini", delay: async () => {} })) evs.push(e);
+    expect(calls).toBe(2);
+    expect(evs.some(e => e.type === "text")).toBe(true);
+    expect(evs.some(e => e.type === "error")).toBe(false);
   });
 });
 

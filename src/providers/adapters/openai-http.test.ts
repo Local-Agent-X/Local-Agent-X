@@ -15,11 +15,13 @@ import { markParamUnsupported } from "../types.js";
 import type { ProviderRequest, StreamChunk } from "../adapter/types.js";
 
 const createMock = vi.fn();
+const clientOptions = vi.fn();
 
 // The OpenAI SDK is mocked at the client boundary so the tests assert the
 // exact create() params without any network.
 vi.mock("openai", () => ({
   default: class {
+    constructor(opts: unknown) { clientOptions(opts); }
     chat = { completions: { create: createMock } };
   },
 }));
@@ -77,6 +79,18 @@ async function collect(req: ProviderRequest): Promise<StreamChunk[]> {
 beforeEach(() => {
   createMock.mockReset();
   vi.mocked(markParamUnsupported).mockClear();
+});
+
+// One transient error used to cost up to 9 HTTP attempts: the SDK's own 2
+// retries inside each of transport-retry's 3, and a 10-minute SDK timer
+// beside the idle watchdog's, which an operator raising the watchdog could
+// not lift.
+describe("the client makes one attempt per call", () => {
+  it("leaves retry to transport-retry and the clock to the idle watchdog", async () => {
+    createMock.mockResolvedValueOnce(fakeStream());
+    await collect(baseReq());
+    expect(clientOptions).toHaveBeenLastCalledWith(expect.objectContaining({ maxRetries: 0, timeout: 2_147_483_647 }));
+  });
 });
 
 describe("buildParams response_format emission", () => {

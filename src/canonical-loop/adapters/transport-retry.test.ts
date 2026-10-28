@@ -96,7 +96,7 @@ describe("withTransportRetry", () => {
     const { factory, calls } = scripted([[err], [err], [err], [err]]);
 
     const out = await collect(
-      withTransportRetry(factory, { label: "t", maxAttempts: 9, delay: noDelay }),
+      withTransportRetry(factory, { label: "t", delay: noDelay }),
     );
 
     expect(calls()).toBe(3); // initial + 2 retries, no more

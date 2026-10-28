@@ -28,8 +28,7 @@ src/browser/observation.ts#ObservationRegistry.observeInner 111
 src/browser/secret-fill.ts#withBrowserLock:callback 125
 src/canonical-loop/adapters/anthropic-transport.ts#stream 107
 src/canonical-loop/adapters/app-build-adapter.ts#CliBuildAdapter.runTurn 104
-src/canonical-loop/adapters/codex.ts#CodexAdapter.runTurn 105
-src/canonical-loop/adapters/openai-compat.ts#OpenAICompatAdapter.runTurn 137
+src/canonical-loop/adapters/openai-compat.ts#OpenAICompatAdapter.runTurn 130
 src/canonical-loop/adapters/openai-compat/canonical-to-chat-param.ts#canonicalToChatParam 101
 src/canonical-loop/adapters/openai-compat/stream-once.ts#streamOnce 113
 src/canonical-loop/chat-runner/event-pump.ts#subscribeOpEvents:callback 122

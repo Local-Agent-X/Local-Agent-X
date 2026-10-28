@@ -23,7 +23,7 @@
  */
 import { createLogger } from "../logger.js";
 import {
-  CONTEXT_FLOOR, findPsRow, ollamaModelKey, parsePsRows, safetyMarginBytes, spillBytes, steppedDownContext,
+  CONTEXT_FLOOR, DECLARED_MARGIN_BYTES, findPsRow, ollamaModelKey, parsePsRows, safetyMarginBytes, spillBytes, steppedDownContext,
 } from "./context-sizing-core.js";
 import { readGpuUsedBytes } from "./gpu-memory.js";
 import {
@@ -85,7 +85,10 @@ export async function observeChatResidency(
   if (!contended && (spill > 0 || override) && record.gpu?.source === "measured") {
     const used = await (deps.gpuUsed ?? readGpuUsedBytes)();
     const ollamaVram = rows.reduce((sum, r) => sum + r.sizeVramBytes, 0);
-    if (used !== null) contended = used - ollamaVram > safetyMarginBytes(record.gpu.totalBytes);
+    // A declared context was fitted to the card with only Ollama's minimum
+    // left over, so anything past that minimum is someone else's VRAM.
+    const margin = record.reason === "declared_fits" ? DECLARED_MARGIN_BYTES : safetyMarginBytes(record.gpu.totalBytes);
+    if (used !== null) contended = used - ollamaVram > margin;
   }
 
   if (spill > 0 && contended) {

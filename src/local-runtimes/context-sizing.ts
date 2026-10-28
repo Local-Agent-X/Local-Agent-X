@@ -1,9 +1,11 @@
 /**
  * Context sizing for local Ollama models — the one owner of "what num_ctx does
- * this model run at". Users never set it: LAX reads the model's architecture
- * and the machine's VRAM, picks the largest context that stays fully on the
- * GPU (context-sizing-core.ts), persists the decision per (model digest,
- * runtime version, GPU), and every consumer reads the same number:
+ * this model run at". A model built with a num_ctx (a Modelfile PARAMETER,
+ * e.g. a "-172k" tag) runs at it whenever it fits the card; otherwise LAX
+ * reads the model's architecture and the machine's VRAM and picks the largest
+ * context that stays fully on the GPU (context-sizing-core.ts). It persists
+ * the decision per (model digest, runtime version, GPU), and every consumer
+ * reads the same number:
  *
  *   ollama-native transport  -> options.num_ctx on every chat request
  *   cache.ts getLocalModel   -> the REPORTED window, so preflight, compaction,
@@ -20,7 +22,7 @@ import { createHash } from "node:crypto";
 import { createLogger } from "../logger.js";
 import { isLoopbackUrl } from "../local-only-policy.js";
 import {
-  chooseContext, findPsRow, kvBytesPerToken, nativeContextLength, ollamaModelKey, parsePsRows,
+  chooseContext, declaredContextLength, findPsRow, kvBytesPerToken, nativeContextLength, ollamaModelKey, parsePsRows,
   type GpuMemory,
 } from "./context-sizing-core.js";
 import { ContextSizingStore, type SizingRecord } from "./context-sizing-store.js";
@@ -33,6 +35,8 @@ const HTTP_TIMEOUT_MS = 3_000;
 const REVALIDATE_MS = 5 * 60_000;
 /** A background model LAX loads itself is loaded at no more than this. */
 const BACKGROUND_NUM_CTX = 16_384;
+/** Bumped when the sizing rule changes, so persisted decisions re-decide. */
+const SIZING_POLICY = 2;
 
 export interface SizingDeps {
   fetchJson: (url: string, init?: RequestInit) => Promise<Record<string, unknown> | null>;
@@ -163,12 +167,15 @@ function tagRow(tags: Record<string, unknown> | null, model: string): { size: nu
   return null;
 }
 
-async function showInfo(deps: SizingDeps, root: string, model: string): Promise<Record<string, unknown> | null> {
+async function showModel(deps: SizingDeps, root: string, model: string): Promise<{ info: Record<string, unknown> | null; declaredCtx: number | null }> {
   const show = await deps.fetchJson(`${root}/api/show`, {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ model }),
   });
   const info = show?.model_info;
-  return info && typeof info === "object" ? (info as Record<string, unknown>) : null;
+  return {
+    info: info && typeof info === "object" ? (info as Record<string, unknown>) : null,
+    declaredCtx: declaredContextLength(show?.parameters),
+  };
 }
 
 /** VRAM the background models will hold: what /api/ps measures for a loaded
@@ -181,7 +188,7 @@ async function headroomBytes(deps: SizingDeps, root: string, models: string[], t
     const loaded = findPsRow(rows, model);
     if (loaded) { total += loaded.sizeVramBytes; continue; }
     const size = tagRow(tags, model)?.size ?? 0;
-    const info = size > 0 ? await showInfo(deps, root, model) : null;
+    const info = size > 0 ? (await showModel(deps, root, model)).info : null;
     const kv = info ? kvBytesPerToken(info, deps.kvCacheType(model)) : null;
     const ctx = Math.min(info ? nativeContextLength(info) ?? BACKGROUND_NUM_CTX : BACKGROUND_NUM_CTX, BACKGROUND_NUM_CTX);
     total += kv !== null ? size + kv * ctx : Math.ceil(size * 1.5);
@@ -203,7 +210,9 @@ async function decide(root: string, model: string, deps: SizingDeps): Promise<Si
     .filter((m) => ollamaModelKey(m) !== ollamaModelKey(model) && tagRow(tags, m) !== null)
     .sort();
   const kvType = deps.kvCacheType(model);
-  const fingerprint = fingerprintOf([tag.digest, runtimeVersion, gpu?.name ?? null, gpu?.totalBytes ?? null, background, kvType]);
+  // A Modelfile num_ctx change moves the digest. The policy number re-decides
+  // records made before a declared num_ctx was honored.
+  const fingerprint = fingerprintOf([tag.digest, runtimeVersion, gpu?.name ?? null, gpu?.totalBytes ?? null, background, kvType, SIZING_POLICY]);
   const persistable = tag.digest !== null && runtimeVersion !== null;
 
   const stored = deps.store.read(key);
@@ -215,11 +224,11 @@ async function decide(root: string, model: string, deps: SizingDeps): Promise<Si
     budgetBytes: null, estimatedBytes: null, gpu, verification: "pending" as const, decidedAt: at,
   };
   if (!local) return { ...base, numCtx: null, reason: "remote_runtime" };
-  const info = await showInfo(deps, root, model);
+  const { info, declaredCtx } = await showModel(deps, root, model);
   const nativeMax = info ? nativeContextLength(info) : null;
   const kv = info ? kvBytesPerToken(info, kvType) : null;
   const headroom = gpu && nativeMax !== null && kv !== null ? await headroomBytes(deps, root, background, tags) : 0;
-  const choice = chooseContext({ nativeMax, weightsBytes: tag.size, kvBytesPerToken: kv, gpu, headroomBytes: headroom });
+  const choice = chooseContext({ nativeMax, weightsBytes: tag.size, kvBytesPerToken: kv, gpu, headroomBytes: headroom, declaredCtx });
   const record: SizingRecord = {
     ...base, nativeMax, kvBytesPerToken: kv, headroomBytes: headroom,
     numCtx: choice.numCtx, reason: choice.reason, budgetBytes: choice.budgetBytes, estimatedBytes: choice.estimatedBytes,

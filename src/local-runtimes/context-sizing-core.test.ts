@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   CONTEXT_FLOOR,
   chooseContext,
+  declaredContextLength,
   findPsRow,
   kvBytesPerToken,
   nativeContextLength,
@@ -13,6 +14,15 @@ import {
 import {
   EMBEDDER_VRAM, QWEN36_27B_INFO, QWEN3_8B_INFO, RTX_5090, WEIGHTS_27B, WEIGHTS_8B,
 } from "./context-sizing.test-helper.js";
+
+describe("declaredContextLength", () => {
+  it("reads num_ctx from /api/show's parameters text, and only that", () => {
+    const params = "presence_penalty               0\ntop_p                          0.95\nnum_ctx                        172032";
+    expect(declaredContextLength(params)).toBe(172_032);
+    expect(declaredContextLength("num_predict 4096\ntop_k 20")).toBeNull();
+    expect(declaredContextLength(undefined)).toBeNull();
+  });
+});
 
 describe("kvBytesPerToken", () => {
   it("sums a hybrid model's per-layer KV heads: 16 of 64 qwen35 layers attend", () => {
@@ -81,6 +91,27 @@ describe("chooseContext", () => {
       nativeMax: 262_144, weightsBytes: WEIGHTS_27B, kvBytesPerToken: 65_536,
     });
     expect(withClassifier.numCtx).toBe(114_688);
+  });
+
+  describe("a model built with a num_ctx (qwen3.8:27b-172k on the 5090, measured 2026-10-28)", () => {
+    // The tag's own /api/tags size, KV per token and embedder headroom from the
+    // live sizing record; the auto-fit gave 147,456 with this exact budget.
+    const q38 = { gpu: RTX_5090, headroomBytes: 1_004_423_240, nativeMax: 262_144, weightsBytes: 17_741_872_135, kvBytesPerToken: 69_632 };
+
+    it("runs at the declared 172,032, which the card holds; the auto-fit would have given 147,456", () => {
+      expect(chooseContext({ ...q38, declaredCtx: 172_032 })).toMatchObject({ numCtx: 172_032, reason: "declared_fits" });
+      expect(chooseContext(q38)).toMatchObject({ numCtx: 147_456, reason: "fits_gpu", budgetBytes: 29_767_402_629 });
+    });
+
+    it("falls back to the auto-fit when the declared window would spill even on the whole card", () => {
+      expect(chooseContext({ ...q38, declaredCtx: 262_144 })).toMatchObject({ numCtx: 147_456, reason: "fits_gpu" });
+    });
+
+    it("never runs past the native window, and ignores a declared size under the floor", () => {
+      const big = { name: "NVIDIA RTX PRO 6000", totalBytes: 96 * 1024 ** 3, source: "measured" as const };
+      expect(chooseContext({ ...q38, gpu: big, declaredCtx: 1_048_576 })).toMatchObject({ numCtx: 262_144, reason: "declared_fits" });
+      expect(chooseContext({ ...q38, declaredCtx: 16_384 })).toMatchObject({ numCtx: 147_456, reason: "fits_gpu" });
+    });
   });
 
   it("never sizes up without a VRAM figure", () => {

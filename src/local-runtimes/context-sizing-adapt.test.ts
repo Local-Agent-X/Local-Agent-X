@@ -123,6 +123,24 @@ describe("contention", () => {
     expect(persisted()).toMatchObject({ numCtx: SIZED, verification: "pending" });
   });
 
+  it("a declared window fitted to the whole card: a browser's 1.5 GB is contention, so the user's size survives", async () => {
+    const tag = "qwen3.6:27b-192k";
+    const runtime = referenceRuntime();
+    runtime.models.push({ ...runtime.models[0], name: tag, digest: "sha256:27b-192k", parameters: "num_ctx 196608" });
+    const store = new ContextSizingStore(join(dir, "local-context-sizing.json"));
+    await ensureContextDecision(ROOT, tag, {
+      deps: { fetchJson: fakeFetchJson(runtime), gpu: async () => RTX_5090, store, backgroundModels: async () => ["mxbai-embed-large"], kvCacheType: () => null, now: () => now },
+    });
+    expect(appliedContext(ROOT, tag)).toBe(196_608);
+    const row = { name: tag, size: 31e9, size_vram: 29e9, context_length: 196_608 };
+    const rows = [row, embedder];
+    const ollama = rows.reduce((sum, r) => sum + r.size_vram, 0);
+    await observeChatResidency(ROOT, tag, { ps: async () => ({ models: rows }), gpuUsed: async () => ollama + 1.5e9, now: () => now, store });
+    expect(appliedContext(ROOT, tag)).toBeLessThan(196_608);
+    _resetContextSizingForTests();
+    expect(contextSizingRecord(ROOT, tag)).toMatchObject({ numCtx: 196_608, reason: "declared_fits", verification: "pending" });
+  });
+
   it("without a driver reading, an unexplained spill is the estimate's fault", async () => {
     externalVram = null;
     await observe([chat(SIZED, 27.4e9, 25.4e9), embedder]);

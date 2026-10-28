@@ -6,7 +6,9 @@ import {
   _resetContextSizingForTests, appliedContext, contextSizingRecord, ensureContextDecision, sizingKey, type SizingDeps,
 } from "./context-sizing.js";
 import { ContextSizingStore } from "./context-sizing-store.js";
-import { fakeFetchJson, referenceRuntime, RTX_5090, type FakeRuntimeState } from "./context-sizing.test-helper.js";
+import {
+  fakeFetchJson, QWEN36_27B_INFO, referenceRuntime, RTX_5090, WEIGHTS_27B, type FakeRuntimeState,
+} from "./context-sizing.test-helper.js";
 import { getLocalModel, getLocalModelCapabilityProfile, invalidateLocalRuntimes, restoreProjectedLocalRuntime } from "./cache.js";
 import { resolveContextWindow } from "../context-manager/model-windows.js";
 import type { GpuMemory } from "./context-sizing-core.js";
@@ -63,6 +65,15 @@ describe("ensureContextDecision", () => {
     expect(appliedContext(ROOT, "qwen3.6:27b")).toBe(172_032);
     // config.ollamaUrl spells it "localhost", the chat base carries /v1: one endpoint.
     expect(appliedContext("http://localhost:11434/v1", "qwen3.6:27b")).toBe(172_032);
+  });
+
+  it("runs a tag built with a num_ctx at it, where the auto-fit would have shrunk it", async () => {
+    // The 27B auto-fits to 172,032 here; built at 196,608 it fits the card
+    // only without the safety margin, and the user picked that tag.
+    state.models.push({ name: "qwen3.6:27b-192k", size: WEIGHTS_27B, digest: "sha256:27b-192k", info: QWEN36_27B_INFO, parameters: "temperature 1\nnum_ctx 196608" });
+    expect(await ensureContextDecision(ROOT, "qwen3.6:27b-192k", { deps: deps() }))
+      .toMatchObject({ numCtx: 196_608, reason: "declared_fits" });
+    expect(appliedContext(ROOT, "qwen3.6:27b-192k")).toBe(196_608);
   });
 
   it("gives the 8B its whole native window", async () => {

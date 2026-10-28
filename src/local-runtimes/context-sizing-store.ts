@@ -22,7 +22,7 @@ export const SizingRecordSchema = z.object({
   fingerprint: z.string().min(1),
   numCtx: z.number().int().positive().nullable(),
   reason: z.enum([
-    "fits_gpu", "native_max_fits", "remote_runtime", "gpu_unknown", "model_info_incomplete",
+    "declared_fits", "fits_gpu", "native_max_fits", "remote_runtime", "gpu_unknown", "model_info_incomplete",
     "native_below_floor", "gpu_too_small", "spilled_at_floor",
   ]),
   nativeMax: nullableInt,

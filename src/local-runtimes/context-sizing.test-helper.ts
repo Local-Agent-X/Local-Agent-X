@@ -39,7 +39,8 @@ export const EMBEDDER_VRAM = 618_387_209;
 
 export interface FakeRuntimeState {
   version: string;
-  models: Array<{ name: string; size: number; digest: string; info: Record<string, unknown> | null }>;
+  /** `parameters` is /api/show's Modelfile PARAMETER text, when the tag sets any. */
+  models: Array<{ name: string; size: number; digest: string; info: Record<string, unknown> | null; parameters?: string }>;
   ps: Array<{ name: string; size: number; size_vram: number; context_length?: number }>;
   calls: string[];
 }
@@ -68,7 +69,7 @@ export function fakeFetchJson(state: FakeRuntimeState) {
     if (path === "/api/show") {
       const model = (JSON.parse(String(init?.body)) as { model: string }).model;
       const hit = state.models.find((m) => m.name === model || m.name === `${model}:latest`);
-      return hit ? { model_info: hit.info ?? {}, capabilities: ["completion", "tools"] } : null;
+      return hit ? { model_info: hit.info ?? {}, capabilities: ["completion", "tools"], parameters: hit.parameters } : null;
     }
     return null;
   };

@@ -13,7 +13,9 @@ import { modelFamilyRiderFor, providerRiderFor } from "./provider-riders.js";
 import type { FileAccessMode } from "../../security/layer/index.js";
 import { loadFileAccessMode } from "../../security/layer/index.js";
 import {
+  asRecalledData,
   harnessNotice,
+  type SystemPromptBuilder,
   type RenderedPromptSection,
   type SystemPromptBuildResult,
 } from "../../context/system-prompt-builder.js";
@@ -21,6 +23,7 @@ import { channelContextBlock } from "../../channel-context.js";
 import type { ChannelKind } from "../types.js";
 import type { ChatMode } from "../../session/mode.js";
 import { projectAgentsMd } from "../../context/project-agents-md.js";
+import { projectDocumentsSection } from "../../memory/project-docs/full-text.js";
 import { sessionWorkRootOf } from "../../workspace/paths.js";
 
 const logger = createLogger("agent-request.prepare-request.sysprompt");
@@ -154,6 +157,25 @@ export interface BuildSystemPromptInput {
   /** Directive for an explicit build route this turn (/app-build methodology
    *  or a resolved Product Build continuation), from product-build-routing.ts. */
   buildTurnDirective?: string;
+}
+
+/**
+ * What the session's project brings to the prompt. Both are static, so their
+ * unchanged bytes stay in the cached prefix turn after turn:
+ * - a code session's project rules (context/project-agents-md.ts);
+ * - a chat project's documents in full, while they fit the model's share of
+ *   its window (memory/project-docs/full-text.ts). Its own section, so a
+ *   local window's budget can shed it alone; search covers them either way.
+ */
+function addProjectSections(builder: SystemPromptBuilder, input: BuildSystemPromptInput): void {
+  const projectRules = input.mode === "code" ? projectAgentsMd(sessionWorkRootOf(input.sessionId)) : "";
+  if (projectRules) {
+    builder.addSection({ id: "project-rules", label: "Project Rules", type: "static", policy: "degradable", priority: "navigation", build: () => projectRules });
+  }
+  const documents = input.mode === "code" ? "" : projectDocumentsSection(input.memoryIndex, input.sessionId, input.resolvedModel);
+  if (documents) {
+    builder.addSection({ id: "project-documents", label: "Project Documents", type: "static", policy: "degradable", priority: "facts", build: () => asRecalledData("project-documents", documents) });
+  }
 }
 
 export async function buildSystemPromptWithTelemetry(
@@ -322,12 +344,7 @@ export async function buildSystemPromptWithTelemetry(
     contextBuilder.addSection({ id, label, type: "dynamic", policy, build: () => text });
   }
 
-  // A code session's project rules (context/project-agents-md.ts). Static, so
-  // the file's unchanged bytes stay in the cached prefix turn after turn.
-  const projectRules = input.mode === "code" ? projectAgentsMd(sessionWorkRootOf(input.sessionId)) : "";
-  if (projectRules) {
-    contextBuilder.addSection({ id: "project-rules", label: "Project Rules", type: "static", policy: "degradable", priority: "navigation", build: () => projectRules });
-  }
+  addProjectSections(contextBuilder, input);
 
   // Explicit build route only: the background op owns the build and this
   // turn's inline-build tools are stripped (tool-selection.ts); the directive

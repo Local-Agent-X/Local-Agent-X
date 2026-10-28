@@ -73,7 +73,7 @@ describe("schema v12 fact provenance migration", () => {
       const rows = db.prepare("SELECT provenance FROM facts ORDER BY id").all() as Array<{ provenance: string | null }>;
       expect(rows).toEqual([{ provenance: null }, { provenance: null }]);
       expect(schemaVersion(db)).toBe(CURRENT_SCHEMA_VERSION);
-      expect(CURRENT_SCHEMA_VERSION).toBe(19);
+      expect(CURRENT_SCHEMA_VERSION).toBe(20);
     } finally {
       db.close();
     }
@@ -262,5 +262,22 @@ describe("schema v17/v18 re-chunks sessions (harness rows as user text; duplicat
     db.prepare("INSERT INTO files (path, source, hash, mtime, size) VALUES ('sessions/chat-b.jsonl', 'session', 'abc', 0, 0)").run();
     initSchema(db);
     expect((db.prepare("SELECT hash FROM files WHERE path = 'sessions/chat-b.jsonl'").get() as { hash: string }).hash).toBe("");
+  });
+});
+
+describe("schema v20 project document text", () => {
+  it("adds the text table and re-extracts every indexed project document once", () => {
+    const db = new Database(":memory:");
+    try {
+      initSchema(db);
+      db.prepare(`INSERT INTO files (path, source, hash, mtime, size) VALUES ('project/proj-a/docs/a.md', 'project-doc', '1:2', 1, 2), ('memory/x.md', 'memory', 'keep', 1, 2)`).run();
+      migrateSchema(db, 19);
+      const hashes = db.prepare("SELECT path, hash FROM files ORDER BY path").all();
+      expect(hashes).toEqual([{ path: "memory/x.md", hash: "keep" }, { path: "project/proj-a/docs/a.md", hash: "" }]);
+      db.prepare("INSERT INTO project_doc_text (path, file, text) VALUES ('project/proj-a/docs/a.md', '/w/a.md', 'body')").run();
+      expect(schemaVersion(db)).toBe(20);
+    } finally {
+      db.close();
+    }
   });
 });

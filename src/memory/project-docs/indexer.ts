@@ -8,6 +8,7 @@ import { join, relative } from "node:path";
 import type { MemoryIndex } from "../index-core.js";
 import type { Chunk } from "../types.js";
 import { chunkText } from "../chunking.js";
+import { forgetDocumentText, saveDocumentText } from "./full-text.js";
 import { isSensitivePath } from "../../data-lineage/paths.js";
 import { createLogger } from "../../logger.js";
 import { projectDocPath, projectDocPathPrefix } from "./paths.js";
@@ -70,9 +71,15 @@ async function indexDoc(memory: MemoryIndex, doc: FoundDoc): Promise<void> {
   const { maxChunkChars, overlapChars } = memory.getChunkConfig();
   const chunks = chunkText(text, doc.virtualPath, "project-doc", maxChunkChars, overlapChars, { file_path: doc.file }) as Chunk[];
   await memory.indexChunksIdempotent(chunks, doc.virtualPath, "project-doc");
+  saveDocumentText(memory, doc.virtualPath, doc.file, text);
   const [mtime, size] = doc.stamp.split(":").map(Number);
   memory["db"].prepare("INSERT OR REPLACE INTO files (path, source, hash, mtime, size) VALUES (?, 'project-doc', ?, ?, ?)")
     .run(doc.virtualPath, doc.stamp, mtime, size);
+}
+
+function removeDoc(memory: MemoryIndex, path: string): void {
+  memory.removeFile(path);
+  forgetDocumentText(memory, path);
 }
 
 /** Bring the index in line with the project's folders. */
@@ -98,7 +105,7 @@ export async function indexProjectDocs(memory: MemoryIndex, project: ProjectLike
   }
   const present = new Set(found.map((d) => d.virtualPath));
   for (const path of before.keys()) {
-    if (!present.has(path)) { memory.removeFile(path); report.removed++; }
+    if (!present.has(path)) { removeDoc(memory, path); report.removed++; }
   }
   if (report.skipped.length) logger.info(`[project-docs] ${project.id}: skipped ${report.skipped.length}: ${report.skipped.slice(0, 5).join("; ")}`);
   return report;
@@ -107,7 +114,7 @@ export async function indexProjectDocs(memory: MemoryIndex, project: ProjectLike
 /** Drop every document of a project that no longer exists. */
 export function removeProjectDocs(memory: MemoryIndex, projectId: string): number {
   const paths = [...indexedPaths(memory, projectId).keys()];
-  for (const path of paths) memory.removeFile(path);
+  for (const path of paths) removeDoc(memory, path);
   return paths.length;
 }
 

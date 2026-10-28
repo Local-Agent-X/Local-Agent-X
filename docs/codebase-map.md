@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1882 non-test source files · 90 oversized · 245 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1883 non-test source files · 90 oversized · 245 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -22,13 +22,13 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/ops/` | 172 | 29 | XL | 1 |
 | `src/security/` | 142 | 54 | XL | 3 |
 | `src/tools/` | 121 | 221 | XL | 9 |
-| `src/tool-execution/` | 84 | 79 | XL | 2 |
+| `src/tool-execution/` | 85 | 79 | XL | 2 |
 | `src/canonical-loop/` | 81 | 276 | XL | 12 |
 | `src/workspace/` | 80 | 3 | M |  |
 | `src/providers/` | 70 | 26 | L | 1 |
-| `src/session/` | 54 | 9 | M |  |
-| `src/data-lineage/` | 53 | 11 | M |  |
-| `src/memory/` | 53 | 146 | XL | 7 |
+| `src/session/` | 55 | 9 | M |  |
+| `src/data-lineage/` | 54 | 11 | M |  |
+| `src/memory/` | 53 | 147 | XL | 7 |
 | `src/browser/` | 48 | 88 | XL | 5 |
 | `src/tool-policy/` | 46 | 21 | L |  |
 | `src/local-runtimes/` | 42 | 26 | L | 1 |
@@ -38,7 +38,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/chat-ws/` | 33 | 23 | L |  |
 | `src/agency/` | 29 | 21 | L |  |
 | `src/agent-store/` | 28 | 7 | M | 1 |
-| `src/context-manager/` | 26 | 15 | M |  |
+| `src/context-manager/` | 27 | 15 | M |  |
 | `src/context/` | 25 | 10 | M | 1 |
 | `src/classifiers/` | 24 | 16 | L |  |
 | `src/agent-request/` | 23 | 15 | L | 3 |
@@ -385,9 +385,9 @@ job. Comments are free: never cut them to fit.
 - `src/test-suite.ts` — 280+ code lines (cap 350)
 - `src/tools/build-app-spawn.ts` — 280+ code lines (cap 350)
 - `src/agency/handler-tools.ts#createHandlerTools` — 100+ own code lines (cap 100)
-- `src/agent-request/prepare-request/build-system-prompt.ts#buildSystemPromptWithTelemetry` — 100+ own code lines (cap 100)
 - `src/auto-build/workflow-resolver.ts#candidateFromEvidence` — 100+ own code lines (cap 100)
 - `src/cron/cron-service-execute.ts#runJob` — 100+ own code lines (cap 100)
+- `src/agent-request/prepare-request/build-system-prompt.ts#buildSystemPromptWithTelemetry` — 90+ own code lines (cap 100)
 - `src/anthropic-client/stream-cli.ts#streamViaColdSpawn` — 90+ own code lines (cap 100)
 - `src/app-renderer/components.ts#renderComponent` — 90+ own code lines (cap 100)
 - `src/auto-build/orchestrator/manager.ts#startOrchestration` — 90+ own code lines (cap 100)

@@ -1,5 +1,5 @@
 /**
- * Memory schema steps v15–v19 (split from index-schema-migrations.ts):
+ * Memory schema steps v15–v20 (split from index-schema-migrations.ts):
  * the retrieval and provenance repairs of October 2026. Runs inside
  * migrateSchema's transaction, after the earlier steps.
  */
@@ -48,5 +48,15 @@ export function migrateRetrievalAndProvenance(db: InstanceType<typeof Database>,
     // search_past_sessions(message_id) reads it. NULL for older rows and for
     // facts no user message produced (extraction, daily logs, dream).
     try { db.exec(`ALTER TABLE facts ADD COLUMN source_message_id TEXT`); } catch {}
+  }
+
+  if (fromVersion < 20) {
+    // v20: a project document's whole extracted text, so a project small
+    // enough to fit the model's window gets its documents in full
+    // (project-docs/full-text.ts). The chunks overlap and cannot be joined
+    // back. Blank the stamp of every indexed document so the next pass
+    // re-extracts each one once and fills the table.
+    db.exec(`CREATE TABLE IF NOT EXISTS project_doc_text (path TEXT PRIMARY KEY, file TEXT NOT NULL, text TEXT NOT NULL)`);
+    try { db.exec(`UPDATE files SET hash = '' WHERE source = 'project-doc'`); } catch {}
   }
 }

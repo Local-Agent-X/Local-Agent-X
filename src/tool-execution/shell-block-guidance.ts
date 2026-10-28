@@ -8,7 +8,7 @@ import { TAINTED_CONTENT_SOURCES } from "@arikernel/core";
 import { USER_HINTS, type ToolResult } from "../types.js";
 import { hasCapability } from "../tool-registry.js";
 import { findTaintInPayload, detectSecretsInOutput } from "../data-lineage/index.js";
-import { scanForSecrets } from "../security/secrets/index.js";
+import { registeredOnlyAsSeen, scanForSecrets } from "../security/secrets/index.js";
 import { storedSecretRoute } from "./stored-secret-route.js";
 
 // Kernel taint sources that @arikernel/core's deny-tainted-shell rule treats as
@@ -101,12 +101,21 @@ export function taintedShellBlockReason(
  * sensitive-read class, not egress class, so egressGuardGate never sees it).
  * Known values only — a secret SHAPE the model typed from a key the user pasted
  * in chat is the tainted-shell gate's business, and only under taint. Pure.
+ *
+ * Except a value the user wrote themselves (`userWords`, their own messages)
+ * that only the output masker registered: it did not leak to the model, the
+ * user handed it over and asked for it to be used. TB2 qemu-alpine-ssh
+ * (2026-10-27): "ssh … with password `password123`" — the first login's
+ * output masked the password, and the second login was refused for carrying
+ * it. A vault secret, or a masked value the user never wrote, stays refused.
  */
-export function knownSecretShellBlockReason(toolName: string, args: unknown): string | null {
+export function knownSecretShellBlockReason(toolName: string, args: unknown, userWords = ""): string | null {
   if (!hasCapability(toolName, "shell")) return null;
   const payload = shellCommandPayload(args);
   if (!payload) return null;
-  const hits = scanForSecrets(payload).matches.filter((m) => m.type === "known-secret-value").length;
+  const userGave = (value: string) => userWords.includes(value) && registeredOnlyAsSeen(value);
+  const hits = scanForSecrets(payload).matches
+    .filter((m) => m.type === "known-secret-value" && !userGave(payload.slice(m.startIndex, m.endIndex))).length;
   if (hits === 0) return null;
   return (
     `Shell is blocked for this command: it carries a stored secret value (${hits} occurrence${hits === 1 ? "" : "s"}, plain or encoded) — ` +
@@ -118,8 +127,8 @@ export function knownSecretShellBlockReason(toolName: string, args: unknown): st
 /** The blocked envelope for knownSecretShellBlockReason — the outbound scan's
  *  own layer and blocked_by, so the chat renders a content block, never a
  *  connectivity failure. Null when the command carries no known value. */
-export function knownSecretShellBlock(toolName: string, args: unknown): ToolResult | null {
-  const reason = knownSecretShellBlockReason(toolName, args);
+export function knownSecretShellBlock(toolName: string, args: unknown, userWords = ""): ToolResult | null {
+  const reason = knownSecretShellBlockReason(toolName, args, userWords);
   if (!reason) return null;
   return {
     content: `BLOCKED by egress guard: ${reason}`,

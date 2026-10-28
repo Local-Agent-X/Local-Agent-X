@@ -9,6 +9,7 @@ export {
 	knownSecretValues,
 	registerRedactedSecretValue,
 	unregisterRedactedSecretValue,
+	registeredOnlyAsSeen,
 	vaultSecretSource,
 	isAppAtRestSecretBasename,
 	APP_AT_REST_SECRET_BASENAMES,

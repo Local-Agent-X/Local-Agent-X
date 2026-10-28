@@ -9,7 +9,7 @@ import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { executeToolCalls } from "./execute-tool.js";
 import { knownSecretShellBlock, knownSecretShellBlockReason } from "./shell-block-guidance.js";
 import { setAriRequired } from "../ari-kernel/state.js";
-import { registerRedactedSecretValue, unregisterRedactedSecretValue, scanForSecrets } from "../security/secrets/index.js";
+import { registerRedactedSecretValue, unregisterRedactedSecretValue, scanForSecrets, vaultSecretSource } from "../security/secrets/index.js";
 import type { ToolDefinition, ToolResult } from "../types.js";
 
 // Readable and low-entropy on purpose: it matches no credential shape, so the
@@ -33,6 +33,24 @@ describe("knownSecretShellBlockReason", () => {
     expect(knownSecretShellBlockReason("process_start", { command: "deploy", args: [`--token=${STORED}`] })).not.toBeNull();
     expect(knownSecretShellBlockReason("bash", { command: "npm test" })).toBeNull();
     expect(knownSecretShellBlockReason("write", { path: "/tmp/x", content: STORED })).toBeNull();
+  });
+
+  // TB2 qemu-alpine-ssh, 2026-10-27: the task said "ssh … with password
+  // `password123`"; the first login's output masked it, and the second login
+  // was refused for carrying it. The user's own words may be used.
+  it("a value the user wrote, registered only by the output masker, may be used", () => {
+    const cmd = { command: `expect -c 'send "${STORED}\\r"'` };
+    expect(knownSecretShellBlockReason("bash", cmd, `log in with password ${STORED} please`)).toBeNull();
+    expect(knownSecretShellBlockReason("bash", cmd, "log in with the password I gave you")).toMatch(/stored secret value/);
+  });
+
+  it("a vault secret stays refused even when the user typed it", () => {
+    registerRedactedSecretValue(STORED, vaultSecretSource("DB_PASSWORD"));
+    try {
+      expect(knownSecretShellBlockReason("bash", { command: `psql -W ${STORED}` }, `use ${STORED}`)).toMatch(/stored secret value/);
+    } finally {
+      unregisterRedactedSecretValue(STORED, vaultSecretSource("DB_PASSWORD"));
+    }
   });
 
   it("points a tool that takes secret_env at it, and one that does not at http_request", () => {

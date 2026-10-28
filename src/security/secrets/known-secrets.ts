@@ -252,6 +252,13 @@ export function unregisterRedactedSecretValue(value: string, source = SEEN): voi
   SECRET_MATCHERS.delete(value);
 }
 
+/** True when the only claim on `value` is the output masker's (`seen`): no
+ *  vault entry, operator token or other source vouches for it. */
+export function registeredOnlyAsSeen(value: string): boolean {
+  const sources = REGISTERED.get(value);
+  return !!sources && sources.size === 1 && sources.has(SEEN);
+}
+
 /** The source a vault entry registers its value under. */
 export function vaultSecretSource(name: string): string {
   return `vault:${name}`;

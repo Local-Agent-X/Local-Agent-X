@@ -11,6 +11,7 @@ import { checkSessionPolicy } from "../session/policy.js";
 import { getKernelTaintSources } from "../data-lineage/index.js";
 import { anchorsShellAtCwd, hasCapability, pathSpecsForCall } from "../tool-registry.js";
 import { taintedShellBlockReason, knownSecretShellBlock, blockedSelfVerifyGuidance, SHELL_TAINT_DENY_SOURCES } from "./shell-block-guidance.js";
+import { allHumanText } from "./unnamed-delete-gate.js";
 import { getHookEngine } from "../hooks/hook-engine.js";
 import { checkCircuit, circuitArgsSig } from "../circuit-breaker.js";
 import { checkToolRateLimit } from "./rate-limiter.js";
@@ -93,7 +94,8 @@ async function ariKernelGate(ctx: ToolCallContext): Promise<PhaseOutcome> {
     // A registered known secret value on a shell command line is refused
     // regardless of taint (shell-block-guidance.ts): the command line is the
     // one egress channel the outbound scan does not cover.
-    const knownSecretBlock = knownSecretShellBlock(tc.name, args);
+    // A value the user wrote in their own messages may be used (shell-block-guidance.ts).
+    const knownSecretBlock = knownSecretShellBlock(tc.name, args, allHumanText(ctx.priorMessages));
     if (knownSecretBlock) return terminate(ctx, { rendered: "model", result: knownSecretBlock, allowed: false });
     // Tainted-shell PAYLOAD-EVIDENCE pre-gate (chunk L). LAX owns the tainted-shell
     // decision — it front-runs the kernel's PURELY-TEMPORAL deny-tainted-shell. The

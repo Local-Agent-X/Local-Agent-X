@@ -225,6 +225,22 @@ describe("the agent's own files", async () => {
     await preauthorizeUnnamedDeletes({ ...scope, toolCalls: [{ id: "o6", name: "bash", arguments: JSON.stringify({ command: `rm "${p}"` }) }] });
     expect(requests).toHaveLength(0);
   });
+
+  // TB2 qemu-alpine-ssh, 2026-10-27: `cd /app/alpine-vm && rm -f qemu.log` was
+  // looked up as the workspace's qemu.log, not the agent's own log. A leading
+  // cd to a drive path is not placed on Windows (cmd keeps the drive).
+  it.runIf(process.platform !== "win32")("a shell rm of its own file after a leading cd resolves in that folder", async () => {
+    own("qemu.log");
+    // The fixture sits in the OS temp dir, where a shell delete asks nothing
+    // anyway; move temp off it so the agent-created lookup is what decides.
+    for (const name of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(name, join(dir, "elsewhere"));
+    try {
+      await preauthorizeUnnamedDeletes({ ...scope, toolCalls: [{ id: "o7", name: "bash", arguments: JSON.stringify({ command: `cd ${dir} && rm -f qemu.log && echo restarted` }) }] });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+    expect(requests).toHaveLength(0);
+  });
 });
 
 // Lane 2 (2026-09-26): a file created during THIS request that the file tools did

@@ -35,13 +35,13 @@
  */
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { existsSync, statSync } from "node:fs";
-import { basename } from "node:path";
+import { basename, isAbsolute, join } from "node:path";
 import { homedir } from "node:os";
 import { resolveAgentPath } from "../workspace/paths.js";
 import { folderFileCount } from "../tools/delete-folder.js";
 import { isHarnessRow } from "../harness-rows.js";
 import { containsHarnessMarker } from "../harness-text.js";
-import { shellDeleteTargets } from "../security/layer/shell-delete-targets.js";
+import { shellDeletes, shellDeleteTargets } from "../security/layer/shell-delete-targets.js";
 import { disposableFileDeletes } from "./disposable-tree-delete.js";
 import { isTaskArtifact } from "../data-lineage/task-artifacts.js";
 import type { ToolDefinition } from "../types.js";
@@ -67,6 +67,12 @@ export function currentHumanText(priorMessages: readonly ChatCompletionMessagePa
     return UNTRUSTED.test(m.content) ? "" : m.content;
   }
   return "";
+}
+
+/** Everything a person wrote in this history, by the same row test: every
+ *  human row, minus any carrying untrusted-content markers. */
+export function allHumanText(priorMessages: readonly ChatCompletionMessageParam[] | undefined): string {
+  return (priorMessages ?? []).filter(isHumanRow).map((m) => m.content).filter((c) => !UNTRUSTED.test(c)).join("\n");
 }
 
 /** How many messages a person wrote in this history, by the same row test. */
@@ -210,6 +216,22 @@ function disposableShellTargets(name: string, args: Record<string, unknown>): st
   return command === undefined ? [] : disposableFileDeletes(command, {});
 }
 
+/** Each relative shell delete target placed in the folder a `cd` in the
+ *  command entered (the extractor's per-delete folder), for the agent-created
+ *  lookup. TB2 qemu-alpine-ssh, 2026-10-27: `cd /app/alpine-vm && rm -f
+ *  qemu.log` was looked up as the workspace's qemu.log, not the log the
+ *  agent's own redirect wrote, and carded. A target with no placed folder is
+ *  left as written. */
+function placedShellTargets(name: string, args: Record<string, unknown>): Map<string, string> {
+  const command = shellCommandOf(name, args);
+  const placed = new Map<string, string>();
+  for (const del of command === undefined ? [] : shellDeletes(command)) {
+    if (typeof del.cwd !== "string") continue;
+    for (const t of del.targets) if (!isAbsolute(t) && !placed.has(t)) placed.set(t, join(del.cwd, t));
+  }
+  return placed;
+}
+
 /** Was the file created after `since`? Linux is excluded: where a filesystem has
  *  no birth time, Node may report the change time instead, which would make an
  *  old file edited this request look new. */
@@ -245,16 +267,16 @@ export function unnamedDeletes(
   const noticed: UnnamedDeleteCall[] = [];
   const trusted = !!scope.sessionId && !scope.untrustedSession;
   for (const tc of toolCalls) {
-    const disposable = tc.name === GATED_DELETE_TOOL
-      ? []
-      : disposableShellTargets(tc.name, dispatchedArgs(tc.arguments, scope.tools?.get(tc.name)?.parameters as ArgSchema));
+    const shellArgs = tc.name === GATED_DELETE_TOOL ? undefined : dispatchedArgs(tc.arguments, scope.tools?.get(tc.name)?.parameters as ArgSchema);
+    const disposable = shellArgs ? disposableShellTargets(tc.name, shellArgs) : [];
+    const placed = shellArgs ? placedShellTargets(tc.name, shellArgs) : new Map<string, string>();
     for (const path of deleteTargetsOf(tc, scope.tools)) {
       if (tc.name === GATED_DELETE_TOOL && absent(path, scope.sessionId)) continue;
       if (disposable.includes(path)) continue;
       const folderFiles = tc.name === GATED_DELETE_TOOL ? folderTarget(path, scope.sessionId) : null;
       if (folderFiles !== null) out.push({ id: tc.id, path, folderFiles });
       else if (userNamedFile(userText, path)) continue;
-      else if (trusted && agentCreated(scope.sessionId!, path)) own.push({ id: tc.id, path });
+      else if (trusted && agentCreated(scope.sessionId!, placed.get(path) ?? path)) own.push({ id: tc.id, path });
       else if (trusted && tc.name === GATED_DELETE_TOOL && scope.requestStartedAt !== undefined
         && createdSince(path, scope.requestStartedAt, scope.sessionId)) noticed.push({ id: tc.id, path, notice: true });
       else out.push({ id: tc.id, path });

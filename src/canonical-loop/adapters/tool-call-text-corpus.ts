@@ -20,7 +20,11 @@
  * Deliberately absent: prose-narration shapes ("I'll run bash …",
  * tree-style `Bash(...)`, `[Calling]` placeholders). Those heuristics are
  * not recognizer syntax and are being removed.
+ *
+ * The naked-JSON cases (the extractor's second layer) live in
+ * tool-call-text-corpus-json.ts and are appended to the corpus below.
  */
+import { NAKED_JSON_CASES } from "./tool-call-text-corpus-json.js";
 
 export interface CorpusExpect {
   /** Count of recognizer ranges over the text with code spans MASKED
@@ -349,56 +353,6 @@ export const TOOL_CALL_TEXT_CORPUS: ReadonlyArray<CorpusCase> = [
       streamLatchesOnFirstLine: false,
     },
   },
-  // Naked-JSON shapes (the extractor's second layer, not recognizer syntax:
-  // ranges 0, and persist hygiene leaves bare JSON alone by design). The
-  // Claude CLI prompt asks for the {"tool_calls":[…]} envelope; Claude
-  // drifts to {"name","input"}. The strip and rebuild consumers run here
-  // WITHOUT offered names, so they scrub the envelope (its own regex) but
-  // not the input shape, which they only match against offered names.
-  {
-    id: "json-tool-calls-envelope-fenced",
-    text: '```json\n{"tool_calls":[{"name":"read","arguments":{"path":"a.txt"}}]}\n```',
-    expect: {
-      ranges: 0,
-      promoted: { name: "read", args: { path: "a.txt" } },
-      remainingKeeps: [],
-      sanitizedKeeps: [],
-      sanitizedDrops: [],
-      stripDrops: ['"tool_calls"', "a.txt"],
-      rebuildLeaks: 1,
-      rebuildToolName: "read",
-      streamLatchesOnFirstLine: true,
-    },
-  },
-  {
-    id: "json-tool-calls-envelope-unoffered-name",
-    text: 'Plan: {"tool_calls":[{"name":"rm_rf","arguments":{"path":"/"}}]}',
-    expect: {
-      ranges: 0,
-      promoted: null, // an unoffered name never dispatches, envelope or not
-      remainingKeeps: ["Plan:"],
-      sanitizedKeeps: [],
-      sanitizedDrops: [],
-      stripDrops: ['"tool_calls"', "rm_rf"],
-      rebuildLeaks: 1,
-      rebuildToolName: "rm_rf",
-      streamLatchesOnFirstLine: true,
-    },
-  },
-  {
-    id: "anthropic-input-shape",
-    text: '{"name":"bash","input":{"command":"ls"}}',
-    expect: {
-      ranges: 0,
-      promoted: { name: "bash", args: { command: "ls" } },
-      remainingKeeps: [],
-      sanitizedKeeps: [],
-      sanitizedDrops: [],
-      stripDrops: [],
-      rebuildLeaks: 0,
-      streamLatchesOnFirstLine: false,
-    },
-  },
   {
     id: "bracket-bare-no-exact-name",
     text: '[read] {"path":"a.txt"}',
@@ -415,4 +369,5 @@ export const TOOL_CALL_TEXT_CORPUS: ReadonlyArray<CorpusCase> = [
       streamLatchesOnFirstLine: false,
     },
   },
+  ...NAKED_JSON_CASES,
 ];

@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1879 non-test source files · 93 oversized · 242 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1880 non-test source files · 92 oversized · 243 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -23,7 +23,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/security/` | 137 | 53 | XL | 3 |
 | `src/tools/` | 121 | 221 | XL | 9 |
 | `src/tool-execution/` | 84 | 78 | XL | 2 |
-| `src/canonical-loop/` | 81 | 274 | XL | 14 |
+| `src/canonical-loop/` | 81 | 275 | XL | 13 |
 | `src/workspace/` | 80 | 3 | M |  |
 | `src/providers/` | 69 | 26 | L | 1 |
 | `src/data-lineage/` | 53 | 11 | M |  |
@@ -257,7 +257,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/canonical-loop/adapters/openai-compat.ts#OpenAICompatAdapter.runTurn`
 - `src/canonical-loop/adapters/openai-compat/canonical-to-chat-param.ts#canonicalToChatParam`
 - `src/canonical-loop/adapters/openai-compat/stream-once.ts#streamOnce`
-- `src/canonical-loop/adapters/tool-call-text-corpus.ts`
 - `src/canonical-loop/chat-runner/event-pump.ts#subscribeOpEvents:callback`
 - `src/canonical-loop/container-execution-backend.ts`
 - `src/canonical-loop/process-relay-journal.ts`
@@ -346,6 +345,7 @@ job. Comments are free: never cut them to fit.
 - `src/auto-build/app-build-tool.ts` — 320+ code lines (cap 350)
 - `src/broker-transport/phone-projection.ts` — 320+ code lines (cap 350)
 - `src/browser/layout-report.ts` — 320+ code lines (cap 350)
+- `src/canonical-loop/adapters/tool-call-text-corpus.ts` — 320+ code lines (cap 350)
 - `src/canonical-loop/checkpoint.ts` — 320+ code lines (cap 350)
 - `src/cognition/cross-session-learning/types.ts` — 320+ code lines (cap 350)
 - `src/protocols/learned-effectiveness.ts` — 320+ code lines (cap 350)

@@ -7,8 +7,10 @@
  * / streaming filters (anthropic-client/parse.ts) — must not deep-import
  * adapter internals, and index.js is a heavy barrel that would mint cycles
  * from those leaves. This barrel is the light pass-through: recognition,
- * masking, and the tag vocabulary, nothing else.
+ * masking, the tag vocabulary, and the one extractor that turns text into
+ * dispatchable calls (the Claude CLI stream parser's text-call path).
  */
+export { extractToolCallsFromText } from "../adapters/tool-call-text-extractor.js";
 export {
   findTextToolCallRanges,
   maskCodeSpans,

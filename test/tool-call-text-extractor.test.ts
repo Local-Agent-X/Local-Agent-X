@@ -139,3 +139,54 @@ describe("extractToolCallsFromText — edges + safety", () => {
     expect(toolCalls[0].id).toMatch(/^call_synth_/);
   });
 });
+
+// The shapes the Claude CLI path parsed with its own regexes before it was
+// routed through this extractor (anthropic-client/stream-cli/stream-parse.ts).
+describe("extractToolCallsFromText — tool_calls envelope and input-key shape", () => {
+  const argsOf = (text: string, tools: Set<string> = TOOLS) =>
+    extractToolCallsFromText(text, tools).toolCalls.map((c) => ({ name: c.name, args: JSON.parse(c.arguments) }));
+
+  it("promotes every offered entry of one envelope, in array order", () => {
+    const text = '```json\n{"tool_calls":[{"name":"read","arguments":{"a":1}},{"name":"bash","arguments":{"b":2}},{"name":"edit"}]}\n```';
+    const { toolCalls, remainingText } = extractToolCallsFromText(text, TOOLS);
+    expect(toolCalls.map((c) => c.name)).toEqual(["read", "bash", "edit"]);
+    expect(JSON.parse(toolCalls[2].arguments)).toEqual({}); // missing arguments → {}
+    expect(remainingText).toBe("");
+  });
+
+  it("an envelope entry naming a tool that was not offered never dispatches", () => {
+    expect(argsOf('{"tool_calls":[{"name":"rm_rf","arguments":{}}]}')).toEqual([]);
+    expect(argsOf('{"tool_calls":[{"arguments":{}},{"name":"read","arguments":{"p":1}}]}')).toEqual([
+      { name: "read", args: { p: 1 } },
+    ]);
+  });
+
+  it("an envelope with nothing offered leaves the text untouched", () => {
+    const text = 'lead {"tool_calls":[{"name":"rm_rf","arguments":{}}]} tail';
+    expect(extractToolCallsFromText(text, TOOLS)).toEqual({ toolCalls: [], remainingText: text });
+  });
+
+  it("a non-array tool_calls is not a call", () => {
+    expect(argsOf('{"tool_calls":"not-an-array"}')).toEqual([]);
+  });
+
+  it("separate envelopes promote in source order with prose kept", () => {
+    const text = 'first: {"tool_calls":[{"name":"read","arguments":{}}]} then {"tool_calls":[{"name":"bash","arguments":{"x":1}}]} done';
+    const { toolCalls, remainingText } = extractToolCallsFromText(text, TOOLS);
+    expect(toolCalls.map((c) => c.name)).toEqual(["read", "bash"]);
+    expect(remainingText).toBe("first:  then  done");
+  });
+
+  it("the {name, input} shape carries its input as the arguments (nested kept)", () => {
+    const text = '{"name":"write","input":{"path":"x","meta":{"deep":[1,{"k":"v"}]}}}\n\nWait — let me call it properly.';
+    expect(argsOf(text)).toEqual([{ name: "write", args: { path: "x", meta: { deep: [1, { k: "v" }] } } }]);
+  });
+
+  it("the {name, input} shape for an unoffered tool never dispatches", () => {
+    expect(argsOf('{"name":"made_up","input":{"x":1}}')).toEqual([]);
+  });
+
+  it("JSON quoted inside a string literal is not a call", () => {
+    expect(argsOf('Example: "{\\"name\\":\\"read\\",\\"input\\":{}}"')).toEqual([]);
+  });
+});

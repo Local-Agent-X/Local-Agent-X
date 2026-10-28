@@ -168,13 +168,13 @@ describe("guardedRewrite", () => {
 				throw new Error("validator bug");
 			},
 		});
-		// Never throws; the non-degenerate candidate is still the fallback.
-		expect(result).toBe("candidate text");
+		// Never throws; a candidate the hook could not accept is not returned.
+		expect(result).toBeNull();
 		expect(run).toHaveBeenCalledTimes(2);
 		expect(run).toHaveBeenLastCalledWith(2, expect.stringContaining("validator bug"));
 	});
 
-	it("feeds validate rejections back and returns the best non-degenerate candidate", async () => {
+	it("feeds validate rejections back and never returns a candidate validate rejected", async () => {
 		const seenFeedback: (string | undefined)[] = [];
 		const run = vi.fn(async (attempt: number, feedback?: string) => {
 			seenFeedback.push(feedback);
@@ -184,9 +184,9 @@ describe("guardedRewrite", () => {
 			maxAttempts: 2,
 			validate: () => "missing DECISIONS section",
 		});
-		// Both candidates failed validate but were non-degenerate; the first one
-		// seen is returned as the fallback.
-		expect(result).toBe("candidate 1");
+		// Both candidates were non-degenerate but failed validate: the caller's
+		// rule says neither is usable, so it gets its null path.
+		expect(result).toBeNull();
 		expect(run).toHaveBeenCalledTimes(2);
 		expect(seenFeedback[1]).toBe("missing DECISIONS section");
 	});

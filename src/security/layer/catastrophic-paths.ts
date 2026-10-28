@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import type { DeleteCall } from "./shell-delete-targets.js";
 
 // ── The irreducible "cannot delete, even in unrestricted mode" floor ──
 //
@@ -106,34 +107,25 @@ export function isCatastrophicDeleteTarget(
 }
 
 /**
- * If `command` is a destructive `rm` (-r/-f) whose target is catastrophic,
- * return a block reason; otherwise null. Called ONLY in unrestricted mode —
- * the workspace/common modes refuse destructive rm outright upstream. Scans
- * each pipe segment whose argv[0] basename is `rm`, gating its non-flag
- * operands through isCatastrophicDeleteTarget.
+ * If any of `deletes` (the command's, from the one delete extractor,
+ * shell-delete-targets.ts) has a catastrophic target, return a block reason;
+ * otherwise null. Called ONLY in unrestricted mode — the workspace/common
+ * modes refuse a destructive delete they cannot place upstream. Every form
+ * counts, behind any wrapper and inside any `bash -c` / `powershell -Command`
+ * body: until 2026-10-27 this read only a bare `rm` split on whitespace, so
+ * `timeout 60 rm -rf ~`, `Remove-Item -Recurse <home>` and `rd /s /q
+ * C:\Users` walked past the floor that holds even here.
  */
-export function detectCatastrophicRm(
-	command: string,
+export function detectCatastrophicDelete(
+	deletes: readonly DeleteCall[],
 	home: string,
 	platform: NodeJS.Platform = process.platform,
 	floor: DeleteFloor = {},
 ): string | null {
-	// Split on EVERY command boundary — pipes, ;, &&, ||, &, newlines — not just
-	// pipes. On POSIX the upstream separator guard blocks `;` anyway, but on
-	// win32 `;` is legit PowerShell statement separation, so `ls; rm -rf /`
-	// reached this scan as ONE segment with argv[0]="ls" and the chained rm was
-	// invisible (live hole found by the startup self-test's SHL-001).
-	for (const segment of command.split(/(?:\|\||&&|[|;&\r\n])+/)) {
-		const words = segment.trim().split(/\s+/).filter(Boolean);
-		if (!words.length) continue;
-		const bin = words[0].replace(/^['"]+|['"]+$/g, "");
-		const base = bin.split(/[\\/]/).pop() || bin;
-		if (base.toLowerCase() !== "rm") continue;
-		for (let i = 1; i < words.length; i++) {
-			const w = words[i];
-			if (w.startsWith("-")) continue; // a flag (incl. `--`), not a target
-			if (isCatastrophicDeleteTarget(w, home, platform, floor)) {
-				return `Blocked: refusing to delete a protected system or root path (${w}) even in unrestricted mode — this would break the OS or wipe your home directory. Delete specific files or subfolders instead.`;
+	for (const del of deletes) {
+		for (const target of del.targets) {
+			if (isCatastrophicDeleteTarget(target, home, platform, floor)) {
+				return `Blocked: refusing to delete a protected system or root path (${target}) even in unrestricted mode — this would break the OS or wipe your home directory. Delete specific files or subfolders instead.`;
 			}
 		}
 	}

@@ -11,6 +11,7 @@ import {
   execBasename, isShellReparseFlag, resolveRealArgv0Index, splitShellSegments, tokenizeCommand,
 } from "./shell-lex.js";
 import { detectControlFileMutation, detectLockedBaselineMutation, detectProtectedEngineMutation } from "./shell-mutation-guard.js";
+import { shellDeletes } from "./shell-delete-targets.js";
 import { DOS_SWITCH, dosSwitchBlockReason } from "./dos-switch.js";
 
 // ── Best-effort shell file-access confinement (defense in depth) ──
@@ -213,82 +214,52 @@ export function evaluateShellCommandAndPaths(command: string, ctx: ShellPathGuar
 // a recoverable task trash, but shell-policy's mode-aware rm rules left two
 // hard-delete holes for them: unrestricted mode allows flagged `rm -rf`, and a
 // bare `rm file` passes in EVERY mode. This rule closes both — in ALL
-// file-access modes — for the three shell hard-delete verbs, and points at the
-// recoverable path instead. It changes NOTHING about shell-policy's mode rules:
+// file-access modes — for every shell delete, and points at the recoverable
+// path instead. It changes NOTHING about shell-policy's mode rules:
 // a non-artifact target still gets exactly the behavior it had.
 //
-// Posture matches the rest of this file: gate on the cheap checks first (no
-// session → no registry → inert; only a command that MENTIONS a delete verb is
-// lexed — this guard runs on every shell command), reuse the canonical lexer +
-// the SAME ~/relative resolution the path tokens above get, and never throw —
-// a glob or $VAR target is a runtime-only shape this parser cannot see (the
-// documented best-effort limit above; the verification pass is the backstop),
-// and an unresolvable token simply doesn't match.
+// Posture matches the rest of this file: no session → no registry → inert;
+// the deletes come from the one delete extractor (shell-delete-targets.ts), so
+// every verb (rm, unlink, shred, rmdir, del, erase, Remove-Item and its
+// aliases), every wrapper and every `bash -c` body counts here exactly as it
+// does for the delete gates; the SAME ~/relative resolution the path tokens
+// above get; and never throw — a glob or $VAR target is a runtime-only shape
+// this parser cannot see (the documented best-effort limit above; the
+// verification pass is the backstop), and an unresolvable token simply
+// doesn't match.
 //
 // Two lexical refinements, both erring in the SAFE direction:
-//  • An in-command `cd`/`pushd` moves the shell's cwd, so a RELATIVE operand in
-//    any LATER segment no longer resolves at the workspace — `cd out && rm
-//    report.md` names out/report.md, and anchoring it at the workspace
-//    false-denied a basename-colliding USER file. Once the cwd has shifted,
-//    relative operands are SKIPPED (absolute and ~ spellings still check) —
-//    the same conservatism extractPathTokens applies to plain relative tokens
-//    it cannot place. False-negative direction, accepted: this rule is the
-//    belt — the registry + delete_file routing remain the primary protection.
+//  • An in-command `cd` (`pushd`, `Set-Location`, …) moves the shell's cwd, so
+//    a RELATIVE operand after it may no longer resolve at the workspace — `cd
+//    out && rm report.md` names out/report.md, and anchoring it at the
+//    workspace false-denied a basename-colliding USER file. The extractor
+//    places a cd it can (`cd ./out &&`) and the operand is checked there; after
+//    one it cannot place, relative operands are SKIPPED (absolute and ~
+//    spellings still check). False-negative direction, accepted: this rule is
+//    the belt — the registry + delete_file routing remain the primary
+//    protection. A cd inside a `bash -c` body moves only that body.
 //  • Bash expands an unquoted brace group BEFORE the filesystem ever sees the
 //    path, so `rm report.md{,}` / `rm {report,notes}.md` name a registered
 //    file with no verbatim spelling in any token — the cheapest purely-lexical
 //    bypass. A SINGLE-LEVEL comma/empty group is expanded lexically and every
 //    expansion checked; nested/multiple groups stay out of scope alongside the
 //    glob/$VAR posture above.
-const SHELL_DELETE_VERBS = new Set(["rm", "unlink", "shred"]);
-const SHELL_DELETE_VERB_RE = /\b(?:rm|unlink|shred)\b/i;
-
-function detectTaskArtifactDelete(command: string, ctx: ShellPathGuardCtx, depth = 0, cwdShifted = false): string | null {
-  if (!ctx.sessionId || !SHELL_DELETE_VERB_RE.test(command)) return null;
-  for (const segment of splitShellSegments(command)) {
-    const words = tokenizeCommand(segment);
-    if (!words.length) continue;
-    const argv0Index = resolveRealArgv0Index(words) ?? 0;
-    const verb = execBasename(words[argv0Index]);
-    // From here on the shell's cwd is no longer the workspace — every LATER
-    // relative operand is ambiguous and skipped (posture note above).
-    if (verb === "cd" || verb === "pushd") { cwdShifted = true; continue; }
-    if (!SHELL_DELETE_VERBS.has(verb)) {
-      // `bash -c "rm …"`: the body is ONE opaque token — re-lex it exactly as
-      // extractPathTokens does, bounded by the same depth. The body runs in a
-      // subshell that INHERITS the current cwd, so cwdShifted rides along; a
-      // cd inside the body never leaks back out (per-call state).
-      if (depth < MAX_REPARSE_DEPTH) {
-        for (let i = argv0Index + 1; i < words.length; i++) {
-          if (isShellReparseFlag(verb, words[i]) && i + 1 < words.length) {
-            const hit = detectTaskArtifactDelete(words[i + 1], ctx, depth + 1, cwdShifted);
-            if (hit) return hit;
-            i++;
-          }
-        }
-      }
-      continue;
-    }
-    let operandsOnly = false; // a bare `--` ends flag parsing for all three verbs
-    for (let i = argv0Index + 1; i < words.length; i++) {
-      const raw = words[i];
-      if (!raw) continue;
-      if (!operandsOnly && raw.startsWith("-")) {
-        if (raw === "--") operandsOnly = true;
-        continue;
-      }
+function detectTaskArtifactDelete(command: string, ctx: ShellPathGuardCtx): string | null {
+  if (!ctx.sessionId) return null;
+  for (const del of shellDeletes(command, ctx.workspace)) {
+    for (const raw of del.targets) {
       try {
         // Tokens arrive quote-stripped; expand a single-level brace group the
         // way bash would (verbatim spelling kept too — a QUOTED brace is
         // literal, and the quotes are gone by now), then ~ as bash would, and
-        // anchor a relative operand at the workspace — the registry
+        // anchor a relative operand where the delete runs — the registry
         // realpath+inode matches, so symlinked/case-variant spellings of a
         // recorded file resolve to the same identity.
         for (const spelling of expandBraces(raw)) {
           const operand = expandTilde(spelling);
-          if (cwdShifted && !isAbsolute(operand)) continue; // cwd ambiguity — skip, don't guess
-          if (isTaskArtifact(ctx.sessionId, resolve(ctx.workspace, operand))) {
-            return `Blocked: \`${verb}\` targets "${raw}" — this file is a work product of the current task — use delete_file (recoverable) instead.`;
+          if (!isAbsolute(operand) && !del.cwd) continue; // cwd ambiguity — skip, don't guess
+          if (isTaskArtifact(ctx.sessionId, resolve(del.cwd ?? ctx.workspace, operand))) {
+            return `Blocked: \`${del.bin}\` targets "${raw}" — this file is a work product of the current task — use delete_file (recoverable) instead.`;
           }
         }
       } catch { /* best-effort: an unresolvable token just doesn't match */ }

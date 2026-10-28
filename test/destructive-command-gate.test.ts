@@ -96,6 +96,8 @@ describe("isDestructiveCommand — flags irreversible shell operations", () => {
     "rm -f file.txt",                  // -f on one file is not a tree
     "rm -v file.txt",
     "git rm -r --cached build",        // staged removal, undone from the index
+    "git rm -rf --cached build",       // tripped "rm -rf" until 2026-10-27
+    "git  rm -r -f --cached build",
     // Quoted text no shell runs: a commit or tag message, a search pattern
     // (both carded until 2026-10-26).
     'git commit -m "drop the rm -r fallback"',

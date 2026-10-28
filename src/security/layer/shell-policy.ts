@@ -5,7 +5,8 @@ import type { InlineEvalPolicy, FileAccessMode } from "./types.js";
 import { BLOCKED_COMMANDS, BROWSER_OPEN_CMDS, EGRESS_TEXT_PATTERNS, RM_DESTRUCTIVE_FLAGS, SOCKET_PLUMBING_PATTERNS } from "./shell-rules.js";
 import { shellLoopbackReachable, shellUnixSocketReachable } from "./loopback-grant.js";
 import { inlineProgramDestinations } from "./shell-inline-destinations.js";
-import { detectCatastrophicRm } from "./catastrophic-paths.js";
+import { detectCatastrophicDelete } from "./catastrophic-paths.js";
+import { shellDeletes } from "./shell-delete-targets.js";
 import { rmInsideWorkspaceVerdict } from "./rm-inside-workspace.js";
 import { commandRuleReason, commandRuleRecovery, findCommandRuleHit } from "./shell-command-rules.js";
 import { decodeShellEscapes } from "./shell-escape-decode.js";
@@ -183,7 +184,9 @@ function hostShapeRefusal(command: string, platform: NodeJS.Platform): string | 
   return separatorRefusal(stripQuotedSpans(command));
 }
 
-// Destructive rm (-r/-f), MODE-AWARE. In unrestricted mode the user has
+// Destructive deletes (recursive or forced, every form the delete extractor
+// reads: rm, Remove-Item, rd /s, del /f, behind any wrapper and inside a
+// `bash -c` body), MODE-AWARE. In unrestricted mode the user has
 // granted full-filesystem access, so deleting their OWN files (Downloads,
 // Documents, projects, /tmp) via the shell must work — only the catastrophic
 // floor (rm -rf /, ~, system dirs → catastrophic-paths.ts) is held, and on a
@@ -192,11 +195,17 @@ function hostShapeRefusal(command: string, platform: NodeJS.Platform): string | 
 // to the irreversible floor, which cards it (rm-inside-workspace.ts); anything
 // else — and an unthreaded mode or workspace (undefined → fail SAFE) — is
 // refused and pointed at delete_file. This is the split-out of the old blanket
-// BLOCKED_COMMANDS rm rule that fired regardless of mode.
+// BLOCKED_COMMANDS rm rule that fired regardless of mode. A destructive rm
+// SPELLED anywhere in the text (RM_DESTRUCTIVE_FLAGS) is judged too, so the
+// confined modes keep refusing one the extractor cannot read: a delete in an
+// interpreter's code (`python -c 'os.system("rm -rf /")'`, SHL-004) is no
+// command position, and a quote-aware rewrite of an rm scan is the migration
+// that lost coverage before.
 function destructiveRmRefusal(command: string, fileAccessMode: FileAccessMode | undefined, workspace: string | undefined, platform: NodeJS.Platform): string | null {
-  if (!RM_DESTRUCTIVE_FLAGS.test(command)) return null;
+  const deletes = shellDeletes(command);
+  if (!deletes.some((d) => d.recursive || d.forced) && !RM_DESTRUCTIVE_FLAGS.test(command)) return null;
   if (fileAccessMode === "unrestricted") {
-    return detectCatastrophicRm(command, homedir(), platform, { rootsOnly: isDisposableSandbox() });
+    return detectCatastrophicDelete(deletes, homedir(), platform, { rootsOnly: isDisposableSandbox() });
   }
   const verdict = fileAccessMode ? rmInsideWorkspaceVerdict(command, workspace) : "unprovable";
   if (verdict === "workspace-prefix") {

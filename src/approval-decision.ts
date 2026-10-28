@@ -262,9 +262,11 @@ const DESTRUCTIVE_COMMAND_PATTERNS: Array<{ pattern: RegExp; reason: string }> =
   // delete (`--delete --force`, `-d -f`, `-df`) are the same -D.
   { pattern: /\bgit\s+branch\b[^|;&]*\s(?:-[A-Za-z]*D[A-Za-z]*\b|-[A-Za-z]*(?:df|fd)[A-Za-z]*\b|(?:--delete|-d)\b[^|;&]*\s(?:--force|-f)\b|(?:--force|-f)\b[^|;&]*\s(?:--delete|-d)\b)/, reason: "git force-delete branch" },
   { pattern: /\bgit\s+filter-branch\b/i, reason: "git history rewrite" },
-  { pattern: /\brm\s+-\w*r\w*f\w*\b/i, reason: "rm -rf" },
-  { pattern: /\brm\s+-\w*f\w*r\w*\b/i, reason: "rm -fr" },
-  { pattern: /\brm\s+-[rf]\b[^|;&]*\s-[rf]\b/i, reason: "rm -r -f" },
+  // `git rm` is a staged removal the index can undo (`git rm -rf --cached
+  // build` deletes nothing on disk), so no rm pattern matches after `git`.
+  { pattern: /(?<!\bgit\s+)\brm\s+-\w*r\w*f\w*\b/i, reason: "rm -rf" },
+  { pattern: /(?<!\bgit\s+)\brm\s+-\w*f\w*r\w*\b/i, reason: "rm -fr" },
+  { pattern: /(?<!\bgit\s+)\brm\s+-[rf]\b[^|;&]*\s-[rf]\b/i, reason: "rm -r -f" },
   // `rm -r` without -f was left off as "not the catastrophic form". Wrong
   // axis: -f only silences prompts and missing-file errors; on a writable
   // tree `rm -r dir` is exactly as unrecoverable as `rm -rf dir`, and it is
@@ -276,7 +278,7 @@ const DESTRUCTIVE_COMMAND_PATTERNS: Array<{ pattern: RegExp; reason: string }> =
   // `rm -Recurse` (the PowerShell alias) is caught here too; the entry below
   // that names it precisely is listed first so the reason says what it is.
   { pattern: /\b(?:rm|ri|rmdir|rd|del|erase)\b[^|;&]*\s-rec\w*\b/i, reason: "Remove-Item -Recurse (alias)" },
-  { pattern: /(?<!git\s)\brm\b[^|;&]*\s(?:-\w*r\w*|--recursive)\b/i, reason: "rm -r" },
+  { pattern: /(?<!\bgit\s+)\brm\b[^|;&]*\s(?:-\w*r\w*|--recursive)\b/i, reason: "rm -r" },
   // A recursive wipe by composition. With `rm -rf` policy-blocked and `rm -r`
   // carded, a 27B ran `find client-data/build-cache -exec rm {} + && rmdir
   // client-data/build-cache` — every file deleted by find's per-file rm, then

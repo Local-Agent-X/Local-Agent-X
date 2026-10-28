@@ -41,7 +41,7 @@ import { resolveAgentPath } from "../workspace/paths.js";
 import { folderFileCount } from "../tools/delete-folder.js";
 import { isHarnessRow } from "../harness-rows.js";
 import { containsHarnessMarker } from "../harness-text.js";
-import { shellDeleteTargets } from "./shell-delete-targets.js";
+import { shellDeleteTargets } from "../security/layer/shell-delete-targets.js";
 import { disposableFileDeletes } from "./disposable-tree-delete.js";
 import { isTaskArtifact } from "../data-lineage/task-artifacts.js";
 import type { ToolDefinition } from "../types.js";

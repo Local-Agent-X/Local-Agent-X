@@ -184,7 +184,7 @@ describe("the pre-pass reads the arguments the dispatcher runs", async () => {
   const { createContext } = await import("./context.js");
   const { resolvePhase } = await import("./resolve-tool.js");
   const { validateArgs } = await import("./arg-validation.js");
-  const { shellDeleteTargets } = await import("./shell-delete-targets.js");
+  const { shellDeleteTargets } = await import("../security/layer/shell-delete-targets.js");
   const tools = new Map([[bashTool.name, bashTool], [deleteFileTool.name, deleteFileTool]]);
   const target = "workspace/client-data/originals/invoice-0042.md";
 
@@ -206,6 +206,20 @@ describe("the pre-pass reads the arguments the dispatcher runs", async () => {
     expect(ran).toEqual([target]);
     expect(deleteTargetsOf(tc, tools)).toEqual(ran);
     expect(unnamedDeletes([tc], [user(VAGUE)], { tools })).toEqual([{ id: tc.id, path: target }]);
+  });
+});
+
+// Audit 2026-10-27: these deleted an un-named file with no card. The floor
+// does not see a non-recursive rm, so this gate is the only card there is.
+describe("a wrapped or nested shell delete of an un-named file asks", () => {
+  it.each([`bash -c "rm -f users.csv"`, "timeout 5 rm users.csv", "nohup rm users.csv", `powershell -Command "del users.csv"`])("%s", (command) => {
+    const sh = { id: "w1", name: "bash", arguments: JSON.stringify({ command }) };
+    expect(unnamedDeletes([sh], [user(VAGUE)])).toEqual([{ id: "w1", path: "users.csv" }]);
+  });
+
+  it("a delete written inside a commit message deletes nothing and asks nothing", () => {
+    const sh = { id: "w2", name: "bash", arguments: JSON.stringify({ command: `git commit -m "fix; rm -f users.csv"` }) };
+    expect(unnamedDeletes([sh], [user(VAGUE)])).toEqual([]);
   });
 });
 

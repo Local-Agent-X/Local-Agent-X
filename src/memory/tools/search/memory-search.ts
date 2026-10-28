@@ -9,7 +9,7 @@ import { recordProjectDocReads } from "../../project-docs/private-reads.js";
 export function memorySearchTool(memory: MemoryIndex) {
   return {
     name: "memory_search",
-    compactDescription: "Keyword/semantic search across long-term memory (facts, knowledge files, entity pages) and, in a project chat, the project's documents; same-session + profile only, past sessions excluded. Use when the exact entity/file is unknown; else memory_recall or memory_get.",
+    compactDescription: "Search long-term memory (facts, knowledge files, entity pages) and, in a project chat, its documents; past sessions excluded. Use when the exact entity/file is unknown; else memory_recall or memory_get.",
     description:
       "Free-text/keyword search across long-term memory — retained facts, knowledge files, and entity pages. Defaults to same-session + profile-level content only; past sessions are NOT included by default. " +
       "In a chat that belongs to a project it also searches that project's documents (source=project-doc): the passages most relevant to the query, each with the file it came from, which `read` opens whole. " +

@@ -1,15 +1,15 @@
 /**
- * Unified response classification across all providers.
+ * Diagnostic classification of why a Codex or Anthropic API response ended.
  *
- * Every provider (Codex, Anthropic, OpenAI, xAI, local, gemini, custom) returns
- * responses in a different format with different fields indicating why the
- * model stopped. This module normalizes them all into a single classification
- * so the agent loop can make informed decisions about retries, fallbacks, and
- * error messages.
- *
- * Without this, when a model returns empty we don't know WHY — is it content
- * moderation? Token limit? Reasoning timeout? Tool schema error? Each requires
- * a different response (retry vs. fallback vs. user error).
+ * The two HTTP clients (codex-client/stream-parse.ts,
+ * anthropic-client/stream-api.ts) classify every response and log anything
+ * that is not a normal completion, so an empty reply in the server log says
+ * WHY — content moderation, token limit, reasoning timeout, a soft refusal in
+ * the text. It is a log line, not a decision: retries, refusals and the
+ * continue-vs-stop signal the loop acts on are owned by the adapters
+ * (canonical-loop/adapters/model-stop.ts, transport-retry.ts). Codex also
+ * attaches the result to its usage as the "response.completed was seen"
+ * marker (codex-client/index.ts).
  */
 
 import { createLogger } from "./logger.js";
@@ -39,8 +39,8 @@ const REFUSAL_PATTERNS: RegExp[] = [
 // refusal. They only signal a refusal when the SAME response also carries
 // first-person declining framing (see FIRST_PERSON_DECLINE) — i.e. the model
 // tying the policy to its own refusal ("...so I won't be able to help").
-// Matching a bare policy mention here would wrongly reclassify a completed
-// answer as content_filter and replay the turn (HE-9). "terms" was dropped
+// Matching a bare policy mention here would wrongly log a completed answer
+// as content_filter (HE-9). "terms" was dropped
 // deliberately — "violates the terms" is almost always descriptive.
 const POLICY_MENTION_PATTERNS: RegExp[] = [
   /\bagainst (?:my|the) (?:guidelines|policies|programming|principles|values)\b/i,
@@ -76,7 +76,7 @@ export function detectRefusalText(text: string | undefined | null): RefusalDetec
   }
   // Policy-mention clauses only count as a refusal when the model is also
   // declining in first person. Without that co-signal the text is describing
-  // a policy, not refusing — flagging it would replay a completed answer.
+  // a policy, not refusing — flagging it would misreport a completed answer.
   if (FIRST_PERSON_DECLINE.test(head)) {
     for (const re of POLICY_MENTION_PATTERNS) {
       const m = head.match(re);
@@ -106,10 +106,6 @@ export interface ClassificationResult {
   rawReason?: string;
   /** Human-readable explanation */
   explanation: string;
-  /** Whether to retry on the same model */
-  shouldRetry: boolean;
-  /** Whether to fall back to a different model */
-  shouldFallback: boolean;
   /** Provider-specific metadata for diagnostics */
   meta?: Record<string, unknown>;
 }
@@ -128,7 +124,7 @@ export function classifyCodexResponse(opts: {
   const { hasText, hasToolCalls, outputTypes = [], status, inputTokens = 0, outputTokens = 0, responseText, providerModerates } = opts;
 
   if (hasToolCalls) {
-    return { type: "tool_called", explanation: "Model called one or more tools", shouldRetry: false, shouldFallback: false };
+    return { type: "tool_called", explanation: "Model called one or more tools" };
   }
 
   if (hasText) {
@@ -138,11 +134,10 @@ export function classifyCodexResponse(opts: {
         type: "content_filter",
         rawReason: status,
         explanation: `Model refused via text: "${refusal.snippet}"`,
-        shouldRetry: false, shouldFallback: true,
         meta: { refusalPattern: refusal.pattern },
       };
     }
-    return { type: "completed", explanation: `Normal completion (${outputTokens} output tokens)`, shouldRetry: false, shouldFallback: false, rawReason: status };
+    return { type: "completed", explanation: `Normal completion (${outputTokens} output tokens)`, rawReason: status };
   }
 
   // Empty response — need to figure out why
@@ -151,7 +146,6 @@ export function classifyCodexResponse(opts: {
       type: "error",
       rawReason: status,
       explanation: `Response marked ${status} — likely a server-side issue`,
-      shouldRetry: true, shouldFallback: false,
     };
   }
 
@@ -162,7 +156,6 @@ export function classifyCodexResponse(opts: {
       type: "reasoning_timeout",
       rawReason: "reasoning-only output",
       explanation: "Model reasoned but didn't produce output. Likely: prompt too heavy, reasoning_effort too high, or token budget exhausted by reasoning.",
-      shouldRetry: false, shouldFallback: true,
       meta: { inputTokens, outputTokens, outputTypes },
     };
   }
@@ -170,22 +163,19 @@ export function classifyCodexResponse(opts: {
   // Zero tokens in AND out. On a MODERATING provider this usually means content
   // moderation blocked the input silently. But a non-moderating / local
   // provider (Ollama, llama.cpp, self-hosted) has no filter to trip — a zero-
-  // token empty there is a transient stream failure, so classify it as a
-  // retryable "empty" instead of a non-retryable content_filter that would
-  // force a needless failover.
+  // token empty there is a transient stream failure, so classify it as
+  // "empty" instead of blaming a content filter that does not exist.
   if (inputTokens === 0 && outputTokens === 0) {
     if (providerModerates === false) {
       return {
         type: "empty",
-        explanation: "Zero tokens on a non-moderating provider — transient empty stream, retry",
-        shouldRetry: true, shouldFallback: false,
+        explanation: "Zero tokens on a non-moderating provider — transient empty stream",
         meta: { inputTokens, outputTokens },
       };
     }
     return {
       type: "content_filter",
       explanation: "Zero tokens processed — likely content moderation blocked the request before generation",
-      shouldRetry: false, shouldFallback: true,
     };
   }
 
@@ -194,7 +184,6 @@ export function classifyCodexResponse(opts: {
     return {
       type: "reasoning_timeout",
       explanation: `Model consumed ${outputTokens} tokens on reasoning but produced no visible output`,
-      shouldRetry: false, shouldFallback: true,
       meta: { inputTokens, outputTokens },
     };
   }
@@ -203,7 +192,6 @@ export function classifyCodexResponse(opts: {
     type: "empty",
     rawReason: status,
     explanation: "Model returned empty response for unknown reason",
-    shouldRetry: true, shouldFallback: true,
     meta: { inputTokens, outputTokens, outputTypes },
   };
 }
@@ -222,14 +210,14 @@ export function classifyAnthropicResponse(opts: {
 
   if (errorMessage) {
     if (errorMessage.includes("429") || /rate.?limit/i.test(errorMessage)) {
-      return { type: "rate_limit", rawReason: errorMessage, explanation: "Rate limit exceeded", shouldRetry: true, shouldFallback: true };
+      return { type: "rate_limit", rawReason: errorMessage, explanation: "Rate limit exceeded" };
     }
-    return { type: "error", rawReason: errorMessage, explanation: errorMessage, shouldRetry: false, shouldFallback: true };
+    return { type: "error", rawReason: errorMessage, explanation: errorMessage };
   }
 
   switch (stopReason) {
     case "tool_use":
-      return { type: "tool_called", rawReason: stopReason, explanation: "Model called a tool", shouldRetry: false, shouldFallback: false };
+      return { type: "tool_called", rawReason: stopReason, explanation: "Model called a tool" };
     case "end_turn":
     case "stop_sequence":
       if (hasText) {
@@ -239,105 +227,25 @@ export function classifyAnthropicResponse(opts: {
             type: "content_filter",
             rawReason: stopReason,
             explanation: `Model refused via text: "${refusal.snippet}"`,
-            shouldRetry: false, shouldFallback: true,
             meta: { refusalPattern: refusal.pattern },
           };
         }
-        return { type: "completed", rawReason: stopReason, explanation: `Normal completion (${outputTokens} tokens)`, shouldRetry: false, shouldFallback: false };
+        return { type: "completed", rawReason: stopReason, explanation: `Normal completion (${outputTokens} tokens)` };
       }
-      return { type: "empty", rawReason: stopReason, explanation: "Model finished normally but produced no content", shouldRetry: true, shouldFallback: true };
+      return { type: "empty", rawReason: stopReason, explanation: "Model finished normally but produced no content" };
     case "max_tokens":
-      return { type: "token_limit", rawReason: stopReason, explanation: "Response was cut off at max_tokens", shouldRetry: false, shouldFallback: false };
+      return { type: "token_limit", rawReason: stopReason, explanation: "Response was cut off at max_tokens" };
     case "refusal":
-      return { type: "content_filter", rawReason: stopReason, explanation: "Model refused the request (content policy)", shouldRetry: false, shouldFallback: true };
+      return { type: "content_filter", rawReason: stopReason, explanation: "Model refused the request (content policy)" };
   }
 
-  if (hasToolCalls) return { type: "tool_called", explanation: "Model called a tool", shouldRetry: false, shouldFallback: false };
-  if (hasText) return { type: "completed", explanation: "Normal completion", shouldRetry: false, shouldFallback: false };
+  if (hasToolCalls) return { type: "tool_called", explanation: "Model called a tool" };
+  if (hasText) return { type: "completed", explanation: "Normal completion" };
 
   return {
     type: "empty",
     rawReason: stopReason,
     explanation: "No content, no tool calls, no stop reason",
-    shouldRetry: true, shouldFallback: true,
-    meta: { inputTokens, outputTokens },
-  };
-}
-
-/** Classify an OpenAI Chat Completions API response (used for openai, xai, local, gemini, custom). */
-export function classifyOpenAIResponse(opts: {
-  hasText: boolean;
-  hasToolCalls: boolean;
-  finishReason?: string;        // "stop" | "length" | "tool_calls" | "content_filter" | "function_call" | null
-  errorMessage?: string;
-  inputTokens?: number;
-  outputTokens?: number;
-  responseText?: string;        // raw text, used for soft-refusal detection
-  providerModerates?: boolean;  // false = provider does no server-side moderation (local/self-hosted); a zero-token empty is transient, not a filter
-}): ClassificationResult {
-  const { hasText, hasToolCalls, finishReason, errorMessage, inputTokens = 0, outputTokens = 0, responseText, providerModerates } = opts;
-
-  if (errorMessage) {
-    if (errorMessage.includes("429") || /rate.?limit/i.test(errorMessage)) {
-      return { type: "rate_limit", rawReason: errorMessage, explanation: "Rate limit exceeded", shouldRetry: true, shouldFallback: true };
-    }
-    return { type: "error", rawReason: errorMessage, explanation: errorMessage, shouldRetry: false, shouldFallback: true };
-  }
-
-  switch (finishReason) {
-    case "tool_calls":
-    case "function_call":
-      return { type: "tool_called", rawReason: finishReason, explanation: "Model called a tool", shouldRetry: false, shouldFallback: false };
-    case "stop":
-      if (hasText) {
-        const refusal = detectRefusalText(responseText);
-        if (refusal.isRefusal) {
-          return {
-            type: "content_filter",
-            rawReason: finishReason,
-            explanation: `Model refused via text: "${refusal.snippet}"`,
-            shouldRetry: false, shouldFallback: true,
-            meta: { refusalPattern: refusal.pattern },
-          };
-        }
-        return { type: "completed", rawReason: finishReason, explanation: `Normal completion (${outputTokens} tokens)`, shouldRetry: false, shouldFallback: false };
-      }
-      return { type: "empty", rawReason: finishReason, explanation: "Model stopped normally but produced no content", shouldRetry: true, shouldFallback: true };
-    case "length":
-      return { type: "token_limit", rawReason: finishReason, explanation: "Response cut off at max_tokens", shouldRetry: false, shouldFallback: false };
-    case "content_filter":
-      return { type: "content_filter", rawReason: finishReason, explanation: "Content moderation blocked the response", shouldRetry: false, shouldFallback: true };
-  }
-
-  if (hasToolCalls) return { type: "tool_called", explanation: "Model called a tool", shouldRetry: false, shouldFallback: false };
-  if (hasText) return { type: "completed", explanation: "Normal completion", shouldRetry: false, shouldFallback: false };
-
-  // No finish_reason, no content — usually means the stream ended abnormally.
-  // Only a MODERATING provider can silently drop a request to zero tokens via a
-  // content filter; on a non-moderating / local provider a zero-token empty is
-  // a transient stream failure, so keep it retryable rather than defaulting to
-  // a non-retryable content_filter (which would replay/failover needlessly).
-  if (inputTokens === 0 && outputTokens === 0) {
-    if (providerModerates === false) {
-      return {
-        type: "empty",
-        explanation: "Zero tokens on a non-moderating provider — transient empty stream, retry",
-        shouldRetry: true, shouldFallback: false,
-        meta: { inputTokens, outputTokens },
-      };
-    }
-    return {
-      type: "content_filter",
-      explanation: "Zero tokens — likely content moderation or malformed request",
-      shouldRetry: false, shouldFallback: true,
-    };
-  }
-
-  return {
-    type: "empty",
-    rawReason: finishReason,
-    explanation: "No content, no tool calls, stream ended",
-    shouldRetry: true, shouldFallback: true,
     meta: { inputTokens, outputTokens },
   };
 }

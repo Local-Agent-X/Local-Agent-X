@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1879 non-test source files · 93 oversized · 243 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1879 non-test source files · 93 oversized · 242 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -179,7 +179,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/reap-stale-procs.ts` | S |
 | `src/replay-test.ts` | S |
 | `src/resilience-policy.ts` | S |
-| `src/response-classifier.ts` | M |
+| `src/response-classifier.ts` | S |
 | `src/restart-notify.ts` | S |
 | `src/retry-context.ts` | S |
 | `src/retry-telemetry.ts` | S |
@@ -494,7 +494,6 @@ job. Comments are free: never cut them to fit.
 - `src/protocols/stats-tools.ts#protocol_stats.execute` — 70+ own code lines (cap 100)
 - `src/providers/adapters/ollama-native.ts#OllamaNativeAdapter.stream` — 70+ own code lines (cap 100)
 - `src/providers/sanitize.ts#sanitizeHistory` — 70+ own code lines (cap 100)
-- `src/response-classifier.ts#classifyCodexResponse` — 70+ own code lines (cap 100)
 - `src/routes/chat.ts#handleChatRoutes` — 70+ own code lines (cap 100)
 - `src/routes/issues.ts#handleIssueRoutes` — 70+ own code lines (cap 100)
 - `src/routes/mcp-servers.ts#handleMcpServerRoutes` — 70+ own code lines (cap 100)
@@ -556,7 +555,7 @@ job. Comments are free: never cut them to fit.
 - `src/protocols/learned-review-drafting.ts#proposeReviewedProcedure` — 60+ own code lines (cap 100)
 - `src/protocols/variables.ts#createVariableTools` — 60+ own code lines (cap 100)
 - `src/providers/adapters/codex-cli.ts#CodexCliAdapter.stream` — 60+ own code lines (cap 100)
-- `src/response-classifier.ts#classifyOpenAIResponse` — 60+ own code lines (cap 100)
+- `src/response-classifier.ts#classifyCodexResponse` — 60+ own code lines (cap 100)
 - `src/routes/health.ts#handleHealthRoutes` — 60+ own code lines (cap 100)
 - `src/routes/mcp.ts#handleMcpRoutes` — 60+ own code lines (cap 100)
 - `src/sandbox/docker-execution-runtime.ts#DockerCliExecutionRuntime.create` — 60+ own code lines (cap 100)

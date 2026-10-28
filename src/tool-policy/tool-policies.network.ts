@@ -50,7 +50,7 @@ export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyRow> = {
   // session (site-provenance.ts vouchedFor), as the egress gate does. save_to
   // is a download: the file it writes is confined like any write.
   http_request: {
-    kernel: "http", ariAction: { arg: "method", writes: ["POST", "PUT", "PATCH", "DELETE"] }, risk: "network-write", capabilities: ["egress"], tags: ["http-api"], essentialRank: 5, blurb: { does: "Make a raw HTTP request to an API." }, timeoutMs: 60_000, output: "http-body", externalContent: true, offBoxFetch: true,
+    kernel: "http", ariAction: { arg: "method", writes: ["POST", "PUT", "PATCH", "DELETE"], whenAbsent: "GET" }, risk: "network-write", capabilities: ["egress"], tags: ["http-api"], essentialRank: 5, blurb: { does: "Make a raw HTTP request to an API." }, timeoutMs: 60_000, output: "http-body", externalContent: true, offBoxFetch: true,
     pathArgs: [{ arg: "save_to", action: "write", whenGiven: true }, { arg: "body_file", action: "read", whenGiven: true }],
     destination: [{ to: "site", arg: "url", allowlisted: true }],
     reads: ["session"], killSwitch: "enableHttp", committing: "kernel-write", category: "research",
@@ -60,7 +60,7 @@ export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyRow> = {
   // The kernel's own HTTP tool: the same arbitrary request http_request makes,
   // so the HTTP Requests switch covers it too.
   // Its verb is the `action` arg; the kernel judges it like http_request's method.
-  ari_http: { kernel: "http", ariAction: { arg: "action", writes: ["post", "put", "patch", "delete"] }, risk: "network-write", capabilities: ["egress"], tags: [], output: "http-body", externalContent: true, offBoxFetch: true, destination: [{ to: "site", arg: "url", allowlisted: true }], reads: ["session"], killSwitch: "enableHttp" },
+  ari_http: { kernel: "http", ariAction: { arg: "action", writes: ["post", "put", "patch", "delete"], whenAbsent: "get" }, risk: "network-write", capabilities: ["egress"], tags: [], output: "http-body", externalContent: true, offBoxFetch: true, destination: [{ to: "site", arg: "url", allowlisted: true }], reads: ["session"], killSwitch: "enableHttp" },
   // Reading a page is not an HTTP request in the switch's sense: no killSwitch.
   web_fetch: {
     kernel: "http", ariAction: "get", risk: "network-read", capabilities: ["egress"], tags: ["web-read"], essentialRank: 17, blurb: { say: "summarize https://example.com", does: "Fetch and read a web page." }, timeoutMs: 60_000, output: "http-body", externalContent: true, offBoxFetch: true,

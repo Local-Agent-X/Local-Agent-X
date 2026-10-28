@@ -166,9 +166,13 @@ type RiskFacts =
  * value in `writes` (any case) is a write, judged as `as` or as that value
  * lowercased, and anything else as `otherwise` ("get" when unset; a file-class
  * tool says "read") — so a POST or a browser click reads as a write to a
- * preset that denies tainted writes.
+ * preset that denies tainted writes. `whenAbsent` is the value the tool itself
+ * uses when the call omits the argument (http_request's `method` is "GET"); a
+ * gate that names the request it judges reads it from here
+ * (tool-registry.ts requestMethodOf). Absent: the tool has no default, and
+ * an omitted argument is judged as `otherwise`.
  */
-export type AriActionSpec = string | { arg: string; writes: readonly string[]; as?: string; otherwise?: string };
+export type AriActionSpec = string | { arg: string; writes: readonly string[]; as?: string; otherwise?: string; whenAbsent?: string };
 
 /** The kernel defense pipeline (feeds TOOLS / TOOL_CLASS_MAP). A tool the
  *  kernel checks must say which action it is judged as; an internal tool

@@ -75,8 +75,13 @@ describe("the outbound scans cover every argument of every egress tool", () => {
   });
 
   it("a {{SECRET_NAME}} placeholder in any declared parameter passes the secret scan", () => {
+    // A body alone makes an http_request a GET with a body (its default method),
+    // refused for that by its own rule, which is not the secret scan.
     const refused = payloadParams()
-      .filter(([tool, param, schema]) => probeEgressGuard(makeCtx(tool, { [param]: carrying(schema, PLACEHOLDER) }, "egress-payload-placeholder")) !== null)
+      .filter(([tool, param, schema]) => {
+        const block = probeEgressGuard(makeCtx(tool, { [param]: carrying(schema, PLACEHOLDER) }, "egress-payload-placeholder"));
+        return block !== null && block.meta?.blocked_by !== "get-head-body-forbidden";
+      })
       .map(([tool, param]) => `${tool}.${param}`);
     expect(refused, `placeholders refused in: ${refused.join(", ")}`).toEqual([]);
   });

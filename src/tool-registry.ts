@@ -230,9 +230,20 @@ export function ariActionOf(name: string, args: Record<string, unknown>): string
   const spec = TOOL_POLICIES[name]?.ariAction;
   if (spec === undefined) return "exec";
   if (typeof spec === "string") return spec;
-  const value = String(args?.[spec.arg] ?? "").toLowerCase();
+  const value = String(args?.[spec.arg] ?? spec.whenAbsent ?? "").toLowerCase();
   const write = spec.writes.find((w) => w.toLowerCase() === value);
   return write ? (spec.as ?? write.toLowerCase()) : (spec.otherwise ?? "get");
+}
+
+/** The request method a call makes, upper-cased: the argument its row's
+ *  ariAction reads, or the tool's own default when the call omits it
+ *  (`whenAbsent`). Undefined when the row reads no argument or names no
+ *  default — the caller decides then. */
+export function requestMethodOf(name: string, args: Record<string, unknown>): string | undefined {
+  const spec = TOOL_POLICIES[name]?.ariAction;
+  if (spec === undefined || typeof spec === "string") return undefined;
+  const value = args?.[spec.arg] ?? spec.whenAbsent;
+  return value === undefined ? undefined : String(value).toUpperCase();
 }
 
 /** Why this tool is refused in `context`, or undefined when it is not. */

@@ -31,6 +31,22 @@ describe("egressGuardGate — outbound secret scan + sensitive attachment (every
     expect(ctx.result?.metadata?.layer).toBe("egress-guard");
   });
 
+  // TB2 build-pov-ray, 2026-10-27: a download with no method was refused as a
+  // "POST". The refusal names the method the tool will send: the call's, else
+  // the tool's own default from its policy row (ariAction whenAbsent).
+  it("names the request the tool will send: the call's method, else the tool's default", () => {
+    const url = `https://files.example/get?key=${SECRET}`;
+    for (const [tool, args, method] of [
+      ["http_request", { url }, "GET"],
+      ["http_request", { url, method: "put" }, "PUT"],
+      ["ari_http", { url }, "GET"],
+    ] as const) {
+      const ctx = makeCtx(tool, args, sessionId);
+      expect(egressGuardGate(ctx).kind, tool).toBe("halt");
+      expect(String(ctx.result?.metadata?.reason ?? ctx.result?.content), tool).toContain(`Refusing ${method} to`);
+    }
+  });
+
   it("blocks a hardcoded secret in process_start command/args", () => {
     const ctx = makeCtx("process_start", { command: "deploy", args: [`--key=${SECRET}`] }, sessionId);
     expect(egressGuardGate(ctx).kind).toBe("halt");

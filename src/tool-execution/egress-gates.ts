@@ -20,7 +20,7 @@ import { USER_HINTS, type BlockAction, type BlockLayer, type ToolResult } from "
 import { checkEgressTaintWithPayload, findTaintInPayload } from "../data-lineage/index.js";
 import { checkCanariesInPayload, recordCanaryExfilAudit } from "../threat/canaries.js";
 import { judgeEgress, type EgressJudgement } from "../net/egress-judge.js";
-import { destinationSpecsOf, hasCapability } from "../tool-registry.js";
+import { destinationSpecsOf, hasCapability, requestMethodOf } from "../tool-registry.js";
 import { checkOutboundRequest, checkOutboundPayload, checkOutboundEmail, checkAttachmentPaths, isTrustedDestination, recipientFields } from "../tools/http-egress-guard.js";
 import { vouchedFor } from "../browser/site-provenance.js";
 import { egressPayload } from "./egress-payload.js";
@@ -105,10 +105,14 @@ export function probeEgressGuard(ctx: ToolCallContext): EgressBlocker | null {
   if (site?.to === "site") {
     const url = String(args[site.arg] ?? "");
     // The request scan reads url, body and headers; every other argument is
-    // scanned with them, under the same destination allowlist.
+    // scanned with them, under the same destination allowlist. The method is
+    // the one the tool will send (its row's ariAction, with the tool's own
+    // default for an omitted one): a hard-coded "POST" named a plain download
+    // a POST in its refusal (TB2 build-pov-ray, 2026-10-27). POST only when the
+    // row says nothing.
     block = checkOutboundRequest({
       url,
-      method: String(args.method ?? "POST").toUpperCase(),
+      method: requestMethodOf(tc.name, args as Record<string, unknown>) ?? "POST",
       body: args.body,
       headers: args.headers,
     }, vouched) ?? (isTrustedDestination(url) ? null : checkOutboundPayload(tc.name, text, vouched));

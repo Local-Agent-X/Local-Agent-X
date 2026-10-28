@@ -12,7 +12,7 @@
  */
 
 import { BaseAdapter } from "../adapter/base-adapter.js";
-import type { ProviderRequest, StreamChunk } from "../adapter/types.js";
+import { STREAM_CLOSED_STOP, type ProviderRequest, type StreamChunk } from "../adapter/types.js";
 import { streamCodexResponse } from "../../codex-client/index.js";
 import { toCodexTools } from "../shared/tool-shape.js";
 import { clampNoneForCloud } from "../reasoning-effort.js";
@@ -84,7 +84,7 @@ export class CodexCliAdapter extends BaseAdapter {
             for (const item of evt.reasoning || []) {
               yield { type: "reasoning", item };
             }
-            yield { type: "done", stopReason: "end_turn", responseId: evt.responseId };
+            yield { type: "done", stopReason: doneStop(evt.stopReason), responseId: evt.responseId };
             return;
         }
       }
@@ -92,6 +92,17 @@ export class CodexCliAdapter extends BaseAdapter {
       yield { type: "error", message: (e as Error).message || "Codex stream error" };
     }
   }
+}
+
+/**
+ * The Responses API's ending in the stop vocabulary the canonical loop reads:
+ * "completed" is a clean end of turn; an incomplete reason ("max_output_tokens",
+ * "content_filter") passes through, which is what the cut-off re-drive
+ * (cut-off-turn.ts) keys on; no terminal event at all is STREAM_CLOSED_STOP.
+ */
+function doneStop(stopReason: string | undefined): string {
+  if (!stopReason) return STREAM_CLOSED_STOP;
+  return stopReason === "completed" ? "end_turn" : stopReason;
 }
 
 export const codexCliAdapter = new CodexCliAdapter();

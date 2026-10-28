@@ -92,3 +92,36 @@ describe("flushOnAbnormalClose — no double dispatch of live-yielded tool calls
     expect((flushedCalls[0] as { name: string }).name).toBe("search");
   });
 });
+
+// The Responses API ends a reply cut off at the output limit with
+// `response.incomplete` (status "incomplete", incomplete_details.reason
+// "max_output_tokens"). The parser only knew `response.completed`, so a
+// cut-off arrived as an abnormal close with no stop reason, and the turn
+// loop's cut-off re-drive could never fire for Codex.
+describe("the stop reason the API gave", () => {
+  it("a cut-off reply records the incomplete reason and still surfaces its text", async () => {
+    const state = createCodexStreamState();
+    const out = await drain({
+      type: "response.incomplete",
+      response: {
+        id: "resp_1",
+        status: "incomplete",
+        incomplete_details: { reason: "max_output_tokens" },
+        output: [{ type: "message", content: [{ type: "output_text", text: "partial" }] }],
+      },
+    } as unknown as CodexStreamEvent, state);
+    expect(state.stopReason).toBe("max_output_tokens");
+    expect(state.responseId).toBe("resp_1");
+    expect(out.some((y) => y.type === "text" && y.delta === "partial")).toBe(true);
+  });
+
+  it("a completed reply records its status", async () => {
+    const state = createCodexStreamState();
+    await drain({ type: "response.completed", response: { id: "resp_2", status: "completed" } } as unknown as CodexStreamEvent, state);
+    expect(state.stopReason).toBe("completed");
+  });
+
+  it("a stream with no terminal event has no stop reason", () => {
+    expect(createCodexStreamState().stopReason).toBeUndefined();
+  });
+});

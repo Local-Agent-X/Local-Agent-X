@@ -160,6 +160,7 @@ export async function* streamCodexResponse(params: {
     type: "done",
     usage: state.usage,
     responseId: state.responseId,
+    ...(state.stopReason ? { stopReason: state.stopReason } : {}),
     reasoning: state.reasoningItems,
   };
 }

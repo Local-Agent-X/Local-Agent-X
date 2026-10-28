@@ -1,54 +1,63 @@
+/**
+ * The Codex adapter reports an empty or cut-off turn as it came back and
+ * leaves the re-drive to the turn loop: cut-off-turn.ts for a stop at the
+ * output limit, empty-turn-termination.ts for a turn with nothing in it. It
+ * used to re-run the turn itself, twice, with guidance that was never saved,
+ * never charged to the nudge budget and reset every turn, and then raise
+ * empty_response — so the turn loop's own handlers never saw a Codex turn.
+ */
 import { describe, it, expect } from "vitest";
 import { CodexAdapter } from "./codex.js";
 import type { CodexTransport } from "./codex-transport.js";
 import type { TurnInput, AdapterReport } from "../adapter-contract.js";
+import { STREAM_CLOSED_STOP } from "../../providers/adapter/types.js";
 
 function makeInput(): TurnInput {
   return { opId: "op-test", turnIdx: 0, messages: [], tools: [] };
 }
 
-// Stub transport that replays a fixed event list on every stream() call
-// (the adapter re-streams on its truncation-recovery retries).
-function transportYielding(events: Array<Record<string, unknown>>): CodexTransport {
-  return {
+/** Replays a fixed event list and counts how many times it was streamed. */
+function transportYielding(events: Array<Record<string, unknown>>): CodexTransport & { calls: number } {
+  const t = {
+    calls: 0,
     async *stream() {
+      t.calls += 1;
       for (const e of events) yield e;
     },
-  } as unknown as CodexTransport;
+  };
+  return t as unknown as CodexTransport & { calls: number };
 }
 
-describe("CodexAdapter empty-turn handling", () => {
-  it("surfaces an empty_response error instead of a silent done when the stream is empty", async () => {
-    // Regression (2026-06-15): a rotated/expired ChatGPT OAuth session — the
-    // user signed in on another device — makes the request return an EMPTY
-    // stream, not a 401. Before the fix the adapter ran the truncation-
-    // recovery retries, found nothing, and finished as a contentless `done`,
-    // leaving the chat bubble spinning at "0 tokens" with no error. It must
-    // now end the turn in error with an actionable "reconnect" message.
-    const transport = transportYielding([{ type: "done" }]);
-    const adapter = new CodexAdapter({ transport, model: "gpt-5.5" });
-    const reports: AdapterReport[] = [];
-    const result = await adapter.runTurn(makeInput(), (r) => reports.push(r));
+async function run(events: Array<Record<string, unknown>>) {
+  const transport = transportYielding(events);
+  const adapter = new CodexAdapter({ transport, model: "gpt-5.5" });
+  const reports: AdapterReport[] = [];
+  const result = await adapter.runTurn(makeInput(), (r) => reports.push(r));
+  const stopReason = (result.providerState.providerPayload as { stopReason?: string }).stopReason;
+  return { transport, reports, result, stopReason };
+}
 
-    const err = reports.find((r) => r.kind === "error");
-    expect(err).toBeDefined();
-    expect((err as { code: string }).code).toBe("empty_response");
-    expect((err as { message: string }).message).toMatch(/reconnect openai/i);
-    expect(result.terminalReason).toBe("error");
+describe("CodexAdapter leaves empty and cut-off turns to the turn loop", () => {
+  it("a stream that closed with no response is streamed once and reported with its stop, not as an error", async () => {
+    const { transport, reports, result, stopReason } = await run([{ type: "done", stopReason: STREAM_CLOSED_STOP }]);
+    expect(transport.calls).toBe(1);
+    expect(reports.some((r) => r.kind === "error")).toBe(false);
+    expect(result.terminalReason).toBe("done");
+    expect(stopReason).toBe(STREAM_CLOSED_STOP);
   });
 
-  it("does NOT fire empty_response when the model produced text", async () => {
-    const transport = transportYielding([
-      { type: "text", delta: "hello" },
-      { type: "done" },
-    ]);
-    const adapter = new CodexAdapter({ transport, model: "gpt-5.5" });
-    const reports: AdapterReport[] = [];
-    const result = await adapter.runTurn(makeInput(), (r) => reports.push(r));
+  it("a reply cut off at the output limit is streamed once and carries the stop the cut-off re-drive keys on", async () => {
+    const { transport, reports, result, stopReason } = await run([{ type: "done", stopReason: "max_output_tokens" }]);
+    expect(transport.calls).toBe(1);
+    expect(reports.some((r) => r.kind === "error")).toBe(false);
+    expect(stopReason).toBe("max_output_tokens");
+    expect(result.modelStop).toBe("continue");
+  });
 
-    expect(
-      reports.some((r) => r.kind === "error" && (r as { code: string }).code === "empty_response"),
-    ).toBe(false);
+  it("a turn with text finishes as done", async () => {
+    const { transport, result } = await run([{ type: "text", delta: "hello" }, { type: "done", stopReason: "end_turn" }]);
+    expect(transport.calls).toBe(1);
     expect(result.terminalReason).toBe("done");
+    expect(result.modelStop).toBe("ended");
   });
 });

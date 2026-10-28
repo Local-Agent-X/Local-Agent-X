@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1879 non-test source files · 92 oversized · 244 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1879 non-test source files · 91 oversized · 245 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -23,9 +23,9 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/security/` | 137 | 53 | XL | 3 |
 | `src/tools/` | 121 | 221 | XL | 9 |
 | `src/tool-execution/` | 84 | 78 | XL | 2 |
-| `src/canonical-loop/` | 80 | 274 | XL | 13 |
+| `src/canonical-loop/` | 80 | 274 | XL | 12 |
 | `src/workspace/` | 80 | 3 | M |  |
-| `src/providers/` | 69 | 26 | L | 1 |
+| `src/providers/` | 70 | 26 | L | 1 |
 | `src/data-lineage/` | 53 | 11 | M |  |
 | `src/memory/` | 53 | 146 | XL | 7 |
 | `src/session/` | 51 | 9 | M |  |
@@ -253,7 +253,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/browser/secret-fill.ts#withBrowserLock:callback`
 - `src/canonical-loop/adapters/anthropic-transport.ts#stream`
 - `src/canonical-loop/adapters/app-build-adapter.ts#CliBuildAdapter.runTurn`
-- `src/canonical-loop/adapters/codex.ts#CodexAdapter.runTurn`
 - `src/canonical-loop/adapters/openai-compat.ts#OpenAICompatAdapter.runTurn`
 - `src/canonical-loop/adapters/openai-compat/canonical-to-chat-param.ts#canonicalToChatParam`
 - `src/canonical-loop/adapters/openai-compat/stream-once.ts#streamOnce`
@@ -402,6 +401,7 @@ job. Comments are free: never cut them to fit.
 - `src/canonical-loop/checkpoint.ts#commitOwnedTurn` — 90+ own code lines (cap 100)
 - `src/canonical-loop/checkpoint.ts#projectTurnCommit` — 90+ own code lines (cap 100)
 - `src/chat-ws/message-router.ts#ws.on:callback` — 90+ own code lines (cap 100)
+- `src/codex-client/index.ts#streamCodexResponse` — 90+ own code lines (cap 100)
 - `src/codex-client/stream-parse.ts#processCodexEvent` — 90+ own code lines (cap 100)
 - `src/local-runtimes/certification-runner.ts#runExclusive:callback` — 90+ own code lines (cap 100)
 - `src/memory/extract.ts#runExtraction` — 90+ own code lines (cap 100)
@@ -423,10 +423,10 @@ job. Comments are free: never cut them to fit.
 - `src/agent-guards/loop-detection.ts#noteToolResults` — 80+ own code lines (cap 100)
 - `src/auth/index.ts#createServer:callback` — 80+ own code lines (cap 100)
 - `src/auto-build/chunk-review/gate-build-exec.ts#runBuildExecGate` — 80+ own code lines (cap 100)
+- `src/canonical-loop/adapters/codex.ts#CodexAdapter.runTurn` — 80+ own code lines (cap 100)
 - `src/canonical-loop/agent-runner/run.ts#runAgentViaCanonical` — 80+ own code lines (cap 100)
 - `src/canonical-loop/soak-metrics.ts#finalize` — 80+ own code lines (cap 100)
 - `src/classifiers/classify-with-llm.ts#classifyWithLLM` — 80+ own code lines (cap 100)
-- `src/codex-client/index.ts#streamCodexResponse` — 80+ own code lines (cap 100)
 - `src/conversation/ingest.ts#ingestSingleFile` — 80+ own code lines (cap 100)
 - `src/mcp-client/connection.ts#MCPConnection.connect` — 80+ own code lines (cap 100)
 - `src/memory/cognitive/proactive/suggestions.ts#analyzeContext` — 80+ own code lines (cap 100)

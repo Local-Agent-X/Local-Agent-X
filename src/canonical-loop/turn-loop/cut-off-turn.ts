@@ -29,12 +29,16 @@ const CUT_OFF_TURN_KEY = "cut-off-turn-counter";
 export const CUT_OFF_REDRIVE_LIMIT = 2;
 /** How much of a cut-off draft stays in history. */
 export const CUT_OFF_KEPT_CHARS = 2_000;
+// The second sentence is for a reply that was itself one oversized tool call
+// (a whole deck or file in one `create`): re-emitting it hits the same limit.
+// It came from the Codex adapter's own re-drive, which this replaced.
 export const CUT_OFF_NUDGE =
-  "Your last reply hit the output limit and was cut off before you made a tool call or finished. Do not restate the plan: take the next concrete step now with one tool call, then continue from its result.";
+  "Your last reply hit the output limit and was cut off before you made a tool call or finished. Do not restate the plan: take the next concrete step now with one tool call, then continue from its result. If that step is a large file or artifact, build it in several small calls (create it with minimal content, then add each part, such as one slide with `add_slide`, in its own call) instead of one large one.";
 export const CUT_OFF_TERMINAL =
   "I ran out of output room before acting, several times in a row, so the task is not done. The model kept writing past its output limit without making a tool call.";
 
-/** Stops that mean the provider cut the reply off at its output limit. */
+/** Stops that mean the provider cut the reply off at its output limit
+ *  (`max_output_tokens` is the Responses API's, Codex included). */
 const CUT_OFF_STOPS = new Set(["length", "max_tokens", "max_output_tokens"]);
 
 export function isCutOffStop(stop: string | undefined): boolean {

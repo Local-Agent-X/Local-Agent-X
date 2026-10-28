@@ -19,29 +19,11 @@ import { hasInjects } from "../../agent-loop/inject-queue.js";
 import { classifyModelStop } from "./model-stop.js";
 import { withTransportRetry } from "./transport-retry.js";
 import { resolveStepReasoningEffort } from "../step-effort.js";
-import { createLogger } from "../../logger.js";
 import { PROVIDERS } from "../../providers/registry.js";
-
-const logger = createLogger("canonical-loop.codex");
 
 export const CODEX_ADAPTER_NAME = "codex";
 export const CODEX_ADAPTER_VERSION = "1.0.0";
 export const CODEX_PROVIDER_STATE_MAX_BYTES = 256 * 1024;
-
-// How many guided retries to attempt after a truncated/empty turn before giving
-// up. A model may need more than one nudge to switch from a one-shot oversized
-// call to incremental calls; capped so a model that can't adapt still
-// terminates (open-steps then surfaces the partial) instead of looping.
-const MAX_TRUNCATION_RETRIES = 2;
-
-// Artifact-agnostic recovery guidance fed to the model after its tool call was
-// truncated at the subscription endpoint's output cap. The earlier version named
-// `write`/`edit` specifically, which is useless for a binary artifact like a
-// .pptx — the model ignored it and re-emitted the same oversized presentation
-// call. This names the right incremental path per artifact type, including
-// add_slide for presentations.
-const TRUNCATION_RECOVERY_GUIDANCE =
-  "Your previous response was cut off before it finished — that single tool call's output exceeded this provider's size limit. Do not repeat it as one large call. Build the artifact incrementally with several smaller calls: create it first with minimal content, then add each part in its own follow-up call. For a PowerPoint, use the presentation tool's `add_slide` action one slide at a time instead of putting every slide in a single `create`; for a document or spreadsheet, add sections or rows in separate edits; for a text file, `write` a small version then extend it with `edit`. Keep every individual tool call's payload modest (a few KB).";
 
 export interface CodexAdapterOptions {
   transport?: CodexTransport;
@@ -120,9 +102,9 @@ export class CodexAdapter implements Adapter {
       previousResponseId: prevResponseId,
       // Per-step routing: mechanical steps cap at "medium", NOT the default
       // "low" ceiling — this endpoint measured ~40% EMPTY responses at "low"
-      // (codex-client/request.ts:72-73), and the empty-turn recovery would
-      // retry at the same capped effort then die as a false "session
-      // expired". Never up-shifts. See step-effort.ts.
+      // (codex-client/request.ts:72-73), and every re-drive of an empty turn
+      // would run at the same capped effort. Never up-shifts. See
+      // step-effort.ts.
       // clampNoneForCloud: this adapter passes no thinking profile, so the
       // resolver cannot return "none" today — but the Responses API has no
       // such value, and a type-level guarantee beats a reading of the call.
@@ -197,52 +179,12 @@ export class CodexAdapter implements Adapter {
     this.inflight = consume();
     try { await this.inflight; } finally { this.inflight = null; }
 
-    // Truncation recovery. The Codex/ChatGPT subscription endpoint caps a single
-    // response's output and rejects max_output_tokens, so when the model tries
-    // to emit a whole artifact in one oversized tool call it hits the cap, the
-    // stream closes mid-emit, and the partial (invalid-JSON) call is dropped
-    // (see flushOnAbnormalClose) — leaving a zero-text, zero-tool, zero-error
-    // turn. A bare re-run repeats the identical oversized call, so we feed the
-    // model artifact-agnostic guidance to build incrementally and retry a
-    // bounded number of times. Fires ONLY on the silent-fail signature; healthy
-    // turns are untouched. Mirror of the post-stream retry in openai-compat.ts.
-    // Live failure 2026-05-14: chat-mp5psjdd-ersqf on gpt-5.5 — 120s turn, 0
-    // output, 0 tools, no error. Live 2026-06-13: 20-slide deck truncated twice
-    // because the old single retry steered to write/edit (useless for .pptx).
-    const isTruncatedEmpty = () =>
-      !this.aborted &&
-      !interruptedByInject &&
-      !firstError &&
-      assembledText.length === 0 &&
-      pendingToolCalls.length === 0;
-    if (isTruncatedEmpty()) {
-      req.messages = [...req.messages, { role: "user", content: TRUNCATION_RECOVERY_GUIDANCE }];
-      for (let attempt = 1; attempt <= MAX_TRUNCATION_RETRIES && isTruncatedEmpty(); attempt++) {
-        logger.info(`${req.model} returned a truncated/empty turn — retry ${attempt}/${MAX_TRUNCATION_RETRIES} with incremental-build guidance`);
-        this.aborter = new AbortController();
-        req.signal = this.aborter.signal;
-        this.inflight = consume();
-        try { await this.inflight; } finally { this.inflight = null; }
-      }
-    }
-
-    // Still empty after the truncation-recovery retries — zero text, zero
-    // tool calls, zero error, not aborted, not interrupted. Surface it as a
-    // turn failure instead of finishing as a silent, contentless `done`.
-    // The dominant real-world trigger is an expired/rotated ChatGPT OAuth
-    // session (the user signed in on another device): the request comes
-    // back as an empty stream rather than a 401, so there's no transport
-    // error to catch and the bubble would otherwise spin and then finish
-    // blank. Bug: chat hung at "0 tokens" forever after a phone ChatGPT
-    // login rotated the session (2026-06-15). Setting firstError flips
-    // terminalReason to "error"; reporting it renders the message in the
-    // bubble so the user knows to reconnect.
-    if (isTruncatedEmpty()) {
-      const message =
-        "The model returned an empty response (no text or tool calls). This usually means your ChatGPT/OpenAI session expired or you signed in on another device — reconnect OpenAI to continue, or switch providers.";
-      firstError = { code: "empty_response", message };
-      report({ kind: "error", code: "empty_response", message, retryable: false });
-    }
+    // An empty or cut-off turn is reported as it came back; the turn loop
+    // re-drives it. A reply cut off at the output limit carries
+    // "max_output_tokens" (cut-off-turn.ts); a stream that closed with no
+    // response, which is how an expired ChatGPT sign-in looks, carries
+    // STREAM_CLOSED_STOP, and the empty-turn terminal names the sign-in
+    // (empty-turn-termination.ts).
 
     // Finalize an assistant message whenever there is EITHER text OR tool
     // calls. Earlier this only fired on text, dropping tool-only turns —

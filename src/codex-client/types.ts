@@ -28,9 +28,12 @@ export interface CodexStreamEvent {
   // response.function_call_arguments.delta
   name?: string;
   call_id?: string;
-  // response.completed / response.done
+  // response.completed / response.done / response.incomplete
   response?: {
     id?: string;
+    /** "completed", or "incomplete" with the reason beside it. */
+    status?: string;
+    incomplete_details?: { reason?: string };
     output?: Array<{
       type: string;
       content?: Array<{ type?: string; text?: string }>;
@@ -71,6 +74,10 @@ export type CodexStreamYield =
       type: "done";
       usage: { inputTokens: number; outputTokens: number; classification?: ClassificationResult };
       responseId?: string;
+      /** The response's status ("completed"), or for an incomplete one its
+       *  reason ("max_output_tokens", "content_filter"). Absent when the
+       *  stream ended without a terminal event. */
+      stopReason?: string;
       reasoning: ReasoningItem[];
     };
 

@@ -19,6 +19,13 @@ import type { Op } from "../../ops/types.js";
 import type { ToolCall } from "../contract-types.js";
 import { appendNudgeAsUserMessage } from "./nudges.js";
 import { narrationPromisesFollowup } from "./p1-followup-detector.js";
+import { STREAM_CLOSED_STOP } from "../../providers/adapter/types.js";
+
+/** The empty turn's terminal when the provider sent no response at all — on
+ *  ChatGPT/OpenAI sign-in that is an expired or rotated session (signing in
+ *  on another device), which comes back as an empty stream, not a 401. */
+const STREAM_CLOSED_TERMINAL =
+  "I wasn't able to produce a response: the provider closed the stream without sending a response. This usually means the sign-in session expired (for ChatGPT/OpenAI, signing in on another device does it) — reconnect the provider to continue, or switch providers.";
 
 /**
  * Per-op key for the interactive fully-empty-turn counter, held in the same
@@ -232,7 +239,9 @@ export function appendEmptyTurnTerminal(
   stopReason?: string,
 ): void {
   const named = stopReason ? ` (the model ended the turn with stop reason "${stopReason}")` : "";
-  const text = signaledDone
+  const text = stopReason === STREAM_CLOSED_STOP
+    ? STREAM_CLOSED_TERMINAL
+    : signaledDone
     ? `I don't have anything to add here${named}.`
     : `I wasn't able to produce a response — I appear to be blocked; the model ended the turn with no reply and no tool call${named}. Please try rephrasing or asking again.`;
   appendHonestTerminal(opId, turnIdx, allMessages, text, "empty-turn");

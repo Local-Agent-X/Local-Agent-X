@@ -85,6 +85,7 @@ import { MISSING_TOOL_RESULT_TEXT } from "./orphan-tool-results.js";
 import { appendNudgeAsUserMessage } from "./nudges.js";
 import { failedCallNudge } from "./failed-call-gate.js";
 import { REASONING_ONLY_NUDGE } from "./empty-turn-termination.js";
+import { STREAM_CLOSED_STOP } from "../../providers/adapter/types.js";
 import { CUT_OFF_KEPT_CHARS, CUT_OFF_NUDGE, CUT_OFF_REDRIVE_LIMIT, CUT_OFF_TERMINAL } from "./cut-off-turn.js";
 import { MALFORMED_TOOL_CALL_REDRIVE_LIMIT } from "./malformed-tool-call.js";
 import { createLogger } from "../../logger.js";
@@ -1568,6 +1569,19 @@ describe("decideTurnOutcome — interactive fully-empty turns terminate (no maxT
     const r2 = await decideTurnOutcome(empty({ adapterTerminalReason: "done", hasReasoning: true, modelSignaledDone: true, providerStop: "end_turn" }));
     expect(r2.terminalReason).toBe("done");
     expect(assistantTexts(r2).join(" ")).toMatch(/no reply and no tool call \(the model ended the turn with stop reason "end_turn"\)/);
+  });
+
+  // An expired ChatGPT sign-in comes back as an empty stream, not a 401
+  // (2026-06-15). The Codex adapter used to say so itself after two retries;
+  // the turn loop owns the empty turn now, and its terminal keeps the hint.
+  it("(e) a stream that closed with no response is re-driven once, then ends naming the sign-in", async () => {
+    const closed = { adapterTerminalReason: "done" as const, modelSignaledDone: false, providerStop: STREAM_CLOSED_STOP };
+    const r1 = await decideTurnOutcome(empty(closed));
+    expect(r1.terminalReason).toBeNull();
+    expect(assistantTexts(r1)).toEqual([]);
+    const r2 = await decideTurnOutcome(empty(closed));
+    expect(r2.terminalReason).toBe("done");
+    expect(assistantTexts(r2).join(" ")).toMatch(/closed the stream without sending a response.*sign-in.*expired.*reconnect/i);
   });
 
   it("(d) a WORKER turn keeps the adapter's done as-is", async () => {

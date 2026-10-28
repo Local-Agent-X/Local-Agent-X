@@ -27,6 +27,9 @@ export interface CodexStreamState {
   consumedToolCallIds: Set<string>;
   usage: { inputTokens: number; outputTokens: number };
   responseId: string | undefined;
+  // Why the response ended, from its terminal event (see stopReasonOf);
+  // undefined until one arrives.
+  stopReason: string | undefined;
   reasoningItems: ReasoningItem[];
   // Summary keys (item_id:summary_index) that already streamed live deltas, so
   // the terminal `.done` event doesn't re-emit the same text. The ChatGPT Codex
@@ -43,6 +46,7 @@ export function createCodexStreamState(): CodexStreamState {
     consumedToolCallIds: new Set(),
     usage: { inputTokens: 0, outputTokens: 0 },
     responseId: undefined,
+    stopReason: undefined,
     reasoningItems: [],
     reasoningSummaryStreamed: new Set(),
   };
@@ -162,10 +166,17 @@ export async function* processCodexEvent(
   // shape doesn't work for this endpoint. User generates images via
   // browser-driven navigation to a paid LLM site instead.)
 
-  // Response completed
-  if (event.type === "response.completed" || event.type === "response.done") {
+  // Response ended. `response.incomplete` is how the API ends a reply cut
+  // off at the output limit; it carries the same response body.
+  if (event.type === "response.completed" || event.type === "response.done" || event.type === "response.incomplete") {
     yield* finalizeCompleted(event, state, model);
   }
+}
+
+/** The response's status, or for an incomplete one the reason it stopped. */
+function stopReasonOf(event: CodexStreamEvent): string {
+  const status = event.response?.status ?? (event.type === "response.incomplete" ? "incomplete" : "completed");
+  return status === "incomplete" ? event.response?.incomplete_details?.reason ?? status : status;
 }
 
 async function* finalizeCompleted(
@@ -173,6 +184,7 @@ async function* finalizeCompleted(
   state: CodexStreamState,
   model: string,
 ): AsyncGenerator<CodexStreamYield> {
+  state.stopReason = stopReasonOf(event);
   // Capture the response ID for previous_response_id on the next turn
   if (event.response?.id) {
     state.responseId = event.response.id;
@@ -244,7 +256,7 @@ async function* finalizeCompleted(
     hasText: !!state.fullText.trim(),
     hasToolCalls: state.toolCalls.size > 0,
     outputTypes: outputTypesArr,
-    status: (event.response as unknown as Record<string, unknown>)?.status as string | undefined,
+    status: event.response?.status,
     inputTokens: state.usage.inputTokens,
     outputTokens: state.usage.outputTokens,
     responseText: state.fullText,

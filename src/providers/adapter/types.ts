@@ -108,6 +108,14 @@ export type StreamChunk =
   | { type: "mcp_activity"; toolName?: string; arguments?: string };
 
 /**
+ * A done chunk's stop when the provider's stream ended without the provider's
+ * own terminal event, so no stop reason was given. With nothing in the turn,
+ * that is how an expired ChatGPT sign-in looks (an empty stream, not a 401),
+ * and the turn loop's empty-turn terminal says so (empty-turn-termination.ts).
+ */
+export const STREAM_CLOSED_STOP = "stream_closed";
+
+/**
  * Tool call as emitted in the final response (when not streaming
  * incrementally). Used by callers who want a synchronous summary
  * after the stream closes.

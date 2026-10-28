@@ -21,7 +21,7 @@
 // a task container has neither.
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { cpSync, createWriteStream, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, cpSync, createWriteStream, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -72,12 +72,37 @@ const FORENSICS_SNAPSHOT_MS = 60_000;
  *  profile and the memory database beside them. */
 const FORENSICS = ["operations", "sessions", "action-log", "audit", "logs", "run-traces"];
 
+/** Copies a tree the live server is still changing. An entry deleted mid-copy
+ *  (an op's `operation.lock` directory) is skipped: Node's recursive cpSync
+ *  raised that as an uncaught C++ std::filesystem error, which aborted this
+ *  driver mid-task (chess-best-move, feal-linear-cryptanalysis, 2026-10-28). */
+function copyLiveTree(from, to) {
+  let entries;
+  try {
+    entries = readdirSync(from, { withFileTypes: true });
+  } catch (e) {
+    if (e.code === "ENOENT") return;
+    throw e;
+  }
+  mkdirSync(to, { recursive: true });
+  for (const entry of entries) {
+    const src = join(from, entry.name);
+    const dst = join(to, entry.name);
+    try {
+      if (entry.isDirectory()) copyLiveTree(src, dst);
+      else if (entry.isFile()) copyFileSync(src, dst);
+    } catch (e) {
+      if (e.code !== "ENOENT") throw e;
+    }
+  }
+}
+
 function copyForensics(dataDir, dest) {
   for (const sub of FORENSICS) {
     const from = join(dataDir, sub);
     if (!existsSync(from)) continue;
     try {
-      cpSync(from, join(dest, sub), { recursive: true, force: true });
+      copyLiveTree(from, join(dest, sub));
     } catch (e) {
       console.error(`could not snapshot ${sub}: ${e.message}`);
     }

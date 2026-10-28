@@ -78,13 +78,13 @@ describe("structural_search — language-intel path (TS/JS)", () => {
     expect(res.content).toContain("[def] a.ts:2:");
   });
 
-  it("respects limit with a '(N more)' tail", async () => {
+  it("respects limit with grep's '(N more lines)' tail", async () => {
     tsFixture();
     const res = await structuralSearchTool.execute({ symbol: "greetUser", path: dir, limit: 2 });
     expect(res.isError).toBeUndefined();
     const hitLines = res.content.split("\n").filter((l) => /:\d+:/.test(l));
     expect(hitLines.length).toBe(2);
-    expect(res.content).toMatch(/\.\.\. \(\d+ more\)/);
+    expect(res.content).toMatch(/\.\.\. \(\d+ more lines\)/);
   });
 
   it("unknown symbol yields a clear empty-result message naming symbol and root", async () => {

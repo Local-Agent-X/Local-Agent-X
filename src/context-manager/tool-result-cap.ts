@@ -31,8 +31,9 @@
 import { OUTPUT_RESERVE_TOKENS, PROMPT_WINDOW_SHARE } from "./request-fit.js";
 
 /** The flat cap every model used before the window-aware cap; still the
- *  ceiling, so large windows keep the historical behavior. Mirrored (not
- *  imported) by the audit phase's DEFAULT_MAX_RESULT_SIZE — one number. */
+ *  ceiling, so large windows keep the historical behavior. This cap is the
+ *  only limit on a tool result: tools return their whole result and the audit
+ *  phase cuts it here (tools/result-spill.ts capWithSpill). */
 export const DEFAULT_MAX_RESULT_CHARS = 50_000;
 
 /** Never squeeze a single result below this — a cap smaller than a screen of

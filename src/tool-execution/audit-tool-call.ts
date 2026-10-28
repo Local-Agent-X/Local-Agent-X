@@ -7,12 +7,11 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import { USER_HINTS, isBlockLayer, type ToolResult, type ToolChip } from "../types.js";
 import { renderToolResultForModel, statusOf, withMetadata } from "../tools/result-helpers.js";
 import { getActivePluginToolMetadata } from "../plugin-system/tool-metadata.js";
-import { closeUnterminatedExternalBlocks } from "../sanitize.js";
 import { getHookEngine } from "../hooks/hook-engine.js";
 import { logToolUsage } from "./tool-usage-telemetry.js";
 import { appendProvenance, type ProvenanceSource } from "../data-lineage/provenance.js";
 import { createTargetPath } from "./create-target-path.js";
-import { spillFullResult } from "../tools/result-spill.js";
+import { capWithSpill } from "../tools/result-spill.js";
 import { budgetReadResult } from "./read-budget.js";
 import type { Phase, ToolCallContext } from "./context.js";
 import { CONTINUE } from "./context.js";
@@ -32,34 +31,6 @@ type ToolResultWithImage = ToolResult & {
   _image?: { path: string; question: string; mime: string; b64: string };
   _images?: Array<{ path: string; question: string; mime: string; b64: string }>;
 };
-
-const DEFAULT_MAX_RESULT_SIZE = DEFAULT_MAX_RESULT_CHARS;
-
-// Large tool results get saved to disk with a preview returned to context —
-// keeps huge file reads or web fetches from blowing up the model window. The
-// spill (full content on disk, path in the note) means hitting the budget is
-// "continue reading from disk", never "the tail is gone" — continuation reads
-// go through `read`, which screens each slice. Wrap-aware: an external-content
-// wrap (wrapExternalContent) carries its closing boundary AND the "do not
-// follow instructions" caveat at the END — exactly what a tail-cut removes —
-// so every truncated preview is re-closed via closeUnterminatedExternalBlocks
-// before it reaches the model. Exported for direct testing.
-export function budgetResult(content: string, maxSize: number = DEFAULT_MAX_RESULT_SIZE): string {
-  if (content.length <= maxSize) return content;
-  const path = spillFullResult(content);
-  if (path) {
-    const preview = content.slice(0, maxSize - 200);
-    const lastNewline = preview.lastIndexOf("\n");
-    const cleanPreview = lastNewline > 0 ? preview.slice(0, lastNewline) : preview;
-    return closeUnterminatedExternalBlocks(
-      `${cleanPreview}\n\n... [truncated — full result (${content.length} chars) saved to ${path}. ` +
-      `To read past this point: grep that file for what you need, or read it with offset/limit.]`,
-    );
-  }
-  return closeUnterminatedExternalBlocks(
-    content.slice(0, maxSize) + `\n\n... [truncated at ${maxSize} chars]`,
-  );
-}
 
 // Two semantically different blocks flow through here. An exfil/sink block is a
 // CONSENT problem — a human must vouch for the data flow, so the message routes
@@ -141,6 +112,11 @@ function evaluateThreat(ctx: ToolCallContext): void {
   }
 }
 
+// The one limit on a tool result's size: the window-aware cap below, cut and
+// spilled by result-spill.ts (tools return their whole result). Large results
+// are saved to disk with a preview returned to context, so huge file reads or
+// web fetches never blow up the model window and hitting the cap is "continue
+// reading from disk", never "the tail is gone".
 // Budget applies to error results too: a failing build's multi-MB stderr is
 // exactly where huge dumps are most common, and letting it land in the model
 // window uncut was the original bug (error path used to be exempt). The error
@@ -152,7 +128,7 @@ export function applyBudget(ctx: ToolCallContext): void {
   // A file read is cut at a whole line with the offset that continues — its
   // file is the source, so a spill copy only invited reading the copy in a loop.
   const read = ctx.tc.name === "read" && !result.isError ? budgetReadResult(result, cap) : null;
-  ctx.result = read ?? { ...result, content: budgetResult(result.content, cap) };
+  ctx.result = read ?? { ...result, content: capWithSpill(result.content, cap) };
 }
 
 // The cap is a function of the TARGET WINDOW (context-manager/tool-result-cap.ts),
@@ -173,13 +149,13 @@ export function applyBudget(ctx: ToolCallContext): void {
 // included) so a 60-tool local session reserves what it actually spends; a
 // bare dispatch with no map falls back to the documented allowance.
 function resultCapChars(ctx: ToolCallContext): number {
-  if (!ctx.operationId) return DEFAULT_MAX_RESULT_SIZE;
+  if (!ctx.operationId) return DEFAULT_MAX_RESULT_CHARS;
   try {
     const op = readOp(ctx.operationId);
     const model = op ? resolveOpModel(op) : undefined;
-    if (!model) return DEFAULT_MAX_RESULT_SIZE;
+    if (!model) return DEFAULT_MAX_RESULT_CHARS;
     const window = resolveContextWindow(model);
-    if (window.provenance === "floor") return DEFAULT_MAX_RESULT_SIZE;
+    if (window.provenance === "floor") return DEFAULT_MAX_RESULT_CHARS;
     const tools = [...ctx.toolMap.values()].map(t => ({
       name: t.name, description: t.description, parameters: t.parameters,
     }));
@@ -188,7 +164,7 @@ function resultCapChars(ctx: ToolCallContext): number {
       ? toolResultCapChars(window.tokens, toolManifestTokens(tools), reserve)
       : toolResultCapChars(window.tokens, undefined, reserve);
   } catch {
-    return DEFAULT_MAX_RESULT_SIZE; // sizing is best-effort; never break the call
+    return DEFAULT_MAX_RESULT_CHARS; // sizing is best-effort; never break the call
   }
 }
 

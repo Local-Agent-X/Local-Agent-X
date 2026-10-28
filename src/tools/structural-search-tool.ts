@@ -15,6 +15,7 @@ import type { ReferenceHit } from "../language-intel/index.js";
 import { getLanguageIntel } from "../language-intel/index.js";
 import { ripgrepBin, searchRoot } from "./grep-tool.js";
 import { ok, err } from "./result-helpers.js";
+import { truncate } from "./grep-context.js";
 
 type Mode = "references" | "definition";
 
@@ -22,11 +23,6 @@ const DEFAULT_LIMIT = 50;
 /** How many candidate positions to resolve the bare symbol name to before
  *  querying the language service from the best (declaration-first) one. */
 const POSITION_PROBE_LIMIT = 5;
-
-function truncate(lines: string[], limit: number): string {
-  if (lines.length <= limit) return lines.join("\n");
-  return lines.slice(0, limit).join("\n") + `\n... (${lines.length - limit} more)`;
-}
 
 /** Dedupe hits by file:line and format as `file:line:  lineText` (path
  *  relative to root), definition sites prefixed `[def]`. */

@@ -280,7 +280,7 @@ export function applyResultTaintPolicy(
   // wrapExternalContent boundary — that missed unwrapped browser reads and
   // self-tainted any session that merely read a source file containing the
   // boundary literal. The bytes fingerprinted are what the model can see: the
-  // audit phase's budgetResult caps every delivered result at
+  // audit phase's capWithSpill caps every delivered result at
   // DEFAULT_MAX_RESULT_CHARS, so the head up to that ceiling is the whole
   // delivered content (the spilled tail is reachable only through a later
   // local `read`, which this tool-class axis does not cover).

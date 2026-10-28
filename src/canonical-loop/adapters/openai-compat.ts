@@ -18,10 +18,10 @@
  * re-sends full history. provider_state is just `lastTurnIdx`, model,
  * and usage.
  *
- * Empty-response retry: if a turn produces zero text + zero tool calls
- * after sending tools, we retry once without tools so the turn isn't blank.
- * The no-tool latch (markNoToolSupport) only applies to loopback
- * endpoints — a local model that empties on tools genuinely can't do them
+ * Empty-response retry: if a turn produces no text, reasoning or tool call,
+ * and was not cut off, after sending tools, we retry once without tools so the
+ * turn isn't blank (isNoOutputReply). The no-tool latch (markNoToolSupport)
+ * only applies to local endpoints — a local model that empties on tools genuinely can't do them
  * (qwen2's silent-fail pattern). A cloud frontier model (Gemini compat, grok,
  * gpt-5) that empties is transient and must NOT be latched, or it narrates
  * every later turn with no tools. See shouldLatchNoToolSupport.
@@ -33,7 +33,7 @@ import { CONTEXT_WINDOW_EXCEEDED_CODE } from "../adapter-contract.js";
 import type { CanonicalMessage, ProviderStateEnvelope } from "../contract-types.js";
 import type { ProviderRequest } from "../../providers/adapter/types.js";
 import { markNoToolSupport } from "../../providers/types.js";
-import { shouldLatchNoToolSupport, shouldRescueTextToolCalls } from "./openai-compat/turn-policy.js";
+import { isNoOutputReply, shouldLatchNoToolSupport, shouldRescueTextToolCalls } from "./openai-compat/turn-policy.js";
 import { maybeVerifyToolSupport, noteLiveToolCallEvidence } from "../../providers/tool-capability-probe.js";
 import { createLogger } from "../../logger.js";
 
@@ -226,21 +226,14 @@ export class OpenAICompatAdapter implements Adapter {
     }
 
     // Empty-response retry. Some models (qwen2:7b is the canonical offender)
-    // accept the `tools` field, run for several seconds, then return ZERO text
-    // and ZERO tool calls — a silent failure. Retry once without tools so the
-    // turn isn't blank. The PERMANENT no-tool latch only applies to loopback
+    // accept the `tools` field, run for several seconds, then return nothing
+    // at all — a silent failure. Retry once without tools so the turn isn't
+    // blank (isNoOutputReply: a reasoning-only or cut-off reply is the turn
+    // loop's to re-drive). The PERMANENT no-tool latch only applies to local
     // endpoints, where an empty really does mean the local model can't do
     // tools; a cloud frontier model (xAI, OpenAI) that empties once is
-    // transient and must not be latched off for the whole process. No-op for
-    // healthy providers (gpt-5, grok, sonnet) — they don't silent-fail.
-    const noOutput =
-      !this.aborted &&
-      !result.interruptedByInject &&
-      !result.stoppedByGuard &&
-      !result.firstError &&
-      result.assembledText.length === 0 &&
-      result.pendingToolCalls.length === 0;
-    if (noOutput && req.tools.length > 0) {
+    // transient and must not be latched off for the whole process.
+    if (!this.aborted && isNoOutputReply(result) && req.tools.length > 0) {
       const latch = shouldLatchNoToolSupport(baseURL, model);
       logger.info(`${model} returned empty with tools — retrying without tools${latch ? " (latched: local endpoint)" : " (this turn only: cloud endpoint)"}`);
       if (latch) markNoToolSupport(baseURL, model);
@@ -254,7 +247,7 @@ export class OpenAICompatAdapter implements Adapter {
 
     // Live tool-capability evidence — AFTER the turn settled, gated on the
     // SAME policy helper as the no-tool latch (shouldLatchNoToolSupport):
-    // loopback endpoints, where behavioral facts about the engine are ours
+    // local endpoints, where behavioral facts about the engine are ours
     // to record. A turn that already produced structured tool calls IS the
     // evidence — record it for free, never spending an HTTP probe on the
     // key. Only evidence-less keys get the background probe: fire-and-forget,

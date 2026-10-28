@@ -85,17 +85,18 @@ describe("evidence outranks an empty reply", () => {
   });
 });
 
+const result = (over: Partial<StreamOnceResult>): StreamOnceResult => ({
+  assembledText: "", assembledThinking: "", pendingToolCalls: [], firstError: null, providerStop: "stop",
+  usagePromptTokens: 10, usageCompletionTokens: 1, interruptedByInject: false, ...over,
+});
+const input = (turnIdx: number): TurnInput => ({
+  opId: "op-1", turnIdx,
+  messages: [{ messageId: "u1", role: "user", content: { text: "read it" } }],
+  tools: [{ name: "read", description: "read a file", inputSchema: { type: "object" } }],
+});
+const adapter = () => createOpenAICompatAdapter({ model: MODEL, baseURL: LOOPBACK, apiKey: "ollama", systemPrompt: "sys" });
+
 describe("the adapter, end to end", () => {
-  const result = (over: Partial<StreamOnceResult>): StreamOnceResult => ({
-    assembledText: "", assembledThinking: "", pendingToolCalls: [], firstError: null, providerStop: "stop",
-    usagePromptTokens: 10, usageCompletionTokens: 1, interruptedByInject: false, ...over,
-  });
-  const input = (turnIdx: number): TurnInput => ({
-    opId: "op-1", turnIdx,
-    messages: [{ messageId: "u1", role: "user", content: { text: "read it" } }],
-    tools: [{ name: "read", description: "read a file", inputSchema: { type: "object" } }],
-  });
-  const adapter = () => createOpenAICompatAdapter({ model: MODEL, baseURL: LOOPBACK, apiKey: "ollama", systemPrompt: "sys" });
 
   it("a native tool call on turn 1, then an empty reply on turn 2: the retry happens, the latch does not", async () => {
     const a = adapter();
@@ -118,5 +119,31 @@ describe("the adapter, end to end", () => {
     await adapter().runTurn(input(0), () => {});
     expect(hasNoTools(LOOPBACK, MODEL)).toBe(true);
     expect(hasNoTools(LOOPBACK, MODEL, Date.now() + NO_TOOLS_LATCH_TTL_MS + 1)).toBe(false);
+  });
+});
+
+// The turn loop owns these two shapes: a reasoning-only turn gets the
+// reasoning-only nudge (empty-turn-termination.ts) and a cut-off one the
+// cut-off re-drive (cut-off-turn.ts). The adapter's tools-stripped retry, and
+// the latch, are for a reply with nothing in it at all.
+describe("the tools-stripped retry is only for a reply with no output of any kind", () => {
+  it("a reasoning-only reply goes to the turn loop: no retry, no latch, stop reason kept", async () => {
+    mockStream.mockResolvedValueOnce(result({ assembledThinking: "I should read the file first." }));
+    const state = await adapter().runTurn(input(0), () => {});
+    expect(mockStream).toHaveBeenCalledTimes(1);
+    expect(hasNoTools(LOOPBACK, MODEL)).toBe(false);
+    expect(state.terminalReason).toBe("done");
+  });
+
+  it("a reply cut off at the output limit goes to the turn loop with its stop reason", async () => {
+    mockStream.mockResolvedValueOnce(result({ providerStop: "length" }));
+    const state = await adapter().runTurn(input(0), () => {});
+    expect(mockStream).toHaveBeenCalledTimes(1);
+    expect(hasNoTools(LOOPBACK, MODEL)).toBe(false);
+    expect((state.providerState.providerPayload as { stopReason?: string }).stopReason).toBe("length");
+  });
+
+  it("a LAN runtime counts as local for the latch, the same as every other local-model rule", () => {
+    expect(shouldLatchNoToolSupport("http://192.168.1.20:11434/v1", MODEL)).toBe(true);
   });
 });

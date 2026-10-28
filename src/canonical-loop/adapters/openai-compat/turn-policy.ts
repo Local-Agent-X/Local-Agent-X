@@ -1,18 +1,40 @@
 /**
  * Per-turn policy for the OpenAI-compat adapter, split out of openai-compat.ts:
- * two pure decisions about an ENDPOINT — whether an empty reply with tools
- * attached may latch the model off tools, and whether text that looks like a
- * tool call may be rescued into one. Both key on the host, never on the turn,
- * so they live beside the other openai-compat/* helpers.
+ * which reply is the "can't do tools" signature the tools-stripped retry is
+ * for, whether that reply may latch the model off tools, and whether text that
+ * looks like a tool call may be rescued into one.
  */
 import { getToolsVerified } from "../../../providers/types.js";
+import { isLocalModelEndpoint } from "../../../local-runtimes/model-endpoint.js";
+import { isCutOffStop } from "../../turn-loop/cut-off-turn.js";
+import type { StreamOnceResult } from "./types.js";
+
+/**
+ * A settled reply with nothing in it: no text, no reasoning, no tool call, and
+ * not cut off at the output limit. That is what a tool-incapable model (qwen2:7b
+ * with `tools` attached) returns, and the only shape the adapter retries with
+ * tools stripped. A reasoning-only reply is the model thinking and stopping, and
+ * a cut-off one ran out of room; the turn loop re-drives both with a nudge that
+ * says what happened (empty-turn-termination.ts, cut-off-turn.ts), and a
+ * retry here hid them from it and latched a working model off tools.
+ */
+export function isNoOutputReply(result: StreamOnceResult): boolean {
+  return !result.interruptedByInject &&
+    !result.stoppedByGuard &&
+    !result.firstError &&
+    result.assembledText.length === 0 &&
+    result.assembledThinking.length === 0 &&
+    result.pendingToolCalls.length === 0 &&
+    !isCutOffStop(result.providerStop);
+}
 
 /**
  * Whether an empty-with-tools turn should PERMANENTLY latch the model to
  * no-tool mode (via markNoToolSupport) vs just retry-without-tools for this
  * one turn.
  *
- * Latch ONLY for loopback/local endpoints. The latch exists for genuinely
+ * Latch ONLY for local-model endpoints (isLocalModelEndpoint: loopback, a
+ * private-IP runtime, or one the operator added). The latch exists for genuinely
  * tool-incapable local models (qwen2:7b on local Ollama): there, an empty
  * response really does mean "this model can't do tools," and latching saves a
  * dead first leg on every later turn. For CLOUD frontier providers (Gemini's
@@ -29,15 +51,7 @@ export function shouldLatchNoToolSupport(baseURL: string | undefined, model?: st
   // only. Without this, one empty after a real tool call latched the install
   // off native tools for that model (op-outcomes, 2026-09-23).
   if (model && getToolsVerified(baseURL, model)?.ok === true) return false;
-  let host: string;
-  try {
-    host = new URL(baseURL).hostname.toLowerCase();
-  } catch {
-    return false;
-  }
-  // Strip IPv6 brackets if URL parsing left them.
-  host = host.replace(/^\[|\]$/g, "");
-  return host === "localhost" || host === "127.0.0.1" || host === "::1" || host === "0.0.0.0";
+  return isLocalModelEndpoint(baseURL);
 }
 
 /**

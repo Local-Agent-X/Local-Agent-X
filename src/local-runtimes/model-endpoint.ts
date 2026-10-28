@@ -1,7 +1,8 @@
 /**
  * Is `baseUrl` serving a LOCAL model — one the local-model request rules
- * apply to: the default output cap (LOCAL_DEFAULT_MAX_TOKENS) and its
- * window-aware clamp, the degenerate-stream guard, and the thinking-off switch?
+ * apply to: the output cap (local-cap.ts: the LOCAL_DEFAULT_MAX_TOKENS default
+ * and the window-aware clamp), the degenerate-stream guard, and the
+ * thinking-off switch?
  *
  *   loopback / private-IP literal → yes (the zero-config case)
  *   a runtime the operator added by hand (settings.localRuntimes) → yes, by

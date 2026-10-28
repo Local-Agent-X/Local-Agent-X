@@ -29,7 +29,7 @@ import { DEGENERATE_STREAM_STOP_REASON } from "../stream-guards.js";
 import { extractToolCallsFromText } from "../tool-call-text-extractor.js";
 import { resolveContextWindow } from "../../../context-manager/model-windows.js";
 import { markNoToolSupport } from "../../../providers/types.js";
-import { LOCAL_DEFAULT_MAX_TOKENS } from "../../../providers/adapter/types.js";
+import { LOCAL_DEFAULT_MAX_TOKENS } from "./local-cap.js";
 import type { AdapterReport } from "../../adapter-contract.js";
 import type { ProviderRequest } from "../../../providers/adapter/types.js";
 
@@ -245,21 +245,22 @@ describe("window-aware cap threading (runTurn → ProviderRequest)", () => {
     expect(typeof sent.maxTokens).toBe("number");
     expect(sent.maxTokens!).toBeLessThan(LOCAL_DEFAULT_MAX_TOKENS);
     expect(sent.maxTokens!).toBeGreaterThan(4_000); // tiny prompt: ~window − reserve
-    expect(sent.omitDefaultMaxTokens).toBeUndefined();
   });
 
-  it("PROBED window with no completion budget: cap omitted AND transport default suppressed", async () => {
+  it("PROBED window with no completion budget: the request carries no cap at all", async () => {
     mockWindow.mockReturnValue({ tokens: 1_100, provenance: "probed" });
     const sent = await runOnce();
     expect(sent.maxTokens).toBeUndefined();
-    expect(sent.omitDefaultMaxTokens).toBe(true);
   });
 
-  it("FLOOR window (unloaded model): nothing clamped, nothing suppressed — the 16384 default applies downstream", async () => {
+  it("FLOOR window (unloaded model): the request itself carries the 16384 default, unclamped", async () => {
     mockWindow.mockReturnValue({ tokens: 8_192, provenance: "floor" });
-    const sent = await runOnce();
-    expect(sent.maxTokens).toBeUndefined();
-    expect(sent.omitDefaultMaxTokens).toBeUndefined();
+    expect((await runOnce()).maxTokens).toBe(LOCAL_DEFAULT_MAX_TOKENS);
+  });
+
+  it("cloud endpoint: no cap invented", async () => {
+    mockWindow.mockReturnValue({ tokens: 400_000, provenance: "exact" });
+    expect((await runOnce({ baseURL: "https://api.llm-cloud.example/v1" })).maxTokens).toBeUndefined();
   });
 
   it("explicit cap: respected under a big window, clamped down under a small one, never raised", async () => {

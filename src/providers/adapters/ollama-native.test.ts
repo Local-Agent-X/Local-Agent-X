@@ -10,7 +10,6 @@ import { _resetContextSizingForTests, ensureContextDecision } from "../../local-
 import { ContextSizingStore } from "../../local-runtimes/context-sizing-store.js";
 import { _resetModelProfilesForTests } from "../../local-runtimes/model-profile.js";
 import { fakeFetchJson, referenceRuntime, RTX_5090 } from "../../local-runtimes/context-sizing.test-helper.js";
-import { reloadSettings } from "../../settings.js";
 
 const ROOT = "http://127.0.0.1:11434";
 let dir: string;
@@ -90,7 +89,7 @@ describe("OllamaNativeAdapter request", () => {
   it("posts /api/chat with the applied num_ctx, keep_alive and the local output cap", async () => {
     await sizeTheModel();
     responses.push(() => ndjson([{ message: { role: "assistant", content: "ok" }, done: false }, done()]));
-    const chunks = await collect(req());
+    const chunks = await collect(req({ maxTokens: 16_384 }));
     expect(posts).toHaveLength(1);
     expect(posts[0]).toMatchObject({
       model: "qwen3.6:27b", stream: true, keep_alive: "30m",
@@ -103,25 +102,16 @@ describe("OllamaNativeAdapter request", () => {
     await expect.poll(() => psReads).toBe(1);
   });
 
-  // Terminal-Bench (2026-10-18): Ollama reached by NAME from a container got
-  // no num_predict, so a thinking model generated until the context was full.
-  it("caps output for a runtime the operator added by name, as for loopback", async () => {
-    const remote = "http://host.docker.internal:11434";
-    writeFileSync(join(dir, "settings.json"), JSON.stringify({ localRuntimes: [{ kind: "ollama", baseUrl: remote }] }));
-    reloadSettings();
-    try {
-      responses.push(() => ndjson([done()]));
-      await collect(req({ baseURL: `${remote}/v1` }));
-      expect(posts[0].options).toMatchObject({ num_predict: 16_384 });
-      writeFileSync(join(dir, "settings.json"), "{}");
-      reloadSettings();
-      responses.push(() => ndjson([done()]));
-      await collect(req({ baseURL: `${remote}/v1` }));
-      expect(posts[1].options).not.toHaveProperty("num_predict");
-    } finally {
-      rmSync(join(dir, "settings.json"), { force: true });
-      reloadSettings();
-    }
+  // The cap is decided once, in canonical-loop/adapters/openai-compat/
+  // local-cap.ts (the local runaway default included): the transport sends
+  // num_predict exactly as req.maxTokens, and none without it.
+  it("sends num_predict exactly as given, and none when the request has no cap", async () => {
+    responses.push(() => ndjson([done()]));
+    await collect(req({ maxTokens: 40_000 }));
+    expect(posts[0].options).toMatchObject({ num_predict: 40_000 });
+    responses.push(() => ndjson([done()]));
+    await collect(req());
+    expect(posts[1].options).not.toHaveProperty("num_predict");
   });
 
   it("sends no num_ctx for a model LAX has not sized, and does not observe it", async () => {

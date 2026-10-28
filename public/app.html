@@ -37,7 +37,7 @@
 <link rel="preload" href="/hero-master.png" as="image"/>
 <link rel="icon" type="image/x-icon" href="/favicon.ico"/>
 <link rel="icon" type="image/png" sizes="192x192" href="/favicon.png"/>
-<link rel="stylesheet" href="/css/app.css?v=vb44"/>
+<link rel="stylesheet" href="/css/app.css?v=vb45"/>
 <link rel="stylesheet" href="/css/browser-workspace.css?v=v2"/>
 <link rel="stylesheet" href="/vendor/xterm/xterm.css?v=v1"/>
 <link rel="stylesheet" href="/css/voice-sphere.css?v=vb2"/>
@@ -748,8 +748,8 @@
                rather than a false alarm. Replaces a status-badge that no code
                ever populated. -->
           <div id="cfg-emb-status"></div>
-          <div class="field"><label class="field-label">Provider</label><select class="field-select" id="cfg-emb-provider" onchange="onEmbProviderChange(this.value)"><option value="ollama">Ollama (Local, Free)</option><option value="openai">OpenAI</option><option value="gemini">Google Gemini</option><option value="local">Built-in (No server needed)</option><option value="none">None (Keyword search only)</option></select></div>
-          <div class="field"><label class="field-label">Embedding Model</label><select class="field-select" id="cfg-emb-model-select" style="display:none"></select><input class="field-input" id="cfg-emb-model" placeholder="e.g. nomic-embed-text, text-embedding-3-small" value=""/><div class="field-hint" id="cfg-emb-hint">For Ollama: nomic-embed-text (default), mxbai-embed-large, all-minilm. For OpenAI: text-embedding-3-small, text-embedding-3-large.</div></div>
+          <div class="field"><label class="field-label">Provider</label><select class="field-select" id="cfg-emb-provider" onchange="onEmbProviderChange(this.value)"><option value="ollama">Ollama (Local, Free)</option><option value="openai">OpenAI (cloud: sends your memory text to OpenAI)</option><option value="gemini">Google Gemini (cloud: sends your memory text to Google)</option><option value="local">Built-in (No server needed)</option><option value="none">None (Keyword search only)</option></select></div>
+          <div class="field"><label class="field-label">Embedding Model</label><select class="field-select" id="cfg-emb-model-select" style="display:none"></select><input class="field-input" id="cfg-emb-model" placeholder="e.g. nomic-embed-text, text-embedding-3-small" value=""/><div class="field-hint" id="cfg-emb-hint">For Ollama: nomic-embed-text (default), mxbai-embed-large, all-minilm. For OpenAI: text-embedding-3-small, text-embedding-3-large.</div><div class="field-warning" id="cfg-emb-cloud-warning" hidden></div></div>
           <div class="mem-card-divider"></div>
           <div class="section-title">Import Conversations</div>
           <div class="section-desc">Import chat history from other AI platforms. Supports ChatGPT, Claude.ai, Claude Code, Codex CLI, Slack, and generic JSON exports. Auto-detects format.</div>
@@ -1880,7 +1880,7 @@
 <script src="/js/settings-android.js?v=v1"></script>
 <script src="/js/settings-save-load.js?v=v2"></script>
 <script src="/js/settings-voice-tier4.js?v=v1"></script>
-<script src="/js/settings-embedding.js?v=v1"></script>
+<script src="/js/settings-embedding.js?v=v2"></script>
 <script src="/js/settings-conversation-ingest.js?v=v1"></script>
 <script src="/js/settings-tts.js?v=v1"></script>
 <script src="/js/settings-agent-sync.js?v=v2"></script>

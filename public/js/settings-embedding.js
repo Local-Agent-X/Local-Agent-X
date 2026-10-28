@@ -100,13 +100,23 @@ async function onEmbProviderChange(provider) {
   const modelSelect = document.getElementById('cfg-emb-model-select');
 
   const hints = {
-    ollama: 'Select an Ollama model. Run "ollama pull nomic-embed-text" to add embedding models.',
+    ollama: 'Runs on this computer (unless your Ollama server is on another machine). Run "ollama pull nomic-embed-text" to add embedding models.',
     openai: 'Recommended: text-embedding-3-small ($0.02/M tokens). Needs OPENAI_API_KEY in secrets.',
     gemini: 'Recommended: text-embedding-004. Needs GEMINI_API_KEY in secrets.',
     local: 'Built-in TF-IDF embeddings. No external server needed but lower quality.',
     none: 'Keyword search only. No semantic matching.',
   };
   if (hint) hint.textContent = hints[provider] || '';
+  // A cloud embedder receives the text of everything memory indexes. Project
+  // documents are the exception: they stay keyword-searched and never leave.
+  const cloudWarning = document.getElementById('cfg-emb-cloud-warning');
+  const cloudNames = { openai: 'OpenAI', gemini: 'Google' };
+  if (cloudWarning) {
+    cloudWarning.hidden = !cloudNames[provider];
+    cloudWarning.textContent = cloudNames[provider]
+      ? 'Your data leaves this computer: to build search, LAX sends ' + cloudNames[provider] + ' the text of your chat history, saved facts and knowledge files. Project documents are not sent; they get keyword search only. Choose Ollama or Built-in to keep everything on this computer.'
+      : '';
+  }
 
   if (provider === 'ollama' && modelSelect) {
     // Show dropdown, hide text input, load Ollama models

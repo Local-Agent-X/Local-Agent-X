@@ -15,9 +15,10 @@ import type { WireReasoningEffort } from "../reasoning-effort.js";
  * Runaway guard rail for LOCAL endpoints: a degenerate local model (observed:
  * a local Gemma looping one sentence verbatim for 41s until user abort) can
  * otherwise generate unbounded — the streaming path historically sent NO
- * token cap at all. 16384 output tokens is far past any legitimate single
- * reply yet bounds a runaway to minutes-not-forever even when the
- * degenerate-stream guard misses the pattern. Cloud endpoints deliberately
+ * token cap at all. Only where the window is a guess: on a MEASURED window
+ * the reply gets the whole budget the window has left instead (local-cap.ts),
+ * since a thinking model's reasoning alone can run past 40k tokens, and the
+ * degenerate-stream guard (stream-guards.ts) stops a loop. Cloud endpoints deliberately
  * get NO default — this is a guard rail, never a style cap; an explicit
  * `maxTokens` from the caller always wins on any endpoint. Applied by the
  * OpenAI-http transport; window-aware clamping lives in

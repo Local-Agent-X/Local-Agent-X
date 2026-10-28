@@ -64,14 +64,6 @@ export interface TurnInput {
    */
   stepEffortHint?: "mechanical";
   /**
-   * Present when this step re-drives a reply the output limit cut off before
-   * any tool call: the Nth such re-drive in a row (turn-loop/cut-off-turn.ts).
-   * An adapter that sets its own output cap MAY raise it for the step — the
-   * reply needed more room. Additive v1 metadata: ABSENT means 0, i.e. exactly
-   * today's behavior.
-   */
-  cutOffRedrives?: number;
-  /**
    * True when `messages` is an ephemerally COMPACTED view of op_messages
    * (compact-history.ts swapped older turns for a summary). Additive v1
    * metadata: adapters ignore it; turn-loop copies it onto the committed

@@ -12,7 +12,7 @@ import type { ToolCall } from "../contract-types.js";
 const appendNudgeAsUserMessage = vi.fn(() => true);
 vi.mock("./nudges.js", () => ({ appendNudgeAsUserMessage: (...a: unknown[]) => appendNudgeAsUserMessage(...(a as [])) }));
 
-const { CUT_OFF_KEPT_CHARS, CUT_OFF_NUDGE, CUT_OFF_REDRIVE_LIMIT, cutOffRedrivesInARow, evaluateCutOffTurn, isCutOffStop, trimCutOffText } =
+const { CUT_OFF_KEPT_CHARS, CUT_OFF_NUDGE, CUT_OFF_REDRIVE_LIMIT, evaluateCutOffTurn, isCutOffStop, trimCutOffText } =
   await import("./cut-off-turn.js");
 const { _resetMiddlewareStates } = await import("../middlewares/state.js");
 
@@ -45,16 +45,6 @@ describe("evaluateCutOffTurn", () => {
     for (let i = 0; i < CUT_OFF_REDRIVE_LIMIT; i++) expect(evaluateCutOffTurn(turn({ turnIdx: i }))).toBe("redrive");
     expect(evaluateCutOffTurn(turn({ turnIdx: CUT_OFF_REDRIVE_LIMIT }))).toBe("exhausted");
     expect(appendNudgeAsUserMessage).toHaveBeenCalledTimes(CUT_OFF_REDRIVE_LIMIT);
-  });
-
-  it("tells the next turn how many re-drives in a row it follows, back to 0 once a turn acts", () => {
-    expect(cutOffRedrivesInARow(op.id)).toBe(0);
-    evaluateCutOffTurn(turn());
-    expect(cutOffRedrivesInARow(op.id)).toBe(1);
-    evaluateCutOffTurn(turn());
-    expect(cutOffRedrivesInARow(op.id)).toBe(2);
-    evaluateCutOffTurn(turn({ providerStop: "tool_calls", toolCalls: [call] }));
-    expect(cutOffRedrivesInARow(op.id)).toBe(0);
   });
 
   it("counts consecutive cut-offs only: a turn that acts resets the budget", () => {

@@ -208,11 +208,10 @@ export class OpenAICompatAdapter implements Adapter {
     }
 
     // Window-aware output cap. vLLM-class engines validate prompt+max_tokens
-    // against max_model_len, so on a MEASURED window the local default (and
-    // any explicit cap) clamps down to the real completion budget — or is
-    // omitted entirely when none is left. See local-cap.ts for the policy.
-    applyLocalCap(req, { baseURL, explicitMaxTokens: this.opts.maxTokens, window: preflight.window,
-      fit: preflight.fit, cutOffRedrives: input.cutOffRedrives });
+    // against max_model_len, so on a MEASURED window the reply gets the real
+    // completion budget (an explicit cap clamps down to it) — or no cap at
+    // all when none is left. See local-cap.ts for the policy.
+    applyLocalCap(req, { baseURL, explicitMaxTokens: this.opts.maxTokens, window: preflight.window, fit: preflight.fit });
 
     this.inflight = this.runStreamOnce(req, report);
     let result = await this.inflight;

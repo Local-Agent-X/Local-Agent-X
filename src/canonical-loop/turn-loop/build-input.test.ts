@@ -27,7 +27,6 @@ vi.mock("../../context-manager/model-windows.js", async (importOriginal) => {
 vi.mock("../../context-manager/compaction.js", () => ({ summarizeOldMessages: vi.fn(async () => "SUMMARY") }));
 
 import { buildTurnInput, collapseAdjacentUserMessages } from "./build-input.js";
-import { evaluateCutOffTurn } from "./cut-off-turn.js";
 import { compactHistory } from "./compact-history.js";
 import { lookupContextWindow, resolveContextWindow } from "../../context-manager/model-windows.js";
 import { summarizeOldMessages } from "../../context-manager/compaction.js";
@@ -307,17 +306,6 @@ describe("buildTurnInput — situational-awareness wiring", () => {
     const last = input.messages[input.messages.length - 1];
     expect((last.content as { text: string }).text).toContain("[SITUATIONAL CONTEXT");
     expect(input.stepEffortHint).toBe("mechanical");
-  });
-
-  // The adapter raises its local output cap from this count (local-cap.ts).
-  it("hands the adapter the cut-off re-drives the turn follows, and nothing otherwise", async () => {
-    appendAssistantReply();
-    expect((await buildTurnInput(makeOp("interactive"), 1, null)).cutOffRedrives).toBeUndefined();
-    const cutOff = { op: makeOp("interactive"), turnIdx: 1, providerStop: "length", toolCalls: [],
-      terminalReason: "done" as const, middlewareAborted: false, middlewareSuspended: false };
-    evaluateCutOffTurn(cutOff);
-    evaluateCutOffTurn({ ...cutOff, turnIdx: 2 });
-    expect((await buildTurnInput(makeOp("interactive"), 3, null)).cutOffRedrives).toBe(2);
   });
 
   // F2 — a redirect turn. The `[REDIRECT]` row is appended by the ADAPTER,

@@ -24,9 +24,9 @@
  *                               documented anti-pattern. The engine's own
  *                               server-side clamp covers the gap until a
  *                               probe sweep learns the real window.
- *   measured (probed / exact) → cap = min(explicit ?? default × 2^redrives,
- *                               window − promptEstimate − OUTPUT_RESERVE);
- *                               if that budget is under
+ *   measured (probed / exact) → cap = explicit clamped to the budget, else
+ *                               the whole budget: window − promptEstimate −
+ *                               OUTPUT_RESERVE. If that budget is under
  *                               MIN_USEFUL_COMPLETION_TOKENS, send NO cap at
  *                               all (omitDefault): the prompt already ~fills
  *                               the window — prompt-side pressure is the
@@ -35,13 +35,17 @@
  *
  * An explicit caller cap is never RAISED — only clamped by the same rule.
  *
- * The default doubles for each cut-off re-drive in a row (TurnInput.
- * cutOffRedrives, turn-loop/cut-off-turn.ts): a thinking model's reasoning
- * counts against the cap, and a reply cut off before its first tool call
- * needs more room, not the same room again. Only on a measured window, where
- * the doubled cap can be held to what the window has left.
+ * No flat cap on a measured window: the reply may use whatever the window
+ * has left. A thinking model's reasoning counts as output, and qwen3.8 thinks
+ * 40k+ tokens on a hard derivation (Hermes, which sends no cap, did the same
+ * on the same tasks, 2026-10-25). The 16k default cut those replies off, and
+ * each re-drive started the thought over: TB2 adaptive-rejection-sampler
+ * (2026-10-27) spent 16k, then 32k, then 39k tokens of thinking, ~10 minutes
+ * of a 15-minute task. A model stuck repeating itself is stopped by the
+ * degenerate-stream guard (stream-guards.ts) within seconds; the window bounds
+ * the rest.
  */
-import { LOCAL_DEFAULT_MAX_TOKENS, type ProviderRequest } from "../../../providers/adapter/types.js";
+import type { ProviderRequest } from "../../../providers/adapter/types.js";
 import { OUTPUT_RESERVE_TOKENS, type RequestFit } from "../../../context-manager/request-fit.js";
 import type { ContextWindowResolution } from "../../../context-manager/model-windows.js";
 import { isLocalModelEndpoint } from "../../../local-runtimes/model-endpoint.js";
@@ -66,8 +70,6 @@ export function clampLocalMaxTokens(args: {
   windowProvenance: ContextWindowResolution["provenance"];
   /** Estimated tokens of the request as it will actually ship. */
   promptTokensEstimate: number;
-  /** Cut-off re-drives in a row this request follows (absent = 0). */
-  cutOffRedrives?: number;
 }): LocalCapDecision {
   const passthrough: LocalCapDecision = { maxTokens: args.explicitMaxTokens, omitDefault: false };
   if (!args.isLocalEndpoint) return passthrough;
@@ -79,8 +81,7 @@ export function clampLocalMaxTokens(args: {
   // very budget that reserve exists to protect.
   const available = args.windowTokens - args.promptTokensEstimate - OUTPUT_RESERVE_TOKENS;
   if (available < MIN_USEFUL_COMPLETION_TOKENS) return { maxTokens: undefined, omitDefault: true };
-  const cap = args.explicitMaxTokens ?? LOCAL_DEFAULT_MAX_TOKENS * 2 ** (args.cutOffRedrives ?? 0);
-  return { maxTokens: Math.min(cap, available), omitDefault: false };
+  return { maxTokens: Math.min(args.explicitMaxTokens ?? available, available), omitDefault: false };
 }
 
 /**
@@ -94,7 +95,6 @@ export function resolveLocalCap(args: {
   explicitMaxTokens: number | undefined;
   window: ContextWindowResolution;
   fit: RequestFit;
-  cutOffRedrives?: number;
 }): LocalCapDecision {
   return clampLocalMaxTokens({
     isLocalEndpoint: isLocalModelEndpoint(args.baseURL),
@@ -102,7 +102,6 @@ export function resolveLocalCap(args: {
     windowTokens: args.window.tokens,
     windowProvenance: args.window.provenance,
     promptTokensEstimate: args.fit.requestTokens,
-    cutOffRedrives: args.cutOffRedrives,
   });
 }
 

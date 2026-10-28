@@ -1,11 +1,10 @@
-// Window-aware output-cap clamp: on a MEASURED local window the default (or
-// explicit) cap must shrink to the real completion budget — vLLM validates
+// Window-aware output cap: on a MEASURED local window the reply gets the real
+// completion budget, and an explicit cap shrinks to it — vLLM validates
 // prompt+max_tokens against max_model_len and 400s every request otherwise —
 // while guesses (floor/heuristic windows) and cloud endpoints change nothing.
 
 import { describe, it, expect } from "vitest";
 import { applyLocalCap, clampLocalMaxTokens, resolveLocalCap, MIN_USEFUL_COMPLETION_TOKENS } from "./local-cap.js";
-import { LOCAL_DEFAULT_MAX_TOKENS } from "../../../providers/adapter/types.js";
 import { OUTPUT_RESERVE_TOKENS, type RequestFit } from "../../../context-manager/request-fit.js";
 
 function base(over: Partial<Parameters<typeof clampLocalMaxTokens>[0]> = {}) {
@@ -20,14 +19,9 @@ function base(over: Partial<Parameters<typeof clampLocalMaxTokens>[0]> = {}) {
 }
 
 describe("clampLocalMaxTokens", () => {
-  it("big measured window: default rides through unclamped", () => {
-    expect(base()).toEqual({ maxTokens: LOCAL_DEFAULT_MAX_TOKENS, omitDefault: false });
-  });
-
-  it("small measured window: default clamps to window − prompt − reserve", () => {
-    const d = base({ windowTokens: 8_192 });
-    expect(d).toEqual({ maxTokens: 8_192 - 3_000 - OUTPUT_RESERVE_TOKENS, omitDefault: false });
-    expect(d.maxTokens!).toBeLessThan(LOCAL_DEFAULT_MAX_TOKENS);
+  it("measured window: the cap is the whole budget, window − prompt − reserve", () => {
+    expect(base()).toEqual({ maxTokens: 131_072 - 3_000 - OUTPUT_RESERVE_TOKENS, omitDefault: false });
+    expect(base({ windowTokens: 8_192 })).toEqual({ maxTokens: 8_192 - 3_000 - OUTPUT_RESERVE_TOKENS, omitDefault: false });
   });
 
   it("exact-provenance windows clamp the same as probed ones", () => {
@@ -80,28 +74,22 @@ describe("applyLocalCap", () => {
 
   it("puts the decided cap on the request, and the omit flag only when there is no room", () => {
     const req: { maxTokens?: number; omitDefaultMaxTokens?: boolean } = {};
-    applyLocalCap(req, { ...args, cutOffRedrives: 1 });
-    expect(req).toEqual({ maxTokens: LOCAL_DEFAULT_MAX_TOKENS * 2 });
+    applyLocalCap(req, args);
+    expect(req).toEqual({ maxTokens: 131_072 - 3_000 - OUTPUT_RESERVE_TOKENS });
     const full: { maxTokens?: number; omitDefaultMaxTokens?: boolean } = {};
     applyLocalCap(full, { ...args, window: { tokens: 3_100, provenance: "probed" as const } });
     expect(full).toEqual({ maxTokens: undefined, omitDefaultMaxTokens: true });
   });
 });
 
-describe("clampLocalMaxTokens after a cut-off reply", () => {
-  it("each re-drive in a row doubles the default, so a long thought gets room to finish", () => {
-    expect(base({ cutOffRedrives: 1 }).maxTokens).toBe(LOCAL_DEFAULT_MAX_TOKENS * 2);
-    expect(base({ cutOffRedrives: 2 }).maxTokens).toBe(LOCAL_DEFAULT_MAX_TOKENS * 4);
-  });
-
-  it("never beyond what the measured window has left", () => {
-    expect(base({ cutOffRedrives: 2, windowTokens: 40_000 }).maxTokens).toBe(40_000 - 3_000 - OUTPUT_RESERVE_TOKENS);
-  });
-
-  it("a guessed window or a cloud endpoint is unchanged; an explicit cap is never raised", () => {
-    expect(base({ cutOffRedrives: 2, windowProvenance: "floor" })).toEqual({ maxTokens: undefined, omitDefault: false });
-    expect(base({ cutOffRedrives: 2, isLocalEndpoint: false })).toEqual({ maxTokens: undefined, omitDefault: false });
-    expect(base({ cutOffRedrives: 2, explicitMaxTokens: 512 }).maxTokens).toBe(512);
+// TB2 adaptive-rejection-sampler, 2026-10-27: qwen3.8 thought 16k, then 32k,
+// then 39k tokens before its first tool call, cut off twice by the 16k local
+// default and starting over each time.
+describe("no flat cap on a measured local window", () => {
+  it("a long thought gets the whole budget the window has left, on the first try", () => {
+    const cap = base({ windowTokens: 172_032, promptTokensEstimate: 12_000 }).maxTokens!;
+    expect(cap).toBe(172_032 - 12_000 - OUTPUT_RESERVE_TOKENS);
+    expect(cap).toBeGreaterThan(40_000);
   });
 });
 

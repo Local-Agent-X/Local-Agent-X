@@ -8,11 +8,10 @@ export interface RetryOptions {
   baseDelayMs: number;
   maxDelayMs: number;
   shouldRetry?: (error: unknown, attempt: number) => boolean;
-  /** Optional shared retry budget. When passed, attempts also count
-   *  against ctx.budget; withRetry bails early if the budget or deadline
-   *  is exhausted even when the local maxRetries is not. */
+  /** The turn's retry context; its correlationId goes on each retry's log
+   *  line. The local maxRetries is the only cap (see retry-context.ts). */
   ctx?: RetryContext;
-  /** Layer label for ctx.onAttempt / log lines. Defaults to "L1-tool". */
+  /** Layer label for log lines. Defaults to "L1-tool". */
   layer?: string;
 }
 
@@ -42,25 +41,14 @@ export async function withRetry<T>(
   let lastError: unknown;
 
   for (let attempt = 0; attempt <= opts.maxRetries; attempt++) {
-    // Telemetry-only budget bookkeeping — count attempts so callers can
-    // inspect ctx.budget.attemptsUsed if they want to. The gating that
-    // used to live here (throw "retry budget exhausted" / "retry deadline
-    // exceeded") was a regression bait: when a turn spent its budget on
-    // early prep work (PDF lookups, protocol loads, etc.) before slow-
-    // start tools like `browser` ran, the gate killed those tools BEFORE
-    // their first real attempt. The shared-budget machinery is reserved
-    // for a future multi-layer retry strategy; only L1 (this function)
-    // exists today, and each withRetry call's local `maxRetries` is the
-    // correct per-call cap. Counter still increments so a future second
-    // layer can read it; nothing throws on it.
-    if (opts.ctx) opts.ctx.budget.attemptsUsed++;
-
+    // No shared-budget gate: one that threw "retry budget exhausted" killed
+    // slow-start tools like `browser` BEFORE their first real attempt when
+    // the turn had spent the budget on earlier prep work. Each call's local
+    // `maxRetries` is the cap.
     try {
       return await fn();
     } catch (err) {
       lastError = err;
-      try { opts.ctx?.onAttempt?.(layer, attempt + 1, err instanceof Error ? err : new Error(String(err))); } catch { /* hook must not break flow */ }
-
       if (attempt >= opts.maxRetries) break;
       if (opts.shouldRetry && !opts.shouldRetry(err, attempt + 1)) break;
 

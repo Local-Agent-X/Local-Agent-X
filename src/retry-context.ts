@@ -1,20 +1,17 @@
 /**
- * RetryContext — shared retry budget + correlationId for a single request.
+ * RetryContext — the correlationId that stitches one chat turn's tool-retry
+ * log lines (`withRetry` in src/auto-retry.ts, called by
+ * tool-execution/tool-runner.ts) together across what telemetry would
+ * otherwise see as unrelated events.
  *
- * History: six retry layers (L1-L6) could once stack on one chat turn.
- * After P4.C6 + bc91139 + P5.C4 only L1 (`withRetry` in src/auto-retry.ts,
- * called by tool-executor for transient-network tools) remains. The
- * shared-budget machinery matters only when a second layer reappears, but
- * the correlationId is useful today: it stitches retry log lines for one
- * turn together across what telemetry would otherwise see as unrelated
- * events.
- *
- * Future layers that would plug in here if resurrected:
- *   - Per-loop stream-error retries (L2/L3/L4) — were in run-anthropic /
- *     run-standard / agent-codex; deleted P4.C6.
- *   - Provider cascade (L5) — was in routes/chat.ts; deleted bc91139.
- *   - Warm-pool subprocess retry (L6) — never existed as a retry loop;
- *     warm-pool uses a wake-queue, not retries.
+ * Not a retry budget. Each retry layer bounds itself and owns a different
+ * failure: a tool call's transient error (`withRetry`, its own maxRetries);
+ * one provider request (canonical-loop/adapters/transport-retry.ts); an op
+ * whose turn failed before doing anything (the worker's re-queue,
+ * canonical-loop/worker-adapter-retry.ts). A shared attempt budget once lived
+ * here and gated `withRetry`; it killed slow-start tools before their first
+ * attempt when earlier work had spent it, so the gate went, and the fields
+ * nothing read went after it.
  */
 import { randomUUID } from "node:crypto";
 
@@ -22,36 +19,17 @@ export interface RetryContext {
   /** Stable per-request id. Mirror into every retry log line so logs
    *  across layers/processes can be stitched. */
   correlationId: string;
-  /** Budget shared across the request. `attemptsUsed` is the only field
-   *  read today; `maxAttempts` / `deadlineMs` are reserved for when a
-   *  second retry layer (re-)appears and the two need to cooperate. */
-  budget: { maxAttempts: number; deadlineMs: number; attemptsUsed: number };
-  /** Hook for telemetry / tests to observe retry attempts. */
-  onAttempt?: (layer: string, attempt: number, err?: Error) => void;
 }
 
-const DEFAULT_MAX_ATTEMPTS = 4;
-const DEFAULT_DEADLINE_MS = 90_000;
-
-export function createRetryContext(
-  opts?: Partial<RetryContext["budget"]> & { onAttempt?: RetryContext["onAttempt"] },
-): RetryContext {
-  return {
-    correlationId: randomUUID(),
-    budget: {
-      maxAttempts: opts?.maxAttempts ?? DEFAULT_MAX_ATTEMPTS,
-      deadlineMs: opts?.deadlineMs ?? Date.now() + DEFAULT_DEADLINE_MS,
-      attemptsUsed: opts?.attemptsUsed ?? 0,
-    },
-    onAttempt: opts?.onAttempt,
-  };
+export function createRetryContext(): RetryContext {
+  return { correlationId: randomUUID() };
 }
 
 // ── Per-session attachment ──
-// The tool-executor doesn't take a RetryContext parameter (would require
-// threading through executeToolCalls → executeSingleTool → withRetry). The
-// chat-turn entry attaches the context by sessionId; tool-executor reads
-// it at the withRetry call site. Mirrors the session-policy.ts pattern.
+// The tool runner doesn't take a RetryContext parameter (would require
+// threading through executeToolCalls → the dispatch phases → withRetry). The
+// chat-turn entry attaches the context by sessionId; tool-runner.ts reads it
+// at the withRetry call site. Mirrors the session-policy.ts pattern.
 const BY_SESSION = new Map<string, RetryContext>();
 
 export function attachRetryContext(sessionId: string, ctx: RetryContext): void {

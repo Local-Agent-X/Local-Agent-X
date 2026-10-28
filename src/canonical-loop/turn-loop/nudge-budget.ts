@@ -32,7 +32,7 @@ const BUDGET_BY_OP_TYPE: Record<string, number> = {
 };
 const DEFAULT_BUDGET = 8;
 
-const EXEMPT_REASONS = new Set(["adapter-retry", "reported-adapter-retry"]);
+const EXEMPT_REASONS = new Set(["adapter-retry"]);
 
 /**
  * Guards whose firing is bounded BY CONSTRUCTION, so they do not draw on the

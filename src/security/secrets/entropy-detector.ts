@@ -112,7 +112,18 @@ function printableRatio(buf: Buffer): number {
 function isSlug(run: string): boolean {
   const parts = run.split(/[-_/.]/);
   if (parts.length < 3) return false;
-  return parts.every(p => p.length > 0 && /^[a-z0-9]+$/.test(p));
+  return parts.every(p => p.length > 0 && /^[a-z0-9]+$/.test(p)) || isWordSlug(parts);
+}
+
+// The same costume in title or upper case: every part a word (`Source`, `POV`,
+// `code`) or a number, 3+ characters each. TB2 build-pov-ray (2026-10-27): the
+// download URL's `Official-POV-Ray_Source_Code` segment cleared the entropy
+// floor and the request was refused as carrying a token. A random key's parts
+// mix case inside a word (`xK9q`), so they almost never all read as words; the
+// length floor keeps 1-2 character parts, which do by chance, from counting.
+const WORD_PART = /^(?:[A-Z]?[a-z]+|[A-Z]+|[0-9]+)$/;
+function isWordSlug(parts: string[]): boolean {
+  return parts.every(p => p.length >= 3 && WORD_PART.test(p));
 }
 
 function isExcludedBase64(run: string): boolean {

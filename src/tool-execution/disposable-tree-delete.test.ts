@@ -229,6 +229,24 @@ describe("an inert prelude, a virtual environment, a redirection", () => {
     }
   });
 
+  // TB2 build-pmars, 2026-10-27: `cd /tmp && rm -rf pmars* && apt-get source pmars`.
+  it.runIf(process.platform !== "win32")("a glob in the last segment under the temp dir", () => {
+    const temp = join(root, "os-temp");
+    mkdirSync(join(temp, "pmars-0.9.4"));
+    expect(floor(`cd ${temp} && rm -rf pmars* && apt-get source pmars`)).toBe("allow-with-rollback");
+    expect(floor(`rm -rf ${temp}/pmars*`)).toBe("allow-with-rollback");
+  });
+
+  it("but not a glob outside temp, in a folder segment, with a trailing slash, or for Remove-Item", () => {
+    const temp = join(root, "os-temp").replace(/\\/g, "/");
+    for (const command of [
+      "rm -rf node_*",
+      `rm -rf ${temp}/*/build`,
+      `rm -rf ${temp}/pmars*/`,
+      `Remove-Item -Recurse -Force ${temp}/pmars*`,
+    ]) expect(floor(command), command).toBe("ask");
+  });
+
   it("a redirection is not a target", () => {
     expect(floor("rm -rf node_modules 2>/dev/null")).toBe("allow-with-rollback");
     expect(floor("rm -rf node_modules > /dev/null 2>&1")).toBe("allow-with-rollback");

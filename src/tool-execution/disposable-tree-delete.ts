@@ -149,6 +149,7 @@ function agentCreated(abs: string, isDir: boolean, sessionId: string | undefined
 }
 
 function disposable(target: string, verb: DeleteVerb, scope: TreeDeleteScope): boolean {
+  if (tempGlob(target, verb, scope)) return true;
   if (!target || EXPANDS.test(target) || unplaceable(target)) return false;
   const trailingSep = /[\\/]$/.test(target);
   const abs = resolve(scope.cwd, target);
@@ -167,6 +168,21 @@ function disposable(target: string, verb: DeleteVerb, scope: TreeDeleteScope): b
     return (verb !== "remove-item" && process.platform !== "win32") || !hasShallowLink(abs);
   }
   return agentCreated(abs, stat.isDirectory(), scope.sessionId);
+}
+
+/** A glob in the last segment of a target under the real temp dir: whatever
+ *  it matches is in temp. TB2 build-pmars (2026-10-27): `cd /tmp && rm -rf
+ *  pmars*` waited on a card twice. Never with a trailing separator (the glob
+ *  then a slash would follow a matched link out of temp; bare, rm only
+ *  unlinks it), and
+ *  never for Remove-Item or on Windows, where a recursive delete follows a
+ *  junction and the matches are not inspected here. */
+function tempGlob(target: string, verb: DeleteVerb, scope: TreeDeleteScope): boolean {
+  if (!target || /[$`~%]/.test(target) || /[\\/]$/.test(target) || unplaceable(target)) return false;
+  if (verb === "remove-item" || process.platform === "win32") return false;
+  const abs = resolve(scope.cwd, target);
+  if (GLOB.test(dirname(abs)) || !GLOB.test(basename(abs))) return false;
+  return inTempDir(join(dirname(abs), "_"), scope.tempDir ?? tmpdir());
 }
 
 /**

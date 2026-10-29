@@ -148,20 +148,63 @@ export function pathsOverlap(a: string, b: string): boolean {
   return related(norm(a), norm(b));
 }
 
+/** An existing folder the shell may enter: a cd into it succeeds. */
+function enterable(dir: string): boolean {
+  try {
+    if (!statSync(dir).isDirectory()) return false;
+    accessSync(dir, constants.X_OK);
+    return true;
+  } catch {
+    return false; /* missing or not enterable: the cd may fail */
+  }
+}
+
+// The compound commands a segment can open or close: errexit is suspended in
+// their conditions, and a cd inside one is not the line's own.
+const OPENS = /^(?:if|while|until|for|select|case|function)\b|^[({]|\(\)\s*\{?$/;
+const CLOSES = /^(?:fi|done|esac)\b|^[)}]/;
+
+/**
+ * Does a failed `cd` at top-level segment `at` end the script? `set -e` is on
+ * at the top level before it and not turned off, the cd opens its own segment
+ * outside every compound command, and it is the last command of its && / ||
+ * list: bash's errexit applies there, and nowhere earlier in a list. Then a cd
+ * that fails runs nothing after it, so whatever runs after it runs in its
+ * folder whether or not that folder exists yet. TB2 configure-git-webserver,
+ * 2026-10-28: `set -e⏎mkdir -p /tmp/e2e && cd /tmp/e2e⏎rm -rf key* testrepo`
+ * was carded because /tmp/e2e did not exist when the command was checked.
+ */
+export function errexitStopsFailedCd(line: string, at: number): boolean {
+  const segments = shellSegments(line);
+  let errexit = false;
+  let open = 0;
+  for (const [i, s] of segments.slice(0, at + 1).entries()) {
+    const words = s.text.trim().split(/\s+/);
+    if (i === at) {
+      const last = segments[at + 1]?.after;
+      return errexit && open === 0 && /^(?:cd|pushd)$/.test(words[0]) && last !== "&&" && last !== "||" && last !== "|" && last !== "|&";
+    }
+    if (OPENS.test(s.text.trim())) open++;
+    if (CLOSES.test(words[0] ?? "")) open = Math.max(0, open - 1);
+    if (open > 0 || words[0] !== "set") continue;
+    for (const [j, w] of words.entries()) {
+      if (/^-[a-zA-Z]*e/.test(w) || (w === "-o" && words[j + 1] === "errexit")) errexit = true;
+      if (/^\+[a-zA-Z]*e/.test(w) || (w === "+o" && words[j + 1] === "errexit")) errexit = false;
+    }
+  }
+  return false;
+}
+
 /**
  * The top-level `cd`s in `line` that cannot fail, for shellDeletes: the folder
  * exists, may be entered, and nothing before the cd moves it away (the rule
  * above) or deletes it. A failed cd leaves the commands after a `;` or a
- * newline running in the old folder, so only a proven one carries there.
+ * newline running in the old folder, so only a proven one carries there,
+ * unless a failed cd ends the script (errexitStopsFailedCd).
  */
 export function cdCannotFail(line: string): CdSucceeds {
   return (dir, segment) => {
-    try {
-      if (!statSync(dir).isDirectory()) return false;
-      accessSync(dir, constants.X_OK);
-    } catch {
-      return false; /* missing or not enterable: the cd may fail */
-    }
+    if (!enterable(dir) && !errexitStopsFailedCd(line, segment)) return false;
     if (!priorRunsLeave(line, segment, dir)) return false;
     return shellDeletes(line).filter((d) => d.segment < segment).every((d) =>
       d.targets.every((t) => !UNPLACEABLE.test(t) && (isAbsolute(t) || typeof d.cwd === "string") && !pathsOverlap(resolve(d.cwd ?? "", t), dir)));

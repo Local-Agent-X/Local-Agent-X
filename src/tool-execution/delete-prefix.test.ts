@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { shellDeletes } from "../security/layer/shell-delete-targets.js";
 import { shellSegments } from "../security/layer/shell-lex.js";
-import { cdCannotFail, deleteLine, priorRunsLeave, runsAlone } from "./delete-prefix.js";
+import { cdCannotFail, deleteLine, errexitStopsFailedCd, priorRunsLeave, runsAlone } from "./delete-prefix.js";
 
 const T = "/tmp/clonetest";
 /** The delete is the last segment of each command below. */
@@ -92,5 +92,49 @@ describe("cdCannotFail: a cd whose folder exists carries past ; and a newline", 
     expect(placed(`mv ${vm} ${posix(root)}/old; cd ${vm}; rm -f qmp.sock`)).toBeNull();
     expect(placed(`rm -rf ${vm}; cd ${vm}; rm -f qmp.sock`)).toBeNull();
     expect(shellDeletes(`cd ${vm}\nrm -f qmp.sock`, posix(root)).at(-1)?.cwd).toBeNull();
+  });
+});
+
+// Under `set -e` a cd that fails ends the script, so what runs after it runs
+// in its folder whether or not the folder exists yet. TB2 configure-git-
+// webserver, 2026-10-28: `set -e⏎mkdir -p /tmp/e2e && cd /tmp/e2e⏎rm -rf key*`.
+describe("errexitStopsFailedCd: where bash's errexit ends the script at a failed cd", () => {
+  const atCd = (command: string) => {
+    const line = deleteLine(command)!;
+    const at = shellSegments(line).findIndex((s) => /^\s*cd\b/.test(s.text));
+    return errexitStopsFailedCd(line, at);
+  };
+
+  it.each([
+    "set -e\nmkdir -p /tmp/e2e && cd /tmp/e2e\nrm -rf key* testrepo",
+    "set -euo pipefail; cd /tmp/new; rm -f a",
+    "set -o errexit\ncd /tmp/new\nrm -f a",
+    "set -e\n# you'll want a fresh dir\ncd /tmp/new\nrm -f a",
+  ])("stops: %s", (command) => expect(atCd(command)).toBe(true));
+
+  it.each([
+    "mkdir -p /tmp/e2e && cd /tmp/e2e\nrm -rf key*",
+    "set -e; set +e; cd /tmp/new; rm -f a",
+    "set -e; cd /tmp/new || true; rm -f a",
+    "set -e; cd /tmp/new && ls; rm -f a",
+    "set -e; if true; then\ncd /tmp/new\nfi; rm -f a",
+    "set -e; (cd /tmp/new; rm -f a)",
+    "f() { set -e; }; cd /tmp/new; rm -f a",
+    "set -e; while read d; do\ncd /tmp/new\ndone; rm -f a",
+  ])("does not: %s", (command) => expect(atCd(command)).toBe(false));
+});
+
+describe("cdCannotFail under errexit", () => {
+  let root: string;
+  beforeEach(() => { root = mkdtempSync(join(tmpdir(), "lax-delete-prefix-")); });
+  afterEach(() => rmSync(root, { recursive: true, force: true }));
+  const posix = (p: string) => p.replace(/\\/g, "/");
+  const placed = (command: string) => shellDeletes(command, posix(root), cdCannotFail(command)).at(-1)?.cwd;
+
+  it("places the delete in a folder the script makes, and only where a failed cd stops it", () => {
+    const fresh = posix(join(root, "e2e"));
+    expect(placed(`set -e\nmkdir -p ${fresh} && cd ${fresh}\nrm -rf key* testrepo`)).toBe(join(root, "e2e"));
+    expect(placed(`mkdir -p ${fresh} && cd ${fresh}\nrm -rf key* testrepo`)).toBeNull();
+    expect(placed(`set -e\nln -sfn /home/user ${fresh}\ncd ${fresh}\nrm -rf key*`)).toBeNull();
   });
 });

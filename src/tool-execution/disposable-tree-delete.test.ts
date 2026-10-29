@@ -164,6 +164,26 @@ describe("every lookalike keeps the card", () => {
     ]) expect(floor(command), command).toBe("ask");
   });
 
+  // TB2 configure-git-webserver, 2026-10-28: the folder did not exist yet, so
+  // the cd was unproven; under set -e a failed cd ends the script.
+  const e2eScript = (errexit: string, targets: string) => {
+    const e2e = join(root, "os-temp", "e2e").replace(/\\/g, "/");
+    return `${errexit}# test key (you'll add your own key)\nmkdir -p ${e2e} && cd ${e2e}\nrm -rf ${targets}\nssh-keygen -t ed25519 -N '' -f key -q`;
+  };
+  it("a set -e script's delete in a temp folder it makes, and the same script without errexit", () => {
+    expect(floor(e2eScript("set -e\n", "testrepo"))).toBe("allow-with-rollback");
+    expect(floor(e2eScript("", "testrepo"))).toBe("ask");
+  });
+  // A glob is disposable only off Windows (disposableGlob).
+  it.skipIf(process.platform === "win32")("the run's own line, with its glob", () => {
+    expect(floor(e2eScript("set -e\n", "key* testrepo"))).toBe("allow-with-rollback");
+    // A glob in a folder that is not there matches nothing, unless the line
+    // moves something into the folder first.
+    const fresh = join(root, "project", "fresh").replace(/\\/g, "/");
+    expect(floor(`rm -rf ${fresh}/*`)).toBe("allow-with-rollback");
+    expect(floor(`mv ${join(root, "project", "client-data").replace(/\\/g, "/")} ${fresh}; rm -rf ${fresh}/*`)).toBe("ask");
+  });
+
   it("a path into temp through a link that leaves it", () => {
     symlinkSync(join(root, "project"), join(root, "os-temp", "link"), "junction");
     const posix = (p: string) => p.replace(/\\/g, "/");

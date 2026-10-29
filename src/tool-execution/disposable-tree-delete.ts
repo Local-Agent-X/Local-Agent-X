@@ -97,6 +97,15 @@ function hasShallowLink(dir: string): boolean {
 
 /** The folder `abs` really sits in is under the real temp dir: `/tmp/link/x`
  *  with `link` pointing at the home folder deletes `~/x`, not temp. */
+/** A glob whose folder is not there matches nothing, so deletes nothing — as
+ *  a path not there does (disposable). What runs before the delete may not
+ *  move anything into that folder (priorRunsLeave on prefixTarget). TB2
+ *  configure-git-webserver, 2026-10-28: `rm -rf key*` in a folder the script
+ *  makes with `mkdir -p` one line earlier. */
+function globFolderAbsent(abs: string): boolean {
+  try { lstatSync(dirname(abs)); return false; } catch (err) { return (err as NodeJS.ErrnoException).code === "ENOENT"; }
+}
+
 function inTempDir(abs: string, tempDir: string): boolean {
   try {
     return within(realpathSync(tempDir), join(realpathSync(dirname(abs)), basename(abs)));
@@ -184,7 +193,7 @@ function disposableGlob(target: string, verb: DeleteVerb, scope: TreeDeleteScope
   if (verb === "remove-item" || process.platform === "win32") return false;
   const abs = resolve(scope.cwd, target);
   if (GLOB.test(dirname(abs)) || !GLOB.test(basename(abs))) return false;
-  return inTempDir(join(dirname(abs), "_"), scope.tempDir ?? tmpdir()) || globHoldsNoData(abs);
+  return globFolderAbsent(abs) || inTempDir(join(dirname(abs), "_"), scope.tempDir ?? tmpdir()) || globHoldsNoData(abs);
 }
 
 /** What the command runs before a delete is checked against: the target, or
@@ -236,7 +245,7 @@ function disposableFile(target: string, cwd: string | undefined, tempDir: string
   if (!target || unplaceable(target) || (cwd === undefined && !isAbsolute(target))) return false;
   const abs = resolve(cwd ?? "", target);
   if (GLOB.test(dirname(abs))) return false;
-  if (GLOB.test(basename(abs))) return inTempDir(join(dirname(abs), "_"), tempDir) || globHoldsNoData(abs);
+  if (GLOB.test(basename(abs))) return globFolderAbsent(abs) || inTempDir(join(dirname(abs), "_"), tempDir) || globHoldsNoData(abs);
   let stat;
   try { stat = lstatSync(abs); } catch (err) { return (err as NodeJS.ErrnoException).code === "ENOENT"; }
   return inTempDir(abs, tempDir) || holdsNoData(abs, stat, /[\\/]$/.test(target));

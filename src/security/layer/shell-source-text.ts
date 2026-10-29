@@ -15,11 +15,13 @@
 //   still read it; anything else (cat, tee, a database client) takes data.
 //   Under an unquoted delimiter bash still runs the body's `$(…)` and
 //   backticks, so those stay on the line, where the nested-command rules see
-//   them.
+//   them. Data written to a file that a later command on the line runs is
+//   read the way that command runs it (shell-file-runs.ts): `cat > x.sh <<EOF
+//   … EOF; bash x.sh` is a script.
 
 import { commandPositions } from "./shell-command-positions.js";
 import { expansionsIn } from "./shell-nested-commands.js";
-import { resolveRealArgv0 } from "./shell-lex.js";
+import { INTERPRETERS, LANGUAGES, SHELLS, laterRunOf, outputFiles, readerBin } from "./shell-file-runs.js";
 
 export interface SourceText {
   /** The command line bash parses: continuations joined, heredoc bodies out. */
@@ -32,15 +34,7 @@ export interface SourceText {
   programs: string[];
 }
 
-/** Interpreters whose stdin program the destination reader can read. */
-const LANGUAGES = new Set(["python", "perl", "ruby", "node", "php", "deno", "bun"]);
-
 interface Heredoc { delimiter: string; quoted: boolean; stripTabs: boolean; body: string }
-
-const SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh", "ash", "fish", "source", "."]);
-const INTERPRETERS = new Set([
-  "python", "perl", "ruby", "node", "php", "deno", "bun", "pwsh", "powershell", "cmd", "xargs",
-]);
 
 const marker = (n: number) => `LAXHEREDOC${n}`;
 
@@ -134,13 +128,17 @@ function walk(text: string): { line: string; heredocs: Heredoc[] } {
   return { line, heredocs };
 }
 
+type HeredocKind = "shell" | "interpreter" | "program" | "data";
+
 /** What reads each heredoc: the command it is attached to and every command it
  *  pipes into. A shell anywhere in that chain runs it; failing that, an
- *  interpreter does; otherwise it is data. A heredoc whose command cannot be
- *  found is judged as a script. "program" is an interpreter whose every
- *  reader in the chain is a language (LANGUAGES), not `xargs` or `cmd`. */
-function readers(line: string, count: number): Array<"shell" | "interpreter" | "program" | "data"> {
-  const kinds: Array<"shell" | "interpreter" | "program" | "data"> = new Array(count).fill("shell");
+ *  interpreter does; otherwise it is data, unless the chain writes it to a
+ *  file a later command runs, which reads it as that command does. A heredoc
+ *  whose command cannot be found is judged as a script. "program" is an
+ *  interpreter whose every reader in the chain is a language (LANGUAGES), not
+ *  `xargs` or `cmd`. */
+function readers(line: string, heredocs: readonly Heredoc[]): HeredocKind[] {
+  const kinds: HeredocKind[] = new Array(heredocs.length).fill("shell");
   const positions = commandPositions(line).positions.filter((p) => p.depth === 0);
   positions.forEach((p, idx) => {
     for (const r of p.redirections) {
@@ -150,27 +148,24 @@ function readers(line: string, count: number): Array<"shell" | "interpreter" | "
       for (let j = idx + 1; j < positions.length && positions[j].piped; j++) chain.push(positions[j]);
       const bins = chain.map((q) => readerBin(q.words));
       const interpreters = bins.filter((b) => INTERPRETERS.has(b!));
-      kinds[Number(m[1])] = bins.some((b) => b === null || SHELLS.has(b)) ? "shell"
+      const kind: HeredocKind = bins.some((b) => b === null || SHELLS.has(b)) ? "shell"
         : interpreters.length === 0 ? "data"
         : interpreters.every((b) => LANGUAGES.has(b!)) ? "program" : "interpreter";
+      const firstLine = heredocs[Number(m[1])].body.split("\n", 1)[0];
+      const runs = kind === "data"
+        ? chain.flatMap(outputFiles).map((f) => laterRunOf(positions, idx + chain.length - 1, f, firstLine)).filter(Boolean)
+        : [];
+      kinds[Number(m[1])] = runs.includes("shell") ? "shell" : runs.includes("interpreter") ? "interpreter" : runs[0] ?? kind;
     }
   });
   return kinds;
-}
-
-/** The program that reads a command's stdin, past an assignment, `(`, `{`, `!`
- *  and wrappers; null when the program is computed at run time, which fails
- *  closed as a shell. */
-function readerBin(words: string[]): string | null {
-  const bin = resolveRealArgv0(words.map((w) => w.replace(/^(?:[A-Za-z_]\w*=(?=\$\())?(?:\$\(|[<>]\(|[({!`])+/, "")).filter(Boolean));
-  return bin === null || /[$`]/.test(bin) ? null : bin;
 }
 
 /** Read `command` as bash does before running it (see the header). */
 export function readSourceText(command: string): SourceText {
   const { line, heredocs } = walk(command);
   if (heredocs.length === 0) return { command: line, scripts: [], programs: [] };
-  const kinds = readers(line, heredocs.length);
+  const kinds = readers(line, heredocs);
   const scripts: string[] = [];
   const programs: string[] = [];
   const rebuilt = line.replace(/<<LAXHEREDOC(\d+)/g, (_, n: string) => {
@@ -184,4 +179,16 @@ export function readSourceText(command: string): SourceText {
     return words;
   });
   return { command: rebuilt, scripts, programs };
+}
+
+/**
+ * The text of every command bash runs for `command`: its command line, then
+ * each heredoc body a shell runs, read the same way. For a rule that scans
+ * text for what runs (the irreversible floor, the delete extractor): a data
+ * body (a Makefile, a hook, an init script written for later) is not on the
+ * list, and a Python program's `del x[i]` stays inside its quoted word.
+ */
+export function commandsBashRuns(command: string): string[] {
+  const source = readSourceText(command);
+  return [source.command, ...source.scripts.flatMap(commandsBashRuns)];
 }

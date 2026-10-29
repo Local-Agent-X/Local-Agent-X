@@ -14,7 +14,8 @@ import {
 } from "./shell-rules.js";
 import { arithmeticSpanEnd, execBasename, resolveRealArgv0, resolveRealArgv0Index, splitShellSegments, stripQuotedSpans, tokenizeCommand } from "./shell-lex.js";
 import { realpathDeep } from "./file-access.js";
-import { splitRedirections } from "./shell-command-positions.js";
+import { commandPositions, splitRedirections, type CommandPosition } from "./shell-command-positions.js";
+import { laterRunOf, outputFiles } from "./shell-file-runs.js";
 import type { InlineEvalPolicy } from "./types.js";
 import { DECODE_EXEC_REFUSAL, ENCODED_PAYLOAD_REFUSAL, NESTED_COMMAND_WAY_OUT } from "./shell-refusals.js";
 
@@ -37,9 +38,7 @@ export function detectObfuscation(command: string): string | null {
   // `od` only dumps, it never decodes, so it is not checked.
   const bins = splitShellSegments(command).map((s) => resolveRealArgv0(tokenizeCommand(s)) ?? "");
   const runs = bins.some((b) => DECODED_TEXT_RUNNERS.has(b));
-  const decodes = /\bbase64\b[^|;&\n]*\s(?:-d|-D|--decode)\b/i.test(command)
-    || /\bxxd\b[^|;&\n]*\s-[a-z]*r[a-z]*\b/i.test(command) || bins.includes("rev");
-  if (decodes && runs) return DECODE_EXEC_REFUSAL;
+  if (decodedTextRuns(command)) return DECODE_EXEC_REFUSAL;
   // String concatenation tricks: a='r'; b='m'; $a$b. The trick is the JOIN of
   // the pieces, so that is what is refused. Short quoted values alone are a
   // PowerShell hashtable (`@{n='Msg';e={…}}`, LogName='System'): a read-only
@@ -76,6 +75,36 @@ const DECODED_TEXT_RUNNERS: ReadonlySet<string> = new Set([
   "sh", "bash", "zsh", "dash", "ksh", "fish", "python", "perl", "ruby", "node", "php",
   "pwsh", "powershell", "eval", "source", ".", "xargs", "exec",
 ]);
+
+/** A command that decodes: `base64 -d`, `xxd -r`, `rev`. */
+function decodesText(p: CommandPosition): boolean {
+  const args = p.words.slice(p.at + 1);
+  if (p.bin === "base64") return args.some((a) => /^(?:-[a-zA-Z]*[dD][a-zA-Z]*|--decode)$/.test(a));
+  if (p.bin === "xxd") return args.some((a) => /^-[a-z]*r[a-z]*$/.test(a));
+  return p.bin === "rev";
+}
+
+/**
+ * Does decoded text reach something that runs it? Through the pipe it prints
+ * into (`… | base64 -d | sh`), or through a file a later command on the line
+ * runs (`base64 -d > x.sh; bash x.sh`). Decoded into a file nothing runs, it
+ * is data: TB2 filter-js-from-html (2026-10-28, from another harness's run)
+ * wrote a filter with `base64 -d <<'B64' > /app/filter.py` and checked its
+ * syntax with `python3 -c "ast.parse(…)"`, refused because a decode and an
+ * interpreter were both on the line.
+ */
+function decodedTextRuns(command: string): boolean {
+  const positions = commandPositions(command).positions;
+  return positions.some((p, i) => {
+    if (!decodesText(p)) return false;
+    let end = i;
+    while (positions[end + 1]?.piped) {
+      end++;
+      if (DECODED_TEXT_RUNNERS.has(positions[end].bin)) return true;
+    }
+    return [p, ...positions.slice(i + 1, end + 1)].flatMap(outputFiles).some((f) => laterRunOf(positions, end, f) !== null);
+  });
+}
 
 /** An unbroken run of base64/hex characters long enough to hide a program. */
 const ENCODED_BLOB = /[A-Za-z0-9+/=_-]{400,}/;
@@ -229,12 +258,13 @@ export function detectNestedCommandExecution(command: string): string | null {
   // Process substitution <(...) / >(...) — quote-stripped so a literal `>(`
   // inside quotes isn't misread (the operator is not quote-expandable), and
   // arithmetic-stripped: `$(( a<(b+1) ))` is a comparison.
-  if (/[<>]\(/.test(withoutArithmetic(stripQuotedSpans(command)))) {
+  if (/[<>]\(/.test(withoutArithmetic(stripQuotedSpans(command, { posixEscapes: true })))) {
     return `Blocked: process substitution <(...) / >(...) runs a nested command whose argv the network/denylist scan can't inspect. ${NESTED_COMMAND_WAY_OUT}`;
   }
   // Subshell ( ... ) and brace-group { ...; } at a command position. `((` at a
   // segment start is an arithmetic command (no nested command) and is allowed.
-  for (const segment of splitShellSegments(command)) {
+  // POSIX-only check, so a backslash escapes as bash reads it.
+  for (const segment of splitShellSegments(command, { posixEscapes: true })) {
     const t = segment.trim();
     if (t.startsWith("(") && !t.startsWith("((")) {
       return `Blocked: a ( subshell ) runs its contents as a nested command the network/denylist scan can't inspect. Run the command without the subshell. ${NESTED_COMMAND_WAY_OUT}`;

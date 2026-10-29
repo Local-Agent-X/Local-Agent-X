@@ -4,6 +4,7 @@
 // stdin is a pipe. These replace raw-string patterns that matched the same words
 // anywhere in the line — inside commit messages, grep patterns, echo text.
 
+import { existsSync } from "node:fs";
 import { type CommandPosition } from "./shell-command-positions.js";
 import { execBasename, isShellReparseFlag } from "./shell-lex.js";
 import { INLINE_CODE_PATTERNS, INTERP_EVAL_FLAGS, NETWORK_CLIENT_BINS } from "./shell-rules.js";
@@ -28,7 +29,8 @@ export interface CommandRule {
   category: CommandRuleCategory;
   /** Finishes "Blocked: `<bin>` …" — what the command does that is refused. */
   why: string;
-  matches(p: CommandPosition): boolean;
+  /** `before`: the commands ahead of `p` on the line, in order. */
+  matches(p: CommandPosition, before: readonly CommandPosition[]): boolean;
   /** The word to name in the refusal, when it is not the command word (a wrapper). */
   offender?(p: CommandPosition): string;
 }
@@ -73,6 +75,25 @@ function binWith(
 ): CommandRule {
   const set = new Set(names);
   return { id, category, why, matches: (p) => set.has(p.bin) && when(argsOf(p)) };
+}
+
+// A Python virtual environment's activate script: set PATH and a prompt,
+// written by the tool that made the environment. `uv venv /x/.venv && source
+// /x/.venv/bin/activate` was refused as an unread script (TB2 financial-
+// document-processor, 2026-10-28, from another harness's run). Its own only
+// when the environment is on disk (pyvenv.cfg beside bin/) or an earlier
+// command on the line creates it there.
+const VENV_MAKERS: Array<(bin: string, args: string[]) => boolean> = [
+  (bin, args) => bin === "uv" && args[0] === "venv",
+  (bin) => bin === "virtualenv",
+  (bin, args) => bin === "python" && args.some((a, i) => a === "-m" && (args[i + 1] === "venv" || args[i + 1] === "virtualenv")),
+];
+function isVenvActivate(script: string, before: readonly CommandPosition[]): boolean {
+  const m = /^(\/.+?)\/+bin\/activate$/.exec(script);
+  if (!m) return false;
+  const dir = m[1].replace(/\/+$/, "");
+  if (existsSync(`${dir}/pyvenv.cfg`)) return true;
+  return before.some((q) => VENV_MAKERS.some((made) => made(q.bin, argsOf(q))) && argsOf(q).some((a) => a.replace(/\/+$/, "") === dir));
 }
 
 // `eval` and PowerShell's equivalents run a STRING as a command: whatever it
@@ -127,8 +148,8 @@ export const COMMAND_RULES: readonly CommandRule[] = [
   // inline-network scan still read the program for what it calls.
   binWith("inline-interpreter", "inline-program", "runs an inline program the shell checks cannot read",
     ["perl", "ruby", "php"], (a) => (a[0] === "-e" || a[0] === "-E") || lower(a[0]) === "-r"),
-  binWith("source-absolute", "shell-escape", "runs a script from an absolute path inside this shell",
-    [".", "source"], (a) => (a[0] ?? "").startsWith("/")),
+  { id: "source-absolute", category: "shell-escape", why: "runs a script from an absolute path inside this shell",
+    matches: (p, before) => (p.bin === "." || p.bin === "source") && (argsOf(p)[0] ?? "").startsWith("/") && !isVenvActivate(argsOf(p)[0], before) },
   binWith("interactive-shell", "shell-escape", "starts an interactive session, the building block of a reverse shell",
     ["bash", "sh", "zsh", "python"], (a) => a.includes("-i")),
   binWith("node-inspector", "shell-escape", "opens a debugger port that runs arbitrary code",

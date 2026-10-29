@@ -10,14 +10,32 @@
 
 import { SHELL_KEYWORD_PREFIXES, SHELL_WRAPPER_PREFIXES, WRAPPER_VALUE_OPTIONS } from "./shell-rules.js";
 
+/** How a lexer reads a backslash. POSIX shells escape with it: outside quotes
+ *  it makes the next character literal, inside double quotes it escapes `"`,
+ *  `\`, `$` and a backtick. Off by default, because the same lexers read
+ *  PowerShell and cmd lines, where `"C:\dir\"` is a path and a closing quote.
+ *  TB2 schemelike-metacircular-eval, 2026-10-28: `python3 -c "s = \"\"\"((eq?
+ *  …"` closed its quote at the first `\"`, and `((eq?` read as a subshell. */
+export interface LexOptions { posixEscapes?: boolean }
+
+/** At `i`, a backslash the lexer must take with the character after it. */
+function escapeAt(text: string, i: number, quote: string | null, opts: LexOptions): boolean {
+  if (!opts.posixEscapes || text[i] !== "\\" || quote === "'") return false;
+  return quote === null || /["\\$`]/.test(text[i + 1] ?? "");
+}
+
 // Remove the contents of single- and double-quoted spans (and the quotes)
 // so shell separators that are literal inside an argument — e.g. the `;` in
 // `python -c "a; b"` — aren't mistaken for command chaining.
-export function stripQuotedSpans(command: string): string {
+export function stripQuotedSpans(command: string, opts: LexOptions = {}): string {
   let out = "";
   let quote: string | null = null;
-  for (const c of command) {
-    if (quote) {
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i];
+    if (escapeAt(command, i, quote, opts)) {
+      if (!quote) out += command.slice(i, i + 2);
+      i++;
+    } else if (quote) {
       if (c === quote) quote = null;
     } else if (c === '"' || c === "'") {
       quote = c;
@@ -66,8 +84,8 @@ export function tokenizeCommand(segment: string): string[] {
 // newline-chained pair) can't escape by hiding behind a non-`|` separator.
 // Best-effort like the rest of this module: no operator-precedence parsing,
 // subshell/backslash-escape handling — enough to isolate each command position.
-export function splitShellSegments(command: string): string[] {
-  return shellSegments(command).map((s) => s.text);
+export function splitShellSegments(command: string, opts: LexOptions = {}): string[] {
+  return shellSegments(command, opts).map((s) => s.text);
 }
 
 /** The separator that PRECEDED a segment (null for the first). `|&` is bash's
@@ -96,8 +114,13 @@ export function arithmeticSpanEnd(command: string, i: number): number {
 }
 
 /** splitShellSegments, keeping which separator started each segment — a rule
- *  about what a command is PIPED into needs to know it was a pipe. */
-export function shellSegments(command: string): ShellSegment[] {
+ *  about what a command is PIPED into needs to know it was a pipe. A `#` that
+ *  starts a word comments out the rest of its line, in bash and PowerShell
+ *  alike, and is left out of the segment: read as words, the apostrophe in `#
+ *  there's a bug` opened a quote that swallowed the commands after it (TB2
+ *  feal-linear-cryptanalysis, 2026-10-28, where it hid a heredoc's command and
+ *  the C file it wrote was judged as a shell script). */
+export function shellSegments(command: string, opts: LexOptions = {}): ShellSegment[] {
   const segments: ShellSegment[] = [];
   let cur = "";
   let after: SegmentJoin | null = null;
@@ -105,6 +128,16 @@ export function shellSegments(command: string): ShellSegment[] {
   const cut = (join: SegmentJoin) => { segments.push({ text: cur, after }); cur = ""; after = join; };
   for (let i = 0; i < command.length; i++) {
     const c = command[i];
+    if (escapeAt(command, i, quote, opts)) {
+      cur += command.slice(i, i + 2);
+      i++;
+      continue;
+    }
+    if (!quote && c === "#" && (i === 0 || /[\s;&|(]/.test(command[i - 1]))) {
+      const nl = command.indexOf("\n", i);
+      i = (nl < 0 ? command.length : nl) - 1;
+      continue;
+    }
     if (quote) {
       cur += c;
       if (c === quote) quote = null;

@@ -42,6 +42,7 @@ import { folderFileCount } from "../tools/delete-folder.js";
 import { isHarnessRow } from "../harness-rows.js";
 import { containsHarnessMarker } from "../harness-text.js";
 import { shellDeletes, shellDeleteTargets } from "../security/layer/shell-delete-targets.js";
+import { commandsBashRuns } from "../security/layer/shell-source-text.js";
 import { disposableFileDeletes } from "./disposable-tree-delete.js";
 import { isTaskArtifact } from "../data-lineage/task-artifacts.js";
 import type { ToolDefinition } from "../types.js";
@@ -157,8 +158,13 @@ export function deleteTargetsOf(tc: { name: string; arguments: string }, tools?:
   // commandArg). EXP-18 showed the ladder: `delete_file` refused → `rm -rf`
   // carded by the floor → per-file `rm`, which nothing covered. The rule is
   // about the act, not the tool.
+  // Each command bash runs, not the raw text: a Makefile's `rm -f $(OUTPUT)`
+  // or an init script's `rm -f $PIDFILE`, written with `cat <<'EOF'`, deletes
+  // nothing, and Python's `del x[i]` in a heredoc program is not cmd's `del`
+  // (TB2 make-doom-for-mips, configure-git-webserver, llm-inference-batching-
+  // scheduler, 2026-10-28, from other harnesses' runs).
   const command = shellCommandOf(tc.name, args);
-  return command !== undefined ? shellDeleteTargets(command) : [];
+  return command === undefined ? [] : [...new Set(commandsBashRuns(command).flatMap(shellDeleteTargets))];
 }
 
 /** A delete_file target that is an existing folder: its file count, else null. */
@@ -225,7 +231,7 @@ function disposableShellTargets(name: string, args: Record<string, unknown>): st
 function placedShellTargets(name: string, args: Record<string, unknown>): Map<string, string> {
   const command = shellCommandOf(name, args);
   const placed = new Map<string, string>();
-  for (const del of command === undefined ? [] : shellDeletes(command)) {
+  for (const del of command === undefined ? [] : commandsBashRuns(command).flatMap((text) => shellDeletes(text))) {
     if (typeof del.cwd !== "string") continue;
     for (const t of del.targets) if (!isAbsolute(t) && !placed.has(t)) placed.set(t, join(del.cwd, t));
   }

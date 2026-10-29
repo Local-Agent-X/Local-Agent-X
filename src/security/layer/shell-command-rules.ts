@@ -62,11 +62,11 @@ export function findCommandRuleHit(command: string, ctx: CommandRuleContext = {}
   // is the refusal that still stands once a cage lets wget itself run.
   for (const network of [false, true]) {
     if (network && ctx.egressEnforced) break;
-    for (const p of walk.positions) {
+    for (const [i, p] of walk.positions.entries()) {
       for (const rule of COMMAND_RULES) {
         if ((rule.category === "network") !== network || standsDown(rule.category)) continue;
         if (network && reachesOnlyLoopback(p, ctx)) continue;
-        if (rule.matches(p)) return { kind: "rule", rule, bin: rule.offender?.(p) ?? p.words[p.at] };
+        if (rule.matches(p, walk.positions.slice(0, i))) return { kind: "rule", rule, bin: rule.offender?.(p) ?? p.words[p.at] };
       }
     }
   }

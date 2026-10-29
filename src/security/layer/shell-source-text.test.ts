@@ -15,8 +15,13 @@ describe("line continuations", () => {
 
 describe("heredocs", () => {
   it("drops a data body and keeps the operator and its redirect", () => {
+    const r = readSourceText("cat <<'EOF' > soln.py\nimport requests\n(a, b) = f()\nEOF\nwc -l soln.py");
+    expect(r).toEqual({ command: "cat <<'EOF' > soln.py\nwc -l soln.py", scripts: [], programs: [] });
+  });
+
+  it("reads a written file the line goes on to run as the program it is", () => {
     const r = readSourceText("cat <<'EOF' > soln.py\nimport requests\n(a, b) = f()\nEOF\npython3 soln.py");
-    expect(r).toEqual({ command: "cat <<'EOF' > soln.py\npython3 soln.py", scripts: [], programs: [] });
+    expect(r).toEqual({ command: "cat <<'EOF' 'import requests\n(a, b) = f()' > soln.py\npython3 soln.py", scripts: [], programs: ["import requests\n(a, b) = f()"] });
   });
 
   it("hands a body a shell reads back as a script", () => {

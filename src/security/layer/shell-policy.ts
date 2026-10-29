@@ -3,7 +3,7 @@ import type { SecurityDecision } from "../../types.js";
 import { USER_HINTS } from "../../types.js";
 import type { InlineEvalPolicy, FileAccessMode } from "./types.js";
 import { BLOCKED_COMMANDS, BROWSER_OPEN_CMDS, EGRESS_TEXT_PATTERNS, RM_DESTRUCTIVE_FLAGS, SOCKET_PLUMBING_PATTERNS } from "./shell-rules.js";
-import { shellLoopbackReachable, shellUnixSocketReachable } from "./loopback-grant.js";
+import { isThisMachineHost, shellLoopbackReachable, shellUnixSocketReachable } from "./loopback-grant.js";
 import { inlineProgramDestinations } from "./shell-inline-destinations.js";
 import { detectCatastrophicDelete } from "./catastrophic-paths.js";
 import { shellDeletes } from "./shell-delete-targets.js";
@@ -110,6 +110,30 @@ const SHELL_LOOPBACK_GRANT = { loopbackReachable: shellLoopbackReachable, unixSo
 function inlineProgramLocal(command: string, heredocPrograms: readonly string[]): boolean {
   const d = inlineProgramDestinations(command, heredocPrograms);
   return d.kind === "local" && d.ports.every(shellLoopbackReachable) && d.unixSockets.every(shellUnixSocketReachable);
+}
+
+/**
+ * Bash's /dev/tcp and /dev/udp sockets on the line all reach this machine: each
+ * spells a literal own address and a port the shell may reach, as `curl
+ * localhost:PORT` may (loopback-grant.ts). Then the fd plumbing that wires
+ * stdio onto one (`exec 3<>/dev/tcp/127.0.0.1/22`, `cat <&3`) reaches no
+ * farther. TB2 qemu-startup and configure-git-webserver (2026-10-28, from
+ * other harnesses' runs) probed a VM's telnet port and sshd this way. A host
+ * the line computes, or a path this cannot read, is not this machine.
+ */
+function devSocketsOnlyLocal(command: string): boolean {
+  const opened = command.match(/\/dev\/(?:tcp|udp)\//gi)?.length ?? 0;
+  const read = [...command.matchAll(/\/dev\/(?:tcp|udp)\/([A-Za-z0-9.:[\]-]+)\/(\d{1,5})(?![\w$])/gi)];
+  return opened > 0 && read.length === opened && read.every(([, host, port]) => isThisMachineHost(host) && shellLoopbackReachable(port));
+}
+
+/** The raw-text patterns a command is scanned for: the denylist always; where
+ *  no cage holds egress, the network text too, less what reaches only this
+ *  machine (an inline program's local destinations, /dev/tcp to a local port). */
+function rawTextPatterns(command: string, egressEnforced: boolean, inlineLocal: () => boolean): readonly RegExp[] {
+  if (egressEnforced) return BLOCKED_COMMANDS;
+  const egressText = inlineLocal() ? SOCKET_PLUMBING_PATTERNS : EGRESS_TEXT_PATTERNS;
+  return [...BLOCKED_COMMANDS, ...(devSocketsOnlyLocal(command) ? egressText.filter((p) => !SOCKET_PLUMBING_PATTERNS.includes(p)) : egressText)];
 }
 
 /** The command separator a bash command chains with outside quotes (newline,
@@ -423,7 +447,7 @@ export function evaluateShellCommand(
   // an unconfined host they are refused on sight. win32 is excluded: `$(…)`
   // and `( )` are ordinary PowerShell syntax there.
   if (platform !== "win32") {
-    const nested = detectNestedCommandExecution(structuralRulesApply ? command : stripQuotedSpans(command));
+    const nested = detectNestedCommandExecution(structuralRulesApply ? command : stripQuotedSpans(command, { posixEscapes: true }));
     if (nested) {
       return { allowed: false, reason: nested, userHint: USER_HINTS.commandShell };
     }
@@ -465,7 +489,7 @@ export function evaluateShellCommand(
   // full command (which catches patterns that span pipes). ONE reporter for both
   // arms so the two can't drift — they previously returned near-identical bare
   // strings and were edited independently.
-  const rawPatterns = egressEnforced ? BLOCKED_COMMANDS : [...BLOCKED_COMMANDS, ...(inlineLocal() ? SOCKET_PLUMBING_PATTERNS : EGRESS_TEXT_PATTERNS)];
+  const rawPatterns = rawTextPatterns(command, egressEnforced, inlineLocal);
   const segments = command.split("|").map((s) => s.trim());
   for (const segment of segments) {
     const hit = firstBlockedCommand(segment, rawPatterns);

@@ -25,6 +25,7 @@ import { declaredPaths, hasCapability, pathSpecsForCall, policyRowOf, shellComma
 import { TOOL_POLICIES } from "./tool-policy/tool-policies.js";
 import { declaredDestinations, destinationKey } from "./tool-execution/send-destinations.js";
 import { isDisposableTreeDelete, type TreeDeleteScope } from "./tool-execution/disposable-tree-delete.js";
+import { commandsBashRuns } from "./security/layer/shell-source-text.js";
 import { consentedInChat, type ChatTurn } from "./tool-execution/chat-consent.js";
 
 // Profile name cached 1s — same shape as the prior approvalMode cache.
@@ -390,9 +391,16 @@ export function isDestructiveCommand(
   // and app_serve_backend's command was never scanned at all.
   const raw = shellCommandOf(toolName, args);
   if (raw === undefined) return null;
-  const cmd = floorText(raw);
-  for (const { pattern, reason } of DESTRUCTIVE_COMMAND_PATTERNS) {
-    if (pattern.test(cmd)) return reason;
+  // Each command bash runs: a heredoc body is the line's data unless a shell
+  // runs it (shell-source-text.ts). A git hook or a Makefile written with
+  // `cat <<'EOF'` carded as the `rm -rf` inside it (TB2 git-multibranch,
+  // 2026-10-28, from another harness's run); a script fed to `bash <<EOF`, or
+  // one the line goes on to run, is still scanned.
+  for (const text of commandsBashRuns(raw)) {
+    const cmd = withoutInertLiterals(text);
+    for (const { pattern, reason } of DESTRUCTIVE_COMMAND_PATTERNS) {
+      if (pattern.test(cmd)) return reason;
+    }
   }
   return null;
 }

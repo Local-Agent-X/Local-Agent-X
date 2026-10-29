@@ -240,13 +240,13 @@ export const cameraCaptureTool: ToolDefinition = {
 export const ocrTool: ToolDefinition = {
   name: "ocr",
   description:
-    "Extract text from an image using OCR (Tesseract). " +
+    "Extract text from an image using OCR (Tesseract, on this computer). " +
     "Use this when the user asks to read text from an image, screenshot, or photo.",
   parameters: {
     type: "object",
     properties: {
       path: { type: "string", description: "Path to the image file" },
-      language: { type: "string", description: "OCR language (default: eng). Use eng+fra for multi-language." },
+      language: { type: "string", description: "OCR language (default and only installed: eng)." },
     },
     required: ["path"],
   },
@@ -254,19 +254,15 @@ export const ocrTool: ToolDefinition = {
     try {
       const filePath = resolveAgentPath(String(args.path), sessionIdOf(args));
       if (!existsSync(filePath)) return { content: `File not found: ${filePath}`, isError: true };
-      // Bind to the validated canonical inode (realpath + O_NOFOLLOW leaf) and
-      // hand the OCR engine that canonical path, so a symlink swapped in after
-      // the gate (R4-19) is rejected here instead of OCR'd off the swapped file.
+      // Read through the validated canonical inode (realpath + O_NOFOLLOW
+      // leaf) and hand the OCR engine those bytes, so a symlink swapped in
+      // after the gate (R4-19) is never OCR'd.
       const { fd, canonicalPath } = openValidatedRead(filePath);
-      const { closeSync } = await import("node:fs");
-      closeSync(fd);
-      const { recognizeTextNative, recognizeText } = await import("./ocr-tool.js");
-      let result;
-      try {
-        result = recognizeTextNative(canonicalPath, { language: args.language ? String(args.language) : undefined });
-      } catch {
-        result = await recognizeText(canonicalPath, { language: args.language ? String(args.language) : undefined });
-      }
+      const { closeSync, readFileSync } = await import("node:fs");
+      let bytes: Buffer;
+      try { bytes = readFileSync(fd); } finally { closeSync(fd); }
+      const { recognizeText } = await import("./ocr-tool.js");
+      const result = await recognizeText(bytes, args.language ? String(args.language) : undefined);
       if (!result.text) return { content: "No text detected in image.", isError: false };
       // Text read off an image is the image's author talking, not the user.
       return { content: `OCR Result (${result.processingMs}ms, lang=${result.language}):\n\n${wrapExternalContent(result.text, "ocr", { file: canonicalPath })}` };

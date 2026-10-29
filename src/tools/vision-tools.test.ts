@@ -14,8 +14,7 @@ import { resolveMediaPath } from "./shared/media-path.js";
 
 const ocr = vi.hoisted(() => ({ text: "" }));
 vi.mock("./ocr-tool.js", () => ({
-  recognizeTextNative: () => ({ text: ocr.text, confidence: -1, language: "eng", words: [], processingMs: 7 }),
-  recognizeText: async () => { throw new Error("unreachable"); },
+  recognizeText: async () => ({ text: ocr.text, confidence: 90, language: "eng", processingMs: 7 }),
 }));
 
 const maskId = (text: string): string => text.replace(/ id="[0-9a-f]+"/g, ' id="X"');

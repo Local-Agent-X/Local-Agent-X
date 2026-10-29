@@ -2,16 +2,18 @@
 // document of the chat's project fits in a quarter of the model's window, the
 // prompt carries all of them word for word; past that it carries none and the
 // agent works from search. The text comes from the index, never a re-read.
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, afterAll } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createCanvas } from "@napi-rs/canvas";
 import { MemoryIndex } from "../index.js";
 import { getRuntimeConfig, setRuntimeConfig } from "../../config.js";
 import { lookupContextWindow } from "../../context-manager/model-windows.js";
 import { setSessionProject, _resetSessionProjectsForTest } from "../../session/project.js";
 import { indexProjectDocs } from "./indexer.js";
 import { projectDocsDir } from "./folders.js";
+import { stopOcr } from "../../tools/ocr-tool.js";
 import { PROJECT_DOCS_FULL_SHARE, projectDocumentsInFull, projectDocumentsSection } from "./full-text.js";
 
 const PID = "proj-full-a";
@@ -36,7 +38,9 @@ afterEach(() => {
   try { rmSync(root, { recursive: true, force: true }); } catch {}
 });
 
-async function addDoc(projectId: string, name: string, text: string): Promise<void> {
+afterAll(() => stopOcr());
+
+async function addDoc(projectId: string, name: string, text: string | Buffer): Promise<void> {
   mkdirSync(projectDocsDir(projectId), { recursive: true });
   writeFileSync(join(projectDocsDir(projectId), name), text);
   await indexProjectDocs(memory, { id: projectId });
@@ -59,6 +63,16 @@ describe("a project's documents in full", () => {
     expect(projectDocumentsInFull(memory, PID, 100)).toBeNull();
     expect(projectDocumentsInFull(memory, OTHER, 100_000)).toBeNull();
   });
+
+  it("leave out a picture with no words in it", async () => {
+    const blank = createCanvas(400, 300);
+    const g = blank.getContext("2d");
+    g.fillStyle = "#fff";
+    g.fillRect(0, 0, 400, 300);
+    await addDoc(PID, "photo.png", blank.toBuffer("image/png"));
+    await addDoc(PID, "plan.md", "Ship in March.\n");
+    expect(projectDocumentsInFull(memory, PID, 1000)?.map((d) => d.path)).toEqual([`project/${PID}/docs/plan.md`]);
+  }, 60_000);
 
   it("follow the folder: a deleted file leaves, an edited one is the new text", async () => {
     await addDoc(PID, "a.md", "first version\n");

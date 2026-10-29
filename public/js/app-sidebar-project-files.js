@@ -15,7 +15,7 @@ function addProjectFiles(projectId, e) {
   const input = document.createElement('input');
   input.type = 'file';
   input.multiple = true;
-  input.accept = '.pdf,.docx,.pptx,.md,.markdown,.txt,.csv,.tsv,.json,.yaml,.yml,.xml,.html,.htm';
+  input.accept = '.pdf,.docx,.pptx,.md,.markdown,.txt,.csv,.tsv,.json,.yaml,.yml,.xml,.html,.htm,.png,.jpg,.jpeg,.webp,.bmp,.tif,.tiff';
   input.onchange = async () => {
     if (!input.files || input.files.length === 0) return;
     const form = new FormData();

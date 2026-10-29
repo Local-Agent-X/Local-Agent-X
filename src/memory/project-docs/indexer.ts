@@ -71,7 +71,9 @@ async function indexDoc(memory: MemoryIndex, doc: FoundDoc): Promise<void> {
   const { maxChunkChars, overlapChars } = memory.getChunkConfig();
   const chunks = chunkText(text, doc.virtualPath, "project-doc", maxChunkChars, overlapChars, { file_path: doc.file }) as Chunk[];
   await memory.indexChunksIdempotent(chunks, doc.virtualPath, "project-doc");
-  saveDocumentText(memory, doc.virtualPath, doc.file, text);
+  // A photo with no words in it is not a document to hand the model.
+  if (text.trim()) saveDocumentText(memory, doc.virtualPath, doc.file, text);
+  else forgetDocumentText(memory, doc.virtualPath);
   const [mtime, size] = doc.stamp.split(":").map(Number);
   memory["db"].prepare("INSERT OR REPLACE INTO files (path, source, hash, mtime, size) VALUES (?, 'project-doc', ?, ?, ?)")
     .run(doc.virtualPath, doc.stamp, mtime, size);

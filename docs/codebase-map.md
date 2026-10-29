@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1884 non-test source files · 90 oversized · 245 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1885 non-test source files · 90 oversized · 245 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -23,7 +23,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/security/` | 142 | 54 | XL | 3 |
 | `src/tools/` | 121 | 221 | XL | 9 |
 | `src/tool-execution/` | 85 | 79 | XL | 2 |
-| `src/canonical-loop/` | 81 | 276 | XL | 12 |
+| `src/canonical-loop/` | 81 | 277 | XL | 12 |
 | `src/workspace/` | 80 | 3 | M |  |
 | `src/providers/` | 70 | 26 | L | 1 |
 | `src/data-lineage/` | 55 | 11 | M |  |
@@ -333,6 +333,7 @@ job. Comments are free: never cut them to fit.
 
 - `src/agency/worktree-recovery.ts` — 340+ code lines (cap 350)
 - `src/browser/downloads.ts` — 340+ code lines (cap 350)
+- `src/canonical-loop/checkpoint.ts` — 330+ code lines (cap 350)
 - `src/canonical-loop/container-runtime-projection.ts` — 330+ code lines (cap 350)
 - `src/canonical-loop/provider-adapter-factory.ts` — 330+ code lines (cap 350)
 - `src/cognition/cross-session-learning/learner.ts` — 330+ code lines (cap 350)
@@ -344,7 +345,6 @@ job. Comments are free: never cut them to fit.
 - `src/broker-transport/phone-projection.ts` — 320+ code lines (cap 350)
 - `src/browser/layout-report.ts` — 320+ code lines (cap 350)
 - `src/canonical-loop/adapters/tool-call-text-corpus.ts` — 320+ code lines (cap 350)
-- `src/canonical-loop/checkpoint.ts` — 320+ code lines (cap 350)
 - `src/cognition/cross-session-learning/types.ts` — 320+ code lines (cap 350)
 - `src/protocols/learned-effectiveness.ts` — 320+ code lines (cap 350)
 - `src/protocols/learned-lifecycle.ts` — 320+ code lines (cap 350)

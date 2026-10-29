@@ -14,7 +14,7 @@ import {
   scavengeTurnCommitStages,
   type TurnCommitEnvelope,
 } from "./turn-commit-store.js";
-import { hasMessageCollision, isTurnCommitEnvelope } from "./turn-commit-validation.js";
+import { hasMessageCollision, turnCommitEnvelopeProblem } from "./turn-commit-validation.js";
 import { publishTurnTrace } from "./turn-trace-store.js";
 import type { TurnTrace } from "./adapter-contract.js";
 import { appendActionLedgerOnce } from "../ops/action-ledger.js";
@@ -206,8 +206,10 @@ function commitOwnedTurn(input: CommitTurnInput & { leaseClaim: LeaseClaim }): C
       ...(input.failureReason ? { failureReason: input.failureReason } : {}),
     },
   };
-  if (!isTurnCommitEnvelope(envelope) || hasMessageCollision(messages, promptMessages)) {
-    throw new Error(`turn commit message collision or invalid envelope for ${input.op.id}#${input.turnIdx}`);
+  const problem = turnCommitEnvelopeProblem(envelope);
+  if (problem) throw new Error(`turn commit invalid envelope for ${input.op.id}#${input.turnIdx}: ${problem}`);
+  if (hasMessageCollision(messages, promptMessages)) {
+    throw new Error(`turn commit message collision for ${input.op.id}#${input.turnIdx}: a message id or position is already in the op`);
   }
 
   if (!publishTurnCommit(envelope)) {

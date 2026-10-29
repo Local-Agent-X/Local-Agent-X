@@ -134,10 +134,21 @@ describe("message collision safety", () => {
     };
   }
 
+  // TB2 build-pmars, 2026-10-28: the container's clock stepped back during a
+  // model call, modelMs came out negative, and the error said "message
+  // collision or invalid envelope" — the one cause it did not name was the
+  // one that happened.
+  it("names an invalid envelope and its field, apart from a collision", () => {
+    const { op, claim } = mkOp("negative-model-ms");
+    expect(() => commitTurn({ ...input(op, claim), modelMs: -184 }))
+      .toThrow(`turn commit invalid envelope for ${op.id}#0: invalid turn row: modelMs=-184`);
+    expect(readOpTurn(op.id, 0)).toBeNull();
+  });
+
   it("rejects a finalized messageId collision without replacing the seed", () => {
     const { op, claim } = mkOp("id-collision");
     const row = seed(op.id); appendOpMessage(row);
-    expect(() => commitTurn(input(op, claim, row.messageId))).toThrow("message collision");
+    expect(() => commitTurn(input(op, claim, row.messageId))).toThrow(`turn commit message collision for ${op.id}#0`);
     expect(readOpTurn(op.id, 0)).toBeNull();
     expect(readOpMessages(op.id)).toEqual([row]);
   });

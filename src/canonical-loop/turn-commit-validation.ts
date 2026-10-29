@@ -9,21 +9,32 @@ const STATES = new Set(["queued", "running", "paused", "cancelling", "cancelled"
 const LEARNED = new Set(["clean", "partial", "aborted"]);
 
 export function isTurnCommitEnvelope(value: unknown): value is TurnCommitEnvelope {
-  if (!record(value)) return false;
+  return turnCommitEnvelopeProblem(value) === null;
+}
+
+/** What makes `value` not a turn commit envelope, in words a log can carry
+ *  (a turn row names its failing fields); null when it is one. */
+export function turnCommitEnvelopeProblem(value: unknown): string | null {
+  if (!record(value)) return "not an object";
   const envelope = value as Partial<TurnCommitEnvelope>;
-  if (envelope.schemaVersion !== 1 || !isOpTurnRow(envelope.turn)
-    || !Array.isArray(envelope.messages) || !envelope.messages.every(isOpMessageRow)
-    || !isProjection(envelope.projection)) return false;
+  if (envelope.schemaVersion !== 1) return "schemaVersion is not 1";
+  const badTurnFields = turnRowProblems(envelope.turn, isProviderState);
+  if (badTurnFields.length > 0) return `invalid turn row: ${badTurnFields.join(", ")}`;
+  if (!Array.isArray(envelope.messages)) return "messages is not an array";
+  const badMessage = envelope.messages.findIndex((row) => !isOpMessageRow(row));
+  if (badMessage >= 0) return `invalid message row at ${badMessage}`;
+  if (!isProjection(envelope.projection)) return "invalid projection";
+  const turn = envelope.turn as OpTurnRow;
   const ids = new Set<string>();
   const positions = new Set<string>();
-  for (const row of envelope.messages) {
-    if (row.opId !== envelope.turn.opId || row.turnIdx !== envelope.turn.turnIdx) return false;
+  for (const row of envelope.messages as OpMessageRow[]) {
+    if (row.opId !== turn.opId || row.turnIdx !== turn.turnIdx) return `message ${row.messageId} belongs to another turn`;
     const position = messagePosition(row);
-    if (ids.has(row.messageId) || positions.has(position)) return false;
+    if (ids.has(row.messageId) || positions.has(position)) return `message ${row.messageId} appears twice`;
     ids.add(row.messageId);
     positions.add(position);
   }
-  return true;
+  return null;
 }
 
 export function isOpTurnRow(value: unknown): value is OpTurnRow {
@@ -40,16 +51,27 @@ function isOpTurnRowWithProvider(
   value: unknown,
   providerValid: (value: unknown) => boolean,
 ): value is OpTurnRow {
-  if (!record(value)) return false;
+  return turnRowProblems(value, providerValid).length === 0;
+}
+
+/** The fields of a turn row that fail their check; empty for a valid row. */
+function turnRowProblems(value: unknown, providerValid: (value: unknown) => boolean): string[] {
+  if (!record(value)) return ["not an object"];
   const row = value as Partial<OpTurnRow>;
-  return typeof row.opId === "string" && integer(row.turnIdx)
-    && providerValid(row.providerState)
-    && Array.isArray(row.toolCallSummary) && row.toolCallSummary.every(isToolSummary)
-    && TERMINALS.has(row.terminalReason as never)
-    && typeof row.redirectConsumed === "boolean" && typeof row.createdAt === "string"
-    && optionalStringArray(row.observedTools)
-    && optionalFinite(row.modelMs) && optionalFinite(row.toolDispatchMs)
-    && isNextTurnPivot(row.nextTurnPivot);
+  const checks: Array<[string, boolean]> = [
+    ["opId", typeof row.opId === "string"],
+    ["turnIdx", integer(row.turnIdx)],
+    ["providerState", providerValid(row.providerState)],
+    ["toolCallSummary", Array.isArray(row.toolCallSummary) && row.toolCallSummary.every(isToolSummary)],
+    ["terminalReason", TERMINALS.has(row.terminalReason as never)],
+    ["redirectConsumed", typeof row.redirectConsumed === "boolean"],
+    ["createdAt", typeof row.createdAt === "string"],
+    ["observedTools", optionalStringArray(row.observedTools)],
+    [`modelMs=${row.modelMs}`, optionalFinite(row.modelMs)],
+    [`toolDispatchMs=${row.toolDispatchMs}`, optionalFinite(row.toolDispatchMs)],
+    ["nextTurnPivot", isNextTurnPivot(row.nextTurnPivot)],
+  ];
+  return checks.filter(([, ok]) => !ok).map(([name]) => name);
 }
 
 export function isOpMessageRow(value: unknown): value is OpMessageRow {

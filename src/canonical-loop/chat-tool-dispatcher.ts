@@ -34,6 +34,7 @@ import { createLogger } from "../logger.js";
 import type { CallContext } from "../tool-execution/context.js";
 import { augmentByName, augmentFromToolSearch, canCallByName } from "./tool-augmentation.js";
 import { noteUnavailableTools } from "./unavailable-tool-hint.js";
+import { elapsedMs, monotonicNow } from "./elapsed.js";
 
 const logger = createLogger("canonical-loop.chat-tool-dispatcher");
 
@@ -152,14 +153,14 @@ export function makeChatToolDispatcher(opts: ChatToolDispatcherOptions): ToolDis
 
   return {
     async dispatch(call: ToolCall): Promise<ToolDispatchResult> {
-      const t0 = Date.now();
+      const t0 = monotonicNow();
       try {
         const messages = await runExecuteToolCalls([toWireCall(call)]);
-        const result = shapeCallResult(call, messages, Date.now() - t0, opts, toolMap);
+        const result = shapeCallResult(call, messages, elapsedMs(t0), opts, toolMap);
         opts.onRuntimeStateChange?.();
         return result;
       } catch (e) {
-        return errorResult(call, e, Date.now() - t0);
+        return errorResult(call, e, elapsedMs(t0));
       }
     },
 
@@ -177,17 +178,17 @@ export function makeChatToolDispatcher(opts: ChatToolDispatcherOptions): ToolDis
     // one executeToolCalls run, so every result carries the batch wall-clock;
     // the consumer is soak telemetry and the approximation is acceptable.
     async dispatchBatch(calls: ToolCall[]): Promise<ToolDispatchResult[]> {
-      const t0 = Date.now();
+      const t0 = monotonicNow();
       try {
         const messages = await runExecuteToolCalls(calls.map(toWireCall));
         const groups = groupMessagesByCall(messages);
-        const durationMs = Date.now() - t0;
+        const durationMs = elapsedMs(t0);
         const results = calls.map(call =>
           shapeCallResult(call, groups.get(call.toolCallId) ?? [], durationMs, opts, toolMap));
         opts.onRuntimeStateChange?.();
         return results;
       } catch (e) {
-        const durationMs = Date.now() - t0;
+        const durationMs = elapsedMs(t0);
         return calls.map(call => errorResult(call, e, durationMs));
       }
     },

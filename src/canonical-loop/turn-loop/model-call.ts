@@ -24,6 +24,7 @@ import type { ResolvedTurnLoopDeps } from "./turn-deps.js";
 import type { DriveTurnResult } from "./types.js";
 import { recoverAdapterThrow, clearAdapterThrowStreak } from "./adapter-throw-recovery.js";
 import { recoverReportedAdapterError } from "./reported-adapter-recovery.js";
+import { elapsedMs, monotonicNow } from "../elapsed.js";
 
 export interface AdapterError {
   code: string;
@@ -96,7 +97,7 @@ export async function runModelCall(
   // the adapter's model call vs dispatching tools. Together with
   // commitMs (small, not separately tracked) and any caller-side prep,
   // they reconstruct where the turn's wall-clock went.
-  const modelStart = Date.now();
+  const modelStart = monotonicNow();
   let result: TurnResult;
   try {
     result = await adapter.runTurn(input, (r: AdapterReport) => {
@@ -164,7 +165,7 @@ export async function runModelCall(
     toolCalls: toolCalls.length, observedTools: observedTools.length,
   });
   if (recoveredReport) return { kind: "ended", turnResult: recoveredReport };
-  const modelMs = Date.now() - modelStart;
+  const modelMs = elapsedMs(modelStart);
   const assistantText = finalized
     .filter(m => m.role === "assistant")
     .map(m => extractText(m.content))

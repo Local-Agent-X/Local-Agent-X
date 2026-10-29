@@ -12,6 +12,7 @@
  * Boundary: this module has no DB handle, no event-writer, no child_process.
  */
 import { internalToolFailureText } from "./internal-tool-failure.js";
+import { elapsedMs, monotonicNow } from "./elapsed.js";
 import type { ToolCall } from "./contract-types.js";
 import type { ToolDispatchStatus } from "./types.js";
 import type { ToolBlockRecord, ToolResultStatus } from "../types.js";
@@ -78,13 +79,13 @@ export function functionToolDispatcher(
 ): ToolDispatcher {
   return {
     async dispatch(call) {
-      const start = Date.now();
+      const start = monotonicNow();
       const out = await fn(call);
       return {
         toolCallId: call.toolCallId,
         status: out.status,
         result: out.result,
-        durationMs: Date.now() - start,
+        durationMs: elapsedMs(start),
       };
     },
   };

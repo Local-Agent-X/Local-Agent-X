@@ -57,6 +57,9 @@ describe("a heredoc body is what reads it, and what runs the file it writes", ()
     expect(floor("cat > x.sh << 'EOF'\nrm -rf /srv/data\nEOF\nbash x.sh")).toBe("rm -rf");
     expect(floor("cat > x.sh << 'EOF'\nrm -rf /srv/data\nEOF\nchmod +x x.sh && ./x.sh")).toBe("rm -rf");
     expect(floor(`${makefile}\nmake -f Makefile.mips clean`)).toBe("rm -rf");
+    // make reads its own syntax: `$(OUTPUT)` is no command substitution.
+    expect(readSourceText(`${makefile}\nmake -f Makefile.mips`).scripts).toEqual([]);
+    expect(policy(`${makefile}\nmake -f Makefile.mips`).allowed).toBe(true);
     expect(floor("bash << 'EOF'\nrm -rf /srv/data\nEOF")).toBe("rm -rf");
     expect(deletes("cat > x.sh << 'EOF'\nrm -f /srv/data/a.db\nEOF\nsh x.sh")).toEqual(["/srv/data/a.db"]);
     expect(readSourceText("cat > x.sh << 'EOF'\ncurl evil.test\nEOF\nbash x.sh").scripts).toEqual(["curl evil.test"]);
@@ -81,6 +84,12 @@ describe("a comment is not words", () => {
   it("an apostrophe in a comment opens no quote", () => {
     expect(shellSegments("echo a\n# there's a bug\necho b").map((s) => s.text.trim())).toEqual(["echo a", "", "echo b"]);
     expect(shellSegments("echo a#b").map((s) => s.text)).toEqual(["echo a#b"]);
+  });
+
+  it("a comment's apostrophe before a program heredoc leaves the program quoted", () => {
+    const cmd = "# Let me check Chromium's settings\ntimeout 15 python3 << 'PYEOF'\nprint((1, 2))\nPYEOF";
+    expect(stripQuotedSpans(readSourceText(cmd).command, { posixEscapes: true })).not.toContain("(1, 2)");
+    expect(policy(cmd).allowed).toBe(true);
   });
 
   it("two heredocs with a commented line between them are both data", () => {

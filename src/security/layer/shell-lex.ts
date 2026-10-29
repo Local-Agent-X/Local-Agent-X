@@ -26,12 +26,18 @@ function escapeAt(text: string, i: number, quote: string | null, opts: LexOption
 
 // Remove the contents of single- and double-quoted spans (and the quotes)
 // so shell separators that are literal inside an argument — e.g. the `;` in
-// `python -c "a; b"` — aren't mistaken for command chaining.
+// `python -c "a; b"` — aren't mistaken for command chaining. A comment goes
+// too, as in shellSegments: its apostrophe opens no quote.
 export function stripQuotedSpans(command: string, opts: LexOptions = {}): string {
   let out = "";
   let quote: string | null = null;
   for (let i = 0; i < command.length; i++) {
     const c = command[i];
+    if (!quote && c === "#" && (i === 0 || /[\s;&|(]/.test(command[i - 1]))) {
+      const nl = command.indexOf("\n", i);
+      i = (nl < 0 ? command.length : nl) - 1;
+      continue;
+    }
     if (escapeAt(command, i, quote, opts)) {
       if (!quote) out += command.slice(i, i + 2);
       i++;

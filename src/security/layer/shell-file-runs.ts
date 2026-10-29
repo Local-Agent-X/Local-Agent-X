@@ -62,9 +62,13 @@ function runOf(p: CommandPosition, file: string, firstLine: string): FileRunner 
   if (command.includes("/") && names(command, file)) return byShebang(firstLine);
   const bin = readerBin(p.words);
   if (bin === null) return args.some((a) => names(a, file)) ? "shell" : null;
+  // A Makefile is make's input, not a shell script: make expands its own
+  // `$(CC)` and runs only the recipes. Read as shell, `$(CC)` was a command
+  // substitution (TB2 make-doom-for-mips, 2026-10-28). Its text stays on the
+  // line, where the floor still reads a recipe's `rm -rf`.
   if (bin === "make") {
     const f = args.findIndex((a) => a === "-f" || a === "--file" || a === "--makefile");
-    return (f >= 0 && names(args[f + 1] ?? "", file)) || (f < 0 && MAKEFILES.has(posix.basename(file))) ? "shell" : null;
+    return (f >= 0 && names(args[f + 1] ?? "", file)) || (f < 0 && MAKEFILES.has(posix.basename(file))) ? "interpreter" : null;
   }
   if (bin === "git" && /\/hooks\/[^/]+$/.test(file) && args.some((a) => GIT_HOOK_RUNNERS.has(a))) return "shell";
   if (bin === "service" && file.startsWith("/etc/init.d/") && args[0] === posix.basename(file)) return "shell";

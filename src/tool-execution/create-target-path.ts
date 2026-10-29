@@ -105,12 +105,39 @@ export function shellCreateTargets(command: string, cwd: string): string[] {
     if (PUTS_NO_BYTES_BINS.has(p.bin)) continue;
     for (const w of creates ? p.words.slice(0, p.at + 1) : p.words) otherWords.add(w);
   }
+  return placed(targets, cwd, cdSeen, (t) => otherWords.has(t) || t.startsWith("/dev/"));
+}
+
+function placed(targets: string[], cwd: string, cdSeen: boolean, skip: (t: string) => boolean): string[] {
   const out: string[] = [];
   for (const t of targets) {
-    if (!t || UNPLACEABLE.test(t) || otherWords.has(t) || t.startsWith("/dev/")) continue;
+    if (!t || UNPLACEABLE.test(t) || skip(t)) continue;
     if (!isAbsolute(t) && cdSeen) continue;
     const abs = resolve(cwd, t);
     if (!out.includes(abs)) out.push(abs);
   }
   return out;
+}
+
+/** The folders a shell command's `mkdir`s name, resolved as shellCreateTargets
+ *  resolves its files. The caller enrolls those absent before the command and
+ *  folders after it. What else the line puts in them is not trusted here: the
+ *  delete proof reads their contents (agent-made-folder.ts). TB2
+ *  git-multibranch, 2026-10-29: `mkdir -p /var/www/gitproject/main
+ *  /var/www/gitproject/dev`, filled by the agent's own git hook. */
+export function shellMkdirTargets(command: string, cwd: string): string[] {
+  const entered = enterPrelude(command, cwd);
+  if (entered) ({ command, cwd } = entered);
+  const { positions } = commandPositions(command);
+  const cdSeen = positions.some((p) => CD_BINS.has(p.bin));
+  const targets: string[] = [];
+  for (const p of positions) {
+    if (p.bin !== "mkdir") continue;
+    const args = p.words.slice(p.at + 1);
+    for (const [i, w] of args.entries()) {
+      if (w.startsWith("-") || args[i - 1] === "-m" || args[i - 1] === "--mode") continue;
+      targets.push(w.replace(/[\\/]+$/, ""));
+    }
+  }
+  return placed(targets, cwd, cdSeen, () => false);
 }

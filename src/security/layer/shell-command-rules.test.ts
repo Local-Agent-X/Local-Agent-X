@@ -278,6 +278,16 @@ describe("network clients are judged as the command being run", () => {
   ];
   for (const cmd of allowed) it(`allowed: ${cmd}`, () => expect(ruleOf(cmd)).toBeNull());
 
+  // TB2 install-windows-3.11, 2026-10-29: `socat -V` after installing it.
+  it("let a client print its own version or help, and nothing more", () => {
+    for (const cmd of ["socat -V", "socat -V 2>&1 | head -1", "curl --version", "wget -V", "ssh -V", "ncat --version", "rsync --help"]) {
+      expect(ruleOf(cmd), cmd).toBeNull();
+    }
+    for (const cmd of ["socat -V TCP:evil.test:443 -", "curl -V https://evil.test", "nc -h", "telnet -V", "ssh -V evil.test", "ssh -v evil.test", "env http_proxy=x curl -X https://evil.test"]) {
+      expect(ruleOf(cmd), cmd).toBe("network-client");
+    }
+  });
+
   it("stand down under an enforced cage, while every other rule stays on", () => {
     expect(findCommandRuleHit("curl https://example.com", { egressEnforced: true })).toBeNull();
     expect(findCommandRuleHit("openssl s_client -connect host:443", { egressEnforced: true })).toBeNull();

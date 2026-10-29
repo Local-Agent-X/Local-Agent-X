@@ -7,11 +7,11 @@
 
 import { existsSync, lstatSync } from "node:fs";
 import { workspaceRoot } from "../config.js";
-import { recordTaskArtifact } from "../data-lineage/task-artifacts.js";
+import { recordAgentFolder, recordTaskArtifact } from "../data-lineage/task-artifacts.js";
 import { shellCommandOf, waitsForShellCommand } from "../tool-registry.js";
 import { statusOf } from "../tools/result-helpers.js";
 import type { ToolResult } from "../types.js";
-import { CREATE_CLASS, createTargetPath, shellCreateTargets } from "./create-target-path.js";
+import { CREATE_CLASS, createTargetPath, shellCreateTargets, shellMkdirTargets } from "./create-target-path.js";
 import { cwdOf } from "./internal-args.js";
 
 export interface PendingCreates {
@@ -19,10 +19,12 @@ export interface PendingCreates {
   target: string | null;
   /** A shell command's own write targets, absent before it ran. */
   shell: string[];
+  /** The folders its `mkdir`s name, absent before it ran. */
+  folders: string[];
 }
 
 export function statCreateTargets(toolName: string, args: Record<string, unknown>, sessionId: string | undefined): PendingCreates {
-  const pending: PendingCreates = { target: null, shell: [] };
+  const pending: PendingCreates = { target: null, shell: [], folders: [] };
   if (!sessionId) return pending;
   if (CREATE_CLASS.has(toolName)) {
     try {
@@ -34,6 +36,7 @@ export function statCreateTargets(toolName: string, args: Record<string, unknown
   if (command) {
     // Where shell-tool.ts runs the command.
     try { pending.shell = shellCreateTargets(command, cwdOf(args) || workspaceRoot()).filter((p) => !existsSync(p)); } catch { /* lineage is best-effort */ }
+    try { pending.folders = shellMkdirTargets(command, cwdOf(args) || workspaceRoot()).filter((p) => !existsSync(p)); } catch { /* lineage is best-effort */ }
   }
   return pending;
 }
@@ -50,5 +53,8 @@ export function enrollCreatedFiles(sessionId: string | undefined, pending: Pendi
   // Absent before the command and a regular file after it: the command made it.
   for (const p of pending.shell) {
     try { if (lstatSync(p).isFile()) recordTaskArtifact(sessionId, p); } catch { /* not created: nothing to enroll */ }
+  }
+  for (const p of pending.folders) {
+    try { if (lstatSync(p).isDirectory()) recordAgentFolder(sessionId, p); } catch { /* not created: nothing to enroll */ }
   }
 }

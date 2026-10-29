@@ -43,6 +43,7 @@ import { isHarnessRow } from "../harness-rows.js";
 import { containsHarnessMarker } from "../harness-text.js";
 import { shellDeletes, shellDeleteTargets } from "../security/layer/shell-delete-targets.js";
 import { commandsBashRuns } from "../security/layer/shell-source-text.js";
+import { agentMadeFolderHoldsOnlyNew } from "./agent-made-folder.js";
 import { disposableFileDeletes } from "./disposable-tree-delete.js";
 import { isTaskArtifact } from "../data-lineage/task-artifacts.js";
 import type { ToolDefinition } from "../types.js";
@@ -197,9 +198,15 @@ export interface UnnamedDeleteScope {
   tools?: ReadonlyMap<string, ToolDefinition>;
 }
 
-/** Did this session's agent create the file with one of its file tools? */
+/** Did this session's agent create the file with one of its file tools, or
+ *  make the folder with nothing older than it inside (agent-made-folder.ts)? */
 function agentCreated(sessionId: string, path: string): boolean {
-  try { return isTaskArtifact(sessionId, resolveAgentPath(path, sessionId)); } catch { return false; /* unresolvable path: not provably the agent's */ }
+  try {
+    const abs = resolveAgentPath(path, sessionId);
+    return isTaskArtifact(sessionId, abs) || agentMadeFolderHoldsOnlyNew(abs, sessionId);
+  } catch {
+    return false; /* unresolvable path: not provably the agent's */
+  }
 }
 
 /** A delete_file target with nothing on disk deletes nothing: the tool answers

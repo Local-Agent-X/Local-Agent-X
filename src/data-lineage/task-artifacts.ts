@@ -134,6 +134,43 @@ export function unrecordTaskArtifact(sessionId: string, path: string): void {
 	}
 }
 
+/** A folder the agent's own command made: the inode it made, and when. */
+interface FolderIdentity { dev: number; ino: number; birthtimeMs: number }
+
+/** sessionId → canonical folder path → the folder the agent made there. */
+const sessionFolders = new Map<string, Map<string, FolderIdentity>>();
+
+/** Enroll a folder the agent's command made (absent before it, a folder
+ *  after). Its birth time is what the delete proof measures its contents
+ *  against (src/tool-execution/agent-made-folder.ts); a filesystem that keeps
+ *  none records nothing. */
+export function recordAgentFolder(sessionId: string, path: string): void {
+	if (!sessionId || !path) return;
+	let s;
+	try { s = statSync(path); } catch { return; /* gone already: nothing made */ }
+	if (!s.isDirectory() || !(s.birthtimeMs > 0)) return;
+	let map = sessionFolders.get(sessionId);
+	if (!map) {
+		map = new Map();
+		sessionFolders.set(sessionId, map);
+	}
+	map.set(canonical(path), { dev: s.dev, ino: s.ino, birthtimeMs: s.birthtimeMs });
+}
+
+/** When this session's agent made the folder at `path`, or null: the folder
+ *  there now must be the one it made (same inode and birth time), so a folder
+ *  removed and replaced at that path is not its. */
+export function agentFolderBirth(sessionId: string, path: string): number | null {
+	const made = sessionFolders.get(sessionId)?.get(canonical(path));
+	if (!made) return null;
+	try {
+		const s = statSync(path);
+		return s.dev === made.dev && s.ino === made.ino && s.birthtimeMs === made.birthtimeMs ? made.birthtimeMs : null;
+	} catch {
+		return null; // gone: nothing to delete
+	}
+}
+
 /** All artifacts recorded for the session (canonical spellings, copy). */
 export function listTaskArtifacts(sessionId: string): string[] {
 	return [...(sessionArtifacts.get(sessionId) ?? [])];
@@ -144,6 +181,7 @@ export function listTaskArtifacts(sessionId: string): string[] {
  *  long as the session. */
 export function clearTaskArtifacts(sessionId: string): void {
 	sessionArtifacts.delete(sessionId);
+	sessionFolders.delete(sessionId);
 }
 
 /**
@@ -156,6 +194,12 @@ export function clearTaskArtifacts(sessionId: string): void {
  */
 export function propagateTaskArtifacts(childSessionId: string, parentSessionId: string): number {
 	if (!childSessionId || !parentSessionId || childSessionId === parentSessionId) return 0;
+	const folders = sessionFolders.get(childSessionId);
+	if (folders && folders.size > 0) {
+		const into = sessionFolders.get(parentSessionId) ?? new Map<string, FolderIdentity>();
+		for (const [p, id] of folders) if (!into.has(p)) into.set(p, id);
+		sessionFolders.set(parentSessionId, into);
+	}
 	const from = sessionArtifacts.get(childSessionId);
 	if (!from || from.size === 0) return 0;
 	let target = sessionArtifacts.get(parentSessionId);

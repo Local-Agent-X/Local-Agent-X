@@ -120,20 +120,34 @@ function inlineProgramLocal(command: string, heredocPrograms: readonly string[])
  * farther. TB2 qemu-startup and configure-git-webserver (2026-10-28, from
  * other harnesses' runs) probed a VM's telnet port and sshd this way. A host
  * the line computes, or a path this cannot read, is not this machine.
+ *
+ * A descriptor >= 3 that a redirect duplicates (`>&3`, `<&3`) must be opened
+ * on the line itself: on such a socket, on a standard stream, or on a literal
+ * path that is not a socket device (a log file, a FIFO, a Unix socket file,
+ * which open() refuses, so bash cannot connect to it). TB2 install-windows-3.11,
+ * 2026-10-29: `exec 3<>/app/qemu-monitor.sock; printf 'info status\n' >&3`. One
+ * not opened here may be a socket an earlier line opened.
  */
-function devSocketsOnlyLocal(command: string): boolean {
+function fdPlumbingOnlyLocal(command: string): boolean {
   const opened = command.match(/\/dev\/(?:tcp|udp)\//gi)?.length ?? 0;
   const read = [...command.matchAll(/\/dev\/(?:tcp|udp)\/([A-Za-z0-9.:[\]-]+)\/(\d{1,5})(?![\w$])/gi)];
-  return opened > 0 && read.length === opened && read.every(([, host, port]) => isThisMachineHost(host) && shellLoopbackReachable(port));
+  if (read.length !== opened || !read.every(([, host, port]) => isThisMachineHost(host) && shellLoopbackReachable(port))) return false;
+  const opens = new Map<string, string>();
+  for (const [, fd, target] of command.matchAll(/(?<![\w$&])(\d+)(?:<>|>>|>\||>|<)(?!&)[ \t]*("[^"]*"|'[^']*'|[^\s;&|()<>]+)/g)) opens.set(fd, target);
+  for (const [, fd, std] of command.matchAll(/(?<![\w$&])(\d+)[<>]&([0-2])(?!\d)/g)) opens.set(fd, `&${std}`);
+  const used = [...command.matchAll(/[<>]&(\d+)/g)].map((m) => m[1]).filter((fd) => Number(fd) >= 3);
+  const literalLocal = (t: string) => /^&[0-2]$/.test(t) || (/^(?:"[^"$`\\]+"|'[^']+'|[\w@%+=:,./-]+)$/.test(t) && !/\/(?:fd|proc)\//.test(t));
+  return used.every((fd) => opens.has(fd)) && [...opens].every(([fd, t]) => Number(fd) < 3 || literalLocal(t));
 }
 
 /** The raw-text patterns a command is scanned for: the denylist always; where
  *  no cage holds egress, the network text too, less what reaches only this
- *  machine (an inline program's local destinations, /dev/tcp to a local port). */
+ *  machine (an inline program's local destinations, fd plumbing onto a local
+ *  port or path). */
 function rawTextPatterns(command: string, egressEnforced: boolean, inlineLocal: () => boolean): readonly RegExp[] {
   if (egressEnforced) return BLOCKED_COMMANDS;
   const egressText = inlineLocal() ? SOCKET_PLUMBING_PATTERNS : EGRESS_TEXT_PATTERNS;
-  return [...BLOCKED_COMMANDS, ...(devSocketsOnlyLocal(command) ? egressText.filter((p) => !SOCKET_PLUMBING_PATTERNS.includes(p)) : egressText)];
+  return [...BLOCKED_COMMANDS, ...(fdPlumbingOnlyLocal(command) ? egressText.filter((p) => !SOCKET_PLUMBING_PATTERNS.includes(p)) : egressText)];
 }
 
 /** The command separator a bash command chains with outside quotes (newline,

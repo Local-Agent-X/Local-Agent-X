@@ -30,6 +30,7 @@ import { isTaskArtifact } from "../data-lineage/task-artifacts.js";
 import { hasExternalIngestion } from "../data-lineage/external.js";
 import { plainDelete, shellDeletes, type DeleteVerb } from "../security/layer/shell-delete-targets.js";
 import { shellSegments } from "../security/layer/shell-lex.js";
+import { agentMadeFolderHoldsOnlyNew } from "./agent-made-folder.js";
 import { cdCannotFail, deleteLine, priorRunsLeave, runsAlone } from "./delete-prefix.js";
 import { globHoldsNoData, holdsNoData } from "./no-data-paths.js";
 
@@ -136,10 +137,13 @@ function unplaceable(target: string): boolean {
 }
 
 /** Every file under `abs` (or `abs` itself) was written by this session's
- *  agent with its file tools. Off once the session read untrusted content. */
+ *  agent with its file tools, or `abs` is a folder its command made that holds
+ *  nothing older than itself (agent-made-folder.ts). Off once the session read
+ *  untrusted content. */
 function agentCreated(abs: string, isDir: boolean, sessionId: string | undefined): boolean {
   if (!sessionId || hasExternalIngestion(sessionId)) return false;
   if (!isDir) return isTaskArtifact(sessionId, abs);
+  if (agentMadeFolderHoldsOnlyNew(abs, sessionId)) return true;
   const files: string[] = [];
   const walk = (dir: string): boolean => {
     for (const e of readdirSync(dir, { withFileTypes: true })) {

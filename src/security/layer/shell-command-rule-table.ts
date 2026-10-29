@@ -65,6 +65,24 @@ function partitionsOnlyFiles(bin: string, args: string[]): boolean {
   return LISTS_ALL_DISKS.has(bin) && args.some((a) => a === "-l" || a === "--list");
 }
 
+// A network client's own version and help flags: given alone, the client
+// prints and exits without connecting. TB2 install-windows-3.11, 2026-10-29:
+// `apt-get install … socat; socat -V` checked the install and was refused as
+// a connection. Each client's documented spellings only.
+const INFO_ONLY_FLAGS: Record<string, ReadonlySet<string>> = {
+  curl: new Set(["-V", "--version", "-h", "--help"]),
+  wget: new Set(["-V", "--version", "-h", "--help"]),
+  socat: new Set(["-V", "-h", "-hh", "-hhh"]),
+  ncat: new Set(["--version", "-h", "--help"]),
+  ssh: new Set(["-V"]),
+  rsync: new Set(["--version", "--help"]),
+  aria2c: new Set(["-v", "--version", "-h", "--help"]),
+};
+function asksOnlyInfo(p: CommandPosition): boolean {
+  const args = argsOf(p);
+  return args.length === 1 && INFO_ONLY_FLAGS[p.bin]?.has(args[0]) === true;
+}
+
 function bins(id: string, category: CommandRuleCategory, why: string, names: string[]): CommandRule {
   const set = new Set(names);
   return { id, category, why, matches: (p) => set.has(p.bin) };
@@ -213,7 +231,7 @@ export const COMMAND_RULES: readonly CommandRule[] = [
 
   // ── Network egress (skipped where a kernel cage holds egress: findCommandRuleHit) ──
   { id: "network-client", category: "network", why: "reaches the network directly, outside the checked HTTP path",
-    matches: (p) => NETWORK_CLIENT_BINS.has(p.bin) },
+    matches: (p) => NETWORK_CLIENT_BINS.has(p.bin) && !asksOnlyInfo(p) },
   binWith("raw-tls", "network", "opens a raw TLS connection to any host", ["openssl"],
     (a) => lower(a[0]) === "s_client" || lower(a[0]) === "s_server"),
 

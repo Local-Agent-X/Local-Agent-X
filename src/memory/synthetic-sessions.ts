@@ -88,3 +88,23 @@ export function isHiddenFromChatLists(id: string): boolean {
 export function isExcludedFromSessionSummaries(id: string): boolean {
   return INTERNAL_SCRATCH_PREFIXES.some((p) => id.startsWith(p));
 }
+
+// ── Transcript search — the past-chat concern (the FIFTH reader) ──
+//
+// The raw transcripts are indexed and searched as chats (the memory index's
+// session lane, universal-index's transcript walk, search_past_sessions'
+// exact scan), and none of them filtered: a dream run's transcript is a
+// harness prompt wearing role:"user" plus the agent's consolidation work,
+// and searching "truckfinder" ranked a dream run above the chat where the
+// user built it (2026-10-28). A dream, an eval dry-run or a skill review is
+// nobody's conversation.
+//
+// Narrower than summaries: a cron- transcript is the run of a job the USER
+// scheduled, its prompt is the user's own task text and its result is what
+// they asked for, so it stays searchable; ide- chats are real conversations.
+const TRANSCRIPT_SEARCH_EXCLUDED: readonly string[] =
+  INTERNAL_SCRATCH_PREFIXES.filter((p) => p !== "cron-");
+
+export function isExcludedFromTranscriptSearch(id: string): boolean {
+  return TRANSCRIPT_SEARCH_EXCLUDED.some((p) => id.startsWith(p));
+}

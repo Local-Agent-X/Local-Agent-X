@@ -6,6 +6,7 @@ import { randomId } from "../src/util/ids.js";
 import {
   CHAT_LIST_HIDDEN_PREFIXES,
   isExcludedFromSessionSummaries,
+  isExcludedFromTranscriptSearch,
   isHiddenFromChatLists,
   isSyntheticSessionId,
   SYNTHETIC_SESSION_PREFIXES,
@@ -136,6 +137,33 @@ describe("summary seam readers import the predicate — no re-typed prefix liter
     for (const prefix of SYNTHETIC_SESSION_PREFIXES) {
       // Quoted occurrences only — prose in comments may name the prefixes.
       expect(src).not.toMatch(new RegExp(`["']${prefix.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
+    }
+  });
+});
+
+// The past-chat search: a dream run's transcript (a harness prompt wearing
+// role:"user") ranked above the user's own TruckFinder chat for "truckfinder"
+// (2026-10-28). Scratch no person said stays out; a job the user scheduled and
+// the IDE panel's chats stay in.
+describe("isExcludedFromTranscriptSearch — only conversations are searched as chats", () => {
+  it("excludes dream, eval and skill-review runs, raw id and filename", () => {
+    for (const id of ["dream-1793208444657", "dream-1793208444657.jsonl", randomId("eval"), "skill-review-123.jsonl"]) {
+      expect(isExcludedFromTranscriptSearch(id)).toBe(true);
+    }
+  });
+
+  it("keeps cron runs (the user's scheduled task), ide- chats and real chats", () => {
+    for (const id of [`cron-daily-report-${Date.now()}.jsonl`, "ide-todo-app.jsonl", "chat-mvse7h7h-jt4lw.jsonl", "mobile-x.jsonl", "dreamer", "skill-reviewer"]) {
+      expect(isExcludedFromTranscriptSearch(id)).toBe(false);
+    }
+  });
+
+  it("every transcript reader imports the predicate rather than re-typing a prefix", () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    for (const file of ["../src/memory/index-files.ts", "../src/memory/universal-index.ts", "../src/memory/tools/search/exact-past-search.ts"]) {
+      const src = readFileSync(join(here, file), "utf-8");
+      expect(src).toMatch(/import \{[^}]*isExcludedFromTranscriptSearch[^}]*\} from "[./]+(?:memory\/)?synthetic-sessions\.js"/);
+      expect(src).not.toMatch(/["']dream-/);
     }
   });
 });

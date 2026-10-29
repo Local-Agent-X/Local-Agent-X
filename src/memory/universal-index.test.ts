@@ -15,7 +15,7 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, rmSync, mkdirSync, writeFileSync, appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { MemoryIndex } from "../memory/index.js";
 import { _createUniversalIndexForTest, type UniversalIndex } from "./universal-index.js";
 
@@ -192,5 +192,44 @@ describe("Dream write triggers reindex (via post-dream backfill)", () => {
     expect(after.length).toBeGreaterThan(0);
     // It's a non-MIND, non-daily-log file in the memory root → personality store.
     expect(after.some(r => r.source === "personality")).toBe(true);
+  });
+});
+
+// A dream run's transcript is a harness prompt wearing role:"user" plus the
+// agent's consolidation work. Indexed as a chat, it outranked the chat where
+// the user built TruckFinder for "truckfinder" (2026-10-28).
+describe("Transcripts that are nobody's conversation are not indexed as chats", () => {
+  const transcript = (id: string, said: string) => {
+    const rows = [
+      { kind: "meta", id, title: id, createdAt: 1, updatedAt: 2 },
+      { kind: "msg", id: `u-${id}`, createdAt: "2026-10-28T10:00:00.000Z", message: { role: "user", content: said } },
+      { kind: "msg", id: `a-${id}`, createdAt: "2026-10-28T10:00:05.000Z", message: { role: "assistant", content: `noted: ${said}` } },
+    ];
+    writeFileSync(join(tempDir, "sessions", `${id}.jsonl`), rows.map((r) => JSON.stringify(r)).join("\n") + "\n");
+  };
+  const sessionPaths = () => (memory["db"].prepare("SELECT DISTINCT path FROM chunks WHERE source = 'session'").all() as { path: string }[])
+    .map((r) => basename(r.path));
+
+  it("backfill and sync index the chat and the user's cron run, never the dream run", async () => {
+    transcript("chat-truck", "build truckfinder for food trucks");
+    transcript("cron-daily-1", "truckfinder daily report");
+    transcript("dream-1793208444657", "consolidate truckfinder memories");
+    await ui.backfillAll();
+    memory.markDirty();
+    await memory.sync();
+    expect(sessionPaths().sort()).toEqual(["chat-truck.jsonl", "cron-daily-1.jsonl"]);
+    const hits = await memory.search("truckfinder", { sources: ["session"], maxResults: 10, crossSession: true });
+    expect(hits.some((h) => h.provenance?.session_id?.startsWith("dream-"))).toBe(false);
+  });
+
+  it("a dream run indexed before this rule is dropped by the next sync", async () => {
+    transcript("dream-1793208444657", "consolidate truckfinder memories");
+    const path = join(tempDir, "sessions", "dream-1793208444657.jsonl");
+    const { buildSessionChunks } = await import("./chunking.js");
+    await memory.indexChunksIdempotent(buildSessionChunks(path, "dream-1793208444657") as never, path, "session");
+    expect(sessionPaths()).toEqual(["dream-1793208444657.jsonl"]);
+    memory.markDirty();
+    await memory.sync();
+    expect(sessionPaths()).toEqual([]);
   });
 });

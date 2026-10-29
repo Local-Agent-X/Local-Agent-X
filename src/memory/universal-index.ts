@@ -29,6 +29,7 @@ import type { MemoryIndex } from "../memory/index.js";
 import type { CanonicalSource, ChunkMetadata, Chunk } from "./types.js";
 import { withChunkProvenance } from "./search-helpers.js";
 import { chunkText, buildSessionChunks } from "./chunking.js";
+import { isExcludedFromTranscriptSearch } from "./synthetic-sessions.js";
 import { runBackfill, type BackfillReport, type IndexResult } from "./universal-index-backfill.js";
 
 import { createLogger } from "../logger.js";
@@ -174,7 +175,7 @@ export class UniversalIndex {
 
   async indexSessionTranscript(sessionId: string): Promise<IndexResult> {
     const path = join(this.sessionsDir, `${sessionId}.jsonl`);
-    if (!existsSync(path)) return { added: 0, removed: 0, unchanged: 0 };
+    if (!existsSync(path) || isExcludedFromTranscriptSearch(sessionId)) return { added: 0, removed: 0, unchanged: 0 };
     const chunks = buildSessionChunks(path, sessionId) as Chunk[];
     if (chunks.length === 0) return { added: 0, removed: 0, unchanged: 0 };
     return this.memory.indexChunksIdempotent(chunks, path, "session");

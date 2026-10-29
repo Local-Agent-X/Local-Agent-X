@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join, basename } from "node:path";
 import type { FileRecord } from "./types.js";
+import { isExcludedFromTranscriptSearch } from "./synthetic-sessions.js";
 
 export function getDailyLogPath(memoryDir: string, date?: Date): string {
   const d = date || new Date();
@@ -64,7 +65,7 @@ export function listSessionFiles(dataDir: string): FileRecord[] {
   if (!existsSync(sessDir)) return [];
   const records: FileRecord[] = [];
 
-  const files = readdirSync(sessDir).filter((f) => f.endsWith(".jsonl") && !f.startsWith("."));
+  const files = readdirSync(sessDir).filter((f) => f.endsWith(".jsonl") && !f.startsWith(".") && !isExcludedFromTranscriptSearch(f));
   for (const file of files) {
     const fullPath = join(sessDir, file);
     try {

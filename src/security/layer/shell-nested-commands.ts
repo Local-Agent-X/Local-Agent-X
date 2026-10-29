@@ -12,7 +12,7 @@
 // (an unterminated `$(`), or nesting past MAX_NESTING, is reported as
 // unreadable, and the caller refuses it.
 
-import { execBasename, resolveRealArgv0Index, tokenizeCommand } from "./shell-lex.js";
+import { arithmeticSpanEnd, execBasename, resolveRealArgv0Index, tokenizeCommand } from "./shell-lex.js";
 
 /** Where a substitution's output stands on the remaining line. */
 export const NESTED_OUTPUT = "$NESTED_OUTPUT";
@@ -160,10 +160,13 @@ function readExpansion(text: string, i: number, split: NestedSplit): number | nu
     return close;
   }
   if (c !== "$" || (next !== "(" && next !== "{")) return null;
-  const close = next === "(" ? closingParen(text, i + 2) : closingBrace(text, i + 2);
+  // `$((` is arithmetic only if it closes as arithmetic (arithmeticSpanEnd):
+  // `$(( (cmd) ) )` is a command substitution of a subshell.
+  const arithmeticEnd = next === "(" ? arithmeticSpanEnd(text, i) : -1;
+  const close = arithmeticEnd > 0 ? arithmeticEnd - 1 : next === "(" ? closingParen(text, i + 2) : closingBrace(text, i + 2);
   if (close < 0) { split.unreadable = `a ${c}${next} expansion is not closed`; return -1; }
   const inner = text.slice(i + 2, close);
-  if (next === "(" && !inner.startsWith("(")) {
+  if (next === "(" && arithmeticEnd < 0) {
     split.bodies.push(inner);
     split.line += placeholderFor(inner);
   } else if (next === "{" && /^[\s|]/.test(inner)) {
@@ -234,7 +237,7 @@ export function splitNestedCommands(command: string): NestedSplit {
       if (close < 0) { split.unreadable = "a ( subshell ) is not closed"; return split; }
       const inner = command.slice(i + 1, close);
       // `(( … ))` at a command position is arithmetic, not a subshell.
-      if (inner.startsWith("(") && inner.endsWith(")")) {
+      if (arithmeticSpanEnd(command, i) === close + 1) {
         const nested = expansionsIn(inner);
         if (nested.length === 0) split.line += command.slice(i, close + 1);
         else { split.bodies.push(...splitNestedCommands(nested.join(" ")).bodies); split.line += ":"; }

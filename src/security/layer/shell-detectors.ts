@@ -12,7 +12,7 @@ import {
   INTERP_EVAL_FLAGS,
   RENAME_ESCAPE_EVAL_FLAGS,
 } from "./shell-rules.js";
-import { execBasename, resolveRealArgv0, resolveRealArgv0Index, splitShellSegments, stripQuotedSpans, tokenizeCommand } from "./shell-lex.js";
+import { arithmeticSpanEnd, execBasename, resolveRealArgv0, resolveRealArgv0Index, splitShellSegments, stripQuotedSpans, tokenizeCommand } from "./shell-lex.js";
 import { realpathDeep } from "./file-access.js";
 import { splitRedirections } from "./shell-command-positions.js";
 import type { InlineEvalPolicy } from "./types.js";
@@ -192,12 +192,33 @@ export function detectInterpreterEscape(command: string): string | null {
 // detected at a command POSITION via the quote-aware segment split (a literal
 // `(` in `echo "(hi)"`, or brace-EXPANSION `cp a.{js,ts}` with no leading
 // space, is not misread as a group).
+/** A `$(` that opens a command substitution: every `$(` but the opener of an
+ *  arithmetic `$(( … ))` (arithmeticSpanEnd). The scan goes on inside one,
+ *  where `$(( $(cmd) + 1 ))` substitutes a command. */
+function commandSubstitutionAt(command: string): boolean {
+  for (let i = command.indexOf("$("); i >= 0; i = command.indexOf("$(", i + 2)) {
+    if (arithmeticSpanEnd(command, i) < 0) return true;
+  }
+  return false;
+}
+
+/** `text` with each arithmetic `$(( … ))` blanked to `$0`. */
+function withoutArithmetic(text: string): string {
+  let out = "";
+  for (let i = 0; i < text.length; i++) {
+    const end = text[i] === "$" ? arithmeticSpanEnd(text, i) : -1;
+    if (end > 0) { out += "$0"; i = end - 1; } else out += text[i];
+  }
+  return out;
+}
+
 export function detectNestedCommandExecution(command: string): string | null {
   if (/`/.test(command)) {
     return `Blocked: backtick command substitution runs a nested command whose argv the network/denylist scan can't see. Use $(( )) for arithmetic. ${NESTED_COMMAND_WAY_OUT}`;
   }
-  // $( command-sub, but NOT $(( arithmetic (negative lookahead on the 2nd paren).
-  if (/\$\((?!\()/.test(command)) {
+  // $( command-sub, but NOT $(( arithmetic — and `$((` is arithmetic only when
+  // it closes as arithmetic: `$(( (dig x) ) )` is a substitution of a subshell.
+  if (commandSubstitutionAt(command)) {
     return `Blocked: $(...) command substitution runs a nested command whose argv the network/denylist scan can't see. Arithmetic $(( )) and parameter \${...} expansion are allowed. ${NESTED_COMMAND_WAY_OUT}`;
   }
   // bash 5.3 function/value substitution: `${ cmd; }` / `${| cmd; }` RUN a
@@ -206,8 +227,9 @@ export function detectNestedCommandExecution(command: string): string | null {
     return `Blocked: \${ ...; } function substitution runs a nested command whose argv the network/denylist scan can't see. Use \${NAME} parameter expansion. ${NESTED_COMMAND_WAY_OUT}`;
   }
   // Process substitution <(...) / >(...) — quote-stripped so a literal `>(`
-  // inside quotes isn't misread (the operator is not quote-expandable).
-  if (/[<>]\(/.test(stripQuotedSpans(command))) {
+  // inside quotes isn't misread (the operator is not quote-expandable), and
+  // arithmetic-stripped: `$(( a<(b+1) ))` is a comparison.
+  if (/[<>]\(/.test(withoutArithmetic(stripQuotedSpans(command)))) {
     return `Blocked: process substitution <(...) / >(...) runs a nested command whose argv the network/denylist scan can't inspect. ${NESTED_COMMAND_WAY_OUT}`;
   }
   // Subshell ( ... ) and brace-group { ...; } at a command position. `((` at a

@@ -75,6 +75,26 @@ export function splitShellSegments(command: string): string[] {
 export type SegmentJoin = "|" | "|&" | "||" | "&&" | ";" | "&" | "\n";
 export interface ShellSegment { text: string; after: SegmentJoin | null }
 
+/**
+ * Where the arithmetic `$(( … ))` or `(( … ))` opening at `i` ends (the index
+ * just past its `))`), or -1 when none opens there. Inside one, `|`, `&`,
+ * `||`, `&&`, `<<` and `(` are operators on numbers: `$(( (1<<31)|(1<<30) ))`
+ * runs no command (TB2 circuit-fibsqrt, 2026-10-28, refused as a subshell after
+ * the split at its `|`). It is arithmetic only if its parentheses balance and
+ * the last two close together; bash reads `$(( (cmd) ) )` as a command
+ * substitution of a subshell, and so is -1 here.
+ */
+export function arithmeticSpanEnd(command: string, i: number): number {
+  const open = command.startsWith("$((", i) ? 3 : command.startsWith("((", i) ? 2 : 0;
+  if (open === 0) return -1;
+  let depth = 2;
+  for (let j = i + open; j < command.length; j++) {
+    if (command[j] === "(") depth++;
+    else if (command[j] === ")" && --depth === 0) return command[j - 1] === ")" ? j + 1 : -1;
+  }
+  return -1;
+}
+
 /** splitShellSegments, keeping which separator started each segment — a rule
  *  about what a command is PIPED into needs to know it was a pipe. */
 export function shellSegments(command: string): ShellSegment[] {
@@ -93,6 +113,13 @@ export function shellSegments(command: string): ShellSegment[] {
     if (c === '"' || c === "'") {
       quote = c;
       cur += c;
+      continue;
+    }
+    // `$(( … ))` anywhere, `(( … ))` where a command starts: one word.
+    const arithmetic = c === "$" || (c === "(" && cur.trim() === "") ? arithmeticSpanEnd(command, i) : -1;
+    if (arithmetic > 0) {
+      cur += command.slice(i, arithmetic);
+      i = arithmetic - 1;
       continue;
     }
     const next = command[i + 1];

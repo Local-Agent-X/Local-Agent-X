@@ -7,9 +7,9 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { SessionStore } from "../memory/session-store.js";
-import { bindDelegatedSessionLineage } from "../canonical-loop/delegated-session-lineage.js";
+import { bindDelegatedSessionLineage } from "./delegated-session-lineage.js";
 import { clearSessionOwner } from "../browser/session-owner-registry.js";
-import { _resetSessionProjectsForTest, getSessionProject, seedSessionProjects } from "./project.js";
+import { _resetSessionProjectsForTest, getSessionProject, seedSessionProjects } from "../session/project.js";
 
 const dirs: string[] = [];
 afterEach(() => {

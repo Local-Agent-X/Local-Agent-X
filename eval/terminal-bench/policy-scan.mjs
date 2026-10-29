@@ -14,6 +14,18 @@
 // bash / process_start call in each trial's saved session) instead of the
 // reference solutions: what today's rules would still refuse of real work.
 //
+//   node eval/terminal-bench/policy-scan.mjs --trajectories /jobs/<a>,/jobs/<b> --out /out/cross.json
+//
+// --trajectories does the same for OTHER harnesses' runs, from the trajectory
+// Harbor saves for each trial (agent/trajectory.json, ATIF): every command
+// Hermes or Codex sent, none of which any gate stopped. What LAX would refuse
+// of them is a false alarm waiting for LAX's model to try the same thing.
+// Hermes' execute_code is translated to the `python3 - <<'PY'` a LAX model
+// writes for it, and marked so. OpenClaw's trajectory holds no tool calls.
+// Each call also goes through the approval floor and the unnamed-delete gate;
+// those read the disk, which a replay does not have, so a delete they ask
+// about here may have been provable in the trial.
+//
 // Default settings are the benchmark seed's (seed.mjs: unrestricted file
 // access, the disposable-sandbox switch, LAX_SANDBOX=host). --desktop scans
 // as a default install on a Linux machine where LAX's sandbox cannot start.
@@ -102,11 +114,66 @@ function* sessionCommands(jobDir) {
   }
 }
 
+/** A harness's shell call as the LAX call its model would make instead. */
+const TRAJECTORY_SHELL = {
+  terminal: (a) => a.command && { toolName: a.background ? "process_start" : "bash", command: a.command },
+  exec_command: (a) => a.cmd && { toolName: "bash", command: Array.isArray(a.cmd) ? a.cmd.join(" ") : a.cmd },
+  execute_code: (a) => a.code && { toolName: "bash", command: `python3 - <<'PY'\n${a.code}\nPY`, translated: true },
+};
+
+/** Every shell call in a job's trajectories: `{ harness, task, toolName, command, translated? }`. */
+function* trajectoryCommands(jobDir) {
+  for (const trial of readdirSync(jobDir)) {
+    const path = join(jobDir, trial, "agent", "trajectory.json");
+    if (!existsSync(path)) continue;
+    let t;
+    try { t = JSON.parse(readFileSync(path, "utf8")); } catch { continue; }
+    const harness = String(t.agent?.name ?? "unknown").toLowerCase();
+    for (const step of t.steps ?? []) {
+      for (const tc of step.tool_calls ?? []) {
+        const call = TRAJECTORY_SHELL[tc.function_name]?.(tc.arguments ?? {});
+        if (call && typeof call.command === "string") yield { harness, task: trial.split("__")[0], ...call };
+      }
+    }
+  }
+}
+
+// The approval gates a bash call meets after the security layer, as the
+// Autonomous profile the benchmark seed sets runs them.
+const { applyIrreversibleFloor } = await import(pathToFileURL(join(repoRoot, "dist/approval-decision.js")).href);
+const { unnamedDeletes } = await import(pathToFileURL(join(repoRoot, "dist/tool-execution/unnamed-delete-gate.js")).href);
+function approvalAsk(toolName, command) {
+  const args = { command };
+  if (applyIrreversibleFloor("allow-with-rollback", toolName, args, undefined, { cwd: "/app", sessionId: "scan" }) === "ask") return "irreversible floor";
+  const unnamed = unnamedDeletes([{ id: "x", name: toolName, arguments: JSON.stringify(args) }], [{ role: "user", content: "Do the task." }], { sessionId: "scan" });
+  return unnamed.length ? `unnamed delete: ${unnamed.map((d) => d.path).join(", ")}` : null;
+}
+
 // --replay <job dir>: judge what a run's model actually ran, not the reference.
 const replayDir = arg("replay", null);
+const trajectoryDirs = arg("trajectories", null)?.split(",").filter(Boolean) ?? null;
 const results = [];
 let tasks;
-if (replayDir) {
+if (trajectoryDirs) {
+  const seen = new Set();
+  const judged = new Set();
+  let calls = 0;
+  for (const dir of trajectoryDirs) {
+    for (const c of trajectoryCommands(resolve(dir))) {
+      seen.add(c.task);
+      const key = `${c.task}\0${c.toolName}\0${c.command}`;
+      if (judged.has(key)) continue;
+      judged.add(key); calls++;
+      const d = layer.evaluate({ toolName: c.toolName, args: { command: c.command }, sessionId: "scan", callContext: "api" });
+      const ask = d.allowed ? approvalAsk(c.toolName, c.command) : null;
+      if (!d.allowed || ask) {
+        results.push({ harness: c.harness, task: c.task, gate: d.allowed ? "approval" : "security", translated: c.translated === true, command: c.command.slice(0, 600), reason: d.allowed ? ask : d.reason });
+      }
+    }
+  }
+  tasks = [...seen];
+  console.log(`${calls} distinct shell calls from ${trajectoryDirs.length} job(s)`);
+} else if (replayDir) {
   const seen = new Set();
   for (const { task, toolName, command } of sessionCommands(resolve(replayDir))) {
     seen.add(task);
@@ -126,15 +193,19 @@ if (replayDir) {
 }
 
 // Group by rule: the reason with its variable parts (paths, names, numbers) folded.
-const fold = (r) => String(r).replace(/"[^"]*"/g, '"X"').replace(/`[^`]*`/g, "`X`").replace(/\d+/g, "N").slice(0, 140);
+const fold = (r) => String(r).replace(/"[^"]*"/g, '"X"').replace(/`[^`]*`/g, "`X`").replace(/(unnamed delete: ).*/, "$1…").replace(/\d+/g, "N").slice(0, 140);
 const byRule = new Map();
 for (const r of results) {
-  const k = fold(r.reason);
-  const e = byRule.get(k) ?? { rule: k, count: 0, tasks: new Set(), example: r };
-  e.count++; e.tasks.add(r.task); byRule.set(k, e);
+  const k = `${r.gate ? `[${r.gate}] ` : ""}${fold(r.reason)}`;
+  const e = byRule.get(k) ?? { rule: k, count: 0, tasks: new Set(), harnesses: new Set(), examples: [] };
+  e.count++; e.tasks.add(r.task); if (r.harness) e.harnesses.add(r.harness);
+  if (e.examples.length < 5) e.examples.push({ task: r.task, harness: r.harness, translated: r.translated, command: r.command.slice(0, 300) });
+  byRule.set(k, e);
 }
 const rules = [...byRule.values()].sort((a, b) => b.tasks.size - a.tasks.size)
-  .map((e) => ({ rule: e.rule, statements: e.count, tasks: [...e.tasks], example: { task: e.example.task, command: e.example.command.slice(0, 200) } }));
+  .map((e) => ({ rule: e.rule, statements: e.count, tasks: [...e.tasks], harnesses: [...e.harnesses], examples: e.examples }));
+// Each rule's first example stands for it in the summary line below.
+for (const r of rules) r.example = r.examples[0];
 const blockedTasks = new Set(results.map((r) => r.task));
 writeFileSync(outPath, JSON.stringify({ settings: desktop ? "desktop (default install, no sandbox)" : "benchmark seed", tasks: tasks.length, tasksWithABlock: blockedTasks.size, rules, results }, null, 2));
 console.log(`${desktop ? "desktop" : "benchmark"}: ${blockedTasks.size} of ${tasks.length} tasks have at least one refused statement; ${rules.length} rules`);

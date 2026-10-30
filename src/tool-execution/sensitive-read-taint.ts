@@ -18,6 +18,8 @@
 // saw is not security — the invariant is what makes the block trustworthy.
 
 import { randomUUID } from "node:crypto";
+import { existsSync, lstatSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import type { ToolResult } from "../types.js";
 import {
   recordSensitiveRead,
@@ -31,6 +33,10 @@ import {
 } from "../data-lineage/index.js";
 import type { TaintSource, MaskOptions } from "../data-lineage/index.js";
 import { recordExternalIngestion, isExternalIngestingTool } from "../data-lineage/external.js";
+import { isMintedKey, recordMintedKey } from "../data-lineage/minted-keys.js";
+import { workspaceRoot } from "../config.js";
+import { shellCreateTargets } from "./create-target-path.js";
+import { cwdOf } from "./internal-args.js";
 import { DEFAULT_MAX_RESULT_CHARS } from "../context-manager/tool-result-cap.js";
 import { hasCapability, outputOf, shellCommandOf, waitsForShellCommand } from "../tool-registry.js";
 import { resolveAgentPath } from "../workspace/paths.js";
@@ -126,6 +132,59 @@ export interface PreExecuteFloor {
   id: string;
   pairs: TaintPair[];
   preTaintedPath: string | null;
+  /** A command's sensitive operands that did not exist before it ran: the
+   *  agent's own key files if the command makes them (minted-keys.ts). */
+  unborn: string[];
+  /** The sensitive files its output redirections write that did not exist
+   *  before it ran (`cat x.key x.crt > x.pem`), resolved where the shell runs. */
+  unbornWrites: string[];
+}
+
+/** The sensitive files a command's output redirections create, absent now.
+ *  A wrong placement is safe: only a regular file there after the command records. */
+function unbornKeyWrites(command: string, args: Record<string, unknown>): string[] {
+  try {
+    return shellCreateTargets(command, cwdOf(args) || workspaceRoot()).filter((p) => isSensitivePath(p) && !existsSync(p));
+  } catch {
+    return []; // best-effort, like created-files.ts: an unplaced target stays the user's
+  }
+}
+
+// Only an absolute operand is judged by where it lives: a relative one
+// resolves where the shell runs, which is not followed here, so it stays
+// sensitive.
+const mintedKey = (sid: string, p: string): boolean => isAbsolute(p) && isMintedKey(sid, p);
+
+/** What is at a path now: a regular file, nothing, or something else (a link,
+ *  which reaches bytes this command need not have made). */
+function kindNow(p: string): "file" | "none" | "other" {
+  try {
+    return lstatSync(p).isFile() ? "file" : "other";
+  } catch {
+    return "none";
+  }
+}
+
+/**
+ * The sensitive operands of a finished command whose output is withheld: every
+ * one it reads, less the key files this session's commands made. A key file is
+ * this command's own when it did not exist before the command ran and the
+ * command read no sensitive file that already existed (`cp ~/.ssh/id_rsa
+ * /tmp/x.key` makes nothing of its own): whatever it holds, this command put
+ * there. One still there as a regular file is recorded (minted-keys.ts), one
+ * the command also removed (TB2's `… > /tmp/key_pub.pem && diff … && rm …`)
+ * just isn't withheld, and a link is withheld.
+ */
+function withheldCommandPaths(sid: string, command: string, floor: PreExecuteFloor, result: ToolResult | undefined): string[] {
+  const existing = sensitivePathsReadByCommand(command).filter((p) => !floor.unborn.includes(p) && !mintedKey(sid, p));
+  const ownWork = existing.length === 0 && !!result && !result.isError;
+  const made = ownWork ? floor.unborn.filter((p) => kindNow(p) !== "other") : [];
+  for (const p of ownWork ? [...made, ...floor.unbornWrites] : []) if (kindNow(p) === "file") recordMintedKey(sid, p);
+  if (made.length > 0) {
+    retractProvisionalTaint(sid, floor.pairs.filter((f) => made.includes(f.target)), floor.id);
+    floor.pairs = floor.pairs.filter((f) => !made.includes(f.target));
+  }
+  return [...existing, ...floor.unborn.filter((p) => !made.includes(p))];
 }
 
 // Resolve a path arg the SAME way the file sinks do (project-root anchored,
@@ -176,7 +235,7 @@ export function setPreExecuteTaintFloor(
   sessionId: string | undefined,
 ): PreExecuteFloor {
   const sid = sessionId || "default";
-  const floor: PreExecuteFloor = { id: randomUUID(), pairs: [], preTaintedPath: null };
+  const floor: PreExecuteFloor = { id: randomUUID(), pairs: [], preTaintedPath: null, unborn: [], unbornWrites: [] };
   const isSensitiveReadCap = hasCapability(toolName, "sensitive-read");
   const command = finishedCommandOf(toolName, args);
   if (isSensitiveReadCap && command === undefined && typeof args.path === "string" && args.path) {
@@ -192,9 +251,12 @@ export function setPreExecuteTaintFloor(
     }
   } else if (command !== undefined) {
     for (const p of sensitivePathsReadByCommand(command)) {
+      if (mintedKey(sid, p)) continue;
+      if (isAbsolute(p) && !existsSync(p)) floor.unborn.push(p);
       recordSensitiveRead(sid, "sensitive_file", p, undefined, floor.id);
       floor.pairs.push({ source: "sensitive_file", target: p });
     }
+    floor.unbornWrites = unbornKeyWrites(command, args);
   }
   return floor;
 }
@@ -249,14 +311,15 @@ export function applyResultTaintPolicy(
   }
 
   if (command !== undefined) {
-    const matches = sensitivePathsReadByCommand(command);
-    if (matches.length > 0) {
+    const withheld = withheldCommandPaths(sid, command, floor, result);
+    if (withheld.length > 0) {
       // The floor for these paths was set pre-execute; whether it stands is
       // decided by the stub branch below (stubbed → retracted, delivered →
       // kept). No content-bearing re-record — these reads carry no per-path
       // content to fingerprint. A command that names a secrets FILE gets the
-      // whole-result stub; any other command's output is masked below.
-      redactReason = `${toolName} command referenced sensitive path(s): ${matches.join(", ")}`;
+      // whole-result stub; any other command's output, and one naming only
+      // keys this session made, is masked below.
+      redactReason = `${toolName} command referenced sensitive path(s): ${withheld.join(", ")}`;
     }
   }
 

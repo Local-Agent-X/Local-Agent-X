@@ -179,6 +179,16 @@ describe("a descriptor opened on a local path", () => {
   });
 });
 
+// TB2 install-windows-3.11, 2026-10-29: LAX's own model checked its nginx page
+// with urlopen(url, timeout) inside a command substitution.
+describe("a URL with an argument after it", () => {
+  const check = (url: string) => `echo "   /vnc.html: $(python3 -c "import urllib.request;r=urllib.request.urlopen('${url}',5);print(r.status, r.headers.get('Content-Type'))")"`;
+  it("reaches the URL's own host", () => {
+    expect(policy(check("http://127.0.0.1:80/vnc.html")).allowed).toBe(true);
+    expect(policy(check("http://evil.test:80/vnc.html")).allowed).toBe(false);
+  });
+});
+
 describe("decoded text is refused only when something runs it", () => {
   it("decoded into a file nothing runs is data", () => {
     const cmd = "base64 -d << 'B64' > /app/filter.py\nIyEvdXNyL2Jpbi9lbnYgcHl0aG9uMwo=\nB64\npython3 -c \"import ast; ast.parse(open('/app/filter.py').read())\"";

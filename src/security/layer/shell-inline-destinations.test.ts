@@ -28,6 +28,9 @@ describe("inlineProgramDestinations", () => {
     ["import urllib.request; req = urllib.request.Request('https://localhost:8443/', method='GET'); resp = urllib.request.urlopen(req, timeout=5)", { kind: "local", ports: ["8443"], unixSockets: [] }],
     ["import requests; url = 'http://127.0.0.1:5000/health'; print(requests.get(url).status_code)", { kind: "local", ports: ["5000"], unixSockets: [] }],
     ["import http.client; conn = http.client.HTTPConnection('127.0.0.1', 6080, timeout=5); conn.request('HEAD', '/')", { kind: "local", ports: ["6080"], unixSockets: [] }],
+    // TB2 install-windows-3.11 (2026-10-29): a number after a URL is another
+    // argument (urlopen's next positional), not a port.
+    ["import urllib.request;r=urllib.request.urlopen('http://127.0.0.1:80/vnc.html',5);print(r.status)", { kind: "local", ports: ["80"], unixSockets: [] }],
   ];
   for (const [program, expected] of local) it(`local: ${program.slice(0, 60)}`, () => expect(py(program)).toEqual(expected));
 
@@ -47,6 +50,8 @@ describe("inlineProgramDestinations", () => {
     "import requests; url = 'http://localhost:1/'; url = input(); requests.get(url)",
     "import requests; url = base + '/x'; requests.get(url)",
     "import http.client; conn = http.client.HTTPConnection('evil.test', 80)",
+    "import urllib.request; urllib.request.urlopen('http://evil.test:80/', 5)",
+    "import urllib.request; urllib.request.urlopen('http://127.0.0.1.evil.test/', 5)",
   ];
   for (const program of unknown) it(`unknown: ${program.slice(0, 60)}`, () => expect(py(program)).toEqual({ kind: "unknown" }));
   it("is unknown for node reaching out", () => expect(node("fetch('https://evil.test')")).toEqual({ kind: "unknown" }));

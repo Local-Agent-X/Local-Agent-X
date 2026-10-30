@@ -99,9 +99,23 @@ function destinationsOf(argText: string, bound: Map<string, string[] | null>): D
   return out;
 }
 
+/** The port a URL literal reaches, or null when its host is not this machine
+ *  or it does not parse. */
+function urlDestination(s: string): Destination | null {
+  try {
+    const url = new URL(s);
+    return loopback(url.hostname) ? { port: url.port || defaultPort(url.protocol) } : null;
+  } catch { return null; }
+}
+
 /** Where one call's literal argument text points, or null when it cannot be read. */
 function destinationOf(argText: string): Destination | null {
   let m: RegExpMatchArray | null;
+  // A URL names its own host and port, so a number after it is some other
+  // argument, not a port: `urlopen('http://127.0.0.1:80/vnc.html', 5)` (TB2
+  // install-windows-3.11, 2026-10-29) is not the pair (host, port) HOST_PORT reads.
+  const first = (m = ONLY_STRING.exec(argText)) && literal(m, 1, 2);
+  if (first && URL_LITERAL.test(first)) return urlDestination(first);
   if ((m = TUPLE.exec(argText))) return loopback(literal(m, 1, 2)) ? { port: m[3] } : null;
   if ((m = PORT_HOST.exec(argText))) return loopback(literal(m, 2, 3)) ? { port: m[1] } : null;
   if ((m = HOST_PORT.exec(argText))) return loopback(literal(m, 1, 2)) ? { port: m[3] } : null;
@@ -112,16 +126,7 @@ function destinationOf(argText: string): Destination | null {
     if (path) return { unixSocket: path[1] ?? path[2] };
     return host && port && loopback(host[1] ?? host[2]) ? { port: port[1] } : null;
   }
-  if ((m = ONLY_STRING.exec(argText))) {
-    const s = literal(m, 1, 2);
-    if (s.startsWith("/")) return { unixSocket: s };
-    if (!URL_LITERAL.test(s)) return null;
-    try {
-      const url = new URL(s);
-      return loopback(url.hostname) ? { port: url.port || defaultPort(url.protocol) } : null;
-    } catch { return null; }
-  }
-  return null;
+  return first?.startsWith("/") ? { unixSocket: first } : null;
 }
 
 /** The destinations every inline program of `command` names (see the header),

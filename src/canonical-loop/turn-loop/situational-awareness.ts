@@ -209,5 +209,7 @@ function goalLine(firstUserText: string): string | null {
   if (!text) return null;
   const oneLine = text.replace(/\s+/g, " ");
   const clipped = oneLine.length > GOAL_MAX_CHARS ? oneLine.slice(0, GOAL_MAX_CHARS) + "…" : oneLine;
-  return `Original request: "${clipped}"`;
+  // "Original request:" alone read as the user asking again: a model restarted
+  // the task from this line (TB2 build-pmars, 2026-10-29).
+  return `Original request (already underway; quoted to keep you oriented, not sent again): "${clipped}"`;
 }

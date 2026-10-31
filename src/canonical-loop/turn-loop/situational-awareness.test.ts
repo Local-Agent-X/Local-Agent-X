@@ -88,16 +88,16 @@ describe("composeDigest", () => {
     const early = composeDigest({ turnIdx: 2, recent: [], firstUserText: "build the thing" });
     expect(early).not.toContain("Original request");
     const late = composeDigest({ turnIdx: 6, recent: [], firstUserText: "build the thing" });
-    expect(late).toContain('Original request: "build the thing"');
+    expect(late).toContain('Original request (already underway; quoted to keep you oriented, not sent again): "build the thing"');
   });
 
   it("clips a long goal restatement", () => {
     const long = "a".repeat(300);
     const d = composeDigest({ turnIdx: 6, recent: [], firstUserText: long });
     expect(d).toContain("…");
-    // Goal line clips at GOAL_MAX_CHARS(160); the rest is the fixed
-    // header/footer + pace line. Bound = clipped goal + ~200 of frame.
-    expect(d!.length).toBeLessThan(360);
+    // Goal line clips at GOAL_MAX_CHARS(160) after its 75-char label; the rest
+    // is the fixed header/footer + pace line. Bound = clipped goal + ~200 of frame.
+    expect(d!.length).toBeLessThan(440);
   });
 
   it("carries success criteria + hard constraints into the re-grounding block", () => {

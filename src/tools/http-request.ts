@@ -313,5 +313,17 @@ function requestFailedResult(
     });
   }
   if (e instanceof EgressRedirectBlocked) return err(`${e.message}${c.droppedNote}`, { ...base, blocked_url: e.blockedUrl });
-  return err(`HTTP request failed: ${(e as Error).message}${c.droppedNote}`, base);
+  return err(`HTTP request failed: ${failureDetail(e)}${c.droppedNote}`, base);
+}
+
+/** A wire failure with its reason. Node's fetch says only "fetch failed" and
+ *  keeps the reason (ECONNRESET, ETIMEDOUT, a TLS error) on `cause`; ten such
+ *  results in one Terminal-Bench run said nothing the model could act on
+ *  (mteb-leaderboard, 2026-10-29). */
+export function failureDetail(e: unknown): string {
+  const error = e as Error & { cause?: { code?: unknown; message?: unknown } };
+  const message = error?.message ?? String(e);
+  const cause = error?.cause;
+  const reason = typeof cause?.code === "string" ? cause.code : typeof cause?.message === "string" ? cause.message : "";
+  return reason && !message.includes(reason) ? `${message} (${reason})` : message;
 }

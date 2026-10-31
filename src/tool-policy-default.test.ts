@@ -111,8 +111,10 @@ describe("rate-limit derivation", () => {
   it("preserves the per-tool + global sliding-window caps", () => {
     const byTool = Object.fromEntries(deriveRateLimits().map((l) => [l.tool, l]));
     expect(byTool.bash).toMatchObject({ maxCalls: 30, windowMs: 60_000, action: "block" });
-    expect(byTool.http_request).toMatchObject({ maxCalls: 20, action: "block" });
-    expect(byTool.web_fetch).toMatchObject({ maxCalls: 20, action: "block" });
+    // Above what a batch of lookups does in a minute, still a ceiling on a spray.
+    expect(byTool.http_request).toMatchObject({ maxCalls: 60, windowMs: 60_000, action: "block" });
+    expect(byTool.web_fetch).toMatchObject({ maxCalls: 60, action: "block" });
+    expect(byTool.compare_pages).toMatchObject({ maxCalls: 60, action: "block" });
     expect(byTool.write).toMatchObject({ maxCalls: 50, action: "warn" });
     // browser intentionally has no count-based limit — it is paced at the mutex
     // and stopped by no-progress detection instead (see tool-policies.network.ts).

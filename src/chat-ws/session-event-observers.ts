@@ -25,6 +25,11 @@ export function subscribeSessionEvents(sessionId: string, observer: SessionEvent
   };
 }
 
+/** Someone observes this session's events right now (the phone's projection). */
+export function sessionObserved(sessionId: string): boolean {
+  return (observers.get(sessionId)?.listeners.size ?? 0) > 0;
+}
+
 export function sessionEventHighWater(sessionId: string): number {
   return observers.get(sessionId)?.version ?? 0;
 }

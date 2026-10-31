@@ -16,6 +16,12 @@ export const ChatRequestSchema = z.object({
     url: z.string(),
     isImage: z.boolean(),
   })).optional().default([]),
+  // `false`: the caller reads the response but will answer no approval card
+  // (a script, a benchmark driver). A call that needs a person is then parked
+  // in the inbox at once instead of waiting the card's window
+  // (chat-ws/broadcast.ts sessionAttended). Absent, the open response counts
+  // as someone who may answer.
+  attended: z.boolean().optional(),
 }).superRefine((data, ctx) => {
   if (!data.message.trim() && (!data.attachments || data.attachments.length === 0)) {
     ctx.addIssue({

@@ -13,14 +13,14 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1889 non-test source files · 89 oversized · 246 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1890 non-test source files · 89 oversized · 246 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 172 | 29 | XL | 1 |
-| `src/security/` | 143 | 55 | XL | 3 |
+| `src/security/` | 143 | 56 | XL | 3 |
 | `src/tools/` | 121 | 221 | XL | 9 |
 | `src/tool-execution/` | 85 | 80 | XL | 2 |
 | `src/canonical-loop/` | 81 | 278 | XL | 11 |
@@ -35,7 +35,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/util/` | 42 | 3 | S |  |
 | `src/threat/` | 40 | 13 | L |  |
 | `src/auth/` | 37 | 11 | L |  |
-| `src/chat-ws/` | 33 | 23 | L |  |
+| `src/chat-ws/` | 34 | 23 | L |  |
 | `src/agency/` | 29 | 21 | L |  |
 | `src/context-manager/` | 29 | 15 | M |  |
 | `src/agent-store/` | 28 | 7 | M | 1 |
@@ -438,6 +438,7 @@ job. Comments are free: never cut them to fit.
 - `src/providers/adapters/openai-http.ts#call:callback` — 80+ own code lines (cap 100)
 - `src/routes/agents/projects.ts#handleProjectRoutes` — 80+ own code lines (cap 100)
 - `src/routes/bridges/secrets.ts#handleSecretsRoutes` — 80+ own code lines (cap 100)
+- `src/routes/chat.ts#handleChatRoutes` — 80+ own code lines (cap 100)
 - `src/routes/chat/delegation-handoff.ts#runDelegationHandoff` — 80+ own code lines (cap 100)
 - `src/routes/connector-proxy.ts#handleConnectorProxyRoutes` — 80+ own code lines (cap 100)
 - `src/server/api-request-router.ts#routeApiRequest` — 80+ own code lines (cap 100)
@@ -495,7 +496,6 @@ job. Comments are free: never cut them to fit.
 - `src/protocols/stats-tools.ts#protocol_stats.execute` — 70+ own code lines (cap 100)
 - `src/providers/adapters/ollama-native.ts#OllamaNativeAdapter.stream` — 70+ own code lines (cap 100)
 - `src/providers/sanitize.ts#sanitizeHistory` — 70+ own code lines (cap 100)
-- `src/routes/chat.ts#handleChatRoutes` — 70+ own code lines (cap 100)
 - `src/routes/issues.ts#handleIssueRoutes` — 70+ own code lines (cap 100)
 - `src/routes/mcp-servers.ts#handleMcpServerRoutes` — 70+ own code lines (cap 100)
 - `src/screen-capture.ts#captureScreen` — 70+ own code lines (cap 100)

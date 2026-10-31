@@ -36,7 +36,7 @@ import { classifyShellTier, isShellTierTool } from "./shell-approval-tier.js";
 import { getSandboxStatus } from "../sandbox/index.js";
 import { takeUnnamedDeleteDecision, UNNAMED_DELETE_DECLINED_TEXT, UNNAMED_DELETE_USE_TRASH_TEXT } from "./unnamed-delete-gate.js";
 import { secretEnvGate } from "./secret-env-approval.js";
-import { parkOrRefuse, takeUserGrant } from "./deferred-call.js";
+import { attendedRun, nobodyWatching, parkOrRefuse, takeUserGrant } from "./deferred-call.js";
 import { publishOperations } from "../publish-operation.js";
 import { chatTurnOf } from "./chat-consent.js";
 import { shellTreeDeleteScope } from "./tree-delete-scope.js";
@@ -249,17 +249,18 @@ export const requireApprovalPhase: Phase = async (ctx) => {
   // answers this card in any run, alwaysAsk ones included.
   const granted = takeUserGrant(ctx);
 
-  // Unattended run: no human to prompt. The profile says "ask" and nothing
-  // authorized it, so it does not silently run (this is the load-bearing
-  // guarantee for cron/delegated runs): the call is parked in the user's
-  // inbox and the run goes on without it. A policy reason or a memory
-  // promotion asks a person under every profile, so the fallback refusal
-  // never points at a looser profile, a switch that changes nothing.
-  if (!granted && ctx.callContext !== "local") {
+  // Unattended run, or a chat nobody is attached to: no human to prompt. The
+  // profile says "ask" and nothing authorized it, so it does not silently run
+  // (this is the load-bearing guarantee for cron/delegated runs): the call is
+  // parked in the user's inbox and the run goes on without it. A policy
+  // reason or a memory promotion asks a person under every profile, so the
+  // fallback refusal never points at a looser profile, a switch that changes
+  // nothing.
+  if (!granted && !attendedRun(ctx)) {
     const reason =
       `BLOCKED (unattended): ${ctx.tc.name} needs human approval` +
       `${promotion ? " because risky content cannot become durable memory without explicit user approval" : ctx.policyApprovalReason ? ` because ${ctx.policyApprovalReason}` : " under the active autonomy profile"}, ` +
-      `but no one is watching this ${ctx.callContext} run.`;
+      `but ${nobodyWatching(ctx)}.`;
     const reviewNote = ctx.publishReview ? reviewNoteForModel(ctx.publishReview) : "";
     const refusal: ToolResult = {
       content: `${reason} ` +

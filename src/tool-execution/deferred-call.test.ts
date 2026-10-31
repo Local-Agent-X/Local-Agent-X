@@ -10,7 +10,9 @@ import { join } from "node:path";
 import { requireApprovalPhase } from "./require-approval.js";
 import { secretEnvGate } from "./secret-env-approval.js";
 import { runSandboxedPhase } from "./run-sandboxed.js";
-import { deferUnattendedCall } from "./deferred-call.js";
+import { attendedRun, deferUnattendedCall } from "./deferred-call.js";
+import { holdSessionStream } from "../chat-ws/broadcast.js";
+import { activeChats, type ActiveChat } from "../chat-ws/state.js";
 import { executeToolCalls } from "./execute-tool.js";
 import { dispatchApprovedCall } from "./approved-call.js";
 import { SecurityLayer } from "../security/index.js";
@@ -100,6 +102,27 @@ describe("the approval phase's unattended branch", () => {
     expect(parked()).toHaveLength(0);
     expect(harness.result?.metadata?.deferredTo).toBeUndefined();
     expect(String(harness.result?.content)).toContain("run it from a chat");
+  });
+
+  // TB2 2026-10-24/29: cards raised in chats driven over the API, with no tab,
+  // phone or answering caller attached, waited 300 s each and were refused.
+  it("a live chat turn nobody is attached to parks the call at once, labelled as the chat's, and attends again once someone is", async () => {
+    const onEvent = () => {};
+    const c = ctx("bash", { command: "rm -rf /tmp/build" }, "local", "chat-unwatched", { policyApprovalReason: "a shell delete needs the user's yes", onEvent });
+    // Outside a live turn (a dispatch with its own channel) the card is kept.
+    expect(attendedRun(c)).toBe(true);
+    activeChats.set("chat-unwatched", { sessionId: "chat-unwatched", done: false } as unknown as ActiveChat);
+    expect((await requireApprovalPhase(c)).kind).toBe("halt");
+    const items = parked();
+    expect(items).toHaveLength(1);
+    expect(items[0].title).toBe("Chat wants to run bash");
+    expect(items[0].deferredCall).toMatchObject({ callContext: "local", jobLabel: "Chat", sessionId: "chat-unwatched" });
+    expect(items[0].deferredCall?.reason).toBe("BLOCKED (unattended): bash needs human approval because a shell delete needs the user's yes, but no one is attached to this chat.");
+    expect(c.result?.metadata).toMatchObject({ layer: "approval", deferredTo: items[0].id });
+    expect(String(c.result?.content)).toContain("waiting in the user's inbox");
+    expect(attendedRun(c)).toBe(false);
+    const release = holdSessionStream("chat-unwatched");
+    try { expect(attendedRun(c)).toBe(true); } finally { release(); activeChats.delete("chat-unwatched"); }
   });
 });
 

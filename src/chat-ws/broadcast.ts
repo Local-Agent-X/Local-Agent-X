@@ -10,7 +10,7 @@ import type { ServerEvent } from "../types.js";
 import type { GlobalFrame } from "./frames.js";
 import { hasChatHandlerPending } from "../ops/session-bridge.js";
 import { isHiddenFromChatLists } from "../memory/synthetic-sessions.js";
-import { notifySessionEventObservers } from "./session-event-observers.js";
+import { notifySessionEventObservers, sessionObserved } from "./session-event-observers.js";
 import { activeChats, browserClients, clients } from "./state.js";
 
 // How long a terminated ActiveChat lingers before its buffer is swept.
@@ -150,6 +150,52 @@ export function broadcastToSession(sessionId: string, event: ServerEvent): void 
       ws.send(payload);
     }
   }
+}
+
+// ── Who can answer a chat's approval card ──
+//
+// A card is shown to whoever receives the session's events: a browser tab or
+// the desktop window (any tab, since the sidebar shows the card's badge for a
+// chat the user is not viewing), a socket client subscribed to the session
+// (the broker's bridge relaying it to the phone, an IDE session), the phone's
+// projection (session-event-observers.ts), or a caller reading the `/api/chat`
+// response. With none of those the card has no one to reach, and waiting its
+// window for an answer only idles the run: the approval gate parks the call in
+// the inbox at once instead (tool-execution/deferred-call.ts attendedRun), as
+// it does for a scheduled job. TB2 2026-10-24/29: four `rm -rf` cards in
+// sessions driven over the API waited 300 s each and were then refused.
+const heldStreams = new Map<string, number>();
+
+/** A caller is reading this session's events over an open response and may
+ *  answer a card. Returns the release, idempotent, for the response's end or
+ *  close. A caller that will not answer cards does not hold the stream. */
+export function holdSessionStream(sessionId: string): () => void {
+  heldStreams.set(sessionId, (heldStreams.get(sessionId) ?? 0) + 1);
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    const left = (heldStreams.get(sessionId) ?? 1) - 1;
+    if (left > 0) heldStreams.set(sessionId, left); else heldStreams.delete(sessionId);
+  };
+}
+
+/** Is anyone attached who could answer this session's approval card? */
+export function sessionAttended(sessionId: string): boolean {
+  if ((heldStreams.get(sessionId) ?? 0) > 0 || sessionObserved(sessionId)) return true;
+  for (const [ws, subs] of clients) {
+    if (ws.readyState === 1 /* OPEN */ && (browserClients.has(ws) || subs.has(sessionId))) return true;
+  }
+  return false;
+}
+
+/** A chat turn this server is running for `sessionId` whose events nobody
+ *  receives. Only a live turn (an ActiveChat not yet done) is judged: a
+ *  dispatch outside one (an IDE or MCP caller with its own channel, a test)
+ *  keeps its card. */
+export function chatUnattended(sessionId: string): boolean {
+  const chat = activeChats.get(sessionId);
+  return !!chat && !chat.done && !sessionAttended(sessionId);
 }
 
 /** The ONE definition of the active_chats listing: live turns minus every

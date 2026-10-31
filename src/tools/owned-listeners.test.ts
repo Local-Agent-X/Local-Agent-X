@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import {
-  ownedLoopbackPorts, ownedUnixSockets, parseLsof, parseProcNetUnix, parseProcStat, parsePs, parseWinTable,
+  linuxListeningPids, ownedLoopbackPorts, ownedUnixSockets, parseLsof, parseProcNetTcp, parseProcNetUnix, parseProcStat, parsePs, parseWinTable,
   portsOwnedBy, registerOwnedProcess, socketsOwnedBy, unregisterOwnedProcess,
 } from "./owned-listeners.js";
 import { evaluateWebFetch } from "../security/layer/network-policy.js";
@@ -82,6 +82,41 @@ describe("ownedUnixSockets — a socket is the agent's when a process it started
   it("reads the parent pid after the command name, whatever it holds", () => {
     expect(parseProcStat("300 (qemu-system-x86) S 100 300 1 0")).toBe(100);
     expect(parseProcStat("301 (a (b) c) S 42 301 1 0")).toBe(42);
+  });
+
+  // TB2 install-windows-3.11, 2026-10-29: the container had no lsof, so the
+  // agent's own QEMU port 5901 was nobody's. The listening sockets are in
+  // /proc/net/tcp (st 0A), inode to port; tcp6 the same with longer addresses.
+  it("reads only LISTENING TCP sockets from /proc/net/tcp and tcp6, inode to port", () => {
+    const tcp = [
+      "  sl  local_address rem_address   st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode",
+      "   0: 0100007F:170D 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 5101 1 0000000000000000 100 0 0 10 0",
+      "   1: 00000000:0050 00000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 5102 1 0000000000000000 100 0 0 10 0",
+      "   2: 0100007F:170D 0100007F:C3A2 01 00000000:00000000 00:00000000 00000000     0        0 5103 1 0000000000000000 20 4 30 10 -1",
+    ].join("\n");
+    const tcp6 = [
+      "  sl  local_address                         remote_address                        st tx_queue rx_queue tr tm->when retrnsmt   uid  timeout inode",
+      "   0: 00000000000000000000000000000000:1F90 00000000000000000000000000000000:0000 0A 00000000:00000000 00:00000000 00000000     0        0 5104 1 0000000000000000 100 0 0 10 0",
+    ].join("\n");
+    expect([...parseProcNetTcp(tcp)]).toEqual([["5101", 5901], ["5102", 80]]);
+    expect([...parseProcNetTcp(tcp6)]).toEqual([["5104", 8080]]);
+    expect(parseProcNetTcp("").size).toBe(0);
+  });
+
+  it.runIf(process.platform === "linux")("finds a TCP port this process listens on, as a holder and as the agent's once registered", async () => {
+    const { createServer } = await import("node:net");
+    const server = createServer();
+    await new Promise<void>((done) => server.listen(0, "127.0.0.1", done));
+    const port = (server.address() as { port: number }).port;
+    try {
+      expect(linuxListeningPids(port)).toEqual([process.pid]);
+      expect(ownedLoopbackPorts().has(String(port))).toBe(false);
+      registerOwnedProcess(process.pid);
+      expect(ownedLoopbackPorts().has(String(port))).toBe(true);
+    } finally {
+      unregisterOwnedProcess(process.pid);
+      server.close();
+    }
   });
 
   it.runIf(process.platform === "linux")("finds a socket this process listens on once it is registered", async () => {

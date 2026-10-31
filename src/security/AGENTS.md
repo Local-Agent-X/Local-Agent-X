@@ -20,6 +20,7 @@
 | `layer/types.ts` `WORKER_CONTEXTS` (delegated agents and scheduled jobs answer to one set of rules) | `layer/layer-core.ts` worktree gate, `src/tool-execution/unattended-shell-gate.ts`, the self-verify redirect in `src/tool-execution/enforce-policy.ts` | `layer/layer-core-delegated-worktree.test.ts` (a scheduled job decided exactly as a delegated agent) |
 | a worker run's shell containment (`layer/layer-core.ts` `delegatedShellOsContained`: the sandbox's `delegatedShellAllowed`, never a work root) | `src/tool-execution/unattended-shell-gate.ts` reads the same primitive; every provisioner that anchors a work root (`src/agency/agent-workspace.ts`, cron, build-lane workers) relies on the sandbox, not the folder, for containment | `layer/layer-core-delegated-worktree.test.ts` ("bash on an unconfined host is refused even with a work root") |
 | `secrets/known-secrets.ts` | `src/tool-execution/` known-secret shell gate, `src/memory/write-safely.ts` redaction | `secrets/known-secrets-email.test.ts`, `src/tool-execution/known-secret-shell-gate.test.ts` |
+| `layer/shell-local-sink.ts` (a command line whose every sink is the local filesystem: the one exemption the known-secret shell gate makes) | `src/tool-execution/shell-block-guidance.ts` `knownSecretShellBlockReason` | `layer/shell-local-sink.test.ts`, `src/tool-execution/known-secret-shell-gate.test.ts` |
 | `layer/index.ts` / `secrets/index.ts` exports | every `from "../security/index.js"` importer | none |
 
 ## Tests

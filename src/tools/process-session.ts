@@ -17,7 +17,7 @@ import { killProcessGroup } from "../process-tree-kill.js";
 import { evaluateShellCommand, registerTrackedShellSessions } from "../security/layer/index.js";
 import { getSandboxMode, getSandboxStatus } from "../sandbox/index.js";
 import { spawnCagedSync } from "./caged-spawn.js";
-import { registerOwnedProcess, unregisterOwnedProcess } from "./owned-listeners.js";
+import { linuxListeningPids, registerOwnedProcess, unregisterOwnedProcess } from "./owned-listeners.js";
 import { workspaceRoot } from "../config.js";
 import { resolveAgentPath } from "../workspace/paths.js";
 import { secretEnvProgram, withheldOutputNote, type ResolvedSecretEnv, type SecretEnv } from "./shell-secret-env.js";
@@ -303,6 +303,9 @@ export function pidsOnPort(port: number): number[] | null {
       });
       return parseNetstatListenerPids(table, port);
     }
+    // Linux from /proc: a minimal container has no lsof (owned-listeners.ts).
+    const fromProc = linuxListeningPids(port);
+    if (fromProc !== null) return fromProc;
     const out = execFileSync("lsof", ["-ti", `tcp:${port}`, "-sTCP:LISTEN"], { encoding: "utf-8", timeout: 5000 });
     const pids = new Set<number>();
     for (const line of out.split(/\r?\n/)) {

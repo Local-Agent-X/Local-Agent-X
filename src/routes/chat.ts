@@ -12,6 +12,7 @@ import { handleTrashRestoreRoute } from "./chat/trash-restore-route.js";
 import { runChatTurn } from "./chat/run-chat-turn.js";
 import { parseChatMode } from "../session/mode.js";
 import { markDryRunSession, unmarkDryRunSession } from "../tool-execution/index.js";
+import { holdSessionStream } from "../chat-ws/broadcast.js";
 
 const logger = createLogger("routes.chat");
 void logger;
@@ -44,6 +45,11 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
 
     res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-cache", Connection: "keep-alive", ...corsHeaders(req) });
 
+    // While this response is open its reader can answer an approval card;
+    // released when it ends or the caller drops it (the turn keeps running).
+    const releaseStream = parsed.data.attended === false ? () => {} : holdSessionStream(sessionId);
+    res.on("close", releaseStream);
+
     // Heartbeat keeps the SSE connection alive for slow tool turns. The
     // runChatTurn helper doesn't know about res; the route owns the
     // transport-level keepalive. Cleared in the finally below.
@@ -69,6 +75,7 @@ export const handleChatRoutes: RouteHandler = async (method, url, req, res, ctx,
       });
     } finally {
       clearInterval(heartbeat);
+      releaseStream();
       if (!res.writableEnded) res.end();
     }
     return true;

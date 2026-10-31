@@ -54,7 +54,10 @@ export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyRow> = {
     pathArgs: [{ arg: "save_to", action: "write", whenGiven: true }, { arg: "body_file", action: "read", whenGiven: true }],
     destination: [{ to: "site", arg: "url", allowlisted: true }],
     reads: ["session"], killSwitch: "enableHttp", committing: "kernel-write", category: "research",
-    rateLimit: { maxCalls: 20, windowMs: 60_000, action: "block" },
+    // The cap bounds how fast a compromised turn can spray requests; it sits
+    // above what a batch of lookups does in a minute (TB2 protein-assembly,
+    // 2026-10-29: twenty small API calls hit the old 20, then 65 s of sleeps).
+    rateLimit: { maxCalls: 60, windowMs: 60_000, action: "block" },
     rules: [{ id: "allow-http-limited", decision: "allow", reason: "HTTP allowed (rate limited, SSRF-checked, content-wrapped)", priority: 40, constraints: { maxCallsPerSession: 60 } }],
   },
   // The kernel's own HTTP tool: the same arbitrary request http_request makes,
@@ -65,12 +68,12 @@ export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyRow> = {
   web_fetch: {
     kernel: "http", ariAction: "get", risk: "network-read", capabilities: ["egress"], tags: ["web-read"], essentialRank: 17, blurb: { say: "summarize https://example.com", does: "Fetch and read a web page." }, timeoutMs: 60_000, output: "http-body", externalContent: true, offBoxFetch: true,
     destination: [{ to: "site", arg: "url" }], category: "research",
-    rateLimit: { maxCalls: 20, windowMs: 60_000, action: "block" },
+    rateLimit: { maxCalls: 60, windowMs: 60_000, action: "block" },
     rules: [{ id: "allow-webfetch-limited", decision: "allow", reason: "Web fetch allowed (rate limited, SSRF-checked, content-wrapped)", priority: 40, constraints: { maxCallsPerSession: 60 } }],
   },
   compare_pages: {
     kernel: "http", ariAction: "get", risk: "network-read", capabilities: ["egress"], tags: [], externalContent: true, offBoxFetch: true,
-    rateLimit: { maxCalls: 20, windowMs: 60_000, action: "block" },
+    rateLimit: { maxCalls: 60, windowMs: 60_000, action: "block" },
     rules: [{ id: "allow-compare-pages", decision: "allow", reason: "Structural two-page compare (read-only, rate limited, SSRF-checked, content-wrapped)", priority: 40, constraints: { maxCallsPerSession: 60 } }],
   },
   // Both ship the model's query off-box and read what comes back: the same

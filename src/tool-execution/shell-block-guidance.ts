@@ -9,6 +9,7 @@ import { USER_HINTS, type ToolResult } from "../types.js";
 import { hasCapability } from "../tool-registry.js";
 import { findTaintInPayload, detectSecretsInOutput } from "../data-lineage/index.js";
 import { registeredOnlyAsSeen, scanForSecrets } from "../security/secrets/index.js";
+import { commandSinksOnlyLocal } from "../security/layer/shell-local-sink.js";
 import { storedSecretRoute } from "./stored-secret-route.js";
 
 // Kernel taint sources that @arikernel/core's deny-tainted-shell rule treats as
@@ -108,6 +109,13 @@ export function taintedShellBlockReason(
  * (2026-10-27): "ssh … with password `password123`" — the first login's
  * output masked the password, and the second login was refused for carrying
  * it. A vault secret, or a masked value the user never wrote, stays refused.
+ *
+ * And except a command line whose every sink is the local filesystem
+ * (security/layer/shell-local-sink.ts): the gate exists because the line is
+ * an egress channel, and `grep -r <value> .` or `sed` over a repository has
+ * none. Finding and scrubbing a leaked key means naming it. TB2
+ * sanitize-git-repo, 2026-10-29. A client, an interpreter or an unknown
+ * binary anywhere on the line keeps the refusal.
  */
 export function knownSecretShellBlockReason(toolName: string, args: unknown, userWords = ""): string | null {
   if (!hasCapability(toolName, "shell")) return null;
@@ -116,7 +124,7 @@ export function knownSecretShellBlockReason(toolName: string, args: unknown, use
   const userGave = (value: string) => userWords.includes(value) && registeredOnlyAsSeen(value);
   const hits = scanForSecrets(payload).matches
     .filter((m) => m.type === "known-secret-value" && !userGave(payload.slice(m.startIndex, m.endIndex))).length;
-  if (hits === 0) return null;
+  if (hits === 0 || commandSinksOnlyLocal(payload)) return null;
   return (
     `Shell is blocked for this command: it carries a stored secret value (${hits} occurrence${hits === 1 ? "" : "s"}, plain or encoded) — ` +
     `a value the vault holds or one that was masked out of an earlier tool result. Credentials never go on a command line. ` +

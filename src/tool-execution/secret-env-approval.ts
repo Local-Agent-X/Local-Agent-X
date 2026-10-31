@@ -17,7 +17,7 @@ import { decisionDenies, decisionRequiresPrompt, getApprovalManager, getRiskDeci
 import { paidMediaSecretEnvRefusal, SECRET_ENV_TOOLS, secretEnvOf, secretEnvProgram, secretManipulation } from "../tools/shell-secret-env.js";
 import { spawnCommandOf } from "../tools/process-session.js";
 import type { ToolCallContext } from "./context.js";
-import { parkOrRefuse, takeUserGrant } from "./deferred-call.js";
+import { attendedRun, parkOrRefuse, takeUserGrant } from "./deferred-call.js";
 
 export const SECRET_USE_TOOL = "use_secret";
 
@@ -50,7 +50,7 @@ export async function secretEnvGate(ctx: ToolCallContext): Promise<SecretEnvGate
   if (!decisionRequiresPrompt(rule)) return { kind: "continue" };
   // The user's yes to this exact call, given from the inbox, covers its secrets too.
   if (takeUserGrant(ctx)) return { kind: "continue" };
-  if (ctx.callContext !== "local" || !ctx.onEvent) {
+  if (!attendedRun(ctx) || !ctx.onEvent) {
     const reason = `BLOCKED: handing ${names.join(", ")} to a command needs the user's yes under this profile, and no one can be asked on this run.`;
     const refusal = blockedResult(reason,
       "Send the secret with http_request and a {{SECRET_NAME}} placeholder if that fits; otherwise report the command as waiting for the user. Continue with the rest of the request.");

@@ -3,7 +3,10 @@
  * process_start — a dependency-free leaf (node:child_process only) the security
  * layer folds into its local-service ports, the same way it folds in the
  * dev-server record store (dev-server-records.ts, and for the same reason: the
- * layer cannot import process-session.ts without a cycle).
+ * layer cannot import process-session.ts without a cycle). On Linux the
+ * listeners and the process table come from /proc (no lsof or ps, which a
+ * minimal container lacks); the port-holder lookup (process-session.ts
+ * pidsOnPort) reads the same table.
  *
  * Evidence, not configuration: a port is reachable because a process the
  * agent started (or a descendant of it — `npm run dev` forks the server that
@@ -117,10 +120,25 @@ function query(): { listeners: Listener[]; procs: Proc[] } {
 	if (process.platform === "win32") {
 		return parseWinTable(execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", WIN_SCRIPT], opts));
 	}
+	// Linux from /proc alone: a minimal container has neither lsof nor ps
+	// (TB2 install-windows-3.11, 2026-10-29: "listener lookup failed: spawnSync
+	// lsof ENOENT", so the agent's own QEMU port was nobody's).
+	if (process.platform === "linux") return queryLinux();
 	return {
 		listeners: parseLsof(execFileSync("lsof", ["-nP", "-iTCP", "-sTCP:LISTEN", "-F", "pn"], opts)),
 		procs: parsePs(execFileSync("ps", ["-eo", "pid=,ppid="], opts)),
 	};
+}
+
+/** The pids listening on a TCP `port`, read from /proc (Linux only; null
+ *  elsewhere, and when /proc could not be read: no answer is not "nothing"). */
+export function linuxListeningPids(port: number): number[] | null {
+	if (process.platform !== "linux") return null;
+	try {
+		return [...new Set(queryLinux().listeners.filter((l) => l.port === port).map((l) => l.pid))];
+	} catch {
+		return null;
+	}
 }
 
 /** The live pid → ppid table, for a caller that must tell this process's own
@@ -168,6 +186,19 @@ export function parseProcNetUnix(text: string): Map<string, string> {
 	return byInode;
 }
 
+// /proc/net/tcp and tcp6: `sl local_address rem_address st … inode`, the
+// address as hex `ADDR:PORT`, st 0A a listening socket. Inode → port.
+export function parseProcNetTcp(text: string): Map<string, number> {
+	const byInode = new Map<string, number>();
+	for (const line of text.split("\n").slice(1)) {
+		const f = line.trim().split(/\s+/);
+		if (f.length < 10 || f[3] !== "0A") continue;
+		const port = parseInt(f[1].slice(f[1].lastIndexOf(":") + 1), 16);
+		if (Number.isInteger(port)) byInode.set(f[9], port);
+	}
+	return byInode;
+}
+
 // `/proc/<pid>/stat` is `pid (comm) state ppid …`; comm may hold spaces and
 // parens, so the fields are read after its LAST `)`.
 export function parseProcStat(stat: string): number | null {
@@ -175,10 +206,18 @@ export function parseProcStat(stat: string): number | null {
 	return Number.isInteger(ppid) ? ppid : null;
 }
 
-/** Linux, from /proc alone: a minimal container has neither lsof nor ps. */
-function querySocketsLinux(): { listeners: SocketListener[]; procs: Proc[] } {
-	const byInode = parseProcNetUnix(readFileSync("/proc/net/unix", "utf-8"));
-	const listeners: SocketListener[] = [];
+function readProcNet(name: string): string {
+	try { return readFileSync(`/proc/net/${name}`, "utf-8"); } catch { return ""; /* a kernel without that family lists nothing */ }
+}
+
+/** Linux, from /proc alone: a minimal container has neither lsof nor ps. One
+ *  walk of /proc/<pid>/fd maps each process's socket inodes to the TCP ports
+ *  and Unix socket paths /proc/net says are listening. */
+function queryLinux(): { listeners: Listener[]; sockets: SocketListener[]; procs: Proc[] } {
+	const portByInode = new Map([...parseProcNetTcp(readProcNet("tcp")), ...parseProcNetTcp(readProcNet("tcp6"))]);
+	const pathByInode = parseProcNetUnix(readProcNet("unix"));
+	const listeners: Listener[] = [];
+	const sockets: SocketListener[] = [];
 	const procs: Proc[] = [];
 	for (const d of readdirSync("/proc")) {
 		if (!/^\d+$/.test(d)) continue;
@@ -188,12 +227,15 @@ function querySocketsLinux(): { listeners: SocketListener[]; procs: Proc[] } {
 			if (ppid !== null) procs.push({ pid, ppid });
 			for (const fd of readdirSync(`/proc/${d}/fd`)) {
 				const inode = /^socket:\[(\d+)\]$/.exec(readlinkSync(`/proc/${d}/fd/${fd}`))?.[1];
-				const path = inode === undefined ? undefined : byInode.get(inode);
-				if (path) listeners.push({ path, pid });
+				if (inode === undefined) continue;
+				const port = portByInode.get(inode);
+				if (port !== undefined) listeners.push({ port, pid });
+				const path = pathByInode.get(inode);
+				if (path) sockets.push({ path, pid });
 			}
 		} catch { /* the process exited or its fds are another user's: no evidence from it */ }
 	}
-	return { listeners, procs };
+	return { listeners, sockets, procs };
 }
 
 /**
@@ -209,8 +251,8 @@ export function ownedUnixSockets(): Set<string> {
 	if (socketCache && Date.now() - socketCache.at < CACHE_MS) return socketCache.paths;
 	let paths = new Set<string>();
 	try {
-		const { listeners, procs } = querySocketsLinux();
-		for (const p of socketsOwnedBy(listeners, procs, ownedPids)) {
+		const { sockets, procs } = queryLinux();
+		for (const p of socketsOwnedBy(sockets, procs, ownedPids)) {
 			try { paths.add(realpathSync(p)); } catch { /* bound, then unlinked: no file to reach */ }
 		}
 	} catch {

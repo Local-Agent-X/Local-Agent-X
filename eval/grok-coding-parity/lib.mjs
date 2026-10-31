@@ -71,7 +71,10 @@ export async function driveChat(message, sessionId, timeoutMs, target = LIVE(), 
   const timer = setTimeout(() => ac.abort(), timeoutMs);
   const t0 = Date.now();
   try {
-    const res = await fetch(`${target.baseUrl}/api/chat`, { method: "POST", headers: target.headers, body: JSON.stringify({ message, sessionId, ...(mode ? { mode } : {}) }), signal: ac.signal });
+    // attended:false — this driver reads the stream but answers no approval
+    // card, so a call that needs one is parked in the inbox at once instead of
+    // holding the turn for the card's window.
+    const res = await fetch(`${target.baseUrl}/api/chat`, { method: "POST", headers: target.headers, body: JSON.stringify({ message, sessionId, attended: false, ...(mode ? { mode } : {}) }), signal: ac.signal });
     if (!res.ok) { err = `HTTP ${res.status}`; }
     else {
       let buf = "";

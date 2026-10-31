@@ -2,8 +2,10 @@
 // parked for the user's yes, and the one place a gate learns the user already
 // gave it.
 //
-// An unattended run (cron, delegated, api) has no one to show an approval
-// card to. It does not pause: the gate parks the call in the user's inbox (an
+// An unattended run (cron, delegated, api), or a chat whose events nobody
+// receives (chat-ws/broadcast.ts sessionAttended: no tab, no phone, no caller
+// reading the response), has no one to show an approval card to. It does not
+// pause: the gate parks the call in the user's inbox (an
 // "approval" item, src/inbox/approvals.ts), the model reads that the call is
 // waiting there, and the run finishes what it can without it. On Approve the
 // inbox runs that exact call through this pipeline again (approved-call.ts)
@@ -28,7 +30,7 @@
 import type { ToolCallContext } from "./context.js";
 import type { ToolResult } from "../types.js";
 import { getApprovalManager } from "../approval-manager.js";
-import { isHeadlessSession } from "../chat-ws/broadcast.js";
+import { chatUnattended, isHeadlessSession } from "../chat-ws/broadcast.js";
 import { readOp } from "../ops/op-store.js";
 import { OP_TYPE } from "../ops/op-types.js";
 import { runLabel } from "../inbox/producers.js";
@@ -47,14 +49,27 @@ function jobLabel(ctx: ToolCallContext): string {
   let op: ReturnType<typeof readOp> = null;
   try { op = ctx.operationId ? readOp(ctx.operationId) : null; } catch { /* unreadable op: name the run by its context alone */ }
   const scheduled = op?.type === OP_TYPE.scheduledMission || ctx.callContext === "cron";
-  return runLabel(scheduled ? "Scheduled job" : "Background task", op?.task ?? "");
+  return runLabel(scheduled ? "Scheduled job" : ctx.callContext === "local" ? "Chat" : "Background task", op?.task ?? "");
+}
+
+/** A person can answer a card on this run. A cron, delegated or API run has
+ *  no one; a chat turn whose events nobody receives (chat-ws/broadcast.ts
+ *  chatUnattended) has no one now, and waiting the card's window for them
+ *  only idles the run. */
+export function attendedRun(ctx: Pick<ToolCallContext, "callContext" | "sessionId">): boolean {
+  return ctx.callContext === "local" && !(ctx.sessionId && chatUnattended(ctx.sessionId));
+}
+
+/** The run the card could not reach, for a refusal's wording. */
+export function nobodyWatching(ctx: Pick<ToolCallContext, "callContext">): string {
+  return ctx.callContext === "local" ? "no one is attached to this chat" : `no one is watching this ${ctx.callContext} run`;
 }
 
 /** Park this call in the user's inbox. Returns the item id, or null when
  *  nothing was parked: an attended run (it shows a card instead), a harness
  *  run that is not the user's job, or an inbox that could not record it. */
 export function deferUnattendedCall(ctx: ToolCallContext, reason: string, grant?: DeferredGrant): string | null {
-  if (ctx.callContext === "local") return null;
+  if (attendedRun(ctx)) return null;
   // Harness runs (skill review, dreaming, evals) are not the user's jobs.
   if (ctx.sessionId && isHeadlessSession(ctx.sessionId)) return null;
   const args = Object.fromEntries(Object.entries(ctx.args).filter(([name]) => !name.startsWith("_")));

@@ -5,6 +5,7 @@ import { resolveAgentPath, sessionIdOf } from "../workspace/paths.js";
 import { moveToTrash, moveToTaskTrash } from "../safe-delete.js";
 import { isTaskArtifact, unrecordTaskArtifact } from "../data-lineage/task-artifacts.js";
 import { readValidatedFile, writeValidatedFile, FileAccessDeniedError } from "../security/layer/index.js";
+import { scanForSecrets } from "../security/secrets/index.js";
 import type { ToolDefinition } from "../types.js";
 import { detectInjection, injectionFinding } from "../sanitize.js";
 import { ok, err, blocked } from "./result-helpers.js";
@@ -33,6 +34,24 @@ export function isScreenExemptAgentCode(filePath: string): boolean {
     normalized.includes("workspace/apps/") &&
     /\.(ts|tsx|js|jsx|mjs|cjs|css|svelte|vue)$/i.test(normalized)
   );
+}
+
+/**
+ * A file the model writes must not carry a credential: the secrets vault holds
+ * those. The judgement is the canonical scanner's (security/secrets), the same
+ * catalog that gates egress and taints reads. The write tool used to keep its
+ * own six regexes, one of which matched any 22-letter run around "sk", "pk",
+ * "key" or "auth": it refused a Python file of protein sequences twice
+ * (Terminal-Bench protein-assembly, 2026-10-29) and missed an OpenAI key and
+ * a password assignment the catalog catches.
+ *
+ * CSS and SVG are not scanned: a data URI there is image bytes, not a token.
+ */
+export function secretInContentRejection(filePath: string, content: string): string | null {
+  const ext = filePath.split(".").pop()?.toLowerCase() || "";
+  if (ext === "css" || ext === "svg") return null;
+  if (scanForSecrets(content).clean) return null;
+  return "BLOCKED: Content appears to contain a secret/credential. Secrets must never be written to workspace files. Use the secrets vault instead.";
 }
 
 export const readTool: ToolDefinition = {
@@ -212,21 +231,8 @@ export const writeTool: ToolDefinition = {
     const content = String(args.content);
     const connectorRejection = connectorManifestWriteRejection(filePath);
     if (connectorRejection) return err(connectorRejection);
-    const ext = filePath.split(".").pop()?.toLowerCase() || "";
-    const skipSecretScan = ["css", "svg"].includes(ext);
-    const SECRET_PATTERNS = skipSecretScan ? [] : [
-      /(?:sk|pk|api|key|token|secret|password|auth)[-_]?[a-zA-Z0-9]{20,}/i,
-      /ghp_[a-zA-Z0-9]{36}/,
-      /gho_[a-zA-Z0-9]{36}/,
-      /glpat-[a-zA-Z0-9-]{20,}/,
-      /AKIA[A-Z0-9]{16}/,
-      /eyJ[a-zA-Z0-9_-]{50,}\.[a-zA-Z0-9_-]{50,}/,
-    ];
-    for (const pattern of SECRET_PATTERNS) {
-      if (pattern.test(content)) {
-        return err(`BLOCKED: Content appears to contain a secret/credential. Secrets must never be written to workspace files. Use the secrets vault instead.`);
-      }
-    }
+    const secretRejection = secretInContentRejection(filePath, content);
+    if (secretRejection) return err(secretRejection);
     const containerRejection = binaryContainerRejection(filePath, content);
     if (containerRejection) return err(containerRejection);
     const guard = checkAppWrite(filePath, content, sessionIdOf(args));

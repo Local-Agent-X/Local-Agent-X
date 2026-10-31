@@ -12,6 +12,7 @@ import {
   continuationRow,
   continueCutOffReply,
   isContinuableCut,
+  isReasoningOnlyStop,
   mergeLeg,
 } from "./cut-off-continuation.js";
 import type { StreamOnceResult } from "./types.js";
@@ -41,6 +42,24 @@ describe("isContinuableCut", () => {
     expect(isContinuableCut(reply({ assembledThinking: "t", stoppedByGuard: "loop" }))).toBe(false);
     expect(isContinuableCut(reply({ assembledThinking: "t", interruptedByInject: true }))).toBe(false);
     expect(isContinuableCut(reply())).toBe(false);
+  });
+});
+
+describe("isReasoningOnlyStop", () => {
+  const thoughtThenStopped = () => reply({ providerStop: "stop", assembledThinking: "facet nodes come from the custom heap, so", usageCompletionTokens: 7_734 });
+
+  it("is a reply the model ended after thinking, with no answer and no tool call", () => {
+    expect(isReasoningOnlyStop(thoughtThenStopped())).toBe(true);
+    expect(isReasoningOnlyStop(reply({ providerStop: "end_turn", assembledThinking: "t" }))).toBe(true);
+  });
+
+  it("is not an answer, a tool call, a cut, an owned turn, or an empty reply", () => {
+    expect(isReasoningOnlyStop(reply({ providerStop: "stop", assembledThinking: "t", assembledText: "the answer" }))).toBe(false);
+    expect(isReasoningOnlyStop(reply({ providerStop: "tool_calls", assembledThinking: "t", pendingToolCalls: [toolCall] }))).toBe(false);
+    expect(isReasoningOnlyStop(cutWhileThinking())).toBe(false);
+    expect(isReasoningOnlyStop(reply({ providerStop: "stop", assembledThinking: "t", stoppedByGuard: "loop" }))).toBe(false);
+    expect(isReasoningOnlyStop(reply({ providerStop: "stop", assembledThinking: "t", firstError: { code: "x", message: "y" } }))).toBe(false);
+    expect(isReasoningOnlyStop(reply({ providerStop: "stop" }))).toBe(false);
   });
 });
 
@@ -90,6 +109,27 @@ describe("continueCutOffReply", () => {
     expect(result.pendingToolCalls).toEqual([toolCall]);
     expect(result.assembledThinking).toBe("T1");
     expect(result.usageCompletionTokens).toBe(16_504);
+  });
+
+  // custom-memory-heap-crash (2026-10-31): two thought-only turns in a row
+  // ended the op as blocked with seven minutes left.
+  it("continues a reply the model ended after thinking, as a thought cut mid-way: closed, with the budget sentence", async () => {
+    const run = leg(reply({ pendingToolCalls: [toolCall], providerStop: "tool_calls", usageCompletionTokens: 60 }));
+    const thoughtOnly = reply({ providerStop: "stop", assembledThinking: "the fix did not take; valgrind next", usageCompletionTokens: 9_405 });
+    const { result, legs } = await continueCutOffReply({ req, result: thoughtOnly, cap, run, isAborted: () => false });
+    expect(legs).toBe(1);
+    expect((run.mock.calls[0][0] as ProviderRequest).messages.at(-1))
+      .toEqual({ role: "assistant", content: "", reasoning: `the fix did not take; valgrind next\n\n${THINKING_BUDGET_CLOSE}` });
+    expect(result.pendingToolCalls).toEqual([toolCall]);
+    expect(result.usageCompletionTokens).toBe(9_465);
+  });
+
+  it("a reply still thought-only after its legs goes to the turn loop's nudge, as before", async () => {
+    const run = leg(reply({ providerStop: "stop", assembledThinking: "still thinking" }));
+    const { result, legs } = await continueCutOffReply({ req, result: reply({ providerStop: "stop", assembledThinking: "T1" }), cap, run, isAborted: () => false });
+    expect(legs).toBe(CUT_OFF_CONTINUATION_LEGS);
+    expect(result.providerStop).toBe("stop");
+    expect(result.assembledText).toBe("");
   });
 
   it("continues cut text mid-sentence until the reply finishes", async () => {

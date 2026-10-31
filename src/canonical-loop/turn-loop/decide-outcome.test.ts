@@ -86,7 +86,8 @@ import { appendNudgeAsUserMessage } from "./nudges.js";
 import { failedCallNudge } from "./failed-call-gate.js";
 import { REASONING_ONLY_NUDGE } from "./empty-turn-termination.js";
 import { STREAM_CLOSED_STOP } from "../../providers/adapter/types.js";
-import { CUT_OFF_KEPT_CHARS, CUT_OFF_NUDGE, CUT_OFF_REDRIVE_LIMIT, CUT_OFF_TERMINAL } from "./cut-off-turn.js";
+import { CUT_OFF_KEPT_CHARS, CUT_OFF_NUDGE, CUT_OFF_REDRIVE_LIMIT, CUT_OFF_TERMINAL, DEGENERATE_KEPT, DEGENERATE_NUDGE, DEGENERATE_TERMINAL } from "./cut-off-turn.js";
+import { DEGENERATE_STOP } from "../adapters/stream-guards.js";
 import { MALFORMED_TOOL_CALL_REDRIVE_LIMIT } from "./malformed-tool-call.js";
 import { createLogger } from "../../logger.js";
 
@@ -1988,6 +1989,30 @@ describe("decideTurnOutcome — a reply the output limit cut off", () => {
     const r = await decideTurnOutcome(cutOffTurn({ providerStop: "stop", modelSignaledDone: true, modelWantsToContinue: false }));
     expect(r.terminalReason).toBe("done");
     expect(vi.mocked(appendNudgeAsUserMessage)).not.toHaveBeenCalledWith("op-test", 1, CUT_OFF_NUDGE, expect.anything());
+  });
+
+  // cobol-modernization (2026-10-31): Ollama aborted a looping reply, the op
+  // ended with two minutes left. A degenerate reply is the same kind of turn
+  // as a cut-off one; the loop itself never goes into history.
+  it("re-opens a turn whose reply degenerated, with its own nudge, and keeps a marker in place of the loop", async () => {
+    const loop = "the same sentence again and again. ".repeat(200);
+    const r = await decideTurnOutcome(cutOffTurn({
+      finalized: [{ messageId: "am1", role: "assistant", content: { text: loop } }],
+      assistantText: loop, providerStop: DEGENERATE_STOP,
+    }));
+    expect(r.terminalReason).toBeNull();
+    expect(vi.mocked(appendNudgeAsUserMessage)).toHaveBeenCalledWith("op-test", 1, DEGENERATE_NUDGE, expect.anything());
+    expect((r.allMessages[0].content as { text: string }).text).toBe(DEGENERATE_KEPT);
+  });
+
+  it("a degenerate reply with nothing in it (the runtime aborted mid-thought) is re-opened too, and ends honestly once spent", async () => {
+    const thoughtOnly = (turnIdx: number) => cutOffTurn({
+      turnIdx, finalized: [], assistantText: "", hasReasoning: true, providerStop: DEGENERATE_STOP,
+    });
+    for (let i = 0; i < CUT_OFF_REDRIVE_LIMIT; i++) expect((await decideTurnOutcome(thoughtOnly(i))).terminalReason).toBeNull();
+    const r = await decideTurnOutcome(thoughtOnly(CUT_OFF_REDRIVE_LIMIT));
+    expect(r.terminalReason).toBe("done");
+    expect(r.allMessages.some(m => m.role === "assistant" && (m.content as { text?: string }).text === DEGENERATE_TERMINAL)).toBe(true);
   });
 });
 

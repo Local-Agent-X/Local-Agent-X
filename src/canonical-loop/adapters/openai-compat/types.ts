@@ -76,10 +76,11 @@ export interface StreamOnceResult {
   /** Mid-stream user-inject interrupt — caller should set its own aborted
    *  flag so post-stream handling treats the turn as aborted. */
   interruptedByInject: boolean;
-  /** Degenerate-output guard tripped mid-stream (local endpoints only) and
-   *  the stream was cut early; value is the detector detail. Caller treats
-   *  the turn as cleanly DONE with the partial text — never error, never
-   *  retried. See stream-guards.ts. */
+  /** The reply degenerated and the stream was cut early, by the guard (local
+   *  endpoints only) or by the runtime's own abort; value is the detail, and
+   *  `providerStop` is DEGENERATE_STOP. Caller treats the turn as cleanly
+   *  DONE with the partial text — never error, never retried here; the turn
+   *  loop re-drives it when it made no tool call. See stream-guards.ts. */
   stoppedByGuard?: string;
 }
 

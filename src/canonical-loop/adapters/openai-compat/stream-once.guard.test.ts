@@ -25,7 +25,7 @@ vi.mock("../../../providers/tool-capability-probe.js", () => ({
 
 import { streamOnce } from "./stream-once.js";
 import { createOpenAICompatAdapter } from "../openai-compat.js";
-import { DEGENERATE_STREAM_STOP_REASON } from "../stream-guards.js";
+import { DEGENERATE_STOP, DEGENERATE_STREAM_STOP_REASON } from "../stream-guards.js";
 import { extractToolCallsFromText } from "../tool-call-text-extractor.js";
 import { resolveContextWindow } from "../../../context-manager/model-windows.js";
 import { markNoToolSupport } from "../../../providers/types.js";
@@ -96,6 +96,7 @@ describe("streamOnce degenerate guard", () => {
 
     expect(result.stoppedByGuard).toMatch(/tail repetition/);
     expect(result.firstError).toBeNull();
+    expect(result.providerStop).toBe(DEGENERATE_STOP);
     // Partial text preserved, but the stream did not run to completion.
     expect(result.assembledText.length).toBeGreaterThan(0);
     expect(result.assembledText.length).toBeLessThan(200 * LOOP_BLOCK.length);
@@ -107,6 +108,40 @@ describe("streamOnce degenerate guard", () => {
     expect(body.reason).toBe(DEGENERATE_STREAM_STOP_REASON);
     expect(body.firedBy).toBe("stream-guard");
     expect(body.debug).toMatch(/tail repetition/);
+  });
+
+  // Ollama's runner aborts a reply whose last token repeats past its limit and
+  // sends it as a stream error line; LAX took it as a transport error and the
+  // op died on it (cobol-modernization, 2026-10-31). It is the guard's event.
+  it("the runtime's own repeat-limit abort is a guard stop, not a transport error", async () => {
+    async function* abortedByRuntime() {
+      yield { type: "thinking" as const, delta: "the MOVE semantics are" };
+      yield { type: "text" as const, delta: "The fix" };
+      yield { type: "error" as const, message: "prediction aborted, token repeat limit reached" };
+    }
+    streamMock.mockImplementationOnce(abortedByRuntime);
+    const reports: AdapterReport[] = [];
+    const result = await streamOnce(req("http://127.0.0.1:11434/v1"), (r) => reports.push(r), { isAborted: () => false });
+
+    expect(result.firstError).toBeNull();
+    expect(result.stoppedByGuard).toMatch(/token repeat limit/);
+    expect(result.providerStop).toBe(DEGENERATE_STOP);
+    expect(result.assembledText).toBe("The fix");
+    expect(reports.filter((r) => r.kind === "error")).toHaveLength(0);
+    const markers = markerReports(reports);
+    expect(markers).toHaveLength(1);
+    expect(markers[0].kind === "stream_chunk" ? (markers[0].body as Record<string, unknown>).firedBy : null).toBe("runtime");
+  });
+
+  it("any other stream error is still a transport error", async () => {
+    async function* rejected() {
+      yield { type: "error" as const, message: "400 the input exceeds the context length of the model" };
+    }
+    streamMock.mockImplementationOnce(rejected);
+    const result = await streamOnce(req("http://127.0.0.1:11434/v1"), () => {}, { isAborted: () => false });
+    expect(result.firstError).toMatchObject({ code: "transport_error" });
+    expect(result.stoppedByGuard).toBeUndefined();
+    expect(result.providerStop).toBeUndefined();
   });
 
   it("cloud endpoint: guard is not armed — identical degenerate stream runs to completion", async () => {

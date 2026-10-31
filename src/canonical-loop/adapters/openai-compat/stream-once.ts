@@ -23,7 +23,7 @@ import { createLogger } from "../../../logger.js";
 import { refusalError } from "../model-stop.js";
 import { extractToolCallsFromText } from "../tool-call-text-extractor.js";
 import { parseArgs } from "../tool-call-text-repair.js";
-import { createDegenerateStreamGuard, DEGENERATE_STREAM_STOP_REASON } from "../stream-guards.js";
+import { createDegenerateStreamGuard, DEGENERATE_STOP, DEGENERATE_STREAM_STOP_REASON, isRuntimeDegenerateAbort } from "../stream-guards.js";
 import { withTransportRetry } from "../transport-retry.js";
 import { chatTransportFor } from "./chat-transport.js";
 import type { StreamOnceResult } from "./types.js";
@@ -96,23 +96,8 @@ export async function streamOnce(
             // the loop return()s the generator chain, which aborts the SDK's
             // in-flight HTTP request via its own AbortController. Text
             // streamed so far stays in assembledText, so the partial reply
-            // still finalizes. Surface exactly ONE user-visible notice: the
-            // adapter contract has no "stopped" report kind, so it rides the
-            // op-stream bus as a marker chunk (stream_chunk bodies pass
-            // through turn-loop verbatim); the chat event pump maps it to the
-            // standard `stopped` ServerEvent, and every other stream consumer
-            // ignores chunks without delta/replace by invariant.
-            out.stoppedByGuard = verdict.reason;
-            logger.warn(`[stream-guard] ${req.model}: ${verdict.reason} — stopping local stream early`);
-            report({
-              kind: "stream_chunk",
-              body: {
-                stopped: true,
-                reason: DEGENERATE_STREAM_STOP_REASON,
-                debug: verdict.reason,
-                firedBy: "stream-guard",
-              },
-            });
+            // still finalizes.
+            stopDegenerate(out, report, req.model, verdict.reason, "stream-guard");
             break;
           }
         }
@@ -150,6 +135,12 @@ export async function streamOnce(
       }
       if (ev.type === "error") {
         const message = ev.message ?? "transport error";
+        // The runtime stopped a looping reply itself: the guard's event, one
+        // layer down, so the guard's outcome — not a failed op.
+        if (isRuntimeDegenerateAbort(message)) {
+          stopDegenerate(out, report, req.model, message, "runtime");
+          break;
+        }
         if (!out.firstError) out.firstError = { code: "transport_error", message };
         report({ kind: "error", code: "transport_error", message, retryable: false });
         continue;
@@ -175,6 +166,30 @@ export async function streamOnce(
   out.rawText = out.assembledText;
   if (!deps.keepCutOffReasoning) promoteCutOffReasoning(out, report);
   return out;
+}
+
+/**
+ * A degenerate reply, caught by the guard or by the runtime, ends here with
+ * DEGENERATE_STOP as its stop and exactly ONE user-visible notice: the adapter
+ * contract has no "stopped" report kind, so it rides the op-stream bus as a
+ * marker chunk (stream_chunk bodies pass through turn-loop verbatim); the chat
+ * event pump maps it to the standard `stopped` ServerEvent, and every other
+ * stream consumer ignores chunks without delta/replace by invariant.
+ */
+function stopDegenerate(
+  out: StreamOnceResult,
+  report: (r: AdapterReport) => void,
+  model: string,
+  reason: string,
+  firedBy: "stream-guard" | "runtime",
+): void {
+  out.stoppedByGuard = reason;
+  out.providerStop = DEGENERATE_STOP;
+  logger.warn(`[${firedBy}] ${model}: ${reason} — stopping local stream early`);
+  report({
+    kind: "stream_chunk",
+    body: { stopped: true, reason: DEGENERATE_STREAM_STOP_REASON, debug: reason, firedBy },
+  });
 }
 
 /**

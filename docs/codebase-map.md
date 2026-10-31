@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1889 non-test source files · 90 oversized · 245 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1889 non-test source files · 89 oversized · 246 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -23,7 +23,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/security/` | 143 | 55 | XL | 3 |
 | `src/tools/` | 121 | 221 | XL | 9 |
 | `src/tool-execution/` | 85 | 80 | XL | 2 |
-| `src/canonical-loop/` | 81 | 278 | XL | 12 |
+| `src/canonical-loop/` | 81 | 278 | XL | 11 |
 | `src/workspace/` | 81 | 3 | M |  |
 | `src/providers/` | 71 | 26 | L | 1 |
 | `src/data-lineage/` | 56 | 12 | L |  |
@@ -255,7 +255,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/canonical-loop/adapters/app-build-adapter.ts#CliBuildAdapter.runTurn`
 - `src/canonical-loop/adapters/openai-compat.ts#OpenAICompatAdapter.runTurn`
 - `src/canonical-loop/adapters/openai-compat/canonical-to-chat-param.ts#canonicalToChatParam`
-- `src/canonical-loop/adapters/openai-compat/stream-once.ts#streamOnce`
 - `src/canonical-loop/chat-runner/event-pump.ts#subscribeOpEvents:callback`
 - `src/canonical-loop/container-execution-backend.ts`
 - `src/canonical-loop/process-relay-journal.ts`
@@ -398,6 +397,7 @@ job. Comments are free: never cut them to fit.
 - `src/canonical-loop/adapters/anthropic/stream-consume.ts#streamConsume` — 90+ own code lines (cap 100)
 - `src/canonical-loop/adapters/canonical-to-transport.ts#canonicalToTransport` — 90+ own code lines (cap 100)
 - `src/canonical-loop/adapters/codex-transport.ts#stream` — 90+ own code lines (cap 100)
+- `src/canonical-loop/adapters/openai-compat/stream-once.ts#streamOnce` — 90+ own code lines (cap 100)
 - `src/canonical-loop/checkpoint.ts#commitOwnedTurn` — 90+ own code lines (cap 100)
 - `src/canonical-loop/checkpoint.ts#projectTurnCommit` — 90+ own code lines (cap 100)
 - `src/chat-ws/message-router.ts#ws.on:callback` — 90+ own code lines (cap 100)

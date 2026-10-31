@@ -38,6 +38,26 @@
 export const DEGENERATE_STREAM_STOP_REASON =
   "Local model output degenerated — stream stopped early";
 
+/** The stop a degenerate reply ends with, whichever side caught it: this
+ *  guard, or the runtime's own (below). Not a provider's string. The turn
+ *  loop re-drives a reply that ended this way with no tool call, as it does a
+ *  cut-off one (turn-loop/cut-off-turn.ts). */
+export const DEGENERATE_STOP = "degenerate";
+
+/**
+ * The runtime's own degenerate-output stop. Ollama's runner aborts a
+ * prediction whose last token has repeated past its token repeat limit and
+ * reports it on the stream as an error line, `{"error":"prediction aborted,
+ * token repeat limit reached"}`, with no status. It is the same event this
+ * guard catches, caught one layer down, so it gets the same outcome: the
+ * stream stops and the turn carries on, instead of the op ending as a
+ * transport error (Terminal-Bench cobol-modernization, 2026-10-31: the op
+ * died on it with two minutes left).
+ */
+export function isRuntimeDegenerateAbort(message: string): boolean {
+  return /\bprediction aborted\b.*\btoken repeat limit\b/i.test(message);
+}
+
 export interface DegenerateStreamGuardOptions {
   /** Run the detectors every N accumulated chars. Default 512. */
   checkEveryChars?: number;

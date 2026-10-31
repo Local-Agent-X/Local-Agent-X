@@ -21,10 +21,19 @@
  * cap on each re-drive; qwen3.8 thinks past 16k tokens on hard derivations,
  * and every re-drive started the same thought over (6 of 37 Terminal-Bench
  * tasks, 2026-10-25).
+ *
+ * A reply that DEGENERATED (looped or garbled until the stream guard or the
+ * runtime stopped it, adapters/stream-guards.ts) is the same kind of turn: it
+ * ended with no tool call and no answer, and the task is not over. It is
+ * re-driven under the same bound with its own nudge, and its text, which is
+ * the loop itself, is replaced by a marker rather than kept. Before, the
+ * adapter ended such a turn as done and the op with it; when the runtime
+ * caught the loop the op ended as an error (cobol-modernization, 2026-10-31).
  */
 import { getMiddlewareState } from "../middlewares/state.js";
 import type { Op } from "../../ops/types.js";
 import type { ToolCall } from "../contract-types.js";
+import { DEGENERATE_STOP } from "../adapters/stream-guards.js";
 import { appendNudgeAsUserMessage } from "./nudges.js";
 
 const CUT_OFF_TURN_KEY = "cut-off-turn-counter";
@@ -38,6 +47,13 @@ export const CUT_OFF_NUDGE =
   "Your last reply hit the output limit and was cut off before you made a tool call or finished. Do not restate the plan: take the next concrete step now with one tool call, then continue from its result. If that step is a large file or artifact, build it in several small calls (create it with minimal content, then add each part, such as one slide with `add_slide`, in its own call) instead of one large one.";
 export const CUT_OFF_TERMINAL =
   "I ran out of output room before acting, several times in a row, so the task is not done. The model kept writing past its output limit without making a tool call.";
+export const DEGENERATE_NUDGE =
+  "Your last reply degenerated into repetition and was stopped before you made a tool call or finished. Do not resume that text: take the next concrete step now with one short tool call, then continue from its result.";
+export const DEGENERATE_TERMINAL =
+  "My replies kept degenerating into repetition before acting, several times in a row, so the task is not done.";
+/** What stands in history for a degenerate reply: its text is the loop. */
+export const DEGENERATE_KEPT =
+  "[This reply degenerated into repetition and was stopped before any tool call. Continue by making the next tool call.]";
 
 /** Stops that mean the provider cut the reply off at its output limit
  *  (`max_output_tokens` is the Responses API's, Codex included). */
@@ -45,6 +61,15 @@ const CUT_OFF_STOPS = new Set(["length", "max_tokens", "max_output_tokens"]);
 
 export function isCutOffStop(stop: string | undefined): boolean {
   return !!stop && CUT_OFF_STOPS.has(stop.toLowerCase());
+}
+
+export function isDegenerateStop(stop: string | undefined): boolean {
+  return stop === DEGENERATE_STOP;
+}
+
+/** The honest terminal once the re-drives for this kind of turn are spent. */
+export function unusableTurnTerminal(stop: string | undefined): string {
+  return isDegenerateStop(stop) ? DEGENERATE_TERMINAL : CUT_OFF_TERMINAL;
 }
 
 export interface CutOffTurnInput {
@@ -70,19 +95,23 @@ export interface CutOffTurnInput {
  */
 export function evaluateCutOffTurn(in_: CutOffTurnInput): "redrive" | "exhausted" | null {
   const state = getMiddlewareState(in_.op.id, CUT_OFF_TURN_KEY, () => ({ consecutive: 0 }));
-  const cutOff = isCutOffStop(in_.providerStop) && in_.toolCalls.length === 0;
-  if (!cutOff) { state.consecutive = 0; return null; }
+  const degenerate = isDegenerateStop(in_.providerStop);
+  const unusable = (degenerate || isCutOffStop(in_.providerStop)) && in_.toolCalls.length === 0;
+  if (!unusable) { state.consecutive = 0; return null; }
   // An adapter error, a middleware abort or a suspend decided this turn.
   if (in_.terminalReason === "error" || in_.middlewareAborted || in_.middlewareSuspended) return null;
   if (state.consecutive >= CUT_OFF_REDRIVE_LIMIT) return "exhausted";
-  appendNudgeAsUserMessage(in_.op.id, in_.turnIdx + 1, CUT_OFF_NUDGE,
-    { name: "cut-off-turn", reason: "cut-off-turn", outcome: "nudge" });
+  const name = degenerate ? "degenerate-turn" : "cut-off-turn";
+  appendNudgeAsUserMessage(in_.op.id, in_.turnIdx + 1, degenerate ? DEGENERATE_NUDGE : CUT_OFF_NUDGE,
+    { name, reason: name, outcome: "nudge" });
   state.consecutive += 1;
   return "redrive";
 }
 
-/** The tail of a cut-off draft, marked as such, for the committed history. */
-export function trimCutOffText(text: string): string {
+/** What the committed history keeps of an unusable reply: the tail of a
+ *  cut-off draft, marked as such; a marker alone for a degenerate one. */
+export function trimCutOffText(text: string, stop?: string): string {
+  if (isDegenerateStop(stop)) return DEGENERATE_KEPT;
   if (text.length <= CUT_OFF_KEPT_CHARS) return text;
   return `[This reply was cut off at the output limit before any tool call; only its last ${CUT_OFF_KEPT_CHARS} characters are kept. Continue by making the next tool call.]\n…${text.slice(-CUT_OFF_KEPT_CHARS)}`;
 }

@@ -74,6 +74,20 @@ describe("a cut-off reply on a discovered Ollama runtime", () => {
     expect(reports.filter(r => r.kind === "stream_chunk")).toHaveLength(0);
   });
 
+  it("a reply the model ended after thinking is continued the same way, and the turn is the leg's tool call", async () => {
+    mockStream
+      .mockResolvedValueOnce(reply({ providerStop: "stop", assembledThinking: "facet nodes are freed after the heap is torn down", usageCompletionTokens: 7_734 }))
+      .mockResolvedValueOnce(reply({ pendingToolCalls: [toolCall], providerStop: "tool_calls", usageCompletionTokens: 80 }));
+    const reports: AdapterReport[] = [];
+    const result = await adapter().runTurn(input, r => reports.push(r));
+    expect(mockStream).toHaveBeenCalledTimes(2);
+    expect(mockStream.mock.calls[1][0].messages.at(-1)).toEqual({
+      role: "assistant", content: "", reasoning: `facet nodes are freed after the heap is torn down\n\n${THINKING_BUDGET_CLOSE}`,
+    });
+    expect(result.terminalReason).toBeUndefined();
+    expect(result.providerState.providerPayload).toMatchObject({ cutOffContinuations: 1, stopReason: "tool_calls", usageOutputTokens: 7_814 });
+  });
+
   it("still cut after its legs: promoted and handed to the turn loop as a cut-off turn", async () => {
     mockStream.mockResolvedValue(reply({ assembledThinking: "still thinking" }));
     const reports: AdapterReport[] = [];

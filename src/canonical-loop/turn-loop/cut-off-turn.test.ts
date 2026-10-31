@@ -12,8 +12,11 @@ import type { ToolCall } from "../contract-types.js";
 const appendNudgeAsUserMessage = vi.fn(() => true);
 vi.mock("./nudges.js", () => ({ appendNudgeAsUserMessage: (...a: unknown[]) => appendNudgeAsUserMessage(...(a as [])) }));
 
-const { CUT_OFF_KEPT_CHARS, CUT_OFF_NUDGE, CUT_OFF_REDRIVE_LIMIT, evaluateCutOffTurn, isCutOffStop, trimCutOffText } =
-  await import("./cut-off-turn.js");
+const {
+  CUT_OFF_KEPT_CHARS, CUT_OFF_NUDGE, CUT_OFF_REDRIVE_LIMIT, CUT_OFF_TERMINAL, DEGENERATE_KEPT, DEGENERATE_NUDGE,
+  DEGENERATE_TERMINAL, evaluateCutOffTurn, isCutOffStop, isDegenerateStop, trimCutOffText, unusableTurnTerminal,
+} = await import("./cut-off-turn.js");
+const { DEGENERATE_STOP } = await import("../adapters/stream-guards.js");
 const { _resetMiddlewareStates } = await import("../middlewares/state.js");
 
 const op = { id: "op-cut-off", lane: "interactive" } as unknown as Op;
@@ -32,6 +35,14 @@ describe("isCutOffStop", () => {
 
   it("is false for a finished or tool-calling turn, and for no stop at all", () => {
     for (const s of ["stop", "end_turn", "tool_calls", "tool_use", undefined]) expect(isCutOffStop(s)).toBe(false);
+  });
+
+  it("a degenerate stop is its own kind, not a cut-off", () => {
+    expect(isDegenerateStop(DEGENERATE_STOP)).toBe(true);
+    expect(isCutOffStop(DEGENERATE_STOP)).toBe(false);
+    for (const s of ["length", "stop", undefined]) expect(isDegenerateStop(s)).toBe(false);
+    expect(unusableTurnTerminal(DEGENERATE_STOP)).toBe(DEGENERATE_TERMINAL);
+    expect(unusableTurnTerminal("length")).toBe(CUT_OFF_TERMINAL);
   });
 });
 
@@ -56,6 +67,18 @@ describe("evaluateCutOffTurn", () => {
   it("leaves a cut-off turn that made a tool call to the normal loop", () => {
     expect(evaluateCutOffTurn(turn({ toolCalls: [call] }))).toBeNull();
     expect(appendNudgeAsUserMessage).not.toHaveBeenCalled();
+  });
+
+  // A reply the stream guard or the runtime stopped as degenerate ended with
+  // nothing to act on, like a cut-off one; it shares the bound and gets its
+  // own nudge (cobol-modernization, 2026-10-31).
+  it("re-drives a degenerate turn with no tool call under the same bound, with the degenerate nudge", () => {
+    const degenerate = (turnIdx: number) => turn({ turnIdx, providerStop: DEGENERATE_STOP });
+    expect(evaluateCutOffTurn(degenerate(0))).toBe("redrive");
+    expect(appendNudgeAsUserMessage).toHaveBeenCalledWith("op-cut-off", 1, DEGENERATE_NUDGE, expect.objectContaining({ name: "degenerate-turn" }));
+    expect(evaluateCutOffTurn(turn({ turnIdx: 1 }))).toBe("redrive"); // a cut-off counts in the same run
+    expect(evaluateCutOffTurn(degenerate(2))).toBe("exhausted");
+    expect(evaluateCutOffTurn(turn({ providerStop: DEGENERATE_STOP, toolCalls: [call] }))).toBeNull();
   });
 
   it("never overrides an adapter error, an abort or a suspend", () => {
@@ -91,5 +114,11 @@ describe("trimCutOffText", () => {
     expect(kept.startsWith("[This reply was cut off at the output limit")).toBe(true);
     expect(kept).toContain("Continue by making the next tool call.");
     expect(kept.endsWith("the last step was")).toBe(true);
+  });
+
+  it("keeps nothing of a degenerate reply but the marker: its text is the loop", () => {
+    expect(trimCutOffText("again and again. ".repeat(10), DEGENERATE_STOP)).toBe(DEGENERATE_KEPT);
+    expect(trimCutOffText("", DEGENERATE_STOP)).toBe(DEGENERATE_KEPT);
+    expect(trimCutOffText("short draft", "length")).toBe("short draft");
   });
 });

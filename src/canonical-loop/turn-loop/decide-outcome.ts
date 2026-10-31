@@ -32,7 +32,7 @@ import { continuationVetoedTerminal } from "./continuation-guard.js";
 import type { GuardFire } from "./guard-fire.js";
 import { appendEmptyTurnTerminal, appendHonestTerminal, evaluateEmptyInteractiveTurn, redriveAnnouncedOnlyTurn } from "./empty-turn-termination.js";
 import { appendMissingToolResults } from "./orphan-tool-results.js";
-import { CUT_OFF_TERMINAL, evaluateCutOffTurn, trimCutOffText } from "./cut-off-turn.js";
+import { evaluateCutOffTurn, trimCutOffText, unusableTurnTerminal } from "./cut-off-turn.js";
 import { evaluateMalformedToolCall } from "./malformed-tool-call.js";
 import { createLogger } from "../../logger.js";
 import { recordP1Outcome } from "./p1-metrics.js";
@@ -113,9 +113,10 @@ function replaceAssistantText(messages: CommitTurnMessage[], text: string): Comm
 
 /**
  * The turns that produced nothing usable, each re-driven with its own nudge:
- *  - a reply the output limit cut off (cut-off-turn.ts) is re-driven to act,
- *    or ends honestly once the re-drives are spent; either way only its tail
- *    goes into history (the caller trims it when `cutOff` is set);
+ *  - a reply the output limit cut off, or one that degenerated until the
+ *    stream was stopped (cut-off-turn.ts), is re-driven to act, or ends
+ *    honestly once the re-drives are spent; either way only its tail, or a
+ *    marker, goes into history (the caller trims it when `cutOff` is set);
  *  - a tool call the runtime could not parse ran nothing (malformed-tool-call.ts).
  * `redriven` re-opens the turn.
  */
@@ -171,8 +172,10 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
       : (adapterTerminalReason ?? (adapterError ? "error" : null));
 
   const { cutOff, redriven } = redriveUnusableTurn(in_, terminalReason, middlewareAborted, middlewareSuspended);
-  if (cutOff) allMessages = replaceAssistantText(allMessages, trimCutOffText(assistantText));
-  if (redriven) terminalReason = null;
+  if (cutOff) allMessages = replaceAssistantText(allMessages, trimCutOffText(assistantText, in_.providerStop));
+  // Spent re-drives end the turn with the honest terminal appended below; left
+  // null here, an empty one fell through to the reasoning-only nudge instead.
+  terminalReason = redriven ? null : cutOff === "exhausted" ? "done" : terminalReason;
 
   // Two questions, two fields (tool-failure-summary.ts) — see mutationCommitted.
   const failureSummary = collectToolFailures(toolMessages, toolSummary);
@@ -387,7 +390,7 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
     earnedFires.push(honestTerminal.fire);
   }
   if (cutOff === "exhausted" && terminalReason === "done") {
-    appendHonestTerminal(op.id, turnIdx, allMessages, CUT_OFF_TERMINAL, "cut-off");
+    appendHonestTerminal(op.id, turnIdx, allMessages, unusableTurnTerminal(in_.providerStop), "cut-off");
   }
 
   // Terminal epilogue (terminal-epilogue.ts): loud-partial warning,

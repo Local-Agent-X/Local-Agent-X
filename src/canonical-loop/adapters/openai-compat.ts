@@ -262,7 +262,9 @@ export class OpenAICompatAdapter implements Adapter {
     else if (result.interruptedByInject) terminalReason = "done";
     // Degenerate-stream cut: the guard already surfaced its `stopped` notice
     // and the partial text finalizes above — the turn ends CLEANLY, never as
-    // an error (an error terminal would fail the op and eat the partial).
+    // an error (an error terminal would fail the op and eat the partial). Its
+    // stop is DEGENERATE_STOP, on which the turn loop re-drives a turn that
+    // made no tool call (turn-loop/cut-off-turn.ts).
     else if (result.stoppedByGuard) terminalReason = "done";
     else if (firstError) terminalReason = "error";
     else if (pendingToolCalls.length > 0) terminalReason = undefined;

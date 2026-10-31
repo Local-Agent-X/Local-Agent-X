@@ -8,8 +8,11 @@ vi.mock("../store.js", () => ({
 }));
 
 import { firstUserMessageText, appliedRedirectTexts } from "../store.js";
-import { runSpecAuditGate, clearSpecAuditStateForOp, _resetSpecAuditState } from "./spec-audit.js";
+import { runSpecAuditGate, clearSpecAuditStateForOp, _resetSpecAuditState, namedPathEvidence, describeNamedPath } from "./spec-audit.js";
 import type { Op } from "../../ops/types.js";
+import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const op = (id: string) => ({ id } as Op);
 const PATHS = ["/proj/app/errors.ts"];
@@ -27,7 +30,43 @@ beforeEach(() => {
   (appliedRedirectTexts as ReturnType<typeof vi.fn>).mockReturnValue([]);
 });
 
+// The auditor sees only the write/edit diff; a deliverable a shell command
+// made was reported missing (TB2 openssl-selfsigned-cert, 2026-10-29). The
+// paths the request names now go in front of the diff as they are on disk.
+describe("namedPathEvidence", () => {
+  it("lists each path the request names once, as the disk has it, and nothing else", () => {
+    const root = mkdtempSync(join(tmpdir(), "spec-audit-"));
+    mkdirSync(join(root, "ssl"));
+    writeFileSync(join(root, "ssl", "server.crt"), "-----BEGIN CERTIFICATE-----\nMIIB\n");
+    const request = `Create /app/ssl/server.crt and /app/ssl/server.key, then write "check_cert.py" (see ./notes/plan.md, also /app/ssl/server.crt).`;
+    const text = namedPathEvidence(request, (p) => join(root, p.replace(/^\/app\//, "").replace(/^\.\//, "")));
+    expect(text).toContain("FILES THE REQUEST NAMES");
+    expect(text).toContain("/app/ssl/server.crt: file, 33 bytes; begins: -----BEGIN CERTIFICATE----- ⏎ MIIB ⏎ ");
+    expect(text).toContain("/app/ssl/server.key: does not exist");
+    expect(text).toContain("./notes/plan.md: does not exist");
+    expect(text.match(/server\.crt/g)).toHaveLength(1);
+    expect(text).not.toContain("check_cert.py"); // a bare name is not a path
+  });
+
+  it("is empty when the request names no path, and skips a path the resolver refuses", () => {
+    expect(namedPathEvidence("Remove every tailnet reference from the app", (p) => p)).toBe("");
+    expect(namedPathEvidence("fix /etc/shadow", () => { throw new Error("outside"); })).toBe("");
+    expect(describeNamedPath(join(tmpdir(), "no-such-file-" + Date.now()))).toBe("does not exist");
+  });
+});
+
 describe("runSpecAuditGate", () => {
+  it("puts the request's named paths, as they are on disk, ahead of the diff the auditor reads", async () => {
+    (firstUserMessageText as ReturnType<typeof vi.fn>).mockReturnValue("Write the plan to /app/out/plan.jsonl using the data in /app/data");
+    const audit = auditWith([]);
+    await runSpecAuditGate(op("named"), { editedPaths: PATHS, collectEvidence: evidenceOk, audit, describeNamedPath: (abs) => `seen ${abs.replace(/\\/g, "/")}` });
+    const { evidence } = (audit.mock.calls[0] as unknown as [{ evidence: string }])[0];
+    expect(evidence.startsWith("FILES THE REQUEST NAMES")).toBe(true);
+    expect(evidence).toMatch(/\/app\/out\/plan\.jsonl: seen .*plan\.jsonl/);
+    expect(evidence).toMatch(/\/app\/data: seen .*data/);
+    expect(evidence.endsWith(DIFF)).toBe(true);
+  });
+
   it("unmet findings → one retry nudge naming the items", async () => {
     const audit = auditWith(['"remove every tailnet ref" — errors.ts still shows "Tailscale network"']);
     const r = await runSpecAuditGate(op("a"), { editedPaths: PATHS, collectEvidence: evidenceOk, audit });

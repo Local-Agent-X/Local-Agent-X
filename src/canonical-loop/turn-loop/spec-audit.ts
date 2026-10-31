@@ -21,6 +21,7 @@
 // LAX_SPEC_AUDIT=0. Per-op state cleared on op terminal via
 // clearSpecAuditStateForOp (state-machine.ts).
 
+import { readdirSync, readFileSync, statSync } from "node:fs";
 import { opEditedSourcePaths } from "../middlewares/verify-gate.js";
 import { firstUserMessageText, appliedRedirectTexts } from "../store.js";
 import { getSessionForOp } from "../../ops/session-bridge.js";
@@ -60,6 +61,52 @@ async function defaultCollectEvidence(absPaths: string[], signal?: AbortSignal):
   return collectDiffEvidence(absPaths, AUDIT_EVIDENCE_LIMIT, signal);
 }
 
+/**
+ * The paths the request names, as they stand on disk when the done-claim
+ * lands. The diff shows only what `write` and `edit` touched; a deliverable a
+ * shell command created (`cp`, a script's output, a build) is invisible there,
+ * and the auditor called such files missing four times in one Terminal-Bench
+ * run (openssl-selfsigned-cert, mteb-leaderboard, reshard-c4-data,
+ * 2026-10-29). Goes AHEAD of the diff so the head-truncation never cuts it.
+ */
+const PATH_IN_REQUEST = /(?:^|[\s"'`(\[])((?:\/|~\/|\.{1,2}\/)?[\w.-]+(?:\/[\w.-]+)+|\/[\w.-]+)/g;
+const MAX_NAMED_PATHS = 12;
+const NAMED_HEAD_CHARS = 400;
+const NAMED_READ_MAX_BYTES = 200_000;
+
+export function describeNamedPath(abs: string): string {
+  try {
+    const st = statSync(abs);
+    if (st.isDirectory()) return `directory, ${readdirSync(abs).length} entries`;
+    if (!st.isFile()) return "exists";
+    if (st.size > NAMED_READ_MAX_BYTES) return `file, ${st.size} bytes`;
+    const head = readFileSync(abs, "utf-8").slice(0, NAMED_HEAD_CHARS).replace(/\r?\n/g, " ⏎ ");
+    return `file, ${st.size} bytes; begins: ${head}`;
+  } catch {
+    return "does not exist";
+  }
+}
+
+export function namedPathEvidence(
+  request: string,
+  resolve: (p: string) => string,
+  describe: (abs: string) => string = describeNamedPath,
+): string {
+  const seen = new Set<string>();
+  const lines: string[] = [];
+  for (const m of request.matchAll(PATH_IN_REQUEST)) {
+    const p = m[1].replace(/[.,:;]+$/, "");
+    if (seen.has(p)) continue;
+    if (seen.size >= MAX_NAMED_PATHS) break;
+    seen.add(p);
+    let abs: string;
+    try { abs = resolve(p); } catch { continue; } // outside anything the agent may reach: not evidence
+    lines.push(`${p}: ${describe(abs)}`);
+  }
+  if (lines.length === 0) return "";
+  return `FILES THE REQUEST NAMES, AS THEY ARE ON DISK NOW (however they were made):\n${lines.join("\n")}`;
+}
+
 function formatUnmetForAgent(unmet: string[]): string {
   const rows = unmet.map((u, i) => `  ${i + 1}. ${u}`).join("\n");
   return (
@@ -82,6 +129,8 @@ export interface SpecAuditOptions {
   editedPaths?: string[];
   audit?: typeof auditDoneClaim;
   collectEvidence?: (absPaths: string[], signal?: AbortSignal) => Promise<string>;
+  /** How a path the request names is described (describeNamedPath). */
+  describeNamedPath?: (abs: string) => string;
   signal?: AbortSignal;
 }
 
@@ -133,6 +182,8 @@ export async function runSpecAuditGate(op: Op, opts: SpecAuditOptions = {}): Pro
     logger.debug(`op=${op.id} no diff and no readable edited file — gate is a no-op`);
     return NO_RETRY;
   }
+  const named = namedPathEvidence(request, (p) => resolveAgentPath(p, sessionId), opts.describeNamedPath);
+  if (named) evidence = `${named}\n\n${evidence}`;
 
   AUDITED.add(op.id);
   const audit = opts.audit ?? auditDoneClaim;

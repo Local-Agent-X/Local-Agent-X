@@ -27,10 +27,13 @@ const HARMLESS: ReadonlySet<string> = new Set(["echo", "printf", "ls", "dir", "t
  *  `powershell -Command "Remove-Item …"`). `rm -rf dist && mkdir dist` deletes
  *  and recreates on purpose, and a `cd` moves the base relative paths resolve
  *  against: in both, a path that still exists proves nothing, and a false "not
- *  deleted" is worse than none. A glob names no path to look for. */
+ *  deleted" is worse than none. A glob names no path to look for, and neither
+ *  does an opaque delete (`find build -name '*.o' -delete`, `Remove-Item
+ *  -Filter`): its operands stay while what they select goes. */
 export function deletedPathsOf(command: string): string[] {
   const out: string[] = [];
   for (const del of deletesOnly(command, HARMLESS) ?? []) {
+    if (del.opaque) continue;
     for (const p of del.targets) if (!/[*?]/.test(p) && !out.includes(p)) out.push(p);
   }
   return out;

@@ -29,6 +29,13 @@ describe("deletedPathsOf — what a command asks to delete", () => {
   it("lets harmless steps ride along", () => {
     expect(deletedPathsOf("rm a.txt && echo done")).toEqual(["a.txt"]);
   });
+
+  it("makes no claim for an opaque delete, whose operands stay while what they select goes", () => {
+    expect(deletedPathsOf("find build -name '*.o' -delete")).toEqual([]);
+    expect(deletedPathsOf("git clean -fdx")).toEqual([]);
+    expect(deletedPathsOf("Remove-Item build -Recurse -Filter *.tmp")).toEqual([]);
+    expect(deletedPathsOf("echo a.txt | xargs rm")).toEqual([]);
+  });
 });
 
 describe("checkShellDeleteHappened", () => {

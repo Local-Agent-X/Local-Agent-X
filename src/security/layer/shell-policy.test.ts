@@ -138,6 +138,15 @@ describe("evaluateShellCommand (posix) — mode-aware rm", () => {
     }
   });
 
+  // A tree wiped by composition reaches the same floor as `rm -r` of it.
+  it("unrestricted: the floor reads find -delete and find -exec rm over a root; over the agent's own build dir they run", () => {
+    for (const cmd of ["find / -delete", `find ${home} -type f -exec rm {} +`, "find /etc -name '*.conf' -delete"]) {
+      expect(U(cmd).allowed, cmd).toBe(false);
+    }
+    expect(U("find ./build -name '*.o' -delete").allowed).toBe(true);
+    expect(U("git clean -fdx").allowed).toBe(true);
+  });
+
   it("unrestricted: a delete only spelled in quotes, and git rm, are not deletes", () => {
     expect(U(`git commit -m "rm -rf /"`).allowed).toBe(true);
     expect(U("git rm -rf --cached /etc").allowed).toBe(true);

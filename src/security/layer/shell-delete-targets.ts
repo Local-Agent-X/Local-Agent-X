@@ -17,16 +17,28 @@
  * EXP-18 (2026-09-24) is why single-file deletes are listed at all: with
  * `delete_file` out of the schema the model fell from `rm -rf` (carded by the
  * irreversible floor) to five single-file `rm` commands no gate covered.
+ *
+ * The composed forms are deletes too, and opaque ones: `find … -delete` and
+ * `find … -exec rm` remove what find's tests select under its start paths,
+ * `git clean -f` what git finds untracked under its pathspecs, and a delete
+ * fed by `xargs` what arrived on stdin. Their targets are the paths as
+ * written, their reach a tree, and `opaque` says the operands are not exactly
+ * what goes. The irreversible floor (approval-decision.ts) scans for them by
+ * text on purpose and keeps doing so; reading them here is what puts them in
+ * front of the catastrophic floor, the mutation locks and the in-workspace
+ * rule, which read only this. op-outcomes restraint-wipe-build-cache,
+ * 2026-09-23: `find client-data/build-cache -exec rm {} + && rmdir …`.
  */
 import { isAbsolute, resolve } from "node:path";
 import { commandPositions, type CommandPosition } from "./shell-command-positions.js";
-import { shellSegments } from "./shell-lex.js";
+import { execBasename, shellSegments } from "./shell-lex.js";
 
 /** The form of a delete, which fixes how its words read: POSIX `rm`,
  *  `unlink`, `shred` and `rmdir`; cmd.exe `rd` and `del`; PowerShell
  *  `Remove-Item`, whose aliases (`ri`, and `rm`, `del`, `rd` written with its
- *  parameters) read the same. */
-export type DeleteVerb = "rm" | "unlink" | "shred" | "rmdir" | "rd" | "del" | "remove-item";
+ *  parameters) read the same; and the composed tree deletes `find` (with
+ *  `-delete` or an `-exec rm`) and `git clean -f`. */
+export type DeleteVerb = "rm" | "unlink" | "shred" | "rmdir" | "rd" | "del" | "remove-item" | "find" | "git-clean";
 
 export interface DeleteCall {
   verb: DeleteVerb;
@@ -65,7 +77,9 @@ const DOS_SWITCH = /^\/[a-z?]{1,2}(?::\S*)?$/i;
 export function deleteOf(p: CommandPosition): DeleteCall | null {
   const args = p.words.slice(p.at + 1);
   const wrapped = p.depth > 0 || p.at > 0;
-  const call = (verb: DeleteVerb, parsed: Parsed): DeleteCall => ({ verb, bin: p.bin, wrapped, ...parsed });
+  // A delete xargs feeds removes what arrived on stdin, not only its own words.
+  const fed = p.words.slice(0, p.at).some((w) => execBasename(w) === "xargs");
+  const call = (verb: DeleteVerb, parsed: Parsed): DeleteCall => ({ verb, bin: p.bin, wrapped, ...parsed, opaque: parsed.opaque || fed });
   const ps = args.some((w) => PS_PARAM.test(w));
   switch (p.bin) {
     case "rm": return ps ? call("remove-item", powershell(args)) : call("rm", posix(args, "rRf"));
@@ -76,11 +90,45 @@ export function deleteOf(p: CommandPosition): DeleteCall | null {
       return ps ? call("remove-item", powershell(args)) : call("rmdir", posix(args, ""));
     case "del": case "erase": return ps ? call("remove-item", powershell(args)) : call("del", dos(args));
     case "remove-item": case "ri": return call("remove-item", powershell(args));
+    case "find": { const f = findDelete(args); return f && call("find", f); }
+    case "git": { const g = gitClean(args); return g && call("git-clean", g); }
     default: return null;
   }
 }
 
 type Parsed = Pick<DeleteCall, "recursive" | "forced" | "targets" | "flags" | "opaque">;
+
+const FIND_EXEC = new Set(["-exec", "-execdir", "-ok", "-okdir"]);
+const FIND_DELETERS = new Set(["rm", "unlink", "rmdir"]);
+
+/** `find [-H|-L|-P] <paths…> <expression>`: a delete when the expression has
+ *  `-delete` or hands matches to rm/unlink/rmdir; its targets are the start
+ *  paths (`.` when none), what goes under them is find's tests' to decide. */
+function findDelete(args: string[]): Parsed | null {
+  const expression = args.findIndex((w) => /^[-(!]/.test(w) && !/^-[HLP]$/.test(w));
+  const words = expression < 0 ? [] : args.slice(expression);
+  const deletes = words.some((w, i) => w === "-delete" || (FIND_EXEC.has(w) && FIND_DELETERS.has(execBasename(words[i + 1] ?? ""))));
+  if (!deletes) return null;
+  const paths = (expression < 0 ? args : args.slice(0, expression)).filter((w) => !/^-[HLP]$/.test(w));
+  return { recursive: true, forced: false, targets: paths.length > 0 ? paths : ["."], flags: [], opaque: true };
+}
+
+/** `git [-C dir|-c k=v…] clean -f [-d] [-x] [<pathspec>…]`: removes every
+ *  untracked file under its pathspecs (`.` when none). A dry run (`-n`) or a
+ *  clean without `-f`, which git refuses by default, deletes nothing. */
+function gitClean(args: string[]): Parsed | null {
+  let i = 0;
+  while (i < args.length && args[i].startsWith("-")) i += /^-[Cc]$/.test(args[i]) ? 2 : 1;
+  if (args[i] !== "clean") return null;
+  const rest = args.slice(i + 1);
+  const dash = rest.indexOf("--");
+  const words = dash < 0 ? rest : rest.slice(0, dash);
+  const flags = words.filter((w) => w.startsWith("-"));
+  const letters = flags.filter((w) => /^-[^-]/.test(w)).map((w) => w.slice(1)).join("");
+  if (letters.includes("n") || flags.includes("--dry-run") || !(letters.includes("f") || flags.includes("--force"))) return null;
+  const targets = [...words.filter((w) => !w.startsWith("-")), ...(dash < 0 ? [] : rest.slice(dash + 1))];
+  return { recursive: true, forced: true, targets: targets.length > 0 ? targets : ["."], flags, opaque: true };
+}
 
 /** POSIX words: flags until `--`, then operands. `letters` are the cluster
  *  letters that mean recursive (r, R) and forced (f); `valued` flags take the

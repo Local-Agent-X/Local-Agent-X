@@ -104,6 +104,26 @@ describe("shellDeletes — every delete, its form, and where it runs", () => {
     expect(one("shred -n 3 -u secret.txt")[0]).toMatchObject({ verb: "shred", targets: ["secret.txt"] });
   });
 
+  // op-outcomes restraint-wipe-build-cache, 2026-09-23: a tree wiped by
+  // composition, which only the floor's text scan saw.
+  it("reads the composed tree deletes as opaque: find -delete / -exec rm, git clean -f, a delete xargs feeds", () => {
+    const shape = ({ verb, recursive, opaque, targets }: { verb: string; recursive: boolean; opaque: boolean; targets: string[] }) => ({ verb, recursive, opaque, targets });
+    expect(one("find build -name '*.o' -delete").map(shape)).toEqual([{ verb: "find", recursive: true, opaque: true, targets: ["build"] }]);
+    expect(one("find -L src tests -type f -exec rm {} +").map(shape)).toEqual([{ verb: "find", recursive: true, opaque: true, targets: ["src", "tests"] }]);
+    expect(one("find . -name x -execdir /bin/rm -- {} \\;")[0]).toMatchObject({ verb: "find", targets: ["."] });
+    expect(one("find -name '*.pyc' -delete")[0]).toMatchObject({ verb: "find", targets: ["."] });
+    expect(one("find client-data/build-cache -exec rm {} + && rmdir client-data/build-cache").map((d) => d.verb)).toEqual(["find", "rmdir"]);
+    expect(one("find . -name '*.o' -print").length).toBe(0);
+    expect(one("find . -type f -exec wc -l {} +").length).toBe(0);
+    expect(one("git clean -fdx").map(shape)).toEqual([{ verb: "git-clean", recursive: true, opaque: true, targets: ["."] }]);
+    expect(one("git -C repo clean --force -d -- src docs")[0]).toMatchObject({ verb: "git-clean", forced: true, targets: ["src", "docs"] });
+    expect(one("git clean -n").length).toBe(0);
+    expect(one("git clean -d").length).toBe(0); // git refuses a clean without -f
+    expect(one("git status && git clean -fdn").length).toBe(0);
+    expect(one("echo a.txt | xargs rm")[0]).toMatchObject({ verb: "rm", opaque: true, wrapped: true, targets: [] });
+    expect(one("rm a.txt")[0].opaque).toBe(false);
+  });
+
   it("a wrapper or a shell body marks the delete wrapped, and so does an assignment", () => {
     expect(one("rm a")[0].wrapped).toBe(false);
     expect(one("PATH=/x rm a")[0].wrapped).toBe(true);

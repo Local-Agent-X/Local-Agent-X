@@ -321,6 +321,21 @@ describe("a disposable sandbox stands down the command-shape rules", () => {
     expect(ws("command nc example.com 80").allowed).toBe(false);
   });
 
+  it("reads the box's own account tables through getent, and never its name databases", () => {
+    const ws = (cmd: string) => evaluateShellCommandAndPaths(cmd, {
+      workspace: dataDir, fileAccessMode: "workspace", allowedPathCheck: () => false, inlineEvalPolicy: "refuse", sessionId: "t",
+    });
+    expect(unconfined("getent passwd").allowed).toBe(true);
+    expect(confined("getent group mail | cut -d: -f4").allowed).toBe(true);
+    expect(ws("getent passwd 1000").allowed).toBe(true);
+    expect(unconfined("getent -s files passwd root").allowed).toBe(true);
+    expect(unconfined("getent services smtp").allowed).toBe(true);
+    for (const cmd of ["getent hosts secret.evil.com", "getent ahostsv4 secret.evil.com", "getent -s dns hosts x", "getent networks evil", "getent shadow root", "getent"]) {
+      expect(unconfined(cmd).allowed, cmd).toBe(false);
+      expect(confined(cmd).allowed, cmd).toBe(false);
+    }
+  });
+
   it("keeps the whole system-folder floor on a machine that is not disposable", () => {
     const rm = (cmd: string) => evaluateShellCommand(cmd, undefined, undefined, "unrestricted", "linux", false);
     expect(rm("rm -f /etc/nginx/sites-enabled/default").allowed).toBe(false);

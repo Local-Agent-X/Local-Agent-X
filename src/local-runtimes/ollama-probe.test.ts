@@ -4,6 +4,7 @@ import {
   ollamaProbe,
   parseNumCtx,
   parseToolCapability,
+  parseThinkingSpec,
   parseLoadedContext,
   isEmbeddingOnly,
 } from "./ollama-probe.js";
@@ -43,6 +44,28 @@ describe("parseToolCapability", () => {
   it("null (unknown, not false) when capabilities is absent", () => {
     expect(parseToolCapability(undefined)).toBeNull();
     expect(parseToolCapability("tools")).toBeNull();
+  });
+});
+
+// The shapes Ollama 0.40 reports (/api/show, read live 2026-10-31), so the
+// Think picker can be mapped onto what each model takes instead of a name.
+describe("parseThinkingSpec", () => {
+  it("takes the runtime's thinking object as it is: levels, boolean, or none", () => {
+    expect(parseThinkingSpec({ values: [false, "low", "medium", "xhigh"], default: "medium" }, ["completion", "thinking"]))
+      .toEqual({ values: [false, "low", "medium", "xhigh"], default: "medium" });
+    expect(parseThinkingSpec({ values: [false, true], default: true }, ["completion", "thinking"]))
+      .toEqual({ values: [false, true], default: true });
+    expect(parseThinkingSpec({ values: [false], default: false }, ["completion", "tools"]))
+      .toEqual({ values: [false], default: false });
+  });
+  it("derives a boolean spec from capabilities on a build that reports no thinking object", () => {
+    expect(parseThinkingSpec(undefined, ["completion", "tools", "thinking"])).toEqual({ values: [false, true], default: true });
+    expect(parseThinkingSpec(undefined, ["completion", "tools"])).toEqual({ values: [false], default: false });
+  });
+  it("null when the runtime says nothing, and a malformed object counts as nothing", () => {
+    expect(parseThinkingSpec(undefined, undefined)).toBeNull();
+    expect(parseThinkingSpec({ values: "xhigh" }, undefined)).toBeNull();
+    expect(parseThinkingSpec({ values: [{ level: 1 }], default: "medium" }, undefined)).toBeNull();
   });
 });
 
@@ -125,7 +148,9 @@ describe("ollamaProbe.probeModel", () => {
         model_info: { "qwen35.context_length": 262144 },
       },
     });
-    expect(await ollamaProbe.probeModel(EP, "m")).toEqual({ contextWindow: 32768, tools: true });
+    expect(await ollamaProbe.probeModel(EP, "m")).toEqual({
+      contextWindow: 32768, tools: true, thinking: { values: [false], default: false },
+    });
   });
 
   it("falls back to Modelfile num_ctx when not loaded", async () => {
@@ -133,7 +158,19 @@ describe("ollamaProbe.probeModel", () => {
       "/api/ps": { models: [] },
       "/api/show": { parameters: "num_ctx   4096", capabilities: ["completion"] },
     });
-    expect(await ollamaProbe.probeModel(EP, "m")).toEqual({ contextWindow: 4096, tools: false });
+    expect(await ollamaProbe.probeModel(EP, "m")).toEqual({
+      contextWindow: 4096, tools: false, thinking: { values: [false], default: false },
+    });
+  });
+
+  it("carries the model's thinking levels as the runtime reports them", async () => {
+    stubFetch({
+      "/api/ps": { models: [] },
+      "/api/show": { capabilities: ["completion", "tools", "thinking"], thinking: { values: [false, "low", "medium", "xhigh"], default: "medium" } },
+    });
+    expect(await ollamaProbe.probeModel(EP, "qwen3.8:27b")).toEqual({
+      tools: true, thinking: { values: [false, "low", "medium", "xhigh"], default: "medium" },
+    });
   });
 
   it("{} when nothing is known — null never becomes an optimistic default", async () => {

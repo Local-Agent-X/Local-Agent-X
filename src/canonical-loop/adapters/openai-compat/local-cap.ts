@@ -12,9 +12,9 @@
  *    "heuristic")               preflight's documented anti-pattern, and the
  *                               engine's own server-side clamp covers the gap
  *                               until a probe sweep learns the real window.
- *   local, measured window    → cap = explicit clamped to the budget, else
- *   (probed / exact)            the whole budget: window − promptEstimate −
- *                               OUTPUT_RESERVE. If that budget is under
+ *   local, measured window    → cap = explicit, else LOCAL_DEFAULT_MAX_TOKENS,
+ *   (probed / exact)            clamped to the budget: window − promptEstimate
+ *                               − OUTPUT_RESERVE. If that budget is under
  *                               MIN_USEFUL_COMPLETION_TOKENS, send NO cap at
  *                               all: the prompt already ~fills the window —
  *                               prompt-side pressure is the preflight/
@@ -31,15 +31,16 @@
  *
  * An explicit caller cap is never RAISED — only clamped by the same rule.
  *
- * No flat cap on a measured window: the reply may use whatever the window
- * has left. A thinking model's reasoning counts as output, and qwen3.8 thinks
- * 40k+ tokens on a hard derivation (Hermes, which sends no cap, did the same
- * on the same tasks, 2026-10-25). The 16k default cut those replies off, and
- * each re-drive started the thought over: TB2 adaptive-rejection-sampler
- * (2026-10-27) spent 16k, then 32k, then 39k tokens of thinking, ~10 minutes
- * of a 15-minute task. A model stuck repeating itself is stopped by the
- * degenerate-stream guard (stream-guards.ts) within seconds; the window bounds
- * the rest.
+ * The flat default holds on a measured window too. A thinking model's
+ * reasoning counts as output, and uncapped it runs away: with the cap lifted
+ * (2026-10-27 to 10-30) qwen3.8 on Terminal-Bench 2.0 wrote 76 replies past
+ * 16k tokens, one of 130,559, 5.3 hours of generation across the run, and the
+ * tasks that produced them timed out (17 of 25) where the capped run of
+ * 2026-10-24 had passed 7 of them. The degenerate-stream guard watches answer
+ * text only, so nothing else bounds a silent stretch of thinking. What the cap
+ * must NOT do is throw the thought away: a cut reply is continued from where
+ * it stopped (cut-off-continuation.ts), so the cap is a bound on one silent
+ * leg — about two minutes at local speed — not on the reply.
  */
 import type { ProviderRequest } from "../../../providers/adapter/types.js";
 import { OUTPUT_RESERVE_TOKENS, type RequestFit } from "../../../context-manager/request-fit.js";
@@ -47,11 +48,10 @@ import type { ContextWindowResolution } from "../../../context-manager/model-win
 import { isLocalModelEndpoint } from "../../../local-runtimes/model-endpoint.js";
 
 /**
- * Runaway guard rail for a LOCAL endpoint whose window is a guess: a
- * degenerate local model (observed: a local Gemma looping one sentence
- * verbatim for 41s until user abort) can otherwise generate unbounded — the
- * streaming path historically sent NO token cap at all. On a measured window
- * the reply gets the window's whole remaining budget instead (above).
+ * Runaway guard rail for a LOCAL endpoint: a degenerate local model
+ * (observed: a local Gemma looping one sentence verbatim for 41s until user
+ * abort) can otherwise generate unbounded — the streaming path historically
+ * sent NO token cap at all. Also the length of one continuation leg (above).
  */
 export const LOCAL_DEFAULT_MAX_TOKENS = 16384;
 
@@ -80,7 +80,7 @@ export function clampLocalMaxTokens(args: {
   // very budget that reserve exists to protect.
   const available = args.windowTokens - args.promptTokensEstimate - OUTPUT_RESERVE_TOKENS;
   if (available < MIN_USEFUL_COMPLETION_TOKENS) return undefined;
-  return Math.min(args.explicitMaxTokens ?? available, available);
+  return Math.min(args.explicitMaxTokens ?? LOCAL_DEFAULT_MAX_TOKENS, available);
 }
 
 /**

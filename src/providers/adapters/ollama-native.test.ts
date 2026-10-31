@@ -3,7 +3,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderRequest, StreamChunk } from "../adapter/types.js";
-import { OllamaNativeAdapter, thinkValue } from "./ollama-native.js";
+import type { ThinkingSpec } from "../../local-runtimes/types.js";
+import { OllamaNativeAdapter, thinkFor } from "./ollama-native.js";
+import { invalidateLocalRuntimes, restoreProjectedLocalRuntime } from "../../local-runtimes/cache.js";
 import { hasNoToolSupport, hasParamUnsupported } from "../types.js";
 import { classify } from "../../resilience-policy.js";
 import { _resetContextSizingForTests, ensureContextDecision } from "../../local-runtimes/context-sizing.js";
@@ -72,8 +74,25 @@ afterEach(() => {
   vi.unstubAllGlobals();
   delete process.env.LAX_DATA_DIR;
   _resetContextSizingForTests();
+  invalidateLocalRuntimes();
   rmSync(dir, { recursive: true, force: true });
 });
+
+/** Discovery's record of one model on this runtime, thinking spec included. */
+function discovered(model: string, thinking?: ThinkingSpec): void {
+  const file = join(dir, "runtime.json");
+  writeFileSync(file, JSON.stringify({
+    kind: "ollama", id: "ollama@127.0.0.1:11434", label: "Ollama",
+    endpoint: { baseUrl: ROOT, origin: "auto" }, chatBaseUrl: `${ROOT}/v1`,
+    models: [{ id: model, contextWindow: null, tools: null, ...(thinking ? { thinking } : {}) }], refreshedAt: 1,
+  }));
+  restoreProjectedLocalRuntime(file);
+}
+
+const QWEN38: ThinkingSpec = { values: [false, "low", "medium", "xhigh"], default: "medium" };
+const QWEN3: ThinkingSpec = { values: [false, true], default: true };
+const GPT_OSS: ThinkingSpec = { values: ["low", "medium", "high"], default: "medium" };
+const LLAMA: ThinkingSpec = { values: [false], default: false };
 
 async function sizeTheModel(): Promise<void> {
   await ensureContextDecision(ROOT, "qwen3.6:27b", {
@@ -122,23 +141,64 @@ describe("OllamaNativeAdapter request", () => {
     expect(psReads).toBe(0);
   });
 
-  it("maps reasoning_effort to think", () => {
-    expect(thinkValue(`${ROOT}/v1`, "qwen3.6:27b", "none")).toBe(false);
-    expect(thinkValue(`${ROOT}/v1`, "qwen3.6:27b", "high")).toBe(true);
-    expect(thinkValue(`${ROOT}/v1`, "gpt-oss:20b", "minimal")).toBe("low");
-    expect(thinkValue(`${ROOT}/v1`, "gpt-oss:20b", "high")).toBe("high");
+  // The Think picker reaches a local model through the levels the runtime
+  // itself reports for it (/api/show `thinking`, via discovery), never a name.
+  // Until 2026-10-31 a name regex gated the param and qwen3.8 got no `think`
+  // at all, so the picker and the per-step effort did nothing on Ollama.
+  describe("thinkFor: the picker's depth as the model's own levels", () => {
+    it("a level model gets the nearest level it lists, the higher one on a tie", () => {
+      expect(thinkFor(QWEN38, "medium")).toBe("medium");
+      expect(thinkFor(QWEN38, "low")).toBe("low");
+      expect(thinkFor(QWEN38, "minimal")).toBe("low");
+      expect(thinkFor(QWEN38, "high")).toBe("xhigh");
+      expect(thinkFor(QWEN38, "xhigh")).toBe("xhigh");
+      expect(thinkFor(GPT_OSS, "xhigh")).toBe("high");
+      expect(thinkFor(GPT_OSS, "minimal")).toBe("low");
+    });
+
+    it("a boolean model gets true for any depth; thinking off is false only where the model has an off", () => {
+      expect(thinkFor(QWEN3, "medium")).toBe(true);
+      expect(thinkFor(QWEN3, "xhigh")).toBe(true);
+      expect(thinkFor(QWEN3, "none")).toBe(false);
+      expect(thinkFor(QWEN38, "none")).toBe(false);
+      expect(thinkFor(GPT_OSS, "none")).toBeUndefined();
+    });
+
+    it("a model that cannot think is sent nothing, whatever the picker says", () => {
+      expect(thinkFor(LLAMA, "high")).toBeUndefined();
+      expect(thinkFor(LLAMA, "none")).toBeUndefined();
+    });
+
+    it("no requested depth, or a model discovery never described, leaves the runtime's default; off is still off", () => {
+      expect(thinkFor(QWEN38, undefined)).toBeUndefined();
+      expect(thinkFor(undefined, "high")).toBeUndefined();
+      expect(thinkFor(undefined, "none")).toBe(false);
+    });
   });
 
-  it.each([
-    [true, true],
-    [false, undefined],
-  ])("replayReasoning %s -> think %s (EXP-36: the template renders a prior <think> only when think is set)", async (replay, think) => {
+  it("sends the discovered model's level for the picker's depth, and nothing for an undiscovered one", async () => {
+    discovered("qwen3.8:27b", QWEN38);
+    responses.push(() => ndjson([done()]));
+    await collect(req({ model: "qwen3.8:27b", reasoningEffort: "high" }));
+    expect(posts[0].think).toBe("xhigh");
+    responses.push(() => ndjson([done()]));
+    await collect(req({ model: "qwen3.8:27b", reasoningEffort: "low" }));
+    expect(posts[1].think).toBe("low");
+    responses.push(() => ndjson([done()]));
+    await collect(req({ model: "qwen3:8b", reasoningEffort: "high" }));
+    expect(posts[2]).not.toHaveProperty("think");
+  });
+
+  // EXP-36: the Qwen templates render a prior <think> only when think is set;
+  // a boolean thinking model's spec sets it on every request with a depth.
+  it("a boolean thinking model gets think:true, so a replayed <think> renders", async () => {
+    discovered("qwen3:8b", QWEN3);
     mkdirSync(join(dir, "model-profiles"), { recursive: true });
-    writeFileSync(join(dir, "model-profiles", "qwen3-8b.json"), JSON.stringify({ replayReasoning: replay }));
+    writeFileSync(join(dir, "model-profiles", "qwen3-8b.json"), JSON.stringify({ replayReasoning: true }));
     _resetModelProfilesForTests();
     responses.push(() => ndjson([done()]));
-    await collect(req({ model: "qwen3:8b" }));
-    expect(posts[0].think).toBe(think);
+    await collect(req({ model: "qwen3:8b", reasoningEffort: "medium" }));
+    expect(posts[0].think).toBe(true);
     _resetModelProfilesForTests();
   });
 

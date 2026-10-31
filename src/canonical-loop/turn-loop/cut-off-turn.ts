@@ -14,11 +14,13 @@
  * runaway draft fed back in full would fill the window again. Past the limit
  * the turn ends with an honest terminal instead of a silent "done".
  *
- * A local model on a measured window has no flat output cap (local-cap.ts),
- * so this now fires where the window itself ran out, or on a cloud or
- * explicit cap. It used to double a 16k local cap on each re-drive; qwen3.8
- * thinks past 16k tokens on hard derivations, and every re-drive started the
- * same thought over (6 of 37 Terminal-Bench tasks, 2026-10-25).
+ * On a discovered Ollama runtime the adapter continues a cut reply itself
+ * first, from the thinking it already has (adapters/openai-compat/
+ * cut-off-continuation.ts), so this fires there only once those legs are
+ * spent too; elsewhere it is the whole answer. It used to double a 16k local
+ * cap on each re-drive; qwen3.8 thinks past 16k tokens on hard derivations,
+ * and every re-drive started the same thought over (6 of 37 Terminal-Bench
+ * tasks, 2026-10-25).
  */
 import { getMiddlewareState } from "../middlewares/state.js";
 import type { Op } from "../../ops/types.js";

@@ -25,6 +25,18 @@ export interface LocalRuntimeEndpoint {
   origin: "auto" | "manual";
 }
 
+/**
+ * The thinking a runtime says a model accepts: the `think` values it takes
+ * and the one it uses when a request sends none. Ollama /api/show `thinking`
+ * (0.40, read live 2026-10-31): qwen3.8 `[false, "low", "medium", "xhigh"]`
+ * default "medium"; qwen3 / qwen3.6 `[false, true]` default true; gpt-oss
+ * `["low", "medium", "high"]`; llama3.2 `[false]` — it cannot think.
+ */
+export interface ThinkingSpec {
+  values: Array<boolean | string>;
+  default: boolean | string;
+}
+
 export interface LocalModel {
   /** Model id exactly as the runtime's chat endpoint expects it. */
   id: string;
@@ -36,6 +48,9 @@ export interface LocalModel {
   contextWindow: number | null;
   /** Runtime-declared tool-call support. null = unknown (self-heal decides). */
   tools: boolean | null;
+  /** Runtime-declared thinking levels (ThinkingSpec). Absent = the runtime
+   *  did not say, and a request leaves `think` to the runtime's default. */
+  thinking?: ThinkingSpec;
   /**
    * True only when the runtime AUTHORITATIVELY declares this model embeds
    * and cannot chat. Probes must report such models (marked), never drop

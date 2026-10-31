@@ -1,43 +1,33 @@
 /**
- * The reasoning-param decision, and specifically: with thinking-off unused,
- * this must behave EXACTLY as the inline gate it replaced.
+ * The reasoning-param decision for the Chat Completions transport.
  *
- * EXP-6 and EXP-6b both reverted, leaving this code shipped but unused. That
- * is only safe if "unused" is actually true, and "I read the code and it looks
- * equivalent" is the reasoning that already cost two wrong claims in this
- * campaign. So the equivalence is pinned here.
+ * A local endpoint is sent the user's depth for every model and learns from a
+ * 400 what a model rejects; a cloud endpoint is sent it only for a model its
+ * provider row (or, with no row, the OSS-family catalog) says reasons. Until
+ * 2026-10-31 the local side was gated by that same name list, and the Think
+ * picker did nothing for a local model the list did not know.
  */
-import { describe, it, expect, vi } from "vitest";
-
-// Profiles decide replay; pin one opted-in id so the mechanism is tested
-// independently of what the shipped profiles currently declare.
-vi.mock("../../local-runtimes/model-profile.js", () => ({
-  modelReplaysReasoning: (model: string) => model === "replayer:8b",
-}));
+import { describe, it, expect } from "vitest";
 
 import { resolveReasoningParam, isReasoningCapable } from "./openai-param-support.js";
 
 const OLLAMA = "http://127.0.0.1:11434/v1";
+const LMSTUDIO = "http://192.168.1.50:1234/v1";
 const CLOUD = "https://api.openai.com/v1";
+const UNKNOWN_CLOUD = "https://llm.example.com/v1";
 
-describe("with thinking-off unused, nothing changed", () => {
-  it("an unprofiled local model is sent NO reasoning_effort, exactly as before", () => {
-    // The name-based capability check does not match qwen3:8b; since EXP-36
-    // its profile (replayReasoning) sends the param anyway, so the "nothing
-    // on the wire" path is pinned on a local model with no profile.
-    expect(isReasoningCapable(OLLAMA, "qwen3:8b")).toBe(false);
-    expect(resolveReasoningParam({ baseURL: OLLAMA, model: "llama3:8b", effort: "medium" }).send).toBe(false);
-    expect(resolveReasoningParam({ baseURL: OLLAMA, model: "llama3:8b", effort: undefined }).send).toBe(false);
+describe("a local endpoint is asked, never matched by name", () => {
+  it("sends the session depth for any local model, known name or not", () => {
+    expect(resolveReasoningParam({ baseURL: OLLAMA, model: "qwen3.8:27b", effort: "high" })).toEqual({ send: true, value: "high" });
+    expect(resolveReasoningParam({ baseURL: LMSTUDIO, model: "llama3:8b", effort: "low" })).toEqual({ send: true, value: "low" });
+    expect(resolveReasoningParam({ baseURL: OLLAMA, model: "llama3:8b", effort: undefined }).value).toBe("medium");
   });
 
-  it("a reasoning-capable model still gets its session depth verbatim", () => {
-    expect(isReasoningCapable(OLLAMA, "deepseek-r1:7b")).toBe(true);
-    const d = resolveReasoningParam({ baseURL: OLLAMA, model: "deepseek-r1:7b", effort: "high" });
-    expect(d).toEqual({ send: true, value: "high" });
-  });
-
-  it("absent effort falls back to the same default the inline gate used", () => {
-    expect(resolveReasoningParam({ baseURL: OLLAMA, model: "gpt-oss:20b", effort: undefined }).value).toBe("medium");
+  it("stops sending once the endpoint has rejected the param for that model", async () => {
+    const { markParamUnsupported } = await import("../types.js");
+    markParamUnsupported(OLLAMA, "sulky:1b", "reasoning_effort");
+    expect(resolveReasoningParam({ baseURL: OLLAMA, model: "sulky:1b", effort: "medium" }).send).toBe(false);
+    expect(resolveReasoningParam({ baseURL: OLLAMA, model: "sulky:1b", effort: "none" }).send).toBe(false);
   });
 
   it("xhigh still clamps to high on Chat Completions", () => {
@@ -45,33 +35,28 @@ describe("with thinking-off unused, nothing changed", () => {
   });
 });
 
-describe("thinking-off, if a profile ever asks for it again", () => {
-  it("is sent only to a local endpoint, which is the only place it was measured", () => {
-    const local = resolveReasoningParam({ baseURL: OLLAMA, model: "qwen3:8b", effort: "none" });
-    expect(local).toEqual({ send: true, value: "none" });
+describe("a cloud endpoint goes by its catalog", () => {
+  it("a cloud model its provider row does not list reasoning for is sent nothing", () => {
+    expect(isReasoningCapable(CLOUD, "gpt-4o")).toBe(false);
+    expect(resolveReasoningParam({ baseURL: CLOUD, model: "gpt-4o", effort: "high" }).send).toBe(false);
   });
 
-  it("never reaches a cloud endpoint — it clamps to the nearest real depth", () => {
-    const cloud = resolveReasoningParam({ baseURL: CLOUD, model: "gpt-4o", effort: "none" });
-    expect(cloud.value).toBe("minimal");
-    expect(cloud.value).not.toBe("none");
-  });
-
-  it("is not sent at all when the endpoint has already rejected the param", async () => {
-    const { markParamUnsupported } = await import("../types.js");
-    markParamUnsupported(OLLAMA, "sulky:1b", "reasoning_effort");
-    expect(resolveReasoningParam({ baseURL: OLLAMA, model: "sulky:1b", effort: "none" }).send).toBe(false);
+  it("a cloud URL no provider row owns falls back to the OSS reasoning families", () => {
+    expect(isReasoningCapable(UNKNOWN_CLOUD, "deepseek-r1:7b")).toBe(true);
+    expect(isReasoningCapable(UNKNOWN_CLOUD, "qwen3:8b")).toBe(false);
+    expect(resolveReasoningParam({ baseURL: UNKNOWN_CLOUD, model: "deepseek-r1:7b", effort: "high" })).toEqual({ send: true, value: "high" });
+    expect(resolveReasoningParam({ baseURL: UNKNOWN_CLOUD, model: "qwen3:8b", effort: "high" }).send).toBe(false);
   });
 });
 
-describe("resolveReasoningParam — a profile that replays its reasoning", () => {
-  // Ollama /v1 sets its think switch from reasoning_effort, and the Qwen
-  // templates render a prior <think> only when it is set; a replaying
-  // profile therefore gets the param on a loopback endpoint even though its
-  // name is not in the reasoning-capable list — and only on a loopback one.
-  it("sends reasoning_effort locally for a replaying profile, not for any other local model or in the cloud", () => {
-    expect(resolveReasoningParam({ baseURL: OLLAMA, model: "replayer:8b", effort: undefined }).send).toBe(true);
-    expect(resolveReasoningParam({ baseURL: OLLAMA, model: "qwen3:8b", effort: undefined }).send).toBe(false);
-    expect(resolveReasoningParam({ baseURL: CLOUD, model: "replayer:8b", effort: undefined }).send).toBe(false);
+describe("thinking-off", () => {
+  it("is sent only to a local endpoint, which is the only place it was measured", () => {
+    expect(resolveReasoningParam({ baseURL: OLLAMA, model: "qwen3:8b", effort: "none" })).toEqual({ send: true, value: "none" });
+  });
+
+  it("never reaches a cloud endpoint — it clamps to the nearest real depth", () => {
+    const cloud = resolveReasoningParam({ baseURL: CLOUD, model: "o3-mini", effort: "none" });
+    expect(cloud.value).toBe("minimal");
+    expect(cloud.value).not.toBe("none");
   });
 });

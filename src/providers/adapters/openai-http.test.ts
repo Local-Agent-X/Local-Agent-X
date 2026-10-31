@@ -312,12 +312,10 @@ describe("stream usage plumbing", () => {
     const sent = chunks.find((c) => c.type === "request_sent") as { type: "request_sent"; params: Record<string, unknown> };
     expect(sent.params).toMatchObject({ model: "llama3:8b", stream_options: { include_usage: true }, temperature: 0.7, max_tokens: 16_384, tools: ["read_file"] });
     expect("messages" in sent.params).toBe(false);
-    // An unprofiled local model is not in the reasoning-family regex and has
-    // no profile asking for replay, so nothing about reasoning went on the
-    // wire — the runtime's own default (thinking on) applies, and the trace
-    // must show that absence, not the composed intent. (qwen3:8b now sends
-    // reasoning_effort by profile — EXP-36.)
-    expect("reasoning_effort" in sent.params).toBe(false);
+    // A local endpoint is sent the depth for every model, whatever its name
+    // (openai-param-support.ts): the runtime says what it takes by accepting
+    // it or by 400-ing it once, and the trace shows what went on the wire.
+    expect(sent.params.reasoning_effort).toBe("medium");
   });
 
   it("and from an unknown endpoint too", async () => {

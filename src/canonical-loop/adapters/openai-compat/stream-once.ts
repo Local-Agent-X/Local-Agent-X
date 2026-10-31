@@ -33,6 +33,10 @@ const logger = createLogger("canonical-loop.adapters.openai-compat.stream");
 export interface StreamOnceDeps {
   isAborted: () => boolean;
   sessionId?: string;
+  /** Leave a cut-off, reasoning-only reply as it streamed: the caller will
+   *  continue it (cut-off-continuation.ts) and promote it itself if it
+   *  stays cut. Default: promoted here (promoteCutOffReasoning). */
+  keepCutOffReasoning?: boolean;
 }
 
 export async function streamOnce(
@@ -55,7 +59,8 @@ export async function streamOnce(
   // verbatim or emit garble indefinitely; cloud frontier models don't, and
   // a false trip there would cut a healthy paid stream). Watches answer-text
   // deltas only: reasoning models legitimately produce repetitive
-  // chain-of-thought, and thinking is bounded by max_tokens regardless.
+  // chain-of-thought, and thinking is bounded by the local output cap
+  // (local-cap.ts) regardless.
   const local = isLocalModelEndpoint(req.baseURL);
   const guard = local ? createDegenerateStreamGuard() : null;
   // A background call to this model now would wait behind this request, so
@@ -168,18 +173,25 @@ export async function streamOnce(
     endServing?.();
   }
   out.rawText = out.assembledText;
-  // Reasoning-only fallback. The model reasoned the entire output
-  // budget away (finish_reason "length") and never emitted `content` —
-  // without this, the user sees an empty bubble. Surface the reasoning as
-  // the assistant text so the turn is at least visible. Skip when the turn
-  // produced tool calls (then text is optional) or had a transport error
-  // (the error event already surfaced).
-  //
-  // ONLY on a length stop. A model that planned and then stopped ("We need to
-  // find the stub file. Let's list workspace.") had its plan committed as the
-  // answer, and the turn ended as done without the tool call it described
-  // (muse, grep, 2026-09-17). With no text, the turn loop sees a
-  // reasoning-only turn and re-drives it (empty-turn-termination.ts).
+  if (!deps.keepCutOffReasoning) promoteCutOffReasoning(out, report);
+  return out;
+}
+
+/**
+ * Reasoning-only fallback. The model reasoned the entire output budget away
+ * (finish_reason "length") and never emitted `content` — without this, the
+ * user sees an empty bubble. Surface the reasoning as the assistant text so
+ * the turn is at least visible. Skip when the turn produced tool calls (then
+ * text is optional) or had a transport error (the error event already
+ * surfaced).
+ *
+ * ONLY on a length stop. A model that planned and then stopped ("We need to
+ * find the stub file. Let's list workspace.") had its plan committed as the
+ * answer, and the turn ended as done without the tool call it described
+ * (muse, grep, 2026-09-17). With no text, the turn loop sees a
+ * reasoning-only turn and re-drives it (empty-turn-termination.ts).
+ */
+export function promoteCutOffReasoning(out: StreamOnceResult, report: (r: AdapterReport) => void): void {
   if (
     out.providerStop === "length" &&
     out.assembledText.length === 0 &&
@@ -190,7 +202,6 @@ export async function streamOnce(
     out.assembledText = out.assembledThinking;
     report({ kind: "stream_chunk", body: { delta: out.assembledThinking } });
   }
-  return out;
 }
 
 /**

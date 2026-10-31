@@ -7,7 +7,9 @@
  * Wire facts (verified live against Ollama 0.32, 2026-07-15):
  *   /api/version → {"version":"..."} — Ollama-specific, used for detect.
  *   /api/tags    → model list with size/modified_at.
- *   /api/show    → capabilities: ["completion","tools",…]; parameters is a
+ *   /api/show    → capabilities: ["completion","tools",…]; thinking: the
+ *                  `think` values the model takes and its default (0.40);
+ *                  parameters is a
  *                  whitespace-aligned string that may carry "num_ctx N";
  *                  model_info["<arch>.context_length"] is the ARCHITECTURE
  *                  max (e.g. 262144), NOT what's being served — never
@@ -26,6 +28,7 @@ import type {
   LocalModel,
   LocalRuntimeEndpoint,
   LocalRuntimeProbe,
+  ThinkingSpec,
 } from "./types.js";
 
 const DETECT_TIMEOUT_MS = 1_500;
@@ -69,6 +72,24 @@ export function parseNumCtx(parameters: unknown): number | null {
 export function parseToolCapability(capabilities: unknown): boolean | null {
   if (!Array.isArray(capabilities)) return null;
   return capabilities.includes("tools");
+}
+
+/**
+ * The model's thinking levels from /api/show: its `thinking` object when the
+ * runtime sends one (Ollama 0.40), else derived from `capabilities`, which
+ * only says whether the model thinks at all (a boolean `think`). null = the
+ * runtime said nothing either way.
+ */
+export function parseThinkingSpec(thinking: unknown, capabilities: unknown): ThinkingSpec | null {
+  const spec = thinking as { values?: unknown; default?: unknown } | null | undefined;
+  const isValue = (v: unknown): v is boolean | string => typeof v === "boolean" || typeof v === "string";
+  if (spec && typeof spec === "object" && Array.isArray(spec.values) && spec.values.every(isValue) && isValue(spec.default)) {
+    return { values: spec.values, default: spec.default };
+  }
+  if (!Array.isArray(capabilities)) return null;
+  return capabilities.includes("thinking")
+    ? { values: [false, true], default: true }
+    : { values: [false], default: false };
 }
 
 /**
@@ -154,6 +175,8 @@ export const ollamaProbe: LocalRuntimeProbe = {
     if (window !== null) result.contextWindow = window;
     const tools = show ? parseToolCapability(show.capabilities) : null;
     if (tools !== null) result.tools = tools;
+    const thinking = show ? parseThinkingSpec(show.thinking, show.capabilities) : null;
+    if (thinking !== null) result.thinking = thinking;
     return result;
   },
 

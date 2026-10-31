@@ -49,9 +49,13 @@ import { appendTrailingContext, canonicalToChatParam } from "./openai-compat/can
 import { extendLocalWire, type LocalWireState } from "./openai-compat/local-wire.js";
 import { isLocalModelEndpoint } from "../../local-runtimes/model-endpoint.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
-import { applyLocalCap } from "./openai-compat/local-cap.js";
+import type { ContextWindowResolution } from "../../context-manager/model-windows.js";
+import type { RequestFit } from "../../context-manager/request-fit.js";
+import { applyLocalCap, resolveLocalCap } from "./openai-compat/local-cap.js";
+import { continueCutOffReply } from "./openai-compat/cut-off-continuation.js";
+import { chatTransportName } from "./openai-compat/chat-transport.js";
 import { sendLeavingOutUnreadableImages } from "./openai-compat/unreadable-images.js";
-import { streamOnce, applyToolCallTextFallback } from "./openai-compat/stream-once.js";
+import { streamOnce, applyToolCallTextFallback, promoteCutOffReasoning } from "./openai-compat/stream-once.js";
 import { assessOpenAiCompatPreflight, promptExceedsMeasuredWindow } from "./openai-compat/request-preflight.js";
 import { buildTurnTrace } from "./openai-compat/turn-trace.js";
 import { resolveStepReasoningEffort, type ThinkingMode } from "../step-effort.js";
@@ -213,36 +217,7 @@ export class OpenAICompatAdapter implements Adapter {
     // all when none is left. See local-cap.ts for the policy.
     applyLocalCap(req, { baseURL, explicitMaxTokens: this.opts.maxTokens, window: preflight.window, fit: preflight.fit });
 
-    this.inflight = this.runStreamOnce(req, report);
-    let result = await this.inflight;
-
-    // Tool-call-in-text fallback: some models emit tool calls as raw JSON
-    // inside `content` instead of populating tool_calls. Detect + rewrite.
-    // Never mine a guard-stopped stream for tool calls — degenerate output
-    // must not be able to dispatch anything.
-    const toolNameSet = new Set(req.tools.map(t => t.name));
-    if (!result.stoppedByGuard && shouldRescueTextToolCalls(baseURL)) {
-      applyToolCallTextFallback(result, report, model, toolNameSet);
-    }
-
-    // Empty-response retry. Some models (qwen2:7b is the canonical offender)
-    // accept the `tools` field, run for several seconds, then return nothing
-    // at all — a silent failure. Retry once without tools so the turn isn't
-    // blank (isNoOutputReply: a reasoning-only or cut-off reply is the turn
-    // loop's to re-drive). The PERMANENT no-tool latch only applies to local
-    // endpoints, where an empty really does mean the local model can't do
-    // tools; a cloud frontier model (xAI, OpenAI) that empties once is
-    // transient and must not be latched off for the whole process.
-    if (!this.aborted && isNoOutputReply(result) && req.tools.length > 0) {
-      const latch = shouldLatchNoToolSupport(baseURL, model);
-      logger.info(`${model} returned empty with tools — retrying without tools${latch ? " (latched: local endpoint)" : " (this turn only: cloud endpoint)"}`);
-      if (latch) markNoToolSupport(baseURL, model);
-      const retryReq: ProviderRequest = { ...req, tools: [] as unknown as ProviderRequest["tools"] };
-      this.inflight = this.runStreamOnce(retryReq, report);
-      result = await this.inflight;
-    }
-    this.inflight = null;
-
+    const { result, cutOffContinuations } = await this.streamTurn(req, preflight, report);
     const { assembledText, pendingToolCalls, firstError, providerStop, usagePromptTokens, usageCompletionTokens, usageCachedTokens, firstTokenMs } = result;
 
     // Live tool-capability evidence — AFTER the turn settled, gated on the
@@ -317,6 +292,7 @@ export class OpenAICompatAdapter implements Adapter {
       ...(usageCachedTokens !== undefined ? { promptCachedTokens: usageCachedTokens } : {}),
       ...(firstTokenMs !== undefined ? { ttftMs: firstTokenMs } : {}),
       ...(promptOverWindow ? { promptOverWindow: true } : {}),
+      ...(cutOffContinuations > 0 ? { cutOffContinuations } : {}),
     });
 
     const sizeCheck = this.checkProviderStateSize(providerState);
@@ -361,8 +337,68 @@ export class OpenAICompatAdapter implements Adapter {
       : null;
   }
 
-  private async runStreamOnce(req: ProviderRequest, report: (r: AdapterReport) => void): Promise<StreamOnceResult> {
-    const deps = { isAborted: () => this.aborted, sessionId: this.opts.sessionId };
+  /** The model's reply for this turn, settled: streamed, continued where the
+   *  cap cut it, rescued from text when the call came as prose, and retried
+   *  without tools when it came back empty. */
+  private async streamTurn(
+    req: ProviderRequest,
+    preflight: { window: ContextWindowResolution; fit: RequestFit },
+    report: (r: AdapterReport) => void,
+  ): Promise<{ result: StreamOnceResult; cutOffContinuations: number }> {
+    const { model, baseURL } = this.opts;
+    // On a discovered Ollama runtime a cut-off reply is continued from where
+    // it stopped before anything judges it (cut-off-continuation.ts); the
+    // reasoning-only promotion waits until the reply is final.
+    const continues = await chatTransportName(baseURL) === "ollama-native";
+    const run = (r: ProviderRequest) => {
+      this.inflight = this.runStreamOnce(r, report, continues);
+      return this.inflight;
+    };
+    let result = await run(req);
+    let cutOffContinuations = 0;
+    if (continues) {
+      const continued = await continueCutOffReply({
+        req, result, run, isAborted: () => this.aborted,
+        cap: (added) => resolveLocalCap({
+          baseURL, explicitMaxTokens: this.opts.maxTokens, window: preflight.window,
+          fit: { ...preflight.fit, requestTokens: preflight.fit.requestTokens + added },
+        }),
+      });
+      result = continued.result;
+      cutOffContinuations = continued.legs;
+      promoteCutOffReasoning(result, report);
+    }
+
+    // Tool-call-in-text fallback: some models emit tool calls as raw JSON
+    // inside `content` instead of populating tool_calls. Detect + rewrite.
+    // Never mine a guard-stopped stream for tool calls — degenerate output
+    // must not be able to dispatch anything.
+    if (!result.stoppedByGuard && shouldRescueTextToolCalls(baseURL)) {
+      applyToolCallTextFallback(result, report, model, new Set(req.tools.map(t => t.name)));
+    }
+
+    // Empty-response retry. Some models (qwen2:7b is the canonical offender)
+    // accept the `tools` field, run for several seconds, then return nothing
+    // at all — a silent failure. Retry once without tools so the turn isn't
+    // blank (isNoOutputReply: a reasoning-only or cut-off reply is the turn
+    // loop's to re-drive). The PERMANENT no-tool latch only applies to local
+    // endpoints, where an empty really does mean the local model can't do
+    // tools; a cloud frontier model (xAI, OpenAI) that empties once is
+    // transient and must not be latched off for the whole process.
+    if (!this.aborted && isNoOutputReply(result) && req.tools.length > 0) {
+      const latch = shouldLatchNoToolSupport(baseURL, model);
+      logger.info(`${model} returned empty with tools — retrying without tools${latch ? " (latched: local endpoint)" : " (this turn only: cloud endpoint)"}`);
+      if (latch) markNoToolSupport(baseURL, model);
+      const retryReq: ProviderRequest = { ...req, tools: [] as unknown as ProviderRequest["tools"] };
+      this.inflight = this.runStreamOnce(retryReq, report);
+      result = await this.inflight;
+    }
+    this.inflight = null;
+    return { result, cutOffContinuations };
+  }
+
+  private async runStreamOnce(req: ProviderRequest, report: (r: AdapterReport) => void, keepCutOffReasoning = false): Promise<StreamOnceResult> {
+    const deps = { isAborted: () => this.aborted, sessionId: this.opts.sessionId, keepCutOffReasoning };
     const result = await sendLeavingOutUnreadableImages(req, report, (r, rep) => streamOnce(r, rep, deps), this.unreadableImages);
     // Mid-stream inject interrupt: streamOnce broke out of the loop and
     // flagged this on the result. The flag flows through to the caller via

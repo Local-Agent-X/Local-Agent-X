@@ -1,9 +1,9 @@
-// The one output-cap decision for openai-compat requests. On a MEASURED local
-// window the reply gets the real completion budget, and an explicit cap shrinks
-// to it — vLLM validates prompt+max_tokens against max_model_len and 400s every
-// request otherwise. A guessed local window gets the 16k runaway default; a
-// cloud endpoint gets the caller's cap or none. The transports send whatever
-// this decides, unchanged.
+// The one output-cap decision for openai-compat requests. A local reply gets
+// the 16k default, and on a MEASURED window that (or an explicit cap) shrinks
+// to the real completion budget — vLLM validates prompt+max_tokens against
+// max_model_len and 400s every request otherwise. A guessed local window gets
+// the default unclamped; a cloud endpoint gets the caller's cap or none. The
+// transports send whatever this decides, unchanged.
 
 import { describe, it, expect } from "vitest";
 import { applyLocalCap, clampLocalMaxTokens, resolveLocalCap, LOCAL_DEFAULT_MAX_TOKENS, MIN_USEFUL_COMPLETION_TOKENS } from "./local-cap.js";
@@ -21,8 +21,8 @@ function base(over: Partial<Parameters<typeof clampLocalMaxTokens>[0]> = {}) {
 }
 
 describe("clampLocalMaxTokens", () => {
-  it("measured window: the cap is the whole budget, window − prompt − reserve", () => {
-    expect(base()).toBe(131_072 - 3_000 - OUTPUT_RESERVE_TOKENS);
+  it("measured window: the default, clamped to the budget window − prompt − reserve", () => {
+    expect(base()).toBe(LOCAL_DEFAULT_MAX_TOKENS);
     expect(base({ windowTokens: 8_192 })).toBe(8_192 - 3_000 - OUTPUT_RESERVE_TOKENS);
   });
 
@@ -69,7 +69,7 @@ describe("applyLocalCap", () => {
   it("puts the decided cap on the request — undefined when there is no room", () => {
     const req: { maxTokens?: number } = {};
     applyLocalCap(req, args);
-    expect(req).toEqual({ maxTokens: 131_072 - 3_000 - OUTPUT_RESERVE_TOKENS });
+    expect(req).toEqual({ maxTokens: LOCAL_DEFAULT_MAX_TOKENS });
     const full: { maxTokens?: number } = { maxTokens: 512 };
     applyLocalCap(full, { ...args, explicitMaxTokens: 512, window: { tokens: 3_100, provenance: "probed" as const } });
     expect(full).toEqual({ maxTokens: undefined });
@@ -82,14 +82,14 @@ describe("applyLocalCap", () => {
   });
 });
 
-// TB2 adaptive-rejection-sampler, 2026-10-27: qwen3.8 thought 16k, then 32k,
-// then 39k tokens before its first tool call, cut off twice by the 16k local
-// default and starting over each time.
-describe("no flat cap on a measured local window", () => {
-  it("a long thought gets the whole budget the window has left, on the first try", () => {
-    const cap = base({ windowTokens: 172_032, promptTokensEstimate: 12_000 })!;
-    expect(cap).toBe(172_032 - 12_000 - OUTPUT_RESERVE_TOKENS);
-    expect(cap).toBeGreaterThan(40_000);
+// With the cap lifted on a measured window (2026-10-27 to 10-30) qwen3.8 on
+// Terminal-Bench 2.0 wrote 76 replies past 16k tokens, one of 130,559, and
+// the tasks that produced them timed out. The window bounds nothing a
+// thinking model does in minutes; the cap does, and a cut reply is continued
+// rather than restarted (cut-off-continuation.ts).
+describe("the flat cap holds on a measured local window", () => {
+  it("a long thought is bounded at the default, however much window is left", () => {
+    expect(base({ windowTokens: 172_032, promptTokensEstimate: 12_000 })).toBe(LOCAL_DEFAULT_MAX_TOKENS);
   });
 });
 
@@ -109,6 +109,7 @@ describe("resolveLocalCap (seam wrapper)", () => {
   it("derives locality from the baseURL", () => {
     const args = { explicitMaxTokens: undefined, window: probed, fit: fit() };
     expect(resolveLocalCap({ baseURL: "http://127.0.0.1:11434/v1", ...args })).toBe(8_192 - 3_000 - OUTPUT_RESERVE_TOKENS);
+    expect(resolveLocalCap({ baseURL: "http://127.0.0.1:11434/v1", ...args, window: { tokens: 172_032, provenance: "probed" } })).toBe(LOCAL_DEFAULT_MAX_TOKENS);
     expect(resolveLocalCap({ ...args, baseURL: "http://192.168.1.50:8000/v1", window: { tokens: 8_192, provenance: "floor" } }))
       .toBe(LOCAL_DEFAULT_MAX_TOKENS);
     expect(resolveLocalCap({ baseURL: "https://api.llm-cloud.example/v1", ...args })).toBeUndefined();

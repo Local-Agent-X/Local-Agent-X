@@ -11,8 +11,11 @@
  *   options.num_ctx  the context-sizing decision (local-runtimes/
  *                    context-sizing.ts), via the probe's chatExtraBody seam
  *   keep_alive       MODEL_KEEP_ALIVE, the same knob every warm uses
- *   think            what reasoning_effort meant on /v1: false for "none", a
- *                    level for a model whose depth is dial-able, else true
+ *   think            the user's thinking depth as this model takes it,
+ *                    chosen from the levels the runtime itself reports for
+ *                    the model (thinkFor below); nothing for a model
+ *                    discovery has not described, so the runtime's default
+ *                    applies
  * Same self-heals as openai-http for the rejections Ollama can return here
  * ("does not support tools", "does not support thinking" — server/routes.go
  * ChatHandler lines 2715-2729), one retry each, learned per (baseURL, model)
@@ -21,10 +24,12 @@
 import { BaseAdapter } from "../adapter/base-adapter.js";
 import type { ProviderRequest, StreamChunk } from "../adapter/types.js";
 import { hasNoToolSupport, markNoToolSupport, hasParamUnsupported, markParamUnsupported } from "../types.js";
-import { isReasoningCapable, resolveReasoningParam } from "./openai-param-support.js";
+import { THINKING_OFF, type WireReasoningEffort } from "../reasoning-effort.js";
 import { buildOllamaChatBody } from "./ollama-native-request.js";
 import { parseOllamaChatStream } from "./ollama-native-stream.js";
 import { ollamaProbe } from "../../local-runtimes/ollama-probe.js";
+import { getLocalModel } from "../../local-runtimes/cache.js";
+import type { ThinkingSpec } from "../../local-runtimes/types.js";
 import { appliedContext } from "../../local-runtimes/context-sizing.js";
 import { observeChatResidency } from "../../local-runtimes/context-sizing-adapt.js";
 import { MODEL_KEEP_ALIVE } from "../../local-runtimes/residency.js";
@@ -37,11 +42,40 @@ export function ollamaRootOf(baseURL: string | undefined): string {
   return (baseURL ?? "").replace(/\/+$/, "").replace(/\/v1$/, "");
 }
 
-/** reasoning_effort's meaning as Ollama's native `think` value. */
-export function thinkValue(baseURL: string | undefined, model: string, value: string): boolean | string {
-  if (value === "none") return false;
-  if (!isReasoningCapable(baseURL, model)) return true;
-  return value === "minimal" ? "low" : value;
+/** The depth ladder the picker and Ollama's level names share. Ollama's
+ *  "max" (glimmer) sits above xhigh; a name on neither ladder is skipped. */
+const DEPTHS = ["minimal", "low", "medium", "high", "xhigh", "max"];
+
+/**
+ * The `think` value for this request: the requested depth as the model's own
+ * levels express it (ThinkingSpec, from /api/show via discovery).
+ *   - a model that cannot think (`[false]`)        → nothing
+ *   - thinking off                                 → false, when it has an off
+ *   - a boolean model (`[false, true]`)            → true
+ *   - a level model                                → the nearest level it
+ *     lists to the requested depth, the higher one on a tie, since a picked
+ *     depth is the least the user asked for: qwen3.8 has no "high", so
+ *     "high" becomes "xhigh"; gpt-oss has no "xhigh", so that becomes "high"
+ *   - no requested depth, or no spec at all        → nothing: the runtime's
+ *     own default for the model (undefined), except that off is still off
+ */
+export function thinkFor(spec: ThinkingSpec | undefined, effort: WireReasoningEffort | undefined): boolean | string | undefined {
+  if (!spec) return effort === THINKING_OFF ? false : undefined;
+  const levels = spec.values.filter((v): v is string => typeof v === "string");
+  if (levels.length === 0 && !spec.values.includes(true)) return undefined;
+  if (effort === THINKING_OFF) return spec.values.includes(false) ? false : undefined;
+  if (effort === undefined) return undefined;
+  if (levels.length === 0) return true;
+  const want = DEPTHS.indexOf(effort);
+  let best: string | undefined;
+  let bestDistance = Infinity;
+  for (const level of levels) {
+    const at = DEPTHS.indexOf(level);
+    if (at < 0) continue;
+    const distance = Math.abs(at - want) + (at < want ? 0.5 : 0);
+    if (distance < bestDistance) { best = level; bestDistance = distance; }
+  }
+  return best ?? true;
 }
 
 interface Flags { tools: boolean; think: boolean }
@@ -61,14 +95,18 @@ export class OllamaNativeAdapter extends BaseAdapter {
   async *stream(req: ProviderRequest): AsyncIterable<StreamChunk> {
     const root = ollamaRootOf(req.baseURL);
     const numCtx = appliedContext(root, req.model);
-    const reasoning = resolveReasoningParam({ baseURL: req.baseURL, model: req.model, effort: req.reasoningEffort });
+    // A model that 400'd on think (learned below, shared with /v1's
+    // reasoning_effort latch) gets none.
+    const think = hasParamUnsupported(req.baseURL, req.model, "reasoning_effort")
+      ? undefined
+      : thinkFor(getLocalModel(req.baseURL ?? "", req.model)?.thinking, req.reasoningEffort);
     // Exactly the cap the caller decided (local-cap.ts owns it); none → none.
     const numPredict = req.maxTokens;
     const includeFormat = !!req.responseFormat && !hasParamUnsupported(req.baseURL, req.model, "response_format");
     const build = (flags: Flags) => buildOllamaChatBody(req, {
       useTools: flags.tools,
       extraBody: numCtx !== undefined ? ollamaProbe.chatExtraBody(req.model, numCtx) : {},
-      think: flags.think ? thinkValue(req.baseURL, req.model, reasoning.value) : undefined,
+      think: flags.think ? think : undefined,
       numPredict,
       includeFormat,
       keepAlive: MODEL_KEEP_ALIVE,
@@ -84,7 +122,7 @@ export class OllamaNativeAdapter extends BaseAdapter {
       signal: req.signal,
     });
 
-    let flags: Flags = { tools: !hasNoToolSupport(req.baseURL, req.model), think: reasoning.send };
+    let flags: Flags = { tools: !hasNoToolSupport(req.baseURL, req.model), think: think !== undefined };
     const startedAt = Date.now();
     let body: Record<string, unknown>;
     let res: Response;

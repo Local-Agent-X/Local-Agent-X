@@ -78,6 +78,51 @@ describe("a folder the agent made, filled since", () => {
     expect(agentFolderBirth(SESSION, b)).not.toBeNull();
   });
 
+  // build-pmars and reshard-c4-data (2026-10-24): the folders came from a
+  // program, not a mkdir, and their deletes waited on cards nobody answered.
+  it("is recorded from a folder the command named as an operand, once the program made it", () => {
+    const out = join(root, "c4_resharded");
+    const pending = statCreateTargets("bash", { command: `cd ${posix(root)} && python3 compress.py /app/c4_sample ${posix(out)}` }, SESSION);
+    mkdirSync(out);
+    enrollCreatedFiles(SESSION, pending, { content: "", status: "ok" } as unknown as ToolResult);
+    expect(agentFolderBirth(SESSION, out)).not.toBeNull();
+  });
+
+  it("is recorded from a folder a program made where the command ran, under a name the command never said", () => {
+    const src = join(root, "pmars-src");
+    mkdirSync(src);
+    const theirs = join(src, "notes");
+    mkdirSync(theirs); // there before the command: never the agent's
+    const pending = statCreateTargets("bash", { command: "apt-get source pmars", _cwd: src }, SESSION);
+    const made = join(src, "pmars-0.9.4");
+    mkdirSync(made);
+    writeFileSync(join(src, "pmars_0.9.4.orig.tar.gz"), "x"); // a file, not a folder
+    enrollCreatedFiles(SESSION, pending, { content: "", status: "ok" } as unknown as ToolResult);
+    expect(agentFolderBirth(SESSION, made)).not.toBeNull();
+    expect(agentFolderBirth(SESSION, theirs)).toBeNull();
+    // The whole chain: what the program unpacked into it since is newer than
+    // it, so the delete raises no card; the folder that was there before does.
+    settle();
+    mkdirSync(join(made, "src"));
+    writeFileSync(join(made, "src", "pmars.c"), "int main(){}");
+    expect(agentMadeFolderHoldsOnlyNew(made, SESSION)).toBe(true);
+    expect(floor(`cd ${posix(src)} && rm -rf pmars-0.9.4`)).toBe("allow-with-rollback");
+    expect(floor(`cd ${posix(src)} && rm -rf notes`)).not.toBe("allow-with-rollback");
+  });
+
+  it("records nothing from a command that failed, or for a path that already existed", () => {
+    const existed = join(root, "existed");
+    mkdirSync(existed);
+    const failed = join(root, "half");
+    const pending = statCreateTargets("bash", { command: `python3 gen.py ${posix(existed)} ${posix(failed)}` }, SESSION);
+    mkdirSync(failed);
+    enrollCreatedFiles(SESSION, pending, { content: "", status: "error" } as unknown as ToolResult);
+    expect(agentFolderBirth(SESSION, failed)).toBeNull();
+    enrollCreatedFiles(SESSION, pending, { content: "", status: "ok" } as unknown as ToolResult);
+    expect(agentFolderBirth(SESSION, existed)).toBeNull();
+    expect(agentFolderBirth(SESSION, failed)).not.toBeNull();
+  });
+
   it("reads mkdir's folders, not its mode or flags", () => {
     expect(shellMkdirTargets("mkdir -p -m 755 /srv/a /srv/b/", "/w").map(posix)).toEqual(["/srv/a", "/srv/b"].map((p) => posix(resolve(p))));
     expect(shellMkdirTargets("mkdir $D ~/x", "/w")).toEqual([]);

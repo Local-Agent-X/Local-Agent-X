@@ -6,6 +6,14 @@
  * card twice until the trial timed out. The files were git's, written by a
  * program the agent ran, so no file record covered them.
  *
+ * How the agent's making of a folder is known (created-files.ts): a `mkdir`
+ * named it, another command named it as an operand (`python compress.py in
+ * /tmp/out`), or it appeared where the command ran and was born while the
+ * command ran (`apt-get source pmars` → pmars-0.9.4), absent before the
+ * command in every case. TB2 build-pmars and reshard-c4-data, 2026-10-24:
+ * deleting such folders waited on cards nobody answered. A folder that was
+ * there before the command, however it got there, is never the agent's.
+ *
  * The proof is the disk's, not the record's: every entry under the folder was
  * born after the folder was (a move or a hard link keeps the entry's own birth
  * time, so data brought in from elsewhere fails it) and last modified after it

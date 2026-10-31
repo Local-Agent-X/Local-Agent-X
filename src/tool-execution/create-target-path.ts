@@ -141,3 +141,25 @@ export function shellMkdirTargets(command: string, cwd: string): string[] {
   }
   return placed(targets, cwd, cdSeen, () => false);
 }
+
+/** Every operand a shell command names, resolved the same way: a program's
+ *  output folder is usually one of its arguments (`python compress.py in
+ *  /tmp/out`, `git clone url dest`). The caller keeps only those absent before
+ *  the command and folders after it, so naming a path that already exists, or
+ *  one the command never makes, enrolls nothing. Flags are not paths. */
+export function shellNamedPaths(command: string, cwd: string): string[] {
+  const entered = enterPrelude(command, cwd);
+  if (entered) ({ command, cwd } = entered);
+  const { positions } = commandPositions(command);
+  const cdSeen = positions.some((p) => CD_BINS.has(p.bin));
+  const words = positions.flatMap((p) => p.words.slice(p.at + 1)).filter((w) => !w.startsWith("-"));
+  return placed(words.map((w) => w.replace(/[\\/]+$/, "")), cwd, cdSeen, () => false);
+}
+
+/** Where the command's programs run: `cwd`, or the folder its leading `cd`
+ *  enters. A program that makes a folder it was not told the name of
+ *  (`apt-get source pmars` → pmars-0.9.4, `git clone url` → the repo) makes
+ *  it here. */
+export function shellRunDir(command: string, cwd: string): string {
+  return enterPrelude(command, cwd)?.cwd ?? cwd;
+}

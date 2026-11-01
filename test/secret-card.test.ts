@@ -121,6 +121,26 @@ describe("the secret card", () => {
     expect(fields[0].type).toBe("password");
   });
 
+  // A new user takes the agent's ask at face value: the card for a
+  // model-provider key says the agent needs none for its own work.
+  it("a model-provider key's card tells the user the agent needs no such key for its own work", () => {
+    const card = (show: string) => {
+      const window = new Window({ url: "http://127.0.0.1" });
+      window.document.body.innerHTML = `<div id="messages"><div class="msg assistant">Enter your key</div></div><textarea id="msg-input"></textarea>`;
+      window.eval(script);
+      window.eval(show);
+      return window.document;
+    };
+    const tagged = card(`showMultiSecretModal([{ name: "ANTHROPIC_API_KEY", service: "Anthropic", reason: "Generate recipes", modelProvider: "Anthropic" }])`);
+    const note = tagged.querySelector(".secret-model-provider-note");
+    expect(note).not.toBeNull();
+    expect(note!.textContent).toContain("never needs a key for Anthropic");
+    expect(note!.textContent).toContain("your own app or project");
+    const plain = card(`showSecretModal("RESEND_API_KEY", "Resend", "Send mail")`);
+    expect(plain.querySelector(".secret-input-field")).not.toBeNull();
+    expect(plain.querySelector(".secret-model-provider-note")).toBeNull();
+  });
+
   it("an open card cancels the reply's reserved room, and stays visible in the browser workspace's latest-turn view", () => {
     const { doc } = setup();
     expect(doc.querySelector("#messages > #secret-modal-overlay.visible")).not.toBeNull();

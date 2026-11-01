@@ -2,7 +2,7 @@
 
 **Owns:** Per-provider metadata and wire plumbing — the `PROVIDERS` registry, provider ids, model catalog and capability stores, the HTTP / Ollama / Codex wire adapters, and per-provider history cleanup before a request is sent.
 **Does not own:** Per-turn transport adapters (how a turn streams and finalizes) → `src/canonical-loop/adapters/`; credentials and sign-in → `src/auth/`; the whole per-turn request pipeline → `src/agent-request/`.
-**Entry:** no index. Public files: `registry.ts` (`PROVIDERS`), `provider-ids.ts` (`PROVIDER_IDS`, `ProviderId`), `sanitize.ts` (history cleanup), `adapters/` behind `adapter/base-adapter.ts`, `model-catalog.ts`, `resolve-provider-context.ts`.
+**Entry:** no index. Public files: `registry.ts` (`PROVIDERS`), `provider-ids.ts` (`PROVIDER_IDS`, `ProviderId`), `sanitize.ts` (history cleanup), `adapters/` behind `adapter/base-adapter.ts`, `model-catalog.ts`, `resolve-provider-context.ts`, `model-provider-keys.ts` (which requested secrets are keys for a model provider, and what the secret prompt and the agent are told about one).
 
 ## Invariants
 - Adding a provider = one `PROVIDER_IDS` entry + one `PROVIDERS` entry; every other site reads `PROVIDERS`. Never add an `if (provider === ...)` branch at a call site — the `transport` discriminant encodes the Anthropic Messages vs OpenAI-compat split.

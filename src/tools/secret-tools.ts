@@ -1,6 +1,7 @@
 import type { ToolDefinition, ToolResult, ServerEvent } from "../types.js";
 import type { SecretsStore } from "../secrets.js";
 import { onEventOf } from "../tool-execution/internal-args.js";
+import { modelProviderKeyGuidance, modelProviderOfSecret } from "../providers/model-provider-keys.js";
 
 function ok(content: string): ToolResult {
   return { content };
@@ -76,6 +77,9 @@ export function createSecretTools(
 
       // Emit SSE event to trigger the frontend modal
       // Prefer per-request _onEvent (session-scoped) over constructor onEvent (may be stale global)
+      // A key for a model provider is one the agent could run on itself: the
+      // card says so to the user, and the result says so to the agent.
+      const modelProvider = modelProviderOfSecret(name, service);
       const emit = onEventOf(args) || onEvent;
       emit?.({
         type: "secret_request",
@@ -83,6 +87,7 @@ export function createSecretTools(
         service,
         reason,
         ...(url ? { url } : {}),
+        ...(modelProvider ? { modelProvider } : {}),
       });
 
       return ok(
@@ -90,6 +95,7 @@ export function createSecretTools(
           (url
             ? `A prompt has been shown in the UI. Once they save it, fill it into ${url} with browser_fill_from_secret; it never passes through you. `
             : `A prompt has been shown in the UI. Once they provide it, you can use {{${name}}} in http_request headers. `) +
+          (modelProvider ? modelProviderKeyGuidance(modelProvider) + " " : "") +
           `When they save or cancel it, that arrives as their next message; end your turn here and continue then.`
       );
     },
@@ -133,7 +139,7 @@ export function createSecretTools(
       required: ["secrets"],
     },
     async execute(args) {
-      type SecretReq = { name: string; service?: string; reason: string; url?: string };
+      type SecretReq = { name: string; service?: string; reason: string; url?: string; modelProvider?: string };
       const raw = Array.isArray(args.secrets) ? args.secrets : [];
       const normalized: SecretReq[] = [];
       for (const s of raw) {
@@ -143,6 +149,8 @@ export function createSecretTools(
         const entry: SecretReq = { name, reason: String(r.reason || "Required for API access") };
         if (r.service) entry.service = String(r.service);
         if (r.url) entry.url = String(r.url);
+        const modelProvider = modelProviderOfSecret(name, entry.service);
+        if (modelProvider) entry.modelProvider = modelProvider;
         normalized.push(entry);
       }
 
@@ -166,11 +174,13 @@ export function createSecretTools(
       const skippedNote = existing.length > 0
         ? ` Already stored (skipped): ${existing.join(", ")}.`
         : "";
+      const providers = [...new Set(missing.map(s => s.modelProvider).filter((p): p is string => !!p))];
       return ok(
         `Requesting ${missing.length} credential(s) from the user in a single secure prompt: ${missing.map(s => s.name).join(", ")}.` +
           skippedNote +
           ` Once saved, use them as ${missing.map(s => `{{${s.name}}}`).join(" / ")} in http_request headers` +
           (missing.some(s => s.url) ? `; a website login (one with a url) fills with browser_fill_from_secret on its site. ` : `. `) +
+          providers.map(p => modelProviderKeyGuidance(p) + " ").join("") +
           `When they save or cancel, that arrives as their next message; end your turn here and continue then.`
       );
     },

@@ -108,6 +108,9 @@
         html += '<div style="margin-bottom:14px">';
         html += '<div style="display:inline-block;background:#1a1a30;border:1px solid var(--border);border-radius:6px;padding:3px 10px;font-family:var(--mono);font-size:.74rem;color:var(--accent);margin-bottom:4px">' + _esc(s.name) + '</div>';
         html += '<div style="color:var(--muted);font-size:.78rem;margin:4px 0 6px;line-height:1.4">' + _esc(s.reason) + '</div>';
+        // A key for a model provider: the agent is already a model, so the
+        // user is told it needs none for its own work before they paste one.
+        if (s.modelProvider) html += '<div class="secret-model-provider-note" style="color:var(--text);font-size:.74rem;margin:0 0 6px;line-height:1.4">Local Agent X already runs on its own model and never needs a key for ' + _esc(s.modelProvider) + ' to think, write or generate anything. Save this only if it is for your own app or project, or to run Local Agent X on ' + _esc(s.modelProvider) + ' (pick it in Settings after saving).</div>';
         // A website login names its site: the vault fills it only there.
         const site = _siteOf(s.url);
         if (site) html += '<div style="color:var(--muted);font-size:.74rem;margin:0 0 6px">For ' + _esc(site) + ' only &mdash; filled there by the vault, never shown to the agent.</div>';
@@ -176,8 +179,8 @@
     try { return new URL(/^[a-z][a-z0-9+.-]*:/i.test(url) ? url : 'https://' + url).host; } catch (_) { return ''; }
   }
 
-  function showSecretModal(name, service, reason, url, sessionId) {
-    showMultiSecretModal([{ name, service, reason, url }], sessionId);
+  function showSecretModal(name, service, reason, url, sessionId, modelProvider) {
+    showMultiSecretModal([{ name, service, reason, url, modelProvider }], sessionId);
   }
 
   // `sessionId` is the chat that asked; the card is shown and answered there.

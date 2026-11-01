@@ -124,7 +124,7 @@ function dispatchChatStreamEvent(msg) {
       break;
 
     case 'secret_request':
-      showSecretModal(event.name, event.service, event.reason, event.url, sessionId);
+      showSecretModal(event.name, event.service, event.reason, event.url, sessionId, event.modelProvider);
       break;
 
     case 'secrets_request':

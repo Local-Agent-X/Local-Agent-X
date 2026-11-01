@@ -75,3 +75,40 @@ describe("a website login through the vault", () => {
     expect(res.content).not.toContain("pw-value");
   });
 });
+
+// The agent once asked for an Anthropic key so a script could write recipes
+// it could have written itself. A key for a model provider now reaches the
+// card tagged, so the user is told the agent needs none for its own work, and
+// the agent is told the same in the result (2026-10-31).
+describe("a key for a model provider", () => {
+  it("request_secret tags the card with the provider and tells the agent the work is its own", async () => {
+    const events: ServerEvent[] = [];
+    const res = await tool("request_secret", events).execute({ name: "ANTHROPIC_API_KEY", service: "Anthropic", reason: "Generate recipes with Claude" });
+    expect(events).toEqual([{ type: "secret_request", name: "ANTHROPIC_API_KEY", service: "Anthropic", reason: "Generate recipes with Claude", modelProvider: "Anthropic" }]);
+    expect(res.content).toContain("Anthropic is a model provider: you never need its key for your own work");
+    expect(res.content).toContain("agent_spawn / op_submit_batch");
+  });
+
+  it("request_secrets tags each provider key and names each provider once", async () => {
+    const events: ServerEvent[] = [];
+    const res = await tool("request_secrets", events).execute({ secrets: [
+      { name: "OPENAI_API_KEY", service: "OpenAI", reason: "Summaries" },
+      { name: "OPENAI_ORG_ID", service: "OpenAI", reason: "Summaries" },
+      { name: "STRIPE_SECRET_KEY", service: "Stripe", reason: "Charges" },
+    ] });
+    expect(events[0]).toMatchObject({ type: "secrets_request", secrets: [
+      { name: "OPENAI_API_KEY", modelProvider: "OpenAI" },
+      { name: "OPENAI_ORG_ID", modelProvider: "OpenAI" },
+      { name: "STRIPE_SECRET_KEY" },
+    ] });
+    expect((events[0] as { secrets: Array<Record<string, unknown>> }).secrets[2]).not.toHaveProperty("modelProvider");
+    expect(res.content.split("OpenAI is a model provider").length).toBe(2);
+  });
+
+  it("an ordinary credential is untouched", async () => {
+    const events: ServerEvent[] = [];
+    const res = await tool("request_secret", events).execute({ name: "RESEND_API_KEY", service: "Resend", reason: "Send mail" });
+    expect(events[0]).not.toHaveProperty("modelProvider");
+    expect(res.content).not.toContain("model provider");
+  });
+});

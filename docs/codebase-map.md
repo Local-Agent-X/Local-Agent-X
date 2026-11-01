@@ -29,7 +29,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/session/` | 57 | 9 | M |  |
 | `src/data-lineage/` | 56 | 12 | L |  |
 | `src/memory/` | 53 | 148 | XL | 7 |
-| `src/browser/` | 48 | 88 | XL | 5 |
+| `src/browser/` | 47 | 88 | XL | 5 |
 | `src/tool-policy/` | 47 | 21 | L |  |
 | `src/local-runtimes/` | 43 | 26 | L | 1 |
 | `src/util/` | 42 | 3 | S |  |

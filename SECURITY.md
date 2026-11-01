@@ -42,7 +42,6 @@ Local Agent X is a single-user personal agent designed for a local workstation. 
 - [ ] Export logs to SIEM via `GET /api/logs/export` (NDJSON format)
 - [ ] Do NOT expose port 7007 to the network
 - [ ] Do NOT share the bearer token across users
-- [ ] Rotate auth token periodically via `POST /api/auth/rotate`
 
 ## Data Retention
 

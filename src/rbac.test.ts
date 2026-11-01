@@ -20,7 +20,7 @@ describe("RBAC agent role", () => {
   it("agent role is DENIED the sensitive sinks", () => {
     expect(rbac.checkEndpoint("agent", "GET", "/api/secrets/x/reveal").allowed).toBe(false);
     expect(rbac.checkEndpoint("agent", "POST", "/api/plugins/load").allowed).toBe(false);
-    expect(rbac.checkEndpoint("agent", "POST", "/api/auth/rotate").allowed).toBe(false);
+    expect(rbac.checkEndpoint("agent", "POST", "/api/security/operator-token/rotate").allowed).toBe(false);
   });
 
   // C7 round-2: /api/local-runtimes is egress-granting — a POST/DELETE there

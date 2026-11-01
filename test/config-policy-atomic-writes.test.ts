@@ -145,19 +145,19 @@ describe("POST /api/tool-policy/toggle writes tool-policy.json atomically", () =
   });
 });
 
-describe("POST /api/auth/rotate writes config.json atomically", () => {
+describe("POST /api/security/operator-token/rotate writes config.json atomically", () => {
   it("token rotation persists config.json via tmp+rename", async () => {
     writeFileSync(join(dataDir, "config.json"), JSON.stringify({ authToken: "old", port: 12345 }), "utf-8");
     rec.writes.length = 0;
     rec.renames.length = 0;
-    const { handleSecurityRoutes } = await import("../src/routes/settings/security.js");
+    const { handleSecurityRoutes } = await import("../src/routes/security.js");
     const rotated: string[] = [];
     const ctx = {
       dataDir,
       config: { authToken: "old", port: 12345 },
       rbac: { rotateOperatorToken: (t: string) => { rotated.push(t); } },
     } as unknown as ServerContext;
-    const url = new URL("http://test/api/auth/rotate");
+    const url = new URL("http://test/api/security/operator-token/rotate");
     const req = mockJsonRequest({});
     const cap = mockResponse();
 

@@ -2,39 +2,11 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, safeErrorMessage, corsHeaders } from "../../server-utils.js";
-import { rotateAuthToken } from "../../config.js";
-import { setBrowserAuthContext } from "../../browser/index.js";
 import { redactCredentials } from "../../security/index.js";
 import { listAuditFiles } from "../../threat/audit-crypto.js";
-import { createLogger } from "../../logger.js";
 
-const logger = createLogger("routes.settings.security");
-
-export const handleSecurityRoutes: RouteHandler = async (method, url, req, res, ctx, role) => {
+export const handleSecurityRoutes: RouteHandler = async (method, url, req, res, ctx) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
-
-  // Token rotation
-  if (method === "POST" && url.pathname === "/api/auth/rotate") {
-    // Rotating mints a fresh OPERATOR token — require operator role. The
-    // handler previously ignored the role, so a future lower-tier (user/
-    // readonly) token could rotate (and thereby seize) the operator token.
-    // Not reachable in the default single-user config (operator is the only
-    // token), but enforced structurally so introducing scoped tokens can't
-    // silently open it.
-    if (role !== "operator") { json(403, { error: "Operator role required to rotate the auth token" }); return true; }
-    try {
-      // The one minting path: it persists the token AND registers it for
-      // masking, so the model never sees the new token in any tool output.
-      const newToken = rotateAuthToken();
-      ctx.config.authToken = newToken;
-      ctx.rbac.rotateOperatorToken(newToken);
-      setBrowserAuthContext(newToken, String(ctx.config.port));
-      const masked = newToken.slice(0, 4) + "****" + newToken.slice(-4);
-      logger.info(`Token rotated. New token: ${masked}`);
-      json(200, { ok: true, token: newToken, message: "Token rotated. Save this token." });
-    } catch { json(500, { error: "Failed to rotate token" }); }
-    return true;
-  }
 
   // History export
   if (method === "GET" && url.pathname === "/api/history") {

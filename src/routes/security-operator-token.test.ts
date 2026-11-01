@@ -13,6 +13,8 @@ import type { Role } from "../rbac.js";
 import { RBACManager } from "../rbac.js";
 import { getRuntimeConfig, setRuntimeConfig } from "../config.js";
 import type { LAXConfig } from "../types.js";
+import { maskSecretValues } from "../data-lineage/index.js";
+import { unregisterRedactedSecretValue } from "../security/secrets/index.js";
 import { handleSecurityRoutes } from "./security.js";
 
 vi.mock("../desktop-bridge.js", () => ({ desktopBridgeAvailable: () => false, desktopRestartServer: () => false }));
@@ -68,6 +70,22 @@ describe("/api/security/operator-token", () => {
     expect(rbac.authenticate(token).valid).toBe(true);
     expect(rbac.authenticate(bootToken).valid).toBe(false);
     expect(rbac.listTokens().find((t) => t.id === "operator-default")?.expiresAt).toBeUndefined();
+  });
+
+  // rotateAuthToken registers the new token for masking before the response is
+  // written: a tool that later prints it (a `cat` of config.json, the startup
+  // URL file) shows the model a mask, not the credential.
+  it("POST rotate's new token is masked in any output from the moment it is returned", async () => {
+    const { res, body } = mkRes();
+    await handleSecurityRoutes("POST", url("/api/security/operator-token/rotate"), req, res, ctx(), "operator" as Role);
+    const token = body().token as string;
+    try {
+      const shown = maskSecretValues(`http://127.0.0.1:7007/?token=${token}`, { knownOnly: true });
+      expect(shown.masked).toBe(1);
+      expect(shown.text).not.toContain(token);
+    } finally {
+      unregisterRedactedSecretValue(token);
+    }
   });
 
   it("POST rotate is refused for every role but operator", async () => {

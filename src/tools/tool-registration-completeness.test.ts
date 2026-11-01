@@ -24,9 +24,13 @@
 // image path, a context_files array, a dev server's cwd — invisible to every
 // forward test, because the forward tests only check what IS declared.
 import { beforeAll, describe, expect, it } from "vitest";
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import type { ToolDefinition } from "../types.js";
+import type { ToolPluginContext } from "./plugin.js";
+import { plugins } from "./plugins.js";
+import { unifiedRegistry } from "./registry.js";
 import { collectRuntimeTools } from "./runtime-tool-names.js";
 import { allTools } from "./registry-build.js";
 import { ToolPolicy, auditPolicyCoverage } from "../tool-policy/index.js";
@@ -52,6 +56,25 @@ describe("every runtime tool, plugins included, is fully registered", () => {
     for (const pluginTool of ["setting", "http_request", "browser", "memory_search", "agent_spawn"]) {
       expect(names, `${pluginTool} should come from a plugin`).toContain(pluginTool);
     }
+  });
+
+  // Boot keeps the first of two built-in tools with one name and drops the
+  // other (bootstrap-tools.ts), so a clash ships a tool that never runs.
+  it("no two built-in plugins register the same tool name", async () => {
+    const ctx = {
+      secretsStore: {}, memoryIndex: {}, cronService: {}, dataDir: mkdtempSync(join(tmpdir(), "lax-tool-clash-")),
+      activeBrowserSessionIdRef: { value: "" }, activeRuntimeBySession: new Map(), registry: unifiedRegistry,
+    } as unknown as ToolPluginContext;
+    const owners = new Map<string, string[]>();
+    try {
+      for (const plugin of plugins) {
+        for (const tool of await plugin.register(ctx)) owners.set(tool.name, [...(owners.get(tool.name) ?? []), plugin.id]);
+      }
+    } finally {
+      rmSync((ctx as { dataDir: string }).dataDir, { recursive: true, force: true });
+    }
+    const clashes = [...owners].filter(([, ids]) => ids.length > 1).map(([name, ids]) => `${name} (${ids.join(", ")})`);
+    expect(clashes, "rename one of them").toEqual([]);
   });
 
   it("has a covering policy rule — a tool without one is default-denied", () => {

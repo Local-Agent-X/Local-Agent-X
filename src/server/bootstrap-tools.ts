@@ -77,8 +77,13 @@ export async function bootstrapTools(deps: {
     applyAudiences(produced);
     outputsById.set(plugin.id, produced);
     for (const tool of produced) {
+      // The first definition is the one both dispatch paths see: the registry
+      // keeps its first entry, and a name→tool map built over allAgentTools
+      // (the MCP bridge) would keep the LAST, so the bridge ran a different
+      // tool than chat for the same name.
       if (seenTools.has(tool.name)) {
-        logger.warn(`[tools] Duplicate tool name: "${tool.name}" — later definition wins (plugin=${plugin.id})`);
+        logger.warn(`[tools] Duplicate tool name: "${tool.name}" — first definition kept, plugin=${plugin.id}'s dropped`);
+        continue;
       }
       seenTools.add(tool.name);
       allAgentTools.push(tool);

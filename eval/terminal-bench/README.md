@@ -14,6 +14,7 @@ the same conditions and the task's own tests decide pass or fail.
 | `bundle.mjs` | Builds the Linux bundle from one commit, entirely inside a Debian bullseye container: compiled `dist/`, production `node_modules` for linux-x64, and a Node binary. |
 | `policy-scan.mjs` | Runs every statement of each task's reference solution (`<task>/solution/solve.sh`) through LAX's security layer, as a chat turn's shell call would reach it, and groups the refusals by rule. No model. With `--replay <job dir>` it judges the shell commands a finished LAX run's model actually sent instead. Use it to find classes of over-blocking; justify each fix with a real-user case, never one task's solution. |
 | `hermes_pinned.py` | Harbor's Hermes agent, installed from one pinned Hermes release end to end (`-a hermes_pinned:HermesPinned --ak version=v2026.9.24`). Harbor 0.24's own adapter fetches the installer from Hermes' `main` and runs a `hermes version` subcommand that no release has, so it installs nothing (2026-10-20). It retries the installer download, and takes `apt_fallback.py`'s setup fallback. |
+| `compare.mjs` | Scores Harbor jobs from each trial's verifier reward and says whether two runs really differ: the pass rate with a 95% interval from resampling tasks, and for two runs the paired difference on their common tasks, the tasks only one side passes, and (one attempt per task) the exact McNemar p-value. Trials whose verifier never ran are listed apart, outside both rates. `node eval/terminal-bench/compare.mjs --a <job>[,<job>] --b <job> --label-a LAX --label-b Hermes`. |
 | `apt_fallback.py` | Harbor's OpenClaw and Codex agents (`apt_fallback:OpenClawAptFallback`, `apt_fallback:CodexAptFallback`) whose setup survives a Debian release past end of life: when `apt-get` fails on deb.debian.org's security mirror, which still lists bullseye's updates but no longer serves them, the security suite is pointed at archive.debian.org and the install runs again. Without it, every harness but LAX fails setup on the bullseye task images (the qemu-* tasks) before the model sees the task. `OpenClawNode24AptFallback` also runs OpenClaw on Node 24, which releases from 2026.9 need; Harbor's adapter installs Node 22. |
 
 ### Scanning the reference solutions
@@ -57,6 +58,25 @@ Needs Docker (with NVIDIA GPU support for the GPU tasks) and Harbor
 
    Add `-k 5` for leaderboard-grade attempts. Run one task at a time (`-n 1`)
    against one local model, since the model serves one request at a time.
+4. Compare runs with `compare.mjs`, never by subtracting pass counts: on 89
+   tasks with one attempt each, a run moves by several tasks on its own, and a
+   difference whose interval includes zero is noise.
+
+## Repo editing: SWE-bench Verified
+
+Terminal-Bench measures terminal tasks. The everyday coding job, a change to
+an existing repository that its tests must accept, is measured by SWE-bench
+Verified, which Harbor hosts as `swe-bench/swe-bench-verified` (500 tasks).
+The same agent runs it; not yet run with LAX as of 2026-11-01:
+
+```
+PYTHONPATH=eval/terminal-bench harbor run -d swe-bench/swe-bench-verified \
+  -e docker -a lax_agent:LaxAgent -m ollama/qwen3.8:27b-172k -n 1 -l 50
+```
+
+`-l 50` caps the run at 50 tasks. Give every harness the same tasks: pass the
+names of the first run's tasks with `-i` to the next one, so `compare.mjs`
+pairs them.
 
 Each trial's logs land under `/logs/agent/` in the trial folder:
 `lax-result.json` (reply, tool calls, time), `lax-server.log`, `lax.txt`.

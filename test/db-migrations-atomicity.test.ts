@@ -205,3 +205,19 @@ describe("runMigrations — successful migrations apply exactly once", () => {
     ).toHaveLength(1);
   });
 });
+
+describe("config-defaults (v1)", () => {
+  it("fills a missing key with the schema's default, and leaves the profile-derived ones to loadConfig", async () => {
+    const { writeFileSync } = await import("node:fs");
+    writeFileSync(join(dataDir, "config.json"), JSON.stringify({ model: "m" }), "utf-8");
+    await runMigrations(dataDir);
+    const cfg = JSON.parse(readFileSync(join(dataDir, "config.json"), "utf-8"));
+    expect(cfg.maxIterations).toBe(160);
+    expect(cfg.model).toBe("m");
+    // Derived from the deployment profile while absent (config.ts); a value
+    // written here would stop following the profile.
+    expect(cfg.toolApproval).toBeUndefined();
+    expect(cfg.retentionDays).toBeUndefined();
+    expect(cfg.logLevel).toBeUndefined();
+  });
+});

@@ -2,6 +2,7 @@ import { existsSync, readFileSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "./lax-data-dir.js";
 import { atomicWriteFileSync } from "./server-utils.js";
+import { configSchema } from "./config-schema.js";
 import { recordUserNotice, SPEND_BUDGET_NOTICE_ID, SPEND_BUDGET_NOTICE_TEXT } from "./user-notice.js";
 
 export interface Migration {
@@ -33,15 +34,15 @@ registerBuiltinMigration({
     try {
       const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
       let changed = false;
-      const defaults: Record<string, unknown> = {
-        maxIterations: 160, temperature: 0.7, profile: "home",
-        toolApproval: "confirm-risky", retentionDays: 90,
-        logLevel: "basic",
-        browserMode: "in-app",
-        browserIdleTimeoutMs: 600000, agentTimeoutMs: 300000,
-      };
-      for (const [key, value] of Object.entries(defaults)) {
-        if (cfg[key] === undefined) { cfg[key] = value; changed = true; }
+      // The schema's own defaults, not a copy that drifts. toolApproval,
+      // retentionDays and logLevel are not written: loadConfig derives them
+      // from the deployment profile while they are absent (config.ts), and a
+      // copy here wrote "confirm-risky" over the home profile's "auto", so a
+      // fresh install's config.json disagreed with its running config.
+      const defaults = configSchema.parse({}) as Record<string, unknown>;
+      const keys = ["maxIterations", "temperature", "profile", "browserMode", "browserIdleTimeoutMs", "agentTimeoutMs"];
+      for (const key of keys) {
+        if (cfg[key] === undefined && defaults[key] !== undefined) { cfg[key] = defaults[key]; changed = true; }
       }
       if (changed) atomicWriteFileSync(cfgPath, JSON.stringify(cfg, null, 2));
     } catch {}

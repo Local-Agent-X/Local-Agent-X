@@ -60,6 +60,9 @@ describe("isCatalogChatModel — the endpoints list everything, the picker wants
     }
     expect(isCatalogChatModel("xai", "grok-4.7")).toBe(true);
     expect(isCatalogChatModel("xai", "grok-2-image-1212")).toBe(false);
+    // Shipped but kept off the chat picker (chat completions refuses it); the
+    // provider listing it does not put it back. Found in the picker 2026-10-31.
+    expect(isCatalogChatModel("xai", "grok-4.20-multi-agent-0309")).toBe(false);
     expect(isCatalogChatModel("cerebras", "llama-4-scout")).toBe(true);
     expect(isCatalogChatModel("custom", "nomic-embed-text")).toBe(false);
   });
@@ -245,6 +248,13 @@ describe("a complete catalog hides shipped models the provider no longer lists",
     expect(state.complete).toBe(false);
     expect(pickerModelsFor("anthropic-api")).toEqual(chatModelsFor("anthropic-api"));
     expect(hiddenLogs()).toEqual([]);
+  });
+
+  it("does not add back a shipped id the registry keeps off the chat picker", async () => {
+    key("xai", "xai-key");
+    routes.push([/api\.x\.ai\/v1\/language-models$/, () => ({ models: [{ id: "grok-4.7" }, { id: "grok-4.20-multi-agent-0309" }] })]);
+    await refreshProviderCatalog("xai");
+    expect(pickerModelsFor("xai")).toEqual(["grok-4.7"]);
   });
 
   it("hides nothing on a successful but empty list", async () => {

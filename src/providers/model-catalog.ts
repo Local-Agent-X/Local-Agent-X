@@ -80,6 +80,10 @@ const XAI_NOT_CHAT = /image|vision/;
 const GENERIC_NOT_CHAT = /embed|rerank|whisper|tts/i;
 
 export function isCatalogChatModel(provider: ProviderId, id: string): boolean {
+  // A shipped id the registry keeps off the chat picker (the multi-agent
+  // Grok, which chat completions refuses) is not put back by the provider
+  // listing it: the list says the account may call it, not that chat can.
+  if (PROVIDERS[provider].chatExcludedModels?.includes(id)) return false;
   switch (provider) {
     case "anthropic-api":
     case "anthropic": return id.startsWith("claude-");

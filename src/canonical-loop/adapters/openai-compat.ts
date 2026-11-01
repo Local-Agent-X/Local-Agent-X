@@ -46,8 +46,9 @@ import {
 } from "./openai-compat/types.js";
 import { byteLengthUtf8 } from "./openai-compat/helpers.js";
 import { appendTrailingContext, canonicalToChatParam } from "./openai-compat/canonical-to-chat-param.js";
-import { extendLocalWire, type LocalWireState } from "./openai-compat/local-wire.js";
+import { extendLocalWire, thinkLevelInPrompt, type LocalWireState } from "./openai-compat/local-wire.js";
 import { isLocalModelEndpoint } from "../../local-runtimes/model-endpoint.js";
+import { getLocalModel } from "../../local-runtimes/cache.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { ContextWindowResolution } from "../../context-manager/model-windows.js";
 import type { RequestFit } from "../../context-manager/request-fit.js";
@@ -59,6 +60,7 @@ import { streamOnce, applyToolCallTextFallback, promoteCutOffReasoning } from ".
 import { assessOpenAiCompatPreflight, promptExceedsMeasuredWindow } from "./openai-compat/request-preflight.js";
 import { buildTurnTrace } from "./openai-compat/turn-trace.js";
 import { resolveStepReasoningEffort, type ThinkingMode } from "../step-effort.js";
+import type { WireReasoningEffort } from "../../providers/reasoning-effort.js";
 import { modelAssistantRowShape, modelReplaysReasoning, modelThinking, modelToolStepSampling } from "../../local-runtimes/model-profile.js";
 import { classifyModelStop } from "./model-stop.js";
 
@@ -136,6 +138,18 @@ export class OpenAICompatAdapter implements Adapter {
     return messages;
   }
 
+  /** The step's thinking profile and the effort it sends, from the step's
+   *  hint as this wire can honor it: none on a local level model, whose level
+   *  sits in the cached prompt (local-wire.ts thinkLevelInPrompt), so there
+   *  every step keeps the session effort. */
+  private stepReasoning(input: TurnInput): { thinking: ReturnType<typeof profileThinking>; reasoningEffort: WireReasoningEffort | undefined } {
+    const { baseURL, model } = this.opts;
+    const held = !!baseURL && !!model && isLocalModelEndpoint(baseURL) && thinkLevelInPrompt(getLocalModel(baseURL, model)?.thinking);
+    const stepEffortHint = held ? undefined : input.stepEffortHint;
+    const thinking = profileThinking(model, { ...input, stepEffortHint });
+    return { thinking, reasoningEffort: resolveStepReasoningEffort(stepEffortHint, this.opts.reasoningEffort, undefined, thinking) };
+  }
+
   async runTurn(input: TurnInput, report: (r: AdapterReport) => void): Promise<TurnResult> {
     if (this.aborted) {
       report({ kind: "error", code: "aborted", message: "adapter aborted before runTurn", retryable: false });
@@ -160,7 +174,7 @@ export class OpenAICompatAdapter implements Adapter {
       this.opts.requireToolOnFirstTurn === true &&
       input.tools.length > 0;
 
-    const thinking = profileThinking(model, input);
+    const { thinking, reasoningEffort } = this.stepReasoning(input);
     // The model card's sampling, from the profile. Omitted fields go unsent,
     // and a runtime default applies — which on Ollama's /v1 is top_p 1.0,
     // not the Modelfile's 0.95, so a profile states it.
@@ -183,12 +197,7 @@ export class OpenAICompatAdapter implements Adapter {
       ...(sampling?.minP != null ? { minP: sampling.minP } : {}),
       ...(sampling?.repeatPenalty != null ? { repeatPenalty: sampling.repeatPenalty } : {}),
       maxTokens: this.opts.maxTokens,
-      reasoningEffort: resolveStepReasoningEffort(
-        input.stepEffortHint,
-        this.opts.reasoningEffort,
-        undefined,
-        thinking,
-      ),
+      reasoningEffort,
       sessionId: this.opts.sessionId,
       signal: this.aborter.signal,
       ...(forcedInList && forced

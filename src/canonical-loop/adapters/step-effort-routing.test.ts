@@ -21,18 +21,25 @@ vi.mock("../../providers/tool-capability-probe.js", () => ({
   maybeVerifyToolSupport: vi.fn(),
   noteLiveToolCallEvidence: vi.fn(),
 }));
+vi.mock("../../local-runtimes/cache.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../local-runtimes/cache.js")>()),
+  getLocalModel: vi.fn(),
+}));
 
 import { createOpenAICompatAdapter } from "./openai-compat.js";
 import { CodexAdapter } from "./codex.js";
 import type { CodexTransport } from "./codex-transport.js";
 import { streamOnce } from "./openai-compat/stream-once.js";
 import { resolveContextWindow } from "../../context-manager/model-windows.js";
+import { getLocalModel } from "../../local-runtimes/cache.js";
+import type { LocalModel, ThinkingSpec } from "../../local-runtimes/types.js";
 import type { TurnInput } from "../adapter-contract.js";
 import type { ReasoningEffort } from "../../providers/reasoning-effort.js";
 import type { StreamOnceResult } from "./openai-compat/types.js";
 
 const mockStream = vi.mocked(streamOnce);
 const mockWindow = vi.mocked(resolveContextWindow);
+const mockLocalModel = vi.mocked(getLocalModel);
 
 function cleanResult(): StreamOnceResult {
   return {
@@ -155,5 +162,37 @@ describe("codex per-step effort routing", () => {
     });
     await adapter.runTurn(makeInput("mechanical"), () => {});
     expect(captured[0].reasoningEffort).toBe("minimal");
+  });
+});
+
+describe("openai-compat per-step effort on the local wire", () => {
+  // Ollama renders a level model's think level as the first line of the
+  // system turn (local-wire.ts thinkLevelInPrompt), so a per-step level change
+  // makes the runtime re-read the whole prompt: on Terminal-Bench 2.0
+  // (2026-10-31) 154 such re-reads cost 71 minutes across 45 tasks.
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockStream.mockResolvedValue(cleanResult());
+    mockWindow.mockReturnValue({ tokens: 172_032, provenance: "probed" as const });
+  });
+
+  function localAdapter(model: string, thinking: ThinkingSpec | null) {
+    mockLocalModel.mockReturnValue(thinking ? ({ id: model, contextWindow: null, thinking } as unknown as LocalModel) : null);
+    return createOpenAICompatAdapter({ model, baseURL: "http://127.0.0.1:11434/v1", apiKey: "ollama", reasoningEffort: "medium" });
+  }
+
+  it("a level model keeps the session effort on a mechanical step: its level is the cached prompt's first line", async () => {
+    await localAdapter("qwen3.8:27b", { values: [false, "low", "medium", "xhigh"], default: "medium" }).runTurn(makeInput("mechanical"), () => {});
+    expect(mockStream.mock.calls[0][0].reasoningEffort).toBe("medium");
+  });
+
+  it("a boolean think model still takes the down-shift: its on/off lands in the assistant prefix, which the cache keeps", async () => {
+    await localAdapter("qwen3.6:27b", { values: [false, true], default: true }).runTurn(makeInput("mechanical"), () => {});
+    expect(mockStream.mock.calls[0][0].reasoningEffort).toBe("low");
+  });
+
+  it("a model discovery has not described takes the down-shift as before", async () => {
+    await localAdapter("mystery:7b", null).runTurn(makeInput("mechanical"), () => {});
+    expect(mockStream.mock.calls[0][0].reasoningEffort).toBe("low");
   });
 });

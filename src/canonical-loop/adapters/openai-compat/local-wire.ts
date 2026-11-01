@@ -23,6 +23,7 @@
  * redirect, whose row the loop may persist in its own form next round.
  */
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
+import type { ThinkingSpec } from "../../../local-runtimes/types.js";
 
 /** Rounds between fresh tails on the local wire. */
 export const LOCAL_TAIL_EVERY = 8;
@@ -66,4 +67,22 @@ export function extendLocalWire(prev: LocalWireState | null, round: LocalWireRou
   const fresh = due ? round.tailAlone : [];
   const messages = [...prev.sent, ...round.durable.slice(prev.durable.length), ...fresh];
   return { messages, state: { sent: messages, durable: round.durable, tailTurn: fresh.length > 0 ? round.turnIdx : prev.tailTurn } };
+}
+
+/**
+ * Whether this model's think level is part of the prompt the runtime caches.
+ * Ollama renders a LEVEL model's level as the first line of the system turn
+ * (its qwen38 renderer: "Reasoning effort is set to low. …", likewise xhigh;
+ * medium and off add no line), so a level that changes between rounds
+ * rewrites token zero and the runtime re-reads the whole prompt. A boolean
+ * think model's on/off lands in the assistant prefix at the END, which the
+ * cache keeps. Terminal-Bench 2.0 on qwen3.8 27B (2026-10-31): the per-step
+ * down-shift to "low" after a file-tool step flipped the level 249 times in
+ * 45 tasks, and 154 of those rounds re-read the prompt (2% of same-level
+ * rounds did), 71 minutes of prefill in all, 20 of them inside one 60-minute
+ * task. So on the local wire a level model keeps the session effort on every
+ * step (openai-compat.ts stepHint).
+ */
+export function thinkLevelInPrompt(thinking: ThinkingSpec | null | undefined): boolean {
+  return thinking?.values.some((v) => typeof v === "string") ?? false;
 }

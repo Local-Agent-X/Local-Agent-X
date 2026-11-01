@@ -2,7 +2,7 @@
 // hybrid model, needs to reuse its cache at all (see local-wire.ts).
 import { describe, expect, it } from "vitest";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
-import { extendLocalWire, LOCAL_TAIL_EVERY, type LocalWireState } from "./local-wire.js";
+import { extendLocalWire, LOCAL_TAIL_EVERY, thinkLevelInPrompt, type LocalWireState } from "./local-wire.js";
 
 const user = (content: string): ChatCompletionMessageParam => ({ role: "user", content });
 const tool = (content: string): ChatCompletionMessageParam => ({ role: "tool", tool_call_id: "c", content });
@@ -57,5 +57,19 @@ describe("extendLocalWire", () => {
     const first = extendLocalWire(null, round(5, [user("a")]));
     const out = extendLocalWire(first.state, round(0, [user("a"), tool("b")]));
     expect(out.messages.at(-1)).toEqual(tail(0, false)[0]);
+  });
+});
+
+describe("thinkLevelInPrompt", () => {
+  it("holds for a model that lists think levels: Ollama renders the level into the system turn", () => {
+    expect(thinkLevelInPrompt({ values: [false, "low", "medium", "xhigh"], default: "medium" })).toBe(true);
+    expect(thinkLevelInPrompt({ values: ["low", "medium", "high"], default: "medium" })).toBe(true);
+  });
+
+  it("does not for a boolean think model, an off-only one, or one discovery has not described", () => {
+    expect(thinkLevelInPrompt({ values: [false, true], default: true })).toBe(false);
+    expect(thinkLevelInPrompt({ values: [false], default: false })).toBe(false);
+    expect(thinkLevelInPrompt(null)).toBe(false);
+    expect(thinkLevelInPrompt(undefined)).toBe(false);
   });
 });

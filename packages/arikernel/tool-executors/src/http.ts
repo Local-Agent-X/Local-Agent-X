@@ -2,7 +2,7 @@ import type { TaintLabel, ToolCall, ToolResult } from "@arikernel/core";
 import { now } from "@arikernel/core";
 import type { ToolExecutor } from "./base.js";
 import { DEFAULT_TIMEOUT_MS, makeResult } from "./base.js";
-import { ssrfSafeRequest } from "./ssrf.js";
+import { type PinnedResponse, ssrfSafeRequest } from "./ssrf.js";
 import { runPreDispatchGate } from "./pre-dispatch-gate.js";
 
 // Re-export SSRF utilities for backward compatibility
@@ -72,8 +72,25 @@ function webTaintLabel(url: string): TaintLabel {
 	}
 }
 
+/**
+ * The request the executor sends once a call passes its checks. A host that
+ * owns a guarded fetch of its own passes it, so the kernel's tool reaches the
+ * network through the same egress guard as the host's other tools; the
+ * default pins DNS itself (ssrf.ts).
+ */
+export type HttpRequestFn = (
+	url: string,
+	method: string,
+	headers: Record<string, string>,
+	body: string | undefined,
+	timeoutMs: number,
+	maxRedirects: number,
+) => Promise<Pick<PinnedResponse, "status" | "headers" | "body">>;
+
 export class HttpExecutor implements ToolExecutor {
 	readonly toolClass = "http";
+
+	constructor(private readonly request: HttpRequestFn = ssrfSafeRequest) {}
 
 	async execute(toolCall: ToolCall): Promise<ToolResult> {
 		await runPreDispatchGate(toolCall);
@@ -171,7 +188,7 @@ export class HttpExecutor implements ToolExecutor {
 		}
 
 		try {
-			const response = await ssrfSafeRequest(
+			const response = await this.request(
 				url,
 				httpMethod,
 				headers ?? {},

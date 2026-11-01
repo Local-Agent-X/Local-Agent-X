@@ -15,6 +15,12 @@ export default defineConfig({
       "@arikernel/policy-engine": fileURLToPath(
         new URL("./packages/arikernel/policy-engine/src/index.ts", import.meta.url),
       ),
+      // The executors too: the host hands ari_http its guarded request through
+      // HttpExecutor's constructor (tools/arikernel-bridge.ts), and a stale
+      // dist without that seam silently ran the kernel's own request.
+      "@arikernel/tool-executors": fileURLToPath(
+        new URL("./packages/arikernel/tool-executors/src/index.ts", import.meta.url),
+      ),
       electron: fileURLToPath(new URL("./test/setup/electron-mock.ts", import.meta.url)),
     },
   },

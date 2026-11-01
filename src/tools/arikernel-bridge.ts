@@ -42,6 +42,7 @@ import type { ToolCall, ToolClass, ToolResult as AriToolResult, TaintLabel, Tain
 import { generateId, now } from "@arikernel/core";
 import { getKernelTaintSources } from "../data-lineage/index.js";
 import {
+  DEFAULT_MAX_RESPONSE_SIZE,
   DatabaseExecutor,
   FileExecutor,
   HttpExecutor,
@@ -54,6 +55,8 @@ import type { ToolDefinition, ToolResult } from "../types.js";
 import { STAGE_RECOVERY } from "../tool-execution/stage-recovery.js";
 import { sessionIdOf, withoutInternalArgs } from "../tool-execution/internal-args.js";
 import { resolveAgentPath } from "../workspace/paths.js";
+import { wrapExternalContent } from "../sanitize.js";
+import { canonicalFetch } from "./web-egress.js";
 
 interface BridgeArgs {
   action?: string;
@@ -77,6 +80,29 @@ export interface BridgeConfig {
   description: string;
   defaultAction: string;
   executor: ToolExecutor;
+  /** The result is off-box content (its row's externalContent): it reaches
+   *  the model inside wrapExternalContent's boundary, like every network tool's. */
+  externalContent?: true;
+}
+
+/**
+ * ari_http's request, through the egress guard every other tool's fetch takes
+ * (web-egress.ts canonicalFetch): DNS pinning, the private-address block over
+ * every address form, the strict-mode allowlist, the outbound-bytes judge, and
+ * a re-check per redirect. The kernel executor's own pinned request misses
+ * NAT64 and 6to4 forms of a private address (ssrf.ts isPrivateIPv6), so a name
+ * resolving to 64:ff9b::a9fe:a9fe reached the metadata address. The kernel
+ * still runs its checks first: scheme, method from action, URL length, no body
+ * on GET.
+ */
+async function guardedRequest(
+  url: string, method: string, headers: Record<string, string>, body: string | undefined,
+  timeoutMs: number, maxRedirects: number,
+): Promise<{ status: number; headers: Record<string, string>; body: string }> {
+  const res = await canonicalFetch(url, { method, headers, body, timeoutMs, maxRedirects });
+  const out: Record<string, string> = {};
+  res.headers.forEach((value, key) => { out[key] = value; });
+  return { status: res.status, headers: out, body: (await res.text()).slice(0, DEFAULT_MAX_RESPONSE_SIZE) };
 }
 
 /** The executor's parameters: the model's arguments without the bridge's own
@@ -200,8 +226,11 @@ function buildBridge(cfg: BridgeConfig): ToolDefinition {
     async execute(args: Record<string, unknown>): Promise<ToolResult> {
       const tc = buildToolCall(cfg, args as BridgeArgs);
       try {
-        const result = await cfg.executor.execute(tc);
-        return toLaxResult(cfg.toolName, result);
+        const result = toLaxResult(cfg.toolName, await cfg.executor.execute(tc));
+        if (cfg.externalContent && !result.isError) {
+          result.content = wrapExternalContent(result.content, cfg.toolName, { url: String(tc.parameters.url ?? "") });
+        }
+        return result;
       } catch (e) {
         const msg = e instanceof Error ? e.message : String(e);
         return {
@@ -238,7 +267,8 @@ export function createArikernelBridgeTools(options?: { sqliteDatabase?: SqliteDa
       description:
         "AriKernel HTTP executor (kernel-side). Method derived from action, URL-length cap, SSRF protections, header inspection. Args: { action: 'get'|'post'|..., url, headers?, body? }.",
       defaultAction: "get",
-      executor: new HttpExecutor(),
+      executor: new HttpExecutor(guardedRequest),
+      externalContent: true,
     }),
     buildBridge({
       toolName: "ari_database",

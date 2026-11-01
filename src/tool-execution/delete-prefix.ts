@@ -12,10 +12,17 @@
  * Copying, extracting, building and running a program leave every original
  * where it was: what they put at a target is their own output. Data is
  * relocated by a move or a link (mv, ln, rsync, mount --bind, …), and only to
- * the paths its operands spell: an operand, or an operand with another's name
- * under it. Such a command is harmless when every operand is a literal
- * absolute path and none of those paths is the target, a folder holding it,
- * or a path inside it. A compressor that replaces its input (`gzip a` leaves
+ * the paths its operands spell. For a delete's target what matters is where
+ * data LANDS: the destination (the last operand, or `-t`'s), or a source's
+ * name under it; a source only loses data, so `tar xzf three.tgz package/x
+ * && mv package/x ./x && rm -rf package` moves nothing onto `package`
+ * (2026-10-31). For a `cd`'s folder both directions count (priorRunsKeep): a
+ * source moved away is a folder the cd no longer finds. A relative operand is
+ * read in the folder its command runs in, when that folder is known. A verb
+ * whose destination is not its last operand (`mklink`, `rename`, `New-Item`),
+ * or one given a named parameter, is read both ways. Such a command is
+ * harmless when every operand is placeable and no landing is the target, a
+ * folder holding it, or a path inside it. A compressor that replaces its input (`gzip a` leaves
  * only `a.gz`) renames it the same way, and an archiver told to remove what it
  * packs (`tar --remove-files`, `zip -m`) is never proven. An interpreter whose program text names the target's
  * folders or name may do the same and is not proven. The program a delete
@@ -29,7 +36,7 @@
 import { accessSync, constants, statSync } from "node:fs";
 import { basename, isAbsolute, resolve, sep } from "node:path";
 import { commandPositions, type CommandPosition } from "../security/layer/shell-command-positions.js";
-import { shellDeletes, type CdSucceeds } from "../security/layer/shell-delete-targets.js";
+import { positionsWithCwd, shellDeletes, type CdSucceeds } from "../security/layer/shell-delete-targets.js";
 import { shellSegments, tokenizeCommand } from "../security/layer/shell-lex.js";
 import { expansionsIn } from "../security/layer/shell-nested-commands.js";
 import { readSourceText } from "../security/layer/shell-source-text.js";
@@ -38,6 +45,10 @@ const RELOCATORS: ReadonlySet<string> = new Set([
   "mv", "rename", "ln", "link", "rsync", "mount", "mklink",
   "move", "move-item", "mi", "ren", "rename-item", "rni", "new-item", "ni",
 ]);
+/** Relocators whose destination is the last operand (or `-t`'s). */
+const DEST_LAST: ReadonlySet<string> = new Set(["mv", "ln", "link", "rsync", "mount", "move", "move-item", "mi", "ren", "rename-item", "rni"]);
+// A PowerShell named parameter: the operands' order no longer says which is the destination.
+const PS_NAMED = /^-(?:destination|path|literalpath|target|value)$/i;
 const LOOKUP_CHANGERS: ReadonlySet<string> = new Set([
   "alias", "hash", "enable", "source", ".", "function", "set-alias", "new-alias", "sal", "nal",
 ]);
@@ -72,22 +83,31 @@ function related(a: string, b: string): boolean {
   return a === b || a.startsWith(b.endsWith(sep) ? b : b + sep) || b.startsWith(a.endsWith(sep) ? a : a + sep);
 }
 
-/** A move or link whose every landing place is a literal path away from `target`. */
-function relocationMissing(p: CommandPosition, target: string): boolean {
+/** A move or link whose every landing place is a placeable path away from
+ *  `target`: its destination and the sources' names under it, or with
+ *  `symmetric` every operand (the header). `cwd` places a relative operand. */
+function relocationMissing(p: CommandPosition, target: string, cwd: string | undefined, symmetric: boolean): boolean {
   const before = p.words.slice(0, p.at);
   if (before.some((w) => /^(?:xargs|parallel)$/.test(w))) return false;
   const operands: string[] = [];
   const args = p.words.slice(p.at + 1);
+  let dest: string | undefined;
+  let named = false;
   for (let i = 0; i < args.length; i++) {
     const w = args[i];
-    if (w === "-t" || w === "--target-directory") { operands.push(args[++i] ?? ""); continue; }
-    if (w.startsWith("--target-directory=")) { operands.push(w.slice("--target-directory=".length)); continue; }
+    if (w === "-t" || w === "--target-directory") { dest = args[++i] ?? ""; operands.push(dest); continue; }
+    if (w.startsWith("--target-directory=")) { dest = w.slice("--target-directory=".length); operands.push(dest); continue; }
+    if (PS_NAMED.test(w)) named = true;
     if (w.startsWith("-")) continue;
     operands.push(w);
   }
-  if (operands.length < 2 || operands.some((o) => !o || UNPLACEABLE.test(o) || !isAbsolute(o))) return false;
+  if (operands.length < 2 || operands.some((o) => !o || UNPLACEABLE.test(o) || (!isAbsolute(o) && cwd === undefined))) return false;
+  const place = (o: string) => resolve(cwd ?? "", o);
   const t = norm(target);
-  const landings = operands.flatMap((o) => [o, ...operands.filter((q) => q !== o).map((q) => resolve(o, basename(q)))]);
+  dest ??= operands[operands.length - 1];
+  const landings = symmetric || named || !DEST_LAST.has(p.bin)
+    ? operands.flatMap((o) => [place(o), ...operands.filter((q) => q !== o).map((q) => resolve(place(o), basename(q)))])
+    : [place(dest), ...operands.filter((o) => o !== dest).map((s) => resolve(place(dest!), basename(s)))];
   return !landings.some((l) => related(norm(l), t));
 }
 
@@ -121,12 +141,12 @@ function targetNames(target: string): RegExp[] {
     new RegExp(`(?<![\\w.-])${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\w.-])`));
 }
 
-function harmless(p: CommandPosition, target: string): boolean {
+function harmless(p: CommandPosition, target: string, cwd: string | undefined, symmetric: boolean): boolean {
   if (changesLookup(p)) return false;
   if (p.bin === "git" && p.words.slice(p.at + 1).includes("mv")) return false;
   if (p.bin === "find" && p.words.some((w) => /^-(?:exec|execdir|ok|okdir)$/.test(w))) return false;
   if (p.words.some((w) => ARCHIVE_MOVE.test(w)) || (p.bin === "zip" && p.words.some((w) => /^-[a-z]*m/.test(w)))) return false;
-  if (RELOCATORS.has(p.bin)) return relocationMissing(p, target);
+  if (RELOCATORS.has(p.bin)) return relocationMissing(p, target, cwd, symmetric);
   if (IN_PLACE_COMPRESSORS.has(p.bin)) return inPlaceRenameMissing(p, target);
   if (INTERPRETERS.has(p.bin)) {
     const names = targetNames(target);
@@ -135,13 +155,17 @@ function harmless(p: CommandPosition, target: string): boolean {
   return true;
 }
 
-/** Every command `text` runs, nested `$(…)` and backticks included, is harmless. */
-function allHarmless(text: string, target: string, depth = 0): boolean {
+/** Every command `text` runs, nested `$(…)` and backticks included, is
+ *  harmless. The folder a nested command runs in is not read. */
+function allHarmless(text: string, target: string, symmetric: boolean, depth = 0): boolean {
   const walk = commandPositions(text);
   if (walk.tooDeep || depth > 3) return false;
-  if (!walk.positions.every((p) => harmless(p, target))) return false;
-  return expansionsIn(text).every((e) => allHarmless(e.replace(/^(?:\$[({]|`)|[)}`]$/g, ""), target, depth + 1));
+  if (!walk.positions.every((p) => harmless(p, target, undefined, symmetric))) return false;
+  return expansionsIn(text).every((e) => allHarmless(bare(e), target, symmetric, depth + 1));
 }
+
+/** An expansion's command: `$(…)`, backticks and `${ …; }` opened. */
+const bare = (e: string) => e.replace(/^(?:\$[({]|`)|[)}`]$/g, "");
 
 /** Does path `a` overlap `b`: the same path, or one inside the other? */
 export function pathsOverlap(a: string, b: string): boolean {
@@ -221,7 +245,7 @@ export function errexitStopsFailedCd(line: string, at: number): boolean {
 export function cdCannotFail(line: string): CdSucceeds {
   return (dir, segment) => {
     if (!enterable(dir) && !errexitStopsFailedCd(line, segment)) return false;
-    if (!priorRunsLeave(line, segment, dir)) return false;
+    if (!priorRunsKeep(line, segment, dir)) return false;
     return shellDeletes(line).filter((d) => d.segment < segment).every((d) =>
       d.targets.every((t) => !UNPLACEABLE.test(t) && (isAbsolute(t) || typeof d.cwd === "string") && !pathsOverlap(resolve(d.cwd ?? "", t), dir)));
   };
@@ -230,9 +254,21 @@ export function cdCannotFail(line: string): CdSucceeds {
 /**
  * True when nothing `line` runs before its top-level segment `at` can put
  * existing data at `target` (absolute) or change which program that segment
- * runs (see the header). `line` is read as deleteLine returns it.
+ * runs (see the header). `line` is read as deleteLine returns it; `base` is
+ * the folder it runs in, when the caller knows it, which places a relative
+ * operand of a move before the delete.
  */
-export function priorRunsLeave(line: string, at: number, target: string): boolean {
+export function priorRunsLeave(line: string, at: number, target: string, base?: string): boolean {
+  if (commandPositions(line).tooDeep) return false;
+  for (const { position, cwd } of positionsWithCwd(line, base)) {
+    if (position.segment < at && !harmless(position, target, cwd ?? undefined, false)) return false;
+  }
+  return shellSegments(line).slice(0, at).every((s) => expansionsIn(s.text).every((e) => allHarmless(bare(e), target, false, 1)));
+}
+
+/** priorRunsLeave for a folder a `cd` will enter: a move of it away counts
+ *  too, so every operand of a move is a landing. */
+export function priorRunsKeep(line: string, at: number, dir: string): boolean {
   const before = shellSegments(line).slice(0, at).map((s) => s.text).filter((s) => s.trim());
-  return before.every((segment) => allHarmless(segment, target));
+  return before.every((segment) => allHarmless(segment, dir, true));
 }

@@ -73,6 +73,15 @@ describe("recursive deletes that destroy nothing anyone needs run without a card
     expect(floor(`W=$(pwd); mkdir -p "$W/new-app" && cd "$W/new-app" && rm -rf package`)).toBe("ask");
   });
 
+  // The 2026-10-31 card in full: a download unpacked in a folder the command
+  // makes, one file moved out of the unpacked folder, the leftovers removed.
+  it("the leftovers of a download the command itself unpacked", () => {
+    const posix = (p: string) => p.replace(/\\/g, "/");
+    const command = `W="${posix(root)}"; ls -a "$W/project"; mkdir -p "$W/new-app" && cd "$W/new-app" && npm pack three@0.170.0 --silent 2>&1 | tail -1 && tar -xzf three-0.170.0.tgz package/build/three.module.js && mv package/build/three.module.js ./three.module.js && rm -rf package three-0.170.0.tgz && ls -la`;
+    expect(floor(command)).toBe("allow-with-rollback");
+    expect(floor(command.replace("mv package/build/three.module.js ./three.module.js", `mv "$W/project/client-data" package`))).toBe("ask");
+  });
+
   it("a plain cd opening the command: the targets resolve in the folder it enters", () => {
     const work = join(root, "os-temp", "alpboot");
     mkdirSync(join(work, "rootfs"), { recursive: true });

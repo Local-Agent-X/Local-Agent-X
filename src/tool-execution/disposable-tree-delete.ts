@@ -232,7 +232,7 @@ export function isDisposableTreeDelete(command: string, trips: (segment: string)
     const cwd = cwds.get(i);
     if (!del || typeof cwd !== "string" || !runsAlone(line, i)) return false;
     const at = { ...scope, cwd };
-    if (!del.targets.every((t) => disposable(t, del.verb, at) && priorRunsLeave(line, i, prefixTarget(resolve(cwd, t))))) return false;
+    if (!del.targets.every((t) => disposable(t, del.verb, at) && priorRunsLeave(line, i, prefixTarget(resolve(cwd, t)), cwd))) return false;
     found = true;
   }
   return found;
@@ -276,7 +276,7 @@ export function disposableFileDeletes(command: string, scope: { cwd?: string; te
     if (!plainDelete(segments[del.segment].text) || !runsAlone(line, del.segment)) continue;
     for (const t of del.targets) {
       if (out.includes(t) || !disposableFile(t, del.cwd, scope.tempDir ?? tmpdir())) continue;
-      if (priorRunsLeave(line, del.segment, prefixTarget(resolve(del.cwd ?? "", t)))) out.push(t);
+      if (priorRunsLeave(line, del.segment, prefixTarget(resolve(del.cwd ?? "", t)), del.cwd ?? undefined)) out.push(t);
     }
   }
   return out;

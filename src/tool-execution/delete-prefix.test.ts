@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { shellDeletes } from "../security/layer/shell-delete-targets.js";
 import { shellSegments } from "../security/layer/shell-lex.js";
-import { cdCannotFail, deleteLine, errexitStopsFailedCd, priorRunsLeave, runsAlone } from "./delete-prefix.js";
+import { cdCannotFail, deleteLine, errexitStopsFailedCd, priorRunsKeep, priorRunsLeave, runsAlone } from "./delete-prefix.js";
 
 const T = "/tmp/clonetest";
 /** The delete is the last segment of each command below. */
@@ -33,6 +33,33 @@ describe("priorRunsLeave: what moves nothing onto the target", () => {
     "python3 -c 'print(1)'; rm -rf /tmp/clonetest",
     "gzip /var/log/old.log; rm -rf /tmp/clonetest",
   ])("%s", (command) => expect(leaves(command)).toBe(true));
+});
+
+// A source only loses data; a relative operand is read where its command
+// runs. The 2026-10-31 card: a download unpacked, one file moved out of the
+// unpacked folder, the folder removed.
+describe("priorRunsLeave: a move out of the target, and a move read in the folder it runs in", () => {
+  const base = join(tmpdir(), "lax-prefix-base");
+  const target = join(base, "package");
+  it.each([
+    "mv /tmp/clonetest/report.pdf /home/u/keep; rm -rf /tmp/clonetest",
+    "mv /tmp/clonetest /home/u/keep; rm -rf /tmp/clonetest",
+    "ln -s /tmp/clonetest/a /home/u/a; rm -rf /tmp/clonetest",
+  ])("%s", (command) => expect(leaves(command)).toBe(true));
+
+  it("places a relative operand in the folder the command runs in, and refuses it without one", () => {
+    const line = "tar -xzf three.tgz package/build/x.js && mv package/build/x.js ./x.js && rm -rf package";
+    expect(priorRunsLeave(line, 2, target, base)).toBe(true);
+    expect(priorRunsLeave(line, 2, target)).toBe(false);
+    expect(priorRunsLeave("mv ../docs ./package; rm -rf package", 1, target, base)).toBe(false);
+    expect(priorRunsLeave("mv -t package ../docs; rm -rf package", 1, target, base)).toBe(false);
+  });
+
+  it("reads a verb whose destination is not last, or a named parameter, both ways", () => {
+    expect(leaves("mklink /J /tmp/clonetest /home/u/docs; rm -rf /tmp/clonetest")).toBe(false);
+    expect(leaves("Move-Item -Destination /tmp/clonetest -Path /home/u/docs; rm -rf /tmp/clonetest")).toBe(false);
+    expect(leaves("rename 's/a/b/' /tmp/clonetest/x; rm -rf /tmp/clonetest")).toBe(false);
+  });
 });
 
 describe("priorRunsLeave: what could put data there, or change what the delete runs", () => {
@@ -61,6 +88,13 @@ describe("priorRunsLeave: what could put data there, or change what the delete r
   it("a compressor renaming the target's file in place", () => {
     expect(leaves("gzip /home/u/thesis.docx; rm -f /home/u/thesis.docx.gz", "/home/u/thesis.docx.gz")).toBe(false);
     expect(leaves("gzip -k /home/u/thesis.docx; rm -f /home/u/thesis.docx.gz", "/home/u/thesis.docx.gz")).toBe(true);
+  });
+});
+
+describe("priorRunsKeep: a cd's folder moved away counts, where a delete's target would not", () => {
+  it("a move of the folder away is not harmless for the cd", () => {
+    expect(priorRunsKeep("mv /tmp/clonetest /home/u/keep; cd /tmp/clonetest", 1, "/tmp/clonetest")).toBe(false);
+    expect(priorRunsKeep("mv /home/u/x /home/u/y; cd /tmp/clonetest", 1, "/tmp/clonetest")).toBe(true);
   });
 });
 

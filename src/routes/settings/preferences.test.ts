@@ -99,6 +99,27 @@ describe("POST /api/settings persists the live runtime config, not the stale boo
     expect(persisted.maxIterations).toBe(299); // hand edit NOT clobbered
   });
 
+  it("keeps a new port saved together with a live setting (the live save used to put the old one back)", async () => {
+    const config = loadConfig();
+    setRuntimeConfig(config);
+    const oldPort = config.port;
+    const newPort = oldPort === 8123 ? 8124 : 8123;
+    const ctx = { config, dataDir: suiteLaxDir } as unknown as Parameters<typeof handlePreferencesRoutes>[4];
+    const res = makeRes();
+    await handlePreferencesRoutes(
+      "POST",
+      new URL("http://127.0.0.1/api/settings"),
+      makeReq({ port: newPort, maxSubAgents: 5 }, config.authToken) as unknown as Parameters<typeof handlePreferencesRoutes>[2],
+      res as unknown as Parameters<typeof handlePreferencesRoutes>[3],
+      ctx,
+      "operator",
+    );
+    expect(res.statusCode).toBe(200);
+    const persisted = JSON.parse(readFileSync(getConfigPath(), "utf-8"));
+    expect(persisted.maxSubAgents).toBe(5);
+    expect(persisted.port).toBe(newPort);
+  });
+
   it("persists, broadcasts, and invalidates browser state on a mode change", async () => {
     routeMocks.broadcastAll.mockClear();
     routeMocks.closeAllBrowsers.mockClear();

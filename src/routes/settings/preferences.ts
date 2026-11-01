@@ -66,6 +66,56 @@ function levenshtein(a: string, b: string): number {
   return dp[n];
 }
 
+/**
+ * The fields read once at boot, written straight to config.json: the port
+ * and the workspace save location. Runs AFTER the runtime save in the POST
+ * handler: saveConfig merges the running config over the file, and the
+ * running config still holds the old values, so a save that also changed a
+ * live setting used to put the old port and workspace back (2026-11-01 audit).
+ * Returns why a workspace location was refused, or null.
+ */
+function persistBootFields(dataDir: string, body: Record<string, unknown>): string | null {
+  let workspaceRefused: string | null = null;
+  // Port is special: lives in config.json (read at boot, env-overridable)
+  // but never read via getRuntimeConfig() — separate persistence path.
+  if (body.port) {
+    const configPath = join(dataDir, "config.json");
+    let cfg: Record<string, unknown> = {};
+    try { if (existsSync(configPath)) cfg = JSON.parse(readFileSync(configPath, "utf-8")); } catch {}
+    cfg.port = parseInt(String(body.port), 10);
+    atomicWriteFileSync(configPath, JSON.stringify(cfg, null, 2), { mode: 0o600 });
+  }
+
+  // Workspace save location: same persistence path as port — config.json,
+  // honored at next boot. We deliberately do NOT touch ctx.config.workspace
+  // live: the running server is still serving from (and holding open) the old
+  // workspace, and loadConfig migrates + re-links the folder at the next boot,
+  // once this app instance has exited. Validate by creating the directory;
+  // persist the raw value the user entered (loadConfig resolves it). An
+  // invalid path is dropped — the next GET re-syncs the box to reality. So is
+  // a location no workspace may have (unsafeWorkspaceReason), which the next
+  // boot would refuse anyway; the response says why.
+
+  if (typeof body.workspace === "string" && body.workspace.trim()) {
+    const wsPath = body.workspace.trim();
+    workspaceRefused = unsafeWorkspaceReason(resolve(wsPath));
+    let valid = workspaceRefused === null;
+    try {
+      const resolved = resolve(wsPath);
+      if (!valid || (existsSync(resolved) && !statSync(resolved).isDirectory())) valid = false;
+      else mkdirSync(resolved, { recursive: true });
+    } catch { valid = false; }
+    if (valid) {
+      const configPath = join(dataDir, "config.json");
+      let cfg: Record<string, unknown> = {};
+      try { if (existsSync(configPath)) cfg = JSON.parse(readFileSync(configPath, "utf-8")); } catch {}
+      cfg.workspace = wsPath;
+      atomicWriteFileSync(configPath, JSON.stringify(cfg, null, 2), { mode: 0o600 });
+    }
+  }
+  return workspaceRefused;
+}
+
 export const handlePreferencesRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
 
@@ -116,44 +166,6 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
         broadcastAll({ type: "settings_changed", settings: broadcastBody });
       } catch {}
     }
-    // Port is special: lives in config.json (read at boot, env-overridable)
-    // but never read via getRuntimeConfig() — separate persistence path.
-    if (body.port) {
-      const configPath = join(ctx.dataDir, "config.json");
-      let cfg: Record<string, unknown> = {};
-      try { if (existsSync(configPath)) cfg = JSON.parse(readFileSync(configPath, "utf-8")); } catch {}
-      cfg.port = parseInt(String(body.port), 10);
-      atomicWriteFileSync(configPath, JSON.stringify(cfg, null, 2), { mode: 0o600 });
-    }
-
-    // Workspace save location: same persistence path as port — config.json,
-    // honored at next boot. We deliberately do NOT touch ctx.config.workspace
-    // live: the running server is still serving from (and holding open) the old
-    // workspace, and loadConfig migrates + re-links the folder at the next boot,
-    // once this app instance has exited. Validate by creating the directory;
-    // persist the raw value the user entered (loadConfig resolves it). An
-    // invalid path is dropped — the next GET re-syncs the box to reality. So is
-    // a location no workspace may have (unsafeWorkspaceReason), which the next
-    // boot would refuse anyway; the response says why.
-    let workspaceRefused: string | null = null;
-    if (typeof body.workspace === "string" && body.workspace.trim()) {
-      const wsPath = body.workspace.trim();
-      workspaceRefused = unsafeWorkspaceReason(resolve(wsPath));
-      let valid = workspaceRefused === null;
-      try {
-        const resolved = resolve(wsPath);
-        if (!valid || (existsSync(resolved) && !statSync(resolved).isDirectory())) valid = false;
-        else mkdirSync(resolved, { recursive: true });
-      } catch { valid = false; }
-      if (valid) {
-        const configPath = join(ctx.dataDir, "config.json");
-        let cfg: Record<string, unknown> = {};
-        try { if (existsSync(configPath)) cfg = JSON.parse(readFileSync(configPath, "utf-8")); } catch {}
-        cfg.workspace = wsPath;
-        atomicWriteFileSync(configPath, JSON.stringify(cfg, null, 2), { mode: 0o600 });
-      }
-    }
-
     // Runtime-bound fields: validate, then mirror into config.json + ctx.config
     // so getRuntimeConfig() returns the new value on the next read. Invalid
     // values are dropped silently — the field stays at its old runtime value
@@ -174,6 +186,9 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
       const { saveConfig } = await import("../../config.js");
       saveConfig(runtimeConfig);
     }
+    // After the save above: it merges the running config over config.json,
+    // and the running config still holds the old port and workspace.
+    const workspaceRefused = persistBootFields(ctx.dataDir, body);
     if (browserModeChanged) {
       const { closeAllBrowsers } = await import("../../browser/index.js");
       await closeAllBrowsers();

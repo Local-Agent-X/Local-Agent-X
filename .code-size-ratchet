@@ -38,7 +38,7 @@ src/canonical-loop/session-bridge-observer.ts#recordCanonicalEventWithSink 153
 src/canonical-loop/turn-loop/decide-outcome.ts#decideTurnOutcome 107
 src/canonical-loop/worker.ts#drive 184
 src/cognition/cross-session-learning/service.ts#CrossSessionLearningService.reconcile 152
-src/config.ts#loadConfig 133
+src/config.ts#loadConfig 132
 src/context/system-prompt-builder.ts#createSystemPromptBuilder 126
 src/local-runtimes/certification-runner.ts 360
 src/mcp-client/manifest.ts#assessMcpManifest 118
@@ -68,7 +68,7 @@ src/routes/memory.ts#handleMemoryRoutes 263
 src/routes/security.ts#handleSecurityRoutes 163
 src/routes/sessions.ts#handleSessionRoutes 141
 src/routes/settings/local-runtimes.ts#handleLocalRuntimesRoutes 122
-src/routes/settings/preferences.ts#handlePreferencesRoutes 189
+src/routes/settings/preferences.ts#handlePreferencesRoutes 165
 src/routes/settings/providers.ts#handleProvidersRoutes 130
 src/routes/settings/system.ts#handleSystemRoutes 116
 src/sandbox/docker-execution-runtime.ts 363

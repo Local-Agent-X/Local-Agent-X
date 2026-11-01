@@ -29,7 +29,7 @@ import { dirname, join, basename, resolve } from "node:path";
 import { randomUUID } from "node:crypto";
 import { createRequire } from "node:module";
 import { opEditedSourcePaths } from "../middlewares/verify-gate.js";
-import { firstUserMessageText } from "../store.js";
+import { opRequestText } from "../store.js";
 import { getSessionForOp } from "../../ops/session-bridge.js";
 import { resolveAgentPath } from "../../workspace/paths.js";
 import { generateOracleProbe, type OracleProbe, type ProbeLanguage } from "../../classifiers/oracle-probe-gen.js";
@@ -334,7 +334,7 @@ export async function runSpecProbeGate(op: Op, opts: SpecProbeOptions = {}): Pro
   } else {
     const generate = opts.generate ?? generateOracleProbe;
     probe = await generate({
-      userRequest: firstUserMessageText(op.id),
+      userRequest: opRequestText(op.id),
       fileList: abs.map((p) => basename(p)),
       apiSurface: extractApiSurface(abs),
       signal: opts.signal,

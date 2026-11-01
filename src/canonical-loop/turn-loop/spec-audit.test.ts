@@ -3,11 +3,11 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 // The gate anchors to the op's first user message; ops in this test have no
 // on-disk message store, so pin the request text here.
 vi.mock("../store.js", () => ({
-  firstUserMessageText: vi.fn(() => "Remove every tailnet reference from the app"),
+  opRequestText: vi.fn(() => "Remove every tailnet reference from the app"),
   appliedRedirectTexts: vi.fn(() => []),
 }));
 
-import { firstUserMessageText, appliedRedirectTexts } from "../store.js";
+import { opRequestText, appliedRedirectTexts } from "../store.js";
 import { runSpecAuditGate, clearSpecAuditStateForOp, _resetSpecAuditState, namedPathEvidence, describeNamedPath } from "./spec-audit.js";
 import type { Op } from "../../ops/types.js";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
@@ -24,7 +24,7 @@ const auditWith = (verdict: string[] | null) => vi.fn(async () => verdict);
 beforeEach(() => {
   _resetSpecAuditState();
   vi.clearAllMocks();
-  (firstUserMessageText as ReturnType<typeof vi.fn>).mockReturnValue(
+  (opRequestText as ReturnType<typeof vi.fn>).mockReturnValue(
     "Remove every tailnet reference from the app",
   );
   (appliedRedirectTexts as ReturnType<typeof vi.fn>).mockReturnValue([]);
@@ -57,7 +57,7 @@ describe("namedPathEvidence", () => {
 
 describe("runSpecAuditGate", () => {
   it("puts the request's named paths, as they are on disk, ahead of the diff the auditor reads", async () => {
-    (firstUserMessageText as ReturnType<typeof vi.fn>).mockReturnValue("Write the plan to /app/out/plan.jsonl using the data in /app/data");
+    (opRequestText as ReturnType<typeof vi.fn>).mockReturnValue("Write the plan to /app/out/plan.jsonl using the data in /app/data");
     const audit = auditWith([]);
     await runSpecAuditGate(op("named"), { editedPaths: PATHS, collectEvidence: evidenceOk, audit, describeNamedPath: (abs) => `seen ${abs.replace(/\\/g, "/")}` });
     const { evidence } = (audit.mock.calls[0] as unknown as [{ evidence: string }])[0];
@@ -103,7 +103,7 @@ describe("runSpecAuditGate", () => {
     const audit = auditWith(["item"]);
     const r1 = await runSpecAuditGate(op("e"), { editedPaths: [], collectEvidence: evidenceOk, audit });
     expect(r1.shouldRetry).toBe(false);
-    (firstUserMessageText as ReturnType<typeof vi.fn>).mockReturnValue("fix");
+    (opRequestText as ReturnType<typeof vi.fn>).mockReturnValue("fix");
     const r2 = await runSpecAuditGate(op("f"), { editedPaths: PATHS, collectEvidence: evidenceOk, audit });
     expect(r2.shouldRetry).toBe(false);
     expect(evidenceOk).not.toHaveBeenCalled();

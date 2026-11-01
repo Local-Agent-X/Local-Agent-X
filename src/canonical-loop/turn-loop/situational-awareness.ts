@@ -39,7 +39,7 @@
  * have" line would be pure duplication.
  */
 import type { Op } from "../../ops/types.js";
-import { firstUserMessageText } from "../store.js";
+import { opRequestText } from "../store.js";
 import { getSessionForOp } from "../../ops/session-bridge.js";
 import { recentActions, type LedgerAction } from "../../ops/action-ledger.js";
 import { getOpenTasksForSession } from "../../tools/task-tools.js";
@@ -99,7 +99,7 @@ export async function buildSituationalAwareness(op: Op, turnIdx: number): Promis
   const recent = sessionId ? recentActions(sessionId, RECENT_ACTIONS_CAP) : [];
   const restateAfter = goalRestateAfterTurn(resolveOpTier(op));
   const restating = turnIdx >= restateAfter;
-  const firstUserText = restating ? firstUserMessageText(op.id) : "";
+  const firstUserText = restating ? opRequestText(op.id) : "";
   // Success criteria + hard constraints come from the turn-0 contextPack — the
   // same fields initial-prompt.ts embeds in the seed message. By the restate
   // turn that seed has scrolled out of the model's working view; re-grounding

@@ -24,6 +24,7 @@
 import { existsSync, mkdirSync, appendFileSync, readFileSync, writeFileSync, renameSync, readdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
+import { isHarnessRowKind } from "../harness-rows.js";
 import { tryWithOpLock, withOpLock } from "../ops/op-store.js";
 import {
   canonicalEventsPath,
@@ -333,13 +334,24 @@ export function appendOpMessage(row: OpMessageRow): void {
  * source for every prompter/gate that anchors to "what the user asked for"
  * (spec-probes, spec-audit, situational-awareness). Non-text content → "".
  */
-export function firstUserMessageText(opId: string): string {
-  const first = readOpMessages(opId).find((m) => m.role === "user");
-  if (!first) return "";
-  const c = first.content;
-  if (typeof c === "string") return c;
-  if (c && typeof c === "object" && typeof (c as { text?: unknown }).text === "string") {
-    return (c as { text: string }).text;
+/**
+ * The text of the request this op works on: the LAST user row seeded at turn
+ * 0 that is not a harness row. A chat op is seeded with the whole conversation
+ * before its own message (chat-runner/seed-messages.ts), so its FIRST user row
+ * is the chat's oldest message: the done-claim audit judged a three.js
+ * request against "build a game using unreal engine", six times in one chat
+ * (2026-11-01). A delegated op's turn 0 holds only its task. Rows from later
+ * turns are the harness's nudges, never the request.
+ */
+export function opRequestText(opId: string): string {
+  const seeded = readOpMessages(opId).filter((m) => m.role === "user" && m.turnIdx === 0);
+  for (let i = seeded.length - 1; i >= 0; i--) {
+    const c = seeded[i].content;
+    if (typeof c === "string") return c;
+    if (c && typeof c === "object" && typeof (c as { text?: unknown }).text === "string") {
+      if (isHarnessRowKind((c as { kind?: unknown }).kind)) continue;
+      return (c as { text: string }).text;
+    }
   }
   return "";
 }

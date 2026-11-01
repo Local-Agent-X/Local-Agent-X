@@ -18,7 +18,7 @@ const store = vi.hoisted(() => ({
 vi.mock("../ops/op-store.js", () => ({ listOps: vi.fn(() => store.ops) }));
 vi.mock("../canonical-loop/index.js", () => ({
   readOpMessages: vi.fn((opId: string) => store.rows[opId] ?? []),
-  firstUserMessageText: vi.fn(() => "Instructions: a 3D maze escape game\n\nRULES: write files"),
+  opRequestText: vi.fn(() => "Instructions: a 3D maze escape game\n\nRULES: write files"),
 }));
 
 describe("extractBuildBrief", () => {

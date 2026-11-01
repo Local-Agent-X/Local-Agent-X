@@ -41,7 +41,7 @@ export {
   readOpTurns,
   appendOpMessage,
   readOpMessages,
-  firstUserMessageText,
+  opRequestText,
 } from "./store.js";
 
 export {

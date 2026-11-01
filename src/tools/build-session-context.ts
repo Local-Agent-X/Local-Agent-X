@@ -17,7 +17,7 @@
 
 import { existsSync } from "node:fs";
 import { listOps } from "../ops/op-store.js";
-import { readOpMessages, firstUserMessageText } from "../canonical-loop/index.js";
+import { readOpMessages, opRequestText } from "../canonical-loop/index.js";
 import { STRUCTURE_NOTE_MARKER, VERIFY_EVIDENCE_MARKER } from "../canonical-loop/public/build-adapters.js";
 
 /** Most recent prior builds included. Newest last (chronological read). */
@@ -62,7 +62,7 @@ export function gatherPriorBuildSessions(appUrl: string, opType: string): PriorB
 
   const entries: PriorBuildEntry[] = [];
   for (const op of prior) {
-    const brief = extractBuildBrief(firstUserMessageText(op.id));
+    const brief = extractBuildBrief(opRequestText(op.id));
     const rows = readOpMessages(op.id);
     const finalReport = lastAssistantText(rows);
     const gate = lastVerifyEvidence(rows);

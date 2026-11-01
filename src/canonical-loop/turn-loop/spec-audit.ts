@@ -23,7 +23,7 @@
 
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { opEditedSourcePaths } from "../middlewares/verify-gate.js";
-import { firstUserMessageText, appliedRedirectTexts } from "../store.js";
+import { opRequestText, appliedRedirectTexts } from "../store.js";
 import { getSessionForOp } from "../../ops/session-bridge.js";
 import { resolveAgentPath } from "../../workspace/paths.js";
 import { auditDoneClaim, AUDIT_EVIDENCE_LIMIT } from "../../classifiers/done-claim-audit.js";
@@ -146,7 +146,7 @@ export async function runSpecAuditGate(op: Op, opts: SpecAuditOptions = {}): Pro
 
   const raw = opts.editedPaths ?? opEditedSourcePaths(op.id);
   if (raw.length === 0) return NO_RETRY;
-  let request = firstUserMessageText(op.id).trim();
+  let request = opRequestText(op.id).trim();
   if (request.length < MIN_REQUEST_CHARS) return NO_RETRY;
   // The request the audit re-reads is the WHOLE ask: mid-op redirect
   // instructions are amendments to it, and they used to vanish from every

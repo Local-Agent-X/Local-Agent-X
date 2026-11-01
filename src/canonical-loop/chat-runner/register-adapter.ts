@@ -14,6 +14,7 @@ import { createAnthropicAdapter } from "../adapters/anthropic.js";
 import { defaultAnthropicTransport } from "../adapters/anthropic-transport.js";
 import type { OpenAICompatTarget } from "../adapters/openai-compat.js";
 import { isAnthropicProvider } from "../../providers/provider-ids.js";
+import { isReasoningModel } from "../../providers/registry.js";
 import { splitPromptForStablePrefix } from "./local-prompt-split.js";
 import { modelStablePrefix } from "../../local-runtimes/model-profile.js";
 
@@ -128,7 +129,7 @@ export async function registerAdapterForChat(
         apiKey: target.apiKey,
         systemPrompt: prepared.systemPrompt,
         temperature: prepared.temperature,
-        thinking: /gemini-(2\.5|3)/i.test(prepared.model),
+        thinking: isReasoningModel("gemini", prepared.model),
         sessionId,
         forcedToolChoice,
       }),

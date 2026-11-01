@@ -133,7 +133,9 @@ const REASONING_OPENAI_FAMILY = /^o[134]|gpt-[56]/i;
 // keep it set for them; grok-code-fast streams reasoning in the separate field
 // regardless, handled by the adapter's thinking-delta path.
 const REASONING_GROK = /^grok-4(?!.*-non-reasoning)/i;
-const REASONING_GEMINI = /gemini-(2\.5|3)/i;
+// Every Gemini line from 2.5 on thinks; a new major (gemini-4-argon) must match
+// without an edit here.
+const REASONING_GEMINI = /gemini-(2\.5|[3-9]|\d{2})/i;
 const REASONING_OSS = /deepseek-r1|qwen.*reasoning|gpt-oss/i;
 
 export const PROVIDERS: Record<ProviderId, ProviderMeta> = {

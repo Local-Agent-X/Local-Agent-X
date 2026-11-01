@@ -6,6 +6,7 @@ import type {
   ExactDelegatedRuntimeDescriptor,
 } from "../ops/types.js";
 import { isAnthropicProvider, type ProviderId } from "../providers/provider-ids.js";
+import { isReasoningModel } from "../providers/registry.js";
 import {
   assertSurface, isCredentialSource, isFingerprint, isProviderId, isRuntime,
   isTarget, sameTargetKind,
@@ -213,7 +214,7 @@ export async function createProviderAdapterFactory(
       systemPrompt: options.systemPrompt,
       temperature: options.temperature,
       // Short path, cross-provider: Gemini's knob is this boolean.
-      thinking: !shortPath(options) && /gemini-(2\.5|3)/i.test(identity.model),
+      thinking: !shortPath(options) && isReasoningModel("gemini", identity.model),
       sessionId: options.sessionId ?? identity.sessionId,
     });
   }

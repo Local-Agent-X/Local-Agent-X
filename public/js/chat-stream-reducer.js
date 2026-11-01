@@ -62,7 +62,18 @@
   //                   the notice carries the button (chat-render-notices.js).
   //   review_notice — a publish ran with pre-publish review findings, so the
   //                   user has them whether or not the agent repeats them.
+  //   file_changes  — files this request changed, with an Undo; ONE notice
+  //                   per request, each call's files added to it.
   function addNotice(e, event) {
+    if (event.type === 'file_changes') {
+      if (!event.opId || !event.sessionId || !Array.isArray(event.files) || !event.files.length) return;
+      const notices = e.notices || (e.notices = []);
+      const id = 'fc-' + event.opId;
+      let n = notices.find(x => x.id === id);
+      if (!n) { n = { id, kind: 'changes', sessionId: event.sessionId, opId: event.opId, files: [], status: 'changed' }; notices.push(n); }
+      for (const f of event.files) if (!n.files.includes(f)) n.files.push(f);
+      return;
+    }
     let notice = null;
     if (event.type === 'delete_notice' && Array.isArray(event.files) && event.files.length) {
       notice = { id: 'dn-' + (event.toolCallIds || []).join('-'), files: event.files.slice(), restored: false };
@@ -292,7 +303,7 @@
         }
         e.lastActivityMs = now;
         break;
-      case 'delete_notice':
+      case 'delete_notice': case 'file_changes':
       case 'review_notice': case 'code_handoff':
         addNotice(e, event);
         break;

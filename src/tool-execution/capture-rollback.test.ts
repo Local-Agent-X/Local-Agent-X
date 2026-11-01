@@ -1,73 +1,95 @@
 /**
- * capture-rollback phase gating — the wiring that connects the autonomy
- * profile's "allow-with-rollback" decision to the rollback snapshot.
+ * capture-rollback wiring: which calls copy files aside (every call whose
+ * policy row says it writes or deletes a path, in every autonomy profile),
+ * with the paths resolved the way the file tools resolve them, and which
+ * calls tell the chat about a change it can undo.
  *
- * The snapshot mechanics live in autonomy/rollback.ts (tested there). This
- * locks the GATE: capture fires for exactly one decision and is otherwise a
- * no-op, and a capture failure never blocks the tool the profile approved.
+ * The snapshot mechanics live in autonomy/rollback.ts (tested there).
  */
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { join } from "node:path";
 
-// vi.hoisted so these exist when the hoisted vi.mock factories below run.
-const { getToolDecision, captureRollback } = vi.hoisted(() => ({
-  getToolDecision: vi.fn<(tool: string, sessionId?: string) => string>(),
-  captureRollback: vi.fn(),
-}));
-
-vi.mock("../approval-manager.js", () => ({ getToolDecision }));
+const { captureRollback } = vi.hoisted(() => ({ captureRollback: vi.fn() }));
 vi.mock("../autonomy/rollback.js", () => ({ captureRollback }));
 
-import { captureRollbackPhase } from "./capture-rollback.js";
+import { announceFileChanges, captureRollbackPhase } from "./capture-rollback.js";
 import { CONTINUE } from "./context.js";
 import type { ToolCallContext } from "./context.js";
+import { resolveAgentPath } from "../workspace/paths.js";
+import type { RollbackContract } from "../autonomy/rollback.js";
 
-function ctx(name = "write", args: Record<string, unknown> = { path: "/tmp/x" }): ToolCallContext {
+function ctx(name: string, args: Record<string, unknown>, extra: Partial<ToolCallContext> = {}): ToolCallContext {
   return {
     tc: { id: "tc-1", name, arguments: JSON.stringify(args) },
     sessionId: "sess-1",
+    operationId: "op-1",
     args,
+    ...extra,
   } as unknown as ToolCallContext;
 }
 
+const contract = (artifacts: RollbackContract["artifacts"]): RollbackContract =>
+  ({ toolCallId: "tc-1", tool: "write", sessionId: "sess-1", opId: "op-1", ts: 0, artifacts });
+
 beforeEach(() => {
-  getToolDecision.mockReset();
   captureRollback.mockReset();
-  captureRollback.mockReturnValue({
-    toolCallId: "tc-1", ts: 0, tool: "write", risk: "workspace-write",
-    artifacts: [{ type: "file-backup", original: "/tmp/x", backup: "/tmp/x.bak" }],
+  captureRollback.mockImplementation((_call, paths: string[]) => (paths.length ? contract([]) : null));
+});
+
+describe("captureRollbackPhase", () => {
+  it("captures what a write will change, resolved the way the write tool resolves it", async () => {
+    const c = ctx("write", { path: "src/app.ts", content: "x" });
+    expect(await captureRollbackPhase(c)).toEqual(CONTINUE);
+    expect(captureRollback).toHaveBeenCalledWith(
+      { toolCallId: "tc-1", tool: "write", sessionId: "sess-1", opId: "op-1" },
+      [resolveAgentPath("src/app.ts", "sess-1")],
+    );
+    expect(c.rollback).toBeDefined();
+  });
+
+  it.each([
+    ["edit", { path: join("a", "b.ts"), old_string: "x", new_string: "y" }],
+    ["delete_file", { path: "old.txt" }],
+  ])("captures for %s too", async (name, args) => {
+    await captureRollbackPhase(ctx(name, args));
+    expect(captureRollback.mock.calls[0][1]).toHaveLength(1);
+  });
+
+  it("captures nothing for a call that writes no file", async () => {
+    const c = ctx("read", { path: "src/app.ts" });
+    await captureRollbackPhase(c);
+    expect(captureRollback.mock.calls[0][1]).toEqual([]);
+    expect(c.rollback).toBeUndefined();
+  });
+
+  it("never blocks the tool when capture throws", async () => {
+    captureRollback.mockImplementation(() => { throw new Error("disk full"); });
+    expect(await captureRollbackPhase(ctx("write", { path: "x.txt", content: "" }))).toEqual(CONTINUE);
   });
 });
 
-describe("captureRollbackPhase gating", () => {
-  it("captures when the decision is allow-with-rollback", async () => {
-    getToolDecision.mockReturnValue("allow-with-rollback");
-    const outcome = await captureRollbackPhase(ctx());
-    expect(captureRollback).toHaveBeenCalledTimes(1);
-    expect(captureRollback).toHaveBeenCalledWith("tc-1", "write", expect.any(String), { path: "/tmp/x" });
-    expect(outcome).toEqual(CONTINUE);
+describe("announceFileChanges", () => {
+  const changed = contract([
+    { type: "file-backup", original: "/w/a.ts", backup: "/r/0-a.ts.bak" },
+    { type: "created", original: "/w/b.ts" },
+    { type: "none", reason: "folder" },
+  ]);
+
+  it("tells the chat which files a successful call changed, under its request", () => {
+    const onEvent = vi.fn();
+    announceFileChanges(ctx("write", {}, { rollback: changed, onEvent, result: { content: "ok" } }));
+    expect(onEvent).toHaveBeenCalledWith({ type: "file_changes", sessionId: "sess-1", opId: "op-1", files: ["/w/a.ts", "/w/b.ts"] });
   });
 
-  it.each(["allow", "ask", "deny"])(
-    "does NOT capture when the decision is %s",
-    async (decision) => {
-      getToolDecision.mockReturnValue(decision);
-      const outcome = await captureRollbackPhase(ctx());
-      expect(captureRollback).not.toHaveBeenCalled();
-      expect(outcome).toEqual(CONTINUE);
-    },
-  );
-
-  it("passes the call's own sessionId through to the decision lookup", async () => {
-    getToolDecision.mockReturnValue("allow");
-    await captureRollbackPhase(ctx());
-    expect(getToolDecision).toHaveBeenCalledWith("write", "sess-1");
-  });
-
-  it("never blocks the tool when capture throws — capture is best-effort", async () => {
-    getToolDecision.mockReturnValue("allow-with-rollback");
-    captureRollback.mockImplementation(() => { throw new Error("disk full"); });
-    const outcome = await captureRollbackPhase(ctx());
-    expect(outcome).toEqual(CONTINUE);
+  it.each([
+    ["the call failed", { result: { content: "boom", isError: true } }],
+    ["the call was blocked", { result: { content: "no", status: "blocked", metadata: { recovery: "", layer: "policy" } } }],
+    ["the result was replayed, not run now", { result: { content: "ok" }, resultReused: "dedup-cache" }],
+    ["nothing was captured", { result: { content: "ok" }, rollback: undefined }],
+  ])("says nothing when %s", (_why, extra) => {
+    const onEvent = vi.fn();
+    announceFileChanges(ctx("write", {}, { rollback: changed, onEvent, ...(extra as Partial<ToolCallContext>) }));
+    expect(onEvent).not.toHaveBeenCalled();
   });
 });

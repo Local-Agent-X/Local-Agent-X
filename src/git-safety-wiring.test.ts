@@ -5,26 +5,20 @@
  *
  * The pure composers (composeGitArgs / gitSafeCmd) are unit-tested in
  * agency/worktree-git-safety.test.ts against real git. THIS file proves the
- * three call sites the first pass missed are actually wired to them, by
+ * call sites the first pass missed are actually wired to them, by
  * intercepting the spawned argv / command string:
  *   - auto-build/git-helpers.ts  (caged spawn argv — commit/add/init)
- *   - autonomy/rollback.ts       (execFileSync argv — stash push/apply/drop)
  *   - update-service.ts          (execSync string — fetch origin main)
  */
 
 import { EventEmitter } from "node:events";
-import { mkdtempSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const spawnCalls: Array<{ cmd: string; args: string[] }> = [];
 const execCalls: string[] = [];
 const execSyncImpl = vi.fn<(cmd: string) => string>();
-const gitArgvCalls: string[][] = [];
-const gitArgvImpl = vi.fn<(args: string[]) => string>();
 
-// Override ONLY execSync, git's execFileSync + spawn; keep every other
+// Override ONLY execSync + spawn; keep every other
 // child_process export real so unrelated importers (process-tree-kill etc.)
 // still load.
 vi.mock("node:child_process", async (importActual) => {
@@ -35,11 +29,6 @@ vi.mock("node:child_process", async (importActual) => {
       execCalls.push(cmd);
       void rest;
       return execSyncImpl(cmd);
-    },
-    execFileSync: (file: string, args: string[], ...rest: unknown[]) => {
-      if (file !== "git") return (actual.execFileSync as (...a: unknown[]) => unknown)(file, args, ...rest);
-      gitArgvCalls.push(args);
-      return gitArgvImpl(args);
     },
     spawn: (cmd: string, args: string[]) => {
       spawnCalls.push({ cmd, args });
@@ -67,15 +56,12 @@ vi.mock("./local-only-policy.js", () => ({
 }));
 
 import { getHeadSha } from "./auto-build/git-helpers.js";
-import { captureRollback } from "./autonomy/rollback.js";
 import { checkForUpdate, bustUpdateCache } from "./update-service.js";
 
 beforeEach(() => {
   spawnCalls.length = 0;
   execCalls.length = 0;
   execSyncImpl.mockReset();
-  gitArgvCalls.length = 0;
-  gitArgvImpl.mockReset();
 });
 
 afterEach(() => {
@@ -99,30 +85,6 @@ describe("git-helpers spawn carries gc.auto=0", () => {
     // Flags come FIRST, before the subcommand, so git parses them as config.
     expect(spawnCalls[0].args.slice(0, 2)).toEqual(["-c", "gc.auto=0"]);
     expect(spawnCalls[0].args.slice(-2)).toEqual(["rev-parse", "HEAD"]);
-  });
-});
-
-describe("rollback stash carries gc.auto=0", () => {
-  it("wraps `git stash push` (the object-creating mutation) with -c gc.auto=0", () => {
-    gitArgvImpl.mockImplementation((args) => {
-      const cmd = args.join(" ");
-      if (/status --porcelain/.test(cmd)) return "M a.txt\n";
-      if (/rev-parse stash/.test(cmd)) return "a".repeat(40) + "\n";
-      return "";
-    });
-    // A temp cwd (no src/autonomy/rollback.ts) clears captureGitStash's
-    // self-protect guard so the stash path actually runs.
-    const dir = mkdtempSync(join(tmpdir(), "lax-gitsafety-rb-"));
-    try {
-      const contract = captureRollback("test-gitsafety-rb", "bash", "shell", { command: "x" }, dir);
-      expect(contract.artifacts[0].type).toBe("git-stash");
-      const push = gitArgvCalls.find((a) => a.includes("stash") && a.includes("push"));
-      expect(push).toBeDefined();
-      // Flags come FIRST, before the subcommand, so git parses them as config.
-      expect(push!.slice(0, 2)).toEqual(["-c", "gc.auto=0"]);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
   });
 });
 

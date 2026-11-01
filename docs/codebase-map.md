@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1898 non-test source files · 88 oversized · 247 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1900 non-test source files · 88 oversized · 247 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -23,7 +23,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/security/` | 145 | 57 | XL | 2 |
 | `src/tools/` | 122 | 224 | XL | 9 |
 | `src/tool-execution/` | 85 | 82 | XL | 2 |
-| `src/workspace/` | 83 | 3 | M |  |
+| `src/workspace/` | 84 | 3 | M |  |
 | `src/canonical-loop/` | 81 | 279 | XL | 11 |
 | `src/providers/` | 72 | 27 | L | 1 |
 | `src/data-lineage/` | 56 | 12 | L |  |
@@ -50,9 +50,9 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/orchestrator/` | 20 | 24 | L |  |
 | `src/server/` *(entrypoint)* | 18 | 57 | XL | 6 |
 | `src/agents/` | 17 | 13 | L |  |
+| `src/autonomy/` | 17 | 5 | M |  |
 | `src/net/` | 17 | 11 | L |  |
 | `src/anthropic-client/` | 15 | 21 | L | 2 |
-| `src/autonomy/` | 15 | 4 | M |  |
 | `src/cognition/` | 14 | 35 | XL | 1 |
 | `src/cron/` | 14 | 14 | L |  |
 | `src/inbox/` | 14 | 5 | M |  |
@@ -64,7 +64,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/whatsapp-bridge/` | 12 | 8 | M | 1 |
 | `src/agent-loop/` | 10 | 1 | S |  |
 | `src/persistence/` | 10 | 2 | S |  |
-| `src/routes/` | 10 | 95 | XL | 17 |
+| `src/routes/` | 10 | 96 | XL | 17 |
 | `src/sync/` | 10 | 21 | L | 1 |
 | `src/codex-client/` | 9 | 6 | M |  |
 | `src/plugin-system/` | 9 | 10 | L | 1 |

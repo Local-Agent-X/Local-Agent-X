@@ -64,6 +64,73 @@ function renderDeleteNotice(n) {
   return el;
 }
 
+// Changes notices — the files this request changed with the file tools, whose
+// bytes from before are kept (src/tool-execution/capture-rollback.ts). Undo
+// puts every file changed from this request on back to how it was before it
+// (src/autonomy/rollback-rewind.ts): when later requests changed files too, it
+// says so and asks first, since those changes go as well.
+//
+// Exposes (global): renderChangesNotice(notice)
+
+function renderChangesNotice(n) {
+  const el = document.createElement('div');
+  el.className = 'delete-notice changes-notice';
+  el.setAttribute('data-id', n.id || '');
+  const files = Array.isArray(n.files) ? n.files : [];
+  const count = files.length + ' file' + (files.length === 1 ? '' : 's');
+  const names = files.map(f => '<span class="delete-notice-file" title="' + esc(f) + '">' + esc(_noticeBaseName(f)) + '</span>').join(', ');
+
+  const paint = () => {
+    if (n.status === 'undone') {
+      el.classList.add('restored');
+      el.innerHTML = '<span class="delete-notice-text">Undid the changes: ' + esc(n.outcome || '') + '</span>'
+        + (n.error ? '<div class="delete-notice-error">' + esc(n.error) + '</div>' : '');
+      return;
+    }
+    el.innerHTML = '<span class="delete-notice-text">Changed ' + count + ': ' + names + '.</span>'
+      + '<button class="delete-notice-undo" type="button">Undo</button>'
+      + (n.error ? '<div class="delete-notice-error">' + esc(n.error) + '</div>' : '');
+    el.querySelector('.delete-notice-undo').addEventListener('click', undo);
+  };
+
+  const rewind = async (preview) => {
+    const res = await apiFetch('/api/rollback/rewind', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: n.sessionId, opId: n.opId, preview }),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Undo failed.');
+    return data;
+  };
+
+  const undo = async () => {
+    const btn = el.querySelector('.delete-notice-undo');
+    if (btn) { btn.disabled = true; btn.textContent = 'Undoing…'; }
+    try {
+      const plan = await rewind(true);
+      const later = plan.laterRequests || 0;
+      if (later > 0 && !window.confirm('Undo also puts back the files changed by the ' + later
+        + ' later request' + (later === 1 ? '' : 's') + ' in this chat. Continue?')) { paint(); return; }
+      const r = await rewind(false);
+      const parts = [];
+      if (r.restored.length) parts.push(r.restored.length + ' put back');
+      if (r.removed.length) parts.push(r.removed.length + ' new file' + (r.removed.length === 1 ? '' : 's') + ' moved to the trash');
+      n.status = 'undone';
+      n.outcome = (parts.join(', ') || 'nothing left to change') + '.';
+      if (r.failed.length) n.error = r.failed.map(f => _noticeBaseName(f.path) + ': ' + f.error).join(' ');
+      else delete n.error;
+    } catch (err) {
+      n.error = (err && err.message) ? err.message : String(err);
+    }
+    try { if (typeof saveChats === 'function') saveChats(); } catch { /* the notice still shows the outcome */ }
+    paint();
+  };
+
+  paint();
+  return el;
+}
+
 // Learning notices — the post-turn review proposed a learned workflow from this
 // chat (src/protocols/learned-review-drafting.ts). It is a draft until the user
 // keeps it: Keep activates the proposed version, Discard rejects the proposal —

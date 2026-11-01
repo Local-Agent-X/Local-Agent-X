@@ -1,5 +1,6 @@
 import type { RouteHandler } from "../../server-context.js";
 import { handleSystemRoutes } from "./system.js";
+import { handleRollbackRoutes } from "./rollback.js";
 import { handleDecommissionRoutes } from "./decommission.js";
 import { handleDiagnosticsRoutes } from "./diagnostics.js";
 import { handlePluginsRoutes } from "./plugins.js";
@@ -11,6 +12,7 @@ import { handleAndroidRoutes } from "./android.js";
 
 const handlers: RouteHandler[] = [
   handleSystemRoutes,
+  handleRollbackRoutes,
   handleDecommissionRoutes,
   handleDiagnosticsRoutes,
   handlePluginsRoutes,

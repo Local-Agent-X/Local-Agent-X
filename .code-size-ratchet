@@ -70,7 +70,7 @@ src/routes/sessions.ts#handleSessionRoutes 155
 src/routes/settings/local-runtimes.ts#handleLocalRuntimesRoutes 122
 src/routes/settings/preferences.ts#handlePreferencesRoutes 189
 src/routes/settings/providers.ts#handleProvidersRoutes 130
-src/routes/settings/system.ts#handleSystemRoutes 129
+src/routes/settings/system.ts#handleSystemRoutes 116
 src/sandbox/docker-execution-runtime.ts 363
 src/security/layer/file-access.ts#evaluateFileAccess 105
 src/security/layer/kernel-class-policy.ts#evaluateByKernelClass 132

@@ -1013,7 +1013,7 @@
         </div>
         <div class="section-card">
           <div class="section-title">Rollback</div>
-          <div class="section-desc">Recent tool calls captured under "allow-with-rollback". Click Undo to restore the pre-state.</div>
+          <div class="section-desc">Files the agent changed with its file tools, kept for 30 days. Undo puts one call's files back; the Undo under a chat reply puts back everything from that request on. Shell commands are not captured.</div>
           <div id="rollback-list" style="margin-top:8px;font-size:.78rem"></div>
           <button class="action-btn" id="rollback-refresh-btn" onclick="loadRollbackList()" style="margin-top:8px">Refresh</button>
         </div>
@@ -1747,7 +1747,7 @@
      lane-replace rule the blocks call. -->
 <script src="/js/agentxos-timeline.js?v=v1"></script>
 <script src="/js/chat-stream-blocks.js?v=v3"></script>
-<script src="/js/chat-stream-reducer.js?v=v4"></script>
+<script src="/js/chat-stream-reducer.js?v=v5"></script>
 <!-- Frame admission (which frames may mutate an entry) is its own module for
      the 400-LOC gate; the store core delegates to it. -->
 <script src="/js/chat-stream-admit.js?v=v1"></script>
@@ -1850,10 +1850,10 @@
 <script src="/js/chat-render-publish-review.js?v=v1"></script>
 <script src="/js/chat-render-shell-preview.js?v=v1"></script>
 <script src="/js/chat-render-approvals.js?v=v4"></script>
-<script src="/js/chat-render-notices.js?v=v4"></script>
+<script src="/js/chat-render-notices.js?v=v5"></script>
 <script src="/js/chat-learning-notices.js?v=v1"></script>
 <script src="/js/chat-file-changes.js?v=v1"></script>
-<script src="/js/chat-render-artifacts.js?v=v10"></script>
+<script src="/js/chat-render-artifacts.js?v=v11"></script>
 <script src="/js/thinking-phrases.js?v=v2"></script>
 <script src="/js/phrase-rain.js?v=v1"></script>
 <script src="/js/chat-render-window.js?v=v1"></script>
@@ -1886,7 +1886,7 @@
 <script src="/js/settings-tts.js?v=v1"></script>
 <script src="/js/settings-agent-sync.js?v=v2"></script>
 <script src="/js/settings-file-access.js?v=v1"></script>
-<script src="/js/settings-rollback.js?v=v1"></script>
+<script src="/js/settings-rollback.js?v=v2"></script>
 <script src="/js/settings-run-traces.js?v=v1"></script>
 <script src="/js/settings-audit-log.js?v=v1"></script>
 <script src="/js/settings-sandbox.js?v=v4"></script>

@@ -157,6 +157,10 @@ export type ServerEvent =
   // them and the user did not name them (tool-execution/unnamed-delete-gate.ts).
   // The chat shows them with an Undo; `files` are absolute original paths.
   | { type: "delete_notice"; files: string[]; toolCallIds: string[] }
+  // A call in request `opId` of session `sessionId` changed these files, and their bytes from before
+  // are kept (tool-execution/capture-rollback.ts). The chat gathers a request's
+  // calls into one line with an Undo that rewinds them (POST /api/rollback/rewind).
+  | { type: "file_changes"; sessionId: string; opId: string; files: string[] }
   // A publish ran with pre-publish review findings (tool-execution/
   // publish-review-gate.ts announcePublishReview). The chat keeps them under
   // the reply, so the user has them whether or not the model repeats them.

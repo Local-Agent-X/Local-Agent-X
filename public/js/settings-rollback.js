@@ -1,4 +1,4 @@
-// Settings: Rollback — list recent allow-with-rollback captures, undo on click.
+// Settings: Rollback — list recent file captures (src/autonomy/rollback.ts), undo on click.
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
@@ -12,13 +12,13 @@ function rollbackArtifactSummary(artifacts) {
   }
   return useful.map(a => {
     if (a.type === 'file-backup') return `file: ${escapeHtml(a.original)}`;
-    if (a.type === 'git-stash') return `git stash: ${escapeHtml(a.sha.slice(0, 8))}`;
+    if (a.type === 'created') return `new file: ${escapeHtml(a.original)}`;
     return escapeHtml(a.type);
   }).join(', ');
 }
 
 async function undoRollback(toolCallId, btn) {
-  if (!confirm(`Undo ${toolCallId}? File backups will be copied back and git stashes will be popped.`)) return;
+  if (!confirm(`Undo ${toolCallId}? Its files go back to how they were before it; files it created go to the trash.`)) return;
   btn.disabled = true; btn.textContent = '...';
   try {
     const r = await apiFetch('/api/rollback/undo', {
@@ -49,7 +49,7 @@ async function loadRollbackList() {
     if (!res.ok) { host.textContent = 'Could not load rollback list.'; return; }
     const { entries } = await res.json();
     if (!entries || entries.length === 0) {
-      host.innerHTML = '<span style="color:var(--muted)">No rollback artifacts yet. Switch to Developer or Autonomous profile and run a workspace-write/shell/destructive tool to populate this.</span>';
+      host.innerHTML = '<span style="color:var(--muted)">Nothing yet. Every file the agent writes, edits or deletes with its file tools shows up here.</span>';
       return;
     }
     host.innerHTML = entries.map((e) => {
@@ -61,7 +61,7 @@ async function loadRollbackList() {
       return `<div style="padding:8px 0;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px">
         <div style="flex:1;min-width:0">
           <div style="font-family:var(--mono);font-size:.72rem;color:var(--muted)">${escapeHtml(e.toolCallId)} · ${escapeHtml(when)}</div>
-          <div><strong>${escapeHtml(e.tool)}</strong> <span style="color:var(--muted)">(${escapeHtml(e.risk)})</span></div>
+          <div><strong>${escapeHtml(e.tool)}</strong></div>
           <div style="font-size:.72rem;color:var(--muted)">${summary}</div>
         </div>
         <div>${button}</div>

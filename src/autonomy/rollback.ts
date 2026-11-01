@@ -1,28 +1,35 @@
 /**
- * Rollback capture — when a profile decides "allow-with-rollback" for a
- * tool call, snapshot enough state BEFORE the tool runs that a human can
- * restore it after. Capture is best-effort; if we can't snapshot a given
- * tool's side effects, we record that fact in the contract instead of
- * faking safety.
+ * Rollback store — the bytes a file had before the agent changed it, so the
+ * change can be undone. Every tool call that writes or deletes a file captures
+ * here before it runs (tool-execution/capture-rollback.ts, which reads the
+ * paths off the policy rows), in every autonomy profile: a file the call will
+ * edit or delete is copied aside, a file it will create is recorded as created.
+ * Each capture is a contract keyed by the tool call and tagged with its
+ * session and request (op).
  *
- * Storage layout under ~/.lax/rollback/:
+ * Two ways back:
+ *   restoreRollback(toolCallId)          one call (Settings → Rollback)
+ *   rewindToBeforeOp(sessionId, opId)    every file changed from that request
+ *                                        on (rollback-rewind.ts, the chat's Undo)
+ *
+ * Shell commands are not captured: what a command will change is not knowable
+ * before it runs. A git stash of the work tree used to stand in, and stashing
+ * takes the user's uncommitted work OUT of the tree before the command runs.
+ *
+ * Storage under ~/.lax/rollback/:
  *   index.jsonl                       one line per captured contract
  *   restored.jsonl                    one line per toolCallId we've undone
- *   {toolCallId}/<original-name>.bak  raw file backups
- *
- * restoreRollback() walks the contract and reverses each artifact:
- * file-backup → copyback, git-stash → stash pop. Restoration is logged
- * to restored.jsonl so listRollbacks() can mark already-undone entries.
+ *   {toolCallId}/<n>-<name>.bak       raw file backups
+ * Contracts older than RETENTION_MS are pruned, with their backups.
  */
 
-import { existsSync, mkdirSync, copyFileSync, statSync, lstatSync, appendFileSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, copyFileSync, statSync, lstatSync, appendFileSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, basename, dirname, isAbsolute, resolve } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
-import { composeGitArgs, execGitSync } from "../git-safety.js";
 import { getRuntimeConfig } from "../config.js";
 import { evaluateFileAccess, loadFileAccessMode } from "../security/layer/index.js";
+import { moveToTrash } from "../safe-delete.js";
 import { createLogger } from "../logger.js";
-import type { ToolRisk } from "./risk.js";
 
 const logger = createLogger("autonomy-rollback");
 
@@ -35,27 +42,28 @@ const RESTORED_FILE = join(ROLLBACK_DIR, "restored.jsonl");
 // to: no path separator, no leading dot. "|" stays: one provider's ids join a
 // call id and an item id with it.
 const TOOL_CALL_ID = /^[A-Za-z0-9_-][A-Za-z0-9_.|-]{0,199}$/;
-const STASH_SHA = /^[0-9a-f]{40}$/;
 
-/** git as argv, never a shell string: the stash message carries the tool-call
- *  id, and a restore's sha and directory are read back from the index. Starts
- *  no fsmonitor hook the repository's config could name. */
-function git(args: string[], cwd: string): string {
-  return execGitSync(composeGitArgs(["-c", "core.fsmonitor=false", ...args]), {
-    cwd, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
-  });
-}
+/** A file larger than this is not copied aside before every write: a model
+ *  rewriting a large data file in a loop would fill the disk with copies. */
+const MAX_BACKUP_BYTES = 25 * 1024 * 1024;
+/** How long a capture can be undone. */
+const RETENTION_MS = 30 * 24 * 3_600_000;
+const PRUNE_EVERY_MS = 3_600_000;
 
 export type RollbackArtifact =
   | { type: "file-backup"; original: string; backup: string }
-  | { type: "git-stash"; sha: string; cwd: string }
+  | { type: "created"; original: string }
   | { type: "none"; reason: string };
 
-export interface RollbackContract {
+export interface RollbackCall {
   toolCallId: string;
-  ts: number;
   tool: string;
-  risk: ToolRisk;
+  sessionId?: string;
+  opId?: string;
+}
+
+export interface RollbackContract extends RollbackCall {
+  ts: number;
   artifacts: RollbackArtifact[];
 }
 
@@ -63,100 +71,61 @@ function ensureDir(path: string): void {
   if (!existsSync(path)) mkdirSync(path, { recursive: true });
 }
 
-function captureFileBackup(toolCallId: string, filePath: string): RollbackArtifact {
+function captureFile(toolCallId: string, filePath: string, n: number): RollbackArtifact {
   try {
-    if (!existsSync(filePath)) return { type: "none", reason: `file does not exist: ${filePath}` };
-    if (statSync(filePath).isDirectory()) return { type: "none", reason: `path is a directory: ${filePath}` };
+    if (!existsSync(filePath)) return { type: "created", original: filePath };
+    const st = statSync(filePath);
+    if (st.isDirectory()) return { type: "none", reason: `${filePath} is a folder: a deleted folder goes to the trash, and restore_file brings it back` };
+    if (st.size > MAX_BACKUP_BYTES) return { type: "none", reason: `${filePath} is ${st.size} bytes, over the ${MAX_BACKUP_BYTES}-byte backup cap` };
     const dir = join(ROLLBACK_DIR, toolCallId);
     ensureDir(dir);
-    const backup = join(dir, basename(filePath) + ".bak");
+    const backup = join(dir, `${n}-${basename(filePath)}.bak`);
     copyFileSync(filePath, backup);
     return { type: "file-backup", original: filePath, backup };
   } catch (e) {
-    return { type: "none", reason: `backup failed: ${(e as Error).message}` };
+    return { type: "none", reason: `backup of ${filePath} failed: ${(e as Error).message}` };
   }
 }
 
-function captureGitStash(toolCallId: string, cwd: string): RollbackArtifact {
-  // Self-protect: never stash the LAX dev repo itself. captureRollback's
-  // default cwd is process.cwd(); during tests that's this repo, and a
-  // shell-class tool dispatched without an explicit cwd would otherwise
-  // git-stash live working-tree edits out from under the developer.
-  // Users running LAX against their own project repos won't match.
-  if (existsSync(join(cwd, "src", "autonomy", "rollback.ts"))) {
-    return { type: "none", reason: "refusing to stash LAX source repo" };
-  }
-  try {
-    git(["rev-parse", "--is-inside-work-tree"], cwd);
-  } catch {
-    return { type: "none", reason: "cwd is not a git repository" };
-  }
-  try {
-    const dirty = git(["status", "--porcelain"], cwd).trim();
-    if (!dirty) return { type: "none", reason: "no uncommitted changes to stash" };
-    git(["stash", "push", "--include-untracked", "-m", `lax-rollback-${toolCallId}`], cwd);
-    // Capture the stash commit SHA, not the positional ref. stash@{0}
-    // shifts when the user (or another lax capture) pushes more stashes;
-    // the SHA is stable and survives reorders.
-    const sha = git(["rev-parse", "stash@{0}"], cwd).trim();
-    return { type: "git-stash", sha, cwd };
-  } catch (e) {
-    return { type: "none", reason: `git stash failed: ${(e as Error).message}` };
-  }
-}
+let lastPruneAt = 0;
 
-// Tools that name their target file in args under a known key. Keep this
-// short and known — guessing arg shapes leads to silent miscapture.
-const PATH_ARG_KEYS = ["path", "file_path", "filepath"] as const;
-
-function pathFromArgs(args: Record<string, unknown>, cwd: string): string | null {
-  for (const key of PATH_ARG_KEYS) {
-    const v = args[key];
-    if (typeof v === "string" && v.length > 0) return isAbsolute(v) ? v : join(cwd, v);
-  }
-  return null;
-}
-
-export function captureRollback(
-  toolCallId: string,
-  toolName: string,
-  risk: ToolRisk,
-  args: Record<string, unknown>,
-  cwd: string = process.cwd(),
-): RollbackContract {
+/**
+ * Copy aside every file this call is about to change. `paths` are absolute,
+ * resolved the way the tool resolves them. Returns null when the call names
+ * no file: nothing it does is a file change this store can hold.
+ */
+export function captureRollback(call: RollbackCall, paths: readonly string[], now = Date.now()): RollbackContract | null {
+  if (paths.length === 0) return null;
   ensureDir(ROLLBACK_DIR);
-  const artifacts: RollbackArtifact[] = [];
-
-  if (!TOOL_CALL_ID.test(toolCallId)) {
-    artifacts.push({ type: "none", reason: "the tool call id cannot name a backup directory" });
-  } else if (risk === "shell") {
-    artifacts.push(captureGitStash(toolCallId, cwd));
-  } else if (risk === "workspace-write" || risk === "destructive") {
-    const p = pathFromArgs(args, cwd);
-    if (p) {
-      artifacts.push(captureFileBackup(toolCallId, p));
-    } else {
-      artifacts.push({ type: "none", reason: `no recognized file-path arg for ${toolName}` });
-    }
-  } else {
-    artifacts.push({ type: "none", reason: `risk class ${risk} has no rollback capture` });
-  }
-
-  const contract: RollbackContract = {
-    toolCallId,
-    ts: Date.now(),
-    tool: toolName,
-    risk,
-    artifacts,
-  };
-
+  if (now - lastPruneAt > PRUNE_EVERY_MS) pruneRollbacks(now);
+  const artifacts: RollbackArtifact[] = TOOL_CALL_ID.test(call.toolCallId)
+    ? [...new Set(paths)].map((p, i) => captureFile(call.toolCallId, p, i))
+    : [{ type: "none", reason: "the tool call id cannot name a backup directory" }];
+  const contract: RollbackContract = { ...call, ts: now, artifacts };
   try {
     appendFileSync(INDEX_FILE, JSON.stringify(contract) + "\n");
   } catch (e) {
     logger.warn(`[rollback] failed to append index: ${(e as Error).message}`);
   }
-
   return contract;
+}
+
+/** Drop contracts older than the retention window, with their backups. */
+export function pruneRollbacks(now = Date.now()): number {
+  lastPruneAt = now;
+  const all = readContracts();
+  const keep = all.filter((c) => now - c.ts < RETENTION_MS);
+  if (keep.length === all.length) return 0;
+  const kept = new Set(keep.map((c) => c.toolCallId));
+  for (const c of all) {
+    if (!kept.has(c.toolCallId) && TOOL_CALL_ID.test(c.toolCallId)) {
+      rmSync(join(ROLLBACK_DIR, c.toolCallId), { recursive: true, force: true });
+    }
+  }
+  writeFileSync(INDEX_FILE, keep.map((c) => JSON.stringify(c) + "\n").join(""));
+  const restored = readJsonl<{ toolCallId: string }>(RESTORED_FILE).filter((r) => kept.has(r.toolCallId));
+  writeFileSync(RESTORED_FILE, restored.map((r) => JSON.stringify(r) + "\n").join(""));
+  return all.length - keep.length;
 }
 
 // ── Restore / list ────────────────────────────────────────────────────
@@ -170,7 +139,12 @@ function readJsonl<T>(path: string): T[] {
     .filter((x): x is T => x !== null);
 }
 
-function loadRestoredIds(): Set<string> {
+/** Every contract on record, oldest first. */
+export function readContracts(): RollbackContract[] {
+  return readJsonl<RollbackContract>(INDEX_FILE).sort((a, b) => a.ts - b.ts);
+}
+
+export function loadRestoredIds(): Set<string> {
   return new Set(readJsonl<{ toolCallId: string }>(RESTORED_FILE).map((r) => r.toolCallId));
 }
 
@@ -183,7 +157,7 @@ export function listRollbacks(limit = 50): RollbackListEntry[] {
   // Last entry per toolCallId wins (in case the same id ever got two
   // contracts; shouldn't happen, but be defensive about a JSONL append log).
   const byId = new Map<string, RollbackContract>();
-  for (const c of readJsonl<RollbackContract>(INDEX_FILE)) byId.set(c.toolCallId, c);
+  for (const c of readContracts()) byId.set(c.toolCallId, c);
   const all = Array.from(byId.values()).sort((a, b) => b.ts - a.ts);
   return all.slice(0, limit).map((c) => ({ ...c, restored: restored.has(c.toolCallId) }));
 }
@@ -193,80 +167,74 @@ export type RestoreResult =
   | { ok: false; error: string };
 
 /**
- * Where a file backup may be copied back to, or why not. The index is an
- * ordinary file under ~/.lax that any file writer can append to, so a restore
- * trusts no path a line names: the backup must be a regular file capture wrote
- * for this call (not a symlink to, say, a key file the copy would publish),
- * and the original must be a path the file-access layer lets a write reach,
- * the same answer the write tools get.
+ * Where an undo may write or remove, or why not. The index is an ordinary
+ * file under ~/.lax that any file writer can append to, so a restore trusts no
+ * path a line names: a backup must be a regular file capture wrote for this
+ * call (not a symlink to, say, a key file the copy would publish), and the
+ * original must be a path the file-access layer lets the same action reach,
+ * the same answer the file tools get.
  */
-function backupTarget(toolCallId: string, a: { original: unknown; backup: unknown }): { target: string } | { error: string } {
-  if (typeof a.original !== "string" || typeof a.backup !== "string" || !isAbsolute(a.original)) {
-    return { error: "the contract's file paths are malformed" };
+function undoTarget(toolCallId: string, a: RollbackArtifact, sessionId?: string): { target: string } | { error: string } {
+  if (a.type === "none") return { error: "no-op artifact" };
+  if (typeof a.original !== "string" || !isAbsolute(a.original)) return { error: "the contract's file paths are malformed" };
+  if (a.type === "file-backup") {
+    if (typeof a.backup !== "string") return { error: "the contract's file paths are malformed" };
+    if (dirname(resolve(a.backup)) !== join(ROLLBACK_DIR, toolCallId)) return { error: `not a backup of this call: ${a.backup}` };
+    if (!existsSync(a.backup)) return { error: `backup missing: ${a.backup}` };
+    if (!lstatSync(a.backup).isFile()) return { error: `backup is not a regular file: ${a.backup}` };
   }
-  if (dirname(resolve(a.backup)) !== join(ROLLBACK_DIR, toolCallId)) return { error: `not a backup of this call: ${a.backup}` };
-  if (!existsSync(a.backup)) return { error: `backup missing: ${a.backup}` };
-  if (!lstatSync(a.backup).isFile()) return { error: `backup is not a regular file: ${a.backup}` };
-  const d = evaluateFileAccess(getRuntimeConfig().workspace, loadFileAccessMode(), () => false, "write", a.original);
-  return d.allowed ? { target: d.canonicalPath ?? a.original } : { error: `refusing to write ${a.original}: ${d.reason}` };
+  const action = a.type === "created" ? "delete_file" : "write";
+  const d = evaluateFileAccess(getRuntimeConfig().workspace, loadFileAccessMode(), () => false, action, a.original, sessionId);
+  return d.allowed ? { target: d.canonicalPath ?? a.original } : { error: `refusing to ${action === "write" ? "write" : "remove"} ${a.original}: ${d.reason}` };
 }
 
-function restoreOne(toolCallId: string, artifact: RollbackArtifact): { ok: boolean; error?: string } {
-  if (artifact.type === "file-backup") {
-    const to = backupTarget(toolCallId, artifact);
-    if ("error" in to) return { ok: false, error: to.error };
-    try { copyFileSync(artifact.backup, to.target); return { ok: true }; }
-    catch (e) { return { ok: false, error: (e as Error).message }; }
-  }
-  if (artifact.type === "git-stash") {
-    if (typeof artifact.sha !== "string" || !STASH_SHA.test(artifact.sha)) {
-      return { ok: false, error: `not a stash commit sha: ${String(artifact.sha)}` };
+/** Put one artifact back: copy a backup over the file, or move a file the
+ *  call created to the trash (so the undo itself can be undone). */
+export async function undoArtifact(toolCallId: string, a: RollbackArtifact, sessionId?: string): Promise<{ ok: true } | { ok: false; error: string }> {
+  const to = undoTarget(toolCallId, a, sessionId);
+  if ("error" in to) return { ok: false, error: to.error };
+  try {
+    if (a.type === "file-backup") {
+      copyFileSync(a.backup, to.target);
+    } else if (existsSync(to.target) && !(await moveToTrash(to.target, "undo"))) {
+      return { ok: false, error: `could not move ${to.target} to the trash` };
     }
-    try {
-      // Apply by SHA (stable) — see captureGitStash. `git stash drop` only
-      // accepts positional refs, so look up the current stash@{n} that
-      // matches our SHA at restore time. The ref may have shifted since
-      // capture; the SHA hasn't.
-      git(["stash", "apply", artifact.sha], artifact.cwd);
-      const list = git(["stash", "list", "--format=%H:%gd"], artifact.cwd);
-      const match = list.split("\n").find((l) => l.startsWith(artifact.sha));
-      const ref = match ? match.split(":")[1] : null;
-      if (ref) git(["stash", "drop", ref], artifact.cwd);
-      return { ok: true };
-    } catch (e) { return { ok: false, error: (e as Error).message }; }
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, error: (e as Error).message };
   }
-  return { ok: false, error: "no-op artifact" };
 }
 
-export function restoreRollback(toolCallId: string): RestoreResult {
+/** Mark calls undone and reclaim their backups: they are spent. */
+export function markRestored(toolCallIds: readonly string[], now = Date.now()): void {
+  for (const id of toolCallIds) {
+    try { appendFileSync(RESTORED_FILE, JSON.stringify({ toolCallId: id, ts: now }) + "\n"); }
+    catch (e) { logger.warn(`[rollback] failed to log restoration: ${(e as Error).message}`); }
+    if (!TOOL_CALL_ID.test(id)) continue;
+    try { rmSync(join(ROLLBACK_DIR, id), { recursive: true, force: true }); }
+    catch (e) { logger.warn(`[rollback] failed to clean ${id} dir: ${(e as Error).message}`); }
+  }
+}
+
+export async function restoreRollback(toolCallId: string): Promise<RestoreResult> {
   if (!TOOL_CALL_ID.test(toolCallId)) return { ok: false, error: `not a tool call id: ${toolCallId}` };
-  const contracts = readJsonl<RollbackContract>(INDEX_FILE).filter((c) => c.toolCallId === toolCallId);
+  const contracts = readContracts().filter((c) => c.toolCallId === toolCallId);
   if (contracts.length === 0) return { ok: false, error: `no contract for ${toolCallId}` };
   if (loadRestoredIds().has(toolCallId)) return { ok: false, error: `already restored: ${toolCallId}` };
 
   const contract = contracts[contracts.length - 1];
   const restored: RollbackArtifact[] = [];
   const skipped: RollbackArtifact[] = [];
-
   for (const a of contract.artifacts) {
     if (a.type === "none") { skipped.push(a); continue; }
-    const r = restoreOne(toolCallId, a);
+    const r = await undoArtifact(toolCallId, a, contract.sessionId);
     if (r.ok) restored.push(a);
     else { logger.warn(`[rollback] restore of ${a.type} failed: ${r.error}`); skipped.push(a); }
   }
-
   if (restored.length === 0) {
     return { ok: false, error: `nothing to restore (all ${contract.artifacts.length} artifacts were no-op or failed)` };
   }
-
-  try { appendFileSync(RESTORED_FILE, JSON.stringify({ toolCallId, ts: Date.now() }) + "\n"); }
-  catch (e) { logger.warn(`[rollback] failed to log restoration: ${(e as Error).message}`); }
-
-  // Backups for this call are spent — file-backup artifacts have already
-  // been copied back, git stashes already dropped. Reclaim the disk.
-  try { rmSync(join(ROLLBACK_DIR, toolCallId), { recursive: true, force: true }); }
-  catch (e) { logger.warn(`[rollback] failed to clean ${toolCallId} dir: ${(e as Error).message}`); }
-
+  markRestored([toolCallId]);
   return { ok: true, restored, skipped };
 }
 

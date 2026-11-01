@@ -307,6 +307,7 @@ function _renderRowNotices(bodyEl, notices) {
       if (n.kind === 'learning') bodyEl.appendChild(renderLearningNotice(n));
       else if (n.kind === 'review') bodyEl.appendChild(renderReviewNotice(n));
       else if (n.kind === 'handoff') bodyEl.appendChild(renderHandoffNotice(n));
+      else if (n.kind === 'changes') bodyEl.appendChild(renderChangesNotice(n));
       else {
         const notice = renderDeleteNotice(n);
         if (activityBody) { notice.classList.add('in-activity'); activityBody.appendChild(notice); }

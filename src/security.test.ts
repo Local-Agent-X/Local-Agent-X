@@ -409,6 +409,8 @@ describe("Prompt injection defense", () => {
         .toContain("⚠ INJECTION WARNING");
       expect(wrapExternalContent(weakSignal, "http_request", {})).toContain("⚠ INJECTION WARNING");
       expect(wrapExternalContent(weakSignal, "test")).toContain("⚠ INJECTION WARNING");
+      // 0.0.0.0 is the unspecified address, not loopback (ip-classification).
+      expect(wrapExternalContent(weakSignal, "http_request", { url: "http://0.0.0.0:3000/x" })).toContain("⚠ INJECTION WARNING");
     });
   });
 });

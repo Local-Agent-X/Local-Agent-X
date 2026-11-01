@@ -18,6 +18,7 @@ import {
   MEMORY_BLOCK_SINGLE,
 } from "./injection-patterns.js";
 import { mintedBlockBodies, rememberMintedBoundary } from "./external-boundaries.js";
+import { isLoopbackHost } from "./security/layer/ip-classification.js";
 import { externalContentClose, externalContentOpen, externalContentOpens } from "./external-content-markers.js";
 
 // Re-export the known-secret registry surface from its canonical home
@@ -198,19 +199,18 @@ export function redactKnownSecrets(content: string): string {
   return out;
 }
 
-// 127.0.0.0/8 (not just 127.0.0.1 — 127.x.x.x is the whole loopback block),
-// the IPv6 loopback in its bracketed and bare forms, and the "localhost"
-// name. Deliberately NOT "is this trustworthy" — it answers a narrower
-// question (is this request confined to this machine) that wrapExternalContent
-// uses only to gate the ALARM banner, never the underlying detection or the
-// boundary wrap. An unparseable/relative/missing URL is conservatively NOT
-// loopback (the pre-existing, fully-alarming behavior).
-const LOOPBACK_HOSTNAMES = new Set(["localhost", "127.0.0.1", "::1", "[::1]", "0.0.0.0"]);
+// 127.0.0.0/8 (not just 127.0.0.1 — 127.x.x.x is the whole loopback block)
+// plus the loopback names and literals ip-classification owns. Deliberately
+// NOT "is this trustworthy" — it answers a narrower question (is this request
+// confined to this machine) that wrapExternalContent uses only to gate the
+// ALARM banner, never the underlying detection or the boundary wrap. An
+// unparseable/relative/missing URL is conservatively NOT loopback (the
+// fully-alarming behavior), and so is 0.0.0.0, the unspecified address.
 function isLoopbackUrl(url: string | undefined): boolean {
   if (!url) return false;
   try {
-    const hostname = new URL(url).hostname.toLowerCase();
-    return LOOPBACK_HOSTNAMES.has(hostname) || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname);
+    const hostname = new URL(url).hostname.toLowerCase().replace(/^\[|\]$/g, "");
+    return isLoopbackHost(hostname) || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname);
   } catch {
     return false;
   }

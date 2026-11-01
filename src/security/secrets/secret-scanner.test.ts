@@ -541,6 +541,17 @@ describe("scanForSecrets — high-entropy detector (positives)", () => {
     expect(missed).toBe(0);
   });
 
+  // The hex-of-text exemption must not swallow hex key material: random bytes
+  // decode to about 37% printable, far under the text ratio.
+  it("flags random hex key material that is not a hash length", () => {
+    let missed = 0;
+    for (let i = 0; i < 500; i++) {
+      const hex = randomBytes(24).toString("hex"); // 48 hex chars
+      if (scanForSecrets(`value ${hex} end`).clean) missed++;
+    }
+    expect(missed).toBe(0);
+  });
+
   it("flags a random 48-char base64-ish token", () => {
     const token = randomBase64ish(36).slice(0, 48);
     const text = `received ${token} from upstream`;
@@ -567,6 +578,8 @@ describe("scanForSecrets — high-entropy detector (false-positive traps stay cl
     // TB2 build-pov-ray (2026-10-27): a download refused as carrying a token.
     ["a URL path of title-case words", "https://cept.org/files/download/software/Official-POV-Ray_Source_Code/Old_Versions/POV-Ray/v22/povray-2.2-full.tar.gz.gz"],
     ["an upper/title-case slug", "see Release_Notes-FINAL-Draft_2026 for details"],
+    // A PJ's Disneyland download (2026-11-01): the link hex-encodes its asset path.
+    ["a download link that hex-encodes a path", "https://kenney.nl/download-link/" + Buffer.from("assets/modular-buildings", "utf8").toString("hex")],
   ];
 
   for (const [label, text] of benign) {

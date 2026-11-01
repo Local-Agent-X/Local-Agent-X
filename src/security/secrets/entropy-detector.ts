@@ -20,7 +20,7 @@
  *     temp-dir names, nanoids, and slugs, NOT secrets. A real base64-alphabet
  *     secret almost always mixes case; requiring mixed case removes this whole
  *     benign-ID FP class (FN: an all-lowercase secret slips, accepted).
- *   - base64 that decodes to mostly-printable text — i.e. base64-OF-PROSE. Per
+ *   - hex or base64 that decodes to mostly-printable text: an encoding OF TEXT. Per
  *     bits/char alone this is indistinguishable from a real token (b64 of
  *     English ~4.4 bits/char), so we decode and skip runs that round-trip to
  *     >85% printable ASCII. Real key material decodes to high-binary bytes
@@ -84,6 +84,11 @@ const HASH_HEX_LENGTHS = new Set([32, 40, 64]);
 
 function isExcludedHex(run: string): boolean {
   if (HASH_HEX_LENGTHS.has(run.length)) return true;
+  // Hex OF TEXT, the hex twin of the base64-of-prose rule below: a download
+  // link that encodes its asset path (kenney.nl/download-link/6173736574732f...
+  // is "assets/...") was refused as a secret (2026-11-01). Key material
+  // decodes to random bytes, about 37% printable.
+  if (run.length % 2 === 0 && printableRatio(Buffer.from(run, "hex")) > PRINTABLE_TEXT_RATIO) return true;
   return false;
 }
 

@@ -83,6 +83,8 @@ import type { Op } from "../../ops/types.js";
 import { _resetMiddlewareStates } from "../middlewares/state.js";
 import { MISSING_TOOL_RESULT_TEXT } from "./orphan-tool-results.js";
 import { appendNudgeAsUserMessage } from "./nudges.js";
+import { hasInjects, opConsumesInjects } from "../../agent-loop/inject-queue.js";
+import { getSessionForOp } from "../../ops/session-bridge.js";
 import { failedCallNudge } from "./failed-call-gate.js";
 import { REASONING_ONLY_NUDGE } from "./empty-turn-termination.js";
 import { STREAM_CLOSED_STOP } from "../../providers/adapter/types.js";
@@ -1544,6 +1546,24 @@ describe("decideTurnOutcome — interactive fully-empty turns terminate (no maxT
     const r2 = await decideTurnOutcome(empty({ hasReasoning: true, modelSignaledDone: false }));
     expect(r2.terminalReason).toBe("done");
     expect(assistantTexts(r2).join(" ")).toMatch(/wasn't able to produce a response/);
+  });
+
+  it("(c1) a round cut short by the user's own message is not nudged, and does not end the turn", async () => {
+    // The stream stops the moment the user sends (interruptedByInject); the
+    // round had only thought so far. The next round answers the user.
+    vi.mocked(opConsumesInjects).mockReturnValue(true);
+    vi.mocked(getSessionForOp).mockReturnValue("sess-waiting");
+    vi.mocked(hasInjects).mockReturnValue(true);
+    try {
+      const r = await decideTurnOutcome(empty({ hasReasoning: true, modelSignaledDone: false }));
+      expect(appendNudgeAsUserMessage).not.toHaveBeenCalledWith(iop.id, 1, REASONING_ONLY_NUDGE, expect.anything());
+      expect(r.terminalReason).toBeNull();
+      expect(assistantTexts(r)).toEqual([]);
+    } finally {
+      vi.mocked(opConsumesInjects).mockReturnValue(false);
+      vi.mocked(getSessionForOp).mockReturnValue(undefined);
+      vi.mocked(hasInjects).mockReturnValue(false);
+    }
   });
 
   it("(c2) a reasoning-only turn with no nudge budget left ends honestly at once", async () => {

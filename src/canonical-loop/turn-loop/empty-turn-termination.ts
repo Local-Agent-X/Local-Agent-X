@@ -20,6 +20,23 @@ import type { ToolCall } from "../contract-types.js";
 import { appendNudgeAsUserMessage } from "./nudges.js";
 import { narrationPromisesFollowup } from "./p1-followup-detector.js";
 import { STREAM_CLOSED_STOP } from "../../providers/adapter/types.js";
+import { hasInjects, opConsumesInjects } from "../../agent-loop/inject-queue.js";
+import { getSessionForOp } from "../../ops/session-bridge.js";
+
+/**
+ * The user's own message is waiting for the next round. Every adapter cuts its
+ * stream the moment one arrives (interruptedByInject), so the round ends with
+ * whatever it had: often thinking and nothing else, or half a sentence. That is
+ * the user speaking, not the model stalling, and the next round answers them;
+ * neither nudge below applies (the reasoning-only one fired eight times in two
+ * of the owner's chats, 2026-11-01). The gate that keeps the turn open for the
+ * message reads the same queue (decide-outcome-gates.ts).
+ */
+function userMessageWaiting(op: Op): boolean {
+  if (!opConsumesInjects(op.type)) return false;
+  const sessionId = getSessionForOp(op.id);
+  return !!sessionId && hasInjects(sessionId);
+}
 
 /** The empty turn's terminal when the provider sent no response at all — on
  *  ChatGPT/OpenAI sign-in that is an expired or rotated session (signing in
@@ -127,7 +144,7 @@ export function redriveAnnouncedOnlyTurn(in_: AnnouncedOnlyTurnInput): boolean {
   // here rather than threaded through the turn input.
   const state = getMiddlewareState(op.id, ANNOUNCED_ONLY_TURN_KEY, () => ({ used: false, sawTool: false }));
   if (toolCalls.length > 0) { state.sawTool = true; return false; }
-  if (state.sawTool || state.used) return false;
+  if (state.sawTool || state.used || userMessageWaiting(op)) return false;
   if (!isAnnouncedOnlyReply(assistantText)) return false;
   const nudged = appendNudgeAsUserMessage(op.id, in_.turnIdx + 1, ANNOUNCED_ONLY_NUDGE,
     { name: "announced-only", reason: "announced-only", outcome: "nudge" });
@@ -190,7 +207,7 @@ export function evaluateEmptyInteractiveTurn(
   let terminalReason = in_.terminalReason;
   let emptyInteractiveTerminal: { signaledDone: boolean; stopReason?: string } | null = null;
   const stopReason = in_.providerStop;
-  if (op.lane === "interactive" && !middlewareAborted && !middlewareSuspended) {
+  if (op.lane === "interactive" && !middlewareAborted && !middlewareSuspended && !userMessageWaiting(op)) {
     const noOutput = assistantText.trim().length === 0 && toolCalls.length === 0;
     const fullyEmpty = noOutput && !hasReasoning;
     const emptyState = getMiddlewareState(op.id, INTERACTIVE_EMPTY_TURN_KEY, () => ({ consecutive: 0 }));

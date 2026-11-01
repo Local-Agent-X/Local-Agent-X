@@ -62,7 +62,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/ari-kernel/` | 12 | 12 | M |  |
 | `src/integrations/` | 12 | 15 | M |  |
 | `src/whatsapp-bridge/` | 12 | 8 | M | 1 |
-| `src/agent-loop/` | 10 | 1 | S |  |
+| `src/agent-loop/` | 11 | 1 | S |  |
 | `src/persistence/` | 10 | 2 | S |  |
 | `src/routes/` | 10 | 98 | XL | 17 |
 | `src/sync/` | 10 | 21 | L | 1 |

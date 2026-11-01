@@ -12,6 +12,7 @@ import { applyIrreversibleFloor, destructiveOperationReason, isDestructiveComman
 import { clearTaskArtifacts, recordTaskArtifact } from "../data-lineage/task-artifacts.js";
 import { clearExternalIngestion, recordExternalIngestion } from "../data-lineage/external.js";
 import { disposableFileDeletes, isDisposableTreeDelete, type TreeDeleteScope } from "./disposable-tree-delete.js";
+import { resolveWindowsShell } from "../tools/shell-env.js";
 
 let root: string;
 let scope: TreeDeleteScope;
@@ -63,6 +64,15 @@ describe("recursive deletes that destroy nothing anyone needs run without a card
 
   // TB2 qemu-startup, 2026-10-27: `cd /tmp/alpboot && rm -rf rootfs && mkdir
   // rootfs` waited on a card for a temp folder the model had made.
+  // The 2026-10-31 card: the folder named through a variable the line
+  // assigns, made by the command, and nothing in it yet.
+  it("a folder the command makes, named through a literal the line assigns", () => {
+    const posix = (p: string) => p.replace(/\\/g, "/");
+    expect(floor(`W="${posix(root)}"; ls -a "$W/project"; mkdir -p "$W/new-app" && cd "$W/new-app" && rm -rf package three.tgz`)).toBe("allow-with-rollback");
+    expect(floor(`W="${posix(root)}"; cd "$W/project" && rm -rf client-data`)).toBe("ask");
+    expect(floor(`W=$(pwd); mkdir -p "$W/new-app" && cd "$W/new-app" && rm -rf package`)).toBe("ask");
+  });
+
   it("a plain cd opening the command: the targets resolve in the folder it enters", () => {
     const work = join(root, "os-temp", "alpboot");
     mkdirSync(join(work, "rootfs"), { recursive: true });
@@ -233,9 +243,14 @@ describe("every lookalike keeps the card", () => {
     expect(floor("rm -rf venv")).toBe("ask");
   });
 
-  it.runIf(process.platform === "win32")("on Windows, a Git Bash path, which this cannot place (it would read as absent)", () => {
-    expect(floor("rm -rf /c/Users/nobody/thesis")).toBe("ask");
-    expect(floor("cd /c/Users/nobody && rm -rf thesis")).toBe("ask");
+  // Under Git Bash `/c/…` is `C:\…` (shell-proof-text.ts); under the PowerShell
+  // fallback it is a path this cannot place, which would read as absent.
+  it.runIf(process.platform === "win32")("on Windows, a Git Bash path is placed only when Git Bash runs the command", () => {
+    const gitBash = resolveWindowsShell().kind === "bash";
+    const msys = (p: string) => p.replace(/^([A-Za-z]):/, (_m, d: string) => `/${d.toLowerCase()}`).replace(/\\/g, "/");
+    expect(floor(`rm -rf ${msys(join(root, "project", "client-data"))}`)).toBe("ask");
+    expect(floor(`rm -rf ${msys(join(root, "project", "not-there"))}`)).toBe(gitBash ? "allow-with-rollback" : "ask");
+    expect(floor(`cd ${msys(join(root, "project"))} && rm -rf not-there`)).toBe(gitBash ? "allow-with-rollback" : "ask");
   });
 });
 

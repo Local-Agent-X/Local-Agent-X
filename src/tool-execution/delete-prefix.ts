@@ -164,6 +164,22 @@ function enterable(dir: string): boolean {
 const OPENS = /^(?:if|while|until|for|select|case|function)\b|^[({]|\(\)\s*\{?$/;
 const CLOSES = /^(?:fi|done|esac)\b|^[)}]/;
 
+/** The compound-command depth each top-level segment of `line` opens at:
+ *  0 outside every if/for/while/case/function, brace group and subshell. A
+ *  segment at depth 0 runs when the line runs; one deeper runs only when its
+ *  compound does. */
+export function segmentDepths(line: string): number[] {
+  const depths: number[] = [];
+  let open = 0;
+  for (const s of shellSegments(line)) {
+    const words = tokenizeCommand(s.text);
+    if (CLOSES.test(words[0] ?? "")) open = Math.max(0, open - 1);
+    depths.push(open);
+    if (OPENS.test(s.text.trim())) open++;
+  }
+  return depths;
+}
+
 /**
  * Does a failed `cd` at top-level segment `at` end the script? `set -e` is on
  * at the top level before it and not turned off, the cd opens its own segment

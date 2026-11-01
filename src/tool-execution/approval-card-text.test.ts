@@ -28,6 +28,12 @@ describe("what an irreversible shell command would do, in plain words", () => {
     expect(text).toContain('Permanently deletes "package" in a folder the command changes into.');
   });
 
+  it("a cd through a name the line assigns is placed, so the folder is named", () => {
+    const posix = dir.replace(/\\/g, "/");
+    const text = destructiveExplanation("bash", shell(`W="${posix}"; mkdir -p "$W/app" && cd "$W/app" && rm -rf package`), "rm -rf", dir);
+    expect(text).toContain(`Permanently deletes "package" in ${join(dir, "app")}.`);
+  });
+
   it("a composed delete says what decides the files", () => {
     expect(destructiveExplanation("bash", shell("find build -name '*.o' -delete"), "find -delete", dir))
       .toContain('Deletes the files find selects under "build"');
@@ -71,7 +77,8 @@ describe("the card for a shell ask", () => {
 
   it("an irreversible one leads with what it would delete, not the command", () => {
     const { context, preview } = card(long);
-    expect(context).toMatch(/^⚠ Cannot be undone — Permanently deletes "package" and "three-0.170.0.tgz" in a folder the command changes into\. Deleted files do not go to the recycle bin\. \(rm -rf\)$/);
+    // Where the folder is named depends on the box (Git Bash places `/c/…`); what is deleted does not.
+    expect(context).toMatch(/^⚠ Cannot be undone — Permanently deletes "package" and "three-0.170.0.tgz" in .+\. Deleted files do not go to the recycle bin\. \(rm -rf\)$/);
     expect(preview).toMatchObject({ explanation: expect.stringContaining('"package" and "three-0.170.0.tgz"') });
   });
 

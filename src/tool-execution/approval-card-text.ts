@@ -21,6 +21,7 @@ import { shellCommandOf } from "../tool-registry.js";
 import { shellDeletes, type ShellDelete } from "../security/layer/shell-delete-targets.js";
 import { deleteLine } from "./delete-prefix.js";
 import { shellTreeDeleteScope } from "./tree-delete-scope.js";
+import { proofText } from "./shell-proof-text.js";
 
 /** The destructive reasons that are not deletes (approval-decision.ts
  *  DESTRUCTIVE_COMMAND_PATTERNS), each in plain words. A delete's words come
@@ -64,7 +65,8 @@ export function destructiveExplanation(toolName: string, args: Record<string, un
   if (command === undefined) return reason;
   const plain = PLAIN[reason];
   if (plain) return `${plain}.`;
-  const deletes = shellDeletes(deleteLine(command) ?? command, cwd).filter((d) => d.recursive || d.opaque);
+  const read = proofText(command);
+  const deletes = shellDeletes(deleteLine(read) ?? read, cwd).filter((d) => d.recursive || d.opaque);
   const what = deletes.length > 0 ? deletes.map(describeDelete).join("; ") : `Permanently deletes files (${reason})`;
   return `${what}. Deleted files do not go to the recycle bin.`;
 }

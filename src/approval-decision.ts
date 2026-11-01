@@ -25,6 +25,7 @@ import { declaredPaths, hasCapability, pathSpecsForCall, policyRowOf, shellComma
 import { TOOL_POLICIES } from "./tool-policy/tool-policies.js";
 import { declaredDestinations, destinationKey } from "./tool-execution/send-destinations.js";
 import { isDisposableTreeDelete, type TreeDeleteScope } from "./tool-execution/disposable-tree-delete.js";
+import { proofText } from "./tool-execution/shell-proof-text.js";
 import { commandsBashRuns } from "./security/layer/shell-source-text.js";
 import { shellSegments } from "./security/layer/shell-lex.js";
 import { consentedInChat, type ChatTurn } from "./tool-execution/chat-consent.js";
@@ -417,7 +418,7 @@ export function isDestructiveCommand(
 function approvalShellReason(toolName: string, args: Record<string, unknown>, treeDelete?: TreeDeleteScope): string | null {
   const reason = isDestructiveCommand(toolName, args);
   if (reason === null || !treeDelete) return reason;
-  const cmd = floorText(shellCommandOf(toolName, args) ?? "");
+  const cmd = floorText(proofText(shellCommandOf(toolName, args) ?? ""));
   const trips = (segment: string) => DESTRUCTIVE_COMMAND_PATTERNS.some(({ pattern }) => pattern.test(segment));
   return isDisposableTreeDelete(cmd, trips, treeDelete) ? null : reason;
 }

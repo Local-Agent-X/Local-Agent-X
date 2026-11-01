@@ -1,5 +1,4 @@
 import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
 
 export type ExportFormat = "json" | "markdown";
 
@@ -26,16 +25,6 @@ interface ExportedSession {
   attachments?: Array<{ name: string; mimeType: string; base64: string }>;
 }
 
-function loadSession(sessionDir: string, sessionId: string): SessionData {
-  // Sanitize sessionId to prevent path traversal
-  const safeId = sessionId.replace(/[^a-zA-Z0-9_-]/g, "_");
-  const sessionFile = join(sessionDir, `${safeId}.json`);
-  if (!existsSync(sessionFile)) {
-    throw new Error(`Session not found: ${sessionId}`);
-  }
-  return JSON.parse(readFileSync(sessionFile, "utf-8"));
-}
-
 function encodeAttachment(filePath: string): string | null {
   if (!existsSync(filePath)) return null;
   return readFileSync(filePath).toString("base64");
@@ -56,12 +45,9 @@ function formatTimestamp(ts: number): string {
   return new Date(ts).toISOString().replace("T", " ").replace(/\.\d+Z$/, " UTC");
 }
 
-export function exportSession(
-  sessionDir: string,
-  sessionId: string,
-  format: ExportFormat,
-): string {
-  const session = loadSession(sessionDir, sessionId);
+/** The caller loads the session through the SessionStore (routes/sessions.ts);
+ *  this used to look for `<dataDir>/<id>.json`, which no store writes. */
+export function exportSession(session: SessionData, format: ExportFormat): string {
 
   if (format === "json") {
     const exported: ExportedSession = {

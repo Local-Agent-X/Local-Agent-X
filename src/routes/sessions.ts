@@ -4,8 +4,8 @@ import { isHarnessRow } from "../harness-rows.js";
 import { join } from "node:path";
 import type { RouteHandler } from "../server-context.js";
 import { isValidSessionId, safeErrorMessage, safeParseBody, jsonResponse } from "../server-utils.js";
-import { exportSession, importSession } from "../session/export.js";
-import { loadSessionPage } from "../progressive-loader.js";
+import { importSession } from "../session/export.js";
+import { handleSessionReadRoutes } from "./session-read.js";
 import { isExcludedFromSessionSummaries, isHiddenFromChatLists } from "../memory/synthetic-sessions.js";
 import { handleSessionFork } from "./sessions-fork.js";
 
@@ -133,30 +133,14 @@ export const handleSessionRoutes: RouteHandler = async (method, url, req, res, c
     return true;
   }
 
-  // Get single session
-  if (method === "GET" && url.pathname.startsWith("/api/sessions/") && url.pathname.endsWith("/export")) {
-    const id = url.pathname.split("/")[3];
-    const format = (url.searchParams.get("format") || "json") as "json" | "markdown";
-    try {
-      json(200, exportSession(ctx.dataDir, id, format)); return true;
-    } catch (e) { json(404, { error: safeErrorMessage(e) }); return true; }
-  }
+  // Reading one stored session out: its export, its messages page by page.
+  if (await handleSessionReadRoutes(method, url, req, res, ctx)) return true;
 
   if (method === "POST" && url.pathname === "/api/sessions/import") {
     try {
       const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
       json(200, await importSession(body as unknown as string)); return true;
     } catch (e) { json(400, { error: safeErrorMessage(e) }); return true; }
-  }
-
-  // Progressive loading
-  if (method === "GET" && url.pathname.startsWith("/api/sessions/") && url.pathname.endsWith("/messages")) {
-    const id = url.pathname.split("/")[3];
-    const page = parseInt(url.searchParams.get("page") || "0");
-    const pageSize = parseInt(url.searchParams.get("pageSize") || "50");
-    try {
-      json(200, await loadSessionPage(id, page, pageSize)); return true;
-    } catch (e) { json(404, { error: safeErrorMessage(e) }); return true; }
   }
 
   // Rename session (PATCH)

@@ -1,9 +1,8 @@
 import { isHarnessRow } from "./harness-rows.js";
-import { existsSync, readFileSync } from "node:fs";
 
 interface StoredMessage {
   role: string;
-  content: unknown;
+  content?: unknown;
   timestamp?: number;
   _ephemeral?: boolean;
 }
@@ -49,13 +48,6 @@ function cleanLegacyStoppedSuffix(m: StoredMessage): StoredMessage {
   return cleaned === m.content ? m : { ...m, content: cleaned };
 }
 
-interface StoredSession {
-  id: string;
-  title: string;
-  messages: StoredMessage[];
-  createdAt: number;
-  updatedAt: number;
-}
 
 export interface PageResult {
   messages: StoredMessage[];
@@ -68,35 +60,18 @@ export interface PageResult {
 
 const DEFAULT_PAGE_SIZE = 50;
 
-function resolveSessionPath(sessionId: string): string {
-  // Sanitize sessionId to prevent path traversal
-  const safeId = sessionId.replace(/[^a-zA-Z0-9_-]/g, "_");
-  const candidates = [
-    safeId,
-    safeId + ".json",
-  ];
-  for (const c of candidates) {
-    if (existsSync(c)) return c;
-  }
-  throw new Error(`Session not found: ${sessionId}`);
-}
-
-function readSession(sessionPath: string): StoredSession {
-  const raw = readFileSync(sessionPath, "utf-8");
-  return JSON.parse(raw);
-}
-
-export function getSessionMessageCount(sessionId: string): number {
-  const session = readSession(resolveSessionPath(sessionId));
-  return session.messages.length;
-}
-
+/**
+ * One page of a session's visible messages, newest page first. The caller
+ * loads the session through the SessionStore (routes/sessions.ts): this used
+ * to open `<id>` or `<id>.json` relative to the server's own folder, files no
+ * store has written since sessions moved to `sessions/<id>.jsonl`, so every
+ * /messages call answered 404 and a fork into Code mode opened empty.
+ */
 export function loadSessionPage(
-  sessionId: string,
+  session: { messages: StoredMessage[] },
   page: number = 0,
   pageSize: number = DEFAULT_PAGE_SIZE,
 ): PageResult {
-  const session = readSession(resolveSessionPath(sessionId));
   // Filter out middleware-nudge / ephemeral messages BEFORE pagination so
   // page indices stay stable from the user's perspective. A polluted session
   // JSON would otherwise show "page 1 of 5" with one nudge and one real

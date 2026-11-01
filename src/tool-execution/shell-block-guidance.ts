@@ -8,7 +8,7 @@ import { TAINTED_CONTENT_SOURCES } from "@arikernel/core";
 import { USER_HINTS, type ToolResult } from "../types.js";
 import { hasCapability } from "../tool-registry.js";
 import { findTaintInPayload, detectSecretsInOutput } from "../data-lineage/index.js";
-import { registeredOnlyAsSeen, scanForSecrets } from "../security/secrets/index.js";
+import { registeredOnlyAsSeen, scanKnownSecretValues } from "../security/secrets/index.js";
 import { commandSinksOnlyLocal } from "../security/layer/shell-local-sink.js";
 import { storedSecretRoute } from "./stored-secret-route.js";
 
@@ -122,8 +122,12 @@ export function knownSecretShellBlockReason(toolName: string, args: unknown, use
   const payload = shellCommandPayload(args);
   if (!payload) return null;
   const userGave = (value: string) => userWords.includes(value) && registeredOnlyAsSeen(value);
-  const hits = scanForSecrets(payload).matches
-    .filter((m) => m.type === "known-secret-value" && !userGave(payload.slice(m.startIndex, m.endIndex))).length;
+  // The known-value pass alone: the full scan keeps one match per span, so a
+  // registered value with a recognizable shape (an AWS key) came back typed
+  // as that shape and was not counted as known (found replaying TB2
+  // sanitize-git-repo's commands, 2026-10-31).
+  const hits = scanKnownSecretValues(payload)
+    .filter((m) => !userGave(payload.slice(m.startIndex, m.endIndex))).length;
   if (hits === 0 || commandSinksOnlyLocal(payload)) return null;
   return (
     `Shell is blocked for this command: it carries a stored secret value (${hits} occurrence${hits === 1 ? "" : "s"}, plain or encoded) — ` +

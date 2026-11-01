@@ -122,6 +122,13 @@ describe("browser identity isolation config migration", () => {
     });
   });
 
+  it("never takes an xAI key as the OpenAI key: xAI resolves XAI_API_KEY itself", () => {
+    writeFileSync(configPath, JSON.stringify({ workspace: resolve("workspace"), sandboxModeMigrated: true, browserPerSessionContextMigrated: true }), "utf-8");
+    withEnvironment({ XAI_API_KEY: "ENV_XAI_ONLY", OPENAI_API_KEY: undefined, LAX_DOCUMENTS_DIR: undefined }, () => {
+      expect(loadConfig().openaiApiKey).toBeUndefined();
+    });
+  });
+
   it("persists a generated auth token without persisting other env overlays", () => {
     writeFileSync(configPath, JSON.stringify({
       model: "disk-generated-auth-model",

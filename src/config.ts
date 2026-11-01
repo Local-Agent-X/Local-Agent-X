@@ -113,8 +113,9 @@ export function loadConfig(): LAXConfig {
     }
   }
 
-  // Environment variable overrides
-  if (process.env.XAI_API_KEY) raw.openaiApiKey = process.env.XAI_API_KEY;
+  // Environment variable overrides. openaiApiKey is read as an OpenAI key by
+  // every consumer; an XAI_API_KEY copied into it was sent to OpenAI. xAI
+  // resolves XAI_API_KEY itself (auth/auth-provider.ts).
   if (process.env.OPENAI_API_KEY) raw.openaiApiKey = process.env.OPENAI_API_KEY;
   const portEnv = process.env.LAX_PORT;
   if (portEnv) raw.port = parseInt(portEnv, 10);

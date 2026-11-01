@@ -107,7 +107,7 @@ function applyStringEdit(content: string, rawOld: string, rawNew: string, replac
 function commitEdit(filePath: string, updated: string, verb: string, allowSyntaxErrors: boolean, sessionId: string | undefined): ToolResult {
   const connectorRejection = connectorManifestWriteRejection(filePath);
   if (connectorRejection) return err(connectorRejection);
-  const guard = checkAppWrite(filePath, updated, sessionId);
+  const guard = checkAppWrite(filePath, updated, sessionId, { edit: true });
   if (!guard.allow) return err(guard.message ?? writeGuardRejectionMessage(guard.reason ?? "policy violation"));
   const before = existsSync(filePath) ? readFileSync(filePath, "utf-8") : null;
   const verdict = checkEditSyntax(filePath, before, updated);

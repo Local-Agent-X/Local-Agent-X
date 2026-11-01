@@ -116,12 +116,14 @@ function builtArtifactWarning(filePath: string): string | null {
   );
 }
 
-/** `sessionId` keys the design gate: the session whose agent is writing. */
-export function checkAppWrite(filePath: string, content: string, sessionId?: string): WriteGuardResult {
+/** `sessionId` keys the design gate: the session whose agent is writing.
+ *  `edit` marks a targeted edit (the edit tools), which the design gate lets
+ *  through for a file that exists. */
+export function checkAppWrite(filePath: string, content: string, sessionId?: string, opts: { edit?: boolean } = {}): WriteGuardResult {
   const parts = appRootAndRel(filePath, sessionId);
   if (!parts) return { allow: true };
   if (!parts.workspaceApp) {
-    const design = designGateRejection(parts.root, appIdOf(parts.root), filePath, content, sessionId, { newProjectOnly: true });
+    const design = designGateRejection(parts.root, appIdOf(parts.root), filePath, content, sessionId, { newProjectOnly: true, edit: opts.edit });
     return design ? { allow: false, reason: "design system not yet loaded for this project", message: design } : { allow: true };
   }
 
@@ -130,7 +132,7 @@ export function checkAppWrite(filePath: string, content: string, sessionId?: str
 
   // Before the content checks: a design rejection means rewriting the file, so
   // it must not wait behind a CDN fix and cost a second full draft.
-  const design = designGateRejection(parts.root, appIdOf(parts.root), filePath, content, sessionId);
+  const design = designGateRejection(parts.root, appIdOf(parts.root), filePath, content, sessionId, { edit: opts.edit });
   if (design) return { allow: false, reason: "design system not yet loaded for this app", message: design };
 
   for (const host of BLOCKED_CDNS) {

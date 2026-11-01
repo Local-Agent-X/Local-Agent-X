@@ -66,6 +66,14 @@ describe("the first UI write to an app carries the design system", () => {
     expect(r.message).toContain("DESIGN SYSTEM");
   });
 
+  it("lets a targeted edit of a file that exists through, and still holds a new file and a whole-file rewrite", () => {
+    mkdirSync(join(apps, "old"), { recursive: true });
+    writeFileSync(join(apps, "old", "index.html"), PAGE);
+    expect(checkAppWrite(join(apps, "old", "index.html"), PAGE.replace("x", "y"), "s-edit", { edit: true }).allow).toBe(true);
+    expect(checkAppWrite(join(apps, "old", "about.html"), PAGE, "s-edit", { edit: true }).allow).toBe(false);
+    expect(checkAppWrite(join(apps, "old", "index.html"), PAGE, "s-rewrite").allow).toBe(false);
+  });
+
   it("is per session: another conversation has not seen it", () => {
     const path = join(apps, "bot", "index.html");
     markDesignDelivered("s1", "bot");

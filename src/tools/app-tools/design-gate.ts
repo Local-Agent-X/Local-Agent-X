@@ -12,7 +12,7 @@
  * Two doors, one record:
  *   - `app_design_brief` — the agent asks for the system before writing (the
  *     system prompt says to). Costs nothing on a turn that builds no app.
- *   - the write gate (checkAppWrite) — the first UI write to an app in a
+ *   - the write gate (checkAppWrite) — the first UI file written into an app in a
  *     session that has not seen the system is refused, and the refusal CARRIES
  *     the system, so the next attempt lands. Code enforces what the prompt
  *     asks for; an agent without the tool still cannot write past it.
@@ -26,6 +26,7 @@
  * the agent sees the system again before writing, which is the point.
  * Disable with LAX_APP_DESIGN_GUARD=0.
  */
+import { existsSync } from "node:fs";
 import type { ToolDefinition } from "../../types.js";
 import { sessionIdOf } from "../../workspace/paths.js";
 import {
@@ -89,10 +90,19 @@ export function designGateRejection(
   filePath: string,
   content: string,
   sessionId: string | undefined,
-  opts: { /** Only a project with no files yet is held for the system: its first draft is the one to land on-spec. */ newProjectOnly?: boolean } = {},
+  opts: {
+    /** Only a project with no files yet is held for the system: its first draft is the one to land on-spec. */
+    newProjectOnly?: boolean;
+    /** A targeted edit (edit, edit_lines, multi_edit) of a file that exists: it
+     *  keeps the file's look, so it is never held. A whole-file write still is.
+     *  Refusing one cost a round for a one-token cache-bust (`v=7` → `v=8`,
+     *  after a restart emptied the in-memory record, 2026-11-01). */
+    edit?: boolean;
+  } = {},
 ): string | null {
   if (process.env.LAX_APP_DESIGN_GUARD === "0") return null;
   if (!DESIGN_EXT_RE.test(filePath)) return null;
+  if (opts.edit && existsSync(filePath)) return null;
   if (designDelivered(sessionId, appId)) return null;
   if (opts.newProjectOnly && !appFolderIsNew(appRoot)) return null;
   const system = renderAppDesignSystem(appRoot, content);

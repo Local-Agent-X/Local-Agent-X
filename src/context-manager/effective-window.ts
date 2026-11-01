@@ -51,7 +51,16 @@ export const CLI_EFFECTIVE_WINDOW = 200_000;
  * 24b28575).
  */
 export const SUBSCRIPTION_PROVEN_WINDOWS: Record<string, number> = {
-  "claude-opus-5": 425_000,   // op_chat_turn_03762399d7564b73: 425,357 tokens, 2026-09-03 (oauth)
+  // Probe 2026-10-31 (tmp/window-probe.ts, the same chokepoint and credential;
+  // logs in reports/window-probe-<model>-2026-10-31.txt): 649,405 then 949,107
+  // input tokens served, "OK" answered. Chat op op_chat_turn_03762399d7564b73
+  // had proven 425,357 on 2026-09-03.
+  "claude-opus-5": 949_000,
+  // Probe 2026-10-31: 949,073 input tokens served; the answer was a refusal
+  // of the nonsense padding, a model verdict on an accepted prompt.
+  "claude-fable-5-1": 949_000,
+  // Probe 2026-10-31: 649,385 then 949,073 input tokens served, "OK" answered.
+  "claude-sonnet-5-5": 949_000,
   // Deliberate probe 2026-10-26 (tmp/window-probe.ts through the stream
   // chokepoint on the subscription credential): 649,385 and 949,073 input
   // tokens both served (input_tokens in the response usage; the second answer

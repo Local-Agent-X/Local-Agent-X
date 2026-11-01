@@ -68,7 +68,7 @@ describe("effectiveContextWindow", () => {
 	});
 
 	it("sizes measured models on the subscription lane by what it has served", () => {
-		expect(effectiveContextWindow("claude-opus-5", "cli")).toBe(425_000);
+		expect(effectiveContextWindow("claude-opus-5", "cli")).toBe(949_000);
 		expect(effectiveContextWindow("claude-opus-5-5", "cli")).toBe(949_000);
 		expect(effectiveContextWindow("claude-opus-4-8", "cli")).toBe(276_000);
 		expect(effectiveContextWindow("claude-opus-4-8[1m]", "cli")).toBe(276_000);

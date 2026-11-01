@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1897 non-test source files · 88 oversized · 247 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1898 non-test source files · 88 oversized · 247 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -24,7 +24,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/tools/` | 122 | 224 | XL | 9 |
 | `src/tool-execution/` | 85 | 82 | XL | 2 |
 | `src/workspace/` | 83 | 3 | M |  |
-| `src/canonical-loop/` | 81 | 278 | XL | 11 |
+| `src/canonical-loop/` | 81 | 279 | XL | 11 |
 | `src/providers/` | 72 | 27 | L | 1 |
 | `src/data-lineage/` | 56 | 12 | L |  |
 | `src/session/` | 56 | 9 | M |  |

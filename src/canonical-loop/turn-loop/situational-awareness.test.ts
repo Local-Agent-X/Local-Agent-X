@@ -112,6 +112,16 @@ describe("composeDigest", () => {
     expect(d).toContain("Hard constraints (do not violate): do not touch auth");
   });
 
+  it("names the request's files that are not on disk yet, with the goal restatement", () => {
+    const d = composeDigest({ turnIdx: 8, recent: [], firstUserText: "write /app/program.py", missingFiles: ["/app/program.py"] });
+    expect(d).toContain("Files your request names that are not on disk now: /app/program.py");
+  });
+
+  it("leaves the missing-files line out before the restate turn and when every named file exists", () => {
+    expect(composeDigest({ turnIdx: 1, recent: [], firstUserText: "write /app/program.py", missingFiles: ["/app/program.py"] })).not.toContain("not on disk");
+    expect(composeDigest({ turnIdx: 8, recent: [], firstUserText: "write /app/program.py", missingFiles: [] })).not.toContain("not on disk");
+  });
+
   it("omits criteria/constraints before the restate threshold", () => {
     const d = composeDigest({
       turnIdx: 2,

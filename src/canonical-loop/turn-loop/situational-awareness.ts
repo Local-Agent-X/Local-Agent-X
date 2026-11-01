@@ -46,8 +46,9 @@ import { getOpenTasksForSession } from "../../tools/task-tools.js";
 import { resolveOpModel } from "../op-model.js";
 import { classifyModel, type ModelTier } from "../../model-tiers.js";
 import { createLogger } from "../../logger.js";
-import { sessionWorkRootOf } from "../../workspace/paths.js";
+import { resolveAgentPath, sessionWorkRootOf } from "../../workspace/paths.js";
 import { workRootGitLine } from "./work-root-git.js";
+import { missingNamedFiles } from "./request-named-paths.js";
 
 const logger = createLogger("canonical-loop.situational-awareness");
 
@@ -112,8 +113,12 @@ export async function buildSituationalAwareness(op: Op, turnIdx: number): Promis
   // turns where the plan was written. Shown on every turn, not just the restate
   // ones — losing your place is most likely deep in a long task.
   const openTasks = sessionId ? getOpenTasksForSession(sessionId) : [];
+  // The files the request names that are still not on disk, checked when the
+  // goal is restated: by then the agent is deep enough in that a named output
+  // never written is the thing most worth knowing (request-named-paths.ts).
+  const missingFiles = firstUserText ? missingNamedFiles(firstUserText, (p) => resolveAgentPath(p, sessionId || undefined)) : [];
   const digest = composeDigest({
-    turnIdx, recent, firstUserText, successCriteria, constraints, restateAfter, openTasks,
+    turnIdx, recent, firstUserText, successCriteria, constraints, restateAfter, openTasks, missingFiles,
     gitStatus: gitStatus ?? undefined,
   });
   // Debug seam: the digest is ephemeral (injected into the prompt, never
@@ -138,6 +143,8 @@ export function composeDigest(input: {
   openTasks?: { id: string; description: string }[];
   /** The session's repository state, one line (work-root-git.ts). */
   gitStatus?: string;
+  /** Files the request names that are not on disk now (request-named-paths.ts). */
+  missingFiles?: string[];
 }): string | null {
   const { turnIdx, recent, firstUserText } = input;
   const successCriteria = input.successCriteria ?? [];
@@ -160,6 +167,8 @@ export function composeDigest(input: {
   if (turnIdx >= restateAfter) {
     const goal = goalLine(firstUserText);
     if (goal) lines.push(goal);
+    const missing = input.missingFiles ?? [];
+    if (missing.length > 0) lines.push(`Files your request names that are not on disk now: ${missing.join(", ")}`);
     const criteriaLine = bulletLine("Success criteria (all must hold before you finish)", successCriteria);
     if (criteriaLine) lines.push(criteriaLine);
     const constraintLine = bulletLine("Hard constraints (do not violate)", constraints);

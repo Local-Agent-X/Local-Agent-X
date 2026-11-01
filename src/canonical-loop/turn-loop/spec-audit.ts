@@ -28,6 +28,7 @@ import { getSessionForOp } from "../../ops/session-bridge.js";
 import { resolveAgentPath } from "../../workspace/paths.js";
 import { auditDoneClaim, AUDIT_EVIDENCE_LIMIT } from "../../classifiers/done-claim-audit.js";
 import { collectDiffEvidence } from "./diff-evidence.js";
+import { pathsNamedIn } from "./request-named-paths.js";
 import { createLogger } from "../../logger.js";
 import type { Op } from "../../ops/types.js";
 
@@ -69,8 +70,6 @@ async function defaultCollectEvidence(absPaths: string[], signal?: AbortSignal):
  * run (openssl-selfsigned-cert, mteb-leaderboard, reshard-c4-data,
  * 2026-10-29). Goes AHEAD of the diff so the head-truncation never cuts it.
  */
-const PATH_IN_REQUEST = /(?:^|[\s"'`(\[])((?:\/|~\/|\.{1,2}\/)?[\w.-]+(?:\/[\w.-]+)+|\/[\w.-]+)/g;
-const MAX_NAMED_PATHS = 12;
 const NAMED_HEAD_CHARS = 400;
 const NAMED_READ_MAX_BYTES = 200_000;
 
@@ -92,13 +91,8 @@ export function namedPathEvidence(
   resolve: (p: string) => string,
   describe: (abs: string) => string = describeNamedPath,
 ): string {
-  const seen = new Set<string>();
   const lines: string[] = [];
-  for (const m of request.matchAll(PATH_IN_REQUEST)) {
-    const p = m[1].replace(/[.,:;]+$/, "");
-    if (seen.has(p)) continue;
-    if (seen.size >= MAX_NAMED_PATHS) break;
-    seen.add(p);
+  for (const p of pathsNamedIn(request)) {
     let abs: string;
     try { abs = resolve(p); } catch { continue; } // outside anything the agent may reach: not evidence
     lines.push(`${p}: ${describe(abs)}`);

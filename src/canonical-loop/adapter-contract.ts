@@ -85,6 +85,15 @@ export interface TurnInput {
    * message is stable", i.e. exactly the pre-existing behavior.
    */
   ephemeralTailMessages?: number;
+  /**
+   * The messageId of the last row of history the view has settled: the tool-
+   * round prune's last stubbed row (turn-loop/prune-tool-rounds.ts). Rows up to
+   * it stay byte-identical until the next prune batch, which only changes rows
+   * after it. An adapter with explicit cache breakpoints may place a second
+   * conversation breakpoint on it, so a batch reads the prefix back instead of
+   * rewriting the whole history. Absent: no settled frontier this turn.
+   */
+  cacheFrontierMessageId?: string;
 }
 
 export type AdapterReport =

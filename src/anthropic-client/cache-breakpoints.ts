@@ -56,6 +56,12 @@ export function markConversationCache(
   messages: AnthropicMessage[],
   enabled?: boolean,
   ephemeralTail = 0,
+  /** POST-conversion index of the last row of settled history (the tool-round
+   *  prune's last stubbed row): a second breakpoint, so a prune batch, which
+   *  only changes rows after it, reads everything up to it back instead of
+   *  rewriting the history. With tools and system that makes four, the API's
+   *  limit. Placed only strictly below the main breakpoint. */
+  frontier?: number,
 ): AnthropicMessage[] {
   if (!enabled || messages.length === 0) return messages;
   // A tail that would swallow the whole conversation leaves NOTHING stable to
@@ -67,17 +73,23 @@ export function markConversationCache(
   // the first turn there is a stable row beneath the tail.
   if (ephemeralTail >= messages.length) return messages;
   const idx = messages.length - 1 - Math.max(0, ephemeralTail);
-  const target = messages[idx];
+  const out = [...messages];
+  markMessage(out, idx);
+  if (frontier !== undefined && frontier >= 0 && frontier < idx) markMessage(out, frontier);
+  return out;
+}
+
+/** Put the breakpoint on the last block of out[idx], in place. */
+function markMessage(out: AnthropicMessage[], idx: number): void {
+  const target = out[idx];
   let content: AnthropicContent[];
   if (typeof target.content === "string") {
-    if (!target.content) return messages;
+    if (!target.content) return;
     content = [{ type: "text", text: target.content, cache_control: { type: "ephemeral" } }];
   } else {
-    if (target.content.length === 0) return messages;
+    if (target.content.length === 0) return;
     content = [...target.content];
     content[content.length - 1] = { ...content[content.length - 1], cache_control: { type: "ephemeral" } };
   }
-  const out = [...messages];
   out[idx] = { ...target, content };
-  return out;
 }

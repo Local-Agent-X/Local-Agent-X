@@ -64,6 +64,9 @@ export interface AnthropicTransportRequest {
 export interface TransportMessage {
   role: "system" | "user" | "assistant" | "tool";
   content: string;
+  /** The last row of settled history (TurnInput.cacheFrontierMessageId): a
+   *  provider with explicit cache breakpoints may place one on it. */
+  cacheFrontier?: true;
   /** Required when role === "tool". */
   toolCallId?: string;
   /**

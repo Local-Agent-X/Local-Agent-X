@@ -91,8 +91,15 @@ function pin(opId: string, messageId: string): void {
  * The view with older rounds' tool output stubbed. `changed` is true whenever a
  * row was stubbed, so the caller records the view as reshaped. Without an opId
  * (direct callers, tests) the boundary is recomputed from the view alone.
+ *
+ * `frontierMessageId` is the last stubbed row: every row up to it stays
+ * byte-identical until the next batch moves the boundary, which leaves those
+ * rows alone. A provider whose cache is keyed by explicit breakpoints
+ * (Anthropic: the last stable row only) rewrote the whole history on every
+ * batch, 19-28% of two chats' cache writes (2026-11-01); a breakpoint here
+ * lets the next batch read everything before it back.
  */
-export function pruneToolRounds(messages: CanonicalMessage[], opId?: string): { messages: CanonicalMessage[]; changed: boolean } {
+export function pruneToolRounds(messages: CanonicalMessage[], opId?: string): { messages: CanonicalMessage[]; changed: boolean; frontierMessageId?: string } {
   const pinnedId = opId ? pinnedBoundary.get(opId) : undefined;
   const pinnedAt = pinnedId ? messages.findIndex((m) => m.messageId === pinnedId) : -1;
   const target = keepBoundary(messages);
@@ -103,7 +110,7 @@ export function pruneToolRounds(messages: CanonicalMessage[], opId?: string): { 
   }
   if (boundary <= 0) return { messages, changed: false };
   const out = stubRows(messages, boundary);
-  return { messages: out, changed: out.some((m, i) => m !== messages[i]) };
+  return { messages: out, changed: out.some((m, i) => m !== messages[i]), frontierMessageId: out[boundary - 1].messageId };
 }
 
 /** Test-only: forget every pinned boundary. */

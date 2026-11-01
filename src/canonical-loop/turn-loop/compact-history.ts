@@ -185,6 +185,9 @@ export interface CompactHistoryResult {
    * on it against the full replay would freeze compaction one turn later.
    */
   compacted: boolean;
+  /** The last row the tool-round prune stubbed, when it is still in the view:
+   *  stable until the next batch, so a provider can cache up to it. */
+  cacheFrontierMessageId?: string;
 }
 
 /**
@@ -204,7 +207,9 @@ export async function compactHistory(
 ): Promise<CompactHistoryResult> {
   const pruned = pruneToolRounds(messages, opId);
   const result = await summarizeOverThreshold(pruned.messages, model, usage, opId, baselineTokens, sessionBacked, transport);
-  return { messages: result.messages, compacted: result.compacted || pruned.changed };
+  const frontier = pruned.frontierMessageId;
+  const kept = frontier !== undefined && result.messages.some((m) => m.messageId === frontier);
+  return { messages: result.messages, compacted: result.compacted || pruned.changed, ...(kept ? { cacheFrontierMessageId: frontier } : {}) };
 }
 
 async function summarizeOverThreshold(

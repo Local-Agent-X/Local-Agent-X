@@ -50,6 +50,16 @@ async function drain(req: AnthropicTransportRequest): Promise<void> {
 }
 
 describe("defaultAnthropicTransport — cache fields reach the wire options", () => {
+  it("passes the flagged frontier row's index as cacheFrontierIndex", async () => {
+    captured.length = 0;
+    await drain(request({ messages: [
+      { role: "user", content: "ship it" },
+      { role: "assistant", content: "on it", cacheFrontier: true },
+      { role: "user", content: "[SITUATIONAL CONTEXT …]" },
+    ] }));
+    expect(captured[0].cacheFrontierIndex).toBe(1);
+  });
+
   it("passes ephemeralTailMessages through to streamAnthropicResponse", async () => {
     captured.length = 0;
     await drain(request({ ephemeralTailMessages: 1 }));

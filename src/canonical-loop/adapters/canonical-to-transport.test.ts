@@ -8,6 +8,24 @@ function msg(role: CanonicalMessage["role"], content: unknown, id: string): Cano
 
 const IMG = { mime: "image/png", b64: "aGVsbG8=" };
 
+describe("canonicalToTransport cache frontier", () => {
+  it("flags the frontier row's own message, not the image sidecar deferred after it", () => {
+    const out = canonicalToTransport([
+      msg("user", { text: "go" }, "m1"),
+      msg("assistant", { text: "", toolCalls: [{ id: "tc-1", name: "shot", arguments: "{}" }] }, "m2"),
+      msg("tool_result", { toolCallId: "tc-1", result: { text: "shot", images: [IMG] } }, "m3"),
+      msg("assistant", { text: "done" }, "m4"),
+    ], undefined, undefined, "m3");
+    expect(out.map((m) => m.cacheFrontier ?? false)).toEqual([false, false, true, false, false]);
+    expect(out[2]).toMatchObject({ role: "tool", toolCallId: "tc-1" });
+  });
+
+  it("flags nothing without a frontier", () => {
+    const out = canonicalToTransport([msg("user", { text: "go" }, "m1")], undefined);
+    expect(out[0].cacheFrontier).toBeUndefined();
+  });
+});
+
 describe("canonicalToTransport image-sidecar placement (PR-7)", () => {
   it("keeps parallel tool_result rows adjacent when the FIRST result carries images", () => {
     // Regression (PR-7): the assistant issues two parallel tool calls; the

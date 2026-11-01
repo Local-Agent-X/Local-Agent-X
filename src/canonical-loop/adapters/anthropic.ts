@@ -123,7 +123,7 @@ export class AnthropicAdapter implements Adapter {
     const req: AnthropicTransportRequest = {
       model,
       systemPrompt: this.opts.systemPrompt ?? "You are a helpful assistant.",
-      messages: canonicalToTransport(input.messages, input.pendingRedirect, new Set(input.tools.map(t => t.name))),
+      messages: canonicalToTransport(input.messages, input.pendingRedirect, new Set(input.tools.map(t => t.name)), input.cacheFrontierMessageId),
       tools: convertTools(input.tools),
       signal: this.aborter.signal,
       maxTokens: this.opts.maxTokens,

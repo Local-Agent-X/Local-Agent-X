@@ -106,9 +106,7 @@ export function defaultAnthropicTransport(pinned?: { credential: string; source:
           forcedToolName: forced?.name,
           disableThinking: req.disableThinking,
           effort: req.effort,
-          systemStablePrefixLen: req.systemStablePrefixLen,
-          cacheConversation: req.cacheConversation,
-          ephemeralTailMessages: req.ephemeralTailMessages,
+          ...cacheFieldsOf(req),
         });
 
         for await (const ev of stream) {
@@ -173,6 +171,20 @@ export function defaultAnthropicTransport(pinned?: { credential: string; source:
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────
+
+/** The request's prompt-cache fields, as the wire options carry them. Each is
+ *  silent to lose (the request still succeeds, the cache just stops hitting),
+ *  so they travel together. toOpenAiMessage maps 1:1, so the flagged row's
+ *  transport index is its index in the options' messages. */
+function cacheFieldsOf(req: AnthropicTransportRequest) {
+  const frontier = req.messages.findIndex((m) => m.cacheFrontier);
+  return {
+    systemStablePrefixLen: req.systemStablePrefixLen,
+    cacheConversation: req.cacheConversation,
+    ephemeralTailMessages: req.ephemeralTailMessages,
+    cacheFrontierIndex: frontier >= 0 ? frontier : undefined,
+  };
+}
 
 function toOpenAiMessage(m: AnthropicTransportRequest["messages"][number]): ChatCompletionMessageParam {
   // Round-trip assistant tool_calls — same reason as codex-transport's

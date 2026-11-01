@@ -32,6 +32,8 @@ describe("pruneToolRounds", () => {
     const out = pruneToolRounds(rows, "op1");
     expect(out.changed).toBe(true);
     expect(stubbed(out.messages)).toEqual(["t0", "t1", "t2", "t3"]);
+    // The last stubbed row: stable until the next batch, a cache frontier.
+    expect(out.frontierMessageId).toBe("t3");
     expect(resultOf(out.messages[2])).toBe("[earlier tool result elided — read, 20005 chars. The file or command is still there to read or run again.]");
     expect(out.messages.filter((m) => m.role !== "tool_result")).toEqual(rows.filter((m) => m.role !== "tool_result"));
     expect((out.messages[2].content as { status: string }).status).toBe("ok");

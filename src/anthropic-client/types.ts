@@ -96,6 +96,12 @@ export interface StreamOptions {
    *  when cacheConversation is off. Counted in POST-conversion messages: the
    *  tail rows must survive convertMessages 1:1 (plain user text does). */
   ephemeralTailMessages?: number;
+  /** Index in `messages` (PRE-conversion) of the last row of settled history,
+   *  the tool-round prune's last stubbed row: a second conversation
+   *  breakpoint goes on it, so a prune batch reads the history before it back
+   *  instead of rewriting it. Ignored when cacheConversation is off or the row
+   *  is not below the main breakpoint. */
+  cacheFrontierIndex?: number;
 }
 
 export interface AnthropicMessage {

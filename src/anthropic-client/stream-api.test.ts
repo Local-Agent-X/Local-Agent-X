@@ -414,6 +414,40 @@ describe("streamViaAPI — conversation-history breakpoint (cacheConversation)",
     ]);
   });
 
+  // A tool-round prune batch changes only rows after its frontier; a second
+  // breakpoint there lets the batch read everything before it back.
+  it("adds a second breakpoint on the settled-history frontier, mapped across tool-result conversion", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({
+      cacheConversation: true,
+      ephemeralTailMessages: 1,
+      cacheFrontierIndex: 3, // the stubbed tool row, PRE-conversion (the system row is dropped)
+      messages: [
+        { role: "system", content: "sys" },
+        { role: "user", content: "port it" },
+        { role: "assistant", content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "read", arguments: "{}" } }] },
+        { role: "tool", tool_call_id: "c1", content: "[earlier tool result elided]" },
+        { role: "assistant", content: "next" },
+        { role: "user", content: "[SITUATIONAL CONTEXT ...]" },
+      ],
+    });
+    const msgs = cap.calls[0].body.messages as Array<{ content: Array<Record<string, unknown>> | string }>;
+    const marked = msgs.map((m) => (Array.isArray(m.content) ? m.content.some((b) => b.cache_control) : false));
+    expect(marked).toEqual([false, false, true, true, false]); // the tool_result row and the last stable row
+    expect((msgs[2].content as Array<Record<string, unknown>>)[0]).toMatchObject({ type: "tool_result", cache_control: { type: "ephemeral" } });
+  });
+
+  it("puts no second breakpoint on a frontier at or past the main one", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({
+      cacheConversation: true,
+      cacheFrontierIndex: 1,
+      messages: [{ role: "user", content: "first" }, { role: "assistant", content: "reply" }],
+    });
+    const msgs = cap.calls[0].body.messages as Array<{ content: unknown }>;
+    expect(msgs[0].content).toBe("first");
+  });
+
   it("does not touch messages when the flag is off", async () => {
     const cap = stubFetchCapturing(done);
     await collect({ messages: [{ role: "user", content: "hi" }] });

@@ -61,8 +61,18 @@ function planToolChoice(
   return { toolChoice: wanted, thinkingOff: true };
 }
 
+/** The settled-history frontier (StreamOptions.cacheFrontierIndex) as an index
+ *  into the CONVERTED messages. convertMessages maps each message to at most
+ *  one, in order, carrying state only forward, so converting the prefix up to
+ *  the frontier yields exactly the converted prefix. */
+function convertedFrontier(messages: StreamOptions["messages"], index: number | undefined): number | undefined {
+  if (index === undefined || index < 0 || index >= messages.length) return undefined;
+  const n = convertMessages(messages.slice(0, index + 1)).length;
+  return n > 0 ? n - 1 : undefined;
+}
+
 export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<StreamEvent> {
-  const { token, model, messages, systemPrompt, tools, maxTokens, toolChoice, forcedToolName, signal, temperature, disableThinking, effort, systemStablePrefixLen, cacheConversation, ephemeralTailMessages } = options;
+  const { token, model, messages, systemPrompt, tools, maxTokens, toolChoice, forcedToolName, signal, temperature, disableThinking, effort, systemStablePrefixLen, cacheConversation, ephemeralTailMessages, cacheFrontierIndex } = options;
   // Subscription OAuth tokens reach the Messages API only when the request wears
   // Claude Code's identity (Bearer + betas + UA + system prefix). This is the
   // only subscription path that streams real thinking text. See oauth-direct.ts.
@@ -158,7 +168,7 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
       : systemPrompt
         ? splitSystemBlocks(systemPrompt, systemStablePrefixLen)
         : undefined,
-    messages: markConversationCache(convertMessages(messages), cacheConversation, ephemeralTailMessages),
+    messages: markConversationCache(convertMessages(messages), cacheConversation, ephemeralTailMessages, convertedFrontier(messages, cacheFrontierIndex)),
     stream: true,
     // Thinking lets the model reason about blockers before acting. Adaptive
     // family (Fable 5, Opus 5, Opus 4.6/4.7/4.8, Sonnet 5, Sonnet 4.6): send

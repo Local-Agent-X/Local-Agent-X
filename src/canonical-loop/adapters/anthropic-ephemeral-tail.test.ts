@@ -44,6 +44,15 @@ describe("AnthropicAdapter — ephemeral tail plumbing", () => {
     expect(seen[0].messages[seen[0].messages.length - 1].content).toContain("SITUATIONAL CONTEXT");
   });
 
+  // The prune frontier is the other per-turn cache field: dropped, the request
+  // still succeeds and every prune batch silently rewrites the history again.
+  it("flags the TurnInput.cacheFrontierMessageId row on the transport request", async () => {
+    const seen: AnthropicTransportRequest[] = [];
+    const adapter = new AnthropicAdapter({ transport: capturingTransport(seen), cacheConversation: true });
+    await adapter.runTurn(turnInput({ cacheFrontierMessageId: "a0" }), () => {});
+    expect(seen[0].messages.map((m) => m.cacheFrontier ?? false)).toEqual([false, true, false]);
+  });
+
   it("leaves the field absent when the loop declares no ephemeral tail", async () => {
     const seen: AnthropicTransportRequest[] = [];
     const adapter = new AnthropicAdapter({ transport: capturingTransport(seen), cacheConversation: true });

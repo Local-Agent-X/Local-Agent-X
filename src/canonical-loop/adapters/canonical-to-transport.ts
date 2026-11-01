@@ -54,6 +54,10 @@ export function canonicalToTransport(
   messages: CanonicalMessage[],
   pendingRedirect: TurnInput["pendingRedirect"],
   validToolNames?: ReadonlySet<string>,
+  /** TurnInput.cacheFrontierMessageId: the transport row built from this
+   *  canonical row is flagged `cacheFrontier`, for a provider that places
+   *  explicit cache breakpoints. */
+  cacheFrontierMessageId?: string,
 ): TransportMessage[] {
   const out: TransportMessage[] = [];
   // Image sidecars for tool results are DEFERRED until the consecutive run
@@ -69,8 +73,12 @@ export function canonicalToTransport(
       pendingImageSidecars = [];
     }
   };
+  // Where the frontier row's own message lands: each row pushes its message
+  // first (a tool row's image sidecar is deferred past the run).
+  let frontierAt = -1;
   for (const m of messages) {
     if (m.role !== "tool_result") flushImageSidecars();
+    if (cacheFrontierMessageId !== undefined && m.messageId === cacheFrontierMessageId) frontierAt = out.length;
     const c = m.content as Record<string, unknown> | string | null | undefined;
     if (m.role === "system") {
       out.push({ role: "system", content: extractText(c) });
@@ -156,6 +164,7 @@ export function canonicalToTransport(
     }
   }
   flushImageSidecars();
+  if (frontierAt >= 0 && frontierAt < out.length) out[frontierAt] = { ...out[frontierAt], cacheFrontier: true };
   if (pendingRedirect) {
     // FOLD the redirect into a trailing user row when there is one, instead of
     // pushing a second user row after it. Two reasons, both load-bearing:

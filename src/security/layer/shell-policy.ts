@@ -2,7 +2,8 @@ import { homedir } from "node:os";
 import type { SecurityDecision } from "../../types.js";
 import { USER_HINTS } from "../../types.js";
 import type { InlineEvalPolicy, FileAccessMode } from "./types.js";
-import { BLOCKED_COMMANDS, BROWSER_OPEN_CMDS, RM_DESTRUCTIVE_FLAGS, SOCKET_PLUMBING_PATTERNS } from "./shell-rules.js";
+import { BLOCKED_COMMANDS, BROWSER_OPEN_CMDS, RM_DESTRUCTIVE_FLAGS } from "./shell-rules.js";
+import { socketPlumbingRefusal } from "./shell-socket-plumbing.js";
 import { isThisMachineHost, shellLoopbackReachable, shellUnixSocketReachable } from "./loopback-grant.js";
 import { inlineProgramDestinations, inlinePrograms } from "./shell-inline-destinations.js";
 import { detectCatastrophicDelete } from "./catastrophic-paths.js";
@@ -113,43 +114,6 @@ function inlineProgramLocal(command: string, heredocPrograms: readonly string[])
   return d.kind === "local" && d.ports.every(shellLoopbackReachable) && d.unixSockets.every(shellUnixSocketReachable);
 }
 
-/**
- * Bash's /dev/tcp and /dev/udp sockets on the line all reach this machine: each
- * spells a literal own address and a port the shell may reach, as `curl
- * localhost:PORT` may (loopback-grant.ts). Then the fd plumbing that wires
- * stdio onto one (`exec 3<>/dev/tcp/127.0.0.1/22`, `cat <&3`) reaches no
- * farther. TB2 qemu-startup and configure-git-webserver (2026-10-28, from
- * other harnesses' runs) probed a VM's telnet port and sshd this way. A host
- * the line computes, or a path this cannot read, is not this machine.
- *
- * A descriptor >= 3 that a redirect duplicates (`>&3`, `<&3`) must be opened
- * on the line itself: on such a socket, on a standard stream, or on a literal
- * path that is not a socket device (a log file, a FIFO, a Unix socket file,
- * which open() refuses, so bash cannot connect to it). TB2 install-windows-3.11,
- * 2026-10-29: `exec 3<>/app/qemu-monitor.sock; printf 'info status\n' >&3`. One
- * not opened here may be a socket an earlier line opened.
- */
-function fdPlumbingOnlyLocal(command: string): boolean {
-  const opened = command.match(/\/dev\/(?:tcp|udp)\//gi)?.length ?? 0;
-  const read = [...command.matchAll(/\/dev\/(?:tcp|udp)\/([A-Za-z0-9.:[\]-]+)\/(\d{1,5})(?![\w$])/gi)];
-  if (read.length !== opened || !read.every(([, host, port]) => isThisMachineHost(host) && shellLoopbackReachable(port))) return false;
-  const opens = new Map<string, string>();
-  for (const [, fd, target] of command.matchAll(/(?<![\w$&])(\d+)(?:<>|>>|>\||>|<)(?!&)[ \t]*("[^"]*"|'[^']*'|[^\s;&|()<>]+)/g)) opens.set(fd, target);
-  for (const [, fd, std] of command.matchAll(/(?<![\w$&])(\d+)[<>]&([0-2])(?!\d)/g)) opens.set(fd, `&${std}`);
-  const used = [...command.matchAll(/[<>]&(\d+)/g)].map((m) => m[1]).filter((fd) => Number(fd) >= 3);
-  const literalLocal = (t: string) => /^&[0-2]$/.test(t) || (/^(?:"[^"$`\\]+"|'[^']+'|[\w@%+=:,./-]+)$/.test(t) && !/\/(?:fd|proc)\//.test(t));
-  return used.every((fd) => opens.has(fd)) && [...opens].every(([fd, t]) => Number(fd) < 3 || literalLocal(t));
-}
-
-/** The raw-text patterns a command is scanned for: the denylist always; where
- *  no cage holds egress, the socket plumbing of a reverse shell too, unless it
- *  wires onto this machine's own ports or paths (fdPlumbingOnlyLocal). The
- *  network use of a program is judged on the program's text
- *  (detectInlineNetwork), not here. */
-function rawTextPatterns(command: string, egressEnforced: boolean): readonly RegExp[] {
-  if (egressEnforced || fdPlumbingOnlyLocal(command)) return BLOCKED_COMMANDS;
-  return [...BLOCKED_COMMANDS, ...SOCKET_PLUMBING_PATTERNS];
-}
 
 /** The command separator a bash command chains with outside quotes (newline,
  *  a bare &, ;), refused with the way that works (shell-refusals.ts), or null.
@@ -501,11 +465,18 @@ export function evaluateShellCommand(
   const rmRefusal = destructiveRmRefusal(command, fileAccessMode, workspace, platform);
   if (rmRefusal) return { allowed: false, reason: rmRefusal, userHint: USER_HINTS.commandShell };
 
-  // The raw-text patterns over the whole command. None is anchored, so a
-  // per-pipe-segment pass found nothing this one does not (the whole line
-  // contains every segment); it only reported a different scope.
-  const hit = firstBlockedCommand(command, rawTextPatterns(command, egressEnforced));
+  // The denylist's raw-text patterns over the whole command. None is
+  // anchored, so a per-pipe-segment pass found nothing this one does not (the
+  // whole line contains every segment); it only reported a different scope.
+  const hit = firstBlockedCommand(command, BLOCKED_COMMANDS);
   if (hit) return deniedCommandBlock(hit);
+  // Where no cage holds egress, bash's own sockets and the descriptor
+  // plumbing of a reverse shell, read off the redirections
+  // (shell-socket-plumbing.ts); a local port or path reaches no farther.
+  if (!egressEnforced) {
+    const plumbing = socketPlumbingRefusal(commandPositions(command));
+    if (plumbing) return deniedCommandBlock(plumbing);
+  }
 
   return { allowed: true, reason: "Shell command allowed" };
 }

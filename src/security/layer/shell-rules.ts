@@ -53,20 +53,6 @@ export const INLINE_HTTP_LIBRARY_PATTERNS: readonly RegExp[] = [
   /\baiohttp\b/i,                           // Python aiohttp
 ];
 
-// The socket plumbing of a reverse shell, in shell syntax: no destination a
-// program spells could make it local.
-export const SOCKET_PLUMBING_PATTERNS: readonly RegExp[] = [
-  // fd-redirect onto a NON-standard descriptor (>=3): the io-duplication a
-  // reverse shell uses to wire stdio onto a pre-opened socket fd (`>&5`, `<&3`,
-  // `2>&7`). The socket OPEN itself is caught by the /dev/tcp + `exec N<>` rules
-  // below. Benign std-stream merges (2>&1, 1>&2, >&2) target fd 0-2 — they can't
-  // reach the network and are the ubiquitous output-capture idiom — so the
-  // narrowed pattern leaves them ALLOWED (the bare /\d+>&\d/ blocked 2>&1, which
-  // starved every verify command that captured stderr).
-  /[<>]&(?:[3-9]|\d{2,})/,                  // fd redirect to fd>=3 (<&3, >&5, 2>&10)
-  /(^|[\s<>&|=])\/dev\/(tcp|udp)\//i,        // bash /dev/tcp|/dev/udp socket (reverse shell / exfil); boundary-char guard hits spaced AND glued redirects without false-firing on path/dev/tcpdump
-  /\bexec\s+\d+<>/i,                        // fd exec redirect (reverse shell)
-];
 
 
 // The command-line forms of these are argv rules now (shell-command-rule-table.ts),

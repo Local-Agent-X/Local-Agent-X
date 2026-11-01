@@ -7,10 +7,12 @@
 
 import { execBasename, isShellReparseFlag, resolveRealArgv0Index, shellSegments, tokenizeCommand, type SegmentJoin } from "./shell-lex.js";
 
-/** One shell redirection of a command: the operator without its fd digits
- *  (`>`, `>>`, `>|`, `>&`, `<`, `<>`, `<<`, `<<<`, `<&`, `&>`, `&>>`) and its
- *  target — a file, an fd for `>&`/`<&`, a delimiter for `<<`, "" when none. */
+/** One shell redirection of a command: its fd digits ("" when none: stdout
+ *  for `>`, stdin for `<`), the operator (`>`, `>>`, `>|`, `>&`, `<`, `<>`,
+ *  `<<`, `<<<`, `<&`, `&>`, `&>>`) and its target — a file, an fd for
+ *  `>&`/`<&`, a delimiter for `<<`, "" when none. */
 export interface Redirection {
+  fd: string;
   op: string;
   target: string;
 }
@@ -84,7 +86,7 @@ export function splitRedirections(tokens: string[]): { words: string[]; redirect
     const op = m[2] ?? m[4];
     let target = m[5];
     if (target === "") target = tokens[++i] ?? "";
-    redirections.push({ op, target });
+    redirections.push({ fd: m[1] ?? "", op, target });
   }
   return { words, redirections };
 }

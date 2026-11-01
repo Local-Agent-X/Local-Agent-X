@@ -20,6 +20,7 @@ import { createHash } from "node:crypto";
 import { readOp, tryWithOpLock } from "../../ops/op-store.js";
 import { resolveCredential } from "../../auth/resolve.js";
 import { OP_TYPE } from "../../ops/op-types.js";
+import { appendTurnToSession } from "./append-turn.js";
 
 async function submitDelegationOp(message: string, sessionId: string, ingressKey?: string): Promise<{ opId: string }> {
   const lane = "build" as const;
@@ -92,7 +93,7 @@ interface PreparedAgentRequest {
 }
 
 interface SessionLike {
-  messages: unknown[];
+  messages: ChatCompletionMessageParam[];
   updatedAt: number;
 }
 
@@ -119,8 +120,8 @@ interface DelegationHandoffResult {
 /**
  * Auto-delegated to worker pool: route the message into a fresh-context
  * worker subprocess and run a tiny no-tools chat turn so the agent
- * acknowledges the delegation in its own voice. Mutates `session.messages`
- * with the agent's ack reply, saves the session, emits the `done` SSE
+ * acknowledges the delegation in its own voice. Appends this message and the
+ * agent's ack reply to `session.messages`, saves the session, emits the `done` SSE
  * event. Caller is expected to short-circuit (`return true`) afterwards.
  */
 export async function runDelegationHandoff(args: DelegationHandoffArgs): Promise<DelegationHandoffResult> {
@@ -231,16 +232,10 @@ export async function runDelegationHandoff(args: DelegationHandoffArgs): Promise
       renderedPromptSections,
     });
 
-    const { stripEphemeralMessages } = await import("../../providers/sanitize.js");
-    const { COMPACTION_PREFIX } = await import("../../types.js");
-    type MsgRecord = Record<string, unknown>;
-    session.messages = stripEphemeralMessages(result.messages).filter((m) => {
-      if (m.role === "system") {
-        return typeof m.content === "string" && m.content.startsWith(COMPACTION_PREFIX);
-      }
-      if (m.role === "tool") return true;
-      return m.content || (m as unknown as MsgRecord).tool_calls;
-    });
+    // result.messages is the run's own view: [system prompt, ...the history it
+    // was given (compacted), this message, ...its reply]. Only the last two
+    // parts are this turn's; the rest is already in the session, in full.
+    appendTurnToSession(session, result.messages.slice(1 + prepared.cleanHistory.length));
     session.updatedAt = Date.now();
     ctx.saveSession(session as Parameters<typeof ctx.saveSession>[0]);
 

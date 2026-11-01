@@ -55,8 +55,7 @@ describe("only the user's own compact may shorten the transcript", () => {
       "memory/session-message-log.ts",     // persists what it is handed
       "memory/retract-last-turn.ts",       // treats it as an immovable floor
       "canonical-loop/chat-runner/create-op.ts", // folds an existing one into the prompt
-      "routes/chat/run-chat-turn/canonical-run.ts", // keeps an existing one on save
-      "routes/chat/delegation-handoff.ts", // same keep-what-exists filter
+      "routes/chat/append-turn.ts", // keeps an existing one when a turn's rows are appended
     ]);
     const offenders: string[] = [];
     for (const file of sourceFiles(SRC)) {

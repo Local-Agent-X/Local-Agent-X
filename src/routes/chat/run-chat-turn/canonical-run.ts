@@ -8,6 +8,7 @@ import { sanitizeModelOutput } from "../../../providers/output-sanitize.js";
 import type { TurnError } from "../../../providers/sanitize.js";
 import { createLogger } from "../../../logger.js";
 import { markTurnPersisted } from "../../../chat-ws/state.js";
+import { appendTurnToSession } from "../append-turn.js";
 
 const logger = createLogger("routes.chat.canonical-run");
 
@@ -246,9 +247,6 @@ export async function persistTurnState(input: PersistInput): Promise<void> {
     return;
   }
 
-  const { stripEphemeralMessages: stripCanonical } = await import("../../../providers/sanitize.js");
-  type MsgRecordC = Record<string, unknown>;
-
   const newChatMessages: ChatCompletionMessageParam[] = [];
   // The end-of-turn profile pass scans this turn's rows for untrusted markers;
   // only a COMPLETE op-row projection yields the tool results. The projection
@@ -324,16 +322,9 @@ export async function persistTurnState(input: PersistInput): Promise<void> {
     } as ChatCompletionMessageParam);
   }
 
-  const { COMPACTION_PREFIX: COMPACTION_PREFIX_CHAT } = await import("../../../types.js");
   // The recall this turn showed the model stays in the chat for later turns.
   const { withRecallCarried } = await import("../../../agent-request/recall-carry.js");
-  session.messages = stripCanonical([...session.messages, ...withRecallCarried(newChatMessages, recall ?? null)]).filter((m) => {
-    if (m.role === "system") {
-      return typeof m.content === "string" && m.content.startsWith(COMPACTION_PREFIX_CHAT);
-    }
-    if (m.role === "tool") return true;
-    return m.content || (m as unknown as MsgRecordC).tool_calls || (m as { images?: unknown[] }).images?.length;
-  });
+  appendTurnToSession(session, withRecallCarried(newChatMessages, recall ?? null));
   session.updatedAt = Date.now();
 
   if (assistantText) {

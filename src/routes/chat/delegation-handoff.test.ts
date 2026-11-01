@@ -116,6 +116,37 @@ describe("delegation-handoff orphaned-ActiveChat net", () => {
     expect(ctx.chatWs.failChatIfCurrent).toHaveBeenCalledWith(SESSION, abort, "");
   });
 
+  it("appends this turn to the stored conversation instead of replacing it with the run's compacted view", async () => {
+    const { ctx } = makeCtx();
+    const args = makeArgs(ctx);
+    const older = [
+      { role: "user", content: "first, long ago" },
+      { role: "assistant", content: "answered" },
+      { role: "user", content: "recent" },
+      { role: "assistant", content: "recent answer" },
+    ];
+    args.session.messages = [...older];
+    // The run saw a compacted history: the checkpoint summary and the tail.
+    args.prepared.cleanHistory = [{ role: "system", content: "[checkpoint] summary of the first exchange" }, ...older.slice(2)];
+    runAgentViaCanonical.mockResolvedValueOnce({
+      messages: [
+        { role: "system", content: "sys" },
+        ...args.prepared.cleanHistory,
+        { role: "user", content: "build me a thing" },
+        { role: "assistant", content: "Handed to a worker." },
+      ],
+      usage: { promptTokens: 1, completionTokens: 2, totalTokens: 3 },
+    });
+
+    await runDelegationHandoff(args as never);
+
+    expect(args.session.messages).toEqual([
+      ...older,
+      { role: "user", content: "build me a thing" },
+      { role: "assistant", content: "Handed to a worker." },
+    ]);
+  });
+
   it("happy path: done reaches wsChat.onEvent and the net never fires", async () => {
     const { ctx, wsOnEvent } = makeCtx();
 

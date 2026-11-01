@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1901 non-test source files · 88 oversized · 247 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1903 non-test source files · 88 oversized · 247 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -25,9 +25,9 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/tool-execution/` | 85 | 83 | XL | 2 |
 | `src/workspace/` | 84 | 3 | M |  |
 | `src/canonical-loop/` | 81 | 279 | XL | 11 |
-| `src/providers/` | 72 | 27 | L | 1 |
+| `src/providers/` | 73 | 27 | L | 1 |
+| `src/session/` | 57 | 9 | M |  |
 | `src/data-lineage/` | 56 | 12 | L |  |
-| `src/session/` | 56 | 9 | M |  |
 | `src/memory/` | 53 | 148 | XL | 7 |
 | `src/browser/` | 48 | 88 | XL | 5 |
 | `src/tool-policy/` | 47 | 21 | L |  |
@@ -64,7 +64,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/whatsapp-bridge/` | 12 | 8 | M | 1 |
 | `src/agent-loop/` | 10 | 1 | S |  |
 | `src/persistence/` | 10 | 2 | S |  |
-| `src/routes/` | 10 | 96 | XL | 17 |
+| `src/routes/` | 10 | 98 | XL | 17 |
 | `src/sync/` | 10 | 21 | L | 1 |
 | `src/codex-client/` | 9 | 6 | M |  |
 | `src/plugin-system/` | 9 | 10 | L | 1 |
@@ -439,7 +439,6 @@ job. Comments are free: never cut them to fit.
 - `src/routes/agents/projects.ts#handleProjectRoutes` — 80+ own code lines (cap 100)
 - `src/routes/bridges/secrets.ts#handleSecretsRoutes` — 80+ own code lines (cap 100)
 - `src/routes/chat.ts#handleChatRoutes` — 80+ own code lines (cap 100)
-- `src/routes/chat/delegation-handoff.ts#runDelegationHandoff` — 80+ own code lines (cap 100)
 - `src/routes/connector-proxy.ts#handleConnectorProxyRoutes` — 80+ own code lines (cap 100)
 - `src/server/api-request-router.ts#routeApiRequest` — 80+ own code lines (cap 100)
 - `src/server/background-jobs/dream-check.ts#registerDreamRunner:callback` — 80+ own code lines (cap 100)
@@ -496,6 +495,7 @@ job. Comments are free: never cut them to fit.
 - `src/protocols/stats-tools.ts#protocol_stats.execute` — 70+ own code lines (cap 100)
 - `src/providers/adapters/ollama-native.ts#OllamaNativeAdapter.stream` — 70+ own code lines (cap 100)
 - `src/providers/sanitize.ts#sanitizeHistory` — 70+ own code lines (cap 100)
+- `src/routes/chat/delegation-handoff.ts#runDelegationHandoff` — 70+ own code lines (cap 100)
 - `src/routes/issues.ts#handleIssueRoutes` — 70+ own code lines (cap 100)
 - `src/routes/mcp-servers.ts#handleMcpServerRoutes` — 70+ own code lines (cap 100)
 - `src/screen-capture.ts#captureScreen` — 70+ own code lines (cap 100)

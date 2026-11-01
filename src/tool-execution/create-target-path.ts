@@ -7,7 +7,7 @@
 import { isAbsolute, resolve } from "node:path";
 import { resolveAgentPath, sessionIdOf } from "../workspace/paths.js";
 import { declaredPaths, pathSpecsForCall, TOOL_PATH_ARGS } from "../tool-registry.js";
-import { commandPositions } from "../security/layer/shell-command-positions.js";
+import { positionsWithCwd } from "../security/layer/shell-delete-targets.js";
 import { enterPrelude } from "./shell-prelude.js";
 import { chartOutPath } from "../tools/chart-tools.js";
 import { addSlideOutPath } from "../tools/presentation-tools.js";
@@ -58,7 +58,6 @@ export function createTargetPath(toolName: string, args: Record<string, unknown>
 // output. An append (`>>`) or a `touch` keeps whatever an earlier step of the
 // line put at that path, which may be the user's bytes.
 const WRITE_REDIRECTS: ReadonlySet<string> = new Set([">", ">|", "&>"]);
-const CD_BINS: ReadonlySet<string> = new Set(["cd", "pushd", "popd", "chdir", "set-location", "sl"]);
 // Commands that only read, print or remove the paths they are given: naming
 // the file cannot put anyone's bytes in it. Their own redirections are read
 // above. A remove before the write leaves the write's bytes; one after leaves
@@ -81,39 +80,41 @@ const UNPLACEABLE = /[$`*?~{}]/;
  * since that command may act on the path too (`mv users.csv new.csv && cat
  * new.csv > new.csv`), unless the command only reads or prints it (`cat`,
  * `tail`, `grep`, `rm`, …: TB2 qemu-alpine-ssh's `… > console.log; cat
- * console.log`). Relative targets resolve where the shell runs: `cwd`, or the
- * folder a leading `cd` enters (shell-prelude.ts; TB2 extract-elf's `cd /app &&
- * rm -f out.json && node extract.js > out.json`), and are left out after any
- * other `cd`, which this cannot follow; an expansion, glob, brace
- * or `~` is left out too. A file a program opens itself (`python gen.py`
- * writing out.csv) is not seen.
+ * console.log`). Relative targets resolve where their command runs: `cwd`, or
+ * the folder a `cd` the one cd rule can place entered (shell-delete-targets.ts
+ * positionsWithCwd, the rule the delete proofs follow; TB2 extract-elf's `cd
+ * /app && rm -f out.json && node extract.js > out.json`), and are left out
+ * after a `cd` it cannot place; an expansion, glob, brace or `~` is left out
+ * too. A file a program opens itself (`python gen.py` writing out.csv) is not
+ * seen.
  */
 export function shellCreateTargets(command: string, cwd: string): string[] {
   const entered = enterPrelude(command, cwd);
   if (entered) ({ command, cwd } = entered);
-  const { positions } = commandPositions(command);
-  const cdSeen = positions.some((p) => CD_BINS.has(p.bin));
-  const targets: string[] = [];
+  const targets: Placed[] = [];
   const otherWords = new Set<string>();
-  for (const p of positions) {
+  for (const { position: p, cwd: at } of positionsWithCwd(command, cwd)) {
     for (const r of p.redirections) {
-      if (WRITE_REDIRECTS.has(r.op) || (r.op === ">&" && !/^(?:\d+|-)?$/.test(r.target))) targets.push(r.target);
+      if (WRITE_REDIRECTS.has(r.op) || (r.op === ">&" && !/^(?:\d+|-)?$/.test(r.target))) targets.push({ t: r.target, at });
     }
     const operands = p.words.slice(p.at + 1);
     const creates = p.bin === "tee" && operands.every((w) => !w.startsWith("-"));
-    if (creates) targets.push(...operands);
+    if (creates) targets.push(...operands.map((t) => ({ t, at })));
     if (PUTS_NO_BYTES_BINS.has(p.bin)) continue;
     for (const w of creates ? p.words.slice(0, p.at + 1) : p.words) otherWords.add(w);
   }
-  return placed(targets, cwd, cdSeen, (t) => otherWords.has(t) || t.startsWith("/dev/"));
+  return placed(targets, (t) => otherWords.has(t) || t.startsWith("/dev/"));
 }
 
-function placed(targets: string[], cwd: string, cdSeen: boolean, skip: (t: string) => boolean): string[] {
+/** A path as written and the folder its command runs in (null: unplaceable). */
+interface Placed { t: string; at: string | null | undefined }
+
+function placed(targets: Placed[], skip: (t: string) => boolean): string[] {
   const out: string[] = [];
-  for (const t of targets) {
+  for (const { t, at } of targets) {
     if (!t || UNPLACEABLE.test(t) || skip(t)) continue;
-    if (!isAbsolute(t) && cdSeen) continue;
-    const abs = resolve(cwd, t);
+    if (!isAbsolute(t) && !at) continue;
+    const abs = resolve(at ?? "", t);
     if (!out.includes(abs)) out.push(abs);
   }
   return out;
@@ -128,18 +129,16 @@ function placed(targets: string[], cwd: string, cdSeen: boolean, skip: (t: strin
 export function shellMkdirTargets(command: string, cwd: string): string[] {
   const entered = enterPrelude(command, cwd);
   if (entered) ({ command, cwd } = entered);
-  const { positions } = commandPositions(command);
-  const cdSeen = positions.some((p) => CD_BINS.has(p.bin));
-  const targets: string[] = [];
-  for (const p of positions) {
+  const targets: Placed[] = [];
+  for (const { position: p, cwd: at } of positionsWithCwd(command, cwd)) {
     if (p.bin !== "mkdir") continue;
     const args = p.words.slice(p.at + 1);
     for (const [i, w] of args.entries()) {
       if (w.startsWith("-") || args[i - 1] === "-m" || args[i - 1] === "--mode") continue;
-      targets.push(w.replace(/[\\/]+$/, ""));
+      targets.push({ t: w.replace(/[\\/]+$/, ""), at });
     }
   }
-  return placed(targets, cwd, cdSeen, () => false);
+  return placed(targets, () => false);
 }
 
 /** Every operand a shell command names, resolved the same way: a program's
@@ -150,10 +149,9 @@ export function shellMkdirTargets(command: string, cwd: string): string[] {
 export function shellNamedPaths(command: string, cwd: string): string[] {
   const entered = enterPrelude(command, cwd);
   if (entered) ({ command, cwd } = entered);
-  const { positions } = commandPositions(command);
-  const cdSeen = positions.some((p) => CD_BINS.has(p.bin));
-  const words = positions.flatMap((p) => p.words.slice(p.at + 1)).filter((w) => !w.startsWith("-"));
-  return placed(words.map((w) => w.replace(/[\\/]+$/, "")), cwd, cdSeen, () => false);
+  const words = positionsWithCwd(command, cwd).flatMap(({ position: p, cwd: at }) =>
+    p.words.slice(p.at + 1).filter((w) => !w.startsWith("-")).map((w) => ({ t: w.replace(/[\\/]+$/, ""), at })));
+  return placed(words, () => false);
 }
 
 /** Where the command's programs run: `cwd`, or the folder its leading `cd`

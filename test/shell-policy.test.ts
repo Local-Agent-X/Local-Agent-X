@@ -486,6 +486,12 @@ describe("evaluateShellCommand — C3-13 argv-aware interpreter escapes", () => 
   it("blocks `/usr/bin/ruby -rsocket -e` via path-prefixed argv[0]", () => {
     expect(evaluateShellCommand("/usr/bin/ruby -rsocket -e 'puts 1'").allowed).toBe(false);
   });
+  it("blocks the escape behind a wrapper and inside a shell's body, and a quoted pipe is not a segment", () => {
+    expect(evaluateShellCommand("sudo perl -e 'print 1'").allowed).toBe(false);
+    expect(evaluateShellCommand("timeout 5 ruby -w -e 'puts 1'").allowed).toBe(false);
+    expect(evaluateShellCommand(`bash -c "perl -we 'print 1'"`).allowed).toBe(false);
+    expect(evaluateShellCommand(`echo "a | perl -e x"`).allowed).toBe(true);
+  });
   it("does NOT block a non-eval interpreter invocation (`ruby script.rb`)", () => {
     expect(evaluateShellCommand("ruby script.rb").allowed).toBe(true);
   });

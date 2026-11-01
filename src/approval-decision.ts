@@ -26,6 +26,7 @@ import { TOOL_POLICIES } from "./tool-policy/tool-policies.js";
 import { declaredDestinations, destinationKey } from "./tool-execution/send-destinations.js";
 import { isDisposableTreeDelete, type TreeDeleteScope } from "./tool-execution/disposable-tree-delete.js";
 import { commandsBashRuns } from "./security/layer/shell-source-text.js";
+import { shellSegments } from "./security/layer/shell-lex.js";
 import { consentedInChat, type ChatTurn } from "./tool-execution/chat-consent.js";
 
 // Profile name cached 1s — same shape as the prior approvalMode cache.
@@ -352,7 +353,7 @@ const PRINTERS = new Set(["echo", "printf", "which", "type"]);
 function onlyLooksUp(name: string, body: string): boolean {
   if (/`|\$\(|(?<!\|)\|(?!\|)|\b(?:eval|xargs|for|while|until)\b/.test(body)) return false;
   const ref = new RegExp(String.raw`\$\{?${name}\b`);
-  return body.split(/[;&|\n]+/).every((segment) => {
+  return shellSegments(body).map((s) => s.text).every((segment) => {
     if (!ref.test(segment)) return true;
     if (/[<>]/.test(segment)) return false;
     const [head, flag] = segment.trim().replace(/^(?:(?:do|then|else|if|elif|!)\s+)+/, "").split(/\s+/);

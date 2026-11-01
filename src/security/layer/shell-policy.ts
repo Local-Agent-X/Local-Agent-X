@@ -27,6 +27,7 @@ import { isDisposableSandbox } from "./disposable-sandbox.js";
 import { readSourceText } from "./shell-source-text.js";
 import { runsNestedOutput, splitNestedCommands } from "./shell-nested-commands.js";
 import { commandPositions } from "./shell-command-positions.js";
+import { shellSegments } from "./shell-lex.js";
 
 // Re-exported for the existing public surface (importers reference it from
 // "./shell-policy.js"); the implementation now lives in shell-detectors.ts.
@@ -42,8 +43,8 @@ function firstBlockedCommand(text: string, patterns: readonly RegExp[]): string 
   return null;
 }
 
-// The denylist deny, told so the model can act on it. Both arms (pipe segment /
-// full command) previously returned a bare "matches dangerous pattern" naming
+// The denylist deny, told so the model can act on it. It previously returned
+// a bare "matches dangerous pattern" naming
 // neither the binary nor a replacement — so the guidance that already exists in
 // shell-rules.ts ("the agent should use http_request") never reached the model,
 // which retried the same denied `curl` 16 times in three days (measured
@@ -62,14 +63,14 @@ function firstBlockedCommand(text: string, patterns: readonly RegExp[]): string 
 // pre-dispatch pack currently drops SecurityDecision.recovery (security-layer-pack)
 // — text placed solely in recovery would be dead on that path. `recovery` is set
 // too, so it becomes the richer message once that seam carries it.
-function deniedCommandBlock(matched: string, scope: "pipe segment" | "command"): SecurityDecision {
+function deniedCommandBlock(matched: string): SecurityDecision {
   // The first word of the match is the offending binary for every rule in the
   // list (`curl …|` → "curl", `dd …of=` → "dd", `sudo …` → "sudo").
   const bin = matched.trim().split(/\s+/)[0] || matched.trim();
   return {
     allowed: false,
     reason:
-      `Blocked: this ${scope} uses "${bin}", which is on the shell denylist. ` +
+      `Blocked: this command uses "${bin}", which is on the shell denylist. ` +
       `If you need HTTP, use the \`http_request\` tool — it is SSRF-checked, DNS-pinned and audited, and it ` +
       `CAN reach this app's own server and any registered dev server; to download a file, give it save_to. ` +
       `To check that a local port is open, \`nc -z 127.0.0.1 PORT\` is allowed, and a shell client may reach a local port ` +
@@ -427,8 +428,8 @@ export function evaluateShellCommand(
   // legit `python3 -c` self-checks in 7 weeks). detectInlineNetwork below
   // still scans inline bodies for network use in every mode.
   if (structuralRulesApply && inlineEval !== undefined && workspace !== undefined) {
-    for (const segment of command.split("|")) {
-      const hit = detectInlineInterpreterEval(tokenizeCommand(segment), inlineEval, workspace);
+    for (const segment of shellSegments(command)) {
+      const hit = detectInlineInterpreterEval(tokenizeCommand(segment.text), inlineEval, workspace);
       if (hit) {
         return { allowed: false, reason: hit, userHint: USER_HINTS.commandShell };
       }
@@ -499,20 +500,11 @@ export function evaluateShellCommand(
   const rmRefusal = destructiveRmRefusal(command, fileAccessMode, workspace, platform);
   if (rmRefusal) return { allowed: false, reason: rmRefusal, userHint: USER_HINTS.commandShell };
 
-  // Check every segment of a piped command against blocked patterns, then the
-  // full command (which catches patterns that span pipes). ONE reporter for both
-  // arms so the two can't drift — they previously returned near-identical bare
-  // strings and were edited independently.
-  const rawPatterns = rawTextPatterns(command, egressEnforced, inlineLocal);
-  const segments = command.split("|").map((s) => s.trim());
-  for (const segment of segments) {
-    const hit = firstBlockedCommand(segment, rawPatterns);
-    if (hit) return deniedCommandBlock(hit, "pipe segment");
-  }
-  for (const pattern of rawPatterns) {
-    const m = pattern.exec(command);
-    if (m) return deniedCommandBlock(m[0], "command");
-  }
+  // The raw-text patterns over the whole command. None is anchored, so a
+  // per-pipe-segment pass found nothing this one does not (the whole line
+  // contains every segment); it only reported a different scope.
+  const hit = firstBlockedCommand(command, rawTextPatterns(command, egressEnforced, inlineLocal));
+  if (hit) return deniedCommandBlock(hit);
 
   return { allowed: true, reason: "Shell command allowed" };
 }

@@ -22,9 +22,17 @@ describe("skipInertPrefix", () => {
       "command cp users.csv a; rm -f a",
       "ls $(mv users.csv a); rm -f a",
       "echo `mv users.csv a`; rm -f a",
-      "echo 'a; b'; rm -f a",
       "command -v uv | rm -f a",
+      "echo start & rm -f a",
     ]) expect(skipInertPrefix(command), command).toBe(command);
+  });
+
+  // The segments are the one quote-aware split's: a separator inside quotes
+  // is text, and so is a pipe.
+  it("a quoted separator does not end an inert command, and a quoted pipe is not a pipe", () => {
+    expect(skipInertPrefix("echo 'a; b'; rm -f a")).toBe("rm -f a");
+    expect(skipInertPrefix(`echo "x | y" && cd ./out && rm -f a`)).toBe("cd ./out && rm -f a");
+    expect(enterPrelude(`echo "go; now" && cd ./out && rm -f a`, resolve("/w"))).toEqual({ command: "rm -f a", cwd: resolve("/w/out") });
   });
 });
 

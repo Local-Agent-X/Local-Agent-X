@@ -57,7 +57,19 @@ describe("shellCreateTargets leaves out what it cannot prove is the command's ou
       "echo x > ~/a.txt",
     ]) expect(shellCreateTargets(command, cwd), command).toEqual([]);
     expect(shellCreateTargets("cd out && echo x > /tmp/a.txt", cwd)).toEqual([resolve("/tmp/a.txt")]);
-    expect(shellCreateTargets("cd ../a && cd ../b && echo x > a.txt", cwd)).toEqual([]);
+    // A cd this cannot place after one it could: nothing after it is placed.
+    expect(shellCreateTargets("cd ./a && cd b && echo x > a.txt", cwd)).toEqual([]);
+    // A cd after `;` may have failed, so the next command's folder is unknown.
+    expect(shellCreateTargets("echo x > first.txt; cd ./a; echo x > a.txt", cwd)).toEqual([resolve(cwd, "first.txt")]);
+  });
+
+  // The one cd rule (shell-delete-targets.ts positionsWithCwd), which the
+  // delete proofs follow: each command's own folder, a `&&`-chained cd
+  // carried, a body's cd kept to the body.
+  it("places each command's output where that command runs, following every cd the delete rules follow", () => {
+    expect(shellCreateTargets("cd ../a && cd ../b && echo x > a.txt", cwd)).toEqual([resolve(cwd, "../b/a.txt")]);
+    expect(shellCreateTargets("echo x > top.txt && cd ./sub && echo y > in.txt", cwd)).toEqual([resolve(cwd, "top.txt"), resolve(cwd, "sub/in.txt")]);
+    expect(shellCreateTargets(`bash -c "cd ./sub && echo y > in.txt" && echo x > top.txt`, cwd)).toEqual([resolve(cwd, "sub/in.txt"), resolve(cwd, "top.txt")]);
   });
 });
 

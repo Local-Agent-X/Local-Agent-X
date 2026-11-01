@@ -168,16 +168,16 @@ export function detectScriptWrite(command: string): string | null {
 // ── C3-13: argv-aware interpreter-escape detection ──
 // The bare-form denylist (`\bperl\s+-e\b`, …) only catches the flag IMMEDIATELY
 // after the binary, so `perl -w -e`, `perl -Mstrict -e`, `ruby -rsocket -e`,
-// `ruby -w -e` slip through. Tokenize each pipe segment; if argv[0]'s basename
-// is an inline-eval interpreter and ANY later token is an eval/require flag —
-// `-e`/`-E`/`-r`, or a clustered short-flag containing e/E/r (e.g. `-we`,
-// `-rsocket`) — block it, regardless of intervening flags.
+// `ruby -w -e` slip through. Every command position (commandPositions: each
+// segment, wrappers looked through, `bash -c` bodies walked); if the real
+// command word's basename is an inline-eval interpreter and ANY later token is
+// an eval/require flag — `-e`/`-E`/`-r`, or a clustered short-flag containing
+// e/E/r (e.g. `-we`, `-rsocket`) — block it, regardless of intervening flags.
 export function detectInterpreterEscape(command: string): string | null {
-  for (const segment of command.split("|")) {
-    const tokens = tokenizeCommand(segment);
-    if (tokens.length === 0) continue;
-    const bin = execBasename(tokens[0]);
+  for (const p of commandPositions(command).positions) {
+    const bin = p.bin;
     if (!INTERP_ESCAPE_BINS.has(bin)) continue;
+    const tokens = p.words.slice(p.at);
     for (let i = 1; i < tokens.length; i++) {
       const t = tokens[i];
       if (t === "--") break; // end-of-flags; remaining tokens are operands

@@ -7,10 +7,14 @@
  * act at all. The delete proofs ask a weaker question, whether anything before
  * a delete can move data onto its target, and answer it in delete-prefix.ts.
  *
+ * Segments come from the one quote-aware splitter (shell-lex.ts
+ * `shellSegments`): a separator inside quotes splits nothing, so `echo 'a; b'`
+ * is one inert command, not an opaque one.
+ *
  * Fail-closed: anything not provably inert ends the prelude, and a `cd` this
  * cannot place returns null.
  */
-import { tokenizeCommand } from "../security/layer/shell-lex.js";
+import { shellSegments, tokenizeCommand, type ShellSegment } from "../security/layer/shell-lex.js";
 import { placeCd } from "../security/layer/shell-delete-targets.js";
 
 /** Commands that read or print, or make an empty folder: none can move,
@@ -30,22 +34,28 @@ function inertSegment(segment: string): boolean {
   return INERT_HEADS.has(head);
 }
 
-// One segment with no separator and no quote in it but the empty `""` the
-// floor blanks a lookup's operand to (approval-decision.ts), then its separator.
-const LEADING_SEGMENT = /^\s*((?:[^;&|\n'"]|"")*?)\s*(?:&&|\|\||;|\n)/;
+/** The segments from `from` on, as one command again: each after the
+ *  separator that preceded it. */
+function fromSegment(segments: ShellSegment[], from: number): string {
+  const glue = (sep: string | null) => (sep === "\n" ? "\n" : sep === ";" ? "; " : ` ${sep} `);
+  return segments.slice(from).map((s, i) => (i === 0 ? "" : glue(s.after)) + s.text.trim()).join("");
+}
+
+/** Only these carry on to a next command that runs after this one; a pipe
+ *  or a single `&` runs both at once. */
+const SEQUENTIAL = new Set(["&&", "||", ";", "\n"]);
 
 /** `command` with its leading inert segments removed. A pipe ends the
  *  prelude: its sides run at once. */
 export function skipInertPrefix(command: string): string {
-  let rest = command;
-  for (let m = LEADING_SEGMENT.exec(rest); m && m[1] && inertSegment(m[1]); m = LEADING_SEGMENT.exec(rest)) {
-    rest = rest.slice(m[0].length);
-  }
-  return rest.trimStart();
+  const segments = shellSegments(command);
+  let from = 0;
+  while (from < segments.length - 1 && inertSegment(segments[from].text) && SEQUENTIAL.has(segments[from + 1].after ?? "")) from++;
+  return fromSegment(segments, from);
 }
 
-const CD = /^(?:cd|pushd|popd|chdir|set-location|sl)\b/i;
-const LEADING_CD = /^\s*(?:cd|pushd|set-location|sl)\s+("[^"]*"|'[^']*'|[^\s"';&|]+)\s*&&/i;
+const CD = /^(?:cd|pushd|popd|chdir|set-location|sl)$/i;
+const PLACEABLE_CD = /^(?:cd|pushd|set-location|sl)$/i;
 
 /**
  * `cd <dir> && …` opening the command: the rest runs in `dir`, so its targets
@@ -57,11 +67,12 @@ const LEADING_CD = /^\s*(?:cd|pushd|set-location|sl)\s+("[^"]*"|'[^']*'|[^\s"';&
  * this cannot place. An undefined `cwd` is a folder the caller does not know.
  */
 export function enterLeadingCd<C extends string | undefined>(command: string, cwd: C): { command: string; cwd: C | string } | null {
-  if (!CD.test(command.trimStart())) return { command, cwd };
-  const m = LEADING_CD.exec(command);
-  if (!m) return null;
-  const dir = placeCd(tokenizeCommand(m[1])[0], cwd);
-  return dir === null ? null : { command: command.slice(m[0].length).trimStart(), cwd: dir };
+  const segments = shellSegments(command);
+  const words = tokenizeCommand(segments[0]?.text ?? "");
+  if (!CD.test(words[0] ?? "")) return { command, cwd };
+  if (!PLACEABLE_CD.test(words[0]) || words.length !== 2 || segments[1]?.after !== "&&") return null;
+  const dir = placeCd(words[1], cwd);
+  return dir === null ? null : { command: fromSegment(segments, 1), cwd: dir };
 }
 
 /** The command from its first real act, and the folder that act runs in:

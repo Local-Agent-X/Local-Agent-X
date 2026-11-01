@@ -30,7 +30,7 @@ import { accessSync, constants, statSync } from "node:fs";
 import { basename, isAbsolute, resolve, sep } from "node:path";
 import { commandPositions, type CommandPosition } from "../security/layer/shell-command-positions.js";
 import { shellDeletes, type CdSucceeds } from "../security/layer/shell-delete-targets.js";
-import { shellSegments } from "../security/layer/shell-lex.js";
+import { shellSegments, tokenizeCommand } from "../security/layer/shell-lex.js";
 import { expansionsIn } from "../security/layer/shell-nested-commands.js";
 import { readSourceText } from "../security/layer/shell-source-text.js";
 
@@ -179,7 +179,7 @@ export function errexitStopsFailedCd(line: string, at: number): boolean {
   let errexit = false;
   let open = 0;
   for (const [i, s] of segments.slice(0, at + 1).entries()) {
-    const words = s.text.trim().split(/\s+/);
+    const words = tokenizeCommand(s.text);
     if (i === at) {
       const last = segments[at + 1]?.after;
       return errexit && open === 0 && /^(?:cd|pushd)$/.test(words[0]) && last !== "&&" && last !== "||" && last !== "|" && last !== "|&";

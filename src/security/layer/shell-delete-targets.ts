@@ -219,14 +219,24 @@ function afterCd(p: CommandPosition, next: CommandPosition | undefined, cwd: str
  *  install-windows-3.11, 2026-10-28). `segment` is the cd's top-level segment. */
 export type CdSucceeds = (dir: string, segment: number) => boolean;
 
-/** Every delete in `command`, in order, with the folder each runs in from
- *  `base` (the shell's folder; undefined when the caller does not know it).
- *  A `cd` inside a shell's body moves only the rest of that body; one a
- *  caller's `cdSucceeds` proves carries past any separator. */
-export function shellDeletes(command: string, base?: string, cdSucceeds?: CdSucceeds): ShellDelete[] {
+/** A command position with the folder it runs in: `base` (the shell's
+ *  folder; undefined when the caller does not know it), the folder a
+ *  placeable `cd` before it entered, or null after one this cannot place. */
+export interface PlacedPosition {
+  position: CommandPosition;
+  cwd: string | null | undefined;
+}
+
+/** Every command position of `command` that is not itself a `cd`, with the
+ *  folder it runs in. The one cd-following rule: a `cd` inside a shell's
+ *  body moves only the rest of that body; only `&&` carries a cd's folder,
+ *  unless the caller's `cdSucceeds` proves it. The delete rules read it
+ *  through shellDeletes; the shell-write lineage (create-target-path.ts)
+ *  reads it to place a command's own output files. */
+export function positionsWithCwd(command: string, base?: string, cdSucceeds?: CdSucceeds): PlacedPosition[] {
   const positions = commandPositions(command).positions;
   const cwds: Array<string | null | undefined> = [base];
-  const out: ShellDelete[] = [];
+  const out: PlacedPosition[] = [];
   positions.forEach((p, i) => {
     // A body is walked right after the shell that runs it, one level deeper,
     // and starts where that shell is; leaving it drops what it moved.
@@ -238,9 +248,19 @@ export function shellDeletes(command: string, base?: string, cdSucceeds?: CdSucc
       cwds[p.depth] = afterCd(p, next, cwd, cdSucceeds);
       return;
     }
-    const del = deleteOf(p);
-    if (del) out.push({ ...del, cwd, segment: p.segment });
+    out.push({ position: p, cwd });
   });
+  return out;
+}
+
+/** Every delete in `command`, in order, with the folder each runs in
+ *  (positionsWithCwd). */
+export function shellDeletes(command: string, base?: string, cdSucceeds?: CdSucceeds): ShellDelete[] {
+  const out: ShellDelete[] = [];
+  for (const { position, cwd } of positionsWithCwd(command, base, cdSucceeds)) {
+    const del = deleteOf(position);
+    if (del) out.push({ ...del, cwd, segment: position.segment });
+  }
   return out;
 }
 

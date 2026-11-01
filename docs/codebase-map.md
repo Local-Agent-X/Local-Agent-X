@@ -13,14 +13,14 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1890 non-test source files · 89 oversized · 246 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1890 non-test source files · 88 oversized · 247 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 172 | 29 | XL | 1 |
-| `src/security/` | 143 | 56 | XL | 3 |
+| `src/security/` | 143 | 56 | XL | 2 |
 | `src/tools/` | 121 | 221 | XL | 9 |
 | `src/tool-execution/` | 85 | 80 | XL | 2 |
 | `src/canonical-loop/` | 81 | 278 | XL | 11 |
@@ -299,7 +299,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/sandbox/docker-execution-runtime.ts`
 - `src/security/layer/file-access.ts#evaluateFileAccess`
 - `src/security/layer/kernel-class-policy.ts#evaluateByKernelClass`
-- `src/security/layer/shell-policy.ts#evaluateShellCommand`
 - `src/self-edit/sandbox.ts#runSelfEditInSandbox`
 - `src/self-edit/tool.ts#selfEditTool.execute`
 - `src/server/background-jobs/cron-runner.ts#cronService.onExecute:callback`
@@ -362,7 +361,6 @@ job. Comments are free: never cut them to fit.
 - `src/canonical-loop/process-execution-backend.ts` — 300+ code lines (cap 350)
 - `src/cron/cron-service.ts` — 300+ code lines (cap 350)
 - `src/routes/connector-proxy.ts` — 300+ code lines (cap 350)
-- `src/security/layer/shell-detectors.ts` — 300+ code lines (cap 350)
 - `src/tools/document-tools.ts` — 300+ code lines (cap 350)
 - `src/tools/presentation-tools.ts` — 300+ code lines (cap 350)
 - `src/api-docs.ts` — 290+ code lines (cap 350)
@@ -372,6 +370,7 @@ job. Comments are free: never cut them to fit.
 - `src/memory/index-schema-migrations.ts` — 290+ code lines (cap 350)
 - `src/ops/operation-requirements.ts` — 290+ code lines (cap 350)
 - `src/protocols/skills-install.ts` — 290+ code lines (cap 350)
+- `src/security/layer/shell-detectors.ts` — 290+ code lines (cap 350)
 - `src/telegram-bridge/bridge.ts` — 290+ code lines (cap 350)
 - `src/browser/in-app-resolve-scripts.ts` — 280+ code lines (cap 350)
 - `src/browser/runtime.ts` — 280+ code lines (cap 350)
@@ -416,6 +415,7 @@ job. Comments are free: never cut them to fit.
 - `src/routes/workspace-files.ts#handleWorkspaceFilesRoutes` — 90+ own code lines (cap 100)
 - `src/screen-stream/signaling-machine.ts#signalingReducer` — 90+ own code lines (cap 100)
 - `src/security/layer/network-policy.ts#evaluateWebFetch` — 90+ own code lines (cap 100)
+- `src/security/layer/shell-policy.ts#evaluateShellCommand` — 90+ own code lines (cap 100)
 - `src/server/inbound-channel-runner.ts#runInboundChannelTurn` — 90+ own code lines (cap 100)
 - `src/tool-execution/run-sandboxed.ts#runSandboxedPhase` — 90+ own code lines (cap 100)
 - `src/tools/email-send-tool.ts#emailSend.execute` — 90+ own code lines (cap 100)

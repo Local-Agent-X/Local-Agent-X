@@ -16,14 +16,18 @@
  * app, the main chat editing a non-scaffolded app) is untouched. That keeps the
  * two concerns from welding together (see /blast-radius: COUPLED verdict).
  *
- * Only fires on files under workspace/apps/. Code outside the app folder
- * (the rest of the repo) isn't sandboxed and isn't this guard's concern.
+ * Fires on files under workspace/apps/ (app-root.ts). A session's own project
+ * folder outside it (a code session's) gets the design gate alone, and only
+ * for a new project: its preview is not served by Local Agent X, so the CDN
+ * and viewport rules are not its concern, and an existing repo's first UI edit
+ * is not a first draft to put on-spec. Code elsewhere isn't this guard's concern.
  */
 import { existsSync, readFileSync } from "node:fs";
 import { SCAFFOLD_MANIFEST_REL } from "../framework-scaffold.js";
 import { readRunTargetManifest } from "../app-run-target.js";
 import { designGateRejection } from "./design-gate.js";
 import { FONT_URL_PREFIX } from "../design-fonts.js";
+import { appIdOf, appRootAndRel, workspaceAppRootAndRel } from "./app-root.js";
 
 export interface WriteGuardResult {
   allow: boolean;
@@ -50,29 +54,14 @@ const BLOCKED_CDNS = [
 // viewport-meta requirement — html files are routinely edited in slivers.
 const VIEWPORT_CHECK_MIN_BYTES = 200;
 
-function isUnderAppsDir(filePath: string): boolean {
-  const normalized = filePath.replace(/\\/g, "/").toLowerCase();
-  return normalized.includes("/workspace/apps/");
-}
-
 function isHtml(filePath: string): boolean {
   return /\.html?$/i.test(filePath);
-}
-
-/** Split an app-file path into its `workspace/apps/<id>` root and the app-
- *  relative remainder. null when the path isn't under an app dir. Case-
- *  insensitive on the anchor to match isUnderAppsDir; separators normalized so
- *  Windows paths resolve too. */
-function appRootAndRel(filePath: string): { root: string; rel: string } | null {
-  const norm = filePath.replace(/\\/g, "/");
-  const m = norm.match(/^(.*\/workspace\/apps\/[^/]+)\/(.+)$/i);
-  return m ? { root: m[1], rel: m[2] } : null;
 }
 
 /** Rejection message when the target is a harness-owned baseline file, or null
  *  when the app has no scaffold manifest or the file isn't owned. */
 function ownedBaselineRejection(filePath: string): string | null {
-  const parts = appRootAndRel(filePath);
+  const parts = workspaceAppRootAndRel(filePath);
   if (!parts) return null;
   const manifestPath = `${parts.root}/${SCAFFOLD_MANIFEST_REL}`;
   if (!existsSync(manifestPath)) return null;
@@ -112,7 +101,7 @@ export function isLockedBaselinePath(filePath: string): boolean {
  *      evidence there IS source to edit instead; without src/, the assets
  *      may BE the hand-authored source. */
 function builtArtifactWarning(filePath: string): string | null {
-  const parts = appRootAndRel(filePath);
+  const parts = workspaceAppRootAndRel(filePath);
   if (!parts) return null;
   const manifest = readRunTargetManifest(parts.root);
   if (!manifest) return null; // absent or corrupt manifest → fail-open, no warn
@@ -129,17 +118,19 @@ function builtArtifactWarning(filePath: string): string | null {
 
 /** `sessionId` keys the design gate: the session whose agent is writing. */
 export function checkAppWrite(filePath: string, content: string, sessionId?: string): WriteGuardResult {
-  if (!isUnderAppsDir(filePath)) return { allow: true };
+  const parts = appRootAndRel(filePath, sessionId);
+  if (!parts) return { allow: true };
+  if (!parts.workspaceApp) {
+    const design = designGateRejection(parts.root, appIdOf(parts.root), filePath, content, sessionId, { newProjectOnly: true });
+    return design ? { allow: false, reason: "design system not yet loaded for this project", message: design } : { allow: true };
+  }
 
   const baseline = ownedBaselineRejection(filePath);
   if (baseline) return { allow: false, reason: "harness-owned baseline file", message: baseline };
 
   // Before the content checks: a design rejection means rewriting the file, so
   // it must not wait behind a CDN fix and cost a second full draft.
-  const parts = appRootAndRel(filePath);
-  const design = parts
-    ? designGateRejection(parts.root, parts.root.replace(/^.*\//, ""), filePath, content, sessionId)
-    : null;
+  const design = designGateRejection(parts.root, appIdOf(parts.root), filePath, content, sessionId);
   if (design) return { allow: false, reason: "design system not yet loaded for this app", message: design };
 
   for (const host of BLOCKED_CDNS) {

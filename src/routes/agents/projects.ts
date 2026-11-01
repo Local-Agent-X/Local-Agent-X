@@ -3,7 +3,7 @@ import { jsonResponse, safeParseBody } from "../../server-utils.js";
 import type { Project } from "../../agent-store/index.js";
 import { seedProjectRosters } from "../../project-rosters.js";
 import { createLogger } from "../../logger.js";
-import { codeSessionFolder } from "../../session/code-work-root.js";
+import { codeSessionFolder } from "../../session/project-folder.js";
 import { basename, dirname, resolve } from "node:path";
 
 const logger = createLogger("routes.agents.projects");

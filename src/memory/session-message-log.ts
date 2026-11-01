@@ -138,6 +138,7 @@ export function readSessionLog(dir: string, id: string): Session | null {
     updatedAt: meta.updatedAt,
     ...(meta.projectId ? { projectId: meta.projectId } : {}),
     ...(meta.mode === "code" ? { mode: meta.mode } : {}),
+    ...(meta.folder ? { folder: meta.folder } : {}),
     messages: projectedMessages,
     ...(liveCheckpoint ? { compactionCheckpoint: liveCheckpoint } : {}),
   };
@@ -175,6 +176,7 @@ export function writeSessionLog(dir: string, session: Session): void {
     updatedAt: session.updatedAt,
     ...(session.projectId ? { projectId: session.projectId } : {}),
     ...(session.mode === "code" ? { mode: session.mode } : {}),
+    ...(session.folder ? { folder: session.folder } : {}),
   };
 
   const lines: string[] = [JSON.stringify(meta)];

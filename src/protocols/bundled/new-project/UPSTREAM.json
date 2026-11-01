@@ -1,0 +1,10 @@
+{
+  "upstream": "~/.claude/skills/new-project/SKILL.md",
+  "sha256": "100509fead49ae92dc1c9e248146ce45cd8a8f8c62539cffdf5bf9ca6f621b22",
+  "files": {
+    "references/couplings.md": "5cb840e0d1cc7849071c2b0ace0e596b416972f919c8aa632ac0ad5a62139d1a",
+    "references/registry-pattern.md": "fbde37ff69b0d1583c21fb8d30f82e1c6a03386b5ec1e64eeb0c63b9fbcb6496",
+    "references/retrofit.md": "6ad1b9027585d989f17b93cc43f2ce2b1ab9c1f099945e947a746788adf95c1c",
+    "references/templates.md": "b5ebb8d82d8858e46a0781af285469ff73bb6a86729f21000455537aabfa4332"
+  }
+}

@@ -19,7 +19,7 @@ import { isHarnessRow } from "../harness-rows.js";
 import type { ServerContext } from "../server-context.js";
 import { isValidSessionId, readBody, jsonResponse } from "../server-utils.js";
 import { parseChatMode } from "../session/mode.js";
-import { codeSessionFolder } from "../session/code-work-root.js";
+import { codeSessionFolder } from "../session/project-folder.js";
 import { codeFolderProject } from "./agents/projects.js";
 
 const MAX_BRIEF_BYTES = 200 * 1024;

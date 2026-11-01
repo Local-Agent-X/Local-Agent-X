@@ -20,6 +20,8 @@ export interface SessionMetaRow {
   projectId?: string;
   /** Absent = chat (session/mode.ts). */
   mode?: ChatMode;
+  /** The chat's bound folder, workspace-relative (session/project-folder.ts). */
+  folder?: string;
 }
 
 export interface SessionMessageRow {

@@ -14,6 +14,7 @@ import { fileNotFoundError } from "./edit-recovery.js";
 import { binaryContainerRejection, checkEditSyntax, syntaxRejectionMessage } from "./syntax-validate.js";
 import { checkHardcodedHomePath } from "./portable-path-check.js";
 import { checkAppWrite, writeGuardRejectionMessage } from "./app-tools/write-guard.js";
+import { appFolderStartedBy, appStartNote, onAppFolderStarted } from "./app-tools/new-app-folder.js";
 import { appUrlHint, cardFileName, servedFileHint } from "./file-hints.js";
 import { connectorManifestWriteRejection } from "./connector-write-guard.js";
 import { buildImportAppendix, isJsFamilyFile } from "./read-imports.js";
@@ -237,6 +238,8 @@ export const writeTool: ToolDefinition = {
     if (containerRejection) return err(containerRejection);
     const guard = checkAppWrite(filePath, content, sessionIdOf(args));
     if (!guard.allow) return err(guard.message ?? writeGuardRejectionMessage(guard.reason ?? "policy violation"));
+    // Measured before the write lands: is this the file that starts an app?
+    const starting = appFolderStartedBy(filePath, sessionIdOf(args));
     try {
       mkdirSync(dirname(filePath), { recursive: true });
       // Preserve the file's existing line-ending style on overwrite. The
@@ -273,6 +276,7 @@ export const writeTool: ToolDefinition = {
       // workspace (R4-19 write leg). The pre-dispatch gate already realpath-
       // confined this path; this closes the leaf-swap TOCTOU at the open.
       writeValidatedFile(filePath, toWrite);
+      const started = starting ? appStartNote(onAppFolderStarted(starting, sessionIdOf(args))) : "";
       // Non-fatal portability nudge (the file already landed): a machine-specific
       // home path baked into portable source is the "works on my machine" bug.
       const portability = checkHardcodedHomePath(filePath, before, toWrite);
@@ -281,7 +285,7 @@ export const writeTool: ToolDefinition = {
         : verdict.issue;
       const note = [syntaxNote, portability, guard.warn].filter(Boolean).join("\n\n");
       return ok(
-        `Wrote ${filePath}${appUrlHint(filePath)}${servedFileHint(filePath)}`,
+        `Wrote ${filePath}${appUrlHint(filePath)}${servedFileHint(filePath)}${started ? `\n${started}` : ""}`,
         { ...(note ? { recovery: note } : {}), fileChange: fileChangeOf(filePath, before, toWrite) },
       );
     } catch (e) {

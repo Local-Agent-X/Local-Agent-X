@@ -1,6 +1,6 @@
 /**
  * A code session's project rules: the AGENTS.md at the root of the folder it
- * works in (session/code-work-root.ts, session/ide-work-root.ts), read into
+ * works in (session/project-folder.ts, session/ide-work-root.ts), read into
  * its prompt the way coding agents read a repo's AGENTS.md.
  *
  * Capped, because a long rules file would crowd out the task on a local

@@ -262,6 +262,12 @@ export interface Session {
    */
   mode?: ChatMode;
   /**
+   * The folder a chat builds in, relative to the workspace (`apps/<name>`),
+   * bound at its first app write (session/project-folder.ts). A code session
+   * has its project's folder instead. Absent = not bound.
+   */
+  folder?: string;
+  /**
    * Compaction lives as a leading `{role:"system", content:"[COMPACTED CONTEXT — …]"}`
    * entry in `messages` (round-tripped through a `summary` row in the
    * jsonl log). `compactedSummary` / `compactedAt` no longer exist as

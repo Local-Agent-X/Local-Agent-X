@@ -26,14 +26,13 @@
  * the agent sees the system again before writing, which is the point.
  * Disable with LAX_APP_DESIGN_GUARD=0.
  */
-import { readdirSync } from "node:fs";
 import type { ToolDefinition } from "../../types.js";
-import { workspacePath } from "../../config.js";
 import { sessionIdOf } from "../../workspace/paths.js";
 import {
   selectDesignBrief, DESIGN_CRAFT, DESIGN_TECHNIQUES, DESIGN_ANTI_PATTERNS,
 } from "../design-brief.js";
 import { ok, err } from "./shared.js";
+import { appFolderIsNew, appIdOf, appRootForSession, describeAppRoot } from "./app-root.js";
 
 /** Files whose content IS the visual design. A .md/.json/.ts write carries no
  *  look and passes the gate. */
@@ -70,19 +69,10 @@ export function resetDesignDeliveries(): void {
   delivered.clear();
 }
 
-/** True when the app directory holds no files yet — a missing one counts. */
-function isNewApp(appRoot: string): boolean {
-  try {
-    return readdirSync(appRoot).length === 0;
-  } catch {
-    return true;
-  }
-}
-
 /** The design system text for one app. `describe` classifies a new app's
  *  archetype; an existing app gets no archetype, as build_app does on update. */
 export function renderAppDesignSystem(appRoot: string, describe: string): string {
-  const brief = isNewApp(appRoot)
+  const brief = appFolderIsNew(appRoot)
     ? selectDesignBrief(describe).brief
     : "This app already exists: keep its current look (colors, type, layout) and apply the rules below to what you change.";
   return [brief, DESIGN_CRAFT, DESIGN_TECHNIQUES, DESIGN_ANTI_PATTERNS].join("\n\n");
@@ -99,10 +89,12 @@ export function designGateRejection(
   filePath: string,
   content: string,
   sessionId: string | undefined,
+  opts: { /** Only a project with no files yet is held for the system: its first draft is the one to land on-spec. */ newProjectOnly?: boolean } = {},
 ): string | null {
   if (process.env.LAX_APP_DESIGN_GUARD === "0") return null;
   if (!DESIGN_EXT_RE.test(filePath)) return null;
   if (designDelivered(sessionId, appId)) return null;
+  if (opts.newProjectOnly && !appFolderIsNew(appRoot)) return null;
   const system = renderAppDesignSystem(appRoot, content);
   markDesignDelivered(sessionId, appId);
   return (
@@ -116,22 +108,25 @@ export const appDesignBrief: ToolDefinition = {
   name: "app_design_brief",
   effect: { class: "read-only" },
   description:
-    "Get the house design system for an app in workspace/apps/ BEFORE writing its UI files (index.html, CSS, components). " +
-    "Call it once per app per conversation, before the first write; writes of UI files to an app that hasn't had it are rejected. " +
+    "Get the house design system for the app you are about to write UI files for (index.html, CSS, components): " +
+    "this session's project folder (the folder a code session is bound to, or the app this chat builds), or an app under workspace/apps/ named by `app`. " +
+    "Call it once per app per conversation, before the first write; the first UI write to a new app that hasn't had it is rejected. " +
     "build_app applies it itself, so this is for apps you write directly.",
   parameters: {
     type: "object",
     properties: {
-      app: { type: "string", description: "The app's folder name under workspace/apps/ (e.g. 'coinbase-paper-bot')" },
+      app: { type: "string", description: "The app's folder name under workspace/apps/ (e.g. 'coinbase-paper-bot'). Omit when this session already has a project folder: that folder is the app." },
       description: { type: "string", description: "What the app is, in a sentence (e.g. 'crypto paper-trading dashboard with an equity chart and a trade log'). Picks the design archetype for a new app." },
     },
-    required: ["app", "description"],
+    required: ["description"],
   },
   async execute(args: Record<string, unknown>) {
-    const app = String(args.app || "").trim();
-    if (!app || /[\\/]|^\.\.?$/.test(app)) return err("app must be a folder name under workspace/apps/, with no slashes");
-    const system = renderAppDesignSystem(workspacePath("apps", app), String(args.description || ""));
-    markDesignDelivered(sessionIdOf(args), app);
-    return ok(`DESIGN SYSTEM for workspace/apps/${app}/ — follow it in every UI file you write for this app.\n\n${system}`);
+    const app = String(args.app || "").trim() || undefined;
+    if (app && /[\\/]|^\.\.?$/.test(app)) return err("app must be a folder name under workspace/apps/, with no slashes");
+    const root = appRootForSession(app, sessionIdOf(args));
+    if (!root) return err("Name the app: this session has no project folder yet, so pass its folder name under workspace/apps/.");
+    const system = renderAppDesignSystem(root, String(args.description || ""));
+    markDesignDelivered(sessionIdOf(args), appIdOf(root));
+    return ok(`DESIGN SYSTEM for ${describeAppRoot(root)}/ — follow it in every UI file you write for this app.\n\n${system}`);
   },
 };

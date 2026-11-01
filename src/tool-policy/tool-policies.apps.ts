@@ -105,6 +105,10 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   // Returns the design system text and records that this session has it
   // (design-gate.ts); reads only the app folder's listing.
   app_design_brief:      { kernel: "internal", risk: "safe", capabilities: [], tags: [], blurb: { say: "add a habit tracker to my sidebar", does: "Load the house design system before writing an app's UI by hand." }, reads: ["session"], rules: [{ id: "allow-app-design-brief", decision: "allow", reason: "Read the house design system before writing app UI", priority: 50 }] },
+  // Lands the structure kit in the session's project folder, never overwriting
+  // (app-tools/project-kit-tool.ts): the on-request route for a project that
+  // was not started by a build tool or the write tool.
+  project_kit:           { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [], reads: ["session"] },
   // The app-build ops (build_app, start/finalize_app_build, run_build_plan),
   // self_edit, op_submit*/op_wait and agent_spawn/agent_create run for minutes
   // by design: timeoutMs 0, since killing a real long-runner is the bigger bug.

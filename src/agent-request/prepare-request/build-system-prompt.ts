@@ -162,13 +162,14 @@ export interface BuildSystemPromptInput {
 /**
  * What the session's project brings to the prompt. Both are static, so their
  * unchanged bytes stay in the cached prefix turn after turn:
- * - a code session's project rules (context/project-agents-md.ts);
+ * - the project folder's rules, for any session bound to one — a code session's
+ *   project, or the app a chat builds (context/project-agents-md.ts);
  * - a chat project's documents in full, while they fit the model's share of
  *   its window (memory/project-docs/full-text.ts). Its own section, so a
  *   local window's budget can shed it alone; search covers them either way.
  */
 function addProjectSections(builder: SystemPromptBuilder, input: BuildSystemPromptInput): void {
-  const projectRules = input.mode === "code" ? projectAgentsMd(sessionWorkRootOf(input.sessionId)) : "";
+  const projectRules = projectAgentsMd(sessionWorkRootOf(input.sessionId));
   if (projectRules) {
     builder.addSection({ id: "project-rules", label: "Project Rules", type: "static", policy: "degradable", priority: "navigation", build: () => projectRules });
   }

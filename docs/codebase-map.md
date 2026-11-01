@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1894 non-test source files · 88 oversized · 247 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1897 non-test source files · 88 oversized · 247 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -21,13 +21,13 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 172 | 29 | XL | 1 |
 | `src/security/` | 145 | 57 | XL | 2 |
-| `src/tools/` | 122 | 221 | XL | 9 |
+| `src/tools/` | 122 | 224 | XL | 9 |
 | `src/tool-execution/` | 85 | 82 | XL | 2 |
+| `src/workspace/` | 83 | 3 | M |  |
 | `src/canonical-loop/` | 81 | 278 | XL | 11 |
-| `src/workspace/` | 81 | 3 | M |  |
 | `src/providers/` | 72 | 27 | L | 1 |
 | `src/data-lineage/` | 56 | 12 | L |  |
-| `src/session/` | 55 | 9 | M |  |
+| `src/session/` | 56 | 9 | M |  |
 | `src/memory/` | 53 | 148 | XL | 7 |
 | `src/browser/` | 48 | 88 | XL | 5 |
 | `src/tool-policy/` | 46 | 21 | L |  |
@@ -58,11 +58,11 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/inbox/` | 14 | 5 | M |  |
 | `src/voice/` | 14 | 74 | XL | 1 |
 | `src/self-edit/` | 13 | 19 | L | 2 |
+| `src/app-scaffold/` | 12 | 7 | M |  |
 | `src/ari-kernel/` | 12 | 12 | M |  |
 | `src/integrations/` | 12 | 15 | M |  |
 | `src/whatsapp-bridge/` | 12 | 8 | M | 1 |
 | `src/agent-loop/` | 10 | 1 | S |  |
-| `src/app-scaffold/` | 10 | 7 | M |  |
 | `src/persistence/` | 10 | 2 | S |  |
 | `src/routes/` | 10 | 95 | XL | 17 |
 | `src/sync/` | 10 | 21 | L | 1 |

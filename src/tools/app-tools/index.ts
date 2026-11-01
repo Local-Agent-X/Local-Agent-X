@@ -19,6 +19,7 @@ import { appCreate, appUpdate, appList, appDelete, appPermissions } from "./life
 import { appRead, appAction, appQuery } from "./runtime.js";
 import { sidebarPin, sidebarUnpin, sidebarClear } from "./sidebar.js";
 import { appDesignBrief } from "./design-gate.js";
+import { projectKit } from "./project-kit-tool.js";
 
 export const appTools: ToolDefinition[] = [
   appCreate,
@@ -33,4 +34,5 @@ export const appTools: ToolDefinition[] = [
   sidebarUnpin,
   sidebarClear,
   appDesignBrief,
+  projectKit,
 ];

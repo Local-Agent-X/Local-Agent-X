@@ -6,6 +6,7 @@ import { ok, err, blocked, timeout as timeoutResult } from "./result-helpers.js"
 import { detectTargetShell, translateForShell, powershellCmdletHint, quotedGlobHint, windowsPathHint, workspacePrefixHint } from "./shell-translate.js";
 import { resolveWindowsShell, recordAvSuspectKill, isLikelyAvKill } from "./shell-env.js";
 import { runCaged, type CagedOutput } from "./caged-spawn.js";
+import { registerOwnedGroup } from "./owned-listeners.js";
 import { workspaceRoot } from "../config.js";
 import { resolveSecretEnv, secretEnvOf, secretEnvProgram, withheldOutputNote, type ResolvedSecretEnv, type SecretEnv } from "./shell-secret-env.js";
 import { inboxWithheldOutput } from "../inbox/producers.js";
@@ -50,6 +51,20 @@ function withheldRunResult(
  * there was no progress signal to confirm forward motion. `render` is the
  * run's own view of a line (scrubbed, or the fixed note of a withheld run).
  */
+// POSIX: the shell leads its own process group, so a server it backgrounds
+// (`node server.js &`) keeps that group once the shell exits and is
+// reparented, and its port is the agent's to reach (owned-listeners.ts
+// registerOwnedGroup); a timeout or abort kills the group, background jobs
+// included, as runCaged says it does. Windows has no groups and a detached
+// child would open a console.
+const GROUP_LEADER = process.platform === "win32" ? {} : { detached: true, onSpawn: registerOwnedGroup };
+
+/** The command's progress line in the chat: its output so far, scrubbed, or
+ *  a note that the output is withheld. */
+function shellProgress(onEvent: ((e: ServerEvent) => void) | undefined, toolCallId: string | undefined, withheld: boolean, scrub: (line: string) => string) {
+  return progressEmitter(onEvent, toolCallId, (line) => (withheld ? "running — the output goes to your inbox, not the model" : scrub(line)));
+}
+
 function progressEmitter(
   onEvent: ((e: ServerEvent) => void) | undefined,
   toolCallId: ReturnType<typeof toolCallIdOf>,
@@ -228,14 +243,14 @@ export const bashTool: ToolDefinition = {
       const cwd = cwdOf(args) || workspaceRoot();
 
       const onEvent = onEventOf(args);
-      const progress = progressEmitter(onEvent, toolCallIdOf(args), (line) =>
-        withheldRun ? "running — the output goes to your inbox, not the model" : scrub(line));
+      const progress = shellProgress(onEvent, toolCallIdOf(args), withheldRun !== null, scrub);
 
       // Non-zero exits resolve with `code` set; a rejection means nothing ran.
       const outcome = await runCaged(cmd, {
         cwd,
         env: secrets?.env,
         signal: abortSignal,
+        ...GROUP_LEADER,
         // A Windows cage still proving its fence: the command waits (bounded)
         // to run caged, or on the visible fallback, instead of being refused.
         // The wait is not the command's: it keeps its whole timeout, and the

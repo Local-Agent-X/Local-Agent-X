@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import {
-  linuxListeningPids, ownedLoopbackPorts, ownedUnixSockets, parseLsof, parseProcNetTcp, parseProcNetUnix, parseProcStat, parsePs, parseWinTable,
+  linuxListeningPids, liveGroups, ownedLoopbackPorts, ownedUnixSockets, parseLsof, parseProcNetTcp, parseProcNetUnix, parseProcStat, parsePs, parseWinTable,
   portsOwnedBy, registerOwnedProcess, socketsOwnedBy, unregisterOwnedProcess,
 } from "./owned-listeners.js";
 import { evaluateWebFetch } from "../security/layer/network-policy.js";
@@ -25,6 +25,21 @@ describe("portsOwnedBy — a port is the agent's when its listener descends from
     const cyclic = [{ pid: 300, ppid: 200 }, { pid: 200, ppid: 300 }];
     expect(portsOwnedBy(listeners, cyclic, new Set([100])).size).toBe(0);
   });
+
+  // A server a shell backgrounded, reparented to init once the shell exited:
+  // the parent chain lost it, the process group the shell led did not.
+  it("includes a port held by a process in a group the agent's shell led, whatever its parent", () => {
+    const orphaned = [{ pid: 400, ppid: 1, pgid: 150 }, { pid: 900, ppid: 1, pgid: 900 }];
+    const ports = [{ port: 8000, pid: 400 }, { port: 5432, pid: 900 }];
+    expect([...portsOwnedBy(ports, orphaned, new Set(), new Set([150]))]).toEqual(["8000"]);
+    expect(portsOwnedBy(ports, orphaned, new Set(), new Set([151])).size).toBe(0);
+    expect(portsOwnedBy(ports, [{ pid: 400, ppid: 1 }], new Set(), new Set([150])).size).toBe(0); // no group reported
+  });
+
+  it("keeps a group while a live process holds it, and drops one whose id a reused pid carries", () => {
+    const procs = [{ pid: 400, ppid: 1, pgid: 150 }, { pid: 160, ppid: 1, pgid: 700 }, { pid: 170, ppid: 1, pgid: 170 }];
+    expect([...liveGroups(new Set([150, 160, 170, 180]), procs)]).toEqual([150, 170]);
+  });
 });
 
 describe("the OS tables are parsed into listeners and a parent map", () => {
@@ -39,6 +54,7 @@ describe("the OS tables are parsed into listeners and a parent map", () => {
       { port: 2024, pid: 300 }, { port: 2024, pid: 300 }, { port: 5432, pid: 900 },
     ]);
     expect(parsePs("  300   200\n  200   100\n")).toEqual([{ pid: 300, ppid: 200 }, { pid: 200, ppid: 100 }]);
+    expect(parsePs("  300   200   100\n")).toEqual([{ pid: 300, ppid: 200, pgid: 100 }]);
   });
 });
 
@@ -79,9 +95,10 @@ describe("ownedUnixSockets — a socket is the agent's when a process it started
     expect([...parseProcNetUnix(table)]).toEqual([["4101", "/tmp/vm.sock"], ["4105", "/tmp/with space.sock"]]);
   });
 
-  it("reads the parent pid after the command name, whatever it holds", () => {
-    expect(parseProcStat("300 (qemu-system-x86) S 100 300 1 0")).toBe(100);
-    expect(parseProcStat("301 (a (b) c) S 42 301 1 0")).toBe(42);
+  it("reads the parent pid and the process group after the command name, whatever it holds", () => {
+    expect(parseProcStat("300 (qemu-system-x86) S 100 300 1 0")).toEqual({ ppid: 100, pgid: 300 });
+    expect(parseProcStat("301 (a (b) c) S 42 150 1 0")).toEqual({ ppid: 42, pgid: 150 });
+    expect(parseProcStat("bad")).toBeNull();
   });
 
   // TB2 install-windows-3.11, 2026-10-29: the container had no lsof, so the

@@ -196,6 +196,9 @@ export interface CagedRunOptions extends CagedSpawnOptions {
   /** After each chunk, with the capture so far. The same object every call,
    *  updated in place, so a deferred reader sees the latest output. */
   onOutput?: (captured: CagedOutput) => void;
+  /** Once the child is up, with its pid: a detached child leads the process
+   *  group its background jobs stay in (owned-listeners.ts). */
+  onSpawn?: (pid: number) => void;
 }
 
 export type CagedRunOutcome =
@@ -221,6 +224,7 @@ export async function runCaged(spec: CagedSpawnSpec, opts: CagedRunOptions): Pro
   }
   const sandboxMode = getSandboxMode();
   const startMs = Date.now();
+  if (child.pid) opts.onSpawn?.(child.pid);
   return new Promise<CagedRunOutcome>((resolveP, rejectP) => {
     const captured: CagedOutput = { stdout: "", stderr: "" };
     let capturedChars = 0;

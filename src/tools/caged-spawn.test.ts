@@ -113,10 +113,13 @@ describe("spawnCaged / runCaged: the seam", () => {
     seam.mode = "guarded";
     seam.proxy = { HTTP_PROXY: "http://lax:t@127.0.0.1:60090", NODE_USE_ENV_PROXY: "1" };
     seam.wrapTo = () => PRINT_ENV;
-    const outcome = await runCaged("echo hi", { cwd: tmpdir(), env: { EXTRA: "1", HTTP_PROXY: "http://caller" }, timeoutMs: 15_000 });
+    const spawned: number[] = [];
+    const outcome = await runCaged("echo hi", { cwd: tmpdir(), env: { EXTRA: "1", HTTP_PROXY: "http://caller" }, timeoutMs: 15_000, onSpawn: (pid) => spawned.push(pid) });
 
     expect(seam.calls).toEqual(["proof", "proxy", `grants:${resolveWindowsShell().path}`, "wrap"]);
     expect(outcome).toMatchObject({ kind: "exit", code: 0, sandboxMode: "guarded" });
+    expect(spawned.length).toBe(1);
+    expect(spawned[0]).toBeGreaterThan(0);
     const childEnv = JSON.parse(outcome.kind === "exit" ? outcome.stdout : "{}") as Record<string, string>;
     const wrapEnv = seam.wrapped[0].env;
     for (const env of [childEnv, wrapEnv]) {

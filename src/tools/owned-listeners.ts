@@ -21,15 +21,29 @@
  * (ownedUnixSockets): `qemu -serial unix:/tmp/vm.sock,server` started by the
  * agent is its console, while docker.sock, an ssh-agent or the session bus,
  * which no process the agent started holds, stay out of reach.
+ *
+ * A server a shell command backgrounded (`node server.js &`, `qemu … &`) is
+ * reparented to init once the shell exits, and the parent chain loses it.
+ * The shell tool spawns each shell detached, leading its own process group,
+ * and registers the group (registerOwnedGroup): a listener in that group is
+ * the agent's for as long as any process holds the group. A daemon that
+ * calls setsid() leaves the group and is not proven; a reused pid is not the
+ * shell (liveGroups).
  */
 import { execFileSync } from "node:child_process";
 import { readdirSync, readFileSync, readlinkSync, realpathSync } from "node:fs";
 
 export interface Listener { port: number; pid: number }
-export interface Proc { pid: number; ppid: number }
+/** `pgid`: the process group, where the table reports it (Linux, macOS). */
+export interface Proc { pid: number; ppid: number; pgid?: number }
 export interface SocketListener { path: string; pid: number }
 
 const ownedPids = new Set<number>();
+// The process groups the agent's shells led (shell-tool.ts spawns each
+// detached): a server a shell backgrounded keeps the group once the shell
+// exits and init adopts it, where the parent chain would have lost it.
+const ownedGroups = new Set<number>();
+const GROUPS_CAP = 1024;
 let cache: { at: number; ports: Set<string> } | null = null;
 let socketCache: { at: number; paths: Set<string> } | null = null;
 const CACHE_MS = 3000;
@@ -50,11 +64,32 @@ export function unregisterOwnedProcess(pid: number | null | undefined): void {
 	}
 }
 
-/** Is `pid` one of `owned` or a descendant of one, by the `procs` table? */
-function ownedBy(procs: readonly Proc[], owned: ReadonlySet<number>): (pid: number) => boolean {
+/** A shell the agent ran leads process group `pid` (spawned detached). Kept
+ *  until no live process is in the group; the oldest go once the cap is hit. */
+export function registerOwnedGroup(pid: number | null | undefined): void {
+	if (typeof pid !== "number" || pid <= 0) return;
+	ownedGroups.add(pid);
+	for (const g of ownedGroups) { if (ownedGroups.size <= GROUPS_CAP) break; ownedGroups.delete(g); }
+	cache = null;
+	socketCache = null;
+}
+
+/** The groups still held by a live process. A group whose id a live process
+ *  carries as its pid but not as its group is a reused pid, not the shell. */
+export function liveGroups(groups: ReadonlySet<number>, procs: readonly Proc[]): Set<number> {
+	const held = new Set(procs.map((p) => p.pgid));
+	const reused = new Set(procs.filter((p) => p.pgid !== undefined && p.pgid !== p.pid).map((p) => p.pid));
+	return new Set([...groups].filter((g) => held.has(g) && !reused.has(g)));
+}
+
+/** Is `pid` one of `owned`, a descendant of one, or in one of `groups`, by the `procs` table? */
+function ownedBy(procs: readonly Proc[], owned: ReadonlySet<number>, groups: ReadonlySet<number>): (pid: number) => boolean {
 	const parent = new Map<number, number>();
-	for (const p of procs) parent.set(p.pid, p.ppid);
+	const group = new Map<number, number | undefined>();
+	for (const p of procs) { parent.set(p.pid, p.ppid); group.set(p.pid, p.pgid); }
 	return (pid) => {
+		const pgid = group.get(pid);
+		if (pgid !== undefined && groups.has(pgid)) return true;
 		const seen = new Set<number>();
 		for (let cur: number | undefined = pid; cur !== undefined && cur > 0 && !seen.has(cur); cur = parent.get(cur)) {
 			if (owned.has(cur)) return true;
@@ -64,9 +99,10 @@ function ownedBy(procs: readonly Proc[], owned: ReadonlySet<number>): (pid: numb
 	};
 }
 
-/** The listening ports whose owning process is one of `owned` or descends from one. */
-export function portsOwnedBy(listeners: readonly Listener[], procs: readonly Proc[], owned: ReadonlySet<number>): Set<string> {
-	const isOwned = ownedBy(procs, owned);
+/** The listening ports whose owning process is one of `owned` or descends
+ *  from one, or sits in one of `groups`. */
+export function portsOwnedBy(listeners: readonly Listener[], procs: readonly Proc[], owned: ReadonlySet<number>, groups: ReadonlySet<number> = new Set()): Set<string> {
+	const isOwned = ownedBy(procs, owned, groups);
 	const ports = new Set<string>();
 	for (const l of listeners) {
 		if (Number.isInteger(l.port) && l.port > 0 && l.port <= 65535 && isOwned(l.pid)) ports.add(String(l.port));
@@ -106,11 +142,12 @@ export function parseLsof(out: string): Listener[] {
 	return listeners;
 }
 
+// `ps -eo pid=,ppid=,pgid=` (BSD and procps spell all three).
 export function parsePs(out: string): Proc[] {
 	const procs: Proc[] = [];
 	for (const line of out.split("\n")) {
-		const m = /^\s*(\d+)\s+(\d+)\s*$/.exec(line);
-		if (m) procs.push({ pid: Number(m[1]), ppid: Number(m[2]) });
+		const m = /^\s*(\d+)\s+(\d+)(?:\s+(\d+))?\s*$/.exec(line);
+		if (m) procs.push({ pid: Number(m[1]), ppid: Number(m[2]), ...(m[3] === undefined ? {} : { pgid: Number(m[3]) }) });
 	}
 	return procs;
 }
@@ -126,7 +163,7 @@ function query(): { listeners: Listener[]; procs: Proc[] } {
 	if (process.platform === "linux") return queryLinux();
 	return {
 		listeners: parseLsof(execFileSync("lsof", ["-nP", "-iTCP", "-sTCP:LISTEN", "-F", "pn"], opts)),
-		procs: parsePs(execFileSync("ps", ["-eo", "pid=,ppid="], opts)),
+		procs: parsePs(execFileSync("ps", ["-eo", "pid=,ppid=,pgid="], opts)),
 	};
 }
 
@@ -154,12 +191,12 @@ export function processTable(): Proc[] {
  * once per CACHE_MS. A query failure yields the empty set: no evidence, no port.
  */
 export function ownedLoopbackPorts(): Set<string> {
-	if (ownedPids.size === 0) return new Set();
+	if (ownedPids.size === 0 && ownedGroups.size === 0) return new Set();
 	if (cache && Date.now() - cache.at < CACHE_MS) return cache.ports;
 	let ports: Set<string>;
 	try {
 		const { listeners, procs } = query();
-		ports = portsOwnedBy(listeners, procs, ownedPids);
+		ports = portsOwnedBy(listeners, procs, ownedPids, pruneGroups(procs));
 	} catch {
 		ports = new Set();
 	}
@@ -167,9 +204,17 @@ export function ownedLoopbackPorts(): Set<string> {
 	return ports;
 }
 
-/** The socket paths whose listening process is one of `owned` or descends from one. */
-export function socketsOwnedBy(listeners: readonly SocketListener[], procs: readonly Proc[], owned: ReadonlySet<number>): Set<string> {
-	const isOwned = ownedBy(procs, owned);
+/** Drop the groups no live process holds, and return the rest. */
+function pruneGroups(procs: readonly Proc[]): ReadonlySet<number> {
+	const live = liveGroups(ownedGroups, procs);
+	for (const g of ownedGroups) if (!live.has(g)) ownedGroups.delete(g);
+	return live;
+}
+
+/** The socket paths whose listening process is one of `owned` or descends
+ *  from one, or sits in one of `groups`. */
+export function socketsOwnedBy(listeners: readonly SocketListener[], procs: readonly Proc[], owned: ReadonlySet<number>, groups: ReadonlySet<number> = new Set()): Set<string> {
+	const isOwned = ownedBy(procs, owned, groups);
 	return new Set(listeners.filter((l) => l.path.startsWith("/") && isOwned(l.pid)).map((l) => l.path));
 }
 
@@ -199,11 +244,11 @@ export function parseProcNetTcp(text: string): Map<string, number> {
 	return byInode;
 }
 
-// `/proc/<pid>/stat` is `pid (comm) state ppid …`; comm may hold spaces and
-// parens, so the fields are read after its LAST `)`.
-export function parseProcStat(stat: string): number | null {
-	const ppid = Number(stat.slice(stat.lastIndexOf(")") + 2).split(" ")[1]);
-	return Number.isInteger(ppid) ? ppid : null;
+// `/proc/<pid>/stat` is `pid (comm) state ppid pgrp session …`; comm may hold
+// spaces and parens, so the fields are read after its LAST `)`.
+export function parseProcStat(stat: string): { ppid: number; pgid: number } | null {
+	const [, ppid, pgid] = stat.slice(stat.lastIndexOf(")") + 2).split(" ").map(Number);
+	return Number.isInteger(ppid) && Number.isInteger(pgid) ? { ppid, pgid } : null;
 }
 
 function readProcNet(name: string): string {
@@ -223,8 +268,8 @@ function queryLinux(): { listeners: Listener[]; sockets: SocketListener[]; procs
 		if (!/^\d+$/.test(d)) continue;
 		const pid = Number(d);
 		try {
-			const ppid = parseProcStat(readFileSync(`/proc/${d}/stat`, "utf-8"));
-			if (ppid !== null) procs.push({ pid, ppid });
+			const stat = parseProcStat(readFileSync(`/proc/${d}/stat`, "utf-8"));
+			if (stat !== null) procs.push({ pid, ...stat });
 			for (const fd of readdirSync(`/proc/${d}/fd`)) {
 				const inode = /^socket:\[(\d+)\]$/.exec(readlinkSync(`/proc/${d}/fd/${fd}`))?.[1];
 				if (inode === undefined) continue;
@@ -247,12 +292,12 @@ function queryLinux(): { listeners: Listener[]; sockets: SocketListener[]; procs
  * failure yields the empty set: no evidence, no socket.
  */
 export function ownedUnixSockets(): Set<string> {
-	if (ownedPids.size === 0 || process.platform !== "linux") return new Set();
+	if ((ownedPids.size === 0 && ownedGroups.size === 0) || process.platform !== "linux") return new Set();
 	if (socketCache && Date.now() - socketCache.at < CACHE_MS) return socketCache.paths;
 	let paths = new Set<string>();
 	try {
 		const { sockets, procs } = queryLinux();
-		for (const p of socketsOwnedBy(sockets, procs, ownedPids)) {
+		for (const p of socketsOwnedBy(sockets, procs, ownedPids, pruneGroups(procs))) {
 			try { paths.add(realpathSync(p)); } catch { /* bound, then unlinked: no file to reach */ }
 		}
 	} catch {

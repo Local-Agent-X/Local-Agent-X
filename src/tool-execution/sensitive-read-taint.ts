@@ -41,6 +41,7 @@ import { DEFAULT_MAX_RESULT_CHARS } from "../context-manager/tool-result-cap.js"
 import { hasCapability, outputOf, shellCommandOf, waitsForShellCommand } from "../tool-registry.js";
 import { resolveAgentPath } from "../workspace/paths.js";
 import { realpathDeep, isSanctionedWorkRootEnvFile } from "../security/layer/index.js";
+import { isDotenvFile } from "../security/layer/sensitive-paths.js";
 import { recordPrivateReadFromResult } from "./private-read-record.js";
 import { createLogger } from "../logger.js";
 import { recordResponseTokens } from "../browser/site-provenance.js";
@@ -297,7 +298,16 @@ export function applyResultTaintPolicy(
     const fileContent = typeof result?.content === "string" ? result.content : undefined;
     const sanctionedEnv = isSanctionedWorkRootEnvFile(sessionId, taintPath);
     const envHoldsRealSecret = sanctionedEnv && !!fileContent && detectSecretsInOutput(fileContent).structured;
-    if (isSensitivePath(taintPath) && (!sanctionedEnv || envHoldsRealSecret)) {
+    if (isSensitivePath(taintPath) && isDotenvFile(taintPath) && !sanctionedEnv && result) {
+      // Keys only: the file-access gate let the read through for this, and
+      // every value goes before delivery, so nothing sensitive enters context
+      // and nothing is tainted (the provisional floor is withdrawn as a stub's
+      // is). What a secret-shaped value in a comment or a continuation line
+      // would leave is masked below with everything else delivered.
+      if (floor.pairs.length > 0) retractProvisionalTaint(sid, floor.pairs, floor.id);
+      floor.pairs = [];
+      result = dotenvKeysOnly(result);
+    } else if (isSensitivePath(taintPath) && (!sanctionedEnv || envHoldsRealSecret)) {
       // Content-bearing UPGRADE of the pre-execute floor entry: fingerprints
       // let a later egress block name which tainted bytes are in the payload.
       // Content is fingerprinted (hashed), never stored as plaintext.
@@ -433,15 +443,40 @@ function redactionStub(redactReason: string, command: string | undefined): ToolR
       `[redacted by data-lineage gate — ${redactReason}. ` +
       outcome +
       "The raw bytes were withheld from the model context, so nothing sensitive entered this session and no tools are blocked. " +
-      "Do not re-read this source; if a credential is needed, use a {{SECRET_NAME}} placeholder or ask the user. " +
-      "To learn which keys an app expects, read its .env.example or its code; list_secrets names what the vault holds.]",
+      "Do not re-read this source from the shell; if a credential is needed, use a {{SECRET_NAME}} placeholder or ask the user. " +
+      "To learn which keys an app expects, open its .env with the read tool, which shows the keys with every value masked; list_secrets names what the vault holds.]",
     isError: false,
     status: "blocked",
     metadata: {
       layer: "data-lineage", redacted: true, reason: redactReason,
-      recovery: "Do not re-read this source. Report what it was for as not checked, and continue with the rest of the request. For an app's key names read .env.example or the code; for the vault's names call list_secrets.",
+      recovery: "Do not re-read this source from the shell. Report what it was for as not checked, and continue with the rest of the request. For an app's key names open its .env with the read tool (values come back masked); for the vault's names call list_secrets.",
     },
   };
+}
+
+// A dotenv assignment anywhere on a line, after whatever a tool put in front
+// of it (`12\t`, `path:12:`, `export `): the name, then the value to the end
+// of the line.
+const DOTENV_ASSIGNMENT = /^(.*?)([A-Za-z_][A-Za-z0-9_.-]*\s*=)(.*)$/;
+const VALUE_MASK = "<set>";
+const KEYS_ONLY_NOTE =
+  "[values masked: this is a secrets file, so its keys are shown and its values never are. " +
+  "list_secrets names what the vault holds; a {{NAME}} placeholder in http_request, or secret_env for a command, uses one.]";
+
+/** The dotenv file with every value masked: each assignment keeps its name
+ *  and loses what follows `=` (an empty value stays empty); every other line
+ *  stays. The note tells the model what it is looking at and the way to use
+ *  a value without seeing it. */
+export function dotenvKeysOnly(result: ToolResult): ToolResult {
+  if (typeof result.content !== "string") return result;
+  let values = 0;
+  const content = result.content.split("\n").map((line) => {
+    const m = DOTENV_ASSIGNMENT.exec(line);
+    if (!m || m[3].trim() === "") return line;
+    values++;
+    return `${m[1]}${m[2]}${/^\s*/.exec(m[3])![0]}${VALUE_MASK}`;
+  }).join("\n");
+  return withMetadata({ ...result, content: `${content}\n${KEYS_ONLY_NOTE}` }, { values_masked: values, keys_only: true });
 }
 
 /** Above this size the file is not read to judge an echo: taken as carried. */

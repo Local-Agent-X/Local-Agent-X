@@ -292,6 +292,69 @@ describe("run-sandboxed redacts sensitive results before delivery (no taint on s
     }
   });
 
+  // The keys-only view: a read of a dotenv file is the one sanctioned way to
+  // learn which credentials an app expects. Every value goes, every key
+  // stays, nothing is tainted, and the note says how to use a value unseen.
+  it("read of a .env delivers its keys with every value masked, whatever the line's prefix, and taints nothing", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lineage-dotenv-"));
+    const file = join(dir, ".env");
+    const body = "# app config\nSUPABASE_URL=https://abc.supabase.co\nSUPABASE_KEY=sb_secret_9f8e7d6c5b4a3b2c1\nEMPTY=\nexport FLAG = on\n";
+    writeFileSync(file, body, "utf-8");
+    const readStub: ToolDefinition = {
+      name: "read",
+      description: "test stub",
+      parameters: { type: "object", properties: {}, required: [] },
+      async execute() { return { content: body.split("\n").map((l, i) => (l ? `${i + 1}\t${l}` : l)).join("\n"), isError: false }; },
+    };
+    const sessionId = "redact-dotenv-keys";
+    clearSessionTaint(sessionId);
+    const ctx = makeCtx({ name: "read", args: { path: file }, tool: readStub, sessionId });
+    try {
+      await runSandboxedPhase(ctx);
+      const out = String(ctx.result!.content);
+      expect(out).toContain("SUPABASE_URL=<set>");
+      expect(out).toContain("SUPABASE_KEY=<set>");
+      expect(out).toContain("export FLAG = <set>");
+      expect(out).not.toContain("= on");
+      expect(out).toContain("EMPTY=\n");
+      expect(out).toContain("# app config");
+      expect(out).not.toContain("supabase.co");
+      expect(out).not.toContain("sb_secret");
+      expect(out).toMatch(/values masked.*list_secrets/);
+      expect(ctx.result!.status ?? "ok").not.toBe("blocked");
+      expect(ctx.result!.metadata).toMatchObject({ keys_only: true, values_masked: 3 });
+      expect(checkEgressTaint(sessionId).blocked).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("the same view through grep's path:line prefix, and a secrets file that is not a dotenv still gets the stub", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lineage-dotenv-grep-"));
+    const env = join(dir, ".env.production");
+    writeFileSync(env, "TOKEN=ghp_abcdefghijklmnopqrstuvwxyz012345\n", "utf-8");
+    const netrc = join(dir, ".netrc");
+    writeFileSync(netrc, "machine api.example.com login u password hunter2hunter2\n", "utf-8");
+    const grepStub = (line: string): ToolDefinition => ({
+      name: "grep", description: "test stub", parameters: { type: "object", properties: {}, required: [] },
+      async execute() { return { content: line, isError: false }; },
+    });
+    clearSessionTaint("redact-dotenv-grep");
+    const g = makeCtx({ name: "grep", args: { pattern: "TOKEN", path: env }, tool: grepStub(`${env}:1:TOKEN=ghp_abcdefghijklmnopqrstuvwxyz012345`), sessionId: "redact-dotenv-grep" });
+    const n = makeCtx({ name: "grep", args: { pattern: "password", path: netrc }, tool: grepStub(`${netrc}:1:machine api.example.com login u password hunter2hunter2`), sessionId: "redact-dotenv-grep" });
+    try {
+      await runSandboxedPhase(g);
+      expect(String(g.result!.content)).toContain(":1:TOKEN=<set>");
+      expect(String(g.result!.content)).not.toContain("ghp_");
+      await runSandboxedPhase(n);
+      expect(n.result!.metadata?.redacted).toBe(true);
+      expect(String(n.result!.content)).not.toContain("hunter2");
+      expect(checkEgressTaint("redact-dotenv-grep").blocked).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   // An owned-source record with a secret VALUE in it keeps the record and
   // loses the value: masked in place, registered so the outbound scan refuses
   // it, session not tainted (the bytes never entered context).

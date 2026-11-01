@@ -474,14 +474,20 @@ describe("work-root .env carve-out", () => {
     expect(evaluateFileAccess(WORKSPACE, "unrestricted", () => false, "write", join(PROJ, ".env"), SESSION).allowed).toBe(false);
   });
 
-  it("still blocks .env for a session WITHOUT a work root", () => {
-    const d = evaluateFileAccess(WORKSPACE, "unrestricted", () => false, "read", join(PROJ, ".env.local"), "agent-other-9");
-    expect(d.allowed).toBe(false);
+  // A READ of any dotenv file is let through for the keys-only view
+  // (sensitive-read-taint.ts dotenvKeysOnly masks every value before
+  // delivery); a write outside the work root, and every other sensitive
+  // shape, stay refused.
+  it("lets a session WITHOUT a work root read .env (keys only), never write it", () => {
+    expect(evaluateFileAccess(WORKSPACE, "unrestricted", () => false, "read", join(PROJ, ".env.local"), "agent-other-9").allowed).toBe(true);
+    expect(evaluateFileAccess(WORKSPACE, "unrestricted", () => false, "read", join(PROJ, ".env"), "agent-other-9").allowed).toBe(true);
+    expect(evaluateFileAccess(WORKSPACE, "unrestricted", () => false, "write", join(PROJ, ".env.local"), "agent-other-9").allowed).toBe(false);
+    expect(evaluateFileAccess(WORKSPACE, "unrestricted", () => false, "read", join(PROJ, ".env.key"), "agent-other-9").allowed).toBe(false);
   });
 
-  it("still blocks an env file OUTSIDE the work root for the work-rooted session", () => {
-    const d = evaluateFileAccess(WORKSPACE, "unrestricted", () => false, "read", join(ROOT, ".env.local"), SESSION);
-    expect(d.allowed).toBe(false);
+  it("an env file OUTSIDE the work root: readable keys-only, not writable, for the work-rooted session", () => {
+    expect(evaluateFileAccess(WORKSPACE, "unrestricted", () => false, "read", join(ROOT, ".env.local"), SESSION).allowed).toBe(true);
+    expect(evaluateFileAccess(WORKSPACE, "unrestricted", () => false, "write", join(ROOT, ".env.local"), SESSION).allowed).toBe(false);
   });
 
   it("still blocks non-env sensitive files INSIDE the work root", () => {

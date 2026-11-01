@@ -3,7 +3,7 @@ import type { SecurityDecision } from "../../types.js";
 import { USER_HINTS } from "../../types.js";
 import type { FileAccessMode } from "./types.js";
 import type { PathArgSpec } from "../../tool-registry.js";
-import { classifySensitivePath } from "./sensitive-paths.js";
+import { classifySensitivePath, isDotenvFile } from "./sensitive-paths.js";
 import { SYSTEM_DIR_PATTERNS } from "./catastrophic-paths.js";
 import { isLaxControlFile, isAppAtRestSecretUnderLax } from "./lax-control-files.js";
 import { resolveAgentPathFrom, realpathDeep, sessionWorkRootOf } from "../../workspace/paths.js";
@@ -368,23 +368,34 @@ export function evaluateFileAccess(
     }
   }
 
-  // Check sensitive paths against both resolved and real paths
-  const normalizedResolved = process.platform === "win32" ? resolved.toLowerCase() : resolved;
-  const normalizedRealPath = process.platform === "win32" ? realPath.toLowerCase() : realPath;
-  const match = matchesSensitivePath(normalizedResolved) ?? matchesSensitivePath(normalizedRealPath);
-  if (match && !isSanctionedWorkRootEnvFile(sessionId, realPath)) {
-    return {
-      allowed: false,
-      reason: `Blocked: matches sensitive path pattern ${typeof match === "string" ? match : match.source}`,
-      userHint: USER_HINTS.secrets,
-    };
-  }
+  const sensitive = sensitivePathRefusal(resolved, realPath, action, sessionId);
+  if (sensitive) return sensitive;
 
   // Hand back the canonical inode the checks above bound to (realPath). The
   // read sinks open THIS path with O_NOFOLLOW (see openValidatedRead) instead
   // of re-deriving a raw lexical path, so the inode validated here is the inode
   // opened — closing the symlink-swap TOCTOU (R4-19).
   return { allowed: true, reason: "File access allowed", canonicalPath: realPath };
+}
+
+/** The sensitive-path refusal, checked against both the resolved and the real
+ *  path, or null. Two reads are let through: a dotenv file's, delivered with
+ *  every value masked (keys only; tool-execution/sensitive-read-taint.ts), so
+ *  which credentials an app expects can be learned the one way that cannot
+ *  leak them (2026-10-31: refused, the agent ran `cat .env | sed` itself and
+ *  quarantined the chat); and the work-rooted session's own env file. */
+function sensitivePathRefusal(resolved: string, realPath: string, action: string, sessionId: string | undefined): SecurityDecision | null {
+  const normalizedResolved = process.platform === "win32" ? resolved.toLowerCase() : resolved;
+  const normalizedRealPath = process.platform === "win32" ? realPath.toLowerCase() : realPath;
+  const match = matchesSensitivePath(normalizedResolved) ?? matchesSensitivePath(normalizedRealPath);
+  if (!match) return null;
+  if (action === "read" && isDotenvFile(realPath)) return null;
+  if (isSanctionedWorkRootEnvFile(sessionId, realPath)) return null;
+  return {
+    allowed: false,
+    reason: `Blocked: matches sensitive path pattern ${typeof match === "string" ? match : match.source}`,
+    userHint: USER_HINTS.secrets,
+  };
 }
 
 // The validated-inode open/read/write helpers (openValidatedRead /

@@ -104,6 +104,21 @@ const BROWSER_PROFILE_DIR_NAMES: ReadonlySet<string> = new Set(["user data", "pa
  * Does NOT include the app's own at-rest secret basenames — that check is run
  * separately by each caller (see module header).
  */
+/**
+ * A dotenv file: `.env` or `.env.<anything>` that is not also a key or
+ * certificate by extension (`.env.pem`, `.env.key` stay keys). The one
+ * credential-file shape whose KEY NAMES are ordinary to need — which
+ * credentials an app expects — so a read of one is delivered with every value
+ * masked (file-access.ts allows the read, tool-execution/sensitive-read-taint.ts
+ * masks it) instead of refused outright; a write, and every other sensitive
+ * shape, keep the refusal.
+ */
+export function isDotenvFile(filePath: string): boolean {
+  const base = filePath.split(/[\\/]/).filter(Boolean).pop()?.toLowerCase() ?? "";
+  if (base === ".env") return true;
+  return base.startsWith(".env.") && !SENSITIVE_EXTENSIONS.some((ext) => base.endsWith(ext));
+}
+
 export function classifySensitivePath(filePath: string): boolean {
   if (!filePath) return false;
   const segs = filePath.split(/[\\/]/).filter(Boolean);

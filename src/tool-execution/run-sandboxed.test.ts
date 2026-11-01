@@ -646,12 +646,13 @@ describe("work-root env read-taint carve-out", () => {
 
   // An errored result skips the redaction stub, so whatever the tool returned
   // reached the model. The provisional floor stands exactly when that output
-  // carries the file's bytes.
+  // carries the file's bytes. (A dotenv file is the keys-only view instead,
+  // masked on every outcome; this is the stub class: secrets.json.)
   const envFile = () => {
     const dir = mkdtempSync(join(tmpdir(), "lax-env-"));
     dirs.add(dir);
-    const file = join(dir, ".env");
-    writeFileSync(file, "DB_URL=postgres://u:p@db/x\nAPI_KEY=sk_live_abcdef0123456789\n", "utf-8");
+    const file = join(dir, "secrets.json");
+    writeFileSync(file, '{"db_url":"postgres://u:p@db/x","api_key":"sk_live_abcdef0123456789"}\n', "utf-8");
     return file;
   };
   const failingRead = (output: string) => ({
@@ -664,7 +665,7 @@ describe("work-root env read-taint carve-out", () => {
   it("a FAILED sensitive read whose error output echoes the file keeps the taint", async () => {
     const s = freshSession();
     try {
-      await run(failingRead("read failed mid-way after: API_KEY=sk_live_abcdef0123456789"), { path: envFile() }, s);
+      await run(failingRead('read failed mid-way after: {"db_url":"postgres://u:p@db/x","api_key":"sk_live_abcdef0123456789"}'), { path: envFile() }, s);
       expect(checkEgressTaint(s).blocked).toBe(true);
     } finally {
       clearSessionTaint(s);
@@ -678,7 +679,7 @@ describe("work-root env read-taint carve-out", () => {
     try {
       await run(failingRead("EACCES: permission denied"), { path: envFile() }, s);
       expect(checkEgressTaint(s).blocked).toBe(false);
-      await run(failingRead("DB_URL=<set>\nAPI_KEY=<set>\nls: cannot access 'apps/mobile/.env': No such file"), { path: envFile() }, s);
+      await run(failingRead('{"db_url":"<set>","api_key":"<set>"}\nls: cannot access \'apps/mobile/.env\': No such file'), { path: envFile() }, s);
       expect(checkEgressTaint(s).blocked).toBe(false);
     } finally {
       clearSessionTaint(s);

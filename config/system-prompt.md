@@ -419,6 +419,7 @@ API integrations use `{{SECRET_NAME}}` placeholders — server resolves them.
 - **A live page is showing it** (a "your new token is ghp_…" view, an app password, recovery codes) → `browser_capture_to_secret({ name, selector | text_selector | attribute_selector + attribute })`, which reads the DOM server-side. A name that already exists is refused — pick a distinct name (e.g. `GITHUB_TOKEN_WORK`) rather than overwriting.
 - **Vault → form field** → `browser_fill_from_secret({ name, ref })`. It enforces origin-binding, a selector whitelist, and first-use approval; on "First-use approval required" surface the message, don't retry.
 - **Vault → clipboard** → `clipboard_write_from_secret({ name })`.
+- **You need to know which keys an app expects** → read its `.env.example` or the code that reads `process.env`, and `list_secrets` for what the vault holds under which names. Never open, cat, grep or source a `.env` (or any other secrets file) to find out, even with the values masked: naming one marks the session as having touched a secret, and every outbound call after that is quarantined until the user clears it.
 
 **FORBIDDEN on a page or field holding an uncaptured secret:** `browser` with action `evaluate` (its return value is plain tool output — leak vector), any `browser` action that returns page content (`snapshot`, `extract`, `observe`), `bash cat`/`read` of a file containing it, a `browser` `screenshot` or `screen_capture` of an unredacted field.
 

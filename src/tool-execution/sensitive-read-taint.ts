@@ -18,8 +18,8 @@
 // saw is not security — the invariant is what makes the block trustworthy.
 
 import { randomUUID } from "node:crypto";
-import { existsSync, lstatSync } from "node:fs";
-import { isAbsolute } from "node:path";
+import { existsSync, lstatSync, readFileSync, statSync } from "node:fs";
+import { isAbsolute, resolve } from "node:path";
 import type { ToolResult } from "../types.js";
 import {
   recordSensitiveRead,
@@ -323,6 +323,9 @@ export function applyResultTaintPolicy(
     }
   }
 
+  // What the tool returned, before masking: what an errored delivery would
+  // echo of a sensitive file is judged against these bytes.
+  const rawOutput = typeof result?.content === "string" ? result.content : "";
   // A result the stub below replaces is never delivered, so it is not masked.
   if (result && !(redactReason && !result.isError)) result = maskDeliveredSecrets(toolName, args, result);
 
@@ -355,6 +358,16 @@ export function applyResultTaintPolicy(
   // to someone new can be put to the user (private-content-gate.ts).
   recordPrivateReadFromResult(sid, toolName, args, result, DEFAULT_MAX_RESULT_CHARS);
 
+  // Policy denial (status:"blocked" per the 5-state envelope): the tool was
+  // refused BEFORE producing data — no sensitive byte was read, let alone
+  // delivered. Same invariant outcome as the stub: withdraw the provisional
+  // floor and drop the pending records. (Only gate-authored denials use this
+  // status.)
+  if (result?.isError && result.status === "blocked") {
+    if (floor.pairs.length > 0) retractProvisionalTaint(sid, floor.pairs, floor.id);
+    return result;
+  }
+
   if (redactReason && result && !result.isError) {
     // Whole-result stub: the sensitive bytes never reach the model, so per the
     // delivery-point invariant NOTHING entered context and nothing is tainted.
@@ -364,36 +377,27 @@ export function applyResultTaintPolicy(
     // by the outbound egress scan at send time.
     if (floor.pairs.length > 0) retractProvisionalTaint(sid, floor.pairs, floor.id);
     logger.info(`sensitive read fully redacted before delivery — session NOT tainted (${redactReason})`);
-    // A command has already run by now: whatever it wrote or changed is done,
-    // and only its output is withheld. Telling the model it "did NOT complete"
-    // sent it to redo work that had happened (TB2, 2026-10-27: `openssl req
-    // -keyout /etc/nginx/ssl/x.key` made the key, and the model was told not).
-    const outcome = command !== undefined
-      ? `The command RAN — anything it created or changed is done — but its output was withheld, so whatever you meant to learn from that output is unverified; report it as not checked, never as done. `
-      : `This read did NOT complete: none of this source's content is available to you, so whatever you meant to check with it is unverified — report it as not checked, never as done. `;
-    return {
-      content:
-        `[redacted by data-lineage gate — ${redactReason}. ` +
-        outcome +
-        `The raw bytes were withheld from the model context, so nothing sensitive entered this session and no tools are blocked. ` +
-        `Do not re-read this source; if a credential is needed, use a {{SECRET_NAME}} placeholder or ask the user.]`,
-      isError: false,
-      status: "blocked",
-      metadata: {
-        layer: "data-lineage", redacted: true, reason: redactReason,
-        recovery: "Do not re-read this source. Report what it was for as not checked, and continue with the rest of the request.",
-      },
-    };
+    return redactionStub(redactReason, command);
   }
 
-  // Policy denial (status:"blocked" per the 5-state envelope): the tool was
-  // refused BEFORE producing data — no sensitive byte was read, let alone
-  // delivered. Same invariant outcome as the stub: withdraw the provisional
-  // floor and drop the pending records. (Only gate-authored denials use this
-  // status; a mid-read failure is status:"error" and commits below.)
-  if (result?.isError && result.status === "blocked") {
-    if (floor.pairs.length > 0) retractProvisionalTaint(sid, floor.pairs, floor.id);
-    return result;
+  // An errored result is delivered with its output, which can echo the file
+  // (a partial read, a key in a stack trace). The taint stands only for the
+  // files whose bytes that output carries: a value masked by the command's
+  // own `sed`, a key list, or an `ls` error carries none. 2026-10-31: `cat
+  // apps/web/.env | sed 's/=.*/=<set>/'; ls apps/mobile/.env` exited 2 on the
+  // missing second file, and the taint committed on its masked key list, with
+  // no bytes behind it, quarantined every outbound call of the chat until the
+  // user clicked Declassify.
+  if (result?.isError && floor.pairs.length > 0) {
+    const cwd = command === undefined ? undefined : cwdOf(args) || workspaceRoot();
+    const carries = (target: string) => outputCarriesFile(rawOutput, isAbsolute(target) || cwd === undefined ? target : resolve(cwd, target));
+    const dropped = floor.pairs.filter((f) => f.source === "sensitive_file" && !carries(f.target));
+    if (dropped.length > 0) {
+      retractProvisionalTaint(sid, dropped, floor.id);
+      floor.pairs = floor.pairs.filter((f) => !dropped.includes(f));
+      const kept = new Set(floor.pairs.map((f) => f.target));
+      pending.splice(0, pending.length, ...pending.filter((p) => p.source !== "sensitive_file" || kept.has(p.target)));
+    }
   }
 
   // No stub — whatever the tool returned (including an errored result's
@@ -412,6 +416,58 @@ export function applyResultTaintPolicy(
   const committed = taintSourcesOf([...floor.pairs, ...pending]);
   if (result && committed.length > 0) result = withMetadata(result, { taint_sources: committed });
   return result;
+}
+
+/** What the model gets in place of a sensitive source's bytes: what happened
+ *  and the way to what it wanted. A command has already run by now: whatever
+ *  it wrote or changed is done, and only its output is withheld. Telling the
+ *  model it "did NOT complete" sent it to redo work that had happened (TB2,
+ *  2026-10-27: `openssl req -keyout /etc/nginx/ssl/x.key` made the key, and
+ *  the model was told not). */
+function redactionStub(redactReason: string, command: string | undefined): ToolResult {
+  const outcome = command !== undefined
+    ? "The command RAN — anything it created or changed is done — but its output was withheld, so whatever you meant to learn from that output is unverified; report it as not checked, never as done. "
+    : "This read did NOT complete: none of this source's content is available to you, so whatever you meant to check with it is unverified — report it as not checked, never as done. ";
+  return {
+    content:
+      `[redacted by data-lineage gate — ${redactReason}. ` +
+      outcome +
+      "The raw bytes were withheld from the model context, so nothing sensitive entered this session and no tools are blocked. " +
+      "Do not re-read this source; if a credential is needed, use a {{SECRET_NAME}} placeholder or ask the user. " +
+      "To learn which keys an app expects, read its .env.example or its code; list_secrets names what the vault holds.]",
+    isError: false,
+    status: "blocked",
+    metadata: {
+      layer: "data-lineage", redacted: true, reason: redactReason,
+      recovery: "Do not re-read this source. Report what it was for as not checked, and continue with the rest of the request. For an app's key names read .env.example or the code; for the vault's names call list_secrets.",
+    },
+  };
+}
+
+/** Above this size the file is not read to judge an echo: taken as carried. */
+const FILE_OVERLAP_CAP = 1 << 20;
+
+/** Does delivered `output` carry bytes of the file at `path`: one of its
+ *  non-comment lines, or a value after `=`, of eight characters or more. A
+ *  file this process cannot read gave the shell, which runs as this user,
+ *  nothing to echo. */
+function outputCarriesFile(output: string, path: string): boolean {
+  let text: string;
+  try {
+    if (statSync(path).size > FILE_OVERLAP_CAP) return true;
+    text = readFileSync(path, "utf-8");
+  } catch {
+    return false; // absent or unreadable: no bytes to have echoed
+  }
+  for (const raw of text.split(/\r?\n/)) {
+    const line = raw.trim();
+    if (line.length < 8 || line.startsWith("#")) continue;
+    if (output.includes(line)) return true;
+    const eq = line.indexOf("=");
+    const value = eq < 0 ? "" : line.slice(eq + 1).trim().replace(/^(["'])(.*)\1$/, "$2");
+    if (value.length >= 8 && output.includes(value)) return true;
+  }
+  return false;
 }
 
 /** The persisted shape of a taint record: source and target only, deduped.

@@ -6,6 +6,9 @@
 // behind the delivered bytes (red team round 2, T-M1). A call now withdraws
 // or supersedes only the floor it set itself.
 import { afterEach, describe, expect, it } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { runSandboxedPhase } from "./run-sandboxed.js";
 import { checkEgressTaint, clearSessionTaint, getKernelTaintSources, getTaintSummary } from "../data-lineage/index.js";
 import type { ToolCallContext } from "./context.js";
@@ -41,7 +44,12 @@ afterEach(() => clearSessionTaint(SID));
 
 describe("two concurrent pipelines reading one sensitive path under one session", () => {
   it("one call's stub withdraws only its own floor; the other's delivery keeps the session tainted", async () => {
-    const cmd = "cat ~/.ssh/id_rsa";
+    // A real key file: an errored delivery keeps the taint only for the
+    // file whose bytes its output carries.
+    const dir = mkdtempSync(join(tmpdir(), "lax-race-key-"));
+    const key = join(dir, "id_rsa").replace(/\\/g, "/");
+    writeFileSync(key, "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmU\n-----END OPENSSH PRIVATE KEY-----\n", "utf-8");
+    const cmd = `cat ${key}`;
     const a = deferred<ToolResult>();
     const b = deferred<ToolResult>();
     const ctxA = ctxFor(bashThatReturns(a.promise), { command: cmd }, SID);
@@ -60,9 +68,10 @@ describe("two concurrent pipelines reading one sensitive path under one session"
 
     // B returns an error row that echoes the file: delivered, and the floor it
     // set is still there behind the bytes.
-    b.resolve({ content: "Host github.com\n  IdentityFile ~/.ssh/id_rsa\ncat: trailing garbage", isError: true, metadata: { exit_code: 1 } });
+    b.resolve({ content: "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAABG5vbmU\ncat: trailing garbage", isError: true, metadata: { exit_code: 1 } });
     await runB;
-    expect(ctxB.result?.content).toContain("IdentityFile");
+    rmSync(dir, { recursive: true, force: true });
+    expect(ctxB.result?.content).toContain("trailing garbage");
     expect(getTaintSummary(SID).count).toBe(1);
     expect(checkEgressTaint(SID).blocked).toBe(true);
     expect(getKernelTaintSources(SID)).toEqual(["credential"]);

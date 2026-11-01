@@ -644,20 +644,42 @@ describe("work-root env read-taint carve-out", () => {
     }
   });
 
-  it("a FAILED sensitive read keeps the taint (error output was delivered)", async () => {
-    // An errored result skips the redaction stub, so whatever the tool
-    // returned — which can echo sensitive content — reached the model. The
-    // provisional floor must stand.
-    const failingRead = {
-      name: "read",
-      description: "fake failing read",
-      parameters: { type: "object", properties: { path: { type: "string" } } },
-      async execute() { return { content: "EACCES: permission denied", isError: true }; },
-    } as unknown as ToolDefinition;
+  // An errored result skips the redaction stub, so whatever the tool returned
+  // reached the model. The provisional floor stands exactly when that output
+  // carries the file's bytes.
+  const envFile = () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-env-"));
+    dirs.add(dir);
+    const file = join(dir, ".env");
+    writeFileSync(file, "DB_URL=postgres://u:p@db/x\nAPI_KEY=sk_live_abcdef0123456789\n", "utf-8");
+    return file;
+  };
+  const failingRead = (output: string) => ({
+    name: "read",
+    description: "fake failing read",
+    parameters: { type: "object", properties: { path: { type: "string" } } },
+    async execute() { return { content: output, isError: true }; },
+  } as unknown as ToolDefinition);
+
+  it("a FAILED sensitive read whose error output echoes the file keeps the taint", async () => {
     const s = freshSession();
     try {
-      await run(failingRead, { path: join(tmpdir(), ".env.local") }, s);
+      await run(failingRead("read failed mid-way after: API_KEY=sk_live_abcdef0123456789"), { path: envFile() }, s);
       expect(checkEgressTaint(s).blocked).toBe(true);
+    } finally {
+      clearSessionTaint(s);
+    }
+  });
+
+  // 2026-10-31: a masked key list beside an unrelated `ls` error committed a
+  // taint with no bytes behind it and quarantined a chat's outbound calls.
+  it("a FAILED sensitive read whose error output carries none of the file does not taint", async () => {
+    const s = freshSession();
+    try {
+      await run(failingRead("EACCES: permission denied"), { path: envFile() }, s);
+      expect(checkEgressTaint(s).blocked).toBe(false);
+      await run(failingRead("DB_URL=<set>\nAPI_KEY=<set>\nls: cannot access 'apps/mobile/.env': No such file"), { path: envFile() }, s);
+      expect(checkEgressTaint(s).blocked).toBe(false);
     } finally {
       clearSessionTaint(s);
     }

@@ -14,7 +14,7 @@
 //     tainted before the egress check runs.
 
 import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -166,6 +166,11 @@ describe("batcher gate-atomicity (R4-09: no egress + sensitive-read co-batch)", 
     // content fingerprinted. Under the B+ completeness guard an unrelated
     // payload may still egress — but a payload that CARRIES the delivered
     // bytes must be blocked, and its execute must never run.
+    // The bytes the error echoes are the file's: the taint stands only for a
+    // file whose bytes the delivered output carries (sensitive-read-taint.ts).
+    const keyDir = mkdtempSync(join(tmpdir(), "lax-r4-09-"));
+    const keyFile = join(keyDir, "id_rsa");
+    writeFileSync(keyFile, "-----BEGIN OPENSSH PRIVATE KEY-----\nSGVsbG8gc2VjcmV0IGJ5dGVzIGZyb20gaWRfcnNh\n-----END OPENSSH PRIVATE KEY-----\n", "utf-8");
     const deliveredText = "read failed after partial read: SGVsbG8gc2VjcmV0IGJ5dGVzIGZyb20gaWRfcnNh trailing";
     const events: string[] = [];
     const erroringRead: ToolDefinition = {
@@ -188,13 +193,14 @@ describe("batcher gate-atomicity (R4-09: no egress + sensitive-read co-batch)", 
     const serverEvents: Array<Record<string, unknown>> = [];
     const msgs = await executeToolCalls(
       [
-        { id: "1", name: "read", arguments: JSON.stringify({ path: SENSITIVE_PATH }) },
+        { id: "1", name: "read", arguments: JSON.stringify({ path: keyFile }) },
         { id: "2", name: "web_search", arguments: JSON.stringify({ query: `look up ${deliveredText}` }) },
       ],
       toolMap, undefined as never, undefined, undefined, undefined, undefined, session,
       (e) => serverEvents.push(e as unknown as Record<string, unknown>),
       undefined, undefined, undefined, undefined, "local",
     );
+    rmSync(keyDir, { recursive: true, force: true });
 
     // The delivered read committed the taint…
     expect(getTaintSummary(session).count).toBeGreaterThan(0);

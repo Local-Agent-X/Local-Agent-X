@@ -257,6 +257,41 @@ describe("run-sandboxed redacts sensitive results before delivery (no taint on s
     }
   });
 
+  // 2026-10-31: `cat apps/web/.env | sed 's/=.*/=<set>/'; ls apps/mobile/.env`
+  // exited 2 on the missing second file. An errored result skips the stub,
+  // so the masked key list reached the model, and the taint committed with
+  // it (no bytes of the file behind it) quarantined every outbound call until
+  // the user clicked Declassify. An errored delivery now taints only for a
+  // file whose bytes it carries.
+  it("a bash command naming a secrets file that exits non-zero with none of its bytes: delivered, session NOT tainted", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lineage-env-err-"));
+    const env = join(dir, ".env");
+    writeFileSync(env, "SUPABASE_URL=https://x.supabase.co\nSUPABASE_KEY=sb_secret_9f8e7d6c5b4a3\n", "utf-8");
+    const stub: ToolDefinition = {
+      name: "bash",
+      description: "test stub",
+      parameters: { type: "object", properties: {}, required: [] },
+      async execute() {
+        return { content: "SUPABASE_URL=<set>\nSUPABASE_KEY=<set>\nls: cannot access 'apps/mobile/.env': No such file or directory", isError: true, status: "error", metadata: { exit_code: 2 } };
+      },
+    };
+    const sessionId = "redact-env-error-test";
+    clearSessionTaint(sessionId);
+    const command = `cat ${env.replace(/\\/g, "/")} | sed 's/=.*/=<set>/'; ls apps/mobile/.env`;
+    const ctx = makeCtx({ name: "bash", args: { command }, tool: stub, sessionId });
+    try {
+      await runSandboxedPhase(ctx);
+      expect(ctx.result!.content).toContain("SUPABASE_KEY=<set>");
+      expect(ctx.result!.content).not.toContain("sb_secret_9f8e7d6c5b4a3");
+      expect(ctx.result!.isError).toBe(true);
+      expect(ctx.result!.metadata).toMatchObject({ exit_code: 2 });
+      expect(ctx.result!.metadata?.taint_sources).toBeUndefined();
+      expect(checkEgressTaint(sessionId).blocked).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   // An owned-source record with a secret VALUE in it keeps the record and
   // loses the value: masked in place, registered so the outbound scan refuses
   // it, session not tainted (the bytes never entered context).

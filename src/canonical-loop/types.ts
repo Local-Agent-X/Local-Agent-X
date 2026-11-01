@@ -6,7 +6,7 @@
  * schema.ts. Everything in this file is additive — no legacy types change.
  */
 import type { OpLane } from "../ops/types.js";
-import type { ToolResultStatus } from "../types.js";
+import type { ActionPreview, ToolResultStatus } from "../types.js";
 
 // ── Canonical state machine (PRD §10) ─────────────────────────────────────
 
@@ -79,6 +79,9 @@ export interface PendingApprovalRecord {
   toolCallId?: string;
   argsPreview: string;
   context?: string;
+  /** The typed preview the live card carried (a shell ask's whole command, a
+   *  publish ask's review), so a card rebuilt after a restart shows it too. */
+  preview?: ActionPreview;
   requestedAt: number;
   /**
    * Decision recorded while NO in-process card was live (post-restart

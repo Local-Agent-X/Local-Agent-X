@@ -32,6 +32,7 @@ import { makeDefaultPolicyPack } from "../tool-policy/packs/default-policy-pack.
 import { makeThreatEnginePack } from "../tool-policy/packs/threat-engine-pack.js";
 import { resolvePreDispatchDeps, type PreDispatchDeps } from "./pre-dispatch-deps.js";
 import { shellTreeDeleteScope } from "./tree-delete-scope.js";
+import { approvalCardText } from "./approval-card-text.js";
 import { formatConstraintSource } from "../canonical-loop/public/plan-ledger.js";
 
 export type { PreDispatchDeps, PreDispatchApprovalManager, PreDispatchRuntimeFlags } from "./pre-dispatch-deps.js";
@@ -359,13 +360,13 @@ export async function assertToolCallAllowed(
     }
 
     if (decisionRequiresPrompt(decision)) {
+      const card = approvalCardText({ toolName: call.name, args: call.args, sessionId: ctx.sessionId, destructive, line: ctx.approval.context || "" });
       const approved = await d.getApprovalManager().requestApproval({
         toolName: call.name,
         toolCallId: call.id,
         sessionId: ctx.sessionId,
-        context: destructive
-          ? `⚠ Irreversible operation (${destructive}) — confirm before running. ${ctx.approval.context || ""}`
-          : ctx.approval.context || "",
+        context: card.context,
+        ...(card.preview ? { preview: card.preview } : {}),
         args: call.args,
         alwaysAsk: !!destructive,
         opId: ctx.opId,

@@ -64,6 +64,13 @@ describe("buildPendingApprovals", () => {
     }]);
   });
 
+  it("carries the live card's preview, so a rebuilt shell card shows its whole command", () => {
+    const preview = { kind: "shell" as const, cmd: "cd app && rm -rf build", cwd: "/repo" };
+    const [entry] = buildPendingApprovals([mkOp({ pendingApproval: pending({ preview }) })], NOW);
+    expect(entry.preview).toEqual(preview);
+    expect(buildPendingApprovals([mkOp({ pendingApproval: pending() })], NOW)[0]).not.toHaveProperty("preview");
+  });
+
   it("filters cards at or past the 5-minute expiry, keeps ones just inside it", () => {
     const ops = [
       mkOp({ opId: "op_expired", pendingApproval: pending({ approvalId: "apr-old", requestedAt: NOW - APPROVAL_TIMEOUT_MS }) }),

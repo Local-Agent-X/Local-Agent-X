@@ -55,6 +55,7 @@ async function rediscoverPendingApprovals() {
       toolName: p.toolName,
       context: p.context,
       argsPreview: p.argsPreview,
+      preview: p.preview,
       opId: p.opId,
       expiresAt: p.expiresAt,
     });

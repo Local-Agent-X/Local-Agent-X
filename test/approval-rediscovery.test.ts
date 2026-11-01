@@ -53,6 +53,7 @@ interface PendingEntry {
 	toolName: string;
 	argsPreview: string;
 	context: string | null;
+	preview?: { kind: string; cmd: string; cwd: string };
 	requestedAt: number;
 	expiresAt: number;
 }
@@ -225,6 +226,13 @@ describe("rediscoverPendingApprovals — connect-time hydration", () => {
 		// The op IS in flight server-side (blocked on the ask) — the turn must
 		// read live so renderMessages synthesizes the row the card hangs off.
 		expect(store.isStreaming(SESSION)).toBe(true);
+	});
+
+	it("carries the ask's preview, so a rebuilt shell card shows its whole command", async () => {
+		const preview = { kind: "shell", cmd: "cd app && rm -rf build dist", cwd: "/repo" };
+		pendingResponse = [pendingEntry({ preview })];
+		await rediscoverPendingApprovals();
+		expect((store.get(SESSION)!.approvals[0] as { preview?: unknown }).preview).toEqual(preview);
 	});
 
 	it("runs from the WS onopen hook (connect AND reconnect share connectChatWs)", async () => {

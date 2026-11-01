@@ -487,6 +487,10 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
 .approval-title{font-weight:600}
 .approval-context{color:var(--muted);font-family:var(--mono);font-size:.78rem;margin:6px 0;white-space:pre-wrap;word-break:break-word}
 .approval-args{margin:6px 0;font-family:var(--mono);font-size:.72rem;color:var(--muted)}
+/* A shell ask's whole command: no scroll box and no cut, so the part the card warns about is always on screen. */
+.shell-preview{margin:6px 0}
+.shell-preview-command{margin:0;padding:8px 10px;background:var(--code-bg);border-radius:6px;font-family:var(--mono);font-size:.78rem;color:var(--text);white-space:pre-wrap;word-break:break-all}
+.shell-preview-cwd{margin-top:4px;font-family:var(--mono);font-size:.72rem;color:var(--muted);overflow-wrap:anywhere}
 .approval-args pre{white-space:pre-wrap;word-break:break-all;margin:4px 0 0;padding:6px 8px;background:var(--code-bg);border-radius:4px;max-height:120px;overflow-y:auto}
 .approval-actions{display:flex;align-items:center;gap:10px;margin-top:10px;flex-wrap:wrap}
 .approval-actions button{padding:6px 14px;border-radius:6px;border:1px solid var(--border);cursor:pointer;font-size:.82rem}
@@ -550,6 +554,7 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
 .approval-record.approved .approval-record-icon{color:var(--ok)}
 .approval-record.denied .approval-record-icon,.approval-record.timeout .approval-record-icon{color:var(--danger)}
 .approval-record-tool{font-family:var(--mono);color:var(--text)}
+.approval-record-command{font-family:var(--mono);overflow-wrap:anywhere}
 .approval-record-context{font-family:var(--mono);max-width:22ch;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;opacity:.75}
 .approval-record-time{margin-left:auto;white-space:nowrap;opacity:.7}
 @media (prefers-reduced-motion:reduce){.approval-card.live,.approval-card.arriving{animation:none;box-shadow:0 0 0 2px var(--warn)}}

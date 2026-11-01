@@ -221,7 +221,7 @@ describe("AMBER / GREEN — the profile's publish row decides", () => {
     const c = ctx({ sessionId: session("Power"), command: "git push --force origin feature", answer: true, events });
     expect((await requireApprovalPhase(c)).kind).toBe("continue");
     const [card] = cards(events);
-    expect(card.context).toMatch(/Irreversible operation \(git force-push\).*Pre-publish review: GREEN/);
+    expect(card.context).toMatch(/Cannot be undone — Overwrites the branch's history on the remote.*\(git force-push\).*Pre-publish review: GREEN/);
   });
 });
 

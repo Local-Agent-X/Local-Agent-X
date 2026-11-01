@@ -21,6 +21,7 @@ import type { RouteHandler } from "../server-context.js";
 import { jsonResponse } from "../server-utils.js";
 import { APPROVAL_TIMEOUT_MS } from "../approval-manager.js";
 import type { ActiveCanonicalOp } from "../canonical-loop/index.js";
+import type { ActionPreview } from "../types.js";
 
 export interface PendingApprovalEntry {
   opId: string;
@@ -29,6 +30,8 @@ export interface PendingApprovalEntry {
   toolName: string;
   argsPreview: string;
   context: string | null;
+  /** The live card's typed preview (a shell ask's whole command), when it had one. */
+  preview?: ActionPreview;
   /** Epoch ms the ask went out (PendingApprovalRecord.requestedAt). */
   requestedAt: number;
   /** requestedAt + APPROVAL_TIMEOUT_MS — past this the card is unanswerable. */
@@ -56,6 +59,7 @@ export function buildPendingApprovals(
       toolName: p.toolName,
       argsPreview: p.argsPreview,
       context: p.context ?? null,
+      ...(p.preview ? { preview: p.preview } : {}),
       requestedAt: p.requestedAt,
       expiresAt,
     });

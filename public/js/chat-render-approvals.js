@@ -20,6 +20,7 @@
 //   - makeApprovalCard   (chat-tool-cards.js) — canonical approval card DOM
 //   - formatMsgTime      (chat-render.js)     — optional record timestamp
 //   - applyPublishReview (chat-render-publish-review.js) — review block on a publish ask
+//   - applyShellPreview  (chat-render-shell-preview.js)  — the command on a shell ask
 
 // Terminal wording. Every state except 'approved' means the tool did NOT run —
 // say so, because a bare "Denied" / "Timed out" left users re-clicking a dead
@@ -62,6 +63,8 @@ function makeApprovalRecord(ap) {
     ['approval-record-tool', ap.toolName || 'tool'],
     ['approval-record-outcome', outcome.text],
     ['approval-record-context', ap.context || ''],
+    // A shell ask's line says why it asked; the command itself is its preview.
+    ['approval-record-command', (ap.preview && ap.preview.kind === 'shell') ? ap.preview.cmd : ''],
     ['approval-record-time', (ap.resolvedAt && typeof formatMsgTime === 'function') ? formatMsgTime(ap.resolvedAt) : ''],
   ];
   for (const [cls, text] of parts) {
@@ -185,8 +188,10 @@ function renderApproval(ap) {
   if (!live) return makeApprovalRecord(ap);
   const card = makeApprovalCard(ap.id, ap.toolName, ap.context, ap.argsPreview, ap.rememberable !== false);
   card.classList.add('live');
-  // A publish ask carries its pre-publish review (chat-render-publish-review.js).
+  // A publish ask carries its pre-publish review (chat-render-publish-review.js);
+  // a shell ask its whole command (chat-render-shell-preview.js).
   if (ap.preview && typeof applyPublishReview === 'function') applyPublishReview(card, ap.preview);
+  if (ap.preview && typeof applyShellPreview === 'function') applyShellPreview(card, ap.preview);
   // Above the buttons — the consequence has to be read before the decision.
   // A null second argument appends, which is the right place anyway. The clock
   // is OPTIONAL: an ask that reaches us without the server's deadline (an

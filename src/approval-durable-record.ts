@@ -15,6 +15,7 @@
  */
 import { createLogger } from "./logger.js";
 import type { ApprovalDenyReason } from "./approval-manager.js";
+import type { ActionPreview } from "./types.js";
 
 const logger = createLogger("approval-manager");
 
@@ -24,6 +25,7 @@ export interface DurableApprovalRequest {
   toolCallId?: string;
   argsPreview: string;
   context?: string;
+  preview?: ActionPreview;
   requestedAt: number;
   /** Decision recorded post-restart while no card was live (see
    *  canonical-loop/types.ts PendingApprovalRecord.resolution). Never set on

@@ -277,6 +277,7 @@ class ApprovalManager {
           toolCallId: opts.toolCallId,
           argsPreview,
           context: opts.context,
+          ...(opts.preview ? { preview: opts.preview } : {}),
           requestedAt,
         });
       }

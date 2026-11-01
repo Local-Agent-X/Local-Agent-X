@@ -40,6 +40,7 @@ import { attendedRun, nobodyWatching, parkOrRefuse, takeUserGrant } from "./defe
 import { publishOperations } from "../publish-operation.js";
 import { chatTurnOf } from "./chat-consent.js";
 import { shellTreeDeleteScope } from "./tree-delete-scope.js";
+import { approvalCardText } from "./approval-card-text.js";
 import { publishReviewGate } from "./publish-review-gate.js";
 import { reviewCardContext, reviewNoteForModel, reviewPreview } from "./publish-review-text.js";
 import { rememberApprovedPrivateShares } from "./private-content-gate.js";
@@ -311,20 +312,16 @@ export const requireApprovalPhase: Phase = async (ctx) => {
   }
 
   const review = ctx.publishReview;
+  const card = promotion ? { context: describePromotionForHuman(promotion) } : approvalCardText({
+    toolName: ctx.tc.name, args: ctx.args, sessionId: ctx.sessionId, destructive, policyReason: ctx.policyApprovalReason, line: ctx.approvalContext,
+    review: review ? { context: reviewCardContext(publishOps[0], review, ctx.approvalContext), preview: reviewPreview(publishOps[0], review) } : undefined,
+  });
   const outcome: ApprovalOutcome = granted ? { approved: true, grantId: granted } : !ctx.onEvent ? { approved: false } : await getApprovalManager().requestApprovalDetailed({
     toolName: ctx.tc.name,
     toolCallId: ctx.tc.id,
     sessionId: ctx.sessionId || "default",
-    context: promotion
-      ? describePromotionForHuman(promotion)
-      : destructive
-      ? `⚠ Irreversible operation (${destructive}) — confirm before running. ${review ? reviewCardContext(publishOps[0], review, ctx.approvalContext) : ctx.approvalContext}`
-      : ctx.policyApprovalReason
-        ? `Policy approval required: ${ctx.policyApprovalReason}. ${ctx.approvalContext}`
-        : review
-          ? reviewCardContext(publishOps[0], review, ctx.approvalContext)
-          : ctx.approvalContext,
-    ...(review ? { preview: reviewPreview(publishOps[0], review) } : {}),
+    context: card.context,
+    ...(card.preview ? { preview: card.preview } : {}),
     args: promotion ? { ...promotion } : ctx.args,
     alwaysAsk: !!destructive || policyRequiresPrompt,
     // Canonical op id (chat-tool-dispatcher threads opts.opId through

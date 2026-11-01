@@ -17,6 +17,19 @@ const CLEAN_TS = `export function add(a: number, b: number): number {\n  return 
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "lax-edit-")); });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
+describe("editTool — writes new_string exactly as given", () => {
+  it.each([
+    ["a SQL dollar-quote", "DO $$ BEGIN PERFORM 1; END $$;"],
+    ["a replacement pattern", "s.replace('a', '$&!') + `$1 $' $\\``"],
+  ])("keeps %s byte for byte", async (_what, text) => {
+    const file = join(dir, "x.sql");
+    writeFileSync(file, "-- head\nPLACEHOLDER\n-- tail\n");
+    const r = await editTool.execute({ path: file, old_string: "PLACEHOLDER", new_string: text });
+    expect(r.isError).toBeFalsy();
+    expect(readFileSync(file, "utf-8")).toBe(`-- head\n${text}\n-- tail\n`);
+  });
+});
+
 describe("editTool — write-time syntax gate", () => {
   it("REJECTS an edit that breaks a clean .ts and leaves the file UNCHANGED", async () => {
     const file = join(dir, "math.ts");

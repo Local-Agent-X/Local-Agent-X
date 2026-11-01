@@ -77,7 +77,10 @@ function applyStringEdit(content: string, rawOld: string, rawNew: string, replac
           matches.map((m, i) => `Match ${i + 1} (around L${m.line}):\n${m.snippet}`).join("\n\n"),
       };
     }
-    const updated = replaceAll ? content.split(effOld).join(effNew) : content.replace(effOld, effNew);
+    // A replacer FUNCTION, never a replacement string: in a string, `$$`, `$&`
+    // and `$1` are patterns, and an edit writing SQL's `DO $$ BEGIN` wrote
+    // `DO $ BEGIN` (2026-11-01).
+    const updated = replaceAll ? content.split(effOld).join(effNew) : content.replace(effOld, () => effNew);
     return { ok: true, updated };
   }
 

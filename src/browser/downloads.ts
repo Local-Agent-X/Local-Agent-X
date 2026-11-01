@@ -6,7 +6,8 @@ import { basename, extname, join, resolve } from "node:path";
 import type { Readable } from "node:stream";
 import { getRuntimeConfig } from "../config.js";
 import { createLogger } from "../logger.js";
-import { getBrowserInspectionDir, getBrowserNativeDownloadDir, isInsideDirectory } from "./download-paths.js";
+import { getBrowserInspectionDir, getBrowserNativeDownloadDir } from "./download-paths.js";
+import { pathIsWithin } from "../security/layer/path-within.js";
 import { publishVerifiedDownload } from "./download-integrity.js";
 import { inspectZipFile, type ZipInspection } from "./download-zip.js";
 
@@ -379,7 +380,7 @@ export function installDownloadHandler(page: Page, sessionId = "default"): void 
     } finally {
       const nativePath = await download.path().catch(() => null);
       await download.delete().catch(() => { /* explicit path removal below is the fallback */ });
-      if (nativePath && isInsideDirectory(nativePath, getBrowserNativeDownloadDir())) await rm(nativePath, { force: true });
+      if (nativePath && pathIsWithin(getBrowserNativeDownloadDir(), resolve(nativePath))) await rm(nativePath, { force: true });
     }
   });
 }

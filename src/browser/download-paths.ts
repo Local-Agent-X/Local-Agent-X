@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
-import { relative, resolve } from "node:path";
+import { resolve } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 
 function privateDownloadDir(name: "native" | "inspected", dataDir = getLaxDir()): string {
@@ -21,9 +21,4 @@ export function resetBrowserNativeDownloadDir(dataDir?: string): string {
 
 export function getBrowserInspectionDir(dataDir?: string): string {
   return privateDownloadDir("inspected", dataDir);
-}
-
-export function isInsideDirectory(path: string, directory: string): boolean {
-  const rel = relative(resolve(directory), resolve(path));
-  return rel === "" || (!rel.startsWith("..") && !/^[a-z]:/i.test(rel));
 }

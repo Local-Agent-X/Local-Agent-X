@@ -4,7 +4,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { Readable } from "node:stream";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { captureRollback } from "../../autonomy/rollback.js";
+import { captureBeforeCall, recordCapture } from "../../autonomy/rollback.js";
 import { handleRollbackRoutes } from "./rollback.js";
 import type { ServerContext } from "../../server-context.js";
 
@@ -31,8 +31,9 @@ describe("POST /api/rollback/rewind", () => {
     const file = join(dir, "a.txt");
     writeFileSync(file, "before");
     const sessionId = `s-${Date.now()}`, opId = `op-${Date.now()}`;
-    captureRollback({ toolCallId: `tc-${Date.now()}`, tool: "write", sessionId, opId }, [file]);
+    const pending = captureBeforeCall({ toolCallId: `tc-${Date.now()}`, tool: "write", sessionId, opId }, [file]);
     writeFileSync(file, "after");
+    recordCapture(pending);
 
     const plan = await call("POST", "/api/rollback/rewind", { sessionId, opId, preview: true });
     expect(plan).toMatchObject({ status: 200, json: { files: [file], laterRequests: 0 } });

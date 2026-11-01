@@ -5,16 +5,21 @@
  * paths off the policy rows), in every autonomy profile: a file the call will
  * edit or delete is copied aside, a file it will create is recorded as created.
  * Each capture is a contract keyed by the tool call and tagged with its
- * session and request (op).
+ * session and request (op). Two steps: captureBeforeCall copies, then
+ * recordCapture, after the call ran, keeps only what the call changed, so a
+ * shell command's operand it merely read (a script, an input file) is neither
+ * listed as changed nor put back over later edits.
  *
  * Two ways back:
  *   restoreRollback(toolCallId)          one call (Settings → Rollback)
  *   rewindToBeforeOp(sessionId, opId)    every file changed from that request
  *                                        on (rollback-rewind.ts, the chat's Undo)
  *
- * Shell commands are not captured: what a command will change is not knowable
- * before it runs. A git stash of the work tree used to stand in, and stashing
- * takes the user's uncommitted work OUT of the tree before the command runs.
+ * A shell command is captured by the files its text names
+ * (tool-execution/capture-rollback.ts). What it changes without naming (a
+ * build's outputs, a file a script opens itself) is not. A git stash of the
+ * work tree used to stand in, and stashing takes the user's uncommitted work
+ * OUT of the tree before the command runs.
  *
  * Storage under ~/.lax/rollback/:
  *   index.jsonl                       one line per captured contract
@@ -71,6 +76,15 @@ function ensureDir(path: string): void {
   if (!existsSync(path)) mkdirSync(path, { recursive: true });
 }
 
+/** What a path held when it was captured, to tell afterwards whether the call
+ *  changed it. Kept in memory between the two steps, never on record. */
+interface Before { exists: boolean; size: number; mtimeMs: number }
+
+function statBefore(p: string): Before {
+  try { const st = statSync(p); return { exists: true, size: st.size, mtimeMs: st.mtimeMs }; }
+  catch { return { exists: false, size: 0, mtimeMs: 0 }; }
+}
+
 function captureFile(toolCallId: string, filePath: string, n: number): RollbackArtifact {
   try {
     if (!existsSync(filePath)) return { type: "created", original: filePath };
@@ -89,19 +103,55 @@ function captureFile(toolCallId: string, filePath: string, n: number): RollbackA
 
 let lastPruneAt = 0;
 
+export interface PendingCapture {
+  call: RollbackCall;
+  ts: number;
+  entries: Array<{ path: string | null; before: Before; artifact: RollbackArtifact }>;
+}
+
 /**
- * Copy aside every file this call is about to change. `paths` are absolute,
- * resolved the way the tool resolves them. Returns null when the call names
- * no file: nothing it does is a file change this store can hold.
+ * Before the call: copy aside every file it may change. `paths` are absolute,
+ * resolved the way the tool resolves them. Null when the call names no file.
+ * Nothing is on record until recordCapture.
  */
-export function captureRollback(call: RollbackCall, paths: readonly string[], now = Date.now()): RollbackContract | null {
+export function captureBeforeCall(call: RollbackCall, paths: readonly string[], now = Date.now()): PendingCapture | null {
   if (paths.length === 0) return null;
   ensureDir(ROLLBACK_DIR);
   if (now - lastPruneAt > PRUNE_EVERY_MS) pruneRollbacks(now);
-  const artifacts: RollbackArtifact[] = TOOL_CALL_ID.test(call.toolCallId)
-    ? [...new Set(paths)].map((p, i) => captureFile(call.toolCallId, p, i))
-    : [{ type: "none", reason: "the tool call id cannot name a backup directory" }];
-  const contract: RollbackContract = { ...call, ts: now, artifacts };
+  if (!TOOL_CALL_ID.test(call.toolCallId)) {
+    return { call, ts: now, entries: [{ path: null, before: statBefore(""), artifact: { type: "none", reason: "the tool call id cannot name a backup directory" } }] };
+  }
+  const entries = [...new Set(paths)].map((p, i) => ({ path: p, before: statBefore(p), artifact: captureFile(call.toolCallId, p, i) }));
+  return { call, ts: now, entries };
+}
+
+function changedSince(path: string, before: Before, artifact: RollbackArtifact): boolean {
+  const now = statBefore(path);
+  if (now.exists !== before.exists) return true;
+  if (!now.exists) return false;
+  if (now.size !== before.size || now.mtimeMs !== before.mtimeMs) return true;
+  if (artifact.type !== "file-backup") return false;
+  // Same size and time stamp: a rewrite inside one clock tick. The bytes decide.
+  try { return !readFileSync(path).equals(readFileSync(artifact.backup)); } catch { return true; }
+}
+
+/**
+ * After the call: keep what it changed (rewrote, deleted, created; a folder or
+ * an over-cap file that went or changed keeps its reason), drop the copies of
+ * the rest, and put the capture on record. Null when it changed nothing.
+ */
+export function recordCapture(pending: PendingCapture | null): RollbackContract | null {
+  if (!pending) return null;
+  const kept: RollbackArtifact[] = [];
+  for (const { path, before, artifact } of pending.entries) {
+    if (path && changedSince(path, before, artifact)) kept.push(artifact);
+    else if (artifact.type === "file-backup") rmSync(artifact.backup, { force: true });
+  }
+  if (kept.length === 0) {
+    if (TOOL_CALL_ID.test(pending.call.toolCallId)) rmSync(join(ROLLBACK_DIR, pending.call.toolCallId), { recursive: true, force: true });
+    return null;
+  }
+  const contract: RollbackContract = { ...pending.call, ts: pending.ts, artifacts: kept };
   try {
     appendFileSync(INDEX_FILE, JSON.stringify(contract) + "\n");
   } catch (e) {

@@ -15,7 +15,7 @@ import { enforcePolicyPhase } from "./enforce-policy.js";
 import { dedupCheckPhase, dedupRecordPhase } from "./dedup-check.js";
 import { requireApprovalPhase } from "./require-approval.js";
 import { announceNoticedDeletes, preauthorizeUnnamedDeletes } from "./unnamed-delete-preauth.js";
-import { announceFileChanges, captureRollbackPhase } from "./capture-rollback.js";
+import { captureRollbackPhase, recordFileChanges } from "./capture-rollback.js";
 import { emitTraceStartPhase, emitTraceCompletePhase } from "./emit-trace.js";
 import { runSandboxedPhase } from "./run-sandboxed.js";
 import { announcePublishReview, attachPublishReviewNote } from "./publish-review-gate.js";
@@ -110,7 +110,7 @@ async function executeSingleTool(
     await captureRollbackPhase(ctx);
     await emitTraceStartPhase(ctx);
     await runSandboxedPhase(ctx);
-    announceFileChanges(ctx);
+    recordFileChanges(ctx);
     attachPublishReviewNote(ctx);
     announcePublishReview(ctx);
     await emitTraceCompletePhase(ctx);

@@ -1,9 +1,9 @@
 import { describe, it, expect, afterEach } from "vitest";
-import { appendFileSync, existsSync, mkdirSync, writeFileSync, readFileSync, rmdirSync, rmSync, symlinkSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, writeFileSync, readFileSync, rmdirSync, rmSync, symlinkSync, utimesSync } from "node:fs";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import {
-  captureRollback, restoreRollback, listRollbacks, pruneRollbacks, readContracts,
+  captureBeforeCall, recordCapture, restoreRollback, listRollbacks, pruneRollbacks, readContracts,
   ROLLBACK_DIR_PATH, ROLLBACK_INDEX_FILE, type RollbackContract,
 } from "./rollback.js";
 
@@ -24,30 +24,27 @@ function cleanup(id: string): void {
 
 const call = (toolCallId: string, tool = "write") => ({ toolCallId, tool, sessionId: "s-1", opId: "op-1" });
 
-describe("captureRollback", () => {
+/** A call through both steps: copy before, `act` (what the call does), record after. */
+function capture(c: ReturnType<typeof call>, paths: string[], act: () => void = () => {}, now?: number) {
+  const pending = captureBeforeCall(c, paths, now);
+  act();
+  return recordCapture(pending);
+}
+
+describe("captureBeforeCall", () => {
   const trackedIds: string[] = [];
   afterEach(() => {
     while (trackedIds.length) cleanup(trackedIds.pop()!);
   });
 
-  it("copies aside a file the call will change, tagged with its session and request", () => {
+  it("copies aside a file the call may change", () => {
     const id = freshId(); trackedIds.push(id);
     const target = join(tmpdir(), `lax-rb-target-${id}.txt`);
     writeFileSync(target, "original content");
-
-    const contract = captureRollback(call(id), [target])!;
-    expect(contract).toMatchObject({ toolCallId: id, tool: "write", sessionId: "s-1", opId: "op-1" });
-    expect(contract.artifacts).toHaveLength(1);
-    const a = contract.artifacts[0];
+    const a = captureBeforeCall(call(id), [target])!.entries[0].artifact;
     expect(a.type).toBe("file-backup");
     if (a.type === "file-backup") expect(readFileSync(a.backup, "utf-8")).toBe("original content");
     rmSync(target, { force: true });
-  });
-
-  it("records a file the call will create, so an undo can remove it", () => {
-    const id = freshId(); trackedIds.push(id);
-    const target = join(tmpdir(), `lax-rb-new-${id}.txt`);
-    expect(captureRollback(call(id), [target])!.artifacts).toEqual([{ type: "created", original: target }]);
   });
 
   it("keeps two files of the same name apart", () => {
@@ -55,27 +52,67 @@ describe("captureRollback", () => {
     const a = join(tmpdir(), `lax-rb-a-${id}`), b = join(tmpdir(), `lax-rb-b-${id}`);
     mkdirSync(a); mkdirSync(b);
     writeFileSync(join(a, "index.ts"), "A"); writeFileSync(join(b, "index.ts"), "B");
-    const backups = captureRollback(call(id), [join(a, "index.ts"), join(b, "index.ts")])!.artifacts
-      .map((x) => (x.type === "file-backup" ? readFileSync(x.backup, "utf-8") : x.type));
+    const backups = captureBeforeCall(call(id), [join(a, "index.ts"), join(b, "index.ts")])!.entries
+      .map(({ artifact: x }) => (x.type === "file-backup" ? readFileSync(x.backup, "utf-8") : x.type));
     expect(backups).toEqual(["A", "B"]);
     rmSync(a, { recursive: true, force: true }); rmSync(b, { recursive: true, force: true });
   });
 
   it("says why a folder is not copied", () => {
     const id = freshId(); trackedIds.push(id);
-    const a = captureRollback(call(id, "delete_file"), [tmpdir()])!.artifacts[0];
+    const a = captureBeforeCall(call(id, "delete_file"), [tmpdir()])!.entries[0].artifact;
     expect(a.type).toBe("none");
     if (a.type === "none") expect(a.reason).toContain("restore_file");
   });
 
   it("captures nothing for a call that names no file", () => {
-    expect(captureRollback(call(freshId(), "remember"), [])).toBeNull();
+    expect(captureBeforeCall(call(freshId(), "remember"), [])).toBeNull();
+  });
+});
+
+describe("recordCapture keeps what the call changed", () => {
+  it("records a rewritten file, tagged with its session and request, on the index", () => {
+    const id = freshId();
+    const target = join(tmpdir(), `lax-rb-rec-${id}.txt`);
+    writeFileSync(target, "before");
+    const contract = capture(call(id), [target], () => writeFileSync(target, "after"))!;
+    expect(contract).toMatchObject({ toolCallId: id, tool: "write", sessionId: "s-1", opId: "op-1" });
+    expect(contract.artifacts.map((a) => a.type)).toEqual(["file-backup"]);
+    expect(readFileSync(ROLLBACK_INDEX_FILE, "utf-8")).toContain(id);
+    cleanup(id); rmSync(target, { force: true });
   });
 
-  it("appends a JSON line to the index file", () => {
-    const id = freshId(); trackedIds.push(id);
-    captureRollback(call(id), [join(tmpdir(), `lax-rb-idx-${id}.txt`)]);
-    expect(readFileSync(ROLLBACK_INDEX_FILE, "utf-8")).toContain(id);
+  it("records a rewrite inside one clock tick: same size, same time stamp, other bytes", () => {
+    const id = freshId();
+    const target = join(tmpdir(), `lax-rb-tick-${id}.txt`);
+    writeFileSync(target, "aaaa");
+    const t = new Date(2026, 0, 1);
+    utimesSync(target, t, t);
+    const contract = capture(call(id), [target], () => { writeFileSync(target, "bbbb"); utimesSync(target, t, t); });
+    expect(contract?.artifacts.map((a) => a.type)).toEqual(["file-backup"]);
+    cleanup(id); rmSync(target, { force: true });
+  });
+
+  it("records a deleted file and a created one", () => {
+    const id = freshId();
+    const gone = join(tmpdir(), `lax-rb-gone-${id}.txt`), made = join(tmpdir(), `lax-rb-made-${id}.txt`);
+    writeFileSync(gone, "x");
+    const contract = capture(call(id), [gone, made], () => { rmSync(gone); writeFileSync(made, "y"); })!;
+    expect(contract.artifacts).toEqual([
+      expect.objectContaining({ type: "file-backup", original: gone }),
+      { type: "created", original: made },
+    ]);
+    cleanup(id); rmSync(made, { force: true });
+  });
+
+  it("records nothing, and keeps no copy, for files the call only read", () => {
+    const id = freshId();
+    const script = join(tmpdir(), `lax-rb-read-${id}.py`);
+    writeFileSync(script, "print(1)");
+    expect(capture(call(id, "bash"), [script, join(tmpdir(), `lax-rb-never-${id}.txt`)])).toBeNull();
+    expect(existsSync(join(ROLLBACK_DIR_PATH, id))).toBe(false);
+    expect(readContracts().some((c) => c.toolCallId === id)).toBe(false);
+    rmSync(script, { force: true });
   });
 });
 
@@ -84,8 +121,7 @@ describe("restoreRollback", () => {
     const id = freshId();
     const target = homeFile(`lax-rb-restore-${id}.txt`);
     writeFileSync(target, "original");
-    captureRollback(call(id), [target]);
-    writeFileSync(target, "mutated-by-agent");
+    capture(call(id), [target], () => writeFileSync(target, "mutated-by-agent"));
 
     expect((await restoreRollback(id)).ok).toBe(true);
     expect(readFileSync(target, "utf-8")).toBe("original");
@@ -95,8 +131,7 @@ describe("restoreRollback", () => {
   it("moves a file the call created out of the way", async () => {
     const id = freshId();
     const target = homeFile(`lax-rb-created-${id}.txt`);
-    captureRollback(call(id), [target]);
-    writeFileSync(target, "made by the agent");
+    capture(call(id), [target], () => writeFileSync(target, "made by the agent"));
 
     expect((await restoreRollback(id)).ok).toBe(true);
     expect(existsSync(target)).toBe(false);
@@ -106,8 +141,7 @@ describe("restoreRollback", () => {
     const id = freshId();
     const target = homeFile(`lax-rb-twice-${id}.txt`);
     writeFileSync(target, "v1");
-    captureRollback(call(id), [target]);
-    writeFileSync(target, "v2");
+    capture(call(id), [target], () => writeFileSync(target, "v2"));
 
     expect((await restoreRollback(id)).ok).toBe(true);
     const second = await restoreRollback(id);
@@ -126,9 +160,8 @@ describe("restoreRollback", () => {
     const id = freshId();
     const target = homeFile(`lax-rb-list-${id}.txt`);
     writeFileSync(target, "v1");
-    captureRollback(call(id), [target]);
+    capture(call(id), [target], () => writeFileSync(target, "v2"));
     expect(listRollbacks(50).find((e) => e.toolCallId === id)?.restored).toBe(false);
-    writeFileSync(target, "v2");
     await restoreRollback(id);
     expect(listRollbacks(50).find((e) => e.toolCallId === id)?.restored).toBe(true);
     rmSync(target, { force: true });
@@ -141,8 +174,8 @@ describe("pruneRollbacks", () => {
     const target = join(tmpdir(), `lax-rb-prune-${old}.txt`);
     writeFileSync(target, "x");
     const now = Date.now();
-    captureRollback(call(old), [target], now - 31 * 24 * 3_600_000);
-    captureRollback(call(fresh), [target], now);
+    capture(call(old), [target], () => writeFileSync(target, "y"), now - 31 * 24 * 3_600_000);
+    capture(call(fresh), [target], () => writeFileSync(target, "zz"), now);
 
     expect(pruneRollbacks(now)).toBeGreaterThanOrEqual(1);
     const ids = readContracts().map((c) => c.toolCallId);
@@ -174,8 +207,8 @@ describe("restore trusts nothing the index names", () => {
     const target = homeFile(`lax-rb-esc-${escape}.txt`);
     writeFileSync(target, "x");
     try {
-      const c = captureRollback(call(`../${escape}`), [target])!;
-      expect(c.artifacts[0].type).toBe("none");
+      const c = captureBeforeCall(call(`../${escape}`), [target])!;
+      expect(c.entries[0].artifact.type).toBe("none");
       expect(existsSync(join(ROLLBACK_DIR_PATH, "..", escape))).toBe(false);
     } finally {
       rmSync(join(ROLLBACK_DIR_PATH, "..", escape), { recursive: true, force: true });

@@ -54,9 +54,10 @@ export interface ToolCallContext {
    * the pre-publish review, noted onto the tool result after it runs. */
   publishReview?: import("../canonical-loop/public/publish-review.js").PublishReview;
 
-  /** Set by the rollback-capture phase when the call names files it changes:
-   *  their bytes from before, for the chat's Undo (capture-rollback.ts). */
-  rollback?: import("../autonomy/rollback.js").RollbackContract;
+  /** Set by the rollback-capture phase when the call names files it may
+   *  change: their bytes from before, put on record after the call for what it
+   *  did change, for the chat's Undo (capture-rollback.ts). */
+  rollback?: import("../autonomy/rollback.js").PendingCapture;
 
   startedAt?: number;
   result?: ToolResult;

@@ -49,7 +49,7 @@ async function loadRollbackList() {
     if (!res.ok) { host.textContent = 'Could not load rollback list.'; return; }
     const { entries } = await res.json();
     if (!entries || entries.length === 0) {
-      host.innerHTML = '<span style="color:var(--muted)">Nothing yet. Every file the agent writes, edits or deletes with its file tools shows up here.</span>';
+      host.innerHTML = '<span style="color:var(--muted)">Nothing yet. Every file the agent writes, edits or deletes shows up here, including the files its shell commands name.</span>';
       return;
     }
     host.innerHTML = entries.map((e) => {

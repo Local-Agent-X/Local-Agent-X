@@ -1,8 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { homedir } from "node:os";
-import { captureRollback, loadRestoredIds } from "./rollback.js";
+import { captureBeforeCall, loadRestoredIds, recordCapture } from "./rollback.js";
 import { planRewind, rewindToBeforeOp } from "./rollback-rewind.js";
 
 // The rewind's targets must be paths the file-access layer lets a write
@@ -14,8 +14,9 @@ const uniq = (s: string): string => `${s}-${Date.now().toString(36)}-${n++}`;
 /** Capture, then do what the tool would have done. */
 function agentWrite(session: string, op: string, path: string, body: string): string {
   const toolCallId = uniq("tc");
-  captureRollback({ toolCallId, tool: "write", sessionId: session, opId: op }, [path]);
+  const pending = captureBeforeCall({ toolCallId, tool: "write", sessionId: session, opId: op }, [path]);
   writeFileSync(path, body);
+  recordCapture(pending);
   return toolCallId;
 }
 
@@ -77,7 +78,12 @@ describe("rewindToBeforeOp", () => {
     const session = uniq("s"), op = uniq("op");
     const outside = join(homedir(), ".ssh", uniq("authorized_keys"));
     const id = uniq("tc");
-    captureRollback({ toolCallId: id, tool: "write", sessionId: session, opId: op }, [outside]);
+    // A forged created entry for a path the file-access layer will not let a
+    // delete reach: the call "created" a file under ~/.ssh.
+    const pending = captureBeforeCall({ toolCallId: id, tool: "write", sessionId: session, opId: op }, [outside]);
+    mkdirSync(dirname(outside), { recursive: true });
+    writeFileSync(outside, "the user's key");
+    recordCapture(pending);
 
     const r = await rewindToBeforeOp(session, op);
     expect(r.ok && r.failed.map((f) => f.path)).toEqual([outside]);

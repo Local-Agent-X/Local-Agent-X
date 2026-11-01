@@ -16,18 +16,22 @@ const MODEL_CONTEXTS: Record<string, number> = {
   // gpt-6 / gpt-5.6 / gpt-5.4 pages all say "1,050,000 context window,
   // 128,000 max output tokens"; the gpt-5.2 / 5.1 / 5 / 5.4-nano pages
   // "400,000 / 128,000"; o3-pro "200,000 / 100,000".
-  // gpt-6 is sized by its INPUT cap, measured 2026-10-26 over the ChatGPT
-  // subscription: gpt-6-sol served 921,298 input tokens and closed the stream
-  // at ~924K; gpt-6-astra served 900K and closed at 950K. 922,000 = the
-  // 1,050,000 window minus the 128,000 output reservation, which Luna shares.
+  // gpt-6 and gpt-5.6 are sized by their INPUT cap, measured over the ChatGPT
+  // subscription: 2026-10-26 gpt-6-sol served 921,298 input tokens and closed
+  // the stream at ~924K, gpt-6-astra served 900K and closed at 950K;
+  // 2026-10-31 (tmp/window-probe-codex.ts, logs in reports/) gpt-6.1-sol,
+  // gpt-6.1-terra, gpt-6-luna, gpt-5.6-sol, gpt-5.6-terra and gpt-5.6-luna
+  // each served 899,314 and closed at 950K. 922,000 = the 1,050,000 window
+  // minus the 128,000 output reservation, the same on every one of them.
   "gpt-6.1-sol": 922_000,
+  "gpt-6.1-terra": 922_000,
   "gpt-6-astra": 922_000,
   "gpt-6-sol": 922_000,
   "gpt-6-luna": 922_000,
-  "gpt-5.6": 1_050_000,      // bare alias routes to Sol
-  "gpt-5.6-sol": 1_050_000,
-  "gpt-5.6-terra": 1_050_000,
-  "gpt-5.6-luna": 1_050_000,
+  "gpt-5.6": 922_000,      // bare alias routes to Sol
+  "gpt-5.6-sol": 922_000,
+  "gpt-5.6-terra": 922_000,
+  "gpt-5.6-luna": 922_000,
   "gpt-5.5": 1_050_000,
   "gpt-5.4": 1_050_000,
   "gpt-5.4-pro": 1_050_000,
@@ -47,9 +51,17 @@ const MODEL_CONTEXTS: Record<string, number> = {
   // grok-4.5 / 4.3 / 4.20 1M; grok-build-0.1 256k (grok-code-fast-1 is its
   // alias, 256k on its own page). The undated grok-4.20 ids and
   // grok-code-fast are LiteLLM-only aliases of the dated rows.
+  // Probed 2026-10-31 (tmp/window-probe-xai.ts over the SuperGrok sign-in,
+  // logs in reports/): grok-4.5 refuses 983,199 tokens with "input_too_large
+  // … > 500000 tokens", so it is 500k on the lane whatever the docs page says
+  // (LiteLLM had it right); grok-4.6 served 491,248 and refused 509,853 (">
+  // 500000"); grok-4.3 served 994,453; grok-4.20-0309-reasoning and
+  // -non-reasoning served ~992,700 and refused ~1,013,500 ("> 1000000");
+  // grok-build-0.1 served 248,563 and refused 268,434 ("> 256000"); grok-4.7
+  // was probed 2026-10-26 (476,817 served, 500,834 refused).
   "grok-4.7": 500_000,
   "grok-4.6": 500_000,
-  "grok-4.5": 1_000_000, // pin: x.ai docs 2026-09-27 say 1M; LiteLLM carries 500k
+  "grok-4.5": 500_000, // pin: x.ai docs 2026-09-27 say 1M; the lane refuses past 500k (probe above)
   "grok-4.3": 1_000_000,
   "grok-4.20-0309-reasoning": 1_000_000,
   "grok-4.20-0309-non-reasoning": 1_000_000,

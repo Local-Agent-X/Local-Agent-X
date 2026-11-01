@@ -93,8 +93,8 @@ describe("effectiveContextWindow", () => {
 	// never on the Claude subscription lane, so their windows are untouched.
 	it("never clamps non-Anthropic models regardless of transport", () => {
 		expect(effectiveContextWindow("gpt-5.5", "cli")).toBe(1_050_000);
-		expect(effectiveContextWindow("gpt-5.6-sol", "cli")).toBe(1_050_000);
-		expect(effectiveContextWindow("gpt-5.6-luna", "cli")).toBe(1_050_000);
+		expect(effectiveContextWindow("gpt-5.6-sol", "cli")).toBe(922_000);
+		expect(effectiveContextWindow("gpt-5.6-luna", "cli")).toBe(922_000);
 		expect(effectiveContextWindow("gemini-3.1-pro-preview", "cli")).toBe(1_048_576);
 		expect(effectiveContextWindow("grok-4.3", "cli")).toBe(1_000_000);
 	});

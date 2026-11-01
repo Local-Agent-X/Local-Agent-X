@@ -9,6 +9,7 @@ import { homedir } from "node:os";
 import {
   INTERP_ESCAPE_BINS,
   DANGEROUS_INVOKE_BINS,
+  INLINE_HTTP_LIBRARY_PATTERNS,
   INTERP_EVAL_FLAGS,
   RENAME_ESCAPE_EVAL_FLAGS,
 } from "./shell-rules.js";
@@ -396,18 +397,26 @@ function getentReadsLocalTable(args: string[]): boolean {
   return false;
 }
 
-// ── C3-17: raw-socket / network module use in node -e / python -c bodies ──
-// The denylist above flags some HTTP *libraries* (requests/urllib/httpx) but
-// misses RAW SOCKETS and the low-level node/python network modules, which give
-// the same arbitrary-egress capability inside an inline script body. Broaden
-// the inline-interpreter scan to also flag net/socket/https/http(module)/dgram/
-// fetch/tls/connect. Only fires when an inline-script flag (node -e / python -c
-// / perl -e / ruby -e) AND a network-module reference both appear, matching the
-// existing detectScriptWrite style.
-export function detectInlineNetwork(command: string): string | null {
-  const hasInlineScript =
-    /\b(python[23]?|node|perl|ruby)\b\s+-[a-zA-Z]*[ce]\b/i.test(command);
-  if (!hasInlineScript) return null;
+// ── C3-17: network use in the programs a command hands an interpreter ──
+// Read over PROGRAM text only: the inline bodies (`python -c`, `node -e`,
+// `perl -ne`; shell-rules.ts inlineProgramsOf) and the heredoc programs
+// (shell-source-text.ts) of the command, never the command line. Until
+// 2026-10-31 the HTTP-library patterns ran over the whole line and the socket
+// patterns over the whole line once any inline flag appeared, so `pip install
+// aiohttp`, `grep -rn http.client src` and a URL check inside a quoted `$(…)`
+// (TB2 install-windows-3.11, 10-24 and 10-29) were refused as programs. An
+// HTTP library (requests/urllib/httpx/http.client/.NET) and a raw socket or
+// low-level network module (net/socket/https/http/dgram/tls, fetch, connect)
+// give the same arbitrary egress inside a program.
+export type InlineNetworkHit = { kind: "library"; matched: string } | { kind: "socket" };
+
+export function detectInlineNetwork(programs: readonly string[]): InlineNetworkHit | null {
+  if (programs.length === 0) return null;
+  const text = programs.join("\n");
+  for (const pattern of INLINE_HTTP_LIBRARY_PATTERNS) {
+    const m = pattern.exec(text);
+    if (m) return { kind: "library", matched: m[0] };
+  }
   const networkPatterns = [
     /\bimport\s+socket\b/i,                 // python: import socket
     /\bsocket\.socket\s*\(/i,               // python: socket.socket(...)
@@ -423,10 +432,7 @@ export function detectInlineNetwork(command: string): string | null {
     // (`import sqlite3 as db`) still reads as network.
     /(?<!\bsqlite3)\.connect\s*\(/i,
   ];
-  if (networkPatterns.some((p) => p.test(command))) {
-    return "Blocked: raw socket / network module in inline script — use http_request (SSRF-checked) instead.";
-  }
-  return null;
+  return networkPatterns.some((p) => p.test(text)) ? { kind: "socket" } : null;
 }
 
 // Is this argv[0] token written as a PATH (vs. a bare command name resolved via

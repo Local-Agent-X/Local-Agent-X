@@ -7,17 +7,14 @@
 import { existsSync } from "node:fs";
 import { type CommandPosition } from "./shell-command-positions.js";
 import { execBasename, isShellReparseFlag } from "./shell-lex.js";
-import { INLINE_CODE_PATTERNS, INTERP_EVAL_FLAGS, NETWORK_CLIENT_BINS } from "./shell-rules.js";
+import { INLINE_CODE_PATTERNS, inlineProgramsOf, NETWORK_CLIENT_BINS } from "./shell-rules.js";
 import { ENVIRONMENT_SETUP_OUTPUT } from "./shell-nested-commands.js";
 
 // The inline program an interpreter was handed (`python -c "<code>"`, `node -e
-// "<code>"`, an awk program): the word after an eval flag, or for awk, its words.
+// "<code>"`, an awk program): the word after an eval flag (shell-rules.ts
+// inlineProgramsOf, the one reading), or for awk, its words.
 function inlineCode(p: CommandPosition): string[] {
-  const args = argsOf(p);
-  if (AWK_BINS.has(p.bin)) return args;
-  const flags = INTERP_EVAL_FLAGS[p.bin];
-  if (!flags) return [];
-  return args.filter((_, i) => i > 0 && flags.has(args[i - 1]));
+  return AWK_BINS.has(p.bin) ? argsOf(p) : inlineProgramsOf(p);
 }
 
 export type CommandRuleCategory =

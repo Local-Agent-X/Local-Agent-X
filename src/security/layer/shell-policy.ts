@@ -2,9 +2,9 @@ import { homedir } from "node:os";
 import type { SecurityDecision } from "../../types.js";
 import { USER_HINTS } from "../../types.js";
 import type { InlineEvalPolicy, FileAccessMode } from "./types.js";
-import { BLOCKED_COMMANDS, BROWSER_OPEN_CMDS, EGRESS_TEXT_PATTERNS, RM_DESTRUCTIVE_FLAGS, SOCKET_PLUMBING_PATTERNS } from "./shell-rules.js";
+import { BLOCKED_COMMANDS, BROWSER_OPEN_CMDS, RM_DESTRUCTIVE_FLAGS, SOCKET_PLUMBING_PATTERNS } from "./shell-rules.js";
 import { isThisMachineHost, shellLoopbackReachable, shellUnixSocketReachable } from "./loopback-grant.js";
-import { inlineProgramDestinations } from "./shell-inline-destinations.js";
+import { inlineProgramDestinations, inlinePrograms } from "./shell-inline-destinations.js";
 import { detectCatastrophicDelete } from "./catastrophic-paths.js";
 import { shellDeletes } from "./shell-delete-targets.js";
 import { rmInsideWorkspaceVerdict } from "./rm-inside-workspace.js";
@@ -142,13 +142,13 @@ function fdPlumbingOnlyLocal(command: string): boolean {
 }
 
 /** The raw-text patterns a command is scanned for: the denylist always; where
- *  no cage holds egress, the network text too, less what reaches only this
- *  machine (an inline program's local destinations, fd plumbing onto a local
- *  port or path). */
-function rawTextPatterns(command: string, egressEnforced: boolean, inlineLocal: () => boolean): readonly RegExp[] {
-  if (egressEnforced) return BLOCKED_COMMANDS;
-  const egressText = inlineLocal() ? SOCKET_PLUMBING_PATTERNS : EGRESS_TEXT_PATTERNS;
-  return [...BLOCKED_COMMANDS, ...(fdPlumbingOnlyLocal(command) ? egressText.filter((p) => !SOCKET_PLUMBING_PATTERNS.includes(p)) : egressText)];
+ *  no cage holds egress, the socket plumbing of a reverse shell too, unless it
+ *  wires onto this machine's own ports or paths (fdPlumbingOnlyLocal). The
+ *  network use of a program is judged on the program's text
+ *  (detectInlineNetwork), not here. */
+function rawTextPatterns(command: string, egressEnforced: boolean): readonly RegExp[] {
+  if (egressEnforced || fdPlumbingOnlyLocal(command)) return BLOCKED_COMMANDS;
+  return [...BLOCKED_COMMANDS, ...SOCKET_PLUMBING_PATTERNS];
 }
 
 /** The command separator a bash command chains with outside quotes (newline,
@@ -443,12 +443,13 @@ export function evaluateShellCommand(
   // that the shell may reach (shell-inline-destinations.ts): checking a local
   // port or talking to a service's control socket from a few lines of Python
   // reaches no farther than a shell client to the same place.
-  let local: boolean | undefined;
-  const inlineLocal = () => (local ??= inlineProgramLocal(command, platform === "win32" ? [] : readSourceText(raw).programs));
   if (!egressEnforced) {
-    const inlineNet = detectInlineNetwork(command);
-    if (inlineNet && !inlineLocal()) {
-      return { allowed: false, reason: inlineNet, userHint: USER_HINTS.commandShell };
+    const heredocPrograms = platform === "win32" ? [] : readSourceText(raw).programs;
+    const inlineNet = detectInlineNetwork([...inlinePrograms(command), ...heredocPrograms]);
+    if (inlineNet && !inlineProgramLocal(command, heredocPrograms)) {
+      return inlineNet.kind === "library"
+        ? deniedCommandBlock(inlineNet.matched)
+        : { allowed: false, reason: "Blocked: raw socket / network module in inline script — use http_request (SSRF-checked) instead.", userHint: USER_HINTS.commandShell };
     }
   }
 
@@ -503,7 +504,7 @@ export function evaluateShellCommand(
   // The raw-text patterns over the whole command. None is anchored, so a
   // per-pipe-segment pass found nothing this one does not (the whole line
   // contains every segment); it only reported a different scope.
-  const hit = firstBlockedCommand(command, rawTextPatterns(command, egressEnforced, inlineLocal));
+  const hit = firstBlockedCommand(command, rawTextPatterns(command, egressEnforced));
   if (hit) return deniedCommandBlock(hit);
 
   return { allowed: true, reason: "Shell command allowed" };

@@ -13,6 +13,14 @@ describe("inlinePrograms", () => {
     expect(inlinePrograms(`python3 -c 'print(1)' && node -e 'x()'`)).toEqual(["print(1)", "x()"]);
     expect(inlinePrograms("python3 script.py -c")).toEqual([]);
   });
+
+  it("reads a short cluster holding the eval letter, not a long flag with a glued value", () => {
+    expect(inlinePrograms(`python3 -Ic 'print(1)'`)).toEqual(["print(1)"]);
+    expect(inlinePrograms(`perl -ne 'print' f && perl -we 'print 1'`)).toEqual(["print", "print 1"]);
+    expect(inlinePrograms(`ruby -rsocket -e 'puts 1'`)).toEqual(["puts 1"]);
+    expect(inlinePrograms(`sudo python3 -c 'print(1)' && bash -c "node -e 'y()'"`)).toEqual(["print(1)", "y()"]);
+    expect(inlinePrograms(`perl -Mstrict script.pl`)).toEqual([]);
+  });
 });
 
 describe("inlineProgramDestinations", () => {

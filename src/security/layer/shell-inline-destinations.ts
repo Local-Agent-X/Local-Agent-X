@@ -16,7 +16,7 @@
  * is "unknown", and the scan refuses it as before.
  */
 import { commandPositions } from "./shell-command-positions.js";
-import { INTERP_EVAL_FLAGS } from "./shell-rules.js";
+import { inlineProgramsOf } from "./shell-rules.js";
 import { defaultPort, isThisMachineHost } from "./loopback-grant.js";
 
 export type InlineDestinations =
@@ -24,16 +24,10 @@ export type InlineDestinations =
   | { kind: "local"; ports: string[]; unixSockets: string[] }
   | { kind: "unknown" };
 
-/** The inline programs of a command: each argument that follows an eval flag. */
+/** The inline programs of a command: each argument that follows an eval flag
+ *  (shell-rules.ts inlineProgramsOf), in every command position. */
 export function inlinePrograms(command: string): string[] {
-  const programs: string[] = [];
-  for (const p of commandPositions(command).positions) {
-    const flags = INTERP_EVAL_FLAGS[p.bin];
-    if (!flags) continue;
-    const args = p.words.slice(p.at + 1);
-    args.forEach((a, i) => { if (i > 0 && flags.has(args[i - 1])) programs.push(a); });
-  }
-  return programs;
+  return commandPositions(command).positions.flatMap(inlineProgramsOf);
 }
 
 // A call that takes a destination, followed by what it is given. Group 1 is

@@ -33,10 +33,14 @@ export const BLOCKED_COMMANDS = [
 // a .NET or Python script handed to an interpreter, or the socket plumbing of
 // a reverse shell. Text patterns, so they can only match words; applied, like
 // the network-client rule, only where no kernel cage holds egress.
-// HTTP libraries named inside a program. Their destination is the URL the
-// program spells, so for a program whose every destination is a literal this
-// machine's own (shell-inline-destinations.ts) shell-policy skips these: it
-// reaches no farther than a shell client to the same port.
+// HTTP libraries named inside a program. Read over PROGRAM text only (the
+// inline programs and heredoc programs of a command, shell-detectors.ts
+// detectInlineNetwork), never the command line: `pip install aiohttp`, `grep
+// -rn http.client src` and a comment naming urllib are not programs. Their
+// destination is the URL the program spells, so for a program whose every
+// destination is a literal this machine's own (shell-inline-destinations.ts)
+// shell-policy skips these: it reaches no farther than a shell client to the
+// same port.
 export const INLINE_HTTP_LIBRARY_PATTERNS: readonly RegExp[] = [
   /\bNet\.WebClient\b/i,                    // .NET web client
   /\bSystem\.Net\.Http/i,                   // .NET HTTP
@@ -64,7 +68,6 @@ export const SOCKET_PLUMBING_PATTERNS: readonly RegExp[] = [
   /\bexec\s+\d+<>/i,                        // fd exec redirect (reverse shell)
 ];
 
-export const EGRESS_TEXT_PATTERNS: readonly RegExp[] = [...INLINE_HTTP_LIBRARY_PATTERNS, ...SOCKET_PLUMBING_PATTERNS];
 
 // The command-line forms of these are argv rules now (shell-command-rule-table.ts),
 // which read the command being run instead of matching its words anywhere. Inside
@@ -183,6 +186,28 @@ export const INTERP_EVAL_FLAGS: Record<string, Set<string>> = {
   deno: new Set(["-e", "--eval"]),
   bun: new Set(["-e", "-p", "--eval", "--print"]),
 };
+
+/** Is `word` an eval flag of `bin`: one listed, or a short cluster that holds
+ *  a listed single letter (`python3 -Ic`, `perl -ne`, `perl -we`). A long
+ *  cluster is a flag with a glued value (`ruby -rsocket`), not an eval. */
+export function isInlineEvalFlag(bin: string, word: string): boolean {
+  const flags = INTERP_EVAL_FLAGS[bin];
+  if (!flags) return false;
+  if (flags.has(word)) return true;
+  if (!/^-[a-zA-Z]{2,3}$/.test(word)) return false;
+  return [...flags].some((f) => f.length === 2 && word.includes(f[1]));
+}
+
+/** The programs an interpreter at command position `p` was handed inline:
+ *  the word after each eval flag. The one reading shared by the inline-code
+ *  rule (shell-command-rule-table.ts), the destination reader
+ *  (shell-inline-destinations.ts) and the inline network scan
+ *  (shell-detectors.ts), so a form one sees the others see. */
+export function inlineProgramsOf(p: { bin: string; words: string[]; at: number }): string[] {
+  if (!INTERP_EVAL_FLAGS[p.bin]) return [];
+  const args = p.words.slice(p.at + 1);
+  return args.filter((_, i) => i > 0 && isInlineEvalFlag(p.bin, args[i - 1]));
+}
 
 // The rename-escape (part b) flag set: any eval-style flag that, paired with a
 // model-writable-path argv[0], marks a renamed interpreter. Legit workspace

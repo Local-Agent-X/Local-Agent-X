@@ -208,7 +208,25 @@ describe("what bash reads before it runs anything", () => {
     expect(unconfined(program("print(urllib.request.urlopen('https://x.test/').read())")).allowed).toBe(false);
     // `"http://127.0.0.1:5000" + "@x.test/"` is a request to x.test.
     expect(unconfined(program("print(urllib.request.urlopen('http://127.0.0.1:5000' + path).read())")).allowed).toBe(false);
-    expect(unconfined("xargs - <<'EOF'\nurllib.request.urlopen('http://127.0.0.1:5000/')\nEOF").allowed).toBe(false);
+    // xargs runs its lines as commands, not as Python: no program, nothing a
+    // library pattern may read (it was refused only by the whole-line text match).
+    expect(unconfined("xargs - <<'EOF'\nurllib.request.urlopen('http://127.0.0.1:5000/')\nEOF").allowed).toBe(true);
+  });
+
+  // The HTTP-library and socket patterns read program text only: the inline
+  // programs (any eval-flag spelling) and the heredoc programs of a command.
+  it("judges a program's network use on the program, never on the command line around it", () => {
+    for (const cmd of [
+      "pip install aiohttp requests httpx", `grep -rn "http.client" src`, `echo "see urllib.request for the API"`,
+      `git commit -m "use requests.get instead of urllib"`, "python3 -m json.tool http.client.json",
+    ]) expect(unconfined(cmd).allowed, cmd).toBe(true);
+    for (const cmd of [
+      `python3 -Ic "import requests; requests.get('https://x.test')"`,
+      `perl -ne 'use IO::Socket; IO::Socket::INET->new("x.test:80")' f`,
+      `python3 -c "import aiohttp"`,
+      "python3 - <<'EOF'\nimport socket\ns = socket.socket(); s.connect((host, 80))\nEOF",
+    ]) expect(unconfined(cmd).allowed, cmd).toBe(false);
+    expect(unconfined(`python3 -c "import requests; requests.get('https://x.test')"`).reason).toMatch(/uses "requests\.get".*http_request/);
   });
 
   it("does not take a left shift for a heredoc", () => {

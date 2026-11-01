@@ -33,6 +33,7 @@ import { enqueueBridgeMedia } from "../bridge-media-queue.js";
 import { createLogger } from "../logger.js";
 import type { CallContext } from "../tool-execution/context.js";
 import { augmentByName, augmentFromToolSearch, canCallByName } from "./tool-augmentation.js";
+import { rememberSessionTools } from "../agent-request/prepare-request/tool-selection.js";
 import { noteUnavailableTools } from "./unavailable-tool-hint.js";
 import { elapsedMs, monotonicNow } from "./elapsed.js";
 
@@ -74,6 +75,22 @@ export interface ChatToolDispatcherOptions {
  * runtime. The closure captures session-scoped context — register one per
  * op via `registerToolDispatcherForOp`.
  */
+/**
+ * A tool loaded mid-request joins the session's set the moment it loads, so
+ * the next request ships it from the start (tool-selection.ts). Saved at the
+ * op's teardown, it was always an empty list: the terminal transition had
+ * already unregistered the op's tools. Each request then started from the
+ * kit and re-added http_request / multi_edit mid-request, and a tool added
+ * mid-request rewrites the whole prompt cache (2026-11-01: 49 rounds, 38-47%
+ * of two chats' cache writes).
+ */
+function loadRemembering(toolMap: Map<string, ToolDefinition>, sessionId: string | undefined, load: () => unknown): void {
+  const before = new Set(toolMap.keys());
+  load();
+  const added = [...toolMap.keys()].filter((name) => !before.has(name));
+  if (added.length > 0 && sessionId) rememberSessionTools(sessionId, added);
+}
+
 export function makeChatToolDispatcher(opts: ChatToolDispatcherOptions): ToolDispatcher {
   const toolMap = new Map(opts.tools.map(t => [t.name, t]));
 
@@ -111,7 +128,7 @@ export function makeChatToolDispatcher(opts: ChatToolDispatcherOptions): ToolDis
     for (const c of wireCalls) {
       if (toolMap.has(c.name)) continue;
       try {
-        augmentByName(c.name, opts.opId, toolMap, opts.onToolsAugmented, opts.callContext);
+        loadRemembering(toolMap, opts.sessionId, () => augmentByName(c.name, opts.opId!, toolMap, opts.onToolsAugmented, opts.callContext));
       } catch (e) {
         if (opts.onToolsAugmented) throw e;
         logger.warn(`[augment] by-name augmentation failed for '${c.name}': ${(e as Error).message}`);
@@ -328,7 +345,7 @@ function shapeCallResult(
   //      request schema includes them.
   if (call.tool === "tool_search" && opts.opId && canonicalStatus === "ok") {
     try {
-      augmentFromToolSearch(content, opts.opId, toolMap, opts.onToolsAugmented, opts.callContext);
+      loadRemembering(toolMap, opts.sessionId, () => augmentFromToolSearch(content, opts.opId!, toolMap, opts.onToolsAugmented, opts.callContext));
     } catch (e) {
       if (opts.onToolsAugmented) throw e;
       logger.warn(`[augment] tool_search augmentation failed: ${(e as Error).message}`);

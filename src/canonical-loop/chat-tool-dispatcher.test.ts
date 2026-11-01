@@ -11,7 +11,14 @@
 // tool. If someone reverts the wiring to `undefined`, the tool re-runs and this
 // fails.
 
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
+
+// A tool loaded mid-request joins the session's set as it loads.
+const { rememberSessionTools } = vi.hoisted(() => ({ rememberSessionTools: vi.fn() }));
+vi.mock("../agent-request/prepare-request/tool-selection.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../agent-request/prepare-request/tool-selection.js")>();
+  return { ...actual, rememberSessionTools: (...a: Parameters<typeof actual.rememberSessionTools>) => { rememberSessionTools(...a); actual.rememberSessionTools(...a); } };
+});
 import { makeChatToolDispatcher } from "./chat-tool-dispatcher.js";
 import { appendOpMessage } from "./store.js";
 import { setAriRequired } from "../ari-kernel/state.js";
@@ -79,6 +86,8 @@ describe("a tool called by name that the schema does not carry", () => {
       const text = typeof res.result === "string" ? res.result : JSON.stringify(res.result);
       expect(text).toContain("FRESH");
       expect(calls.n).toBe(1);
+      // Saved for the session now, so the next request ships it from the start.
+      expect(rememberSessionTools).toHaveBeenCalledWith("s-byname", ["echo"]);
 
       const unknown = await dispatcher.dispatch({ toolCallId: "call-unknown", tool: "echoo", args: {} });
       const utext = typeof unknown.result === "string" ? unknown.result : JSON.stringify(unknown.result);

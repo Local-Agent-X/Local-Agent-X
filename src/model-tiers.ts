@@ -82,15 +82,6 @@ function atLeastMajor(model: string, pattern: RegExp, min: number): boolean {
   return major !== undefined && Number(major) >= min;
 }
 
-export function isWeakModel(model: string): boolean {
-  return classifyModel(model) === "weak";
-}
-
-export function isMediumOrWeak(model: string): boolean {
-  const t = classifyModel(model);
-  return t === "weak" || t === "medium";
-}
-
 /**
  * Slots the medium cap reserves for tools the USER'S MESSAGE matched
  * (keyword/RAG), over and above the unconditional essentials. This is the

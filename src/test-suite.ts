@@ -134,7 +134,6 @@ async function testModuleImports(): Promise<void> {
     "./voice/voice-fast.js",
     "./voice/voice-auth.js",
     "./voice/voice-timeline.js",
-    "./tts-stream.js",
     "./tools/camera-tool.js",
     "./screen-capture.js",
     "./tools/ocr-tool.js",

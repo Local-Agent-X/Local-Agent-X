@@ -186,16 +186,3 @@ export function lookupContextWindow(model: string): number {
   return resolveContextWindow(model).tokens;
 }
 
-/**
- * Codex models (OpenAI gpt-5.x family) have a NOMINAL context window of up
- * to 1M tokens, but their PRACTICAL agentic performance degrades well before
- * that. We saw a 334k-token Codex turn end with "I'm missing the actual task
- * context" despite making real edits — the original task was buried under
- * tool results. Compact much earlier for Codex regardless of the nominal
- * window so the original user message stays anchored near the response
- * position. Anthropic models hold focus better and don't need this.
- */
-export function isCodexModel(model: string): boolean {
-  const lower = model.toLowerCase();
-  return lower.startsWith("gpt-") || lower.includes("codex") || lower.startsWith("o1") || lower.startsWith("o3");
-}

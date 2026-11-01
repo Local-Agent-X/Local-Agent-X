@@ -216,7 +216,6 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/tools.ts` | S |
 | `src/trash-journal.ts` | S |
 | `src/trash-restore.ts` | S |
-| `src/tts-stream.ts` | S |
 | `src/types.ts` | S |
 | `src/update-extracted-validation.ts` | S |
 | `src/update-git-rollback.ts` | S |

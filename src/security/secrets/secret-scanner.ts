@@ -11,7 +11,7 @@
  * The decode/normalize evasion engine (ReDoS bounds + decode peel) lives in
  * secret-decode-engine.ts; the normalized-view + known-value passes live in
  * secret-normalize.ts. This file is the scan driver and the stable barrel — the
- * public surface (scanForSecrets, redactSecrets, containsSecrets,
+ * public surface (scanForSecrets, redactSecrets,
  * decodedPayloadViews, SecretMatch, ScanResult) is re-exported here unchanged.
  */
 
@@ -151,15 +151,6 @@ export function redactSecrets(text: string): string {
     redacted = before + `[REDACTED:${match.pattern}]` + after;
   }
   return redacted;
-}
-
-/** Check if text contains any secrets (quick boolean check) */
-export function containsSecrets(text: string): boolean {
-  for (const pattern of CREDENTIAL_PATTERNS) {
-    pattern.regex.lastIndex = 0;
-    if (pattern.regex.test(text)) return true;
-  }
-  return false;
 }
 
 /**

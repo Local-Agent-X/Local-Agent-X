@@ -27,23 +27,6 @@ describe("UnifiedToolRegistry — F2 single-source store", () => {
     registry = new UnifiedToolRegistry();
   });
 
-  it("a tool registered with toolClass='shell' is visible to BOTH the chat-path and the AriKernel view", () => {
-    const tool = makeTool("bash");
-    registry.register(tool, { toolClass: "shell", tags: ["shell"], searchHint: "run a command" });
-
-    // Chat-path view — name-keyed lookup.
-    expect(registry.get("bash")).toBe(tool);
-
-    // AriKernel view — toolClass-keyed filter (this is the
-    // "ExecutorRegistry-as-view" surface from F2 part 1).
-    const shellTools = registry.getByToolClass("shell");
-    expect(shellTools).toHaveLength(1);
-    expect(shellTools[0]).toBe(tool);
-
-    // toolClass filter is exact — wrong class returns nothing.
-    expect(registry.getByToolClass("file")).toEqual([]);
-  });
-
   it("MCP-sourced tools are tagged at registration time and surfaced via getMcpTools()", () => {
     const githubTool = makeTool("mcp_github_create_issue");
     const fsTool = makeTool("mcp_filesystem_read_file");

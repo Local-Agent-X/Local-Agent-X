@@ -5,14 +5,10 @@
  * ToolRegistry class, packages/arikernel/tool-executors ExecutorRegistry)
  * into one indexed store.
  *
- * Two consumer views read from this same store:
- *
- *   - Chat-path: name-keyed lookup for prompt assembly, tool_search,
- *     audience filtering, and dispatch (see src/tools/tool-search.ts re-export).
- *   - AriKernel: toolClass-keyed filter via getByToolClass(); the
- *     ExecutorRegistry inside the arikernel package is the matching
- *     in-package store (no longer self-constructing) and the LAX side
- *     wires the two together at boot.
+ * Readers use the name-keyed lookup for prompt assembly, tool_search,
+ * audience filtering, and dispatch (see src/tools/tool-search.ts re-export).
+ * The ExecutorRegistry inside the arikernel package is the kernel's own
+ * in-package store; each entry here still records its `toolClass`.
  *
  * MCP tools register here directly during boot (see bootstrap-tools.ts) —
  * no more catch-up dedup pass after buildToolRegistry().
@@ -133,20 +129,6 @@ export class UnifiedToolRegistry {
           searchHint: e.searchHint,
         });
       }
-    }
-    return out;
-  }
-
-  /**
-   * AriKernel view — tools tagged with the given `toolClass`. The kernel's
-   * own ExecutorRegistry holds the live `ToolExecutor` instances; this
-   * view is the source of truth for "which tools belong to which class"
-   * (used for filtering/inspection and for LAX-side mirroring at boot).
-   */
-  getByToolClass(toolClass: ToolClass): ToolDefinition[] {
-    const out: ToolDefinition[] = [];
-    for (const entry of this.tools.values()) {
-      if (entry.toolClass === toolClass) out.push(entry.tool);
     }
     return out;
   }

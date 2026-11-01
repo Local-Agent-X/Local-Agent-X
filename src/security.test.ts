@@ -1045,4 +1045,21 @@ describe("evaluateShellCommand — browser-open guard moved into shared gate (M1
     expect(d.allowed).toBe(false);
     expect(d.reason).toMatch(/use the browser tool instead/);
   });
+  // The opener is the command being run with the URL among its arguments:
+  // behind a wrapper, inside a PowerShell body, or with a flag in between.
+  it("rejects the opener behind a wrapper, with a flag, inside a PowerShell body, and the launchers", () => {
+    for (const cmd of [
+      "sudo xdg-open https://evil.com", "open -a Safari https://evil.com", `powershell -Command "Start-Process https://evil.com"`,
+      "sensible-browser", "wslview index.html", "rundll32 url.dll,FileProtocolHandler https://evil.com", "start www.evil.com",
+    ]) {
+      const d = evaluateShellCommand(cmd);
+      expect(d.allowed, cmd).toBe(false);
+      expect(d.reason, cmd).toMatch(/use the browser tool instead/);
+    }
+  });
+  it("a URL opener spelled inside a quoted argument is text", () => {
+    for (const cmd of [`echo "open https://evil.com"`, `git commit -m "start https://docs now"`, "grep -rn 'xdg-open https://' docs"]) {
+      expect(evaluateShellCommand(cmd).reason, cmd).not.toMatch(/use the browser tool instead/);
+    }
+  });
 });

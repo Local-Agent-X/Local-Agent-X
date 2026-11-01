@@ -24,9 +24,10 @@ export const BLOCKED_COMMANDS = [
   // the same reason (`grep host /etc/hosts` is not an invocation of host).
   // A backslash-newline is a line continuation, joined before any rule reads
   // the command (shell-source-text.ts). `nohup … &` is a backgrounded command,
-  // refused by the bare-& rule wherever backgrounding is.
-  // ── Credential access ──
-  /\bcredential\s+manager/i,                 // Windows credential manager
+  // refused by the bare-& rule wherever backgrounding is. The Windows
+  // credential store is the "credential-store" argv rule (cmdkey, vaultcmd,
+  // keymgr.dll): the words "credential manager" are prose ("Git Credential
+  // Manager").
 ];
 
 // Network use spelled INSIDE a body the command walk cannot read as a command:
@@ -127,19 +128,17 @@ export const DANGEROUS_INVOKE_BINS = new Set([
   "resolve-dnsname",
 ]);
 
-// Commands that hand a URL to the system browser / an external app. Rejected
-// with a specific "use the browser tool instead" message (which has CDP
-// attach, audit logging, and no system-app launch). Lives here — not inline in
-// bashTool — so EVERY bash-spawning path (bash, process_start, process_restart)
-// inherits it. Covers the cross-platform openers: start/open/xdg-open/explorer
-// with an http(s):// or www. target, plus the PowerShell/rundll32 idioms.
-// NOTE: no trailing `\b` here. A trailing `\b` anchored on `https?:` never
-// matched a real URL — `:` → `/` in `https://…` is non-word→non-word, so there
-// is no word boundary, and the inline copy this replaced silently failed to
-// block `open https://…` (only `open https:foo`). The leading `\b` is what
-// prevents substring false-positives; the branch contents anchor the rest.
-export const BROWSER_OPEN_CMDS =
-  /\b(start\s+(https?:|www\.|"?https?:)|explorer\s+(https?:|"?https?:)|open\s+(https?:|"?https?:)|xdg-open\s+(https?:|"?https?:)|sensible-browser|wslview\s|powershell.*Start-Process.*https?:|rundll32\s+url\.dll)/i;
+// Commands that hand a URL to the system browser / an external app, read as
+// command positions (shell-detectors.ts detectBrowserOpen). Rejected with a
+// specific "use the browser tool instead" message (which has CDP attach,
+// audit logging, and no system-app launch) on EVERY bash-spawning path (bash,
+// process_start, process_restart). The cross-platform openers take an
+// http(s): or www. argument; the two browser launchers and rundll32's url.dll
+// open one whatever they are given; `Start-Process` is read inside a
+// PowerShell body as the walk reads any body.
+export const BROWSER_OPENERS_WITH_URL = new Set(["start", "explorer", "open", "xdg-open", "start-process"]);
+export const BROWSER_LAUNCHERS = new Set(["sensible-browser", "wslview"]);
+export const URL_ARGUMENT = /^(?:https?:|www\.)/i;
 
 // ── C3-13: argv-aware interpreter-escape detection ──
 // argv[0] basenames that run an inline-eval body via `-e`/`-E`/`-r` flags.

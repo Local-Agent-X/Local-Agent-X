@@ -27,6 +27,22 @@ describe("refused: Windows persistence through PowerShell", () => {
   });
 });
 
+// Was a raw-text "credential manager" pattern with no tests, which read
+// "Git Credential Manager" in a commit message as the store.
+describe("refused: the Windows credential store, by its own tools", () => {
+  it("cmdkey, vaultcmd, and the control panel through rundll32 or control", () => {
+    for (const cmd of [
+      "cmdkey /list", "vaultcmd /listcreds:\"Windows Credentials\"", "rundll32.exe keymgr.dll,KRShowKeyMgr",
+      "control /name Microsoft.CredentialManager", "timeout 5 cmdkey /list",
+    ]) expect(ruleOf(cmd), cmd).toBe("credential-store");
+  });
+  it("while the words are prose, and rundll32 or control for anything else is not this rule", () => {
+    for (const cmd of [`git commit -m "use Git Credential Manager"`, `echo "open the credential manager"`, "rundll32 user32.dll,LockWorkStation", "control /name Microsoft.Mouse"]) {
+      expect(ruleOf(cmd), cmd).not.toBe("credential-store");
+    }
+  });
+});
+
 describe("refused: eval and piping into a shell, at any command position", () => {
   const cases: Array<[string, string]> = [
     [`eval "$X"`, "eval"],

@@ -215,6 +215,12 @@ export const COMMAND_RULES: readonly CommandRule[] = [
   bins("credential-dumper", "credential", "dumps stored credentials", ["mimikatz", "hashdump"]),
   binWith("keychain", "credential", "reads a password from the macOS keychain", ["security"],
     (a) => lower(a[0]) === "find-generic-password" || lower(a[0]) === "find-internet-password"),
+  // Windows' stored credentials: the store's own tools, and the two ways of
+  // opening its control panel. Was a raw-text "credential manager" pattern,
+  // which read "Git Credential Manager" in a commit message as the store.
+  bins("credential-store", "credential", "reads the Windows credential store", ["cmdkey", "vaultcmd"]),
+  binWith("credential-store", "credential", "opens the Windows credential store", ["rundll32", "control"],
+    (a) => a.some((x) => /^keymgr\.dll\b|^microsoft\.credentialmanager$/i.test(x))),
 
   // ── Obfuscation ──
   // A base64 decode by itself is not here: decoding is ordinary, and the

@@ -7,11 +7,14 @@
 import { isAbsolute, relative, resolve, join } from "node:path";
 import { homedir } from "node:os";
 import {
+  BROWSER_LAUNCHERS,
+  BROWSER_OPENERS_WITH_URL,
   INTERP_ESCAPE_BINS,
   DANGEROUS_INVOKE_BINS,
   INLINE_HTTP_LIBRARY_PATTERNS,
   INTERP_EVAL_FLAGS,
   RENAME_ESCAPE_EVAL_FLAGS,
+  URL_ARGUMENT,
 } from "./shell-rules.js";
 import { arithmeticSpanEnd, execBasename, resolveRealArgv0, resolveRealArgv0Index, splitShellSegments, stripQuotedSpans, tokenizeCommand } from "./shell-lex.js";
 import { realpathDeep } from "./file-access.js";
@@ -153,16 +156,39 @@ export function detectScriptWrite(command: string): string | null {
       return "Use the write/edit tools instead — bash exit 0 ≠ work done.";
     }
   }
-  // 3. sed -i / awk inplace editing files in-place
-  if (/\bsed\s+(-[a-zA-Z]*i[a-zA-Z]*|-(-in-place))\b/i.test(command)) {
-    return "Use the edit tool (one file) or bulk_replace (same replacement across many files) instead — bash exit 0 ≠ work done. This gate applies in every file-access mode and location; the target path is not the issue.";
-  }
-  if (/\bawk\b[^|]*\binplace\b/i.test(command)) {
+  // 3. sed -i / awk inplace editing files in-place: the command being run,
+  //    with the flag among its own arguments (`sed -n -i …` edits in place;
+  //    `grep "sed -i" notes.md` runs no sed).
+  if (commandPositions(command).positions.some(editsInPlace)) {
     return "Use the edit tool (one file) or bulk_replace (same replacement across many files) instead — bash exit 0 ≠ work done. This gate applies in every file-access mode and location; the target path is not the issue.";
   }
   // 4. Plain redirect of `echo`/`printf` to a writable file path is allowed
   //    (small one-liners don't trip the silent-noop bug). Heredocs are the
   //    real problem because they swallow newlines + multi-line content.
+  return null;
+}
+
+const AWK_FAMILY = new Set(["awk", "gawk", "mawk", "nawk"]);
+
+/** `sed` with `-i` in any short cluster or `--in-place[=suffix]`; awk with
+ *  its `inplace` extension. */
+function editsInPlace(p: CommandPosition): boolean {
+  const args = p.words.slice(p.at + 1);
+  if (p.bin === "sed") return args.some((a) => /^-[a-zA-Z]*i/.test(a) || /^--in-place(?:=|$)/.test(a));
+  return AWK_FAMILY.has(p.bin) && args.some((a) => /\binplace\b/i.test(a));
+}
+
+// ── URLs handed to the system browser (shell-rules.ts BROWSER_OPENERS_WITH_URL) ──
+// The command being run, with the URL among its own arguments: a quoted
+// mention (`echo "open https://x"`, a commit message) is text.
+export function detectBrowserOpen(command: string): string | null {
+  for (const p of commandPositions(command).positions) {
+    const args = p.words.slice(p.at + 1);
+    const opens = BROWSER_LAUNCHERS.has(p.bin)
+      || (BROWSER_OPENERS_WITH_URL.has(p.bin) && args.some((a) => URL_ARGUMENT.test(a)))
+      || (p.bin === "rundll32" && args.some((a) => /^url\.dll\b/i.test(a)));
+    if (opens) return "Cannot open URLs in the system browser — use the browser tool instead.";
+  }
   return null;
 }
 

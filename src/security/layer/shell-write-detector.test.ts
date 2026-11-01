@@ -25,6 +25,17 @@ describe("shellCommandWritesFiles", () => {
     }
   });
 
+  // The in-place edit is the command being run with the flag among its own
+  // arguments, not the words anywhere on the line.
+  it("reads sed -i and awk inplace as the command run, with the flag anywhere in its arguments", () => {
+    for (const cmd of ["sed -n -i 's/a/b/' x.ts", "sed --in-place=.bak 's/a/b/' x.ts", "sudo sed -ri 's/a/b/' /etc/x", "gawk -i inplace '{print}' x.txt"]) {
+      expect(shellCommandWritesFiles(cmd), cmd).toBe(true);
+    }
+    for (const cmd of [`grep -rn "sed -i" notes.md`, `echo "awk inplace is handy"`, "sed 's/a/b/' x.ts"]) {
+      expect(shellCommandWritesFiles(cmd), cmd).toBe(false);
+    }
+  });
+
   it("does NOT flag read-only commands or benign redirects (no over-block)", () => {
     for (const cmd of [
       "grep -rn tailnet src",

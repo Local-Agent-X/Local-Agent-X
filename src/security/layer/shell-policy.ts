@@ -2,7 +2,7 @@ import { homedir } from "node:os";
 import type { SecurityDecision } from "../../types.js";
 import { USER_HINTS } from "../../types.js";
 import type { InlineEvalPolicy, FileAccessMode } from "./types.js";
-import { BLOCKED_COMMANDS, BROWSER_OPEN_CMDS, RM_DESTRUCTIVE_FLAGS } from "./shell-rules.js";
+import { BLOCKED_COMMANDS, RM_DESTRUCTIVE_FLAGS } from "./shell-rules.js";
 import { socketPlumbingRefusal } from "./shell-socket-plumbing.js";
 import { isThisMachineHost, shellLoopbackReachable, shellUnixSocketReachable } from "./loopback-grant.js";
 import { inlineProgramDestinations, inlinePrograms } from "./shell-inline-destinations.js";
@@ -13,6 +13,7 @@ import { commandRuleReason, commandRuleRecovery, findCommandRuleHit } from "./sh
 import { decodeShellEscapes } from "./shell-escape-decode.js";
 import {
   detectObfuscation,
+  detectBrowserOpen,
   detectSecretPlaceholder,
   detectScriptWrite,
   stripQuotedSpans,
@@ -96,9 +97,8 @@ function literalShapeRefusal(command: string): SecurityDecision | null {
   if (secretPlaceholder) return { allowed: false, reason: secretPlaceholder, userHint: USER_HINTS.commandShell };
   // Reject launching a URL in the system browser — route to the browser tool
   // (CDP attach + audit) instead, on every bash-spawning path (bash, process_start).
-  if (BROWSER_OPEN_CMDS.test(command)) {
-    return { allowed: false, reason: "Cannot open URLs in the system browser — use the browser tool instead.", userHint: USER_HINTS.commandShell };
-  }
+  const browserOpen = detectBrowserOpen(command);
+  if (browserOpen) return { allowed: false, reason: browserOpen, userHint: USER_HINTS.commandShell };
   return null;
 }
 

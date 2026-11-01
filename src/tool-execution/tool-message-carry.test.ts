@@ -20,6 +20,7 @@ import { showUnblockControlTool } from "../tools/unblock-control-tool.js";
 import { activatePluginToolMetadata, deactivatePluginToolMetadata } from "../plugin-system/tool-metadata.js";
 import { registerRedactedSecretValue, unregisterRedactedSecretValue } from "../security/secrets/index.js";
 import { blockRecordOf, mediaRefOf, toolMessage, toolMessageMetadata, toolMessageResult, toolMessageStatus } from "./tool-message-carry.js";
+import { withStubTools } from "./stub-tool-policy.test-helper.js";
 
 const CARRY = "src/tool-execution/tool-message-carry.ts";
 
@@ -39,7 +40,7 @@ describe("every tool message the pipeline emits carries its status", () => {
     _clearDedupCacheForTests();
     const msgs = await executeToolCalls(
       [{ id: `c-${tool.name}`, name: tool.name, arguments: "{}" }],
-      new Map([[tool.name, tool]]), undefined as never, undefined, undefined, undefined, undefined,
+      new Map([[tool.name, tool]]), undefined as never, withStubTools([tool.name]), undefined, undefined, undefined,
       opts.sessionId ?? "carry-test-session", undefined, undefined, opts.priorMessages, undefined, undefined, "api",
     );
     return msgs.filter((m) => m.role === "tool") as Array<{ content?: unknown; _status?: string; _block?: unknown; _metadata?: Record<string, unknown> }>;

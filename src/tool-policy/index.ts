@@ -10,6 +10,7 @@ import { mergeWithDefaults, stampedDefaultPolicy } from "./merge-defaults.js";
 import type { PolicyDecision, ToolPolicyConfig, ToolPolicyRule } from "./types.js";
 import { USER_HINTS } from "../types.js";
 import { shellCommandOf } from "../tool-registry.js";
+import { getLaxDir } from "../lax-data-dir.js";
 
 const logger = createLogger("tool-policy");
 
@@ -329,6 +330,24 @@ export function loadToolPolicy(dataDir: string): LiveToolPolicy {
     logger.info(`[policy] Created default policy at ${policyPath}`);
   } catch {}
   return new LiveToolPolicy(new ToolPolicy(stamped), policyPath);
+}
+
+const installed = new Map<string, LiveToolPolicy>();
+
+/**
+ * The policy installed in the data dir: one live instance per dir, since each
+ * load starts a file watcher. The server boots with it, and a dispatch whose
+ * caller passed no policy is judged by it (pre-dispatch.ts): a missing policy
+ * used to allow every tool, so autopilot rounds and the app-build sub-agent ran
+ * bash and http_request with no default-deny at all (2026-11-01).
+ */
+export function installedToolPolicy(dataDir: string = getLaxDir()): LiveToolPolicy {
+  let policy = installed.get(dataDir);
+  if (!policy) {
+    policy = loadToolPolicy(dataDir);
+    installed.set(dataDir, policy);
+  }
+  return policy;
 }
 
 // ── Boot-time coverage audit ─────────────────────────────────────────────

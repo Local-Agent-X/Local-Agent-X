@@ -39,6 +39,7 @@ import { err } from "../../tools/result-helpers.js";
 import type { CanonicalEvent } from "../types.js";
 import type { ToolCall } from "../contract-types.js";
 import type { ToolDefinition, ToolResult } from "../../types.js";
+import { withStubTools } from "../../tool-execution/stub-tool-policy.test-helper.js";
 
 const OPS_BASE = join(homedir(), ".lax", "operations");
 const trackedOpIds: string[] = [];
@@ -66,6 +67,7 @@ function registerChatDispatcher(opId: string, tools: ToolDefinition[], signal?: 
   registerToolDispatcherForOp(opId, makeChatToolDispatcher({
     tools,
     security: undefined as never,
+    toolPolicy: withStubTools(tools.map((t) => t.name)),
     sessionId: `s-${opId}`,
     callContext: "local",
     opId,

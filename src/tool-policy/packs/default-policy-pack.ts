@@ -21,13 +21,12 @@ function describeRules(): RulePackRule[] {
   }));
 }
 
-export function makeDefaultPolicyPack(toolPolicy: ToolPolicy | undefined): RulePack {
+export function makeDefaultPolicyPack(toolPolicy: ToolPolicy): RulePack {
   return {
     id: PACK_ID,
     priority: PACK_PRIORITY,
     rules: describeRules(),
     evaluate(call: PolicyCall, ctx: PolicyEvalCtx): PackDecision {
-      if (!toolPolicy) return { allowed: true };
       const d = toolPolicy.evaluate(call.name, call.args, ctx.sessionId);
       if (d.confirm) {
         return {

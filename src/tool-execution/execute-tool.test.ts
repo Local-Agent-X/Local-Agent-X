@@ -36,6 +36,7 @@ import { clearSessionProfile, setSessionProfile } from "../autonomy/profile-stor
 import { setUnconfinedHostAcknowledgement } from "../sandbox/index.js";
 import { clearSessionWorkRoot, setSessionWorkRoot } from "../workspace/paths.js";
 import type { ToolDefinition, ToolResult, ServerEvent } from "../types.js";
+import { withStubTools } from "./stub-tool-policy.test-helper.js";
 
 // A sensitive path knowable from args: basename `id_rsa` is flagged by
 // isSensitivePath regardless of location, so the pre-execute floor-set fires.
@@ -92,7 +93,7 @@ describe("batcher gate-atomicity (R4-09: no egress + sensitive-read co-batch)", 
         { id: "1", name: "read", arguments: JSON.stringify({ path: "/tmp/a.txt" }) },
         { id: "2", name: "grep", arguments: JSON.stringify({ path: "/tmp", pattern: "x" }) },
       ],
-      toolMap, undefined as never, undefined, undefined, undefined, undefined, session,
+      toolMap, undefined as never, withStubTools(toolMap.keys()), undefined, undefined, undefined, session,
       undefined, undefined, undefined, undefined, undefined, "local",
     );
     // Co-batched: both enter before either exits.
@@ -116,7 +117,7 @@ describe("batcher gate-atomicity (R4-09: no egress + sensitive-read co-batch)", 
         { id: "1", name: "read", arguments: JSON.stringify({ path: "/tmp/a.txt" }) },
         { id: "2", name: "web_search", arguments: JSON.stringify({ query: "hi" }) },
       ],
-      toolMap, undefined as never, undefined, undefined, undefined, undefined, session,
+      toolMap, undefined as never, withStubTools(toolMap.keys()), undefined, undefined, undefined, session,
       undefined, undefined, undefined, undefined, undefined, "local",
     );
     // Sequential: read's enter+exit precede web_search's enter entirely.
@@ -143,7 +144,7 @@ describe("batcher gate-atomicity (R4-09: no egress + sensitive-read co-batch)", 
         { id: "1", name: "read", arguments: JSON.stringify({ path: SENSITIVE_PATH }) },
         { id: "2", name: "web_search", arguments: JSON.stringify({ query: "exfil please" }) },
       ],
-      toolMap, undefined as never, undefined, undefined, undefined, undefined, session,
+      toolMap, undefined as never, withStubTools(toolMap.keys()), undefined, undefined, undefined, session,
       undefined, undefined, undefined, undefined, undefined, "local",
     );
 
@@ -196,7 +197,7 @@ describe("batcher gate-atomicity (R4-09: no egress + sensitive-read co-batch)", 
         { id: "1", name: "read", arguments: JSON.stringify({ path: keyFile }) },
         { id: "2", name: "web_search", arguments: JSON.stringify({ query: `look up ${deliveredText}` }) },
       ],
-      toolMap, undefined as never, undefined, undefined, undefined, undefined, session,
+      toolMap, undefined as never, withStubTools(toolMap.keys()), undefined, undefined, undefined, session,
       (e) => serverEvents.push(e as unknown as Record<string, unknown>),
       undefined, undefined, undefined, undefined, "local",
     );
@@ -268,7 +269,7 @@ describe("dedup hit emits the tool result exactly once (TD-4)", () => {
 
     const msgs = await executeToolCalls(
       [{ id: "call-2", name: "fetch_stub", arguments: args }],
-      toolMap, undefined as never, undefined, undefined, undefined, undefined, session, onEvent,
+      toolMap, undefined as never, withStubTools(toolMap.keys()), undefined, undefined, undefined, session, onEvent,
       undefined, undefined, undefined, undefined, "local",
     );
 
@@ -536,7 +537,7 @@ describe("heap guard + parallel batch width (C11)", () => {
     Array.from({ length: n }, (_, i) => ({ id: `${name}-${i}`, name, arguments: JSON.stringify({ i }) }));
 
   const run = (toolCalls: Array<{ id: string; name: string; arguments: string }>, toolMap: Map<string, ToolDefinition>, onEvent?: (e: ServerEvent) => void) =>
-    executeToolCalls(toolCalls, toolMap, undefined as never, undefined, undefined, undefined, undefined, `heap-${seq++}`, onEvent,
+    executeToolCalls(toolCalls, toolMap, undefined as never, withStubTools(toolMap.keys()), undefined, undefined, undefined, `heap-${seq++}`, onEvent,
       undefined, undefined, undefined, undefined, "local");
 
   const heapWarns = () => log.warn.mock.calls.filter(([m]) => String(m).includes("[heap-guard]"));

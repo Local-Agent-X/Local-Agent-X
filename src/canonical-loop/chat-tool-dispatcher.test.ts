@@ -17,6 +17,10 @@ import { appendOpMessage } from "./store.js";
 import { setAriRequired } from "../ari-kernel/state.js";
 import type { OpMessageRow } from "./types.js";
 import type { ToolDefinition, ToolResult } from "../types.js";
+import { withStubTools } from "../tool-execution/stub-tool-policy.test-helper.js";
+
+// The tools these tests define; real names keep their real rules.
+const STUB_POLICY = withStubTools(["echo", "timed_stub", "plain_stub"]);
 
 let seq = 0;
 function freshOpId(): string { return `op_dispatcher_test_${seq++}_${process.pid}`; }
@@ -64,7 +68,7 @@ describe("a tool called by name that the schema does not carry", () => {
     const echo = echoTool(calls);
     unifiedRegistry.register(echo);
     try {
-      const dispatcher = makeChatToolDispatcher({
+      const dispatcher = makeChatToolDispatcher({ toolPolicy: STUB_POLICY,
         tools: [],                       // the schema carries nothing
         security: undefined as never,
         sessionId: "s-byname",
@@ -95,7 +99,7 @@ describe("makeChatToolDispatcher wires priorMessages from op storage", () => {
     seedPriorCall(opId, JSON.stringify({ v: 1 }), "PRIOR_RESULT");
 
     const calls = { n: 0 };
-    const dispatcher = makeChatToolDispatcher({
+    const dispatcher = makeChatToolDispatcher({ toolPolicy: STUB_POLICY,
       tools: [echoTool(calls)],
       security: undefined as never,
       sessionId: "s-dedup",
@@ -116,7 +120,7 @@ describe("makeChatToolDispatcher wires priorMessages from op storage", () => {
     seedPriorCall(opId, JSON.stringify({ v: 1 }), "PRIOR_RESULT");
 
     const calls = { n: 0 };
-    const dispatcher = makeChatToolDispatcher({
+    const dispatcher = makeChatToolDispatcher({ toolPolicy: STUB_POLICY,
       tools: [echoTool(calls)],
       security: undefined as never,
       sessionId: "s-control",
@@ -137,7 +141,7 @@ describe("makeChatToolDispatcher wires priorMessages from op storage", () => {
     seedPriorCall(opId, JSON.stringify({ v: 1 }), "[error]\ntransient bridge timeout", "error");
 
     const calls = { n: 0 };
-    const dispatcher = makeChatToolDispatcher({
+    const dispatcher = makeChatToolDispatcher({ toolPolicy: STUB_POLICY,
       tools: [echoTool(calls)],
       security: undefined as never,
       sessionId: "s-error-retry",
@@ -167,7 +171,7 @@ describe("the dispatch result carries the tool message's metadata", () => {
   }) as unknown as ToolDefinition;
 
   it("exit code, duration and the rest ride `metadata`; durationMs is the tool's own", async () => {
-    const dispatcher = makeChatToolDispatcher({
+    const dispatcher = makeChatToolDispatcher({ toolPolicy: STUB_POLICY,
       tools: [withResult("timed_stub", { content: "boom", isError: true, status: "error", metadata: { exit_code: 1, duration_ms: 42, sandbox: "guarded" } })],
       security: undefined as never, sessionId: "s-metadata", callContext: "local", opId: freshOpId(),
     });
@@ -178,7 +182,7 @@ describe("the dispatch result carries the tool message's metadata", () => {
   });
 
   it("a result without metadata carries none and keeps the wall-clock duration", async () => {
-    const dispatcher = makeChatToolDispatcher({
+    const dispatcher = makeChatToolDispatcher({ toolPolicy: STUB_POLICY,
       tools: [withResult("plain_stub", { content: "fine" })],
       security: undefined as never, sessionId: "s-no-metadata", callContext: "local", opId: freshOpId(),
     });
@@ -202,7 +206,7 @@ describe("a name that is not a tool is refused before the kernel", () => {
   } as unknown as ToolDefinition;
 
   const dispatchText = async (tool: string) => {
-    const dispatcher = makeChatToolDispatcher({
+    const dispatcher = makeChatToolDispatcher({ toolPolicy: STUB_POLICY,
       tools: [browserLike], security: undefined as never, sessionId: "s-unknown-first", callContext: "local", opId: freshOpId(),
     });
     const res = await dispatcher.dispatch({ toolCallId: `call-${tool}`, tool, args: {} });

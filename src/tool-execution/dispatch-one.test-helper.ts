@@ -10,6 +10,7 @@ import type { RBACManager, Role } from "../rbac.js";
 import type { CallContext } from "./context.js";
 import { executeToolCalls } from "./execute-tool.js";
 import { toolMessageResult } from "./tool-message-carry.js";
+import { withStubTools } from "./stub-tool-policy.test-helper.js";
 
 export interface DispatchOneCtx {
   toolMap: Map<string, ToolDefinition>;
@@ -33,7 +34,7 @@ export async function dispatchOne(
 ): Promise<ToolResult> {
   const msgs = await executeToolCalls(
     [{ id: call.id, name: call.name, arguments: call.arguments ?? JSON.stringify(call.args ?? {}) }],
-    ctx.toolMap, ctx.security, ctx.toolPolicy, ctx.threatEngine, ctx.rbac, ctx.callerRole,
+    ctx.toolMap, ctx.security, ctx.toolPolicy ?? withStubTools(ctx.toolMap.keys()), ctx.threatEngine, ctx.rbac, ctx.callerRole,
     ctx.sessionId, ctx.onEvent, ctx.signal, ctx.priorMessages, ctx.runId, ctx.operationId, ctx.callContext ?? "api",
   );
   const toolMsg = msgs.find((m) => m.role === "tool");

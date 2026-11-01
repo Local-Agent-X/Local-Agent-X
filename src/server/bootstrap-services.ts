@@ -4,7 +4,7 @@ import { getLaxDir } from "../lax-data-dir.js";
 import { platformRoot } from "../platform-root.js";
 import { loadSettings } from "../settings.js";
 import { SecurityLayer } from "../security/index.js";
-import { loadToolPolicy } from "../tool-policy/index.js";
+import { installedToolPolicy, type LiveToolPolicy } from "../tool-policy/index.js";
 import { SessionStore, MemoryIndex, MemoryManager, ensurePersonalityFiles } from "../memory/index.js";
 import { SecretsStore } from "../secrets.js";
 import { AgentSync } from "../sync/index.js";
@@ -29,7 +29,7 @@ export interface BootstrappedServices {
   security: SecurityLayer;
   publicDir: string;
   dataDir: string;
-  toolPolicy: ReturnType<typeof loadToolPolicy>;
+  toolPolicy: LiveToolPolicy;
   rbac: RBACManager;
   agentSync: AgentSync;
   sessionStore: SessionStore;
@@ -268,7 +268,7 @@ export async function bootstrapServices(config: LAXConfig): Promise<Bootstrapped
   const dataDir = getLaxDir();
   for (const d of ["apps", "images", "videos", "missions"]) mkdirSync(join(resolve(config.workspace), d), { recursive: true });
   mkdirSync(join(dataDir, "uploads"), { recursive: true });
-  const toolPolicy = loadToolPolicy(dataDir);
+  const toolPolicy = installedToolPolicy(dataDir);
   const rbac = new RBACManager(dataDir, config.authToken);
   setInternalAgentToken(rbac.getInternalAgentToken());
   setBrowserAuthContext(config.authToken, String(config.port));

@@ -10,7 +10,7 @@
  * RBAC / approval remain per-user gates outside the pack mechanism.
  */
 import type { SecurityLayer } from "../security/index.js";
-import type { ToolPolicy } from "../tool-policy/index.js";
+import { installedToolPolicy, type ToolPolicy } from "../tool-policy/index.js";
 import type { ThreatEngine } from "../threat/threat-engine.js";
 import type { RBACManager, Role } from "../rbac.js";
 import {
@@ -289,7 +289,7 @@ export async function assertToolCallAllowed(
   const packs: RulePack[] = [
     d.makeSpendCapPack(),
     makeSecurityLayerPack(ctx.security),
-    makeDefaultPolicyPack(ctx.toolPolicy),
+    makeDefaultPolicyPack(ctx.toolPolicy ?? installedToolPolicy()),
     makeThreatEnginePack(ctx.threatEngine),
     d.makeEgressRefutationPack(),
   ];

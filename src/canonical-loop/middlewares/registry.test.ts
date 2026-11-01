@@ -67,6 +67,7 @@ const EXPECTED_ORDER = [
   "verify-gate",
   "open-steps",
   "budget-ladder",
+  "deliverable-first",
   "post-edit-diagnostics",
   "external-change-diff",
   "dead-end",

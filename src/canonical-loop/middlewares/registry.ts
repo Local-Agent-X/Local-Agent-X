@@ -45,6 +45,7 @@ import { officeThemeGuardMiddleware } from "./office-theme-guard.js";
 import { prematureCompletionMiddleware } from "./premature-completion.js";
 import { openStepsMiddleware } from "./open-steps.js";
 import { budgetLadderMiddleware } from "./budget-ladder.js";
+import { deliverableFirstMiddleware } from "./deliverable-first.js";
 import { midTurnStaleMiddleware } from "./mid-turn-stale.js";
 import { verifyGateMiddleware } from "./verify-gate.js";
 import { postEditDiagnosticsMiddleware } from "./post-edit-diagnostics.js";
@@ -94,6 +95,10 @@ const DEFAULT_STACK: StackEntry[] = [
   // the budget wall that prompted it fires on interactive ops, and the
   // same no-progress spend happens unattended on worker ops.
   { order: 195, mw: budgetLadderMiddleware },
+  // All lanes — once per op, twice past the goal-restate turn, a file the
+  // request names still missing from disk: write a version now, improve it in
+  // place. The digest has named it as a fact since the restate turn.
+  { order: 196, mw: deliverableFirstMiddleware },
   // NOTE: auto-build-app (order 230) and post-commit (order 240) retired
   // 2026-07-10 — zero fires across the full persisted-op window (post-commit:
   // 33 days / 190 worker ops; auto-build-app: no log evidence and modern

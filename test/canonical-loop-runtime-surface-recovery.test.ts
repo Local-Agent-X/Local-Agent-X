@@ -29,6 +29,7 @@ vi.mock("../src/security/index.js", () => ({
   SecurityLayer: class {
     runtimePolicyFingerprint() { return "f".repeat(64); }
     restoreAllowedPaths() {}
+    restoreFences() {}
     runtimeIdentity() {
       return {
         workspace: "C:\\workspace",

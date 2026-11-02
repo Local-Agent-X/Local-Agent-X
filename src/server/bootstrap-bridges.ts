@@ -20,6 +20,7 @@ import {
 import { createInboundChannelRunner, type InboundChannelPayload } from "./inbound-channel-runner.js";
 import { runDurableInboundCommand } from "./durable-inbound-command.js";
 import { readInboundCommandPlan, type DurableInboundCommandPlan } from "./inbound-delivery-store.js";
+import { selfPort } from "../security/layer/loopback-grant.js";
 
 const logger = createLogger("server.bootstrap-bridges");
 
@@ -158,7 +159,7 @@ async function handleVoiceControl(
   const tierArg = (parts[2] || "lite").toLowerCase();
   const tierId = VOICE_COMMAND_TIER_MAP[tierArg];
   if (!tierId) return "Unknown tier. Use: lite (default) | studio.";
-  const base = `http://127.0.0.1:${process.env.LAX_PORT || "7007"}`;
+  const base = `http://127.0.0.1:${selfPort()}`;
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   const token = (config as { authToken?: string }).authToken;
   if (token) headers.Authorization = `Bearer ${token}`;

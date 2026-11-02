@@ -59,6 +59,7 @@ import { registerAppBuildRuntime } from "./build-app-runtime.js";
 import { cliBuildDeveloperModeRefusal } from "./build-app-cli-gate.js";
 import { OP_TYPE } from "../ops/op-types.js";
 import { runtimeOf, sessionIdOf } from "../tool-execution/internal-args.js";
+import { selfPort } from "../security/layer/loopback-grant.js";
 
 export const APP_BUILD_OP_TYPE = OP_TYPE.appBuild;
 export const BUILD_APP_BUDGET = { maxIterations: 50, maxWallTimeMs: 0 } as const;
@@ -198,7 +199,7 @@ export const buildAppTool: ToolDefinition = {
     const buildModel = resolveBuildModel(provider, chatRuntime.model);
 
     const appDir = workspacePath("apps", appName);
-    const port = process.env.LAX_PORT ?? "7007";
+    const port = selfPort();
     const appUrl = `http://127.0.0.1:${port}/apps/${appName}/index.html`;
 
     // Collision guard before mkdir so a refused build leaves no empty dir

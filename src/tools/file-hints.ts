@@ -2,13 +2,14 @@ import { isAbsolute, relative } from "node:path";
 import { workspaceRoot } from "../config.js";
 import { runningSessionsForPath } from "./process-tools.js";
 import { readDevServerRecord, type DevServerRecord } from "./dev-server.js";
+import { selfPort } from "../security/layer/loopback-grant.js";
 
 /** When write/edit touches a file under workspace/apps/<name>/, append a
  *  hint with the app's served URL. Without this, models routinely answer
  *  "Built it at workspace/apps/foo/index.html" — a workspace path the
  *  user can't click. The hint nudges the model to surface a real URL. */
 export function appUrlHint(absoluteFilePath: string, workspace: string = workspaceRoot()): string {
-  const port = process.env.LAX_PORT ?? "7007";
+  const port = selfPort();
   const appId = appIdFromPath(absoluteFilePath);
   if (appId) {
     const appUrl = `http://127.0.0.1:${port}/apps/${appId}/index.html`;

@@ -12,6 +12,7 @@ import { decideFrontendServe, proxyFrontendDevServer } from "./dev-server-proxy.
 import { phoneErrorPipeScript } from "./error-pipe-inject.js";
 import { ideFrameBridgeScript } from "./ide-frame-bridge.js";
 import type { LAXConfig } from "../types.js";
+import { selfPort } from "../security/layer/loopback-grant.js";
 
 export interface AppServingDeps {
   ensureDevServerRunning: typeof ensureDevServerRunning;
@@ -59,7 +60,7 @@ export function serveWorkspaceApp(
     // whether the build ever registered it (e.g. a P-1-terminated build). No-op
     // for genuinely static apps → falls through to file serving below.
     if (!frontend && appId) {
-      deps.ensureFrameworkRegistered(appId, join(workspace, "apps", appId), Number(process.env.LAX_PORT ?? "7007"));
+      deps.ensureFrameworkRegistered(appId, join(workspace, "apps", appId), Number(selfPort()));
       frontend = deps.readDevServerRecord(appId);
     }
     if (frontend && frontend.kind === "frontend") {

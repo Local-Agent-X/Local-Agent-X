@@ -5,6 +5,7 @@ import { workspaceRoot } from "../config.js";
 import { confineToDir, writeValidatedFile } from "../security/layer/index.js";
 import { err } from "./result-helpers.js";
 import { acquireImages, IMAGES_PARAM_SCHEMA, type ImageSpec } from "./shared/image-acquire.js";
+import { selfPort } from "../security/layer/loopback-grant.js";
 
 function escapeHtmlAttr(s: string): string {
   return s
@@ -84,7 +85,7 @@ ${content}
     try {
       mkdirSync(dirname(file), { recursive: true });
       writeValidatedFile(file, html);
-      const port = process.env.LAX_PORT ?? "7007";
+      const port = selfPort();
       const notes = imageNotes.length ? `\nImage notes:\n${imageNotes.join("\n")}` : "";
       return { content: `Page created: http://127.0.0.1:${port}/apps/${name}/\nTitle: ${title}\nListed with the apps.${notes}` };
     } catch (e) {

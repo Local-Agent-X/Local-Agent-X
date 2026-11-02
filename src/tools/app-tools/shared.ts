@@ -5,6 +5,7 @@
  */
 
 import type { ToolResult } from "../../types.js";
+import { selfPort } from "../../security/layer/loopback-grant.js";
 
 // status:"ok" opts successes into the explicit [ok] header
 // (renderToolResultForModel) — bare-prose successes left weaker models
@@ -17,5 +18,5 @@ export function err(content: string): ToolResult { return { content, isError: tr
 export const APP_TOOL_ACTOR = "agent";
 
 export function getAppPort(): number {
-  return parseInt(process.env.LAX_PORT ?? "7007", 10);
+  return parseInt(selfPort(), 10);
 }

@@ -21,6 +21,7 @@ import { externalSinkDomain, type ThreatEngine } from "../../threat/threat-engin
 import { CAPABILITY_CLASS_MEMBERS, hasCapability } from "../../tool-registry.js";
 import { USER_HINTS } from "../../types.js";
 import type { PolicyCall, PolicyEvalCtx, PackDecision, RulePack, RulePackRule } from "../evaluator.js";
+import { selfPort } from "../../security/layer/loopback-grant.js";
 
 const PACK_ID = "threat-engine";
 const PACK_PRIORITY = 30;
@@ -36,7 +37,7 @@ const RULE_REASON =
 
 function isOwnAppBrowserCall(args: Record<string, unknown>): boolean {
   const urlArg = String(args.url || "");
-  const appPort = process.env.LAX_PORT ?? "7007";
+  const appPort = selfPort();
   return new RegExp(`^https?://(127\\.0\\.0\\.1|localhost):${appPort}`, "i").test(urlArg);
 }
 

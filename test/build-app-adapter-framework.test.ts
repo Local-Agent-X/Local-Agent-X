@@ -14,6 +14,7 @@
  * src/canonical-loop/adapters/app-build-finalize.test.ts.
  */
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { setSelfPort } from "../src/security/layer/loopback-grant.js";
 import { mkdtempSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -42,14 +43,9 @@ afterEach(() => {
   }
 });
 
-// The adapter reads LAX_PORT for the proxy URL — pin the default so the
-// expected URLs are deterministic on boxes where a dev server exported it.
-let prevLaxPort: string | undefined;
-beforeEach(() => { prevLaxPort = process.env.LAX_PORT; delete process.env.LAX_PORT; });
-afterEach(() => {
-  if (prevLaxPort === undefined) delete process.env.LAX_PORT;
-  else process.env.LAX_PORT = prevLaxPort;
-});
+// The adapter reads this server's port (selfPort) for the proxy URL — pin the
+// default so the expected URLs are deterministic.
+beforeEach(() => { setSelfPort("7007"); });
 
 /** Next-shaped appDir exactly as the live bug produced it: config + package.json
  *  with the next dep + app-router entry, NO index.html anywhere. */

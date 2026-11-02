@@ -51,6 +51,7 @@ import { runToolIntentGate } from "./tool-intent-gate.js";
 import { runFailedCallGate } from "./failed-call-gate.js";
 import { earnedDoneNudge } from "../middlewares/open-steps.js";
 import { OP_TYPE } from "../../ops/op-types.js";
+import { selfPort } from "../../security/layer/loopback-grant.js";
 
 /** The gate contract lives in its own leaf module (no gate, no table) so the
  *  definition modules and this one cannot form an import cycle. Re-exported
@@ -215,7 +216,7 @@ const frameworkServeGate: CompletionGate = {
       const { finalizeFrameworkBuild } = await import("../adapters/app-build-finalize.js");
       const { workspacePath } = await import("../../config.js");
       const finalized = await finalizeFrameworkBuild(
-        { appDir: workspacePath("apps", appName), appName, laxPort: process.env.LAX_PORT ?? "7007", registerServer: true },
+        { appDir: workspacePath("apps", appName), appName, laxPort: selfPort(), registerServer: true },
         {},
       );
       // Counted on `handled && ok`, i.e. where the REPAIR LANDED — the same

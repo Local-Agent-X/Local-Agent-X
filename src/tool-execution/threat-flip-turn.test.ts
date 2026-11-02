@@ -8,6 +8,7 @@ import { describe, it, expect } from "vitest";
 import { auditPhase } from "./audit-tool-call.js";
 import type { ToolCallContext } from "./context.js";
 import { CAPABILITY_CLASS_MEMBERS } from "../tool-registry.js";
+import { selfPort } from "../security/layer/loopback-grant.js";
 
 const restrictedEngine = {
   evaluateToolResult: () => ({ blocked: false }),
@@ -43,7 +44,7 @@ describe("the restricted flip turn withholds every outside call's result", () =>
 
   it("leaves a local read and the browser opening this app's own page alone", async () => {
     expect((await audited("read", { path: "notes.md" })).result?.status).toBe("ok");
-    const port = process.env.LAX_PORT ?? "7007";
+    const port = selfPort();
     expect((await audited("browser", { action: "navigate", url: `http://127.0.0.1:${port}/apps/x/` })).result?.status).toBe("ok");
   });
 });

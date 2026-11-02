@@ -29,6 +29,7 @@ import type { BrowserMode } from "../types.js";
 import { waitForContinuityCacheRestore } from "./continuity-cache.js";
 import type { BrowserBackend, InteractionResult, ScrollOptions } from "./backend.js";
 import { PasswordFieldRefused, isPasswordFieldType } from "./password-field-rule.js";
+import { selfPort } from "../security/layer/loopback-grant.js";
 
 export interface BrowserContextRuntime {
   acquire(
@@ -96,7 +97,7 @@ export class BrowserManager implements BrowserBackend {
   getEngine(): BrowserEngine { return this.currentEngine; }
   getCurrentUrl(): string { try { return this.page?.url() || ""; } catch { return ""; } }
   isOnOwnApp(): boolean {
-    const port = process.env.LAX_PORT ?? "7007";
+    const port = selfPort();
     return new RegExp(`^https?://(127\\.0\\.0\\.1|localhost):${port}`, "i").test(this.getCurrentUrl());
   }
 

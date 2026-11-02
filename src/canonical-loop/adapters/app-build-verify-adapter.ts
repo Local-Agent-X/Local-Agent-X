@@ -74,6 +74,7 @@ import {
   type AppVisionJudge,
   type DevServerUrlResolver,
 } from "./app-build-smoke-gate.js";
+import { selfPort } from "../../security/layer/loopback-grant.js";
 
 export {
   runAppSmokeGate,
@@ -362,7 +363,7 @@ export class AppBuildVerifyAdapter implements Adapter {
       {
         appDir: this.appDir,
         appName,
-        laxPort: process.env.LAX_PORT ?? "7007",
+        laxPort: selfPort(),
         registerServer: true,
       },
       this.finalizeDeps,

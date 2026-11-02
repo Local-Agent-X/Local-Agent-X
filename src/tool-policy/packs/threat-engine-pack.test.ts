@@ -1,4 +1,5 @@
 import { describe, it, expect } from "vitest";
+import { selfPort } from "../../security/layer/loopback-grant.js";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { makeThreatEnginePack } from "./threat-engine-pack.js";
@@ -125,7 +126,7 @@ describe("threat-engine pack — sinkless evidence stays conservative", () => {
 
   it("keeps the own-app localhost exemption", async () => {
     const pack = makeThreatEnginePack(restrictedCanaryOnly());
-    const appPort = process.env.LAX_PORT ?? "7007";
+    const appPort = selfPort();
     const d = await pack.evaluate(call("browser", { url: `http://127.0.0.1:${appPort}/chat` }), CTX);
     expect(d.allowed).toBe(true);
   });

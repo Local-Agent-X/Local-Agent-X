@@ -36,6 +36,7 @@ import { basename, join, resolve } from "node:path";
 import { smokeUrl, type SmokeResult } from "../../auto-build/scenario-scorer/smoke.js";
 import { BROWSER_INSTALL_FIX, probeBrowserAvailability } from "../../browser-availability.js";
 import { startStaticSmokeOrigin, staticSmokeServeRoot, type SmokeOrigin } from "./app-build-smoke-origin.js";
+import { selfPort } from "../../security/layer/loopback-grant.js";
 
 const SMOKE_LOAD_TIMEOUT_MS = 30_000;
 /** Generous because the proxy's first hit lazily COLD-STARTS the dev server —
@@ -121,7 +122,7 @@ export const resolveDevServerProxyUrl: DevServerUrlResolver = async (appName) =>
   // spin up a dev server for an app that already serves statically.
   const hasStatic = staticBuildDistDir(workspacePath("apps", appName)) !== null;
   if (!readDevServerRecord(appName) && !hasStatic) return null;
-  const laxPort = process.env.LAX_PORT ?? "7007";
+  const laxPort = selfPort();
   return `http://127.0.0.1:${laxPort}/apps/${appName}/`;
 };
 

@@ -34,6 +34,7 @@ import { finalizeFrameworkBuild, type FinalizeFrameworkDeps } from "./app-build-
 import { AppBuildVerifyAdapter, type AppSmokeGateRunner, type AppVisionJudge, type DevServerUrlResolver } from "./app-build-verify-adapter.js";
 import { defaultProviderAdapterFactory } from "./app-build-provider-factory.js";
 import { cliBuildDeveloperModeRefusal } from "../../tools/build-app-cli-gate.js";
+import { selfPort } from "../../security/layer/loopback-grant.js";
 
 export const APP_BUILD_ADAPTER_NAME = "app_build";
 export const APP_BUILD_ADAPTER_VERSION = "1.0.0";
@@ -238,7 +239,7 @@ class CliBuildAdapter implements Adapter {
       {
         appDir: this.opts.appDir,
         appName: this.opts.appName,
-        laxPort: process.env.LAX_PORT ?? "7007",
+        laxPort: selfPort(),
         registerServer: !result.isError,
         // Default: keep the finished app on its dev server. On desktop the
         // request handler redirects a warm frontend dev server straight to its

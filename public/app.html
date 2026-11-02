@@ -923,9 +923,9 @@
             <select class="field-select" id="cfg-autonomy-profile" onchange="setAutonomyProfile(this.value)">
               <option value="Safe">Safe — ask before edits, shell, network calls, or publishing</option>
               <option value="Normal" selected>Normal — autonomous in workspace, ask for money, deletes, external messages, publishing</option>
-              <option value="Developer">Developer — like Normal, but reversible shell/destructive run with rollback; publishing still asks</option>
+              <option value="Developer">Developer — like Normal, but shell commands and deletes run without asking; Undo restores the files they change (a shell command: the files it names); publishing still asks</option>
               <option value="Power">Power — autonomous for everything except money and secrets (reviewed publishes run)</option>
-              <option value="Autonomous">Autonomous — fully unattended; reversible actions wrap in rollback</option>
+              <option value="Autonomous">Autonomous — fully unattended; Undo restores the files its actions change (a shell command: the files it names)</option>
             </select>
             <div class="field-hint">"Always for this session" on an approval card remembers your choice until the server restarts.</div>
             <div class="field-hint">Publishing (git push, deploys, package publishes, releases) is always reviewed first by a fresh model that sees exactly what would ship. A red finding blocks it under every profile unless you override it on the card ("Push anyway"), and so does a review that could not run ("Push unreviewed"); otherwise the profile decides whether you are asked.</div>
@@ -1506,7 +1506,7 @@
             <option value="">Default — inherit global (approval-tier actions block unattended)</option>
             <option value="Autonomous">Autonomous — run everything, including money &amp; secrets</option>
             <option value="Power">Power — everything except money &amp; secrets</option>
-            <option value="Developer">Developer — shell &amp; destructive with rollback</option>
+            <option value="Developer">Developer — shell &amp; deletes run; Undo restores the files they name</option>
           </select>
         </div>
         <div class="field"><label class="field-label">Images <span style="color:var(--muted);font-weight:400">— the engine this mission makes images with</span></label>

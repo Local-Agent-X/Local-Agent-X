@@ -63,6 +63,12 @@ export function statCreateTargets(toolName: string, args: Record<string, unknown
   return pending;
 }
 
+/** How far a file system's timestamp may trail Date.now(): Linux stamps files
+ *  from a coarse clock a few milliseconds behind it, so a folder made just
+ *  after the command started read as born before it. A folder moved in from
+ *  elsewhere keeps a birth time far older than this. */
+const BIRTH_CLOCK_SLACK_MS = 1_000;
+
 /** The folders that appeared where the command ran, born while it ran. */
 function foldersBornInRunDir(watch: NonNullable<PendingCreates["runDir"]>): string[] {
   const born: string[] = [];
@@ -71,7 +77,7 @@ function foldersBornInRunDir(watch: NonNullable<PendingCreates["runDir"]>): stri
     const p = join(watch.dir, name);
     try {
       const s = lstatSync(p);
-      if (s.isDirectory() && s.birthtimeMs >= watch.startMs) born.push(p);
+      if (s.isDirectory() && s.birthtimeMs >= watch.startMs - BIRTH_CLOCK_SLACK_MS) born.push(p);
     } catch { /* gone again: nothing made */ }
   }
   return born;

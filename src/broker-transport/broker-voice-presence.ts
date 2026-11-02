@@ -18,14 +18,21 @@ import {
 import { openBrokerSocket } from "./ws-socket-adapter.js";
 import { BrokerVoiceDialer } from "./broker-voice-dialer.js";
 import { getVoiceSessionFactory } from "../voice/audio-ws.js";
+import type { SignalAuthenticator } from "./signal-auth.js";
 
 /** Production deps: a real ws-backed voice dialer reusing the registered session factory. */
-export function defaultVoicePresenceDeps(): BrokerPresenceDeps {
+export function defaultVoicePresenceDeps(signalAuth?: SignalAuthenticator): BrokerPresenceDeps {
   return {
     createDialer: (connectUrl, token, onClosed, onAuthError) => {
       const socket = openBrokerSocket(connectUrl, token);
       // The SAME factory /ws/voice uses — broker voice runs the identical STT→LLM→TTS brain.
-      return new BrokerVoiceDialer({ socket, sessionFactory: getVoiceSessionFactory(), onClosed, onAuthError });
+      return new BrokerVoiceDialer({
+        socket,
+        sessionFactory: getVoiceSessionFactory(),
+        onClosed,
+        onAuthError,
+        ...(signalAuth ? { signalAuth } : {}),
+      });
     },
     reconnectMs: DEFAULT_RECONNECT_MS,
     setTimer: (fn, ms) => setTimeout(fn, ms),
@@ -39,7 +46,7 @@ export function defaultVoicePresenceDeps(): BrokerPresenceDeps {
 
 /** Construct + start the desktop's voice presence (channel=voice). Returns it for shutdown. */
 export function startBrokerVoicePresence(config: Omit<BrokerPresenceConfig, "channel">): BrokerPresence {
-  const presence = new BrokerPresence({ ...config, channel: "voice" }, defaultVoicePresenceDeps());
+  const presence = new BrokerPresence({ ...config, channel: "voice" }, defaultVoicePresenceDeps(config.signalAuth));
   presence.start();
   return presence;
 }

@@ -21,6 +21,7 @@ import { openBrokerChatLoopback } from "./chat-loopback.js";
 import { PhoneProjectionBridge } from "./phone-projection.js";
 import { HttpTunnelBridge } from "./http-tunnel-bridge.js";
 import { BrokerScreenDialer } from "./broker-screen-dialer.js";
+import type { SignalAuthenticator } from "./signal-auth.js";
 import { getRuntimeConfig } from "../config.js";
 import { createLogger } from "../logger.js";
 
@@ -64,6 +65,8 @@ export interface BrokerPresenceConfig {
    *  The supervisor has already STOPPED (no more re-dials — retrying a dead credential
    *  loops forever); the owner surfaces it (account page) and re-arms after re-login. */
   onAuthError?: (code: BrokerErrorCode) => void;
+  /** Signs this desktop's offers and checks the phone's answers (signal-auth.ts). */
+  signalAuth?: SignalAuthenticator;
 }
 
 /** A live dialer the supervisor can stop. The real BrokerScreenDialer satisfies it. */
@@ -239,7 +242,7 @@ export class BrokerPresence {
 }
 
 /** Production deps: build a real ws-backed dialer with a data-channel control path. */
-export function defaultPresenceDeps(pairedPhoneId: string): BrokerPresenceDeps {
+export function defaultPresenceDeps(pairedPhoneId: string, signalAuth?: SignalAuthenticator): BrokerPresenceDeps {
   return {
     createDialer: (connectUrl, token, onClosed, onAuthError) => {
       const socket = openBrokerSocket(connectUrl, token);
@@ -261,7 +264,7 @@ export function defaultPresenceDeps(pairedPhoneId: string): BrokerPresenceDeps {
           return { origin: `http://127.0.0.1:${cfg.port}`, token: cfg.authToken };
         },
       });
-      return new BrokerScreenDialer({ socket, control, chat, http, projection, onClosed, onAuthError });
+      return new BrokerScreenDialer({ socket, control, chat, http, projection, onClosed, onAuthError, ...(signalAuth ? { signalAuth } : {}) });
     },
     reconnectMs: DEFAULT_RECONNECT_MS,
     setTimer: (fn, ms) => setTimeout(fn, ms),
@@ -275,7 +278,7 @@ export function defaultPresenceDeps(pairedPhoneId: string): BrokerPresenceDeps {
 
 /** Construct + start a desktop broker presence from config. Returns it for shutdown. */
 export function startBrokerPresence(config: BrokerPresenceConfig): BrokerPresence {
-  const presence = new BrokerPresence(config, defaultPresenceDeps(config.pairedPhoneId));
+  const presence = new BrokerPresence(config, defaultPresenceDeps(config.pairedPhoneId, config.signalAuth));
   presence.start();
   return presence;
 }

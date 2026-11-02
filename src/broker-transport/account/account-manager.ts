@@ -9,7 +9,7 @@
 // so the whole flow unit-tests offline with fakes. The one stateful thing it owns is the
 // in-flight UI state (loginPrompt / pairing); persisted state lives in storage.ts.
 
-import { deviceCodeLogin, type LoginPrompt } from "../vendor/index.js";
+import { deviceCodeLogin, withDeviceKey, type LoginPrompt } from "../vendor/index.js";
 import type {
   StartedDeviceCode,
   DeviceCodePoll,
@@ -18,6 +18,7 @@ import type {
   PairingEntry,
 } from "../vendor/index.js";
 import type { DeviceIdentity } from "./identity.js";
+import { pinnedKeyFor } from "../signal-auth.js";
 import type { AccountState } from "./storage.js";
 
 /** The api surface the manager uses (AgentxosApiClient satisfies it; tests fake it). */
@@ -41,6 +42,9 @@ export interface AccountStatus {
   deviceId: string | null;
   paired: boolean;
   pairedPhoneId: string | null;
+  /** The paired phone's key is pinned, so every connection from it is checked
+   *  (signal-auth.ts). False for a pairing made before pinning existed. */
+  phoneVerified: boolean;
   /** In-flight device-code login prompt (what to type + where), or null. */
   login: LoginPrompt | null;
   /** In-flight pairing QR (data URL + challenge expiry), or null. */
@@ -60,6 +64,10 @@ export interface AccountManagerDeps {
   updateState: (patch: Partial<AccountState>) => AccountState | null;
   clearState: () => void;
   renderQr: (text: string) => Promise<string>;
+  /** This desktop's public key as the QR carries it (identity.ts rawPublicKey). */
+  rawPublicKey: () => string;
+  /** A fresh one-time pairing secret: 32 random bytes, unpadded base64url. */
+  newPairingSecret: () => string;
   sleep: (ms: number) => Promise<void>;
   now: () => number;
   /** Called once a pairing is established — the activation hook starts broker presence. */
@@ -91,6 +99,7 @@ export class AgentxosAccountManager {
       deviceId: s?.deviceId ?? null,
       paired: Boolean(s?.pairedPhoneId),
       pairedPhoneId: s?.pairedPhoneId ?? null,
+      phoneVerified: s ? pinnedKeyFor(s) !== null : false,
       login: this.loginPrompt,
       pairing: this.pairing,
       error: this.error,
@@ -191,7 +200,7 @@ export class AgentxosAccountManager {
           ) ?? null;
       } else if (await this.adoptExistingPairing(state)) return;
       const issued = await this.deps.api.requestPairingChallenge(state.sessionToken, state.deviceId);
-      this.pairing = { qrDataUrl: await this.deps.renderQr(issued.qrPayload), expiresAt: issued.expiresAt };
+      this.pairing = { qrDataUrl: await this.deps.renderQr(this.withKey(issued.qrPayload)), expiresAt: issued.expiresAt };
 
       const deadline = issued.expiresAt + PAIR_GRACE_MS;
       while (this.deps.now() < deadline) {
@@ -215,6 +224,18 @@ export class AgentxosAccountManager {
     }
   }
 
+  /** Add this desktop's key and a fresh pairing secret to the server's QR payload, so the
+   *  phone that scans it can prove so on its first connection (signal-auth.ts). Neither
+   *  passes through the server or the broker. The secret is saved first: the QR must
+   *  never show one the desktop can't check. */
+  private withKey(serverPayload: string): string {
+    const secret = this.deps.newPairingSecret();
+    const shown = withDeviceKey(serverPayload, this.deps.rawPublicKey(), secret);
+    if (!shown) return serverPayload;
+    this.deps.updateState({ pairingSecret: secret });
+    return shown;
+  }
+
   /** Disconnect the paired phone for REAL: revoke the server-side pairing (not just the
    *  local record — sign-out leaves the pairing live, which is why a re-login re-adopts it)
    *  and clear pairedPhoneId. After this the page drops to "Pair your phone". The caller
@@ -228,7 +249,7 @@ export class AgentxosAccountManager {
         (p) => p.desktopDeviceId === state.deviceId,
       );
       if (mine) await this.deps.api.revokePairing(state.sessionToken, mine.pairingId);
-      this.deps.updateState({ pairedPhoneId: undefined });
+      this.deps.updateState({ pairedPhoneId: undefined, pinnedPhone: undefined, pairingSecret: undefined });
     } catch (e) {
       this.error = (e as Error).message;
     }

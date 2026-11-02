@@ -19,6 +19,8 @@
 // frames exactly as shipped builds send them; they must keep parsing. Add fixtures
 // when a frame gains a field; never edit or delete one within a version.
 
+import { parseSignalAuth, type SignalAuth } from "./signal-auth.js";
+
 export const BROKER_PROTOCOL_VERSION = 1;
 
 export * from "./link.js";
@@ -34,13 +36,17 @@ export * from "./workers.js";
 export * from "./inbox.js";
 export * from "./apps.js";
 export * from "./sessions.js";
+export * from "./signal-auth.js";
+export * from "./pairing-qr.js";
 
 export type DeviceRole = "desktop" | "phone";
 
-/** WebRTC signaling, relayed verbatim by the broker (never inspected). */
+/** WebRTC signaling, relayed verbatim by the broker (never inspected). An offer or
+ *  answer may carry `auth`, its sender's device-key signature (signal-auth.ts); builds
+ *  from before it send none and ignore it. */
 export type RtcSignal =
-  | { kind: "offer"; sdp: string }
-  | { kind: "answer"; sdp: string }
+  | { kind: "offer"; sdp: string; auth?: SignalAuth }
+  | { kind: "answer"; sdp: string; auth?: SignalAuth }
   | { kind: "ice"; candidate: string; sdpMid: string | null; sdpMLineIndex: number | null };
 
 /** One ICE server for an RTCPeerConnection — the standard RTCIceServer shape. STUN
@@ -106,7 +112,9 @@ export function parseRtcSignal(raw: unknown): RtcSignal | null {
   const r = asRecord(raw);
   if (!r) return null;
   if (r.kind === "offer" || r.kind === "answer") {
-    return typeof r.sdp === "string" ? { kind: r.kind, sdp: r.sdp } : null;
+    if (typeof r.sdp !== "string") return null;
+    const auth = parseSignalAuth(r.auth);
+    return auth ? { kind: r.kind, sdp: r.sdp, auth } : { kind: r.kind, sdp: r.sdp };
   }
   if (r.kind === "ice") {
     if (typeof r.candidate !== "string") return null;

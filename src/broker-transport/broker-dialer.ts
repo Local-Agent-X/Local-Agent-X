@@ -11,10 +11,11 @@
 // answer / ice, what to drop on rebuild, and what to close on teardown.
 
 import { BrokerClient } from "./vendor/broker-client.js";
-import type { BrokerErrorCode, IceServer, RtcSignal } from "./vendor/protocol.js";
+import type { BrokerErrorCode, IceServer, RtcSignal, SignalAuth } from "./vendor/protocol.js";
 import { ICE_GRACE_MS } from "./vendor/protocol.js";
 import type { SocketAdapter } from "./vendor/socket-adapter.js";
 import { iceSignal, type DialerIceCandidate } from "./ice-signal.js";
+import type { SignalAuthenticator } from "./signal-auth.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("broker-transport.dialer");
@@ -61,6 +62,9 @@ export interface BrokerDialerOptions {
   onAuthError?: (code: BrokerErrorCode) => void;
   /** Disambiguates log lines between the voice and screen dialers (e.g. "voice "). */
   logLabel?: string;
+  /** Signs every offer and checks every answer against the paired phone's key
+   *  (signal-auth.ts). Omitted → offers go unsigned and answers apply unchecked. */
+  signalAuth?: SignalAuthenticator;
 }
 
 export abstract class BrokerDialer {
@@ -71,6 +75,9 @@ export abstract class BrokerDialer {
    *  callback to onAuthError instead of onClosed. */
   private authCode: BrokerErrorCode | null = null;
   private readonly logLabel: string;
+  private readonly signalAuth: SignalAuthenticator | undefined;
+  /** The offer the current peer sent; an answer is checked against it. */
+  private lastOfferSdp: string | null = null;
 
   /** Latest broker-minted ICE config — readable by subclasses when they start the peer. */
   protected iceServers: IceServer[] = [];
@@ -91,6 +98,7 @@ export abstract class BrokerDialer {
     this.onClosedCb = opts.onClosed;
     this.onAuthErrorCb = opts.onAuthError;
     this.logLabel = opts.logLabel ?? "";
+    this.signalAuth = opts.signalAuth;
   }
 
   /** Wire the broker socket. Subclasses MUST call this LAST in their constructor, after
@@ -126,7 +134,9 @@ export abstract class BrokerDialer {
 
   protected sendOffer(sdp: string): void {
     if (this.stopped) return;
-    this.client.sendSignal({ kind: "offer", sdp });
+    const auth = this.signalAuth?.signOffer(sdp);
+    this.client.sendSignal(auth ? { kind: "offer", sdp, auth } : { kind: "offer", sdp });
+    this.lastOfferSdp = sdp;
     this.offerSent = true;
     const held = this.heldIce;
     this.heldIce = [];
@@ -200,6 +210,7 @@ export abstract class BrokerDialer {
     this.clearGrace();
     // A new peer: its candidates wait for its own offer.
     this.offerSent = false;
+    this.lastOfferSdp = null;
     this.heldIce = [];
     try {
       const result = this.onStart();
@@ -218,7 +229,7 @@ export abstract class BrokerDialer {
     if (this.stopped) return;
     switch (signal.kind) {
       case "answer":
-        this.onAnswer(signal.sdp);
+        if (this.answerAllowed(signal.sdp, signal.auth)) this.onAnswer(signal.sdp);
         break;
       case "ice":
         this.onRemoteIce({ candidate: signal.candidate, sdpMid: signal.sdpMid, sdpMLineIndex: signal.sdpMLineIndex });
@@ -233,6 +244,20 @@ export abstract class BrokerDialer {
         break;
       }
     }
+  }
+
+  /** An answer reaches the peer only if it answers our offer and, for a pinned pairing,
+   *  is signed by the phone's key. A refused answer ends this dialer: the presence
+   *  supervisor re-dials with backoff, and the account page says why. */
+  private answerAllowed(sdp: string, auth: SignalAuth | undefined): boolean {
+    if (!this.signalAuth) return true;
+    if (this.lastOfferSdp === null) {
+      logger.warn(`[broker-transport] ${this.logLabel}ignoring an answer with no offer out`);
+      return false;
+    }
+    if (this.signalAuth.checkAnswer(this.lastOfferSdp, sdp, auth)) return true;
+    this.teardown();
+    return false;
   }
 
   /** Phone left the rendezvous (genuinely left, or reconnected → the broker re-fired our

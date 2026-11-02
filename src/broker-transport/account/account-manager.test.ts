@@ -1,13 +1,15 @@
 import { describe, it, expect } from "vitest";
 import { AgentxosAccountManager, type AccountApi, type AccountManagerDeps } from "./account-manager.js";
 import type { AccountState } from "./storage.js";
-import type { DeviceCodePoll, PairingEntry, StartedDeviceCode } from "../vendor/index.js";
+import { parseQrPayload, type DeviceCodePoll, type PairingEntry, type StartedDeviceCode } from "../vendor/index.js";
 
 const STARTED: StartedDeviceCode = {
   deviceCode: "dc", userCode: "ABCD2345", userCodeDisplay: "ABCD-2345",
   verificationUri: "https://app.agentxos.ai/link", verificationUriComplete: "https://app.agentxos.ai/link?code=ABCD2345",
   expiresIn: 600, interval: 5,
 };
+
+const DESKTOP_KEY = "K".repeat(43);
 
 /** A controllable fake of the account API + an in-memory store. */
 function harness(opts: { polls?: DeviceCodePoll[]; pairings?: () => PairingEntry[] } = {}) {
@@ -29,6 +31,7 @@ function harness(opts: { polls?: DeviceCodePoll[]; pairings?: () => PairingEntry
     revokePairing: async (_token, pairingId) => { revoked.add(pairingId); },
   };
   let t = 0;
+  const shownQrs: string[] = [];
   const deps: AccountManagerDeps = {
     api,
     identity: () => ({ publicKey: "PUBPEM", privateKey: "PRIVPEM" }),
@@ -37,11 +40,16 @@ function harness(opts: { polls?: DeviceCodePoll[]; pairings?: () => PairingEntry
     saveState: (s) => { state = s; },
     updateState: (patch) => { state = state ? { ...state, ...patch } : null; return state; },
     clearState: () => { state = null; },
-    renderQr: async (text) => `data:image/png;base64,${Buffer.from(text).toString("base64")}`,
+    renderQr: async (text) => {
+      shownQrs.push(text);
+      return `data:image/png;base64,${Buffer.from(text).toString("base64")}`;
+    },
+    rawPublicKey: () => DESKTOP_KEY,
+    newPairingSecret: () => `${"s".repeat(42)}${challenges}`,
     sleep: async () => { t += 2000; },
     now: () => t,
   };
-  return { manager: new AgentxosAccountManager(deps), getState: () => state, registered, challengeCount: () => challenges };
+  return { manager: new AgentxosAccountManager(deps), getState: () => state, registered, challengeCount: () => challenges, shownQrs };
 }
 
 const PAIRING = (over: Partial<PairingEntry> = {}): PairingEntry => ({
@@ -193,5 +201,35 @@ describe("AgentxosAccountManager — pairing", () => {
     manager.signOut();
     await manager.startLogin(); // sign back in
     expect(manager.status().paired).toBe(false); // stays unpaired — the revoke stuck
+  });
+
+  it("the QR carries this desktop's key and a fresh secret the desktop keeps to check the phone's proof", async () => {
+    let calls = 0;
+    const { manager, getState, shownQrs } = harness({ pairings: () => (++calls >= 3 ? [PAIRING()] : []) });
+    await manager.startLogin();
+    await manager.startPairing();
+    expect(shownQrs).toHaveLength(1);
+    const qr = parseQrPayload(shownQrs[0]);
+    expect(qr).toMatchObject({ code: "C", connectUrl: "u", desktopKey: DESKTOP_KEY });
+    expect(qr?.pairingSecret).toBe(getState()?.pairingSecret);
+    expect(manager.status().phoneVerified).toBe(false); // nothing pinned until the phone proves the scan
+  });
+
+  it("a pairing reads as verified only while its pinned key belongs to the paired phone", async () => {
+    const { manager, getState } = harness({ pairings: () => [PAIRING()] });
+    await manager.startLogin();
+    getState()!.pinnedPhone = { deviceId: "phone-9", key: "P".repeat(43) };
+    expect(manager.status().phoneVerified).toBe(true);
+    getState()!.pinnedPhone = { deviceId: "another-phone", key: "P".repeat(43) };
+    expect(manager.status().phoneVerified).toBe(false);
+  });
+
+  it("unpair forgets the pinned key and any pending secret", async () => {
+    const { manager, getState } = harness({ pairings: () => [PAIRING()] });
+    await manager.startLogin();
+    Object.assign(getState()!, { pinnedPhone: { deviceId: "phone-9", key: "P".repeat(43) }, pairingSecret: "x" });
+    await manager.unpair();
+    expect(getState()?.pinnedPhone).toBeUndefined();
+    expect(getState()?.pairingSecret).toBeUndefined();
   });
 });

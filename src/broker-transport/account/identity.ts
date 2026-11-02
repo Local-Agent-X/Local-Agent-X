@@ -5,14 +5,15 @@
 // stable identity (survives logout); the server-assigned deviceId + session token live
 // separately in storage.ts (they clear on logout, the keypair does not).
 //
-// Today the broker authenticates connects with the session TOKEN (device-code), not a
-// per-device signature, so the private key isn't exercised yet — but registering a real
-// public key (not a throwaway string) means a future signed-per-device-token upgrade
-// needs no re-pairing. File perms are 0600 (private key at rest).
+// The broker authenticates connects with the session TOKEN (device-code), not a
+// per-device signature. The private key signs this desktop's WebRTC offers instead
+// (signal-auth.ts), and its raw public key rides the pairing QR, so the paired phone
+// can tell a real offer from one the broker made up. File perms are 0600 (private key
+// at rest).
 
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { generateKeyPairSync } from "node:crypto";
+import { createPrivateKey, createPublicKey, generateKeyPairSync, sign } from "node:crypto";
 import { getLaxDir } from "../../lax-data-dir.js";
 import { atomicWriteFileSync } from "../../server-utils.js";
 
@@ -55,4 +56,16 @@ export function getOrCreateDeviceIdentity(): DeviceIdentity {
   };
   atomicWriteFileSync(identityPath(), JSON.stringify(identity, null, 2), { mode: 0o600 });
   return identity;
+}
+
+/** The public key as the wire carries it: 32 raw bytes, unpadded base64url (the JWK `x`). */
+export function rawPublicKey(identity: DeviceIdentity): string {
+  const jwk = createPublicKey(identity.publicKey).export({ format: "jwk" });
+  if (typeof jwk.x !== "string") throw new Error("device identity is not an ed25519 key");
+  return jwk.x;
+}
+
+/** Sign a UTF-8 message with the private key: 64 bytes, unpadded base64url. */
+export function signWithIdentity(identity: DeviceIdentity, message: string): string {
+  return sign(null, Buffer.from(message, "utf8"), createPrivateKey(identity.privateKey)).toString("base64url");
 }

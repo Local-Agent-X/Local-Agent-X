@@ -10,9 +10,11 @@
 // stopBrokerPresence tears it down.
 
 import { hostname } from "node:os";
+import { randomBytes } from "node:crypto";
 import { AgentxosApiClient, DEFAULT_ACCOUNT_API_URL } from "../vendor/index.js";
 import { AgentxosAccountManager } from "./account-manager.js";
-import { getOrCreateDeviceIdentity } from "./identity.js";
+import { getOrCreateDeviceIdentity, rawPublicKey, signWithIdentity } from "./identity.js";
+import { createSignalAuthenticator, type SignalAuthenticator } from "../signal-auth.js";
 import { loadAccountState, saveAccountState, updateAccountState, clearAccountState, type AccountState } from "./storage.js";
 import { renderQrDataUrl } from "./qr-render.js";
 import { transportMode } from "../config.js";
@@ -58,6 +60,8 @@ export function getAccountManager(): AgentxosAccountManager {
     updateState: updateAccountState,
     clearState: clearAccountState,
     renderQr: renderQrDataUrl,
+    rawPublicKey: () => rawPublicKey(getOrCreateDeviceIdentity()),
+    newPairingSecret: () => randomBytes(32).toString("base64url"),
     sleep: (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     now: () => Date.now(),
     // When a pairing is established, activate broker presence immediately (no restart).
@@ -87,6 +91,7 @@ export function maybeStartBrokerPresence(state: AccountState | null = loadAccoun
     // Read the token fresh each (re)dial so a re-login is picked up.
     getToken: () => loadAccountState()?.sessionToken ?? "",
     onAuthError: handleBrokerAuthError,
+    signalAuth: productionSignalAuth(),
   };
   presence = startBrokerPresence(config);
   presencePhoneId = state.pairedPhoneId;
@@ -100,6 +105,24 @@ export function maybeStartBrokerPresence(state: AccountState | null = loadAccoun
     now: () => Date.now(),
     onRefused: handleBrokerAuthError,
     log: (message) => logger.warn(message),
+  });
+}
+
+/** Device-key signaling over this desktop's own identity and account file. A refused
+ *  answer goes on the account page, the same place a refused session does. */
+function productionSignalAuth(): SignalAuthenticator {
+  const identity = getOrCreateDeviceIdentity();
+  return createSignalAuthenticator({
+    loadState: loadAccountState,
+    updateState: updateAccountState,
+    sign: (message) => signWithIdentity(identity, message),
+    onRefused: (message) => {
+      try {
+        getAccountManager().flagSessionInvalid(message);
+      } catch {
+        // Strict local-only mode refuses the manager; presence can't run there anyway.
+      }
+    },
   });
 }
 

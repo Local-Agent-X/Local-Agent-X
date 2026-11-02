@@ -53,6 +53,8 @@ export interface BrokerVoiceDialerDeps {
   /** Fires INSTEAD of onClosed on a terminal broker auth/gate refusal (dead token,
    *  revoked pairing) — the supervisor stops + surfaces it rather than re-dialing. */
   onAuthError?: (code: import("./vendor/protocol.js").BrokerErrorCode) => void;
+  /** Signs offers and checks answers against the paired phone's key (signal-auth.ts). */
+  signalAuth?: import("./signal-auth.js").SignalAuthenticator;
 }
 
 export class BrokerVoiceDialer extends BrokerDialer {
@@ -61,7 +63,12 @@ export class BrokerVoiceDialer extends BrokerDialer {
   private peer: VoicePeerLike | null = null;
 
   constructor(deps: BrokerVoiceDialerDeps) {
-    super({ onClosed: deps.onClosed, ...(deps.onAuthError ? { onAuthError: deps.onAuthError } : {}), logLabel: "voice " });
+    super({
+      onClosed: deps.onClosed,
+      ...(deps.onAuthError ? { onAuthError: deps.onAuthError } : {}),
+      ...(deps.signalAuth ? { signalAuth: deps.signalAuth } : {}),
+      logLabel: "voice ",
+    });
     this.createPeer = deps.createPeer ?? ((h, ice, onCtrl) => VoicePeer.create(h, ice, onCtrl));
     // The bridge owns the voice control plane + session; getPeer reads the dialer's current
     // peer live (rebuilt on reconnect), so the audio router always targets it.

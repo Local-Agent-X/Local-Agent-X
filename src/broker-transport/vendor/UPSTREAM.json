@@ -3,7 +3,7 @@
   "files": {
     "protocol.ts": {
       "upstream": "packages/protocol/src/index.ts",
-      "sha256": "2ac6768575597d0e87ec7daecb8e3affd7c16de9e139ff8d670f57908e9f0428"
+      "sha256": "e0fdb0afb0ed8329ffe1e269c6d676ee1fed0b19b3c46d382192f05abcc9eb99"
     },
     "guards.ts": {
       "upstream": "packages/protocol/src/guards.ts",
@@ -88,6 +88,14 @@
     "file-change.ts": {
       "upstream": "packages/protocol/src/file-change.ts",
       "sha256": "d798f93f2155013ceb1f04e9bc5c533a56f58a1cffcb757a8d68267a7a660b2e"
+    },
+    "pairing-qr.ts": {
+      "upstream": "packages/protocol/src/pairing-qr.ts",
+      "sha256": "2e23ee50b693ccc72b832cbca77c763714933a410d6b68ace7ec320788e0d493"
+    },
+    "signal-auth.ts": {
+      "upstream": "packages/protocol/src/signal-auth.ts",
+      "sha256": "7dea84a01f30ab4366f431090729c1f9c321f049c87aa95f02ca4480c43de4e7"
     }
   }
 }

@@ -50,7 +50,7 @@ export interface RegisteredDevice {
 export interface IssuedPairing {
   code: string;
   expiresAt: number;
-  /** The JSON string the desktop renders as a QR (packages/data qr-payload contract). */
+  /** The JSON string the desktop renders as a QR (the protocol package's pairing-qr contract). */
   qrPayload: string;
 }
 

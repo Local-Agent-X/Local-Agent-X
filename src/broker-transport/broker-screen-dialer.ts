@@ -60,6 +60,8 @@ export interface BrokerScreenDialerDeps {
   /** Fires INSTEAD of onClosed on a terminal broker auth/gate refusal (dead token,
    *  revoked pairing) — the supervisor stops + surfaces it rather than re-dialing. */
   onAuthError?: (code: import("./vendor/protocol.js").BrokerErrorCode) => void;
+  /** Signs offers and checks answers against the paired phone's key (signal-auth.ts). */
+  signalAuth?: import("./signal-auth.js").SignalAuthenticator;
 }
 
 export class BrokerScreenDialer extends BrokerDialer {
@@ -73,7 +75,11 @@ export class BrokerScreenDialer extends BrokerDialer {
   private readonly rtcId = randomUUID();
 
   constructor(deps: BrokerScreenDialerDeps) {
-    super({ onClosed: deps.onClosed, ...(deps.onAuthError ? { onAuthError: deps.onAuthError } : {}) });
+    super({
+      onClosed: deps.onClosed,
+      ...(deps.onAuthError ? { onAuthError: deps.onAuthError } : {}),
+      ...(deps.signalAuth ? { signalAuth: deps.signalAuth } : {}),
+    });
     this.control = deps.control;
     this.chat = deps.chat ?? new NullChatChannel();
     this.http = deps.http ?? new NullHttpChannel();

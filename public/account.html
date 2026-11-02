@@ -128,6 +128,12 @@
             '<h1><span class="ok">✓ Connected</span></h1>' +
             "<p>This Mac is paired with your phone and reachable through the agentxos broker." +
             (justPaired ? " Closing this window…" : " You can close this window.") + "</p>" +
+            // Verified = the phone's key is pinned, so a connection the broker forged is
+            // refused (src/broker-transport/signal-auth.ts). An older pairing still works;
+            // a fresh scan with an up-to-date phone app pins the key.
+            (s.phoneVerified
+              ? '<p class="muted"><span class="ok">Verified.</span> Every connection is checked against your phone\'s own key.</p>'
+              : '<p class="muted">Not verified yet. Show the pairing QR and scan it with the latest phone app, so this computer can check that every connection really comes from your phone. Nothing disconnects in the meantime.</p>') +
             '<p class="muted">Phone never scanned a code? Show the pairing QR to link it — nothing is disconnected unless a new phone scans.</p>' +
             '<div class="row"><button class="btn" id="done">Done</button>' +
             '<button class="btn ghost" id="repair">Show pairing QR</button>' +

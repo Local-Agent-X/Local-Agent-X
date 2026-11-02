@@ -26,6 +26,14 @@ export interface AccountState {
   /** The paired phone's device id — the broker `target=` this desktop waits to meet.
    *  Undefined until a phone scans this desktop's QR + a pairing is discovered. */
   pairedPhoneId?: string;
+  /** The phone key this desktop pinned for a pairing, learned from the phone's first
+   *  answer after it scanned this desktop's QR (signal-auth.ts). While `deviceId` matches
+   *  pairedPhoneId, every answer must be signed by `key`. A different paired phone is
+   *  unverified until it, too, pairs by QR. */
+  pinnedPhone?: { deviceId: string; key: string };
+  /** The one-time secret in the pairing QR this desktop last showed. The phone proves it
+   *  scanned that QR with an HMAC under it; cleared once a key is pinned. */
+  pairingSecret?: string;
 }
 
 function accountPath(): string {
@@ -49,12 +57,20 @@ export function loadAccountState(): AccountState | null {
         deviceId: parsed.deviceId,
         pairedPhoneId: typeof parsed.pairedPhoneId === "string" ? parsed.pairedPhoneId : undefined,
         sessionRenewedAt: typeof parsed.sessionRenewedAt === "number" ? parsed.sessionRenewedAt : undefined,
+        pinnedPhone: isPinnedPhone(parsed.pinnedPhone) ? parsed.pinnedPhone : undefined,
+        pairingSecret: typeof parsed.pairingSecret === "string" ? parsed.pairingSecret : undefined,
       };
     }
   } catch {
     /* corrupt → treated as signed out */
   }
   return null;
+}
+
+function isPinnedPhone(v: unknown): v is { deviceId: string; key: string } {
+  if (typeof v !== "object" || v === null) return false;
+  const r = v as Record<string, unknown>;
+  return typeof r.deviceId === "string" && typeof r.key === "string";
 }
 
 /** Persist the full account state (atomic, 0600). */

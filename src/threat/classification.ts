@@ -2,7 +2,7 @@
 // DATA CLASSIFICATION — Tag tool results with sensitivity labels
 // ═══════════════════════════════════════════════════════════════════
 
-import { CREDENTIAL_KEY_NAMES } from "../security/secrets/credential-patterns.js";
+import { CREDENTIAL_KEY_NAMES, CREDENTIAL_PATTERNS } from "../security/secrets/credential-patterns.js";
 import { EXTERNAL_CONTENT_BLOCK_RE, EXTERNAL_CONTENT_UNTERMINATED_RE } from "../external-content-markers.js";
 
 export type DataLabel =
@@ -91,11 +91,24 @@ export function isLiveCredentialAssignment(match: string): boolean {
   return !CREDENTIAL_VALUE_NOT_LIVE.some((p) => p.test(value));
 }
 
+// Vendor token shapes come from the credential catalog, the same entries the
+// redactor masks: a local copy here had drifted both ways — it let `_`/`-`
+// into an sk- body (a hyphenated product name scored as a key) and never
+// learned gho_/ghs_/ghu_/ghr_, xai-, Stripe, npm and the rest, so those were
+// hidden from the model but never scored. Marker entries carry no secret
+// bytes, and the generic/crypto/database entries are scored below or under
+// their own label. Non-global copies: `test` on a /g regex keeps lastIndex.
+const VENDOR_TOKEN_TYPES = new Set(["api_key", "cloud", "vcs", "comm"]);
+const VENDOR_TOKEN_PATTERNS = CREDENTIAL_PATTERNS
+  .filter((p) => VENDOR_TOKEN_TYPES.has(p.type) && !p.marker)
+  .map((p) => new RegExp(p.regex.source, p.regex.flags.replace("g", "")));
+
 const CLASSIFICATION_PATTERNS: Array<{ label: DataLabel; pattern: RegExp; confidence: number; validate?: (match: string) => boolean }> = [
   // Credentials. A prefix alone is not a credential: case-insensitive bare
   // prefixes scored the sk-SK locale, "Akiane", and "bearer of this card".
   // Each needs its exact case and a token body, as the redaction catalog does.
-  { label: "credentials", pattern: /\b(?:sk-[A-Za-z0-9_-]{20,}|ghp_[A-Za-z0-9]{36,}|github_pat_[A-Za-z0-9_]{20,}|xox[bpas]-[A-Za-z0-9-]{20,}|glpat-[A-Za-z0-9_-]{20,}|AKIA[A-Z0-9]{16})|\b[Bb]earer\s+[A-Za-z0-9._~+/-]{20,}/, confidence: 0.95 },
+  ...VENDOR_TOKEN_PATTERNS.map((pattern) => ({ label: "credentials" as const, pattern, confidence: 0.95 })),
+  { label: "credentials", pattern: /\b[Bb]earer\s+[A-Za-z0-9._~+/-]{20,}/, confidence: 0.95 },
   // Key list comes from the credential catalog (CREDENTIAL_KEY_NAMES), NOT a local
   // copy. The local copy had drifted: it omitted authorization / access_key /
   // private_key, so a raw `AWS_SECRET_ACCESS_KEY=…` was redacted out of the model's
@@ -103,7 +116,6 @@ const CLASSIFICATION_PATTERNS: Array<{ label: DataLabel; pattern: RegExp; confid
   // `g` flag is required: validated entries are scanned via matchAll, so one
   // placeholder can't mask a real assignment later in the same content.
   { label: "credentials", pattern: new RegExp(`(?:${CREDENTIAL_KEY_NAMES})\\s*[:=]\\s*["']?[^\\s"',]{8,}`, "gi"), confidence: 0.85, validate: isLiveCredentialAssignment },
-  { label: "credentials", pattern: /\b(AIza[0-9A-Za-z_-]{35})\b/, confidence: 0.95 },  // Google API key
   { label: "credentials", pattern: /\b(ya29\.[0-9A-Za-z_-]+)\b/, confidence: 0.9 },     // Google OAuth token
   { label: "credentials", pattern: /\b(eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,})\b/, confidence: 0.85 },  // JWT
   // PII

@@ -200,4 +200,14 @@ describe("a credential prefix alone does not classify as a credential", () => {
     expect(credential("token ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8")).toBe(true);
     expect(credential("key sk-abcdefghijklmnopqrstuv")).toBe(true);
   });
+
+  // The token shapes are the credential catalog's (credential-patterns.ts), so
+  // what the redactor hides is what scores.
+  it("scores every vendor token the catalog redacts, and no hyphenated sk- name", () => {
+    expect(credential("gh auth: gho_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8")).toBe(true);
+    expect(credential("XAI_KEY xai-" + "abcdefghijklmnopqrstuv0123")).toBe(true);
+    expect(credential("npm_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8")).toBe(true);
+    expect(credential("AIza" + "SyA1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q")).toBe(true);
+    expect(credential("the sk-learn-pipeline-tutorial-for-beginners page")).toBe(false);
+  });
 });

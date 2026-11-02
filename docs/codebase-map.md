@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1905 non-test source files · 87 oversized · 248 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1906 non-test source files · 86 oversized · 250 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -28,7 +28,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/providers/` | 73 | 27 | L | 1 |
 | `src/session/` | 58 | 9 | M |  |
 | `src/data-lineage/` | 57 | 12 | L |  |
-| `src/memory/` | 54 | 148 | XL | 7 |
+| `src/memory/` | 54 | 149 | XL | 6 |
 | `src/browser/` | 47 | 88 | XL | 5 |
 | `src/tool-policy/` | 47 | 21 | L |  |
 | `src/local-runtimes/` | 43 | 26 | L | 1 |
@@ -272,7 +272,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/memory/index-schema-migrations.ts#db.transaction:callback`
 - `src/memory/tools/facts.ts#createFactsTools`
 - `src/memory/tools/facts.ts#remember.execute`
-- `src/memory/tools/save.ts#memory_update_profile.execute`
 - `src/ops/tools/op-submit-async.ts#opSubmitAsyncTool.execute`
 - `src/plugin-system.ts`
 - `src/plugin-system.ts#PluginManager.loadPluginAtPath`
@@ -374,6 +373,7 @@ job. Comments are free: never cut them to fit.
 - `src/browser/runtime.ts` — 280+ code lines (cap 350)
 - `src/canonical-loop/scheduler.ts` — 280+ code lines (cap 350)
 - `src/mcp-client/index.ts` — 280+ code lines (cap 350)
+- `src/memory/auto-extract.ts` — 280+ code lines (cap 350)
 - `src/memory/index-core.ts` — 280+ code lines (cap 350)
 - `src/memory/tools/save.ts` — 280+ code lines (cap 350)
 - `src/protocols/builder.ts` — 280+ code lines (cap 350)
@@ -404,6 +404,7 @@ job. Comments are free: never cut them to fit.
 - `src/memory/extract.ts#runExtraction` — 90+ own code lines (cap 100)
 - `src/memory/index-facts.ts#retain` — 90+ own code lines (cap 100)
 - `src/memory/personality.ts#dedupeProfileLines` — 90+ own code lines (cap 100)
+- `src/memory/tools/save.ts#withProfileWrite:callback@203` — 90+ own code lines (cap 100)
 - `src/protocols/builder.ts#createBuilderTools` — 90+ own code lines (cap 100)
 - `src/protocols/learned-drafting.ts#validateProof` — 90+ own code lines (cap 100)
 - `src/routes/agents/history.ts#handleAgentHistoryRoutes` — 90+ own code lines (cap 100)

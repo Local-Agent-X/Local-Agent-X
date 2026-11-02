@@ -42,13 +42,12 @@ src/config.ts#loadConfig 132
 src/context/system-prompt-builder.ts#createSystemPromptBuilder 126
 src/local-runtimes/certification-runner.ts 360
 src/mcp-client/manifest.ts#assessMcpManifest 118
-src/memory/auto-extract.ts#autoExtractAndSave 183
+src/memory/auto-extract.ts#autoExtractAndSave 115
 src/memory/context.ts#buildContextBlockParts 130
 src/memory/date-parser.ts#parseDateRange 102
 src/memory/index-schema-migrations.ts#db.transaction:callback 259
 src/memory/tools/facts.ts#createFactsTools 108
 src/memory/tools/facts.ts#remember.execute 103
-src/memory/tools/save.ts#memory_update_profile.execute 112
 src/ops/tools/op-submit-async.ts#opSubmitAsyncTool.execute 114
 src/plugin-system.ts 366
 src/plugin-system.ts#PluginManager.loadPluginAtPath 136

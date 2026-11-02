@@ -1,4 +1,5 @@
 import { readFileSync, existsSync } from "node:fs";
+import { withProfileWrite } from "../profile-write-queue.js";
 import { join } from "node:path";
 import type { MemoryIndex } from "../../memory/index.js";
 import { PERSONALITY_FILES, setUserScalarField } from "../personality.js";
@@ -111,32 +112,34 @@ export function createSaveTools(memory: MemoryIndex) {
           return { content: "field is required", isError: true };
         }
         const filePath = join(memory["memoryDir"], "USER.md");
-        const existing = existsSync(filePath) ? readFileSync(filePath, "utf-8") : "";
-        const updated = setUserScalarField(existing, field, value);
-        // Funnel through the same dedupe + safety gate every other write uses.
-        const safe = await dedupeProfileMarkdownConfirmed(updated);
-        try {
-          const target = "memory:profile:user-field";
-          writeMemorySafely({
-            content: safe,
-            source: "tool",
-            target: filePath,
-            mode: "overwrite",
-            promotion: promotionContextFromToolArgs(args, {
-              content: `${field}: ${value}`,
-              source: "model-tool:memory_set_user_field",
-              target,
-              sessionId: sessionIdOf(args) ?? "default",
-            }),
-          });
-        } catch (e) {
-          if (e instanceof MemoryWriteBlocked) {
-            return { content: `BLOCKED: ${e.reason}`, isError: true };
+        return withProfileWrite(memory["memoryDir"], async () => {
+          const existing = existsSync(filePath) ? readFileSync(filePath, "utf-8") : "";
+          const updated = setUserScalarField(existing, field, value);
+          // Funnel through the same dedupe + safety gate every other write uses.
+          const safe = await dedupeProfileMarkdownConfirmed(updated);
+          try {
+            const target = "memory:profile:user-field";
+            writeMemorySafely({
+              content: safe,
+              source: "tool",
+              target: filePath,
+              mode: "overwrite",
+              promotion: promotionContextFromToolArgs(args, {
+                content: `${field}: ${value}`,
+                source: "model-tool:memory_set_user_field",
+                target,
+                sessionId: sessionIdOf(args) ?? "default",
+              }),
+            });
+          } catch (e) {
+            if (e instanceof MemoryWriteBlocked) {
+              return { content: `BLOCKED: ${e.reason}`, isError: true };
+            }
+            throw e;
           }
-          throw e;
-        }
-        memory.markDirty();
-        return { content: `USER.md: ${field} = ${value || "(cleared)"}` };
+          memory.markDirty();
+          return { content: `USER.md: ${field} = ${value || "(cleared)"}` };
+        });
       },
     },
 
@@ -197,130 +200,132 @@ export function createSaveTools(memory: MemoryIndex) {
         }
 
         const filePath = join(memory["memoryDir"], filename);
-        const existing = existsSync(filePath)
-          ? readFileSync(filePath, "utf-8")
-          : "";
+        return withProfileWrite(memory["memoryDir"], async () => {
+          const existing = existsSync(filePath)
+            ? readFileSync(filePath, "utf-8")
+            : "";
 
-        let updated: string;
+          let updated: string;
 
-        if (action === "full_replace") {
-          // Safety: require minimum content length to prevent accidental wipe
-          if (newContent.trim().length < 20) {
+          if (action === "full_replace") {
+            // Safety: require minimum content length to prevent accidental wipe
+            if (newContent.trim().length < 20) {
+              return {
+                content:
+                  "full_replace requires at least 20 characters of content to prevent accidental wipe.",
+                isError: true,
+              };
+            }
+            // Backup the existing file before full replace. Existing content was
+            // already gated on its way in, but treat .bak like every other
+            // memory write so the funnel has no exceptions.
+            if (existing.trim()) {
+              const backupPath = filePath + ".bak";
+              try {
+                writeMemorySafely({
+                  content: existing,
+                  source: "tool",
+                  target: backupPath,
+                  mode: "overwrite",
+                  promotion: createInternalMemoryContext(existing, backupPath, "profile-backup"),
+                });
+              } catch {}
+            }
+            updated = newContent;
+          } else if (action === "append") {
+            updated = existing + "\n\n" + newContent;
+          } else if (action === "replace_section") {
+            const heading = String(args.section_heading || "");
+            if (!heading) {
+              return {
+                content: "section_heading required for replace_section",
+                isError: true,
+              };
+            }
+
+            // Find section by heading and replace it
+            const headingPattern = new RegExp(
+              `(^|\\n)(##?\\s+${heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[^\\n]*)([\\s\\S]*?)(?=\\n##?\\s|$)`,
+              "i"
+            );
+
+            const match = existing.match(headingPattern);
+            if (match) {
+              updated = existing.replace(
+                headingPattern,
+                `$1$2\n${newContent}`
+              );
+            } else {
+              // Section not found — append as new section
+              updated = existing + `\n\n## ${heading}\n${newContent}`;
+            }
+          } else {
+            return { content: `Unknown action: ${action}`, isError: true };
+          }
+
+          // Char-limit enforcement on USER.md. Bounded narrative files force
+          // the model to consolidate instead of append-forever. 'heart' and
+          // 'identity' are user-author content with no limit — they're not
+          // append targets.
+          const PROFILE_CHAR_LIMITS: Record<string, number> = {
+            "USER.md": MAX_PROFILE_CHARS,
+          };
+          const limit = PROFILE_CHAR_LIMITS[filename];
+          if (limit !== undefined && updated.length > limit) {
+            // NOT an error — return as `isError: false` so the model treats
+            // it as a retry hint rather than a terminal failure. Live testing
+            // showed Codex giving up after one over-limit response when this
+            // returned isError:true; treating it as guidance produces the
+            // intended retry behavior.
+            const sectionHeadings = Array.from(existing.matchAll(/^##?\s+([^\n]+)/gm))
+              .map(m => m[1].trim())
+              .slice(0, 12);
             return {
               content:
-                "full_replace requires at least 20 characters of content to prevent accidental wipe.",
-              isError: true,
-            };
-          }
-          // Backup the existing file before full replace. Existing content was
-          // already gated on its way in, but treat .bak like every other
-          // memory write so the funnel has no exceptions.
-          if (existing.trim()) {
-            const backupPath = filePath + ".bak";
-            try {
-              writeMemorySafely({
-                content: existing,
-                source: "tool",
-                target: backupPath,
-                mode: "overwrite",
-                promotion: createInternalMemoryContext(existing, backupPath, "profile-backup"),
-              });
-            } catch {}
-          }
-          updated = newContent;
-        } else if (action === "append") {
-          updated = existing + "\n\n" + newContent;
-        } else if (action === "replace_section") {
-          const heading = String(args.section_heading || "");
-          if (!heading) {
-            return {
-              content: "section_heading required for replace_section",
-              isError: true,
+                `${filename} is full: this write would be ${updated.length} chars (cap ${limit}). The write was NOT applied. RETRY in this same turn — pick ONE of:\n` +
+                `  (a) call again with action='replace_section' and section_heading set to a stale/redundant section. Existing sections in ${filename}: ${sectionHeadings.join(" | ")}\n` +
+                `  (b) call again with action='full_replace' after reading the file — keep only what's still relevant; aim for ~${Math.round(limit * 0.7)} chars to leave growth room\n` +
+                `  (c) if this content is an individual durable fact, call \`remember\` instead (Facts DB has no per-file cap)\n` +
+                `Don't drop the write. Don't claim "saved!" — the user will think it persisted when it didn't. Pick one of the three retries above and execute it now.`,
+              isError: false,
             };
           }
 
-          // Find section by heading and replace it
-          const headingPattern = new RegExp(
-            `(^|\\n)(##?\\s+${heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[^\\n]*)([\\s\\S]*?)(?=\\n##?\\s|$)`,
-            "i"
-          );
-
-          const match = existing.match(headingPattern);
-          if (match) {
-            updated = existing.replace(
-              headingPattern,
-              `$1$2\n${newContent}`
-            );
-          } else {
-            // Section not found — append as new section
-            updated = existing + `\n\n## ${heading}\n${newContent}`;
+          // Profile-file safety net: collapse any duplicate top-level blocks
+          // before persisting. Tool description steers the model toward
+          // replace_section, but bad calls (`append` of a fresh "# About Me"
+          // when one exists) used to corrupt the file permanently. This
+          // catches that at the funnel.
+          if (filename === "USER.md" || filename === "IDENTITY.md" || filename === "HEART.md") {
+            updated = await dedupeProfileMarkdownConfirmed(updated);
           }
-        } else {
-          return { content: `Unknown action: ${action}`, isError: true };
-        }
 
-        // Char-limit enforcement on USER.md. Bounded narrative files force
-        // the model to consolidate instead of append-forever. 'heart' and
-        // 'identity' are user-author content with no limit — they're not
-        // append targets.
-        const PROFILE_CHAR_LIMITS: Record<string, number> = {
-          "USER.md": MAX_PROFILE_CHARS,
-        };
-        const limit = PROFILE_CHAR_LIMITS[filename];
-        if (limit !== undefined && updated.length > limit) {
-          // NOT an error — return as `isError: false` so the model treats
-          // it as a retry hint rather than a terminal failure. Live testing
-          // showed Codex giving up after one over-limit response when this
-          // returned isError:true; treating it as guidance produces the
-          // intended retry behavior.
-          const sectionHeadings = Array.from(existing.matchAll(/^##?\s+([^\n]+)/gm))
-            .map(m => m[1].trim())
-            .slice(0, 12);
+          try {
+            const target = `memory:profile:${fileKey}`;
+            writeMemorySafely({
+              content: updated,
+              source: "tool",
+              target: filePath,
+              mode: "overwrite",
+              promotion: promotionContextFromToolArgs(args, {
+                content: newContent,
+                source: "model-tool:memory_update_profile",
+                target,
+                sessionId: sessionIdOf(args) ?? "default",
+              }),
+            });
+          } catch (e) {
+            if (e instanceof MemoryWriteBlocked) {
+              return { content: `BLOCKED: ${e.reason}`, isError: true };
+            }
+            throw e;
+          }
+          memory.markDirty();
+
           return {
-            content:
-              `${filename} is full: this write would be ${updated.length} chars (cap ${limit}). The write was NOT applied. RETRY in this same turn — pick ONE of:\n` +
-              `  (a) call again with action='replace_section' and section_heading set to a stale/redundant section. Existing sections in ${filename}: ${sectionHeadings.join(" | ")}\n` +
-              `  (b) call again with action='full_replace' after reading the file — keep only what's still relevant; aim for ~${Math.round(limit * 0.7)} chars to leave growth room\n` +
-              `  (c) if this content is an individual durable fact, call \`remember\` instead (Facts DB has no per-file cap)\n` +
-              `Don't drop the write. Don't claim "saved!" — the user will think it persisted when it didn't. Pick one of the three retries above and execute it now.`,
-            isError: false,
+            content: `Updated ${filename} (${action}${action === "replace_section" ? `: ${args.section_heading}` : ""}, now ${updated.length}${limit ? `/${limit}` : ""} chars)`,
           };
-        }
-
-        // Profile-file safety net: collapse any duplicate top-level blocks
-        // before persisting. Tool description steers the model toward
-        // replace_section, but bad calls (`append` of a fresh "# About Me"
-        // when one exists) used to corrupt the file permanently. This
-        // catches that at the funnel.
-        if (filename === "USER.md" || filename === "IDENTITY.md" || filename === "HEART.md") {
-          updated = await dedupeProfileMarkdownConfirmed(updated);
-        }
-
-        try {
-          const target = `memory:profile:${fileKey}`;
-          writeMemorySafely({
-            content: updated,
-            source: "tool",
-            target: filePath,
-            mode: "overwrite",
-            promotion: promotionContextFromToolArgs(args, {
-              content: newContent,
-              source: "model-tool:memory_update_profile",
-              target,
-              sessionId: sessionIdOf(args) ?? "default",
-            }),
-          });
-        } catch (e) {
-          if (e instanceof MemoryWriteBlocked) {
-            return { content: `BLOCKED: ${e.reason}`, isError: true };
-          }
-          throw e;
-        }
-        memory.markDirty();
-
-        return {
-          content: `Updated ${filename} (${action}${action === "replace_section" ? `: ${args.section_heading}` : ""}, now ${updated.length}${limit ? `/${limit}` : ""} chars)`,
-        };
+        });
       },
     },
   ];

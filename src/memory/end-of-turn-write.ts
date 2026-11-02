@@ -32,6 +32,7 @@ import { resolveProviderContext } from "../providers/resolve-provider-context.js
 import { PERSONALITY_FILES } from "./personality.js";
 import { dedupeProfileMarkdownConfirmed, compactProfileIfOverCap } from "./personality-confirmed.js";
 import { writeMemorySafely, appendProfileOverflow, MemoryWriteBlocked, MAX_PROFILE_CHARS } from "./write-safely.js";
+import { withProfileWrite } from "./profile-write-queue.js";
 import { PROMOTION_SOURCE, unattendedPromotionBlocker, mintCleanSelfPromotion } from "./end-of-turn-promotion.js";
 import type { MemoryIndex } from "./index-core.js";
 
@@ -260,77 +261,79 @@ export async function applyWrite(d: WriteDecisionPayload, ctx: EndOfTurnContext)
   // Mirrors memory_update_profile's write path with the same char caps.
   // End-of-turn only writes USER.md — facts go through the agent's `remember`
   // tool during the turn, not this classifier.
-  const filename = PERSONALITY_FILES.user;
-  const filePath = join(ctx.memory.getMemoryDir(), filename);
-  const existing = existsSync(filePath) ? readFileSync(filePath, "utf-8") : "";
+  return withProfileWrite(ctx.memory.getMemoryDir(), async () => {
+    const filename = PERSONALITY_FILES.user;
+    const filePath = join(ctx.memory.getMemoryDir(), filename);
+    const existing = existsSync(filePath) ? readFileSync(filePath, "utf-8") : "";
 
-  let updated: string;
-  if (d.action === "append") {
-    updated = existing + (existing.endsWith("\n") ? "" : "\n") + "\n" + d.content + "\n";
-  } else {
-    // replace_section
-    const heading = d.section_heading!;
-    const headingPattern = new RegExp(
-      `(^|\\n)(##?\\s+${heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[^\\n]*)([\\s\\S]*?)(?=\\n##?\\s|$)`,
-      "i",
-    );
-    const match = existing.match(headingPattern);
-    if (match) {
-      updated = existing.replace(headingPattern, `$1$2\n${d.content}\n`);
+    let updated: string;
+    if (d.action === "append") {
+      updated = existing + (existing.endsWith("\n") ? "" : "\n") + "\n" + d.content + "\n";
     } else {
-      // Section doesn't exist yet — append as new section
-      updated = existing + (existing.endsWith("\n") ? "" : "\n") + `\n## ${heading}\n${d.content}\n`;
+      // replace_section
+      const heading = d.section_heading!;
+      const headingPattern = new RegExp(
+        `(^|\\n)(##?\\s+${heading.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}[^\\n]*)([\\s\\S]*?)(?=\\n##?\\s|$)`,
+        "i",
+      );
+      const match = existing.match(headingPattern);
+      if (match) {
+        updated = existing.replace(headingPattern, `$1$2\n${d.content}\n`);
+      } else {
+        // Section doesn't exist yet — append as new section
+        updated = existing + (existing.endsWith("\n") ? "" : "\n") + `\n## ${heading}\n${d.content}\n`;
+      }
     }
-  }
 
-  // Profile-file safety net: collapse duplicate top-level blocks before
-  // persisting. Mirrors the funnel in memory_update_profile so both write
-  // paths land on the same canonical shape.
-  if (filename === "USER.md" || filename === "IDENTITY.md" || filename === "HEART.md") {
-    updated = await dedupeProfileMarkdownConfirmed(updated);
-  }
-
-  // Char-limit: structural dedupe above already ran and wasn't enough. Try
-  // semantic compaction before giving up (fails open to `updated` unchanged
-  // on any failure — see compactProfileIfOverCap). The write gate still
-  // enforces the same cap as a hard backstop for writers that bypass this path.
-  if (filename === "USER.md" && updated.length > MAX_PROFILE_CHARS) {
-    updated = await compactProfileIfOverCap(updated, MAX_PROFILE_CHARS);
-  }
-  if (filename === "USER.md" && updated.length > MAX_PROFILE_CHARS) {
-    // Consolidation couldn't make room either. There's no model turn left to
-    // hand this to (unlike the tool-call writers) — never drop the fact:
-    // park it in the daily log so it's still searchable and recoverable.
-    appendProfileOverflow({
-      memory: ctx.memory,
-      target: filePath,
-      content: d.content,
-      source: "eot",
-      sessionId: ctx.sessionId,
-      reason: `would be ${updated.length}/${MAX_PROFILE_CHARS} chars after consolidation`,
-      promotion: mintCleanSelfPromotion(d, ctx.sessionId, { target: "memory:daily-log", source: `${PROMOTION_SOURCE}:overflow` }),
-    });
-    return {
-      ok: false,
-      reason: `${filename} would be ${updated.length}/${MAX_PROFILE_CHARS} chars — routed new content to the daily log instead of dropping it`,
-    };
-  }
-
-  try {
-    writeMemorySafely({
-      content: updated,
-      source: "eot",
-      target: filePath,
-      mode: "overwrite",
-      promotion: mintCleanSelfPromotion(d, ctx.sessionId),
-    });
-    return { ok: true };
-  } catch (e) {
-    if (e instanceof MemoryWriteBlocked) {
-      return { ok: false, blocked: true, reason: e.reason };
+    // Profile-file safety net: collapse duplicate top-level blocks before
+    // persisting. Mirrors the funnel in memory_update_profile so both write
+    // paths land on the same canonical shape.
+    if (filename === "USER.md" || filename === "IDENTITY.md" || filename === "HEART.md") {
+      updated = await dedupeProfileMarkdownConfirmed(updated);
     }
-    throw e;
-  }
+
+    // Char-limit: structural dedupe above already ran and wasn't enough. Try
+    // semantic compaction before giving up (fails open to `updated` unchanged
+    // on any failure — see compactProfileIfOverCap). The write gate still
+    // enforces the same cap as a hard backstop for writers that bypass this path.
+    if (filename === "USER.md" && updated.length > MAX_PROFILE_CHARS) {
+      updated = await compactProfileIfOverCap(updated, MAX_PROFILE_CHARS);
+    }
+    if (filename === "USER.md" && updated.length > MAX_PROFILE_CHARS) {
+      // Consolidation couldn't make room either. There's no model turn left to
+      // hand this to (unlike the tool-call writers) — never drop the fact:
+      // park it in the daily log so it's still searchable and recoverable.
+      appendProfileOverflow({
+        memory: ctx.memory,
+        target: filePath,
+        content: d.content,
+        source: "eot",
+        sessionId: ctx.sessionId,
+        reason: `would be ${updated.length}/${MAX_PROFILE_CHARS} chars after consolidation`,
+        promotion: mintCleanSelfPromotion(d, ctx.sessionId, { target: "memory:daily-log", source: `${PROMOTION_SOURCE}:overflow` }),
+      });
+      return {
+        ok: false,
+        reason: `${filename} would be ${updated.length}/${MAX_PROFILE_CHARS} chars — routed new content to the daily log instead of dropping it`,
+      };
+    }
+
+    try {
+      writeMemorySafely({
+        content: updated,
+        source: "eot",
+        target: filePath,
+        mode: "overwrite",
+        promotion: mintCleanSelfPromotion(d, ctx.sessionId),
+      });
+      return { ok: true };
+    } catch (e) {
+      if (e instanceof MemoryWriteBlocked) {
+        return { ok: false, blocked: true, reason: e.reason };
+      }
+      throw e;
+    }
+  });
 }
 
 /** @internal — exported for tests */

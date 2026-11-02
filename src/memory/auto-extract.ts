@@ -17,6 +17,7 @@ import { TAINTED_FACT_SOURCE_PREFIX } from "./fact-provenance-label.js";
 import { externalContentVerdict } from "../data-lineage/external.js";
 
 import { createLogger } from "../logger.js";
+import { withProfileWrite } from "./profile-write-queue.js";
 const logger = createLogger("memory.auto-extract");
 
 /**
@@ -146,46 +147,52 @@ export async function autoExtractAndSave(
   if (facts.agent_name) {
     const identityPath = join(memory["memoryDir"], "IDENTITY.md");
     if (existsSync(identityPath)) {
-      let content = readFileSync(identityPath, "utf-8");
-      if (content.includes("- Name:")) {
-        content = content.replace(/^- Name:.*$/m, `- Name: ${facts.agent_name}`);
-      } else {
-        content += `\n- Name: ${facts.agent_name}`;
-      }
-      if (content.length > MAX_PROFILE_CHARS) {
-        content = await compactProfileIfOverCap(content, MAX_PROFILE_CHARS);
-      }
-      if (content.length > MAX_PROFILE_CHARS) {
-        // No model turn to hand this to (unattended background pass) — never
-        // drop the name: park it in the daily log instead of losing it.
-        appendProfileOverflow({
-          memory,
-          target: identityPath,
-          content: `- Name: ${facts.agent_name}`,
-          source: "auto-extract",
-          sessionId: sessionId ?? "default",
-          reason: `IDENTITY.md would be ${content.length}/${MAX_PROFILE_CHARS} chars after consolidation`,
-          promotion: promotionFor(facts.agent_name, "memory:daily-log", "agent_name", 1) ?? undefined,
-        });
-        return;
-      }
-      try {
-        writeMemorySafely({
-          content,
-          source: "auto-extract",
-          target: identityPath,
-          mode: "overwrite",
-          promotion: promotionFor(facts.agent_name, "memory:profile:identity", "agent_name", 1)!,
-        });
-        memory.markDirty();
-        logger.info(`[memory] Auto-updated agent name to: ${facts.agent_name}`);
-      } catch (e) {
-        if (e instanceof MemoryWriteBlocked) {
-          logger.warn(`[memory] Auto-extract IDENTITY write blocked: ${e.reason}`);
-          return;
+      // true: stop the whole pass, as the early returns always did.
+      const agentName = facts.agent_name;
+      const stop = await withProfileWrite(memory["memoryDir"], async () => {
+        let content = readFileSync(identityPath, "utf-8");
+        if (content.includes("- Name:")) {
+          content = content.replace(/^- Name:.*$/m, `- Name: ${agentName}`);
+        } else {
+          content += `\n- Name: ${agentName}`;
         }
-        throw e;
-      }
+        if (content.length > MAX_PROFILE_CHARS) {
+          content = await compactProfileIfOverCap(content, MAX_PROFILE_CHARS);
+        }
+        if (content.length > MAX_PROFILE_CHARS) {
+          // No model turn to hand this to (unattended background pass) — never
+          // drop the name: park it in the daily log instead of losing it.
+          appendProfileOverflow({
+            memory,
+            target: identityPath,
+            content: `- Name: ${agentName}`,
+            source: "auto-extract",
+            sessionId: sessionId ?? "default",
+            reason: `IDENTITY.md would be ${content.length}/${MAX_PROFILE_CHARS} chars after consolidation`,
+            promotion: promotionFor(agentName, "memory:daily-log", "agent_name", 1) ?? undefined,
+          });
+          return true;
+        }
+        try {
+          writeMemorySafely({
+            content,
+            source: "auto-extract",
+            target: identityPath,
+            mode: "overwrite",
+            promotion: promotionFor(agentName, "memory:profile:identity", "agent_name", 1)!,
+          });
+          memory.markDirty();
+          logger.info(`[memory] Auto-updated agent name to: ${agentName}`);
+        } catch (e) {
+          if (e instanceof MemoryWriteBlocked) {
+            logger.warn(`[memory] Auto-extract IDENTITY write blocked: ${e.reason}`);
+            return true;
+          }
+          throw e;
+        }
+        return false;
+      });
+      if (stop) return;
     }
   }
 
@@ -196,44 +203,50 @@ export async function autoExtractAndSave(
   if (facts.user_name) {
     const userPath = join(memory["memoryDir"], "USER.md");
     if (existsSync(userPath)) {
-      let content = readFileSync(userPath, "utf-8");
-      if (content.includes("- Name:")) {
-        content = content.replace(/^- Name:.*$/m, `- Name: ${facts.user_name}`);
-      } else {
-        content += `\n- Name: ${facts.user_name}`;
-      }
-      if (content.length > MAX_PROFILE_CHARS) {
-        content = await compactProfileIfOverCap(content, MAX_PROFILE_CHARS);
-      }
-      if (content.length > MAX_PROFILE_CHARS) {
-        appendProfileOverflow({
-          memory,
-          target: userPath,
-          content: `- Name: ${facts.user_name}`,
-          source: "auto-extract",
-          sessionId: sessionId ?? "default",
-          reason: `USER.md would be ${content.length}/${MAX_PROFILE_CHARS} chars after consolidation`,
-          promotion: promotionFor(facts.user_name, "memory:daily-log", "user_name", 1) ?? undefined,
-        });
-        return;
-      }
-      try {
-        writeMemorySafely({
-          content,
-          source: "auto-extract",
-          target: userPath,
-          mode: "overwrite",
-          promotion: promotionFor(facts.user_name, "memory:profile:user", "user_name", 1)!,
-        });
-        memory.markDirty();
-        logger.info(`[memory] Auto-saved user name: ${facts.user_name}`);
-      } catch (e) {
-        if (e instanceof MemoryWriteBlocked) {
-          logger.warn(`[memory] Auto-extract USER write blocked: ${e.reason}`);
-          return;
+      // true: stop the whole pass, as the early returns always did.
+      const userName = facts.user_name;
+      const stop = await withProfileWrite(memory["memoryDir"], async () => {
+        let content = readFileSync(userPath, "utf-8");
+        if (content.includes("- Name:")) {
+          content = content.replace(/^- Name:.*$/m, `- Name: ${userName}`);
+        } else {
+          content += `\n- Name: ${userName}`;
         }
-        throw e;
-      }
+        if (content.length > MAX_PROFILE_CHARS) {
+          content = await compactProfileIfOverCap(content, MAX_PROFILE_CHARS);
+        }
+        if (content.length > MAX_PROFILE_CHARS) {
+          appendProfileOverflow({
+            memory,
+            target: userPath,
+            content: `- Name: ${userName}`,
+            source: "auto-extract",
+            sessionId: sessionId ?? "default",
+            reason: `USER.md would be ${content.length}/${MAX_PROFILE_CHARS} chars after consolidation`,
+            promotion: promotionFor(userName, "memory:daily-log", "user_name", 1) ?? undefined,
+          });
+          return true;
+        }
+        try {
+          writeMemorySafely({
+            content,
+            source: "auto-extract",
+            target: userPath,
+            mode: "overwrite",
+            promotion: promotionFor(userName, "memory:profile:user", "user_name", 1)!,
+          });
+          memory.markDirty();
+          logger.info(`[memory] Auto-saved user name: ${userName}`);
+        } catch (e) {
+          if (e instanceof MemoryWriteBlocked) {
+            logger.warn(`[memory] Auto-extract USER write blocked: ${e.reason}`);
+            return true;
+          }
+          throw e;
+        }
+        return false;
+      });
+      if (stop) return;
     }
   }
 

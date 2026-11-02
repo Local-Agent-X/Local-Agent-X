@@ -6,7 +6,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { findChromeExecutable } from "../src/browser/launcher.js";
-import { getBrowserNativeDownloadDir, isInsideDirectory } from "../src/browser/download-paths.js";
+import { getBrowserNativeDownloadDir } from "../src/browser/download-paths.js";
+import { pathIsWithin } from "../src/security/layer/path-within.js";
 
 const root = mkdtempSync(join(tmpdir(), "lax-native-download-live-"));
 const chrome = findChromeExecutable();
@@ -71,6 +72,6 @@ describe("native browser download path", () => {
     expect(result.viaProductionLauncher).toBe(true);
     expect(result.downloadSeen).toBe(true);
     expect(result.existed).toBe(true);
-    expect(isInsideDirectory(result.nativePath, quarantine)).toBe(true);
+    expect(pathIsWithin(quarantine, result.nativePath)).toBe(true);
   }, 35_000);
 });

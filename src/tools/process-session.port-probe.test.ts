@@ -4,13 +4,20 @@
 // port and restart a healthy dev server.
 import { describe, expect, it, vi } from "vitest";
 
-const os = vi.hoisted(() => ({ table: "" as string, fail: false }));
+const os = vi.hoisted(() => ({ table: "" as string, fail: false, proc: null as number[] | null }));
 vi.mock("node:child_process", async (importOriginal) => ({
   ...(await importOriginal<typeof import("node:child_process")>()),
   execFileSync: () => {
     if (os.fail) throw new Error("ETIMEDOUT");
     return os.table;
   },
+}));
+// Linux reads /proc first (owned-listeners.ts), which would answer from this
+// machine's real socket table; null here is "/proc unavailable", so the cases
+// below exercise the command each platform falls back to.
+vi.mock("./owned-listeners.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./owned-listeners.js")>()),
+  linuxListeningPids: () => os.proc,
 }));
 
 import { isPortBound, pidsOnPort } from "./process-session.js";
@@ -43,5 +50,15 @@ describe("pidsOnPort / isPortBound", () => {
   it("an invalid port has no listeners, whatever the OS would say", () => {
     os.fail = true;
     expect(pidsOnPort(0)).toEqual([]);
+  });
+
+  it.skipIf(process.platform === "win32")("on Linux, /proc answers before lsof is asked", () => {
+    os.fail = true; // lsof would fail: the /proc answer stands
+    os.proc = [4242];
+    try {
+      expect(pidsOnPort(5180)).toEqual([4242]);
+    } finally {
+      os.proc = null;
+    }
   });
 });

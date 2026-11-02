@@ -24,6 +24,7 @@ import { setSessionProject } from "../session/project.js";
 import { registerChildSessionOwner, clearSessionOwner } from "../browser/session-owner-registry.js";
 import { inheritSessionLineage } from "../canonical-loop/index.js";
 import { AgentWorkspaceError, provisionAgentWorkspace, releaseAgentWorkspace, type AgentWorkspace } from "../agency/agent-workspace.js";
+import { installWorktreeDependencies } from "../agency/worktree-deps.js";
 import { requiredPromptPlan } from "../context/system-prompt-builder.js";
 import { OP_TYPE } from "../ops/op-types.js";
 const logger = createLogger("server.handler-events");
@@ -125,6 +126,7 @@ export function registerHandlerEvents(deps: {
       workspace = provisionAgentWorkspace({
         agentId, runSessionId, security, requiresWorktree, workDir: req.workDir, workRoot: req.workRoot,
       });
+      workspace.promptBlock += await installWorktreeDependencies(workspace, runSessionId, signal);
       const { resolveProvider } = await import("../agent-request/index.js");
       // Thread the resolved per-agent model pin into the provider chain.
       // resolveAgentModel (invoke.ts) already walked run→roster→template;

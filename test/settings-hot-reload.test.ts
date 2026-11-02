@@ -7,10 +7,10 @@
  *   1. settingTool / settings POST → saveConfig() writes config.json on disk
  *   2. The fs watcher started by startConfigWatcher() (src/server/lifecycle.ts)
  *      observes the change (500ms debounce inside ConfigWatcher)
- *   3. The onChange callback calls setRuntimeConfig(loadConfig())
+ *   3. The onChange callback calls reloadRuntimeConfig(loadConfig())
  *   4. getRuntimeConfig() returns the fresh value to every gate / dispatcher
  *
- * If anyone removes `setRuntimeConfig(loadConfig())` from the onChange handler
+ * If anyone removes `reloadRuntimeConfig(loadConfig())` from the onChange handler
  * (or replaces it with a no-op), THIS test must fail — that regression would
  * silently re-enable disabled tools until process restart.
  *
@@ -24,7 +24,7 @@
  *     to 10s (NOT a fixed sleep) for the change to land.
  *   - Test 2 (the regression-pin) uses vi.doMock + vi.resetModules + a fresh
  *     re-import of lifecycle.ts so the watcher's static import of
- *     setRuntimeConfig binds to the spy. We then trigger the same fs change
+ *     reloadRuntimeConfig binds to the spy. We then trigger the same fs change
  *     and assert the spy was called with the new value.
  */
 
@@ -39,6 +39,7 @@ import {
   loadConfig,
   saveConfig,
   setRuntimeConfig,
+  reloadRuntimeConfig,
 } from "../src/config.js";
 import { startConfigWatcher } from "../src/server/lifecycle.js";
 import { ConfigWatcher } from "../src/config-hot-reload.js";
@@ -188,12 +189,13 @@ describe("settings hot-reload chain", () => {
     expect(getRuntimeConfig().enableShell).toBe(false);
   });
 
-  it("regression-pin: watcher's onChange invokes setRuntimeConfig with the reloaded config", async () => {
+  it("regression-pin: watcher's onChange invokes reloadRuntimeConfig with the reloaded config", async () => {
     // Strategy: vi.doMock + vi.resetModules so a fresh lifecycle.ts re-imports
-    // a SPIED setRuntimeConfig. Then we trigger an fs change and confirm the
-    // spy was called with the new value. This pins THE WIRE, not just the
-    // effect — if the onChange handler ever loses the setRuntimeConfig call,
-    // the spy stays at 0 calls and the test fails.
+    // a SPIED reloadRuntimeConfig (the in-place reload every ctx.config holder
+    // sees). Then we trigger an fs change and confirm the spy was called with
+    // the new value. This pins THE WIRE, not just the effect — if the onChange
+    // handler ever loses the reload call, the spy stays at 0 calls and the
+    // test fails.
 
     // First, reset the on-disk value to a known starting point so the spy's
     // call args are unambiguous.
@@ -210,13 +212,13 @@ describe("settings hot-reload chain", () => {
     const spy = vi.fn((cfg: unknown) => {
       // Mirror the real behavior so the rest of the runtime stays consistent
       // for any other tests/poll loops that may read getRuntimeConfig.
-      setRuntimeConfig(cfg as ReturnType<typeof loadConfig>);
+      reloadRuntimeConfig(cfg as ReturnType<typeof loadConfig>);
     });
 
     vi.resetModules();
     vi.doMock("../src/config.js", async () => {
       const actual = await vi.importActual<typeof import("../src/config.js")>("../src/config.js");
-      return { ...actual, setRuntimeConfig: spy };
+      return { ...actual, reloadRuntimeConfig: spy };
     });
 
     let watcherStopFn: (() => void) | null = null;

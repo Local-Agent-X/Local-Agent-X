@@ -153,7 +153,8 @@ describe("the real table", () => {
     const text = readFileSync(fileURLToPath(new URL("../src/context-manager/model-windows.ts", import.meta.url)), "utf8");
     const rows = parseWindowRows(text);
     expect(rows.length).toBeGreaterThan(30);
-    expect(rows.find((r) => r.id === "grok-4.5")).toEqual({ id: "grok-4.5", tokens: 1_000_000, pinned: true });
+    // The real row: pinned at what the SuperGrok lane serves (probed 2026-10-31).
+    expect(rows.find((r) => r.id === "grok-4.5")).toEqual({ id: "grok-4.5", tokens: 500_000, pinned: true });
     expect(rows.find((r) => r.id === "claude-opus-5-5")).toEqual({ id: "claude-opus-5-5", tokens: 1_000_000, pinned: false });
   });
 });

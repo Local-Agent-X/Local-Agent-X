@@ -117,7 +117,8 @@ describe("the bundled copies", () => {
 
   it("new-project names project_kit, its references travel with it, and nothing points at Claude Code", () => {
     const dir = join(BUNDLED_DIR, "new-project");
-    const text = readFileSync(join(dir, "SKILL.md"), "utf-8");
+    // A Windows checkout (core.autocrlf) has CRLF on disk; git stores LF.
+    const text = readFileSync(join(dir, "SKILL.md"), "utf-8").replace(/\r\n/g, "\n");
     expect(text).toContain("`project_kit`");
     expect(text).not.toMatch(/Claude Code|~\/\.claude\/skills|grand-daddy|PowerShell/);
     expect(text).toContain("  - bash\n");

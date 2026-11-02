@@ -8,7 +8,8 @@ import {
   DISABLE_FEATURES,
   STEALTH_ARGS,
 } from "../src/browser/launcher.js";
-import { getBrowserNativeDownloadDir, isInsideDirectory } from "../src/browser/download-paths.js";
+import { getBrowserNativeDownloadDir } from "../src/browser/download-paths.js";
+import { pathIsWithin } from "../src/security/layer/path-within.js";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -88,8 +89,8 @@ describe("browser launch args — single --disable-features flag", () => {
       const args = chromeLaunchArgs(quarantine, "http://127.0.0.1:43123");
       expect(options.downloadsPath).toBe(quarantine);
       expect(args).toContain(`--download.default_directory=${quarantine}`);
-      expect(isInsideDirectory(quarantine, dataDir)).toBe(true);
-      expect(isInsideDirectory(quarantine, workspaceDownloads)).toBe(false);
+      expect(pathIsWithin(dataDir, quarantine)).toBe(true);
+      expect(pathIsWithin(workspaceDownloads, quarantine)).toBe(false);
       expect(JSON.stringify({ options, args })).not.toContain(workspaceDownloads);
     } finally {
       rmSync(dataDir, { recursive: true, force: true });

@@ -138,11 +138,14 @@ export function rehydrateAgentRuntimeSurface(op: Op, surface: DelegatedRuntimeSu
   // stays the worker's own session (the two differ for an attended worker).
   const parentSessionId = descriptor?.adapter === "provider-exact" ? descriptor.parentSessionId : undefined;
   const ownerSessionId = descriptorOwnerSessionId({ sessionId, parentSessionId }) ?? sessionId;
-  if (surface.security.allowedPaths.some(entry => entry.sessionId !== "_global" && entry.sessionId !== sessionId)) {
+  if (surface.security.allowedPaths.some(entry => entry.sessionId !== "_global" && entry.sessionId !== sessionId)
+    || surface.security.fences?.some(entry => entry.sessionId !== sessionId)) {
     runtimeSurfaceMismatch("cross_session_authority");
   }
-  try { security.restoreAllowedPaths(surface.security.allowedPaths); }
-  catch { runtimeSurfaceMismatch("security_authority_invalid"); }
+  try {
+    security.restoreAllowedPaths(surface.security.allowedPaths);
+    security.restoreFences(surface.security.fences);
+  } catch { runtimeSurfaceMismatch("security_authority_invalid"); }
   const policy = surface.toolPolicyFingerprint ? loadToolPolicy(getLaxDir()) : undefined;
   if (surface.toolPolicyFingerprint && policy?.runtimeFingerprint() !== surface.toolPolicyFingerprint) {
     runtimeSurfaceMismatch("tool_policy_changed");

@@ -11,7 +11,9 @@ import { runAgentViaCanonical } from "../canonical-loop/index.js";
 import type { Operation, OperationPhase } from "./operation-types.js";
 import { AUTOPILOT_DONE_RE, type AutopilotConfig } from "./types.js";
 import type { ToolDefinition, LAXConfig } from "../types.js";
+import { resolve } from "node:path";
 import { SecurityLayer } from "../security/index.js";
+import { getWorktreeRepoRoot } from "../agency/worktree.js";
 import { loadFileAccessModeAtLeast } from "../security/layer/index.js";
 import { extractAgentOutput } from "../server-utils.js";
 import { registerAutopilotSession, unregisterAutopilotSession, getSelfEditCount } from "./registry.js";
@@ -80,6 +82,10 @@ export async function runAutopilotRound(
   // to the worktree regardless of mode.
   const security = new SecurityLayer(opts.autopilot.worktreePath, loadFileAccessModeAtLeast("common"));
   security.addAllowedPath(opts.autopilot.worktreePath, sessionId);
+  // In "unrestricted" mode the line above confines nothing: the fence keeps
+  // the checkout the worktree was cut from read-only in every mode.
+  const repoRoot = getWorktreeRepoRoot(opts.autopilot.worktreeName);
+  if (repoRoot) security.fenceToWorktree(sessionId, { worktree: opts.autopilot.worktreePath, repoRoot: resolve(repoRoot) });
 
   registerAutopilotSession(sessionId, opts.opId, opts.autopilot.worktreePath, opts.autopilot.maxSelfEditCalls);
 
@@ -194,6 +200,7 @@ export async function runAutopilotRound(
   } finally {
     unregisterAutopilotSession(sessionId);
     security.removeAllowedPath(opts.autopilot.worktreePath, sessionId);
+    security.releaseFence(sessionId);
   }
 }
 

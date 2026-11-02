@@ -2,12 +2,16 @@ import { isAbsolute } from "node:path";
 import { createHash } from "node:crypto";
 import type { FileAccessMode, InlineEvalPolicy } from "./types.js";
 import type { PathArgSpec } from "../../tool-policy/tool-policies.types.js";
+import type { WorktreeFence } from "./worktree-fence.js";
 
 export interface SecurityRuntimeIdentity {
   workspace: string;
   fileAccessMode: FileAccessMode;
   inlineEvalPolicy: InlineEvalPolicy;
   allowedPaths: Array<{ sessionId: string; path: string }>;
+  /** The session's worktree fence, carried into a worker process so a resumed
+   *  agent stays fenced (absent on surfaces persisted before the fence). */
+  fences?: Array<{ sessionId: string } & WorktreeFence>;
 }
 
 export function snapshotSecurityRuntime(
@@ -16,12 +20,31 @@ export function snapshotSecurityRuntime(
   inlineEvalPolicy: InlineEvalPolicy,
   paths: Map<string, Set<string>>,
   sessionId?: string,
+  fences: ReadonlyMap<string, WorktreeFence> = new Map(),
 ): SecurityRuntimeIdentity {
   const allowedPaths = [...paths.entries()]
     .filter(([key]) => key === "_global" || (!!sessionId && key === sessionId))
     .flatMap(([sessionId, entries]) => [...entries].map(path => ({ sessionId, path })))
     .sort((a, b) => a.sessionId.localeCompare(b.sessionId) || a.path.localeCompare(b.path));
-  return { workspace, fileAccessMode, inlineEvalPolicy, allowedPaths };
+  const fence = sessionId ? fences.get(sessionId) : undefined;
+  return { workspace, fileAccessMode, inlineEvalPolicy, allowedPaths, ...(fence ? { fences: [{ sessionId: sessionId!, ...fence }] } : {}) };
+}
+
+export function restoreSecurityFences(
+  entries: SecurityRuntimeIdentity["fences"],
+  clear: () => void,
+  add: (sessionId: string, fence: WorktreeFence) => void,
+): void {
+  if (entries === undefined) return clear();
+  if (!Array.isArray(entries) || entries.length > 100) throw new Error("invalid persisted worktree fences");
+  for (const e of entries) {
+    if (!e || typeof e.sessionId !== "string" || !e.sessionId
+      || [e.worktree, e.repoRoot].some((p) => typeof p !== "string" || !isAbsolute(p) || p.includes("\0"))) {
+      throw new Error("invalid persisted worktree fence");
+    }
+  }
+  clear();
+  for (const e of entries) add(e.sessionId, { worktree: e.worktree, repoRoot: e.repoRoot });
 }
 
 /**

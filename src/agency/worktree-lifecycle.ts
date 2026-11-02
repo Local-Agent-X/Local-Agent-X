@@ -29,7 +29,7 @@ function addWorktreeOnNewBranch(repoRoot: string, wtPath: string, branch: string
 /** Create an isolated worktree for an agent, of `repoDir`'s repository (a
  *  user project the agent was sent to) or, by default, of the repo the app
  *  runs from. */
-export function createWorktree(agentId: string, repoDir?: string): { path: string; branch: string } | null {
+export function createWorktree(agentId: string, repoDir?: string): { path: string; branch: string; repoRoot: string } | null {
   let repoRoot: string;
   let baseBranch: string;
   try {
@@ -45,7 +45,7 @@ export function createWorktree(agentId: string, repoDir?: string): { path: strin
   const recovered = claimRecoveredWorktree({
     name: agentId, branch, runId: agentId, repoRoot, baseBranch,
   });
-  if (recovered) return { path: recovered.path, branch: recovered.branch };
+  if (recovered) return { path: recovered.path, branch: recovered.branch, repoRoot };
   if (!worktreeSlotAvailable()) {
     logger.warn(`[worktree] cap reached (${activeWorktrees.size}/${MAX_CONCURRENT_WORKTREES}) — refusing new worktree for ${agentId}`);
     return null;
@@ -59,7 +59,7 @@ export function createWorktree(agentId: string, repoDir?: string): { path: strin
     }, agentId);
     activeWorktrees.set(agentId, entry);
     logger.info(`[worktree] Created ${wtPath} on branch ${branch} (base: ${baseBranch})`);
-    return { path: wtPath, branch };
+    return { path: wtPath, branch, repoRoot };
   } catch (e) {
     logger.warn(`[worktree] Failed to create: ${(e as Error).message}`);
     return null;

@@ -38,6 +38,11 @@ export function getWorktreeBranch(name: string): string | undefined {
   return activeWorktrees.get(name)?.branch;
 }
 
+/** The checkout a worktree was cut from: what its session's fence keeps read-only. */
+export function getWorktreeRepoRoot(name: string): string | undefined {
+  return activeWorktrees.get(name)?.repoRoot;
+}
+
 /** Worktree-scoped git status --porcelain. Returns empty string for clean. */
 export function getWorktreeStatus(name: string): string {
   const wt = activeWorktrees.get(name);

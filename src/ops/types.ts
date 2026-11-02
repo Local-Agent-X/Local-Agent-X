@@ -183,6 +183,7 @@ export interface DelegatedRuntimeSurface {
     fileAccessMode: import("../security/layer/index.js").FileAccessMode;
     inlineEvalPolicy: import("../security/layer/index.js").InlineEvalPolicy;
     allowedPaths: Array<{ sessionId: string; path: string }>;
+    fences?: Array<{ sessionId: string; worktree: string; repoRoot: string }>;
     sessionWorkRoot?: string;
     configFingerprint: string;
   };

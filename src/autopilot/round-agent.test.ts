@@ -27,7 +27,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../canonical-loop/index.js", () => ({ runAgentViaCanonical: mocks.runAgent }));
 vi.mock("../security/index.js", () => ({
-  SecurityLayer: class { addAllowedPath(): void {} removeAllowedPath(): void {} },
+  SecurityLayer: class { addAllowedPath(): void {} removeAllowedPath(): void {} fenceToWorktree(): void {} releaseFence(): void {} },
 }));
 vi.mock("../security/layer/index.js", () => ({ loadFileAccessModeAtLeast: () => "common" }));
 

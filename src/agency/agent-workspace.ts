@@ -128,6 +128,7 @@ export function provisionAgentWorkspace(opts: {
       if (!worktree) throw new AgentWorkspaceError(`could not create an isolated worktree of ${plan.repoRoot} (see the server log)`);
       const root = plan.subdir ? join(worktree.path, plan.subdir) : worktree.path;
       security.addAllowedPath(worktree.path, runSessionId);
+      security.fenceToWorktree(runSessionId, { worktree: worktree.path, repoRoot: resolve(worktree.repoRoot) });
       setSessionWorkRoot(runSessionId, root);
       return {
         worktree,
@@ -157,6 +158,7 @@ export function provisionAgentWorkspace(opts: {
       throw new AgentWorkspaceError("could not create an isolated worktree of Local Agent X's source (is it running from a git checkout?) — without one this agent cannot run commands");
     }
     security.addAllowedPath(worktree.path, runSessionId);
+    security.fenceToWorktree(runSessionId, { worktree: worktree.path, repoRoot: resolve(worktree.repoRoot) });
     return {
       worktree,
       workRoot: null,
@@ -180,7 +182,10 @@ export function provisionAgentWorkspace(opts: {
 /** Undo provisionAgentWorkspace's registrations. Idempotent. A scratch folder
  *  the run left empty is removed; one it wrote into stays for the user. */
 export function releaseAgentWorkspace(ws: AgentWorkspace, security: SecurityLayer, runSessionId: string): void {
-  if (ws.worktree) security.removeAllowedPath(ws.worktree.path, runSessionId);
+  if (ws.worktree) {
+    security.removeAllowedPath(ws.worktree.path, runSessionId);
+    security.releaseFence(runSessionId);
+  }
   if (ws.workRoot) {
     security.removeAllowedPath(ws.workRoot, runSessionId);
     clearSessionWorkRoot(runSessionId);

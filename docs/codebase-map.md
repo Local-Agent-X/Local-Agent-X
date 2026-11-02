@@ -13,17 +13,17 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1910 non-test source files · 86 oversized · 251 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1911 non-test source files · 86 oversized · 251 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 173 | 29 | XL | 1 |
-| `src/security/` | 157 | 58 | XL | 2 |
+| `src/security/` | 157 | 59 | XL | 2 |
 | `src/tools/` | 122 | 224 | XL | 9 |
-| `src/tool-execution/` | 85 | 83 | XL | 2 |
-| `src/workspace/` | 85 | 3 | M |  |
+| `src/tool-execution/` | 86 | 83 | XL | 2 |
+| `src/workspace/` | 86 | 3 | M |  |
 | `src/canonical-loop/` | 81 | 280 | XL | 11 |
 | `src/providers/` | 73 | 27 | L | 1 |
 | `src/session/` | 58 | 9 | M |  |
@@ -36,7 +36,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/util/` | 42 | 3 | S |  |
 | `src/auth/` | 36 | 11 | L |  |
 | `src/chat-ws/` | 34 | 23 | L |  |
-| `src/agency/` | 29 | 21 | L |  |
+| `src/agency/` | 30 | 21 | L |  |
 | `src/context-manager/` | 29 | 15 | M |  |
 | `src/agent-store/` | 28 | 7 | M | 1 |
 | `src/context/` | 26 | 10 | M | 1 |
@@ -426,6 +426,7 @@ job. Comments are free: never cut them to fit.
 - `src/auto-build/chunk-review/gate-build-exec.ts#runBuildExecGate` — 80+ own code lines (cap 100)
 - `src/canonical-loop/adapters/codex.ts#CodexAdapter.runTurn` — 80+ own code lines (cap 100)
 - `src/canonical-loop/agent-runner/run.ts#runAgentViaCanonical` — 80+ own code lines (cap 100)
+- `src/canonical-loop/agent-runner/runtime-surface.ts#rehydrateAgentRuntimeSurface` — 80+ own code lines (cap 100)
 - `src/canonical-loop/soak-metrics.ts#finalize` — 80+ own code lines (cap 100)
 - `src/classifiers/classify-with-llm.ts#classifyWithLLM` — 80+ own code lines (cap 100)
 - `src/conversation/ingest.ts#ingestSingleFile` — 80+ own code lines (cap 100)
@@ -468,7 +469,6 @@ job. Comments are free: never cut them to fit.
 - `src/browser/in-app-resolve-scripts.ts#textSearchScript` — 70+ own code lines (cap 100)
 - `src/browser/launcher.ts#launchAgentChrome` — 70+ own code lines (cap 100)
 - `src/canonical-loop/adapters/app-build-smoke-gate.ts#runAppSmokeGate` — 70+ own code lines (cap 100)
-- `src/canonical-loop/agent-runner/runtime-surface.ts#rehydrateAgentRuntimeSurface` — 70+ own code lines (cap 100)
 - `src/canonical-loop/agent-runner/seed-messages.ts#seedOpMessages` — 70+ own code lines (cap 100)
 - `src/canonical-loop/chat-runner/register-adapter.ts#registerAdapterForChat` — 70+ own code lines (cap 100)
 - `src/canonical-loop/chat-tool-dispatcher.ts#shapeCallResult` — 70+ own code lines (cap 100)

@@ -193,9 +193,9 @@ const EXPANDS = /[$`*?~%]/;
  * undefined `cwd` is a folder the caller does not know: only an absolute dir
  * on no other drive can be placed from it.
  */
-export function placeCd(dir: string | undefined, cwd: string | undefined): string | null {
+export function placeCd(dir: string | undefined, cwd: string | undefined, bareNamesRelative = false): string | null {
   if (!dir || EXPANDS.test(dir) || dir.startsWith("-")) return null;
-  if (!isAbsolute(dir) && (cwd === undefined || !/^\.\.?(?:[\\/]|$)/.test(dir))) return null;
+  if (!isAbsolute(dir) && (cwd === undefined || (!bareNamesRelative && !/^\.\.?(?:[\\/]|$)/.test(dir)))) return null;
   if (/^[a-z]:/i.test(dir) && (cwd === undefined || dir[0].toLowerCase() !== resolve(cwd)[0].toLowerCase())) return null;
   if (process.platform === "win32" && /^[\\/]/.test(dir)) return null;
   return resolve(cwd ?? "", dir);
@@ -204,11 +204,11 @@ export function placeCd(dir: string | undefined, cwd: string | undefined): strin
 /** The folder a cd position leaves the next command in. Only `&&` carries it:
  *  after `;`, `||` or a newline the next command runs where a failed cd left
  *  it, and a piped or backgrounded cd runs in a subshell. */
-function afterCd(p: CommandPosition, next: CommandPosition | undefined, cwd: string | null | undefined, cdSucceeds?: CdSucceeds): string | null | undefined {
+function afterCd(p: CommandPosition, next: CommandPosition | undefined, cwd: string | null | undefined, cdSucceeds?: CdSucceeds, bareNamesRelative = false): string | null | undefined {
   if (!next || next.depth < p.depth) return cwd;
   if (CD_UNPLACEABLE.has(p.bin) || cwd === null) return null;
   // bash's -P/-L/-e and PowerShell's -Path name no folder; `cd -` does, one placeCd refuses.
-  const dir = placeCd(p.words.slice(p.at + 1).find((w) => !/^-(?:[PLe]|path|literalpath)$/i.test(w)), cwd);
+  const dir = placeCd(p.words.slice(p.at + 1).find((w) => !/^-(?:[PLe]|path|literalpath)$/i.test(w)), cwd, bareNamesRelative);
   if (next.join === "&&") return dir;
   return dir !== null && p.depth === 0 && cdSucceeds?.(dir, p.segment) ? dir : null;
 }
@@ -232,8 +232,10 @@ export interface PlacedPosition {
  *  body moves only the rest of that body; only `&&` carries a cd's folder,
  *  unless the caller's `cdSucceeds` proves it. The delete rules read it
  *  through shellDeletes; the shell-write lineage (create-target-path.ts)
- *  reads it to place a command's own output files. */
-export function positionsWithCwd(command: string, base?: string, cdSucceeds?: CdSucceeds): PlacedPosition[] {
+ *  reads it to place a command's own output files. `bareNamesRelative` is for
+ *  a caller that has checked no CDPATH is in play (the worktree fence): it
+ *  places `cd sub` as `cd ./sub`. */
+export function positionsWithCwd(command: string, base?: string, cdSucceeds?: CdSucceeds, bareNamesRelative = false): PlacedPosition[] {
   const positions = commandPositions(command).positions;
   const cwds: Array<string | null | undefined> = [base];
   const out: PlacedPosition[] = [];
@@ -245,7 +247,7 @@ export function positionsWithCwd(command: string, base?: string, cdSucceeds?: Cd
     const cwd = cwds[p.depth];
     if (CD_BINS.has(p.bin) || CD_UNPLACEABLE.has(p.bin)) {
       const next = positions.slice(i + 1).find((q) => q.depth <= p.depth);
-      cwds[p.depth] = afterCd(p, next, cwd, cdSucceeds);
+      cwds[p.depth] = afterCd(p, next, cwd, cdSucceeds, bareNamesRelative);
       return;
     }
     out.push({ position: p, cwd });

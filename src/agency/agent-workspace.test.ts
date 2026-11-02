@@ -101,6 +101,41 @@ describe("provisionAgentWorkspace — a spawned agent can run commands where it 
     expect(bash(sec, session).allowed).toBe(false);
   });
 
+  // The worktree used to anchor relative paths only: in unrestricted mode an
+  // absolute path, a cd or a git -C wrote straight into the user's checkout
+  // (audit 2026-10-25). The fence refuses that and survives into a forked
+  // worker through the persisted runtime surface.
+  it("a git repo's worktree fences the repo it was cut from: read it, change only the worktree", () => {
+    const repo = gitRepo(join(BASE, "fenced-repo"));
+    const sec = new SecurityLayer(roots.workspace, "unrestricted");
+    const session = "agent-run-fenced";
+    const agentId = `ws-test-fence-${randomBytes(4).toString("hex")}`;
+    const ws = provisionAgentWorkspace({ agentId, runSessionId: session, security: sec, requiresWorktree: false, workDir: repo });
+    const call = (layer: SecurityLayer, toolName: string, args: Record<string, unknown>) =>
+      layer.evaluate({ toolName, args, sessionId: session, callContext: "delegated" });
+    try {
+      const wt = ws.worktree!.path;
+      const intoRepo = call(sec, "write", { path: join(repo, "README.md"), content: "y\n" });
+      expect(intoRepo.allowed).toBe(false);
+      expect(intoRepo.reason).toContain(join(wt, "README.md"));
+      expect(call(sec, "write", { path: join(wt, "README.md"), content: "y\n" }).allowed).toBe(true);
+      expect(call(sec, "bash", { command: `cd "${repo}" && git commit -am wip` }).allowed).toBe(false);
+      expect(call(sec, "bash", { command: `git -C "${repo}" log --oneline` }).allowed).toBe(true);
+      expect(call(sec, "process_start", { command: "npm run dev", cwd: repo }).allowed).toBe(false);
+
+      // A resumed op runs in a child process: the fence comes back from the surface.
+      const resumed = new SecurityLayer(roots.workspace, "unrestricted");
+      const identity = sec.runtimeIdentity(session);
+      resumed.restoreAllowedPaths(identity.allowedPaths);
+      resumed.restoreFences(identity.fences);
+      expect(call(resumed, "write", { path: join(repo, "README.md"), content: "y\n" }).allowed).toBe(false);
+    } finally {
+      releaseAgentWorkspace(ws, sec, session);
+      cleanupWorktree(agentId);
+    }
+    expect(sec.fenceOf(session)).toBeUndefined();
+  });
+
   it("a plain folder becomes the run's scoped work root", () => {
     const dir = join(BASE, "plain-run");
     mkdirSync(dir);

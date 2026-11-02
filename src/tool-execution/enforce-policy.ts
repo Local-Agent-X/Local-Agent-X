@@ -186,13 +186,17 @@ function sessionPolicyGate(ctx: ToolCallContext): PhaseOutcome {
 
 // Worktree enforcement: rewrite paths BEFORE the security pre-dispatch
 // chain so security evaluates the actual path.
+// The session's worktree fence names its worktree whatever the session id and
+// in a forked worker too, where the in-process worktree registry is empty.
 async function rewriteWorktreePaths(ctx: ToolCallContext): Promise<void> {
   const { tc, args, sessionId } = ctx;
-  if (!sessionId?.startsWith("agent-")) return;
+  if (!sessionId) return;
   try {
-    const agentId = sessionId.slice(6);
-    const { getWorktreePath } = await import("../agency/worktree.js");
-    const wtPath = getWorktreePath(agentId);
+    let wtPath = ctx.security.fenceOf(sessionId)?.worktree;
+    if (!wtPath && sessionId.startsWith("agent-")) {
+      const { getWorktreePath } = await import("../agency/worktree.js");
+      wtPath = getWorktreePath(sessionId.slice(6));
+    }
     if (!wtPath) return;
     // Every path the call opens, by its declared arg (a list-valued arg is
     // gated per element and left as written).

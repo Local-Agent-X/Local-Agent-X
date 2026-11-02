@@ -20,7 +20,8 @@ import { sessionWorkRootOf } from "../../workspace/paths.js";
 import { evaluateByKernelClass as evaluateKernelClassPolicy } from "./kernel-class-policy.js";
 import { loadLocalServicePorts, liveLocalServicePorts, loadFileAccessMode, loadInlineEvalPolicy, manualRuntimeHostPorts } from "./security-config.js";
 import { EgressPolicyState, updateSecurityJson } from "./egress-policy-state.js";
-import { fingerprintSecurityPolicy, restoreSecurityAllowedPaths, snapshotSecurityRuntime, type SecurityRuntimeIdentity } from "./runtime-state.js";
+import { fingerprintSecurityPolicy, restoreSecurityAllowedPaths, restoreSecurityFences, snapshotSecurityRuntime, type SecurityRuntimeIdentity } from "./runtime-state.js";
+import { fenceCallRefusal, type WorktreeFence } from "./worktree-fence.js";
 import { evaluateDelegatedWorktreeGate } from "./delegated-worktree-gate.js";
 import { selfPort, setSelfPort } from "./loopback-grant.js";
 
@@ -50,6 +51,8 @@ export class SecurityLayer {
   // applies to literal loopback hosts — see evaluateWebFetch.
   private localServicePorts: Set<string> = new Set();
   private sessionAllowedPaths = new Map<string, Set<string>>();
+  /** Sessions working in a git worktree: the repo it was cut from is read-only to them (worktree-fence.ts). */
+  private sessionFences = new Map<string, WorktreeFence>();
   fileAccessMode: FileAccessMode = "common";
   /** Pinned confinement for a hermetic evaluation (the startup self-test asserts host rules on any box); null = live. */
   private sandboxConfinedPin: boolean | null = null;
@@ -68,6 +71,11 @@ export class SecurityLayer {
     const set = this.sessionAllowedPaths.get(sessionId || "_global");
     for (const form of canonicalAllowForms(p)) set?.delete(form);
   }
+  /** Fence a session to its worktree: from now on it may read `fence.repoRoot`
+   *  but change files only inside `fence.worktree`. */
+  fenceToWorktree(sessionId: string, fence: WorktreeFence): void { this.sessionFences.set(sessionId, fence); }
+  releaseFence(sessionId: string): void { this.sessionFences.delete(sessionId); }
+  fenceOf(sessionId: string | undefined): WorktreeFence | undefined { return sessionId ? this.sessionFences.get(sessionId) : undefined; }
   /** Check if a path is in the allowed set for a session */
   private isInAllowedPaths(realPath: string, sessionId?: string): boolean {
     const check = (key: string) => {
@@ -165,7 +173,7 @@ export class SecurityLayer {
   }
 
   runtimeIdentity(sessionId?: string): SecurityRuntimeIdentity {
-    return snapshotSecurityRuntime(this.workspace, this.fileAccessMode, this.inlineEvalPolicy, this.sessionAllowedPaths, sessionId); }
+    return snapshotSecurityRuntime(this.workspace, this.fileAccessMode, this.inlineEvalPolicy, this.sessionAllowedPaths, sessionId, this.sessionFences); }
 
   runtimePolicyFingerprint(): string {
     // Kill-switches + local-only/supervised toggles are sealed into the policy surface:
@@ -179,6 +187,9 @@ export class SecurityLayer {
 
   restoreAllowedPaths(entries: Array<{ sessionId: string; path: string }>): void {
     restoreSecurityAllowedPaths(entries, () => this.sessionAllowedPaths.clear(), (path, sessionId) => this.addAllowedPath(path, sessionId)); }
+
+  restoreFences(entries: SecurityRuntimeIdentity["fences"]): void {
+    restoreSecurityFences(entries, () => this.sessionFences.clear(), (sessionId, fence) => this.fenceToWorktree(sessionId, fence)); }
 
   setFileAccessMode(mode: FileAccessMode): void {
     this.fileAccessMode = mode;
@@ -213,6 +224,10 @@ export class SecurityLayer {
       });
       if (blocked) return blocked;
     }
+
+    const fence = this.fenceOf(ctx.sessionId);
+    const fenced = fence && fenceCallRefusal(fence, toolName, args, this.workspace, ctx.sessionId!);
+    if (fenced) return fenced;
 
     // File sinks are gated DECLARATIVELY: any tool opening a caller path
     // declares it in TOOL_PATH_ARGS, and every declared arg runs the same

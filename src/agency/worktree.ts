@@ -31,6 +31,7 @@ export {
   getWorktreePath,
   getWorktreeBaseBranch,
   getWorktreeBranch,
+  getWorktreeRepoRoot,
   getWorktreeStatus,
   getWorktreeChangedFiles,
   getMergeDeltaFiles,

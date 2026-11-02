@@ -57,6 +57,9 @@ export function assertSurface(value: unknown): void {
   if (!Array.isArray(surface.security.allowedPaths)
     || surface.security.allowedPaths.some(entry => !entry || typeof entry.sessionId !== "string"
       || typeof entry.path !== "string" || !isAbsolute(entry.path))) throw new Error("invalid delegated allowed-path surface");
+  if (surface.security.fences !== undefined && (!Array.isArray(surface.security.fences)
+    || surface.security.fences.some(entry => !entry || typeof entry.sessionId !== "string"
+      || [entry.worktree, entry.repoRoot].some(p => typeof p !== "string" || !isAbsolute(p))))) throw new Error("invalid delegated worktree-fence surface");
   if (surface.security.sessionWorkRoot !== undefined && !isAbsolute(surface.security.sessionWorkRoot)) throw new Error("invalid delegated work-root surface");
   if (surface.toolPolicyFingerprint !== undefined && !isFingerprint(surface.toolPolicyFingerprint)) throw new Error("invalid delegated tool-policy surface");
   if (surface.threatEngine !== false && (!surface.threatEngine || typeof surface.threatEngine !== "object" || !("state" in surface.threatEngine))) throw new Error("invalid delegated threat-engine surface");

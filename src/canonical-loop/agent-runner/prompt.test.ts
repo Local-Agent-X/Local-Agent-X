@@ -135,3 +135,31 @@ describe("canonical agent final prompt seam", () => {
     });
   });
 });
+
+// op_messages has no system role, so the seeder drops a history's system rows.
+// The /api/compact summary is one; without the fold a spoken turn (or any
+// agent-runner op) on a compacted thread ran without it.
+describe("the history's system rows reach the prompt", () => {
+  const compacted = [
+    { role: "system" as const, content: "[Conversation summary] we chose Postgres" },
+    { role: "user" as const, content: "and the port?" },
+  ];
+
+  it("folds them in as a required system-history section", async () => {
+    const dispatch = options();
+    await prepareCanonicalAgentPrompt(dispatch, compacted, profile(null));
+    expect(dispatch.systemPrompt).toContain("we chose Postgres");
+    const section = dispatch.renderedPromptSections.find((s) => s.id === "system-history");
+    expect(section).toMatchObject({ policy: "required" });
+  });
+
+  it("leaves a prompt that already carries them alone", async () => {
+    const dispatch = options();
+    dispatch.systemPrompt += "\n\n[Conversation summary] we chose Postgres";
+    dispatch.renderedPromptSections.push(renderPromptSection({
+      id: "system-history", label: "System History", type: "dynamic", policy: "required", text: "\n\n[Conversation summary] we chose Postgres",
+    }));
+    await prepareCanonicalAgentPrompt(dispatch, compacted, profile(null));
+    expect(dispatch.systemPrompt.match(/we chose Postgres/g)).toHaveLength(1);
+  });
+});

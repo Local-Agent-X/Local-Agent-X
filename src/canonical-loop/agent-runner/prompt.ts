@@ -4,6 +4,8 @@ import { toolSchemaFormatForDispatch } from "../../providers/shared/tool-shape.j
 import { applyCapabilityAwarePromptProfile } from "../prompt-preflight.js";
 import type { LocalModelCapabilityProfile } from "../../local-runtimes/index.js";
 import type { CanonicalAgentOptions } from "./types.js";
+import { foldSystemRowsIntoPrompt } from "../chat-runner/message-convert.js";
+import { appendSystemPromptSection } from "../../context/system-prompt-builder.js";
 
 /** Final section-aware prompt seam shared by every non-chat canonical caller. */
 export async function prepareCanonicalAgentPrompt(
@@ -14,6 +16,21 @@ export async function prepareCanonicalAgentPrompt(
   const plannedPrompt = options.renderedPromptSections.map((section) => section.text).join("");
   if (plannedPrompt !== options.systemPrompt) {
     throw new Error("Canonical agent prompt sections do not match systemPrompt bytes");
+  }
+
+  // op_messages has no system role, so seeding drops the history's system rows:
+  // the /api/compact summary and truncateHistory's digest. Fold them into the
+  // prompt as createChatOp does for chat — a spoken turn on a compacted thread
+  // lost the summary. A prompt that already carries them is left alone.
+  if (!options.renderedPromptSections.some((section) => section.id === "system-history")) {
+    const folded = foldSystemRowsIntoPrompt(options.systemPrompt, history);
+    appendSystemPromptSection(options, {
+      id: "system-history",
+      label: "System History",
+      type: "dynamic",
+      policy: "required",
+      text: folded.slice(options.systemPrompt.length),
+    });
   }
 
   if (!options.promptTelemetry) {

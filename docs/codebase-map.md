@@ -39,7 +39,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/agency/` | 29 | 21 | L |  |
 | `src/context-manager/` | 29 | 15 | M |  |
 | `src/agent-store/` | 28 | 7 | M | 1 |
-| `src/context/` | 25 | 10 | M | 1 |
+| `src/context/` | 26 | 10 | M | 1 |
 | `src/classifiers/` | 24 | 16 | L |  |
 | `src/agent-request/` | 23 | 15 | L | 3 |
 | `src/app-runtime/` | 23 | 12 | M |  |

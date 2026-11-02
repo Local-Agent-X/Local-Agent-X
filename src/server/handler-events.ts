@@ -65,6 +65,27 @@ export function buildExecutionRules(platformLine: string, maxIterations: number,
 /** An agent run's tool session becomes the parent chat's child: it drives the
  *  parent's browser (session-owner registry) and starts with the parent's
  *  taint and ingestion, as a delegated op does at bind. */
+/** The last turns of the conversation that spawned the agent, as a prompt block. */
+function parentContextBlock(parent: Session | undefined): string {
+  if (!parent?.messages.length) return "";
+  const lines = parent.messages.slice(-10).filter((m) => typeof m.content === "string")
+    .map((m) => `${m.role === "user" ? "User" : "Agent"}: ${(m.content as string).slice(0, 200)}`);
+  return `\n\n--- PARENT CONTEXT ---\n${lines.join("\n")}\n--- END ---\n`;
+}
+
+/** Who the agent is: its template's identity, or just its id for an ad-hoc run. */
+function identityBlockFor(
+  agentId: string,
+  template: { id: string; name: string; role: string } | null | undefined,
+  reportsTo: string | undefined,
+  projectName: string | undefined,
+): string {
+  if (!template) return `\n\nYour agent ID: ${agentId}\n`;
+  return `\n\n--- YOUR IDENTITY ---\nAgent ID: ${template.id}\nName: ${template.name}\nRole: ${template.role}\n` +
+    `${reportsTo ? `Reports to: ${reportsTo}` : "Reports to: Board (user)"}\n${projectName ? `Project: ${projectName}` : ""}\n` +
+    `Use agent_whoami with agentId="${template.id}" to see your full status and assigned issues.\n--- END IDENTITY ---\n`;
+}
+
 function adoptChildRunSession(runSessionId: string, parentSessionId: string | undefined, agentId: string): void {
   registerChildSessionOwner(runSessionId, parentSessionId, { agentId });
   inheritSessionLineage(runSessionId, parentSessionId);
@@ -110,11 +131,8 @@ export function registerHandlerEvents(deps: {
     const { ProjectRosterStore } = await import("../project-rosters.js");
     const roster = template && agentProject ? ProjectRosterStore.getInstance().get(agentProject.id, template.id) : undefined;
 
-    let parentContext = "";
-    if (parentSessionId) { const ps = sessions.get(parentSessionId); if (ps?.messages.length) { parentContext = `\n\n--- PARENT CONTEXT ---\n${ps.messages.slice(-10).filter(m => typeof m.content === "string").map(m => `${m.role === "user" ? "User" : "Agent"}: ${(m.content as string).slice(0, 200)}`).join("\n")}\n--- END ---\n`; } }
-    const identityBlock = template
-      ? `\n\n--- YOUR IDENTITY ---\nAgent ID: ${template.id}\nName: ${template.name}\nRole: ${template.role}\n${roster?.reportsTo ? `Reports to: ${roster.reportsTo}` : "Reports to: Board (user)"}\n${agentProject ? `Project: ${agentProject.name}` : ""}\nUse agent_whoami with agentId="${template.id}" to see your full status and assigned issues.\n--- END IDENTITY ---\n`
-      : `\n\nYour agent ID: ${agentId}\n`;
+    const parentContext = parentContextBlock(parentSessionId ? sessions.get(parentSessionId) : undefined);
+    const identityBlock = identityBlockFor(agentId, template, roster?.reportsTo, agentProject?.name);
 
     const agentSession: Session = { id: `agent-${agentId}`, title: `Agent: ${role}`, messages: [], createdAt: Date.now(), updatedAt: Date.now() };
     // Where the run works, decided BEFORE it starts: a folder that can't be

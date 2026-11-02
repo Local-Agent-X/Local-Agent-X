@@ -219,6 +219,18 @@ export const HARNESS_MARKERS: readonly HarnessMarker[] = [
     emitter: "browser/cdp-network.ts REFETCH_PREFIX",
   },
   {
+    id: "degenerate-reply-kept",
+    pattern: /\s*\[This reply degenerated into repetition[^\]\n]{0,200}\]?/g,
+    sample: "[This reply degenerated into repetition and was stopped before any tool call. Continue by making the next tool call.]",
+    emitter: "canonical-loop/turn-loop/cut-off-turn.ts DEGENERATE_KEPT",
+  },
+  {
+    id: "dotenv-keys-only-note",
+    pattern: /\s*\[values masked: this is a secrets file[^\]\n]{0,300}\]?/g,
+    sample: "[values masked: this is a secrets file, so its keys are shown and its values never are. list_secrets names what the vault holds; a {{NAME}} placeholder in http_request, or secret_env for a command, uses one.]",
+    emitter: "tool-execution/sensitive-read-taint.ts KEYS_ONLY_NOTE",
+  },
+  {
     id: "retrieval-results-frame",
     pattern: new RegExp(
       `<\\/?search_results(?:\\s+count="\\d{0,9}")?(?:\\s+query="[^"\\n]{0,120}")?>|${escapeRe(RETRIEVAL_RESULTS_INSTRUCTION)}`,

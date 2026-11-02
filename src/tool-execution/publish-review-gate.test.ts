@@ -336,6 +336,74 @@ describe("a publish that could not be reviewed rides along with one that was", (
   });
 });
 
+// Peter, 2026-11-01: RED goes back to the agent to fix before it reaches the
+// user. Two fix rounds per request; the card decides after that, or at once
+// when the agent publishes the same change unfixed.
+describe("RED — sent back to be fixed first", () => {
+  const inRequest = (sid: string, events: ServerEvent[], opId = "op-red-1", answer: boolean | null = false) =>
+    ({ ...ctx({ sessionId: sid, events, answer }), operationId: opId }) as ToolCallContext;
+
+  it("two fix rounds with the findings and no card, then the card", async () => {
+    const f = fake(RED, "fp-red-a");
+    const sid = session("Autonomous");
+    const events: ServerEvent[] = [];
+    const first = inRequest(sid, events);
+    expect((await requireApprovalPhase(first)).kind).toBe("halt");
+    expect(cards(events)).toEqual([]);
+    expect(lastText(first)).toMatch(/^NOT RUN: the pre-publish review of git push origin feature found problems that must be fixed/);
+    expect(lastText(first)).toContain("Fix round 1 of 2");
+    expect(lastText(first)).toContain("supabase/migrations/0042.sql:3");
+
+    f.fingerprint = "fp-red-b"; // a fix that is still red
+    const second = inRequest(sid, events);
+    expect((await requireApprovalPhase(second)).kind).toBe("halt");
+    expect(lastText(second)).toContain("Fix round 2 of 2");
+    expect(cards(events)).toEqual([]);
+
+    f.fingerprint = "fp-red-c"; // still red after the last round: the user decides
+    const third = inRequest(sid, events);
+    expect((await requireApprovalPhase(third)).kind).toBe("halt");
+    expect(cards(events)).toHaveLength(1);
+    expect(f.reviews).toBe(3);
+  });
+
+  it("a fix that reviews GREEN ships with no card", async () => {
+    const f = fake(RED, "fp-red-fix");
+    const sid = session("Autonomous");
+    const events: ServerEvent[] = [];
+    expect((await requireApprovalPhase(inRequest(sid, events))).kind).toBe("halt");
+    f.next = GREEN;
+    f.fingerprint = "fp-fixed";
+    expect((await requireApprovalPhase(inRequest(sid, events))).kind).toBe("continue");
+    expect(cards(events)).toEqual([]);
+  });
+
+  it("the same change published again unfixed goes to the card at once", async () => {
+    fake(RED, "fp-disputed");
+    const sid = session("Autonomous");
+    const events: ServerEvent[] = [];
+    await requireApprovalPhase(inRequest(sid, events));
+    expect(cards(events)).toEqual([]);
+    expect((await requireApprovalPhase(inRequest(sid, events, "op-red-1", true))).kind).toBe("continue");
+    expect(cards(events)).toHaveLength(1);
+  });
+
+  it("an unattended run gets the fix rounds too, then is blocked without a card", async () => {
+    const f = fake(RED, "fp-cron-a");
+    const sid = session("Autonomous");
+    const events: ServerEvent[] = [];
+    const run = () => ({ ...ctx({ sessionId: sid, callContext: "cron", events }), operationId: "op-cron" }) as ToolCallContext;
+    expect(lastText(await (async () => { const c = run(); await requireApprovalPhase(c); return c; })())).toContain("Fix round 1 of 2");
+    f.fingerprint = "fp-cron-b";
+    await requireApprovalPhase(run());
+    f.fingerprint = "fp-cron-c";
+    const last = run();
+    expect((await requireApprovalPhase(last)).kind).toBe("halt");
+    expect(lastText(last)).toContain("unattended run, so nobody can override it");
+    expect(cards(events)).toEqual([]);
+  });
+});
+
 describe("RED — blocked unless the user overrides", () => {
   it("interactive: an always-ask 'Push anyway' card with the findings; yes runs it and is audited", async () => {
     fake(RED);

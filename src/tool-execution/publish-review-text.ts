@@ -127,6 +127,18 @@ export function amberHoldText(op: PublishOperation, review: PublishReview): stri
   ].join("\n") + unknownTail(review);
 }
 
+/** A RED publish sent back to the agent to fix (publish-review-gate.ts
+ *  redFixRound): what was found, and what happens after the fix. */
+export function redFixText(op: PublishOperation, review: PublishReview, round: number, rounds: number): string {
+  return [
+    `NOT RUN: the pre-publish review of ${op.label} found problems that must be fixed before it ships (${reviewHeadline(review)}). Fix round ${round} of ${rounds}.`,
+    ...review.findings.map(findingLine),
+    "Fix every red finding (and the amber ones that are real), commit, and publish again: the fixed change gets a fresh review. " +
+      `A review that is still red after round ${rounds} goes to the user to decide. ` +
+      "If you believe a red finding is wrong, publish the same change again and say why in your reply: the user decides on it.",
+  ].join("\n") + unknownTail(review);
+}
+
 /** The word on the override button: what the user is overriding — a red
  *  finding ("Push anyway") or the absence of a review ("Push unreviewed"). */
 export function overrideLabel(op: PublishOperation, review: PublishReview): string {

@@ -5,10 +5,13 @@
  * ship (publish-review/change-set.ts → canonical-loop/publish-review-submit.ts)
  * and the verdict drives what happens next:
  *
- *   RED       blocked. The model gets the findings as the tool result so it can
- *             fix them. In an interactive run the user also gets a card with
- *             the findings and a "Push anyway" override (alwaysAsk, registered
- *             in approval-overrides.ts); approving runs the original call and
+ *   RED       blocked. First it goes back to the agent: the findings are the
+ *             tool result and it fixes, commits and publishes again, for up to
+ *             RED_FIX_ROUNDS rounds per request (redFixRound). A RED after the
+ *             last round, or the same change published again unfixed, goes to
+ *             the user: in an interactive run a card with the findings and a
+ *             "Push anyway" override (alwaysAsk, registered in
+ *             approval-overrides.ts); approving runs the original call and
  *             records the override in the audit trail. Unattended: no override.
  *   FAILED / UNKNOWN, or AMBER / GREEN with another publish in the call
  *             that could not be reviewed
@@ -45,7 +48,7 @@ import type { PublishOperation } from "../publish-operation.js";
 import { changeSetIsEmpty, type ChangeSet } from "../publish-review/change-set-types.js";
 import type { PublishReview, PublishReviewRequest, PublishReviewRun } from "../canonical-loop/public/publish-review.js";
 import type { ToolCallContext } from "./context.js";
-import { amberHoldText, needsUserYes, reviewCardContext, reviewNoteForModel, reviewPreview, stopText, type StopReason } from "./publish-review-text.js";
+import { amberHoldText, needsUserYes, redFixText, reviewCardContext, reviewNoteForModel, reviewPreview, stopText, type StopReason } from "./publish-review-text.js";
 import { statusOf } from "../tools/result-helpers.js";
 import { createLogger } from "../logger.js";
 
@@ -150,11 +153,41 @@ export async function publishReviewGate(ctx: ToolCallContext, ops: PublishOperat
   if (ctx.signal?.aborted) {
     return { kind: "block", result: { content: `NOT RUN: the turn was stopped while ${op.label} was being reviewed.`, isError: true, status: "blocked", metadata: { layer: "approval", userHint: USER_HINTS.policy, recovery: "The user stopped the turn. Do not retry the publish; report what was left unpublished." } } };
   }
+  const fixRound = redFixRound(ctx, review);
+  if (fixRound > 0) {
+    return { kind: "block", result: { content: redFixText(op, review, fixRound, RED_FIX_ROUNDS), isError: true, status: "blocked", metadata: { layer: "approval", userHint: USER_HINTS.publishReview, recovery: "Fix the red findings, commit, and publish again: the fixed change gets a fresh review." } } };
+  }
   if (holdsForAmber(ctx, review)) {
     return { kind: "block", result: { content: amberHoldText(op, review), isError: true, status: "blocked", metadata: { layer: "approval", userHint: USER_HINTS.publishReview, recovery: "Fix the real amber findings, commit, and publish again once." } } };
   }
   if (!needsUserYes(review, ops)) return { kind: "proceed", review, overridden: false };
   return overrideOutcome(ctx, op, review);
+}
+
+/** Fix rounds a request gets on a RED review before the user decides. */
+const RED_FIX_ROUNDS = 2;
+/** Per request: the RED change sets already sent back to be fixed. */
+const RED_SENT_BACK = new Map<string, Set<string>>();
+
+/**
+ * RED goes back to the agent that made the change before it reaches the user
+ * (Peter, 2026-11-01): the findings are the tool result, the agent fixes,
+ * commits and publishes again, and the fixed change set gets a fresh review.
+ * Before, RED raised the "Push anyway" card at once and the agent sat blocked
+ * on it, then was told to stop, never to fix. A request gets RED_FIX_ROUNDS
+ * rounds; a RED after the last, or the same change set published again unfixed
+ * (the agent disputes the finding), is the user's call on the card. Returns
+ * this round's number, or 0 when the card decides. A dispatch with no request
+ * id is never sent back: nothing would carry its rounds.
+ */
+function redFixRound(ctx: ToolCallContext, review: PublishReview): number {
+  if (review.status !== "RED" || !ctx.operationId) return 0;
+  const sent = RED_SENT_BACK.get(ctx.operationId) ?? new Set<string>();
+  if (sent.has(review.fingerprint) || sent.size >= RED_FIX_ROUNDS) return 0;
+  if (!RED_SENT_BACK.has(ctx.operationId) && RED_SENT_BACK.size >= AMBER_HELD_CAP) RED_SENT_BACK.clear();
+  sent.add(review.fingerprint);
+  RED_SENT_BACK.set(ctx.operationId, sent);
+  return sent.size;
 }
 
 /** Requests whose first AMBER publish was held. */
@@ -289,4 +322,5 @@ export function _resetPublishGateForTests(): void {
   VERDICTS.clear();
   IN_FLIGHT.clear();
   AMBER_HELD.clear();
+  RED_SENT_BACK.clear();
 }

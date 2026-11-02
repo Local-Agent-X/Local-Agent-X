@@ -9,8 +9,6 @@
 import type { MemorySearchResult } from "./index.js";
 
 import { createLogger } from "../logger.js";
-import { resolveCredential } from "../auth/resolve.js";
-import { getRuntimeConfig } from "../config.js";
 import { dispatch } from "../llm-dispatch.js";
 const logger = createLogger("memory-reranker");
 
@@ -65,78 +63,35 @@ JSON array of ${candidates.length} scores:`;
   return results;
 }
 
+/**
+ * Every provider rides the canonical single-shot dispatcher (llm-dispatch), the
+ * same seam memory-resolver/memory-extract/memory-hyde use. Each leg here used
+ * to raw-fetch its provider and drifted from it: the Anthropic one Bearer-sent
+ * subscription credentials (the banned direct-HTTP path) and sent temperature
+ * to adaptive models (a 400); the Ollama one sent no num_ctx, so a rerank at a
+ * different context size reloaded the chat model under the next chat turn, and
+ * defaulted to qwen2:7b rather than the background model every other local
+ * side call uses. A failure returns [] (original scores kept, warned), never a
+ * fallback to another provider. 200 tokens, temperature 0; Ollama keeps its
+ * longer 60 s timeout for a cold load.
+ */
 async function callLLM(prompt: string, count: number, options: RerankOptions): Promise<number[]> {
   const provider = options.provider || "ollama";
-
-  if (provider === "ollama") {
-    const model = options.model || "qwen2:7b";
-    try {
-      const base = getRuntimeConfig().ollamaUrl.replace(/\/+$/, "");
-      const res = await fetch(`${base}/api/generate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ model, prompt, stream: false, options: { temperature: 0, num_predict: 200 } }),
-        signal: AbortSignal.timeout(60000),
-      });
-      if (!res.ok) {
-        logger.warn(`[reranker] Ollama returned ${res.status}`);
-        return [];
-      }
-      const data = await res.json() as Record<string, unknown>;
-      const response = String(data.response || "");
-      if (!response) return [];
-      return parseScores(response, count);
-    } catch (e) {
-      logger.warn("[reranker] Ollama call failed:", (e as Error).message);
-      return [];
-    }
-  }
-
-  if (provider === "anthropic") {
-    // No private Anthropic wire here. This leg used to raw-fetch /v1/messages
-    // itself, which forked the canonical dispatch leg and drifted on both of
-    // its invariants: it Bearer-fetched `oauth:` (subscription) credentials —
-    // the banned direct-HTTP path, 429 since April 2026 — and hardcoded
-    // temperature:0, which adaptive-thinking models reject with a 400. The
-    // canonical single-shot dispatcher (llm-dispatch → hosted.js callAnthropic,
-    // the same seam memory-resolver/memory-extract/memory-hyde ride) already
-    // owns both: usesAnthropicSubscriptionAuth routes subscription creds
-    // through the canonical anthropic client (CLI proxy), and the API-key raw
-    // leg gates temperature on anthropicUsesAdaptiveThinking and normalizes
-    // the model id. Provider is pinned to "anthropic" — a failure returns []
-    // (original scores kept, warned), never a fallback to another provider.
-    // maxTokens/temperature/timeout defaults match the old literals (200/0/30s);
-    // the default model is the registry's Anthropic background model (Haiku).
-    const text = await dispatch({ prompt, provider: "anthropic", anthropicModel: options.model });
-    if (text === null) { logger.warn("[reranker] Anthropic dispatch failed"); return []; }
-    const scores = parseScores(text, count);
-    if (scores.length > 0) logger.info(`[reranker] Anthropic scored ${scores.length} candidates`);
-    else logger.warn(`[reranker] Anthropic returned unparseable: ${text.slice(0, 80)}`);
-    return scores;
-  }
-
-  if (provider === "openai") {
-    const resolved = await resolveCredential("openai");
-    const apiKey = resolved?.credential || "";
-    if (!apiKey) return [];
-    const model = options.model || "gpt-4o-mini";
-    try {
-      const res = await fetch("https://api.openai.com/v1/chat/completions", {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: `Bearer ${apiKey}` },
-        body: JSON.stringify({
-          model, messages: [{ role: "user", content: prompt }],
-          temperature: 0, max_tokens: 200,
-        }),
-        signal: AbortSignal.timeout(30000),
-      });
-      if (!res.ok) return [];
-      const data = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
-      return parseScores(data.choices?.[0]?.message?.content || "", count);
-    } catch { return []; }
-  }
-
-  return [];
+  const model =
+    provider === "ollama" ? { ollamaModel: options.model }
+      : provider === "anthropic" ? { anthropicModel: options.model }
+        : provider === "openai" ? { openaiModel: options.model }
+          : null;
+  if (!model) return [];
+  const text = await dispatch({
+    prompt, provider: provider as "ollama" | "anthropic" | "openai", ...model,
+    temperature: 0, maxTokens: 200, timeoutMs: provider === "ollama" ? 60_000 : 30_000,
+  });
+  if (text === null) { logger.warn(`[reranker] ${provider} dispatch failed`); return []; }
+  const scores = parseScores(text, count);
+  if (scores.length > 0) logger.info(`[reranker] ${provider} scored ${scores.length} candidates`);
+  else logger.warn(`[reranker] ${provider} returned unparseable: ${text.slice(0, 80)}`);
+  return scores;
 }
 
 function parseScores(text: string, expectedCount: number): number[] {

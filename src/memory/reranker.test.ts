@@ -45,9 +45,14 @@ describe("rerankWithLLM ollama URL comes from config (fetch stubbed — no netwo
   });
 
   it("calls config.ollamaUrl (trailing slash stripped), never hardcoded localhost:11434", async () => {
-    const out = await rerankWithLLM("q", [result("a"), result("b")], { provider: "ollama" });
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(fetchSpy.mock.calls[0][0]).toBe("http://127.0.0.1:9999/api/generate");
+    const out = await rerankWithLLM("q", [result("a"), result("b")], { provider: "ollama", model: "qwen3:8b" });
+    // The generate call is dispatch's Ollama leg (llm-dispatch/ollama.ts), which
+    // may first ask the runtime what is loaded to size num_ctx.
+    const generate = fetchSpy.mock.calls.find((c) => String(c[0]).endsWith("/api/generate"));
+    expect(generate?.[0]).toBe("http://127.0.0.1:9999/api/generate");
+    const body = JSON.parse((generate![1] as { body: string }).body) as { model: string; options: { temperature: number; num_predict: number } };
+    expect(body.model).toBe("qwen3:8b");
+    expect(body.options).toMatchObject({ temperature: 0, num_predict: 200 });
     // Scores applied → reranked ordering preserved with blended scores.
     expect(out).toHaveLength(2);
   });

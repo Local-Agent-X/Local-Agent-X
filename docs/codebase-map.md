@@ -34,7 +34,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/local-runtimes/` | 43 | 26 | L | 1 |
 | `src/threat/` | 42 | 13 | L |  |
 | `src/util/` | 42 | 3 | S |  |
-| `src/auth/` | 37 | 11 | L |  |
+| `src/auth/` | 36 | 11 | L |  |
 | `src/chat-ws/` | 34 | 23 | L |  |
 | `src/agency/` | 29 | 21 | L |  |
 | `src/context-manager/` | 29 | 15 | M |  |

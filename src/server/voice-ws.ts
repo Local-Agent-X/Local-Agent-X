@@ -25,6 +25,7 @@ import { OP_TYPE } from "../ops/op-types.js";
 import { ThreatEngine } from "../threat/threat-engine.js";
 import type { VoiceTurnInput, VoiceTurnRunner } from "../voice/voice-session/index.js";
 import { VOICE_BUSY_REPLY, canaryWatch, claimVoiceTurn, commitVoiceTurn, type VoiceTurnSlot } from "./voice-turn-guard.js";
+import { createVoiceTurnClock, type VoiceTurnClock } from "./voice-turn-timing.js";
 const logger = createLogger("server.lifecycle");
 
 /**
@@ -64,6 +65,69 @@ async function voiceVisualsEnabled(config: LAXConfig): Promise<boolean> {
     if (typeof setting === "boolean") return setting;
   } catch { /* settings unreadable: the config default below stands */ }
   return config.voice_visuals_enabled !== false;
+}
+
+type PreparedRequest = Awaited<ReturnType<typeof import("../agent-request/index.js").prepareAgentRequest>>;
+
+/** The spoken turn's model, tool belt and prompt, chosen from the prepared request. */
+async function planSpokenTurn(prepared: PreparedRequest, config: LAXConfig, allAgentTools: ToolDefinition[]) {
+  // Spoken-turn model: the selected provider's FAST tier, not the chat
+  // model. A reasoning chat model (gpt-5.6-sol) thinks 13-16s before
+  // speaking — dead air. resolveVoiceModel swaps in the provider's declared
+  // fast model (codex → gpt-5.4-mini, etc.) while keeping the provider;
+  // heavy work still delegates to full-power workers on the chat model.
+  const { getSetting } = await import("../settings.js");
+  const voiceModel = resolveVoiceModel(prepared.provider as ProviderId, prepared.model, getSetting);
+  if (voiceModel !== prepared.model) {
+    logger.info(`[voice-ws] spoken turn on fast tier: ${prepared.provider}/${voiceModel} (chat model ${prepared.model})`);
+  }
+
+  // Keep a local voice model resident across the conversation: fire-and-
+  // forget warm (deduped, 30m keep-alive) so turns after the first don't
+  // pay a cold load, and the current turn's own request keeps it warm. The
+  // very first turn of a cold session can still load-wait; a connect-time
+  // prewarm is a follow-up. No-op / harmless 404 for non-Ollama runtimes.
+  // Passing no size is deliberate: warmModel loads at the context the
+  // turn's own request applies (context-sizing.ts), so the warm never
+  // reloads the model this turn is about to use.
+  if (prepared.provider === "local") warmModel(config.ollamaUrl, voiceModel);
+
+  // Voice has the SAME tools as text chat (full parity). The old "tools
+  // mostly off" policy was a vestige of a weaker harness: it was meant to
+  // stop a runaway tool-loop and a mid-conversation setting change, but the
+  // op budget + wall-clock ceiling now bound runaway, and the tool-policy /
+  // approval / rbac gates (all wired into this canonical run) enforce safety
+  // identically in voice and text — so a request shouldn't behave
+  // differently just because it was spoken. With no real tools the agent
+  // FABRICATED actions it couldn't perform ("opened it"); parity fixes that.
+  // The visuals toggle only governs the one cosmetic tool (voice_visual).
+  const visualsEnabled = await voiceVisualsEnabled(config);
+  // Governor: a voice turn is FAST and tool-light. It answers / does quick
+  // lookups inline, drives the agent's OWN browser for web tasks, and
+  // DELEGATES genuinely heavy/long work to a background worker
+  // (op_submit_async) instead of grinding the full 169-tool agentic loop on
+  // the voice critical path — which produced 13-22s silences and tool-parse
+  // failures.
+  //
+  // `browser` drives the agent's own visible Chrome (its own persistent
+  // profile, controllable over CDP) — so "open google" then "search it"
+  // works as one flow, in a window the agent can actually act on. NOT the
+  // user's real browser: open_url (OS launch → real browser) was removed
+  // because the agent can't control what it opens there — a dead end. NO
+  // http_request either (the model abused it to fake browser control via
+  // invented localhost endpoints, then hallucinated success).
+  // Mission scheduling is on the belt because it's a QUICK direct call,
+  // and delegating it is impossible by design: scheduling is deliberately
+  // excluded from the delegated-worker belt (mission_schedule_* is denied —
+  // an unattended worker must not install recurring jobs), so a
+  // "check/set up my 2am mission" spawn could never do it. It stays a
+  // direct voice call.
+  // mission_schedule_delete stays off voice — destructive, belongs in
+  // Voice belt + spoken-mode prompt tail (voice-prompt.ts).
+  const voiceTools = allAgentTools.filter(t =>
+    (VOICE_FAST_TOOLS as readonly string[]).includes(t.name) || (visualsEnabled && t.name === "voice_visual"));
+  const { voiceSplit, voicePromptTelemetry } = voicePromptFor(prepared, buildVoiceTail(visualsEnabled), voiceModel, voiceTools, allAgentTools.length);
+  return { voiceModel, voiceTools, voiceSplit, voicePromptTelemetry };
 }
 
 // A spoken reply is a few sentences; this caps a voice turn's output so a
@@ -120,7 +184,7 @@ export async function setupVoiceWs(deps: {
     // end-of-turn memory pass, and the threat engine with its canary watch. It
     // differs in having no fallback chain (voice picks the configured provider;
     // an error surfaces as agent_error to the client, which will retry).
-    const runVoiceTurn = async ({ text, continuationOf, onDelta, onVisual }: VoiceTurnInput, sessionId: string, slot: VoiceTurnSlot) => {
+    const runVoiceTurn = async ({ text, continuationOf, onDelta, onVisual }: VoiceTurnInput, sessionId: string, slot: VoiceTurnSlot, clock: VoiceTurnClock) => {
       // Durable, continuous memory: load the persisted thread from the same
       // store text chat uses, rather than a per-connection in-memory history
       // that resets on every reconnect. The client sends the chat thread's own
@@ -129,6 +193,7 @@ export async function setupVoiceWs(deps: {
       // store's documented read-after-write invariant).
       await flushSession(sessionId);
       const session = getOrCreateSession(sessionId);
+      clock.mark("load");
 
       // Continuation merge (turn-runner armed it): this turn's text re-includes
       // the barged-over utterance, so retract the interrupted turn's rows —
@@ -162,62 +227,9 @@ export async function setupVoiceWs(deps: {
         throw new Error(`No API key configured for ${prepared.provider}.`);
       }
 
-      // Spoken-turn model: the selected provider's FAST tier, not the chat
-      // model. A reasoning chat model (gpt-5.6-sol) thinks 13-16s before
-      // speaking — dead air. resolveVoiceModel swaps in the provider's declared
-      // fast model (codex → gpt-5.4-mini, etc.) while keeping the provider;
-      // heavy work still delegates to full-power workers on the chat model.
-      const { getSetting } = await import("../settings.js");
-      const voiceModel = resolveVoiceModel(prepared.provider as ProviderId, prepared.model, getSetting);
-      if (voiceModel !== prepared.model) {
-        logger.info(`[voice-ws] spoken turn on fast tier: ${prepared.provider}/${voiceModel} (chat model ${prepared.model})`);
-      }
-
-      // Keep a local voice model resident across the conversation: fire-and-
-      // forget warm (deduped, 30m keep-alive) so turns after the first don't
-      // pay a cold load, and the current turn's own request keeps it warm. The
-      // very first turn of a cold session can still load-wait; a connect-time
-      // prewarm is a follow-up. No-op / harmless 404 for non-Ollama runtimes.
-      // Passing no size is deliberate: warmModel loads at the context the
-      // turn's own request applies (context-sizing.ts), so the warm never
-      // reloads the model this turn is about to use.
-      if (prepared.provider === "local") warmModel(config.ollamaUrl, voiceModel);
-
-      // Voice has the SAME tools as text chat (full parity). The old "tools
-      // mostly off" policy was a vestige of a weaker harness: it was meant to
-      // stop a runaway tool-loop and a mid-conversation setting change, but the
-      // op budget + wall-clock ceiling now bound runaway, and the tool-policy /
-      // approval / rbac gates (all wired into this canonical run) enforce safety
-      // identically in voice and text — so a request shouldn't behave
-      // differently just because it was spoken. With no real tools the agent
-      // FABRICATED actions it couldn't perform ("opened it"); parity fixes that.
-      // The visuals toggle only governs the one cosmetic tool (voice_visual).
-      const visualsEnabled = await voiceVisualsEnabled(config);
-      // Governor: a voice turn is FAST and tool-light. It answers / does quick
-      // lookups inline, drives the agent's OWN browser for web tasks, and
-      // DELEGATES genuinely heavy/long work to a background worker
-      // (op_submit_async) instead of grinding the full 169-tool agentic loop on
-      // the voice critical path — which produced 13-22s silences and tool-parse
-      // failures.
-      //
-      // `browser` drives the agent's own visible Chrome (its own persistent
-      // profile, controllable over CDP) — so "open google" then "search it"
-      // works as one flow, in a window the agent can actually act on. NOT the
-      // user's real browser: open_url (OS launch → real browser) was removed
-      // because the agent can't control what it opens there — a dead end. NO
-      // http_request either (the model abused it to fake browser control via
-      // invented localhost endpoints, then hallucinated success).
-      // Mission scheduling is on the belt because it's a QUICK direct call,
-      // and delegating it is impossible by design: scheduling is deliberately
-      // excluded from the delegated-worker belt (mission_schedule_* is denied —
-      // an unattended worker must not install recurring jobs), so a
-      // "check/set up my 2am mission" spawn could never do it. It stays a
-      // direct voice call.
-      // mission_schedule_delete stays off voice — destructive, belongs in
-      // Voice belt + spoken-mode prompt tail (voice-prompt.ts).
-      const voiceTools = allAgentTools.filter(t =>
-        (VOICE_FAST_TOOLS as readonly string[]).includes(t.name) || (visualsEnabled && t.name === "voice_visual"));
-      const { voiceSplit, voicePromptTelemetry } = voicePromptFor(prepared, buildVoiceTail(visualsEnabled), voiceModel, voiceTools, allAgentTools.length);
+      clock.mark("prepare");
+      const { voiceModel, voiceTools, voiceSplit, voicePromptTelemetry } = await planSpokenTurn(prepared, config, allAgentTools);
+      clock.mark("plan");
       const voiceSystemPrompt = voiceSplit.systemPrompt;
       const voiceRenderedPromptSections = voiceSplit.sections;
 
@@ -228,6 +240,7 @@ export async function setupVoiceWs(deps: {
       const canaryTripped = canaryWatch(threatEngine, slot.abort);
       const onEvent = (event: ServerEvent) => {
         if (event.type === "stream" && "delta" in event && event.delta) {
+          clock.firstToken();
           if (canaryTripped(event.delta)) return;
           const spoken = hygiene.delta(event.delta);
           if (spoken !== null) onDelta(spoken);
@@ -356,6 +369,7 @@ export async function setupVoiceWs(deps: {
         if (hadPrev && prev) activeOnEventBySession.set(sessionId, prev);
         else activeOnEventBySession.delete(sessionId);
       }
+      logger.info(clock.line(sessionId, `${prepared.provider}/${voiceModel}`));
 
       // Compose the assistant message that goes back into history. Control-
       // plane facts (interrupted, tool traces) must NOT be embedded as inline
@@ -397,13 +411,15 @@ export async function setupVoiceWs(deps: {
       const sessionId = input.sessionId && input.sessionId.trim() ? input.sessionId : `voice-${randomUUID()}`;
       // Claimed before the thread is read: a replaced turn (barge-in, or a
       // typed message) has saved its rows by the time this one loads them.
+      const clock = createVoiceTurnClock();
       const slot = await claimVoiceTurn(sessionId, input.signal);
+      clock.mark("slot");
       if (!slot) {
         input.onDelta(VOICE_BUSY_REPLY);
         return { assistantText: VOICE_BUSY_REPLY, updatedHistory: getOrCreateSession(sessionId).messages };
       }
       try {
-        return await runVoiceTurn(input, sessionId, slot);
+        return await runVoiceTurn(input, sessionId, slot, clock);
       } finally {
         slot.release();
       }

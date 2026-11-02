@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1913 non-test source files · 86 oversized · 251 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1914 non-test source files · 86 oversized · 251 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -48,7 +48,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/desktop-contract/` | 21 | 10 | M |  |
 | `src/protocols/` | 21 | 52 | XL |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
-| `src/server/` *(entrypoint)* | 18 | 58 | XL | 5 |
+| `src/server/` *(entrypoint)* | 18 | 59 | XL | 5 |
 | `src/agents/` | 17 | 13 | L |  |
 | `src/autonomy/` | 17 | 5 | M |  |
 | `src/net/` | 17 | 11 | L |  |
@@ -417,7 +417,6 @@ job. Comments are free: never cut them to fit.
 - `src/security/layer/network-policy.ts#evaluateWebFetch` — 90+ own code lines (cap 100)
 - `src/security/layer/shell-policy.ts#evaluateShellCommand` — 90+ own code lines (cap 100)
 - `src/server/inbound-channel-runner.ts#runInboundChannelTurn` — 90+ own code lines (cap 100)
-- `src/server/voice-ws.ts#runVoiceTurn` — 90+ own code lines (cap 100)
 - `src/tool-execution/run-sandboxed.ts#runSandboxedPhase` — 90+ own code lines (cap 100)
 - `src/tools/email-send-tool.ts#emailSend.execute` — 90+ own code lines (cap 100)
 - `src/tools/read-write-tools.ts#readTool.execute` — 90+ own code lines (cap 100)
@@ -445,6 +444,7 @@ job. Comments are free: never cut them to fit.
 - `src/server/api-request-router.ts#routeApiRequest` — 80+ own code lines (cap 100)
 - `src/server/background-jobs/dream-check.ts#registerDreamRunner:callback` — 80+ own code lines (cap 100)
 - `src/server/bootstrap-services.ts#bootstrapServices` — 80+ own code lines (cap 100)
+- `src/server/voice-ws.ts#runVoiceTurn` — 80+ own code lines (cap 100)
 - `src/threat/threat-engine.ts#ThreatEngine.evaluateToolResult` — 80+ own code lines (cap 100)
 - `src/tools/asset-tools.ts#extractSiteAssetsTool.execute` — 80+ own code lines (cap 100)
 - `src/tools/image-tools/generate-video.ts#generateVideoTool.execute` — 80+ own code lines (cap 100)

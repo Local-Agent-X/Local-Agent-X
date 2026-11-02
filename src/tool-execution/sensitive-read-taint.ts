@@ -322,7 +322,15 @@ export function applyResultTaintPolicy(
 
   if (command !== undefined) {
     const withheld = withheldCommandPaths(sid, command, floor, result);
-    if (withheld.length > 0) {
+    const keysOnly = withheld.length > 0 ? dotenvCommandKeysOnly(withheld, command, args, result) : null;
+    if (keysOnly) {
+      // Only dotenv files, and with every value masked the output carries none
+      // of their bytes: delivered keys-only and untainted, as the read tool
+      // delivers a .env (Peter, 2026-11-01).
+      if (floor.pairs.length > 0) retractProvisionalTaint(sid, floor.pairs, floor.id);
+      floor.pairs = [];
+      result = keysOnly;
+    } else if (withheld.length > 0) {
       // The floor for these paths was set pre-execute; whether it stands is
       // decided by the stub branch below (stubbed → retracted, delivered →
       // kept). No content-bearing re-record — these reads carry no per-path
@@ -477,6 +485,29 @@ export function dotenvKeysOnly(result: ToolResult): ToolResult {
     return `${m[1]}${m[2]}${/^\s*/.exec(m[3])![0]}${VALUE_MASK}`;
   }).join("\n");
   return withMetadata({ ...result, content: `${content}\n${KEYS_ONLY_NOTE}` }, { values_masked: values, keys_only: true });
+}
+
+/**
+ * A finished command whose only sensitive operands are dotenv files (`cat
+ * .env`, the model's own sed over it blanking each value, a `grep KEY .env`):
+ * its output with every assignment's value masked, when what is left carries
+ * none of those files' bytes. Null otherwise — a value printed bare (`cut -d=
+ * -f2 .env`), an errored run, another sensitive file — and the stub stands.
+ * The masking is this harness's own, never the command's.
+ */
+function dotenvCommandKeysOnly(
+  withheld: string[], command: string, args: Record<string, unknown>, result: ToolResult | undefined,
+): ToolResult | null {
+  if (!result || result.isError || typeof result.content !== "string") return null;
+  if (!withheld.every((p) => isDotenvFile(p))) return null;
+  const masked = dotenvKeysOnly(result);
+  const cwd = cwdOf(args) || workspaceRoot();
+  const carried = withheld.some((p) => outputCarriesFile(String(masked.content), isAbsolute(p) ? p : resolve(cwd, p)));
+  if (carried) {
+    logger.info(`dotenv command output still carries file bytes after masking — withheld (${command.slice(0, 80)})`);
+    return null;
+  }
+  return masked;
 }
 
 /** Above this size the file is not read to judge an echo: taken as carried. */

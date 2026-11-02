@@ -94,3 +94,49 @@ describe("a delivered sensitive read persists the taint it committed", () => {
     expect(out.metadata).toBeUndefined();
   });
 });
+
+// Peter, 2026-11-01: a .env looked at through the shell is treated like the
+// read tool's keys-only view. The harness masks every value itself; the
+// output is delivered only when, masked, it carries none of the file's bytes.
+describe("a shell read of a dotenv file", () => {
+  const env = () => keyFile(".env", "OPENAI_API_KEY=sk-live-0123456789abcdef\nDB_PASSWORD=correct-horse-battery\n# a comment\n");
+
+  it("delivers the key names with every value masked, and taints nothing", () => {
+    const sid = session();
+    const args = { command: `cat ${env()} | sed 's/=.*/=<set>/'` };
+    const floor = setPreExecuteTaintFloor("bash", args, sid);
+    expect(floor.pairs.length).toBe(1);
+    const out = applyResultTaintPolicy("bash", args, sid, { content: "OPENAI_API_KEY=<set>\nDB_PASSWORD=<set>\n# a comment" }, floor)!;
+    expect(out.status).not.toBe("blocked");
+    expect(out.content).toContain("OPENAI_API_KEY=");
+    expect(out.metadata?.keys_only).toBe(true);
+    expect(getTaintSummary(sid).count).toBe(0);
+  });
+
+  it("masks the values itself when the command printed them", () => {
+    const sid = session();
+    const args = { command: `cat ${env()}` };
+    const floor = setPreExecuteTaintFloor("bash", args, sid);
+    const out = applyResultTaintPolicy("bash", args, sid, { content: "OPENAI_API_KEY=sk-live-0123456789abcdef\nDB_PASSWORD=correct-horse-battery" }, floor)!;
+    expect(String(out.content)).not.toContain("sk-live-0123456789abcdef");
+    expect(String(out.content)).not.toContain("correct-horse-battery");
+    expect(getTaintSummary(sid).count).toBe(0);
+  });
+
+  it("withholds output that prints a value bare", () => {
+    const sid = session();
+    const args = { command: `cut -d= -f2 ${env()}` };
+    const floor = setPreExecuteTaintFloor("bash", args, sid);
+    const out = applyResultTaintPolicy("bash", args, sid, { content: "sk-live-0123456789abcdef\ncorrect-horse-battery" }, floor)!;
+    expect(out.status).toBe("blocked");
+    expect(String(out.content)).not.toContain("sk-live");
+  });
+
+  it("withholds a command that also reads a non-dotenv secrets file", () => {
+    const sid = session();
+    const args = { command: `cat ${env()} ${keyFile("id_rsa")}` };
+    const floor = setPreExecuteTaintFloor("bash", args, sid);
+    const out = applyResultTaintPolicy("bash", args, sid, { content: "OPENAI_API_KEY=x\n-----BEGIN OPENSSH PRIVATE KEY-----" }, floor)!;
+    expect(out.status).toBe("blocked");
+  });
+});

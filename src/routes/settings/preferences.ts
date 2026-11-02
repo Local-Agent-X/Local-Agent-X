@@ -128,12 +128,10 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
   // is a single line in settings-schema.ts — no edits here.
   if (method === "POST" && url.pathname === "/api/settings") {
     const body = await safeParseBody(req); if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
-    // Read + write through getRuntimeConfig(), NOT the boot-time ctx.config
-    // reference. The config disk-watcher hot-reloads via setRuntimeConfig(
-    // loadConfig()), which swaps _runtimeConfig to a NEW object; ctx.config
-    // stays pinned to the stale boot object. Persisting ctx.config here would
-    // clobber any hand edit made directly in config.json (and picked up by the
-    // watcher) with the pre-reload snapshot — the split-brain this route caused.
+    // Read + write through getRuntimeConfig(). The config disk-watcher's hot
+    // reload updates that object in place (reloadRuntimeConfig), so it and
+    // ctx.config are one object carrying any hand edit made directly in
+    // config.json; persisting a separate snapshot would clobber that edit.
     const runtimeConfig = getRuntimeConfig();
     const undeclared = Object.keys(body).filter((k) => !settingSpec(k));
     if (undeclared.length > 0) {

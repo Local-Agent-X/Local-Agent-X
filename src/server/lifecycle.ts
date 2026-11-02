@@ -10,7 +10,7 @@ import { startAriKernel } from "../ari-kernel/index.js";
 import { getSharedAuditTrail } from "../threat/audit-trail.js";
 import { EventBus } from "../event-bus.js";
 import { ConfigWatcher } from "../config-hot-reload.js";
-import { getRuntimeConfig, loadConfig, setRuntimeConfig } from "../config.js";
+import { getRuntimeConfig, loadConfig, reloadRuntimeConfig } from "../config.js";
 import { closeAllBrowsers } from "../browser/index.js";
 import type { LAXConfig } from "../types.js";
 import type { MemoryIndex } from "../memory/index.js";
@@ -152,7 +152,7 @@ export function wireWsChat(deps: {
 export function startConfigWatcher(dataDir: string): void {
   // Reload from disk via loadConfig() so the freshly-validated LAXConfig (with
   // profile defaults, schema parse, generated authToken) is what gets handed
-  // to setRuntimeConfig. Without this call, in-memory ctx.config stays stale
+  // to reloadRuntimeConfig. Without this call, in-memory ctx.config stays stale
   // forever and a UI toggle (enableShell / toolApproval / etc.) writes to
   // config.json but the running gate keeps using the old value — observable
   // as "I turned shell OFF but bash still runs" until process restart.
@@ -161,7 +161,7 @@ export function startConfigWatcher(dataDir: string): void {
       const previousBrowserMode = getRuntimeConfig().browserMode;
       const previousLocalOnlyMode = getRuntimeConfig().localOnlyMode;
       const nextConfig = loadConfig();
-      setRuntimeConfig(nextConfig);
+      reloadRuntimeConfig(nextConfig);
       if (nextConfig.browserMode !== previousBrowserMode) {
         void closeAllBrowsers().catch((error) => {
           logger.error(`[config] Browser mode teardown failed: ${(error as Error).message}`);

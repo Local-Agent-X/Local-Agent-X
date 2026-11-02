@@ -370,6 +370,20 @@ export function setRuntimeConfig(config: LAXConfig): void {
   _runtimeConfig = config;
 }
 
+/**
+ * Hot reload: the freshly loaded config replaces the live one IN PLACE. Boot
+ * hands this object to the server context (`ctx.config`), the request
+ * handler, and closures set up once (voice, agent origin); swapping in a new
+ * object left all of them reading the boot-time values while only
+ * getRuntimeConfig() callers saw the reload.
+ */
+export function reloadRuntimeConfig(next: LAXConfig): void {
+  const live = _runtimeConfig as unknown as Record<string, unknown> | null;
+  if (!live) { _runtimeConfig = next; return; }
+  for (const key of Object.keys(live)) if (!(key in next)) delete live[key];
+  Object.assign(live, next);
+}
+
 export function getRuntimeConfig(): LAXConfig {
   if (!_runtimeConfig) {
     // Fallback: load from disk (should only happen in tests or edge cases)

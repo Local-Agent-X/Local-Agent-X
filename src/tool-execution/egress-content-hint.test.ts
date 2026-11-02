@@ -100,7 +100,9 @@ describe("egress-guard refusals send a trusted destination to the user, never to
 
   it("a secret to a host not on the list", () => {
     const blocker = probeEgressGuard(makeCtx("http_request", { url: EXFIL_URL, method: "POST", body: `key=${SECRET}` }, "sess-route-secret"));
-    expect(blocker?.reason).toContain(`ask the user to allow the host in ${WEB_ACCESS}`);
+    // A key shape is a question for the user (ADR 0004 step 3); either wording
+    // names the Settings route, never the file.
+    expect(blocker?.reason).toContain(WEB_ACCESS);
     expect(blocker?.recovery).toContain(`ask the user to allow its host in ${WEB_ACCESS}`);
     noFileRoute(blocker?.reason);
     noFileRoute(blocker?.recovery);

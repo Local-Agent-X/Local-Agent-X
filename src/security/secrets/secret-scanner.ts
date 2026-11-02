@@ -119,14 +119,21 @@ export function scanForSecrets(text: string): ScanResult {
     });
   }
 
-  // Deduplicate by position
-  const seen = new Set<string>();
-  const deduped = matches.filter(m => {
+  // Deduplicate by position, keeping the strongest evidence for a span: the
+  // user's own stored AWS key is both a catalog shape and a known value, and
+  // the egress guard blocks harder on the second (matchTier).
+  const bySpan = new Map<string, number>();
+  const deduped: SecretMatch[] = [];
+  for (const m of matches) {
     const key = `${m.startIndex}:${m.endIndex}`;
-    if (seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
+    const at = bySpan.get(key);
+    if (at === undefined) {
+      bySpan.set(key, deduped.length);
+      deduped.push(m);
+    } else if (matchTier(m) === "control" && matchTier(deduped[at]) !== "control") {
+      deduped[at] = m;
+    }
+  }
 
   return {
     clean: deduped.length === 0,
@@ -154,6 +161,17 @@ export function scanKnownSecretValues(text: string): SecretMatch[] {
 export function scanHeldValues(text: string, held: readonly string[], pattern: string): SecretMatch[] {
   if (held.length === 0) return [];
   return scanKnownValues(text, buildNormalizedView(text), peelEncodedRuns(text), held, pattern);
+}
+
+/**
+ * The tier of a match's evidence (ADR 0004). "control": the user's own stored
+ * secret, found byte for byte, or encoded content the scan could not inspect —
+ * nobody can vouch for either at a glance, so it always blocks. "advisory": a
+ * known key shape or a random-looking token — a guess, which a person who
+ * recognizes the destination can resolve.
+ */
+export function matchTier(m: SecretMatch): "control" | "advisory" {
+  return m.type === "known-secret-value" || m.type === "uninspected-encoded" ? "control" : "advisory";
 }
 
 /** Redact all detected secrets from text */

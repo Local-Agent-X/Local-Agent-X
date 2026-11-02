@@ -19,7 +19,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { containsNulByte } from "../binary-sniff.js";
 import { join } from "node:path";
-import { scanForSecrets, decodedPayloadViews } from "../security/secrets/index.js";
+import { scanForSecrets, decodedPayloadViews, matchTier, type SecretMatch } from "../security/secrets/index.js";
 import { outboundPayloadParts } from "../security/secrets/index.js";
 import { matchEgressList } from "../security/layer/index.js";
 import { classifyData } from "../threat/classification.js";
@@ -72,7 +72,14 @@ export interface GuardBlock {
    *  destination resolves exactly that doubt. Silent (unattended) runs still
    *  hard-block — an approval with no one watching is a block. */
   confirmable?: boolean;
+  /** For a secret-scan refusal, the tier of its evidence (matchTier): any
+   *  "control" match makes the block "control"; only guesses make it
+   *  "advisory", which a send with a destination may put to the user. */
+  tier?: "control" | "advisory";
 }
+
+const tierOf = (matches: readonly SecretMatch[]): "control" | "advisory" =>
+  matches.some((m) => matchTier(m) === "control") ? "control" : "advisory";
 
 /** Returns null if the call may proceed, or a GuardBlock describing the refusal.
  *  `vouchedToken` clears an entropy-heuristic hit the destination's own site
@@ -102,13 +109,23 @@ export function checkOutboundRequest(args: GuardArgs, vouchedToken?: (token: str
   if (matches.length > 0) {
     if (isTrustedDestination(url)) return null;
     const kinds = [...new Set(matches.map(m => m.pattern))].join(", ");
+    const host = hostOf(url) || url;
+    // Only a guess (a key shape, a random-looking token) is put to the user:
+    // they can tell whether this host is meant to get it. Their own stored
+    // secret, or content too big to inspect, is refused outright.
+    const tier = tierOf(matches);
     return {
-      message:
-        `Refusing ${method} to ${hostOf(url) || url}: request contains secret-shaped content (${kinds}) ` +
-        `and the destination is not in the trusted-destinations list. ` +
-        `If this destination should receive credentials, ask the user to allow the host in Settings → Security → Web access. ` +
-        `For stored secrets prefer {{SECRET_NAME}} placeholders over hardcoded values.`,
+      message: tier === "advisory"
+        ? `${method} to ${host} carries content that looks like a credential (${kinds}), and ${host} is not a trusted destination. ` +
+          `It is sent only if the user approves; allowing the host in Settings → Security → Web access stops the question. ` +
+          `For stored secrets prefer {{SECRET_NAME}} placeholders over hardcoded values.`
+        : `Refusing ${method} to ${host}: request contains secret-shaped content (${kinds}) ` +
+          `and the destination is not in the trusted-destinations list. ` +
+          `If this destination should receive credentials, ask the user to allow the host in Settings → Security → Web access. ` +
+          `For stored secrets prefer {{SECRET_NAME}} placeholders over hardcoded values.`,
       meta: { url, method, blocked_by: "outbound-secret-scan", secret_kinds: kinds },
+      confirmable: tier === "advisory",
+      tier,
     };
   }
 
@@ -164,6 +181,7 @@ export function checkOutboundPayload(
         `This channel can carry data off-box and has no destination allowlist, so credentials may not leave through it. ` +
         `Prefer {{SECRET_NAME}} placeholders over hardcoded values, or remove the credential from the payload.`,
       meta: { sink, blocked_by: "outbound-secret-scan", secret_kinds: kinds },
+      tier: tierOf(matches),
     };
   }
 
@@ -269,11 +287,18 @@ export function checkOutboundEmail(
     ? "sensitive personal data (financial account or SSN)"
     : `secret-shaped content (${kinds})`;
   const dest = untrusted.length > 0 ? untrusted.join(", ") : "no parseable recipient";
+  // The user's own stored secret (or content too big to inspect) going to a
+  // stranger is not a question to put on a card: it is refused, and allowing
+  // the recipient is the way to send it.
+  const tier = scan.clean ? undefined : tierOf(scan.matches);
+  const ask = tier !== "control";
   return {
     message:
       `email_send to ${dest}: the message content contains ${what} and the recipient is not a ` +
       `trusted destination (your own address and the sites allowed in Settings → Security → Web access are trusted). ` +
-      `Confirm the send only if these recipients are meant to receive this content; otherwise remove it. ` +
+      (ask
+        ? `Confirm the send only if these recipients are meant to receive this content; otherwise remove it. `
+        : `It carries one of your stored secrets, or encoded content too large to check, so it is refused; remove it, or send a stored secret by placeholder to a trusted recipient. `) +
       `A recipient's domain that should always receive such data can be allowed in Settings → Security → Web access.`,
     meta: {
       sink: "email_send",
@@ -281,7 +306,8 @@ export function checkOutboundEmail(
       ...(kinds ? { secret_kinds: kinds } : {}),
       untrusted_recipients: untrusted,
     },
-    confirmable: true,
+    confirmable: ask,
+    ...(tier ? { tier } : {}),
   };
 }
 

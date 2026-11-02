@@ -21,7 +21,7 @@
 // code, where the kernel gate returns a raw kernel-only message (no ToolResult,
 // no egress-guard / data-lineage text).
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -31,6 +31,7 @@ import { egressAggregateGate, DATA_LINEAGE_RECOVERY } from "./egress-gates.js";
 import { startAriKernel, stopAriKernel } from "../ari-kernel/lifecycle.js";
 import { recordSensitiveRead, clearSessionTaint } from "../data-lineage/index.js";
 import type { ToolCallContext } from "./context.js";
+import { registerRedactedSecretValue, unregisterRedactedSecretValue } from "../security/secrets/index.js";
 
 // AWS Access Key shape — matched by the credential scanner (checkOutboundRequest).
 const SECRET = "AKIAIOSFODNN7EXAMPLE";
@@ -60,6 +61,12 @@ function makeCtx(name: string, args: Record<string, unknown>, sessionId: string)
 }
 
 describe("SC-10 · kernel↔aggregate seam — a tainted POST surfaces the taint AND the allowlist blocker in one turn", () => {
+  // The key is one of the user's stored secrets here: exact evidence, so the
+  // egress guard's line is a hard block (a bare key shape would be put to the
+  // user on a card, ADR 0004 step 3) and these tests pin the aggregation.
+  beforeAll(() => registerRedactedSecretValue(SECRET));
+  afterAll(() => unregisterRedactedSecretValue(SECRET));
+
   let dir: string;
   const prevKey = process.env.LAX_AUDIT_KEY;
 
@@ -146,6 +153,12 @@ describe("SC-10 · kernel↔aggregate seam — a tainted POST surfaces the taint
 });
 
 describe("SC-10 · egressAggregateGate — the data-lineage + canary + egress-guard cohort aggregates without the kernel", () => {
+  // The key is one of the user's stored secrets here: exact evidence, so the
+  // egress guard's line is a hard block (a bare key shape would be put to the
+  // user on a card, ADR 0004 step 3) and these tests pin the aggregation.
+  beforeAll(() => registerRedactedSecretValue(SECRET));
+  afterAll(() => unregisterRedactedSecretValue(SECRET));
+
   it("reports BOTH the data-lineage taint floor AND the egress-guard allowlist blocker in one response", () => {
     const sid = "sc10-cohort";
     clearSessionTaint(sid);

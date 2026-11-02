@@ -1,9 +1,18 @@
 # ADR 0004 — Split the secret scanner into a control tier and an advisory tier
 
-Status: Proposed — 2026-09-07. Step 1 shipped 2026-09-07 (3dfd476f); step 4
-carried out 2026-11-02 by [ADR 0006](0006-secret-scanner-peel-fails-closed.md);
-step 2 shipped 2026-11-02: every egress block is an `egress_blocked` audit
-event (`src/tool-execution/egress-block-audit.ts`).
+Status: Accepted — every step shipped. Step 1 2026-09-07 (3dfd476f); step 4
+2026-11-02 by [ADR 0006](0006-secret-scanner-peel-fails-closed.md); step 2
+2026-11-02: every egress block is an `egress_blocked` audit event
+(`src/tool-execution/egress-block-audit.ts`); step 3 2026-11-02, as built:
+`matchTier` (`src/security/secrets/secret-scanner.ts`) grades each match
+"control" (the user's stored secret, or encoded content too large to inspect)
+or "advisory" (a key shape, an entropy guess). The egress guard refuses
+control-tier content to any destination the user has not trusted; advisory
+content to a site or recipient goes to the user on a card (an unattended run
+still blocks). Sinks with no destination (clipboard, process start, typed
+text, media forwarding) refuse both tiers. Masking, taint and the other
+readers of `.matches` were left as they were: they mask or record, they never
+blocked a send.
 
 ## Context
 

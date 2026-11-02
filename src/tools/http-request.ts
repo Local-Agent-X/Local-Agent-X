@@ -109,7 +109,12 @@ export function createHttpRequestTool(secrets?: SecretsStore): ToolDefinition {
       if (fromFile && "error" in fromFile) return err(fromFile.error, { recovery: "Fix body_file (or pass the body inline) and retry." });
 
       const guard = checkOutboundRequest({ url, method, body: fromFile ? fromFile.body : args.body, headers: args.headers }, vouchedFor("http_request", args, sessionIdOf(args) ?? ""));
-      if (guard) return err(guard.message, guard.meta);
+      // A confirmable block over the inline url/body/headers was put to the
+      // user by the egress gate before this ran (an unattended run never got
+      // here), so only a hard block is this check's to refuse. A body_file's
+      // contents are read here and nowhere earlier: the gate never asked about
+      // them, so any finding in them is refused.
+      if (guard && (!guard.confirmable || fromFile)) return err(guard.message, guard.meta);
 
       const { headers, modelHeaders: rawHeaders, selfAuth, droppedNote, droppedMeta } = await startingHeaders(url, args.headers);
       let bodyStr = args.body ? String(args.body) : undefined;

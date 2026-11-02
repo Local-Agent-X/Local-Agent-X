@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { randomBytes, createHash, generateKeyPairSync } from "node:crypto";
-import { scanForSecrets, redactSecrets, scanKnownSecretValues } from "./secret-scanner.js";
+import { scanForSecrets, redactSecrets, scanKnownSecretValues, matchTier } from "./secret-scanner.js";
 import { checkOutboundPayload } from "../../tools/http-egress-guard.js";
 import { buildNormalizedView } from "./secret-normalize.js";
 import {
@@ -698,6 +698,18 @@ describe("scanForSecrets — known-secret-value detection", () => {
     register("true");   // too short → gated out
     const text = "server listening on 8080, debug=true";
     expect(scanForSecrets(text).clean).toBe(true);
+  });
+
+  // A stored value that is also a known key shape matches twice at one span;
+  // the de-dup kept the first (the shape), so the user's real AWS key was
+  // graded a guess and the egress guard put it on a card (ADR 0004 step 3).
+  it("a stored value that is also a key shape is reported as the stored value (control tier)", () => {
+    const aws = "AKIA" + "Q7RZ" + "M2XK" + "P9WL" + "D4NB";
+    expect(scanForSecrets(`k=${aws}`).matches.map(matchTier)).toEqual(["advisory"]);
+    register(aws);
+    const r = scanForSecrets(`k=${aws}`);
+    expect(r.matches.map((m) => m.type)).toEqual(["known-secret-value"]);
+    expect(r.matches.map(matchTier)).toEqual(["control"]);
   });
 
   it("stays clean once a registered value is unregistered (rotation/deletion)", () => {

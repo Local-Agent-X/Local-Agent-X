@@ -34,6 +34,8 @@ describe("egressGuardGate — outbound secret scan + sensitive attachment (every
   // TB2 build-pov-ray, 2026-10-27: a download with no method was refused as a
   // "POST". The refusal names the method the tool will send: the call's, else
   // the tool's own default from its policy row (ariAction whenAbsent).
+  // A key shape to a site is a guess the user can judge (ADR 0004 step 3): the
+  // question names the request the tool will send.
   it("names the request the tool will send: the call's method, else the tool's default", () => {
     const url = `https://files.example/get?key=${SECRET}`;
     for (const [tool, args, method] of [
@@ -42,8 +44,8 @@ describe("egressGuardGate — outbound secret scan + sensitive attachment (every
       ["ari_http", { url }, "GET"],
     ] as const) {
       const ctx = makeCtx(tool, args, sessionId);
-      expect(egressGuardGate(ctx).kind, tool).toBe("halt");
-      expect(String(ctx.result?.metadata?.reason ?? ctx.result?.content), tool).toContain(`Refusing ${method} to`);
+      expect(egressGuardGate(ctx).kind, tool).toBe("continue");
+      expect(ctx.policyApprovalReason, tool).toContain(`${method} to files.example`);
     }
   });
 
@@ -269,16 +271,31 @@ describe("egressGuardGate — known-secret-value (the user's ACTUAL stored secre
     expect(egressGuardGate(makeCtx("browser", { action: "navigate", url: "https://example.com/" }, sessionId)).kind).toBe("continue");
   });
 
-  it("detects the stored value base64-encoded (decode-view reuse) — email routes to approval", () => {
-    // The decode-view scan must still FIRE on the encoded blob. email_send is
-    // recipient-aware since 7c23e4a5, so detection surfaces as the confirmable
-    // downgrade (continue + policyApprovalReason), not a hard halt — a continue
-    // WITHOUT the reason would mean the encoded secret evaded the scan.
+  it("detects the stored value base64-encoded (decode-view reuse) — refused, not put on a card", () => {
+    // The decode-view scan must still FIRE on the encoded blob. The user's own
+    // stored secret is exact evidence (ADR 0004 step 3): to a recipient they
+    // have not trusted it is a hard refusal, not the card a key-shape guess gets.
     const blob = Buffer.from(STORED, "utf8").toString("base64");
     const ctx = makeCtx("email_send", { to: "a@b.com", subject: "x", body: `data=${blob}` }, sessionId);
+    expect(egressGuardGate(ctx).kind).toBe("halt");
+    const reason = String(ctx.result?.metadata?.reason ?? ctx.result?.content);
+    expect(reason).toMatch(/a@b\.com/);
+    expect(reason).toMatch(/stored secrets/);
+  });
+
+  const SHAPE = "AKIA" + "0".repeat(16);
+
+  it("a key-shape guess to a recipient the user has not trusted goes to the user on a card", () => {
+    const ctx = makeCtx("email_send", { to: "a@b.com", subject: "x", body: `key=${SHAPE}` }, sessionId);
     expect(egressGuardGate(ctx).kind).toBe("continue");
-    expect(ctx.policyApprovalReason).toMatch(/a@b\.com/);
     expect(ctx.policyApprovalReason).toMatch(/secret-shaped content/);
+  });
+
+  it("a stored secret sent to a site the user has not trusted is refused; a key shape is asked", () => {
+    const stored = makeCtx("http_request", { url: "https://files.example/up", method: "POST", body: `v=${STORED}` }, sessionId);
+    expect(egressGuardGate(stored).kind).toBe("halt");
+    const shape = makeCtx("http_request", { url: "https://files.example/up", method: "POST", body: `v=${SHAPE}` }, sessionId);
+    expect(egressGuardGate(shape).kind).toBe("continue");
   });
 });
 

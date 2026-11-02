@@ -51,7 +51,6 @@ const MODEL_PROVIDERS: readonly Registered[] = [
   { file: "src/ollama-cloud.ts", uses: ["outbound"], why: "lists the user's Ollama Cloud models with their key" },
   { file: "src/llm-dispatch/hosted.ts", uses: ["outbound"], why: "side work (classifiers, summaries) on the configured hosted model" },
   { file: "src/llm-dispatch/ollama.ts", uses: ["outbound"], why: "side work on the configured Ollama" },
-  { file: "src/memory/reranker.ts", uses: ["outbound"], why: "memory reranking on the configured Ollama" },
   { file: "src/embedding-providers/helpers.ts", uses: ["outbound"], why: "the configured embedding provider (retrying fetch its providers share)" },
   { file: "src/embedding-providers/ollama.ts", uses: ["outbound"], why: "embeddings from the configured Ollama" },
   { file: "src/doctor.ts", uses: ["outbound"], why: "Doctor checks a configured provider key against that provider" },

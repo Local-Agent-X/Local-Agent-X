@@ -13,14 +13,14 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1914 non-test source files · 86 oversized · 251 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1916 non-test source files · 86 oversized · 251 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 173 | 29 | XL | 1 |
-| `src/security/` | 157 | 59 | XL | 2 |
+| `src/security/` | 157 | 60 | XL | 2 |
 | `src/tools/` | 122 | 224 | XL | 9 |
 | `src/tool-execution/` | 87 | 84 | XL | 2 |
 | `src/workspace/` | 86 | 3 | M |  |
@@ -65,7 +65,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/agent-loop/` | 11 | 1 | S |  |
 | `src/routes/` | 11 | 98 | XL | 17 |
 | `src/persistence/` | 10 | 2 | S |  |
-| `src/sync/` | 10 | 21 | L | 1 |
+| `src/sync/` | 10 | 22 | L | 1 |
 | `src/codex-client/` | 9 | 6 | M |  |
 | `src/plugin-system/` | 9 | 10 | L | 1 |
 | `src/screen-stream/` | 9 | 11 | L |  |
@@ -78,10 +78,10 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/auto-build/` | 7 | 52 | XL | 3 |
 | `src/android/` | 6 | 7 | M |  |
 | `src/credentials/` | 6 | 1 | S |  |
+| `src/publish-review/` | 5 | 8 | M |  |
 | `src/embedding-providers/` | 4 | 8 | M |  |
 | `src/hooks/` | 4 | 3 | M |  |
 | `src/language-intel/` | 4 | 5 | M |  |
-| `src/publish-review/` | 4 | 8 | M |  |
 | `src/routing/` | 4 | 6 | M |  |
 | `src/conversation/` | 2 | 3 | M |  |
 | `src/llm-dispatch/` | 2 | 2 | M |  |

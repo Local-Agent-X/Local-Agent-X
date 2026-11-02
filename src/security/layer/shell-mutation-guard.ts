@@ -2,6 +2,7 @@ import { basename, isAbsolute, join, posix, win32 } from "node:path";
 import { homedir } from "node:os";
 import { commandPositions, type CommandPosition, type Redirection } from "./shell-command-positions.js";
 import { deleteOf } from "./shell-delete-targets.js";
+import { gitCommand } from "./shell-git-argv.js";
 import { BENIGN_PATHS } from "./shell-path-guard.js";
 import { isLaxControlFile } from "./lax-control-files.js";
 import { isProtectedFile } from "../../config-loader.js";
@@ -50,6 +51,59 @@ function* mutationTargets(p: CommandPosition): Generator<string> {
   else if (MUTATOR_DEST_ONLY.has(verb)) { if (operands.length) yield operands[operands.length - 1]; }
   else if (MUTATOR_FIRST_OPERAND.has(verb)) { if (operands.length) yield operands[0]; }
   else if (MUTATOR_SECOND_OPERAND.has(verb)) { if (operands.length > 1) yield operands[1]; }
+}
+
+// `git config` and `git remote` write a config file the command never names
+// the way a redirect or a cp names its target: <repo>/.git/config,
+// ~/.gitconfig, or a --file. That file decides where git sends a push and what
+// programs it runs (url.*.insteadOf, remote.*.pushurl, core.hooksPath,
+// filters), so it is a write target like any other. A config write is an
+// action option, a set/unset/... subcommand, or a key with a value; a key
+// alone, get and list only read.
+const CONFIG_READ_OPTIONS = new Set(["--get", "--get-all", "--get-regexp", "--get-urlmatch", "--get-color", "--get-colorbool", "-l", "--list"]);
+const CONFIG_WRITE_OPTIONS = new Set(["--add", "--unset", "--unset-all", "--replace-all", "--rename-section", "--remove-section", "-e", "--edit"]);
+const CONFIG_WRITE_SUBCOMMANDS = new Set(["set", "unset", "rename-section", "remove-section", "edit"]);
+const CONFIG_READ_SUBCOMMANDS = new Set(["get", "list"]);
+// Options whose value is the next word unless given as `--opt=value`.
+const CONFIG_VALUE_OPTIONS = new Set(["--blob", "--type", "--default", "--comment", "--value", "--url"]);
+const REMOTE_WRITE_SUBCOMMANDS = new Set(["add", "rename", "remove", "rm", "set-branches", "set-url"]);
+
+const under = (dir: string, p: string): string => (!dir || win32.isAbsolute(p) || posix.isAbsolute(p) || p.startsWith("~") ? p : `${dir}/${p}`);
+
+/** The config file one git command writes, as written (relative to the
+ *  command's folder when that is all the command says), or null. */
+function gitConfigWritten(args: string[]): string | null {
+  const { sub, rest, dirs, gitDir } = gitCommand(args);
+  let file: string | null = null;
+  let scope: "repo" | "global" | "system" = "repo";
+  if (sub === "remote") {
+    if (!REMOTE_WRITE_SUBCOMMANDS.has(rest.find((w) => !w.startsWith("-")) ?? "")) return null;
+  } else if (sub === "config") {
+    let action: "read" | "write" | null = null;
+    const positional: string[] = [];
+    for (let i = 0; i < rest.length; i++) {
+      const eq = rest[i].indexOf("=");
+      const name = rest[i].startsWith("--") && eq > 0 ? rest[i].slice(0, eq) : rest[i];
+      const inline = name === rest[i] ? null : rest[i].slice(eq + 1);
+      if (name === "--global" || name === "--system") scope = name === "--global" ? "global" : "system";
+      else if (name === "-f" || name === "--file") file = inline ?? rest[++i] ?? null;
+      else if (CONFIG_VALUE_OPTIONS.has(name)) { if (inline === null) i++; }
+      else if (CONFIG_WRITE_OPTIONS.has(name)) action = "write";
+      else if (CONFIG_READ_OPTIONS.has(name)) action ??= "read";
+      else if (!name.startsWith("-")) positional.push(name);
+    }
+    action ??= CONFIG_WRITE_SUBCOMMANDS.has(positional[0]) ? "write"
+      : CONFIG_READ_SUBCOMMANDS.has(positional[0]) ? "read"
+      : positional.length >= 2 ? "write" : "read";
+    if (action === "read") return null;
+  } else {
+    return null;
+  }
+  const dir = dirs.reduce((at, d) => under(at, d), "");
+  if (file) return under(dir, file);
+  if (scope === "global") return "~/.gitconfig";
+  if (scope === "system") return null;
+  return `${under(dir, gitDir ?? ".git")}/config`;
 }
 
 /** A path operand with its shell's environment references expanded — `~`,
@@ -107,8 +161,9 @@ export function detectProtectedEngineMutation(command: string): string | null {
 /**
  * Every ABSOLUTE (or ~-expanded) file a shell command would delete or overwrite,
  * with the verb that does it: a redirect target, a mutating verb's operand, a
- * `dd of=`. The one walk every mutation lock reads, so none can drift on what
- * counts as a write. Relative operands are left out on purpose — they resolve
+ * `dd of=`, the config file a `git config` / `git remote` writes. The one walk
+ * every mutation lock reads, so none can drift on what counts as a write.
+ * Relative operands are left out on purpose — they resolve
  * under the agent's cwd, and anchoring them here would judge the wrong tree.
  */
 export function shellMutationTargets(command: string): Array<{ path: string; verb: string }> {
@@ -136,6 +191,10 @@ export function shellMutationTargets(command: string): Array<{ path: string; ver
     for (const target of mutationTargets(p)) add(target, p.bin);
     if (p.bin === "dd") {
       for (const w of p.words) if (w.startsWith("of=")) add(w.slice(3), "dd");
+    }
+    if (p.bin === "git") {
+      const config = gitConfigWritten(p.words.slice(p.at + 1));
+      if (config) add(config, "git");
     }
   }
   return out;

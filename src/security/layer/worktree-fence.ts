@@ -24,6 +24,7 @@ import { pathIsWithin } from "./path-within.js";
 import { realpathDeep, resolveAgentPathFrom } from "../../workspace/paths.js";
 import { placeCd, positionsWithCwd } from "./shell-delete-targets.js";
 import type { CommandPosition } from "./shell-command-positions.js";
+import { gitCommand } from "./shell-git-argv.js";
 import { declaredPaths, pathSpecsForCall, shellCommandOf } from "../../tool-registry.js";
 import { cwdOf } from "../../tool-execution/internal-args.js";
 
@@ -80,19 +81,6 @@ const GIT_READ_SUBCOMMANDS = new Set([
   "status", "log", "diff", "show", "rev-parse", "ls-files", "ls-tree", "blame", "describe", "grep", "cat-file",
   "shortlog", "rev-list", "merge-base", "for-each-ref", "show-ref", "help", "version",
 ]);
-// Global options that take the next word as their value.
-const GIT_VALUE_OPTIONS = new Set(["-C", "-c", "--git-dir", "--work-tree", "--namespace", "--exec-path"]);
-
-/** The git subcommand and its arguments, past global options. */
-function gitCommand(args: string[]): { sub: string; rest: string[] } {
-  for (let i = 0; i < args.length; i++) {
-    if (GIT_VALUE_OPTIONS.has(args[i])) { i++; continue; }
-    if (args[i].startsWith("-")) continue;
-    return { sub: args[i], rest: args.slice(i + 1) };
-  }
-  return { sub: "", rest: [] };
-}
-
 function gitReadOnly(args: string[]): boolean {
   const { sub, rest } = gitCommand(args);
   if (GIT_READ_SUBCOMMANDS.has(sub)) return true;

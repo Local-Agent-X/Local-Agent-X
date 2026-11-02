@@ -5,7 +5,7 @@ import type { PreparedAgentRequest } from "../../../agent-request/types.js";
 import type { ChannelKind } from "../../../agent-request/types.js";
 import type { ChatMode } from "../../../session/mode.js";
 import { createLogger } from "../../../logger.js";
-import { hiddenFrom } from "../../../tool-registry.js";
+import { hiddenForSession } from "../../../tool-registry.js";
 
 const logger = createLogger("routes.chat.prepare");
 
@@ -109,8 +109,7 @@ export function filterToolsForSession(
   tools: PreparedAgentRequest["tools"],
   sessionId: string,
 ): PreparedAgentRequest["tools"] {
-  const isIdeSession = sessionId.startsWith("ide-");
-  return isIdeSession ? tools.filter(t => !hiddenFrom(t.name, "ide")) : tools;
+  return tools.filter(t => !hiddenForSession(t.name, sessionId));
 }
 
 /** Strip `>>discuss` prefix if present so the routing decision can act on raw intent. */

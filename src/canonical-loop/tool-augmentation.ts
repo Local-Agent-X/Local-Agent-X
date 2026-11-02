@@ -40,6 +40,7 @@ import { unifiedRegistry } from "../tools/registry.js";
 import { registerToolsForOp } from "./runtime.js";
 import { isDeniedForDelegatedWorker, type DelegatedBelt } from "../ops/tools/delegated-toolset.js";
 import { readOp } from "../ops/op-store.js";
+import { hiddenForSession } from "../tool-registry.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("canonical-loop.tool-augmentation");
@@ -49,19 +50,23 @@ const logger = createLogger("canonical-loop.tool-augmentation");
  *  agent lane) is BOUNDED — its template's allow-list is its whole surface,
  *  resolved in full when it started, so nothing is ever added; a delegated
  *  worker (the other lanes) widens freely except for its belt's denylist. */
-type CallerReach = { bounded: true } | { bounded: false; belt: DelegatedBelt | undefined };
+type CallerReach =
+  | { bounded: true }
+  | { bounded: false; belt: DelegatedBelt | undefined; sessionId: string | undefined };
 
 function reachOf(opId: string, callContext: CallContext | undefined): CallerReach {
-  if (callContext !== "delegated") return { bounded: false, belt: undefined };
   const op = readOp(opId);
+  if (callContext !== "delegated") return { bounded: false, belt: undefined, sessionId: op?.sessionId };
   if (op?.lane === "agent") return { bounded: true };
-  return { bounded: false, belt: op ? { lane: op.lane, workRoot: op.contextPack?.routing?.workRoot } : undefined };
+  return { bounded: false, belt: op ? { lane: op.lane, workRoot: op.contextPack?.routing?.workRoot } : undefined, sessionId: op?.sessionId };
 }
 
 /** A registered tool this caller may not load: outside a bounded run's
- *  allow-list, or on a delegated worker's denylist. */
+ *  allow-list, on a delegated worker's denylist, or kept out of the op's
+ *  session (an in-editor chat does not spawn or steer workers). */
 function deniedForCaller(name: string, callContext: CallContext | undefined, reach: CallerReach): boolean {
   if (reach.bounded) return true;
+  if (hiddenForSession(name, reach.sessionId)) return true;
   return callContext === "delegated" && isDeniedForDelegatedWorker(name, reach.belt);
 }
 
@@ -96,7 +101,7 @@ function admit(
     // agent or a delegated worker must not search — or name — its way to a
     // tool it was not given.
     if (deniedForCaller(name, callContext, reach)) {
-      logger.warn(`[augment] blocked tool '${name}' for ${reach.bounded ? "bounded agent" : "delegated worker"} op=${opId.slice(0, 12)} (${via})`);
+      logger.warn(`[augment] blocked tool '${name}' for ${reach.bounded ? "bounded agent" : callContext === "delegated" ? "delegated worker" : "this session"} op=${opId.slice(0, 12)} (${via})`);
       continue;
     }
     const tool = unifiedRegistry.get(name);

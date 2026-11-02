@@ -9,6 +9,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ToolDefinition } from "../types.js";
 import { unifiedRegistry } from "../tools/registry.js";
 import { augmentByName, augmentFromToolSearch, canCallByName } from "./tool-augmentation.js";
+import { writeOp } from "../ops/op-store.js";
+import type { Op } from "../ops/types.js";
 
 function tool(name: string): ToolDefinition {
   return { name, description: `${name} does a thing.`, parameters: { type: "object", properties: {} }, execute: async () => ({ content: "" }) } as unknown as ToolDefinition;
@@ -55,6 +57,30 @@ describe("augmentByName — a call to a tool the schema does not carry", () => {
     // A read-only tool is fine.
     expect(augmentByName("grep", opId(), toolMap, undefined, "delegated")).toBe(true);
     expect([...toolMap.keys()]).toEqual(["read", "grep"]);
+  });
+});
+
+// The request's starting set drops a row's hiddenFrom.ide tools for an
+// in-editor session (filterToolsForSession); a mid-request load has to hold the
+// same line, or tool_search hands the editor chat the worker tools back.
+describe("a tool kept out of the op's session is not loaded mid-request", () => {
+  function opFor(sessionId: string): string {
+    const id = opId();
+    writeOp({ id, type: "chat_turn", task: "t", lane: "chat", status: "running", sessionId } as unknown as Op);
+    return id;
+  }
+
+  it("an in-editor session cannot load agent_spawn by name or by search; a chat session can", () => {
+    unifiedRegistry.register(tool("agent_spawn"));
+    const ide = opFor("ide-myapp");
+    const ideMap = new Map([["read", tool("read")]]);
+    expect(augmentByName("agent_spawn", ide, ideMap)).toBe(false);
+    augmentFromToolSearch(JSON.stringify([{ name: "agent_spawn" }]), ide, ideMap);
+    expect([...ideMap.keys()]).toEqual(["read"]);
+    expect(canCallByName("agent_spawn", ide, ideMap, "local")).toBe(false);
+
+    const chat = opFor("chat-abc");
+    expect(augmentByName("agent_spawn", chat, new Map([["read", tool("read")]]))).toBe(true);
   });
 });
 

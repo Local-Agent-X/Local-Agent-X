@@ -25,6 +25,7 @@ import type { ChatMode } from "../../session/mode.js";
 import { projectAgentsMd } from "../../context/project-agents-md.js";
 import { projectDocumentsSection } from "../../memory/project-docs/full-text.js";
 import { sessionWorkRootOf } from "../../workspace/paths.js";
+import { hiddenForSession } from "../../tool-registry.js";
 
 const logger = createLogger("agent-request.prepare-request.sysprompt");
 
@@ -211,7 +212,10 @@ export async function buildSystemPromptWithTelemetry(
     // would reappear here by name and the model would be told to tool_search
     // for a capability this machine doesn't have. The prompt nudges go through
     // the same gate for the same reason.
-    const availableAgentTools = filterAvailableTools(input.allAgentTools);
+    // A tool kept out of this session (hiddenForSession) is neither nudged nor
+    // named: tool_search would refuse to load it here.
+    const availableAgentTools = filterAvailableTools(input.allAgentTools)
+      .filter((t) => !hiddenForSession(t.name, input.sessionId));
     toolPromptSection = buildToolPromptSection(availableAgentTools);
     // Deferred-tool manifest: name every tool NOT loaded into this turn's
     // schema so the model can reach it via tool_search instead of fail-

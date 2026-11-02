@@ -331,6 +331,14 @@ export function hiddenFrom(name: string, surface: ToolSurface): string | undefin
   return TOOL_POLICIES[name]?.hiddenFrom?.[surface];
 }
 
+/** Why this tool is kept out of `sessionId`'s chat, or undefined. An in-editor
+ *  session (`ide-…`) is the IDE surface. One answer for every way a tool reaches
+ *  a session: the request's starting set, a mid-request load, and the deferred
+ *  manifest that names what may be loaded. */
+export function hiddenForSession(name: string, sessionId: string | undefined): string | undefined {
+  return sessionId?.startsWith("ide-") ? hiddenFrom(name, "ide") : undefined;
+}
+
 /** Whether this tool ships something to others, as its row says. */
 export function publishFactOf(name: string): ToolPolicyRow["publish"] {
   return TOOL_POLICIES[name]?.publish;

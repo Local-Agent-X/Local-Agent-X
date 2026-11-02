@@ -407,3 +407,37 @@ describe("stableSystemPrefixLength", () => {
     expect(turn1.renderedSections[0].id).toMatch(/^core-identity\//);
   });
 });
+
+// The deferred manifest names what tool_search may load. An in-editor session
+// cannot load the worker tools (hiddenForSession), so it is not told they exist.
+describe("the deferred-tool manifest in an in-editor session", () => {
+  const tool = (name: string) => ({ name, description: `${name} does a thing.`, parameters: { type: "object", properties: {} }, execute: async () => ({ content: "" }) }) as unknown as BuildSystemPromptInput["allAgentTools"][number];
+  const inputFor = (sessionId: string): BuildSystemPromptInput => ({
+    message: "hi there",
+    channel: "web" as const,
+    sessionId,
+    config: { systemPrompt: "Base prompt." } as BuildSystemPromptInput["config"],
+    memoryIndex: {} as BuildSystemPromptInput["memoryIndex"],
+    integrations: { getAgentContext: () => "" } as BuildSystemPromptInput["integrations"],
+    allAgentTools: [tool("read"), tool("agent_spawn")],
+    loadedTools: [tool("read")],
+    resolvedProvider: "anthropic",
+    resolvedModel: "claude-opus-5-5",
+    contextBlock: "",
+    relevantMemories: "",
+    smartContext: "",
+    memoryContext: "",
+    memoryNotifications: [],
+    memoryCurateBlock: "",
+  });
+
+  // The base prompt names agent_spawn in prose; the manifest line is the one
+  // that carries the tool's own description.
+  const guidance = async (sessionId: string) =>
+    (await buildSystemPromptWithTelemetry(inputFor(sessionId))).renderedSections.find((s) => s.id === "tool-guidance")?.text ?? "";
+
+  it("names agent_spawn in a chat session and not in an ide- session", async () => {
+    expect(await guidance("chat-manifest")).toContain("agent_spawn does a thing");
+    expect(await guidance("ide-manifest")).not.toContain("agent_spawn");
+  });
+});

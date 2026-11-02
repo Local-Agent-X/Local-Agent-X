@@ -32,6 +32,8 @@
  * detection remains the primary control.
  */
 
+import { hexWordRuns, isStdBase64Char, isUrlBase64Char, paddedClassRuns } from "./char-runs.js";
+
 export interface EntropyMatch {
   startIndex: number;
   endIndex: number;
@@ -60,8 +62,10 @@ const MIN_HEX_ENTROPY = 3.0;
 //     that contain `/`/`+` get split here (accepted FN: real tokens are
 //     overwhelmingly base64url or bare alphanumeric, which this still catches).
 // Hex is handled separately so a pure-hex run uses the hex floor/threshold.
-const BASE64_RUN_RE = /[A-Za-z0-9_-]{20,}={0,2}/g;
-const HEX_RUN_RE = /\b[0-9a-fA-F]{24,}\b/g;
+// Both are found by char-runs.ts (a character loop: a greedy regex over a
+// multi-megabyte run overflows V8's backtrack stack).
+const BASE64_RUN_MIN = 20; // [A-Za-z0-9_-]{20,}={0,2}
+const HEX_RUN_MIN = 24; // \b[0-9a-fA-F]{24,}\b
 
 const UUID_RE = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
 
@@ -174,7 +178,6 @@ function isExcludedBase64(run: string): boolean {
 // an SPKI, and PEM "PUBLIC KEY" blocks, are exempt from the entropy passes;
 // private keys stay caught by the catalog (PEM) and by these passes (bare DER).
 
-const BASE64_BLOB_RE = /[A-Za-z0-9+/]{40,}={0,2}/g;
 const PEM_PUBLIC_KEY_RE = /-----BEGIN (?:RSA |EC )?PUBLIC KEY-----[\s\S]*?-----END (?:RSA |EC )?PUBLIC KEY-----/g;
 
 function derLength(buf: Buffer, at: number): { len: number; next: number } | null {
@@ -202,28 +205,36 @@ function publicKeySpans(text: string): Array<[number, number]> {
   const spans: Array<[number, number]> = [];
   PEM_PUBLIC_KEY_RE.lastIndex = 0;
   for (const m of text.matchAll(PEM_PUBLIC_KEY_RE)) spans.push([m.index ?? 0, (m.index ?? 0) + m[0].length]);
-  BASE64_BLOB_RE.lastIndex = 0;
-  for (const m of text.matchAll(BASE64_BLOB_RE)) {
-    const blob = m[0];
-    if (isSubjectPublicKeyInfo(Buffer.from(blob, "base64"))) spans.push([m.index ?? 0, (m.index ?? 0) + blob.length]);
+  for (const { run: blob, index } of paddedClassRuns(text, isStdBase64Char, 40)) {
+    if (isSubjectPublicKeyInfo(Buffer.from(blob, "base64"))) spans.push([index, index + blob.length]);
   }
   return spans;
+}
+
+/** Does [start, end) overlap one of `spans` (ascending, disjoint)? */
+function overlapsSorted(spans: readonly EntropyMatch[], start: number, end: number): boolean {
+  let lo = 0;
+  let hi = spans.length;
+  while (lo < hi) {
+    const mid = (lo + hi) >> 1;
+    if (spans[mid].endIndex <= start) lo = mid + 1;
+    else hi = mid;
+  }
+  return lo < spans.length && spans[lo].startIndex < end;
 }
 
 /**
  * Find high-entropy runs that look like raw key material and aren't a known
  * benign shape. Additive and conservative — see the file header for the
- * FP/FN reasoning. Spans are real offsets into `text`.
+ * FP/FN reasoning. Spans are real offsets into `text`, and never overlap each
+ * other: a base64 run containing a reported hex run is the same token.
  */
 export function detectHighEntropyTokens(text: string): EntropyMatch[] {
   const out: EntropyMatch[] = [];
   const exempt = publicKeySpans(text);
   const isPublicKey = (start: number, end: number) => exempt.some(([s, e]) => start < e && s < end);
 
-  HEX_RUN_RE.lastIndex = 0;
-  for (const m of text.matchAll(HEX_RUN_RE)) {
-    const run = m[0];
-    const index = m.index ?? 0;
+  for (const { run, index } of hexWordRuns(text, HEX_RUN_MIN)) {
     if (run.length < MIN_HEX_LEN) continue;
     if (isExcludedHex(run)) continue;
     if (shannonEntropy(run) < MIN_HEX_ENTROPY) continue;
@@ -231,11 +242,10 @@ export function detectHighEntropyTokens(text: string): EntropyMatch[] {
     out.push({ startIndex: index, endIndex: index + run.length, value: run });
   }
 
-  BASE64_RUN_RE.lastIndex = 0;
-  for (const m of text.matchAll(BASE64_RUN_RE)) {
-    const run = m[0];
-    const index = m.index ?? 0;
+  const hexHits = out.slice();
+  for (const { run, index } of paddedClassRuns(text, isUrlBase64Char, BASE64_RUN_MIN)) {
     if (run.length < MIN_BASE64_LEN) continue;
+    if (overlapsSorted(hexHits, index, index + run.length)) continue;
     // A pure-hex run is already considered by the hex pass with its own
     // (stricter-length, lower-entropy) rules; don't double-count it here.
     if (/^[0-9a-fA-F]+$/.test(run)) continue;

@@ -1,15 +1,24 @@
 /**
  * Secret scanner — decode/normalize evasion engine.
  *
- * The ReDoS-bounded decode pipeline (run regexes, byte budget, depth cap, and the
- * iterativeRunViews peel loop they guard) plus the anchor-relaxed derived-view
- * catalog and the encoded-view credential pass. These bounds are security
- * load-bearing and live together so a bound can never be split away from the loop
- * it guards. Consumed by secret-normalize.ts (known-value pass) and the scan
- * driver in secret-scanner.ts.
+ * The decoders, the peel that turns every encoded run in a text into every
+ * text view it can be decoded to (all layers), the budget that bounds that
+ * work, and the encoded-view credential pass. Consumed by secret-normalize.ts
+ * (known-value pass) and the scan driver in secret-scanner.ts, which peel ONCE
+ * per scan and hand the same peel to every pass (docs/adr/0006).
+ *
+ * Threat model, in one paragraph: the payload is written by a model that may be
+ * prompt-injected and holds a secret. It controls every byte — encodings,
+ * nesting depth, filler, ordering, size. The scan must either SEE every decoded
+ * view of every encoded run, or say so: a run whose views the budget could not
+ * cover is reported as an "uninspected" match spanning the run, so `clean` is
+ * false and every caller (redaction, taint, the egress block, the known-value
+ * block) treats it exactly like a found secret. Nothing the attacker can put in
+ * the payload buys silence; the most it buys is a block of its own payload.
  */
 
 import { CREDENTIAL_PATTERNS } from "./credential-patterns.js";
+import { type CharRun, hexWordRuns, isAnyBase64Char, maximalRuns, paddedClassRuns } from "./char-runs.js";
 
 export interface SecretMatch {
   type: string;
@@ -32,43 +41,6 @@ export function maskSecret(value: string): string {
   return value.slice(0, 4) + "***" + value.slice(-4);
 }
 
-// ── Decode/normalize evasion defense ──────────────────────────────────────
-//
-// scanForSecrets matches the credential catalog against the RAW text. An
-// attacker (or a compromised model) can evade that by encoding the secret:
-// base64("sk-ant-…") or its hex/percent-encoded/unicode-obfuscated forms sail
-// past a raw regex. The passes below detect a secret that is present only in a
-// DECODED or NORMALIZED view of the text. Detection (the `clean` flag) is the
-// must-have; for redaction we attribute the match to the ORIGINAL span (the
-// whole encoded blob, or the normalized-out run) so redactSecrets /
-// redactSecretSpans strip something real — never a span that points into a
-// derived string that doesn't exist in the caller's text.
-
-// Only credential-pattern matches count — no entropy heuristics — so random
-// base64 that decodes to garbage stays clean (near-zero new false positives).
-function rawMatchesAny(text: string): boolean {
-  for (const pattern of CREDENTIAL_PATTERNS) {
-    pattern.regex.lastIndex = 0;
-    if (pattern.regex.test(text)) {
-      pattern.regex.lastIndex = 0;
-      return true;
-    }
-  }
-  return false;
-}
-
-// Name of the first credential pattern the decoded view trips, for the label.
-function firstMatchName(text: string): string | undefined {
-  for (const pattern of CREDENTIAL_PATTERNS) {
-    pattern.regex.lastIndex = 0;
-    if (pattern.regex.test(text)) {
-      pattern.regex.lastIndex = 0;
-      return pattern.name;
-    }
-  }
-  return undefined;
-}
-
 // ── Anchor-relaxed catalog for DERIVED (decoded/normalized-byte) views ─────────
 //
 // C3-19: many catalog regexes start with `\b` (word boundary). On the RAW text
@@ -89,8 +61,8 @@ const DERIVED_VIEW_PATTERNS: ReadonlyArray<{ name: string; regex: RegExp }> =
     regex: new RegExp(p.regex.source.replace(/^\\b/, ""), p.regex.flags),
   }));
 
-// firstMatchName for a DERIVED view: uses the anchor-relaxed catalog so a synthetic
-// prefix byte can't hide a key behind a broken `\b`.
+// The first catalog shape a DERIVED view trips, by name: the anchor-relaxed
+// catalog, so a synthetic prefix byte can't hide a key behind a broken `\b`.
 function firstMatchNameDerived(text: string): string | undefined {
   for (const pattern of DERIVED_VIEW_PATTERNS) {
     pattern.regex.lastIndex = 0;
@@ -102,28 +74,22 @@ function firstMatchNameDerived(text: string): string | undefined {
   return undefined;
 }
 
-// Total decoded bytes we're willing to feed back through the regex pass, across
-// all candidate runs in one scan. A genuine payload that buries a key in a few
-// encoded blobs stays well under this; a multi-megabyte blob that would blow up
-// CPU is already suspicious egress and we accept not decoding all of it.
-const MAX_DECODED_BUDGET = 256 * 1024;
+// ── Decoders ────────────────────────────────────────────────────────────────
+
 // Don't bother decoding runs shorter than this — a real key is >=20 chars, so
 // its encodings are longer; this kills the "base64-decode every short token"
 // cost. Mirrors the catalog's >=20-char key floor.
 const MIN_BASE64_RUN = 16;
 const MIN_HEX_RUN = 32;
+const MIN_PERCENT_RUN = 8;
 
-// Candidate encoded runs: base64/base64url, hex, percent-encoded.
-const BASE64_RUN_RE = /[A-Za-z0-9+/_-]{16,}={0,2}/g;
-const HEX_RUN_RE = /\b[0-9a-fA-F]{32,}\b/g;
-const PERCENT_RUN_RE = /(?:%[0-9a-fA-F]{2}|[^\s%]){8,}/g;
+const PERCENT_ESCAPE_RE = /%[0-9a-fA-F]{2}/;
 
-// Decode a base64/base64url run to its raw bytes, applying the same
-// normalize + round-trip sanity the catalog decode relies on. Returns the
-// Buffer (so callers can take MULTIPLE text interpretations of the same bytes)
-// or null when the run isn't real base64.
+// Decode a base64/base64url run to its raw bytes, applying the normalize +
+// round-trip sanity the catalog decode relies on. Returns the Buffer (so
+// callers can take MULTIPLE text interpretations of the same bytes) or null
+// when the run isn't real base64.
 function decodeBase64Buffer(run: string): Buffer | null {
-  // Normalize base64url → base64 and length-sanity before decoding.
   const normalized = run.replace(/-/g, "+").replace(/_/g, "/");
   const unpadded = normalized.replace(/=+$/, "");
   if (unpadded.length < MIN_BASE64_RUN) return null;
@@ -139,9 +105,26 @@ function decodeBase64Buffer(run: string): Buffer | null {
   }
 }
 
-function decodeBase64(run: string): string | null {
-  const buf = decodeBase64Buffer(run);
-  return buf === null ? null : buf.toString("latin1");
+// Decode a hex run to its raw bytes, or null when the run isn't clean hex.
+function decodeHexBuffer(run: string): Buffer | null {
+  if (run.length < MIN_HEX_RUN || run.length % 2 !== 0) return null;
+  try {
+    const buf = Buffer.from(run, "hex");
+    if (buf.length === 0 || buf.length * 2 !== run.length) return null;
+    return buf;
+  } catch {
+    return null;
+  }
+}
+
+function decodePercent(run: string): string | null {
+  if (!run.includes("%")) return null;
+  try {
+    const decoded = decodeURIComponent(run);
+    return decoded === run ? null : decoded;
+  } catch {
+    return null;
+  }
 }
 
 // Text interpretations of a decoded buffer's bytes for the catalog + known-value
@@ -166,232 +149,186 @@ function bufferTextViews(buf: Buffer | null): string[] {
   return views;
 }
 
-function base64TextViews(run: string): string[] {
-  return bufferTextViews(decodeBase64Buffer(run));
-}
+// ── Schemes ─────────────────────────────────────────────────────────────────
 
-// Decode a hex run to its raw bytes. Returns the Buffer so callers can take
-// MULTIPLE text interpretations (latin1 + both-endian utf16le) — `hex(utf16le(
-// key))` is NUL-interleaved in the latin1 view and only contiguous in a utf16le
-// view, exactly the base64 case. Returns null when the run isn't clean hex.
-function decodeHexBuffer(run: string): Buffer | null {
-  if (run.length < MIN_HEX_RUN || run.length % 2 !== 0) return null;
-  try {
-    const buf = Buffer.from(run, "hex");
-    if (buf.length === 0 || buf.length * 2 !== run.length) return null;
-    return buf;
-  } catch {
-    return null;
-  }
-}
-
-function hexTextViews(run: string): string[] {
-  return bufferTextViews(decodeHexBuffer(run));
-}
-
-function decodeHex(run: string): string | null {
-  const buf = decodeHexBuffer(run);
-  return buf === null ? null : buf.toString("latin1");
-}
-
-function decodePercent(run: string): string | null {
-  if (!run.includes("%")) return null;
-  try {
-    const decoded = decodeURIComponent(run);
-    return decoded === run ? null : decoded;
-  } catch {
-    return null;
-  }
-}
+export type EncodedRun = CharRun;
 
 export interface EncodedScheme {
-  re: RegExp;
-  decode: (run: string) => string | null;
-  label: string;
+  label: "base64" | "hex" | "percent";
+  /** Every candidate run of this encoding in `text`, in order. */
+  runs: (text: string) => EncodedRun[];
+  /** Every text view `run` decodes to; [] when it does not decode. */
+  views: (run: string) => string[];
 }
 
-// All decoded text interpretations of a run for one scheme. base64 AND hex are
-// byte-bearing, so each yields latin1 + both-endian utf16le views (a key carried
-// as base64/hex of UTF-16LE is contiguous only in a utf16le view); percent has a
-// single textual decoding.
-function runDecodeViews(scheme: EncodedScheme, run: string): string[] {
-  if (scheme.label === "base64") return base64TextViews(run);
-  if (scheme.label === "hex") return hexTextViews(run);
-  const decoded = scheme.decode(run);
-  return decoded === null ? [] : [decoded];
-}
+// Runs are found by walking character codes (char-runs.ts), never by a regex
+// over the run: the old percent alternation threw RangeError on ~5 MB, the old
+// base64 class on ~7 MB, before any verdict was produced.
+const PERCENT = 37;
 
-export const ENCODED_SCHEMES: EncodedScheme[] = [
-  { re: BASE64_RUN_RE, decode: decodeBase64, label: "base64" },
-  { re: HEX_RUN_RE, decode: decodeHex, label: "hex" },
-  { re: PERCENT_RUN_RE, decode: decodePercent, label: "percent" },
-];
-
-// C3-18: a fixed one-extra-layer peel let `base64(base64(hex(secret)))` (3
-// layers) sail through clean — defeating the scanner AND the canary gate. The
-// peel below iterates layer-by-layer with NO fixed depth cap: a secret wrapped
-// in an arbitrary number of encoding layers is still reached. Total work is
-// bounded SOLELY by the shared MAX_DECODED_BUDGET byte counter (threaded through
-// every layer/view), which is sufficient for DoS safety — a nested
-// decompression-bomb input draws the budget to zero and the loop terminates. A
-// redundant fixed depth cap was removed because it was only an evasion gap (a
-// >5-layer wrap stopped early even with budget left), never the DoS bound.
-
-// Mutable byte-budget cell so one counter is shared across every layer and view
-// of every run in a single scan (not per-run), matching the original
-// MAX_DECODED_BUDGET intent.
-export interface Budget {
-  remaining: number;
-}
-
-// Per-view, per-scheme cap on how many inner encoded runs may be enqueued.
-// CHOSEN BY MEASUREMENT, not taste, on this repo's corpus (3751 files, 45.5MB)
-// and on adversarial padded documents:
-//   - Inner-run counts per (view, scheme): p50=0, p90=1, p99=1, p99.9=226,
-//     max=4513. 256 covers p99.9, so ordinary content is enumerated in full.
-//   - Evasion: a padded object hides the real blob iff it sits past the cap.
-//     Filler runs tolerated before a wrapped key is missed — cap 4: 0, cap 8: 4,
-//     cap 64: 16, cap 256: 16. Past ~64 the shared byte budget, not the cap, is
-//     the binding limit, so raising it further buys nothing.
-//   - Cost: whole-corpus scan 12.7s at cap 1 (the old first-run-only behavior)
-//     vs 12.6s at cap 256, same 472 not-clean files; the pathological
-//     thousands-of-16-char-tokens document is unchanged (40ms raw / 0.47s
-//     base64-wrapped). Flat because the byte budget already bounds decode work.
-// The cap bounds work and queue memory (256 runs per scheme per view), but it
-// is ALSO the binding security bound today, and calling it anything else
-// misleads the next reader. Cheapest documents that blind the scanner, the
-// taint overlap and the canaries together, all measured:
-//   - before this peel enumerated siblings, one 16-char pad:  ~600 B
-//   - now, 256 filler runs ahead of the blob:                 5,902 B
-//   - the shared MAX_DECODED_BUDGET starvation:             ~128 KB
-// So the cap is 14.5x cheaper to walk past than the byte budget. The filler
-// does not even have to decode: `n` counts regex matches, not successful
-// decodes, so it costs the attacker no budget at all. Raising the cap trades
-// queue memory for a higher evasion floor; lowering it starts losing real
-// detections (cap 8 tolerates only 4 filler runs). 256 is chosen from
-// p99.9=226 inner runs per (view, scheme) over the repo corpus, so ordinary
-// content is still enumerated exhaustively. The boundary is pinned by
-// "the inner-run cap boundary (255 found / 256 missed)" in secret-scanner.test.ts.
-const MAX_INNER_RUNS_PER_VIEW = 256;
-
-/**
- * Iteratively peel an outer encoded run into EVERY decoded text view across any
- * number of layers, sharing one byte budget. A worklist loop: take a view
- * string, re-detect the inner encoded runs inside it, and enqueue those runs'
- * decode views for a later round. Every view we produce (latin1, both-endian
- * utf16le, percent text, at every layer) is yielded for the caller to scan. The
- * SINGLE source of "what bytes can be recovered from this run" —
- * scanEncodedViews, scanKnownValues, and decodedPayloadViews all consume it so
- * the catalog pass, the known-value pass, and the taint-overlap check can never
- * drift on encoding handling. Bounded by `budget`.
- *
- * ALL inner runs are enumerated per scheme per view, not just the first: a run
- * regex matches the FIRST candidate in the view, so sixteen characters of filler
- * ("aaaaaaaaaaaaaaaa" is a valid BASE64_RUN_RE match) used to consume the
- * scheme's only slot and the real blob was never enqueued — one padded object
- * defeated the scanner, the taint overlap check and the canary tripwire at once.
- *
- * PRIORITY, not just a queue. Enumerating siblings draws on the SAME shared
- * MAX_DECODED_BUDGET, so naive enumeration lets filler runs spend the budget
- * before the deeper layers of the real blob are reached — measured: an 8 x 8KB
- * filler object around a 3-layer-wrapped key went FOUND -> MISSED. Each item
- * therefore carries a penalty = its parent's penalty + its index within its
- * (view, scheme) enumeration, and buckets are drained in ascending penalty
- * order. Penalty 0 is exactly the chain the first-run-only code walked, and a
- * child's penalty is never below its parent's, so the whole old traversal is
- * materialized BEFORE any newly-enumerated sibling is charged a single byte:
- * enumeration can only ADD detections, never starve one that already worked.
- */
-export function iterativeRunViews(
-  outerScheme: EncodedScheme,
-  outerRun: string,
-  budget: Budget
-): string[] {
-  const collected: string[] = [];
-  type Item = { run: string; scheme: EncodedScheme };
-  // buckets[p] = items deferred by penalty p. Seeded with the outer run at 0.
-  const buckets: Array<Item[] | undefined> = [[{ run: outerRun, scheme: outerScheme }]];
-  // No fixed depth cap: peel until every bucket drains or the shared byte budget
-  // is spent. budget.remaining > 0 is the SOLE termination bound — DoS-safe, and
-  // a deeper wrap can no longer evade the scan by exceeding a layer count. The
-  // penalty cursor only moves forward (a child's penalty >= its parent's).
-  for (let penalty = 0; penalty < buckets.length && budget.remaining > 0; penalty++) {
-    const bucket = buckets[penalty];
-    if (!bucket) continue;
-    // The bucket grows while it is walked (penalty-0 children land in it); the
-    // length check re-reads it each step so those are processed in FIFO order.
-    for (let i = 0; i < bucket.length && budget.remaining > 0; i++) {
-      const views = runDecodeViews(bucket[i].scheme, bucket[i].run);
-      for (const v of views) {
-        if (budget.remaining <= 0) break;
-        // Charge the budget for EVERY materialized view across ALL layers (not
-        // just the primary view of each decode) so multi-view x multi-layer
-        // amplification is fully counted — this is what bounds a nested
-        // decompression-bomb input: each ~N-byte view we produce (and will scan)
-        // draws down the shared MAX_DECODED_BUDGET, so total bytes produced AND
-        // scanned across the whole peel can't exceed it.
-        budget.remaining -= v.length;
-        collected.push(v);
-        // Enqueue the inner encoded runs of this view for a later round.
-        // Fresh regex per scheme so no shared lastIndex state leaks.
-        for (const inner of ENCODED_SCHEMES) {
-          const fresh = new RegExp(inner.re.source, inner.re.flags);
-          let im: RegExpExecArray | null;
-          for (let n = 0; n < MAX_INNER_RUNS_PER_VIEW && (im = fresh.exec(v)) !== null; n++) {
-            const p = penalty + n;
-            (buckets[p] ??= []).push({ run: im[0], scheme: inner });
-          }
-        }
-      }
+// Percent runs: within each whitespace-free stretch, the pieces between stray
+// `%` signs (a `%` not starting an escape ends a run), kept when they hold at
+// least one escape.
+function percentRuns(text: string): EncodedRun[] {
+  const out: EncodedRun[] = [];
+  if (!text.includes("%")) return out;
+  const notSpace = (c: number) => (c < 128 ? c !== 32 && (c < 9 || c > 13) : !/\s/.test(String.fromCharCode(c)));
+  for (const [tokenStart, tokenEnd] of maximalRuns(text, notSpace)) {
+    let start = tokenStart;
+    for (let i = tokenStart; i <= tokenEnd; i++) {
+      const stray = i < tokenEnd && text.charCodeAt(i) === PERCENT && !PERCENT_ESCAPE_RE.test(text.slice(i, i + 3));
+      if (i < tokenEnd && !stray) continue;
+      const run = text.slice(start, i);
+      if (run.length >= MIN_PERCENT_RUN && PERCENT_ESCAPE_RE.test(run)) out.push({ run, index: start });
+      start = i + 1;
     }
-  }
-  return collected;
-}
-
-/**
- * Find encoded runs whose DECODED view trips a credential pattern, and return a
- * SecretMatch per offending run that spans the ORIGINAL encoded blob (so
- * redaction removes the whole thing). Iteratively peels every encoding layer (so
- * multi-round encodings like base64(base64(hex(secret))) are caught), bounded
- * solely by the shared MAX_DECODED_BUDGET byte budget. Derived views are matched with the
- * anchor-relaxed catalog (firstMatchNameDerived) so a synthetic prefix byte
- * can't hide a key behind a broken `\b`.
- */
-export function scanEncodedViews(text: string): SecretMatch[] {
-  const out: SecretMatch[] = [];
-  const budget: Budget = { remaining: MAX_DECODED_BUDGET };
-
-  for (const scheme of ENCODED_SCHEMES) {
-    // Collect all runs up front (via matchAll) so the inner decode pass — which
-    // reuses scheme regexes — can't clobber this loop's lastIndex.
-    scheme.re.lastIndex = 0;
-    const runs = [...text.matchAll(scheme.re)];
-    for (const m of runs) {
-      if (budget.remaining <= 0) break;
-      const run = m[0];
-      const index = m.index ?? 0;
-      const decodedViews = iterativeRunViews(scheme, run, budget);
-      if (decodedViews.length === 0) continue;
-
-      let name: string | undefined;
-      for (const decoded of decodedViews) {
-        name = firstMatchNameDerived(decoded);
-        if (name) break;
-      }
-      if (!name) continue;
-
-      out.push({
-        type: "obfuscated",
-        pattern: `${name} (${scheme.label})`,
-        value: run.slice(0, 20) + (run.length > 20 ? "..." : ""),
-        masked: maskSecret(run),
-        startIndex: index,
-        endIndex: index + run.length,
-      });
-    }
-    if (budget.remaining <= 0) break;
   }
   return out;
 }
 
-export { MAX_DECODED_BUDGET };
+export const ENCODED_SCHEMES: readonly EncodedScheme[] = [
+  { label: "base64", runs: (t) => paddedClassRuns(t, isAnyBase64Char, MIN_BASE64_RUN), views: (run) => bufferTextViews(decodeBase64Buffer(run)) },
+  { label: "hex", runs: (t) => hexWordRuns(t, MIN_HEX_RUN), views: (run) => bufferTextViews(decodeHexBuffer(run)) },
+  { label: "percent", runs: percentRuns, views: (run) => { const d = decodePercent(run); return d === null ? [] : [d]; } },
+];
+
+// ── Budget ──────────────────────────────────────────────────────────────────
+//
+// Total characters of decoded views one scan may materialize (and therefore
+// regex-scan), across every run, layer and view. Scales with the input: a fixed
+// pool let filler at the front of a payload spend it all before the run that
+// carried the key (128 KB of filler hid a base64 key). Every decode shrinks its
+// input (base64 to 3/4, hex to 1/2, percent by 2 chars per escape), so a
+// pure base64 chain costs at most 6x its length in views (1.5x per layer, as a
+// geometric series); 8 per input char covers it with room, and benign content
+// measured far below it (docs/adr/0006). The floor keeps small payloads at the
+// old fixed pool; the ceiling bounds one scan's CPU and memory.
+const DECODE_BUDGET_PER_CHAR = 8;
+const MIN_DECODE_BUDGET = 256 * 1024;
+const MAX_DECODE_BUDGET = 16 * 1024 * 1024;
+
+export function decodeBudgetFor(textLength: number): number {
+  return Math.min(MAX_DECODE_BUDGET, Math.max(MIN_DECODE_BUDGET, DECODE_BUDGET_PER_CHAR * textLength));
+}
+
+// ── The peel ────────────────────────────────────────────────────────────────
+
+export interface PeeledRun extends EncodedRun {
+  scheme: EncodedScheme;
+  /** Every decoded text view under this run, every layer (latin1, both-endian
+   *  utf16le, percent text). */
+  views: string[];
+  /** False when the budget ran out before every layer under this run was
+   *  materialized: what it carries is unknown, and the passes say so. */
+  complete: boolean;
+}
+
+interface Peel {
+  /** The run decodes at all: a run that does not carries nothing to inspect. */
+  decodes: boolean;
+  views: string[];
+  complete: boolean;
+}
+
+/**
+ * Peel one run into every view under it: decode it, then decode every encoded
+ * run inside each view, until nothing decodes. Every inner run is taken, never
+ * the first or the first N: a cap on how many are looked at is a number of
+ * filler runs an attacker prepends (256 runs, about 6 KB, defeated the last
+ * one). Identical inner runs within the tree are decoded once. Draws on the
+ * scan's shared budget and stops — incomplete — when a decode does not fit.
+ */
+function peelRun(scheme: EncodedScheme, run: string, budget: { remaining: number }): Peel {
+  const views: string[] = [];
+  const seen = new Set<string>([`${scheme.label}\0${run}`]);
+  const take = (vs: string[]): boolean => {
+    let cost = 0;
+    for (const v of vs) cost += v.length;
+    if (cost > budget.remaining) return false;
+    budget.remaining -= cost;
+    for (const v of vs) views.push(v);
+    return true;
+  };
+  const outer = scheme.views(run);
+  if (outer.length === 0) return { decodes: false, views, complete: true };
+  if (!take(outer)) return { decodes: true, views, complete: false };
+  // `views` grows while it is walked: each new view's inner runs are taken in turn.
+  for (let i = 0; i < views.length; i++) {
+    for (const inner of ENCODED_SCHEMES) {
+      for (const r of inner.runs(views[i])) {
+        const key = `${inner.label}\0${r.run}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        if (!take(inner.views(r.run))) return { decodes: true, views, complete: false };
+      }
+    }
+  }
+  return { decodes: true, views, complete: true };
+}
+
+/**
+ * Every encoded run in `text` that decodes, with every view under it. The ONE
+ * peel the catalog pass, the known-value pass and the taint/canary views read,
+ * so they cannot drift on encoding handling and the work is done once per scan.
+ * A run repeated verbatim is peeled once and reported at each position.
+ */
+export function peelEncodedRuns(text: string, budget = { remaining: decodeBudgetFor(text.length) }): PeeledRun[] {
+  const out: PeeledRun[] = [];
+  const memo = new Map<string, Peel>();
+  for (const scheme of ENCODED_SCHEMES) {
+    for (const r of scheme.runs(text)) {
+      const key = `${scheme.label}\0${r.run}`;
+      let peel = memo.get(key);
+      if (!peel) {
+        peel = peelRun(scheme, r.run, budget);
+        memo.set(key, peel);
+      }
+      if (peel.decodes) out.push({ ...r, scheme, views: peel.views, complete: peel.complete });
+    }
+  }
+  return out;
+}
+
+/** The match for a run the budget could not cover: not proof of a secret,
+ *  proof that the scan cannot vouch for it. Spans the whole run so redaction
+ *  removes it, and carries none of its bytes. */
+export function uninspectedMatch(p: PeeledRun): SecretMatch {
+  return {
+    type: "uninspected-encoded",
+    pattern: `Uninspected encoded content (${p.scheme.label})`,
+    value: "",
+    masked: "***",
+    startIndex: p.index,
+    endIndex: p.index + p.run.length,
+  };
+}
+
+/**
+ * Encoded runs whose DECODED views trip a credential pattern, one SecretMatch
+ * per run spanning the ORIGINAL encoded blob (so redaction removes the whole
+ * thing), plus an uninspected match per run the budget could not cover.
+ * Derived views are matched with the anchor-relaxed catalog.
+ */
+export function scanEncodedViews(peeled: readonly PeeledRun[]): SecretMatch[] {
+  const out: SecretMatch[] = [];
+  for (const p of peeled) {
+    let name: string | undefined;
+    for (const decoded of p.views) {
+      name = firstMatchNameDerived(decoded);
+      if (name) break;
+    }
+    if (name) {
+      out.push({
+        type: "obfuscated",
+        pattern: `${name} (${p.scheme.label})`,
+        value: p.run.slice(0, 20) + (p.run.length > 20 ? "..." : ""),
+        masked: maskSecret(p.run),
+        startIndex: p.index,
+        endIndex: p.index + p.run.length,
+      });
+    } else if (!p.complete) {
+      out.push(uninspectedMatch(p));
+    }
+  }
+  return out;
+}

@@ -1,6 +1,7 @@
 # ADR 0004 — Split the secret scanner into a control tier and an advisory tier
 
-Status: Proposed — 2026-09-07
+Status: Proposed — 2026-09-07. Step 1 shipped 2026-09-07 (3dfd476f); step 4
+carried out 2026-11-02 by [ADR 0006](0006-secret-scanner-peel-fails-closed.md).
 
 ## Context
 

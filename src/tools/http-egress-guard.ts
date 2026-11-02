@@ -298,9 +298,8 @@ function hasSensitiveEgressData(text: string): boolean {
   return decodedPayloadViews(text).some((v) => classifyData(v).labels.includes("financial") || SSN_RE.test(v));
 }
 
-// Max attachment bytes scanned for secret-shaped content. Mirrors the scanner's
-// 256KB budget (security/secret-scanner.ts MAX_DECODED_BUDGET, data-lineage's
-// SECRET_SCAN_CAP): a secret in the head of a file is caught; a buried key past
+// Max attachment bytes scanned for secret-shaped content. Mirrors data-lineage's
+// SECRET_SCAN_CAP: a secret in the head of a file is caught; a buried key past
 // 256KB of a huge attachment is the accepted edge and keeps the regex pass cheap.
 const ATTACHMENT_SCAN_CAP = 256 * 1024;
 

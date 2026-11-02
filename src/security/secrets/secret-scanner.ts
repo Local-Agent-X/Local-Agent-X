@@ -19,11 +19,8 @@ import { CREDENTIAL_PATTERNS } from "./credential-patterns.js";
 import { detectHighEntropyTokens } from "./entropy-detector.js";
 import {
   type SecretMatch,
-  type Budget,
   maskSecret,
-  ENCODED_SCHEMES,
-  MAX_DECODED_BUDGET,
-  iterativeRunViews,
+  peelEncodedRuns,
   scanEncodedViews,
 } from "./secret-decode-engine.js";
 import {
@@ -39,6 +36,24 @@ interface ScanResult {
   clean: boolean;
   matches: SecretMatch[];
   scannedLength: number;
+}
+
+/** Does [start, end) overlap any of `spans`? Sorted by start with a running
+ *  maximum end, so each question is one binary search. */
+function coverageOf(spans: readonly SecretMatch[]): (start: number, end: number) => boolean {
+  const sorted = [...spans].sort((a, b) => a.startIndex - b.startIndex);
+  const maxEnd: number[] = [];
+  for (const m of sorted) maxEnd.push(Math.max(m.endIndex, maxEnd[maxEnd.length - 1] ?? 0));
+  return (start, end) => {
+    let lo = 0;
+    let hi = sorted.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (sorted[mid].startIndex < end) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo > 0 && maxEnd[lo - 1] > start;
+  };
 }
 
 /** Scan text for secret patterns */
@@ -66,28 +81,32 @@ export function scanForSecrets(text: string): ScanResult {
     }
   }
 
-  // Build the normalized view once; both the credential-pattern normalized pass
-  // and the known-value normalized pass reuse it (one fold + index map per scan).
+  // Build the normalized view and the decode peel once; the credential, encoded
+  // and known-value passes all read them (one fold, one peel per scan).
   const normalizedView = buildNormalizedView(text);
+  const peeled = peelEncodedRuns(text);
 
   // Additive evasion-resistant passes: a secret present only in a normalized or
   // decoded view of the text still makes the result NOT clean, with a span that
-  // points at the real offending bytes in `text`.
-  matches.push(...scanNormalizedView(text, matches, normalizedView));
-  matches.push(...scanEncodedViews(text));
+  // points at the real offending bytes in `text`. Pushed one by one: a spread of
+  // a large match list overflows the call stack.
+  for (const m of scanNormalizedView(text, matches, normalizedView)) matches.push(m);
+  for (const m of scanEncodedViews(peeled)) matches.push(m);
 
   // Known-secret-value pass: a registered stored secret value (raw, encoded, or
   // normalized) makes the scan NOT clean even when it matches no pattern, so the
   // egress guard blocks and the taint path taints on the user's ACTUAL secrets.
-  matches.push(...scanKnownValues(text, normalizedView));
+  for (const m of scanKnownValues(text, normalizedView, peeled)) matches.push(m);
 
   // Additive entropy pass: catch UNKNOWN secrets (random tokens with no
   // recognizable prefix) the catalog can't match. De-duped against catalog
   // matches — only emit for runs not already covered by a known shape so we
   // don't relabel an Anthropic/GitHub key as a generic high-entropy token.
+  // The entropy runs never overlap each other, so the earlier matches are
+  // indexed once (a scan over a base64 image yields tens of thousands of runs).
+  const covered = coverageOf(matches);
   for (const e of detectHighEntropyTokens(text)) {
-    const covered = matches.some(m => m.startIndex < e.endIndex && e.startIndex < m.endIndex);
-    if (covered) continue;
+    if (covered(e.startIndex, e.endIndex)) continue;
     matches.push({
       type: "high-entropy-token",
       pattern: "High-Entropy Token",
@@ -124,7 +143,7 @@ export function scanForSecrets(text: string): ScanResult {
  */
 export function scanKnownSecretValues(text: string): SecretMatch[] {
   if (!hasKnownSecretValues()) return [];
-  return scanKnownValues(text, buildNormalizedView(text));
+  return scanKnownValues(text, buildNormalizedView(text), peelEncodedRuns(text));
 }
 
 /**
@@ -134,7 +153,7 @@ export function scanKnownSecretValues(text: string): SecretMatch[] {
  */
 export function scanHeldValues(text: string, held: readonly string[], pattern: string): SecretMatch[] {
   if (held.length === 0) return [];
-  return scanKnownValues(text, buildNormalizedView(text), held, pattern);
+  return scanKnownValues(text, buildNormalizedView(text), peelEncodedRuns(text), held, pattern);
 }
 
 /** Redact all detected secrets from text */
@@ -155,13 +174,13 @@ export function redactSecrets(text: string): string {
 
 /**
  * Expand `text` into every view a content-overlap check should inspect: the raw
- * text, its NFKC/homoglyph/control-stripped normalized view, and the decoded
- * payload of each base64/hex/percent-encoded run inside it (one extra layer for
- * double-encoding, matching scanEncodedViews). REUSES the same ENCODED_SCHEMES +
- * buildNormalizedView machinery the scanner's evasion passes use, so a taint
- * overlap check can't drift from the secret scanner on "what counts as the same
- * bytes under encoding." Bounded by MAX_DECODED_BUDGET so a huge payload can't
- * blow up CPU.
+ * text, its NFKC/homoglyph/control-stripped normalized view, and every decoded
+ * view of every base64/hex/percent-encoded run inside it, every layer. Reads the
+ * scanner's own peel (peelEncodedRuns) and normalized view, so a taint overlap
+ * or canary check can't drift from the secret scanner on "what counts as the
+ * same bytes under encoding." Bounded by the same input-scaled decode budget.
+ * A run that budget could not cover contributes the views it got; the
+ * scanner's uninspected match is what fails such a payload closed.
  *
  * The raw text is always views[0]; the rest are derived. Callers should treat
  * the strings as content to fingerprint/search — never echo them (a decoded run
@@ -174,20 +193,7 @@ export function decodedPayloadViews(text: string): string[] {
   const norm = buildNormalizedView(text).normalized;
   if (norm !== text) views.push(norm);
 
-  const budget: Budget = { remaining: MAX_DECODED_BUDGET };
-  for (const scheme of ENCODED_SCHEMES) {
-    if (budget.remaining <= 0) break;
-    scheme.re.lastIndex = 0;
-    for (const m of text.matchAll(scheme.re)) {
-      if (budget.remaining <= 0) break;
-      // Iteratively peel every encoding layer (budget-bounded), surfacing every
-      // decoded text view (latin1 + both-endian utf16le for base64/hex; percent
-      // text) —
-      // the SAME helper scanEncodedViews/scanKnownValues use, so the taint-overlap
-      // check can't drift from the scanner on multi-layer encodings.
-      for (const v of iterativeRunViews(scheme, m[0], budget)) views.push(v);
-    }
-  }
+  for (const p of peelEncodedRuns(text)) for (const v of p.views) views.push(v);
   return views;
 }
 

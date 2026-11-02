@@ -5,9 +5,9 @@
  * strip + NFKC/NFKD + combining-mark strip + category-Cf format-char strip, with
  * an output→source index map) and
  * the two passes that consume it: the normalized-view credential pass and the
- * known-secret-value pass. The known-value pass reuses the decode engine's
- * bounded peel (iterativeRunViews / ENCODED_SCHEMES / MAX_DECODED_BUDGET) so it
- * can't drift from the catalog pass on encoding handling.
+ * known-secret-value pass. The known-value pass reads the decode engine's peel
+ * (peelEncodedRuns, the one per scan) so it can't drift from the catalog pass on
+ * encoding handling.
  */
 
 import { CREDENTIAL_PATTERNS } from "./credential-patterns.js";
@@ -15,11 +15,9 @@ import { normalizeHomoglyphs, stripControlChars } from "../../sanitize.js";
 import { knownSecretValues, hasKnownSecretValues } from "./known-secrets.js";
 import {
   type SecretMatch,
-  type Budget,
+  type PeeledRun,
   maskSecret,
-  ENCODED_SCHEMES,
-  MAX_DECODED_BUDGET,
-  iterativeRunViews,
+  uninspectedMatch,
 } from "./secret-decode-engine.js";
 
 // Build the normalized view char-by-char so every output position maps back to
@@ -164,6 +162,8 @@ function knownValueMatch(start: number, end: number, pattern: string): SecretMat
  * encoded-run, or in the normalized view — reusing the SAME decode/normalize
  * machinery the credential passes use. Values are gated by isSecretShaped at
  * registration time, so short/low-entropy values never reach here (no FP).
+ * An encoded run the peel could not cover is an uninspected match: this pass
+ * is the known-value egress BLOCK, and it must not pass what it never saw.
  *
  * `held` scopes the pass to the given values instead of the registry (a
  * page's own cookies for one evaluate result); the caller gates those the
@@ -172,6 +172,7 @@ function knownValueMatch(start: number, end: number, pattern: string): SecretMat
 export function scanKnownValues(
   text: string,
   view: { normalized: string; outToOrig: number[] },
+  peeled: readonly PeeledRun[],
   held?: readonly string[],
   pattern = "Known Secret Value",
 ): SecretMatch[] {
@@ -186,25 +187,17 @@ export function scanKnownValues(
 
   // 2) Encoded views: a value hidden inside a base64/hex/percent run. Attribute
   //    to the ORIGINAL encoded blob so redaction removes the whole thing.
-  //    C3-8: uses the SAME iterativeRunViews helper as scanEncodedViews (multi-
-  //    layer peel, shared byte budget) — previously this pass did a single decode
-  //    while the catalog pass decoded an inner layer, so base64(base64(known))
-  //    leaked. Sharing the helper means the two passes can't drift on depth.
-  const budget: Budget = { remaining: MAX_DECODED_BUDGET };
-  for (const scheme of ENCODED_SCHEMES) {
-    if (budget.remaining <= 0) break;
-    scheme.re.lastIndex = 0;
-    for (const m of text.matchAll(scheme.re)) {
-      if (budget.remaining <= 0) break;
-      const run = m[0];
-      const index = m.index ?? 0;
-      const decodedViews = iterativeRunViews(scheme, run, budget);
-      // A value sitting raw inside the run (a cookie with one `%3A`, which
-      // makes the whole line a percent run) is the raw pass's span, not a
-      // reason to attribute the entire run.
-      if (values.some((v) => !run.includes(v) && decodedViews.some((d) => d.includes(v)))) {
-        out.push(knownValueMatch(index, index + run.length, pattern));
-      }
+  //    C3-8: reads the SAME peel as scanEncodedViews (every layer) — this pass
+  //    once did a single decode while the catalog pass decoded an inner layer,
+  //    so base64(base64(known)) leaked.
+  for (const p of peeled) {
+    // A value sitting raw inside the run (a cookie with one `%3A`, which
+    // makes the whole line a percent run) is the raw pass's span, not a
+    // reason to attribute the entire run.
+    if (values.some((v) => !p.run.includes(v) && p.views.some((d) => d.includes(v)))) {
+      out.push(knownValueMatch(p.index, p.index + p.run.length, pattern));
+    } else if (!p.complete) {
+      out.push(uninspectedMatch(p));
     }
   }
 

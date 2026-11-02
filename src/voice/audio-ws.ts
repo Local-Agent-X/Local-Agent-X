@@ -161,7 +161,8 @@ export function setupVoiceWebSocket(server: Server, authToken: string, maxPayloa
       const origin = req.headers.origin;
       if (origin && !isLoopbackOrigin(origin)) { try { socket.destroy(); } catch {} return; }
       const hasToken = u.searchParams.get("token") ? "yes" : "no";
-      logger.info(`[voice-ws] upgrade hit: url=${req.url} hasToken=${hasToken}`);
+      // The path only: the query carries the operator token itself.
+      logger.info(`[voice-ws] upgrade hit: path=${u.pathname} hasToken=${hasToken}`);
       wss.handleUpgrade(req, socket as import("node:net").Socket, head, (ws) => {
         wss.emit("connection", ws, req);
       });

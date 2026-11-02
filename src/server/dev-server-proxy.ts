@@ -195,8 +195,9 @@ export function proxyFrontendDevServer(
   }
 
   // Per-request trace so a phone load over the broker is fully visible: which
-  // subresources arrive, their status/size, and any error/hang.
-  logger.info(`[dev-proxy] → GET ${url.pathname}${url.search}`);
+  // subresources arrive, their status/size, and any error/hang. The query is
+  // left out: the app frame's URL carries the operator token (?token=).
+  logger.info(`[dev-proxy] → GET ${url.pathname}${url.search ? " (query omitted)" : ""}`);
 
   // Phone requests are marked by the broker tunnel; only those get the live-
   // reload poller (the phone can't use Vite's HMR ws). Desktop keeps native HMR.

@@ -573,6 +573,6 @@ job. Comments are free: never cut them to fit.
 - `src/tools/process-session.ts#startSession` — 60+ own code lines (cap 100)
 - `src/tools/process-tools-defs.ts#processRestartTool.execute` — 60+ own code lines (cap 100)
 - `src/tools/telegram-tools.ts#telegramSend.execute` — 60+ own code lines (cap 100)
-- `src/voice/audio-ws.ts#ws.on:callback@238` — 60+ own code lines (cap 100)
+- `src/voice/audio-ws.ts#ws.on:callback@239` — 60+ own code lines (cap 100)
 - `src/voice/voice-session/settings.ts#resolveVoiceSettings` — 60+ own code lines (cap 100)
 

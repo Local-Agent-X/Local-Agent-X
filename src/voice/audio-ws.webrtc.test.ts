@@ -10,7 +10,7 @@
 // testing it over a real socket proves the message shapes the phone client must
 // mirror, not just an extracted function in isolation.
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { WebSocket } from "ws";
@@ -292,6 +292,24 @@ describe("/ws/voice webrtc transport", () => {
     expect(peer.closed).toBe(false);
     expect(session.closed).toBe(false);
     ws.close();
+  });
+});
+
+// The operator token rides the upgrade URL's query (?token=); the upgrade
+// trace logged the whole URL, so every voice connect wrote the credential into
+// server.log and desktop-stdio.log.
+describe("/ws/voice upgrade log", () => {
+  it("never carries the token", async () => {
+    const lines: string[] = [];
+    const spy = vi.spyOn(console, "log").mockImplementation((...a: unknown[]) => { lines.push(a.map(String).join(" ")); });
+    try {
+      const ws = await connect();
+      ws.close();
+    } finally {
+      spy.mockRestore();
+    }
+    expect(lines.some((l) => l.includes("upgrade hit"))).toBe(true);
+    expect(lines.filter((l) => l.includes(AUTH))).toEqual([]);
   });
 });
 

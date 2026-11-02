@@ -3,7 +3,7 @@
 // fetches from and pushes to the configured repository after every rewrite
 // rule. These run real git in a scratch repository; nothing contacts a remote
 // (get-url and config only read). The user's global config is each test's own
-// file (GIT_CONFIG_GLOBAL).
+// file: GIT_CONFIG_GLOBAL, and HOME for git before 2.32, which ignores it.
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -16,6 +16,7 @@ let root = "";
 let repo = "";
 let globalConfig = "";
 const savedGlobal = process.env.GIT_CONFIG_GLOBAL;
+const savedHome = process.env.HOME;
 
 const git = (cwd: string, ...args: string[]): void => { execFileSync("git", args, { cwd, stdio: ["ignore", "pipe", "pipe"] }); };
 const local = (key: string, value: string): void => git(repo, "config", "--add", key, value);
@@ -24,9 +25,10 @@ const user = (key: string, value: string): void => git(root, "config", "-f", glo
 beforeEach(() => {
   root = mkdtempSync(join(tmpdir(), "lax-sync-trust-"));
   repo = join(root, "sync-repo");
-  globalConfig = join(root, "global.gitconfig");
+  globalConfig = join(root, ".gitconfig");
   writeFileSync(globalConfig, "");
   process.env.GIT_CONFIG_GLOBAL = globalConfig;
+  process.env.HOME = root;
   git(root, "init", "-q", "-b", "main", repo);
   git(repo, "remote", "add", "origin", REPO);
   local("branch.main.remote", "origin");
@@ -36,6 +38,8 @@ beforeEach(() => {
 afterEach(() => {
   if (savedGlobal === undefined) delete process.env.GIT_CONFIG_GLOBAL;
   else process.env.GIT_CONFIG_GLOBAL = savedGlobal;
+  if (savedHome === undefined) delete process.env.HOME;
+  else process.env.HOME = savedHome;
   rmSync(root, { recursive: true, force: true });
 });
 

@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1904 non-test source files · 88 oversized · 247 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1905 non-test source files · 87 oversized · 248 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -26,14 +26,14 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/workspace/` | 85 | 3 | M |  |
 | `src/canonical-loop/` | 81 | 280 | XL | 11 |
 | `src/providers/` | 73 | 27 | L | 1 |
-| `src/session/` | 57 | 9 | M |  |
-| `src/data-lineage/` | 56 | 12 | L |  |
-| `src/memory/` | 53 | 148 | XL | 7 |
+| `src/session/` | 58 | 9 | M |  |
+| `src/data-lineage/` | 57 | 12 | L |  |
+| `src/memory/` | 54 | 148 | XL | 7 |
 | `src/browser/` | 47 | 88 | XL | 5 |
 | `src/tool-policy/` | 47 | 21 | L |  |
 | `src/local-runtimes/` | 43 | 26 | L | 1 |
+| `src/threat/` | 42 | 13 | L |  |
 | `src/util/` | 42 | 3 | S |  |
-| `src/threat/` | 40 | 13 | L |  |
 | `src/auth/` | 37 | 11 | L |  |
 | `src/chat-ws/` | 34 | 23 | L |  |
 | `src/agency/` | 29 | 21 | L |  |
@@ -48,7 +48,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/desktop-contract/` | 21 | 10 | M |  |
 | `src/protocols/` | 21 | 52 | XL |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
-| `src/server/` *(entrypoint)* | 18 | 57 | XL | 6 |
+| `src/server/` *(entrypoint)* | 18 | 58 | XL | 5 |
 | `src/agents/` | 17 | 13 | L |  |
 | `src/autonomy/` | 17 | 5 | M |  |
 | `src/net/` | 17 | 11 | L |  |
@@ -63,8 +63,8 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/integrations/` | 12 | 15 | M |  |
 | `src/whatsapp-bridge/` | 12 | 8 | M | 1 |
 | `src/agent-loop/` | 11 | 1 | S |  |
+| `src/routes/` | 11 | 98 | XL | 17 |
 | `src/persistence/` | 10 | 2 | S |  |
-| `src/routes/` | 10 | 98 | XL | 17 |
 | `src/sync/` | 10 | 21 | L | 1 |
 | `src/codex-client/` | 9 | 6 | M |  |
 | `src/plugin-system/` | 9 | 10 | L | 1 |
@@ -305,7 +305,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/server/bootstrap-services.ts#initOrRefreshEmbeddingProvider`
 - `src/server/handler-events.ts#agentRunDriver`
 - `src/server/index.ts#startServer`
-- `src/server/voice-ws.ts#voiceTurnRunner`
 - `src/sync/push-files.ts#copyToSync`
 - `src/tool-execution/pre-dispatch.ts#assertToolCallAllowed`
 - `src/tool-execution/require-approval.ts#requireApprovalPhase`
@@ -416,6 +415,7 @@ job. Comments are free: never cut them to fit.
 - `src/security/layer/network-policy.ts#evaluateWebFetch` — 90+ own code lines (cap 100)
 - `src/security/layer/shell-policy.ts#evaluateShellCommand` — 90+ own code lines (cap 100)
 - `src/server/inbound-channel-runner.ts#runInboundChannelTurn` — 90+ own code lines (cap 100)
+- `src/server/voice-ws.ts#runVoiceTurn` — 90+ own code lines (cap 100)
 - `src/tool-execution/run-sandboxed.ts#runSandboxedPhase` — 90+ own code lines (cap 100)
 - `src/tools/email-send-tool.ts#emailSend.execute` — 90+ own code lines (cap 100)
 - `src/tools/read-write-tools.ts#readTool.execute` — 90+ own code lines (cap 100)

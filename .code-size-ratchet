@@ -81,7 +81,6 @@ src/server/background-jobs/index.ts#startBackgroundJobs 106
 src/server/bootstrap-services.ts#initOrRefreshEmbeddingProvider 107
 src/server/handler-events.ts#agentRunDriver 127
 src/server/index.ts#startServer 131
-src/server/voice-ws.ts#voiceTurnRunner 116
 src/sync/push-files.ts#copyToSync 122
 src/tool-execution/pre-dispatch.ts#assertToolCallAllowed 184
 src/tool-execution/require-approval.ts#requireApprovalPhase 182

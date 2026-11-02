@@ -22,7 +22,49 @@ import type { ProviderId } from "../providers/provider-ids.js";
 import { userAuthoredRows } from "../harness-rows.js";
 import { withRecallCarried } from "../agent-request/recall-carry.js";
 import { OP_TYPE } from "../ops/op-types.js";
+import { ThreatEngine } from "../threat/threat-engine.js";
+import type { VoiceTurnInput, VoiceTurnRunner } from "../voice/voice-session/index.js";
+import { VOICE_BUSY_REPLY, canaryWatch, claimVoiceTurn, commitVoiceTurn, type VoiceTurnSlot } from "./voice-turn-guard.js";
 const logger = createLogger("server.lifecycle");
+
+/**
+ * The spoken turn's system prompt and its telemetry. Prompt-cache split: static
+ * sections + voice tail form the stable prefix; per-turn dynamic sections
+ * (memory retrieval, notices) move after it. stream-api caches the stable
+ * block, so consecutive spoken turns stop re-prefilling the whole system tier.
+ * When a turn has no dynamic sections at all, history-tier caching engages too.
+ */
+function voicePromptFor(
+  prepared: Awaited<ReturnType<typeof import("../agent-request/index.js").prepareAgentRequest>>,
+  voiceTail: string,
+  voiceModel: string,
+  voiceTools: ToolDefinition[],
+  allToolCount: number,
+) {
+  const voiceSplit = buildVoicePromptSplit(prepared.renderedPromptSections, prepared.systemPrompt, voiceTail);
+  const voicePromptTelemetry = createPromptTelemetry({
+    profile: "voice",
+    provider: prepared.provider,
+    model: voiceModel,
+    toolSchemaFormat: prepared.promptTelemetry.toolSchemaFormat,
+    prompt: voiceSplit.systemPrompt,
+    tools: voiceTools,
+    allToolCount,
+    historyMessageCount: prepared.cleanHistory.length,
+    sections: voiceSplit.sections.map((section) => section.measurement),
+  });
+  return { voiceSplit, voicePromptTelemetry };
+}
+
+/** The voice_visual toggle: settings.json first, then config. */
+async function voiceVisualsEnabled(config: LAXConfig): Promise<boolean> {
+  try {
+    const { getSetting } = await import("../settings.js");
+    const setting = getSetting<boolean>("voice_visuals_enabled");
+    if (typeof setting === "boolean") return setting;
+  } catch { /* settings unreadable: the config default below stands */ }
+  return config.voice_visuals_enabled !== false;
+}
 
 // A spoken reply is a few sentences; this caps a voice turn's output so a
 // degenerate local model can't loop for the full wall-clock ceiling (the
@@ -67,24 +109,18 @@ export async function setupVoiceWs(deps: {
     const { prepareAgentRequest } = await import("../agent-request/index.js");
     setupVoiceWebSocket(server, config.authToken, config.maxUploadBytes);
 
-    const voiceTurnRunner: import("../voice/voice-session/index.js").VoiceTurnRunner = async ({ text, continuationOf, signal, onDelta, onVisual, sessionId: voiceSessionId }) => {
-      // Per-connection voice session id. The previous hardcoded "voice" caused
-      // every concurrent voice connection to share global session-scoped state
-      // (active onEvent callback, browser session, sub-agent inheritance).
-      // Each voice WebSocket sends its own sessionId in the hello frame; here
-      // we trust it so memory writes, retrieval, and tool plumbing isolate.
-      const sessionId = voiceSessionId && voiceSessionId.trim() ? voiceSessionId : `voice-${randomUUID()}`;
-      // Voice goes through the full agent pipeline so it knows the persona
-      // (the main chat agent), has memory access, and can call tools. Earlier we routed
-      // voice through a stripped-down LLM call to chase latency, but the
-      // savings turned out to be marginal vs prompt caching, and the agent
-      // appearing to forget who it was made the experience feel broken.
-      //
-      // The voice path differs from text chat in three ways:
-      //   1. No threat engine / canary scanning (voice stream is short)
-      //   2. No turn-lock / queue (voice has its own session-level concurrency)
-      //   3. No fallback chain (voice picks the configured provider; an error
-      //      surfaces as agent_error to the client which will retry)
+    // Voice goes through the full agent pipeline so it knows the persona
+    // (the main chat agent), has memory access, and can call tools. Earlier we routed
+    // voice through a stripped-down LLM call to chase latency, but the
+    // savings turned out to be marginal vs prompt caching, and the agent
+    // appearing to forget who it was made the experience feel broken.
+    //
+    // It shares the typed turn's safety on the same thread (voice-turn-guard.ts):
+    // the session's turn slot, the stale-writer check, an append-only save, the
+    // end-of-turn memory pass, and the threat engine with its canary watch. It
+    // differs in having no fallback chain (voice picks the configured provider;
+    // an error surfaces as agent_error to the client, which will retry).
+    const runVoiceTurn = async ({ text, continuationOf, onDelta, onVisual }: VoiceTurnInput, sessionId: string, slot: VoiceTurnSlot) => {
       // Durable, continuous memory: load the persisted thread from the same
       // store text chat uses, rather than a per-connection in-memory history
       // that resets on every reconnect. The client sends the chat thread's own
@@ -156,14 +192,7 @@ export async function setupVoiceWs(deps: {
       // differently just because it was spoken. With no real tools the agent
       // FABRICATED actions it couldn't perform ("opened it"); parity fixes that.
       // The visuals toggle only governs the one cosmetic tool (voice_visual).
-      let visualsEnabled = config.voice_visuals_enabled !== false;
-      try {
-        const { getSetting } = await import("../settings.js");
-        const setting = getSetting<boolean>("voice_visuals_enabled");
-        if (typeof setting === "boolean") {
-          visualsEnabled = setting;
-        }
-      } catch { /* keep config-default */ }
+      const visualsEnabled = await voiceVisualsEnabled(config);
       // Governor: a voice turn is FAST and tool-light. It answers / does quick
       // lookups inline, drives the agent's OWN browser for web tasks, and
       // DELEGATES genuinely heavy/long work to a background worker
@@ -188,36 +217,18 @@ export async function setupVoiceWs(deps: {
       // Voice belt + spoken-mode prompt tail (voice-prompt.ts).
       const voiceTools = allAgentTools.filter(t =>
         (VOICE_FAST_TOOLS as readonly string[]).includes(t.name) || (visualsEnabled && t.name === "voice_visual"));
-      const voiceTail = buildVoiceTail(visualsEnabled);
-      // Prompt-cache split: static sections + voice tail form the stable
-      // prefix; per-turn dynamic sections (memory retrieval, notices) move
-      // after it. stream-api caches the stable block, so consecutive spoken
-      // turns stop re-prefilling the whole system tier. When a turn has no
-      // dynamic sections at all, history-tier caching engages too.
-      const voiceSplit = buildVoicePromptSplit(
-        prepared.renderedPromptSections,
-        prepared.systemPrompt,
-        voiceTail,
-      );
+      const { voiceSplit, voicePromptTelemetry } = voicePromptFor(prepared, buildVoiceTail(visualsEnabled), voiceModel, voiceTools, allAgentTools.length);
       const voiceSystemPrompt = voiceSplit.systemPrompt;
       const voiceRenderedPromptSections = voiceSplit.sections;
-      const voicePromptTelemetry = createPromptTelemetry({
-        profile: "voice",
-        provider: prepared.provider,
-        model: voiceModel,
-        toolSchemaFormat: prepared.promptTelemetry.toolSchemaFormat,
-        prompt: voiceSystemPrompt,
-        tools: voiceTools,
-        allToolCount: allAgentTools.length,
-        historyMessageCount: prepared.cleanHistory.length,
-        sections: voiceRenderedPromptSections.map((section) => section.measurement),
-      });
 
       // TTS + transcript hygiene: strips leaked template tokens from each
       // spoken delta and runs the full pass on the stored text (see the class).
       const hygiene = new VoiceTurnHygiene();
+      const threatEngine = new ThreatEngine(dataDir, sessionId);
+      const canaryTripped = canaryWatch(threatEngine, slot.abort);
       const onEvent = (event: ServerEvent) => {
         if (event.type === "stream" && "delta" in event && event.delta) {
+          if (canaryTripped(event.delta)) return;
           const spoken = hygiene.delta(event.delta);
           if (spoken !== null) onDelta(spoken);
         } else if (event.type === "visual" && onVisual) {
@@ -276,7 +287,7 @@ export async function setupVoiceWs(deps: {
           baseURL: prepared.customBaseURL,
           systemPrompt: voiceSystemPrompt,
           tools: voiceTools,
-          security, toolPolicy, rbac,
+          security, toolPolicy, rbac, threatEngine,
           sessionId,
           callContext: "local",
           // Budget: a quick lookup (web_search → speak) or delegate-and-ack
@@ -326,16 +337,16 @@ export async function setupVoiceWs(deps: {
           // Prompt-cache profile from the split above (see buildVoicePromptSplit).
           systemStablePrefixLen: voiceSplit.stableLen,
           cacheConversation: voiceSplit.fullyStable,
-          signal,
+          signal: slot.signal,
           onEvent,
           opType: OP_TYPE.voiceTurn,
           lane: "interactive",
           promptTelemetry: voicePromptTelemetry,
           renderedPromptSections: voiceRenderedPromptSections,
         });
-        if (signal.aborted || result.stopReason === "abort") aborted = true;
+        if (slot.signal.aborted || result.stopReason === "abort") aborted = true;
       } catch (e) {
-        if (signal.aborted) {
+        if (slot.signal.aborted) {
           aborted = true;
         } else {
           throw e;
@@ -368,14 +379,34 @@ export async function setupVoiceWs(deps: {
         content: finalAssistantText || "[no reply]",
         ...(aborted ? { _interrupted: true } : {}),
       };
-      session.messages = [
-        ...session.messages,
-        ...withRecallCarried([{ role: "user" as const, content: text }, assistantRow], prepared.recall),
-      ];
-      session.updatedAt = Date.now();
-      void saveSession(session);
+      await commitVoiceTurn({
+        session, sessionId, turnSignal: slot.signal, userText: text, replyText: finalAssistantText,
+        rows: withRecallCarried([{ role: "user" as const, content: text }, assistantRow], prepared.recall),
+        memoryManager, saveSession,
+      });
 
       return { assistantText: finalAssistantText, updatedHistory: session.messages };
+    };
+
+    const voiceTurnRunner: VoiceTurnRunner = async (input) => {
+      // Per-connection voice session id. The previous hardcoded "voice" caused
+      // every concurrent voice connection to share global session-scoped state
+      // (active onEvent callback, browser session, sub-agent inheritance).
+      // Each voice WebSocket sends its own sessionId in the hello frame; here
+      // we trust it so memory writes, retrieval, and tool plumbing isolate.
+      const sessionId = input.sessionId && input.sessionId.trim() ? input.sessionId : `voice-${randomUUID()}`;
+      // Claimed before the thread is read: a replaced turn (barge-in, or a
+      // typed message) has saved its rows by the time this one loads them.
+      const slot = await claimVoiceTurn(sessionId, input.signal);
+      if (!slot) {
+        input.onDelta(VOICE_BUSY_REPLY);
+        return { assistantText: VOICE_BUSY_REPLY, updatedHistory: getOrCreateSession(sessionId).messages };
+      }
+      try {
+        return await runVoiceTurn(input, sessionId, slot);
+      } finally {
+        slot.release();
+      }
     };
 
     setVoiceSessionFactory(createVoiceSessionFactory(voiceTurnRunner, (name) => secretsStore.get(name) || ""));

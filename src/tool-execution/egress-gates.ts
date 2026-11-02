@@ -24,6 +24,7 @@ import { destinationSpecsOf, hasCapability, requestMethodOf } from "../tool-regi
 import { checkOutboundRequest, checkOutboundPayload, checkOutboundEmail, checkAttachmentPaths, isTrustedDestination, recipientFields } from "../tools/http-egress-guard.js";
 import { vouchedFor } from "../browser/site-provenance.js";
 import { egressPayload } from "./egress-payload.js";
+import { recordEgressBlocks } from "./egress-block-audit.js";
 import { outboundSecretRecovery } from "./stored-secret-route.js";
 import type { PhaseOutcome, ToolCallContext } from "./context.js";
 import { terminate, CONTINUE } from "./context.js";
@@ -304,9 +305,13 @@ export function egressAggregateGate(ctx: ToolCallContext, upstream: EgressBlocke
   // EVERY blocker confirmable (in practice: only the email recipient-trust
   // scan fired — canary / lineage / kernel / security blockers never are) →
   // ask the user instead of blocking. Any hard blocker keeps the hard block.
-  if (all.every((b) => b.confirmable)) return deferToApproval(ctx, all);
+  if (all.every((b) => b.confirmable)) {
+    recordEgressBlocks(ctx, all, true);
+    return deferToApproval(ctx, all);
+  }
   // Apply the canary audit exactly once, here, when the canary is part of the
   // enforced aggregate (probeCanary is side-effect-free by design).
   if (canaryTripped) recordCanaryExfilAudit(ctx.sessionId || "default", ctx.tc.name);
+  recordEgressBlocks(ctx, all, false);
   return renderEgressAggregate(ctx, all);
 }

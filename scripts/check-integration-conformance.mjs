@@ -40,12 +40,19 @@
  * .code-size-ratchet). It is a RATCHET, not a mute: every baselined finding is
  * printed on every run, and a baseline entry that no longer reproduces FAILS the
  * build so the list can only shrink.
+ *
+ * `--root <dir>` audits a copy of the repo (its src/ and scripts/ baseline)
+ * instead of this checkout, so a test can mutate the copy without rewriting
+ * source another test is reading at the same moment.
  */
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const root = fileURLToPath(new URL("..", import.meta.url));
+const rootArg = process.argv.indexOf("--root");
+const root = rootArg >= 0
+  ? resolve(process.argv[rootArg + 1])
+  : fileURLToPath(new URL("..", import.meta.url));
 const BUILTINS_DIR = join(root, "src/integrations/builtins");
 const BASELINE_PATH = join(root, "scripts/integration-conformance-baseline.json");
 

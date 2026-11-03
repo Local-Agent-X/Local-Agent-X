@@ -7,21 +7,40 @@
  * If any of those three properties silently broke, the gate would keep printing
  * "OK" while the registry drifted back to model-locked. Hence this test.
  */
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { spawnSync } from "node:child_process";
-import { readFileSync, writeFileSync } from "node:fs";
+import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 
-const root = fileURLToPath(new URL("..", import.meta.url));
-const SCRIPT = join(root, "scripts/check-integration-conformance.mjs");
-const BASELINE = join(root, "scripts/integration-conformance-baseline.json");
-const EMAIL = join(root, "src/integrations/builtins/email.ts");
-const GITHUB = join(root, "src/integrations/builtins/github.ts");
-const TYPES = join(root, "src/integrations/types.ts");
+const repo = fileURLToPath(new URL("..", import.meta.url));
+const SCRIPT = join(repo, "scripts/check-integration-conformance.mjs");
+const BASELINE_REL = "scripts/integration-conformance-baseline.json";
+
+// The gate audits a private copy of the tree. The mutation tests below rewrite
+// declarations to provoke findings; doing that to the real src/ let a test in a
+// concurrent shard read the mutated email.ts mid-run and fail.
+let root = "";
+let BASELINE = "", EMAIL = "", GITHUB = "", TYPES = "";
+
+beforeAll(() => {
+  root = mkdtempSync(join(tmpdir(), "lax-conformance-"));
+  cpSync(join(repo, "src"), join(root, "src"), {
+    recursive: true,
+    filter: (p) => !p.split(/[\\/]/).includes("node_modules"),
+  });
+  cpSync(join(repo, BASELINE_REL), join(root, BASELINE_REL));
+  BASELINE = join(root, BASELINE_REL);
+  EMAIL = join(root, "src/integrations/builtins/email.ts");
+  GITHUB = join(root, "src/integrations/builtins/github.ts");
+  TYPES = join(root, "src/integrations/types.ts");
+});
+
+afterAll(() => rmSync(root, { recursive: true, force: true }));
 
 function runGate() {
-  const r = spawnSync(process.execPath, [SCRIPT], { encoding: "utf8", cwd: root });
+  const r = spawnSync(process.execPath, [SCRIPT, "--root", root], { encoding: "utf8", cwd: repo });
   return { code: r.status, out: `${r.stdout ?? ""}${r.stderr ?? ""}` };
 }
 
@@ -164,6 +183,17 @@ describe("integration conformance gate", () => {
     });
     expect(code).toBe(1);
     expect(out).toMatch(/no longer reproduce/);
+  });
+
+  it("audits the copy it is pointed at and leaves the checkout's source alone", () => {
+    const real = join(repo, "src/integrations/builtins/email.ts");
+    const before = readFileSync(real, "utf8");
+    const { code, out } = withSource(EMAIL, t => t.replace(/\n  transport: "smtp_imap",/, ""));
+
+    expect(code).toBe(1);
+    expect(out).toMatch(/transport:email/);
+    expect(EMAIL.startsWith(repo)).toBe(false);
+    expect(readFileSync(real, "utf8")).toBe(before);
   });
 
   it("restores the baseline and the sources after mutation", () => {

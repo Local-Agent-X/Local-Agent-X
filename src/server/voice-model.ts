@@ -40,3 +40,20 @@ export function resolveVoiceModel(
 
   return backgroundModelFor(provider, chatModel);
 }
+
+/**
+ * The output cap for a spoken turn.
+ *
+ * 600 tokens was set so a degenerate LOCAL model couldn't loop for the full
+ * wall-clock ceiling (the original incident ran 41s until the user aborted),
+ * and a spoken reply is a few sentences. But a hosted model's reasoning counts
+ * against the same cap: Anthropic's adaptive thinking and OpenAI's reasoning
+ * tokens both sit inside max_tokens. With voiceModel "chat" on Opus 5.5, an
+ * action request thought past 600, was cut off three times at max_tokens
+ * before any tool call, and the user waited 18s for a reply that never acted
+ * (2026-11-02). Hosted models get room to think and call a tool; how long the
+ * spoken answer is stays the voice prompt's job.
+ */
+export function voiceMaxTokens(provider: ProviderId): number {
+  return provider === "local" ? 600 : 4096;
+}

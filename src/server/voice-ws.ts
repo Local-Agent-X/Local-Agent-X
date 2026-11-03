@@ -16,7 +16,7 @@ import { warmModel } from "../local-runtimes/residency.js";
 import { createPromptTelemetry } from "../prompt-telemetry.js";
 import { buildVoicePromptSplit } from "./voice-prompt-plan.js";
 import { retractLastTurn } from "../memory/retract-last-turn.js";
-import { resolveVoiceModel } from "./voice-model.js";
+import { resolveVoiceModel, voiceMaxTokens } from "./voice-model.js";
 import { VOICE_FAST_TOOLS, buildVoiceTail } from "./voice-prompt.js";
 import type { ProviderId } from "../providers/provider-ids.js";
 import { userAuthoredRows } from "../harness-rows.js";
@@ -129,12 +129,6 @@ async function planSpokenTurn(prepared: PreparedRequest, config: LAXConfig, allA
   const { voiceSplit, voicePromptTelemetry } = voicePromptFor(prepared, buildVoiceTail(visualsEnabled), voiceModel, voiceTools, allAgentTools.length);
   return { voiceModel, voiceTools, voiceSplit, voicePromptTelemetry };
 }
-
-// A spoken reply is a few sentences; this caps a voice turn's output so a
-// degenerate local model can't loop for the full wall-clock ceiling (the
-// original incident ran 41s until the user aborted). Explicit caps are never
-// raised by the local-window clamp, so a small window stays safe too.
-const VOICE_MAX_TOKENS = 600;
 
 export async function setupVoiceWs(deps: {
   server: Server;
@@ -310,7 +304,10 @@ export async function setupVoiceWs(deps: {
           // work delegates to a worker, so a voice turn still stays shallow).
           maxIterations: 8,
           temperature: prepared.temperature,
-          maxTokens: VOICE_MAX_TOKENS,
+          // Per provider (voice-model.ts): tight for a local runtime, room to
+          // think for a hosted model. Explicit caps are never raised by the
+          // local-window clamp, so a small window stays safe too.
+          maxTokens: voiceMaxTokens(prepared.provider as ProviderId),
           // Anthropic text chat already uses direct HTTP OAuth for interactive
           // turns. Voice must do the same: the CLI warm-pool path is for
           // background agentic work and can sit silent while a subprocess
@@ -335,13 +332,11 @@ export async function setupVoiceWs(deps: {
           //     those models have no adaptive mode to strand a call in text.
           //     This is the branch voice takes BY DEFAULT: resolveVoiceModel
           //     falls through to the provider's fast tier (anthropic →
-          //     claude-haiku-4-5). `voiceModel` is absent from settings-schema,
-          //     so it is not offered in the settings UI or to the agent's
-          //     setting tool — but getSetting reads settings.json raw, so a
-          //     hand-edited ~/.lax/settings.json DOES pin it and activate the
-          //     adaptive branch. Dormant by default, not by construction.
+          //     claude-haiku-4-5). The `voiceModel` setting ("chat", or an
+          //     Opus id) puts voice on the adaptive branch, and its thinking
+          //     counts against maxTokens above.
           // Sending an unconditional effort here instead would drop haiku into
-          // the legacy budget_tokens arm (3000 > VOICE_MAX_TOKENS 600 → 400).
+          // the legacy budget_tokens arm.
           // The classifier lane (classify-with-llm.ts) keeps disableThinking:
           // it sends NO tools, so the hazard cannot bite there.
           // Genuinely heavy work still delegates to op_submit_async workers,

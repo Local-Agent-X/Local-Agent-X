@@ -2,7 +2,7 @@
 // model. Regression: voice inherited gpt-5.6-sol (a reasoning model) and spent
 // 13-16s thinking before the first spoken token.
 import { describe, it, expect } from "vitest";
-import { resolveVoiceModel } from "./voice-model.js";
+import { resolveVoiceModel, voiceMaxTokens } from "./voice-model.js";
 
 // getSetting stub factory — returns the given voiceModel value (or undefined).
 function settings(voiceModel?: string) {
@@ -43,5 +43,17 @@ describe("resolveVoiceModel", () => {
 	it("unreadable settings never throw — falls back to the fast tier", () => {
 		const boom = <T,>(_key: string): T | undefined => { throw new Error("settings gone"); };
 		expect(resolveVoiceModel("codex", "gpt-5.6-sol", boom)).toBe("gpt-6-luna");
+	});
+});
+
+describe("voiceMaxTokens", () => {
+	it("keeps the tight cap for a local runtime, where a degenerate model can loop", () => {
+		expect(voiceMaxTokens("local")).toBe(600);
+	});
+
+	it("leaves a hosted model room to think and call a tool before it speaks", () => {
+		for (const p of ["anthropic", "anthropic-api", "codex", "openai", "xai", "gemini"] as const) {
+			expect(voiceMaxTokens(p)).toBeGreaterThanOrEqual(4096);
+		}
 	});
 });

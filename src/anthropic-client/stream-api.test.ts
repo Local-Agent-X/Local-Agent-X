@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 
 import { streamViaAPI } from "./stream-api.js";
-import { resolveVoiceModel } from "../server/voice-model.js";
+import { resolveVoiceModel, voiceMaxTokens } from "../server/voice-model.js";
 import { PROVIDERS } from "../providers/registry.js";
 import type { StreamEvent, StreamOptions } from "./types.js";
 
@@ -521,15 +521,15 @@ describe("streamViaAPI — short-path effort resolution", () => {
   ]);
 
   const voiceTools = [{ name: "voice_visual", description: "show", parameters: { type: "object" } }];
-  // The real voice turn shape (voice-ws.ts): VOICE_MAX_TOKENS and the
+  // The real voice turn shape (voice-ws.ts): the Anthropic voice cap and the
   // configured spoken-turn temperature.
-  const VOICE_MAX_TOKENS = 600;
+  const VOICE_MAX_TOKENS = voiceMaxTokens("anthropic");
   const VOICE_TEMPERATURE = 0.7;
 
   // ── The model voice ACTUALLY runs on ───────────────────────────────────
-  // Driven through the real resolver, not a hardcoded id: `voiceModel` has no
-  // settings-schema entry, so getSetting always misses and every user lands on
-  // the provider's fast tier. If that fallback ever changes, this fails loudly.
+  // Driven through the real resolver, not a hardcoded id: with `voiceModel`
+  // unset, every user lands on the provider's fast tier. If that fallback ever
+  // changes, this fails loudly.
   const defaultVoiceModel = resolveVoiceModel("anthropic", "claude-opus-5", () => undefined);
 
   it("the default voice model is a fast tier with no effort dial", () => {
@@ -582,8 +582,8 @@ describe("streamViaAPI — short-path effort resolution", () => {
 
   // The pairing that actually 400s — enabled thinking whose budget exceeds the
   // turn's max_tokens — must never be built for the SHORT-PATH intent, on any
-  // model. This is the invariant voice depends on: `effort: "low"` at
-  // VOICE_MAX_TOKENS 600 is the exact request that was 400ing.
+  // model. This is the invariant voice depends on: `effort: "low"` at the
+  // then-600 voice cap is the exact request that was 400ing.
   //
   // Scope note, deliberately not silently widened: `medium`+ on a legacy model
   // at max_tokens < 3000 DOES still build budget_tokens 3000, because the
@@ -604,7 +604,7 @@ describe("streamViaAPI — short-path effort resolution", () => {
     }
   });
 
-  // ...and that shared shape is the one the API accepts at max_tokens 600.
+  // ...and that shared shape is the one the API accepts at the voice cap.
   it("default voice config: no thinking block, no budget_tokens, temperature preserved", async () => {
     const cap = stubFetchCapturing(done);
     await collect({
@@ -615,7 +615,7 @@ describe("streamViaAPI — short-path effort resolution", () => {
     expect("thinking" in body).toBe(false);
     expect("output_config" in body).toBe(false);
     // The regression that made this chunk ship-blocking: budget_tokens 3000
-    // against max_tokens 600 is a 400 on every spoken turn.
+    // against the then-600 max_tokens was a 400 on every spoken turn.
     expect(JSON.stringify(body)).not.toContain("budget_tokens");
     expect(body.max_tokens).toBe(VOICE_MAX_TOKENS);
     expect(body.temperature).toBe(VOICE_TEMPERATURE);

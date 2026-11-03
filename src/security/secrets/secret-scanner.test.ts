@@ -541,16 +541,17 @@ describe("scanForSecrets — high-entropy detector (positives)", () => {
     expect(missed).toBe(0);
   });
 
-  // Nor does the CamelCase one: random letters-only mixed-case tokens almost
-  // never split into words (43 in 1M across 20-48 chars when measured).
+  // Nor does the CamelCase one. Letters-only is its worst case, ~0.4% of
+  // random keys: ~0.11% of those split into words (330 in 300k measured), so
+  // the bound below sits well over the expected ~11 misses in 10k.
   it("flags random letters-only mixed-case tokens (the CamelCase exemption stays narrow)", () => {
     const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
     let missed = 0;
-    for (let i = 0; i < 2000; i++) {
+    for (let i = 0; i < 10_000; i++) {
       const token = [...randomBytes(32)].map((b) => letters[b % 52]).join("");
       if (scanForSecrets(`value ${token} end`).clean) missed++;
     }
-    expect(missed).toBe(0);
+    expect(missed).toBeLessThan(60);
   });
 
   // The hex-of-text exemption must not swallow hex key material: random bytes
@@ -593,6 +594,9 @@ describe("scanForSecrets — high-entropy detector (false-positive traps stay cl
     // A Three.js download held for approval as carrying a token (2026-11-03).
     ["a CamelCase file name in a CDN URL", "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/shaders/LuminosityHighPassShader.js"],
     ["CamelCase identifiers with a short word or an acronym", "getElementsByClassName UnrealBloomPassToScreen WebGLRenderTargetCubeMap HTMLParserFactoryBuilder"],
+    // The node_modules corpus (2026-11-03): a one-letter prefix, and CamelCase inside a path.
+    ["a CamelCase name with a one-letter prefix", "baileys/lib/WAUSync/Protocols/USyncDisappearingModeProtocol.js"],
+    ["a CamelCase name inside a path", "https://cdn.jsdelivr.net/npm/date-fns/esm/fp/eachDayOfIntervalWithOptions/index.js"],
     // A PJ's Disneyland download (2026-11-01): the link hex-encodes its asset path.
     ["a download link that hex-encodes a path", "https://kenney.nl/download-link/" + Buffer.from("assets/modular-buildings", "utf8").toString("hex")],
   ];

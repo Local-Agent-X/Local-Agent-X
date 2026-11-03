@@ -26,6 +26,11 @@
 // those read the disk, which a replay does not have, so a delete they ask
 // about here may have been provable in the trial.
 //
+//   node eval/terminal-bench/policy-scan.mjs --egress /jobs/<a>,/jobs/<b> --out /out/egress.json
+//
+// --egress puts every URL those runs touched through the outbound secret scan
+// instead (see the mode below); it needs no container.
+//
 // Default settings are the benchmark seed's (seed.mjs: unrestricted file
 // access, the disposable-sandbox switch, LAX_SANDBOX=host). --desktop scans
 // as a default install on a Linux machine where LAX's sandbox cannot start.
@@ -147,6 +152,57 @@ function approvalAsk(toolName, command) {
   if (applyIrreversibleFloor("allow-with-rollback", toolName, args, undefined, { cwd: "/app", sessionId: "scan" }) === "ask") return "irreversible floor";
   const unnamed = unnamedDeletes([{ id: "x", name: toolName, arguments: JSON.stringify(args) }], [{ role: "user", content: "Do the task." }], { sessionId: "scan" });
   return unnamed.length ? `unnamed delete: ${unnamed.map((d) => d.path).join(", ")}` : null;
+}
+
+// --egress <job>[,<job>]: every URL any trial's tool calls touched — LAX's own
+// sessions and other harnesses' trajectories alike — put through the outbound
+// secret scan as the GET an http_request would send, to a site nobody has
+// allowlisted. Real downloads are benign by construction, so whatever the
+// scan would put to the user is a false alarm waiting for a user to meet it:
+// the Three.js shader file `LuminosityHighPassShader.js` was one (2026-11-03).
+// The scan does not depend on the OS, so this mode runs anywhere.
+const { checkOutboundRequest } = await import(pathToFileURL(join(repoRoot, "dist/tools/http-egress-guard.js")).href);
+const URL_RE = /https?:\/\/[^\s"'`<>()|;\\]+/g;
+
+/** Every URL in a job's tool calls: `{ source, task, url }`. */
+function* jobUrls(jobDir) {
+  const emit = function* (source, task, value) {
+    for (const u of JSON.stringify(value ?? "").replace(/\\\//g, "/").match(URL_RE) ?? []) yield { source, task, url: u.replace(/[.,]+$/, "") };
+  };
+  for (const trial of readdirSync(jobDir)) {
+    const task = trial.split("__")[0];
+    const sessions = join(jobDir, trial, "agent", "lax-data", "sessions");
+    if (existsSync(sessions)) {
+      for (const f of readdirSync(sessions).filter((n) => n.endsWith(".jsonl") && !n.startsWith("."))) {
+        for (const line of readFileSync(join(sessions, f), "utf8").split("\n")) {
+          let m;
+          try { m = JSON.parse(line); } catch { continue; }
+          for (const tc of (m.message ?? m).tool_calls ?? []) yield* emit("lax", task, tc.function?.arguments ?? tc.arguments ?? tc.input);
+        }
+      }
+    }
+    const path = join(jobDir, trial, "agent", "trajectory.json");
+    if (!existsSync(path)) continue;
+    let t;
+    try { t = JSON.parse(readFileSync(path, "utf8")); } catch { continue; }
+    const harness = String(t.agent?.name ?? "unknown").toLowerCase();
+    for (const step of t.steps ?? []) for (const tc of step.tool_calls ?? []) yield* emit(harness, task, tc.arguments);
+  }
+}
+
+const egressDirs = arg("egress", null)?.split(",").filter(Boolean) ?? null;
+if (egressDirs) {
+  const urls = new Map();
+  for (const dir of egressDirs) for (const u of jobUrls(resolve(dir))) if (!urls.has(u.url)) urls.set(u.url, u);
+  const flagged = [];
+  for (const u of urls.values()) {
+    const b = checkOutboundRequest({ url: u.url, method: "GET" });
+    if (b) flagged.push({ ...u, kinds: b.meta?.secret_kinds ?? b.meta?.blocked_by, question: b.message });
+  }
+  writeFileSync(outPath, JSON.stringify({ urls: urls.size, flagged }, null, 2));
+  console.log(`${urls.size} distinct URLs from ${egressDirs.length} job(s); the outbound scan would question ${flagged.length}`);
+  for (const f of flagged) console.log(`  [${f.source}] ${f.task}: ${f.kinds}  ${f.url.slice(0, 160)}`);
+  process.exit(0);
 }
 
 // --replay <job dir>: judge what a run's model actually ran, not the reference.

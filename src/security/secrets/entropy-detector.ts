@@ -120,8 +120,9 @@ function printableRatio(buf: Buffer): number {
 // the threshold. Excluding them kills the slug/path FP that bricked agent runs.
 function isSlug(run: string): boolean {
   const parts = run.split(/[-_/.]/);
-  if (parts.length < 3) return false;
-  return parts.every(p => p.length > 0 && /^[a-z0-9]+$/.test(p)) || isWordSlug(parts);
+  if (parts.length < 2 || parts.some(p => p.length === 0)) return false;
+  if (parts.length >= 3 && (parts.every(p => /^[a-z0-9]+$/.test(p)) || isWordSlug(parts) || isWordPath(parts))) return true;
+  return isHashedName(run);
 }
 
 // The same costume in title or upper case: every part a word (`Source`, `POV`,
@@ -135,20 +136,48 @@ function isWordSlug(parts: string[]): boolean {
   return parts.every(p => p.length >= 3 && WORD_PART.test(p));
 }
 
-// The word costume with no separators: a CamelCase identifier, letters only,
-// every part a word (`Luminosity`, `High`, `GL`, `by`) with at most one part
-// under three letters, and every part that is not an acronym holding a vowel.
-// A Three.js download (2026-11-03) was held for approval as carrying a token
-// because its file was `LuminosityHighPassShader.js`. Measured: 101 in 300k
-// random letters-only 20-48 character tokens read this way (1,486 without the
-// vowel test), and letters-only runs are ~0.4% of random base64url keys.
-const CAMEL_PART = /^(?:[A-Z][a-z]+|[a-z]{2,}|[A-Z]{2,})$/;
+// A path or slug mixing those styles: lowercase parts, title-case words and
+// CamelCase names (`date-fns/esm/fp/eachDayOfIntervalWithOptions/index`,
+// `sculptmap256_Dekker_FloydSteinberg`), with at least one part that is not
+// all lowercase so the lowercase rule above stays the one for those.
+function isWordPath(parts: string[]): boolean {
+  const wordish = (p: string) => /^[a-z0-9]+$/.test(p) || (p.length >= 3 && WORD_PART.test(p))
+    || /^[A-Z][a-z]$/.test(p) && /[aeiouy]/.test(p) || isCamelIdentifier(p);
+  return parts.every(wordish) && parts.some(p => isCamelIdentifier(p) || (p.length >= 3 && /[A-Z]/.test(p)));
+}
+
+// A bundler's content-hashed file name: words, a separator, then an
+// 8-character hash (`index-Bq3x8Zk2`, `temporary-directory-CwHp0_NW`: Vite and
+// Rollup's default, base64url, so the hash can hold `-` and `_` itself). The
+// hash is random, but 8 characters are too few to be a key, and a site's built
+// assets are what an agent downloads from it.
+function isHashedName(run: string): boolean {
+  if (run.length < 11 || !/[-_.]/.test(run[run.length - 9])) return false;
+  const word = (p: string) => /^[A-Za-z]{2,}$/.test(p) && /[aeiouy]/i.test(p) && (WORD_PART.test(p) || isCamelIdentifier(p));
+  return run.slice(0, -9).split(/[-_/.]/).every(word);
+}
+
+// The word costume with no separators: a CamelCase identifier, every part a
+// word (`Luminosity`, `GL`, `Of`, `U` in `USync`) or a number (`ISO9075`),
+// every part that is not an acronym or a number holding a vowel, a short part
+// (under three letters) for every three, and at most one number. A Three.js
+// download (2026-11-03) was held for approval as carrying a token because its
+// file was `LuminosityHighPassShader.js`; the node_modules corpus test
+// (entropy-corpus.test.ts) found the other shapes.
+//
+// Measured with the path and hashed-name rules, per 300k random 20-48
+// character tokens: base64url 28, base64 30, letters and digits 69, letters
+// only 773; known key formats and the user's stored secrets are caught by
+// their own passes regardless.
+const CAMEL_PART = /^(?:[A-Z][a-z]+|[a-z]{2,}|[A-Z]+|[0-9]+)$/;
 function isCamelIdentifier(run: string): boolean {
-  if (!/^[A-Za-z]+$/.test(run)) return false;
-  const parts = run.match(/[A-Z]+(?=[A-Z][a-z]|$)|[A-Z]?[a-z]+|[A-Z]+/g);
-  if (!parts || parts.length < 2 || parts.join("") !== run) return false;
-  return parts.every(p => CAMEL_PART.test(p) && (/^[A-Z]+$/.test(p) || /[aeiouy]/.test(p)))
-    && parts.filter(p => p.length < 3).length <= 1;
+  if (!/^[A-Za-z][A-Za-z0-9]*$/.test(run)) return false;
+  const parts = run.match(/[A-Z]+(?=[A-Z][a-z]|[0-9]|$)|[A-Z]?[a-z]+|[A-Z]+|[0-9]+/g);
+  if (!parts || parts.join("") !== run) return false;
+  const letters = parts.filter(p => !/^[0-9]+$/.test(p));
+  if (letters.length < 2 || parts.length - letters.length > 1) return false;
+  if (!parts.every(p => CAMEL_PART.test(p) && (/^[A-Z0-9]+$/.test(p) || /[aeiouy]/i.test(p)))) return false;
+  return letters.filter(p => p.length < 3).length <= Math.max(1, Math.floor(letters.length / 3));
 }
 
 function isExcludedBase64(run: string): boolean {

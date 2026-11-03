@@ -2773,3 +2773,39 @@ took 51 s and 26 s, almost all of it decode. Cause NOT established. Memory overf
 had 30.3 GiB free and llama.cpp projected 28.1 GB with 2.9 GB to spare; after the run the card held 31.7 of 32.6 GB.
 Running alongside, since the night before: three voice sidecars (voice server, chatterbox, VoxCPM) and the Riot
 client. Separating them needs a controlled A/B run.
+
+## The two remaining cross-message cache breaks, found and fixed (2026-11-03)
+
+The live check above passed only because the run's background memory calls failed. Re-run on a healthy GPU with
+each `/api/chat` body captured at the Ollama boundary (a fetch preload in the isolated server), two rows still made a
+message's request diverge from the last one:
+
+- **The memory context in the cached head changed.** It is rebuilt from the facts database every message; after a
+  `remember` call `<core_memory>` gained a line inside the system message (char 92,966 of 95,857), and message 2
+  re-read its whole 34k-token prompt (diverged at token 31,814 of 32,835). The end-of-turn fact writer does the same
+  on ordinary messages.
+- **The situational digest was never saved.** It rode after the history as a per-request tail, so the next
+  message's history lacked it; one past the 512-token checkpoint window cost a full re-read (message 3, diverged at
+  31,434).
+
+b7a71f54: a local chat's head keeps the memory context it started with and the lines memory gains later lead that
+message's recalled-context row, each told once (chat-runner/local-memory-pin.ts); on a local-provider op the digest is
+a harness row written to op_messages before the round's input is read (turn-loop/local-digest-row.ts), so the turn
+saves it in place.
+
+**Live, isolated server on b7a71f54, qwen3.8:27b-172k, message 1 asks the model to remember something:** every
+captured request is a strict extension of the one before (4 requests, 3 transitions); the digest rows carry forward
+(1, 2, 3 in successive requests); `<memory_changes>` appears after the `remember` call while the system message stays
+byte-identical.
+
+| message | prompt tokens | resumed from checkpoint | re-read | wall |
+|---|---|---|---|---|
+| 1 (cold, `remember` + reply) | 33,095 / 33,278 | — / 33,091 | full / 187 | 15.2 s |
+| 2 | 34,347 | 33,274 | 1,073 | 4.9 s |
+| 3 | 34,904 | 34,343 | 561 | 4.4 s |
+
+**The 11:30 slow run, resolved as environmental:** on the same machine with the same sidecars, a clean probe ran
+3,110 tok/s prefill and 147 tok/s decode at 453 W, and the LAX chat path ran normally. The paging signature was
+reproduced by co-loading qwen3:8b beside the 27B: Ollama reported both "100% GPU" (it sizes the 27B at 18 GB; llama.cpp
+projects 28.1 GB) while the GPU drew ~135 W at 100% SM with 10-17 GB/s of PCIe traffic. Neither Ollama's `/api/ps` nor
+LAX's spill check (context-sizing-adapt.ts) can see that state.

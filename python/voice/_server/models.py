@@ -6,6 +6,7 @@ one place — here.
 """
 
 import os
+import threading
 import time
 
 import numpy as np
@@ -96,6 +97,25 @@ def _neutralize_phonemizer_words_mismatch():
         pass
 
 
+# espeak-ng, which kokoro-onnx phonemizes through, keeps global state and is not
+# thread-safe. Session._prep_one synthesizes up to three reply pieces at once on
+# the executor's threads, and concurrent phonemize() calls returned each other's
+# text: 857 of 1200 came back wrong in a 3-thread test, so a spoken reply
+# repeated one piece, dropped another and moved words (2026-11-03). One lock for
+# the whole process; the ONNX inference after it still runs in parallel.
+_PHONEMIZE_LOCK = threading.Lock()
+
+
+def _serialize_phonemizer(kokoro):
+    original = kokoro.tokenizer.phonemize
+
+    def phonemize(*args, **kwargs):
+        with _PHONEMIZE_LOCK:
+            return original(*args, **kwargs)
+
+    kokoro.tokenizer.phonemize = phonemize
+
+
 def _load_tts():
     global _tts
     if _tts is not None:
@@ -111,6 +131,7 @@ def _load_tts():
     # [CUDAExecutionProvider, CPUExecutionProvider] — CUDA gets used
     # automatically when the cuDNN/CUDA runtime is available.
     _tts = Kokoro(model_path=model_path, voices_path=voices_path)
+    _serialize_phonemizer(_tts)
     log.info(f"  kokoro-onnx ready in {time.time() - t0:.2f}s")
     return _tts
 

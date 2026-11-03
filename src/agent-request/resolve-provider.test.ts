@@ -81,9 +81,10 @@ vi.mock("../providers/registry.js", () => {
 // use for (tool selection, memory/context, the curate nudge, the system-prompt
 // build). Stubbed so the provider-switch journey can be exercised through the
 // real prepare pipeline without standing up a memory manager.
-vi.mock("./prepare-request/build-context.js", () => ({
+vi.mock("./prepare-request/build-context.js", async (importOriginal) => ({
+  memoryPromptInputs: (await importOriginal<typeof import("./prepare-request/build-context.js")>()).memoryPromptInputs,
   buildContext: async () => ({
-    contextBlock: "", relevantMemories: [], smartContext: "", memoryContext: "",
+    contextBlock: "", contextBlockVolatile: "", relevantMemories: [], smartContext: "", memoryContext: "",
     protocolNotice: "", notifications: [], knownProjectsFound: false,
   }),
   isTrivialToolRequest: () => false,

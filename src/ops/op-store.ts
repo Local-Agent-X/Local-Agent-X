@@ -32,7 +32,7 @@ import { createLogger } from "../logger.js";
 import { OP_TYPE } from "./op-types.js";
 const logger = createLogger("workers.op-store");
 
-const OPS_BASE = join(getLaxDir(), "operations");
+export const OPS_BASE = join(getLaxDir(), "operations");
 
 /** What this module writes to operation.json, and the one shape it reads back. */
 export const OP_RECORD_KIND = "op";

@@ -5,7 +5,7 @@
 // PCM, tick the clock, assert it emits well-formed 20ms Opus RTP packets.
 //
 // Responsibility: TTS Int16 PCM (any sample rate) -> resample to 48kHz -> buffer
-// -> a 20ms pacer pulls 960-sample frames, Opus-encodes them, and emits a fully
+// -> a wall-clock pacer pulls 960-sample frames, Opus-encodes them, and emits a fully
 // built RtpPacket (monotonic sequenceNumber, timestamp += 960, stable ssrc,
 // payloadType 111, marker on the first packet of a talkspurt). It owns the
 // encoder lifecycle and the setInterval; the peer just constructs it, pushes
@@ -18,8 +18,17 @@ import { createLogger } from "../logger.js";
 
 const logger = createLogger("voice.rtp-audio");
 
-/** 20ms cadence — one Opus frame (960 samples @ 48kHz) per tick. */
-const PACER_INTERVAL_MS = 20;
+/** One Opus frame (960 samples @ 48kHz) is 20ms of audio. */
+const FRAME_MS = 20;
+/** How often the pacer wakes. The frames it sends per wake come from the wall
+ *  clock, not from this interval: on Windows a 20ms setInterval fires every
+ *  ~31ms (the default 15.6ms timer resolution), so one frame per tick shipped
+ *  32 frames a second against the phone's 50 and the reply played chopped. */
+const PACER_INTERVAL_MS = 10;
+/** Most frames one wake may send to catch up on a late timer (~100ms). A longer
+ *  stall (a blocked event loop) restarts the clock instead of bursting more
+ *  audio than the phone's jitter buffer will hold. */
+const MAX_CATCHUP_FRAMES = 5;
 /** Outbound jitter cushion: queue this much before draining a talkspurt so
  *  bursty/jittery TTS delivery (edge-tts ships MP3 in uneven bursts) can't drain
  *  the buffer to empty mid-utterance. An empty buffer re-marks a talkspurt →
@@ -77,8 +86,12 @@ export class OutboundAudio {
   // Once a talkspurt's cushion is built we drain continuously; brief sub-cushion
   // dips are waited out (not re-marked). Reset when the buffer truly empties.
   private primed = false;
+  // Wall-clock pacing for the current talkspurt: when draining started and how
+  // many frames have gone out since, so each wake sends the frames now due.
+  private drainStartMs = 0;
+  private framesDrained = 0;
 
-  constructor(rtp: RtpBuilders, sink: RtpSink) {
+  constructor(rtp: RtpBuilders, sink: RtpSink, private readonly now: () => number = () => performance.now()) {
     this.rtp = rtp;
     this.sink = sink;
     // 32-bit ssrc, 16-bit initial seq, 32-bit initial timestamp — random
@@ -157,7 +170,7 @@ export class OutboundAudio {
     }, PACER_INTERVAL_MS);
   }
 
-  /** Pull one 960-sample frame if available, encode it, emit an RTP packet. */
+  /** Encode and emit every 960-sample frame the wall clock says is due. */
   private async tick(): Promise<void> {
     if (this.closed || this.ticking) return;
     // Buffer fully drained — the talkspurt's audio ended. Re-mark the next real
@@ -178,16 +191,28 @@ export class OutboundAudio {
     if (!this.primed) {
       if (this.pending.length < PREBUFFER_SAMPLES) return; // keep buffering
       this.primed = true;
+      this.restartClock();
     }
-    if (this.pending.length < OPUS_FRAME_SAMPLES) return; // transient dip; wait
+    if (this.pending.length < OPUS_FRAME_SAMPLES) {
+      // Transient dip: wait, and hold the clock so the refill isn't sent as a burst.
+      this.restartClock();
+      return;
+    }
     this.ticking = true;
     try {
       const encoder = await this.getEncoder();
-      // Re-check after the await: close() (or buffer drain) may have raced in.
-      if (this.closed || this.pending.length < OPUS_FRAME_SAMPLES) return;
-      const frame = this.pending.subarray(0, OPUS_FRAME_SAMPLES);
-      this.pending = this.pending.slice(OPUS_FRAME_SAMPLES);
-      this.emitFrame(encoder, frame);
+      let due = Math.floor((this.now() - this.drainStartMs) / FRAME_MS) + 1 - this.framesDrained;
+      if (due > MAX_CATCHUP_FRAMES) {
+        this.restartClock();
+        due = 1;
+      }
+      // Re-check each frame after the await: close() (or buffer drain) may have raced in.
+      for (; due > 0 && !this.closed && this.pending.length >= OPUS_FRAME_SAMPLES; due--) {
+        const frame = this.pending.subarray(0, OPUS_FRAME_SAMPLES);
+        this.pending = this.pending.slice(OPUS_FRAME_SAMPLES);
+        this.framesDrained++;
+        this.emitFrame(encoder, frame);
+      }
     } catch (e) {
       // Encoder SETUP failure surfaces here (not silently swallowed): log it.
       // The pacer keeps ticking so a transient failure can recover.
@@ -195,6 +220,13 @@ export class OutboundAudio {
     } finally {
       this.ticking = false;
     }
+  }
+
+  /** Make the next frame due now: a fresh talkspurt, or a resume after a dip
+   *  or a stall, paces from here instead of catching up on time it sat out. */
+  private restartClock(): void {
+    this.drainStartMs = this.now();
+    this.framesDrained = 0;
   }
 
   /** Encode a 960-sample frame and hand the built RTP packet to the sink. */

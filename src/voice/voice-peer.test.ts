@@ -233,6 +233,45 @@ describe("OutboundAudio pacer (isolated)", () => {
     }
   });
 
+  it("paces by the wall clock, not by how often its timer fires", async () => {
+    // Windows fires a 20ms setInterval every ~31ms, and a pacer that sent one
+    // frame per tick shipped 32 frames a second to a phone playing 50: the reply
+    // played chopped. Here the clock runs twice as fast as the timers, so a
+    // timer-counting pacer falls to half rate; a clock-keeping one does not.
+    const packets: FakePacket[] = [];
+    const t0 = performance.now();
+    const out = new OutboundAudio(fakeBuilders, (p) => {
+      packets.push(p as unknown as FakePacket);
+    }, () => t0 + (performance.now() - t0) * 2);
+    try {
+      out.push(pcmBurst(24000, 5000), 24000);
+      await wait(100); // encoder warmup + prebuffer
+      const start = packets.length;
+      await wait(500); // 1000ms on the pacer's clock: 50 frames due
+      expect(packets.length - start).toBeGreaterThanOrEqual(40);
+    } finally {
+      out.close();
+    }
+  });
+
+  it("does not burst out the audio it sat on through a stall", async () => {
+    const packets: FakePacket[] = [];
+    let skew = 0;
+    const out = new OutboundAudio(fakeBuilders, (p) => {
+      packets.push(p as unknown as FakePacket);
+    }, () => performance.now() + skew);
+    try {
+      out.push(pcmBurst(24000, 5000), 24000);
+      await wait(150);
+      skew += 2000; // the event loop was blocked for 2s
+      const before = packets.length;
+      await wait(15);
+      expect(packets.length - before).toBeLessThanOrEqual(7);
+    } finally {
+      out.close();
+    }
+  });
+
   it("close() stops the pacer and a short buffer never blocks", async () => {
     const packets: FakePacket[] = [];
     const out = new OutboundAudio(fakeBuilders, (p) => {

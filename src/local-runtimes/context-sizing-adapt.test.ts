@@ -194,9 +194,17 @@ describe("paging that /api/ps does not report", () => {
     expect(appliedContext(ROOT, MODEL)).toBe(SIZED);
   });
 
-  it("steps down on the decode alone when the driver cannot be read", async () => {
+  it("does not act on the decode alone: without a driver reading a long context could be the cause", async () => {
     await reply(resident, 4e9, 120);
     await reply(resident, null, 21);
+    expect(appliedContext(ROOT, MODEL)).toBe(SIZED);
+  });
+
+  it("catches a milder 2x slowdown (a co-loaded 8B: 97 -> 46 tok/s), and lets 1.5x from a long context pass", async () => {
+    await reply(resident, 4e9, 97);
+    await reply(resident, 0.9e9, 65);
+    expect(appliedContext(ROOT, MODEL)).toBe(SIZED);
+    await reply(resident, 0.9e9, 46);
     expect(appliedContext(ROOT, MODEL)).toBeLessThan(SIZED);
   });
 

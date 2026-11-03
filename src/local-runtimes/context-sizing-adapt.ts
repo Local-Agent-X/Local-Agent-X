@@ -19,9 +19,10 @@
  * A fourth that /api/ps cannot show: on Windows a card filled past its VRAM
  * pages to system memory and the runner reports 100% GPU throughout. qwen3.8
  * 27B decoded at 21 tok/s instead of ~120 that way (2026-11-03), and stayed
- * slow until the model reloaded. Its sign is the reply itself: decode far
- * below the rate this decision has shown fully resident, on a card the driver
- * shows full. That steps down temporarily too, which reloads the model.
+ * slow until the model reloaded. Its sign is the reply itself: decode at half
+ * the rate this decision has shown fully resident or less, on a card the
+ * driver shows all but full. That steps down temporarily too, which reloads
+ * the model.
  *
  * "Full" is the driver's free VRAM under the safety margin. Free, not "used
  * minus what /api/ps reports": Ollama reports qwen3.8 27B at 18 GB while its
@@ -52,10 +53,15 @@ const HEADROOM_TOLERANCE_BYTES = 512 * 1024 * 1024;
 const PS_TIMEOUT_MS = 2_000;
 /** Replies shorter than this say too little about decode speed. */
 export const MIN_DECODE_TOKENS = 64;
-/** A reply this many times slower than the healthy rate is paging. Long
+/** A reply this many times slower than the healthy rate may be paging. Long
  *  context alone costs qwen3.8 27B ~1.5x (147 -> ~100 tok/s at 34k); paging
- *  cost it 5-7x. */
-export const PAGING_SLOWDOWN = 3;
+ *  cost it 2x (a co-loaded 8B: 97 -> 46-50) to 5-7x (120 -> 21). */
+export const PAGING_SLOWDOWN = 2;
+/** ...on a card with less than this free. Every paging state measured on the
+ *  5090 had 766-938 MiB free; the same card healthy at the old 172k size had
+ *  1,035 MiB, and the margin now leaves it gigabytes more. Without a driver
+ *  reading a slow reply is not acted on: a long context alone could be it. */
+const PAGING_FREE_BYTES = 1024 ** 3;
 /** What a step-down for paging sheds: the overflow measured on the 27B was
  *  under 1 GB; twice that leaves room for it to grow. */
 const PAGING_SHED_BYTES = 2 * 1024 ** 3;
@@ -154,10 +160,9 @@ export async function observeChatResidency(
     logger.warn(`${model}: ${(spill / 1e9).toFixed(1)} GB spilled to system RAM at ${applied} tokens with no other model to blame; context is now ${next ?? "the runtime default"}`);
     return;
   }
-  // No driver reading leaves the decode alone to go on; a full card confirms it.
-  if (slow && (free === null || cardFull)) {
+  if (slow && free !== null && free < PAGING_FREE_BYTES) {
     const next = stepDownWhileContended(key, record, applied, PAGING_SHED_BYTES, now);
-    if (next !== null) logger.warn(`${model}: decoding at ${rate!.toFixed(0)} tok/s against ${record.healthyDecodeTokPerSec!.toFixed(0)} when fully resident, with ${free === null ? "no driver reading" : `${(free / 1e9).toFixed(1)} GB free`}: the card is paging to system memory; reloading at ${next} tokens until it has room`);
+    if (next !== null) logger.warn(`${model}: decoding at ${rate!.toFixed(0)} tok/s against ${record.healthyDecodeTokPerSec!.toFixed(0)} when fully resident, with ${(free / 1e9).toFixed(1)} GB of VRAM free: the card is paging to system memory; reloading at ${next} tokens until it has room`);
     return;
   }
   if (override) {

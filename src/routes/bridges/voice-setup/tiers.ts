@@ -26,7 +26,14 @@ export interface VoiceTier {
   // check alone reports as installed. Keep each list a subset of what that
   // tier's installer verifies. Omit to fall back to the interpreter check.
   installMarkers?: string[];
+  // How long Start waits for /healthz before reporting a timeout. Omit for
+  // the default (DEFAULT_STARTUP_BUDGET_MS); set it from the tier's measured
+  // cold start, which its sidecar log records.
+  startupBudgetMs?: number;
 }
+
+export const DEFAULT_STARTUP_BUDGET_MS = 180_000;
+export const startupBudgetMs = (tier: VoiceTier) => tier.startupBudgetMs ?? DEFAULT_STARTUP_BUDGET_MS;
 
 export const REPO_ROOT = resolve(process.cwd());
 export const HOME = homedir();
@@ -101,6 +108,10 @@ export const TIERS: VoiceTier[] = [
     // Both are installed unconditionally by python/voxcpm/install.ps1 and
     // are what that installer's verify pass refuses to succeed without.
     installMarkers: ["voxcpm", "fastapi"],
+    // Cold starts measured in ~/.lax/sidecars/studio-vox.log: model load
+    // 58-184s plus a 23s pre-warm synth, so up to ~207s before /healthz
+    // answers. The 3-min default reported a healthy start as a failure.
+    startupBudgetMs: 360_000,
   },
   {
     id: "native",

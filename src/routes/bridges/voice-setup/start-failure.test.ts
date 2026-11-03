@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { startFailureSummary } from "./handlers.js";
+import { startupBudgetMs, tierById } from "./tiers.js";
 
 // Regression lock for the dialog that lied.
 //
@@ -50,6 +51,16 @@ describe("startFailureSummary", () => {
     expect(msg).toContain("still running");
     expect(msg).toMatch(/try start again/i);
     expect(msg).not.toContain("crashed");
+  });
+
+  it("waits each tier's own measured cold start, not one budget for all", () => {
+    // VoxCPM's log records up to ~207s from spawn to /healthz (184s load +
+    // 23s pre-warm); a 3-min budget reported that healthy start as a failure.
+    const vox = tierById("studio-vox")!;
+    expect(startupBudgetMs(vox)).toBeGreaterThan(207_000);
+    const msg = startFailureSummary("studio-vox", { ok: false, reason: "timeout", pid: 1, logTail: "" });
+    expect(msg).toContain(`${Math.round(startupBudgetMs(vox) / 60_000)} min`);
+    expect(msg).not.toContain("3 min");
   });
 
   it("handles an unknown exit code and an empty log without emitting 'undefined'", () => {

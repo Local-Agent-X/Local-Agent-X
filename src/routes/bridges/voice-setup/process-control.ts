@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { createLogger } from "../../../logger.js";
-import { HOME, IS_WIN, TIERS, tierById, type VoiceTier } from "./tiers.js";
+import { HOME, IS_WIN, TIERS, startupBudgetMs, tierById, type VoiceTier } from "./tiers.js";
 import { probeHealth } from "./detection.js";
 import { running } from "./state.js";
 
@@ -286,9 +286,9 @@ export async function startTierAndWait(tier: VoiceTier): Promise<StartOutcome> {
   running.set(tier.id, proc);
   proc.on("exit", code => { logger.info(`[voice-setup] ${tier.id} exited (${code}) — see ${sidecarLogPath(tier.id)}`); if (running.get(tier.id) === proc) running.delete(tier.id); });
   // Cold-start is heavy: faster-whisper large-v3-turbo + Kokoro + Silero
-  // VAD on first CUDA load can take 90-120s. Subsequent starts after OS
-  // file cache is warm are <20s.
-  const deadline = Date.now() + 180_000;
+  // VAD on first CUDA load can take 90-120s, VoxCPM over 3 min. Subsequent
+  // starts after OS file cache is warm are <20s. Each tier sets its budget.
+  const deadline = Date.now() + startupBudgetMs(tier);
   while (Date.now() < deadline) {
     // Death beats the deadline: report it immediately, with the traceback the
     // child just wrote to its log, rather than blaming a cold-start timeout.

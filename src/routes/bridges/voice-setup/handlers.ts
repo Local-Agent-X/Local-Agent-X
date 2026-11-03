@@ -4,7 +4,7 @@ import type { RouteHandler } from "../../../server-context.js";
 import { jsonResponse, safeParseBody, safeErrorMessage } from "../../../server-utils.js";
 import { createLogger } from "../../../logger.js";
 import { kokoroVoiceList, tier4Readiness } from "../../../voice/tier4/index.js";
-import { TIERS, tierById } from "./tiers.js";
+import { DEFAULT_STARTUP_BUDGET_MS, TIERS, startupBudgetMs, tierById } from "./tiers.js";
 import { isInstalled, probeHealth, probeVoiceNpmDeps, tierStatus } from "./detection.js";
 import { killTier, sidecarLogPath, startTierAndWait, type StartOutcome } from "./process-control.js";
 import { runInstaller } from "./install-runner.js";
@@ -25,7 +25,9 @@ export function startFailureSummary(tierId: string, outcome: Extract<StartOutcom
   if (outcome.reason === "exited") {
     return `crashed on startup (exit code ${outcome.exitCode ?? "unknown"}). Retrying won't help until the cause is fixed. Full log: ${sidecarLogPath(tierId)}${tail}`;
   }
-  return `didn't report healthy within 3 min, but pid ${outcome.pid ?? "?"} is still running. Cold-start can be slow; try Start again in 30s.${tail}`;
+  const tier = tierById(tierId);
+  const minutes = Math.round((tier ? startupBudgetMs(tier) : DEFAULT_STARTUP_BUDGET_MS) / 60_000);
+  return `didn't report healthy within ${minutes} min, but pid ${outcome.pid ?? "?"} is still running. Cold-start can be slow; try Start again in 30s.${tail}`;
 }
 
 export const handleVoiceSetupRoutes: RouteHandler = async (method, url, req, res, _ctx, _role) => {

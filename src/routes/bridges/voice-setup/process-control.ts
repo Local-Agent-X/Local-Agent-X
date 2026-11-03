@@ -52,14 +52,20 @@ function openSidecarLogFd(tierId: string): number {
  * sidecar from a previous LAX run that wasn't tracked in the running map.
  */
 function pidOnPort(port: number): number | null {
+  return portOwner(port)?.pid ?? null;
+}
+
+/** The listener on a port and its parent pid (Windows-only, like pidOnPort). */
+function portOwner(port: number): SidecarProc | null {
   if (!IS_WIN) return null;
   try {
     const out = execFileSync("powershell", [
       "-NoProfile", "-Command",
-      `(Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty OwningProcess)`,
+      `$p = (Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty OwningProcess); ` +
+      `if ($p) { "$p," + (Get-CimInstance Win32_Process -Filter "ProcessId=$p" -ErrorAction SilentlyContinue).ParentProcessId }`,
     ], { encoding: "utf-8", timeout: 5000, windowsHide: true }).trim();
-    const pid = Number(out);
-    return Number.isInteger(pid) && pid > 0 ? pid : null;
+    const [pid, ppid] = out.split(",").map(Number);
+    return Number.isInteger(pid) && pid > 0 ? { pid, ppid: Number.isInteger(ppid) ? ppid : 0 } : null;
   } catch {
     return null;
   }
@@ -86,7 +92,7 @@ function killPid(pid: number): boolean {
  * is still alive eating GPU. Matches on `tier.procMatch` (all substrings must
  * be present in the command line).
  */
-interface SidecarProc { pid: number; ppid: number; }
+export interface SidecarProc { pid: number; ppid: number; }
 
 async function findSidecarPids(tier: VoiceTier): Promise<SidecarProc[]> {
   const markers = tier.procMatch;
@@ -159,6 +165,21 @@ function withDescendants(procs: SidecarProc[], roots: Iterable<number>): Set<num
 }
 
 /**
+ * The pids the reaper spares for one tier: the process this LAX owns, the
+ * port's listener, the listener's parent when that parent is one of the tier's
+ * own processes, and their subtrees. The parent case is a Windows venv: the
+ * venv's python.exe (the one carrying the tier's signature) is a launcher that
+ * runs the base interpreter as a child, and that child, whose command line
+ * lacks the venv path, holds the port. Sparing only the listener killed the
+ * launcher, and the tree kill took the healthy worker with it on every LAX
+ * restart.
+ */
+export function reaperKeepSet(procs: SidecarProc[], mine: number | null, owner: SidecarProc | null): Set<number> {
+  const launcher = owner && procs.some((p) => p.pid === owner.ppid) ? owner.ppid : 0;
+  return withDescendants(procs, [mine ?? 0, owner?.pid ?? 0, launcher]);
+}
+
+/**
  * Sweep every sidecar tier for orphan processes and kill them. Safe to run
  * on a timer: it never touches a sidecar THIS instance is tracking (the
  * `running` map — populated the instant we spawn, so a 90-120s cold-starting
@@ -173,7 +194,8 @@ export async function reapOrphanSidecars(): Promise<number> {
     const procs = await findSidecarPids(tier);
     if (procs.length === 0) continue;
     const mine = running.get(tier.id)?.pid ?? null;
-    const onPort = pidOnPort(tier.port);
+    const owner = portOwner(tier.port);
+    const onPort = owner?.pid ?? null;
     const healthy = (await probeHealth(tier.healthUrl)).ok;
     // A responding /healthz means a working server is serving this port — the
     // reaper is for hung/orphan processes, not live ones. If we can't pin the
@@ -181,10 +203,7 @@ export async function reapOrphanSidecars(): Promise<number> {
     // null) and we don't own it, skip the tier entirely rather than blind-kill
     // every matching pid — that blind kill was taking down healthy sidecars.
     if (healthy && !onPort && !mine) continue;
-    // Keep the owned/listening process AND its child subtree: the tracked pid
-    // is the venv launcher, the real worker is its child and matches the same
-    // signature, so keeping only the root would kill the worker.
-    const keep = withDescendants(procs, [mine ?? 0, onPort ?? 0]);
+    const keep = reaperKeepSet(procs, mine, owner);
     for (const { pid } of procs) {
       if (keep.has(pid)) continue;
       if (killPid(pid)) {

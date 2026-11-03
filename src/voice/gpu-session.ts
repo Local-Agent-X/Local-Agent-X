@@ -14,6 +14,7 @@ import { createGPUBridge, type GPUBridge } from "./gpu-bridge.js";
 import { createVoiceTurnMachine, SENTENCE_TERMINATOR, firstChunkCut, type TurnSpeaker } from "./voice-session/turn-runner.js";
 import { registerVoiceSpeaker, unregisterVoiceSpeaker } from "./proactive-registry.js";
 import { resolveVoiceSettings } from "./voice-session/settings.js";
+import { createBargeInConfirm, createNearFieldGate } from "./voice-session/near-field-gate.js";
 import type { VoiceTurnRunner } from "./voice-session/index.js";
 
 import { createLogger } from "../logger.js";
@@ -38,6 +39,20 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
   let inUtterance = false;
   let nextSentenceId = 1;
   const pendingFrames: Int16Array[] = [];
+
+  // Background-voice filter, the same one the in-process engine runs: the
+  // sidecar's VAD answers "is this speech?", not "is this the person at the
+  // mic?", so in a noisy room every nearby talker cut off replies and became a
+  // turn. A new utterance interrupts the reply only once enough near-field
+  // (loud) audio arrives, and a final whose utterance was far-field (quiet) is
+  // dropped. Every voice mode today is the user talking to the agent; a
+  // translator mode must not run this, since there the other person's voice
+  // is the input.
+  const nearField = createNearFieldGate();
+  const bargeIn = createBargeInConfirm(nearField);
+  const utterance: Int16Array[] = [];
+  let utteranceSamples = 0;
+  const MAX_UTTERANCE_SAMPLES = 16000 * 30;
 
   // Per-session voice settings. Initialized from the SERVER-side persisted
   // choice (settings.json ttsVoice) so transports that never send a
@@ -146,15 +161,26 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
     onSpeechStart: () => {
       inUtterance = true;
       ctx.sendEvent({ type: "vad_speech_start" });
-      // Barge-in (no-op when idle): machine aborts the turn, cancels TTS, tells
-      // the browser to drop pending audio. Reset our chunk counter so late
-      // audio_done callbacks from the killed turn don't bleed into the next.
-      machine.interrupt();
-      pendingTtsCount = 0;
+      // Barge-in waits for near-field confirmation (onMicFrame).
+      bargeIn.reset();
+      utterance.length = 0;
+      utteranceSamples = 0;
     },
     onSpeechEnd: () => { inUtterance = false; ctx.sendEvent({ type: "vad_speech_end" }); },
     onPartial: (text) => { if (inUtterance) ctx.sendEvent({ type: "partial", text }); },
     onFinal: (text, ms) => {
+      if (utteranceSamples > 0) {
+        const pcm = new Int16Array(utteranceSamples);
+        let at = 0;
+        for (const f of utterance) { pcm.set(f, at); at += f.length; }
+        utterance.length = 0;
+        utteranceSamples = 0;
+        const nf = nearField.accept(pcm);
+        if (!nf.pass) {
+          logger.info(`[gpu-session] ${ctx.sessionId}: dropped far-field utterance "${text.slice(0, 40)}" (loudness=${nf.loudness.toFixed(4)} < floor=${nf.floor.toFixed(4)})`);
+          return;
+        }
+      }
       // The machine emits the `final` event (with sttMs) after its guards.
       void machine.handleFinalTranscript(text, ms);
     },
@@ -203,6 +229,18 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
         return;
       }
       bridge?.feedAudio(frame);
+      if (!inUtterance) return;
+      if (utteranceSamples + frame.length <= MAX_UTTERANCE_SAMPLES) {
+        utterance.push(new Int16Array(frame));
+        utteranceSamples += frame.length;
+      }
+      if (bargeIn.frame(frame)) {
+        // Barge-in (no-op when idle): machine aborts the turn, cancels TTS, tells
+        // the client to drop pending audio. Reset our chunk counter so late
+        // audio_done callbacks from the killed turn don't bleed into the next.
+        machine.interrupt();
+        pendingTtsCount = 0;
+      }
     },
 
     onEndOfSpeech() {

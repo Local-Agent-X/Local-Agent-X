@@ -20,7 +20,7 @@ import type { Tier4StreamingTTS } from "../tier4/types.js";
 import { resolveVoiceSettings } from "./settings.js";
 import { createAudioBuffers } from "./audio-buffers.js";
 import { classifyEndpointPartial, ENDPOINT_HOLD_MS } from "./endpointing.js";
-import { createNearFieldGate } from "./near-field-gate.js";
+import { createBargeInConfirm, createNearFieldGate } from "./near-field-gate.js";
 import { initializeVoiceStack } from "./model-init.js";
 import { createVoiceTurnMachine } from "./turn-runner.js";
 import { createTier4Speaker } from "./tier4-speaker.js";
@@ -89,9 +89,7 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
     // off a reply; commitUtterance re-checks the whole utterance so background
     // never gets transcribed either.
     const nearField = createNearFieldGate();
-    const BARGE_IN_CONFIRM_MS = 150;
-    let bargeInConfirmed = false;
-    let nearFieldMs = 0;
+    const bargeIn = createBargeInConfirm(nearField);
 
     // In-process speaker (tier4-speaker.ts): streams reply text to the TTS
     // engine one punctuation-aligned chunk at a time. Getter because `tts` is
@@ -223,8 +221,7 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
       // idle, so deferring costs nothing there.)
       ctx.sendEvent({ type: "vad_speech_start" });
       lastPartial = "";
-      bargeInConfirmed = false;
-      nearFieldMs = 0;
+      bargeIn.reset();
       buffers.begin();
     }
 
@@ -304,14 +301,7 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
           // accumulated do we treat this as the user cutting in and interrupt
           // the reply. A far-field talker never reaches the threshold, so the
           // reply plays on and their utterance is dropped at commit.
-          if (!bargeInConfirmed) {
-            if (nearField.isNearFieldFrame(frame)) nearFieldMs += (frame.length / 16);
-            else nearFieldMs = Math.max(0, nearFieldMs - (frame.length / 16));
-            if (nearFieldMs >= BARGE_IN_CONFIRM_MS) {
-              bargeInConfirmed = true;
-              machine.interrupt();
-            }
-          }
+          if (bargeIn.frame(frame)) machine.interrupt();
         } else {
           buffers.pushPreroll(frame);
         }

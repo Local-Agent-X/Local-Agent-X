@@ -59,6 +59,35 @@ export interface NearFieldGate {
   readonly userLevel: number;
 }
 
+/** Near-field audio needed before a new utterance may cut off a reply. */
+export const BARGE_IN_CONFIRM_MS = 150;
+
+export interface BargeInConfirm {
+  /** A new utterance began: start counting from zero. */
+  reset(): void;
+  /** One 16kHz mic frame inside the utterance. True exactly once: on the frame
+   *  that brings near-field audio to BARGE_IN_CONFIRM_MS, the moment to
+   *  interrupt the reply. Quiet frames count back down, so a far-field talker
+   *  never gets there and the reply plays on. */
+  frame(pcm: Int16Array): boolean;
+}
+
+export function createBargeInConfirm(gate: NearFieldGate): BargeInConfirm {
+  let confirmed = false;
+  let nearFieldMs = 0;
+  return {
+    reset() { confirmed = false; nearFieldMs = 0; },
+    frame(pcm) {
+      if (confirmed) return false;
+      const ms = pcm.length / 16;
+      nearFieldMs = gate.isNearFieldFrame(pcm) ? nearFieldMs + ms : Math.max(0, nearFieldMs - ms);
+      if (nearFieldMs < BARGE_IN_CONFIRM_MS) return false;
+      confirmed = true;
+      return true;
+    },
+  };
+}
+
 export function createNearFieldGate(opts: NearFieldOptions = {}): NearFieldGate {
   const absoluteFloor = opts.absoluteFloor ?? 0.012;
   const relativeRatio = opts.relativeRatio ?? 0.4;

@@ -1,6 +1,6 @@
 // Near-field gate: reject far-field background talkers the VAD can't.
 import { describe, it, expect } from "vitest";
-import { createNearFieldGate, utteranceLoudness, frameRms } from "../src/voice/voice-session/near-field-gate.js";
+import { BARGE_IN_CONFIRM_MS, createBargeInConfirm, createNearFieldGate, utteranceLoudness, frameRms } from "../src/voice/voice-session/near-field-gate.js";
 
 // Int16 sine at a given normalized amplitude (0..1) → RMS ≈ amp/√2.
 function tone(seconds: number, amp: number): Int16Array {
@@ -58,5 +58,31 @@ describe("near-field gate", () => {
 
 	it("frameRms handles empty input", () => {
 		expect(frameRms(new Int16Array(0))).toBe(0);
+	});
+});
+
+describe("barge-in confirm", () => {
+	const frames = (ms: number, amp: number) => {
+		const t = tone(ms / 1000, amp);
+		const out: Int16Array[] = [];
+		for (let i = 0; i + 320 <= t.length; i += 320) out.push(t.subarray(i, i + 320));
+		return out;
+	};
+
+	it("confirms once, after 150ms of near-field audio", () => {
+		const confirm = createBargeInConfirm(createNearFieldGate());
+		const hits = frames(400, 0.3).map((f) => confirm.frame(f));
+		expect(hits.filter(Boolean)).toHaveLength(1);
+		expect(hits.indexOf(true)).toBe(Math.ceil(BARGE_IN_CONFIRM_MS / 20) - 1);
+	});
+
+	it("never confirms on far-field audio, and starts over on reset", () => {
+		const gate = createNearFieldGate();
+		gate.accept(tone(0.5, 0.3));
+		const confirm = createBargeInConfirm(gate);
+		expect(frames(1000, 0.03).some((f) => confirm.frame(f))).toBe(false);
+		for (const f of frames(100, 0.3)) confirm.frame(f);
+		confirm.reset();
+		expect(frames(100, 0.3).some((f) => confirm.frame(f))).toBe(false);
 	});
 });

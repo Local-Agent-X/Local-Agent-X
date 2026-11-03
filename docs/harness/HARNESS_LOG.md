@@ -2809,3 +2809,25 @@ byte-identical.
 reproduced by co-loading qwen3:8b beside the 27B: Ollama reported both "100% GPU" (it sizes the 27B at 18 GB; llama.cpp
 projects 28.1 GB) while the GPU drew ~135 W at 100% SM with 10-17 GB/s of PCIe traffic. Neither Ollama's `/api/ps` nor
 LAX's spill check (context-sizing-adapt.ts) can see that state.
+
+## Windows GPU paging that Ollama cannot see: sized out, and caught when it happens (2026-11-03)
+
+**Live:** qwen3.8:27b-172k ran at its declared 172,032 tokens with 0.5 GB of the RTX 5090 to spare. With LAX's memory
+embedder and the voice sidecars also on the card, Windows paged part of the model to system memory: decode fell from
+116-147 to 21-25 tok/s and stayed there until the model reloaded (unloading the co-tenant alone did not recover it),
+while `/api/ps` reported 100% GPU. Signature: ~135-185 W at high SM load, 1-17 GB/s PCIe, 587-954 MiB free per the
+driver. `/api/ps` also under-reports the runner (18 GB for the 27B against ~28 GB in llama.cpp's own memory
+breakdown), so "driver used minus /api/ps" is not a measure of anyone else's VRAM.
+
+**ce4f7e95, dc49915d, 52448f92:** a declared window keeps the standard safety margin (qwen3.8 27B: 147,456 with the
+embedder's headroom); each reply's decode (`eval_count` / `eval_duration`) goes to the residency check, which keeps the
+fastest fully resident decode as a yardstick and, at half of it or less on a card under 1 GiB free, steps the window
+down 2 GiB of KV (a reload) until the card has room again. Contention is the driver's free VRAM, not an attribution.
+
+**Live check (isolated server, no embedder configured, so 155,648):** healthy 101 tok/s at 2.7 GB free; qwen3:8b
+co-loaded left 0.6 GB free and the next reply decoded at 45 -> "the card is paging to system memory; reloading at
+122880 tokens"; Ollama evicted the 8B on the reload (5.0 GB free) and the next message took 7.3 s. The lift back to the
+decided size is covered by a unit test on these numbers, not run live (it needs a 10-minute quiet cooldown).
+
+The rejected alternative, the embedder on the CPU: a memory search costs the same (~25 ms) but indexing 8 chunks goes
+from 0.17 s to 3.7 s, and it frees only ~0.7 GB of the card.

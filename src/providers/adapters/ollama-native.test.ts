@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ProviderRequest, StreamChunk } from "../adapter/types.js";
 import type { ThinkingSpec } from "../../local-runtimes/types.js";
 import { OllamaNativeAdapter, thinkFor } from "./ollama-native.js";
+import { parseOllamaChatStream } from "./ollama-native-stream.js";
 import { invalidateLocalRuntimes, restoreProjectedLocalRuntime } from "../../local-runtimes/cache.js";
 import { hasNoToolSupport, hasParamUnsupported } from "../types.js";
 import { classify } from "../../resilience-policy.js";
@@ -223,6 +224,16 @@ describe("OllamaNativeAdapter stream", () => {
     expect(chunks.find((c) => c.type === "usage")).toEqual({ type: "usage", promptTokens: 1200, completionTokens: 40, cachedTokens: 1100 });
     expect(chunks.at(-1)).toMatchObject({ type: "done", stopReason: "stop" });
     expect((chunks.at(-1) as { firstTokenMs?: number }).firstTokenMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("reports the reply's decode, eval_count tokens in eval_duration, and nothing without the duration", async () => {
+    const decodes = async (final: Record<string, unknown>) => {
+      const seen: Array<[number, number]> = [];
+      for await (const _ of parseOllamaChatStream(ndjson([done(final)]).body!, { startedAt: Date.now(), onDecode: (t, ns) => seen.push([t, ns]) })) { /* drain */ }
+      return seen;
+    };
+    expect(await decodes({ eval_count: 240, eval_duration: 2e9 })).toEqual([[240, 2e9]]);
+    expect(await decodes({ eval_count: 240 })).toEqual([]);
   });
 
   it("reports cachedTokens as unknown, not zero, when the runtime does not send the count", async () => {

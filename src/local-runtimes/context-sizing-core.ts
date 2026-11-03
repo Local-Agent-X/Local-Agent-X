@@ -158,13 +158,6 @@ export interface SizingChoice {
 
 const roundDownToNotch = (n: number) => Math.floor(n / CONTEXT_NOTCH) * CONTEXT_NOTCH;
 
-/** VRAM a declared context leaves free: Ollama's own per-GPU minimum (457 MiB
- *  on the 5090) and little else. A model built with a num_ctx is the user's
- *  choice of window, so it gets the card, not the safety margin; when a
- *  browser or a game takes the rest, the spill check in
- *  context-sizing-adapt.ts steps it down while they hold it. */
-export const DECLARED_MARGIN_BYTES = 512 * 1024 * 1024;
-
 /** The num_ctx PARAMETER in /api/show's `parameters` text, or null. */
 export function declaredContextLength(parameters: unknown): number | null {
   if (typeof parameters !== "string") return null;
@@ -173,9 +166,16 @@ export function declaredContextLength(parameters: unknown): number | null {
   return Number.isSafeInteger(n) && n > 0 ? n : null;
 }
 
-/** The context the model was built with when it fits the card, else the
- *  largest context <= the native window that fits the GPU budget. Never
- *  guesses upward: any unknown input keeps the runtime default. */
+/** The context the model was built with when it fits the GPU budget, else the
+ *  largest context <= the native window that does. Never guesses upward: any
+ *  unknown input keeps the runtime default.
+ *
+ *  A declared window gets the same safety margin as a chosen one. It used to
+ *  get the whole card bar 512 MB, on the theory that the spill check would
+ *  step it down when something else took VRAM; but on Windows an overfull
+ *  card pages to system memory with no spill in /api/ps, and qwen3.8 27B at
+ *  its declared 172,032 decoded at 21 tok/s instead of ~120 once the memory
+ *  embedder and the voice sidecars shared the card (2026-11-03). */
 export function chooseContext(input: SizingInput): SizingChoice {
   const keep = (reason: SizingReason, budgetBytes: number | null = null): SizingChoice =>
     ({ numCtx: null, reason, estimatedBytes: null, budgetBytes });
@@ -184,13 +184,12 @@ export function chooseContext(input: SizingInput): SizingChoice {
     return keep("model_info_incomplete");
   }
   if (input.nativeMax < CONTEXT_FLOOR) return keep("native_below_floor");
+  const budget = input.gpu.totalBytes - safetyMarginBytes(input.gpu.totalBytes) - input.headroomBytes;
   if (input.declaredCtx != null && input.declaredCtx >= CONTEXT_FLOOR) {
     const declared = Math.min(input.declaredCtx, input.nativeMax);
-    const card = input.gpu.totalBytes - DECLARED_MARGIN_BYTES - input.headroomBytes;
     const estimated = estimateResidentBytes(input.weightsBytes, input.kvBytesPerToken, declared);
-    if (estimated <= card) return { numCtx: declared, reason: "declared_fits", estimatedBytes: estimated, budgetBytes: card };
+    if (estimated <= budget) return { numCtx: declared, reason: "declared_fits", estimatedBytes: estimated, budgetBytes: budget };
   }
-  const budget =input.gpu.totalBytes - safetyMarginBytes(input.gpu.totalBytes) - input.headroomBytes;
   const forKv = budget - input.weightsBytes - COMPUTE_RESERVE_BYTES;
   const kvToken = input.kvBytesPerToken * KV_OVERHEAD_FACTOR;
   const fitting = kvToken > 0 ? Math.floor(forKv / kvToken) : forKv >= 0 ? Infinity : -1;

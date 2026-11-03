@@ -35,8 +35,9 @@ const HTTP_TIMEOUT_MS = 3_000;
 const REVALIDATE_MS = 5 * 60_000;
 /** A background model LAX loads itself is loaded at no more than this. */
 const BACKGROUND_NUM_CTX = 16_384;
-/** Bumped when the sizing rule changes, so persisted decisions re-decide. */
-const SIZING_POLICY = 2;
+/** Bumped when the sizing rule changes, so persisted decisions re-decide.
+ *  3: a declared window keeps the safety margin (context-sizing-core.ts). */
+const SIZING_POLICY = 3;
 
 export interface SizingDeps {
   fetchJson: (url: string, init?: RequestInit) => Promise<Record<string, unknown> | null>;
@@ -114,7 +115,13 @@ const entries = new Map<string, Entry>();
 const diskChecked = new Set<string>();
 const inflight = new Map<string, Promise<SizingRecord | null>>();
 /** Temporary step-downs under contention, owned by context-sizing-adapt.ts. */
-export const contentionOverrides = new Map<string, { numCtx: number; since: number; clearSince: number | null }>();
+export const contentionOverrides = new Map<string, {
+  numCtx: number;
+  since: number;
+  clearSince: number | null;
+  /** Free VRAM the decided size needs back before the step-down lifts. */
+  liftWhenFreeBytes: number;
+}>();
 
 function entryFor(key: string, store?: ContextSizingStore): Entry | null {
   const hit = entries.get(key);

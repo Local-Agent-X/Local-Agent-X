@@ -30,6 +30,7 @@ interface ChatLine {
   prompt_eval_count?: unknown;
   prompt_eval_cached_count?: unknown;
   eval_count?: unknown;
+  eval_duration?: unknown;
   error?: unknown;
   status?: unknown;
 }
@@ -70,7 +71,12 @@ export function synthesizeToolCallId(): string {
  */
 export async function* parseOllamaChatStream(
   body: ReadableStream<Uint8Array>,
-  opts: { signal?: AbortSignal; startedAt: number },
+  opts: {
+    signal?: AbortSignal;
+    startedAt: number;
+    /** The reply's decode (eval_count tokens in eval_duration ns), when the final line carries both. */
+    onDecode?: (tokens: number, durationNs: number) => void;
+  },
 ): AsyncIterable<StreamChunk> {
   const calls: Array<{ id: string; name: string; arguments: string }> = [];
   const seenIds = new Set<string>();
@@ -113,6 +119,8 @@ export async function* parseOllamaChatStream(
       const completion = count(line.eval_count) ?? 0;
       const cached = count(line.prompt_eval_cached_count);
       if (prompt || completion) usage = { promptTokens: prompt, completionTokens: completion, ...(cached !== undefined ? { cachedTokens: cached } : {}) };
+      const decodeNs = count(line.eval_duration);
+      if (completion && decodeNs) opts.onDecode?.(completion, decodeNs);
     }
   }
 

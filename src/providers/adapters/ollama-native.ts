@@ -165,8 +165,10 @@ export class OllamaNativeAdapter extends BaseAdapter {
       return;
     }
     let completed = false;
+    let decode: { tokens: number; durationNs: number } | undefined;
+    const onDecode = (tokens: number, durationNs: number) => { decode = { tokens, durationNs }; };
     try {
-      for await (const chunk of parseOllamaChatStream(res.body, { signal: req.signal, startedAt })) {
+      for await (const chunk of parseOllamaChatStream(res.body, { signal: req.signal, startedAt, onDecode })) {
         if (chunk.type === "done") completed = chunk.stopReason !== "abort";
         yield chunk;
       }
@@ -175,8 +177,9 @@ export class OllamaNativeAdapter extends BaseAdapter {
       return;
     }
     // A completed request at the applied size is the moment /api/ps can say
-    // whether that size stayed on the GPU. Fire-and-forget: never on the turn.
-    if (completed && numCtx !== undefined) void observeChatResidency(root, req.model);
+    // whether that size stayed on the GPU, and its decode whether the card
+    // paged without saying so. Fire-and-forget: never on the turn.
+    if (completed && numCtx !== undefined) void observeChatResidency(root, req.model, {}, decode);
   }
 
   /** The flags to retry with once, or null when the error is not one of ours. */

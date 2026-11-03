@@ -98,12 +98,18 @@ describe("chooseContext", () => {
     // live sizing record; the auto-fit gave 147,456 with this exact budget.
     const q38 = { gpu: RTX_5090, headroomBytes: 1_004_423_240, nativeMax: 262_144, weightsBytes: 17_741_872_135, kvBytesPerToken: 69_632 };
 
-    it("runs at the declared 172,032, which the card holds; the auto-fit would have given 147,456", () => {
-      expect(chooseContext({ ...q38, declaredCtx: 172_032 })).toMatchObject({ numCtx: 172_032, reason: "declared_fits" });
+    it("keeps the safety margin: the declared 172,032 fits only the bare card, so it runs at the auto-fit 147,456", () => {
+      // At 172,032 it paged to system memory once the embedder and the voice
+      // sidecars shared the card: 21 tok/s instead of ~120 (2026-11-03).
+      expect(chooseContext({ ...q38, declaredCtx: 172_032 })).toMatchObject({ numCtx: 147_456, reason: "fits_gpu" });
       expect(chooseContext(q38)).toMatchObject({ numCtx: 147_456, reason: "fits_gpu", budgetBytes: 29_767_402_629 });
     });
 
-    it("falls back to the auto-fit when the declared window would spill even on the whole card", () => {
+    it("runs a declared window that fits inside the margin as declared", () => {
+      expect(chooseContext({ ...q38, declaredCtx: 131_072 })).toMatchObject({ numCtx: 131_072, reason: "declared_fits", budgetBytes: 29_767_402_629 });
+    });
+
+    it("falls back to the auto-fit when the declared window would spill", () => {
       expect(chooseContext({ ...q38, declaredCtx: 262_144 })).toMatchObject({ numCtx: 147_456, reason: "fits_gpu" });
     });
 

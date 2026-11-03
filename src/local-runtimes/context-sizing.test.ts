@@ -67,13 +67,19 @@ describe("ensureContextDecision", () => {
     expect(appliedContext("http://localhost:11434/v1", "qwen3.6:27b")).toBe(172_032);
   });
 
-  it("runs a tag built with a num_ctx at it, where the auto-fit would have shrunk it", async () => {
-    // The 27B auto-fits to 172,032 here; built at 196,608 it fits the card
-    // only without the safety margin, and the user picked that tag.
+  it("runs a tag built with a num_ctx at it when it fits inside the safety margin", async () => {
+    state.models.push({ name: "qwen3.6:27b-128k", size: WEIGHTS_27B, digest: "sha256:27b-128k", info: QWEN36_27B_INFO, parameters: "temperature 1\nnum_ctx 131072" });
+    expect(await ensureContextDecision(ROOT, "qwen3.6:27b-128k", { deps: deps() }))
+      .toMatchObject({ numCtx: 131_072, reason: "declared_fits" });
+    expect(appliedContext(ROOT, "qwen3.6:27b-128k")).toBe(131_072);
+  });
+
+  it("sizes a tag whose num_ctx fits only the bare card like any other, keeping the margin", async () => {
+    // The 27B auto-fits to 172,032 here; built at 196,608 it would leave the
+    // card no room for anything else, which pages it to system memory.
     state.models.push({ name: "qwen3.6:27b-192k", size: WEIGHTS_27B, digest: "sha256:27b-192k", info: QWEN36_27B_INFO, parameters: "temperature 1\nnum_ctx 196608" });
     expect(await ensureContextDecision(ROOT, "qwen3.6:27b-192k", { deps: deps() }))
-      .toMatchObject({ numCtx: 196_608, reason: "declared_fits" });
-    expect(appliedContext(ROOT, "qwen3.6:27b-192k")).toBe(196_608);
+      .toMatchObject({ numCtx: 172_032, reason: "fits_gpu" });
   });
 
   it("gives the 8B its whole native window", async () => {

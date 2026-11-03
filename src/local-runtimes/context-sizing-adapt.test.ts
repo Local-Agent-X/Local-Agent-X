@@ -123,24 +123,6 @@ describe("contention", () => {
     expect(persisted()).toMatchObject({ numCtx: SIZED, verification: "pending" });
   });
 
-  it("a declared window fitted to the whole card: a browser's 1.5 GB is contention, so the user's size survives", async () => {
-    const tag = "qwen3.6:27b-192k";
-    const runtime = referenceRuntime();
-    runtime.models.push({ ...runtime.models[0], name: tag, digest: "sha256:27b-192k", parameters: "num_ctx 196608" });
-    const store = new ContextSizingStore(join(dir, "local-context-sizing.json"));
-    await ensureContextDecision(ROOT, tag, {
-      deps: { fetchJson: fakeFetchJson(runtime), gpu: async () => RTX_5090, store, backgroundModels: async () => ["mxbai-embed-large"], kvCacheType: () => null, now: () => now },
-    });
-    expect(appliedContext(ROOT, tag)).toBe(196_608);
-    const row = { name: tag, size: 31e9, size_vram: 29e9, context_length: 196_608 };
-    const rows = [row, embedder];
-    const ollama = rows.reduce((sum, r) => sum + r.size_vram, 0);
-    await observeChatResidency(ROOT, tag, { ps: async () => ({ models: rows }), gpuUsed: async () => ollama + 1.5e9, now: () => now, store });
-    expect(appliedContext(ROOT, tag)).toBeLessThan(196_608);
-    _resetContextSizingForTests();
-    expect(contextSizingRecord(ROOT, tag)).toMatchObject({ numCtx: 196_608, reason: "declared_fits", verification: "pending" });
-  });
-
   it("without a driver reading, an unexplained spill is the estimate's fault", async () => {
     externalVram = null;
     await observe([chat(SIZED, 27.4e9, 25.4e9), embedder]);
@@ -151,5 +133,76 @@ describe("contention", () => {
     await observe([chat(SIZED, 27.4e9, 26e9), embedder]);
     // Spill with only the embedder loaded is the estimate's fault, not contention.
     expect(persisted()?.verification).toBe("stepped_down");
+  });
+});
+
+describe("paging that /api/ps does not report", () => {
+  // Ollama reports the runner at less than it holds (qwen3.8 27B: 18 GB
+  // reported, ~28 GB held), so the driver's reading is given directly here,
+  // never derived from the rows.
+  const TOTAL = RTX_5090.totalBytes;
+  async function reply(rows: Array<{ size_vram: number }>, freeBytes: number | null, tokPerSec: number, tokens = 240): Promise<void> {
+    await observeChatResidency(ROOT, MODEL, {
+      ps: async () => ({ models: rows }),
+      gpuUsed: async () => (freeBytes === null ? null : TOTAL - freeBytes),
+      now: () => now,
+      store: new ContextSizingStore(join(dir, "local-context-sizing.json")),
+    }, { tokens, durationNs: (tokens / tokPerSec) * 1e9 });
+  }
+  const resident = [chat(SIZED, 18e9), embedder];
+
+  it("keeps the fastest fully resident decode as the yardstick, and ignores a reply too short to time", async () => {
+    await reply(resident, 4e9, 120);
+    await reply(resident, 4e9, 300, 20);
+    expect(persisted()).toMatchObject({ verification: "verified", healthyDecodeTokPerSec: 120 });
+  });
+
+  it("steps down when a reply decodes far below it on a full card, and back once the card has room again", async () => {
+    await reply(resident, 4e9, 120);
+    await reply(resident, 0.8e9, 21);
+    const reduced = appliedContext(ROOT, MODEL)!;
+    expect(reduced).toBeLessThan(SIZED);
+    expect(contextSizingRecord(ROOT, MODEL)?.numCtx).toBe(SIZED); // the decision itself is untouched
+
+    // Reloaded smaller it runs at speed, but whatever filled the card is still there.
+    const smaller = [chat(reduced, 16e9), embedder];
+    now += 60_000;
+    await reply(smaller, 2.5e9, 120);
+    now += CONTENTION_COOLDOWN_MS;
+    await reply(smaller, 2.5e9, 120);
+    expect(appliedContext(ROOT, MODEL)).toBe(reduced);
+
+    // It goes; the card has room for the size given back, for a full cooldown.
+    now += 60_000;
+    await reply(smaller, 8e9, 120);
+    now += CONTENTION_COOLDOWN_MS;
+    await reply(smaller, 8e9, 120);
+    expect(appliedContext(ROOT, MODEL)).toBe(SIZED);
+  });
+
+  it("steps down again when the first step was not enough", async () => {
+    await reply(resident, 4e9, 120);
+    await reply(resident, 0.8e9, 21);
+    const first = appliedContext(ROOT, MODEL)!;
+    await reply([chat(first, 16e9), embedder], 0.5e9, 20);
+    expect(appliedContext(ROOT, MODEL)).toBeLessThan(first);
+  });
+
+  it("does not step down for a slow reply on a card with room: a busy GPU is not a full one", async () => {
+    await reply(resident, 4e9, 120);
+    await reply(resident, 4e9, 21);
+    expect(appliedContext(ROOT, MODEL)).toBe(SIZED);
+  });
+
+  it("steps down on the decode alone when the driver cannot be read", async () => {
+    await reply(resident, 4e9, 120);
+    await reply(resident, null, 21);
+    expect(appliedContext(ROOT, MODEL)).toBeLessThan(SIZED);
+  });
+
+  it("has no yardstick before a fully resident reply, so a first slow reply changes nothing", async () => {
+    await reply(resident, 0.8e9, 21);
+    expect(appliedContext(ROOT, MODEL)).toBe(SIZED);
+    expect(persisted()?.healthyDecodeTokPerSec).toBe(21);
   });
 });

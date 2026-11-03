@@ -19,6 +19,7 @@ import { buildToolResultsView, extractText, extractToolResultText } from "./cont
 import { appendNudgeAsUserMessage, middlewareAbortResult, recoverCommittedStrategyPivot } from "./nudges.js";
 import { buildTurnInput, readPendingRedirect } from "./build-input.js";
 import { drainInjectsIntoTurn } from "./inject-drain.js";
+import { writeLocalDigestRow } from "./local-digest-row.js";
 import { opConsumesInjects } from "../../agent-loop/inject-queue.js";
 import { dispatchTools } from "./dispatch-tools.js";
 import { createIdleWatchdog, readIdleTimeoutMs } from "./idle-watchdog.js";
@@ -58,6 +59,8 @@ export interface TurnLoopDeps {
   /** Mid-turn user injects → op_messages drain (chat_turn/agent_spawn only). */
   drainInjectsIntoTurn?: typeof drainInjectsIntoTurn;
   opConsumesInjects?: typeof opConsumesInjects;
+  /** A local wire's situational digest → op_messages, before the input read. */
+  writeLocalDigestRow?: typeof writeLocalDigestRow;
   /** The canonical tool-dispatcher boundary — the loop never executes tools. */
   dispatchTools?: typeof dispatchTools;
   /** Stuck-adapter detection. readIdleTimeoutMs reads hot-reloaded config. */
@@ -100,6 +103,7 @@ export function resolveTurnLoopDeps(deps: TurnLoopDeps = {}): ResolvedTurnLoopDe
     readPendingRedirect: deps.readPendingRedirect ?? readPendingRedirect,
     drainInjectsIntoTurn: deps.drainInjectsIntoTurn ?? drainInjectsIntoTurn,
     opConsumesInjects: deps.opConsumesInjects ?? opConsumesInjects,
+    writeLocalDigestRow: deps.writeLocalDigestRow ?? writeLocalDigestRow,
     dispatchTools: deps.dispatchTools ?? dispatchTools,
     createIdleWatchdog: deps.createIdleWatchdog ?? createIdleWatchdog,
     readIdleTimeoutMs: deps.readIdleTimeoutMs ?? readIdleTimeoutMs,

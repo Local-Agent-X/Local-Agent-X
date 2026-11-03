@@ -88,8 +88,19 @@ describe("localPromptSplit / recalledContextText", () => {
   const sections = [section("core-identity/identity", "IDENTITY ", "static"), section("relevant-memories", "RECALL ")];
 
   it("splits a local model's prompt and leaves a cloud model's whole", () => {
-    expect(localPromptSplit({ provider: "local", model: "qwen3.8:27b", renderedPromptSections: sections })?.tail).toBe("RECALL ");
-    expect(localPromptSplit({ provider: "openai", model: "gpt-5", renderedPromptSections: sections })).toBeNull();
+    expect(localPromptSplit({ provider: "local", model: "qwen3.8:27b", renderedPromptSections: sections }, "s-split")?.tail).toBe("RECALL ");
+    expect(localPromptSplit({ provider: "openai", model: "gpt-5", renderedPromptSections: sections }, "s-split")).toBeNull();
+  });
+
+  it("keeps the chat's first memory context in the head and leads the tail with what memory gained", () => {
+    const withMemory = (core: string) => [section("context-block", core), ...sections];
+    const first = localPromptSplit({ provider: "local", model: "qwen3.8:27b", renderedPromptSections: withMemory("- likes tea\n") }, "s-pin");
+    const second = { provider: "local", model: "qwen3.8:27b", renderedPromptSections: withMemory("- likes tea\n- has a pothos\n") };
+    const split = localPromptSplit(second, "s-pin");
+    expect(split?.head).toBe(first?.head);
+    expect(split?.tail).toMatch(/^<memory_changes>\n[^]*\n- has a pothos\n<\/memory_changes>\n\nRECALL $/);
+    // The adapter and the op seed read one split: asking again tells nothing twice.
+    expect(localPromptSplit(second, "s-pin")).toBe(split);
   });
 
   it("frames the tail as recalled data, and renders nothing for nothing", () => {

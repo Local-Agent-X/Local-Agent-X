@@ -165,7 +165,7 @@ export async function registerAdapterForChat(
     // token prefix, and renders the tool schemas after the system text, can
     // reuse the tools and the history across user messages. The per-op
     // sections are a history row create-op seeded after the user's message.
-    const split = localPromptSplit(prepared);
+    const split = localPromptSplit(prepared, sessionId);
     return createOpenAICompatAdapter({
       systemPrompt: split ? split.head : prepared.systemPrompt,
       model: prepared.model,

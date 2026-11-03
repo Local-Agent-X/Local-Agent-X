@@ -7,8 +7,16 @@
 // Drives the real seams: seedOpMessages → buildTurnInput → the local wire,
 // then the turn's save (op rows → session rows → withRecallCarried) and the
 // next message's seed from that session.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
+
+// The digest's content comes from the session's ledger and task list; here a
+// fixed one, for ops routed to a local runtime only, so the other cases keep
+// the shape they test.
+vi.mock("../turn-loop/situational-awareness.js", () => ({
+  buildSituationalAwareness: async (o: Op, turnIdx: number) =>
+    o.contextPack?.routing?.preferredProvider === "local" ? `[SITUATIONAL CONTEXT] round ${turnIdx}: recent actions: remember` : null,
+}));
 import type { Op } from "../../ops/types.js";
 import type { PreparedAgentRequest } from "../../agent-request/types.js";
 import { seedOpMessages } from "./seed-messages.js";
@@ -19,10 +27,12 @@ import { opMessageRowToChatParam, readOpMessages } from "../index.js";
 import { carriedRecallRefs, withRecallCarried } from "../../agent-request/recall-carry.js";
 import type { RecalledMemory } from "../../memory/auto-search-context.js";
 import { harnessRowKind } from "../../harness-rows.js";
+import { writeLocalDigestRow } from "../turn-loop/local-digest-row.js";
 
 let seq = 0;
 const newOpId = () => `op_local_across_${Date.now()}_${seq++}`;
 const op = (id: string) => ({ id, type: "chat_turn", task: "x", lane: "interactive" } as unknown as Op);
+const localOp = (id: string) => ({ ...op(id), contextPack: { routing: { preferredProvider: "local" } } } as unknown as Op);
 const prepared = (cleanHistory: ChatCompletionMessageParam[]) => ({ cleanHistory, images: [] } as unknown as PreparedAgentRequest);
 
 const tail = (ref: string, logLine: string) => recalledContextText(
@@ -32,9 +42,9 @@ const tail = (ref: string, logLine: string) => recalledContextText(
 const recalled = (ref: string): RecalledMemory =>
   ({ entries: [{ ref, text: `[PAST SESSION — session, ref: ${ref}, session: chat-0]\n[user] I like tea.` }], pastSessions: true });
 
-/** Round 0 of a message's op, as the local wire sends it, without the per-round digest row. */
-async function firstRequest(opId: string): Promise<ChatCompletionMessageParam[]> {
-  const input = await buildTurnInput(op(opId), 0, null);
+/** Round 0 of a message's op, as the local wire sends it, without an ephemeral digest row. */
+async function firstRequest(opId: string, asOp: (id: string) => Op = op): Promise<ChatCompletionMessageParam[]> {
+  const input = await buildTurnInput(asOp(opId), 0, null);
   const durable = input.messages.slice(0, input.messages.length - (input.ephemeralTailMessages ?? 0));
   return canonicalToChatParam(durable, undefined);
 }
@@ -77,6 +87,26 @@ describe("a local chat's next message extends its last one", () => {
     expect(saved.findIndex((m) => harnessRowKind(m) === "recall")).toBe(1);
     // Later messages see its recall as carried, so they do not render it again.
     expect(carriedRecallRefs(saved).has("m7")).toBe(true);
+  });
+
+  it("a digest message 1 was sent with is in message 2's history, where it was", async () => {
+    // 2026-11-03, qwen3.8: the digest rode after message 1's rows and was never
+    // saved, so message 2's request diverged there and re-read 35k tokens.
+    const op1 = newOpId();
+    seedOpMessages(op1, prepared([]), "Yo", tail("d1", "[12:00:00] User: Yo"));
+    await writeLocalDigestRow(localOp(op1), 0);
+    const request1 = await firstRequest(op1, localOp);
+    expect(JSON.stringify(request1)).toContain("[SITUATIONAL CONTEXT] round 0");
+
+    const session = savedTurn(op1, "Yo Sam", recalled("d1"));
+    expect(session.filter((m) => harnessRowKind(m) === "digest")).toHaveLength(1);
+
+    const op2 = newOpId();
+    seedOpMessages(op2, prepared(session), "what's new", tail("d2", "[12:01:00] User: what's new"));
+    await writeLocalDigestRow(localOp(op2), 0);
+    const request2 = await firstRequest(op2, localOp);
+    expect(request2.length).toBeGreaterThan(request1.length);
+    expect(JSON.stringify(request2.slice(0, request1.length))).toBe(JSON.stringify(request1));
   });
 
   it("a cloud turn, seeded without the row, still carries its recall the old way", async () => {

@@ -25,6 +25,7 @@ import type { RenderedPromptSection } from "../../context/system-prompt-builder.
 import type { PreparedAgentRequest } from "../../agent-request/types.js";
 import { modelStablePrefix } from "../../local-runtimes/model-profile.js";
 import { RECALLED_CONTEXT_CLOSE, RECALLED_CONTEXT_OPEN } from "../../harness-text.js";
+import { pinMemoryContext } from "./local-memory-pin.js";
 
 /** Rebuilt per op from per-turn inputs; each one changes across messages. */
 export const TRAILING_SECTION_IDS: ReadonlySet<string> = new Set([
@@ -42,9 +43,10 @@ export const TRAILING_SECTION_IDS: ReadonlySet<string> = new Set([
 /** Byte-stable for a session (or for the process), whatever their type. */
 export const HEAD_SECTION_IDS: ReadonlySet<string> = new Set([
   // The memory context's stable half: profile files, project brief and
-  // core_memory, byte-identical within a session/day (memory/context.ts
-  // buildContextBlockParts). It rode the tail whole until 2026-11-02, so its
-  // ~4.5k tokens were re-read with every message.
+  // core_memory (memory/context.ts buildContextBlockParts). It rode the tail
+  // whole until 2026-11-02, so its ~4.5k tokens were re-read with every
+  // message. Rebuilt per message it still changes whenever memory does, so
+  // the head holds the chat's first one (local-memory-pin.ts).
   "context-block",
   "system-prompt-override",
   "core-identity",
@@ -85,14 +87,35 @@ function family(id: string): string {
   return id.includes("/") ? id.slice(0, id.indexOf("/")) : id;
 }
 
+type SplitInput = Pick<PreparedAgentRequest, "provider" | "model" | "renderedPromptSections">;
+
+/** One split per request: the memory pin below is told each line once, so the
+ *  adapter and the op seed must read the same result, not compute two. */
+const splits = new WeakMap<SplitInput, SplitPrompt | null>();
+
 /** This request's split, or null when its model keeps one system message:
  *  on for every local model unless its profile opts out; every cloud
  *  provider keeps one. Both the adapter (the head) and the op seed (the
- *  tail's row) read it, from the same final sections. */
-export function localPromptSplit(prepared: Pick<PreparedAgentRequest, "provider" | "model" | "renderedPromptSections">): SplitPrompt | null {
-  return prepared.provider === "local" && modelStablePrefix(prepared.model, { provider: prepared.provider })
-    ? splitPromptForStablePrefix(prepared.renderedPromptSections)
-    : null;
+ *  tail's row) read it, from the same final sections. The memory context in
+ *  the head is the one the chat (`sessionId`) started with
+ *  (local-memory-pin.ts); what memory gained since leads the tail. */
+export function localPromptSplit(prepared: SplitInput, sessionId: string): SplitPrompt | null {
+  if (splits.has(prepared)) return splits.get(prepared) ?? null;
+  let split: SplitPrompt | null = null;
+  if (prepared.provider === "local" && modelStablePrefix(prepared.model, { provider: prepared.provider })) {
+    const sections = [...prepared.renderedPromptSections];
+    const at = sections.findIndex((s) => s.id === "context-block");
+    let changes = "";
+    if (at >= 0) {
+      const pinned = pinMemoryContext(sessionId, sections[at].text);
+      sections[at] = { ...sections[at], text: pinned.head };
+      changes = pinned.changes;
+    }
+    split = splitPromptForStablePrefix(sections);
+    if (changes) split = { ...split, tail: `${changes}\n\n${split.tail}`, tailIds: ["memory-changes", ...split.tailIds] };
+  }
+  splits.set(prepared, split);
+  return split;
 }
 
 /**

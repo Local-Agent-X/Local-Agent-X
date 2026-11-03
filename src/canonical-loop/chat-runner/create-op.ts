@@ -92,7 +92,7 @@ export async function createChatOp(ctx: CanonicalChatContext): Promise<CreatedCh
   writeOp(op);
   // On a local wire the prompt's per-op sections are a row of the
   // conversation, not of this request (local-prompt-split.ts).
-  const split = localPromptSplit(ctx.prepared);
+  const split = localPromptSplit(ctx.prepared, ctx.sessionId);
   seedOpMessages(op.id, ctx.prepared, ctx.message, split ? recalledContextText(split.tail) : null);
   return { op, wallClockMs, resolvedTarget };
 }

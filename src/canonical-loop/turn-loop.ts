@@ -88,6 +88,8 @@ export async function driveTurn(
   const beforeTurnEnd = await phases.beforeTurn();
   if (beforeTurnEnd) return beforeTurnEnd;
 
+  // Last write before the read: on a local wire the digest is a history row.
+  await deps.writeLocalDigestRow(op, turnIdx);
   const input = await deps.buildTurnInput(op, turnIdx, pendingRedirect);
 
   const modelCall = await runModelCall(op, adapter, input, turnIdx, deps);

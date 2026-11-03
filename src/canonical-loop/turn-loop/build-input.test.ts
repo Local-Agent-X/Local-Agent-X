@@ -194,19 +194,16 @@ describe("buildTurnInput — situational-awareness wiring", () => {
     expect(userRun).toHaveLength(1);
   });
 
-  // The local wire is the one transport where the fold COSTS something: the
-  // runtime caches by token prefix of the whole rendered prompt, and a row
-  // whose bytes differ between round 0 (folded) and round 1 (bare) dropped
-  // the entire cache when replayed against Ollama (2026-09-22). Two adjacent
-  // user rows cost it nothing, so there the digest is always its own row.
-  it("a local-provider op keeps the digest as its OWN row even after a trailing user row", async () => {
+  // The local wire caches by token prefix of the whole rendered prompt, so an
+  // ephemeral row there is one the next request lacks (2026-09-22 within an
+  // op, 2026-11-03 across messages). Its digest is a history row the turn
+  // loop wrote before this read (local-digest-row.ts), so the read adds none.
+  it("adds no ephemeral digest for a local-provider op: its digest arrives as history", async () => {
     const op = { ...makeOp("interactive"), contextPack: { routing: { preferredProvider: "local" } } } as unknown as Op;
     const input = await buildTurnInput(op, 1, null);
-    expect(input.messages).toHaveLength(2);
+    expect(input.messages).toHaveLength(1);
     expect(input.messages[0].content).toEqual({ text: "ship it" });
-    expect(input.messages[1].role).toBe("user");
-    expect((input.messages[1].content as { text: string }).text).toContain("[SITUATIONAL CONTEXT");
-    expect(input.ephemeralTailMessages).toBe(1);
+    expect(input.ephemeralTailMessages).toBeUndefined();
   });
 
   it("injects on the long autonomous lanes (agent/background) — they drift too", async () => {

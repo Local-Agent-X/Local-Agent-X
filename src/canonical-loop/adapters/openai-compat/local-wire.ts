@@ -22,6 +22,12 @@
  * the loop may persist in its own form next round. Across ops the prompt's
  * per-op sections are a history row (chat-runner/local-prompt-split.ts
  * recalledContextText), so a new message extends the last one the same way.
+ *
+ * An op routed to the "local" provider sends no digest tail at all: its digest
+ * is a history row too (turn-loop/local-digest-row.ts), because a tail kept
+ * only by this state was missing from the next message's history. The tail
+ * here is then a redirect, or the digest of an op on another provider whose
+ * endpoint is local (a LAN or allowlisted host).
  */
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { ThinkingSpec } from "../../../local-runtimes/types.js";

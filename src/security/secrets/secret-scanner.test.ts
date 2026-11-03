@@ -597,6 +597,8 @@ describe("scanForSecrets — high-entropy detector (false-positive traps stay cl
     // The node_modules corpus (2026-11-03): a one-letter prefix, and CamelCase inside a path.
     ["a CamelCase name with a one-letter prefix", "baileys/lib/WAUSync/Protocols/USyncDisappearingModeProtocol.js"],
     ["a CamelCase name inside a path", "https://cdn.jsdelivr.net/npm/date-fns/esm/fp/eachDayOfIntervalWithOptions/index.js"],
+    // TB2 mteb-leaderboard's downloads (policy-scan --egress): an acronym with a digit in it.
+    ["a CamelCase name ending in an acronym like S2S", "https://raw.githubusercontent.com/embeddings-benchmark/results/71f6b6257025bbe06232352b86b09ab7bd7c904e/results/intfloat__multilingual-e5-base/d13f1b27baf31030b7fd040960d60d909913633f/SNLHierarchicalClusteringS2S.json"],
     // A PJ's Disneyland download (2026-11-01): the link hex-encodes its asset path.
     ["a download link that hex-encodes a path", "https://kenney.nl/download-link/" + Buffer.from("assets/modular-buildings", "utf8").toString("hex")],
   ];

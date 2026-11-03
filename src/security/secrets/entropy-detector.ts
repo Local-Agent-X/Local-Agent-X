@@ -158,7 +158,7 @@ function isHashedName(run: string): boolean {
 }
 
 // The word costume with no separators: a CamelCase identifier, every part a
-// word (`Luminosity`, `GL`, `Of`, `U` in `USync`) or a number (`ISO9075`),
+// word (`Luminosity`, `GL`, `Of`, `U` in `USync`, `S2S`) or a number (`ISO9075`),
 // every part that is not an acronym or a number holding a vowel, a short part
 // (under three letters) for every three, and at most one number. A Three.js
 // download (2026-11-03) was held for approval as carrying a token because its
@@ -169,10 +169,10 @@ function isHashedName(run: string): boolean {
 // character tokens: base64url 28, base64 30, letters and digits 69, letters
 // only 773; known key formats and the user's stored secrets are caught by
 // their own passes regardless.
-const CAMEL_PART = /^(?:[A-Z][a-z]+|[a-z]{2,}|[A-Z]+|[0-9]+)$/;
+const CAMEL_PART = /^(?:[A-Z][a-z]+|[a-z]{2,}|[A-Z]+|[0-9]+|[A-Z]+[0-9][A-Z]+)$/;
 function isCamelIdentifier(run: string): boolean {
   if (!/^[A-Za-z][A-Za-z0-9]*$/.test(run)) return false;
-  const parts = run.match(/[A-Z]+(?=[A-Z][a-z]|[0-9]|$)|[A-Z]?[a-z]+|[A-Z]+|[0-9]+/g);
+  const parts = run.match(/[A-Z]+[0-9][A-Z]+(?![a-z])|[A-Z]+(?=[A-Z][a-z]|[0-9]|$)|[A-Z]?[a-z]+|[A-Z]+|[0-9]+/g);
   if (!parts || parts.join("") !== run) return false;
   const letters = parts.filter(p => !/^[0-9]+$/.test(p));
   if (letters.length < 2 || parts.length - letters.length > 1) return false;

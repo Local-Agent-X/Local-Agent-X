@@ -65,6 +65,13 @@ export const PREFERENCE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     description: "Voice backend. tier4=in-process, python=the installed voice sidecar, cpu_fallback=slow CPU-only engine",
   },
   {
+    field: "voiceModel",
+    owner: "agent",
+    validate: z.string(),
+    runtime: false,
+    description: "Model a spoken voice turn runs on. Empty = the provider's fast tier (e.g. claude-haiku-4-5); \"chat\" = the chat model itself, with light thinking; or an explicit model id",
+  },
+  {
     field: "voiceMode",
     owner: "protected", where: VOICE_SYSTEM,
     validate: z.enum(["browser", "standard"]),

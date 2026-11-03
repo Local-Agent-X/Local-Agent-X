@@ -48,7 +48,13 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
   // dropped. Every voice mode today is the user talking to the agent; a
   // translator mode must not run this, since there the other person's voice
   // is the input.
-  const nearField = createNearFieldGate();
+  //
+  // The bar is 20% of the user's level (~14 dB below them), not the in-process
+  // engine's 40%: a handheld phone's distance from the mouth swings far more
+  // than a desk mic's, and at 40% the user's own "Did you get that?" (0.056
+  // against a level of 0.23) was dropped as background (2026-11-03). A talker
+  // across the room is ~20 dB below a phone held to the mouth.
+  const nearField = createNearFieldGate({ relativeRatio: 0.2 });
   const bargeIn = createBargeInConfirm(nearField);
   const utterance: Int16Array[] = [];
   let utteranceSamples = 0;
@@ -176,6 +182,7 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
         utterance.length = 0;
         utteranceSamples = 0;
         const nf = nearField.accept(pcm);
+        logger.info(`[gpu-session] ${ctx.sessionId}: utterance loudness=${nf.loudness.toFixed(4)} floor=${nf.floor.toFixed(4)} ${nf.pass ? "kept" : "dropped"}`);
         if (!nf.pass) {
           logger.info(`[gpu-session] ${ctx.sessionId}: dropped far-field utterance "${text.slice(0, 40)}" (loudness=${nf.loudness.toFixed(4)} < floor=${nf.floor.toFixed(4)})`);
           return;

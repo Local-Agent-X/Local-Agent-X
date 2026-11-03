@@ -90,6 +90,18 @@ describe("gpu voice session background filter", () => {
 		session.close();
 	});
 
+	it("keeps the user's own softer phrase, which a desk-mic bar would drop", () => {
+		// 2026-11-03: "Did you get that?" at ~24% of the user's level was dropped.
+		const session = start();
+		speak(session, 0.3, "what's on my calendar");
+		speak(session, 0.075, "did you get that");
+		expect(captured.machine.handleFinalTranscript.mock.calls.map((c: any[]) => c[0])).toEqual([
+			"what's on my calendar",
+			"did you get that",
+		]);
+		session.close();
+	});
+
 	it("interrupts a reply only once near-field audio confirms it is the user", () => {
 		const session = start();
 		speak(session, 0.3, "first question");

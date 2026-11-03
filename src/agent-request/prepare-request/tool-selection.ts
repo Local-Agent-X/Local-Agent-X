@@ -279,15 +279,17 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
     // a local model when its profile routes tools per mission (EXP-12: on the
     // local wire the tool schemas render after the system text, so a set that
     // changes 74→75→74 across messages re-prefilled the whole prompt at every
-    // arrival — 30-37k tokens, measured). Re-derived in catalog order so the
-    // same union serializes identically.
+    // arrival — 30-37k tokens, measured). Re-derived in catalog order on
+    // EVERY message, the session's first included, so the same set serializes
+    // identically: the first message's set came out in the shrink's order and
+    // the second's in catalog order, so on qwen3.8 (2026-11-02) two identical
+    // 34-tool sets differed at token ~9.4k and the second message re-read its
+    // whole 37k-token prompt.
     const { modelToolRouting } = await import("../../local-runtimes/model-profile.js");
     const sticky = tier === "strong" || modelToolRouting(input.resolvedModel, { provider: input.resolvedProvider, tier }) === "mission";
-    const known = sessionToolNames.get(input.sessionId);
-    if (sticky && known) {
-      const union = new Set([...known, ...tools.map(t => t.name)]);
-      tools = input.allAgentTools.filter(t => union.has(t.name));
-    }
+    const known = sticky ? sessionToolNames.get(input.sessionId) : undefined;
+    const union = new Set([...(known ?? []), ...tools.map(t => t.name)]);
+    tools = input.allAgentTools.filter(t => union.has(t.name));
     // The tier's DESCRIPTION compaction at the final set's own size, so every
     // pick survives (711f2cd6). Applied after the union so the bytes are a
     // function of the set alone.

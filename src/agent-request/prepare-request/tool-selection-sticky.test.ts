@@ -28,8 +28,12 @@ function tool(name: string): ToolDefinition {
   return { name, description: `${name} does a thing.`, parameters: { type: "object", properties: {} }, execute: async () => ({ content: "" }) };
 }
 
-function catalog(): ToolDefinition[] {
-  const names = new Set<string>([...ESSENTIAL_TOOLS_ORDER, "tool_search", "email_send", "calendar_add", "restore_file"]);
+/** `crowded`: the medium tier's intent slots filled by tools ahead of
+ *  tool_search, and forget's companion update_fact behind it, as in the real
+ *  catalog, so the shrink appends both outside the cap in its own order. */
+function catalog(crowded = false): ToolDefinition[] {
+  const around = crowded ? ["edit_lines", "multi_edit", "tool_search", "update_fact"] : ["tool_search"];
+  const names = new Set<string>([...ESSENTIAL_TOOLS_ORDER, ...around, "email_send", "calendar_add", "restore_file"]);
   const all = [...names].map(tool);
   applyAudiences(all);
   return all;
@@ -54,9 +58,9 @@ const indexPickingByMessage = () => ({
 
 const names = (ts: ToolDefinition[]) => ts.map((t) => t.name).sort();
 
-async function turn(model: string, message: string) {
+async function turn(model: string, message: string, crowdedCatalog = false) {
   return (await selectTools({
-    message, sessionId: `sticky-${model}`, channel: "web", allAgentTools: catalog(), bridgeTools: [],
+    message, sessionId: `sticky-${model}`, channel: "web", allAgentTools: catalog(crowdedCatalog), bridgeTools: [],
     resolvedProvider: "local", resolvedModel: model,
   })).tools;
 }
@@ -84,6 +88,15 @@ describe("tool routing per mission", () => {
     // Byte-identical, not just the same names: descriptions are compacted
     // after the union so the wire bytes are a function of the set alone.
     expect(JSON.stringify(third)).toBe(JSON.stringify(second));
+  });
+
+  it("the session's first message ships the same bytes as the next identical one, index ready or not", async () => {
+    declareProfile("first:27b", "mission");
+    _setToolRAGForTests({ isReady: false, select: async () => [] });
+    const first = await turn("first:27b", "hello", true);
+    const second = await turn("first:27b", "hello", true);
+    expect(JSON.stringify(second.map((t) => t.name))).toBe(JSON.stringify(first.map((t) => t.name)));
+    expect(JSON.stringify(second)).toBe(JSON.stringify(first));
   });
 
   it("an unprofiled local model keeps per-message routing", async () => {

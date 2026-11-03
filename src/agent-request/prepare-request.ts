@@ -96,6 +96,35 @@ async function selectTurnTools(
   return toolSel;
 }
 
+/** The turn's memory and context. The memory pipeline runs for every
+ *  provider: the orchestrator's grounding signals help Codex the same way they
+ *  help Claude. A lean (spoken) turn judges memory relevance by keyword. */
+async function buildTurnMemory(
+  input: AgentRequestInput,
+  resolved: { provider: string; model: string },
+  tier: ToolSelectionResult["tier"],
+  protocolSuggestion: ReturnType<typeof getLearnedProtocolSuggestion>,
+  stepStart: (label: string) => () => void,
+): Promise<Awaited<ReturnType<typeof buildContext>>> {
+  const end = stepStart("buildContext");
+  const ctx = await buildContext({
+    message: input.message,
+    sessionId: input.sessionId,
+    sessionMessages: input.sessionMessages,
+    memoryManager: input.memoryManager,
+    attachments: input.attachments,
+    skipMemory: input.skipMemory,
+    isCodexProvider: resolved.provider === "codex",
+    isTrivialToolRequest: isTrivialToolRequest(input.message),
+    tier,
+    resolvedModel: resolved.model,
+    protocolSuggestion,
+    keywordGates: input.leanPrep,
+  });
+  end();
+  return ctx;
+}
+
 export async function prepareAgentRequest(input: AgentRequestInput): Promise<PreparedAgentRequest> {
   // Per-step timing logs. Added 2026-05-27 after IDE-mode chat turns wedged
   // somewhere inside this pipeline with zero breadcrumbs: only the entry
@@ -155,24 +184,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   const toolSel = await selectTurnTools(input, resolved, cleanHistory, protocolSuggestion, stepStart);
 
   // 4. Build per-turn memory + context (skip heavy parts for bridges/cron).
-  // The memory pipeline runs for every provider — the orchestrator's
-  // grounding signals help Codex the same way they help Claude.
-  end = stepStart("buildContext");
-  const isCodexProvider = resolved.provider === "codex";
-  const ctx = await buildContext({
-    message: input.message,
-    sessionId: input.sessionId,
-    sessionMessages: input.sessionMessages,
-    memoryManager: input.memoryManager,
-    attachments: input.attachments,
-    skipMemory: input.skipMemory,
-    isCodexProvider,
-    isTrivialToolRequest: isTrivialToolRequest(input.message),
-    tier: toolSel.tier,
-    resolvedModel: resolved.model,
-    protocolSuggestion,
-  });
-  end();
+  const ctx = await buildTurnMemory(input, resolved, toolSel.tier, protocolSuggestion, stepStart);
 
   // 5. Memory-curate nudge detection (Stage 1 regex + Stage 2 LLM). Its
   // RETURN value is empty unless LAX_MEMORY_INPROMPT_NUDGE=1; its only other

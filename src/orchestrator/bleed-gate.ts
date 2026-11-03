@@ -34,7 +34,7 @@ export async function classifyVerdict(input: OrchestratorInput, anchorText: stri
   // webrtc" misclassified as follow-up; "i love this idea" same). For
   // those, escalate to the LLM follow-up classifier which gets BOTH the
   // user message AND the prior assistant turn (relational call).
-  if (wordCount >= 3 && wordCount <= 12) {
+  if (!input.keywordGates && wordCount >= 3 && wordCount <= 12) {
     try {
       const { classifyFollowupWithLLM } = await import("../classifiers/followup-classify.js");
       const llmVerdict = await classifyFollowupWithLLM(
@@ -68,18 +68,7 @@ export async function applyBleedGate<S extends FilterableSignal>(
     // the active task pass through; profile signals about other tasks
     // get dropped. This is what makes "im logged in go" continue the
     // current PO instead of surfacing an unrelated past project.
-    try {
-      const { batchedTopicalRelevance } = await import("../classifiers/topical-relevance.js");
-      const v = await batchedTopicalRelevance(anchorText, signals.map(s => s.signal));
-      if (v) {
-        return signals.filter((_, i) => v.relevantIndices.has(i));
-      }
-      const anchorWords = topicalKeywords(anchorText);
-      return signals.filter(s => signalTopicallyRelevant(anchorWords, s.signal));
-    } catch {
-      const anchorWords = topicalKeywords(anchorText);
-      return signals.filter(s => signalTopicallyRelevant(anchorWords, s.signal));
-    }
+    return relevantTo(anchorText, signals, !!input.keywordGates);
   }
 
   // Phase B — substantive new ask. Profile passes; session-scope is
@@ -88,22 +77,21 @@ export async function applyBleedGate<S extends FilterableSignal>(
   const sessionSignals = signals.filter(s => getModuleScope(s.source) !== "profile");
 
   if (sessionSignals.length === 0) return profileSignals;
+  return [...profileSignals, ...await relevantTo(input.message, sessionSignals, !!input.keywordGates)];
+}
 
-  let keptSession = sessionSignals;
-  try {
-    const { batchedTopicalRelevance } = await import("../classifiers/topical-relevance.js");
-    const v = await batchedTopicalRelevance(input.message, sessionSignals.map(s => s.signal));
-    if (v) {
-      keptSession = sessionSignals.filter((_, i) => v.relevantIndices.has(i));
-    } else {
-      const messageWords = topicalKeywords(input.message);
-      keptSession = sessionSignals.filter(s => signalTopicallyRelevant(messageWords, s.signal));
-    }
-  } catch {
-    const messageWords = topicalKeywords(input.message);
-    keptSession = sessionSignals.filter(s => signalTopicallyRelevant(messageWords, s.signal));
+/** The signals that are about `text`: the model's judgment, or keyword
+ *  overlap when the turn asked for keyword gates or the model gave none. */
+async function relevantTo<S extends FilterableSignal>(text: string, signals: S[], keywordOnly: boolean): Promise<S[]> {
+  if (!keywordOnly) {
+    try {
+      const { batchedTopicalRelevance } = await import("../classifiers/topical-relevance.js");
+      const v = await batchedTopicalRelevance(text, signals.map(s => s.signal));
+      if (v) return signals.filter((_, i) => v.relevantIndices.has(i));
+    } catch { /* classifier failed: the keyword verdict below stands */ }
   }
-  return [...profileSignals, ...keptSession];
+  const words = topicalKeywords(text);
+  return signals.filter(s => signalTopicallyRelevant(words, s.signal));
 }
 
 export function getAnchorText(input: OrchestratorInput): string {

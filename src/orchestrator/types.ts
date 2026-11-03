@@ -8,6 +8,11 @@ export interface OrchestratorInput {
   timeOfDay: number;
   dayOfWeek: number;
   agentPreviousMessage?: string;
+  /** Judge follow-up-ness and topical relevance by keyword match only, with
+   *  no model call. Set by a spoken turn: those two calls ran in series
+   *  before the reply could start (up to 3 s + 5 s), and the keyword verdict
+   *  is what the turn already gets whenever a call fails or times out. */
+  keywordGates?: boolean;
 }
 
 export interface Adaptation {

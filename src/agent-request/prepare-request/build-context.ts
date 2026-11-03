@@ -34,6 +34,8 @@ export interface BuildContextInput {
    *  it (prepare-request does, because tool selection needs it first).
    *  Undefined = compute here; null = computed, nothing matched. */
   protocolSuggestion?: LearnedProtocolSuggestion | null;
+  /** Memory relevance by keyword only, no model call (OrchestratorInput.keywordGates). */
+  keywordGates?: boolean;
 }
 
 export interface BuildContextResult {
@@ -83,6 +85,7 @@ export async function buildContext(input: BuildContextInput): Promise<BuildConte
     skipDailyLog: input.isCodexProvider,
     liteMode: !input.skipMemory && input.isTrivialToolRequest,
     minimalMode: input.skipMemory,
+    keywordGates: input.keywordGates,
   });
   logger.info(`[step] buildTurnContextCached ${Date.now() - bcT0}ms sess=${input.sessionId.slice(0, 16)}`);
   let contextBlock = turnCtx.contextBlock;

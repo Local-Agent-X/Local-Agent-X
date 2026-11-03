@@ -35,6 +35,9 @@ export interface TurnContextInput {
   liteMode?: boolean;
   /** Skip everything except buildContextBlock (bridges/cron lightweight path). */
   minimalMode?: boolean;
+  /** Orchestrator judges follow-up and topical relevance by keyword only
+   *  (OrchestratorInput.keywordGates). */
+  keywordGates?: boolean;
 }
 
 export interface TurnContext {
@@ -202,6 +205,7 @@ export class MemoryManager {
             timeOfDay: new Date().getHours(),
             dayOfWeek: new Date().getDay(),
             agentPreviousMessage: lastAssistant || undefined,
+            keywordGates: input.keywordGates,
           });
         } catch (e) {
           logger.warn("Orchestrator failed:", (e as Error).message);

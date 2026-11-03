@@ -54,8 +54,9 @@ export interface AgentRequestInput {
   skipMemory?: boolean;
   /** Lean prep: skip the intent classifier + memory-curate steps whose
    *  output the caller discards (voice overrides tools + prompt). Keeps
-   *  memory/context + system-prompt build. Cuts ~2 pre-model LLM round-trips
-   *  off time-to-first-token for those callers. */
+   *  memory/context + system-prompt build, with the memory step's follow-up
+   *  and topical-relevance judged by keyword instead of a model call. Cuts
+   *  ~4 pre-model LLM round-trips off time-to-first-token for those callers. */
   leanPrep?: boolean;
   /** Override system prompt (sub-agents) */
   systemPromptOverride?: string;

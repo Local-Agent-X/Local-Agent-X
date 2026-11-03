@@ -2743,3 +2743,31 @@ Two things the live run exposed, fixed the same day: a classifier warm fired six
 decided the size and loaded the 27B at the runtime default, so chat reloaded it — an unsized warm now decides
 before it fires (residency.ts); and the first cold round's context meter read "395% critical" against the 8,192
 unloaded-model placeholder — the meter says nothing until a round has a real window (event-pump.ts).
+
+## A local chat's next message reuses the prompt cache — verified live (2026-11-03)
+
+**Why:** every chat message on qwen3.8 re-read its whole ~37k-token prompt (26-30 s before the first word, ~1 s to
+write the reply). Two causes, both "the next request is not an extension of the last" on a hybrid model that resumes
+only from checkpoints near the end of the previous prompt: the tool order differed between a chat's first message
+and later ones (1c791df1), and the per-op sections (memory context, recall, orchestrator) rode a row sent with one
+request and replaced by a differently rendered recall row in the next message's history (e6b1ab74: the stable half
+of the memory context moved into the cached head; the per-message half is seeded as the op's recall row and saved
+exactly as sent).
+
+**Live, isolated server on a5b492ae, qwen3.8:27b-172k, one session, three plain chat messages:**
+
+| message | prompt tokens | resumed from checkpoint | re-read |
+|---|---|---|---|
+| 1 (cold) | 32,833 | — | 32,833 |
+| 2 | 33,694 | 32,829 | 865 |
+| 3 | 34,502 | 33,690 | 812 |
+
+Ollama logged `restored context checkpoint` for messages 2 and 3 and no `forcing full prompt re-processing` for any
+chat request; background classifier calls on the same model between messages did not evict the chat's cache (idle
+slot saved to the prompt cache). At the usual ~1,300 tok/s prefill that is under a second of re-read instead of ~28 s.
+
+**Timing caveat:** wall times from this run are not comparable to the baseline. Three voice sidecars (voice server,
+chatterbox, VoxCPM) were resident on the GPU, the card sat at 31.7 of 32.6 GB, and the model ran at ~75 tok/s
+prefill and ~5 tok/s decode (normally ~1,300 and ~74) while Ollama still reported 100% GPU. Message 1 hit a 5-minute
+`/api/chat` 500 and was retried (515 s); messages 2 and 3 took 51 s and 26 s, almost all of it decode. The context
+sizing above assumes the whole card is LAX's chat model's; with the sidecars loaded it overcommits silently.

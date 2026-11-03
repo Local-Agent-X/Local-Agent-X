@@ -89,6 +89,10 @@ export class OutboundAudio {
   // Wall-clock pacing for the current talkspurt: when draining started and how
   // many frames have gone out since, so each wake sends the frames now due.
   private drainStartMs = 0;
+  // When the last packet went out, and whether sending paused since: a pause
+  // must move the RTP timestamp on by the time it lasted (see emitFrame).
+  private lastEmitMs = 0;
+  private pausedSinceEmit = false;
   private framesDrained = 0;
   // Per-talkspurt delivery health, logged when the talkspurt ends if the pacer
   // ever woke late: a late wake is audio the phone waited for.
@@ -254,6 +258,7 @@ export class OutboundAudio {
   private restartClock(): void {
     this.drainStartMs = this.now();
     this.framesDrained = 0;
+    this.pausedSinceEmit = true;
   }
 
   /** Encode a 960-sample frame and hand the built RTP packet to the sink. */
@@ -278,6 +283,19 @@ export class OutboundAudio {
       this.talkspurtStart = true;
       return;
     }
+    // RTP timestamps are the audio's sampling clock (RFC 3550): after a pause
+    // in sending (the gap between TTS pieces, a dip, a stall) the next packet's
+    // timestamp has to move on by the time the pause lasted. Numbering it
+    // contiguously told the phone's jitter buffer the packets had been delayed
+    // in the network, so it time-stretched the reply to cover the "loss" and
+    // then sped up to catch up: repeated and skipped words (2026-11-03).
+    const now = this.now();
+    if (this.pausedSinceEmit && this.lastEmitMs > 0) {
+      const idleFrames = Math.round((now - this.lastEmitMs) / FRAME_MS) - 1;
+      if (idleFrames > 0) this.timestamp = (this.timestamp + idleFrames * OPUS_FRAME_SAMPLES) >>> 0;
+    }
+    this.pausedSinceEmit = false;
+    this.lastEmitMs = now;
     const header = new this.rtp.RtpHeader({
       payloadType: OPUS_PAYLOAD_TYPE,
       sequenceNumber: this.sequenceNumber,

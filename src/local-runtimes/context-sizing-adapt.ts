@@ -57,11 +57,12 @@ export const MIN_DECODE_TOKENS = 64;
  *  context alone costs qwen3.8 27B ~1.5x (147 -> ~100 tok/s at 34k); paging
  *  cost it 2x (a co-loaded 8B: 97 -> 46-50) to 5-7x (120 -> 21). */
 export const PAGING_SLOWDOWN = 2;
-/** ...on a card with less than this free. Every paging state measured on the
- *  5090 had 766-938 MiB free; the same card healthy at the old 172k size had
- *  1,035 MiB, and the margin now leaves it gigabytes more. Without a driver
- *  reading a slow reply is not acted on: a long context alone could be it. */
-const PAGING_FREE_BYTES = 1024 ** 3;
+/** ...on a card with less than this free: the line between full and not.
+ *  Every paging state measured on the 5090 had 587-954 MiB free; the same
+ *  card healthy at the old 172k size had 1,035 MiB, and the margin now leaves
+ *  it gigabytes more. Without a driver reading a slow reply is not acted on:
+ *  a long context alone could be it. */
+const FULL_CARD_FREE_BYTES = 1024 ** 3;
 /** What a step-down for paging sheds: the overflow measured on the 27B was
  *  under 1 GB; twice that leaves room for it to grow. */
 const PAGING_SHED_BYTES = 2 * 1024 ** 3;
@@ -101,14 +102,18 @@ async function freeVram(record: SizingRecord, deps: Partial<AdaptDeps>): Promise
 }
 
 /** Step down until the contention clears; the size stepped to, or null when
- *  already at the floor. */
+ *  already at the floor. It lifts once growing back would still leave the
+ *  card short of full. Not the whole safety margin on top: the decided size
+ *  never had that free once the margin's other tenants (the desktop, the
+ *  voice sidecars) moved in, and a live step-down that asked for it stayed
+ *  down after the co-loaded model had gone (2.7 GB free at the decided size,
+ *  5.0 GB free stepped down, 5.8 GB asked). */
 function stepDownWhileContended(key: string, record: SizingRecord, applied: number, shed: number, now: number): number | null {
   const kv = record.kvBytesPerToken ?? 0;
   const next = steppedDownContext(applied, shed, kv) ?? (applied > CONTEXT_FLOOR ? CONTEXT_FLOOR : null);
   if (next === null) return null;
   const regrow = Math.ceil(((record.numCtx ?? applied) - next) * kv * KV_OVERHEAD_FACTOR);
-  const margin = record.gpu ? safetyMarginBytes(record.gpu.totalBytes) : 0;
-  contentionOverrides.set(key, { numCtx: next, since: now, clearSince: null, liftWhenFreeBytes: regrow + margin });
+  contentionOverrides.set(key, { numCtx: next, since: now, clearSince: null, liftWhenFreeBytes: regrow + FULL_CARD_FREE_BYTES });
   return next;
 }
 
@@ -160,7 +165,7 @@ export async function observeChatResidency(
     logger.warn(`${model}: ${(spill / 1e9).toFixed(1)} GB spilled to system RAM at ${applied} tokens with no other model to blame; context is now ${next ?? "the runtime default"}`);
     return;
   }
-  if (slow && free !== null && free < PAGING_FREE_BYTES) {
+  if (slow && free !== null && free < FULL_CARD_FREE_BYTES) {
     const next = stepDownWhileContended(key, record, applied, PAGING_SHED_BYTES, now);
     if (next !== null) logger.warn(`${model}: decoding at ${rate!.toFixed(0)} tok/s against ${record.healthyDecodeTokPerSec!.toFixed(0)} when fully resident, with ${(free / 1e9).toFixed(1)} GB of VRAM free: the card is paging to system memory; reloading at ${next} tokens until it has room`);
     return;

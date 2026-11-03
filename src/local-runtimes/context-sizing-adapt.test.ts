@@ -180,6 +180,19 @@ describe("paging that /api/ps does not report", () => {
     expect(appliedContext(ROOT, MODEL)).toBe(SIZED);
   });
 
+  it("lifts once the co-loaded model is gone, though the card never had a whole margin free (live 2026-11-03)", async () => {
+    // Decided 155,648 had 2.7 GB free; stepped to 122,880 with the 8B gone it had 5.0 GB.
+    await reply(resident, 2.7e9, 101);
+    await reply(resident, 0.95e9, 45);
+    const reduced = appliedContext(ROOT, MODEL)!;
+    expect(reduced).toBeLessThan(SIZED);
+    const smaller = [chat(reduced, 16e9), embedder];
+    await reply(smaller, 5e9, 101);
+    now += CONTENTION_COOLDOWN_MS;
+    await reply(smaller, 5e9, 101);
+    expect(appliedContext(ROOT, MODEL)).toBe(SIZED);
+  });
+
   it("steps down again when the first step was not enough", async () => {
     await reply(resident, 4e9, 120);
     await reply(resident, 0.8e9, 21);

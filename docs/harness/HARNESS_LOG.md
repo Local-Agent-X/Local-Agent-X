@@ -2766,8 +2766,10 @@ Ollama logged `restored context checkpoint` for messages 2 and 3 and no `forcing
 chat request; background classifier calls on the same model between messages did not evict the chat's cache (idle
 slot saved to the prompt cache). At the usual ~1,300 tok/s prefill that is under a second of re-read instead of ~28 s.
 
-**Timing caveat:** wall times from this run are not comparable to the baseline. Three voice sidecars (voice server,
-chatterbox, VoxCPM) were resident on the GPU, the card sat at 31.7 of 32.6 GB, and the model ran at ~75 tok/s
-prefill and ~5 tok/s decode (normally ~1,300 and ~74) while Ollama still reported 100% GPU. Message 1 hit a 5-minute
-`/api/chat` 500 and was retried (515 s); messages 2 and 3 took 51 s and 26 s, almost all of it decode. The context
-sizing above assumes the whole card is LAX's chat model's; with the sidecars loaded it overcommits silently.
+**Timing caveat:** wall times from this run are not comparable to the baseline. The model ran at ~70-100 tok/s
+prefill and ~5 tok/s decode from its first batch (the same model and context ran ~1,300 and ~74 on 2026-11-01/02),
+while Ollama reported 100% GPU. Message 1 hit a 5-minute `/api/chat` 500 and was retried (515 s); messages 2 and 3
+took 51 s and 26 s, almost all of it decode. Cause NOT established. Memory overflow is not shown: at load the driver
+had 30.3 GiB free and llama.cpp projected 28.1 GB with 2.9 GB to spare; after the run the card held 31.7 of 32.6 GB.
+Running alongside, since the night before: three voice sidecars (voice server, chatterbox, VoxCPM) and the Riot
+client. Separating them needs a controlled A/B run.

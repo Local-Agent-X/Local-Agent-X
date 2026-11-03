@@ -148,6 +148,8 @@ export interface BuildSystemPromptInput {
   resolvedProvider: string;
   resolvedModel: string;
   contextBlock: string;
+  /** The memory context's per-message half (memory/manager.ts TurnContext). */
+  contextBlockVolatile?: string;
   /** `<identity_names>` block or "" (build-context.ts) — survives every strip and shed. */
   identityNames?: string;
   relevantMemories: string;
@@ -326,6 +328,7 @@ export async function buildSystemPromptWithTelemetry(
       memoryDir: (input.memoryIndex as unknown as { memoryDir?: string }).memoryDir,
       sessionId: input.sessionId,
       contextBlock: input.contextBlock,
+      contextBlockVolatile: input.contextBlockVolatile,
       identityNames: input.identityNames,
       relevantMemories: input.relevantMemories,
       smartContext: input.smartContext,

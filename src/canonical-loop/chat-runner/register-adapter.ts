@@ -15,8 +15,7 @@ import { defaultAnthropicTransport } from "../adapters/anthropic-transport.js";
 import type { OpenAICompatTarget } from "../adapters/openai-compat.js";
 import { isAnthropicProvider } from "../../providers/provider-ids.js";
 import { isReasoningModel } from "../../providers/registry.js";
-import { splitPromptForStablePrefix } from "./local-prompt-split.js";
-import { modelStablePrefix } from "../../local-runtimes/model-profile.js";
+import { localPromptSplit } from "./local-prompt-split.js";
 
 export async function registerAdapterForChat(
   opId: string,
@@ -161,19 +160,14 @@ export async function registerAdapterForChat(
     // The local wire's stable prefix (EXP-12c). Computed HERE, inside the
     // lazy factory, for the same reason the Anthropic split above is: the
     // capability-aware degradation pass and create-op's appends have all
-    // landed by now, so the sections are the final ones. The per-op sections
-    // become the last user-role row (appendTrailingContext) and the system
-    // message is byte-stable for the session — which is the only way a
-    // runtime that caches by token prefix, and renders the tool schemas
-    // after the system text, can reuse the tools and the history across
-    // user messages. On for every local model unless its profile opts out;
-    // every cloud provider on this adapter keeps one system message.
-    const split = prepared.provider === "local" && modelStablePrefix(prepared.model, { provider: prepared.provider })
-      ? splitPromptForStablePrefix(prepared.renderedPromptSections)
-      : null;
+    // landed by now, so the sections are the final ones. The system message
+    // is byte-stable for the session — the only way a runtime that caches by
+    // token prefix, and renders the tool schemas after the system text, can
+    // reuse the tools and the history across user messages. The per-op
+    // sections are a history row create-op seeded after the user's message.
+    const split = localPromptSplit(prepared);
     return createOpenAICompatAdapter({
       systemPrompt: split ? split.head : prepared.systemPrompt,
-      trailingContext: split?.tail || undefined,
       model: prepared.model,
       baseURL: finalTarget.baseURL,
       apiKey: finalTarget.apiKey,

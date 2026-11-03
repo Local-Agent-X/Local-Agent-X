@@ -10,7 +10,6 @@ import type { CanonicalMessage } from "../../contract-types.js";
 import type { TurnInput } from "../../adapter-contract.js";
 import { sanitizeAssistantTextForRebuild } from "../../../anthropic-client/parse.js";
 import { createLogger } from "../../../logger.js";
-import { RECALLED_CONTEXT_CLOSE, RECALLED_CONTEXT_OPEN } from "../../../harness-text.js";
 import { extractText } from "./helpers.js";
 import { toolResultPayload } from "../../turn-loop/content-extract.js";
 import type { CanonicalImageRef } from "./types.js";
@@ -139,44 +138,6 @@ export function canonicalToChatParam(
     out.push({ role: "user", content: `[REDIRECT] ${pendingRedirect.text}` });
   }
   return out;
-}
-
-/**
- * Append the prompt's per-op sections as the LAST row, framed as recalled
- * context. Merged into the final row only when that row is EPHEMERAL — the
- * loop's `ephemeralTailMessages` says the situational digest (or a redirect)
- * is there, regenerated every round and never part of the next round's
- * history — and otherwise its own row, never folded into a durable one.
- *
- * Both halves are measured on Ollama (qwen3.6:27b, 2026-09-22/23, replayed
- * from traces and read off kept runs):
- *   - Folding into a DURABLE user row (the op's own message) is a row edit at
- *     the next round — "text + block" becomes bare "text" — and the runtime
- *     then reuses NOTHING, not even the system prompt (0 of 37,861). A strict
- *     row-extension reuses everything (37,495 of 39,215). Hence never fold
- *     into a durable row.
- *   - Two adjacent user rows after a TOOL row (digest row, then this block as
- *     its own row) cost the cache nothing, but qwen3.6 answered that shape
- *     with an EMPTY reply once in two runs, and the adapter's empty-with-tools
- *     latch then dropped native tools for the rest of the process. Merging
- *     into the ephemeral digest row keeps the `…tool, user` shape 12b ran on
- *     without incident. On a local endpoint that row is not replaced next
- *     round but kept verbatim (local-wire.ts): a hybrid model cannot rewind
- *     its cache, so a replaced last row cost it the whole prompt.
- */
-export function appendTrailingContext(
-  messages: ChatCompletionMessageParam[],
-  trailingContext: string | undefined,
-  ephemeralTailMessages = 0,
-): ChatCompletionMessageParam[] {
-  const body = trailingContext?.trim();
-  if (!body) return messages;
-  const framed = `${RECALLED_CONTEXT_OPEN}\n${body}\n${RECALLED_CONTEXT_CLOSE}`;
-  const last = messages.at(-1);
-  if (ephemeralTailMessages > 0 && last && last.role === "user" && typeof last.content === "string") {
-    return [...messages.slice(0, -1), { role: "user", content: `${last.content}\n\n${framed}` }];
-  }
-  return [...messages, { role: "user", content: framed }];
 }
 
 function extractImages(c: unknown): CanonicalImageRef[] {

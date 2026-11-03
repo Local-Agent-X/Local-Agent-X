@@ -40,6 +40,8 @@ export interface BuildContextInput {
 
 export interface BuildContextResult {
   contextBlock: string;
+  /** The memory context's per-message half (memory/manager.ts TurnContext). */
+  contextBlockVolatile: string;
   /** `<identity_names>` block, or "" — extracted before any strip or shed. */
   identityNames: string;
   /** This turn's recall the chat does not already carry: rendered into the
@@ -89,6 +91,7 @@ export async function buildContext(input: BuildContextInput): Promise<BuildConte
   });
   logger.info(`[step] buildTurnContextCached ${Date.now() - bcT0}ms sess=${input.sessionId.slice(0, 16)}`);
   let contextBlock = turnCtx.contextBlock;
+  let contextBlockVolatile = turnCtx.contextBlockVolatile;
   // Read the two names NOW, before the weak-tier strip below and before the
   // budget or the stable-prefix path can move the block out of the system
   // prompt: the first-turn identity ask keys on them (context/identity-names.ts).
@@ -126,6 +129,7 @@ export async function buildContext(input: BuildContextInput): Promise<BuildConte
   // parse it as third-person info correctly.
   if (input.tier === "weak") {
     contextBlock = "";
+    contextBlockVolatile = "";
     recall = null;
     smartContext = "";
     memoryContext = "";
@@ -156,7 +160,20 @@ export async function buildContext(input: BuildContextInput): Promise<BuildConte
     : "";
 
   const relevantMemories = renderRecalledMemory(recall);
-  return { contextBlock, identityNames, recall, relevantMemories, smartContext, memoryContext, protocolNotice, notifications, knownProjectsFound };
+  return { contextBlock, contextBlockVolatile, identityNames, recall, relevantMemories, smartContext, memoryContext, protocolNotice, notifications, knownProjectsFound };
+}
+
+/** What this turn's memory context puts in the system prompt (build-system-prompt.ts). */
+export function memoryPromptInputs(ctx: BuildContextResult) {
+  return {
+    contextBlock: ctx.contextBlock,
+    contextBlockVolatile: ctx.contextBlockVolatile,
+    identityNames: ctx.identityNames,
+    relevantMemories: ctx.relevantMemories,
+    smartContext: ctx.smartContext,
+    memoryContext: ctx.memoryContext,
+    memoryNotifications: ctx.notifications,
+  };
 }
 
 export function isTrivialToolRequest(message: string): boolean {

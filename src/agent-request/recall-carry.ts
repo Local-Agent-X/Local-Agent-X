@@ -62,11 +62,15 @@ export function recallRow(recall: RecalledMemory | null): ChatCompletionMessageP
  * inside the turn, so retract-last-turn (which cuts from the last user-authored
  * row) takes it with the turn. Every path that saves a turn goes through this:
  * chat (routes/chat/run-chat-turn/canonical-run.ts) and voice (server/voice-ws.ts).
+ * A turn that already carries its recall row keeps that one: on a local wire
+ * the op was seeded with the prompt's per-op sections as that row, exactly as
+ * the model read them (canonical-loop/chat-runner/local-prompt-split.ts).
  */
 export function withRecallCarried(
   turnRows: ChatCompletionMessageParam[],
   recall: RecalledMemory | null,
 ): ChatCompletionMessageParam[] {
+  if (turnRows.some((m) => harnessRowKind(m) === "recall")) return turnRows;
   const row = recallRow(recall);
   if (!row) return turnRows;
   const at = turnRows.findIndex((m) => m.role === "user" && !isHarnessRow(m));

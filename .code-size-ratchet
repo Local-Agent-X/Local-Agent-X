@@ -9,7 +9,7 @@ public/js/chat-status-bar.js#updateStatusBar 114
 public/js/chat-stream-reducer.js#window._chatStreamReduce 176
 public/js/chat-voice-mic.js#startVoiceMode 139
 public/js/chat-voice-ws-handler.js#handleVoiceWsMessage 190
-src/agent-request/prepare-request.ts#prepareAgentRequest 140
+src/agent-request/prepare-request.ts#prepareAgentRequest 135
 src/agent-request/prepare-request/tool-selection.ts#selectTools 109
 src/agent-request/resolve-provider.ts#resolveProvider 114
 src/agent-store/template-defaults.ts#builtInTemplateDefaults 170
@@ -39,7 +39,6 @@ src/canonical-loop/turn-loop/decide-outcome.ts#decideTurnOutcome 107
 src/canonical-loop/worker.ts#drive 184
 src/cognition/cross-session-learning/service.ts#CrossSessionLearningService.reconcile 152
 src/config.ts#loadConfig 132
-src/context/system-prompt-builder.ts#createSystemPromptBuilder 126
 src/local-runtimes/certification-runner.ts 360
 src/mcp-client/manifest.ts#assessMcpManifest 118
 src/memory/auto-extract.ts#autoExtractAndSave 115

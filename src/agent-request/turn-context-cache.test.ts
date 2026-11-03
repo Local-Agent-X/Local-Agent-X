@@ -9,7 +9,8 @@ import type { MemoryManager, TurnContext, TurnContextInput } from "../memory/ind
 
 function ctx(tag: string): TurnContext {
   return {
-    contextBlock: `<current_datetime>${tag}</current_datetime>`,
+    contextBlock: `<core_memory>${tag}</core_memory>`,
+    contextBlockVolatile: `<current_datetime>${tag}</current_datetime>`,
     recall: { entries: [{ ref: "m1", text: tag }], pastSessions: false },
     smartContext: "",
     memoryContext: tag,

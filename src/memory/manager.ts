@@ -13,7 +13,7 @@
 import type { MemoryIndex } from "./index-core.js";
 import type { FactKind, MemorySearchResult, RetainedFact } from "./types.js";
 import type { SearchOptions } from "./index-search.js";
-import { buildContextBlock, buildProfileBlock } from "./context.js";
+import { buildContextBlockParts, buildProfileBlock } from "./context.js";
 import { autoSearchContext, type RecalledMemory } from "./auto-search-context.js";
 import { autoExtractAndSave } from "./auto-extract.js";
 import { findKnownProjectsInMessage, buildKnownProjectsNudge } from "./known-projects.js";
@@ -41,7 +41,12 @@ export interface TurnContextInput {
 }
 
 export interface TurnContext {
+  /** The memory context's stable half (profile files, project brief,
+   *  core_memory): the same bytes message to message within a session/day. */
   contextBlock: string;
+  /** Its volatile half (date, today's log, entities this message names):
+   *  rebuilt for every message (memory/context.ts buildContextBlockParts). */
+  contextBlockVolatile: string;
   /** This turn's associative recall, unrendered: the prompt renders only the
    *  entries the chat does not already carry (agent-request/recall-carry.ts). */
   recall: RecalledMemory | null;
@@ -114,6 +119,7 @@ export class MemoryManager {
   async buildTurnContext(input: TurnContextInput): Promise<TurnContext> {
     const out: TurnContext = {
       contextBlock: "",
+      contextBlockVolatile: "",
       recall: null,
       smartContext: "",
       memoryContext: "",
@@ -127,7 +133,7 @@ export class MemoryManager {
 
     if (input.minimalMode) {
       try {
-        out.contextBlock = await buildContextBlock(this.index, { sessionId: input.sessionId, projectId });
+        ({ stable: out.contextBlock, volatile: out.contextBlockVolatile } = await buildContextBlockParts(this.index, { sessionId: input.sessionId, projectId }));
       } catch (e) {
         logger.warn("buildContextBlock (minimal) failed:", (e as Error).message);
       }
@@ -136,12 +142,12 @@ export class MemoryManager {
 
     if (input.liteMode) {
       try {
-        out.contextBlock = await buildContextBlock(this.index, {
+        ({ stable: out.contextBlock, volatile: out.contextBlockVolatile } = await buildContextBlockParts(this.index, {
           skipDailyLog: input.skipDailyLog,
           userMessage: input.userMessage,
           sessionId: input.sessionId,
           projectId,
-        });
+        }));
       } catch (e) {
         logger.warn("buildContextBlock (lite) failed:", (e as Error).message);
       }
@@ -170,14 +176,14 @@ export class MemoryManager {
     // caveated cross-session recall addition (see auto-search-context.ts).
     const taskStart = lastAssistant === undefined;
     const [contextBlock, recall, knownProjectsNudge, orch] = await Promise.all([
-      buildContextBlock(this.index, {
+      buildContextBlockParts(this.index, {
         userMessage: input.userMessage,
         skipDailyLog: input.skipDailyLog,
         sessionId: input.sessionId,
         projectId,
       }).catch((e) => {
         logger.warn("buildContextBlock failed:", (e as Error).message);
-        return "";
+        return { stable: "", volatile: "" };
       }),
       autoSearchContext(this.index, input.userMessage, { sessionId: input.sessionId, taskStart, projectId }).catch((e) => {
         logger.warn("autoSearchContext failed:", (e as Error).message);
@@ -214,7 +220,8 @@ export class MemoryManager {
       })(),
     ]);
 
-    out.contextBlock = contextBlock;
+    out.contextBlock = contextBlock.stable;
+    out.contextBlockVolatile = contextBlock.volatile;
     out.recall = recall;
     if (knownProjectsNudge) {
       out.smartContext = knownProjectsNudge;

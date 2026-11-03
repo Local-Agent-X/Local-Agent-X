@@ -27,7 +27,6 @@ import type { TurnInput } from "../adapter-contract.js";
 import type { StreamOnceResult } from "./openai-compat/types.js";
 
 const mockStream = vi.mocked(streamOnce);
-const TAIL = "<untrusted-recalled-data>the user likes tea</untrusted-recalled-data>";
 
 function result(): StreamOnceResult {
   return { assembledText: "ok", assembledThinking: "", pendingToolCalls: [], firstError: null, providerStop: "stop", usagePromptTokens: 10, usageCompletionTokens: 1, interruptedByInject: false };
@@ -45,7 +44,7 @@ function roundInput(turn: number): TurnInput {
 }
 
 async function sent(baseURL: string, rounds: number) {
-  const adapter = createOpenAICompatAdapter({ model: "qwen3.6:27b", baseURL, apiKey: "ollama", systemPrompt: "head", trailingContext: TAIL });
+  const adapter = createOpenAICompatAdapter({ model: "qwen3.6:27b", baseURL, apiKey: "ollama", systemPrompt: "head" });
   for (let turn = 0; turn < rounds; turn++) await adapter.runTurn(roundInput(turn), () => {});
   return mockStream.mock.calls.map((c) => JSON.parse(JSON.stringify(c[0].messages)) as unknown[]);
 }
@@ -59,12 +58,6 @@ describe("the local wire over the rounds of one op", () => {
       const prev = requests[r - 1];
       expect(requests[r].slice(0, prev.length), `round ${r}`).toEqual(prev);
     }
-  });
-
-  it("carries the recalled sections once, in the first round's tail", async () => {
-    const requests = await sent("http://127.0.0.1:11434/v1", 4);
-    const last = JSON.stringify(requests.at(-1));
-    expect(last.split("the user likes tea").length - 1).toBe(1);
   });
 
   it("leaves a cloud endpoint's request as built: today's digest last, the old ones gone", async () => {

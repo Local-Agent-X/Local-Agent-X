@@ -19,7 +19,12 @@ import { buildRevivalPlan, historyImagesOf, reviveRowImages } from "../history-i
 // gated — that unconditional read predates this seam.
 export { REVIVED_HISTORY_IMAGE_MAX_COUNT, REVIVED_HISTORY_IMAGE_MAX_BYTES } from "../history-image-revival.js";
 
-export function seedOpMessages(opId: string, prepared: PreparedAgentRequest, currentMessage: string): void {
+/**
+ * `recalledContext`: the prompt's per-op sections as a row of their own, right
+ * after the current message (local-prompt-split.ts recalledContextText) — a
+ * harness row, so the turn's save keeps it and later messages replay it here.
+ */
+export function seedOpMessages(opId: string, prepared: PreparedAgentRequest, currentMessage: string, recalledContext: string | null = null): void {
   let seqInTurn = 0;
   const turnIdx = 0;
   const revivalPlan = buildRevivalPlan(prepared.cleanHistory);
@@ -138,6 +143,17 @@ export function seedOpMessages(opId: string, prepared: PreparedAgentRequest, cur
     seqInTurn,
     role: "user",
     content: userContent,
+    createdAt: new Date().toISOString(),
+  });
+  if (!recalledContext) return;
+  seqInTurn += 1;
+  appendOpMessage({
+    messageId: `rc-${opId}-${turnIdx}-${seqInTurn}-${randomUUID().slice(0, 6)}`,
+    opId,
+    turnIdx,
+    seqInTurn,
+    role: "user",
+    content: { text: recalledContext, kind: "recall" },
     createdAt: new Date().toISOString(),
   });
 }

@@ -1,6 +1,7 @@
 /**
  * The local wire's stable prefix: which rendered system-prompt sections stay
- * in `messages[0]` and which ride a trailing row instead.
+ * in `messages[0]` and which ride a row of their own after the user's message
+ * (recalledContextText below).
  *
  * A local runtime caches the prompt by TOKEN PREFIX of the rendered chat
  * template, and the template renders the tool schemas after the system text.
@@ -13,10 +14,7 @@
  * The rule is by VOLATILITY, not by the builder's static/dynamic type: the
  * riders, the file-access notice, the channel context and the canary block
  * are typed dynamic but are byte-stable for a session, so they stay in the
- * head. What moves is what is rebuilt per op from per-turn inputs. The
- * situational digest already rides a trailing row for the same reason
- * (turn-loop/build-input.ts); this extends that mechanism to the prompt's
- * own per-op sections rather than inventing a second one.
+ * head. What moves is what is rebuilt per op from per-turn inputs.
  *
  * Every section id the builders emit is classified in exactly one of the two
  * sets below; local-prompt-split.test.ts scans the builders and fails on a
@@ -24,10 +22,13 @@
  * the prefix (tail) or silently change what the model reads as system (head).
  */
 import type { RenderedPromptSection } from "../../context/system-prompt-builder.js";
+import type { PreparedAgentRequest } from "../../agent-request/types.js";
+import { modelStablePrefix } from "../../local-runtimes/model-profile.js";
+import { RECALLED_CONTEXT_CLOSE, RECALLED_CONTEXT_OPEN } from "../../harness-text.js";
 
 /** Rebuilt per op from per-turn inputs; each one changes across messages. */
 export const TRAILING_SECTION_IDS: ReadonlySet<string> = new Set([
-  "context-block",
+  "context-block-volatile",
   "relevant-memories",
   "smart-context",
   "memory-orchestrator",
@@ -40,6 +41,11 @@ export const TRAILING_SECTION_IDS: ReadonlySet<string> = new Set([
 
 /** Byte-stable for a session (or for the process), whatever their type. */
 export const HEAD_SECTION_IDS: ReadonlySet<string> = new Set([
+  // The memory context's stable half: profile files, project brief and
+  // core_memory, byte-identical within a session/day (memory/context.ts
+  // buildContextBlockParts). It rode the tail whole until 2026-11-02, so its
+  // ~4.5k tokens were re-read with every message.
+  "context-block",
   "system-prompt-override",
   "core-identity",
   "runtime-context",
@@ -77,6 +83,34 @@ export interface SplitPrompt {
 /** A base-prompt part id is `core-identity/<heading>`; the family is the head. */
 function family(id: string): string {
   return id.includes("/") ? id.slice(0, id.indexOf("/")) : id;
+}
+
+/** This request's split, or null when its model keeps one system message:
+ *  on for every local model unless its profile opts out; every cloud
+ *  provider keeps one. Both the adapter (the head) and the op seed (the
+ *  tail's row) read it, from the same final sections. */
+export function localPromptSplit(prepared: Pick<PreparedAgentRequest, "provider" | "model" | "renderedPromptSections">): SplitPrompt | null {
+  return prepared.provider === "local" && modelStablePrefix(prepared.model, { provider: prepared.provider })
+    ? splitPromptForStablePrefix(prepared.renderedPromptSections)
+    : null;
+}
+
+/**
+ * The tail as the history row that carries it, or null when nothing rendered.
+ *
+ * It is a row OF THE CONVERSATION, not of one request: seeded right after the
+ * user's message when the op starts (seed-messages.ts), saved with the turn
+ * (recall-carry.ts withRecallCarried keeps it instead of building its own),
+ * and replayed in that place on every later message. So the next message's
+ * prompt starts with this one's, byte for byte. Sent per request instead, it
+ * was dropped from the next one, and a hybrid model (qwen3.8, 2026-11-02),
+ * which resumes only from checkpoints near the end of the last prompt, re-read
+ * the whole 37k-token prompt for every message: 26-30 s before the first
+ * word, against ~1 s to write the reply.
+ */
+export function recalledContextText(tail: string): string | null {
+  const body = tail.trim();
+  return body ? `${RECALLED_CONTEXT_OPEN}\n${body}\n${RECALLED_CONTEXT_CLOSE}` : null;
 }
 
 export function splitPromptForStablePrefix(sections: readonly RenderedPromptSection[]): SplitPrompt {

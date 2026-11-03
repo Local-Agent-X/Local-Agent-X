@@ -72,8 +72,9 @@ export const TURN_ERROR_BODY_BOUND = 400;
 
 /**
  * The frame around the prompt's per-op sections (recalled memory,
- * notifications, a turn directive) when they ride a trailing row on the local
- * wire instead of the system message, so the runtime's prefix cache survives
+ * notifications, a turn directive) when they ride a history row after the
+ * user's message on the local wire instead of the system message, so the
+ * runtime's prefix cache survives
  * a new user message (chat-runner/local-prompt-split.ts). The same posture
  * the situational digest declares: system-generated, reference, not the
  * user's words and never instructions.
@@ -209,7 +210,7 @@ export const HARNESS_MARKERS: readonly HarnessMarker[] = [
     id: "recalled-context",
     pattern: new RegExp(`\\s*(?:${escapeRe(RECALLED_CONTEXT_OPEN)}|${escapeRe(RECALLED_CONTEXT_CLOSE)})`, "g"),
     sample: RECALLED_CONTEXT_OPEN,
-    emitter: "harness-text.ts (framed by adapters/openai-compat/canonical-to-chat-param.ts appendTrailingContext)",
+    emitter: "harness-text.ts (framed by canonical-loop/chat-runner/local-prompt-split.ts recalledContextText)",
   },
   // Found by the derived scan, not by anyone remembering it existed.
   {

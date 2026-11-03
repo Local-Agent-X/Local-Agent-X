@@ -5,6 +5,7 @@ import { trackOpForSession } from "../../ops/session-bridge.js";
 import type { Op, OpVisibility } from "../../ops/types.js";
 import type { CanonicalChatContext } from "../chat-runner.js";
 import { seedOpMessages } from "./seed-messages.js";
+import { localPromptSplit, recalledContextText } from "./local-prompt-split.js";
 import { remeasurePromptTelemetry } from "../../prompt-telemetry.js";
 import { foldSystemRowsIntoPrompt } from "./message-convert.js";
 import { appendSystemPromptSection } from "../../context/system-prompt-builder.js";
@@ -89,6 +90,9 @@ export async function createChatOp(ctx: CanonicalChatContext): Promise<CreatedCh
   }
   recordUserLinks(ctx.sessionId, ctx.message);
   writeOp(op);
-  seedOpMessages(op.id, ctx.prepared, ctx.message);
+  // On a local wire the prompt's per-op sections are a row of the
+  // conversation, not of this request (local-prompt-split.ts).
+  const split = localPromptSplit(ctx.prepared);
+  seedOpMessages(op.id, ctx.prepared, ctx.message, split ? recalledContextText(split.tail) : null);
   return { op, wallClockMs, resolvedTarget };
 }

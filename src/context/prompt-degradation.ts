@@ -30,6 +30,7 @@ const DEGRADATION_PRIORITY = [
   "integrations",
   "project-catalog",
   "context-block",
+  "context-block-volatile",
   "relevant-memories",
   "memory-orchestrator",
   "memory-curate",

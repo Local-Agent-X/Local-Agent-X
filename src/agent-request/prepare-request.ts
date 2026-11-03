@@ -20,7 +20,7 @@ import { providerUndercallsTools } from "../providers/provider-ids.js";
 import { explicitTargetPin } from "./target-pin.js";
 import { createLogger } from "../logger.js";
 
-import { buildContext, isTrivialToolRequest } from "./prepare-request/build-context.js";
+import { buildContext, isTrivialToolRequest, memoryPromptInputs } from "./prepare-request/build-context.js";
 import { selectTools, type ToolSelectionResult } from "./prepare-request/tool-selection.js";
 import { getLearnedProtocolSuggestion } from "../protocols/learned-suggestion.js";
 import { isSlashCommandExpansion } from "../slash-commands.js";
@@ -235,12 +235,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     bridgeContext: input.bridgeContext,
     resolvedProvider: resolved.provider,
     resolvedModel: resolved.model,
-    contextBlock: ctx.contextBlock,
-    identityNames: ctx.identityNames,
-    relevantMemories: ctx.relevantMemories,
-    smartContext: ctx.smartContext,
-    memoryContext: ctx.memoryContext,
-    memoryNotifications: ctx.notifications,
+    ...memoryPromptInputs(ctx),
     memoryCurateBlock,
     buildTurnDirective: toolSel.productBuildTurn?.directive,
   });

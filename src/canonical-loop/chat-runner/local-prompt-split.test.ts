@@ -13,7 +13,8 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, it, expect } from "vitest";
-import { HEAD_SECTION_IDS, TRAILING_SECTION_IDS, splitPromptForStablePrefix } from "./local-prompt-split.js";
+import { HEAD_SECTION_IDS, TRAILING_SECTION_IDS, localPromptSplit, recalledContextText, splitPromptForStablePrefix } from "./local-prompt-split.js";
+import { RECALLED_CONTEXT_CLOSE, RECALLED_CONTEXT_OPEN } from "../../harness-text.js";
 import type { RenderedPromptSection } from "../../context/system-prompt-builder.js";
 
 /** The split reads id and text only; the measurement is irrelevant to it. */
@@ -45,6 +46,7 @@ describe("splitPromptForStablePrefix", () => {
       section("core-identity/core-rules", "RULES ", "static"),
       section("tool-guidance", "TOOLS ", "static"),
       section("context-block", "MEMORY-CONTEXT "),
+      section("context-block-volatile", "TODAY "),
       section("relevant-memories", "RECALL "),
       section("file-access", "FILE-ACCESS "),
       section("notifications", "NOTIFY "),
@@ -52,9 +54,11 @@ describe("splitPromptForStablePrefix", () => {
       section("canary", "CANARY "),
     ];
     const { head, tail, tailIds } = splitPromptForStablePrefix(sections);
-    expect(head).toBe("IDENTITY RULES TOOLS FILE-ACCESS RIDER CANARY ");
-    expect(tail).toBe("MEMORY-CONTEXT RECALL NOTIFY ");
-    expect(tailIds).toEqual(["context-block", "relevant-memories", "notifications"]);
+    // The memory context's stable half (profile, core_memory) is head: it
+    // rode the tail whole until 2026-11-02, re-read with every message.
+    expect(head).toBe("IDENTITY RULES TOOLS MEMORY-CONTEXT FILE-ACCESS RIDER CANARY ");
+    expect(tail).toBe("TODAY RECALL NOTIFY ");
+    expect(tailIds).toEqual(["context-block-volatile", "relevant-memories", "notifications"]);
     expect(head.length + tail.length).toBe(sections.reduce((n, s) => n + s.text.length, 0));
   });
 
@@ -77,5 +81,19 @@ describe("splitPromptForStablePrefix", () => {
     // `core-identity` is the family of every base-prompt part (core-identity/<heading>).
     const ghosts = [...HEAD_SECTION_IDS, ...TRAILING_SECTION_IDS].filter((id) => id !== "core-identity" && !emitted.has(id));
     expect(ghosts).toEqual([]);
+  });
+});
+
+describe("localPromptSplit / recalledContextText", () => {
+  const sections = [section("core-identity/identity", "IDENTITY ", "static"), section("relevant-memories", "RECALL ")];
+
+  it("splits a local model's prompt and leaves a cloud model's whole", () => {
+    expect(localPromptSplit({ provider: "local", model: "qwen3.8:27b", renderedPromptSections: sections })?.tail).toBe("RECALL ");
+    expect(localPromptSplit({ provider: "openai", model: "gpt-5", renderedPromptSections: sections })).toBeNull();
+  });
+
+  it("frames the tail as recalled data, and renders nothing for nothing", () => {
+    expect(recalledContextText(" RECALL \n")).toBe(`${RECALLED_CONTEXT_OPEN}\nRECALL\n${RECALLED_CONTEXT_CLOSE}`);
+    expect(recalledContextText("  \n ")).toBeNull();
   });
 });

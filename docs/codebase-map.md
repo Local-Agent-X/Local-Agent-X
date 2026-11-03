@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1916 non-test source files · 86 oversized · 251 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1916 non-test source files · 85 oversized · 253 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -39,9 +39,9 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/agency/` | 30 | 22 | L |  |
 | `src/context-manager/` | 29 | 15 | M |  |
 | `src/agent-store/` | 28 | 7 | M | 1 |
-| `src/context/` | 26 | 10 | M | 1 |
+| `src/context/` | 26 | 10 | M |  |
+| `src/agent-request/` | 24 | 15 | L | 3 |
 | `src/classifiers/` | 24 | 16 | L |  |
-| `src/agent-request/` | 23 | 15 | L | 3 |
 | `src/app-runtime/` | 23 | 12 | M |  |
 | `src/sandbox/` | 23 | 15 | L | 1 |
 | `src/broker-transport/` | 22 | 46 | XL |  |
@@ -263,7 +263,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/canonical-loop/worker.ts#drive`
 - `src/cognition/cross-session-learning/service.ts#CrossSessionLearningService.reconcile`
 - `src/config.ts#loadConfig`
-- `src/context/system-prompt-builder.ts#createSystemPromptBuilder`
 - `src/local-runtimes/certification-runner.ts`
 - `src/mcp-client/manifest.ts#assessMcpManifest`
 - `src/memory/auto-extract.ts#autoExtractAndSave`
@@ -373,6 +372,7 @@ job. Comments are free: never cut them to fit.
 - `src/browser/in-app-resolve-scripts.ts` — 280+ code lines (cap 350)
 - `src/browser/runtime.ts` — 280+ code lines (cap 350)
 - `src/canonical-loop/scheduler.ts` — 280+ code lines (cap 350)
+- `src/context/system-prompt-builder.ts` — 280+ code lines (cap 350)
 - `src/mcp-client/index.ts` — 280+ code lines (cap 350)
 - `src/memory/auto-extract.ts` — 280+ code lines (cap 350)
 - `src/memory/index-core.ts` — 280+ code lines (cap 350)
@@ -384,6 +384,7 @@ job. Comments are free: never cut them to fit.
 - `src/tools/build-app-spawn.ts` — 280+ code lines (cap 350)
 - `src/agency/handler-tools.ts#createHandlerTools` — 100+ own code lines (cap 100)
 - `src/auto-build/workflow-resolver.ts#candidateFromEvidence` — 100+ own code lines (cap 100)
+- `src/context/system-prompt-builder.ts#createSystemPromptBuilder` — 100+ own code lines (cap 100)
 - `src/cron/cron-service-execute.ts#runJob` — 100+ own code lines (cap 100)
 - `src/agent-request/prepare-request/build-system-prompt.ts#buildSystemPromptWithTelemetry` — 90+ own code lines (cap 100)
 - `src/anthropic-client/stream-cli.ts#streamViaColdSpawn` — 90+ own code lines (cap 100)
@@ -426,6 +427,7 @@ job. Comments are free: never cut them to fit.
 - `src/canonical-loop/adapters/codex.ts#CodexAdapter.runTurn` — 80+ own code lines (cap 100)
 - `src/canonical-loop/agent-runner/run.ts#runAgentViaCanonical` — 80+ own code lines (cap 100)
 - `src/canonical-loop/agent-runner/runtime-surface.ts#rehydrateAgentRuntimeSurface` — 80+ own code lines (cap 100)
+- `src/canonical-loop/chat-runner/seed-messages.ts#seedOpMessages` — 80+ own code lines (cap 100)
 - `src/canonical-loop/soak-metrics.ts#finalize` — 80+ own code lines (cap 100)
 - `src/classifiers/classify-with-llm.ts#classifyWithLLM` — 80+ own code lines (cap 100)
 - `src/conversation/ingest.ts#ingestSingleFile` — 80+ own code lines (cap 100)
@@ -487,6 +489,7 @@ job. Comments are free: never cut them to fit.
 - `src/cron/tools.ts#createCronTools` — 70+ own code lines (cap 100)
 - `src/keychain.ts#getOrCreateMasterKey` — 70+ own code lines (cap 100)
 - `src/memory/auto-search-context.ts#autoSearchContext` — 70+ own code lines (cap 100)
+- `src/memory/manager.ts#MemoryManager.buildTurnContext` — 70+ own code lines (cap 100)
 - `src/memory/tools/search/memory-recall.ts#memory_recall.execute` — 70+ own code lines (cap 100)
 - `src/ops/tools/shared.ts#configureDelegatedRuntime` — 70+ own code lines (cap 100)
 - `src/orchestrator/process-message-impl.ts#processMessageImpl` — 70+ own code lines (cap 100)
@@ -531,7 +534,6 @@ job. Comments are free: never cut them to fit.
 - `src/canonical-loop/adapters/openai-compat/resolve-target.ts#resolveOpenAICompatTarget` — 60+ own code lines (cap 100)
 - `src/canonical-loop/chat-runner/create-op.ts#createChatOp` — 60+ own code lines (cap 100)
 - `src/canonical-loop/chat-runner/message-convert.ts#opMessageRowToChatParam` — 60+ own code lines (cap 100)
-- `src/canonical-loop/chat-runner/seed-messages.ts#seedOpMessages` — 60+ own code lines (cap 100)
 - `src/canonical-loop/execution-worker-runtime.ts#runClaimedExecutionWorker` — 60+ own code lines (cap 100)
 - `src/canonical-loop/middlewares/host.ts#buildCanonicalLoopContext` — 60+ own code lines (cap 100)
 - `src/canonical-loop/recovery.ts#finishRecoveredOp` — 60+ own code lines (cap 100)
@@ -549,7 +551,6 @@ job. Comments are free: never cut them to fit.
 - `src/memory/index-search/post-process.ts#postProcess` — 60+ own code lines (cap 100)
 - `src/memory/index-search/vector-search-worker.ts#scanChunks` — 60+ own code lines (cap 100)
 - `src/memory/index-sync.ts#syncIndex` — 60+ own code lines (cap 100)
-- `src/memory/manager.ts#MemoryManager.buildTurnContext` — 60+ own code lines (cap 100)
 - `src/memory/tools/facts.ts#update_fact.execute` — 60+ own code lines (cap 100)
 - `src/ops/tools/op-submit-batch.ts#runDependencyBatch` — 60+ own code lines (cap 100)
 - `src/protocols/learned-drafting.ts#draftLearnedCandidate` — 60+ own code lines (cap 100)

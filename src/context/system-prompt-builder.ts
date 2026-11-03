@@ -227,6 +227,60 @@ function appManifestSection(sessionId: string | undefined, mode: ChatMode): Prom
 }
 
 /**
+ * What memory recalled for this message, each part framed as data: the memory
+ * context's stable and per-message halves, the recalled entries, related
+ * sessions and the orchestrator's read.
+ */
+function addRecalledMemorySections(
+  builder: SystemPromptBuilder,
+  opts: { contextBlock?: string; contextBlockVolatile?: string; relevantMemories?: string; smartContext?: string; memoryContext?: string },
+): void {
+  if (opts.contextBlock) {
+    builder.addSection({
+      id: "context-block", label: "Memory Context", type: "dynamic", policy: "degradable", priority: "facts",
+      build: () => asRecalledData("context-block", opts.contextBlock!),
+      shouldInclude: () => opts.contextBlock!.length > 0,
+    });
+  }
+
+  // The memory context's per-message half, its own section so the stable half
+  // above stays byte-identical from one message to the next: on a local wire
+  // the stable half sits in the cached head and only this one moves
+  // (canonical-loop/chat-runner/local-prompt-split.ts).
+  if (opts.contextBlockVolatile) {
+    builder.addSection({
+      id: "context-block-volatile", label: "Memory Context (this message)", type: "dynamic", policy: "degradable", priority: "facts",
+      build: () => asRecalledData("context-block", opts.contextBlockVolatile!),
+      shouldInclude: () => opts.contextBlockVolatile!.length > 0,
+    });
+  }
+
+  if (opts.relevantMemories) {
+    builder.addSection({
+      id: "relevant-memories", label: "Relevant Memories", type: "dynamic", policy: "degradable", priority: "facts",
+      build: () => asRecalledData("relevant-memories", opts.relevantMemories!),
+      shouldInclude: () => opts.relevantMemories!.length > 0,
+    });
+  }
+
+  if (opts.smartContext) {
+    builder.addSection({
+      id: "smart-context", label: "Related Sessions", type: "dynamic", policy: "degradable", priority: "facts",
+      build: () => asRecalledData("smart-context", opts.smartContext!),
+      shouldInclude: () => opts.smartContext!.length > 0,
+    });
+  }
+
+  if (opts.memoryContext) {
+    builder.addSection({
+      id: "memory-orchestrator", label: "Memory Orchestrator", type: "dynamic", policy: "degradable", priority: "facts",
+      build: () => asRecalledData("memory-orchestrator", opts.memoryContext!),
+      shouldInclude: () => opts.memoryContext!.length > 0,
+    });
+  }
+}
+
+/**
  * Single builder factory for ALL paths — web chat, bridge, cron, sub-agents.
  * Callers pass what they have; empty strings are auto-skipped.
  */
@@ -241,6 +295,8 @@ export function createSystemPromptBuilder(opts: {
   sessionId?: string;
   // Dynamic sections
   contextBlock?: string;
+  /** The memory context's per-message half (memory/manager.ts TurnContext). */
+  contextBlockVolatile?: string;
   /** `<identity_names>` block (context/identity-names.ts) — required, never shed. */
   identityNames?: string;
   relevantMemories?: string;
@@ -348,37 +404,7 @@ Call \`search_past_sessions\` when it doesn't cover the reference — a project,
 
   // ── Dynamic sections (recomputed per request) ──
 
-  if (opts.contextBlock) {
-    builder.addSection({
-      id: "context-block", label: "Memory Context", type: "dynamic", policy: "degradable", priority: "facts",
-      build: () => asRecalledData("context-block", opts.contextBlock!),
-      shouldInclude: () => opts.contextBlock!.length > 0,
-    });
-  }
-
-  if (opts.relevantMemories) {
-    builder.addSection({
-      id: "relevant-memories", label: "Relevant Memories", type: "dynamic", policy: "degradable", priority: "facts",
-      build: () => asRecalledData("relevant-memories", opts.relevantMemories!),
-      shouldInclude: () => opts.relevantMemories!.length > 0,
-    });
-  }
-
-  if (opts.smartContext) {
-    builder.addSection({
-      id: "smart-context", label: "Related Sessions", type: "dynamic", policy: "degradable", priority: "facts",
-      build: () => asRecalledData("smart-context", opts.smartContext!),
-      shouldInclude: () => opts.smartContext!.length > 0,
-    });
-  }
-
-  if (opts.memoryContext) {
-    builder.addSection({
-      id: "memory-orchestrator", label: "Memory Orchestrator", type: "dynamic", policy: "degradable", priority: "facts",
-      build: () => asRecalledData("memory-orchestrator", opts.memoryContext!),
-      shouldInclude: () => opts.memoryContext!.length > 0,
-    });
-  }
+  addRecalledMemorySections(builder, opts);
 
   if (opts.notificationHint) {
     builder.addSection({

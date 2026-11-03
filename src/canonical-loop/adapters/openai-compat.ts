@@ -45,7 +45,7 @@ import {
   type StreamOnceResult,
 } from "./openai-compat/types.js";
 import { byteLengthUtf8 } from "./openai-compat/helpers.js";
-import { appendTrailingContext, canonicalToChatParam } from "./openai-compat/canonical-to-chat-param.js";
+import { canonicalToChatParam } from "./openai-compat/canonical-to-chat-param.js";
 import { extendLocalWire, thinkLevelInPrompt, type LocalWireState } from "./openai-compat/local-wire.js";
 import { isLocalModelEndpoint } from "../../local-runtimes/model-endpoint.js";
 import { getLocalModel } from "../../local-runtimes/cache.js";
@@ -118,20 +118,18 @@ export class OpenAICompatAdapter implements Adapter {
       canonicalToChatParam(messages, redirect, tools, model ? modelAssistantRowShape(model) : "text-and-tool-calls", model ? modelReplaysReasoning(model) : false);
     const tailRows = input.ephemeralTailMessages ?? 0;
     const built = toChat(input.messages, input.pendingRedirect);
-    const full = appendTrailingContext(built, this.opts.trailingContext, tailRows);
-    if (!isLocalModelEndpoint(this.opts.baseURL)) return full;
+    if (!isLocalModelEndpoint(this.opts.baseURL)) return built;
     // The durable rows are the history without the digest row the loop
     // appended; a redirect rides outside `messages`, so nothing is cut then.
     const durable = toChat(input.messages.slice(0, input.messages.length - (input.pendingRedirect ? 0 : tailRows)), undefined);
-    if (!durable.every((row, i) => JSON.stringify(row) === JSON.stringify(full[i]))) {
+    if (!durable.every((row, i) => JSON.stringify(row) === JSON.stringify(built[i]))) {
       this.localWire = null;
-      return full;
+      return built;
     }
     const { messages, state } = extendLocalWire(this.localWire, {
       turnIdx: input.turnIdx,
       durable,
-      tailWithContext: full.slice(durable.length),
-      tailAlone: appendTrailingContext(built, undefined, tailRows).slice(durable.length),
+      tail: built.slice(durable.length),
       redirect: input.pendingRedirect !== undefined,
     });
     this.localWire = state;

@@ -90,6 +90,12 @@ export class OutboundAudio {
   // many frames have gone out since, so each wake sends the frames now due.
   private drainStartMs = 0;
   private framesDrained = 0;
+  // Per-talkspurt delivery health, logged when the talkspurt ends if the pacer
+  // ever woke late: a late wake is audio the phone waited for.
+  private lastWakeMs = 0;
+  private maxWakeGapMs = 0;
+  private clockRestarts = 0;
+  private spurtFrames = 0;
 
   constructor(rtp: RtpBuilders, sink: RtpSink, private readonly now: () => number = () => performance.now()) {
     this.rtp = rtp;
@@ -173,6 +179,9 @@ export class OutboundAudio {
   /** Encode and emit every 960-sample frame the wall clock says is due. */
   private async tick(): Promise<void> {
     if (this.closed || this.ticking) return;
+    const wake = this.now();
+    if (this.primed && this.lastWakeMs > 0) this.maxWakeGapMs = Math.max(this.maxWakeGapMs, wake - this.lastWakeMs);
+    this.lastWakeMs = wake;
     // Buffer fully drained — the talkspurt's audio ended. Re-mark the next real
     // frame as a talkspurt start (so the phone resyncs for the NEXT reply) and
     // re-prime, so the next talkspurt rebuilds its cushion before draining.
@@ -180,6 +189,7 @@ export class OutboundAudio {
       if (this.primed) {
         this.primed = false;
         this.talkspurtStart = true;
+        this.reportTalkspurt();
       }
       return;
     }
@@ -204,6 +214,7 @@ export class OutboundAudio {
       let due = Math.floor((this.now() - this.drainStartMs) / FRAME_MS) + 1 - this.framesDrained;
       if (due > MAX_CATCHUP_FRAMES) {
         this.restartClock();
+        this.clockRestarts++;
         due = 1;
       }
       // Re-check each frame after the await: close() (or buffer drain) may have raced in.
@@ -211,6 +222,7 @@ export class OutboundAudio {
         const frame = this.pending.subarray(0, OPUS_FRAME_SAMPLES);
         this.pending = this.pending.slice(OPUS_FRAME_SAMPLES);
         this.framesDrained++;
+        this.spurtFrames++;
         this.emitFrame(encoder, frame);
       }
     } catch (e) {
@@ -220,6 +232,21 @@ export class OutboundAudio {
     } finally {
       this.ticking = false;
     }
+  }
+
+  /** Log a talkspurt whose pacer ever woke late (more than two frames apart),
+   *  then reset the counters for the next one. */
+  private reportTalkspurt(): void {
+    if (this.maxWakeGapMs > 2 * FRAME_MS) {
+      logger.info(
+        `[rtp-audio] talkspurt ${this.spurtFrames} frames: longest pacer gap ${Math.round(this.maxWakeGapMs)}ms, ` +
+        `${this.clockRestarts} stall restart(s)`,
+      );
+    }
+    this.maxWakeGapMs = 0;
+    this.clockRestarts = 0;
+    this.spurtFrames = 0;
+    this.lastWakeMs = 0;
   }
 
   /** Make the next frame due now: a fresh talkspurt, or a resume after a dip

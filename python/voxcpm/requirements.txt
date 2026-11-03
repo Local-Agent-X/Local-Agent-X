@@ -21,3 +21,9 @@ faster-whisper==1.2.1
 fastapi==0.139.2
 uvicorn[standard]==0.51.0
 soundfile==0.14.0
+
+# VoxCPM speeds synthesis up with torch.compile, which needs Triton; without it
+# the library prints a warning and runs uncompiled. Linux CUDA torch wheels
+# bundle Triton and macOS has no CUDA, so only Windows installs it here. 3.7
+# is the line built for torch 2.11 (install.ps1's $TorchPin): move them together.
+triton-windows==3.7.1.post27 ; sys_platform == "win32"

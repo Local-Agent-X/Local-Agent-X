@@ -108,6 +108,21 @@ describe.each([
   });
 });
 
+describe("voxcpm compiles on Windows", () => {
+  it("pins the Triton build that matches the pinned torch", () => {
+    // Without Triton, VoxCPM's torch.compile step catches the ImportError and
+    // runs uncompiled: synthesis took ~1s per second of speech on an RTX 5090,
+    // so a cloned voice started talking long after the reply was on screen.
+    const req = read("python/voxcpm/requirements.txt");
+    const triton = req.match(/^triton-windows==(\d+)\.(\d+)\S*\s*;\s*sys_platform\s*==\s*"win32"/m);
+    expect(triton, "triton-windows must be pinned for win32").toBeTruthy();
+    const torch = read("python/voxcpm/install.ps1").match(/"torch==(\d+)\.(\d+)/);
+    expect(torch).toBeTruthy();
+    // Triton 3.(N-4) is the line each torch 2.N is built against (2.11 -> 3.7).
+    expect([Number(triton![1]), Number(triton![2])]).toEqual([3, Number(torch![2]) - 4]);
+  });
+});
+
 describe("cu128 torch override stays pinned", () => {
   it.each(["python/chatterbox/install.ps1", "python/voxcpm/install.ps1"])(
     "%s pins the torch pair rather than floating",

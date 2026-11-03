@@ -45,7 +45,7 @@ describe("egressGuardGate — outbound secret scan + sensitive attachment (every
     ] as const) {
       const ctx = makeCtx(tool, args, sessionId);
       expect(egressGuardGate(ctx).kind, tool).toBe("continue");
-      expect(ctx.policyApprovalReason, tool).toContain(`${method} to files.example`);
+      expect(ctx.policyApprovalReason, tool).toContain(`${method} request to files.example`);
     }
   });
 

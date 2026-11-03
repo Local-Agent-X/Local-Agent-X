@@ -21,7 +21,7 @@ import { checkEgressTaintWithPayload, findTaintInPayload } from "../data-lineage
 import { checkCanariesInPayload, recordCanaryExfilAudit } from "../threat/canaries.js";
 import { judgeEgress, type EgressJudgement } from "../net/egress-judge.js";
 import { destinationSpecsOf, hasCapability, requestMethodOf } from "../tool-registry.js";
-import { checkOutboundRequest, checkOutboundPayload, checkOutboundEmail, checkAttachmentPaths, isTrustedDestination, recipientFields, type GuardBlock } from "../tools/http-egress-guard.js";
+import { checkOutboundRequest, checkOutboundPayload, checkOutboundEmail, checkAttachmentPaths, hostOf, isTrustedDestination, recipientFields, type GuardBlock } from "../tools/http-egress-guard.js";
 import { vouchedFor } from "../browser/site-provenance.js";
 import { egressPayload } from "./egress-payload.js";
 import { recordEgressBlocks } from "./egress-block-audit.js";
@@ -111,16 +111,14 @@ export function probeEgressGuard(ctx: ToolCallContext): EgressBlocker | null {
     // default for an omitted one): a hard-coded "POST" named a plain download
     // a POST in its refusal (TB2 build-pov-ray, 2026-10-27). POST only when the
     // row says nothing.
+    // The other arguments go to the same site: a guess there is the user's to
+    // judge too, so the payload scan is told the site.
     block = checkOutboundRequest({
       url,
       method: requestMethodOf(tc.name, args as Record<string, unknown>) ?? "POST",
       body: args.body,
       headers: args.headers,
-    }, vouched) ?? (isTrustedDestination(url) ? null : checkOutboundPayload(tc.name, text, vouched));
-    // The other arguments go to the same site: a guess there is the user's to
-    // judge too (checkOutboundRequest decides its own; the payload scan has
-    // no destination of its own to know that).
-    if (block?.tier === "advisory") block = { ...block, confirmable: true };
+    }, vouched) ?? (isTrustedDestination(url) ? null : checkOutboundPayload(tc.name, text, vouched, hostOf(url)));
   } else if (mail?.to === "recipients") {
     block = checkOutboundEmail(recipientFields(mail.args, args as Record<string, unknown>), text);
   } else {

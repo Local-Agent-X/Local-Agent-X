@@ -82,9 +82,9 @@ describe("the card for a shell ask", () => {
     expect(preview).toMatchObject({ explanation: expect.stringContaining('"package" and "three-0.170.0.tgz"') });
   });
 
-  it("a policy ask names the policy; a profile ask says the profile asked", () => {
+  it("a policy ask says the gate's own reason; a profile ask says the profile asked", () => {
     expect(card("npm install left-pad", "Shell commands require approval in workspace mode").context)
-      .toBe("Policy approval required: Shell commands require approval in workspace mode.");
+      .toBe("Shell commands require approval in workspace mode.");
     expect(card("npm install left-pad").context).toBe("Your security profile asks before a command like this runs.");
   });
 

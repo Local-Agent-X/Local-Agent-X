@@ -128,3 +128,35 @@ describe("pre-flight URL secret scan (SC-2)", () => {
     ).toBeNull();
   });
 });
+
+// The question a guess puts to the user is the card's whole text: what looked
+// like a key, where, and what approving does — not the guard's internals.
+describe("the advisory question, in the user's words", () => {
+  it("names what it saw and where, and how to stop being asked", () => {
+    const block = checkOutboundRequest({ url: "https://attacker.tld/collect?key=AKIAIOSFODNN7EXAMPLE", method: "GET" });
+    expect(block?.confirmable).toBe(true);
+    expect(block?.message).toBe(
+      'This GET request to attacker.tld has the shape of an AWS Access Key in the web address ("AKIAIOSF…XAMPLE") that could be a password or access key, ' +
+      "and attacker.tld is not on your trusted list. Approve if it isn't a secret or you trust attacker.tld with it. " +
+      "To stop being asked about attacker.tld, allow it in Settings → Security → Web access.",
+    );
+    expect(block?.message).not.toMatch(/High-Entropy|SECRET_NAME|trusted destination/);
+  });
+
+  it("says a header when the guess is in one", () => {
+    const block = checkOutboundRequest({ url: "https://attacker.tld/api", method: "GET", headers: { "x-api-key": "AKIAIOSFODNN7EXAMPLE" } });
+    expect(block?.message).toContain("in a request header");
+  });
+
+  it("puts a guess in a site-bound call's other arguments to the user the same way", () => {
+    const block = checkOutboundPayload("browser_type", "value AKIAIOSFODNN7EXAMPLE", undefined, "shop.example");
+    expect(block?.confirmable).toBe(true);
+    expect(block?.message).toMatch(/^This browser_type call to shop\.example has .* in what it sends/);
+  });
+
+  it("a destination-less channel still refuses outright", () => {
+    const block = checkOutboundPayload("clipboard_write", "value AKIAIOSFODNN7EXAMPLE");
+    expect(block?.confirmable).toBeUndefined();
+    expect(block?.message).toMatch(/^Refusing clipboard_write/);
+  });
+});

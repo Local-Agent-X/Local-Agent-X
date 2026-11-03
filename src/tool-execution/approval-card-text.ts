@@ -98,6 +98,8 @@ export function approvalCardText(input: CardTextInput): { context: string; previ
   const preview = command === undefined ? undefined : previewShellCommand(command, scope?.cwd ?? "", explanation);
   const tail = preview ? "" : input.line;
   if (destructive) return { context: headline(tail), preview };
-  if (input.policyReason) return { context: `Policy approval required: ${input.policyReason}. ${tail}`.trim(), preview };
+  // The gate's reason is the card's sentence: a "Policy approval required:"
+  // label in front of it told the user nothing they could act on.
+  if (input.policyReason) return { context: `${input.policyReason.replace(/\.$/, "")}. ${tail}`.trim(), preview };
   return { context: preview ? PROFILE_ASKS : input.line, preview };
 }

@@ -532,12 +532,14 @@ describe("bash-output secret handling (delivery-point invariant)", () => {
 });
 
 describe("bash-output taint requires a STRUCTURED secret (high-entropy-only FP fix)", () => {
-  // A benign source line whose long identifier trips the deliberately-loose
+  // A benign line whose random-looking id trips the deliberately-loose
   // high-entropy pass but matches no credential shape. The live brick: `grep
   // "as any"` over a real repo flagged hook names (useIframeNavigationApi…) as
   // "High-Entropy Token", tainting + shell-blocking the whole turn so the coding
   // task couldn't run its own build/guard. High-entropy-only must not taint.
-  const HIGH_ENTROPY = `server/x.ts:42:  const u = req.user as any; // useIframeNavigationApiHandlerFactory`;
+  // (An identifier like that one no longer fires at all, entropy-detector.ts
+  // isCamelIdentifier; a request id stands in for what still does.)
+  const HIGH_ENTROPY = `server/x.ts:42:  log("request x9Kq2LmP7vRt4WzB8nYc5HdJ done"); // as any`;
   const STRUCTURED = "config dump: AKIAIOSFODNN7EXAMPLE region=us-east-1";
 
   it("sanity: high-entropy-only matches but is NOT structured; a real key IS structured", () => {

@@ -541,6 +541,18 @@ describe("scanForSecrets — high-entropy detector (positives)", () => {
     expect(missed).toBe(0);
   });
 
+  // Nor does the CamelCase one: random letters-only mixed-case tokens almost
+  // never split into words (43 in 1M across 20-48 chars when measured).
+  it("flags random letters-only mixed-case tokens (the CamelCase exemption stays narrow)", () => {
+    const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    let missed = 0;
+    for (let i = 0; i < 2000; i++) {
+      const token = [...randomBytes(32)].map((b) => letters[b % 52]).join("");
+      if (scanForSecrets(`value ${token} end`).clean) missed++;
+    }
+    expect(missed).toBe(0);
+  });
+
   // The hex-of-text exemption must not swallow hex key material: random bytes
   // decode to about 37% printable, far under the text ratio.
   it("flags random hex key material that is not a hash length", () => {
@@ -578,6 +590,9 @@ describe("scanForSecrets — high-entropy detector (false-positive traps stay cl
     // TB2 build-pov-ray (2026-10-27): a download refused as carrying a token.
     ["a URL path of title-case words", "https://cept.org/files/download/software/Official-POV-Ray_Source_Code/Old_Versions/POV-Ray/v22/povray-2.2-full.tar.gz.gz"],
     ["an upper/title-case slug", "see Release_Notes-FINAL-Draft_2026 for details"],
+    // A Three.js download held for approval as carrying a token (2026-11-03).
+    ["a CamelCase file name in a CDN URL", "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/shaders/LuminosityHighPassShader.js"],
+    ["CamelCase identifiers with a short word or an acronym", "getElementsByClassName UnrealBloomPassToScreen WebGLRenderTargetCubeMap HTMLParserFactoryBuilder"],
     // A PJ's Disneyland download (2026-11-01): the link hex-encodes its asset path.
     ["a download link that hex-encodes a path", "https://kenney.nl/download-link/" + Buffer.from("assets/modular-buildings", "utf8").toString("hex")],
   ];

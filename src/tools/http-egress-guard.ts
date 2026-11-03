@@ -116,9 +116,7 @@ export function checkOutboundRequest(args: GuardArgs, vouchedToken?: (token: str
     const tier = tierOf(matches);
     return {
       message: tier === "advisory"
-        ? `${method} to ${host} carries content that looks like a credential (${kinds}), and ${host} is not a trusted destination. ` +
-          `It is sent only if the user approves; allowing the host in Settings → Security → Web access stops the question. ` +
-          `For stored secrets prefer {{SECRET_NAME}} placeholders over hardcoded values.`
+        ? advisoryQuestion(preScanText, matches[0], whereInRequest(args, matches[0]), `This ${method} request to ${host}`, host)
         : `Refusing ${method} to ${host}: request contains secret-shaped content (${kinds}) ` +
           `and the destination is not in the trusted-destinations list. ` +
           `If this destination should receive credentials, ask the user to allow the host in Settings → Security → Web access. ` +
@@ -143,7 +141,42 @@ export function checkOutboundRequest(args: GuardArgs, vouchedToken?: (token: str
   return null;
 }
 
-function hostOf(url: string): string {
+/**
+ * The question an advisory match puts to the user, in their words: what looked
+ * like a key, where in the request, and what approving does. It is the card's
+ * whole text (approval-card-text.ts), and the model reads it if they decline.
+ * The engineering version ("carries content that looks like a credential
+ * (High-Entropy Token) … not a trusted destination … prefer {{SECRET_NAME}}
+ * placeholders") asked a user to approve a Three.js download without saying
+ * the "token" was the file name `LuminosityHighPassShader` (2026-11-03).
+ */
+function advisoryQuestion(scanned: string, match: SecretMatch, where: string, request: string, host: string): string {
+  const what = match.type === "high-entropy-token" ? "random-looking text" : `the shape of ${aOrAn(match.pattern)}`;
+  const seen = scanned.slice(match.startIndex, match.endIndex);
+  return `${request} has ${what} ${where} ("${maskForCard(seen)}") that could be a password or access key, ` +
+    `and ${host} is not on your trusted list. Approve if it isn't a secret or you trust ${host} with it. ` +
+    `To stop being asked about ${host}, allow it in Settings → Security → Web access.`;
+}
+
+/** Where in an http request the match sits: the scanned text is url, body,
+ *  then header values (outboundPayloadParts). */
+function whereInRequest(args: GuardArgs, match: SecretMatch): string {
+  const urlEnd = args.url ? String(args.url).length : 0;
+  const bodyEnd = args.body ? urlEnd + (urlEnd ? 1 : 0) + String(args.body).length : urlEnd;
+  return match.startIndex < urlEnd ? "in the web address" : match.startIndex < bodyEnd ? "in the data being sent" : "in a request header";
+}
+
+function aOrAn(noun: string): string {
+  return `${/^[aeiou]/i.test(noun) ? "an" : "a"} ${noun}`;
+}
+
+/** Enough of the text to judge it by — a file name reads as one — without
+ *  putting a whole real key on the card. */
+function maskForCard(value: string): string {
+  return value.length <= 12 ? value.slice(0, 2) + "…" : `${value.slice(0, 8)}…${value.slice(-6)}`;
+}
+
+export function hostOf(url: string): string {
   try { return new URL(url).hostname.toLowerCase(); } catch { return ""; }
 }
 
@@ -170,18 +203,30 @@ export function checkOutboundPayload(
    *  destination's own site showed the agent that string). Never consulted for
    *  a known secret value or a known key format. */
   vouchedToken?: (token: string) => boolean,
+  /** The site the payload goes to, when the call has one: a guess there is
+   *  put to the user, as checkOutboundRequest does for the request itself. */
+  siteHost?: string,
 ): GuardBlock | null {
   if (!text) return null;
   const matches = unvouchedSecretMatches(text, vouchedToken);
   if (matches.length > 0) {
     const kinds = [...new Set(matches.map(m => m.pattern))].join(", ");
+    const tier = tierOf(matches);
+    if (siteHost && tier === "advisory") {
+      return {
+        message: advisoryQuestion(text, matches[0], "in what it sends", `This ${sink} call to ${siteHost}`, siteHost),
+        meta: { sink, blocked_by: "outbound-secret-scan", secret_kinds: kinds },
+        confirmable: true,
+        tier,
+      };
+    }
     return {
       message:
         `Refusing ${sink}: outbound payload contains secret-shaped content (${kinds}). ` +
         `This channel can carry data off-box and has no destination allowlist, so credentials may not leave through it. ` +
         `Prefer {{SECRET_NAME}} placeholders over hardcoded values, or remove the credential from the payload.`,
       meta: { sink, blocked_by: "outbound-secret-scan", secret_kinds: kinds },
-      tier: tierOf(matches),
+      tier,
     };
   }
 

@@ -135,10 +135,27 @@ function isWordSlug(parts: string[]): boolean {
   return parts.every(p => p.length >= 3 && WORD_PART.test(p));
 }
 
+// The word costume with no separators: a CamelCase identifier, letters only,
+// every part a word (`Luminosity`, `High`, `GL`, `by`) with at most one part
+// under three letters, and every part that is not an acronym holding a vowel.
+// A Three.js download (2026-11-03) was held for approval as carrying a token
+// because its file was `LuminosityHighPassShader.js`. Measured: 101 in 300k
+// random letters-only 20-48 character tokens read this way (1,486 without the
+// vowel test), and letters-only runs are ~0.4% of random base64url keys.
+const CAMEL_PART = /^(?:[A-Z][a-z]+|[a-z]{2,}|[A-Z]{2,})$/;
+function isCamelIdentifier(run: string): boolean {
+  if (!/^[A-Za-z]+$/.test(run)) return false;
+  const parts = run.match(/[A-Z]+(?=[A-Z][a-z]|$)|[A-Z]?[a-z]+|[A-Z]+/g);
+  if (!parts || parts.length < 2 || parts.join("") !== run) return false;
+  return parts.every(p => CAMEL_PART.test(p) && (/^[A-Z]+$/.test(p) || /[aeiouy]/.test(p)))
+    && parts.filter(p => p.length < 3).length <= 1;
+}
+
 function isExcludedBase64(run: string): boolean {
   // UUIDs contain `-`, so they surface in the base64-ish run; exclude them.
   if (UUID_RE.test(run)) return true;
   if (isSlug(run)) return true;
+  if (isCamelIdentifier(run)) return true;
   // Require MIXED CASE. A secret drawn from the base64(url) alphabet (62+
   // symbols) almost always contains both an uppercase and a lowercase letter —
   // across 5k random 40/48-char tokens, every one did. Lowercase-only-

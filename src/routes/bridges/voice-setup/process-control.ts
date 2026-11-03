@@ -59,16 +59,39 @@ function pidOnPort(port: number): number | null {
 function portOwner(port: number): SidecarProc | null {
   if (!IS_WIN) return null;
   try {
-    const out = execFileSync("powershell", [
-      "-NoProfile", "-Command",
-      `$p = (Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty OwningProcess); ` +
-      `if ($p) { "$p," + (Get-CimInstance Win32_Process -Filter "ProcessId=$p" -ErrorAction SilentlyContinue).ParentProcessId }`,
-    ], { encoding: "utf-8", timeout: 5000, windowsHide: true }).trim();
-    const [pid, ppid] = out.split(",").map(Number);
-    return Number.isInteger(pid) && pid > 0 ? { pid, ppid: Number.isInteger(ppid) ? ppid : 0 } : null;
+    return parsePortOwner(execFileSync("powershell", portOwnerArgs(port), { encoding: "utf-8", timeout: 5000, windowsHide: true }));
   } catch {
     return null;
   }
+}
+
+/**
+ * portOwner without blocking the event loop, for the 60s reaper timer. The
+ * PowerShell spawn takes 0.6-0.7s, and run sync it froze the whole server that
+ * long once a minute: a phone voice reply playing through it lost 0.7s of
+ * audio and then got the backlog in a burst (2026-11-03).
+ */
+async function portOwnerAsync(port: number): Promise<SidecarProc | null> {
+  if (!IS_WIN) return null;
+  try {
+    const { stdout } = await execFileAsync("powershell", portOwnerArgs(port), { encoding: "utf-8", timeout: 5000, windowsHide: true });
+    return parsePortOwner(stdout);
+  } catch {
+    return null;
+  }
+}
+
+function portOwnerArgs(port: number): string[] {
+  return [
+    "-NoProfile", "-Command",
+    `$p = (Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1 -ExpandProperty OwningProcess); ` +
+    `if ($p) { "$p," + (Get-CimInstance Win32_Process -Filter "ProcessId=$p" -ErrorAction SilentlyContinue).ParentProcessId }`,
+  ];
+}
+
+function parsePortOwner(out: string): SidecarProc | null {
+  const [pid, ppid] = out.trim().split(",").map(Number);
+  return Number.isInteger(pid) && pid > 0 ? { pid, ppid: Number.isInteger(ppid) ? ppid : 0 } : null;
 }
 
 function killPid(pid: number): boolean {
@@ -194,7 +217,7 @@ export async function reapOrphanSidecars(): Promise<number> {
     const procs = await findSidecarPids(tier);
     if (procs.length === 0) continue;
     const mine = running.get(tier.id)?.pid ?? null;
-    const owner = portOwner(tier.port);
+    const owner = await portOwnerAsync(tier.port);
     const onPort = owner?.pid ?? null;
     const healthy = (await probeHealth(tier.healthUrl)).ok;
     // A responding /healthz means a working server is serving this port — the

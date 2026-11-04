@@ -97,6 +97,7 @@ export const PREFERENCE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     owner: "agent",
     validate: z.string(),
     runtime: false,
+    broadcast: true,
     description: "Voice every transport speaks with by default: a voice id, or a vx:/cb: cloned-voice reference",
   },
   {

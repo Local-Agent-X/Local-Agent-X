@@ -58,6 +58,9 @@ async function _primeLaxSettings() {
     const tierKeys = ['voiceMode', 'voiceEngine', 'voiceTier4Provider', 'voiceTier4Voice', 'voiceSttProvider', 'voiceRealtimeVoice', 'ttsVoice', 'reasoningEffort'];
     for (const k of tierKeys) if (k in server) local[k] = server[k];
     localStorage.setItem('lax_settings', JSON.stringify(local));
+    // The saved voice is server-owned (the phone, the agent and other windows
+    // set it too); lax_voice is this window's copy of it.
+    if (typeof server.ttsVoice === 'string' && server.ttsVoice) localStorage.setItem('lax_voice', server.ttsVoice);
   } catch {}
 }
 

@@ -65,6 +65,19 @@ function quickSwitchVoice(voice) {
 
 
 
+// The saved voice changed somewhere else (another window, the phone, the
+// agent's `setting` call): this window's picker and its live voice session
+// follow. No toast or save — the change was already saved where it was made.
+function adoptSavedVoice(voice) {
+  if (typeof voice !== 'string' || !voice || localStorage.getItem('lax_voice') === voice) return;
+  localStorage.setItem('lax_voice', voice);
+  if (typeof voiceWS !== 'undefined' && voiceWS && voiceWS.readyState === WebSocket.OPEN) {
+    const speed = parseFloat(localStorage.getItem('lax_speed') || '1.15');
+    voiceWS.send(JSON.stringify({ type: 'voice_settings', voice, speed }));
+  }
+  if (typeof updateStatusBar === 'function') updateStatusBar(true);
+}
+
 // Modal builders live in per-modal files (chat-voice-modal-clone/manage.js).
 
 function showVoiceToast(msg) {

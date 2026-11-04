@@ -45,6 +45,7 @@ function handleSettingsChanged(msg) {
       if ('enableRemoteControl' in msg.settings) setToolPolicyToggle('tp-toggle-remote', msg.settings.enableRemoteControl === true);
     }
   }
+  if ('ttsVoice' in msg.settings && typeof adoptSavedVoice === 'function') adoptSavedVoice(msg.settings.ttsVoice);
   // Developer mode flipped (Settings in another window, or an approved
   // `setting` call): the status-bar badge and the Settings card follow.
   if ('developer_mode' in msg.settings) {

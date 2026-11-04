@@ -104,9 +104,9 @@ function openManageClonesModal() {
         if (!r.ok) { statusEl.textContent = 'Failed: ' + (data.error || ('HTTP ' + r.status)); statusEl.style.color = '#c0392b'; btn.disabled = false; return; }
         row.remove();
         const fullId = (provider === 'voxcpm' ? 'vx:' : 'cb:') + id;
-        if (localStorage.getItem('lax_voice') === fullId) {
-          localStorage.setItem('lax_voice', 'am_michael');
-        }
+        // Saved too, not just this window's copy: the next page load adopts
+        // the server's voice and would bring the deleted clone back.
+        if (localStorage.getItem('lax_voice') === fullId) quickSwitchVoice('am_michael');
         await refreshClonedVoices();
         if (typeof updateStatusBar === 'function') updateStatusBar();
         statusEl.textContent = `Deleted.`;

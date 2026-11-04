@@ -11,8 +11,8 @@
  *   2. Upstream moving on. When an agentxos checkout is found ($AGENTXOS_DIR, else the
  *      `agentxos` folder next to this repo), each file's code must equal its upstream
  *      file's code, and every module of the protocol and client packages must be
- *      vendored: a new upstream file is part of the contract once an index exports it. Without a
- *      checkout (CI) this half is skipped, loudly.
+ *      vendored: a new upstream file is part of the contract once an index exports it. Only
+ *      --upstream and --sync look; no build depends on a checkout on this machine.
  *   3. A missing module. Every relative import in a vendored file must name a vendored
  *      file, so an index that exports a module the copy lacks fails even without a
  *      checkout.
@@ -87,7 +87,11 @@ function upstreamModules(dir) {
 }
 
 const manifest = JSON.parse(readFileSync(manifestPath, "utf-8"));
-const upstreamDir = findUpstream();
+// Only the author's commands look at an agentxos checkout. A plain run — every
+// build, the in-app update's included — checks the repo alone (recorded hashes,
+// no missing module), so it passes or fails the same on every machine. Until
+// 2026-11-04 a stale sibling ~/Projects/agentxos (June) failed the build here.
+const upstreamDir = sync || process.argv.includes("--upstream") ? findUpstream() : null;
 const errors = [];
 const vendoredUpstreams = () => new Set(Object.values(manifest.files).map((entry) => entry.upstream));
 
@@ -163,5 +167,5 @@ if (errors.length > 0) {
 }
 console.log(
   `check-vendor-sync: OK (${Object.keys(manifest.files).length} files; ` +
-    (upstreamDir ? `match agentxos upstream at ${upstreamDir})` : "upstream checkout not found, upstream comparison SKIPPED; set AGENTXOS_DIR to run it)"),
+    (upstreamDir ? `match agentxos upstream at ${upstreamDir})` : "recorded hashes; --upstream compares with an agentxos checkout)"),
 );

@@ -10,11 +10,11 @@
  *      the sha256 of its text (line endings folded to LF). A changed hash fails.
  *   2. Upstream moving on. When the skill is found ($NEW_PROJECT_SKILL_DIR, else
  *      ~/.claude/skills/new-project), each copy must equal its upstream file.
- *      Without the skill (CI, another machine) this half is skipped, loudly.
+ *      Only `--sync` and `--upstream` look: no build depends on this machine.
  *
  *   --sync   copy every file from upstream, then record the hashes. The only
  *            way kit/ should change.
- * Runs in `npm run build` (check:kit-sync).
+ * The hash half is pinned by test/skill-sync.test.ts, not a build gate.
  */
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -88,8 +88,10 @@ export function syncKit(upstream = findUpstream()) {
   return Object.keys(manifest).length;
 }
 
+// As check-skill-sync.mjs: a plain run checks recorded hashes only; --sync and
+// --upstream are the author's and the only reads of the skill on this machine.
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  const upstream = findUpstream();
+  const upstream = process.argv.includes("--sync") || process.argv.includes("--upstream") ? findUpstream() : null;
   if (process.argv.includes("--sync")) console.log(`check-kit-sync: copied ${syncKit(upstream)} files from ${upstream}`);
   const drift = kitDrift(upstream);
   if (drift.length > 0) {
@@ -97,5 +99,5 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     for (const d of drift) console.error("  " + d);
     process.exit(1);
   }
-  console.log(`check-kit-sync: OK (${Object.keys(KIT_FILES).length} files${upstream ? "" : "; skill not found, upstream comparison skipped"})`);
+  console.log(`check-kit-sync: OK (${Object.keys(KIT_FILES).length} files${upstream ? `, matching ${upstream}` : ", recorded hashes"})`);
 }

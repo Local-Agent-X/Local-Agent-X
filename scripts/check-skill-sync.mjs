@@ -18,13 +18,15 @@
  *   2. The skill moving on. When it is found ($CLAUDE_SKILLS_DIR, else
  *      ~/.claude/skills), the bundled text must equal the adapted skill, and
  *      each companion file its upstream.
- *      Without it (CI, an install, another machine) this half is skipped, loudly.
+ *      Only `--sync` and `--upstream` look: the repo copy is what ships, and
+ *      no build depends on what this machine has in ~/.claude/skills.
  * Every adaptation must still match the skill's wording: a reworded line fails
  * here instead of shipping Claude Code's tool names to LAX's agent.
  *
  *   --sync   adapt every skill into the bundle and record the hashes. The only
  *            way these SKILL.md files should change.
- * Runs in `npm run build` (check:skill-sync).
+ * The hash half is pinned by test/skill-sync.test.ts; it is not a build gate,
+ * so no bundled file can stop an in-app update.
  */
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -199,8 +201,17 @@ export function syncSkills(skillsDir = findSkillsDir(), bundledDir = BUNDLED_DIR
   return names.length;
 }
 
+// The bundled copy in this repo is what LAX ships; nothing on the machine
+// building it decides whether a build passes. A plain run checks the copies
+// against their recorded hashes only. --sync (import the skill into the repo)
+// and --upstream (show how the repo trails it) are the author's commands and
+// the only ones that read ~/.claude/skills. Until 2026-11-04 every build — the
+// in-app update's included — compared against ~/.claude/skills whenever it held
+// one of these names, so a user with their own `senior-engineer` skill, or an
+// older copy of the owner's public Skills repo, could never update.
 if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
-  const skillsDir = findSkillsDir();
+  const author = process.argv.includes("--sync") || process.argv.includes("--upstream");
+  const skillsDir = author ? findSkillsDir() : null;
   if (process.argv.includes("--sync")) console.log(`check-skill-sync: adapted ${syncSkills(skillsDir)} skills from ${skillsDir}`);
   const drift = skillDrift(skillsDir);
   if (drift.length > 0) {
@@ -208,5 +219,5 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
     for (const d of drift) console.error("  " + d);
     process.exit(1);
   }
-  console.log(`check-skill-sync: OK (${SYNCED_SKILLS.length} skills${skillsDir ? "" : "; ~/.claude/skills not found, upstream comparison skipped"})`);
+  console.log(`check-skill-sync: OK (${SYNCED_SKILLS.length} skills${skillsDir ? `, matching ${skillsDir}` : ", recorded hashes"})`);
 }

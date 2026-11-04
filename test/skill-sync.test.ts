@@ -128,3 +128,49 @@ describe("the bundled copies", () => {
     for (const file of text.matchAll(/`(references\/[a-z-]+\.md)`/g)) expect(manifest.files).toHaveProperty(file[1]);
   });
 });
+
+// 2026-11-04: an in-app update stopped at "bundled skills are out of sync"
+// because the build compared the bundle with ~/.claude/skills on the machine
+// updating. The repo copy is what ships; a user's own skills — their own
+// `senior-engineer`, or an older copy of the owner's public Skills repo — and
+// the bundled ones must never stop an update.
+describe("bundled skills never stop a build or an update", () => {
+  const scratch: string[] = [];
+  afterEach(() => { for (const d of scratch.splice(0)) rmSync(d, { recursive: true, force: true }); });
+
+  it("the shipped bundle and kit match their recorded hashes (the hand-edit check, here instead of in the build)", async () => {
+    const { kitDrift } = await import("../scripts/check-kit-sync.mjs");
+    expect(skillDrift(null)).toEqual([]);
+    expect(kitDrift(null)).toEqual([]);
+  });
+
+  it("a plain run passes on a machine whose ~/.claude/skills holds a different senior-engineer", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const home = mkdtempSync(join(tmpdir(), "skill-home-")); scratch.push(home);
+    mkdirSync(join(home, ".claude", "skills", "senior-engineer"), { recursive: true });
+    writeFileSync(join(home, ".claude", "skills", "senior-engineer", "SKILL.md"), "---\nname: senior-engineer\n---\n\nMy own, different skill.\n");
+    mkdirSync(join(home, ".claude", "skills", "new-project", "scripts"), { recursive: true });
+    writeFileSync(join(home, ".claude", "skills", "new-project", "scripts", "codebase-map.mjs"), "// someone else's\n");
+    const env = { ...process.env, HOME: home, USERPROFILE: home };
+    delete env.CLAUDE_SKILLS_DIR; delete env.NEW_PROJECT_SKILL_DIR;
+    for (const script of ["scripts/check-skill-sync.mjs", "scripts/check-kit-sync.mjs"]) {
+      expect(execFileSync(process.execPath, [script], { env, encoding: "utf-8" })).toMatch(/OK \(.*recorded hashes\)/);
+    }
+  });
+
+  it("the vendored phone protocol is checked on its recorded hashes, not against an agentxos checkout on this machine", async () => {
+    const { execFileSync } = await import("node:child_process");
+    const stale = mkdtempSync(join(tmpdir(), "agentxos-")); scratch.push(stale);
+    mkdirSync(join(stale, "packages", "protocol", "src"), { recursive: true });
+    mkdirSync(join(stale, "packages", "client", "src"), { recursive: true });
+    writeFileSync(join(stale, "packages", "protocol", "src", "index.ts"), "export const stale = true;\n");
+    writeFileSync(join(stale, "packages", "client", "src", "index.ts"), "export const stale = true;\n");
+    const env = { ...process.env, AGENTXOS_DIR: stale };
+    expect(execFileSync(process.execPath, ["scripts/check-vendor-sync.mjs"], { env, encoding: "utf-8" })).toMatch(/OK \(.*recorded hashes/);
+  });
+
+  it("the build runs neither check", () => {
+    const build = JSON.parse(readFileSync("package.json", "utf-8")).scripts.build as string;
+    expect(build).not.toMatch(/skill-sync|kit-sync/);
+  });
+});

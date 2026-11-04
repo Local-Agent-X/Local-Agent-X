@@ -38,7 +38,7 @@ Optional for Claude Code: `scripts/refs-hint-hook.mjs` is a PostToolUse hook
 | `src/broker-transport/vendor/` | yes | The phone↔desktop wire contract, copied from agentxos. Never hand-edit: change agentxos, then `scripts/check-vendor-sync.mjs --sync` (`vendor/README.md`). |
 | `desktop/src/contract/` | yes | The server↔desktop contract, copied from `src/desktop-contract/`. Never hand-edit: change the source, then `scripts/check-desktop-contract.mjs --sync`. |
 | `src/app-scaffold/kit/` | yes | The structure kit dropped into every project the agent builds, copied from the `/new-project` skill. Never hand-edit: change the skill, then `scripts/check-kit-sync.mjs --sync`. |
-| `src/protocols/bundled/senior-engineer/`, `src/protocols/bundled/canonical-check/`, `src/protocols/bundled/blast-radius/` | yes | The owner's skills of those names in `~/.claude/skills`, shipped with Claude Code's tool names swapped for LAX's. Never hand-edit: change the skill, then `scripts/check-skill-sync.mjs --sync` (`check:skill-sync`). |
+| `src/protocols/bundled/senior-engineer/`, `src/protocols/bundled/canonical-check/`, `src/protocols/bundled/blast-radius/` | yes | The owner's skills of those names, shipped with Claude Code's tool names swapped for LAX's. The repo copy is what ships: no build reads `~/.claude/skills`, so neither a user's skills nor these can stop an update. Never hand-edit: change the skill, then `scripts/check-skill-sync.mjs --sync`; `--upstream` shows how far the repo trails it. `test/skill-sync.test.ts` pins the recorded hashes. |
 | `dist/` | no | Build output. Never hand-edit. |
 
 A user page ("build me a calendar") is `workspace/apps/calendar/index.html`

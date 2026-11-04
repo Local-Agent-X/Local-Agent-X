@@ -116,12 +116,17 @@ function settled(over: Partial<Approval> = {}): Approval {
 	};
 }
 
+// Every rendered card can start the page's 1 Hz approval countdown; on real
+// timers it outlives the file's DOM (chat-publish-review-card.test.ts failed
+// CI that way, 2026-11-03), so no test here runs on them.
 beforeEach(() => {
+	vi.useFakeTimers();
 	document.body.innerHTML = "";
 	loadClientModules();
 });
 
 afterEach(() => {
+	vi.clearAllTimers();
 	vi.useRealTimers();
 });
 

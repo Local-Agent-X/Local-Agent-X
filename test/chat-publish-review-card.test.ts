@@ -8,7 +8,7 @@
 // does ("Push anyway"). Model-written finding text is rendered as text, never
 // HTML. Drives the REAL client sources through happy-dom with the same
 // `new Function` harness as chat-approval-card-lifecycle.test.ts.
-import { describe, it, expect, beforeEach } from "vitest";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
@@ -53,9 +53,18 @@ function live(preview: Record<string, unknown> | null) {
 	return { id: `ap-${Math.random()}`, toolName: "bash", context: "⛔ review", argsPreview: '{"command":"git push"}', status: "pending", rememberable: false, preview };
 }
 
+// A rendered card starts the page's approval countdown (1 Hz) and its
+// arrival flash; on real timers they outlived the test file's DOM and failed
+// CI with "document is not defined" after every test had passed (2026-11-03).
 beforeEach(() => {
+	vi.useFakeTimers();
 	document.body.innerHTML = "";
 	load();
+});
+
+afterEach(() => {
+	vi.clearAllTimers();
+	vi.useRealTimers();
 });
 
 describe("publish review on the approval card", () => {

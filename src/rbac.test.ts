@@ -99,6 +99,7 @@ describe("RBAC agent role is fenced out of the cage, autonomy, undo and voice-se
     ["POST", "/api/voices/setup/repair"],
     ["POST", "/api/voices/setup/start"],
     ["POST", "/api/voices/setup/stop"],
+    ["POST", "/api/voices/setup/model-download"],
     ["POST", "/api/mcp/servers"],
     ["POST", "/api/mcp/servers/toggle"],
     ["DELETE", "/api/mcp/servers/github"],

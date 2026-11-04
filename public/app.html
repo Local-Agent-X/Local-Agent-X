@@ -792,7 +792,7 @@
               <div class="field"><label class="field-label">TTS dtype</label><select class="field-select" id="cfg-voice-tier4-dtype" onchange="onTier4SettingChange('voiceTier4Dtype', this.value)"><option value="">Auto</option><option value="fp32">fp32</option><option value="fp16">fp16</option><option value="q8">q8</option><option value="q4">q4</option></select></div>
             </div>
             <div class="field-row">
-              <div class="field"><label class="field-label">Whisper model</label><select class="field-select" id="cfg-voice-whisper-model" onchange="onTier4SettingChange('voiceWhisperModel', this.value)"><option value="">Auto (tiny.en)</option><option value="tiny.en">tiny.en (fastest)</option><option value="base.en">base.en</option><option value="small.en">small.en (best)</option></select></div>
+              <div class="field"><label class="field-label">Speech recognition model</label><select class="field-select" id="cfg-voice-whisper-model" onchange="onTier4SettingChange('voiceWhisperModel', this.value)"><option value="">Auto (tiny.en)</option><option value="tiny.en">tiny.en (fastest)</option><option value="base.en">base.en</option><option value="small.en">small.en</option><option value="parakeet-v3">Parakeet v3 (most accurate, 670 MB)</option></select></div>
               <div class="field"><label class="field-label">Whisper device</label><select class="field-select" id="cfg-voice-whisper-device" onchange="onTier4SettingChange('voiceWhisperDevice', this.value)"><option value="">Auto</option><option value="cpu">CPU</option><option value="dml">DirectML (GPU)</option><option value="cuda">CUDA (GPU)</option></select></div>
             </div>
             <input type="hidden" id="cfg-voice-tier4-voice" value=""/>

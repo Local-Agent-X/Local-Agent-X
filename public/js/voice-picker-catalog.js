@@ -1,8 +1,9 @@
 // Voice tier catalog. Pure data, no DOM. Renderer + handlers in voice-picker.js.
 //
 // Each tier maps to a (voiceMode, voiceEngine, voiceTier4Provider, voiceSttProvider)
-// tuple. Picking a tier writes all four keys atomically. The chat-bar picker
-// reads `voicePool` to filter which voices are eligible.
+// tuple, plus any other voice setting the tier pins (Local pins
+// voiceWhisperModel). Picking a tier writes them all atomically. The chat-bar
+// picker reads `voicePool` to filter which voices are eligible.
 //
 // `prerequisites`: array of { kind, label } — UI renders inline status + an
 // install/start/check button next to the tier card when the prerequisite is
@@ -10,7 +11,9 @@
 //   sidecar:<id>      Python sidecar from voice-setup.ts (lite/studio)
 //   npm:<package>     Node package the runtime can require (kokoro-js, msedge-tts)
 //   secret:<name>     Secret in the encrypted vault (GROQ_API_KEY, OPENAI_API_KEY)
-//   model:<key>       Local model file the runtime expects to find
+//   model:<key>       Local model file the runtime expects to find. A key that
+//                     names a speech-to-text variant (parakeet-v3) gets a
+//                     Download button and progress; picking the tier starts it.
 //   browser-tts       window.speechSynthesis available (always true in modern browsers)
 //
 // `voicePool`: which voice prefixes/IDs the chat-bar should expose for this tier:
@@ -76,15 +79,24 @@ window.LAX_VOICE_CATALOG = {
         // (local-whisper has no secret, so no prereq is added).
       ],
     },
-    // NOTE: Tier 3 "Kokoro local" (in-process kokoro-js + Node ONNX) was
-    // removed from the picker. Studio Lite (tier 4) ships the same Kokoro
-    // voices via a Python sidecar with the more robust faster-whisper STT
-    // and proper VAD — and users wanting voice cloning need tier 4 anyway,
-    // so the in-process variant was redundant and finicky on GPU
-    // (DirectML ConvTranspose crashes, no smart Auto device pick).
-    // The kokoro-js / tier4-factory adapter stays in the codebase so
-    // env-var driven configs (LAX_VOICE_TIER4_PROVIDER=kokoro) and tests
-    // still work; only the user-facing picker entry is gone.
+    // The no-GPU local tier: everything in-process on the CPU, no sidecar.
+    // An earlier "Kokoro local" tier was dropped for being finicky on the
+    // GPU (DirectML ConvTranspose crashes); Kokoro's default is now cpu+q8,
+    // and Parakeet replaces the tiny.en Whisper that made it mishear —
+    // measured 2026-11-04: 4.0% vs 10.2% words wrong, 1.1 s vs 0.95 s per
+    // utterance on CPU (whisper-model-fetch.ts).
+    {
+      id: 'local',
+      label: 'Local (no GPU)',
+      tagline: 'Kokoro voices · runs on any PC · nothing leaves this machine',
+      detail: 'Everything runs on this PC\'s processor, no GPU or sidecar needed: the Kokoro voices (the same ones Studio uses) and NVIDIA Parakeet speech recognition, which mishears far less than the bundled Whisper. Parakeet is a one-time ~670 MB download; the Kokoro voices (~90 MB) download on the first reply. Replies start about a second after the agent answers, longer on older laptops. No cloned voices — those need Studio.',
+      settings: { voiceMode: 'standard', voiceEngine: 'tier4', voiceTier4Provider: 'kokoro', voiceSttProvider: 'local-whisper', voiceWhisperModel: 'parakeet-v3' },
+      voicePool: ['kokoro'],
+      prerequisites: [
+        { kind: 'model:parakeet-v3', label: 'Parakeet speech recognition (~670 MB)' },
+        { kind: 'npm:kokoro-js', label: 'Kokoro voices (~90 MB)' },
+      ],
+    },
     {
       id: 'studio',
       label: 'Studio local',

@@ -144,7 +144,7 @@ export const PREFERENCE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     owner: "agent",
     validate: clearable,
     runtime: false,
-    description: "Local Whisper model size for speech-to-text. null = auto (tiny.en)",
+    description: "Local speech-to-text model (tiny.en, base.en, small.en, parakeet-v3). parakeet-v3 is the most accurate on CPU (~670 MB download). null = auto (tiny.en)",
   },
   {
     field: "voiceWhisperDevice",

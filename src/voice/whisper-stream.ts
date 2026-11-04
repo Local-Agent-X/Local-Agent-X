@@ -4,7 +4,9 @@
 // tradeoff but ~10-12% word errors on conversational speech. Whisper
 // tiny.en gets ~5-7% WER — we invoke it once per utterance (between VAD
 // speech-start and speech-end) to produce the authoritative final
-// transcript that the agent acts on.
+// transcript that the agent acts on. The same wrapper runs NVIDIA's
+// Parakeet (variant parakeet-v3), a transducer sherpa-onnx loads with a
+// different model config (modelFields below).
 //
 // Whisper is synchronous: acceptWaveform + decode blocks the Node event
 // loop for ~150-300ms per utterance on CPU. We serialize via a promise
@@ -82,18 +84,33 @@ interface SherpaModule {
   createOfflineRecognizer: (config: unknown) => SherpaOfflineRecognizer;
 }
 
-function buildConfig(paths: WhisperModelPaths, provider: WhisperProvider): unknown {
+/** The model half of the sherpa-onnx config: Whisper's encoder/decoder, or
+ *  a NeMo transducer's (Parakeet) encoder/decoder/joiner. */
+function modelFields(paths: WhisperModelPaths): Record<string, unknown> {
+  if (paths.kind === "nemo_transducer") {
+    return {
+      transducer: { encoder: paths.encoder, decoder: paths.decoder, joiner: paths.joiner },
+      modelType: "nemo_transducer",
+    };
+  }
+  return {
+    whisper: {
+      encoder: paths.encoder,
+      decoder: paths.decoder,
+      language: "en",
+      task: "transcribe",
+      tailPaddings: 2000,
+      enableTokenTimestamps: 0,
+      enableSegmentTimestamps: 0,
+    },
+    modelType: "whisper",
+  };
+}
+
+export function buildConfig(paths: WhisperModelPaths, provider: WhisperProvider): unknown {
   return {
     modelConfig: {
-      whisper: {
-        encoder: paths.encoder,
-        decoder: paths.decoder,
-        language: "en",
-        task: "transcribe",
-        tailPaddings: 2000,
-        enableTokenTimestamps: 0,
-        enableSegmentTimestamps: 0,
-      },
+      ...modelFields(paths),
       tokens: paths.tokens,
       // Must be 1 on sherpa-onnx's WASM build (no SharedArrayBuffer/pthread
       // support). Setting > 1 throws an Emscripten exception pointer at
@@ -102,7 +119,6 @@ function buildConfig(paths: WhisperModelPaths, provider: WhisperProvider): unkno
       numThreads: 1,
       provider,
       debug: 0,
-      modelType: "whisper",
     },
     decodingMethod: "greedy_search",
     maxActivePaths: 4,
@@ -126,7 +142,7 @@ export function createWhisperTranscriber(
     // once — the user still gets transcripts even on a misconfigured GPU
     // setup. CPU init failures bubble up untouched.
     if (activeProvider === "cpu") {
-      throw new Error(`sherpa-onnx Whisper init failed: ${(e as Error).message}`);
+      throw new Error(`sherpa-onnx ${paths.variant} init failed: ${(e as Error).message}`);
     }
     if (process.env.LAX_VOICE_DEBUG) {
       console.warn(
@@ -138,7 +154,7 @@ export function createWhisperTranscriber(
     try {
       recognizer = sherpa.createOfflineRecognizer(buildConfig(paths, activeProvider));
     } catch (e2) {
-      throw new Error(`sherpa-onnx Whisper init failed: ${(e2 as Error).message}`);
+      throw new Error(`sherpa-onnx ${paths.variant} init failed: ${(e2 as Error).message}`);
     }
   }
 

@@ -4,6 +4,7 @@ import type { RouteHandler } from "../../../server-context.js";
 import { jsonResponse, safeParseBody, safeErrorMessage } from "../../../server-utils.js";
 import { createLogger } from "../../../logger.js";
 import { kokoroVoiceList, tier4Readiness } from "../../../voice/tier4/index.js";
+import { sttModelStates } from "./speech-models.js";
 import { DEFAULT_STARTUP_BUDGET_MS, TIERS, startupBudgetMs, tierById } from "./tiers.js";
 import { isInstalled, probeHealth, probeVoiceNpmDeps, tierStatus } from "./detection.js";
 import { killTier, sidecarLogPath, startTierAndWait, type StartOutcome } from "./process-control.js";
@@ -35,7 +36,7 @@ export const handleVoiceSetupRoutes: RouteHandler = async (method, url, req, res
 
   if (method === "GET" && url.pathname === "/api/voices/setup/status") {
     const tiers = await Promise.all(TIERS.map(tierStatus));
-    json(200, { platform: platform(), tiers, npm: probeVoiceNpmDeps() });
+    json(200, { platform: platform(), tiers, npm: probeVoiceNpmDeps(), sttModels: sttModelStates() });
     return true;
   }
 

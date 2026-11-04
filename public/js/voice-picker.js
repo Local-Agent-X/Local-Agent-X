@@ -30,17 +30,13 @@ window.getTierById = getTierById;
 
 function _resolveActiveTierId(saved) {
   // Existing users with the removed realtime tier (voiceMode='realtime', which
-  // also set voiceEngine='tier4') fall through to the tier4/kokoro→studio
-  // migration below — same pattern as the dropped Kokoro-local tier.
+  // also set voiceEngine='tier4') fall through to the tier4 → Local mapping
+  // below.
   if (saved?.voiceMode === 'browser') return IS_ELECTRON ? C.DEFAULT_TIER_ID : 'browser';
   if (saved?.voiceEngine === 'python') return 'studio';
   if (saved?.voiceTier4Provider === 'edge-tts') return 'edge';
-  // The standalone Kokoro-local tier was removed from the picker. Existing
-  // users with voiceTier4Provider='kokoro' get migrated to Studio (which
-  // also ships Kokoro voices via the more robust Python Lite sidecar). The
-  // kokoro-js adapter still works for env-var driven configs, but the
-  // picker no longer surfaces it as a tier choice.
-  if (saved?.voiceTier4Provider === 'kokoro' || saved?.voiceEngine === 'tier4') return 'studio';
+  // In-process Kokoro on the CPU is the Local tier.
+  if (saved?.voiceTier4Provider === 'kokoro' || saved?.voiceEngine === 'tier4') return 'local';
   return C.DEFAULT_TIER_ID;
 }
 
@@ -191,6 +187,7 @@ async function onTierChange(tierId) {
     Object.assign(local, tier.settings, { voiceTier4Voice: '', voiceRealtimeVoice: '', ttsVoice: '' });
     localStorage.setItem('lax_settings', JSON.stringify(local));
   } catch {}
+  if (typeof _startTierModelDownloads === 'function') await _startTierModelDownloads(tier);
   await loadVoicePicker({ ...tier.settings, voiceTier4Voice: '', voiceRealtimeVoice: '' });
   // Re-render the chat bar so its voice list re-filters.
   if (typeof updateStatusBar === 'function') updateStatusBar();
@@ -208,7 +205,7 @@ async function onVoicePickChange(voice) {
     return;
   }
   if (!voice) return;
-  if (tierId === 'kokoro' || tierId === 'studio') { try { localStorage.setItem('lax_voice', voice); } catch {} }
+  if (tierId === 'local' || tierId === 'studio') { try { localStorage.setItem('lax_voice', voice); } catch {} }
   // Browser tier reads the chosen voice synchronously from localStorage at
   // utterance-build time (chat.js _browserResolveVoice). Server settings are
   // persisted async via _persist() below — that round-trip is too slow for

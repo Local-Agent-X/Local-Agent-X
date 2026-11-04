@@ -17,10 +17,8 @@ import {
   resolveSttProviderName,
   type SttProviderName,
 } from "../voice/stt-providers/index.js";
-import {
-  ensureWhisperModelDownloaded,
-  type WhisperModelPaths,
-} from "../voice/whisper-model-fetch.js";
+import { ensureWhisperModelDownloaded, resolveWhisperVariant } from "../voice/whisper-model-fetch.js";
+import { resolveVoiceSettings } from "../voice/voice-session/settings.js";
 import type { WhisperTranscriber } from "../voice/whisper-stream.js";
 
 import { decodeOggToPcm16, isFfmpegAvailable } from "./audio-codec.js";
@@ -33,36 +31,38 @@ const logger = createLogger("bridge-voice.stt");
 // stateless so re-creating per call is fine, but we still memoize for
 // symmetry.
 let cachedProvider: WhisperTranscriber | null = null;
-let cachedProviderName: SttProviderName | null = null;
-let cachedLocalPaths: WhisperModelPaths | null = null;
+/** Provider, plus the local model for local-whisper ("local-whisper:parakeet-v3"). */
+let cachedKey: string | null = null;
 
 /**
  * The process-wide transcriber, built on first use and reused. Exported so the
- * file-transcription tool shares this instance: the local model is a 50-280 MB
- * ONNX load, and a second copy would double resident memory for no gain.
+ * file-transcription tool shares this instance: the local model is a 50-670 MB
+ * ONNX load, and a second copy would double resident memory for no gain. The
+ * local model is the one voice chat uses (settings.voiceWhisperModel), so
+ * dictation and voice notes hear as well as a voice session does.
  */
 export async function getSharedTranscriber(): Promise<WhisperTranscriber | null> {
   const name: SttProviderName = resolveSttProviderName() || "local-whisper";
+  const variant = resolveWhisperVariant({ variant: resolveVoiceSettings().whisperModel });
+  const key = name === "local-whisper" ? `${name}:${variant}` : name;
 
-  if (cachedProvider && cachedProviderName === name) return cachedProvider;
-  // Tear down the previous one if the env knob changed mid-run.
+  if (cachedProvider && cachedKey === key) return cachedProvider;
+  // Tear down the previous one if the provider or local model changed mid-run.
   if (cachedProvider) {
     try { cachedProvider.close(); } catch {}
     cachedProvider = null;
-    cachedProviderName = null;
+    cachedKey = null;
   }
 
   try {
     if (name === "local-whisper") {
-      if (!cachedLocalPaths) {
-        cachedLocalPaths = await ensureWhisperModelDownloaded();
-      }
-      cachedProvider = createSttProvider(name, { local: { paths: cachedLocalPaths } });
+      const paths = await ensureWhisperModelDownloaded(undefined, { variant });
+      cachedProvider = createSttProvider(name, { local: { paths } });
     } else {
       cachedProvider = createSttProvider(name, { cloud: {} });
     }
-    cachedProviderName = name;
-    logger.info(`STT provider ready: ${name}`);
+    cachedKey = key;
+    logger.info(`STT provider ready: ${key}`);
     return cachedProvider;
   } catch (e) {
     logger.error(`STT provider init failed (${name}): ${(e as Error).message}`);

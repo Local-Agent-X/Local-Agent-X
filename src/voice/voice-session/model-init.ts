@@ -89,7 +89,7 @@ export async function initializeVoiceStack(deps: ModelInitDeps): Promise<Initial
       }),
       ensureWhisperModelDownloaded((p) => {
         if (!isClosed()) ctx.sendEvent({ type: "whisper_model_progress", overallPct: Math.round(p.overallPct), file: p.file });
-      }, undefined, { variant: voiceSettings.whisperModel }),
+      }, { variant: voiceSettings.whisperModel }),
     ]);
     if (isClosed()) return null;
 

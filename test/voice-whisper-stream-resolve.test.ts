@@ -2,8 +2,10 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   DEFAULT_WHISPER_PROVIDER,
   VALID_WHISPER_PROVIDERS,
+  buildConfig,
   resolveWhisperProvider,
 } from "../src/voice/whisper-stream.js";
+import { getWhisperModelPaths } from "../src/voice/whisper-model-fetch.js";
 
 const ENV_KEYS = ["LAX_VOICE_WHISPER_DEVICE"];
 
@@ -81,5 +83,30 @@ describe("resolveWhisperProvider precedence", () => {
     expect(resolveWhisperProvider({ provider: 42 as never })).toBe(DEFAULT_WHISPER_PROVIDER);
     expect(resolveWhisperProvider({ provider: null as never })).toBe(DEFAULT_WHISPER_PROVIDER);
     expect(resolveWhisperProvider({ provider: undefined })).toBe(DEFAULT_WHISPER_PROVIDER);
+  });
+});
+
+describe("buildConfig: the sherpa-onnx config each local model needs", () => {
+  it("loads Parakeet as a NeMo transducer with its joiner", () => {
+    const cfg = buildConfig(getWhisperModelPaths({ variant: "parakeet-v3" }), "cpu") as {
+      modelConfig: Record<string, unknown> & { transducer?: Record<string, string> };
+    };
+    expect(cfg.modelConfig.modelType).toBe("nemo_transducer");
+    expect(cfg.modelConfig.whisper).toBeUndefined();
+    expect(cfg.modelConfig.transducer).toEqual({
+      encoder: expect.stringMatching(/encoder\.int8\.onnx$/),
+      decoder: expect.stringMatching(/decoder\.int8\.onnx$/),
+      joiner: expect.stringMatching(/joiner\.int8\.onnx$/),
+    });
+    expect(cfg.modelConfig.numThreads).toBe(1);
+  });
+
+  it("keeps Whisper on its English transcribe config", () => {
+    const cfg = buildConfig(getWhisperModelPaths({ variant: "tiny.en" }), "cpu") as {
+      modelConfig: Record<string, unknown> & { whisper?: Record<string, unknown> };
+    };
+    expect(cfg.modelConfig.modelType).toBe("whisper");
+    expect(cfg.modelConfig.transducer).toBeUndefined();
+    expect(cfg.modelConfig.whisper).toMatchObject({ language: "en", task: "transcribe" });
   });
 });

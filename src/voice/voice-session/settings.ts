@@ -7,7 +7,7 @@
 //   1. settings.voiceEngine (user choice, primary)
 //   2. LAX_VOICE_TIER=4 → tier4
 //   3. LAX_VOICE_GPU=0  → cpu_fallback (legacy Matcha)
-//   4. default          → python (GPU sidecar, lite tier)
+//   4. default          → tier4 (in-process Kokoro on the CPU; see resolveVoiceSettings)
 //
 // Engine values (stable IDs — UI uses these as the dropdown values):
 //   "tier4"        — native ONNX Kokoro, no Python, ~1.2s first-audio

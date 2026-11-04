@@ -1,23 +1,28 @@
-// Whisper model fetcher (offline post-correction pass).
+// Local speech-to-text model fetcher (the offline pass that produces the
+// final transcript of each utterance).
 //
-// Three Whisper variants are supported. Picked per-session in this order:
+// Four variants: three Whisper sizes and NVIDIA's Parakeet TDT 0.6B v3, a
+// transducer that sherpa-onnx loads differently (`kind`). Picked per-session
+// in this order:
 //   1. explicit { variant } argument
 //   2. LAX_VOICE_WHISPER_MODEL env var (lowercased + validated)
 //   3. settings.json `voiceWhisperModel` (resolved by voice-session, then
 //      passed in as an option)
-//   4. DEFAULT_WHISPER_VARIANT (tiny.en) — speed wins for dictation. The
-//      streaming WS dictate path runs Whisper once per utterance after
-//      VAD speech-end; small.en added ~1s of perceived lag vs real-browser
-//      Web Speech. tiny.en's 7-10% WER is plenty for dictation review-
-//      then-send. Power users who want max accuracy bump to base/small
-//      from the settings dropdown.
+//   4. DEFAULT_WHISPER_VARIANT (tiny.en) — the one bundled with the desktop
+//      app, so voice works with no download. Users bump to another variant
+//      from the settings dropdown or the Local voice tier.
 //
-//   tiny.en   ~104MB   ~7-10% WER   ~150-300ms / utterance   (default)
-//   base.en   ~150MB   ~5-7% WER    ~300-600ms / utterance
-//   small.en  ~280MB   ~3-5% WER    ~700-1500ms / utterance
+// Measured 2026-11-04 on LibriSpeech dev-clean (73 clips, ~6.6 s each),
+// sherpa-onnx WASM, one thread, Core Ultra 9 285K — words wrong (titles and
+// numbers spelled out on both sides) / median time per clip / download:
+//   tiny.en      10.2%   0.95 s    ~104MB (default, bundled)
+//   base.en      10.0%   1.8 s     ~160MB
+//   small.en      5.3%   5.7 s     ~375MB
+//   parakeet-v3   4.0%   1.1 s     ~670MB (25 European languages)
+// Clean read speech: a laptop mic in a room does worse for every model.
 //
-// Files live at ~/.lax/models/whisper-<variant-with-dot->dash>/ and are
-// pulled from csukuangfj/sherpa-onnx-whisper-<variant> on first use.
+// Files live at ~/.lax/models/<variant dir>/ and are pulled from the
+// variant's csukuangfj/sherpa-onnx-* repo on first use.
 
 import { createWriteStream, existsSync, mkdirSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
@@ -25,10 +30,14 @@ import { getLaxDir } from "../lax-data-dir.js";
 import { DESKTOP_ENV } from "../desktop-contract/env.js";
 import { isLocalOnlyMode, LOCAL_ONLY_BLOCK_MESSAGE } from "../local-only-policy.js";
 
-export type WhisperVariant = "tiny.en" | "base.en" | "small.en";
+export type WhisperVariant = "tiny.en" | "base.en" | "small.en" | "parakeet-v3";
+
+/** How sherpa-onnx loads the variant: Whisper is encoder + decoder, NeMo's
+ *  Parakeet is a transducer (encoder + decoder + joiner). */
+export type LocalSttKind = "whisper" | "nemo_transducer";
 
 export const VALID_WHISPER_VARIANTS: ReadonlySet<WhisperVariant> =
-  new Set<WhisperVariant>(["tiny.en", "base.en", "small.en"]);
+  new Set<WhisperVariant>(["tiny.en", "base.en", "small.en", "parakeet-v3"]);
 
 export const DEFAULT_WHISPER_VARIANT: WhisperVariant = "tiny.en";
 
@@ -43,59 +52,93 @@ export function resolveWhisperVariant(opts?: { variant?: WhisperVariant }): Whis
 
 interface ModelFile { name: string; url: string; minBytes: number; }
 
-interface VariantSpec { encoder: number; decoder: number; tokens: number; }
+type FileRole = "encoder" | "decoder" | "joiner" | "tokens";
 
-// Conservative truncation guards — ~60% of real int8 size. sherpa-onnx
-// re-verifies ONNX integrity on load so these only catch obviously
-// truncated downloads.
+interface VariantSpec {
+  kind: LocalSttKind;
+  repo: string;
+  dir: string;
+  /** File name + truncation guard per role. */
+  files: Partial<Record<FileRole, [string, number]>>;
+}
+
+// Truncation guards are ~60% of the real int8 size. sherpa-onnx re-verifies
+// ONNX integrity on load, so these only catch obviously truncated downloads.
+function whisperSpec(v: "tiny.en" | "base.en" | "small.en", encoder: number, decoder: number): VariantSpec {
+  return {
+    kind: "whisper",
+    repo: `csukuangfj/sherpa-onnx-whisper-${v}`,
+    dir: `whisper-${v.replace(".", "-")}`,
+    files: {
+      encoder: [`${v}-encoder.int8.onnx`, encoder],
+      decoder: [`${v}-decoder.int8.onnx`, decoder],
+      tokens: [`${v}-tokens.txt`, 100_000],
+    },
+  };
+}
+
 const VARIANT_SPECS: Record<WhisperVariant, VariantSpec> = {
-  "tiny.en":  { encoder:  8_000_000, decoder:  50_000_000, tokens: 100_000 },
-  "base.en":  { encoder: 14_000_000, decoder:  55_000_000, tokens: 100_000 },
-  "small.en": { encoder: 50_000_000, decoder: 180_000_000, tokens: 100_000 },
+  "tiny.en": whisperSpec("tiny.en", 8_000_000, 50_000_000),
+  "base.en": whisperSpec("base.en", 14_000_000, 55_000_000),
+  "small.en": whisperSpec("small.en", 50_000_000, 180_000_000),
+  "parakeet-v3": {
+    kind: "nemo_transducer",
+    repo: "csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8",
+    dir: "parakeet-tdt-0.6b-v3",
+    files: {
+      encoder: ["encoder.int8.onnx", 400_000_000],
+      decoder: ["decoder.int8.onnx", 7_000_000],
+      joiner: ["joiner.int8.onnx", 4_000_000],
+      tokens: ["tokens.txt", 50_000],
+    },
+  },
 };
 
 function modelDirFor(variant: WhisperVariant): string {
   // When LAX_BUNDLED_MODELS_DIR is set AND it contains the variant we
   // want, use the bundled copy — saves the first-run download. The
   // desktop main process sets this to electron's process.resourcesPath
-  // when packaged; we look for whisper-tiny-en/, whisper-base-en/, etc.
-  // directly inside it. Only the default (tiny.en) is bundled today;
-  // others fall through to the normal ~/.lax/models download path.
+  // when packaged. Only the default (tiny.en) is bundled today; others
+  // fall through to the normal ~/.lax/models download path.
+  const dir = VARIANT_SPECS[variant].dir;
   const bundled = process.env[DESKTOP_ENV.BUNDLED_MODELS_DIR];
   if (bundled) {
-    const bundledDir = join(bundled, `whisper-${variant.replace(".", "-")}`);
+    const bundledDir = join(bundled, dir);
     if (existsSync(bundledDir)) return bundledDir;
   }
-  return join(getLaxDir(), "models", `whisper-${variant.replace(".", "-")}`);
+  return join(getLaxDir(), "models", dir);
 }
 
 function modelFilesFor(variant: WhisperVariant): ModelFile[] {
-  const base = `https://huggingface.co/csukuangfj/sherpa-onnx-whisper-${variant}/resolve/main`;
   const spec = VARIANT_SPECS[variant];
-  return [
-    { name: `${variant}-encoder.int8.onnx`, url: `${base}/${variant}-encoder.int8.onnx`, minBytes: spec.encoder },
-    { name: `${variant}-decoder.int8.onnx`, url: `${base}/${variant}-decoder.int8.onnx`, minBytes: spec.decoder },
-    { name: `${variant}-tokens.txt`,        url: `${base}/${variant}-tokens.txt`,        minBytes: spec.tokens  },
-  ];
+  const base = `https://huggingface.co/${spec.repo}/resolve/main`;
+  return Object.values(spec.files).map(([name, minBytes]) => ({ name, url: `${base}/${name}`, minBytes }));
 }
 
 export interface WhisperModelPaths {
   encoder: string;
   decoder: string;
+  /** Set for transducer variants only. */
+  joiner?: string;
   tokens: string;
   modelDir: string;
   variant: WhisperVariant;
+  kind: LocalSttKind;
 }
 
 export function getWhisperModelPaths(opts?: { variant?: WhisperVariant }): WhisperModelPaths {
   const variant = resolveWhisperVariant(opts);
   const modelDir = modelDirFor(variant);
+  const { kind, files } = VARIANT_SPECS[variant];
+  const at = (role: FileRole) => join(modelDir, files[role]![0]);
   return {
     variant,
+    kind,
     modelDir,
-    encoder: join(modelDir, `${variant}-encoder.int8.onnx`),
-    decoder: join(modelDir, `${variant}-decoder.int8.onnx`),
-    tokens:  join(modelDir, `${variant}-tokens.txt`),
+    encoder: at("encoder"),
+    decoder: at("decoder"),
+    ...(files.joiner ? { joiner: at("joiner") } : {}),
+    tokens: at("tokens"),
   };
 }
 
@@ -122,15 +165,69 @@ export interface WhisperFetchProgress {
   overallPct: number;
 }
 
+interface InFlight {
+  promise: Promise<WhisperModelPaths>;
+  listeners: Set<(p: WhisperFetchProgress) => void>;
+  overallPct: number;
+}
+
+// One download per variant at a time. A voice session starting while the
+// Local tier's download runs would otherwise open a second writer on the
+// same files and corrupt them; it joins the running download instead.
+const inFlight = new Map<WhisperVariant, InFlight>();
+/** Why the last download of a variant failed, until the next one starts. */
+const lastFailure = new Map<WhisperVariant, string>();
+
+export interface WhisperDownloadState {
+  cached: boolean;
+  downloading: boolean;
+  overallPct: number;
+  error?: string;
+}
+
+/** Whether a variant is on disk, downloading now (and how far along), or
+ *  failed its last download. */
+export function whisperDownloadState(variant: WhisperVariant): WhisperDownloadState {
+  const f = inFlight.get(variant);
+  if (f) return { cached: false, downloading: true, overallPct: Math.round(f.overallPct) };
+  const error = lastFailure.get(variant);
+  return { cached: whisperModelExists({ variant }), downloading: false, overallPct: 0, ...(error ? { error } : {}) };
+}
+
 export async function ensureWhisperModelDownloaded(
   onProgress?: (p: WhisperFetchProgress) => void,
-  signal?: AbortSignal,
   opts?: { variant?: WhisperVariant },
 ): Promise<WhisperModelPaths> {
   const variant = resolveWhisperVariant(opts);
   if (whisperModelExists({ variant })) return getWhisperModelPaths({ variant });
   if (isLocalOnlyMode()) throw new Error(LOCAL_ONLY_BLOCK_MESSAGE);
 
+  let flight = inFlight.get(variant);
+  if (!flight) {
+    lastFailure.delete(variant);
+    const started = { listeners: new Set(), overallPct: 0 } as InFlight;
+    started.promise = downloadVariant(variant, (p) => {
+      started.overallPct = p.overallPct;
+      for (const l of started.listeners) l(p);
+    }).catch((e: Error) => {
+      lastFailure.set(variant, e.message);
+      throw e;
+    }).finally(() => inFlight.delete(variant));
+    inFlight.set(variant, started);
+    flight = started;
+  }
+  if (onProgress) flight.listeners.add(onProgress);
+  try {
+    return await flight.promise;
+  } finally {
+    if (onProgress) flight.listeners.delete(onProgress);
+  }
+}
+
+async function downloadVariant(
+  variant: WhisperVariant,
+  onProgress: (p: WhisperFetchProgress) => void,
+): Promise<WhisperModelPaths> {
   const paths = getWhisperModelPaths({ variant });
   const files = modelFilesFor(variant);
   mkdirSync(paths.modelDir, { recursive: true });
@@ -138,7 +235,7 @@ export async function ensureWhisperModelDownloaded(
   let overallTotal = 0;
   for (const f of files) {
     try {
-      const res = await fetch(f.url, { method: "HEAD", redirect: "follow", signal });
+      const res = await fetch(f.url, { method: "HEAD", redirect: "follow" });
       const len = parseInt(res.headers.get("content-length") || "0", 10);
       overallTotal += len > 0 ? len : f.minBytes * 2;
     } catch { overallTotal += f.minBytes * 2; }
@@ -149,16 +246,16 @@ export async function ensureWhisperModelDownloaded(
     const f = files[i];
     const outPath = join(paths.modelDir, f.name);
     try {
-      await downloadOne(f, outPath, i, files.length, overallSoFar, overallTotal, onProgress, signal);
+      await downloadOne(f, outPath, i, files.length, overallSoFar, overallTotal, onProgress);
       overallSoFar += statSync(outPath).size;
     } catch (e) {
       try { unlinkSync(outPath); } catch {}
-      throw new Error(`Whisper model download failed for ${f.name}: ${(e as Error).message}`);
+      throw new Error(`Speech model download failed for ${f.name}: ${(e as Error).message}`);
     }
   }
 
   if (!whisperModelExists({ variant })) {
-    throw new Error("Whisper model download completed but sanity-check failed");
+    throw new Error("Speech model download completed but sanity-check failed");
   }
   return paths;
 }
@@ -170,10 +267,9 @@ async function downloadOne(
   total: number,
   overallSoFar: number,
   overallTotal: number,
-  onProgress: ((p: WhisperFetchProgress) => void) | undefined,
-  signal: AbortSignal | undefined,
+  onProgress: (p: WhisperFetchProgress) => void,
 ): Promise<void> {
-  const res = await fetch(file.url, { redirect: "follow", signal });
+  const res = await fetch(file.url, { redirect: "follow" });
   if (!res.ok) throw new Error(`HTTP ${res.status} fetching ${file.url}`);
   if (!res.body) throw new Error(`No body from ${file.url}`);
 
@@ -186,16 +282,14 @@ async function downloadOne(
     if (done) break;
     await new Promise<void>((resolve, reject) => sink.write(value, (err) => err ? reject(err) : resolve()));
     written += value.byteLength;
-    if (onProgress) {
-      const bytesTotal = fileLen > 0 ? fileLen : file.minBytes * 2;
-      const overallPct = overallTotal > 0 ? ((overallSoFar + written) / overallTotal) * 100 : 0;
-      onProgress({
-        file: file.name,
-        fileIndex: idx, fileCount: total,
-        bytesDownloaded: written, bytesTotal,
-        overallPct: Math.min(100, overallPct),
-      });
-    }
+    const bytesTotal = fileLen > 0 ? fileLen : file.minBytes * 2;
+    const overallPct = overallTotal > 0 ? ((overallSoFar + written) / overallTotal) * 100 : 0;
+    onProgress({
+      file: file.name,
+      fileIndex: idx, fileCount: total,
+      bytesDownloaded: written, bytesTotal,
+      overallPct: Math.min(100, overallPct),
+    });
   }
   await new Promise<void>((resolve, reject) => sink.end((err?: Error | null) => err ? reject(err) : resolve()));
 

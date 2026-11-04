@@ -36,9 +36,11 @@ function _checkPrereq(p) {
     const pkg = p.kind.slice('npm:'.length);
     const tier4Native = (_setupStatus?.tiers || []).find(x => x.id === 'native');
     if (pkg === 'kokoro-js' || pkg === 'kokoro-js + onnxruntime-node') {
+      // Not yet downloaded is still ready: the first voice reply fetches the
+      // ~90 MB model by itself.
       const ok = !!(tier4Native && tier4Native.installed);
       const cached = !!(tier4Native?.healthPayload?.modelCached);
-      return { ok: ok && cached, hint: !ok ? 'Run npm install' : (cached ? 'Ready' : 'Will download on first use'), action: 'none' };
+      return { ok, hint: !ok ? 'Run npm install' : (cached ? 'Ready' : 'Downloads on first use'), action: 'none' };
     }
     // Real probe via /api/voices/setup/status `npm` block. Server checks
     // node_modules/<pkg>/package.json existence + parses version. The label
@@ -55,6 +57,15 @@ function _checkPrereq(p) {
       return { ok: true, hint: info.version ? `Installed v${info.version}` : 'Installed', action: 'none' };
     }
     return { ok: false, hint: 'Missing — run npm install', action: 'none' };
+  }
+  if (p.kind.startsWith('model:') && _setupStatus?.sttModels?.[p.kind.slice('model:'.length)]) {
+    // A local speech-to-text model (/api/voices/setup/status sttModels).
+    const model = p.kind.slice('model:'.length);
+    const m = _setupStatus.sttModels[model];
+    if (m.cached) return { ok: true, hint: 'Downloaded', action: 'none' };
+    if (m.downloading) return { ok: false, hint: `Downloading ${m.overallPct}%`, action: 'none', downloading: true };
+    if (m.error) return { ok: false, hint: 'Download failed', action: 'download-model', model, actionLabel: 'Retry', error: m.error };
+    return { ok: false, hint: 'Not downloaded', action: 'download-model', model, actionLabel: 'Download' };
   }
   if (p.kind.startsWith('model:')) {
     const tier4Native = (_setupStatus?.tiers || []).find(x => x.id === 'native');
@@ -84,6 +95,8 @@ function _renderPrereqRow(p, idx, tierId) {
     action = `<button class="action-btn primary" id="${btnId}" onclick="onTierPrereqAction('${tierId}','start-sidecar','${_esc(r.tierId)}',this)" style="font-size:.7rem;padding:4px 10px">Start</button>`;
   } else if (r.action === 'set-secret') {
     action = `<button class="action-btn" id="${btnId}" onclick="onTierPrereqAction('${tierId}','set-secret','${_esc(r.secretName)}',this)" style="font-size:.7rem;padding:4px 10px">Add ${_esc(r.secretName)}</button>`;
+  } else if (r.action === 'download-model') {
+    action = `<button class="action-btn primary" id="${btnId}" onclick="onTierPrereqAction('${tierId}','download-model','${_esc(r.model)}',this)"${r.error ? ` title="${_esc(r.error)}"` : ''} style="font-size:.7rem;padding:4px 10px">${_esc(r.actionLabel)}</button>`;
   }
   if (r.repairable) {
     action += `<button class="action-btn" onclick="onTierPrereqAction('${tierId}','repair-sidecar','${_esc(r.tierId)}',this)" title="Stop, re-run the installer (fixes broken/outdated packages), and restart" style="font-size:.7rem;padding:4px 10px">Repair</button>`;
@@ -181,7 +194,34 @@ function _renderTierStatus(tier) {
     + rows
     + doctorBtn
     + `</div>`;
+  if (effectivePrereqs.some(p => _checkPrereq(p).downloading)) _pollModelDownload(tier.id);
 }
+
+// While a model downloads, re-read its progress every 1.5 s and redraw the
+// card — only while this tier is still the one on screen.
+let _modelDownloadPoll = null;
+function _pollModelDownload(tierId) {
+  if (_modelDownloadPoll) return;
+  _modelDownloadPoll = setTimeout(async () => {
+    _modelDownloadPoll = null;
+    if (document.getElementById('cfg-voice-tier')?.value !== tierId) return;
+    await _refreshSetupStatus();
+    const tier = getTierById(tierId);
+    if (tier) _renderTierStatus(tier);
+  }, 1500);
+}
+
+/** Start the downloads a tier's `model:` prerequisites need, so picking the
+ *  tier fetches them up front instead of the first voice session waiting on
+ *  them. The server answers at once; the card shows the progress. */
+async function _startTierModelDownloads(tier) {
+  for (const p of tier?.prerequisites || []) {
+    if (!p.kind.startsWith('model:')) continue;
+    try { await apiPost('/api/voices/setup/model-download', { model: p.kind.slice('model:'.length) }); }
+    catch (e) { console.warn('[voice-picker] model download did not start:', e?.message || e); }
+  }
+}
+window._startTierModelDownloads = _startTierModelDownloads;
 
 async function onVoiceDoctorRun(btn) {
   const results = document.getElementById('voice-doctor-results');
@@ -249,6 +289,9 @@ async function onTierPrereqAction(tierId, action, target, btn) {
         throw new Error('repair failed');
       }
       alert('Repaired' + (d.restarted ? ' and restarted.' : '.') + ' Voice should work now.');
+    } else if (action === 'download-model') {
+      const d = await apiPost('/api/voices/setup/model-download', { model: target });
+      if (d?.error) throw new Error(d.error);
     } else if (action === 'set-secret') {
       // Defer to existing secrets UI rather than building an inline form.
       if (typeof openSecretsModal === 'function') openSecretsModal();

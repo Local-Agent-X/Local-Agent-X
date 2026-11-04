@@ -98,8 +98,9 @@ function producedSettingsKeys(): Set<string> {
 function handledSettingsKeys(): Set<string> {
   const text = readFileSync("public/js/chat-ws-handler-misc.js", "utf8");
   const keys = new Set<string>();
-  for (const m of text.matchAll(/'([A-Za-z_]+)' in msg\.settings/g)) keys.add(m[1]);
-  for (const m of text.matchAll(/msg\.settings\.([A-Za-z_]+)/g)) keys.add(m[1]);
+  // A key may hold digits after its first letter (voiceTier4Provider).
+  for (const m of text.matchAll(/'([A-Za-z_][A-Za-z0-9_]*)' in msg\.settings/g)) keys.add(m[1]);
+  for (const m of text.matchAll(/msg\.settings\.([A-Za-z_][A-Za-z0-9_]*)/g)) keys.add(m[1]);
   const card = text.match(/TOOL_POLICY_CARD_FIELDS = \[([^\]]*)\]/);
   for (const m of (card?.[1] ?? "").matchAll(/'([A-Za-z_]+)'/g)) keys.add(m[1]);
   return keys;

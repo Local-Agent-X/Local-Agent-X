@@ -45,6 +45,15 @@ function handleSettingsChanged(msg) {
       if ('enableRemoteControl' in msg.settings) setToolPolicyToggle('tp-toggle-remote', msg.settings.enableRemoteControl === true);
     }
   }
+  // Voice system switched elsewhere (another window, an API call): this
+  // window's cached copy decides which voice list the picker shows, so it
+  // follows before the voice itself does.
+  if ('voiceMode' in msg.settings || 'voiceEngine' in msg.settings || 'voiceTier4Provider' in msg.settings || 'voiceSttProvider' in msg.settings) {
+    try { const s = JSON.parse(localStorage.getItem('lax_settings') || '{}');
+      for (const k of ['voiceMode', 'voiceEngine', 'voiceTier4Provider', 'voiceSttProvider']) if (k in msg.settings) s[k] = msg.settings[k];
+      localStorage.setItem('lax_settings', JSON.stringify(s)); } catch { /* corrupt cache: the next page load re-primes it from the server */ }
+    if (typeof updateStatusBar === 'function') updateStatusBar(true);
+  }
   if ('ttsVoice' in msg.settings && typeof adoptSavedVoice === 'function') adoptSavedVoice(msg.settings.ttsVoice);
   // Developer mode flipped (Settings in another window, or an approved
   // `setting` call): the status-bar badge and the Settings card follow.

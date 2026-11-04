@@ -62,6 +62,7 @@ export const PREFERENCE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     owner: "agent",
     validate: z.enum(["tier4", "python", "cpu_fallback"]),
     runtime: false,
+    broadcast: true,
     description: "Voice backend. tier4=in-process, python=the installed voice sidecar, cpu_fallback=slow CPU-only engine",
   },
   {
@@ -76,6 +77,7 @@ export const PREFERENCE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     owner: "protected", where: VOICE_SYSTEM,
     validate: z.enum(["browser", "standard"]),
     runtime: false,
+    broadcast: true,
     description: "Voice chat tier. browser=the browser's own speech recognition and voices; standard=the server voice pipeline",
   },
   {
@@ -83,6 +85,7 @@ export const PREFERENCE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     owner: "protected", where: VOICE_SYSTEM,
     validate: z.string(),
     runtime: false,
+    broadcast: true,
     description: "Text-to-speech provider for spoken replies (browser, edge-tts, kokoro). Empty = the engine's default. edge-tts sends reply text to Microsoft",
   },
   {
@@ -90,6 +93,7 @@ export const PREFERENCE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     owner: "protected", where: VOICE_SYSTEM,
     validate: z.string(),
     runtime: false,
+    broadcast: true,
     description: "Speech-to-text provider (browser, local-whisper, groq, openai, mistral). Empty = the engine's default. groq/openai/mistral send microphone audio to that provider",
   },
   {

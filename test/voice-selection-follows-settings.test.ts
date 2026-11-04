@@ -81,6 +81,19 @@ describe("the page's voice follows settings.ttsVoice", () => {
     expect(localStorage.getItem("lax_voice")).toBe("vx:optimus");
   });
 
+  it("the server announces a voice-system switch too", () => {
+    for (const k of ["voiceMode", "voiceEngine", "voiceTier4Provider", "voiceSttProvider"]) expect(BROADCAST_KEYS.has(k), k).toBe(true);
+  });
+
+  it("a voice-system switch made elsewhere replaces this window's stale copy", () => {
+    // The window Peter had open on 2026-11-04: cached Edge while the server
+    // had moved to Studio, so the picker listed Edge voices and no clones.
+    localStorage.setItem("lax_settings", JSON.stringify({ provider: "anthropic", voiceMode: "standard", voiceEngine: "tier4", voiceTier4Provider: "edge-tts", voiceSttProvider: "local-whisper" }));
+    settingsChangedHandler(socket)({ type: "settings_changed", settings: { voiceMode: "standard", voiceEngine: "python", voiceTier4Provider: "", voiceSttProvider: "" } });
+    expect(JSON.parse(localStorage.getItem("lax_settings") ?? "{}")).toEqual({ provider: "anthropic", voiceMode: "standard", voiceEngine: "python", voiceTier4Provider: "", voiceSttProvider: "" });
+    expect(updateStatusBar).toHaveBeenCalledWith(true);
+  });
+
   it("a tier switch's cleared voice does not wipe the picker", () => {
     settingsChangedHandler(socket)({ type: "settings_changed", settings: { ttsVoice: "" } });
     expect(localStorage.getItem("lax_voice")).toBe("am_adam");

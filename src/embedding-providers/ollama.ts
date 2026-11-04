@@ -1,12 +1,10 @@
+import { performance } from "node:perf_hooks";
 import { getRuntimeConfig } from "../config.js";
 import { createLogger } from "../logger.js";
 import { fetchLocalOllamaTags } from "../ollama-cloud.js";
 import { emptyVector } from "./helpers.js";
 import type { ExtendedEmbeddingProvider } from "./types.js";
 import { isLocalOnlyMode, isLoopbackUrl } from "../local-only-policy.js";
-// A deadline is evidence about Ollama only when this process was awake to
-// enforce it: the one rule, shared with the runtime sweep behind the picker.
-import { monotonicNowMs, verdictWasStarved } from "../local-runtimes/deadline-verdict.js";
 
 const logger = createLogger("embedding-providers");
 
@@ -30,6 +28,14 @@ const RECHECK_DELAY_MS = 60_000;
 // Pin the embed model resident. Ollama's default keep_alive is 5 minutes, so
 // the model unloaded between chats and the next turn paid the reload.
 const KEEP_ALIVE = "4h";
+// A deadline is evidence about the SERVER only when this process was awake to
+// enforce it. Every cap above is a Node timer, and a timer on a blocked loop
+// fires the instant the loop resumes — this server has stalled 90-110s at a
+// stretch (see server/event-loop-sentinel.ts), which aborts a request that
+// never got a millisecond of service and then convicts Ollama for it. On a
+// healthy loop a timer lands within a few ms of its deadline, so anything this
+// far past its budget is a statement about THIS PROCESS, not about Ollama.
+const LOOP_STARVATION_SLACK_MS = 1_000;
 // Upper bound on how long an honest "not reachable" takes to render: the
 // reachability probe's own connect budget (local-runtimes/ollama-probe.ts
 // DETECT_TIMEOUT_MS, 1.5s). A refused connection answers in microseconds; a
@@ -37,6 +43,19 @@ const KEEP_ALIVE = "4h";
 // cost is one extra /api/version GET against a genuinely down Ollama — never a
 // wrong verdict.
 const REACHABILITY_BUDGET_MS = 1_500;
+
+/** Monotonic milliseconds. Date.now() would let an NTP step or a laptop resume
+ *  fabricate — or hide — a stall. Same clock the loop sentinel measures with. */
+const monotonicNowMs = (): number => Math.round(performance.now());
+
+/**
+ * True when a timed operation overran its budget by more than any healthy
+ * loop's timer jitter — i.e. its deadline fired late because the loop was
+ * starved, so the expiry says nothing about the endpoint.
+ */
+export function verdictWasStarved(elapsedMs: number, budgetMs: number): boolean {
+  return elapsedMs - budgetMs >= LOOP_STARVATION_SLACK_MS;
+}
 
 /**
  * Ask "is Ollama reachable?", and re-ask ONCE when the answer was "no" and the

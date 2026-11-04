@@ -108,11 +108,11 @@ function scheduleCertificationRestore(runtimes: LocalRuntimeInfo[]): void {
   })().finally(() => { restoreWorker = null; });
 }
 
-// A sweep that could not judge an endpoint (its "not there" came from a
-// deadline the blocked event loop fired late, deadline-verdict.ts) asks again
-// this soon rather than at the next 60 s sweep, this many times in a row. At
-// every boot the loop stalls 8-10 s, the first sweep's probes timed out, and
-// the picker showed no local models for a minute (2026-11-03).
+// A sweep that could not judge an endpoint (its probe got no answer before its
+// deadline, discovery.ts) asks again this soon rather than at the next 60 s
+// sweep, this many times in a row. At every boot the event loop is too busy for
+// an answer in time: the first sweep found no Ollama in 4.3 s, and the picker
+// showed no local models for a minute (2026-11-03).
 const INCONCLUSIVE_RESWEEP_MS = 5_000;
 const INCONCLUSIVE_RESWEEPS = 12;
 let inconclusiveStreak = 0;

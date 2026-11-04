@@ -118,7 +118,12 @@ export function mergeWorktree(agentId: string): { merged: boolean; files: number
         // uncommitted work, don't clobber it — leave the branch for a manual
         // merge (the worktree merge above already made agent/<id> a clean
         // fast-forward of base).
-        if (git(["status", "--porcelain"], wt.repoRoot)) {
+        // Tracked edits only. A --ff-only merge never touches an untracked
+        // file (git refuses on its own if an incoming one would overwrite
+        // it), so a stray untracked file must not block: a leftover
+        // .builtref at the repo root stopped every in-app update ("uncommitted
+        // changes") on 2026-11-04.
+        if (git(["status", "--porcelain", "--untracked-files=no"], wt.repoRoot)) {
           throw new Error("parent working tree has uncommitted changes on the base branch");
         }
         git(["merge", "--ff-only", wt.branch], wt.repoRoot);

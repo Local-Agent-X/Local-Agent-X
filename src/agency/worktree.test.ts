@@ -338,6 +338,40 @@ describe("concurrent-worktree cap", () => {
     }
   });
 
+  // 2026-11-04: an untracked .builtref left at the repo root stopped every
+  // in-app update with "uncommitted changes". Untracked files never block the
+  // merge-back; uncommitted edits to tracked files still do.
+  it("an untracked stray file does not block the merge-back; a tracked edit still does", () => {
+    const { repo, g } = initRepo();
+    const prevCwd = process.cwd();
+    const env = { ...process.env };
+    const ids = [`stray-${Date.now().toString(36)}`, `tracked-${Date.now().toString(36)}`];
+    try {
+      process.chdir(repo);
+      const wt = createWorktree(ids[0]);
+      writeFileSync(join(wt!.path, "agent.txt"), "agent change");
+      commitInWorktree(ids[0], "agent work");
+      writeFileSync(join(repo, ".builtref"), "b0365833ff50f4bd76aeda9e7a94f82866fb9059\n");
+      expect(mergeWorktree(ids[0]).merged).toBe(true);
+      expect(existsSync(join(repo, "agent.txt"))).toBe(true);
+      expect(existsSync(join(repo, ".builtref"))).toBe(true);
+
+      const wt2 = createWorktree(ids[1]);
+      writeFileSync(join(wt2!.path, "agent2.txt"), "second change");
+      commitInWorktree(ids[1], "second work");
+      writeFileSync(join(repo, "agent.txt"), "user edited a tracked file");
+      const res = mergeWorktree(ids[1]);
+      expect(res.merged).toBe(false);
+      expect(res.error).toMatch(/uncommitted changes/);
+      expect(g(["show", "HEAD:agent.txt"])).toBe("agent change");
+    } finally {
+      process.chdir(prevCwd);
+      for (const id of ids) { try { cleanupWorktree(id); } catch { /* best-effort */ } activeWorktrees.delete(id); }
+      Object.assign(process.env, env);
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
   // OP-8 happy path: when the user IS sitting on a clean base branch, the
   // agent's changes should still land in their working tree (a fast-forward),
   // so the fix doesn't regress the normal merge-back-to-main behavior.

@@ -6,7 +6,7 @@ import { isEmbeddingModel } from "../../canonical-loop/public/op-facts.js";
 import type { ProviderId } from "../../providers/provider-ids.js";
 import { PROVIDERS, providerRegistryView } from "../../providers/registry.js";
 import { refreshCloudOllama, getCachedCloudModels } from "../../ollama-cloud.js";
-import { getLocalRuntimes, localRuntimesStale, refreshLocalRuntimes } from "../../local-runtimes/index.js";
+import { getLocalRuntimes, localRuntimesSettling, localRuntimesStale, refreshLocalRuntimes } from "../../local-runtimes/index.js";
 import { isLocalOnlyMode, localProviderDecision, LOCAL_ONLY_BLOCK_MESSAGE } from "../../local-only-policy.js";
 import { CATALOG_PROVIDERS, catalogStale, pickerModelsFor, refreshProviderCatalog } from "../../providers/model-catalog.js";
 import { handleLocalRuntimesRoutes, modelsWithCertification } from "./local-runtimes.js";
@@ -168,7 +168,10 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     }
     const customBaseUrl = String(loadSettings().customBaseUrl || "");
     if (hasCustomKey && (!localOnly || localProviderDecision("custom", getRuntimeConfig(), customBaseUrl).allowed)) pushFromRegistry("custom");
-    json(200, { providers, current: { provider: currentProvider, model: currentModel }, localOnlyMode: localOnly }); return true;
+    // localSettling: the local sweep has not judged every endpoint yet (first
+    // boot sweep pending, or its probes were starved), so a missing "local"
+    // entry is not an answer — the picker asks again (chat-status-bar.js).
+    json(200, { providers, current: { provider: currentProvider, model: currentModel }, localOnlyMode: localOnly, localSettling: localRuntimesSettling() }); return true;
   }
 
   // Switch provider

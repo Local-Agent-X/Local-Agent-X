@@ -15,6 +15,7 @@ import {
   getLocalModelCapabilityProfile,
   getRuntimeForModel,
   invalidateLocalRuntimes,
+  localRuntimesSettling,
   localRuntimesStale,
 } from "./cache.js";
 import type { LocalRuntimeInfo } from "./types.js";
@@ -48,7 +49,7 @@ const SECOND_RUNTIME: LocalRuntimeInfo = {
 
 vi.mock("./endpoints.js", () => ({ candidateEndpoints: () => [] }));
 vi.mock("./discovery.js", () => ({
-  discoverLocalRuntimes: vi.fn(async () => [RUNTIME]),
+  discoverLocalRuntimes: vi.fn(async () => ({ runtimes: [RUNTIME], inconclusive: [] as string[] })),
 }));
 
 let dataDir: string;
@@ -120,7 +121,7 @@ describe("local-runtime cache", () => {
       ...RUNTIME,
       models: [{ id: "qwen3.6:27b", contextWindow: null, tools: true }, { id: "mystery:latest", contextWindow: null, tools: null }],
     };
-    vi.mocked(discoverLocalRuntimes).mockResolvedValueOnce([unloaded]);
+    vi.mocked(discoverLocalRuntimes).mockResolvedValueOnce({ runtimes: [unloaded], inconclusive: [] });
     await refreshLocalRuntimes();
     const { resolveContextWindow, LOCAL_UNKNOWN_CONTEXT } = await import("../context-manager/model-windows.js");
     const { modelDeclaredContextWindow } = await import("./model-profile.js");
@@ -175,7 +176,7 @@ describe("local-runtime cache", () => {
 
   it("derives endpoint-isolated profiles for the same model id", async () => {
     const { discoverLocalRuntimes } = await import("./discovery.js");
-    vi.mocked(discoverLocalRuntimes).mockResolvedValueOnce([RUNTIME, SECOND_RUNTIME]);
+    vi.mocked(discoverLocalRuntimes).mockResolvedValueOnce({ runtimes: [RUNTIME, SECOND_RUNTIME], inconclusive: [] });
     recordToolsVerified(RUNTIME.chatBaseUrl, "qwen3.6:27b", true);
     recordNoTools(SECOND_RUNTIME.chatBaseUrl, "qwen3.6:27b");
     await refreshLocalRuntimes();
@@ -208,5 +209,51 @@ describe("local-runtime cache", () => {
       tools: { advertised: null, verified: null, rejectsTools: false },
     });
     expect(profile.maxTools).toBeLessThan(Number.MAX_SAFE_INTEGER);
+  });
+});
+
+// A blocked boot loop fired the probes' deadlines late, so the first sweep
+// found no Ollama and the picker had no local models for a minute (2026-11-03).
+describe("a sweep that could not judge an endpoint", () => {
+  afterEach(() => vi.useRealTimers());
+  const inconclusive = { runtimes: [] as LocalRuntimeInfo[], inconclusive: [RUNTIME.endpoint.baseUrl] };
+
+  it("is settling until a sweep has judged every endpoint", async () => {
+    expect(localRuntimesSettling()).toBe(true); // never swept
+    await refreshLocalRuntimes();
+    expect(localRuntimesSettling()).toBe(false);
+  });
+
+  it("keeps what the last sweep found there, and stays settling", async () => {
+    const { discoverLocalRuntimes } = await import("./discovery.js");
+    await refreshLocalRuntimes();
+    vi.mocked(discoverLocalRuntimes).mockResolvedValueOnce(inconclusive);
+    await refreshLocalRuntimes();
+    expect(getLocalRuntimes()?.map((r) => r.id)).toEqual([RUNTIME.id]);
+    expect(localRuntimesSettling()).toBe(true);
+  });
+
+  it("asks again in seconds, not at the next 60 s sweep, and settles when it answers", async () => {
+    vi.useFakeTimers();
+    const { discoverLocalRuntimes } = await import("./discovery.js");
+    vi.mocked(discoverLocalRuntimes).mockClear();
+    vi.mocked(discoverLocalRuntimes).mockResolvedValueOnce(inconclusive);
+    await refreshLocalRuntimes();
+    expect(getLocalRuntimes()).toEqual([]);
+    await vi.advanceTimersByTimeAsync(5_000);
+    expect(vi.mocked(discoverLocalRuntimes)).toHaveBeenCalledTimes(2);
+    expect(getLocalRuntimes()?.map((r) => r.id)).toEqual([RUNTIME.id]);
+    expect(localRuntimesSettling()).toBe(false);
+  });
+
+  it("stops asking early after a bounded run; the 60 s sweep carries on", async () => {
+    vi.useFakeTimers();
+    const { discoverLocalRuntimes } = await import("./discovery.js");
+    vi.mocked(discoverLocalRuntimes).mockClear();
+    vi.mocked(discoverLocalRuntimes).mockResolvedValue(inconclusive);
+    await refreshLocalRuntimes();
+    await vi.advanceTimersByTimeAsync(5_000 * 20);
+    expect(vi.mocked(discoverLocalRuntimes)).toHaveBeenCalledTimes(13);
+    vi.mocked(discoverLocalRuntimes).mockResolvedValue({ runtimes: [RUNTIME], inconclusive: [] });
   });
 });

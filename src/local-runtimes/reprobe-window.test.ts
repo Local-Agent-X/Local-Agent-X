@@ -27,16 +27,17 @@ async function seedCache(contextWindow: number | null) {
   const cache = await import("./cache.js");
   cache.invalidateLocalRuntimes();
   const discovery = await import("./discovery.js");
-  vi.spyOn(discovery, "discoverLocalRuntimes").mockResolvedValue([
-    {
+  vi.spyOn(discovery, "discoverLocalRuntimes").mockResolvedValue({
+    runtimes: [{
       kind: "ollama",
       id: "ollama@127.0.0.1:11434",
       label: "Ollama",
       endpoint: { baseUrl: "http://127.0.0.1:11434", kind: "ollama" },
       chatBaseUrl: CHAT,
       models: [{ id: "qwen3.6:27b", contextWindow, tools: null }],
-    },
-  ] as unknown as Awaited<ReturnType<typeof discovery.discoverLocalRuntimes>>);
+    }],
+    inconclusive: [],
+  } as unknown as Awaited<ReturnType<typeof discovery.discoverLocalRuntimes>>);
   await cache.refreshLocalRuntimes();
   return cache;
 }

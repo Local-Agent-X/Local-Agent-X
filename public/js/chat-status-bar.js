@@ -114,11 +114,14 @@ window.refreshProviderPicker = refreshProviderPicker;
 // server's provider caches warm (or we hit the ceiling). Without this the
 // picker boxes sat empty until a manual provider switch, since updateStatusBar
 // only re-renders the cache and never refetches.
+// While the server says local runtimes are still settling it re-sweeps every
+// 5s for up to a minute (src/local-runtimes/cache.ts), so keep asking that long.
 async function ensureProvidersLoaded() {
-  for (let attempt = 0; attempt < 10; attempt++) {
+  for (let attempt = 0; attempt < 50; attempt++) {
     const data = await loadProviders();
     updateStatusBar();
     if (isProvidersComplete(data)) return;
+    if (attempt >= 9 && !(data && data.localSettling)) return;
     await new Promise(r => setTimeout(r, 1200));
   }
 }

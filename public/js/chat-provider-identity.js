@@ -39,6 +39,10 @@ function laxResolveActiveProvider(data) {
 function isProvidersComplete(data) {
   if (!data || !Array.isArray(data.providers) || data.providers.length === 0) return false;
   if (!data.current || !data.current.provider) return false;
+  // The server has not judged every local runtime yet (its first sweep is
+  // pending, or a blocked boot starved the probes): a missing "Local Models"
+  // entry is not an answer, whichever provider is selected.
+  if (data.localSettling) return false;
   const active = laxResolveActiveProvider(data);
   // Selected provider isn't in the list at all — its credential gate failed
   // server-side. No amount of refetching changes that, so the payload IS

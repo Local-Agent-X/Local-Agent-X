@@ -50,6 +50,7 @@ export {
   invalidateLocalRuntimes,
   localModelWindow,
   localRuntimesStale,
+  localRuntimesSettling,
   ollamaNativeRootForChatBase,
   refreshLocalRuntimes,
   reprobeLocalModelWindow,

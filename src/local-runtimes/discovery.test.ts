@@ -15,7 +15,7 @@ const CANDIDATE: CandidateEndpoint = {
 describe("discoverLocalRuntimes test-env guard", () => {
   afterEach(() => vi.restoreAllMocks());
 
-  it("does no network I/O and returns [] under vitest", async () => {
+  it("does no network I/O and finds nothing under vitest", async () => {
     // mockRejected so that even a regression (guard removed) can't open a real
     // socket — the assertion below, not a real ECONNREFUSED, is what fails.
     const fetchSpy = vi
@@ -24,7 +24,7 @@ describe("discoverLocalRuntimes test-env guard", () => {
 
     const result = await discoverLocalRuntimes([CANDIDATE]);
 
-    expect(result).toEqual([]);
+    expect(result).toEqual({ runtimes: [], inconclusive: [] });
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 });

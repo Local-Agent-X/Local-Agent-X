@@ -88,28 +88,63 @@ function scheduleCertificationRestore(runtimes: LocalRuntimeInfo[]): void {
   })().finally(() => { restoreWorker = null; });
 }
 
-/** Re-sweep and replace the cache. Coalesces concurrent callers. */
+// A sweep that could not judge an endpoint (its "not there" came from a
+// deadline the blocked event loop fired late, deadline-verdict.ts) asks again
+// this soon rather than at the next 60 s sweep, this many times in a row. At
+// every boot the loop stalls 8-10 s, the first sweep's probes timed out, and
+// the picker showed no local models for a minute (2026-11-03).
+const INCONCLUSIVE_RESWEEP_MS = 5_000;
+const INCONCLUSIVE_RESWEEPS = 12;
+let inconclusiveStreak = 0;
+let resweepTimer: ReturnType<typeof setTimeout> | null = null;
+let lastSweepInconclusive = false;
+
+function resweepSoonIf(inconclusive: boolean): void {
+  lastSweepInconclusive = inconclusive;
+  if (!inconclusive) { inconclusiveStreak = 0; return; }
+  if (resweepTimer || inconclusiveStreak >= INCONCLUSIVE_RESWEEPS) return;
+  inconclusiveStreak += 1;
+  resweepTimer = setTimeout(() => {
+    resweepTimer = null;
+    void refreshLocalRuntimes().catch(() => {});
+  }, INCONCLUSIVE_RESWEEP_MS);
+  resweepTimer.unref?.();
+}
+
+/** Re-sweep and replace the cache. Coalesces concurrent callers. An endpoint
+ *  the sweep could not judge keeps the entry the last sweep found for it. */
 export async function refreshLocalRuntimes(): Promise<LocalRuntimeInfo[]> {
   if (inflight) return inflight;
   inflight = (async () => {
     try {
-      let found = await discoverLocalRuntimes(candidateEndpoints());
+      let sweep = await discoverLocalRuntimes(candidateEndpoints());
       // LM Studio app running with its API server toggled off is invisible
       // to the sweep; flip the server on (gated + throttled inside) and
       // re-sweep once so its models land in THIS refresh, not the next.
-      if (!isLocalModelQualificationBoot() && await maybeAutostartLmStudio(found)) {
-        found = await discoverLocalRuntimes(candidateEndpoints());
+      if (!isLocalModelQualificationBoot() && await maybeAutostartLmStudio(sweep.runtimes)) {
+        sweep = await discoverLocalRuntimes(candidateEndpoints());
       }
+      const kept = (cache ?? []).filter((r) =>
+        sweep.inconclusive.includes(r.endpoint.baseUrl) && !sweep.runtimes.some((f) => f.id === r.id));
+      const found = [...sweep.runtimes, ...kept];
       cache = found;
       refreshedAt = Date.now();
       notifyLocalRuntimesChanged();
       scheduleCertificationRestore(found);
+      resweepSoonIf(sweep.inconclusive.length > 0);
       return found;
     } finally {
       inflight = null;
     }
   })();
   return inflight;
+}
+
+/** True until a sweep has judged every endpoint: never swept yet, or the last
+ *  sweep could not tell whether a runtime is there. The picker keeps asking
+ *  while this holds instead of reading "no local models" as settled. */
+export function localRuntimesSettling(): boolean {
+  return cache === null || lastSweepInconclusive;
 }
 
 /** Sync snapshot for display paths. null = never populated (fire a refresh). */
@@ -283,6 +318,9 @@ export async function reprobeLocalModelWindow(
 export function invalidateLocalRuntimes(): void {
   cache = null;
   refreshedAt = 0;
+  lastSweepInconclusive = false;
+  inconclusiveStreak = 0;
+  if (resweepTimer) { clearTimeout(resweepTimer); resweepTimer = null; }
   restoreEpoch += 1;
   pendingRestore = null;
   restoredSnapshot = null;

@@ -43,6 +43,7 @@ vi.mock("../../local-only-policy.js", () => ({
 vi.mock("../../local-runtimes/index.js", () => ({
   getLocalRuntimes: () => [],
   localRuntimesStale: () => false,
+  localRuntimesSettling: () => false,
   refreshLocalRuntimes: async () => [],
   invalidateLocalRuntimes: () => {},
   manualRuntimeEntries: () => [],

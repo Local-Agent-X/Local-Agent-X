@@ -101,6 +101,16 @@ describe("model chip provider identity", () => {
     expect(complete({ providers: [], current: { provider: "xai" } })).toBe(false);
   });
 
+  it("a payload sent while local runtimes are still settling is never complete", () => {
+    // At boot the local sweep had not judged Ollama yet: the selected local
+    // provider was missing, read as "credential gate failed", and the picker
+    // stopped asking for a minute (2026-11-03). The same holds with a cloud
+    // provider selected, whose picker would otherwise miss "Local Models".
+    expect(complete({ ...DISCONNECTED, current: { provider: "local", model: "qwen3.8:27b-172k" }, localSettling: true } as Providers)).toBe(false);
+    expect(complete({ ...CONNECTED, localSettling: true } as Providers)).toBe(false);
+    expect(complete({ ...CONNECTED, localSettling: false } as Providers)).toBe(true);
+  });
+
   it("never falls back positionally anywhere in the status bar", () => {
     // isProvidersComplete carried its own copy of the same unsafe expression.
     // Match executable source only — the resolver's own comment quotes the old

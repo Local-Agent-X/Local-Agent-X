@@ -53,6 +53,7 @@ export {
   localRuntimesSettling,
   ollamaNativeRootForChatBase,
   refreshLocalRuntimes,
+  onLocalRuntimeSetChanged,
   reprobeLocalModelWindow,
   restoreProjectedLocalRuntime,
   type LocalModelCapabilityProfile,

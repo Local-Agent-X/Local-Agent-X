@@ -17,6 +17,7 @@ import {
   invalidateLocalRuntimes,
   localRuntimesSettling,
   localRuntimesStale,
+  onLocalRuntimeSetChanged,
 } from "./cache.js";
 import type { LocalRuntimeInfo } from "./types.js";
 import {
@@ -255,5 +256,21 @@ describe("a sweep that could not judge an endpoint", () => {
     await vi.advanceTimersByTimeAsync(5_000 * 20);
     expect(vi.mocked(discoverLocalRuntimes)).toHaveBeenCalledTimes(13);
     vi.mocked(discoverLocalRuntimes).mockResolvedValue({ runtimes: [RUNTIME], inconclusive: [] });
+  });
+});
+
+// Open pages learn of a new runtime set at once, not on the user's next
+// provider switch (2026-11-03): one call per change, none for a repeat sweep.
+describe("onLocalRuntimeSetChanged", () => {
+  it("calls on the first set and on each change, not for a sweep that finds the same", async () => {
+    const { discoverLocalRuntimes } = await import("./discovery.js");
+    const seen: string[][] = [];
+    const off = onLocalRuntimeSetChanged((ids) => seen.push(ids));
+    await refreshLocalRuntimes();
+    await refreshLocalRuntimes();
+    vi.mocked(discoverLocalRuntimes).mockResolvedValueOnce({ runtimes: [RUNTIME, SECOND_RUNTIME], inconclusive: [] });
+    await refreshLocalRuntimes();
+    off();
+    expect(seen).toEqual([[RUNTIME.id], [RUNTIME.id, SECOND_RUNTIME.id]]);
   });
 });

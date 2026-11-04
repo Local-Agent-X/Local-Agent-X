@@ -23,6 +23,13 @@ function handleSettingsChanged(msg) {
     _providersCacheTime = 0;
     if (typeof loadProviders === 'function') loadProviders().then(() => updateStatusBar()).catch(() => {});
   }
+  // A local-runtime sweep found a different set (bootstrap-services.ts): the
+  // picker re-reads the list, so "Local Models" appears without the user
+  // having to switch provider first.
+  if (msg.settings.localRuntimesFound) {
+    _providersCacheTime = 0;
+    if (typeof loadProviders === 'function') loadProviders().then(() => updateStatusBar()).catch(() => {});
+  }
   // Tool Policy toggles (enableShell / enableHttp / enableBrowser) →
   // re-sync the DOM state so the settings page reflects what the agent
   // (or another tab) just flipped. Without this the toggles stay green

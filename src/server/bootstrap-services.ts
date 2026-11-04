@@ -373,7 +373,16 @@ export async function bootstrapServices(config: LAXConfig): Promise<Bootstrapped
   // picker and per-turn context-window lookups read a warm cache. Cache
   // replacement schedules persisted certification restoration after discovery;
   // neither that identity validation nor this refresh is awaited by boot.
-  import("../local-runtimes/index.js").then(({ refreshLocalRuntimes }) => {
+  //
+  // Open pages hear when what a sweep found changes (chat-ws-handler-misc.js
+  // re-reads /api/providers), so the picker shows local models the moment a
+  // sweep finds them. It used to learn only on the user's next provider switch:
+  // a boot that missed Ollama left "Local Models" off the picker until then
+  // (2026-11-03).
+  import("../local-runtimes/index.js").then(({ refreshLocalRuntimes, onLocalRuntimeSetChanged }) => {
+    onLocalRuntimeSetChanged((ids) => void import("../chat-ws/index.js")
+      .then(({ broadcastAll }) => broadcastAll({ type: "settings_changed", settings: { localRuntimesFound: ids } }))
+      .catch(() => {}));
     const warmRuntimes = () => void refreshLocalRuntimes().catch(() => {});
     warmRuntimes();
     setInterval(warmRuntimes, 60_000).unref();

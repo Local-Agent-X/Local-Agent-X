@@ -19,6 +19,9 @@ import { getToolsVerified, hasNoTools } from "../providers/model-capabilities-st
 import { isLocalModelQualificationBoot } from "../qualification-boot.js";
 import { lstatSync, readFileSync } from "node:fs";
 import { isAbsolute } from "node:path";
+import { createLogger } from "../logger.js";
+
+const logger = createLogger("local-runtimes.cache");
 
 export interface LocalModelCapabilityProfile {
   runtimeId: string | null;
@@ -60,6 +63,23 @@ export function subscribeLocalRuntimeChanges(cb: LocalRuntimesChangeListener): (
   runtimeListeners.add(cb);
   cb(cache);
   return () => { runtimeListeners.delete(cb); };
+}
+
+/**
+ * Subscribe to changes in WHAT the sweeps found (runtime ids and their model
+ * ids), not to every cache replacement: a 60 s sweep that finds the same set
+ * calls nothing. The server tells open pages through this, so a picker shows
+ * local models the moment a sweep finds them (server/bootstrap-services.ts).
+ */
+export function onLocalRuntimeSetChanged(cb: (runtimeIds: string[]) => void): () => void {
+  let last: string | null = null;
+  return subscribeLocalRuntimeChanges((runtimes) => {
+    if (!runtimes) return;
+    const found = runtimes.map((r) => `${r.id}=${r.models.map((m) => m.id).join("|")}`).sort().join(",");
+    if (found === last) return;
+    last = found;
+    cb(runtimes.map((r) => r.id));
+  });
 }
 
 function notifyLocalRuntimesChanged(): void {
@@ -111,12 +131,25 @@ function resweepSoonIf(inconclusive: boolean): void {
   resweepTimer.unref?.();
 }
 
+/** What the sweeps have found, as runtime id and model count: logged when it
+ *  changes, so a boot that misses a runtime says how fast it decided that. */
+let lastSweepSignature: string | null = null;
+
+function logSweepIfChanged(found: readonly LocalRuntimeInfo[], inconclusive: readonly string[], elapsedMs: number): void {
+  const signature = found.map((r) => `${r.id} (${r.models.length} models)`).sort().join(", ") || "none";
+  if (signature === lastSweepSignature && inconclusive.length === 0) return;
+  lastSweepSignature = signature;
+  const unsure = inconclusive.length ? `; could not judge ${inconclusive.join(", ")}, asking again in ${INCONCLUSIVE_RESWEEP_MS / 1000}s` : "";
+  logger.info(`[local-runtimes] sweep found ${signature} in ${elapsedMs}ms${unsure}`);
+}
+
 /** Re-sweep and replace the cache. Coalesces concurrent callers. An endpoint
  *  the sweep could not judge keeps the entry the last sweep found for it. */
 export async function refreshLocalRuntimes(): Promise<LocalRuntimeInfo[]> {
   if (inflight) return inflight;
   inflight = (async () => {
     try {
+      const startedAt = Date.now();
       let sweep = await discoverLocalRuntimes(candidateEndpoints());
       // LM Studio app running with its API server toggled off is invisible
       // to the sweep; flip the server on (gated + throttled inside) and
@@ -132,6 +165,7 @@ export async function refreshLocalRuntimes(): Promise<LocalRuntimeInfo[]> {
       notifyLocalRuntimesChanged();
       scheduleCertificationRestore(found);
       resweepSoonIf(sweep.inconclusive.length > 0);
+      logSweepIfChanged(found, sweep.inconclusive, Date.now() - startedAt);
       return found;
     } finally {
       inflight = null;
@@ -319,6 +353,7 @@ export function invalidateLocalRuntimes(): void {
   cache = null;
   refreshedAt = 0;
   lastSweepInconclusive = false;
+  lastSweepSignature = null;
   inconclusiveStreak = 0;
   if (resweepTimer) { clearTimeout(resweepTimer); resweepTimer = null; }
   restoreEpoch += 1;

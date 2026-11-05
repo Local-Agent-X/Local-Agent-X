@@ -1,10 +1,36 @@
 import { sanitizeModelOutput, stripLeakedSpecialTokensStreaming } from "../providers/output-sanitize.js";
+import { categoryOf, isReadOnlyCall } from "../tool-registry.js";
 
 /** Spoken when the degenerate-output guard stops a local reply mid-stream.
  *  Voice has no inline-card surface, so a guard stop that would otherwise end
  *  in abrupt silence is voiced instead. */
 export const VOICE_GUARD_STOP_NOTICE =
   " Sorry — my local model glitched there, so I stopped early.";
+
+/** Spoken when a lookup starts and the model has said nothing since the last
+ *  one, so the user hears that work is happening instead of silence. Keyed by
+ *  the tool row's own category: searching the web, looking at the screen, or
+ *  anything else read-only (memory, past chats, a job's status). */
+const LOOKUP_LINES: Record<"web" | "screen" | "other", readonly string[]> = {
+  web: ["Let me look that up. ", "I'll search now. ", "One sec, checking. "],
+  screen: ["Let me take a look. ", "One sec, looking. "],
+  other: ["Let me check. ", "One sec, let me pull that up. ", "I'll check that. "],
+};
+const STILL_LOOKING = "Still looking. ";
+const MAX_LOOKUP_LINES = 2;
+
+/** The kind of lookup this call is, or null when it is not one: an action
+ *  (saving a fact, queueing work, scheduling) needs no "let me check", and
+ *  the sphere is decoration, not work. */
+function lookupKind(toolName: string, args: Record<string, unknown>): keyof typeof LOOKUP_LINES | null {
+  if (toolName === "voice_visual") return null;
+  const category = categoryOf(toolName);
+  if (category === "computer") return "screen";
+  if (!isReadOnlyCall(toolName, args)) return null;
+  return category === "research" || category === "browser" ? "web" : "other";
+}
+
+let lookupRotation = 0;
 
 /**
  * Accumulates a voice turn's model output with delivery + persist hygiene.
@@ -19,6 +45,8 @@ export const VOICE_GUARD_STOP_NOTICE =
  */
 export class VoiceTurnHygiene {
   private raw = "";
+  private spokeSinceLookup = false;
+  private lookupLines = 0;
 
   /** A model delta arrived. Returns the text TTS should speak, or null when
    *  the delta was junk-only (drop it). Always accumulates the raw delta so
@@ -26,7 +54,25 @@ export class VoiceTurnHygiene {
   delta(rawDelta: string): string | null {
     this.raw += rawDelta;
     const spoken = stripLeakedSpecialTokensStreaming(rawDelta);
+    if (spoken.trim().length > 0) this.spokeSinceLookup = true;
     return spoken.length > 0 ? spoken : null;
+  }
+
+  /** A tool call started. Returns a short line to speak when the model has
+   *  been silent since the turn began or the previous lookup, else null. At
+   *  most two per turn; the second says it is still looking. The line enters
+   *  the stored text, since the user heard it. */
+  lookupStarted(toolName: string, args: Record<string, unknown> = {}): string | null {
+    const kind = lookupKind(toolName, args);
+    if (kind === null) return null;
+    const silent = !this.spokeSinceLookup;
+    this.spokeSinceLookup = false;
+    if (!silent || this.lookupLines >= MAX_LOOKUP_LINES) return null;
+    const lines = LOOKUP_LINES[kind];
+    const line = this.lookupLines === 0 ? lines[lookupRotation++ % lines.length] : STILL_LOOKING;
+    this.lookupLines++;
+    this.raw += line;
+    return line;
   }
 
   /** The stream guard stopped a degenerate reply. Returns the notice to speak;

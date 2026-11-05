@@ -66,3 +66,43 @@ describe("VoiceTurnHygiene", () => {
     expect(h.finalize()).toBe("spoken reply");
   });
 });
+
+describe("VoiceTurnHygiene.lookupStarted — no silent lookups", () => {
+  it("speaks a line when a lookup starts before the model said anything, and keeps it in the transcript", () => {
+    const h = new VoiceTurnHygiene();
+    const line = h.lookupStarted("memory_search");
+    expect(line).toMatch(/\S/);
+    expect(h.delta("Your interview is Tuesday.")).toBe("Your interview is Tuesday.");
+    expect(h.finalize()).toBe(`${line}Your interview is Tuesday.`);
+  });
+
+  it("stays quiet when the model already spoke before the lookup", () => {
+    const h = new VoiceTurnHygiene();
+    h.delta("Sure, let me check. ");
+    expect(h.lookupStarted("web_search")).toBeNull();
+  });
+
+  it("says it is still looking on a second silent lookup, then stops at two", () => {
+    const h = new VoiceTurnHygiene();
+    expect(h.lookupStarted("browser")).not.toBeNull();
+    expect(h.lookupStarted("browser")).toBe("Still looking. ");
+    expect(h.lookupStarted("browser")).toBeNull();
+  });
+
+  it("fills the next silent gap after the model spoke before an earlier lookup", () => {
+    const h = new VoiceTurnHygiene();
+    h.delta("Okay — ");
+    expect(h.lookupStarted("web_search")).toBeNull();
+    expect(h.lookupStarted("memory_search")).not.toBeNull();
+  });
+
+  it("never fills for the sphere or an action (a fact save, a hand-off, scheduling)", () => {
+    const h = new VoiceTurnHygiene();
+    for (const t of ["voice_visual", "remember", "op_submit_async", "mission_schedule_create"]) expect(h.lookupStarted(t)).toBeNull();
+  });
+
+  it("varies the line from one turn to the next", () => {
+    const lines = new Set(Array.from({ length: 3 }, () => new VoiceTurnHygiene().lookupStarted("web_search")));
+    expect(lines.size).toBeGreaterThan(1);
+  });
+});

@@ -12,8 +12,8 @@ export const TOOL_POLICIES_MEMORY: Record<string, ToolPolicyRow> = {
   // measured 71 s stall was a hang that blocked the turn. 30 s, not 15 s: the
   // first search after a cold boot pays the ~16.5 s embedder load. Read-only,
   // so killing a real stall strands nothing.
-  search_past_sessions: { kernel: "retrieval", ariAction: "search", risk: "safe", capabilities: [], tags: [], timeoutMs: 30_000, reads: ["session"], rules: [{ id: "allow-search-past-sessions", decision: "allow", reason: "Search prior chat sessions", priority: 50 }] },
-  memory_search:        { kernel: "retrieval", ariAction: "search", risk: "safe", capabilities: ["sensitive-read"], tags: ["memory-search"], essentialRank: 9, blurb: { say: "what do you know about my projects?", does: "Search long-term memory." }, timeoutMs: 30_000, reads: ["session"], loop: { discovery: true } },
+  search_past_sessions: { kernel: "retrieval", ariAction: "search", risk: "safe", capabilities: [], tags: ["voice-fast"], timeoutMs: 30_000, reads: ["session"], rules: [{ id: "allow-search-past-sessions", decision: "allow", reason: "Search prior chat sessions", priority: 50 }] },
+  memory_search:        { kernel: "retrieval", ariAction: "search", risk: "safe", capabilities: ["sensitive-read"], tags: ["memory-search", "voice-fast"], essentialRank: 9, blurb: { say: "what do you know about my projects?", does: "Search long-term memory." }, timeoutMs: 30_000, reads: ["session"], loop: { discovery: true } },
   // Raw conversation-history paging from the canonical op store (recall-tool.ts).
   // kernel "internal" (local read of ~/.lax op state, no ARI_ACTION_MAP needed).
   // It resolves session → op from the trusted session.
@@ -55,7 +55,7 @@ export const TOOL_POLICIES_MEMORY: Record<string, ToolPolicyRow> = {
   memory_stats:          { kernel: "internal", risk: "safe", capabilities: [], tags: ["memory-search"], blurb: { does: "Show memory statistics." }, liveState: "fresh" },
   memory_set_user_field: { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["memory-facts"], essentialRank: 14, reads: ["session"], memoryWrite: true },
   memory_update_profile: { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["memory-facts"], essentialRank: 13, blurb: { does: "Update your user profile (name, role, preferences)." }, reads: ["session"], memoryWrite: true },
-  remember:    { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["memory-facts"], essentialRank: 15, reads: ["session", "userMessage"], memoryWrite: true, rules: [{ id: "allow-remember", decision: "allow", reason: "Save durable fact to Facts DB (internal)", priority: 50 }] },
+  remember:    { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["memory-facts", "voice-fast"], essentialRank: 15, reads: ["session", "userMessage"], memoryWrite: true, rules: [{ id: "allow-remember", decision: "allow", reason: "Save durable fact to Facts DB (internal)", priority: 50 }] },
   update_fact: { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["memory-facts"], reads: ["session", "userMessage"], memoryWrite: true, rules: [{ id: "allow-update-fact", decision: "allow", reason: "Correct a fact in the Facts DB (internal)", priority: 50 }] },
   // forget's description sends a correction to update_fact ("A correction is
   // update_fact, not forget"). LM Studio eval 2026-10-18 (qwen3.6-27b, medium

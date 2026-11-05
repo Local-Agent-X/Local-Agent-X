@@ -238,6 +238,9 @@ export async function setupVoiceWs(deps: {
           if (canaryTripped(event.delta)) return;
           const spoken = hygiene.delta(event.delta);
           if (spoken !== null) onDelta(spoken);
+        } else if (event.type === "tool_start") {
+          const line = hygiene.lookupStarted(event.toolName, (event.args ?? {}) as Record<string, unknown>);
+          if (line) onDelta(line);
         } else if (event.type === "visual" && onVisual) {
           // Forward the visual directive through to the voice WebSocket.
           onVisual(event.kind, event.value, event.durationMs);

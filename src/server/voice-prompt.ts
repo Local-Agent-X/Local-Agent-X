@@ -40,6 +40,12 @@ export function buildVoiceTail(visualsEnabled: boolean): string {
     "screen_capture to see it (ocr when you need the exact text of an error), " +
     "then answer in a sentence or two. Only capture when they actually refer " +
     "to the screen — not for unrelated questions.\n" +
+    "• Anything from an earlier conversation or about the user's life, plans " +
+    "or projects (\"what did we say about…\", \"when's my interview?\", " +
+    "\"you remember the job description?\"): check memory_search, then " +
+    "search_past_sessions, BEFORE saying you don't know or don't have it. When " +
+    "the user tells you something worth keeping (a date, a decision, a " +
+    "preference), save it with remember.\n" +
     "• Opening or using a website (\"open google\", \"pull up youtube\", \"search " +
     "X\", \"go to my email\"): use the browser tool. It opens and drives the " +
     "agent's OWN visible browser window (the in-app view by default) — yours to control, so you can keep " +

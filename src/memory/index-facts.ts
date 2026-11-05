@@ -8,6 +8,7 @@ import { deriveEntitySlugs, loadKnownEntitySlugs } from "./entity-derive.js";
 export { purgeInvalidatedFacts, validityStats } from "./index-facts-purge.js";
 // Ending a fact's validity, and who may: index-facts-invalidate.ts.
 import { alreadySaid, invalidateFact, resolverMayEnd, savedFromMessage } from "./index-facts-invalidate.js";
+import { findResolverCandidates } from "./resolver-candidates.js";
 export { invalidateFact, type InvalidationActor } from "./index-facts-invalidate.js";
 
 import { createLogger } from "../logger.js";
@@ -235,37 +236,6 @@ export async function retainSmart(
   return { facts, decisions };
 }
 
-function findResolverCandidates(
-  db: InstanceType<typeof Database>,
-  hasFts: boolean,
-  content: string,
-  entities: string[],
-  limit: number
-): Array<{ id: number; content: string; kind: string; timestamp: number }> {
-  if (entities.length === 0) {
-    if (!hasFts) return [];
-    const keywords = content.split(/\s+/).slice(0, 5).join(" OR ");
-    try {
-      const rows = db.prepare(
-        `SELECT f.id, f.content, f.kind, f.timestamp FROM facts f
-         JOIN facts_fts fts ON fts.rowid = f.id
-         WHERE facts_fts MATCH ? AND f.valid_to IS NULL
-         ORDER BY f.timestamp DESC LIMIT ?`
-      ).all(keywords, limit) as Array<{ id: number; content: string; kind: string; timestamp: number }>;
-      return rows;
-    } catch { return []; }
-  }
-  const slugs = entities.map(e => slugify(e)).filter(Boolean);
-  if (slugs.length === 0) return [];
-  const placeholders = slugs.map(() => "?").join(",");
-  const rows = db.prepare(
-    `SELECT DISTINCT f.id, f.content, f.kind, f.timestamp FROM facts f
-     JOIN entity_mentions em ON em.fact_id = f.id
-     WHERE em.entity_slug IN (${placeholders}) AND f.valid_to IS NULL
-     ORDER BY f.timestamp DESC LIMIT ?`
-  ).all(...slugs, limit) as Array<{ id: number; content: string; kind: string; timestamp: number }>;
-  return rows;
-}
 
 export function recallByEntity(
   db: InstanceType<typeof Database>,

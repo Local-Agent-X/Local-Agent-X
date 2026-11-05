@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1919 non-test source files · 85 oversized · 253 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1920 non-test source files · 85 oversized · 253 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -28,7 +28,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/providers/` | 73 | 27 | L | 1 |
 | `src/session/` | 58 | 9 | M |  |
 | `src/data-lineage/` | 57 | 12 | L |  |
-| `src/memory/` | 54 | 149 | XL | 6 |
+| `src/memory/` | 54 | 150 | XL | 6 |
 | `src/browser/` | 47 | 88 | XL | 5 |
 | `src/tool-policy/` | 47 | 21 | L |  |
 | `src/local-runtimes/` | 43 | 26 | XL | 1 |
@@ -331,7 +331,6 @@ job. Comments are free: never cut them to fit.
 - `src/canonical-loop/container-runtime-projection.ts` — 330+ code lines (cap 350)
 - `src/canonical-loop/provider-adapter-factory.ts` — 330+ code lines (cap 350)
 - `src/cognition/cross-session-learning/learner.ts` — 330+ code lines (cap 350)
-- `src/memory/index-facts.ts` — 330+ code lines (cap 350)
 - `src/memory/tools/facts.ts` — 330+ code lines (cap 350)
 - `src/net/egress-proxy-core.ts` — 330+ code lines (cap 350)
 - `src/update-rollback.ts` — 330+ code lines (cap 350)
@@ -357,6 +356,7 @@ job. Comments are free: never cut them to fit.
 - `src/browser/manager.ts` — 300+ code lines (cap 350)
 - `src/canonical-loop/process-execution-backend.ts` — 300+ code lines (cap 350)
 - `src/cron/cron-service.ts` — 300+ code lines (cap 350)
+- `src/memory/index-facts.ts` — 300+ code lines (cap 350)
 - `src/routes/connector-proxy.ts` — 300+ code lines (cap 350)
 - `src/tools/document-tools.ts` — 300+ code lines (cap 350)
 - `src/tools/presentation-tools.ts` — 300+ code lines (cap 350)

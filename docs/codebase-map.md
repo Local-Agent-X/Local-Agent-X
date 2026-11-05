@@ -24,7 +24,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/tools/` | 122 | 224 | XL | 9 |
 | `src/tool-execution/` | 87 | 84 | XL | 2 |
 | `src/workspace/` | 86 | 3 | M |  |
-| `src/canonical-loop/` | 81 | 282 | XL | 11 |
+| `src/canonical-loop/` | 82 | 282 | XL | 11 |
 | `src/providers/` | 73 | 27 | L | 1 |
 | `src/session/` | 58 | 9 | M |  |
 | `src/data-lineage/` | 57 | 12 | L |  |
@@ -418,6 +418,7 @@ job. Comments are free: never cut them to fit.
 - `src/security/layer/network-policy.ts#evaluateWebFetch` — 90+ own code lines (cap 100)
 - `src/security/layer/shell-policy.ts#evaluateShellCommand` — 90+ own code lines (cap 100)
 - `src/server/inbound-channel-runner.ts#runInboundChannelTurn` — 90+ own code lines (cap 100)
+- `src/server/voice-ws.ts#runVoiceTurn` — 90+ own code lines (cap 100)
 - `src/tool-execution/run-sandboxed.ts#runSandboxedPhase` — 90+ own code lines (cap 100)
 - `src/tools/email-send-tool.ts#emailSend.execute` — 90+ own code lines (cap 100)
 - `src/tools/read-write-tools.ts#readTool.execute` — 90+ own code lines (cap 100)
@@ -447,7 +448,6 @@ job. Comments are free: never cut them to fit.
 - `src/server/api-request-router.ts#routeApiRequest` — 80+ own code lines (cap 100)
 - `src/server/background-jobs/dream-check.ts#registerDreamRunner:callback` — 80+ own code lines (cap 100)
 - `src/server/bootstrap-services.ts#bootstrapServices` — 80+ own code lines (cap 100)
-- `src/server/voice-ws.ts#runVoiceTurn` — 80+ own code lines (cap 100)
 - `src/threat/threat-engine.ts#ThreatEngine.evaluateToolResult` — 80+ own code lines (cap 100)
 - `src/tools/asset-tools.ts#extractSiteAssetsTool.execute` — 80+ own code lines (cap 100)
 - `src/tools/image-tools/generate-video.ts#generateVideoTool.execute` — 80+ own code lines (cap 100)

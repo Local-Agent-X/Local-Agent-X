@@ -6,8 +6,14 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { acquireTurn, getActiveTurn, getTurnRegistry, releaseTurn, tryAcquireOrReplace } from "../session/turn-lock.js";
 import type { Session } from "../types.js";
-import { canaryWatch, claimVoiceTurn, commitVoiceTurn } from "./voice-turn-guard.js";
+import { canaryWatch, claimVoiceTurn, commitVoiceTurn, voiceTurnRows } from "./voice-turn-guard.js";
 import type { ThreatEngine } from "../threat/threat-engine.js";
+
+const opRows = new Map<string, { messageId: string; content: string }[]>();
+vi.mock("../canonical-loop/index.js", () => ({
+  readOpMessages: (opId: string) => opRows.get(opId) ?? [],
+  opMessageRowToChatParam: (row: { content: string }) => ({ role: "assistant", content: row.content }),
+}));
 
 let seq = 0;
 const sid = () => `voice-guard-${seq++}`;
@@ -70,9 +76,12 @@ describe("commitVoiceTurn", () => {
     const s = session(id, [{ role: "user", content: "typed earlier" }]);
     const persistTurn = vi.fn(async () => {});
     const saveSession = vi.fn();
-    expect(await commitVoiceTurn({ session: s, sessionId: id, turnSignal: slot!.signal, rows, userText: "hi", replyText: "hello", memoryManager: { persistTurn }, saveSession })).toBe(true);
+    expect(await commitVoiceTurn({ session: s, sessionId: id, turnSignal: slot!.signal, rows, turnMessages: rows, userText: "hi", replyText: "hello", memoryManager: { persistTurn }, saveSession })).toBe(true);
     expect(s.messages.map((m) => m.content)).toEqual(["typed earlier", "hi", "hello"]);
     expect(persistTurn).toHaveBeenCalledWith(expect.objectContaining({ userMessage: "hi", agentResponse: "hello", sessionId: id }));
+    // The memory pass gets the turn's rows: with null it declines every spoken
+    // turn as "not provably clean" and saves no fact from a voice call.
+    expect(persistTurn).toHaveBeenCalledWith(expect.objectContaining({ turnMessages: rows }));
     expect(saveSession).toHaveBeenCalledWith(s);
   });
 
@@ -86,7 +95,7 @@ describe("commitVoiceTurn", () => {
     await typed;
     const s = session(id, [{ role: "user", content: "the newer turn's row" }]);
     const saveSession = vi.fn();
-    expect(await commitVoiceTurn({ session: s, sessionId: id, turnSignal: slot!.signal, rows, userText: "hi", replyText: "hello", memoryManager: { persistTurn: vi.fn() }, saveSession })).toBe(false);
+    expect(await commitVoiceTurn({ session: s, sessionId: id, turnSignal: slot!.signal, rows, turnMessages: rows, userText: "hi", replyText: "hello", memoryManager: { persistTurn: vi.fn() }, saveSession })).toBe(false);
     expect(s.messages).toHaveLength(1);
     expect(saveSession).not.toHaveBeenCalled();
   });
@@ -100,5 +109,24 @@ describe("canaryWatch", () => {
     expect(tripped("the token is CAN")).toBe(false);
     expect(tripped("ARY-123")).toBe(true);
     expect(abort).toHaveBeenCalledOnce();
+  });
+});
+
+describe("voiceTurnRows", () => {
+  it("reads the op's own rows, without the replayed history", async () => {
+    opRows.set("op-1", [
+      { messageId: "hist-0", content: "earlier" },
+      { messageId: "m-1", content: "tool result" },
+      { messageId: "m-2", content: "spoken reply" },
+    ]);
+    expect(await voiceTurnRows("op-1")).toEqual([
+      { role: "assistant", content: "tool result" },
+      { role: "assistant", content: "spoken reply" },
+    ]);
+  });
+
+  it("is null when there is no op or it has no rows, so the memory pass declines", async () => {
+    expect(await voiceTurnRows(undefined)).toBeNull();
+    expect(await voiceTurnRows("op-missing")).toBeNull();
   });
 });

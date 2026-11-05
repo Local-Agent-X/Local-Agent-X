@@ -24,7 +24,7 @@ import { withRecallCarried } from "../agent-request/recall-carry.js";
 import { OP_TYPE } from "../ops/op-types.js";
 import { ThreatEngine } from "../threat/threat-engine.js";
 import type { VoiceTurnInput, VoiceTurnRunner } from "../voice/voice-session/index.js";
-import { VOICE_BUSY_REPLY, canaryWatch, claimVoiceTurn, commitVoiceTurn, type VoiceTurnSlot } from "./voice-turn-guard.js";
+import { VOICE_BUSY_REPLY, canaryWatch, claimVoiceTurn, commitVoiceTurn, voiceTurnRows, type VoiceTurnSlot } from "./voice-turn-guard.js";
 import { createVoiceTurnClock, type VoiceTurnClock } from "./voice-turn-timing.js";
 const logger = createLogger("server.lifecycle");
 
@@ -286,6 +286,7 @@ export async function setupVoiceWs(deps: {
       // stored assistant row carries the same `_interrupted` record the
       // legacy throw-and-catch path produced (as an inline marker, then).
       let aborted = false;
+      let turnOpId: string | undefined;
       try {
         const result = await runAgentViaCanonical(text, prepared.cleanHistory, {
           apiKey: prepared.apiKey,
@@ -352,6 +353,7 @@ export async function setupVoiceWs(deps: {
           promptTelemetry: voicePromptTelemetry,
           renderedPromptSections: voiceRenderedPromptSections,
         });
+        turnOpId = result.opId;
         if (slot.signal.aborted || result.stopReason === "abort") aborted = true;
       } catch (e) {
         if (slot.signal.aborted) {
@@ -391,6 +393,7 @@ export async function setupVoiceWs(deps: {
       await commitVoiceTurn({
         session, sessionId, turnSignal: slot.signal, userText: text, replyText: finalAssistantText,
         rows: withRecallCarried([{ role: "user" as const, content: text }, assistantRow], prepared.recall),
+        turnMessages: await voiceTurnRows(turnOpId),
         memoryManager, saveSession,
       });
 

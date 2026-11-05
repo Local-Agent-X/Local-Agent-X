@@ -192,24 +192,24 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   // reads. So awaiting it just added ~1.5-2s of pre-model latency for nothing
   // user-visible. Fire-and-forget by default; the boost lands long before
   // end-of-turn. Only block on it when the in-prompt nudge is actually on.
-  // Lean callers (voice) skip it entirely.
+  // Lean callers (voice) never block on it, but still run it in the
+  // background: the boost is the end-of-turn pass's only trigger, so skipping
+  // it meant no fact was ever extracted from a spoken conversation.
   let memoryCurateBlock = "";
-  if (!input.leanPrep) {
-    const curateInput = {
-      message: input.message,
-      sessionMessages: input.sessionMessages,
-      sessionId: input.sessionId,
-      resolvedProvider: resolved.provider,
-      resolvedModel: resolved.model,
-      resolvedApiKey: resolved.apiKey,
-    };
-    if (process.env.LAX_MEMORY_INPROMPT_NUDGE === "1") {
-      end = stepStart("detectAndBoostCurate");
-      memoryCurateBlock = await detectAndBoostCurate(curateInput);
-      end();
-    } else {
-      void detectAndBoostCurate(curateInput).catch(() => {});
-    }
+  const curateInput = {
+    message: input.message,
+    sessionMessages: input.sessionMessages,
+    sessionId: input.sessionId,
+    resolvedProvider: resolved.provider,
+    resolvedModel: resolved.model,
+    resolvedApiKey: resolved.apiKey,
+  };
+  if (!input.leanPrep && process.env.LAX_MEMORY_INPROMPT_NUDGE === "1") {
+    end = stepStart("detectAndBoostCurate");
+    memoryCurateBlock = await detectAndBoostCurate(curateInput);
+    end();
+  } else {
+    void detectAndBoostCurate(curateInput).catch(() => {});
   }
 
   // 6. Build the final system prompt (base + blocks + provider rider +

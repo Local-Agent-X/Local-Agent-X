@@ -9,7 +9,7 @@ public/js/chat-status-bar.js#updateStatusBar 114
 public/js/chat-stream-reducer.js#window._chatStreamReduce 176
 public/js/chat-voice-mic.js#startVoiceMode 139
 public/js/chat-voice-ws-handler.js#handleVoiceWsMessage 190
-src/agent-request/prepare-request.ts#prepareAgentRequest 135
+src/agent-request/prepare-request.ts#prepareAgentRequest 133
 src/agent-request/prepare-request/tool-selection.ts#selectTools 109
 src/agent-request/resolve-provider.ts#resolveProvider 114
 src/agent-store/template-defaults.ts#builtInTemplateDefaults 170

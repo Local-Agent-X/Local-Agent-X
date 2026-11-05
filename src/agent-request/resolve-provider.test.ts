@@ -30,6 +30,8 @@ let savedSettings: Record<string, unknown> = {};
 let localModels: Array<{ name: string }> = [];
 // What the provider serves (model-catalog.ts); every model by default.
 let servedModels: ((provider: string, model: string) => boolean) = () => true;
+// Session ids the memory-curate detection ran for.
+const curateRuns: string[] = [];
 
 vi.mock("../providers/model-catalog.js", () => ({
   providerServesModel: (provider: string, model: string) => servedModels(provider, model),
@@ -98,7 +100,7 @@ vi.mock("./prepare-request/tool-selection.js", () => ({
 }));
 
 vi.mock("./prepare-request/curate-nudge.js", () => ({
-  detectAndBoostCurate: async () => "",
+  detectAndBoostCurate: async (input: { sessionId: string }) => { curateRuns.push(input.sessionId); return ""; },
 }));
 
 vi.mock("./prepare-request/build-system-prompt.js", () => ({
@@ -417,5 +419,28 @@ describe("resolveProvider — maxIterations floor (120)", () => {
     savedSettings = { provider: "xai", maxIterations: 200 };
     const res = await resolveProvider(CONFIG, SECRETS, "/tmp", undefined, undefined);
     expect(res.maxIterations).toBe(200);
+  });
+});
+
+/**
+ * The curate detection is the end-of-turn fact pass's only trigger. Voice
+ * prepares lean, and lean used to skip the detection, so no fact was ever
+ * extracted from a spoken conversation.
+ */
+describe("prepareAgentRequest — memory-curate signal", () => {
+  it("runs the detection for a lean (spoken) turn too", async () => {
+    savedSettings = { provider: "xai" };
+    credsPresent.add("xai");
+    curateRuns.length = 0;
+
+    await prepareAgentRequest({
+      channel: "voice", message: "my interview is next Tuesday", sessionMessages: [],
+      sessionId: "sess-voice-curate", config: CONFIG, dataDir: "/tmp",
+      memoryIndex: {} as never, memoryManager: {} as never, integrations: {} as never,
+      secretsStore: SECRETS, allAgentTools: [], bridgeTools: [], leanPrep: true,
+    });
+    await new Promise((r) => setTimeout(r, 0));
+
+    expect(curateRuns).toContain("sess-voice-curate");
   });
 });

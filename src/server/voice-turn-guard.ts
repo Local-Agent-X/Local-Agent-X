@@ -72,6 +72,26 @@ export function canaryWatch(threatEngine: ThreatEngine, abort: () => void): (del
 }
 
 /**
+ * The spoken turn's own op rows (tool calls and results included), for the
+ * end-of-turn pass's untrusted-marker scan, as the typed turn reads them. Null
+ * when the op is unknown or its rows cannot be read: the pass then declines.
+ */
+export async function voiceTurnRows(opId: string | undefined): Promise<unknown[] | null> {
+  if (!opId) return null;
+  try {
+    const { readOpMessages, opMessageRowToChatParam } = await import("../canonical-loop/index.js");
+    const rows = readOpMessages(opId)
+      .filter((row) => !row.messageId.startsWith("hist-"))
+      .map((row) => opMessageRowToChatParam(row))
+      .filter((param) => param !== null);
+    return rows.length > 0 ? rows : null;
+  } catch (e) {
+    logger.warn(`[voice] op rows unreadable for the memory pass: ${(e as Error).message}`);
+    return null;
+  }
+}
+
+/**
  * Add the turn's rows to the thread and run the end-of-turn memory pass. A turn
  * a newer one replaced saves nothing (its view of the thread is stale). Returns
  * whether it saved.
@@ -81,6 +101,8 @@ export async function commitVoiceTurn(input: {
   sessionId: string;
   turnSignal: AbortSignal;
   rows: ChatCompletionMessageParam[];
+  /** The op's rows for the memory pass's marker scan (voiceTurnRows). */
+  turnMessages: unknown[] | null;
   userText: string;
   replyText: string;
   memoryManager: Pick<MemoryManager, "persistTurn">;
@@ -100,9 +122,7 @@ export async function commitVoiceTurn(input: {
         agentResponse: input.replyText,
         sessionId,
         hasExternalTaint: hasExternalIngestion(sessionId),
-        // The spoken turn's tool rows are not projected here, so the marker
-        // scan declines (not provably clean) rather than guessing.
-        turnMessages: null,
+        turnMessages: input.turnMessages,
       });
     } catch (e) {
       logger.warn(`[voice] persistTurn failed (proceeding): ${(e as Error).message}`);

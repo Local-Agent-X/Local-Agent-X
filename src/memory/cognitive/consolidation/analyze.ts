@@ -4,13 +4,30 @@
 
 import { type FactEntry, type MergedFact } from "./types.js";
 import { jaccardSimilarity } from "./utils.js";
+import { tokenizeBasic, jaccardSimilarity as jaccardOfSets } from "../../text-utils.js";
 import { loadSqliteFacts, loadAllRecentFacts } from "./load-facts.js";
+
+/** Each fact's words, split once. The pair loops below split both texts for every
+ *  pair: with ~2,300 facts from the last 30 days that was a 1.1-1.3 s freeze of the
+ *  server's one thread on every consolidation run, cutting a voice call off mid-reply
+ *  (2026-11-05). */
+const wordSetsOf = (facts: FactEntry[]): Set<string>[] => facts.map((f) => new Set(tokenizeBasic(f.content)));
+
+/** Two word sets have Jaccard similarity of at least `min`. Sets of very different
+ *  size cannot reach it (|A∩B|/|A∪B| ≤ smaller/larger), so most pairs end here. */
+function similarAtLeast(a: Set<string>, b: Set<string>, min: number): boolean {
+  const smaller = Math.min(a.size, b.size);
+  const larger = Math.max(a.size, b.size);
+  if (larger > 0 && smaller < min * larger) return false;
+  return jaccardOfSets(a, b) >= min;
+}
 
 export function mergeRelatedFacts(facts: FactEntry[]): MergedFact[] {
   if (facts.length < 2) return [];
 
   const merged: MergedFact[] = [];
   const used = new Set<number>();
+  const words = wordSetsOf(facts);
 
   for (let i = 0; i < facts.length; i++) {
     if (used.has(i)) continue;
@@ -19,8 +36,7 @@ export function mergeRelatedFacts(facts: FactEntry[]): MergedFact[] {
 
     for (let j = i + 1; j < facts.length; j++) {
       if (used.has(j)) continue;
-      const sim = jaccardSimilarity(facts[i].content, facts[j].content);
-      if (sim >= 0.7) {
+      if (similarAtLeast(words[i], words[j], 0.7)) {
         group.push(facts[j]);
         used.add(j);
       }
@@ -71,12 +87,13 @@ export function getPromotionCandidates(): FactEntry[] {
   if (allFacts.length === 0) allFacts = loadAllRecentFacts(30);
 
   // Count similar fact occurrences
+  const words = wordSetsOf(allFacts);
   const occurrences = new Map<number, number>();
   for (let i = 0; i < allFacts.length; i++) {
     if (occurrences.has(i)) continue;
     let count = 1;
     for (let j = i + 1; j < allFacts.length; j++) {
-      if (jaccardSimilarity(allFacts[i].content, allFacts[j].content) >= 0.6) {
+      if (similarAtLeast(words[i], words[j], 0.6)) {
         count++;
         occurrences.set(j, -1); // mark as duplicate
       }

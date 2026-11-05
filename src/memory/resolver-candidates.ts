@@ -11,6 +11,9 @@ export interface ResolverCandidateRow { id: number; content: string; kind: strin
 
 /** Content words the FTS match uses; more than this dilutes the ranking. */
 const MAX_MATCH_WORDS = 12;
+/** Best FTS matches ranked before the current/older filter; far more than the few
+ *  candidates kept, so ended or newer facts near the top cannot crowd them out. */
+const RANKED_POOL = 200;
 
 /**
  * The facts most like `content` by its own words (FTS, best match first),
@@ -42,12 +45,17 @@ export function findResolverCandidates(
   const words = [...tokenizeStrict(content)].slice(0, MAX_MATCH_WORDS);
   if (hasFts && words.length > 0) {
     try {
+      // Ranked inside the FTS index first, then filtered: joining every match to
+      // `facts` before ranking took 0.5–1.1 s for a dozen OR'd words matching 1–5k
+      // facts, all of it on the server's one thread, and the sweep runs it per fact
+      // (voice cut out mid-reply, 2026-11-05). The ranked pool is the same answer.
       add(db.prepare(
-        `SELECT f.id, f.content, f.kind, f.timestamp FROM facts f
-         JOIN facts_fts ON facts_fts.rowid = f.id
-         WHERE facts_fts MATCH ? AND f.valid_to IS NULL ${older}
-         ORDER BY bm25(facts_fts) LIMIT ?`,
-      ).all(words.map((w) => `"${w}"`).join(" OR "), ...olderArgs, limit + 1) as ResolverCandidateRow[]);
+        `SELECT f.id, f.content, f.kind, f.timestamp
+         FROM (SELECT rowid, rank FROM facts_fts WHERE facts_fts MATCH ? ORDER BY rank LIMIT ?) m
+         JOIN facts f ON f.id = m.rowid
+         WHERE f.valid_to IS NULL ${older}
+         ORDER BY m.rank LIMIT ?`,
+      ).all(words.map((w) => `"${w}"`).join(" OR "), RANKED_POOL, ...olderArgs, limit + 1) as ResolverCandidateRow[]);
     } catch { /* FTS unavailable or the query rejected: the entity pass still runs */ }
   }
 

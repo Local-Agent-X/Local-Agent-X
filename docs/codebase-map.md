@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1921 non-test source files · 85 oversized · 253 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1921 non-test source files · 85 oversized · 254 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -544,6 +544,7 @@ job. Comments are free: never cut them to fit.
 - `src/cognition/unspoken-detector.ts#UnspokenDetector.detectBehaviorChange` — 60+ own code lines (cap 100)
 - `src/demo-recorder.ts#DemoRecorder.toMarkdown` — 60+ own code lines (cap 100)
 - `src/llm-dispatch/hosted.ts#callOpenAICompatible` — 60+ own code lines (cap 100)
+- `src/local-runtimes/context-sizing-adapt.ts#observeChatResidency` — 60+ own code lines (cap 100)
 - `src/manifest-generator/summary.ts#getManifestSummary` — 60+ own code lines (cap 100)
 - `src/mcp-bridge.ts#handleRequest` — 60+ own code lines (cap 100)
 - `src/mcp-client/integrity.ts#verifyOrTrust` — 60+ own code lines (cap 100)

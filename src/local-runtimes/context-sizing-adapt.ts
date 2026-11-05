@@ -20,9 +20,15 @@
  * pages to system memory and the runner reports 100% GPU throughout. qwen3.8
  * 27B decoded at 21 tok/s instead of ~120 that way (2026-11-03), and stayed
  * slow until the model reloaded. Its sign is the reply itself: decode at half
- * the rate this decision has shown fully resident or less, on a card the
- * driver shows all but full. That steps down temporarily too, which reloads
- * the model.
+ * the rate this decision has shown fully resident or less, at the same prompt
+ * depth, on a card the driver shows all but full. That steps down temporarily
+ * too, which reloads the model.
+ *
+ * "At the same depth" because a deep prompt slows decode by itself: the 27B
+ * ran 186 tok/s a thousand tokens in and 88-110 tok/s 48k tokens in, fully
+ * resident (2026-11-05). Judged against the short-prompt rate, that second
+ * voice turn read as paging, and the reload it caused threw away the prompt
+ * cache the next turn needed.
  *
  * "Full" is the driver's free VRAM under the safety margin. Free, not "used
  * minus what /api/ps reports": Ollama reports qwen3.8 27B at 18 GB while its
@@ -53,10 +59,14 @@ const HEADROOM_TOLERANCE_BYTES = 512 * 1024 * 1024;
 const PS_TIMEOUT_MS = 2_000;
 /** Replies shorter than this say too little about decode speed. */
 export const MIN_DECODE_TOKENS = 64;
-/** A reply this many times slower than the healthy rate may be paging. Long
- *  context alone costs qwen3.8 27B ~1.5x (147 -> ~100 tok/s at 34k); paging
- *  cost it 2x (a co-loaded 8B: 97 -> 46-50) to 5-7x (120 -> 21). */
+/** A reply this many times slower than the healthy rate at its depth may be
+ *  paging: paging cost qwen3.8 27B 2x (a co-loaded 8B: 97 -> 46-50) to 5-7x
+ *  (120 -> 21), and 45x (186 -> 4, prefill 3,000 -> 72) on 2026-11-05. */
 export const PAGING_SLOWDOWN = 2;
+/** The prompt depth at which decode runs at half its short-prompt rate, fully
+ *  resident. qwen3.8 27B: 186 -> ~100 tok/s at 48k (halving at ~56k), 147 ->
+ *  ~100 at 34k (~72k); the lower one, so depth alone never reads as paging. */
+export const DECODE_HALVING_DEPTH = 56_000;
 /** ...on a card with less than this free: the line between full and not.
  *  Every paging state measured on the 5090 had 587-954 MiB free; the same
  *  card healthy at the old 172k size had 1,035 MiB, and the margin now leaves
@@ -79,6 +89,8 @@ export interface AdaptDeps {
 export interface ReplyDecode {
   tokens: number;
   durationNs: number;
+  /** The prompt it decoded after, in tokens (prompt_eval_count); 0 when unknown. */
+  contextTokens?: number;
 }
 
 async function readPs(root: string): Promise<unknown> {
@@ -90,8 +102,17 @@ async function readPs(root: string): Promise<unknown> {
   }
 }
 
-function decodeRate(reply: ReplyDecode | undefined): number | null {
-  return reply && reply.tokens >= MIN_DECODE_TOKENS && reply.durationNs > 0 ? reply.tokens / (reply.durationNs / 1e9) : null;
+/** How much slower than at an empty prompt a fully resident model decodes this deep. */
+function depthSlowdown(contextTokens: number): number {
+  return 1 + contextTokens / DECODE_HALVING_DEPTH;
+}
+
+/** The reply's decode rate, as tokens/s, and scaled to an empty prompt: the
+ *  measure every yardstick and comparison here uses. */
+function decodeRate(reply: ReplyDecode | undefined): { raw: number; shallow: number } | null {
+  if (!reply || reply.tokens < MIN_DECODE_TOKENS || reply.durationNs <= 0) return null;
+  const raw = reply.tokens / (reply.durationNs / 1e9);
+  return { raw, shallow: raw * depthSlowdown(reply.contextTokens ?? 0) };
 }
 
 /** Free VRAM per the driver, or null without a measured GPU or a reading. */
@@ -142,7 +163,7 @@ export async function observeChatResidency(
   const rate = decodeRate(reply);
   // Still slow after a step-down: that step was not enough, so take another.
   const slow = spill === 0 && rate !== null && record.healthyDecodeTokPerSec !== undefined
-    && rate * PAGING_SLOWDOWN < record.healthyDecodeTokPerSec;
+    && rate.shallow * PAGING_SLOWDOWN < record.healthyDecodeTokPerSec;
   const free = spill > 0 || override || slow ? await freeVram(record, deps) : null;
   const cardFull = free !== null && record.gpu !== null && free < safetyMarginBytes(record.gpu.totalBytes);
 
@@ -167,7 +188,9 @@ export async function observeChatResidency(
   }
   if (slow && free !== null && free < FULL_CARD_FREE_BYTES) {
     const next = stepDownWhileContended(key, record, applied, PAGING_SHED_BYTES, now);
-    if (next !== null) logger.warn(`${model}: decoding at ${rate!.toFixed(0)} tok/s against ${record.healthyDecodeTokPerSec!.toFixed(0)} when fully resident, with ${(free / 1e9).toFixed(1)} GB of VRAM free: the card is paging to system memory; reloading at ${next} tokens until it has room`);
+    const depth = reply?.contextTokens ?? 0;
+    const expected = record.healthyDecodeTokPerSec! / depthSlowdown(depth);
+    if (next !== null) logger.warn(`${model}: decoding at ${rate!.raw.toFixed(0)} tok/s ${depth} tokens deep, against ${expected.toFixed(0)} there when fully resident, with ${(free / 1e9).toFixed(1)} GB of VRAM free: the card is paging to system memory; reloading at ${next} tokens until it has room`);
     return;
   }
   if (override) {
@@ -185,7 +208,8 @@ export async function observeChatResidency(
 
 /** A fully resident reply at the decided size: verify the decision once, and
  *  keep the fastest decode it has shown as the paging yardstick. */
-function recordResident(model: string, record: SizingRecord, vram: number, applied: number, rate: number | null, now: number, store?: ContextSizingStore): void {
+function recordResident(model: string, record: SizingRecord, vram: number, applied: number, decode: { shallow: number } | null, now: number, store?: ContextSizingStore): void {
+  const rate = decode?.shallow ?? null;
   const faster = rate !== null && rate > (record.healthyDecodeTokPerSec ?? 0);
   if (record.verification === "verified" && !faster) return;
   saveContextSizingRecord({

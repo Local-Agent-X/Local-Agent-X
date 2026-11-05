@@ -31,7 +31,7 @@ import { ollamaProbe } from "../../local-runtimes/ollama-probe.js";
 import { getLocalModel } from "../../local-runtimes/cache.js";
 import type { ThinkingSpec } from "../../local-runtimes/types.js";
 import { appliedContext } from "../../local-runtimes/context-sizing.js";
-import { observeChatResidency } from "../../local-runtimes/context-sizing-adapt.js";
+import { observeChatResidency, type ReplyDecode } from "../../local-runtimes/context-sizing-adapt.js";
 import { MODEL_KEEP_ALIVE } from "../../local-runtimes/residency.js";
 import { createLogger } from "../../logger.js";
 
@@ -165,8 +165,8 @@ export class OllamaNativeAdapter extends BaseAdapter {
       return;
     }
     let completed = false;
-    let decode: { tokens: number; durationNs: number } | undefined;
-    const onDecode = (tokens: number, durationNs: number) => { decode = { tokens, durationNs }; };
+    let decode: ReplyDecode | undefined;
+    const onDecode = (tokens: number, durationNs: number, contextTokens: number) => { decode = { tokens, durationNs, contextTokens }; };
     try {
       for await (const chunk of parseOllamaChatStream(res.body, { signal: req.signal, startedAt, onDecode })) {
         if (chunk.type === "done") completed = chunk.stopReason !== "abort";

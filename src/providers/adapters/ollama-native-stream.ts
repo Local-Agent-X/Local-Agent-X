@@ -74,8 +74,9 @@ export async function* parseOllamaChatStream(
   opts: {
     signal?: AbortSignal;
     startedAt: number;
-    /** The reply's decode (eval_count tokens in eval_duration ns), when the final line carries both. */
-    onDecode?: (tokens: number, durationNs: number) => void;
+    /** The reply's decode (eval_count tokens in eval_duration ns), when the final line carries both,
+     *  and the prompt it decoded after (prompt_eval_count: the whole prompt, cached part included). */
+    onDecode?: (tokens: number, durationNs: number, promptTokens: number) => void;
   },
 ): AsyncIterable<StreamChunk> {
   const calls: Array<{ id: string; name: string; arguments: string }> = [];
@@ -120,7 +121,7 @@ export async function* parseOllamaChatStream(
       const cached = count(line.prompt_eval_cached_count);
       if (prompt || completion) usage = { promptTokens: prompt, completionTokens: completion, ...(cached !== undefined ? { cachedTokens: cached } : {}) };
       const decodeNs = count(line.eval_duration);
-      if (completion && decodeNs) opts.onDecode?.(completion, decodeNs);
+      if (completion && decodeNs) opts.onDecode?.(completion, decodeNs, prompt);
     }
   }
 

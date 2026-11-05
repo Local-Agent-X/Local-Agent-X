@@ -141,13 +141,13 @@ describe("paging that /api/ps does not report", () => {
   // reported, ~28 GB held), so the driver's reading is given directly here,
   // never derived from the rows.
   const TOTAL = RTX_5090.totalBytes;
-  async function reply(rows: Array<{ size_vram: number }>, freeBytes: number | null, tokPerSec: number, tokens = 240): Promise<void> {
+  async function reply(rows: Array<{ size_vram: number }>, freeBytes: number | null, tokPerSec: number, tokens = 240, contextTokens = 0): Promise<void> {
     await observeChatResidency(ROOT, MODEL, {
       ps: async () => ({ models: rows }),
       gpuUsed: async () => (freeBytes === null ? null : TOTAL - freeBytes),
       now: () => now,
       store: new ContextSizingStore(join(dir, "local-context-sizing.json")),
-    }, { tokens, durationNs: (tokens / tokPerSec) * 1e9 });
+    }, { tokens, durationNs: (tokens / tokPerSec) * 1e9, contextTokens });
   }
   const resident = [chat(SIZED, 18e9), embedder];
 
@@ -219,6 +219,23 @@ describe("paging that /api/ps does not report", () => {
     expect(appliedContext(ROOT, MODEL)).toBe(SIZED);
     await reply(resident, 0.9e9, 46);
     expect(appliedContext(ROOT, MODEL)).toBeLessThan(SIZED);
+  });
+
+  it("does not read a deep prompt's slower decode as paging (live 2026-11-05: 186 tok/s 1k deep, 88 at 48.7k)", async () => {
+    await reply(resident, 4e9, 186, 96, 1_407);
+    await reply(resident, 1.0e9, 88, 161, 48_747);
+    expect(appliedContext(ROOT, MODEL)).toBe(SIZED);
+  });
+
+  it("still catches paging deep in a prompt (live 2026-11-05: 4 tok/s 18k deep)", async () => {
+    await reply(resident, 4e9, 186, 96, 1_407);
+    await reply(resident, 0.8e9, 4, 89, 18_431);
+    expect(appliedContext(ROOT, MODEL)).toBeLessThan(SIZED);
+  });
+
+  it("keeps a deep reply's rate as a yardstick scaled to an empty prompt", async () => {
+    await reply(resident, 4e9, 100, 240, 56_000);
+    expect(persisted()?.healthyDecodeTokPerSec).toBe(200);
   });
 
   it("has no yardstick before a fully resident reply, so a first slow reply changes nothing", async () => {

@@ -226,13 +226,13 @@ describe("OllamaNativeAdapter stream", () => {
     expect((chunks.at(-1) as { firstTokenMs?: number }).firstTokenMs).toBeGreaterThanOrEqual(0);
   });
 
-  it("reports the reply's decode, eval_count tokens in eval_duration, and nothing without the duration", async () => {
+  it("reports the reply's decode, eval_count tokens in eval_duration after prompt_eval_count, and nothing without the duration", async () => {
     const decodes = async (final: Record<string, unknown>) => {
-      const seen: Array<[number, number]> = [];
-      for await (const _ of parseOllamaChatStream(ndjson([done(final)]).body!, { startedAt: Date.now(), onDecode: (t, ns) => seen.push([t, ns]) })) { /* drain */ }
+      const seen: Array<[number, number, number]> = [];
+      for await (const _ of parseOllamaChatStream(ndjson([done(final)]).body!, { startedAt: Date.now(), onDecode: (t, ns, p) => seen.push([t, ns, p]) })) { /* drain */ }
       return seen;
     };
-    expect(await decodes({ eval_count: 240, eval_duration: 2e9 })).toEqual([[240, 2e9]]);
+    expect(await decodes({ eval_count: 240, eval_duration: 2e9, prompt_eval_count: 48_747 })).toEqual([[240, 2e9, 48_747]]);
     expect(await decodes({ eval_count: 240 })).toEqual([]);
   });
 

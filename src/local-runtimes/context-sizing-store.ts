@@ -40,7 +40,8 @@ export const SizingRecordSchema = z.object({
   decidedAt: z.string(),
   verifiedAt: z.string().optional(),
   /** The fastest decode a fully resident reply has shown at this decision,
-   *  tokens/s: the yardstick for paging no spill reports (context-sizing-adapt.ts). */
+   *  tokens/s scaled to an empty prompt: the yardstick for paging no spill
+   *  reports (context-sizing-adapt.ts). */
   healthyDecodeTokPerSec: z.number().positive().optional(),
 }).strict();
 

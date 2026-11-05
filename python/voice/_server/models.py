@@ -64,6 +64,23 @@ def _load_stt():
     return _stt
 
 
+def _unload_stt():
+    """Free the STT model's GPU memory. It loads again on the next call that
+    needs desktop listening (a phone that transcribes on-device does not)."""
+    global _stt
+    if _stt is None:
+        return
+    model, _stt = _stt, None
+    try:
+        # CTranslate2 holds the weights; unload_model releases them now rather
+        # than whenever the Python object is collected.
+        model.model.unload_model()
+    except Exception as e:
+        log.warning(f"faster-whisper unload_model failed ({e}); dropping the reference")
+    del model
+    log.info("faster-whisper unloaded (no call is using desktop listening)")
+
+
 def _load_vad():
     global _vad_model
     if _vad_model is not None:

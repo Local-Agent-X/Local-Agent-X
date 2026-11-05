@@ -17,7 +17,7 @@ Hard architectural commitments (per agent design review):
 
 Protocol (ws://127.0.0.1:7008/voice):
   Node → server (JSON text frames):
-    {"cmd":"init"}
+    {"cmd":"init","stt":bool}                       # stt false: the client transcribes (a phone on-device)
     {"cmd":"audio","pcm":"<b64 16kHz int16>"}     # ~30ms chunk, continuous
     {"cmd":"flush"}                                # force VAD to emit final
     {"cmd":"tts","text":"...","id":<int>}         # queue a sentence
@@ -84,14 +84,16 @@ async def lifespan(app):
     else:
         log.warning("onnxruntime CUDAExecutionProvider not available - voice will be slow on cpu")
     # Pre-warm models so the first voice session doesn't pay model-load
-    # latency. Skip via LAX_VOICE_PRELOAD=0 for fast dev iteration.
+    # latency. Skip via LAX_VOICE_PRELOAD=0 for fast dev iteration. STT is not
+    # pre-warmed: it loads when a call needs desktop listening and unloads when
+    # none has for a while (_acquire_stt), so a phone that transcribes on-device
+    # leaves its GPU memory to the chat model.
     if os.environ.get("LAX_VOICE_PRELOAD", "1") == "1":
         log.info("pre-warming models...")
         try:
-            _load_stt()
             _load_vad()
             _load_tts()
-            log.info("all models pre-warmed")
+            log.info("vad + tts pre-warmed (stt loads per call)")
         except Exception as e:
             log.exception(f"pre-warm failed (continuing, will retry on first request): {e}")
     yield
@@ -105,12 +107,13 @@ app = FastAPI(lifespan=lifespan)
 async def healthz():
     # `ready` is the canonical "fully booted" signal voice-setup.ts checks.
     # Without it the picker shows "Installed, not running" even though the
-    # sidecar is fine. Ready = both STT + TTS pre-warmed.
+    # sidecar is fine. Ready = TTS pre-warmed; STT loads per call (see
+    # _acquire_stt), so `stt` says only whether it is loaded right now.
     stt_ready = models._stt is not None
     tts_ready = models._tts is not None
     return {
         "ok": True,
-        "ready": stt_ready and tts_ready,
+        "ready": tts_ready,
         "stt": stt_ready,
         "tts": tts_ready,
         "gpu": _detect_gpu() or "cpu-only",
@@ -164,10 +167,52 @@ async def synth(req: Request):
     return Response(content=wav, media_type="audio/wav", headers={"X-Voice": voice, "X-Sample-Rate": str(int(sr))})
 
 
+# Desktop listening (STT) is held only while a call uses it. A call whose phone
+# transcribes on-device sends init with "stt": false and never loads it. When
+# the last call using it ends, the model unloads after STT_IDLE_UNLOAD_S, so a
+# string of calls does not reload it each time.
+STT_IDLE_UNLOAD_S = float(os.environ.get("LAX_STT_IDLE_UNLOAD_S", "600"))
+_stt_users = 0
+_stt_unload_task = None
+_stt_lock = asyncio.Lock()
+
+
+async def _acquire_stt():
+    global _stt_users, _stt_unload_task
+    async with _stt_lock:
+        _stt_users += 1
+        if _stt_unload_task is not None:
+            _stt_unload_task.cancel()
+            _stt_unload_task = None
+        # Off the event loop: loading takes seconds and other calls keep speaking.
+        await asyncio.get_running_loop().run_in_executor(None, _load_stt)
+
+
+async def _release_stt():
+    global _stt_users, _stt_unload_task
+    async with _stt_lock:
+        _stt_users = max(0, _stt_users - 1)
+        if _stt_users == 0 and _stt_unload_task is None:
+            _stt_unload_task = asyncio.create_task(_unload_stt_when_idle())
+
+
+async def _unload_stt_when_idle():
+    global _stt_unload_task
+    try:
+        await asyncio.sleep(STT_IDLE_UNLOAD_S)
+    except asyncio.CancelledError:
+        return
+    async with _stt_lock:
+        _stt_unload_task = None
+        if _stt_users == 0:
+            models._unload_stt()
+
+
 @app.websocket("/voice")
 async def voice_ws(ws: WebSocket):
     await ws.accept()
     sess = Session(ws)
+    uses_stt = False
     try:
         while True:
             raw = await ws.receive_text()
@@ -183,7 +228,10 @@ async def voice_ws(ws: WebSocket):
 
             elif cmd == "init":
                 try:
-                    _load_stt()
+                    # "stt": false — the client transcribes itself (a phone on-device).
+                    if msg.get("stt", True) is not False and not uses_stt:
+                        uses_stt = True
+                        await _acquire_stt()
                     _load_vad()
                     _load_tts()
                     await sess._send({
@@ -238,6 +286,8 @@ async def voice_ws(ws: WebSocket):
         log.exception("ws fatal")
     finally:
         await sess.stop_tts_worker()
+        if uses_stt:
+            await _release_stt()
 
 
 def main():

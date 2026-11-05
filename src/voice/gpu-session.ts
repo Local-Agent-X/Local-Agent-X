@@ -28,6 +28,10 @@ const CLAUSE_BREAK = /[,;:]\s+/;  // also split on semicolons/colons, not just c
 const CLAUSE_MIN_CHARS = 30;       // was 60; smaller chunks reduce per-sentence synth time so RTF~1 hardware leaves shorter audible gaps
 
 export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRunner): VoiceSession {
+  // The phone transcribes on-device (ADR 0010 in agentxos-mobile): its words arrive as
+  // `transcript` frames, its mic audio is not ours to transcribe, and the sidecar never
+  // loads its STT model for this call. Speaking stays here.
+  const clientStt = ctx.clientStt === true;
   let bridge: GPUBridge | null = null;
   let bridgeReady = false;
   let closed = false;
@@ -214,7 +218,7 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
     onDisconnect: () => {
       if (!closed) ctx.sendEvent({ type: "voice_error", message: "GPU sidecar disconnected" });
     },
-  });
+  }, undefined, { stt: !clientStt });
 
   bridge.ready().catch((e: Error & { code?: string }) => {
     // ECONNREFUSED here means the user opted into GPU voice but hasn't
@@ -231,7 +235,7 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
 
   return {
     onMicFrame(frame: Int16Array) {
-      if (closed) return;
+      if (closed || clientStt) return;
       if (!bridgeReady) {
         if (pendingFrames.length < 17) pendingFrames.push(new Int16Array(frame));
         return;
@@ -252,7 +256,27 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
     },
 
     onEndOfSpeech() {
-      if (!closed) bridge?.flush();
+      if (!closed && !clientStt) bridge?.flush();
+    },
+
+    // The phone's own recognizer (clientStt). It has already dropped background talkers
+    // and noise, so a final is the user's words. A non-final frame says the user started
+    // talking: that is the barge-in, since the phone's audio no longer reaches us. An
+    // empty final is an utterance the phone heard nothing in.
+    onTranscript(text: string, isFinal: boolean) {
+      if (closed || !clientStt) return;
+      const t = text.trim();
+      if (!isFinal) {
+        machine.interrupt();
+        pendingTtsCount = 0;
+        if (t) ctx.sendEvent({ type: "partial", text: t });
+        return;
+      }
+      if (!t) {
+        machine.discardUtterance("phone heard nothing");
+        return;
+      }
+      void machine.handleFinalTranscript(t);
     },
 
     onVoiceSettings(settings) {

@@ -78,7 +78,12 @@ interface ServerMsg {
 
 const DEFAULT_PORT = parseInt(process.env.LAX_VOICE_PORT || "7008", 10);
 
-export function createGPUBridge(cb: GPUBridgeCallbacks = {}, port: number = DEFAULT_PORT): GPUBridge {
+/**
+ * @param opts.stt false when the client transcribes on its own (a phone on-device):
+ *   the sidecar then never loads its STT model for this call, which leaves that GPU
+ *   memory to the chat model.
+ */
+export function createGPUBridge(cb: GPUBridgeCallbacks = {}, port: number = DEFAULT_PORT, opts: { stt?: boolean } = {}): GPUBridge {
   let ws: WebSocket | null = null;
   let readyResolve: (() => void) | null = null;
   let readyReject: ((e: Error) => void) | null = null;
@@ -97,7 +102,7 @@ export function createGPUBridge(cb: GPUBridgeCallbacks = {}, port: number = DEFA
     ws.on("open", () => {
       connected = true;
       logger.info(`[gpu-bridge] open — sending init`);
-      send({ cmd: "init" });
+      send({ cmd: "init", stt: opts.stt !== false });
     });
 
     ws.on("message", (data: WebSocket.RawData) => {

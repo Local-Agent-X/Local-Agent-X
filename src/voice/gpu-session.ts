@@ -185,6 +185,7 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
         logger.info(`[gpu-session] ${ctx.sessionId}: utterance loudness=${nf.loudness.toFixed(4)} floor=${nf.floor.toFixed(4)} ${nf.pass ? "kept" : "dropped"}`);
         if (!nf.pass) {
           logger.info(`[gpu-session] ${ctx.sessionId}: dropped far-field utterance "${text.slice(0, 40)}" (loudness=${nf.loudness.toFixed(4)} < floor=${nf.floor.toFixed(4)})`);
+          machine.discardUtterance("far-field utterance");
           return;
         }
       }

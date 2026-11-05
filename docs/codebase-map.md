@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1921 non-test source files · 85 oversized · 254 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1921 non-test source files · 85 oversized · 253 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -25,13 +25,13 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/tool-execution/` | 87 | 84 | XL | 2 |
 | `src/workspace/` | 86 | 3 | M |  |
 | `src/canonical-loop/` | 82 | 282 | XL | 11 |
-| `src/providers/` | 73 | 27 | L | 1 |
+| `src/providers/` | 74 | 27 | L | 1 |
 | `src/session/` | 58 | 9 | M |  |
 | `src/data-lineage/` | 57 | 12 | L |  |
 | `src/memory/` | 54 | 151 | XL | 6 |
 | `src/browser/` | 47 | 88 | XL | 5 |
 | `src/tool-policy/` | 47 | 21 | L |  |
-| `src/local-runtimes/` | 43 | 26 | XL | 1 |
+| `src/local-runtimes/` | 44 | 26 | XL | 1 |
 | `src/threat/` | 43 | 13 | L |  |
 | `src/util/` | 42 | 3 | S |  |
 | `src/auth/` | 36 | 11 | L |  |
@@ -519,7 +519,6 @@ job. Comments are free: never cut them to fit.
 - `src/tools/setting-tool.ts#settingTool.execute` — 70+ own code lines (cap 100)
 - `src/voice/gpu-session.ts#createGpuSession` — 70+ own code lines (cap 100)
 - `src/voice/tts-model-fetch.ts#doDownload` — 70+ own code lines (cap 100)
-- `src/voice/voice-session/turn-runner.ts#handleFinalTranscript` — 70+ own code lines (cap 100)
 - `src/agency/agent-workspace.ts#provisionAgentWorkspace` — 60+ own code lines (cap 100)
 - `src/auth/anthropic-login.ts#completeAnthropicCliOAuth` — 60+ own code lines (cap 100)
 - `src/auto-build/orchestrator/resume.ts#computeResumeWindow` — 60+ own code lines (cap 100)

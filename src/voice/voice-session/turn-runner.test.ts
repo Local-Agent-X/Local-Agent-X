@@ -160,14 +160,14 @@ describe("voice turn machine", () => {
 });
 
 describe("voice turn machine — noise gate", () => {
-  it("drops a Whisper stage-direction final entirely: no event, no turn", async () => {
+  it("drops a Whisper stage-direction final: no final, no turn, only the preview cleared", async () => {
     const h = harness();
     const runTurn = vi.fn(twoDeltaRun);
     const machine = createVoiceTurnMachine({ ctx: h.ctx, runTurn, speaker: h.speaker, cancelTts: () => {}, isClosed: () => false, logger });
 
     await machine.handleFinalTranscript("(muffled speaking");
 
-    expect(h.types()).toEqual([]);
+    expect(h.events).toEqual([{ type: "partial", text: "" }]);
     expect(runTurn).not.toHaveBeenCalled();
   });
 });
@@ -209,9 +209,48 @@ describe("voice turn machine — continuation merge", () => {
     expect(inputs[1].continuationOf).toBe("I was thinking about this");
   });
 
-  it("survives a noise final between the barge-in and the real continuation", async () => {
+  // A runTurn whose first TWO calls hang until barge-in aborts them.
+  function makeTwiceHangingRun() {
+    const inputs: Array<{ text: string; continuationOf?: string }> = [];
+    const run: VoiceTurnRunner = async (input) => {
+      inputs.push({ text: input.text, continuationOf: input.continuationOf });
+      if (inputs.length <= 2) {
+        await new Promise<void>((res) => input.signal.addEventListener("abort", () => res()));
+        return { assistantText: "", updatedHistory: input.history };
+      }
+      return twoDeltaRun(input);
+    };
+    return { inputs, run };
+  }
+
+  it("a barge-in that turns out to be noise resumes the reply it cut off", async () => {
+    // 2026-11-05: the agent's own voice on speakerphone barged in on the next
+    // turn, was dropped as far-field, and the user's words went unanswered.
     const h = harness();
     const { inputs, run } = makeHangingRun();
+    const machine = createVoiceTurnMachine({ ctx: h.ctx, runTurn: run, speaker: h.speaker, cancelTts: () => {}, isClosed: () => false, logger });
+
+    const p1 = machine.handleFinalTranscript("I'm about to get up.");
+    await Promise.resolve();
+    machine.interrupt();
+    await p1;
+    h.events.length = 0;
+
+    machine.discardUtterance("far-field utterance");
+    await vi.waitFor(() => expect(inputs).toHaveLength(2));
+
+    // Same words, replacing the interrupted turn; no second `final` (the user's
+    // line is already on screen), and the stale live preview is cleared.
+    expect(inputs[1]).toEqual({ text: "I'm about to get up.", continuationOf: "I'm about to get up." });
+    expect(h.types()[0]).toBe("partial");
+    expect(h.events[0]).toMatchObject({ text: "" });
+    expect(h.types()).not.toContain("final");
+    expect(h.types()).toContain("agent_start");
+  });
+
+  it("a noise final resumes too, and a user still talking merges into the resumed turn", async () => {
+    const h = harness();
+    const { inputs, run } = makeTwiceHangingRun();
     const machine = createVoiceTurnMachine({ ctx: h.ctx, runTurn: run, speaker: h.speaker, cancelTts: () => {}, isClosed: () => false, logger });
 
     const p1 = machine.handleFinalTranscript("first half of the thought");
@@ -220,9 +259,24 @@ describe("voice turn machine — continuation merge", () => {
     await p1;
 
     await machine.handleFinalTranscript("(muffled speaking"); // dropped by the noise gate
+    await vi.waitFor(() => expect(inputs).toHaveLength(2));
+    expect(inputs[1].text).toBe("first half of the thought");
+
+    machine.interrupt(); // the user keeps talking over the resumed turn
     await machine.handleFinalTranscript("second half here");
 
-    expect(inputs[1].text).toBe("first half of the thought second half here");
+    expect(inputs[2]).toEqual({ text: "first half of the thought second half here", continuationOf: "first half of the thought" });
+  });
+
+  it("a discarded utterance with nothing interrupted only clears the preview", async () => {
+    const h = harness();
+    const runTurn = vi.fn(twoDeltaRun);
+    const machine = createVoiceTurnMachine({ ctx: h.ctx, runTurn, speaker: h.speaker, cancelTts: () => {}, isClosed: () => false, logger });
+
+    machine.discardUtterance("far-field utterance");
+
+    expect(h.events).toEqual([{ type: "partial", text: "" }]);
+    expect(runTurn).not.toHaveBeenCalled();
   });
 
   it("does NOT merge when the user heard a real chunk of the reply first", async () => {

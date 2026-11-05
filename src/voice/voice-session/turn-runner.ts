@@ -90,6 +90,9 @@ export interface VoiceTurnMachine {
   /** Run a turn from an authoritative final transcript. `sttMs` (when the
    *  engine measured it) rides along on the `final` event + timing log. */
   handleFinalTranscript(rawText: string, sttMs?: number): Promise<void>;
+  /** The utterance that just ended will never be a turn (the engine dropped it
+   *  as far-field or too short, or it transcribed to nothing). */
+  discardUtterance(reason: string): void;
   /** Barge-in: user spoke during an active reply. No-op when idle. */
   interrupt(): void;
   /** Engine shipped a TTS audio chunk of `ms` playback duration to the browser. */
@@ -248,16 +251,37 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
     tryDrainProactive();
   }
 
+  /**
+   * An utterance that never becomes a turn still ended: clear its live preview,
+   * and when it is what cut off the last reply before the user heard it (an
+   * armed continuation), ask for that reply again. Waiting for "the next real
+   * final" instead left the user's words unanswered whenever nothing followed:
+   * on a speakerphone call the agent's own voice barged in on the next turn, was
+   * dropped as far-field, and the call sat on "Listening" (2026-11-05). If the
+   * user was in fact still talking, they barge in on the resumed turn and the
+   * continuation merges as before.
+   */
+  function discardUtterance(reason: string): void {
+    if (isClosed()) return;
+    ctx.sendEvent({ type: "partial", text: "" });
+    if (!continuation || activeTurn) return;
+    const { text, at } = continuation;
+    continuation = null;
+    if (Date.now() - at >= CONTINUATION_WINDOW_MS) return;
+    logger.info(`[turn] ${sid}: ${reason}; resuming the interrupted utterance`);
+    void runAgentTurn(text, text);
+  }
+
   async function handleFinalTranscript(rawText: string, sttMs?: number): Promise<void> {
     if (isClosed()) return;
     // Noise gate: Whisper hallucinates stage directions ("(muffled speaking",
     // "[BLANK_AUDIO]") on quiet or cut-off audio. Those must never become a
     // user turn — the agent would answer the garbage ("I didn't catch that")
-    // instead of the user's actual words. An armed continuation survives a
-    // dropped noise final and waits for the next real one.
+    // instead of the user's actual words.
     const utterance = stripTranscriptNoise(rawText);
     if (!utterance) {
       if (rawText.trim()) logger.info(`[turn] ${sid}: dropped noise-only final: "${rawText.trim().slice(0, 40)}"`);
+      discardUtterance("noise-only final");
       return;
     }
     if (activeTurn) {
@@ -284,7 +308,12 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
       logger.info(`[turn] ${sid}: dictate final, skipping agent/TTS`);
       return;
     }
+    await runAgentTurn(turnText, continuationOf, sttMs);
+  }
 
+  /** The model turn for `turnText`, from agent_start to the playback hand-off.
+   *  `continuationOf` is the barged-over utterance it replaces, if any. */
+  async function runAgentTurn(turnText: string, continuationOf: string | undefined, sttMs?: number): Promise<void> {
     ctx.sendEvent({ type: "agent_start" });
     // Capture the controller locally. interrupt() aborts it AND nulls the
     // shared `activeTurn` synchronously, so checking `activeTurn?.signal` after
@@ -373,5 +402,5 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
     activeTurn = null;
   }
 
-  return { handleFinalTranscript, interrupt, noteAudioShipped, markTtsDrained, speakProactive, close };
+  return { handleFinalTranscript, discardUtterance, interrupt, noteAudioShipped, markTtsDrained, speakProactive, close };
 }

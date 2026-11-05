@@ -255,6 +255,7 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
       const audio = buffers.drain();
       if (audio.length < buffers.MIN_SAMPLES) {
         logger.info(`[voice-session] ${ctx.sessionId}: utterance too short (${audio.length} samples), skipping Whisper`);
+        machine.discardUtterance("utterance too short");
         return;
       }
       // Near-field gate: drop far-field/background utterances before Whisper so
@@ -262,6 +263,7 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
       const nf = nearField.accept(audio);
       if (!nf.pass) {
         logger.info(`[voice-session] ${ctx.sessionId}: dropped far-field utterance (loudness=${nf.loudness.toFixed(4)} < floor=${nf.floor.toFixed(4)})`);
+        machine.discardUtterance("far-field utterance");
         return;
       }
       if (!whisper) return;
@@ -274,6 +276,7 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
           const t = text.trim();
           if (!t) {
             ctx.sendEvent({ type: "whisper_empty" });
+            machine.discardUtterance("empty transcript");
             return;
           }
           void machine.handleFinalTranscript(t, Date.now() - sttStart);

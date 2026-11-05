@@ -19,7 +19,7 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { VoiceSessionContext } from "../audio-ws.js";
 import type { VoiceTurnRunner } from "./types.js";
-import { stripTranscriptNoise } from "../transcript-noise.js";
+import { collapseLoopedRepeats, stripTranscriptNoise } from "../transcript-noise.js";
 
 // Continuation merge: a barge-in that lands before the user heard more than
 // this much of the reply almost always means "I wasn't done talking", not
@@ -278,7 +278,7 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
     // "[BLANK_AUDIO]") on quiet or cut-off audio. Those must never become a
     // user turn — the agent would answer the garbage ("I didn't catch that")
     // instead of the user's actual words.
-    const utterance = stripTranscriptNoise(rawText);
+    const utterance = collapseLoopedRepeats(stripTranscriptNoise(rawText));
     if (!utterance) {
       if (rawText.trim()) logger.info(`[turn] ${sid}: dropped noise-only final: "${rawText.trim().slice(0, 40)}"`);
       discardUtterance("noise-only final");

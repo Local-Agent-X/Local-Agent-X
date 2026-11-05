@@ -307,6 +307,27 @@ async def upload_clone(payload: dict = Body(...)):
     return {"id": voice_id, **meta}
 
 
+RUN_ON_RETRIES = 2
+
+
+def _ran_on(seconds: float, text: str) -> bool:
+    """Audio far longer than the text: the take ran past the line's end. Normal
+    takes here run 6-14 characters a second plus up to ~1 s of edge silence; this
+    bar flagged 10 of 318 logged takes, all short lines with too much audio."""
+    return seconds > 1.2 + len(text) / 7
+
+
+def _generate(model, text: str, ref, ref_txt):
+    wav = model.generate(
+        text=text,
+        prompt_wav_path=str(ref),
+        prompt_text=ref_txt.read_text(encoding="utf-8"),
+    )
+    if hasattr(wav, "cpu"):
+        wav = wav.cpu().numpy()
+    return wav.squeeze() if wav.ndim > 1 else wav
+
+
 @app.post("/clones/{voice_id}/synth")
 async def synth_with_clone(voice_id: str, payload: dict = Body(...)):
     """Synthesize text using the saved reference clip + transcript.
@@ -320,24 +341,27 @@ async def synth_with_clone(voice_id: str, payload: dict = Body(...)):
         raise HTTPException(404, f"clone {voice_id!r} not found")
 
     model = _load_model()
+    sr = int(model.tts_model.sample_rate)
     t0 = time.time()
     try:
-        wav = model.generate(
-            text=text,
-            prompt_wav_path=str(ref),
-            prompt_text=ref_txt.read_text(encoding="utf-8"),
-        )
+        wav = _generate(model, text, ref, ref_txt)
+        # VoxCPM generates speech step by step and on a short line sometimes does not
+        # stop at its end: "Go enjoy her, man." came back as 4.6 s with a word that was
+        # not in the text (2026-11-05). Its own bad-case retry missed it. A run-on take
+        # is made again, at most twice, and the shortest take is kept.
+        for attempt in range(RUN_ON_RETRIES):
+            if not _ran_on(len(wav) / sr, text):
+                break
+            log.warning(f"synth voice={voice_id} ran on ({len(wav) / sr:.2f}s for {len(text)} chars); take {attempt + 2}")
+            retry = _generate(model, text, ref, ref_txt)
+            if len(retry) < len(wav):
+                wav = retry
     except Exception as e:
         log.exception(f"synth failed for voice={voice_id}")
         raise HTTPException(500, f"synth: {e}")
     synth_ms = int((time.time() - t0) * 1000)
 
     import soundfile as sf
-    if hasattr(wav, "cpu"):
-        wav = wav.cpu().numpy()
-    if wav.ndim > 1:
-        wav = wav.squeeze()
-    sr = int(model.tts_model.sample_rate)
     buf = io.BytesIO()
     sf.write(buf, wav.astype("float32"), sr, subtype="PCM_16", format="WAV")
     log.info(f"synth voice={voice_id} text_len={len(text)} samples={len(wav)}@{sr}Hz {synth_ms}ms")

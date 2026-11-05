@@ -20,6 +20,11 @@ export function validityStats(
 // and the content-keyed embedding_cache. entity_relations rows reference
 // facts(id) with ON DELETE CASCADE so SQLite reclaims them automatically when
 // foreign_keys is on; we delete them explicitly too in case the pragma is off.
+//
+// A fact a newer one REPLACED (invalidated_by set) is history, not garbage:
+// its entity page lists it under "Earlier (replaced)" so "what was my old
+// dose?" has an answer (2026-11-04), so it is never purged. Only facts that
+// ended with no replacement (forgotten, or judged no longer true) are.
 export function purgeInvalidatedFacts(
   db: InstanceType<typeof Database>,
   hasFts: boolean,
@@ -28,7 +33,7 @@ export function purgeInvalidatedFacts(
   const cutoff = Date.now() - olderThanMs;
   const run = db.transaction(() => {
     const rows = db
-      .prepare("SELECT id, content FROM facts WHERE valid_to IS NOT NULL AND valid_to < ?")
+      .prepare("SELECT id, content FROM facts WHERE valid_to IS NOT NULL AND valid_to < ? AND invalidated_by IS NULL")
       .all(cutoff) as Array<{ id: number; content: string }>;
     for (const r of rows) {
       if (hasFts) {

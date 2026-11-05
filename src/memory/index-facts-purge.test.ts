@@ -103,6 +103,17 @@ describe("purgeInvalidatedFacts", () => {
     expect(factExists(liveId)).toBe(true);
   });
 
+  it("never purges a fact a newer one replaced: it is the history the entity page shows", () => {
+    const old = memory.rememberFact("user's @reta vial is 20 mg with 1 mL", { kind: "observation", confidence: 0.9 });
+    const current = memory.rememberFact("user's @reta vial is 50 mg with 2 mL", { kind: "observation", confidence: 0.9 });
+    const oldId = old.fact!.id!;
+    memory.invalidateFact(oldId, { by: "agent", reason: "new vial", replacedBy: current.fact!.id! });
+    setValidTo(oldId, Date.now() - 200 * DAY_MS);
+
+    expect(memory.purgeInvalidatedFacts(RETENTION_MS)).toBe(0);
+    expect(factExists(oldId)).toBe(true);
+  });
+
   it("removes the content-keyed embedding_cache entry for a purged fact", () => {
     const now = Date.now();
     const content = "user briefly liked teal as an accent color";

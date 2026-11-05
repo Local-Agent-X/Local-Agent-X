@@ -68,3 +68,14 @@ describe("listActiveCanonicalOps — approval column pass-through", () => {
     expect(rows.find(r => r.opId === "op_done")).toBeUndefined();
   });
 });
+
+describe("listActiveCanonicalOps — finished ops are not re-read", () => {
+  it("skips an op it found finished while its file is unchanged, and re-reads it once written", () => {
+    writeOp(mkOp("op_revived", { state: "succeeded", flagValue: true }));
+    expect(listActiveCanonicalOps().find(r => r.opId === "op_revived")).toBeUndefined();
+    writeOp(mkOp("op_revived", { state: "queued", flagValue: true, sessionId: "sess-r" }));
+    expect(listActiveCanonicalOps().find(r => r.opId === "op_revived")?.sessionId).toBe("sess-r");
+    writeOp(mkOp("op_revived", { state: "cancelled", flagValue: true }));
+    expect(listActiveCanonicalOps().find(r => r.opId === "op_revived")).toBeUndefined();
+  });
+});

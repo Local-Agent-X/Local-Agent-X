@@ -10,7 +10,7 @@
  * visible in the agent activity surface. UI-only addition — does not
  * change loop behavior, signals, or events.
  */
-import { existsSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
 import { getLaxDir } from "../lax-data-dir.js";
 import { join } from "node:path";
 import { readOp } from "../ops/op-store.js";
@@ -44,6 +44,22 @@ export interface ActiveCanonicalOp {
   pendingApproval: PendingApprovalRecord | null;
 }
 
+/** Ops last read as not active, by the stamp their operation.json had then. Nearly all
+ *  of the thousands of ops on disk are finished, and reading and parsing every one
+ *  (144 MB on one install) froze the server ~0.5 s on each listing, which runs each
+ *  time a chat connects: a voice call cut out (2026-11-05). An op is skipped while its
+ *  file is unchanged; any write (op-store writes by rename) re-reads it. */
+const inactiveAt = new Map<string, string>();
+
+function opFileStamp(opId: string): string | null {
+  try {
+    const st = statSync(join(OPS_BASE, opId, "operation.json"));
+    return `${st.mtimeMs}:${st.size}`;
+  } catch {
+    return null;
+  }
+}
+
 export function listActiveCanonicalOps(): ActiveCanonicalOp[] {
   if (!existsSync(OPS_BASE)) return [];
   let dirs: string[];
@@ -51,11 +67,16 @@ export function listActiveCanonicalOps(): ActiveCanonicalOp[] {
 
   const out: ActiveCanonicalOp[] = [];
   for (const opId of dirs) {
+    const stamp = opFileStamp(opId);
+    if (stamp === null || inactiveAt.get(opId) === stamp) continue;
     const op = readOp(opId);
     if (!op) continue;
     const c = op.canonical;
-    if (!c || c.flagValue !== true) continue;
-    if (typeof c.state !== "string" || !ACTIVE_STATES.has(c.state)) continue;
+    if (!c || c.flagValue !== true || typeof c.state !== "string" || !ACTIVE_STATES.has(c.state)) {
+      inactiveAt.set(opId, stamp);
+      continue;
+    }
+    inactiveAt.delete(opId);
 
     let adapter: string | null = null;
     let adapterVersion: string | null = null;

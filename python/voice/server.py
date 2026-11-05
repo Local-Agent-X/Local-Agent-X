@@ -23,6 +23,7 @@ Protocol (ws://127.0.0.1:7008/voice):
     {"cmd":"tts","text":"...","id":<int>}         # queue a sentence
     {"cmd":"cancel_tts"}                           # drain queue + stop current
     {"cmd":"reset"}                                # clear all state, mic+tts
+    {"cmd":"stt_context","text":"..."}             # what was just said to the user: Whisper's context
     {"cmd":"ping"}
   server → Node (JSON text frames):
     {"type":"ready","stt":bool,"tts":bool,"gpu":"..."}
@@ -65,6 +66,7 @@ from fastapi import FastAPI, Request, Response, WebSocket, WebSocketDisconnect  
 
 from voice._server import models  # noqa: E402
 from voice._server.audio import b64_to_int16  # noqa: E402
+from voice._server.constants import STT_CONTEXT_CHARS  # noqa: E402
 from voice._server.cuda_bootstrap import cuda_added, log  # noqa: E402
 from voice._server.models import _detect_gpu, _load_stt, _load_tts, _load_vad  # noqa: E402
 from voice._server.session import Session  # noqa: E402
@@ -276,6 +278,9 @@ async def voice_ws(ws: WebSocket):
 
             elif cmd == "reset":
                 await sess.reset()
+
+            elif cmd == "stt_context":
+                sess.stt_context = str(msg.get("text") or "")[-STT_CONTEXT_CHARS:]
 
             else:
                 await sess._send({"type": "error", "message": f"unknown cmd: {cmd}"})

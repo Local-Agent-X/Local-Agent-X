@@ -11,3 +11,8 @@ SPEECH_FRAMES_START = 3    # ~96ms speech -> start of speech
 PARTIAL_INTERVAL_S = 0.5   # Run partial STT every 500ms during active speech
 MIN_UTTERANCE_S = 0.25     # Skip Whisper on shorter
 TTS_CHUNK_MS = 80          # WebSocket out-chunk size for TTS
+# Wordings Whisper weighs for an utterance's final text (partials take the single most
+# likely word each step, for speed). ~50 ms more per final on the RTX 5090.
+FINAL_BEAM_SIZE = 5
+# The end of the agent's last reply given to Whisper as context, in characters.
+STT_CONTEXT_CHARS = 400

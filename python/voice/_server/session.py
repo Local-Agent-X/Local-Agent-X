@@ -11,6 +11,7 @@ import numpy as np
 from .audio import f32_to_b64_int16
 from .clones import synth_via_chatterbox, synth_via_voxcpm
 from .constants import (
+    FINAL_BEAM_SIZE,
     MIC_SR,
     MIN_UTTERANCE_S,
     PARTIAL_INTERVAL_S,
@@ -51,6 +52,9 @@ class Session:
         # multi-sentence replies. 3 is comfortable on a 12GB 3060.
         self.tts_prep_sem = asyncio.Semaphore(3)
         self.tts_cancel = False
+        # What was last said to the user (stt_context): Whisper's context for what
+        # the user says next (models._transcribe).
+        self.stt_context = ""
 
     async def start_tts_worker(self):
         if self.tts_streamer_task is None or self.tts_streamer_task.done():
@@ -282,7 +286,7 @@ class Session:
             return
         loop = asyncio.get_running_loop()
         try:
-            text = await loop.run_in_executor(None, lambda: _transcribe(clip))
+            text = await loop.run_in_executor(None, lambda: _transcribe(clip, self.stt_context))
         except Exception as e:
             log.warning(f"partial stt failed: {e}")
             return
@@ -298,7 +302,7 @@ class Session:
         loop = asyncio.get_running_loop()
         t0 = time.time()
         try:
-            text = await loop.run_in_executor(None, lambda: _transcribe(clip))
+            text = await loop.run_in_executor(None, lambda: _transcribe(clip, self.stt_context, FINAL_BEAM_SIZE))
         except Exception as e:
             await self._send({"type": "error", "message": f"final stt: {e}"})
             return

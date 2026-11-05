@@ -18,6 +18,7 @@ vi.mock("./gpu-bridge.js", () => ({
       speak: () => {},
       cancelTTS: () => { record.cancels += 1; },
       reset: () => {},
+      setSttContext: () => {},
       close: () => {},
       ttsSampleRate: 24000,
       micSampleRate: 16000,

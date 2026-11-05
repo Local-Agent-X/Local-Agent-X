@@ -76,15 +76,20 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
   // GPU speaker: the reply a sentence at a time (sentence-chunker.ts). Each piece bumps
   // pendingTtsCount; onAudioDone counts it back down and signals the machine when the
   // queue empties.
+  // What this reply has said so far is the context the sidecar's Whisper hears the
+  // user's next words in (python/voice/_server/models.py _transcribe).
   let queuedThisTurn = false;
+  let spokenThisReply = "";
   const chunker = createSentenceChunker((text) => {
     if (!bridge) return;
     pendingTtsCount++;
     bridge.speak(text, nextSentenceId++, { voice: voiceOverride, speed: speedOverride });
     queuedThisTurn = true;
+    spokenThisReply = `${spokenThisReply} ${text}`.trim();
+    if (!clientStt) bridge.setSttContext(spokenThisReply);
   });
   const speaker: TurnSpeaker = {
-    reset() { chunker.reset(); queuedThisTurn = false; },
+    reset() { chunker.reset(); queuedThisTurn = false; spokenThisReply = ""; },
     feed: (delta) => chunker.feed(delta),
     flushTail: () => chunker.flushTail(),
     hasQueued() { return queuedThisTurn; },

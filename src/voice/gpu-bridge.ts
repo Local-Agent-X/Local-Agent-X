@@ -50,6 +50,9 @@ export interface GPUBridge {
   cancelTTS(): void;
   /** Wipe all server-side state (audio buffer + TTS queue). */
   reset(): void;
+  /** What the user has just heard the agent say: the context Whisper hears their next
+   *  words in, so a word that fits it wins over one that only sounds like it. */
+  setSttContext(text: string): void;
   close(): void;
   readonly ttsSampleRate: number;
   readonly micSampleRate: number;
@@ -223,6 +226,7 @@ export function createGPUBridge(cb: GPUBridgeCallbacks = {}, port: number = DEFA
     },
     cancelTTS() { send({ cmd: "cancel_tts" }); },
     reset() { send({ cmd: "reset" }); },
+    setSttContext(text: string) { send({ cmd: "stt_context", text }); },
 
     close() {
       closed = true;

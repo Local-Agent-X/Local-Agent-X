@@ -8,6 +8,7 @@ one place — here.
 import os
 import threading
 import time
+from typing import Optional
 
 import numpy as np
 
@@ -153,27 +154,32 @@ def _load_tts():
     return _tts
 
 
-def _transcribe_once(samples: np.ndarray) -> str:
+def _transcribe_once(samples: np.ndarray, context: Optional[str], beam_size: int) -> str:
     stt = _load_stt()
     segments, _info = stt.transcribe(
         samples,
         language="en",
-        beam_size=1,
+        beam_size=beam_size,
         vad_filter=False,
         condition_on_previous_text=False,
+        initial_prompt=context or None,
     )
     return " ".join(s.text.strip() for s in segments).strip()
 
 
-def _transcribe(samples: np.ndarray) -> str:
-    """Sync transcribe for use in executor. faster-whisper handles its own
+def _transcribe(samples: np.ndarray, context: Optional[str] = None, beam_size: int = 1) -> str:
+    """Sync transcribe for use in executor. `context` is what was just said to the
+    user (the agent's last reply): Whisper hears the utterance as its continuation,
+    so "you got the name wrong" stops coming out "you got the main one off"
+    (2026-11-05). `beam_size` above 1 weighs that many wordings instead of taking
+    each most likely word; finals use it, partials stay greedy. faster-whisper handles its own
     CUDA threading internally. On a CUDA-stack crash (cuBLAS/cuDNN without
     kernels for this GPU, OOM), retries THIS utterance on CPU and stays on
     CPU for the rest of the process — the mic keeps working, degraded, and
     the session layer surfaces the switch via pop_stt_fallback()."""
     global _stt, _stt_device, _stt_fallback_reason
     try:
-        return _transcribe_once(samples)
+        return _transcribe_once(samples, context, beam_size)
     except Exception as e:
         if _stt_device != "cuda" or not _is_gpu_crash(e):
             raise
@@ -181,7 +187,7 @@ def _transcribe(samples: np.ndarray) -> str:
         _stt = None
         _stt_device = "cpu"
         _stt_fallback_reason = str(e)[:300]
-        return _transcribe_once(samples)
+        return _transcribe_once(samples, context, beam_size)
 
 
 def _detect_gpu() -> str:

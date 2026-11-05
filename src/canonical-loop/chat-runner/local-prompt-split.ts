@@ -69,6 +69,7 @@ export const HEAD_SECTION_IDS: ReadonlySet<string> = new Set([
   "file-access",
   "provider-rider",
   "model-family-rider",
+  "voice-mode", // a spoken turn's instructions (server/voice-prompt-plan.ts): fixed for the call
   // The folded compaction summary. It changes only when a compaction lands,
   // and that is one miss per compaction — the ordinary price of compacting.
   "system-history",

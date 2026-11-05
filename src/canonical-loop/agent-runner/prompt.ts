@@ -6,6 +6,7 @@ import type { LocalModelCapabilityProfile } from "../../local-runtimes/index.js"
 import type { CanonicalAgentOptions } from "./types.js";
 import { foldSystemRowsIntoPrompt } from "../chat-runner/message-convert.js";
 import { appendSystemPromptSection } from "../../context/system-prompt-builder.js";
+import { localPromptSplit, recalledContextText } from "../chat-runner/local-prompt-split.js";
 
 /** Final section-aware prompt seam shared by every non-chat canonical caller. */
 export async function prepareCanonicalAgentPrompt(
@@ -60,4 +61,23 @@ export async function prepareCanonicalAgentPrompt(
     toolSchemaFormat,
     sections: options.renderedPromptSections.map((section) => section.measurement),
   });
+}
+
+/**
+ * A turn saved to a chat thread, on a local wire: send chat's stable prefix
+ * (options.savedToChat). Runs once the prompt's sections are final (the
+ * degradation pass above has run), as chat's does in its adapter factory, so
+ * both read the same split. Returns the recall row's text for the op seed, or
+ * null when the prompt stays whole.
+ */
+export function splitForChatThread(options: CanonicalAgentOptions, sessionId: string): string | null {
+  if (!options.savedToChat) return null;
+  const split = localPromptSplit({
+    provider: options.provider as Parameters<typeof localPromptSplit>[0]["provider"],
+    model: options.model,
+    renderedPromptSections: options.renderedPromptSections,
+  }, sessionId);
+  if (!split) return null;
+  options.systemPrompt = split.head;
+  return recalledContextText(split.tail);
 }

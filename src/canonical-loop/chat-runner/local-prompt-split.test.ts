@@ -29,6 +29,8 @@ function emittedSectionIds(): Set<string> {
     "src/agent-request/prepare-request/build-system-prompt.ts",
     "src/agent-request/prepare-request.ts",
     "src/canonical-loop/chat-runner/create-op.ts",
+    "src/canonical-loop/agent-runner/prompt.ts",
+    "src/server/voice-prompt-plan.ts",
   ];
   const ids = new Set<string>();
   for (const f of files) {

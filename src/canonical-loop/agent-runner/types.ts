@@ -37,6 +37,14 @@ export interface CanonicalAgentOptions extends AgentOptions {
    *  AnthropicAdapterOptions.cacheConversation): pass false only for a caller
    *  whose system prompt changes turn to turn. */
   cacheConversation?: boolean;
+  /** The turn is saved into a chat thread whose next request replays it
+   *  (voice). On a local wire its prompt is then split as chat's is
+   *  (chat-runner/local-prompt-split.ts): the session-stable sections are the
+   *  system message, and the per-message ones a recall row seeded after the
+   *  user's message, which the caller saves with the turn. So the next
+   *  request starts with this one, and a local runtime re-reads only what is
+   *  new instead of the whole prompt. */
+  savedToChat?: boolean;
   /** Trusted dispatch origin. Omitted non-chat callers default to API. */
   callContext?: CallContext;
   /** Op-level wall-clock ceiling. Replaces caller-side setTimeout-driven

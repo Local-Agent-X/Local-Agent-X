@@ -6,7 +6,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { acquireTurn, getActiveTurn, getTurnRegistry, releaseTurn, tryAcquireOrReplace } from "../session/turn-lock.js";
 import type { Session } from "../types.js";
-import { canaryWatch, claimVoiceTurn, commitVoiceTurn, voiceTurnRows } from "./voice-turn-guard.js";
+import { canaryWatch, carriedHarnessRows, claimVoiceTurn, commitVoiceTurn, voiceTurnRows } from "./voice-turn-guard.js";
+import { markHarnessRow } from "../harness-rows.js";
 import type { ThreatEngine } from "../threat/threat-engine.js";
 
 const opRows = new Map<string, { messageId: string; content: string }[]>();
@@ -128,5 +129,27 @@ describe("voiceTurnRows", () => {
   it("is null when there is no op or it has no rows, so the memory pass declines", async () => {
     expect(await voiceTurnRows(undefined)).toBeNull();
     expect(await voiceTurnRows("op-missing")).toBeNull();
+  });
+});
+
+describe("carriedHarnessRows — what a local spoken turn read that the next request replays", () => {
+  const recall = (text: string) => markHarnessRow({ role: "user", content: text }, "recall");
+  const history: ChatCompletionMessageParam[] = [{ role: "user", content: "earlier" }, recall("old recall"), { role: "assistant", content: "ok" }];
+
+  it("keeps this turn's recall and digest rows, in order, and nothing from history", () => {
+    const digest = markHarnessRow({ role: "user", content: "digest" }, "digest");
+    const turn: ChatCompletionMessageParam[] = [
+      { role: "system", content: "S" }, ...history, { role: "user", content: "hi" },
+      recall("new recall"), digest, { role: "assistant", content: "hello" },
+    ];
+    expect(carriedHarnessRows(turn, history.length)).toEqual([recall("new recall"), digest]);
+  });
+
+  it("leaves out nudges, which belong to tool rounds a spoken turn does not save", () => {
+    const turn: ChatCompletionMessageParam[] = [
+      { role: "system", content: "S" }, ...history, { role: "user", content: "hi" },
+      markHarnessRow({ role: "user", content: "keep going" }, "nudge"), { role: "assistant", content: "hello" },
+    ];
+    expect(carriedHarnessRows(turn, history.length)).toEqual([]);
   });
 });

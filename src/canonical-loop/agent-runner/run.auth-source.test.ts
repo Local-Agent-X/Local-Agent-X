@@ -39,7 +39,7 @@ vi.mock("./register-adapter.js", () => ({
     } as unknown as Op["runtimeDescriptor"];
   }),
 }));
-vi.mock("./prompt.js", () => ({ prepareCanonicalAgentPrompt: vi.fn(async () => undefined) }));
+vi.mock("./prompt.js", () => ({ prepareCanonicalAgentPrompt: vi.fn(async () => undefined), splitForChatThread: vi.fn(() => null) }));
 vi.mock("./runtime-surface.js", () => ({
   buildAgentRuntimeSurface: vi.fn(() => ({ kind: "agent-runner" })),
   installOpToolRuntime: vi.fn(() => ({ dispose: vi.fn() })),

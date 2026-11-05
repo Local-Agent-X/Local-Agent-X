@@ -5,11 +5,17 @@ import { appendOpMessage } from "../store.js";
 import type { CanonicalMessageRole } from "../types.js";
 import { buildRevivalPlan, historyImagesOf, reviveRowImages } from "../history-image-revival.js";
 
+/**
+ * `recalledContext`: a chat-thread turn's per-message prompt sections as a row
+ * right after the user's message (prompt.ts splitForChatThread), as
+ * chat-runner/seed-messages.ts seeds it.
+ */
 export function seedOpMessages(
   opId: string,
   history: ChatCompletionMessageParam[],
   userMessage: string,
   images: ImageAttachment[] | undefined,
+  recalledContext: string | null = null,
 ): void {
   let seqInTurn = 0;
   const turnIdx = 0;
@@ -98,6 +104,17 @@ export function seedOpMessages(
     seqInTurn,
     role: "user",
     content: userContent,
+    createdAt: new Date().toISOString(),
+  });
+  if (!recalledContext) return;
+  seqInTurn += 1;
+  appendOpMessage({
+    messageId: `rc-${opId}-${turnIdx}-${seqInTurn}-${randomUUID().slice(0, 6)}`,
+    opId,
+    turnIdx,
+    seqInTurn,
+    role: "user",
+    content: { text: recalledContext, kind: "recall" },
     createdAt: new Date().toISOString(),
   });
 }

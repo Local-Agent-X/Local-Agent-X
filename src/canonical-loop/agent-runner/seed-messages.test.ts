@@ -18,6 +18,7 @@ import {
   REVIVED_HISTORY_IMAGE_MAX_BYTES,
 } from "../history-image-revival.js";
 import { seedOpMessages } from "./seed-messages.js";
+import { readOpMessages } from "../store.js";
 import { buildTurnInput } from "../turn-loop/build-input.js";
 import { canonicalToTransport } from "../adapters/canonical-to-transport.js";
 import { imagesToOpenAIParts } from "../adapters/images-to-openai-parts.js";
@@ -189,5 +190,18 @@ describe("agent-runner seedOpMessages — caption-less photo rows in seeded hist
     );
     const transport = await pipeline();
     expect(transport.map(m => m.role)).toEqual(["assistant", "user"]);
+  });
+});
+
+describe("seedOpMessages — a chat-thread turn's recall row", () => {
+  it("seeds it right after the user's message as a recall harness row, and nothing without one", () => {
+    seedOpMessages(opId, [{ role: "user", content: "earlier" }], "hi", undefined, "<recalled>RECALL</recalled>");
+    const rows = readOpMessages(opId);
+    expect(rows.map((r) => (r.content as { text: string }).text)).toEqual(["earlier", "hi", "<recalled>RECALL</recalled>"]);
+    expect(rows.at(-1)).toMatchObject({ role: "user", turnIdx: 0, content: { kind: "recall" } });
+
+    const plain = `${opId}-plain`;
+    seedOpMessages(plain, [], "hi", undefined);
+    expect(readOpMessages(plain)).toHaveLength(1);
   });
 });

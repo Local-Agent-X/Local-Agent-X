@@ -50,7 +50,7 @@ import { buildAgentRuntimeSurface, installOpToolRuntime } from "./runtime-surfac
 import { sealDelegatedRuntime } from "../runtime-integrity.js";
 import { seedOpMessages } from "./seed-messages.js";
 import { collectMessages, mapStopReason } from "./collect-result.js";
-import { prepareCanonicalAgentPrompt } from "./prompt.js";
+import { prepareCanonicalAgentPrompt, splitForChatThread } from "./prompt.js";
 
 const logger = createLogger("canonical-loop.agent-runner");
 
@@ -165,6 +165,7 @@ export async function runAgentViaCanonical(
   const prepared = await prepareAgentSubmission(userMessage, history, options, lane, wallClockMs);
   if (!prepared) return abortedBeforeSubmit();
   const { preparedRuntime, contextPack } = prepared;
+  const recalledContext = splitForChatThread(options, sessionId);
 
   const op = createAgentOperation({
     opType, userMessage, contextPack, lane, sessionId,
@@ -187,7 +188,7 @@ export async function runAgentViaCanonical(
 
   trackOpForSession(op.id, sessionId, userMessage);
   writeOp(op);
-  seedOpMessages(op.id, history, userMessage, options.images);
+  seedOpMessages(op.id, history, userMessage, options.images, recalledContext);
 
   // Bridge canonical opCancel → tool-execution AbortSignal so subprocesses
   // (self_edit's claude -p, build_app's codex --full-auto) actually die on

@@ -16,8 +16,26 @@ import type { ThreatEngine } from "../threat/threat-engine.js";
 import type { MemoryManager } from "../memory/index.js";
 import type { Session } from "../types.js";
 import { createLogger } from "../logger.js";
+import { harnessRowKind, isHarnessRow } from "../harness-rows.js";
 
 const logger = createLogger("server.voice-turn-guard");
+
+/**
+ * The rows a spoken turn on a local wire read after the user's message that
+ * the next request must replay in place: the recall row the op was seeded with
+ * (agent-runner/prompt.ts splitForChatThread) and the situational digest the
+ * loop wrote (turn-loop/local-digest-row.ts). Saved with the turn as chat
+ * saves them, so the next spoken or typed message extends this one and a
+ * local runtime re-reads only what is new. `turnMessages` is the run's
+ * AgentTurn.messages: [system, ...history, user, ...rows the op added].
+ */
+export function carriedHarnessRows(turnMessages: readonly ChatCompletionMessageParam[], historyLength: number): ChatCompletionMessageParam[] {
+  return turnMessages.slice(historyLength + 2).filter((m) => {
+    if (!isHarnessRow(m)) return false;
+    const kind = harnessRowKind(m);
+    return kind === "recall" || kind === "digest";
+  });
+}
 
 /** Spoken when a typed turn on this thread has already made a committing call. */
 export const VOICE_BUSY_REPLY = "I'm still finishing something from the chat. Give me a moment and ask again.";

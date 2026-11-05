@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { renderPromptSection } from "../../context/system-prompt-builder.js";
 import type { LocalModelCapabilityProfile } from "../../local-runtimes/index.js";
 import type { CanonicalAgentOptions } from "./types.js";
-import { prepareCanonicalAgentPrompt } from "./prompt.js";
+import { prepareCanonicalAgentPrompt, splitForChatThread } from "./prompt.js";
 
 let contextWindow: number | null = 8_192;
 
@@ -161,5 +161,35 @@ describe("the history's system rows reach the prompt", () => {
     }));
     await prepareCanonicalAgentPrompt(dispatch, compacted, profile(null));
     expect(dispatch.systemPrompt.match(/we chose Postgres/g)).toHaveLength(1);
+  });
+});
+
+describe("a turn saved to a chat thread (voice)", () => {
+  function spoken(provider: CanonicalAgentOptions["provider"]): CanonicalAgentOptions {
+    const sections = [
+      renderPromptSection({ id: "core-identity/identity", label: "Identity", type: "static", policy: "required", text: "IDENTITY " }),
+      renderPromptSection({ id: "voice-mode", label: "Voice Mode", type: "static", policy: "required", text: "SPEAK " }),
+      renderPromptSection({ id: "relevant-memories", label: "Recall", type: "dynamic", policy: "degradable", text: "RECALL " }),
+    ];
+    return { ...options(), provider, model: "qwen3.8:27b", systemPrompt: sections.map((s) => s.text).join(""), renderedPromptSections: sections, savedToChat: true };
+  }
+
+  it("on a local wire sends chat's stable prefix and hands the per-message sections to the seed", () => {
+    const dispatch = spoken("local");
+    const recalled = splitForChatThread(dispatch, "s-voice-split");
+    expect(dispatch.systemPrompt).toBe("IDENTITY SPEAK ");
+    expect(recalled).toContain("RECALL");
+  });
+
+  it("leaves a cloud turn's prompt whole", () => {
+    const dispatch = spoken("anthropic");
+    expect(splitForChatThread(dispatch, "s-voice-cloud")).toBeNull();
+    expect(dispatch.systemPrompt).toBe("IDENTITY SPEAK RECALL ");
+  });
+
+  it("leaves a turn nobody saves to a chat alone", () => {
+    const dispatch = { ...spoken("local"), savedToChat: false };
+    expect(splitForChatThread(dispatch, "s-background")).toBeNull();
+    expect(dispatch.systemPrompt).toBe("IDENTITY SPEAK RECALL ");
   });
 });

@@ -89,6 +89,59 @@ export async function readGpuUsedBytes(deps: GpuProbeDeps = {}): Promise<number 
   }
 }
 
+/** Process images that are Ollama's model runners (the serve process holds no GPU memory). */
+const RUNNER_IMAGES = new Set(["llama-server.exe", "ollama.exe", "ollama_llama_server.exe"]);
+
+/** PIDs of Ollama runner processes in `tasklist /FO CSV /NH` output. */
+export function parseRunnerPids(stdout: string): Set<number> {
+  const pids = new Set<number>();
+  for (const line of stdout.split(/\r?\n/)) {
+    const cells = line.match(/"([^"]*)"/g)?.map((c) => c.slice(1, -1));
+    if (!cells || cells.length < 2 || !RUNNER_IMAGES.has(cells[0].toLowerCase())) continue;
+    const pid = Number(cells[1]);
+    if (Number.isInteger(pid)) pids.add(pid);
+  }
+  return pids;
+}
+
+/** Sum of the `pids`' columns in `typeperf "\GPU Process Memory(*)\Shared Usage" -sc 1`
+ *  output (a header row naming each `pid_<n>_luid_…` instance, then one sample row). */
+export function parseSharedUsage(stdout: string, pids: ReadonlySet<number>): number | null {
+  const rows = stdout.split(/\r?\n/).filter((l) => l.startsWith('"'));
+  if (rows.length < 2) return null;
+  const cells = (row: string) => row.match(/"([^"]*)"/g)?.map((c) => c.slice(1, -1)) ?? [];
+  const header = cells(rows[0]);
+  const sample = cells(rows[1]);
+  let sum = 0;
+  header.forEach((name, i) => {
+    const pid = Number(/\(pid_(\d+)_/.exec(name)?.[1]);
+    const bytes = Number(sample[i]);
+    if (pids.has(pid) && Number.isFinite(bytes)) sum += bytes;
+  });
+  return sum;
+}
+
+/**
+ * System memory Ollama's runners hold for the GPU right now, on Windows: the
+ * per-process "GPU Process Memory\Shared Usage" counter. When the card fills,
+ * the driver places further allocations in system memory and the runner keeps
+ * reporting 100% GPU, so this is the one direct reading of that spill; free
+ * VRAM only hints at it. Null off Windows, with no runner, or no reading (the
+ * counter names are localized on non-English Windows).
+ */
+export async function readRunnerSharedBytes(deps: GpuProbeDeps = {}): Promise<number | null> {
+  if ((deps.platform ?? process.platform) !== "win32") return null;
+  const exec = deps.exec ?? execText;
+  try {
+    const pids = parseRunnerPids(await exec("tasklist", ["/FO", "CSV", "/NH"], NVIDIA_SMI_TIMEOUT_MS));
+    if (pids.size === 0) return null;
+    const out = await exec("typeperf", ["\\GPU Process Memory(*)\\Shared Usage", "-sc", "1"], NVIDIA_SMI_TIMEOUT_MS);
+    return parseSharedUsage(out, pids);
+  } catch {
+    return null; // no counter on this machine: the free-VRAM reading still stands
+  }
+}
+
 let cached: { at: number; value: Promise<GpuMemory | null> } | null = null;
 const GPU_CACHE_MS = 10 * 60_000;
 

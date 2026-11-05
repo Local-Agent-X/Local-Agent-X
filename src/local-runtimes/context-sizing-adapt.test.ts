@@ -141,10 +141,11 @@ describe("paging that /api/ps does not report", () => {
   // reported, ~28 GB held), so the driver's reading is given directly here,
   // never derived from the rows.
   const TOTAL = RTX_5090.totalBytes;
-  async function reply(rows: Array<{ size_vram: number }>, freeBytes: number | null, tokPerSec: number, tokens = 240, contextTokens = 0): Promise<void> {
+  async function reply(rows: Array<{ size_vram: number }>, freeBytes: number | null, tokPerSec: number, tokens = 240, contextTokens = 0, runnerShared: number | null = null): Promise<void> {
     await observeChatResidency(ROOT, MODEL, {
       ps: async () => ({ models: rows }),
       gpuUsed: async () => (freeBytes === null ? null : TOTAL - freeBytes),
+      runnerShared: async () => runnerShared,
       now: () => now,
       store: new ContextSizingStore(join(dir, "local-context-sizing.json")),
     }, { tokens, durationNs: (tokens / tokPerSec) * 1e9, contextTokens });
@@ -231,6 +232,20 @@ describe("paging that /api/ps does not report", () => {
     await reply(resident, 4e9, 186, 96, 1_407);
     await reply(resident, 0.8e9, 4, 89, 18_431);
     expect(appliedContext(ROOT, MODEL)).toBeLessThan(SIZED);
+  });
+
+  it("catches paging the free-VRAM line misses, by the runner's memory in system RAM (live 2026-11-05)", async () => {
+    // 104 tok/s fully resident; then 18 tok/s with 1.1 GB free but 2.16 GB of
+    // the runner placed in system memory (the embedder co-loaded on a call).
+    await reply(resident, 1.2e9, 104, 300, 29, 1.09e9);
+    await reply(resident, 1.1e9, 18, 300, 29, 2.16e9);
+    expect(appliedContext(ROOT, MODEL)).toBeLessThan(SIZED);
+  });
+
+  it("does not read the runner's own host buffers (about 1 GB in system memory) as paging", async () => {
+    await reply(resident, 4e9, 104, 300, 29, 1.09e9);
+    await reply(resident, 1.2e9, 21, 300, 29, 1.09e9);
+    expect(appliedContext(ROOT, MODEL)).toBe(SIZED);
   });
 
   it("keeps a deep reply's rate as a yardstick scaled to an empty prompt", async () => {

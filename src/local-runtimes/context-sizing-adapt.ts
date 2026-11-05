@@ -21,7 +21,9 @@
  * 27B decoded at 21 tok/s instead of ~120 that way (2026-11-03), and stayed
  * slow until the model reloaded. Its sign is the reply itself: decode at half
  * the rate this decision has shown fully resident or less, at the same prompt
- * depth, on a card the driver shows all but full. That steps down temporarily
+ * depth, on a card the driver shows all but full or with the runner measured
+ * in system memory (Windows counts that per process; free VRAM alone missed a
+ * 2 GB spill with 1.1 GB free on 2026-11-05). That steps down temporarily
  * too, which reloads the model.
  *
  * "At the same depth" because a deep prompt slows decode by itself: the 27B
@@ -44,7 +46,7 @@ import { createLogger } from "../logger.js";
 import {
   CONTEXT_FLOOR, KV_OVERHEAD_FACTOR, findPsRow, ollamaModelKey, parsePsRows, safetyMarginBytes, spillBytes, steppedDownContext,
 } from "./context-sizing-core.js";
-import { readGpuUsedBytes } from "./gpu-memory.js";
+import { readGpuUsedBytes, readRunnerSharedBytes } from "./gpu-memory.js";
 import {
   appliedContext, contentionOverrides, contextSizingRecord, saveContextSizingRecord, sizingKey, sizingRoot,
 } from "./context-sizing.js";
@@ -73,6 +75,13 @@ export const DECODE_HALVING_DEPTH = 56_000;
  *  it gigabytes more. Without a driver reading a slow reply is not acted on:
  *  a long context alone could be it. */
 const FULL_CARD_FREE_BYTES = 1024 ** 3;
+/** ...or with more than this of the runner in system memory (Windows reports
+ *  it per process; readRunnerSharedBytes). The runner keeps about 1 GB there
+ *  by design, its host-side buffers: 0.95 GB at 64k and 1.09 GB at 147k on
+ *  qwen3.8 27B, decoding at 104-111 tok/s. Paging at 18 tok/s showed 2.16 GB
+ *  with 1.1 GB of VRAM still free, so the free-VRAM line missed it
+ *  (2026-11-05). */
+const PAGED_RUNNER_SHARED_BYTES = 1.5 * 1024 ** 3;
 /** What a step-down for paging sheds: the overflow measured on the 27B was
  *  under 1 GB; twice that leaves room for it to grow. */
 const PAGING_SHED_BYTES = 2 * 1024 ** 3;
@@ -81,6 +90,8 @@ export interface AdaptDeps {
   ps: (root: string) => Promise<unknown>;
   /** VRAM in use by every process on this machine's GPUs, or null. */
   gpuUsed: () => Promise<number | null>;
+  /** System memory the runtime's runners hold for the GPU, or null (readRunnerSharedBytes). */
+  runnerShared: () => Promise<number | null>;
   now: () => number;
   store?: ContextSizingStore;
 }
@@ -120,6 +131,15 @@ async function freeVram(record: SizingRecord, deps: Partial<AdaptDeps>): Promise
   if (record.gpu?.source !== "measured") return null;
   const used = await (deps.gpuUsed ?? readGpuUsedBytes)();
   return used === null ? null : record.gpu.totalBytes - used;
+}
+
+/** What shows a slow reply was paging, as the clause the warning ends with, or
+ *  null when nothing does: a full card, or the runner measured in system memory. */
+async function pagingEvidence(free: number | null, deps: Partial<AdaptDeps>): Promise<string | null> {
+  if (free !== null && free < FULL_CARD_FREE_BYTES) return `with ${(free / 1e9).toFixed(1)} GB of VRAM free`;
+  const shared = await (deps.runnerShared ?? readRunnerSharedBytes)();
+  if (shared !== null && shared > PAGED_RUNNER_SHARED_BYTES) return `with ${(shared / 1e9).toFixed(1)} GB of the runner in system memory`;
+  return null;
 }
 
 /** Step down until the contention clears; the size stepped to, or null when
@@ -186,11 +206,12 @@ export async function observeChatResidency(
     logger.warn(`${model}: ${(spill / 1e9).toFixed(1)} GB spilled to system RAM at ${applied} tokens with no other model to blame; context is now ${next ?? "the runtime default"}`);
     return;
   }
-  if (slow && free !== null && free < FULL_CARD_FREE_BYTES) {
+  const paging = slow ? await pagingEvidence(free, deps) : null;
+  if (paging) {
     const next = stepDownWhileContended(key, record, applied, PAGING_SHED_BYTES, now);
     const depth = reply?.contextTokens ?? 0;
     const expected = record.healthyDecodeTokPerSec! / depthSlowdown(depth);
-    if (next !== null) logger.warn(`${model}: decoding at ${rate!.raw.toFixed(0)} tok/s ${depth} tokens deep, against ${expected.toFixed(0)} there when fully resident, with ${(free / 1e9).toFixed(1)} GB of VRAM free: the card is paging to system memory; reloading at ${next} tokens until it has room`);
+    if (next !== null) logger.warn(`${model}: decoding at ${rate!.raw.toFixed(0)} tok/s ${depth} tokens deep, against ${expected.toFixed(0)} there when fully resident, ${paging}: the card is paging to system memory; reloading at ${next} tokens until it has room`);
     return;
   }
   if (override) {

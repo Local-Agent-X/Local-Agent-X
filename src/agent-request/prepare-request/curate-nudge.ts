@@ -39,6 +39,27 @@ export interface CurateNudgeInput {
   resolvedApiKey: string;
 }
 
+/**
+ * Would the stage-2 classifier run on the local model this turn is about to
+ * use? A local runtime answers one request at a time, and the classifier is
+ * sent before the turn's first request, so the busy-skip in
+ * classify-with-llm-dispatch.ts cannot see the turn yet: the turn queued behind
+ * the classifier for its whole 2 s budget, every turn, and the KV cache was
+ * swapped out and back. On a voice call that was 2 s before every reply, and
+ * the classifier finished inside its budget once in ten local runs
+ * (2026-11-05). A classifier pinned to another local model, or a cloud chat,
+ * still runs.
+ */
+async function wouldQueueAheadOfTurn(input: CurateNudgeInput): Promise<boolean> {
+  if (input.resolvedProvider !== "local") return false;
+  const { resolveBackgroundModel } = await import("../../providers/background-model.js");
+  const { ollamaModelKey } = await import("../../local-runtimes/context-sizing-core.js");
+  const target = await resolveBackgroundModel(input.resolvedProvider, input.resolvedModel);
+  const shared = ollamaModelKey(target.model) === ollamaModelKey(input.resolvedModel);
+  if (shared) logger.debug(`[chat] curate-classifier skipped: it would queue ahead of this turn on ${input.resolvedModel}`);
+  return shared;
+}
+
 /** Returns the in-prompt curate block (usually empty unless
  *  LAX_MEMORY_INPROMPT_NUDGE=1 is set). Always runs the boost detection
  *  side-effects regardless of the env flag — see file header for why. */
@@ -72,7 +93,7 @@ export async function detectAndBoostCurate(input: CurateNudgeInput): Promise<str
     // we await with a short overall budget; if the classifier is slow,
     // we skip the boost and let cadence catch it next time. The boost
     // (if it lands in time) still affects THIS turn's nudge check.
-    if (!regexBoosted) {
+    if (!regexBoosted && !(await wouldQueueAheadOfTurn(input))) {
       try {
         const { classifyTeachMoment } = await import("../../memory/curate-classifier.js");
         const classification = await classifyTeachMoment(input.message, lastAssistantText);

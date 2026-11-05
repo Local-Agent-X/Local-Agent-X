@@ -211,6 +211,18 @@ export abstract class MemoryFactsBase {
     return Relations.relationCount(this.db);
   }
 
+  // ── Supersede sweep ──
+
+  /** Let up to `budget` stored facts end the older facts they make stale
+   *  (supersede-sweep.ts), and rebuild the pages of both. */
+  async sweepSupersededFacts(budget: number): Promise<{ examined: number; replaced: number; backlogLeft: boolean }> {
+    const { resolveFact } = await import("../resolver.js");
+    const { sweepSupersededFacts } = await import("../supersede-sweep.js");
+    const r = await sweepSupersededFacts(this.db, this.hasFts, (content, candidates) => resolveFact(content, candidates), budget);
+    this.refreshEntityPages([...r.ended, ...r.replacing]);
+    return { examined: r.examined, replaced: r.ended.length, backlogLeft: r.backlogLeft };
+  }
+
   // ── Reflect ──
 
   async reflect(sinceDays = 7): Promise<{

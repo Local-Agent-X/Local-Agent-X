@@ -10,6 +10,10 @@ const logger = createLogger("server.background-jobs.memory-bg");
 // Retention window for soft-invalidated facts before hard purge. Generous so
 // recallAsOf can still surface recently-superseded beliefs.
 const PURGE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
+// Stored facts the supersede sweep examines per run (memory-bg polls every
+// 6h): a backlog of a few thousand clears in about a week, one resolver call
+// each, and new facts are taken first.
+const SUPERSEDE_PER_RUN = 150;
 
 export interface MemoryBgDeps {
   dataDir: string;
@@ -21,12 +25,17 @@ export function makeRunMemBg(deps: MemoryBgDeps): () => Promise<void> {
   const { dataDir, sessionStore, memoryIndex } = deps;
   return async () => {
     try { const { MemoryOrchestrator: MO } = await import("../../orchestrator/orchestrator.js"); const r = MO.getInstance().runBackground(memoryIndex); logger.info(`[memory-bg] ${r.totalTimeMs}ms`); } catch (e) { logger.warn("[memory-bg]", (e as Error).message); }
-    // Cheap consolidation stages (algorithmic consolidate + reflect) via the
-    // shared pipeline. Extract is left off here — it's LLM-driven and stays
+    // Consolidation stages via the shared pipeline: algorithmic consolidate,
+    // the supersede sweep (memory keeps itself current — the owner's call,
+    // 2026-11-04: stale facts are replaced by newer ones automatically, kept
+    // as history), and reflect. Extract is left off here — it stays
     // user-triggered through the memory_consolidate/memory_dream tools.
     try {
       const { runConsolidation } = await import("../../memory/consolidation-pipeline.js");
-      const { consolidation, reflection } = await runConsolidation(memoryIndex, { consolidate: true, reflect: 7 });
+      const { consolidation, reflection, supersession } = await runConsolidation(memoryIndex, { consolidate: true, supersede: SUPERSEDE_PER_RUN, reflect: 7 });
+      if (supersession && supersession.replaced > 0) {
+        logger.info(`[memory-bg] Supersede: ${supersession.replaced} replaced of ${supersession.examined} examined${supersession.backlogLeft ? " (backlog left)" : ""}`);
+      }
       if (reflection && (reflection.entitiesUpdated.length > 0 || reflection.opinionsUpdated > 0)) {
         logger.info(`[memory-bg] Reflect: ${reflection.entitiesUpdated.length} entities, ${reflection.opinionsUpdated} opinions`);
       }

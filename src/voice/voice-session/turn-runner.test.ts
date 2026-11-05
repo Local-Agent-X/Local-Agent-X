@@ -104,17 +104,6 @@ describe("voice turn machine", () => {
     expect(h.types()).not.toContain("assistant_done");
   });
 
-  it("firstChunkCut opens fast: clause break, else word boundary, else wait", () => {
-    // Clause break ≥4 chars in → cut right after it ("Sure, ").
-    expect("Sure, let me look".slice(0, firstChunkCut("Sure, let me look"))).toBe("Sure, ");
-    // No early clause → first word boundary at/after the min length.
-    expect(firstChunkCut("Let me take a look")).toBeGreaterThan(0);
-    expect("Let me take a look".slice(0, firstChunkCut("Let me take a look")).trim().length).toBeGreaterThanOrEqual(12);
-    // Too short / no boundary yet → wait (-1).
-    expect(firstChunkCut("Hello")).toBe(-1);
-    expect(firstChunkCut("supercalifragilistic")).toBe(-1); // long but no space yet
-  });
-
   it("queued turn holds until drain, then schedules playback_complete", async () => {
     vi.useFakeTimers();
     const h = harness({ queued: true });
@@ -301,19 +290,23 @@ describe("voice turn machine — continuation merge", () => {
   });
 });
 
-describe("firstChunkCut — opener seams land on punctuation", () => {
-  it("prefers an early natural clause break even with a large word-boundary floor", () => {
-    // The regression: passing 24 for BOTH floors rejected "Yeah," and cut
-    // mid-phrase at char 24 ("…I'm oriented ▍ toward…") — the TTS seam gap
-    // then sat where no human pauses.
-    const buf = "Yeah, I think I'm oriented toward doing good";
-    expect(buf.slice(0, firstChunkCut(buf, 24))).toBe("Yeah, ");
+describe("firstChunkCut — a reply is spoken a sentence at a time", () => {
+  it("waits while the opening sentence is short enough to arrive whole", () => {
+    expect(firstChunkCut("Yeah, it's a quick way to find out")).toBe(-1);
   });
 
-  it("falls back to a word boundary past the floor when no clause break exists", () => {
-    const buf = "I believe the answer here is quite simple really";
-    const cut = firstChunkCut(buf, 24);
-    expect(cut).toBeGreaterThanOrEqual(24);
-    expect(buf[cut - 1]).toBe(" ");
+  it("cuts a long opening sentence at its last clause break, where a person pauses", () => {
+    const buf = "Okay, I checked the photo, and there's no lot number printed on";
+    expect(buf.slice(0, firstChunkCut(buf))).toBe("Okay, I checked the photo, ");
+  });
+
+  it("falls back to the last word boundary when the long opening has no clause break", () => {
+    const buf = "I believe the answer here is quite simple and it comes down to";
+    const cut = firstChunkCut(buf);
+    expect(buf.slice(0, cut)).toBe("I believe the answer here is quite simple and it comes down ");
+  });
+
+  it("waits when there is no boundary to cut at", () => {
+    expect(firstChunkCut("x".repeat(80))).toBe(-1);
   });
 });

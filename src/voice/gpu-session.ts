@@ -19,14 +19,6 @@ import type { VoiceTurnRunner } from "./voice-session/index.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("voice.gpu-session");
-// Long-clause early-flush: if the LLM is grinding out a long comma-heavy
-// sentence, fire the first clause to TTS as soon as it's >= ~60 chars and
-// has a comma. Cuts time-to-first-audio by 200-500ms on those sentences
-// without changing what the listener actually hears (TTS just sees one
-// sentence as two clauses).
-const CLAUSE_BREAK = /[,;:]\s+/;  // also split on semicolons/colons, not just commas
-const CLAUSE_MIN_CHARS = 30;       // was 60; smaller chunks reduce per-sentence synth time so RTF~1 hardware leaves shorter audible gaps
-
 export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRunner): VoiceSession {
   // The phone transcribes on-device (ADR 0010 in agentxos-mobile): its words arrive as
   // `transcript` frames, its mic audio is not ours to transcribe, and the sidecar never
@@ -80,11 +72,9 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
     }
   } catch { /* unreadable settings — sidecar default */ }
 
-  // GPU speaker: clause-split long sentences + early-flush the first clause so
-  // time-to-first-audio stays low on the sidecar's RTF~1 hardware. Each chunk
-  // bumps pendingTtsCount; onAudioDone counts it back down and signals the
-  // machine when the queue empties.
-  const LONG_SENTENCE_CHARS = 50;
+  // GPU speaker: a sentence at a time, the opening cut early only when it runs long
+  // (firstChunkCut). Each chunk bumps pendingTtsCount; onAudioDone counts it back down
+  // and signals the machine when the queue empties.
   let sentenceBuf = "";
   let firstClauseFlushed = false;
   let queuedThisTurn = false;
@@ -95,24 +85,6 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
     firstClauseFlushed = true;
     queuedThisTurn = true;
   };
-  const speakSentence = (raw: string): void => {
-    const sentence = raw.trim();
-    if (!sentence) return;
-    if (sentence.length < LONG_SENTENCE_CHARS) { speakChunk(sentence); return; }
-    // Split a long sentence on commas/semicolons so each chunk's synth time
-    // stays under the previous chunk's playback time (no audible gap).
-    const parts: string[] = [];
-    let remaining = sentence;
-    while (remaining.length > 0) {
-      const m = CLAUSE_BREAK.exec(remaining);
-      if (!m || m.index < CLAUSE_MIN_CHARS - 10) break;
-      const cut = m.index + m[0].length;
-      parts.push(remaining.slice(0, cut).trim());
-      remaining = remaining.slice(cut);
-    }
-    if (remaining.trim()) parts.push(remaining.trim());
-    for (const p of parts) speakChunk(p);
-  };
   const speaker: TurnSpeaker = {
     reset() { sentenceBuf = ""; firstClauseFlushed = false; queuedThisTurn = false; },
     feed(delta) {
@@ -122,13 +94,11 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
         const m = SENTENCE_TERMINATOR.exec(sentenceBuf);
         if (!m) break;
         const cutEnd = m.index + m[0].length;
-        speakSentence(sentenceBuf.slice(0, cutEnd));
+        speakChunk(sentenceBuf.slice(0, cutEnd).trim());
         sentenceBuf = sentenceBuf.slice(cutEnd);
       }
-      // First-chunk flush: get the reply's OPENING to TTS as fast as possible
-      // so the clone starts reading while the rest still streams — the fix for
-      // "voice starts way after the text". Fires once; sentence terminators +
-      // speakSentence's clause splitter handle the bulk with better prosody.
+      // First-chunk flush: a long opening sentence starts speaking before it ends,
+      // so the voice does not trail the text. Fires once.
       if (!firstClauseFlushed) {
         const cut = firstChunkCut(sentenceBuf);
         if (cut > 0) {
@@ -139,7 +109,7 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
     },
     flushTail() {
       const tail = sentenceBuf.trim();
-      if (tail) speakSentence(tail);
+      if (tail) speakChunk(tail);
       sentenceBuf = "";
     },
     hasQueued() { return queuedThisTurn; },

@@ -8,8 +8,8 @@
 //   completion bookkeeping (barge-in stays live until the browser ring drains)
 //
 // Engine specifics are injected so they can't fork again:
-//   - TurnSpeaker  — turns streamed text into audio. In-process speaks whole
-//                    sentences; the GPU path clause-splits + early-flushes.
+//   - TurnSpeaker  — turns streamed text into audio, a sentence at a time, the
+//                    opening cut early only when it runs long (firstChunkCut).
 //   - cancelTts    — stop in-flight synthesis on barge-in.
 // The drain signal differs too (in-process: one onIdle; GPU: per-chunk
 // audio_done countdown), so each session calls markTtsDrained() when its
@@ -31,23 +31,24 @@ const CONTINUATION_WINDOW_MS = 30_000;
 
 export const SENTENCE_TERMINATOR = /[.!?]["')\]]?(?=\s|$)/;
 
-/** Earliest cut point for the OPENING TTS chunk, so the voice starts reading
- *  while the reply is still streaming instead of trailing it — the dominant
- *  felt-latency lever for slow synthesis (clone voices). Returns the slice end
- *  at the first clause break (≥`minClauseChars` in) or a word boundary
- *  (≥`minChars`), or -1 when there's not enough yet. Engine speakers call this
- *  once per turn for the first chunk, then fall back to sentence/clause flushing
- *  for the bulk (which has better prosody). `minClauseChars` lets an engine veto
- *  a too-tiny opener ("Sure,") whose audio drains before the next chunk can
- *  synthesize — a cadence gap on cloud/RTF~1 engines. */
-export function firstChunkCut(buf: string, minChars = 12, minClauseChars = 4): number {
-  const clause = /[,;:]\s+/.exec(buf);
-  if (clause && clause.index >= minClauseChars) return clause.index + clause[0].length;
-  if (buf.length >= minChars) {
-    const space = buf.indexOf(" ", minChars);
-    if (space > 0) return space + 1;
-  }
-  return -1;
+/** How long the reply's opening may grow without a sentence end before part of it is
+ *  spoken anyway (~0.2 s of streamed tokens). */
+export const OPENER_WAIT_CHARS = 60;
+
+/** Where to cut the reply's OPENING chunk, or -1 to wait. Every chunk is synthesized on
+ *  its own, so it is said like a whole sentence: it ends on a falling tone and a pause.
+ *  Cutting replies at their commas made every voice sound like a machine reading
+ *  fragments (2026-11-05), so a reply is spoken a sentence at a time, and the opening is
+ *  cut early only when its first sentence runs past `waitChars` without ending: at its
+ *  last clause break, where a person pauses anyway, else its last word boundary. That
+ *  keeps the first word quick on a long opening sentence. */
+export function firstChunkCut(buf: string, waitChars = OPENER_WAIT_CHARS): number {
+  if (buf.length < waitChars) return -1;
+  let clauseEnd = -1;
+  for (const m of buf.matchAll(/[,;:]\s+/g)) clauseEnd = m.index + m[0].length;
+  if (clauseEnd > 0) return clauseEnd;
+  const space = buf.lastIndexOf(" ");
+  return space > 0 ? space + 1 : -1;
 }
 
 const PLAYBACK_TAIL_MS = 250; // grace for browser scheduler / network jitter

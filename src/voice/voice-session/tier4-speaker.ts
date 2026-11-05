@@ -1,24 +1,14 @@
-// In-process Tier-4 / CPU speaker: streams reply text to the TTS engine one
-// natural chunk at a time. Split out of voice-session/index.ts; behavior is
-// unchanged.
+// In-process Tier-4 / CPU speaker: streams reply text to the TTS engine. Split out
+// of voice-session/index.ts.
 //
-// Chunking is what makes cadence sound human, because every chunk boundary is
-// a synthesis seam (a tiny gap). So seams land on PUNCTUATION, never a raw
-// character count:
-//   - Opener: cut at the first natural clause break ("Yeah," / "Okay, so") so
-//     speech leads the text ASAP; only if none shows up by ~24 chars fall back
-//     to a word boundary. (The old shape passed 24 for BOTH floors, which
-//     rejected "Yeah," and cut mid-phrase — the gap landed where nobody pauses.)
-//   - After the opener: flush at a clause break once ≥40 chars are pending, so
-//     a long sentence starts sooner (edge-tts is a network round-trip) and every
-//     seam sits on a comma/colon. Mirrors the GPU sidecar speaker.
+// Every chunk is synthesized on its own and said like a whole sentence, so a reply goes
+// to the engine a sentence at a time; only a long opening sentence is cut early, at a
+// clause break (firstChunkCut), so speech still leads the text. Cutting at every comma
+// made the voice read fragments (2026-11-05). Same rule as the GPU sidecar speaker.
 
 import { SENTENCE_TERMINATOR, firstChunkCut, type TurnSpeaker } from "./turn-runner.js";
 
 interface SpeakTarget { speak(text: string): void }
-
-const OPENER_MIN_CHARS = 24;
-const CLAUSE_FLUSH_MIN_CHARS = 40;
 
 /** `getTts` is a getter because the engine is assigned after model init; the
  *  speaker is created earlier and no-ops until it's ready. */
@@ -42,19 +32,11 @@ export function createTier4Speaker(getTts: () => SpeakTarget | null | undefined)
         if (sentence) { tts.speak(sentence); ttsQueued = true; firstChunkSpoken = true; }
       }
       if (!firstChunkSpoken) {
-        const cut = firstChunkCut(sentenceBuf, OPENER_MIN_CHARS);
+        const cut = firstChunkCut(sentenceBuf);
         if (cut > 0) {
           const chunk = sentenceBuf.slice(0, cut).trim();
           if (chunk) { tts.speak(chunk); ttsQueued = true; firstChunkSpoken = true; }
           sentenceBuf = sentenceBuf.slice(cut);
-        }
-      } else {
-        const clause = /[,;:]\s+/.exec(sentenceBuf);
-        if (clause && clause.index + clause[0].length >= CLAUSE_FLUSH_MIN_CHARS) {
-          const cutEnd = clause.index + clause[0].length;
-          const chunk = sentenceBuf.slice(0, cutEnd).trim();
-          sentenceBuf = sentenceBuf.slice(cutEnd);
-          if (chunk) { tts.speak(chunk); ttsQueued = true; }
         }
       }
     },

@@ -128,6 +128,59 @@ export function countChunks(
   return (db.prepare("SELECT COUNT(*) as c FROM chunks WHERE path LIKE ?").get(`%${pathPattern}%`) as { c: number }).c;
 }
 
+/** One fact as a page line: its content, when it happened, its source label
+ *  and the message it was saved from. */
+function factLine(fact: RetainedFact): string {
+  const conf = fact.kind === "opinion" ? ` (confidence: ${fact.confidence.toFixed(2)})` : "";
+  // The EVENT date when the source carried one, never the write time.
+  // Falling back to `timestamp` is what made a conversation from the 22nd
+  // read as having happened on the 23rd, because that is when the
+  // consolidation pass that recorded it happened to run.
+  const occurred = fact.occurredAt != null ? localDate(fact.occurredAt) : null;
+  const recorded = localDate(fact.timestamp);
+  const when = occurred !== null
+    ? `*${occurred}*`
+    : `*date unknown* (recorded ${recorded})`;
+  // Each line keeps its source, as core memory and entity context do: this
+  // page is what memory_search returns, and without the label a fact the
+  // user told the agent read as untrusted text the agent could not back up
+  // (qwen3.6-27b, hold-sourced-claim, 2026-10-18: searched, then "you never
+  // said that") — and a fact saved from web content lost its UNTRUSTED mark.
+  // The message it was saved from, as memory_recall prints it:
+  // search_past_sessions(message_id) reads the user's own words there,
+  // which memory_search (this session only) never returns.
+  const from = fact.sourceMessageId ? ` (from message ${fact.sourceMessageId})` : "";
+  return `- ${fact.content}${conf} — ${when}${factTrustSuffix(fact.sourceFile)}${from}`;
+}
+
+const MAX_REPLACED_PER_ENTITY = 15;
+
+/**
+ * The entity's replaced facts (ended by a newer one), newest replacement first, each saying when it
+ * stopped being current and what replaced it. A replaced fact is history, not
+ * gone: "what was my old dose?" is answered from here, and a replacement made
+ * in error is visible on the page rather than silently missing.
+ */
+function replacedSection(db: InstanceType<typeof Database>, slug: string): string[] {
+  const replaced = recallByEntity(db, slug, MAX_FACTS_PER_ENTITY * 4, { includeInvalidated: true })
+    // Replaced, not forgotten: a fact the user asked to forget ends with no
+    // replacement and must not come back as history.
+    .filter((f) => f.validTo != null && f.invalidatedBy != null)
+    .sort((a, b) => (b.validTo ?? 0) - (a.validTo ?? 0))
+    .slice(0, MAX_REPLACED_PER_ENTITY);
+  if (replaced.length === 0) return [];
+  const contentOf = db.prepare("SELECT content FROM facts WHERE id = ?");
+  const lines = ["## Earlier (replaced — history, no longer current)", ""];
+  for (const fact of replaced) {
+    const by = fact.invalidatedBy != null
+      ? (contentOf.get(fact.invalidatedBy) as { content: string } | undefined)?.content
+      : undefined;
+    lines.push(`${factLine(fact)} — replaced ${localDate(fact.validTo!)}${by ? ` by: ${by}` : ""}`);
+  }
+  lines.push("");
+  return lines;
+}
+
 export function updateEntityPage(
   db: InstanceType<typeof Database>,
   entitiesDir: string,
@@ -174,31 +227,10 @@ export function updateEntityPage(
     if (!facts || facts.length === 0) continue;
 
     lines.push(`## ${label}`, "");
-    for (const fact of facts) {
-      const conf =
-        kind === "opinion" ? ` (confidence: ${fact.confidence.toFixed(2)})` : "";
-      // The EVENT date when the source carried one, never the write time.
-      // Falling back to `timestamp` is what made a conversation from the 22nd
-      // read as having happened on the 23rd, because that is when the
-      // consolidation pass that recorded it happened to run.
-      const occurred = fact.occurredAt != null ? localDate(fact.occurredAt) : null;
-      const recorded = localDate(fact.timestamp);
-      const when = occurred !== null
-        ? `*${occurred}*`
-        : `*date unknown* (recorded ${recorded})`;
-      // Each line keeps its source, as core memory and entity context do: this
-      // page is what memory_search returns, and without the label a fact the
-      // user told the agent read as untrusted text the agent could not back up
-      // (qwen3.6-27b, hold-sourced-claim, 2026-10-18: searched, then "you never
-      // said that") — and a fact saved from web content lost its UNTRUSTED mark.
-      // The message it was saved from, as memory_recall prints it:
-      // search_past_sessions(message_id) reads the user's own words there,
-      // which memory_search (this session only) never returns.
-      const from = fact.sourceMessageId ? ` (from message ${fact.sourceMessageId})` : "";
-      lines.push(`- ${fact.content}${conf} — ${when}${factTrustSuffix(fact.sourceFile)}${from}`);
-    }
+    for (const fact of facts) lines.push(factLine(fact));
     lines.push("");
   }
+  lines.push(...replacedSection(db, slug));
 
   const entityPath = join(entitiesDir, `${slug}.md`);
   atomicWriteFileSync(entityPath, lines.join("\n"));
@@ -213,8 +245,9 @@ export function updateEntityPage(
  *  `### Consolidated <date>` blocks of daily-log lines with no source label, and
  *  created `### Facts` pages for entities the Facts DB never held. Both ran to
  *  the end of the file, and this page format uses only `##` headings. Format 4
- *  adds the message each fact was saved from. */
-const ENTITY_PAGE_FORMAT = "4";
+ *  adds the message each fact was saved from. Format 5 adds the replaced facts
+ *  as history. */
+const ENTITY_PAGE_FORMAT = "5";
 const CONSOLIDATION_HEADING = /^### (?:Consolidated \d{4}-\d{2}-\d{2}|Facts)$/m;
 
 /** Cut a page with no facts in the DB at its first consolidation heading. A

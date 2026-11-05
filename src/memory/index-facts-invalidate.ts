@@ -10,26 +10,48 @@ const logger = createLogger("memory.index-facts");
  *  a model's off-turn judgement in retainSmart (background extraction). */
 export type InvalidationActor = "agent" | "resolver";
 
+/** The statement a resolver judged to replace an existing fact: its origin, and
+ *  when it was said (its event date when known, else when it was saved). */
+export interface ReplacingStatement {
+  provenance: string | null;
+  sourceFile: string;
+  occurredAt: number | null;
+  savedAt: number;
+}
+
 /**
- * A resolver may only revise what a model wrote on its own account: origin
- * "assistant" and not reported as the user's (isUserReported). What the user
- * said — quoted or in the agent's words — and rows with no recorded origin end
- * only by an agent action. Live 2026-10-09: 20 s after a chat, background
- * extraction saved "is the user's cousin", and a 3B resolver judged it an
- * UPDATE of the user's Merriweather story (both tagged Odalys) and ended it;
- * on the next chat the agent had no fact and called it made up.
+ * Whether a resolver (a model's off-turn judgement) may end fact `id` in
+ * favour of `replacing`. Two rules, both on code facts, never on the model's
+ * verdict:
+ *
+ * - Never backwards: a statement older than the fact cannot replace it, so a
+ *   late-extracted May note can never end an October one.
+ * - Authority: what a model wrote on its own account (origin "assistant", not
+ *   isUserReported) may be replaced by anything newer; what the user said —
+ *   quoted, in the agent's words, or with no recorded origin — only by a newer
+ *   statement that is itself the user's. Live 2026-10-09: background
+ *   extraction saved "is the user's cousin", a 3B resolver judged it an UPDATE
+ *   of the user's Merriweather story and ended it, and the agent called the
+ *   story made up. That replacement was a model inference ending the user's
+ *   words; a newer statement of the user's (a new vial replacing an old one,
+ *   2026-11-04) is the user correcting themselves. An ended fact stays on its
+ *   entity page as history, so a wrong call is visible, not lost.
  */
-export function resolverMayEnd(db: InstanceType<typeof Database>, id: number): boolean {
-  const row = db.prepare("SELECT provenance, source_file FROM facts WHERE id = ?").get(id) as { provenance: string | null; source_file: string } | undefined;
-  return !row || (row.provenance === "assistant" && !isUserReported({ provenance: row.provenance, sourceFile: row.source_file }));
+export function resolverMayEnd(db: InstanceType<typeof Database>, id: number, replacing: ReplacingStatement): boolean {
+  const row = db.prepare("SELECT provenance, source_file, occurred_at, timestamp FROM facts WHERE id = ?")
+    .get(id) as { provenance: string | null; source_file: string; occurred_at: number | null; timestamp: number } | undefined;
+  if (!row) return true;
+  if ((row.occurred_at ?? row.timestamp) > (replacing.occurredAt ?? replacing.savedAt)) return false;
+  const modelsOwn = row.provenance === "assistant" && !isUserReported({ provenance: row.provenance, sourceFile: row.source_file });
+  return modelsOwn || isUserReported({ provenance: replacing.provenance, sourceFile: replacing.sourceFile });
 }
 
 export function invalidateFact(
   db: InstanceType<typeof Database>,
   id: number,
-  opts: { by: InvalidationActor; reason?: string; replacedBy?: number; at?: Date }
+  opts: { by: InvalidationActor; reason?: string; replacedBy?: number; at?: Date; replacing?: ReplacingStatement }
 ): boolean {
-  if (opts.by === "resolver" && !resolverMayEnd(db, id)) {
+  if (opts.by === "resolver" && (!opts.replacing || !resolverMayEnd(db, id, opts.replacing))) {
     logger.info(`[memory] resolver may not end fact #${id}: ${opts.reason ?? ""}`);
     return false;
   }

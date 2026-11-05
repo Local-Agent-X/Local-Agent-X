@@ -172,6 +172,30 @@ describe("a resolver's background guess cannot end what the user said", () => {
     expect(live(modelNote)).toBe(false);
   });
 
+  // 2026-11-04: the user's May vial (20 mg/1 mL) and October vial (50 mg/2 mL)
+  // were both current, because nothing automatic could end a user statement.
+  it("a newer statement of the user's replaces an older one of theirs, which stays on the page as history", async () => {
+    const may = seed("@Retatrutide vial is 20 mg with 1 mL bac water", "user_statement");
+    vi.mocked(resolveFact).mockResolvedValueOnce({ op: "UPDATE", targetId: may, reason: "new vial" });
+    const { facts } = await memory.retainSmart("- E @Retatrutide vial is now 50 mg with 2 mL bac water", "agent-tool:auto-model-clean-user-statement");
+    expect(live(may)).toBe(false);
+    const ended = db().prepare("SELECT invalidated_by FROM facts WHERE id = ?").get(may) as { invalidated_by: number };
+    expect(ended.invalidated_by).toBe(facts[0].id);
+    const page = readFileSync(join(tempDir, "memory", "bank", "entities", "retatrutide.md"), "utf8");
+    const history = page.slice(page.indexOf("## Earlier (replaced"));
+    expect(history).toContain("20 mg with 1 mL");
+    expect(history).toMatch(/replaced \d{4}-\d\d-\d\d by: Retatrutide vial is now 50 mg/);
+    expect(page.slice(0, page.indexOf("## Earlier"))).toContain("50 mg with 2 mL");
+  });
+
+  it("an older statement never replaces a newer fact, whatever the resolver says", async () => {
+    const october = seed("@Retatrutide vial is 50 mg with 2 mL bac water", "assistant");
+    vi.mocked(resolveFact).mockResolvedValueOnce({ op: "UPDATE", targetId: october, reason: "different vial" });
+    const may = Date.now() - 170 * 24 * 3600_000;
+    await memory.retainSmart("- E @Retatrutide vial is 20 mg with 1 mL bac water", "agent-tool:auto-model-clean-user-statement", 0, { occurredAt: may });
+    expect(live(october)).toBe(true);
+  });
+
   it("an agent action on the user's words still ends a user statement", () => {
     const fact = seed("@Odalys keeps the Kestrel Nine at slip 14", "user_statement");
     expect(memory.invalidateFact(fact, { by: "agent", reason: "agent update_fact" })).toBe(true);
@@ -194,13 +218,19 @@ describe("a saved fact is searchable as soon as it is saved", () => {
     expect(await found("Odalys's sailboat slip")).toBe(false);
   });
 
-  it("update_fact rewrites the page: the new value is found, the old one is not", async () => {
+  it("update_fact rewrites the page: the new value is current, the old one only history", async () => {
     authorizeTestFactMutations(memory);
     memory.rememberFact("@Odalys keeps her sailboat at slip 14", { kind: "world" });
     expect(memory.updateFact("slip 14", "@Odalys keeps her sailboat at slip 31", { kind: "world" }).ok).toBe(true);
     const hits = await memory.search("Odalys sailboat slip", { maxResults: 5, sessionId: "another-chat" });
     expect(hits.some((r) => r.snippet.includes("slip 31"))).toBe(true);
-    expect(hits.some((r) => r.snippet.includes("slip 14"))).toBe(false);
+    // The old value is kept so "where did she keep it before?" has an answer,
+    // but only under the replaced heading, saying what replaced it.
+    for (const h of hits.filter((r) => r.snippet.includes("slip 14"))) {
+      const at = h.snippet.indexOf("slip 14");
+      expect(h.snippet.lastIndexOf("## Earlier (replaced", at)).toBeGreaterThanOrEqual(0);
+      expect(h.snippet.slice(at)).toMatch(/replaced \d{4}-\d\d-\d\d by: Odalys keeps her sailboat at slip 31/);
+    }
   });
 });
 

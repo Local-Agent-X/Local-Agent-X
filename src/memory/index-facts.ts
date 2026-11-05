@@ -177,8 +177,9 @@ export async function retainSmart(
     // misjudged as an update of the cousin fact was lost, with the agent
     // claiming it saved (9115bd39).
     let op = decision.op;
+    const replacing = { provenance: opts?.promotion?.origin ?? null, sourceFile, occurredAt: opts?.occurredAt ?? null, savedAt: Date.now() };
     if ((op === "UPDATE" || op === "DELETE") && decision.targetId !== undefined
-      && !resolverMayEnd(db, decision.targetId)) {
+      && !resolverMayEnd(db, decision.targetId, replacing)) {
       if (alreadySaid(parsed.content, candidates)) {
         logger.info(`[memory] resolver may not end fact #${decision.targetId}; nothing saved — already stored: ${decision.reason}`);
         continue;
@@ -188,7 +189,7 @@ export async function retainSmart(
     }
 
     if (op === "DELETE" && decision.targetId !== undefined) {
-      invalidateFact(db, decision.targetId, { by: "resolver", reason: `deleted by resolver: ${decision.reason}` });
+      invalidateFact(db, decision.targetId, { by: "resolver", reason: `deleted by resolver: ${decision.reason}`, replacing });
       continue;
     }
 
@@ -205,7 +206,8 @@ export async function retainSmart(
       const factId = result.lastInsertRowid as number;
 
       if (op === "UPDATE" && decision.targetId !== undefined) {
-        invalidateFact(db, decision.targetId, { by: "resolver", reason: `superseded by ${factId}: ${decision.reason}`, replacedBy: factId });
+        invalidateFact(db, decision.targetId, { by: "resolver", reason: `superseded by ${factId}: ${decision.reason}`, replacedBy: factId, replacing });
+        logger.info(`[memory] fact #${decision.targetId} replaced by #${factId}: ${decision.reason}`);
       }
 
       for (const entity of validEntities) {

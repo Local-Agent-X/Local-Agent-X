@@ -8,8 +8,8 @@
 //   completion bookkeeping (barge-in stays live until the browser ring drains)
 //
 // Engine specifics are injected so they can't fork again:
-//   - TurnSpeaker  — turns streamed text into audio, a sentence at a time, the
-//                    opening cut early only when it runs long (firstChunkCut).
+//   - TurnSpeaker  — turns streamed text into audio, a sentence at a time
+//                    (sentence-chunker.ts).
 //   - cancelTts    — stop in-flight synthesis on barge-in.
 // The drain signal differs too (in-process: one onIdle; GPU: per-chunk
 // audio_done countdown), so each session calls markTtsDrained() when its
@@ -30,26 +30,6 @@ const CONTINUATION_MAX_HEARD_MS = 2_500;
 const CONTINUATION_WINDOW_MS = 30_000;
 
 export const SENTENCE_TERMINATOR = /[.!?]["')\]]?(?=\s|$)/;
-
-/** How long the reply's opening may grow without a sentence end before part of it is
- *  spoken anyway (~0.2 s of streamed tokens). */
-export const OPENER_WAIT_CHARS = 60;
-
-/** Where to cut the reply's OPENING chunk, or -1 to wait. Every chunk is synthesized on
- *  its own, so it is said like a whole sentence: it ends on a falling tone and a pause.
- *  Cutting replies at their commas made every voice sound like a machine reading
- *  fragments (2026-11-05), so a reply is spoken a sentence at a time, and the opening is
- *  cut early only when its first sentence runs past `waitChars` without ending: at its
- *  last clause break, where a person pauses anyway, else its last word boundary. That
- *  keeps the first word quick on a long opening sentence. */
-export function firstChunkCut(buf: string, waitChars = OPENER_WAIT_CHARS): number {
-  if (buf.length < waitChars) return -1;
-  let clauseEnd = -1;
-  for (const m of buf.matchAll(/[,;:]\s+/g)) clauseEnd = m.index + m[0].length;
-  if (clauseEnd > 0) return clauseEnd;
-  const space = buf.lastIndexOf(" ");
-  return space > 0 ? space + 1 : -1;
-}
 
 const PLAYBACK_TAIL_MS = 250; // grace for browser scheduler / network jitter
 
@@ -167,6 +147,8 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
       logger.info(`[turn] ${sid}: continuation armed (heard ${heardMs}ms of reply)`);
     }
     clearTimer();
+    // A buffered opening must not be spoken after the user cut in (sentence-chunker's timer).
+    speaker.reset();
     try { activeTurn.abort(); } catch { /* already settled */ }
     try { cancelTts(); } catch { /* engine already idle */ }
     ctx.sendEvent({ type: "tts_interrupt" });
@@ -385,6 +367,7 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
       // that already fired.
       if (ttsDrained || (speaker.pendingCount && speaker.pendingCount() === 0)) markTtsDrained();
     } catch (e) {
+      speaker.reset();
       const msg = (e as Error).message || String(e);
       if (turn.signal.aborted) {
         logger.info(`[turn] ${sid}: turn aborted (barge-in)`);

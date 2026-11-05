@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, afterEach } from "vitest";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
-import { createVoiceTurnMachine, firstChunkCut, type TurnSpeaker, type VoiceTurnMachineDeps } from "./turn-runner.js";
+import { createVoiceTurnMachine, type TurnSpeaker, type VoiceTurnMachineDeps } from "./turn-runner.js";
 import type { VoiceTurnRunner } from "./types.js";
 
 // Seam test for the canonical voice turn machine: drives a real turn through
@@ -290,23 +290,3 @@ describe("voice turn machine — continuation merge", () => {
   });
 });
 
-describe("firstChunkCut — a reply is spoken a sentence at a time", () => {
-  it("waits while the opening sentence is short enough to arrive whole", () => {
-    expect(firstChunkCut("Yeah, it's a quick way to find out")).toBe(-1);
-  });
-
-  it("cuts a long opening sentence at its last clause break, where a person pauses", () => {
-    const buf = "Okay, I checked the photo, and there's no lot number printed on";
-    expect(buf.slice(0, firstChunkCut(buf))).toBe("Okay, I checked the photo, ");
-  });
-
-  it("falls back to the last word boundary when the long opening has no clause break", () => {
-    const buf = "I believe the answer here is quite simple and it comes down to";
-    const cut = firstChunkCut(buf);
-    expect(buf.slice(0, cut)).toBe("I believe the answer here is quite simple and it comes down ");
-  });
-
-  it("waits when there is no boundary to cut at", () => {
-    expect(firstChunkCut("x".repeat(80))).toBe(-1);
-  });
-});

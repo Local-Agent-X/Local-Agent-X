@@ -11,7 +11,8 @@
 
 import type { VoiceSession, VoiceSessionContext } from "./audio-ws.js";
 import { createGPUBridge, type GPUBridge } from "./gpu-bridge.js";
-import { createVoiceTurnMachine, SENTENCE_TERMINATOR, firstChunkCut, type TurnSpeaker } from "./voice-session/turn-runner.js";
+import { createVoiceTurnMachine, type TurnSpeaker } from "./voice-session/turn-runner.js";
+import { createSentenceChunker } from "./voice-session/sentence-chunker.js";
 import { registerVoiceSpeaker, unregisterVoiceSpeaker } from "./proactive-registry.js";
 import { resolveVoiceSettings } from "./voice-session/settings.js";
 import { createBargeInConfirm, createNearFieldGate } from "./voice-session/near-field-gate.js";
@@ -72,46 +73,20 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
     }
   } catch { /* unreadable settings — sidecar default */ }
 
-  // GPU speaker: a sentence at a time, the opening cut early only when it runs long
-  // (firstChunkCut). Each chunk bumps pendingTtsCount; onAudioDone counts it back down
-  // and signals the machine when the queue empties.
-  let sentenceBuf = "";
-  let firstClauseFlushed = false;
+  // GPU speaker: the reply a sentence at a time (sentence-chunker.ts). Each piece bumps
+  // pendingTtsCount; onAudioDone counts it back down and signals the machine when the
+  // queue empties.
   let queuedThisTurn = false;
-  const speakChunk = (text: string): void => {
-    if (!text || !bridge) return;
+  const chunker = createSentenceChunker((text) => {
+    if (!bridge) return;
     pendingTtsCount++;
     bridge.speak(text, nextSentenceId++, { voice: voiceOverride, speed: speedOverride });
-    firstClauseFlushed = true;
     queuedThisTurn = true;
-  };
+  });
   const speaker: TurnSpeaker = {
-    reset() { sentenceBuf = ""; firstClauseFlushed = false; queuedThisTurn = false; },
-    feed(delta) {
-      sentenceBuf += delta;
-      // Sentence terminators (.!?) — preferred boundary.
-      while (true) {
-        const m = SENTENCE_TERMINATOR.exec(sentenceBuf);
-        if (!m) break;
-        const cutEnd = m.index + m[0].length;
-        speakChunk(sentenceBuf.slice(0, cutEnd).trim());
-        sentenceBuf = sentenceBuf.slice(cutEnd);
-      }
-      // First-chunk flush: a long opening sentence starts speaking before it ends,
-      // so the voice does not trail the text. Fires once.
-      if (!firstClauseFlushed) {
-        const cut = firstChunkCut(sentenceBuf);
-        if (cut > 0) {
-          speakChunk(sentenceBuf.slice(0, cut).trim());
-          sentenceBuf = sentenceBuf.slice(cut);
-        }
-      }
-    },
-    flushTail() {
-      const tail = sentenceBuf.trim();
-      if (tail) speakChunk(tail);
-      sentenceBuf = "";
-    },
+    reset() { chunker.reset(); queuedThisTurn = false; },
+    feed: (delta) => chunker.feed(delta),
+    flushTail: () => chunker.flushTail(),
     hasQueued() { return queuedThisTurn; },
     pendingCount() { return pendingTtsCount; },
   };

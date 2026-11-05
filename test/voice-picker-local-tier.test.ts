@@ -46,6 +46,17 @@ describe("the Local (no GPU) tier", () => {
     expect(picker.resolve(picker.tier("local")!.settings)).toBe("local");
   });
 
+  it("a fresh desktop install shows Local, what the server runs with no voice settings", () => {
+    const desktop = new Function(`const navigator = { userAgent: "Mozilla/5.0 Electron/38.0.0" };
+      ${source}
+      return _resolveActiveTierId;`)() as Picker["resolve"];
+    expect(desktop({})).toBe("local");
+    // A saved browser bundle can't run in Electron; it shows the default too.
+    expect(desktop({ voiceMode: "browser" })).toBe("local");
+    // A real browser keeps the Web Speech tier.
+    expect(picker.resolve({})).toBe("browser");
+  });
+
   it("other tiers still resolve to themselves", () => {
     expect(picker.resolve({ voiceEngine: "python" })).toBe("studio");
     expect(picker.resolve({ voiceEngine: "tier4", voiceTier4Provider: "edge-tts" })).toBe("edge");

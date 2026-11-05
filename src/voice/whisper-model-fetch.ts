@@ -8,9 +8,10 @@
 //   2. LAX_VOICE_WHISPER_MODEL env var (lowercased + validated)
 //   3. settings.json `voiceWhisperModel` (resolved by voice-session, then
 //      passed in as an option)
-//   4. DEFAULT_WHISPER_VARIANT (tiny.en) — the one bundled with the desktop
-//      app, so voice works with no download. Users bump to another variant
-//      from the settings dropdown or the Local voice tier.
+//   4. parakeet-v3 once it is fully on disk, else DEFAULT_WHISPER_VARIANT
+//      (tiny.en) — the one bundled with the desktop app, so voice works with
+//      no download. A fresh install's voice is the Local tier, which starts
+//      the Parakeet download on its first session (model-init.ts).
 //
 // Measured 2026-11-04 on LibriSpeech dev-clean (73 clips, ~6.6 s each),
 // sherpa-onnx WASM, one thread, Core Ultra 9 285K — words wrong (titles and
@@ -47,7 +48,7 @@ export function resolveWhisperVariant(opts?: { variant?: WhisperVariant }): Whis
   if (envRaw && VALID_WHISPER_VARIANTS.has(envRaw as WhisperVariant)) {
     return envRaw as WhisperVariant;
   }
-  return DEFAULT_WHISPER_VARIANT;
+  return whisperDownloadState("parakeet-v3").cached ? "parakeet-v3" : DEFAULT_WHISPER_VARIANT;
 }
 
 interface ModelFile { name: string; url: string; minBytes: number; }
@@ -199,7 +200,9 @@ export async function ensureWhisperModelDownloaded(
   opts?: { variant?: WhisperVariant },
 ): Promise<WhisperModelPaths> {
   const variant = resolveWhisperVariant(opts);
-  if (whisperModelExists({ variant })) return getWhisperModelPaths({ variant });
+  // A file still being written can already pass the size check, so a running
+  // download is joined, never taken as done.
+  if (!inFlight.has(variant) && whisperModelExists({ variant })) return getWhisperModelPaths({ variant });
   if (isLocalOnlyMode()) throw new Error(LOCAL_ONLY_BLOCK_MESSAGE);
 
   let flight = inFlight.get(variant);

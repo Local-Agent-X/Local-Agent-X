@@ -21,6 +21,9 @@ import {
 import {
   ensureWhisperModelDownloaded,
   getWhisperModelPaths,
+  whisperDownloadState,
+  type WhisperFetchProgress,
+  type WhisperModelPaths,
 } from "../whisper-model-fetch.js";
 import { createTier4, tier4ModelDownloaded, tier4VariantFromEnv } from "../tier4/index.js";
 import { createSttProvider, resolveSttProviderName } from "../stt-providers/index.js";
@@ -71,6 +74,31 @@ export interface ModelInitDeps {
   isClosed: () => boolean;
 }
 
+/** A voice nobody configured is the Local tier: in-process Kokoro, heard on
+ *  this machine. */
+function isDefaultLocalVoice(s: ResolvedVoiceSettings): boolean {
+  return s.engine === "tier4" && !s.whisperModel && !process.env.LAX_VOICE_WHISPER_MODEL
+    && (!s.tier4Provider || s.tier4Provider === "kokoro")
+    && (!s.sttProvider || s.sttProvider === "local-whisper");
+}
+
+/** Ensures the speech model this session listens with. On the default Local
+ *  voice that is Parakeet once it is on disk; until then the session listens
+ *  with the bundled tiny.en and Parakeet downloads in the background, for the
+ *  sessions after it. */
+export function ensureSessionSpeechModel(
+  voiceSettings: ResolvedVoiceSettings,
+  onProgress: (p: WhisperFetchProgress) => void,
+): Promise<WhisperModelPaths> {
+  if (isDefaultLocalVoice(voiceSettings) && !isLocalOnlyMode()
+    && !whisperDownloadState("parakeet-v3").cached) {
+    ensureWhisperModelDownloaded(undefined, { variant: "parakeet-v3" }).catch((e: Error) => {
+      logger.warn(`[voice-session] background Parakeet download failed: ${e.message}`);
+    });
+  }
+  return ensureWhisperModelDownloaded(onProgress, { variant: voiceSettings.whisperModel });
+}
+
 export async function initializeVoiceStack(deps: ModelInitDeps): Promise<InitializedStack | null> {
   const { ctx, voiceSettings, engine, getSecret, ttsCallbacks, sttCallbacks, vadCallbacks, isClosed } = deps;
   const TIER4_MODE = engine === "tier4";
@@ -87,9 +115,9 @@ export async function initializeVoiceStack(deps: ModelInitDeps): Promise<Initial
       ensureVadModelDownloaded((p) => {
         if (!isClosed()) ctx.sendEvent({ type: "vad_model_progress", overallPct: Math.round(p.overallPct) });
       }),
-      ensureWhisperModelDownloaded((p) => {
+      ensureSessionSpeechModel(voiceSettings, (p) => {
         if (!isClosed()) ctx.sendEvent({ type: "whisper_model_progress", overallPct: Math.round(p.overallPct), file: p.file });
-      }, { variant: voiceSettings.whisperModel }),
+      }),
     ]);
     if (isClosed()) return null;
 

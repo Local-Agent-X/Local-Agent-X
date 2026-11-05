@@ -11,8 +11,8 @@
 
 const C = window.LAX_VOICE_CATALOG;
 // Browser tier relies on the Web Speech API key, which Electron-Chromium
-// strips — so it's hidden from the picker in the desktop app (Edge is the
-// zero-setup default there). Still offered in real browsers.
+// strips — so it's hidden from the picker in the desktop app (Local is the
+// default there). Still offered in real browsers.
 const IS_ELECTRON = /electron/i.test(navigator.userAgent || '');
 let _kokoroCatalog = null;
 let _setupStatus = null;          // last /api/voices/setup/status response

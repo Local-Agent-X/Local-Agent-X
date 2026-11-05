@@ -89,7 +89,7 @@ window.LAX_VOICE_CATALOG = {
       id: 'local',
       label: 'Local (no GPU)',
       tagline: 'Kokoro voices · runs on any PC · nothing leaves this machine',
-      detail: 'Everything runs on this PC\'s processor, no GPU or sidecar needed: the Kokoro voices (the same ones Studio uses) and NVIDIA Parakeet speech recognition, which mishears far less than the bundled Whisper. Parakeet is a one-time ~670 MB download; the Kokoro voices (~90 MB) download on the first reply. Replies start about a second after the agent answers, longer on older laptops. No cloned voices — those need Studio.',
+      detail: 'Everything runs on this PC\'s processor, no GPU or sidecar needed: the Kokoro voices (the same ones Studio uses) and NVIDIA Parakeet speech recognition, which mishears far less than the bundled Whisper. Parakeet is a one-time ~670 MB download (the bundled Whisper listens until it finishes); the Kokoro voices (~90 MB) download on the first reply. Replies start about a second after the agent answers, longer on older laptops. No cloned voices — those need Studio.',
       settings: { voiceMode: 'standard', voiceEngine: 'tier4', voiceTier4Provider: 'kokoro', voiceSttProvider: 'local-whisper', voiceWhisperModel: 'parakeet-v3' },
       voicePool: ['kokoro'],
       prerequisites: [
@@ -120,10 +120,12 @@ window.LAX_VOICE_CATALOG = {
   ],
 
   // Default tier when settings.json has no voice keys at all (fresh user).
-  // Edge in Electron (the bundled msedge-tts + tiny.en Whisper gives
-  // good-quality voice chat with zero setup), Browser in a real browser
-  // (Web Speech API is instant + free, no network round trip on STT).
+  // Local in Electron: it is what the server runs with no voice settings
+  // (in-process Kokoro, resolveVoiceSettings), private, no GPU; it listens
+  // with the bundled tiny.en until Parakeet, downloaded on the first voice
+  // session, is on disk. Browser in a real browser (Web Speech API is
+  // instant + free, no network round trip on STT).
   DEFAULT_TIER_ID: (typeof navigator !== "undefined" && /electron/i.test(navigator.userAgent || ""))
-    ? 'edge'
+    ? 'local'
     : 'browser',
 };

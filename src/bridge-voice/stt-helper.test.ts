@@ -4,6 +4,9 @@
 // in voice chat and the weak model everywhere else. It now loads the model
 // settings.voiceWhisperModel names, and rebuilds when that changes.
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const state = vi.hoisted(() => ({
   whisperModel: undefined as string | undefined,
@@ -63,8 +66,18 @@ describe("the shared transcriber follows the voice-chat speech model", () => {
   });
 
   it("falls back to the default when nothing is saved", async () => {
-    state.whisperModel = undefined;
-    await getSharedTranscriber();
-    expect(state.built).toEqual([]); // default is tiny.en, already loaded
+    // An empty data dir: with no Parakeet on disk the default is tiny.en.
+    const saved = process.env.LAX_DATA_DIR;
+    const dir = mkdtempSync(join(tmpdir(), "lax-stt-helper-"));
+    process.env.LAX_DATA_DIR = dir;
+    try {
+      state.whisperModel = undefined;
+      await getSharedTranscriber();
+      expect(state.built).toEqual([]); // default is tiny.en, already loaded
+    } finally {
+      if (saved === undefined) delete process.env.LAX_DATA_DIR;
+      else process.env.LAX_DATA_DIR = saved;
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

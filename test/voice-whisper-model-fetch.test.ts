@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import {
@@ -16,19 +16,25 @@ const ENV_KEYS = ["LAX_VOICE_WHISPER_MODEL"];
 
 describe("resolveWhisperVariant precedence", () => {
   const saved: Record<string, string | undefined> = {};
+  let dataDir: string;
 
+  // An empty data dir, so the default does not depend on what this machine
+  // has downloaded.
   beforeEach(() => {
-    for (const k of ENV_KEYS) {
+    for (const k of [...ENV_KEYS, "LAX_DATA_DIR"]) {
       saved[k] = process.env[k];
       delete process.env[k];
     }
+    dataDir = mkdtempSync(join(tmpdir(), "lax-stt-resolve-"));
+    process.env.LAX_DATA_DIR = dataDir;
   });
 
   afterEach(() => {
-    for (const k of ENV_KEYS) {
+    for (const k of [...ENV_KEYS, "LAX_DATA_DIR"]) {
       if (saved[k] === undefined) delete process.env[k];
       else process.env[k] = saved[k];
     }
+    rmSync(dataDir, { recursive: true, force: true });
   });
 
   it("returns DEFAULT_WHISPER_VARIANT when nothing is set", () => {
@@ -172,6 +178,71 @@ describe("one download per model at a time", () => {
     expect(whisperDownloadState("base.en").error).toBeUndefined();
     failGet(new Error("still offline"));
     await expect(retry).rejects.toThrow(/still offline/);
+  });
+});
+
+// A fresh install's voice is the Local tier, which hears with Parakeet. With
+// no model saved, sessions listen with Parakeet once it is fully on disk and
+// with the bundled tiny.en before that.
+describe("the default speech model", () => {
+  let dataDir: string;
+  const savedDataDir = process.env.LAX_DATA_DIR;
+  const savedModel = process.env.LAX_VOICE_WHISPER_MODEL;
+
+  // Files at the truncation guard's size pass the on-disk check (sparse, so
+  // the 400 MB encoder costs nothing).
+  function placeParakeet(): void {
+    const dir = getWhisperModelPaths({ variant: "parakeet-v3" }).modelDir;
+    mkdirSync(dir, { recursive: true });
+    const sizes = { "encoder.int8.onnx": 400e6, "decoder.int8.onnx": 7e6, "joiner.int8.onnx": 4e6, "tokens.txt": 50e3 };
+    for (const [name, bytes] of Object.entries(sizes)) {
+      writeFileSync(join(dir, name), "");
+      truncateSync(join(dir, name), bytes);
+    }
+  }
+
+  beforeEach(() => {
+    dataDir = mkdtempSync(join(tmpdir(), "lax-stt-default-"));
+    process.env.LAX_DATA_DIR = dataDir;
+    delete process.env.LAX_VOICE_WHISPER_MODEL;
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    if (savedDataDir === undefined) delete process.env.LAX_DATA_DIR;
+    else process.env.LAX_DATA_DIR = savedDataDir;
+    if (savedModel === undefined) delete process.env.LAX_VOICE_WHISPER_MODEL;
+    else process.env.LAX_VOICE_WHISPER_MODEL = savedModel;
+    rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  it("is tiny.en until Parakeet is on disk, then Parakeet", () => {
+    expect(resolveWhisperVariant()).toBe("tiny.en");
+    placeParakeet();
+    expect(resolveWhisperVariant()).toBe("parakeet-v3");
+  });
+
+  it("a saved or env choice still wins over a downloaded Parakeet", () => {
+    placeParakeet();
+    expect(resolveWhisperVariant({ variant: "tiny.en" })).toBe("tiny.en");
+    process.env.LAX_VOICE_WHISPER_MODEL = "base.en";
+    expect(resolveWhisperVariant()).toBe("base.en");
+  });
+
+  it("files still being downloaded are neither the default nor taken as done", async () => {
+    let failGet!: (e: Error) => void;
+    vi.stubGlobal("fetch", vi.fn(async (_url: string, init?: { method?: string }) => {
+      if (init?.method === "HEAD") return new Response(null);
+      return new Promise<Response>((_, reject) => { failGet = reject; });
+    }));
+    const download = ensureWhisperModelDownloaded(undefined, { variant: "parakeet-v3" });
+    await vi.waitFor(() => expect(failGet).toBeTypeOf("function"));
+    placeParakeet(); // big enough to pass the size check, but not finished
+    expect(resolveWhisperVariant()).toBe("tiny.en");
+    const joiner = ensureWhisperModelDownloaded(undefined, { variant: "parakeet-v3" });
+    failGet(new Error("cut off"));
+    await expect(download).rejects.toThrow(/cut off/);
+    await expect(joiner).rejects.toThrow(/cut off/);
   });
 });
 

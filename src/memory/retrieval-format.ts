@@ -14,6 +14,11 @@ import type { ChunkMetadata, MemoryProvenance } from "./types.js";
  * was cut off and the hit read as a miss (2026-10-05: the quote sat at char
  * 1985 of a 2374-char summary shown to 500). A cut end is marked with "…" and
  * the window is reported, so the cut is never silent.
+ *
+ * When the matching lines carry dates (a page of facts, each "recorded
+ * YYYY-MM-DD"), the window opens on the newest of them instead: the first
+ * match is the oldest entry on such a page, so the excerpt showed a May vial
+ * and cut off the October one that replaced it (2026-11-04).
  */
 export function excerptAround(text: string, query: string | undefined, max: number): { snippet: string; window?: { start: number; end: number; total: number } } {
   if (text.length <= max) return { snippet: text };
@@ -22,6 +27,8 @@ export function excerptAround(text: string, query: string | undefined, max: numb
     const lower = text.toLowerCase();
     const terms = query.toLowerCase().split(/[^\p{L}\p{N}']+/u).filter((t) => t.length >= 3).sort((a, b) => b.length - a.length);
     const phrase = query.toLowerCase().trim();
+    const newest = newestMatchingDatedLine(lower, phrase.length >= 3 ? [phrase, ...terms] : terms);
+    if (newest >= 0) return windowFrom(text, newest, max);
     at = phrase.length >= 3 ? lower.indexOf(phrase) : -1;
     for (const t of terms) { if (at >= 0) break; at = lower.indexOf(t); }
   }
@@ -30,10 +37,33 @@ export function excerptAround(text: string, query: string | undefined, max: numb
     const space = text.indexOf(" ", start);
     if (space > 0 && space - start < 40) start = space + 1;
   }
-  start = Math.min(start, text.length - max);
+  return windowFrom(text, start, max);
+}
+
+function windowFrom(text: string, from: number, max: number): { snippet: string; window: { start: number; end: number; total: number } } {
+  const start = Math.min(from, text.length - max);
   const end = Math.min(text.length, start + max);
   const snippet = (start > 0 ? "…" : "") + text.slice(start, end) + (end < text.length ? "…" : "");
   return { snippet, window: { start, end, total: text.length } };
+}
+
+const ISO_DAY = /\b(20\d\d-\d\d-\d\d)\b/g;
+
+/** Where the newest dated line containing a query term starts, or -1 when no
+ *  matching line carries a date. A line's date is the latest one it names. */
+function newestMatchingDatedLine(lower: string, terms: readonly string[]): number {
+  let best = -1;
+  let bestDay = "";
+  let lineStart = 0;
+  for (const line of lower.split("\n")) {
+    if (terms.some((t) => line.includes(t))) {
+      const days = [...line.matchAll(ISO_DAY)].map((m) => m[1]).sort();
+      const day = days[days.length - 1];
+      if (day && day > bestDay) { bestDay = day; best = lineStart; }
+    }
+    lineStart += line.length + 1;
+  }
+  return best;
 }
 
 const pad2 = (n: number) => String(n).padStart(2, "0");

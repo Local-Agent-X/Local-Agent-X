@@ -31,6 +31,27 @@ describe("excerptAround — the snippet shows the match, and says it was cut", (
     expect(excerptAround("short text", "text", 500)).toEqual({ snippet: "short text" });
   });
 
+  it("on a page of dated facts, opens on the newest matching one, not the first", () => {
+    // 2026-11-04: a page held the May vial first and the October vial that
+    // replaced it last; the window opened on the first match and cut October off.
+    const page = [
+      "- Peter has a retatrutide vial: 20 mg with 1 mL bac water. — *date unknown* (recorded 2026-05-25)",
+      "- Glow mix vial is 70 mg with 2 mL bac water. — (recorded 2026-07-29)",
+      "- Retatrutide note (2026-04-27): 20 mg vial, 1 unit = 0.2 mg. — (recorded 2026-05-14)",
+      "- Tesamorelin vial re-mixed with 2 mL. — (recorded 2026-10-26)",
+      "x".repeat(600),
+      "- Peter now uses a 50 mg retatrutide vial with 2 mL bac water, 25 units twice weekly. — (recorded 2026-10-23)",
+    ].join("\n");
+    const e = excerptAround(page, "retatrutide protocol dose", 300);
+    expect(e.snippet).toContain("50 mg retatrutide vial");
+    expect(e.snippet).not.toContain("20 mg with 1 mL");
+  });
+
+  it("without dates on the matching lines, still opens at the first match", () => {
+    const page = "intro ".repeat(120) + "\nthe retatrutide note\n" + "tail ".repeat(120);
+    expect(excerptAround(page, "retatrutide", 200).snippet).toContain("the retatrutide note");
+  });
+
   it("with no query match, shows the start and still marks the cut", () => {
     const e = excerptAround(summary, "unrelated words", 500);
     expect(e.snippet.endsWith("…")).toBe(true);

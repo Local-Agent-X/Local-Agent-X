@@ -137,6 +137,13 @@ export function toolCapTierForProvider(provider: string, model: string): ModelTi
  *         only route from a stored credential to a working command that never
  *         puts the value in the model's context; list_secrets is how it learns
  *         the credential is there.
+ *   31-32 update_plan, wrap_up: the step list and the closing recap. A capped
+ *         model reached them only through tool_search, which a local model
+ *         rarely spends a turn on for bookkeeping, so it neither laid out its
+ *         steps (the open-steps gate had nothing to hold it to) nor said what it
+ *         left unchecked: Terminal-Bench 2.0's losses to Hermes were runs that
+ *         stopped one check short (2026-10-23). Below the weak cut: an 8-tool
+ *         set keeps its doing tools.
  */
 export const ESSENTIAL_TOOLS_ORDER: readonly string[] = toolsWhere((row) => row.essentialRank !== undefined)
   .sort((a, b) => (policyRowOf(a)?.essentialRank ?? 0) - (policyRowOf(b)?.essentialRank ?? 0));

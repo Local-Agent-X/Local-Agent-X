@@ -144,9 +144,15 @@ describe("shrinkToolsForTier — medium manifest size", () => {
     // descriptions already cut to a few words), so a job scheduled from a
     // medium model's chat does not stall at run time on a key the user would
     // have named. The ceiling moved 10,100 → 10,200.
+    //
+    // Re-measured 2026-11-06: 10,556. update_plan and wrap_up joined the
+    // essentials (ranks 31-32): reachable only through tool_search, a local
+    // model never laid out its steps or said what it left unchecked, the
+    // Terminal-Bench 2.0 loss class against Hermes. ~440 tokens, under 0.3% of
+    // the 172k window the local 27B runs at. The ceiling moved 10,200 → 10,600.
     expect(before).toBeGreaterThan(12_000);
     expect(after).toBeLessThanOrEqual(before / 2);
-    expect(after).toBeLessThanOrEqual(10_200);
+    expect(after).toBeLessThanOrEqual(10_600);
   });
 
   it("shortens parameter descriptions past the cap and leaves shorter ones verbatim", () => {

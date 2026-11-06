@@ -27,7 +27,7 @@ import { withCompletionsCarried } from "../agent-request/completion-carry.js";
 import { OP_TYPE } from "../ops/op-types.js";
 import { ThreatEngine } from "../threat/threat-engine.js";
 import type { VoiceTurnInput, VoiceTurnRunner } from "../voice/voice-session/index.js";
-import { VOICE_BUSY_REPLY, canaryWatch, carriedCardRows, carriedHarnessRows, claimVoiceTurn, isCardMetadata, commitVoiceTurn, voiceTurnRows, type VoiceTurnSlot } from "./voice-turn-guard.js";
+import { VOICE_BUSY_REPLY, canaryWatch, carriedToolRows, carriedHarnessRows, claimVoiceTurn, isCardMetadata, commitVoiceTurn, voiceTurnRows, type VoiceTurnSlot } from "./voice-turn-guard.js";
 import { createVoiceTurnClock, type VoiceTurnClock } from "./voice-turn-timing.js";
 const logger = createLogger("server.lifecycle");
 
@@ -385,7 +385,7 @@ export async function setupVoiceWs(deps: {
         turnOpId = result.opId;
         carried = [
           ...carriedHarnessRows(result.messages, prepared.cleanHistory.length),
-          ...carriedCardRows(result.messages, prepared.cleanHistory.length),
+          ...carriedToolRows(result.messages, prepared.cleanHistory.length),
         ];
         if (slot.signal.aborted || result.stopReason === "abort") aborted = true;
       } catch (e) {

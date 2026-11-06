@@ -38,18 +38,28 @@ export function carriedHarnessRows(turnMessages: readonly ChatCompletionMessageP
 }
 
 /**
- * The cards a spoken turn showed (show_card), as the tool rows a typed turn saves:
- * the assistant's show_card calls and their results, metadata.card and all. A spoken
- * turn saves no other tool rows, so without these a card drawn live on the call was
- * gone when the chat reloaded; with them the chat redraws it from history the way it
- * redraws a typed turn's (memory/session-ui-projection.ts).
+ * Every tool call a spoken turn made and its result, as the rows a typed turn
+ * saves, so the chat records what the call DID. Saved without them, a hand-off
+ * to a worker left only the spoken "it's going out now": a typed message
+ * minutes later had no trace that a send was underway, and could send it
+ * again (2026-11-06). The calls ride structurally, never as text in the reply:
+ * a "[Tool calls this turn: …]" line in the reply was echoed back aloud.
+ *
+ * The calls' rows carry no text: the turn's whole spoken reply is the
+ * assistant row saved after them. A call without its result (the turn was cut
+ * off mid-tool) is left out with any result that lost its call, since a
+ * provider refuses a history whose call has no answer. Image rows a tool added
+ * for the model to look at stay out, as before. A card's result keeps its
+ * metadata, so the chat redraws it (memory/session-ui-projection.ts).
  */
-export function carriedCardRows(turnMessages: readonly ChatCompletionMessageParam[], historyLength: number): ChatCompletionMessageParam[] {
+export function carriedToolRows(turnMessages: readonly ChatCompletionMessageParam[], historyLength: number): ChatCompletionMessageParam[] {
+  const rows = turnMessages.slice(historyLength + 2);
+  const answered = new Set(rows.flatMap((m) => (m.role === "tool" ? [m.tool_call_id] : [])));
   const out: ChatCompletionMessageParam[] = [];
   const ids = new Set<string>();
-  for (const m of turnMessages.slice(historyLength + 2)) {
+  for (const m of rows) {
     if (m.role === "assistant" && Array.isArray(m.tool_calls)) {
-      const calls = m.tool_calls.filter((c) => c.type === "function" && c.function.name === "show_card");
+      const calls = m.tool_calls.filter((c) => answered.has(c.id));
       if (calls.length === 0) continue;
       for (const c of calls) ids.add(c.id);
       out.push({ role: "assistant", content: "", tool_calls: calls });

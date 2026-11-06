@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { acquireTurn, getActiveTurn, getTurnRegistry, releaseTurn, tryAcquireOrReplace } from "../session/turn-lock.js";
 import type { Session } from "../types.js";
-import { canaryWatch, carriedCardRows, carriedHarnessRows, claimVoiceTurn, commitVoiceTurn, isCardMetadata, voiceTurnRows } from "./voice-turn-guard.js";
+import { canaryWatch, carriedToolRows, carriedHarnessRows, claimVoiceTurn, commitVoiceTurn, isCardMetadata, voiceTurnRows } from "./voice-turn-guard.js";
 import { markHarnessRow } from "../harness-rows.js";
 import type { ThreatEngine } from "../threat/threat-engine.js";
 
@@ -154,30 +154,55 @@ describe("carriedHarnessRows — what a local spoken turn read that the next req
   });
 });
 
-describe("carriedCardRows: the cards a spoken turn showed, saved like a typed turn's", () => {
-  it("keeps only the show_card calls and their results, metadata and all, in order", () => {
-    const history = [{ role: "user" as const, content: "earlier" }];
-    const card = { title: "Glider", image: "/images/cards/a.jpg" };
-    const cardCall = { id: "c1", type: "function" as const, function: { name: "show_card", arguments: "{\"title\":\"Glider\"}" } };
-    const cardResult = { role: "tool" as const, tool_call_id: "c1", content: "Shown", _metadata: { card } };
-    const turn = [
-      { role: "system" as const, content: "sys" },
-      ...history,
-      { role: "user" as const, content: "show me gliders" },
-      {
-        role: "assistant" as const, content: "",
-        tool_calls: [{ id: "b1", type: "function" as const, function: { name: "browser", arguments: "{}" } }, cardCall],
-      },
-      { role: "tool" as const, tool_call_id: "b1", content: "page" },
-      cardResult,
-      { role: "assistant" as const, content: "Here's one." },
-    ];
-    const rows = carriedCardRows(turn as never, history.length);
-    expect(rows).toEqual([{ role: "assistant", content: "", tool_calls: [cardCall] }, cardResult]);
+describe("carriedToolRows: what a spoken turn did, saved like a typed turn's rows", () => {
+  const history = [{ role: "user" as const, content: "earlier" }];
+  const call = (id: string, name: string) => ({ id, type: "function" as const, function: { name, arguments: "{}" } });
+  const result = (id: string, content: string, extra: Record<string, unknown> = {}) => ({ role: "tool" as const, tool_call_id: id, content, ...extra });
+  const turnOf = (...rows: unknown[]) => [{ role: "system" as const, content: "sys" }, ...history, { role: "user" as const, content: "email jenny" }, ...rows];
+
+  it("keeps every call and its result, a hand-off to a worker included, with the spoken text left to the reply", () => {
+    // A call that handed an email to a worker left no trace, and a typed turn
+    // later could not tell a send was underway.
+    const handoff = call("h1", "op_submit_async");
+    const card = result("c1", "Shown", { _metadata: { card: { title: "Glider" } } });
+    const turn = turnOf(
+      { role: "assistant", content: "Sure, sending it now.", tool_calls: [handoff, call("c1", "show_card")] },
+      result("h1", "Submitted op_send_email_da72 (running in background)"),
+      card,
+      { role: "assistant", content: "It's going out now." },
+    );
+    expect(carriedToolRows(turn as never, history.length)).toEqual([
+      { role: "assistant", content: "", tool_calls: [handoff, call("c1", "show_card")] },
+      result("h1", "Submitted op_send_email_da72 (running in background)"),
+      card,
+    ]);
   });
 
-  it("carries none for a turn that showed no card", () => {
-    expect(carriedCardRows([{ role: "system", content: "s" }, { role: "user", content: "hi" }, { role: "assistant", content: "hey" }], 0)).toEqual([]);
+  it("never saves a call without its result: a turn cut off mid-tool keeps only what was answered", () => {
+    const turn = turnOf(
+      { role: "assistant", content: "", tool_calls: [call("a1", "web_search"), call("a2", "browser")] },
+      result("a1", "results"),
+      { role: "assistant", content: "", tool_calls: [call("b1", "browser")] },
+      result("zz", "a result whose call is gone"),
+    );
+    expect(carriedToolRows(turn as never, history.length)).toEqual([
+      { role: "assistant", content: "", tool_calls: [call("a1", "web_search")] },
+      result("a1", "results"),
+    ]);
+  });
+
+  it("leaves out the image rows a tool added for the model to look at", () => {
+    const turn = turnOf(
+      { role: "assistant", content: "", tool_calls: [call("s1", "screen_capture")] },
+      result("s1", "captured"),
+      { role: "user", content: [{ type: "image_url", image_url: { url: "data:image/png;base64,AAAA" } }] },
+      { role: "assistant", content: "That's your editor." },
+    );
+    expect(carriedToolRows(turn as never, history.length).map((m) => m.role)).toEqual(["assistant", "tool"]);
+  });
+
+  it("carries none for a turn that called no tool", () => {
+    expect(carriedToolRows([{ role: "system", content: "s" }, { role: "user", content: "hi" }, { role: "assistant", content: "hey" }], 0)).toEqual([]);
   });
 
   it("knows a card's metadata from any other", () => {

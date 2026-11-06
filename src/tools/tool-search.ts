@@ -1,5 +1,6 @@
 import type { Audience, ToolDefinition, ToolResult } from "../types.js";
 import { UnifiedToolRegistry } from "./registry.js";
+import { formatToolSearchResult } from "./tool-search-result.js";
 import { selectTools } from "./tool-kits.js";
 import { hiddenForSession } from "../tool-registry.js";
 
@@ -208,15 +209,15 @@ export function createToolSearchTool(registry: UnifiedToolRegistry): ToolDefinit
   return {
     name: "tool_search",
     description:
-      "Search for available tools by keyword. Returns matching tool schemas " +
-      "so they can be used in subsequent turns. Use when you need a capability " +
-      "not covered by the currently loaded tools.",
+      "Load tools you don't have yet. Give exact names to load just those " +
+      "(\"gmail_read\" or \"gmail_read, gmail_send\"), or keywords to load the " +
+      "best matches. Loaded tools are callable on your next step.",
     parameters: {
       type: "object",
       properties: {
         query: {
           type: "string",
-          description: "Keywords to match against tool names, tags, and descriptions",
+          description: "Exact tool names (comma-separated), or keywords to match against names, tags and descriptions",
         },
         max_results: {
           type: "number",
@@ -234,13 +235,12 @@ export function createToolSearchTool(registry: UnifiedToolRegistry): ToolDefinit
         return { content: "No tools matched the query." };
       }
 
-      const results = matches.map((t) => ({
-        name: t.name,
-        description: t.description,
-        parameters: t.parameters,
-      }));
-
-      return { content: JSON.stringify(results, null, 2) };
+      // Names and descriptions only. Each tool found is loaded, and the model gets
+      // its schema from the load itself (the next request's tool list, or a
+      // provider's inline reference: anthropic-client/deferred-tools.ts), so a
+      // copy of every schema here would be the same tokens twice — and this
+      // result is never pruned (context-manager/prune-tool-results.ts).
+      return { content: formatToolSearchResult(matches) };
     },
   };
 }

@@ -1,8 +1,8 @@
 /**
  * Low-level machinery for the tool-call-from-text rescue path — leaf
- * module with no local imports so every consumer (the syntax scanners,
- * the extractor, every adapter's parseArgs) shares ONE implementation
- * without import cycles.
+ * module whose one local import is the dependency-free edit-distance leaf,
+ * so every consumer (the syntax scanners, the extractor, every adapter's
+ * parseArgs) shares ONE implementation without import cycles.
  *
  * Lives here:
  *   - scanBalancedObject / findJsonObjects: balanced-brace JSON scanning
@@ -15,6 +15,7 @@
  *   - resolveToolName: candidate tool-name resolution against the offered
  *     tool set (normalization ladder + bounded edit distance).
  */
+import { levenshtein } from "../../edit-distance.js";
 
 /** Candidate names longer than this are junk, never tool calls. */
 export const MAX_TOOL_NAME_CHARS = 120;
@@ -233,20 +234,6 @@ function canonicalName(s: string): string {
     .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
     .toLowerCase()
     .replace(/[-\s]+/g, "_");
-}
-
-/** Two-row Levenshtein with an early bail once distance must exceed `cap`. */
-function levenshtein(a: string, b: string, cap: number): number {
-  if (Math.abs(a.length - b.length) > cap) return cap + 1;
-  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
-  for (let i = 1; i <= a.length; i++) {
-    const cur: number[] = [i];
-    for (let j = 1; j <= b.length; j++) {
-      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1));
-    }
-    prev = cur;
-  }
-  return prev[b.length];
 }
 
 /**

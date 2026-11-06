@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1933 non-test source files · 84 oversized · 256 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1936 non-test source files · 84 oversized · 256 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -21,7 +21,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 175 | 29 | XL | 1 |
 | `src/security/` | 159 | 60 | XL | 2 |
-| `src/tools/` | 123 | 229 | XL | 9 |
+| `src/tools/` | 125 | 230 | XL | 9 |
 | `src/tool-execution/` | 89 | 84 | XL | 2 |
 | `src/workspace/` | 86 | 3 | M |  |
 | `src/canonical-loop/` | 82 | 282 | XL | 11 |
@@ -52,7 +52,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/server/` *(entrypoint)* | 18 | 59 | XL | 5 |
 | `src/agents/` | 17 | 13 | L |  |
 | `src/net/` | 17 | 11 | L |  |
-| `src/anthropic-client/` | 15 | 21 | L | 2 |
+| `src/anthropic-client/` | 15 | 22 | L | 2 |
 | `src/voice/` | 15 | 77 | XL | 1 |
 | `src/cognition/` | 14 | 35 | XL | 1 |
 | `src/cron/` | 14 | 14 | L |  |
@@ -66,7 +66,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/routes/` | 11 | 99 | XL | 17 |
 | `src/persistence/` | 10 | 2 | S |  |
 | `src/sync/` | 10 | 22 | L | 1 |
-| `src/codex-client/` | 9 | 6 | M |  |
+| `src/codex-client/` | 9 | 7 | M |  |
 | `src/plugin-system/` | 9 | 10 | L | 1 |
 | `src/screen-stream/` | 9 | 11 | L |  |
 | `src/agent-guards/` | 8 | 12 | L |  |
@@ -133,6 +133,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/desktop-bridge.ts` | S |
 | `src/desktop-prebuild-marker.ts` | S |
 | `src/doctor.ts` | S |
+| `src/edit-distance.ts` | S |
 | `src/embedding-singleton.ts` | S |
 | `src/event-bus.ts` | S |
 | `src/external-boundaries.ts` | S |

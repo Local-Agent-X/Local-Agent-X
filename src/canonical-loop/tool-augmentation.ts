@@ -37,6 +37,7 @@
 import type { ToolDefinition } from "../types.js";
 import type { CallContext } from "../tool-execution/context.js";
 import { unifiedRegistry } from "../tools/registry.js";
+import { toolSearchResultNames } from "../tools/tool-search-result.js";
 import { registerToolsForOp } from "./runtime.js";
 import { isDeniedForDelegatedWorker, type DelegatedBelt } from "../ops/tools/delegated-toolset.js";
 import { readOp } from "../ops/op-store.js";
@@ -131,18 +132,7 @@ export function augmentFromToolSearch(
   beforeRegister?: (tools: ToolDefinition[]) => void,
   callContext?: CallContext,
 ): void {
-  // tool_search returns content like:
-  //   "No tools matched the query."   (skip path)
-  //   "[ { name, description, parameters }, ... ]"
-  if (!content.trim().startsWith("[")) return;
-
-  let parsed: unknown;
-  try { parsed = JSON.parse(content); } catch { return; }
-  if (!Array.isArray(parsed)) return;
-
-  const names = parsed
-    .map((entry) => (entry && typeof entry === "object" ? (entry as { name?: unknown }).name : undefined))
-    .filter((n): n is string => typeof n === "string" && n.length > 0);
+  const names = toolSearchResultNames(content);
   admit(names, opId, toolMap, beforeRegister, callContext, "tool_search");
 }
 

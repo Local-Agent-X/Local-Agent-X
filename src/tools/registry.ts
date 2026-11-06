@@ -16,6 +16,7 @@
 import type { ToolClass } from "@arikernel/core";
 import { createHash } from "node:crypto";
 import type { ToolDefinition } from "../types.js";
+import { levenshtein } from "../edit-distance.js";
 
 export interface RegistryEntry {
   tool: ToolDefinition;
@@ -49,6 +50,15 @@ export interface DeferredToolListing {
   description: string;
   tags: string[];
   searchHint: string;
+}
+
+/** A name typed a character or two off ("gmial_read", "gmail_raed"): one edit
+ *  for a short name, two for a longer one. Only name-shaped words count — a
+ *  plain keyword two letters from a short tool name is a coincidence. */
+function isNearMissName(word: string, name: string): boolean {
+  if (word.length < 5 || !word.includes("_")) return false;
+  const cap = name.length <= 8 ? 1 : 2;
+  return levenshtein(word, name, cap) <= cap;
 }
 
 export class UnifiedToolRegistry {
@@ -166,8 +176,14 @@ export class UnifiedToolRegistry {
    */
   search(query: string, maxResults = 5): ToolDefinition[] {
     const queryLower = query.toLowerCase().trim();
-    const words = queryLower.split(/\s+/).filter(Boolean);
+    const words = queryLower.split(/[\s,]+/).filter(Boolean);
     if (words.length === 0) return [];
+
+    // A query that names tools exactly ("gmail_read" or "gmail_read, gmail_send")
+    // loads those and nothing else: each tool loaded is a schema the model then
+    // carries, so the four best keyword neighbours are cost with no use.
+    const named = words.map((w) => this.tools.get(w)?.tool).filter((t): t is ToolDefinition => !!t);
+    if (named.length > 0) return [...new Set(named)].slice(0, maxResults);
 
     const scored: { tool: ToolDefinition; score: number }[] = [];
 
@@ -181,6 +197,7 @@ export class UnifiedToolRegistry {
       if (queryLower === nameLower) score += 100;
       for (const word of words) {
         if (word === nameLower) score += 50;
+        else if (isNearMissName(word, nameLower)) score += 40;
         else if (nameLower.includes(word)) score += 3;
         if (tagsLower.some((t) => t === word)) score += 5;
         else if (tagsLower.some((t) => t.includes(word))) score += 2;

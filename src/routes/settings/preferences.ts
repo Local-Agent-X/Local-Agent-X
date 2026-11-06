@@ -10,6 +10,7 @@ import { isUserOwnedSetting, strictlyTightens } from "../../settings-change-dire
 import { loadSettings, saveSettings } from "../../settings.js";
 import { getRuntimeConfig } from "../../config.js";
 import { unsafeWorkspaceReason } from "../../workspace/workspace-location.js";
+import { levenshtein } from "../../edit-distance.js";
 
 /**
  * Why a request without the operator token may not apply `body`, or null when
@@ -47,23 +48,6 @@ function hasValidOperatorToken(req: IncomingMessage, authToken: string): boolean
   } catch {
     return false;
   }
-}
-
-/** Tiny edit-distance for 'did you mean' hints on sidebar pin 404s. */
-function levenshtein(a: string, b: string): number {
-  if (a === b) return 0;
-  const m = a.length, n = b.length;
-  if (m === 0) return n; if (n === 0) return m;
-  const dp: number[] = Array(n + 1).fill(0).map((_, i) => i);
-  for (let i = 1; i <= m; i++) {
-    let prev = dp[0]; dp[0] = i;
-    for (let j = 1; j <= n; j++) {
-      const tmp = dp[j];
-      dp[j] = a[i - 1] === b[j - 1] ? prev : Math.min(prev, dp[j], dp[j - 1]) + 1;
-      prev = tmp;
-    }
-  }
-  return dp[n];
 }
 
 /**

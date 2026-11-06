@@ -26,12 +26,14 @@ vi.mock("../src/voice/voice-session/turn-runner.js", () => ({
 			speakProactive: vi.fn(),
 			markTtsDrained: vi.fn(),
 			noteAudioShipped: vi.fn(),
+			discardUtterance: vi.fn(),
+			attach: vi.fn(),
+			setCameraFrame: vi.fn(),
 			close: vi.fn(),
 		};
 		return captured.machine;
 	},
 	SENTENCE_TERMINATOR: /[.!?]+\s/g,
-	firstChunkCut: () => 0,
 }));
 vi.mock("../src/voice/gpu-bridge.js", () => ({
 	createGPUBridge: vi.fn((cb: any) => {

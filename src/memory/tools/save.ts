@@ -85,7 +85,7 @@ export function createSaveTools(memory: MemoryIndex) {
 
     {
       name: "memory_set_user_field",
-      compactDescription: "Set ONE scalar profile field: the user's (Name, Location, Job/Role, Pronouns, ...) in USER.md, or with profile='identity' your own (Name, Emoji, Tagline) in IDENTITY.md. Use when the user states or corrects one; prefer over memory_update_profile.",
+      compactDescription: "Set one USER.md field (Name, Location, Role, Pronouns) when the user states or corrects it; profile='identity' sets your own Name.",
       description:
         "Surgically set ONE scalar field in USER.md (Name, Location, Job/Role, Communication style, Interests, Pronouns). " +
         "Use this WHENEVER the user states a personal scalar fact — 'my name is X', 'I'm a Y', 'call me Z', 'I prefer pronouns A/B' — " +
@@ -109,7 +109,7 @@ export function createSaveTools(memory: MemoryIndex) {
           profile: {
             type: "string",
             enum: ["user", "identity"],
-            description: "Whose field: 'user' (default, USER.md, about the user) or 'identity' (IDENTITY.md, about you, the agent).",
+            description: "'identity': yours.",
           },
         },
         required: ["field", "value"],

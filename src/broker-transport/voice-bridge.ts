@@ -31,12 +31,20 @@ export interface VoiceChannel {
   close(): void;
 }
 
+/** The voices a call can speak in, and saving the one the user picks on the phone
+ *  (voice/call-voices.ts). Absent in tests and builds without voice settings. */
+export interface CallVoices {
+  list(): Promise<{ voices: Array<{ id: string; name: string; group: string }>; current: string }>;
+  remember(voice: string): Promise<void>;
+}
+
 export interface VoiceBridgeDeps {
   /** The VoicePeer (built by the dialer) — outbound TTS audio + barge-in flush. A getter
    *  because the peer + bridge are built together (the peer's onMicPcm calls back here). */
   getPeer: () => PeerAudioSink | null;
   /** The registered voice-session factory (real default = the wired voiceTurnRunner). */
   sessionFactory: VoiceSessionFactory;
+  voices?: CallVoices;
 }
 
 export class VoiceBridge implements VoiceChannel {
@@ -113,6 +121,8 @@ export class VoiceBridge implements VoiceChannel {
         break;
       case "voice_settings":
         this.session?.onVoiceSettings?.({ voice: frame.voice, speed: frame.speed });
+        // The user picked this voice on the phone: theirs for every call from now on.
+        if (frame.remember === true && frame.voice) void this.deps.voices?.remember(frame.voice);
         break;
       case "attach":
         this.session?.onAttach?.(frame.attachments.flatMap(inlineAttachment));
@@ -147,6 +157,12 @@ export class VoiceBridge implements VoiceChannel {
     });
     sendRaw({ type: "ready", sessionId, mode });
     logger.info(`[broker-transport] voice session opened: ${sessionId} (mode=${mode})`);
+    // The phone's voice picker: what this call can speak in, and the user's voice now.
+    const session = this.session;
+    void this.deps.voices?.list().then(
+      (offer) => { if (this.session === session) sendRaw({ type: "voices", ...offer }); },
+      (e: Error) => logger.warn(`[broker-transport] voice list failed: ${e.message}`),
+    );
   }
 }
 

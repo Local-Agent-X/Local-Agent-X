@@ -151,4 +151,30 @@ describe("VoiceBridge — inbound control → session", () => {
     expect(getSession()!.attached).toEqual(["a.jpg"]);
     expect(getSession()!.camera).toEqual(["data:image/jpeg;base64,BBBB", null]);
   });
+
+  it("offers the call's voices once it opens, and saves a voice the phone picked to remember", async () => {
+    const peer = new FakePeer();
+    const transport = new FakeTransport();
+    const remembered: string[] = [];
+    const settings: Array<{ voice?: string }> = [];
+    const voices = {
+      list: async () => ({ voices: [{ id: "vx:optimus", name: "Optimus", group: "Your voices" }], current: "am_onyx" }),
+      remember: async (v: string) => { remembered.push(v); },
+    };
+    const bridge = new VoiceBridge({
+      getPeer: () => peer,
+      sessionFactory: () => ({ onMicFrame() {}, onVoiceSettings: (s) => { settings.push(s); }, close() {} }),
+      voices,
+    });
+    bridge.attach(transport);
+    transport.emit({ type: "hello", sessionId: "s1" });
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(transport.events).toContainEqual({ type: "voices", voices: [{ id: "vx:optimus", name: "Optimus", group: "Your voices" }], current: "am_onyx" });
+    transport.emit({ type: "voice_settings", voice: "am_onyx" });
+    transport.emit({ type: "voice_settings", voice: "vx:optimus", remember: true });
+    expect(settings.map((s) => s.voice)).toEqual(["am_onyx", "vx:optimus"]);
+    expect(remembered).toEqual(["vx:optimus"]);
+  });
 });
+

@@ -18,6 +18,7 @@ import {
 import { openBrokerSocket } from "./ws-socket-adapter.js";
 import { BrokerVoiceDialer } from "./broker-voice-dialer.js";
 import { getVoiceSessionFactory } from "../voice/audio-ws.js";
+import { listCallVoices, rememberCallVoice } from "../voice/call-voices.js";
 import type { SignalAuthenticator } from "./signal-auth.js";
 
 /** Production deps: a real ws-backed voice dialer reusing the registered session factory. */
@@ -29,6 +30,7 @@ export function defaultVoicePresenceDeps(signalAuth?: SignalAuthenticator): Brok
       return new BrokerVoiceDialer({
         socket,
         sessionFactory: getVoiceSessionFactory(),
+        voices: { list: () => listCallVoices(), remember: rememberCallVoice },
         onClosed,
         onAuthError,
         ...(signalAuth ? { signalAuth } : {}),

@@ -124,6 +124,7 @@ const LOOPBACK: readonly Registered[] = [
   { file: "src/voice/tts-sidecars.ts", uses: ["outbound"], why: "health of the local TTS sidecars" },
   { file: "src/voice/tier4/pocket-engine.ts", uses: ["outbound", "server"], why: "the local Pocket TTS sidecar: picks a free loopback port, then polls its health" },
   { file: "src/routes/bridges/voice-clones/sidecar-proxy.ts", uses: ["outbound"], why: "the local voice-clone sidecar's health" },
+  { file: "src/voice/call-voices.ts", uses: ["outbound"], why: "the local VoxCPM sidecar's clone list, for the phone's voice picker" },
   { file: "src/routes/bridges/voice-setup/detection.ts", uses: ["outbound"], why: "detects the local voice sidecars" },
   { file: "src/routes/bridges/voice-setup/doctor.ts", uses: ["outbound"], why: "voice doctor: the local sidecars and the local voice WebSocket" },
   { file: "src/broker-transport/chat-loopback.ts", uses: ["outbound"], why: "the phone's chat, relayed to this server's own chat WebSocket" },

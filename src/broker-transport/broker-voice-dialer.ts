@@ -55,6 +55,8 @@ export interface BrokerVoiceDialerDeps {
   onAuthError?: (code: import("./vendor/protocol.js").BrokerErrorCode) => void;
   /** Signs offers and checks answers against the paired phone's key (signal-auth.ts). */
   signalAuth?: import("./signal-auth.js").SignalAuthenticator;
+  /** The phone's voice picker: the call's voices, and saving a pick (voice-bridge.ts). */
+  voices?: import("./voice-bridge.js").CallVoices;
 }
 
 export class BrokerVoiceDialer extends BrokerDialer {
@@ -72,7 +74,7 @@ export class BrokerVoiceDialer extends BrokerDialer {
     this.createPeer = deps.createPeer ?? ((h, ice, onCtrl) => VoicePeer.create(h, ice, onCtrl));
     // The bridge owns the voice control plane + session; getPeer reads the dialer's current
     // peer live (rebuilt on reconnect), so the audio router always targets it.
-    this.voice = new VoiceBridge({ getPeer: () => this.peer, sessionFactory: deps.sessionFactory });
+    this.voice = new VoiceBridge({ getPeer: () => this.peer, sessionFactory: deps.sessionFactory, ...(deps.voices ? { voices: deps.voices } : {}) });
     this.wireBroker(deps.socket);
   }
 

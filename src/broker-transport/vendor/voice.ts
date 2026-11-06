@@ -17,8 +17,9 @@ export type VoiceMode = "chat" | "dictate";
 
 /** Opens the session. Speech-to-text runs on the desktop unless `clientStt`. */
 export type VoiceHelloFrame = { type: "hello"; sessionId: string; mode: VoiceMode; clientStt: boolean };
-/** Change the voice or speaking speed mid-session. */
-export type VoiceSettingsFrame = { type: "voice_settings"; voice?: string; speed?: number };
+/** Change the voice or speaking speed mid-session. `remember`: the user picked this
+ *  voice; it becomes their voice for every call, not just this one. */
+export type VoiceSettingsFrame = { type: "voice_settings"; voice?: string; speed?: number; remember?: boolean };
 /** End of speech: flush the streaming transcriber. */
 export type VoiceEosFrame = { type: "eos" };
 /** A transcript the client produced itself (client-side speech-to-text). Absent
@@ -49,6 +50,10 @@ export type VoiceControlFrame =
 
 export type VoiceVisualKind = "emoji" | "text" | "shape" | "mood";
 
+/** A voice the call can speak in: its id for `voice_settings`, its name, and the group
+ *  a picker lists it under ("Your voices", "American", "British", ...). */
+export type VoiceOption = { id: string; name: string; group: string };
+
 export type VoiceServerEvent =
   /** The session opened. */
   | { type: "ready"; sessionId: string; mode: VoiceMode }
@@ -74,7 +79,10 @@ export type VoiceServerEvent =
    *  lost). Show it; don't end the call. */
   | { type: "tts_error" | "stt_error" | "whisper_error"; message: string }
   /** Decoration only: morph the voice visual, hold, return. */
-  | { type: "visual"; kind: VoiceVisualKind; value: string; durationMs?: number };
+  | { type: "visual"; kind: VoiceVisualKind; value: string; durationMs?: number }
+  /** The voices this call can speak in, sent when it opens, and the user's voice now
+   *  ("" when they never picked one: the desktop's default). */
+  | { type: "voices"; voices: VoiceOption[]; current: string };
 
 // ── builders ──
 
@@ -117,6 +125,7 @@ export function parseVoiceControl(raw: unknown): VoiceControlFrame | null {
       if (voice !== null) frame.voice = voice;
       const speed = asNumber(msg.speed);
       if (speed !== null) frame.speed = speed;
+      if (msg.remember === true) frame.remember = true;
       return frame;
     }
     case "eos":
@@ -187,6 +196,15 @@ export function parseVoiceEvent(raw: unknown): VoiceServerEvent | null {
       if (value === null || (kind !== "emoji" && kind !== "text" && kind !== "shape" && kind !== "mood")) return null;
       const durationMs = asNumber(msg.durationMs);
       return durationMs === null ? { type: "visual", kind, value } : { type: "visual", kind, value, durationMs };
+    }
+    case "voices": {
+      const voices = (Array.isArray(msg.voices) ? msg.voices : []).flatMap((v): VoiceOption[] => {
+        const o = asRecord(v);
+        const id = o === null ? null : asString(o.id);
+        const name = o === null ? null : asString(o.name);
+        return id === null || name === null ? [] : [{ id, name, group: (o !== null ? asString(o.group) : null) ?? "" }];
+      });
+      return { type: "voices", voices, current: asString(msg.current) ?? "" };
     }
     default:
       return null;

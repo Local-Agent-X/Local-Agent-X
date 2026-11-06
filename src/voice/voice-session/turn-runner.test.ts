@@ -148,6 +148,22 @@ describe("voice turn machine", () => {
   });
 });
 
+describe("voice turn machine — what the user showed", () => {
+  it("sends an attachment with the next turn, and nothing with the one after", async () => {
+    const h = harness();
+    const seen: Array<string[] | undefined> = [];
+    const runTurn: VoiceTurnRunner = async (input) => {
+      seen.push(input.attachments?.map((a) => a.name));
+      return twoDeltaRun(input);
+    };
+    const machine = createVoiceTurnMachine({ ctx: h.ctx, runTurn, speaker: h.speaker, cancelTts: () => {}, isClosed: () => false, logger });
+    machine.attach([{ name: "a.jpg", type: "image/jpeg", isImage: true, dataUrl: "data:image/jpeg;base64,AAAA", size: 3 }]);
+    await machine.handleFinalTranscript("what is this");
+    await machine.handleFinalTranscript("thanks");
+    expect(seen).toEqual([["a.jpg"], undefined]);
+  });
+});
+
 describe("voice turn machine — noise gate", () => {
   it("drops a Whisper stage-direction final: no final, no turn, only the preview cleared", async () => {
     const h = harness();

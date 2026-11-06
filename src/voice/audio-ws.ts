@@ -37,6 +37,16 @@ import { authorizeUpgrade, WS_UNAUTHORIZED } from "../server/ws-operator-auth.js
 import { createPeerAudioRouter } from "./voice-peer-session.js";
 const logger = createLogger("voice.audio-ws");
 
+/** A photo or file the user showed the agent on the call (or the camera's frame),
+ *  bytes inline: the chat's attachment shape, which prepareAgentRequest reads. */
+export interface VoiceAttachment {
+  name: string;
+  type: string;
+  isImage: boolean;
+  dataUrl: string;
+  size: number;
+}
+
 export interface VoiceSession {
   /** Feed a 16kHz Int16 PCM frame from the client's mic */
   onMicFrame(frame: Int16Array): void;
@@ -47,6 +57,10 @@ export interface VoiceSession {
   /** Called when the client transcribed locally (browser tier — Web Speech API).
    *  Bypasses server-side VAD + Whisper; finals go straight into the agent. */
   onTranscript?(text: string, isFinal: boolean): void;
+  /** Photos or files the user shared on the call; they go with their next words. */
+  onAttach?(attachments: VoiceAttachment[]): void;
+  /** The camera's latest frame while the user has it open on the call; null: closed. */
+  onCameraFrame?(frame: string | null): void;
   /** Called when the client disconnects or sends bye */
   close(): void;
 }

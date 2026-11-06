@@ -329,6 +329,9 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
         });
       },
 
+      onAttach: (attachments) => machine.attach(attachments),
+      onCameraFrame: (frame) => machine.setCameraFrame(frame),
+
       onVoiceSettings(settings: { voice?: string; speed?: number }) {
         // Live voice swap from the chat-bar picker. Adapters that pick
         // voice per-utterance (kokoro) handle this via speak() and no-op

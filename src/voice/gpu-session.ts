@@ -229,6 +229,9 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
       void machine.handleFinalTranscript(t);
     },
 
+    onAttach: (attachments) => machine.attach(attachments),
+    onCameraFrame: (frame) => machine.setCameraFrame(frame),
+
     onVoiceSettings(settings) {
       if (settings.voice) voiceOverride = settings.voice;
       if (typeof settings.speed === "number" && settings.speed > 0.5 && settings.speed < 2.0) {

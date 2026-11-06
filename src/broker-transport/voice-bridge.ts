@@ -2,7 +2,9 @@
 // data channel instead of the tailnet /ws/voice socket. It is the transport-adapter
 // analogue of ChatBridge / HttpTunnelBridge: the AUDIO rides the VoicePeer's media track
 // (built by the dialer), and this bridge carries the JSON control plane (hello / ready /
-// final / assistant_delta / tts_interrupt / eos / transcript / voice_settings / bye).
+// final / assistant_delta / tts_interrupt / eos / transcript / voice_settings / attach /
+// camera / bye). A photo or camera frame is bigger than one data-channel message, so the
+// channel is chunked both ways like the chat channel (vendor/chunks.ts ChunkedLink).
 //
 // It reuses the SAME registered voice-session factory the /ws/voice path uses (the real
 // STT→LLM→TTS brain), and the SAME createPeerAudioRouter (TTS-rate snoop + barge-in
@@ -12,9 +14,9 @@
 // ControlTransport and a fake session (no werift, no broker socket).
 
 import type { ControlTransport } from "../screen-stream/peer.js";
-import type { VoiceSession, VoiceSessionFactory } from "../voice/audio-ws.js";
+import type { VoiceAttachment, VoiceSession, VoiceSessionFactory } from "../voice/audio-ws.js";
 import { createPeerAudioRouter, type PeerAudioRouter, type PeerAudioSink } from "../voice/voice-peer-session.js";
-import { parseVoiceControl, type VoiceHelloFrame } from "./vendor/protocol.js";
+import { ChunkedLink, parseVoiceControl, type ChatAttachment, type VoiceHelloFrame } from "./vendor/protocol.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("broker-transport.voice");
@@ -39,6 +41,9 @@ export interface VoiceBridgeDeps {
 
 export class VoiceBridge implements VoiceChannel {
   private transport: ControlTransport | null = null;
+  /** The current channel's chunking: one per channel, since the phone behind a new one
+   *  may be another build. */
+  private link = new ChunkedLink();
   private session: VoiceSession | null = null;
   private readonly router: PeerAudioRouter;
   private closed = false;
@@ -50,7 +55,13 @@ export class VoiceBridge implements VoiceChannel {
   attach(transport: ControlTransport): void {
     if (this.closed) return;
     this.transport = transport; // re-attachable across peer rebuilds (replaces the prior)
-    transport.onMessage((text) => this.handle(text));
+    const link = new ChunkedLink();
+    this.link = link;
+    transport.send(link.hello());
+    transport.onMessage((text) => {
+      const whole = link.incoming(text); // null: the phone's hello, or part of a frame
+      if (whole !== null && this.transport === transport) this.handle(whole);
+    });
     transport.onClose(() => {
       // The channel closed (peer rebuilt / phone left) — end the session so a new hello
       // on the next channel starts fresh. Ignore a stale channel's late close.
@@ -103,6 +114,12 @@ export class VoiceBridge implements VoiceChannel {
       case "voice_settings":
         this.session?.onVoiceSettings?.({ voice: frame.voice, speed: frame.speed });
         break;
+      case "attach":
+        this.session?.onAttach?.(frame.attachments.flatMap(inlineAttachment));
+        break;
+      case "camera":
+        this.session?.onCameraFrame?.(frame.frame);
+        break;
       case "bye":
         this.endSession();
         break;
@@ -115,7 +132,10 @@ export class VoiceBridge implements VoiceChannel {
     const channel = this.transport;
     if (!channel || this.session) return;
     const { sessionId, mode, clientStt } = hello;
-    const sendRaw = (event: Record<string, unknown>): void => channel.send(JSON.stringify(event));
+    const link = this.link;
+    const sendRaw = (event: Record<string, unknown>): void => {
+      for (const part of link.outgoing(JSON.stringify(event))) channel.send(part);
+    };
     this.session = this.deps.sessionFactory({
       sessionId,
       mode,
@@ -128,6 +148,11 @@ export class VoiceBridge implements VoiceChannel {
     sendRaw({ type: "ready", sessionId, mode });
     logger.info(`[broker-transport] voice session opened: ${sessionId} (mode=${mode})`);
   }
+}
+
+/** A shared attachment with its bytes inline (the parser keeps no other kind). */
+function inlineAttachment(a: ChatAttachment): VoiceAttachment[] {
+  return a.dataUrl === null ? [] : [{ name: a.name, type: a.type, isImage: a.isImage, dataUrl: a.dataUrl, size: a.size }];
 }
 
 /** Inert VoiceChannel: voice stays on the tailnet (screen/chat-only broker build / tests). */

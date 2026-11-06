@@ -4,9 +4,12 @@
 // directly — the host wires them together at boot.
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
+import type { VoiceAttachment } from "../audio-ws.js";
 
 export interface VoiceTurnInput {
   text: string;
+  /** What the user showed the agent with these words (utterance-media.ts). */
+  attachments?: VoiceAttachment[];
   /** Set when this turn CONTINUES a barged-over turn: the previous user
    *  utterance whose reply was cut almost immediately after it started.
    *  `text` already includes it as a prefix. The host should retract the

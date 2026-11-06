@@ -35,7 +35,11 @@ class FakeSession implements VoiceSession {
   eos = 0;
   transcripts: Array<{ text: string; isFinal: boolean }> = [];
   settings: Array<{ voice?: string; speed?: number }> = [];
+  attached: string[] = [];
+  camera: Array<string | null> = [];
   closed = 0;
+  onAttach(list: Array<{ name: string }>): void { this.attached.push(...list.map((a) => a.name)); }
+  onCameraFrame(frame: string | null): void { this.camera.push(frame); }
   onMicFrame(frame: Int16Array): void { this.mic.push(frame); }
   onEndOfSpeech(): void { this.eos++; }
   onTranscript(text: string, isFinal: boolean): void { this.transcripts.push({ text, isFinal }); }
@@ -128,5 +132,23 @@ describe("VoiceBridge — inbound control → session", () => {
     b.transport.emit({ type: "hello", sessionId: "s2" });
     b.transport.drop();
     expect(b.getSession()!.closed).toBe(1);
+  });
+
+  it("joins a photo the phone sent in chunks, and passes on the camera", () => {
+    const { transport, getSession } = makeBridge();
+    // The bridge says it can join chunks; the phone says so too.
+    expect(transport.events[0]).toEqual({ type: "link_hello", chunks: true });
+    transport.emit({ type: "link_hello", chunks: true });
+    transport.emit({ type: "hello", sessionId: "s1" });
+    const photo = { name: "a.jpg", size: 3, type: "image/jpeg", isImage: true, url: null, dataUrl: `data:image/jpeg;base64,${"A".repeat(30_000)}` };
+    const whole = JSON.stringify({ type: "attach", attachments: [photo] });
+    const parts = Math.ceil(whole.length / 12_288);
+    for (let i = 0; i < parts; i += 1) {
+      transport.emit({ t: "chunk", id: "c1", i, n: parts, b: whole.slice(i * 12_288, (i + 1) * 12_288) });
+    }
+    transport.emit({ type: "camera", frame: "data:image/jpeg;base64,BBBB" });
+    transport.emit({ type: "camera", frame: null });
+    expect(getSession()!.attached).toEqual(["a.jpg"]);
+    expect(getSession()!.camera).toEqual(["data:image/jpeg;base64,BBBB", null]);
   });
 });

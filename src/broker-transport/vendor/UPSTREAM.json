@@ -31,7 +31,7 @@
     },
     "voice.ts": {
       "upstream": "packages/protocol/src/voice.ts",
-      "sha256": "6205ec3201f2c0c2cb1a29556e8b38aa2579ecad4fc439735ee81d920392fbba"
+      "sha256": "32351d0cf27f08fcffb13360429be59c881951c104a07a30226824dc13508b70"
     },
     "broker-client.ts": {
       "upstream": "packages/client/src/broker-client.ts",

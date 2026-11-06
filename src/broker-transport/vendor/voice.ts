@@ -2,7 +2,12 @@
 // audio rides that peer's media track both ways; these JSON frames are the control
 // plane. The phone opens a session with `hello`, the desktop answers `ready`, then
 // streams transcript, reply and playback events.
+//
+// A photo or a camera frame is bigger than one data-channel message, so the channel is
+// chunked like the chat channel (chunks.ts ChunkedLink): each end sends its link hello
+// when the channel opens, and splits only for an end that sent one.
 
+import type { ChatAttachment } from "./chat.js";
 import { asNumber, asRecord, asString } from "./guards.js";
 
 /** "chat" runs speech-to-text, the agent and text-to-speech; "dictate" only transcribes. */
@@ -21,8 +26,24 @@ export type VoiceEosFrame = { type: "eos" };
 export type VoiceTranscriptFrame = { type: "transcript"; text: string; isFinal?: boolean };
 /** Close the session. */
 export type VoiceByeFrame = { type: "bye" };
+/** Photos or files the user shared on the call, the chat's attachment shape with the
+ *  bytes inline (`dataUrl`; `url` is null, there is no upload step). They go to the
+ *  agent with the next thing the user says. */
+export type VoiceAttachFrame = { type: "attach"; attachments: ChatAttachment[] };
+/** The phone's camera while the user has it open on the call: its latest frame (a
+ *  data:image URL), sent every few seconds, or null when it closed. Each thing the user
+ *  says while it is open goes to the agent with the latest frame, so it sees what they
+ *  are pointing the camera at. */
+export type VoiceCameraFrame = { type: "camera"; frame: string | null };
 
-export type VoiceControlFrame = VoiceHelloFrame | VoiceSettingsFrame | VoiceEosFrame | VoiceTranscriptFrame | VoiceByeFrame;
+export type VoiceControlFrame =
+  | VoiceHelloFrame
+  | VoiceSettingsFrame
+  | VoiceEosFrame
+  | VoiceTranscriptFrame
+  | VoiceByeFrame
+  | VoiceAttachFrame
+  | VoiceCameraFrame;
 
 // ── desktop → phone ──
 
@@ -65,6 +86,20 @@ export function buildVoiceHello(sessionId: string, mode: VoiceMode): VoiceHelloF
 
 const asMode = (v: unknown): VoiceMode => (v === "dictate" ? "dictate" : "chat");
 
+const DATA_URL = /^data:[^;,]+;base64,./;
+
+/** An attachment with its bytes inline, or null. */
+function asVoiceAttachment(v: unknown): ChatAttachment | null {
+  const a = asRecord(v);
+  if (a === null) return null;
+  const name = asString(a.name);
+  const type = asString(a.type);
+  const dataUrl = asString(a.dataUrl);
+  if (name === null || type === null || dataUrl === null || !DATA_URL.test(dataUrl)) return null;
+  const isImage = typeof a.isImage === "boolean" ? a.isImage : type.startsWith("image/");
+  return { name, size: asNumber(a.size) ?? 0, type, isImage, url: null, dataUrl };
+}
+
 /** A control frame from the phone, as the desktop reads it. */
 export function parseVoiceControl(raw: unknown): VoiceControlFrame | null {
   const msg = asRecord(raw);
@@ -92,6 +127,16 @@ export function parseVoiceControl(raw: unknown): VoiceControlFrame | null {
     }
     case "bye":
       return { type: "bye" };
+    case "attach": {
+      const list = Array.isArray(msg.attachments) ? msg.attachments.map(asVoiceAttachment) : [];
+      const attachments = list.filter((a): a is ChatAttachment => a !== null);
+      return attachments.length === 0 ? null : { type: "attach", attachments };
+    }
+    case "camera": {
+      if (msg.frame === null) return { type: "camera", frame: null };
+      const frame = asString(msg.frame);
+      return frame !== null && frame.startsWith("data:image/") && DATA_URL.test(frame) ? { type: "camera", frame } : null;
+    }
     default:
       return null;
   }

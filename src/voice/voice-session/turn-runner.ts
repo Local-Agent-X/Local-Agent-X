@@ -19,6 +19,7 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { VoiceSessionContext } from "../audio-ws.js";
 import type { VoiceTurnRunner } from "./types.js";
+import { createUtteranceMedia, type UtteranceMedia } from "./utterance-media.js";
 import { collapseLoopedRepeats, stripTranscriptNoise } from "../transcript-noise.js";
 
 // Continuation merge: a barge-in that lands before the user heard more than
@@ -65,6 +66,9 @@ export interface VoiceTurnMachineDeps {
   cancelTts: () => void;
   isClosed: () => boolean;
   logger: TurnLogger;
+  /** What the user showed the agent, to go with their next words (a fresh holder when
+   *  omitted; tests pass one with their own clock). */
+  media?: UtteranceMedia;
 }
 
 export interface VoiceTurnMachine {
@@ -84,6 +88,10 @@ export interface VoiceTurnMachine {
    *  idle; otherwise queues and drains at the next turn boundary so it never
    *  cuts off a live reply or the user. */
   speakProactive(text: string): void;
+  /** Photos or files the user shared: they go with the next turn. */
+  attach: UtteranceMedia["attach"];
+  /** The camera's latest frame while it is open on the call; null when it closed. */
+  setCameraFrame: UtteranceMedia["setCameraFrame"];
   /** Tear down on session close. */
   close(): void;
 }
@@ -91,6 +99,7 @@ export interface VoiceTurnMachine {
 export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMachine {
   const { ctx, runTurn, speaker, cancelTts, isClosed, logger } = deps;
   const sid = ctx.sessionId;
+  const media = deps.media ?? createUtteranceMedia();
 
   let activeTurn: AbortController | null = null;
   let llmDone = false;
@@ -314,9 +323,11 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
     firstAudioMs = 0;
     speaker.reset();
 
+    const attachments = media.forTurn(continuationOf !== undefined);
     try {
       const result = await runTurn({
         text: turnText,
+        ...(attachments.length > 0 ? { attachments } : {}),
         continuationOf,
         history,
         sessionId: sid,
@@ -386,5 +397,8 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
     activeTurn = null;
   }
 
-  return { handleFinalTranscript, discardUtterance, interrupt, noteAudioShipped, markTtsDrained, speakProactive, close };
+  return {
+    handleFinalTranscript, discardUtterance, interrupt, noteAudioShipped, markTtsDrained, speakProactive,
+    attach: media.attach, setCameraFrame: media.setCameraFrame, close,
+  };
 }

@@ -1,5 +1,7 @@
 import { type Server } from "node:http";
 import { randomUUID } from "node:crypto";
+import { join } from "node:path";
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { AgentOptions } from "../providers/types.js";
 import { runAgentViaCanonical } from "../canonical-loop/index.js";
 import { getApprovalManager } from "../approval-manager.js";
@@ -68,6 +70,15 @@ async function voiceVisualsEnabled(config: LAXConfig): Promise<boolean> {
 }
 
 type PreparedRequest = Awaited<ReturnType<typeof import("../agent-request/index.js").prepareAgentRequest>>;
+
+/** The user's spoken words as their saved row; images they showed ride on it the way a
+ *  typed message's do (run-chat-turn persistTurnState), so the chat shows them and the
+ *  next turns can see them again. */
+function userRowOf(text: string, images: PreparedRequest["images"]): ChatCompletionMessageParam & { images?: Array<{ name: string; url: string }> } {
+  return images.length > 0
+    ? { role: "user", content: text, images: images.map((im) => ({ name: im.name, url: im.url })) }
+    : { role: "user", content: text };
+}
 
 /** The spoken turn's model, tool belt and prompt, chosen from the prepared request. */
 async function planSpokenTurn(prepared: PreparedRequest, config: LAXConfig, allAgentTools: ToolDefinition[]) {
@@ -178,7 +189,7 @@ export async function setupVoiceWs(deps: {
     // end-of-turn memory pass, and the threat engine with its canary watch. It
     // differs in having no fallback chain (voice picks the configured provider;
     // an error surfaces as agent_error to the client, which will retry).
-    const runVoiceTurn = async ({ text, continuationOf, onDelta, onVisual }: VoiceTurnInput, sessionId: string, slot: VoiceTurnSlot, clock: VoiceTurnClock) => {
+    const runVoiceTurn = async ({ text, attachments, continuationOf, onDelta, onVisual }: VoiceTurnInput, sessionId: string, slot: VoiceTurnSlot, clock: VoiceTurnClock) => {
       // Durable, continuous memory: load the persisted thread from the same
       // store text chat uses, rather than a per-connection in-memory history
       // that resets on every reconnect. The client sends the chat thread's own
@@ -211,6 +222,11 @@ export async function setupVoiceWs(deps: {
         config, dataDir,
         memoryIndex, memoryManager, integrations, secretsStore,
         allAgentTools, bridgeTools,
+        // What the user showed the agent on the call (a photo, a file, the camera's
+        // frame): the chat's attachment path, so an image is saved under uploads,
+        // shown to the model, and kept on the user's row like a typed one.
+        attachments: attachments?.map((a) => ({ isImage: a.isImage, name: a.name, url: a.dataUrl })),
+        uploadsDir: join(dataDir, "uploads"),
         // Voice overrides tools (voiceTools) and the system prompt below, so
         // the intent classifier + memory-curate steps are pure waste on the
         // voice critical path. Lean prep skips them — keeps persona/memory.
@@ -299,6 +315,7 @@ export async function setupVoiceWs(deps: {
           baseURL: prepared.customBaseURL,
           systemPrompt: voiceSystemPrompt,
           tools: voiceTools,
+          ...(prepared.images.length > 0 ? { images: prepared.images as AgentOptions["images"] } : {}),
           security, toolPolicy, rbac, threatEngine,
           sessionId,
           callContext: "local",
@@ -398,7 +415,7 @@ export async function setupVoiceWs(deps: {
       };
       await commitVoiceTurn({
         session, sessionId, turnSignal: slot.signal, userText: text, replyText: finalAssistantText,
-        rows: withRecallCarried([{ role: "user" as const, content: text }, ...carried, assistantRow], prepared.recall),
+        rows: withRecallCarried([userRowOf(text, prepared.images), ...carried, assistantRow], prepared.recall),
         turnMessages: await voiceTurnRows(turnOpId),
         memoryManager, saveSession,
       });

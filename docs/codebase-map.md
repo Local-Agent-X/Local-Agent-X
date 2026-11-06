@@ -13,16 +13,16 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1930 non-test source files · 84 oversized · 254 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1932 non-test source files · 84 oversized · 254 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 174 | 29 | XL | 1 |
-| `src/security/` | 158 | 60 | XL | 2 |
-| `src/tools/` | 122 | 227 | XL | 9 |
-| `src/tool-execution/` | 88 | 84 | XL | 2 |
+| `src/security/` | 159 | 60 | XL | 2 |
+| `src/tools/` | 122 | 229 | XL | 9 |
+| `src/tool-execution/` | 89 | 84 | XL | 2 |
 | `src/workspace/` | 86 | 3 | M |  |
 | `src/canonical-loop/` | 82 | 282 | XL | 11 |
 | `src/providers/` | 74 | 27 | L | 1 |
@@ -48,9 +48,9 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/desktop-contract/` | 21 | 10 | M |  |
 | `src/protocols/` | 21 | 52 | XL |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
+| `src/autonomy/` | 18 | 5 | M |  |
 | `src/server/` *(entrypoint)* | 18 | 59 | XL | 5 |
 | `src/agents/` | 17 | 13 | L |  |
-| `src/autonomy/` | 17 | 5 | M |  |
 | `src/net/` | 17 | 11 | L |  |
 | `src/anthropic-client/` | 15 | 21 | L | 2 |
 | `src/voice/` | 15 | 77 | XL | 1 |

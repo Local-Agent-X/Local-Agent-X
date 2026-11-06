@@ -152,6 +152,41 @@ describe("post-edit-diagnostics", () => {
     },
   );
 
+  it(
+    "the FIRST edit's own new error reports: the baseline is taken before the edit runs",
+    { timeout: 60_000 },
+    async () => {
+      const op = opId();
+      const bPath = join(dir, "b.ts");
+      writeFixture(bPath, B_RED_ONE);
+      const calls = [{ toolCallId: "e1", tool: "edit", args: { path: bPath } }];
+      // The model asks for the edit: the file is still as it was (TS2345 only).
+      const before = await postEditDiagnosticsMiddleware.afterModelCall!(ctxFor(op, { toolCalls: calls } as Partial<CanonicalLoopContext>));
+      expect(before.kind).toBe("continue");
+      // The edit lands and introduces TS2322: reported on this very first edit.
+      writeFixture(bPath, B_RED_TWO);
+      const r = await editTurn(op, bPath);
+      expect(r).toMatchObject({ kind: "nudge", reason: "post-edit-diagnostics" });
+      if (r.kind === "nudge") {
+        expect(r.message).toContain("TS2322");
+        expect(r.message).not.toContain("2345");
+      }
+    },
+  );
+
+  it("a file the edit creates has an empty baseline: its errors are all new", { timeout: 60_000 }, async () => {
+    const op = opId();
+    const cPath = join(dir, "c.ts");
+    const calls = [{ toolCallId: "w1", tool: "write", args: { path: cPath, content: "" } }];
+    await postEditDiagnosticsMiddleware.afterModelCall!(ctxFor(op, { toolCalls: calls } as Partial<CanonicalLoopContext>));
+    writeFixture(cPath, 'export const n: number = "oops";\n');
+    const r = await postEditDiagnosticsMiddleware.afterToolExecution!(ctxFor(op, {
+      toolCalls: calls,
+      toolResults: [{ toolCallId: "w1", toolName: "write", content: "ok", status: "ok" }],
+    } as Partial<CanonicalLoopContext>));
+    expect(r).toMatchObject({ kind: "nudge" });
+  });
+
   it("clean edit → no injection (silence, not praise)", { timeout: 60_000 }, async () => {
     const op = opId();
     const aPath = join(dir, "a.ts");

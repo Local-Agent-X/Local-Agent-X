@@ -6,6 +6,7 @@ import { ok, err, blocked, timeout as timeoutResult } from "./result-helpers.js"
 import { detectTargetShell, translateForShell, powershellCmdletHint, quotedGlobHint, windowsPathHint, workspacePrefixHint } from "./shell-translate.js";
 import { resolveWindowsShell, recordAvSuspectKill, isLikelyAvKill } from "./shell-env.js";
 import { runCaged, type CagedOutput } from "./caged-spawn.js";
+import { failingTestsSummary } from "./test-failure-summary.js";
 import { registerOwnedGroup } from "./owned-listeners.js";
 import { workspaceRoot } from "../config.js";
 import { resolveSecretEnv, secretEnvOf, secretEnvProgram, withheldOutputNote, type ResolvedSecretEnv, type SecretEnv } from "./shell-secret-env.js";
@@ -104,8 +105,8 @@ function progressEmitter(
  * finding, in the order the agent should read them. Each hint names a real
  * cause the bare error hides: a cmdlet fired into bash, a Windows path, the
  * workspace/ prefix, a cage denial (file, then network, then a refused
- * loopback port that is listening on the host), and a vendor CLI that moved
- * past its pinned skill.
+ * loopback port that is listening on the host), a vendor CLI that moved
+ * past its pinned skill, and the failing tests of a failed test run.
  */
 function failureNotices(run: {
   sandboxMode: SandboxMode; stdout: string; stderr: string; out: string; cwd: string; command: string; code: number | null;
@@ -133,6 +134,9 @@ function failureNotices(run: {
     // A vendor CLI that fails may have moved past the pinned skill that
     // told the agent to run it (protocols/vendor-drift.ts).
     vendorDriftHint(command, code, stderr),
+    // A failed test run: which tests, where and why, ahead of the runner's own
+    // report, which a long run's cut can leave unread (test-failure-summary.ts).
+    failingTestsSummary(out),
   ].filter(Boolean).join("\n");
 }
 

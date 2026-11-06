@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { captureBeforeCall, loadRestoredIds, recordCapture } from "./rollback.js";
-import { planRewind, rewindToBeforeOp } from "./rollback-rewind.js";
+import { changesSinceOp, planRewind, rewindToBeforeOp } from "./rollback-rewind.js";
 
 // The rewind's targets must be paths the file-access layer lets a write
 // reach, which is inside the (test's) home directory.
@@ -19,6 +19,19 @@ function agentWrite(session: string, op: string, path: string, body: string): st
   recordCapture(pending);
   return toolCallId;
 }
+
+describe("changesSinceOp", () => {
+  it("gives each file the request changed with its bytes from before the request, created files as null", () => {
+    const dir = work(), session = uniq("s"), op = uniq("op");
+    const edited = join(dir, "app.ts"), made = join(dir, "new.ts");
+    writeFileSync(edited, "before");
+    agentWrite(session, op, edited, "after 1");
+    agentWrite(session, op, edited, "after 2");
+    agentWrite(session, op, made, "fresh");
+    expect(changesSinceOp(session, op)).toEqual([{ path: edited, before: "before" }, { path: made, before: null }]);
+    expect(changesSinceOp(session, uniq("op"))).toEqual([]);
+  });
+});
 
 describe("rewindToBeforeOp", () => {
   it("puts every file the request changed back, and removes the files it created", async () => {

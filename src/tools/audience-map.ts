@@ -32,10 +32,12 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   // vs main-chat. Read-only discovery (ARI action "read"), spiral-guarded.
   glob:        ["main-chat", "spawned-agent"],
   grep:        ["main-chat", "spawned-agent"],
-  // structural_search is grep's symbol-accurate sibling. Demoted from
-  // main-chat 2026-07-13: zero fires in 4 wks of telemetry — grep covers the
-  // interactive path; kept for code-working sub-agents.
-  structural_search: ["spawned-agent"],
+  // structural_search is grep's symbol-accurate sibling (references and
+  // definitions from the language service). Demoted from main-chat 2026-07-13
+  // for zero fires in 4 wks; back 2026-11-06: hidden, the chat agent could
+  // only grep for who uses a name, and said so when asked what it lacked.
+  structural_search: ["main-chat", "spawned-agent"],
+  review_changes:    ["main-chat", "spawned-agent"],
 
   // Web & search
   web_fetch:   ["main-chat", "spawned-agent", "operator"],

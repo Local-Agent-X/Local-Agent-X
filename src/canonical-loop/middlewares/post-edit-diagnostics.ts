@@ -5,18 +5,19 @@
  * edit introduced these type errors" immediately instead of at build time.
  * Zero noise on files that were already red.
  *
- * Baseline strategy (deliberate, honest tradeoff): language-intel reads from
- * DISK with mtime staleness, and the edit is already flushed to disk by the
- * time afterToolExecution fires — so a true PRE-edit snapshot is impossible
- * for the first edit of a file in an op. The rule: the FIRST post-edit fire
- * for a file records its diagnostics as the baseline and reports NOTHING
- * (pre-existing red stays silent; a first-edit-introduced error is missed —
- * accepted, the build gate still catches it). Subsequent fires report only
- * diagnostics NOT in the baseline, matched by code + message (line/col shift
- * with every edit, so they are deliberately not part of the identity). The
- * baseline is immutable for the op: an introduced-and-still-unfixed error
- * re-reports on each later edit of that file — each turn's new errors matter.
- * A clean post-edit result is silence, not praise.
+ * Baseline: language-intel reads from DISK, so the baseline is taken in
+ * afterModelCall, when the turn's tool calls are known but not yet run — the
+ * files they will write are still as they were. That is each file's PRE-edit
+ * state, so the first edit's own errors report too (the baseline used to be
+ * taken after the first edit, which hid exactly those, 2026-11-06). A file the
+ * call creates has an empty baseline. A file written by something the hook
+ * cannot see coming falls back to its first post-edit check as the baseline,
+ * reporting nothing that time. Every later check reports only diagnostics NOT
+ * in the baseline, matched by code + message (line/col shift with every edit,
+ * so they are deliberately not part of the identity). The baseline is
+ * immutable for the op: an introduced-and-still-unfixed error re-reports on
+ * each later edit of that file — each turn's new errors matter. A clean
+ * post-edit result is silence, not praise.
  *
  * All lanes — no `when` predicate, mirroring verify-gate's reasoning: coding
  * tasks arrive most often as interactive chat, and an edit that breaks the
@@ -26,6 +27,7 @@
  * proceeds untouched. This middleware must NEVER block or fail a turn.
  * Disable with LAX_POST_EDIT_DIAGNOSTICS=0.
  */
+import { existsSync } from "node:fs";
 import type { CanonicalLoopContext, CanonicalMiddleware } from "./types.js";
 import { getMiddlewareState } from "./state.js";
 import { isDispatchFailure } from "../types.js";
@@ -160,13 +162,13 @@ function diagKey(d: FileDiagnostic): string {
  *  verify-gate's buildActions reads them — filtered to languages language-intel
  *  supports. Dispatch status from the toolCallId-matched result (a failed or
  *  cancelled edit changed nothing worth diagnosing). */
-function editedSupportedFiles(ctx: CanonicalLoopContext): string[] {
+function editedSupportedFiles(ctx: CanonicalLoopContext, onlySucceeded = true): string[] {
   const statusById = new Map(ctx.toolResults.map((tr) => [tr.toolCallId, tr.status]));
   const intel = getLanguageIntel();
   const out: string[] = [];
   for (const tc of ctx.toolCalls) {
     const status = statusById.get(tc.toolCallId);
-    if (isDispatchFailure(status) || status === "cancelled") continue;
+    if (onlySucceeded && (isDispatchFailure(status) || status === "cancelled")) continue;
     for (const raw of callPaths(tc.tool, (tc.args ?? {}) as Record<string, unknown>).writes) {
       const resolved = resolveAgentPath(raw);
       if (!intel.supports(resolved)) continue;
@@ -189,8 +191,43 @@ function formatInjection(fresh: FileDiagnostic[]): string {
   );
 }
 
+function errorsByFileOf(all: FileDiagnostic[]): Map<string, FileDiagnostic[]> {
+  const errorsByFile = new Map<string, FileDiagnostic[]>();
+  for (const d of all) {
+    if (d.severity !== "error") continue;
+    const bucket = errorsByFile.get(d.file);
+    if (bucket) bucket.push(d);
+    else errorsByFile.set(d.file, [d]);
+  }
+  return errorsByFile;
+}
+
 export const postEditDiagnosticsMiddleware: CanonicalMiddleware = {
   name: "post-edit-diagnostics",
+
+  // afterModelCall: the turn's calls are known and not yet run, so the files
+  // they will write are still as they were — each one's baseline, taken once
+  // per op. Never a directive: this hook only records.
+  async afterModelCall(ctx) {
+    if (process.env.LAX_POST_EDIT_DIAGNOSTICS === "0") return { kind: "continue" };
+    try {
+      const state = getMiddlewareState<PostEditDiagState>(ctx.op.id, "post-edit-diagnostics", createPostEditDiagState);
+      const files = editedSupportedFiles(ctx, false).filter((f) => !state.baselines.has(f));
+      if (files.length === 0) return { kind: "continue" };
+      const existing = files.filter((f) => existsSync(f));
+      const errorsByFile = errorsByFileOf(existing.length > 0 ? await getLanguageIntel().getDiagnostics(existing) : []);
+      for (const file of files) {
+        if (state.baselines.size >= MAX_TRACKED_FILES) break;
+        const errors = errorsByFile.get(file) ?? [];
+        state.baselines.set(file, new Set(errors.map(diagKey)));
+        state.lastErrorCounts.set(file, errors.length);
+      }
+    } catch (err) {
+      // Fail-open: without a baseline the post-edit check falls back to its first look.
+      logger.warn(`fail-open: pre-edit baseline failed: ${err instanceof Error ? err.message : String(err)}`);
+    }
+    return { kind: "continue" };
+  },
 
   // afterToolExecution: the edits are on disk, and a nudge from this hook is
   // the same injection channel post-commit uses — a user op_message the model
@@ -208,22 +245,15 @@ export const postEditDiagnosticsMiddleware: CanonicalMiddleware = {
         createPostEditDiagState,
       );
 
-      const all = await getLanguageIntel().getDiagnostics(files);
-      const errorsByFile = new Map<string, FileDiagnostic[]>();
-      for (const d of all) {
-        if (d.severity !== "error") continue;
-        const bucket = errorsByFile.get(d.file);
-        if (bucket) bucket.push(d);
-        else errorsByFile.set(d.file, [d]);
-      }
+      const errorsByFile = errorsByFileOf(await getLanguageIntel().getDiagnostics(files));
 
       const fresh: FileDiagnostic[] = [];
       for (const file of files) {
         const errors = errorsByFile.get(file) ?? [];
         const baseline = state.baselines.get(file);
         if (baseline === undefined) {
-          // First post-edit sighting this op: capture baseline, report nothing
-          // (see module docstring for why a true pre-edit state is unknowable).
+          // No pre-edit baseline (afterModelCall did not see this write
+          // coming, or failed): this first look is the baseline, reporting nothing.
           if (state.baselines.size < MAX_TRACKED_FILES) {
             state.baselines.set(file, new Set(errors.map(diagKey)));
             state.lastErrorCounts.set(file, errors.length);

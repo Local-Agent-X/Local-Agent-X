@@ -12,6 +12,7 @@ export const TOOL_TAGS = [
   "file-edit-variant", // edits in place by another addressing (a line range, a batch); redundant with file-edit, so small sets leave it out
   "file-delete",       // deletes a file, or restores one a delete removed
   "file-search",       // finds files by name or by content
+  "change-review",     // shows what the run itself changed, each file with its diff
   "shell",             // runs a command and returns its output
   "process",           // starts, checks, restarts or stops a long-running command (a server, a watcher)
   "web-search",        // searches the web

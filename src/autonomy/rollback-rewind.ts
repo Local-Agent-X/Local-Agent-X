@@ -15,6 +15,7 @@
  * restorable; every other contract in the range is spent (rollback.ts).
  */
 
+import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
   loadRestoredIds, markRestored, readContracts, undoArtifact,
@@ -62,6 +63,20 @@ export function planRewind(sessionId: string, opId: string): RewindPlan | null {
   const range = rewindRange(sessionId, opId);
   if (!range) return null;
   return { files: [...range.firsts.values()].map((f) => f.artifact.original), laterRequests: range.laterRequests };
+}
+
+/** Each file changed from this request on, with what it held before: the bytes a
+ *  rewind would put back (the earliest capture's backup), or null for a file the
+ *  range created. The agent's review of its own changes (tools/review-changes.ts)
+ *  diffs these against the disk. A backup that cannot be read is left out. */
+export function changesSinceOp(sessionId: string, opId: string): Array<{ path: string; before: string | null }> {
+  const range = rewindRange(sessionId, opId);
+  if (!range) return [];
+  return [...range.firsts.values()].flatMap(({ artifact }): Array<{ path: string; before: string | null }> => {
+    if (artifact.type === "created") return [{ path: artifact.original, before: null }];
+    try { return [{ path: artifact.original, before: readFileSync(artifact.backup, "utf-8") }]; }
+    catch { return []; } // pruned or removed backup: no before to diff against
+  });
 }
 
 export type RewindResult =

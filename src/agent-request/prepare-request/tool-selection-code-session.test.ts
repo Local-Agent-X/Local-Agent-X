@@ -48,14 +48,16 @@ describe("selectTools — a code session", () => {
   it("loads the code session kit, tool_search included", async () => {
     expect(names(await turn("fix the failing test"))).toEqual([...KIT].sort());
     expect(KIT).toContain("tool_search");
-    for (const name of ["bash", "read", "write", "edit", "grep", "glob", "update_plan", "wrap_up"]) expect(KIT).toContain(name);
+    for (const name of ["bash", "read", "write", "edit", "grep", "glob", "structural_search", "update_plan", "wrap_up"]) expect(KIT).toContain(name);
   });
 
   it("keeps the rest of the toolbox one tool_search away, not in every call's schema", () => {
-    for (const name of ["process_start", "http_request", "web_fetch", "web_search", "structural_search", "view_image", "delete_file"]) {
+    for (const name of ["process_start", "http_request", "web_fetch", "web_search", "view_image", "delete_file"]) {
       expect(KIT, name).not.toContain(name);
     }
-    expect(KIT.length).toBeLessThanOrEqual(9);
+    // Lean, but with the code-working tools a coding turn checks its work with:
+    // structural_search (who uses a name) and review_changes (its own diff).
+    expect(KIT.length).toBeLessThanOrEqual(11);
   });
 
   it("ships the same set whatever the message says", async () => {

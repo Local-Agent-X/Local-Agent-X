@@ -39,16 +39,17 @@ export function selectTools(selection: ToolSelection): string[] {
 /** What a coding worker needs: read, discover, modify, run. The self_edit
  *  surgeon, the auto-build chunk runners and the app-builder worker all start
  *  from it; the builder adds the web and a viewer. */
-export const CODING_KIT_TAGS: readonly ToolTag[] = ["file-read", "file-write", "file-edit", "file-search", "shell"];
+export const CODING_KIT_TAGS: readonly ToolTag[] = ["file-read", "file-write", "file-edit", "file-search", "shell", "change-review"];
 export const CODING_KIT: readonly string[] = toolsTagged(...CODING_KIT_TAGS);
 
 /** The coding kit plus the web and an image viewer: the app-builder worker and
  *  the generic Worker template, which build against live references. */
 export const BUILDER_KIT: readonly string[] = toolsTagged(...CODING_KIT_TAGS, "web-read", "web-search", "image-view");
 
-/** What a code session (session/mode.ts) loads up front: read, find, change and
- *  run code, a step list, and tool_search. Everything else (processes, the web,
- *  HTTP, deleting files, images, structural search) is one tool_search away, is
+/** What a code session (session/mode.ts) loads up front: read, find (structural
+ *  search included: who uses a name is a coding question), change and run code,
+ *  a step list, a review of the request's changes, and tool_search. Everything
+ *  else (processes, the web, HTTP, deleting files, images) is one tool_search away, is
  *  named in the prompt's deferred-tool list, and stays loaded for the rest of the
  *  session once loaded. Every loaded schema is re-sent on every model call: the
  *  23-tool kit cost ~6.2k tokens a call, most of it tools a coding turn rarely
@@ -56,7 +57,6 @@ export const BUILDER_KIT: readonly string[] = toolsTagged(...CODING_KIT_TAGS, "w
  *  model). Undo counterparts still join the tools they undo (undo-pairs.ts). */
 export const CODE_SESSION_KIT: ToolSelection = {
   tags: CODING_KIT_TAGS,
-  except: { structural_search: "grep and glob find code; an AST query is a tool_search away" },
   plus: {
     tool_search: "loads any other tool by name or purpose; without it the rest of the catalog is out of reach",
     update_plan: "a multi-step change keeps its steps on record, live under the reply; the open-steps gate reads them",

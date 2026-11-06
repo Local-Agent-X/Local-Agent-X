@@ -20,7 +20,7 @@ describe("a tool set is chosen by what its tools are for", () => {
   });
 
   it("the worker kits are the coding verbs, the builder's web and viewer, and the office umbrellas", () => {
-    expect([...CODING_KIT].sort()).toEqual(["bash", "edit", "glob", "grep", "read", "structural_search", "write"]);
+    expect([...CODING_KIT].sort()).toEqual(["bash", "edit", "glob", "grep", "read", "review_changes", "structural_search", "write"]);
     expect(BUILDER_KIT.filter((name) => !CODING_KIT.includes(name)).sort()).toEqual(["view_image", "web_fetch", "web_search"]);
     expect([...OFFICE_KIT].sort()).toEqual(["document", "pdf", "presentation", "spreadsheet"]);
   });

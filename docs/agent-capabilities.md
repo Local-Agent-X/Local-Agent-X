@@ -35,6 +35,8 @@ demand via tool search and aren't all listed here.)
 - `bash` — Run a shell command. _e.g._ "run `npm test` in the project"
 - `glob` — Find files by name pattern.
 - `grep` — Search file contents.
+- `structural_search`
+- `review_changes` — Review every file changed for this request, with its diff.
 
 ### Web & search
 
@@ -149,4 +151,4 @@ demand via tool search and aren't all listed here.)
 - `presentation`
 
 ---
-_69 capabilities · 51 with a description · 18 awaiting a blurb (add one to the tool's policy row)._
+_71 capabilities · 52 with a description · 19 awaiting a blurb (add one to the tool's policy row)._

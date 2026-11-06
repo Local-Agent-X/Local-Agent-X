@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1932 non-test source files · 84 oversized · 254 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1932 non-test source files · 84 oversized · 255 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -21,7 +21,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 174 | 29 | XL | 1 |
 | `src/security/` | 159 | 60 | XL | 2 |
-| `src/tools/` | 122 | 229 | XL | 9 |
+| `src/tools/` | 123 | 229 | XL | 9 |
 | `src/tool-execution/` | 89 | 84 | XL | 2 |
 | `src/workspace/` | 86 | 3 | M |  |
 | `src/canonical-loop/` | 82 | 282 | XL | 11 |
@@ -563,6 +563,7 @@ job. Comments are free: never cut them to fit.
 - `src/sandbox/docker-execution-runtime.ts#DockerCliExecutionRuntime.create` — 60+ own code lines (cap 100)
 - `src/security/layer/network-dns.ts#resolveAndPinHost` — 60+ own code lines (cap 100)
 - `src/server/bridge-media-forward.ts#forwardBridgeMedia` — 60+ own code lines (cap 100)
+- `src/server/voice-prompt.ts#buildVoiceTail` — 60+ own code lines (cap 100)
 - `src/tool-execution/arg-repair.ts#coerceArgs` — 60+ own code lines (cap 100)
 - `src/tool-execution/arg-repair.ts#repairJson` — 60+ own code lines (cap 100)
 - `src/tools/app-tools/runtime.ts#appQuery.execute` — 60+ own code lines (cap 100)

@@ -177,7 +177,7 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   // ── Diagnostics / planning ──
   doctor:          { kernel: "internal", risk: "safe", capabilities: [], tags: [], rules: [{ id: "allow-doctor", decision: "allow", reason: "System self-diagnostics (read-only)", priority: 50 }] },
   usage_report:    { kernel: "internal", risk: "safe", capabilities: [], tags: [], reads: ["session"], rules: [{ id: "allow-usage-report", decision: "allow", reason: "Token usage / cost report (read-only)", priority: 50 }] },
-  tool_search:     { kernel: "internal", risk: "safe", capabilities: [], tags: [], blurb: { does: "Discover deeper tools not loaded by default." }, liveState: "fresh", rules: [{ id: "allow-tool-search", decision: "allow", reason: "Discover available tools", priority: 50 }] },
+  tool_search:     { kernel: "internal", risk: "safe", capabilities: [], tags: ["voice-fast"], blurb: { does: "Discover deeper tools not loaded by default." }, liveState: "fresh", rules: [{ id: "allow-tool-search", decision: "allow", reason: "Discover available tools", priority: 50 }] },
   list_monitors:   { kernel: "internal", risk: "safe", capabilities: [], tags: [], rules: [{ id: "allow-list-monitors", decision: "allow", reason: "Enumerate available display monitors", priority: 50 }] },
   // Plan mode is per session.
   enter_plan_mode: { kernel: "internal", risk: "safe", capabilities: [], tags: [], blurb: { say: "let's plan this first", does: "Enter plan mode (propose before acting)." }, reads: ["session"], prompt: "Enter plan mode to research before making changes. Only read tools available.", rules: [{ id: "allow-enter-plan", decision: "allow", reason: "Enter read-only plan mode", priority: 50 }] },

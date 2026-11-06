@@ -6,14 +6,27 @@
 // agentic loops on the spoken critical path — not a handful of focused,
 // obviously-named tools. Heavy/long work delegates to a worker (op_submit_async).
 
+import type { ToolDefinition } from "../types.js";
 import { toolsTagged } from "../tool-registry.js";
+import { buildDeferredToolManifest } from "../tools/tool-prompt-builder.js";
+import { toolsNameableInSession } from "../tools/tool-search.js";
 
-/** Tools the voice turn may call: every row tagged `voice-fast`. Mission
+/** Tools the voice turn starts with: every row tagged `voice-fast`. Mission
  *  scheduling is DIRECT (never delegated — a worker must not install recurring
- *  jobs); mission_schedule_delete is not voice-fast (destructive, belongs in
- *  text/UI where the target is unambiguous). screen_capture + ocr answer
- *  "what's on my screen" on demand. */
+ *  jobs). screen_capture + ocr answer "what's on my screen" on demand.
+ *  tool_search is on it, so any other tool (mission_schedule_delete and
+ *  http_request included) is one search away, loaded for the turn that needs it;
+ *  an approval-gated call is declined on a call (voice-ws.ts). */
 export const VOICE_FAST_TOOLS: readonly string[] = toolsTagged("voice-fast");
+
+/** The index of every tool the spoken turn does not start with: the same
+ *  deferred-tool manifest a typed turn carries, over the same session filter,
+ *  so the model knows what tool_search can load instead of guessing. It
+ *  depends only on the belt and the catalog, so it stays in the stable,
+ *  cached part of the prompt across a call. */
+export function voiceToolManifest(allAgentTools: ToolDefinition[], voiceTools: ToolDefinition[], sessionId: string): string {
+  return buildDeferredToolManifest(toolsNameableInSession(allAgentTools, sessionId), voiceTools);
+}
 
 /** The `## Voice mode` tail appended to the prepared system prompt. */
 export function buildVoiceTail(visualsEnabled: boolean): string {
@@ -69,6 +82,12 @@ export function buildVoiceTail(visualsEnabled: boolean): string {
     "anything > ~30s): don't grind it on this turn. Call op_submit_async to " +
     "run it in the background, say one short line like \"On it — I'll let you " +
     "know when it's done,\" and STOP. Never narrate steps or claim it finished.\n" +
+    "• Anything else the user wants done or looked up (their email, files, " +
+    "calendar, a device, an app): the tools under \"More tools available on " +
+    "demand\" exist. Call tool_search for what you need, then call the tool it " +
+    "returns in this same turn. Never say you can't do something before searching.\n" +
+    "• An action that needs the user's approval is declined on a call: say it " +
+    "needs their OK in the app, and don't claim it happened.\n" +
     "• When a background task you started has completed, its result is in your " +
     "context — open with it (\"That search came back — …\").\n" +
     "Never say you did something you didn't." + visualPromptTail

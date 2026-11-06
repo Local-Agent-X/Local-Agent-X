@@ -25,7 +25,6 @@ import type { ChatMode } from "../../session/mode.js";
 import { projectAgentsMd } from "../../context/project-agents-md.js";
 import { projectDocumentsSection } from "../../memory/project-docs/full-text.js";
 import { sessionWorkRootOf } from "../../workspace/paths.js";
-import { hiddenForSession } from "../../tool-registry.js";
 
 const logger = createLogger("agent-request.prepare-request.sysprompt");
 
@@ -207,7 +206,7 @@ export async function buildSystemPromptWithTelemetry(
   let toolPromptSection = "";
   try {
     const { buildToolPromptSection, buildDeferredToolManifest } = await import("../../tools/tool-prompt-builder.js");
-    const { filterAvailableTools } = await import("../../tools/tool-search.js");
+    const { toolsNameableInSession } = await import("../../tools/tool-search.js");
     // Availability gate — the other half of the seam in tool-search.ts. The
     // per-request resolver already withheld unavailable tools from the schema;
     // if the manifest were still built over the RAW catalog every one of them
@@ -216,8 +215,7 @@ export async function buildSystemPromptWithTelemetry(
     // the same gate for the same reason.
     // A tool kept out of this session (hiddenForSession) is neither nudged nor
     // named: tool_search would refuse to load it here.
-    const availableAgentTools = filterAvailableTools(input.allAgentTools)
-      .filter((t) => !hiddenForSession(t.name, input.sessionId));
+    const availableAgentTools = toolsNameableInSession(input.allAgentTools, input.sessionId);
     toolPromptSection = buildToolPromptSection(availableAgentTools);
     // Deferred-tool manifest: name every tool NOT loaded into this turn's
     // schema so the model can reach it via tool_search instead of fail-

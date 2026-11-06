@@ -1,5 +1,11 @@
 import { describe, it, expect } from "vitest";
-import { VOICE_FAST_TOOLS, buildVoiceTail } from "./voice-prompt.js";
+import type { ToolDefinition } from "../types.js";
+import { VOICE_FAST_TOOLS, buildVoiceTail, voiceToolManifest } from "./voice-prompt.js";
+
+const tool = (name: string): ToolDefinition => ({
+  name, description: `${name} does its job.`, parameters: { type: "object", properties: {} },
+  execute: async () => ({ content: "", isError: false }),
+} as unknown as ToolDefinition);
 
 describe("voice tool belt", () => {
   it("can look up and save memory, so a spoken turn never says it doesn't have what was discussed", () => {
@@ -19,5 +25,24 @@ describe("voice tool belt", () => {
     expect(tail).toContain("memory_set_user_field");
     // Things worth seeing are shown as cards, not read aloud.
     expect(tail).toContain("show_card");
+  });
+
+  it("can search for any other tool, so a spoken turn is never stuck with the belt it started with", () => {
+    // A voice call failed a lookup because the tool it needed was not on the belt
+    // and it had no way to load one.
+    expect(VOICE_FAST_TOOLS).toContain("tool_search");
+    expect(buildVoiceTail(false)).toContain("tool_search");
+  });
+
+  it("names every tool the belt lacks, and none it carries, for tool_search to load", () => {
+    const belt = [tool("web_search"), tool("tool_search")];
+    const catalog = [...belt, tool("gmail_read"), tool("mission_schedule_delete")];
+    const manifest = voiceToolManifest(catalog, belt, "voice-test");
+    expect(manifest).toContain("More tools available on demand (2)");
+    expect(manifest).toContain("gmail_read");
+    expect(manifest).toContain("mission_schedule_delete");
+    expect(manifest).not.toContain("- web_search");
+    // Nothing to load: no section at all, so the prompt carries no empty heading.
+    expect(voiceToolManifest(belt, belt, "voice-test")).toBe("");
   });
 });

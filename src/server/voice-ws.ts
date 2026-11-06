@@ -19,7 +19,7 @@ import { createPromptTelemetry } from "../prompt-telemetry.js";
 import { buildVoicePromptSplit } from "./voice-prompt-plan.js";
 import { retractLastTurn } from "../memory/retract-last-turn.js";
 import { resolveVoiceModel, voiceMaxTokens } from "./voice-model.js";
-import { VOICE_FAST_TOOLS, buildVoiceTail } from "./voice-prompt.js";
+import { VOICE_FAST_TOOLS, buildVoiceTail, voiceToolManifest } from "./voice-prompt.js";
 import type { ProviderId } from "../providers/provider-ids.js";
 import { userAuthoredRows } from "../harness-rows.js";
 import { withRecallCarried } from "../agent-request/recall-carry.js";
@@ -81,7 +81,7 @@ function userRowOf(text: string, images: PreparedRequest["images"]): ChatComplet
 }
 
 /** The spoken turn's model, tool belt and prompt, chosen from the prepared request. */
-async function planSpokenTurn(prepared: PreparedRequest, config: LAXConfig, allAgentTools: ToolDefinition[]) {
+async function planSpokenTurn(prepared: PreparedRequest, config: LAXConfig, allAgentTools: ToolDefinition[], sessionId: string) {
   // Spoken-turn model: the selected provider's FAST tier, not the chat
   // model. A reasoning chat model (gpt-5.6-sol) thinks 13-16s before
   // speaking — dead air. resolveVoiceModel swaps in the provider's declared
@@ -124,8 +124,8 @@ async function planSpokenTurn(prepared: PreparedRequest, config: LAXConfig, allA
   // profile, controllable over CDP) — so "open google" then "search it"
   // works as one flow, in a window the agent can actually act on. NOT the
   // user's real browser: open_url (OS launch → real browser) was removed
-  // because the agent can't control what it opens there — a dead end. NO
-  // http_request either (the model abused it to fake browser control via
+  // because the agent can't control what it opens there — a dead end. Nor
+  // http_request on the belt (the model abused it to fake browser control via
   // invented localhost endpoints, then hallucinated success).
   // Mission scheduling is on the belt because it's a QUICK direct call,
   // and delegating it is impossible by design: scheduling is deliberately
@@ -133,11 +133,14 @@ async function planSpokenTurn(prepared: PreparedRequest, config: LAXConfig, allA
   // an unattended worker must not install recurring jobs), so a
   // "check/set up my 2am mission" spawn could never do it. It stays a
   // direct voice call.
-  // mission_schedule_delete stays off voice — destructive, belongs in
+  // Everything else is one tool_search away (it is on the belt): the tail
+  // carries the index of what it can load, and a hit joins the op's tools
+  // for the rest of this turn (canonical-loop/tool-augmentation.ts).
   // Voice belt + spoken-mode prompt tail (voice-prompt.ts).
   const voiceTools = allAgentTools.filter(t =>
     (VOICE_FAST_TOOLS as readonly string[]).includes(t.name) || (visualsEnabled && t.name === "voice_visual"));
-  const { voiceSplit, voicePromptTelemetry } = voicePromptFor(prepared, buildVoiceTail(visualsEnabled), voiceModel, voiceTools, allAgentTools.length);
+  const voiceTail = buildVoiceTail(visualsEnabled) + voiceToolManifest(allAgentTools, voiceTools, sessionId);
+  const { voiceSplit, voicePromptTelemetry } = voicePromptFor(prepared, voiceTail, voiceModel, voiceTools, allAgentTools.length);
   return { voiceModel, voiceTools, voiceSplit, voicePromptTelemetry };
 }
 
@@ -238,7 +241,7 @@ export async function setupVoiceWs(deps: {
       }
 
       clock.mark("prepare");
-      const { voiceModel, voiceTools, voiceSplit, voicePromptTelemetry } = await planSpokenTurn(prepared, config, allAgentTools);
+      const { voiceModel, voiceTools, voiceSplit, voicePromptTelemetry } = await planSpokenTurn(prepared, config, allAgentTools, sessionId);
       clock.mark("plan");
       const voiceSystemPrompt = voiceSplit.systemPrompt;
       const voiceRenderedPromptSections = voiceSplit.sections;

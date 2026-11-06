@@ -1,6 +1,7 @@
 import type { Audience, ToolDefinition, ToolResult } from "../types.js";
 import { UnifiedToolRegistry } from "./registry.js";
 import { selectTools } from "./tool-kits.js";
+import { hiddenForSession } from "../tool-registry.js";
 
 /**
  * Canonical per-request tool resolver.
@@ -112,6 +113,14 @@ export function isToolAvailable(tool: ToolDefinition): boolean {
  */
 export function filterAvailableTools(tools: ToolDefinition[]): ToolDefinition[] {
   return tools.filter(isToolAvailable);
+}
+
+/** The tools a prompt may name in this session: available here, and not kept
+ *  out of the session (hiddenForSession), since tool_search would refuse to
+ *  load one there. The tool nudges and the deferred-tool manifest read it,
+ *  typed and spoken alike. */
+export function toolsNameableInSession(tools: ToolDefinition[], sessionId: string | undefined): ToolDefinition[] {
+  return filterAvailableTools(tools).filter((t) => !hiddenForSession(t.name, sessionId));
 }
 
 export function resolveToolsForRequest(

@@ -64,6 +64,21 @@ function liveReloadScript(appId: string): string {
   );
 }
 
+/**
+ * Answer the phone's live-reload poll with the app's source-change token, or
+ * false when the request is not that poll. Handled here, never forwarded to
+ * Vite, and answered BEFORE the dev server is touched: the poller runs every 2 s
+ * for as long as the page lives, including an app the phone keeps open in the
+ * background, so counting it as use would keep the server from ever idling and
+ * restart one the idle sweep or the running cap stopped.
+ */
+export function answerLiveReloadPoll(url: URL, res: ServerResponse): boolean {
+  if (!url.pathname.endsWith(`/${LIVERELOAD_PATH}`)) return false;
+  res.writeHead(200, { "Content-Type": "text/plain", "Cache-Control": "no-store" });
+  res.end(sourceChangeToken(url.pathname.split("/")[2] || ""));
+  return true;
+}
+
 /** How to serve one `/apps/<id>/…` request for an app that has a live frontend
  *  dev server. Pure decision, split out so the branch is unit-testable without
  *  standing up a real dev server + the process-session machinery. */
@@ -185,14 +200,7 @@ export function proxyFrontendDevServer(
     return;
   }
   const appId = url.pathname.split("/")[2] || "";
-
-  // Live-reload poll endpoint — handled HERE (not forwarded to Vite): return the
-  // app's current source-change token so the injected poller can detect a save.
-  if (url.pathname.endsWith(`/${LIVERELOAD_PATH}`)) {
-    res.writeHead(200, { "Content-Type": "text/plain", "Cache-Control": "no-store" });
-    res.end(sourceChangeToken(appId));
-    return;
-  }
+  if (answerLiveReloadPoll(url, res)) return;
 
   // Per-request trace so a phone load over the broker is fully visible: which
   // subresources arrive, their status/size, and any error/hang. The query is

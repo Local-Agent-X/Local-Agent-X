@@ -8,7 +8,7 @@ import { isPortBound } from "../tools/process-session.js";
 import { registerFrameworkDevServerFromDisk } from "../canonical-loop/public/build-adapters.js";
 import { deriveConnectorCapability } from "./app-connector-auth.js";
 import { APP_CONTENT_TYPES, WORKSPACE_APP_HTML_HEADERS, connectorBootstrapScript, resolveAppStaticFile } from "./app-serving-policy.js";
-import { decideFrontendServe, proxyFrontendDevServer } from "./dev-server-proxy.js";
+import { answerLiveReloadPoll, decideFrontendServe, proxyFrontendDevServer } from "./dev-server-proxy.js";
 import { phoneErrorPipeScript } from "./error-pipe-inject.js";
 import { ideFrameBridgeScript } from "./ide-frame-bridge.js";
 import type { LAXConfig } from "../types.js";
@@ -64,6 +64,7 @@ export function serveWorkspaceApp(
       frontend = deps.readDevServerRecord(appId);
     }
     if (frontend && frontend.kind === "frontend") {
+      if (answerLiveReloadPoll(url, res)) return true;
       let warm = false;
       try { warm = deps.ensureDevServerRunning(appId).status === "running"; } catch {}
       const decision = decideFrontendServe({

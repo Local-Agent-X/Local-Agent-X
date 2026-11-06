@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1933 non-test source files · 84 oversized · 255 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1933 non-test source files · 84 oversized · 256 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -564,6 +564,7 @@ job. Comments are free: never cut them to fit.
 - `src/security/layer/network-dns.ts#resolveAndPinHost` — 60+ own code lines (cap 100)
 - `src/server/bridge-media-forward.ts#forwardBridgeMedia` — 60+ own code lines (cap 100)
 - `src/server/voice-prompt.ts#buildVoiceTail` — 60+ own code lines (cap 100)
+- `src/server/workspace-app-serving.ts#serveWorkspaceApp` — 60+ own code lines (cap 100)
 - `src/tool-execution/arg-repair.ts#coerceArgs` — 60+ own code lines (cap 100)
 - `src/tool-execution/arg-repair.ts#repairJson` — 60+ own code lines (cap 100)
 - `src/tools/app-tools/runtime.ts#appQuery.execute` — 60+ own code lines (cap 100)

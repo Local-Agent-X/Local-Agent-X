@@ -64,6 +64,36 @@ describe("workspace app dev-serving legacy contract", () => {
   });
 });
 
+describe("the phone's live-reload poll", () => {
+  // A page the phone keeps open in the background polls every 2 s for as long
+  // as it lives; that must not count as use, or the dev server never idles and
+  // one the idle sweep or the running cap stopped is started again.
+  it("is answered without waking the dev server or reaching it", async () => {
+    const root = mkdtempSync(join(tmpdir(), "workspace-app-serving-"));
+    roots.push(root);
+    const config = { workspace: join(root, "workspace"), authToken: "operator-token" } as LAXConfig;
+    let woken = 0;
+    const deps: AppServingDeps = {
+      readDevServerRecord: () => ({ appId: "dev-app", command: "vite", cwd: root, port: 5173, connector: "dev-dev-app", kind: "frontend" }),
+      ensureFrameworkRegistered: () => {},
+      ensureDevServerRunning: () => { woken++; return { status: "none" }; },
+      proxyFrontendDevServer: () => { throw new Error("the poll must never reach the dev server"); },
+    };
+    const server = createServer((req, res) => {
+      const url = new URL(req.url || "/", "http://127.0.0.1");
+      if (!serveWorkspaceApp(req.method || "GET", url, req, res, config, root, deps)) { res.writeHead(404); res.end(); }
+    });
+    await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+    const port = (server.address() as AddressInfo).port;
+    const response = await fetch(`http://127.0.0.1:${port}/apps/dev-app/__lax-livereload`, { headers: { "x-lax-tunnel": "1" } });
+    const body = await response.text();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    expect(response.status).toBe(200);
+    expect(body).toMatch(/^\d+$/);
+    expect(woken).toBe(0);
+  });
+});
+
 describe("workspace app static file serving", () => {
   // THE production path for a directory request. resolveAppStaticFile answering
   // "not-found" for a directory with no index.html is what keeps this route

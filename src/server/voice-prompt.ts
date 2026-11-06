@@ -45,7 +45,9 @@ export function buildVoiceTail(visualsEnabled: boolean): string {
     "\"you remember the job description?\"): check memory_search, then " +
     "search_past_sessions, BEFORE saying you don't know or don't have it. When " +
     "the user tells you something worth keeping (a date, a decision, a " +
-    "preference), save it with remember.\n" +
+    "preference), save it with remember. When they correct what you call them " +
+    "(\"stop calling me X\", \"call me Y\"), set it with memory_set_user_field " +
+    "(Name); a name in a translation or language test is not theirs.\n" +
     "• Opening or using a website (\"open google\", \"pull up youtube\", \"search " +
     "X\", \"go to my email\"): use the browser tool. It opens and drives the " +
     "agent's OWN visible browser window (the in-app view by default) — yours to control, so you can keep " +

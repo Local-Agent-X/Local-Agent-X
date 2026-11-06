@@ -207,6 +207,20 @@ export async function autoExtractAndSave(
       const userName = facts.user_name;
       const stop = await withProfileWrite(memory["memoryDir"], async () => {
         let content = readFileSync(userPath, "utf-8");
+        // The user's name is filled in once, here, and never replaced here. This pass
+        // reads one message alone, so a name in it is not always the user's: "Je
+        // m'appelle Pierre" said while testing the voice's French renamed Peter to
+        // Pierre, and a message about his wife renamed him Jenny (2026-11-03, -05);
+        // the name line then went into every prompt, and "stop calling me Pierre"
+        // never wrote it back. Changing a name the user has is the agent's call, made
+        // with the conversation in view (memory_set_user_field).
+        const current = /^- Name:[ \t]*(.*)$/m.exec(content)?.[1]?.trim() ?? "";
+        if (current !== "") {
+          if (current.toLowerCase() !== userName.toLowerCase()) {
+            logger.info(`[memory] Auto-extract kept the user's name "${current}"; "${userName}" was heard in one message, not set by the user`);
+          }
+          return false;
+        }
         if (content.includes("- Name:")) {
           content = content.replace(/^- Name:.*$/m, `- Name: ${userName}`);
         } else {

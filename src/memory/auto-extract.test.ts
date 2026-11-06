@@ -215,15 +215,23 @@ describe("autoExtractAndSave — Phase 2 write paths", () => {
     expect(identity).toContain("- Canonical name: Atlas"); // existing content preserved
   });
 
-  it("user_name → replaces existing Name bullet in USER.md", async () => {
+  it("user_name → never replaces the name the user has: one message's name is not a rename", async () => {
+    // "Je m'appelle Pierre", said testing the voice's French, renamed Peter (2026-11-05).
+    __nextReturn = { user_name: "Pierre" };
+    writeFileSync(join(memoryDir(), "USER.md"), "# User\n- Name: Peter\n- Role: owner\n", "utf-8");
+
+    await autoExtractAndSave(memory, "Je m'appelle Pierre.", "Enchanté, Pierre !");
+
+    expect(readFileSync(join(memoryDir(), "USER.md"), "utf-8")).toBe("# User\n- Name: Peter\n- Role: owner\n");
+  });
+
+  it("user_name → fills an empty Name bullet in USER.md", async () => {
     __nextReturn = { user_name: "Alex" };
-    writeFileSync(join(memoryDir(), "USER.md"), "# User\n- Name: Stranger\n", "utf-8");
+    writeFileSync(join(memoryDir(), "USER.md"), "# User\n- Name:\n", "utf-8");
 
     await autoExtractAndSave(memory, "I'm Alex", "nice to meet you Alex");
 
-    const user = readFileSync(join(memoryDir(), "USER.md"), "utf-8");
-    expect(user).toContain("- Name: Alex");
-    expect(user).not.toContain("- Name: Stranger");
+    expect(readFileSync(join(memoryDir(), "USER.md"), "utf-8")).toContain("- Name: Alex");
   });
 
   it("agent_name write that would exceed MAX_PROFILE_CHARS: IDENTITY.md left untouched, name routed to the daily log instead of dropped", async () => {
@@ -352,7 +360,7 @@ describe("autoExtractAndSave — Phase 2 write paths", () => {
       preference_rule: "User prefers no emojis",
       biographical_event: "User shipped Bookwell v1 last Thursday",
     };
-    writeFileSync(join(memoryDir(), "USER.md"), "- Name: Stranger\n", "utf-8");
+    writeFileSync(join(memoryDir(), "USER.md"), "- Name:\n", "utf-8");
 
     await autoExtractAndSave(memory, "I'm Alex, I prefer no emojis, and I shipped Bookwell v1 last Thursday", "ok");
 

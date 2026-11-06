@@ -53,7 +53,7 @@ export const TOOL_POLICIES_MEMORY: Record<string, ToolPolicyRow> = {
   memory_reflect:        { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [], blurb: { say: "update what you know about me", does: "Refresh entity summaries + opinion confidence." } },
   memory_reindex:        { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [] },
   memory_stats:          { kernel: "internal", risk: "safe", capabilities: [], tags: ["memory-search"], blurb: { does: "Show memory statistics." }, liveState: "fresh" },
-  memory_set_user_field: { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["memory-facts"], essentialRank: 14, reads: ["session"], memoryWrite: true },
+  memory_set_user_field: { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["memory-facts", "voice-fast"], essentialRank: 14, reads: ["session"], memoryWrite: true },
   memory_update_profile: { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["memory-facts"], essentialRank: 13, blurb: { does: "Update your user profile (name, role, preferences)." }, reads: ["session"], memoryWrite: true },
   remember:    { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["memory-facts", "voice-fast"], essentialRank: 15, reads: ["session", "userMessage"], memoryWrite: true, rules: [{ id: "allow-remember", decision: "allow", reason: "Save durable fact to Facts DB (internal)", priority: 50 }] },
   update_fact: { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["memory-facts"], reads: ["session", "userMessage"], memoryWrite: true, rules: [{ id: "allow-update-fact", decision: "allow", reason: "Correct a fact in the Facts DB (internal)", priority: 50 }] },

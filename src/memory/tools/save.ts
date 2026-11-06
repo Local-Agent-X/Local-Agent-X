@@ -88,7 +88,9 @@ export function createSaveTools(memory: MemoryIndex) {
       compactDescription: "Set ONE scalar USER.md field (Name, Location, Job/Role, Pronouns, Communication style, Interests). Use whenever the user states a personal scalar fact ('my name is X'); prefer over memory_update_profile.",
       description:
         "Surgically set ONE scalar field in USER.md (Name, Location, Job/Role, Communication style, Interests, Pronouns). " +
-        "Use this WHENEVER the user states a personal scalar fact — 'my name is X', 'I'm a Y', 'call me Z', 'I prefer pronouns A/B'. " +
+        "Use this WHENEVER the user states a personal scalar fact — 'my name is X', 'I'm a Y', 'call me Z', 'I prefer pronouns A/B' — " +
+        "or corrects one ('stop calling me X': set Name back to what they go by). " +
+        "Only what the user means about themselves: a name in a quote, a translation, a language test or an example is not theirs. " +
         "Always prefer this over memory_update_profile for scalar facts: it patches the canonical line in the 'About Me' block, " +
         "creates the field if missing, and overwrites any prior value. No action/heading guesswork that can corrupt the file.",
       parameters: {

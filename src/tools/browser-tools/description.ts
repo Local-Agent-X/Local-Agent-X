@@ -47,6 +47,7 @@ export const BROWSER_TOOL_DESCRIPTION =
   "- select: Choose dropdown option by ref (set 'ref' + 'value') or CSS selector (set 'selector' + 'value').\n" +
   "- extract: Get visible text from the page or a specific element. On a large page, pass 'find' to get only the matching lines instead of the whole page.\n" +
   "- screenshot: Capture the current page — the image is returned INLINE, so you SEE the page in this one call (no view_image or screen_capture needed). A full-resolution PNG is also saved; use its path with view_image to re-view later or send_image to share it.\n" +
+  "- images: List the page's pictures (its preview image first), each with alt text and the link it sits in — the addresses to put on a show_card.\n" +
   "- evaluate: Run read-only JavaScript to inspect the page. It cannot click, type, focus, remove overlays, or mutate DOM/form state; use click/fill/select with fresh refs for actions.\n" +
   "- act: Natural language action — 'click the login button', 'fill email with test@test.com'. Figures out the right element from a snapshot automatically.\n" +
   "- observe: Summarize what's actionable on the page — buttons, links, inputs, dropdowns with their ref numbers. Form controls also show live state as {checked}/{unchecked}/{filled}/{disabled}, so re-observe after a click to confirm a checkbox toggled instead of reading the DOM by hand.\n" +
@@ -93,7 +94,7 @@ export const BROWSER_TOOL_PARAMETERS = {
   properties: {
     action: {
       type: "string",
-      enum: ["navigate", "new_tab", "snapshot", "click", "click_text", "fill", "select", "extract", "screenshot", "evaluate", "act", "observe", "emulate", "layout_report", "scroll", "tabs", "switch_tab", "close_tab", "info", "read_console", "read_network", "read_response", "downloads", "release_download", "dialog_accept", "dialog_dismiss", "history", "bookmark_add", "bookmarks", "close"],
+      enum: ["navigate", "new_tab", "snapshot", "click", "click_text", "fill", "select", "extract", "screenshot", "evaluate", "act", "observe", "emulate", "layout_report", "images", "scroll", "tabs", "switch_tab", "close_tab", "info", "read_console", "read_network", "read_response", "downloads", "release_download", "dialog_accept", "dialog_dismiss", "history", "bookmark_add", "bookmarks", "close"],
       description: "The browser action to perform. Use 'snapshot' to see interactive elements with ref numbers, then 'click' with a ref. Use 'new_tab' to open a URL in a new tab without closing the current one.",
     },
     url: {

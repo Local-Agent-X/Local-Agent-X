@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1926 non-test source files · 84 oversized · 254 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1928 non-test source files · 84 oversized · 254 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -21,7 +21,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 174 | 29 | XL | 1 |
 | `src/security/` | 158 | 60 | XL | 2 |
-| `src/tools/` | 122 | 225 | XL | 9 |
+| `src/tools/` | 122 | 226 | XL | 9 |
 | `src/tool-execution/` | 87 | 84 | XL | 2 |
 | `src/workspace/` | 86 | 3 | M |  |
 | `src/canonical-loop/` | 82 | 282 | XL | 11 |
@@ -29,7 +29,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/session/` | 58 | 9 | M |  |
 | `src/data-lineage/` | 57 | 12 | L |  |
 | `src/memory/` | 54 | 151 | XL | 5 |
-| `src/browser/` | 47 | 88 | XL | 5 |
+| `src/browser/` | 48 | 89 | XL | 5 |
 | `src/tool-policy/` | 47 | 21 | L |  |
 | `src/local-runtimes/` | 44 | 26 | XL | 1 |
 | `src/threat/` | 43 | 13 | L |  |

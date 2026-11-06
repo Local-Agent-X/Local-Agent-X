@@ -66,7 +66,8 @@ export const TRACKED_ACTIONS = sealedTable(["click", "click_text", "fill", "sele
 // computed style, stylesheets and matching media queries. The tool's declared
 // effect class for it is "read-only"; the no-mutation proof and its limits are
 // in test/browser-layout-report-script.test.ts.
-export const READ_ONLY_ACTIONS = sealedTable(["snapshot", "extract", "screenshot", "tabs", "info", "observe", "read_console", "read_network", "read_response", "history", "bookmarks", "layout_report"]);
+// images too: a fixed script that reads the page's pictures (browser/page-images.ts).
+export const READ_ONLY_ACTIONS = sealedTable(["snapshot", "extract", "screenshot", "tabs", "info", "observe", "read_console", "read_network", "read_response", "history", "bookmarks", "layout_report", "images"]);
 // Page-script evaluation is nominally inspection-only, but executing arbitrary
 // page JavaScript can still invoke getters or site-defined functions with side
 // effects. Dialog responses can likewise advance a challenge. Keep escape and
@@ -87,6 +88,7 @@ export const HUMAN_VERIFICATION_BLOCKED_ACTIONS = sealedTable([
   "dialog_dismiss",
   "emulate",
   "layout_report",
+  "images",
 ]);
 // How the security kernel judges each action: the browser's policy row reads
 // its write list from PAGE_WRITE_ACTIONS (tool-policy/tool-policies.network.ts

@@ -71,6 +71,7 @@ const MUTATING_BROWSER_ACTIONS = new Set([
 // withholds from snapshot/observe.
 const SECRET_READING_ACTIONS = new Set([
   "snapshot", "observe", "extract", "screenshot", "evaluate", "read_console", "read_network", "read_response", "bookmark_add", "layout_report",
+  "images",
 ]);
 
 export function browserSecrecyLevel(): BrowserSecrecy {

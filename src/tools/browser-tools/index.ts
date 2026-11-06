@@ -63,6 +63,7 @@ import { handleAct } from "./act.js";
 import { handleEmulate } from "./emulate.js";
 import { withEmulationNotice } from "./emulation-banner.js";
 import { handleLayoutReport } from "./layout-report.js";
+import { handlePageImages } from "./page-images.js";
 import { handleHistory, handleBookmarkAdd, handleBookmarks } from "./library.js";
 import { handleObserve } from "./observe.js";
 import { handleReadConsole, handleReadNetwork, handleReadResponse } from "./perception.js";
@@ -195,6 +196,7 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
             case "observe": return await handleObserve(manager);
             case "emulate": return await handleEmulate(manager, args, sessionId);
             case "layout_report": return await handleLayoutReport(manager, sessionId);
+            case "images": return await handlePageImages(manager);
             case "read_console": return await handleReadConsole(manager);
             case "read_network": return await handleReadNetwork(manager);
             case "read_response": return await handleReadResponse(manager, args);

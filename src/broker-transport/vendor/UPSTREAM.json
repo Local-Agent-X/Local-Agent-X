@@ -3,7 +3,7 @@
   "files": {
     "protocol.ts": {
       "upstream": "packages/protocol/src/index.ts",
-      "sha256": "d3ebcdd93e663f09ceaf48e4194014af31f688e2c59a5ef5b2748baa5a27f5d9"
+      "sha256": "b0305aeca21c55b7b2768816700ea643c7039fd88e8fd0eadec6893ab5346554"
     },
     "guards.ts": {
       "upstream": "packages/protocol/src/guards.ts",
@@ -23,7 +23,7 @@
     },
     "chat.ts": {
       "upstream": "packages/protocol/src/chat.ts",
-      "sha256": "e8fff7a9e9fa4f9b7e9d91810bca4726f4b03e473a0347a196644cbe39fbef60"
+      "sha256": "05e3b5357f43e1a9c3a072a15147114521957c72faa41c39f8d1f19fec61a926"
     },
     "approval.ts": {
       "upstream": "packages/protocol/src/approval.ts",
@@ -100,6 +100,10 @@
     "card.ts": {
       "upstream": "packages/protocol/src/card.ts",
       "sha256": "57de66e67073c022ce1450de6abc56ff36ece3b0fb3cd4b4f8845533aad67417"
+    },
+    "progress.ts": {
+      "upstream": "packages/protocol/src/progress.ts",
+      "sha256": "ee670c712e6391a385b94292e1f0e4a33aa0c603236b953588ae15eac9372f32"
     }
   }
 }

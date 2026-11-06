@@ -245,14 +245,12 @@ export interface OpTurnToolRecord {
  *  import), the same two tool-mutation-check.ts already pulls, so any consumer
  *  of that one takes this with ZERO new transitive dependencies.
  *
- *  HAZARD — an unbounded prefix match, not a registry lookup. An active PLUGIN
- *  tool named `task_*` never enters the policy table (tool-policy/), so it
- *  reads as the agent's own ledger here and would be silently excluded from
- *  substantive-work credit AND from termination. Registry-derived names are
- *  safe today (only the task tools use the prefix); a plugin author picking it
- *  is not, and nothing warns them. */
+ *  Read from the policy row's `tasks` tag ("keeps the run's step list"): the
+ *  task_* tools, update_plan and wrap_up. It was a `task_` name-prefix match,
+ *  which missed update_plan and wrap_up and would have counted a PLUGIN tool
+ *  that happened to be named `task_*` (no policy row) as the agent's ledger. */
 export function isLedgerTool(name: string): boolean {
-  return name.startsWith("task_");
+  return policyRowOf(name)?.tags.includes("tasks") ?? false;
 }
 
 /** Did this stored row LAND a committing call?

@@ -48,7 +48,7 @@ describe("selectTools — a code session", () => {
   it("loads the code session kit, tool_search included", async () => {
     expect(names(await turn("fix the failing test"))).toEqual([...KIT].sort());
     expect(KIT).toContain("tool_search");
-    for (const name of ["bash", "read", "write", "edit", "grep", "glob", "task_create", "task_update"]) expect(KIT).toContain(name);
+    for (const name of ["bash", "read", "write", "edit", "grep", "glob", "update_plan", "wrap_up"]) expect(KIT).toContain(name);
   });
 
   it("keeps the rest of the toolbox one tool_search away, not in every call's schema", () => {

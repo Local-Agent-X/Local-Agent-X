@@ -105,7 +105,7 @@ describe("the other row-declared facts the gates read", () => {
   });
 
   it("an always-allow covers the whole tool only for LAX's own bookkeeping", () => {
-    expect([...WHOLE_TOOL_GRANTS].sort()).toEqual(["sidebar_clear", "sidebar_pin", "sidebar_unpin", "task_create", "task_update"]);
+    expect([...WHOLE_TOOL_GRANTS].sort()).toEqual(["sidebar_clear", "sidebar_pin", "sidebar_unpin", "task_create", "task_update", "update_plan", "wrap_up"]);
   });
 
   it("the create class is every tool with a write path spec, and the target is that spec's path", () => {

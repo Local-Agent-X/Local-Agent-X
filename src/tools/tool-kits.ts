@@ -59,8 +59,8 @@ export const CODE_SESSION_KIT: ToolSelection = {
   except: { structural_search: "grep and glob find code; an AST query is a tool_search away" },
   plus: {
     tool_search: "loads any other tool by name or purpose; without it the rest of the catalog is out of reach",
-    task_create: "a multi-step change keeps its steps on record; the open-steps gate reads them",
-    task_update: "marks those steps done as the work lands",
+    update_plan: "a multi-step change keeps its steps on record, live under the reply; the open-steps gate reads them",
+    wrap_up: "closes a turn that changed code with what is done and what is not verified",
   },
 };
 

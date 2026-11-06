@@ -20,6 +20,7 @@
 //   - renderApproval                           (chat-render-approvals.js)
 //   - fileChangesOf, renderFileChangesCard     (chat-file-changes.js)
 //   - cardsOf, renderChatCards                 (chat-cards.js)
+//   - isProgressTool, planOf, wrapUpOf, renderPlanList, renderWrapUp (chat-progress.js)
 
 // Build the in-flight assistant bubble from ChatStreamStore state into `parent`.
 // `parent` is either the live #messages container (renderMessages full-render)
@@ -325,8 +326,11 @@ function _renderRowNotices(bodyEl, notices) {
 // identical to its in-flight render.
 function _renderAssistantToolArtifacts(bodyEl, data) {
   if (!bodyEl || !data) return;
-  const toolEvents = data.toolEvents || [];
-  if (toolEvents.length > 0) {
+  // The step list and the recap draw from every event; the activity group and
+  // everything read off it skip their two bookkeeping tools (chat-progress.js).
+  const allEvents = data.toolEvents || [];
+  const toolEvents = allEvents.filter((t) => !isProgressTool(t.name));
+  if (allEvents.length > 0) {
     try {
       // Pair each start with a DISTINCT end. A plain name-match via .find()
       // resolved every same-named start to the FIRST end — so when one tool
@@ -428,6 +432,11 @@ function _renderAssistantToolArtifacts(bodyEl, data) {
       // the answer, not a step toward it.
       const cards = cardsOf(toolEvents);
       if (cards.length > 0) bodyEl.appendChild(renderChatCards(cards));
+      // The step list, then the recap that closes the reply (chat-progress.js).
+      const steps = planOf(allEvents);
+      if (steps) bodyEl.appendChild(renderPlanList(steps));
+      const wrap = wrapUpOf(allEvents);
+      if (wrap) bodyEl.appendChild(renderWrapUp(wrap));
     } catch (toolRenderErr) { console.error('[chat] tool card render error:', toolRenderErr); }
   }
   // Chips attach to the last tool card matching the chip's emit time. The

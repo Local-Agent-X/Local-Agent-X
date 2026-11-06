@@ -1658,6 +1658,26 @@ body.agent-feeds-resizing .agent-feeds{transition:none!important}
 .chat-card-link{border:1px solid var(--border);border-radius:999px;padding:3px 10px;font-size:.75rem;text-decoration:none;color:var(--text)}
 .chat-card-link:hover{background:var(--border)}
 .chat-card-source{opacity:.55;font-size:.72rem}
+/* A reply's step list and closing recap (chat-progress.js). Only the latest
+   reply keeps its answer buttons: a reply followed by another has moved on. */
+.chat-plan{margin-top:10px;border:1px solid var(--border);border-radius:8px;padding:8px 12px;font-size:.82rem;display:flex;flex-direction:column;gap:4px}
+.chat-plan-head{font-weight:600;display:flex;justify-content:space-between}
+.chat-plan-head span{font-weight:400;opacity:.6}
+.chat-plan-step{display:flex;gap:8px;align-items:baseline}
+.chat-plan-mark{width:1em;text-align:center;flex:0 0 auto}
+.chat-plan-step.completed{opacity:.6}
+.chat-plan-step.completed .chat-plan-mark{color:var(--accent)}
+.chat-plan-step.in_progress{font-weight:600}
+.chat-plan-step.in_progress .chat-plan-mark{color:var(--accent)}
+.chat-plan-step.failed .chat-plan-mark{color:var(--danger,#e5484d)}
+.chat-wrapup{margin-top:10px;border:1px solid var(--border);border-radius:10px;padding:10px 12px;background:var(--surface,transparent);font-size:.85rem;display:flex;flex-direction:column;gap:8px}
+.chat-wrapup-recap{line-height:1.45}
+.chat-wrapup-ask{font-weight:600}
+.chat-wrapup-actions{display:flex;flex-wrap:wrap;gap:8px}
+.chat-wrapup-action{border:1px solid var(--border);border-radius:999px;padding:4px 14px;background:transparent;color:var(--text);font:inherit;font-size:.8rem;cursor:pointer}
+.chat-wrapup-action:hover{background:var(--active)}
+.chat-wrapup-action.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent,#fff)}
+.msg:has(~ .msg) .chat-wrapup-actions{display:none}
 .file-changes-all{background:transparent;border:1px solid var(--border);border-radius:5px;color:var(--text);font-size:.72rem;padding:2px 8px;cursor:pointer}
 .file-changes-all:hover{background:var(--active)}
 .file-change-row{display:flex;align-items:baseline;gap:8px;width:100%;padding:6px 10px;border:0;border-top:1px solid var(--border);background:transparent;color:var(--text);font:inherit;text-align:left;cursor:pointer}

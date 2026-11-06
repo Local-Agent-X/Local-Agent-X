@@ -30,6 +30,7 @@ export * from "./tunnel.js";
 export * from "./chat.js";
 export * from "./file-change.js";
 export * from "./card.js";
+export * from "./progress.js";
 export * from "./approval.js";
 export * from "./voice.js";
 export * from "./timeline.js";

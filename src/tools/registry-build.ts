@@ -42,6 +42,7 @@ import { showUnblockControlTool } from "./unblock-control-tool.js";
 import { clipboardTools } from "./clipboard-tools.js";
 import { sqlTools } from "./sql-tools.js";
 import { taskTools } from "./task-tools.js";
+import { wrapUpTool } from "./wrap-up.js";
 import { planTools } from "./plan-tools.js";
 import { askUserTool } from "./ask-user-tool.js";
 import { codeHandoffTool } from "./code-handoff-tool.js";
@@ -70,7 +71,7 @@ export const allTools: ToolDefinition[] = applyPrompts([
   ...processTools,
   ...spreadsheetTools, ...documentTools, ...presentationTools, ...pdfTools, ...chartTools, ...previewTools,
   ...emailTools, ...calendarTools, ...telegramTools, ...whatsappTools, ...clipboardTools, ...sqlTools,
-  ...taskTools, ...planTools, ...autopilotTools, ...opTools,
+  ...taskTools, wrapUpTool, ...planTools, ...autopilotTools, ...opTools,
   ...restartTools, ...updateTools, showUnblockControlTool,
   {
     name: "memory_dream",

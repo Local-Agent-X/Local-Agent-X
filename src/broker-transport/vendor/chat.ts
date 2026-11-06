@@ -10,6 +10,7 @@ import { asNumber, asRecord, asString } from "./guards.js";
 import { parseApprovalEvent } from "./approval.js";
 import { parseFileChange } from "./file-change.js";
 import { parseCardMetadata, type ChatCard } from "./card.js";
+import { parsePlanMetadata, parseWrapUpMetadata, type PlanStep, type WrapUp } from "./progress.js";
 import type { FileChange } from "./file-change.js";
 import type { ApprovalRequestedEvent, ApprovalResolvedEvent, ApprovalResponseFrame, ApprovalTimeoutEvent } from "./approval.js";
 
@@ -55,6 +56,10 @@ export type ToolEndEvent = {
   fileChange?: FileChange;
   /** A card the agent showed (show_card), read from the wire's `metadata.card`. */
   card?: ChatCard;
+  /** The session's step list after this call, read from `metadata.plan`. */
+  plan?: PlanStep[];
+  /** The turn's closing recap (wrap_up), read from `metadata.wrapUp`. */
+  wrapUp?: WrapUp;
 };
 /** The turn finished. `opId` names it, so a resubscribe can say it already holds it. */
 export type DoneEvent = { type: "done"; usage: TurnUsage; opId?: string };
@@ -155,6 +160,10 @@ function parseToolEnd(raw: Record<string, unknown>): ToolEndEvent | null {
   if (fileChange !== null) ev.fileChange = fileChange;
   const card = parseCardMetadata(raw.metadata);
   if (card !== null) ev.card = card;
+  const plan = parsePlanMetadata(raw.metadata);
+  if (plan !== null) ev.plan = plan;
+  const wrapUp = parseWrapUpMetadata(raw.metadata);
+  if (wrapUp !== null) ev.wrapUp = wrapUp;
   return ev;
 }
 

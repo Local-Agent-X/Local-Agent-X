@@ -136,7 +136,7 @@ describe("exempt control/terminal tools", () => {
   it("exempts exactly the rows that declare runControl", () => {
     expect([...exempt].sort()).toEqual([
       "agent_escalate", "ask_user", "process_kill", "process_list", "process_status",
-      "send_file", "session_status", "task_create", "task_update",
+      "send_file", "session_status", "task_create", "task_update", "update_plan", "wrap_up",
     ]);
     for (const name of exempt) expect(isHeapGuardExempt(name)).toBe(true);
   });

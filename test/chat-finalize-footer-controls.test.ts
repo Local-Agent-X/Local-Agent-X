@@ -78,6 +78,7 @@ beforeEach(() => {
   g.renderMessages = vi.fn();
 
   Object.assign(g, load<object>("chat-tool-cards.js", "{ appendToolCardGrouped, attachMediaPreview, toolSummary }"));
+  Object.assign(g, load<object>("chat-progress.js", "{ isProgressTool, planOf, wrapUpOf, renderPlanList, renderWrapUp }"));
   Object.assign(g, load<object>("chat-render-artifacts.js", "{ _buildLiveAssistantInto, _renderAssistantToolArtifacts }"));
   Object.assign(g, load<object>("chat-render-open-state.js", "{ preserveOpenState, captureActivityScroll, restoreActivityScroll }"));
   Object.assign(g, load<object>("chat-render.js", "{ appendReadAloudBtn, _applyPinBottom }"));

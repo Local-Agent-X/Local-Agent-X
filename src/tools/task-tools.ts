@@ -106,7 +106,7 @@ const taskCreate: ToolDefinition = {
     tasks.push({ id, description, status: "pending", parent_id: parent, session_id: sessionId || undefined, created_at: ts, updated_at: ts });
     saveTasks(tasks);
     const note = parentId && !parent ? ` (parent ${parentId} not found — created as a root task)` : "";
-    return { content: `Task created: ${id}\nDescription: ${description}${note}`, metadata: { id } };
+    return { content: `Task created: ${id}\nDescription: ${description}${note}`, metadata: { id, plan: planOf(tasks, sessionId) } };
   },
 };
 
@@ -133,14 +133,15 @@ const taskUpdate: ToolDefinition = {
     // No upsert: task_list prints 8-character ids, and an update by one of
     // those silently created a second task under the prefix while the real one
     // stayed open (and the open-steps gate kept nagging about it).
-    const found = resolveTask(tasks, id, sessionOf(args));
+    const sessionId = sessionOf(args);
+    const found = resolveTask(tasks, id, sessionId);
     if ("error" in found) return { content: found.error, isError: true };
     const { task } = found;
     if (args.status) task.status = args.status as Task["status"];
     if (args.output !== undefined) task.output = args.output as string;
     task.updated_at = now();
     saveTasks(tasks);
-    return { content: `Task ${task.id} updated — status: ${task.status}` };
+    return { content: `Task ${task.id} updated — status: ${task.status}`, metadata: { plan: planOf(tasks, sessionId) } };
   },
 };
 
@@ -205,7 +206,106 @@ const taskGet: ToolDefinition = {
   },
 };
 
-export const taskTools: ToolDefinition[] = [taskCreate, taskUpdate, taskList, taskGet];
+/** A step as the chat draws it, live under the reply on the desktop and the phone
+ *  (metadata.plan; agentxos progress.ts). */
+export interface PlanStep { text: string; status: Task["status"] }
+
+const MAX_PLAN_STEPS = 20;
+
+/** The session's steps, in the order they were made: every task tool's result carries
+ *  them, so the chat's step list follows the store whichever tool changed it. */
+function planOf(tasks: Task[], sessionId: string): PlanStep[] {
+  if (!sessionId) return [];
+  return tasks.filter((t) => t.session_id === sessionId).slice(-MAX_PLAN_STEPS)
+    .map((t) => ({ text: t.description, status: t.status }));
+}
+
+function planLine(plan: PlanStep[]): string {
+  const done = plan.filter((s) => s.status === "completed").length;
+  const current = plan.find((s) => s.status === "in_progress");
+  return `Steps: ${done} of ${plan.length} done${current ? `; now: ${current.text}` : ""}.`;
+}
+
+/** Complete the in-progress step and start the next pending one. */
+function advance(tasks: Task[], sessionId: string): void {
+  const mine = tasks.filter((t) => t.session_id === sessionId);
+  const current = mine.find((t) => t.status === "in_progress");
+  if (current) { current.status = "completed"; current.updated_at = now(); }
+  const next = mine.find((t) => t.status === "pending");
+  if (next) { next.status = "in_progress"; next.updated_at = now(); }
+}
+
+/** The session's whole step list, replaced: the session's earlier steps go. */
+function replacePlan(tasks: Task[], sessionId: string, items: unknown[]): Task[] | string {
+  if (items.length === 0 || items.length > MAX_PLAN_STEPS) return `items must hold 1 to ${MAX_PLAN_STEPS} steps.`;
+  const ts = now();
+  const steps: Task[] = [];
+  for (const raw of items) {
+    const o = (raw ?? {}) as Record<string, unknown>;
+    const text = typeof o.content === "string" ? o.content.trim().slice(0, 120) : "";
+    const status = typeof o.status === "string" ? o.status : "pending";
+    if (!text) return "Every step needs its content.";
+    if (!VALID_STATUSES.has(status)) return `Invalid status: ${status}`;
+    steps.push({ id: randomUUID(), description: text, status: status as Task["status"], session_id: sessionId, created_at: ts, updated_at: ts });
+  }
+  return [...tasks.filter((t) => t.session_id !== sessionId), ...steps];
+}
+
+const updatePlan: ToolDefinition = {
+  name: "update_plan",
+  compactDescription: "The user's live step list for multi-step work: items = the whole list (replaces it), or advance=true to finish the current step and start the next.",
+  description:
+    "Keep the step list the user sees under your reply, on the desktop and the phone, for work with several steps (editing files, " +
+    "running commands, anything that takes more than a couple of tool calls). First call: items = the whole plan in order, short " +
+    "imperative steps, the one you are starting 'in_progress', the rest 'pending'. Then advance=true alongside the call that starts " +
+    "the next step (it completes the current step and starts the next). If the plan changes, send items again. Skip it for a single action.",
+  parameters: {
+    type: "object",
+    properties: {
+      items: {
+        type: "array",
+        description: "The whole plan, in order; replaces the list.",
+        items: {
+          type: "object",
+          properties: { content: { type: "string" }, status: { type: "string", enum: ["pending", "in_progress", "completed", "failed"] } },
+          required: ["content", "status"],
+        },
+      },
+      advance: { type: "boolean", description: "Complete the in-progress step and start the next pending one." },
+    },
+  },
+  async execute(args: Record<string, unknown>): Promise<ToolResult> {
+    const sessionId = sessionOf(args);
+    if (!sessionId) return { content: "update_plan keeps a chat's step list and needs a chat session.", isError: true };
+    let tasks = loadTasks();
+    if (Array.isArray(args.items)) {
+      const replaced = replacePlan(tasks, sessionId, args.items);
+      if (typeof replaced === "string") return { content: replaced, isError: true };
+      tasks = replaced;
+    } else if (args.advance === true) {
+      advance(tasks, sessionId);
+    } else {
+      return { content: "Pass items (the whole plan) or advance=true.", isError: true };
+    }
+    saveTasks(tasks);
+    const plan = planOf(tasks, sessionId);
+    return { content: planLine(plan), metadata: { plan } };
+  },
+};
+
+/** wrap_up's close of the step list: the step in progress is done. A pending step stays
+ *  open, so the open-steps gate still sees declared work left undone. Returns the list. */
+export function finishCurrentStep(sessionId: string): PlanStep[] {
+  if (!sessionId) return [];
+  const tasks = loadTasks();
+  const current = tasks.filter((t) => t.session_id === sessionId && t.status === "in_progress");
+  if (current.length === 0) return planOf(tasks, sessionId);
+  for (const t of current) { t.status = "completed"; t.updated_at = now(); }
+  saveTasks(tasks);
+  return planOf(tasks, sessionId);
+}
+
+export const taskTools: ToolDefinition[] = [taskCreate, taskUpdate, taskList, taskGet, updatePlan];
 
 /** Open (pending / in_progress) tasks a given session created — the signal the
  *  open-steps completion gate reads to decide whether a turn that's about to end

@@ -515,13 +515,15 @@ describe("isLedgerTool — one definition, three decisions", () => {
     }
   });
 
-  // DELETE ME WHEN FIXED — pins the HAZARD documented on isLedgerTool, not
-  // desired behavior. The predicate is an unbounded PREFIX match, not a
-  // registry lookup, so an active plugin tool registered as `task_*` bypasses
-  // the policy table and is silently excluded from termination and from
-  // substantive-work credit. Fix = derive from the registry (or reserve the
-  // prefix at plugin registration), then delete this test.
-  it("KNOWN HAZARD: an unregistered plugin-style `task_*` name is treated as the ledger", () => {
-    expect(isLedgerTool("task_zapier_sync_invoices")).toBe(true);
+  // The predicate was a `task_` name-prefix match, so a plugin tool named
+  // `task_*` (no policy row) was silently excluded from termination and from
+  // substantive-work credit. It now reads the row's `tasks` tag.
+  it("an unregistered plugin-style `task_*` name is real work, not the ledger", () => {
+    expect(isLedgerTool("task_zapier_sync_invoices")).toBe(false);
+  });
+
+  it("the step-list tools that are not named task_* are the ledger too", () => {
+    expect(isLedgerTool("update_plan")).toBe(true);
+    expect(isLedgerTool("wrap_up")).toBe(true);
   });
 });

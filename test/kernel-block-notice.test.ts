@@ -44,6 +44,8 @@ beforeEach(() => {
   Object.assign(g, load<object>("chat-tool-cards.js", "{ appendToolCardGrouped, attachMediaPreview, toolSummary }"));
   Object.assign(g, load<object>("chat-declassify-action.js", "{ isDeclassifiable, isKernelBlockNotice, renderKernelBlockNotice, appendDeclassifyAction }"));
   Object.assign(g, load<object>("chat-file-changes.js", "{ fileChangesOf, renderFileChangesCard }"));
+  Object.assign(g, load<object>("chat-cards.js", "{ cardsOf, renderChatCards }"));
+  Object.assign(g, load<object>("chat-progress.js", "{ isProgressTool, planOf, wrapUpOf, renderPlanList, renderWrapUp }"));
   artifacts = load<Artifacts>("chat-render-artifacts.js", "{ _renderAssistantToolArtifacts }");
 });
 

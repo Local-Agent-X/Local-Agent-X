@@ -117,7 +117,7 @@ export const openStepsMiddleware: CanonicalMiddleware = {
       `You're ending this turn with ${open.length} step${open.length === 1 ? "" : "s"} ` +
       `still open on your task list:\n\n${list}\n\n` +
       "Continue with the next incomplete step now — don't stop until every step is " +
-      "done. If a step is already finished, mark it complete with task_update. If you " +
+      `done. If a step is already finished, mark it complete with ${ctx.toolNames.has("update_plan") ? "update_plan" : "task_update"}. If you ` +
       "are genuinely blocked on one, state the specific blocker instead of stopping silently. " +
       "If you are waiting on the user's answer, do not repeat your question (it is already on their " +
       "screen): finish every step that does not depend on it, then stop.";
@@ -153,7 +153,9 @@ function interactiveBuildPlanSeed(ctx: CanonicalLoopContext): CanonicalMiddlewar
   // finished, checked answer, and the model repeated its report or re-ran a
   // check. It stays for the medium and weak tiers it was built for.
   if (classifyModel(ctx.model) === "strong") return { kind: "continue" };
-  if (!ctx.toolNames.has("task_create")) return { kind: "continue" };
+  // A code session loads update_plan, not the task_* tools: the push names the one it has.
+  const planTool = ctx.toolNames.has("update_plan") ? "update_plan" : ctx.toolNames.has("task_create") ? "task_create (one per step)" : null;
+  if (planTool === null) return { kind: "continue" };
   // The RAW name-only tally, used ONLY as a "can this tool write files" lookup — the one
   // question all three committing tallies answer identically (see types.ts).
   // Never read it as "the op committed something": it is blind to browser /
@@ -177,7 +179,7 @@ function interactiveBuildPlanSeed(ctx: CanonicalLoopContext): CanonicalMiddlewar
   const message =
     "You've written or edited files toward this request but are ending the turn with no plan on record. " +
     "If a complete version of what was asked still needs work — remaining features, wiring, edge cases, or a " +
-    "check that it actually runs — lay out the remaining steps with task_create (one per step), work through " +
+    `check that it actually runs — lay out the remaining steps with ${planTool}, work through ` +
     "them, and verify the result (build it / run it / open it) before you finish; don't stop while a step is open. " +
     "If the work is genuinely complete and you've confirmed it runs, say so and how you verified it. If it was a " +
     "single trivial change, just confirm it's done.";

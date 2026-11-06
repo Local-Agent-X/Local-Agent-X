@@ -95,6 +95,8 @@ demand via tool search and aren't all listed here.)
 - `task_update` — Update a task.
 - `task_list` — List tasks.
 - `task_get` — Get a task's details.
+- `update_plan` — Keep the step list the user sees under the reply.
+- `wrap_up` — End a turn that did work with a short recap and, when needed, one question.
 
 ### Agents
 
@@ -147,4 +149,4 @@ demand via tool search and aren't all listed here.)
 - `presentation`
 
 ---
-_67 capabilities · 49 with a description · 18 awaiting a blurb (add one to the tool's policy row)._
+_69 capabilities · 51 with a description · 18 awaiting a blurb (add one to the tool's policy row)._

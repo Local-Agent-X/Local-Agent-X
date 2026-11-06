@@ -118,6 +118,14 @@ export async function* processCodexEvent(
     return;
   }
 
+  // The client-run tool_search (client-tool-search.ts) arrives whole in its
+  // output_item.done: no argument deltas. LAX runs it as its tool_search tool.
+  if (event.type === "response.output_item.done") {
+    const item = (event as unknown as Record<string, unknown>).item as Record<string, unknown> | undefined;
+    if (item?.type === "tool_search_call") yield* yieldToolSearchCall(item, state);
+    return;
+  }
+
   // Function call arguments delta — item_id is the lookup key (matches
   // the item.id from output_item.added). Some events use call_id instead.
   if (event.type === "response.function_call_arguments.delta") {
@@ -208,6 +216,11 @@ async function* finalizeCompleted(
           state.reasoningItems.push(reasoningItem);
           yield { type: "reasoning", item: reasoningItem };
         }
+        continue;
+      }
+
+      if (item.type === "tool_search_call") {
+        yield* yieldToolSearchCall(item as unknown as Record<string, unknown>, state);
         continue;
       }
 
@@ -310,4 +323,19 @@ export async function* flushOnAbnormalClose(
   });
   logClassification("codex", model, classification);
   (state.usage as Record<string, unknown>).classification = classification;
+}
+
+/** A client-run tool_search call, once: as LAX's tool_search tool call, its
+ *  arguments as JSON. Keyed like a function call so response.completed does not
+ *  yield it again. */
+function* yieldToolSearchCall(item: Record<string, unknown>, state: CodexStreamState): Generator<CodexStreamYield> {
+  const callId = typeof item.call_id === "string" ? item.call_id : "";
+  const itemId = typeof item.id === "string" ? item.id : "";
+  const lookupKey = itemId || callId;
+  if (!lookupKey || state.toolCalls.has(lookupKey)) return;
+  const id = encodeToolCallId(callId || itemId, itemId || undefined);
+  const args = JSON.stringify(item.arguments ?? {});
+  state.toolCalls.set(lookupKey, { id, callId: callId || itemId, itemId, name: "tool_search", arguments: args });
+  state.consumedToolCallIds.add(id);
+  yield { type: "tool_call", id, name: "tool_search", arguments: args };
 }

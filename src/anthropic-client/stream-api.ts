@@ -3,13 +3,14 @@ import { API_BASE, convertMessages } from "./request.js";
 import { connectTimeout } from "../providers/connect-timeout.js";
 import {
   isDirectOAuthToken, unwrapDirectOAuthToken, buildOAuthHeaders,
-  adoptRequiredClaudeCodeVersion, claudeCodeUserAgent, CLAUDE_CODE_SYSTEM_PREFIX, toOAuthWireName, fromOAuthWireName,
+  adoptRequiredClaudeCodeVersion, claudeCodeUserAgent, CLAUDE_CODE_SYSTEM_PREFIX, toOAuthWireName, fromOAuthWireName, renameToolUsesForOAuth,
 } from "./oauth-direct.js";
-import type { AnthropicContent } from "./types.js";
+import type { AnthropicMessage } from "./types.js";
 import type { StreamEvent, StreamOptions } from "./types.js";
 import { hasStableSystemSplit, markConversationCache, splitSystemBlocks } from "./cache-breakpoints.js";
 import { createLogger } from "../logger.js";
 import { toAnthropicTools } from "../providers/shared/tool-shape.js";
+import { deferSearchLoads } from "./deferred-tools.js";
 
 const logger = createLogger("anthropic-client.stream-api");
 
@@ -110,6 +111,10 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
     return;
   }
 
+  // Tools tool_search loaded go deferred and load inline, so a load never
+  // rewrites the front of the prompt (deferred-tools.ts).
+  const view = deferSearchLoads(resolvedModel, convertMessages(messages), tools, oauth ? toOAuthWireName : undefined);
+
   let headers: Record<string, string> = oauth
     ? buildOAuthHeaders(unwrapDirectOAuthToken(token))
     : {
@@ -168,7 +173,7 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
       : systemPrompt
         ? splitSystemBlocks(systemPrompt, systemStablePrefixLen)
         : undefined,
-    messages: markConversationCache(convertMessages(messages), cacheConversation, ephemeralTailMessages, convertedFrontier(messages, cacheFrontierIndex)),
+    messages: markConversationCache(view.messages, cacheConversation, ephemeralTailMessages, convertedFrontier(messages, cacheFrontierIndex)),
     stream: true,
     // Thinking lets the model reason about blockers before acting. Adaptive
     // family (Fable 5, Opus 5, Opus 4.6/4.7/4.8, Sonnet 5, Sonnet 4.6): send
@@ -215,23 +220,15 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
   if (oauth) {
     for (const tool of tools ?? []) wireToOriginal.set(toOAuthWireName(tool.name), tool.name);
   }
-  const anthropicTools = tools
-    ? toAnthropicTools(tools, {
+  const anthropicTools = view.tools
+    ? toAnthropicTools(view.tools, {
         mapName: oauth ? toOAuthWireName : undefined,
         cacheControlLast: true,
         cacheTtl: systemPrompt && hasStableSystemSplit(systemPrompt, systemStablePrefixLen) ? "1h" : undefined,
+        deferred: view.deferred,
       })
     : undefined;
-  // Prior-turn tool_use blocks ride on the wire too; normalize their names to
-  // match so the classifier sees a consistent Claude-Code-shaped tool surface.
-  if (oauth) {
-    for (const m of body.messages as Array<{ role: string; content: unknown }>) {
-      if (!Array.isArray(m.content)) continue;
-      for (const block of m.content as AnthropicContent[]) {
-        if (block.type === "tool_use") block.name = toOAuthWireName(block.name);
-      }
-    }
-  }
+  if (oauth) renameToolUsesForOAuth(body.messages as AnthropicMessage[]);
   if (anthropicTools?.length) {
     // Anthropic prompt caching: mark the LAST tool with cache_control to
     // cache the entire tools array (everything above the marker). First

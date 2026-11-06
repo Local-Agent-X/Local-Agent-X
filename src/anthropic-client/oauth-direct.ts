@@ -146,6 +146,18 @@ export function toOAuthWireName(name: string): string {
   return name;
 }
 
+/** Prior-turn tool_use blocks ride on the wire too: rename them in place to
+ *  match the tool list, so the classifier sees a consistent Claude-Code-shaped
+ *  tool surface. */
+export function renameToolUsesForOAuth(messages: ReadonlyArray<{ content: unknown }>): void {
+  for (const m of messages) {
+    if (!Array.isArray(m.content)) continue;
+    for (const block of m.content as Array<{ type?: string; name?: string }>) {
+      if (block.type === "tool_use" && block.name) block.name = toOAuthWireName(block.name);
+    }
+  }
+}
+
 /**
  * Reverse a wire name back to LAX's tool name. Prefer the explicit map built
  * from this turn's tools; fall back to stripping the `mcp__` prefix for names

@@ -2,10 +2,12 @@
 // — no fetch, no logging. The orchestrator composes these, hands the result
 // to fetchWithRetry, and streams the response.
 
+import { createHash } from "node:crypto";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { convertMessagesToInput } from "../codex-message-convert.js";
 import { DEFAULT_REASONING_EFFORT, type ReasoningEffort } from "../providers/reasoning-effort.js";
 import type { CodexTool } from "./types.js";
+import { withClientToolSearch } from "./client-tool-search.js";
 
 export function extractAccountIdFromJwt(token: string): string | null {
   try {
@@ -42,12 +44,25 @@ export function buildAuthHeaders(token: string): Record<string, string> {
   return headers;
 }
 
-export function buildHeaders(token: string): Record<string, string> {
+/**
+ * The key that routes a conversation's requests to the same prompt cache: a
+ * hash of the LAX session, never the id itself. Without it the ChatGPT backend
+ * served no request from cache — measured 2026-11-06, an identical request sent
+ * twice read 0 cached tokens; with it, the repeat read 6,784 of 6,933. The
+ * Codex CLI sends its conversation id the same way, as `session_id` and
+ * `prompt_cache_key`.
+ */
+export function promptCacheKey(sessionId: string): string {
+  return createHash("sha256").update(`lax-codex:${sessionId}`).digest("hex").slice(0, 32);
+}
+
+export function buildHeaders(token: string, sessionId?: string): Record<string, string> {
   return {
     ...buildAuthHeaders(token),
     "Content-Type": "application/json",
     Accept: "text/event-stream",
     "OpenAI-Beta": "responses=experimental",
+    ...(sessionId ? { session_id: promptCacheKey(sessionId) } : {}),
   };
 }
 
@@ -58,6 +73,8 @@ export interface BuildBodyInput {
   tools?: CodexTool[];
   toolChoice?: "auto" | "required" | { type: "tool"; name: string } | { type: "function"; function: { name: string } };
   reasoningEffort?: ReasoningEffort;
+  /** The LAX session: its cache key keeps the conversation's prefix cached. */
+  sessionId?: string;
 }
 
 function effortForCodexModel(model: string, effort: ReasoningEffort): ReasoningEffort {
@@ -69,11 +86,14 @@ export function buildRequestBody(input: BuildBodyInput): Record<string, unknown>
     input.model,
     input.reasoningEffort ?? DEFAULT_REASONING_EFFORT,
   );
+  // tool_search on the client-run form, so a load never changes `tools`
+  // (client-tool-search.ts).
+  const view = withClientToolSearch(input.model, convertMessagesToInput(input.messages), input.tools);
   const body: Record<string, unknown> = {
     model: input.model,
     stream: true,
     instructions: input.systemPrompt,
-    input: convertMessagesToInput(input.messages),
+    input: view.input,
     text: { verbosity: "medium" },
     include: ["reasoning.encrypted_content"],
     store: false,
@@ -94,6 +114,7 @@ export function buildRequestBody(input: BuildBodyInput): Record<string, unknown>
     // GPT-5.6 replaced the older "minimal" wire value with "low". Keep the
     // user-facing level stable while sending the model's accepted enum.
     reasoning: { effort: reasoningEffort, summary: "auto" },
+    ...(input.sessionId ? { prompt_cache_key: promptCacheKey(input.sessionId) } : {}),
   };
 
   // NOTE: previous_response_id is NOT supported on the Codex subscription
@@ -101,8 +122,8 @@ export function buildRequestBody(input: BuildBodyInput): Record<string, unknown>
   // Incremental mode will need to work via message-level optimization
   // instead of API-level response chaining.
 
-  if (input.tools && input.tools.length > 0) {
-    body.tools = input.tools;
+  if (view.tools && view.tools.length > 0) {
+    body.tools = view.tools;
     // Responses API tool_choice shape: name lives at the top level, not
     // nested under a `function` object. The Chat Completions shape
     // ({type:"function", function:{name}}) is rejected with 400

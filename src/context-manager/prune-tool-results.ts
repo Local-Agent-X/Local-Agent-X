@@ -53,8 +53,12 @@ export function pruneFinishedTurnToolResults(messages: ChatCompletionMessagePara
   const out = messages.map((m, i) => {
     if (i >= boundary || m.role !== "tool" || typeof m.content !== "string") return m;
     if (m.content.length <= PRUNED_RESULT_KEEP_CHARS) return m;
-    changed = true;
     const name = names.get((m as Row).tool_call_id ?? "") ?? "tool";
+    // A tool_search result is not a dump: it is the record of which tools the
+    // conversation loaded, and a provider that defers tools reads the loaded
+    // names from it on every request (anthropic-client/deferred-tools.ts).
+    if (name === "tool_search") return m;
+    changed = true;
     return { ...m, content: elidedToolResultStub(name, m.content.length) } as ChatCompletionMessageParam;
   });
   return changed ? out : messages;

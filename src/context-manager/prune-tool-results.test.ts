@@ -31,6 +31,12 @@ function twoTurns(): ChatCompletionMessageParam[] {
 }
 
 describe("pruneFinishedTurnToolResults", () => {
+  it("keeps a tool_search result whole: it records which tools the conversation loaded", () => {
+    const found = JSON.stringify([{ name: "gmail_read", description: "x".repeat(400) }]);
+    const history = [user("check my mail"), call("s1", "tool_search"), result("s1", found), assistant("ok"), user("and again")];
+    expect(pruneFinishedTurnToolResults(history)[2]).toBe(history[2]);
+  });
+
   it("stubs tool results from turns before the last one and keeps everything else verbatim", () => {
     const history = twoTurns();
     const view = pruneFinishedTurnToolResults(history);

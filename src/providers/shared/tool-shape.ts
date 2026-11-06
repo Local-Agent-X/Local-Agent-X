@@ -40,6 +40,9 @@ export interface AnthropicTool {
   description: string;
   input_schema: Record<string, unknown>;
   cache_control?: { type: "ephemeral"; ttl?: "1h" };
+  /** Sent, but kept out of the prompt until a tool_reference loads it
+   *  (anthropic-client/deferred-tools.ts). */
+  defer_loading?: true;
 }
 
 export interface CodexTool {
@@ -75,19 +78,26 @@ export function toAnthropicTools(
     cacheControlLast?: boolean;
     /** Breakpoint lifetime; omitted = the API's 5-minute default. */
     cacheTtl?: "1h";
+    /** Tools to send deferred (by LAX name). They go after the others, in the
+     *  order given, and never carry the breakpoint: the API refuses
+     *  cache_control on a deferred tool, and a deferred tool is not part of
+     *  the cached prefix anyway. */
+    deferred?: ReadonlySet<string>;
   } = {},
 ): AnthropicTool[] {
-  const shaped: AnthropicTool[] = tools.map(t => ({
+  const shape = (t: ProviderToolShapeInput): AnthropicTool => ({
     name: options.mapName?.(t.name) ?? t.name,
     description: t.description,
     input_schema: t.parameters,
-  }));
-  if (options.cacheControlLast && shaped.length > 0) {
-    shaped[shaped.length - 1].cache_control = options.cacheTtl
+  });
+  const loaded = tools.filter(t => !options.deferred?.has(t.name)).map(shape);
+  const deferred = tools.filter(t => options.deferred?.has(t.name)).map(t => ({ ...shape(t), defer_loading: true as const }));
+  if (options.cacheControlLast && loaded.length > 0) {
+    loaded[loaded.length - 1].cache_control = options.cacheTtl
       ? { type: "ephemeral", ttl: options.cacheTtl }
       : { type: "ephemeral" };
   }
-  return shaped;
+  return [...loaded, ...deferred];
 }
 
 export function toCodexTools(tools: readonly ProviderToolShapeInput[]): CodexTool[] {

@@ -116,5 +116,12 @@ export type AnthropicContent = (
   | { type: "text"; text: string }
   | { type: "image"; source: { type: "base64"; media_type: string; data: string } | { type: "url"; url: string } }
   | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
-  | { type: "tool_result"; tool_use_id: string; content: string }
+  | { type: "tool_result"; tool_use_id: string; content: string | ToolReference[] }
 ) & { cache_control?: { type: "ephemeral" } };
+
+/** A tool loaded inline: the API expands it into the tool's definition at this
+ *  point in the conversation (deferred-tools.ts). */
+export interface ToolReference {
+  type: "tool_reference";
+  tool_name: string;
+}

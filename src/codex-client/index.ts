@@ -53,7 +53,7 @@ export async function* streamCodexResponse(params: {
    */
   signal?: AbortSignal;
 }): AsyncGenerator<CodexStreamYield> {
-  const headers = buildHeaders(params.token);
+  const headers = buildHeaders(params.token, params.sessionId);
   const body = buildRequestBody({
     model: params.model,
     systemPrompt: params.systemPrompt,
@@ -61,6 +61,7 @@ export async function* streamCodexResponse(params: {
     tools: params.tools,
     toolChoice: params.toolChoice,
     reasoningEffort: params.reasoningEffort,
+    sessionId: params.sessionId,
   });
 
   const res = await fetchCodexOnce({

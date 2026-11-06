@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { acquireTurn, getActiveTurn, getTurnRegistry, releaseTurn, tryAcquireOrReplace } from "../session/turn-lock.js";
 import type { Session } from "../types.js";
-import { canaryWatch, carriedHarnessRows, claimVoiceTurn, commitVoiceTurn, voiceTurnRows } from "./voice-turn-guard.js";
+import { canaryWatch, carriedCardRows, carriedHarnessRows, claimVoiceTurn, commitVoiceTurn, isCardMetadata, voiceTurnRows } from "./voice-turn-guard.js";
 import { markHarnessRow } from "../harness-rows.js";
 import type { ThreatEngine } from "../threat/threat-engine.js";
 
@@ -151,5 +151,38 @@ describe("carriedHarnessRows — what a local spoken turn read that the next req
       markHarnessRow({ role: "user", content: "keep going" }, "nudge"), { role: "assistant", content: "hello" },
     ];
     expect(carriedHarnessRows(turn, history.length)).toEqual([]);
+  });
+});
+
+describe("carriedCardRows: the cards a spoken turn showed, saved like a typed turn's", () => {
+  it("keeps only the show_card calls and their results, metadata and all, in order", () => {
+    const history = [{ role: "user" as const, content: "earlier" }];
+    const card = { title: "Glider", image: "/images/cards/a.jpg" };
+    const cardCall = { id: "c1", type: "function" as const, function: { name: "show_card", arguments: "{\"title\":\"Glider\"}" } };
+    const cardResult = { role: "tool" as const, tool_call_id: "c1", content: "Shown", _metadata: { card } };
+    const turn = [
+      { role: "system" as const, content: "sys" },
+      ...history,
+      { role: "user" as const, content: "show me gliders" },
+      {
+        role: "assistant" as const, content: "",
+        tool_calls: [{ id: "b1", type: "function" as const, function: { name: "browser", arguments: "{}" } }, cardCall],
+      },
+      { role: "tool" as const, tool_call_id: "b1", content: "page" },
+      cardResult,
+      { role: "assistant" as const, content: "Here's one." },
+    ];
+    const rows = carriedCardRows(turn as never, history.length);
+    expect(rows).toEqual([{ role: "assistant", content: "", tool_calls: [cardCall] }, cardResult]);
+  });
+
+  it("carries none for a turn that showed no card", () => {
+    expect(carriedCardRows([{ role: "system", content: "s" }, { role: "user", content: "hi" }, { role: "assistant", content: "hey" }], 0)).toEqual([]);
+  });
+
+  it("knows a card's metadata from any other", () => {
+    expect(isCardMetadata({ card: { title: "Glider" } })).toBe(true);
+    expect(isCardMetadata({ fileChange: {} })).toBe(false);
+    expect(isCardMetadata(undefined)).toBe(false);
   });
 });

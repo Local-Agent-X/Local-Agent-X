@@ -342,6 +342,10 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
           if (isClosed()) return;
           ctx.sendEvent({ type: "visual", kind, value, durationMs });
         },
+        onCard: (card) => {
+          if (isClosed() || turn.signal.aborted) return;
+          ctx.sendEvent({ type: "card", card });
+        },
       });
 
       if (turn.signal.aborted) {

@@ -9,6 +9,7 @@
 import { asNumber, asRecord, asString } from "./guards.js";
 import { parseApprovalEvent } from "./approval.js";
 import { parseFileChange } from "./file-change.js";
+import { parseCardMetadata, type ChatCard } from "./card.js";
 import type { FileChange } from "./file-change.js";
 import type { ApprovalRequestedEvent, ApprovalResolvedEvent, ApprovalResponseFrame, ApprovalTimeoutEvent } from "./approval.js";
 
@@ -52,6 +53,8 @@ export type ToolEndEvent = {
   status?: ToolResultStatus;
   /** What a write or edit changed, read from the wire's `metadata.fileChange`. */
   fileChange?: FileChange;
+  /** A card the agent showed (show_card), read from the wire's `metadata.card`. */
+  card?: ChatCard;
 };
 /** The turn finished. `opId` names it, so a resubscribe can say it already holds it. */
 export type DoneEvent = { type: "done"; usage: TurnUsage; opId?: string };
@@ -137,6 +140,24 @@ export type ChatOutboundFrame = ChatSendFrame | SubscribeFrame | ChatStopFrame |
 
 // ── parser ──
 
+/** A tool call ended: its result, and what the desktop attached to it (a write's file
+ *  change, a card the agent showed). */
+function parseToolEnd(raw: Record<string, unknown>): ToolEndEvent | null {
+  const toolName = asString(raw.toolName);
+  const result = asString(raw.result);
+  if (toolName === null || result === null) return null;
+  // An omitted `allowed` means allowed.
+  const ev: ToolEndEvent = { type: "tool_end", toolName, result, allowed: raw.allowed !== false };
+  const toolCallId = asString(raw.toolCallId);
+  if (toolCallId !== null) ev.toolCallId = toolCallId;
+  if (typeof raw.status === "string" && TOOL_STATUSES.includes(raw.status)) ev.status = raw.status as ToolResultStatus;
+  const fileChange = parseFileChange(raw.metadata);
+  if (fileChange !== null) ev.fileChange = fileChange;
+  const card = parseCardMetadata(raw.metadata);
+  if (card !== null) ev.card = card;
+  return ev;
+}
+
 function parseEvent(raw: Record<string, unknown>): ChatServerEvent | null {
   switch (raw.type) {
     case "stream": {
@@ -190,19 +211,8 @@ function parseEvent(raw: Record<string, unknown>): ChatServerEvent | null {
       if (toolCallId !== null) ev.toolCallId = toolCallId;
       return ev;
     }
-    case "tool_end": {
-      const toolName = asString(raw.toolName);
-      const result = asString(raw.result);
-      if (toolName === null || result === null) return null;
-      // An omitted `allowed` means allowed.
-      const ev: ToolEndEvent = { type: "tool_end", toolName, result, allowed: raw.allowed !== false };
-      const toolCallId = asString(raw.toolCallId);
-      if (toolCallId !== null) ev.toolCallId = toolCallId;
-      if (typeof raw.status === "string" && TOOL_STATUSES.includes(raw.status)) ev.status = raw.status as ToolResultStatus;
-      const fileChange = parseFileChange(raw.metadata);
-      if (fileChange !== null) ev.fileChange = fileChange;
-      return ev;
-    }
+    case "tool_end":
+      return parseToolEnd(raw);
     case "done": {
       const usage = asRecord(raw.usage);
       const ev: DoneEvent = {

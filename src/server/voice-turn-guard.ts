@@ -37,6 +37,35 @@ export function carriedHarnessRows(turnMessages: readonly ChatCompletionMessageP
   });
 }
 
+/**
+ * The cards a spoken turn showed (show_card), as the tool rows a typed turn saves:
+ * the assistant's show_card calls and their results, metadata.card and all. A spoken
+ * turn saves no other tool rows, so without these a card drawn live on the call was
+ * gone when the chat reloaded; with them the chat redraws it from history the way it
+ * redraws a typed turn's (memory/session-ui-projection.ts).
+ */
+export function carriedCardRows(turnMessages: readonly ChatCompletionMessageParam[], historyLength: number): ChatCompletionMessageParam[] {
+  const out: ChatCompletionMessageParam[] = [];
+  const ids = new Set<string>();
+  for (const m of turnMessages.slice(historyLength + 2)) {
+    if (m.role === "assistant" && Array.isArray(m.tool_calls)) {
+      const calls = m.tool_calls.filter((c) => c.type === "function" && c.function.name === "show_card");
+      if (calls.length === 0) continue;
+      for (const c of calls) ids.add(c.id);
+      out.push({ role: "assistant", content: "", tool_calls: calls });
+    } else if (m.role === "tool" && ids.has(m.tool_call_id)) {
+      out.push(m);
+    }
+  }
+  return out;
+}
+
+/** A tool result's metadata that carries a card (show_card). */
+export function isCardMetadata(md: unknown): md is { card: Record<string, unknown> } {
+  const card = (md as { card?: unknown } | undefined)?.card;
+  return typeof card === "object" && card !== null && typeof (card as { title?: unknown }).title === "string";
+}
+
 /** Spoken when a typed turn on this thread has already made a committing call. */
 export const VOICE_BUSY_REPLY = "I'm still finishing something from the chat. Give me a moment and ask again.";
 

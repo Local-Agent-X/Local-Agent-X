@@ -109,6 +109,7 @@ const PATH_ARG_EXEMPT: Record<string, string> = {
   "memory_get.path": "a memory-dir-relative name; memory-get.ts resolves it under the memory dir and refuses traversal",
   "memory_forget.path": "a pattern matched against stored memory entries (forget.ts), never opened on disk",
   "memory_update_profile.file": "a key into PERSONALITY_FILES (save.ts), not a path",
+  "show_card.image": "a web address, or an /images/ path that show-card.ts cardImage confines to the workspace images folder with confineToDir, as /images/ is served",
 };
 
 /** tool → why its defining file's network use is not `offBoxFetch`. */

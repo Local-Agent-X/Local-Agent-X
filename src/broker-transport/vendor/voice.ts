@@ -8,6 +8,7 @@
 // when the channel opens, and splits only for an end that sent one.
 
 import type { ChatAttachment } from "./chat.js";
+import { parseCard, type ChatCard } from "./card.js";
 import { asNumber, asRecord, asString } from "./guards.js";
 
 /** "chat" runs speech-to-text, the agent and text-to-speech; "dictate" only transcribes. */
@@ -82,7 +83,9 @@ export type VoiceServerEvent =
   | { type: "visual"; kind: VoiceVisualKind; value: string; durationMs?: number }
   /** The voices this call can speak in, sent when it opens, and the user's voice now
    *  ("" when they never picked one: the desktop's default). */
-  | { type: "voices"; voices: VoiceOption[]; current: string };
+  | { type: "voices"; voices: VoiceOption[]; current: string }
+  /** A card the agent showed during the reply (card.ts): drawn in the chat, not spoken. */
+  | { type: "card"; card: ChatCard };
 
 // ── builders ──
 
@@ -196,6 +199,10 @@ export function parseVoiceEvent(raw: unknown): VoiceServerEvent | null {
       if (value === null || (kind !== "emoji" && kind !== "text" && kind !== "shape" && kind !== "mood")) return null;
       const durationMs = asNumber(msg.durationMs);
       return durationMs === null ? { type: "visual", kind, value } : { type: "visual", kind, value, durationMs };
+    }
+    case "card": {
+      const card = parseCard(msg.card);
+      return card === null ? null : { type: "card", card };
     }
     case "voices": {
       const voices = (Array.isArray(msg.voices) ? msg.voices : []).flatMap((v): VoiceOption[] => {

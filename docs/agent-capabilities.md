@@ -55,6 +55,7 @@ demand via tool search and aren't all listed here.)
 
 - `view_image` — Look at an image you share. _e.g._ "what's in this screenshot?"
 - `send_image`
+- `show_card` — Show a card in the chat: an image, a few facts and links. _e.g._ "show me a few options with pictures"
 - `screen_capture` — Capture the screen. _e.g._ "take a screenshot of my screen"
 
 ### Memory
@@ -146,4 +147,4 @@ demand via tool search and aren't all listed here.)
 - `presentation`
 
 ---
-_66 capabilities · 48 with a description · 18 awaiting a blurb (add one to the tool's policy row)._
+_67 capabilities · 49 with a description · 18 awaiting a blurb (add one to the tool's policy row)._

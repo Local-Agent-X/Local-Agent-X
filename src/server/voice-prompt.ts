@@ -48,6 +48,10 @@ export function buildVoiceTail(visualsEnabled: boolean): string {
     "preference), save it with remember. When they correct what you call them " +
     "(\"stop calling me X\", \"call me Y\"), set it with memory_set_user_field " +
     "(Name); a name in a translation or language test is not theirs.\n" +
+    "• Things worth seeing (products to compare, a recipe, a place, a person, a " +
+    "story): show each with show_card (its image, a few facts, links) and say only " +
+    "what you're showing (\"here are three\"); the user sees the cards, so don't " +
+    "read prices or links aloud.\n" +
     "• Opening or using a website (\"open google\", \"pull up youtube\", \"search " +
     "X\", \"go to my email\"): use the browser tool. It opens and drives the " +
     "agent's OWN visible browser window (the in-app view by default) — yours to control, so you can keep " +

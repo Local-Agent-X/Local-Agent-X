@@ -26,7 +26,7 @@ import { withRecallCarried } from "../agent-request/recall-carry.js";
 import { OP_TYPE } from "../ops/op-types.js";
 import { ThreatEngine } from "../threat/threat-engine.js";
 import type { VoiceTurnInput, VoiceTurnRunner } from "../voice/voice-session/index.js";
-import { VOICE_BUSY_REPLY, canaryWatch, carriedHarnessRows, claimVoiceTurn, commitVoiceTurn, voiceTurnRows, type VoiceTurnSlot } from "./voice-turn-guard.js";
+import { VOICE_BUSY_REPLY, canaryWatch, carriedCardRows, carriedHarnessRows, claimVoiceTurn, isCardMetadata, commitVoiceTurn, voiceTurnRows, type VoiceTurnSlot } from "./voice-turn-guard.js";
 import { createVoiceTurnClock, type VoiceTurnClock } from "./voice-turn-timing.js";
 const logger = createLogger("server.lifecycle");
 
@@ -189,7 +189,7 @@ export async function setupVoiceWs(deps: {
     // end-of-turn memory pass, and the threat engine with its canary watch. It
     // differs in having no fallback chain (voice picks the configured provider;
     // an error surfaces as agent_error to the client, which will retry).
-    const runVoiceTurn = async ({ text, attachments, continuationOf, onDelta, onVisual }: VoiceTurnInput, sessionId: string, slot: VoiceTurnSlot, clock: VoiceTurnClock) => {
+    const runVoiceTurn = async ({ text, attachments, continuationOf, onDelta, onVisual, onCard }: VoiceTurnInput, sessionId: string, slot: VoiceTurnSlot, clock: VoiceTurnClock) => {
       // Durable, continuous memory: load the persisted thread from the same
       // store text chat uses, rather than a per-connection in-memory history
       // that resets on every reconnect. The client sends the chat thread's own
@@ -260,6 +260,9 @@ export async function setupVoiceWs(deps: {
         } else if (event.type === "visual" && onVisual) {
           // Forward the visual directive through to the voice WebSocket.
           onVisual(event.kind, event.value, event.durationMs);
+        } else if (event.type === "tool_end" && onCard && isCardMetadata(event.metadata)) {
+          // A card the agent showed: drawn in the chat as the reply is spoken.
+          onCard(event.metadata.card);
         } else if (event.type === "stopped" && event.firedBy === "stream-guard") {
           // The degenerate-output guard tore a local stream down mid-reply.
           // Voice has no card surface, so speak a short honest notice instead
@@ -376,7 +379,10 @@ export async function setupVoiceWs(deps: {
           savedToChat: true,
         });
         turnOpId = result.opId;
-        carried = carriedHarnessRows(result.messages, prepared.cleanHistory.length);
+        carried = [
+          ...carriedHarnessRows(result.messages, prepared.cleanHistory.length),
+          ...carriedCardRows(result.messages, prepared.cleanHistory.length),
+        ];
         if (slot.signal.aborted || result.stopReason === "abort") aborted = true;
       } catch (e) {
         if (slot.signal.aborted) {

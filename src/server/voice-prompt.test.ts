@@ -5,7 +5,7 @@ describe("voice tool belt", () => {
   it("can look up and save memory, so a spoken turn never says it doesn't have what was discussed", () => {
     // Without these a voice call told the user it had no job description that
     // an October chat covered in detail, and had no way to keep a new date.
-    for (const t of ["memory_search", "search_past_sessions", "remember", "memory_set_user_field"]) {
+    for (const t of ["memory_search", "search_past_sessions", "remember", "memory_set_user_field", "show_card"]) {
       expect(VOICE_FAST_TOOLS).toContain(t);
     }
   });
@@ -17,5 +17,7 @@ describe("voice tool belt", () => {
     expect(tail).toContain("remember");
     // A spoken "stop calling me X" fixes the name the profile gives every prompt.
     expect(tail).toContain("memory_set_user_field");
+    // Things worth seeing are shown as cards, not read aloud.
+    expect(tail).toContain("show_card");
   });
 });

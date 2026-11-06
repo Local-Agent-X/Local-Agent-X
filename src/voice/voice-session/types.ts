@@ -22,6 +22,8 @@ export interface VoiceTurnInput {
    *  tool's side-effect event back to the WebSocket so the browser can
    *  morph particles. Optional; if omitted the visualizer is silent. */
   onVisual?: (kind: "emoji" | "text" | "shape" | "mood", value: string, durationMs: number) => void;
+  /** A card the agent showed (show_card's metadata.card): drawn in the chat, not spoken. */
+  onCard?: (card: Record<string, unknown>) => void;
   signal: AbortSignal;
   sessionId: string;
 }

@@ -74,6 +74,7 @@ beforeEach(() => {
   Object.assign(g, load<object>("chat-declassify-action.js", "{ isKernelBlockNotice, renderKernelBlockNotice }"));
   // And chat-file-changes.js: the row renderer asks it which files the turn wrote.
   Object.assign(g, load<object>("chat-file-changes.js", "{ fileChangesOf, renderFileChangesCard }"));
+  Object.assign(g, load<object>("chat-cards.js", "{ cardsOf, renderChatCards }"));
   artifacts = load<Artifacts>("chat-render-artifacts.js", "{ _renderAssistantToolArtifacts }");
   openState = load<OpenState>("chat-render-open-state.js", "{ captureActivityScroll, restoreActivityScroll }");
 });

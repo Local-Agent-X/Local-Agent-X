@@ -11,6 +11,7 @@ import { webFetchTool } from "./web-tools.js";
 import { comparePagesTool } from "./compare-pages.js";
 import { viewImageTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool } from "./vision-tools.js";
 import { sendVideoTool, sendImageTool } from "./media-send-tools.js";
+import { showCardTool } from "./show-card.js";
 import { transcribeMediaTool, readVideoFramesTool } from "./media-read-tools.js";
 import { sendFileTool } from "./file-delivery-tools.js";
 import { computerTool } from "./input-tools.js";
@@ -62,7 +63,7 @@ export const allTools: ToolDefinition[] = applyPrompts([
   globTool, grepTool, structuralSearchTool, webSearchTool, imageSearchTool, _toolSearchTool,
   selfEditTool, recallTool, askUserTool, codeHandoffTool, runBuildPlanTool, startAppBuildTool, finalizeAppBuildTool,
   buildPlanStatusTool, buildPlanResumeTool,
-  viewImageTool, sendVideoTool, sendImageTool, sendFileTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool, computerTool,
+  viewImageTool, sendVideoTool, sendImageTool, showCardTool, sendFileTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool, computerTool,
   transcribeMediaTool, readVideoFramesTool,
   buildAppTool, appRebuildTool,
   youtubeAnalyzeTool, createPageTool, extractSiteAssetsTool, connectorCreateTool,

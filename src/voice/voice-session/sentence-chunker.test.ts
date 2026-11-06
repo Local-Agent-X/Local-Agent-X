@@ -1,6 +1,8 @@
 // What both speakers hand their TTS engine: whole sentences (each piece is said like a
 // sentence of its own, so a comma cut sounds like a machine reading fragments), and an
-// unfinished opening spoken after OPENER_WAIT_MS so the first words are never held back.
+// unfinished opening spoken once the stream goes quiet for OPENER_WAIT_MS, so the first
+// words are never held back by a tool call. A piece cut early always ends in a clause
+// mark: a cloned voice makes up an ending for a line that has none.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createSentenceChunker, OPENER_WAIT_MS, openerCut } from "./sentence-chunker.js";
 
@@ -36,14 +38,34 @@ describe("sentence chunker", () => {
     expect(spoken).toEqual(["Okay, I checked the photo,", "and there's no lot number on it.", "Flip one over, and look at the back."]);
   });
 
-  it("starts a reply that pauses for a tool without waiting for the tool", () => {
+  it("starts a reply that pauses for a tool without waiting for the tool, ending the piece in a comma", () => {
     vi.useFakeTimers();
     const { c, spoken } = chunker();
     c.feed("Let me look that up");
     vi.advanceTimersByTime(OPENER_WAIT_MS);
-    expect(spoken).toEqual(["Let me look that"]);
+    expect(spoken).toEqual(["Let me look that,"]);
     c.flushTail();
-    expect(spoken).toEqual(["Let me look that", "up"]);
+    expect(spoken).toEqual(["Let me look that,", "up"]);
+  });
+
+  it("speaks a piece that already ends in a clause mark as it is", () => {
+    vi.useFakeTimers();
+    const { c, spoken } = chunker();
+    c.feed("Here's what I found:");
+    vi.advanceTimersByTime(OPENER_WAIT_MS);
+    expect(spoken).toEqual(["Here's what I found:"]);
+  });
+
+  it("never cuts an opening while the stream is still flowing", () => {
+    vi.useFakeTimers();
+    const { c, spoken } = chunker();
+    c.feed("Appreciate");
+    vi.advanceTimersByTime(OPENER_WAIT_MS - 50);
+    c.feed(" you");
+    vi.advanceTimersByTime(OPENER_WAIT_MS - 50);
+    c.feed(" too, Peter.");
+    vi.advanceTimersByTime(OPENER_WAIT_MS * 4);
+    expect(spoken).toEqual(["Appreciate you too, Peter."]);
   });
 
   it("does not cut an opening that finishes in time, and a reset drops a pending one", () => {
@@ -64,6 +86,7 @@ describe("sentence chunker", () => {
 describe("openerCut", () => {
   it("cuts after the last clause break, else the last word boundary, else nowhere", () => {
     expect(openerCut("Okay, I checked, and the")).toBe("Okay, I checked, ".length);
+    expect(openerCut("Let me check:")).toBe("Let me check:".length);
     expect(openerCut("I believe the answer")).toBe("I believe the ".length);
     expect(openerCut("supercalifragilistic")).toBe(-1);
   });

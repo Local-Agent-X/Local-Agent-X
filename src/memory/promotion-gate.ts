@@ -194,6 +194,13 @@ export function joinFactsForPromotion(facts: unknown[]): string {
   return facts.map((fact) => normalizeFactLine(fact as string)).filter(Boolean).join("\n");
 }
 
+/** Where memory_set_user_field writes: the user's profile, or (profile "identity") the
+ *  agent's own. The tool and the request it is checked against both read it here, so
+ *  the target a write was allowed for is the one it lands in. */
+export function profileFieldTarget(args: Record<string, unknown>): string {
+  return args.profile === "identity" ? "memory:profile:identity-field" : "memory:profile:user-field";
+}
+
 export function describeMemoryPromotionRequest(
   toolName: string,
   args: Record<string, unknown>,
@@ -210,7 +217,7 @@ export function describeMemoryPromotionRequest(
   }
   else if (toolName === "update_fact") { content = String(args.content || "").trim(); target = `memory:update:${String(args.query || "").trim()}`; }
   else if (toolName === "memory_save") { content = String(args.content || ""); target = "memory:daily-log"; }
-  else if (toolName === "memory_set_user_field") { content = `${String(args.field || "").trim()}: ${String(args.value || "").trim()}`; target = "memory:profile:user-field"; }
+  else if (toolName === "memory_set_user_field") { content = `${String(args.field || "").trim()}: ${String(args.value || "").trim()}`; target = profileFieldTarget(args); }
   else if (toolName === "memory_update_profile") { content = String(args.content || ""); target = `memory:profile:${String(args.file || "unknown")}`; }
   else if (toolName === "project_brief_update") { content = String(args.content || "").trim(); target = "memory:project-brief"; }
   else if (toolName === "project_create") { content = String(args.summary || "").trim(); target = "memory:project-brief"; }

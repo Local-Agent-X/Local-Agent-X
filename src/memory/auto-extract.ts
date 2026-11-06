@@ -20,6 +20,98 @@ import { createLogger } from "../logger.js";
 import { withProfileWrite } from "./profile-write-queue.js";
 const logger = createLogger("memory.auto-extract");
 
+type PromotionFor = (content: string, target: string, key: string, confidence: number) => MemoryPromotionContext | null;
+
+/** Where each profile keeps its Name line, and the promotion key a name is checked under. */
+const PROFILE_NAME = {
+  user: { file: "USER.md", target: "memory:profile:user", key: "user_name", label: "USER" },
+  agent: { file: "IDENTITY.md", target: "memory:profile:identity", key: "agent_name", label: "IDENTITY" },
+} as const;
+
+/** A Name line's value that is no name: blank, or the new install's "(not yet named)". */
+const UNNAMED = /^(\(not yet named\))?$/i;
+
+/** The name a profile already gives (any `- Name:` line with a real value; the files
+ *  have held two), or "" when it gives none. */
+export function establishedName(content: string): string {
+  for (const m of content.matchAll(/^- Name:[ \t]*(.*)$/gm)) {
+    const value = (m[1] ?? "").trim();
+    if (!UNNAMED.test(value)) return value;
+  }
+  return "";
+}
+
+/**
+ * Fill in a profile's Name (the user's in USER.md, the agent's in IDENTITY.md) from
+ * what one message said, only while the profile gives none. Never replace it here.
+ *
+ * This pass reads one message alone, so a name in it is not always the one it seems:
+ * "Je m'appelle Pierre", said testing the voice's French, renamed the user Pierre; a
+ * message about his wife renamed him Jenny; and the user's own name renamed the agent
+ * Peter (2026-11-03..05). Each Name line goes into every prompt, and a correction
+ * ("stop calling me Pierre") saved a fact but never wrote the line back. Changing a
+ * name already given is a deliberate act, made with the conversation in view: the
+ * agent's memory_set_user_field (profile "identity" for its own).
+ *
+ * Returns true to stop the whole pass (a blocked or overflowing write), as before.
+ */
+async function fillProfileName(args: {
+  memory: MemoryIndex;
+  who: "user" | "agent";
+  name: string;
+  sessionId: string;
+  promotionFor: PromotionFor;
+}): Promise<boolean> {
+  const { memory, who, name, sessionId, promotionFor } = args;
+  const spot = PROFILE_NAME[who];
+  const path = join(memory["memoryDir"], spot.file);
+  if (!existsSync(path)) return false;
+  return withProfileWrite(memory["memoryDir"], async () => {
+    let content = readFileSync(path, "utf-8");
+    const current = establishedName(content);
+    if (current !== "") {
+      if (current.toLowerCase() !== name.toLowerCase()) {
+        logger.info(`[memory] Auto-extract kept the ${who}'s name "${current}"; "${name}" was heard in one message, not set`);
+      }
+      return false;
+    }
+    content = content.includes("- Name:") ? content.replace(/^- Name:.*$/m, `- Name: ${name}`) : `${content}\n- Name: ${name}`;
+    if (content.length > MAX_PROFILE_CHARS) content = await compactProfileIfOverCap(content, MAX_PROFILE_CHARS);
+    if (content.length > MAX_PROFILE_CHARS) {
+      // No model turn to hand this to (unattended background pass): never drop the
+      // name, park it in the daily log instead.
+      appendProfileOverflow({
+        memory,
+        target: path,
+        content: `- Name: ${name}`,
+        source: "auto-extract",
+        sessionId,
+        reason: `${spot.file} would be ${content.length}/${MAX_PROFILE_CHARS} chars after consolidation`,
+        promotion: promotionFor(name, "memory:daily-log", spot.key, 1) ?? undefined,
+      });
+      return true;
+    }
+    try {
+      writeMemorySafely({
+        content,
+        source: "auto-extract",
+        target: path,
+        mode: "overwrite",
+        promotion: promotionFor(name, spot.target, spot.key, 1)!,
+      });
+      memory.markDirty();
+      logger.info(`[memory] Auto-saved ${who} name: ${name}`);
+    } catch (e) {
+      if (e instanceof MemoryWriteBlocked) {
+        logger.warn(`[memory] Auto-extract ${spot.label} write blocked: ${e.reason}`);
+        return true;
+      }
+      throw e;
+    }
+    return false;
+  });
+}
+
 /**
  * Auto-extract durable identity facts from a user message and persist to
  * IDENTITY.md / USER.md.
@@ -140,128 +232,12 @@ export async function autoExtractAndSave(
     }
   };
 
-  if (facts.agent_name) {
-    const promotion = promotionFor(facts.agent_name, "memory:profile:identity", "agent_name", 1);
-    if (!promotion) facts.agent_name = null;
+  const fillName = (who: "agent" | "user", name: string) => fillProfileName({ memory, who, name, sessionId: sid, promotionFor });
+  if (facts.agent_name && promotionFor(facts.agent_name, PROFILE_NAME.agent.target, PROFILE_NAME.agent.key, 1)) {
+    if (await fillName("agent", facts.agent_name)) return;
   }
-  if (facts.agent_name) {
-    const identityPath = join(memory["memoryDir"], "IDENTITY.md");
-    if (existsSync(identityPath)) {
-      // true: stop the whole pass, as the early returns always did.
-      const agentName = facts.agent_name;
-      const stop = await withProfileWrite(memory["memoryDir"], async () => {
-        let content = readFileSync(identityPath, "utf-8");
-        if (content.includes("- Name:")) {
-          content = content.replace(/^- Name:.*$/m, `- Name: ${agentName}`);
-        } else {
-          content += `\n- Name: ${agentName}`;
-        }
-        if (content.length > MAX_PROFILE_CHARS) {
-          content = await compactProfileIfOverCap(content, MAX_PROFILE_CHARS);
-        }
-        if (content.length > MAX_PROFILE_CHARS) {
-          // No model turn to hand this to (unattended background pass) — never
-          // drop the name: park it in the daily log instead of losing it.
-          appendProfileOverflow({
-            memory,
-            target: identityPath,
-            content: `- Name: ${agentName}`,
-            source: "auto-extract",
-            sessionId: sessionId ?? "default",
-            reason: `IDENTITY.md would be ${content.length}/${MAX_PROFILE_CHARS} chars after consolidation`,
-            promotion: promotionFor(agentName, "memory:daily-log", "agent_name", 1) ?? undefined,
-          });
-          return true;
-        }
-        try {
-          writeMemorySafely({
-            content,
-            source: "auto-extract",
-            target: identityPath,
-            mode: "overwrite",
-            promotion: promotionFor(agentName, "memory:profile:identity", "agent_name", 1)!,
-          });
-          memory.markDirty();
-          logger.info(`[memory] Auto-updated agent name to: ${agentName}`);
-        } catch (e) {
-          if (e instanceof MemoryWriteBlocked) {
-            logger.warn(`[memory] Auto-extract IDENTITY write blocked: ${e.reason}`);
-            return true;
-          }
-          throw e;
-        }
-        return false;
-      });
-      if (stop) return;
-    }
-  }
-
-  if (facts.user_name) {
-    const promotion = promotionFor(facts.user_name, "memory:profile:user", "user_name", 1);
-    if (!promotion) facts.user_name = null;
-  }
-  if (facts.user_name) {
-    const userPath = join(memory["memoryDir"], "USER.md");
-    if (existsSync(userPath)) {
-      // true: stop the whole pass, as the early returns always did.
-      const userName = facts.user_name;
-      const stop = await withProfileWrite(memory["memoryDir"], async () => {
-        let content = readFileSync(userPath, "utf-8");
-        // The user's name is filled in once, here, and never replaced here. This pass
-        // reads one message alone, so a name in it is not always the user's: "Je
-        // m'appelle Pierre" said while testing the voice's French renamed Peter to
-        // Pierre, and a message about his wife renamed him Jenny (2026-11-03, -05);
-        // the name line then went into every prompt, and "stop calling me Pierre"
-        // never wrote it back. Changing a name the user has is the agent's call, made
-        // with the conversation in view (memory_set_user_field).
-        const current = /^- Name:[ \t]*(.*)$/m.exec(content)?.[1]?.trim() ?? "";
-        if (current !== "") {
-          if (current.toLowerCase() !== userName.toLowerCase()) {
-            logger.info(`[memory] Auto-extract kept the user's name "${current}"; "${userName}" was heard in one message, not set by the user`);
-          }
-          return false;
-        }
-        if (content.includes("- Name:")) {
-          content = content.replace(/^- Name:.*$/m, `- Name: ${userName}`);
-        } else {
-          content += `\n- Name: ${userName}`;
-        }
-        if (content.length > MAX_PROFILE_CHARS) {
-          content = await compactProfileIfOverCap(content, MAX_PROFILE_CHARS);
-        }
-        if (content.length > MAX_PROFILE_CHARS) {
-          appendProfileOverflow({
-            memory,
-            target: userPath,
-            content: `- Name: ${userName}`,
-            source: "auto-extract",
-            sessionId: sessionId ?? "default",
-            reason: `USER.md would be ${content.length}/${MAX_PROFILE_CHARS} chars after consolidation`,
-            promotion: promotionFor(userName, "memory:daily-log", "user_name", 1) ?? undefined,
-          });
-          return true;
-        }
-        try {
-          writeMemorySafely({
-            content,
-            source: "auto-extract",
-            target: userPath,
-            mode: "overwrite",
-            promotion: promotionFor(userName, "memory:profile:user", "user_name", 1)!,
-          });
-          memory.markDirty();
-          logger.info(`[memory] Auto-saved user name: ${userName}`);
-        } catch (e) {
-          if (e instanceof MemoryWriteBlocked) {
-            logger.warn(`[memory] Auto-extract USER write blocked: ${e.reason}`);
-            return true;
-          }
-          throw e;
-        }
-        return false;
-      });
-      if (stop) return;
-    }
+  if (facts.user_name && promotionFor(facts.user_name, PROFILE_NAME.user.target, PROFILE_NAME.user.key, 1)) {
+    if (await fillName("user", facts.user_name)) return;
   }
 
   if (facts.user_location || facts.user_employer || facts.user_role || facts.family_count) {

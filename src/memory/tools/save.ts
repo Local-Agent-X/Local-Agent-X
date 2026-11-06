@@ -10,7 +10,7 @@ import {
   MemoryWriteBlocked,
   MAX_PROFILE_CHARS,
 } from "../write-safely.js";
-import { createInternalMemoryContext, promotionContextFromToolArgs } from "../promotion-gate.js";
+import { createInternalMemoryContext, profileFieldTarget, promotionContextFromToolArgs } from "../promotion-gate.js";
 import { sessionIdOf } from "../../tool-execution/internal-args.js";
 
 export function createSaveTools(memory: MemoryIndex) {
@@ -85,12 +85,14 @@ export function createSaveTools(memory: MemoryIndex) {
 
     {
       name: "memory_set_user_field",
-      compactDescription: "Set ONE scalar USER.md field (Name, Location, Job/Role, Pronouns, Communication style, Interests). Use whenever the user states a personal scalar fact ('my name is X'); prefer over memory_update_profile.",
+      compactDescription: "Set ONE scalar profile field: the user's (Name, Location, Job/Role, Pronouns, ...) in USER.md, or with profile='identity' your own (Name, Emoji, Tagline) in IDENTITY.md. Use when the user states or corrects one; prefer over memory_update_profile.",
       description:
         "Surgically set ONE scalar field in USER.md (Name, Location, Job/Role, Communication style, Interests, Pronouns). " +
         "Use this WHENEVER the user states a personal scalar fact — 'my name is X', 'I'm a Y', 'call me Z', 'I prefer pronouns A/B' — " +
         "or corrects one ('stop calling me X': set Name back to what they go by). " +
         "Only what the user means about themselves: a name in a quote, a translation, a language test or an example is not theirs. " +
+        "With profile='identity' it sets YOUR OWN field in IDENTITY.md instead: your Name when the user renames you ('call yourself X', " +
+        "'your name is Y'), Emoji, Tagline. A name is changed only here, on purpose: the background pass never replaces one. " +
         "Always prefer this over memory_update_profile for scalar facts: it patches the canonical line in the 'About Me' block, " +
         "creates the field if missing, and overwrites any prior value. No action/heading guesswork that can corrupt the file.",
       parameters: {
@@ -104,6 +106,11 @@ export function createSaveTools(memory: MemoryIndex) {
             type: "string",
             description: "The new value. Empty string clears the field.",
           },
+          profile: {
+            type: "string",
+            enum: ["user", "identity"],
+            description: "Whose field: 'user' (default, USER.md, about the user) or 'identity' (IDENTITY.md, about you, the agent).",
+          },
         },
         required: ["field", "value"],
       },
@@ -113,14 +120,15 @@ export function createSaveTools(memory: MemoryIndex) {
         if (!field) {
           return { content: "field is required", isError: true };
         }
-        const filePath = join(memory["memoryDir"], "USER.md");
+        const fileName = args.profile === "identity" ? "IDENTITY.md" : "USER.md";
+        const filePath = join(memory["memoryDir"], fileName);
         return withProfileWrite(memory["memoryDir"], async () => {
           const existing = existsSync(filePath) ? readFileSync(filePath, "utf-8") : "";
           const updated = setUserScalarField(existing, field, value);
           // Funnel through the same dedupe + safety gate every other write uses.
           const safe = await dedupeProfileMarkdownConfirmed(updated);
           try {
-            const target = "memory:profile:user-field";
+            const target = profileFieldTarget(args);
             writeMemorySafely({
               content: safe,
               source: "tool",
@@ -140,7 +148,7 @@ export function createSaveTools(memory: MemoryIndex) {
             throw e;
           }
           memory.markDirty();
-          return { content: `USER.md: ${field} = ${value || "(cleared)"}` };
+          return { content: `${fileName}: ${field} = ${value || "(cleared)"}` };
         });
       },
     },

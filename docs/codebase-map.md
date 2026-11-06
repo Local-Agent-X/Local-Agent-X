@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1924 non-test source files · 85 oversized · 253 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1924 non-test source files · 84 oversized · 254 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -28,7 +28,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/providers/` | 74 | 27 | L | 1 |
 | `src/session/` | 58 | 9 | M |  |
 | `src/data-lineage/` | 57 | 12 | L |  |
-| `src/memory/` | 54 | 151 | XL | 6 |
+| `src/memory/` | 54 | 151 | XL | 5 |
 | `src/browser/` | 47 | 88 | XL | 5 |
 | `src/tool-policy/` | 47 | 21 | L |  |
 | `src/local-runtimes/` | 44 | 26 | XL | 1 |
@@ -265,7 +265,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/config.ts#loadConfig`
 - `src/local-runtimes/certification-runner.ts`
 - `src/mcp-client/manifest.ts#assessMcpManifest`
-- `src/memory/auto-extract.ts#autoExtractAndSave`
 - `src/memory/context.ts#buildContextBlockParts`
 - `src/memory/date-parser.ts#parseDateRange`
 - `src/memory/index-schema-migrations.ts#db.transaction:callback`
@@ -375,8 +374,8 @@ job. Comments are free: never cut them to fit.
 - `src/canonical-loop/scheduler.ts` — 280+ code lines (cap 350)
 - `src/context/system-prompt-builder.ts` — 280+ code lines (cap 350)
 - `src/mcp-client/index.ts` — 280+ code lines (cap 350)
-- `src/memory/auto-extract.ts` — 280+ code lines (cap 350)
 - `src/memory/index-core.ts` — 280+ code lines (cap 350)
+- `src/memory/promotion-gate.ts` — 280+ code lines (cap 350)
 - `src/protocols/builder.ts` — 280+ code lines (cap 350)
 - `src/screen-capture.ts` — 280+ code lines (cap 350)
 - `src/server/bootstrap-services.ts` — 280+ code lines (cap 350)
@@ -404,10 +403,12 @@ job. Comments are free: never cut them to fit.
 - `src/codex-client/index.ts#streamCodexResponse` — 90+ own code lines (cap 100)
 - `src/codex-client/stream-parse.ts#processCodexEvent` — 90+ own code lines (cap 100)
 - `src/local-runtimes/certification-runner.ts#runExclusive:callback` — 90+ own code lines (cap 100)
+- `src/memory/auto-extract.ts#autoExtractAndSave` — 90+ own code lines (cap 100)
 - `src/memory/extract.ts#runExtraction` — 90+ own code lines (cap 100)
 - `src/memory/index-facts.ts#retain` — 90+ own code lines (cap 100)
 - `src/memory/personality.ts#dedupeProfileLines` — 90+ own code lines (cap 100)
-- `src/memory/tools/save.ts#withProfileWrite:callback@205` — 90+ own code lines (cap 100)
+- `src/memory/tools/save.ts#createSaveTools` — 90+ own code lines (cap 100)
+- `src/memory/tools/save.ts#withProfileWrite:callback@213` — 90+ own code lines (cap 100)
 - `src/protocols/builder.ts#createBuilderTools` — 90+ own code lines (cap 100)
 - `src/protocols/learned-drafting.ts#validateProof` — 90+ own code lines (cap 100)
 - `src/routes/agents/history.ts#handleAgentHistoryRoutes` — 90+ own code lines (cap 100)
@@ -438,7 +439,6 @@ job. Comments are free: never cut them to fit.
 - `src/memory/index-facts.ts#retainSmart` — 80+ own code lines (cap 100)
 - `src/memory/index-search/search.ts#searchInIndex` — 80+ own code lines (cap 100)
 - `src/memory/tools/forget.ts#memory_forget.execute` — 80+ own code lines (cap 100)
-- `src/memory/tools/save.ts#createSaveTools` — 80+ own code lines (cap 100)
 - `src/ops/tools/op-status.ts#opStatusTool.execute` — 80+ own code lines (cap 100)
 - `src/providers/adapters/ollama-native.ts#OllamaNativeAdapter.stream` — 80+ own code lines (cap 100)
 - `src/providers/adapters/openai-http.ts#call:callback` — 80+ own code lines (cap 100)

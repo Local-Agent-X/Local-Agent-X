@@ -72,7 +72,7 @@ vi.mock("./resolver.js", () => ({
 }));
 
 const { MemoryIndex } = await import("../memory/index.js");
-const { autoExtractAndSave } = await import("./auto-extract.js");
+const { autoExtractAndSave, establishedName } = await import("./auto-extract.js");
 const { recordExternalIngestion, clearExternalIngestion } = await import("../data-lineage/external.js");
 const { TAINTED_FACT_SOURCE_PREFIX } = await import("./fact-provenance-label.js");
 
@@ -184,20 +184,33 @@ describe("autoExtractAndSave — Phase 2 write paths", () => {
     expect(liveFactsCount()).toBe(0);
   });
 
-  it("agent_name → rewrites IDENTITY.md `- Name:` line", async () => {
+  it("agent_name → never replaces the agent's name: one message's name is not a rename", async () => {
+    // The user's own name renamed the agent Peter (2026-11-05). A rename is the agent's
+    // deliberate memory_set_user_field (profile "identity").
+    __nextReturn = { agent_name: "Peter" };
+    const identity = "# Agent\n- Name: Primal\n- Other: thing\n";
+    writeFileSync(join(memoryDir(), "IDENTITY.md"), identity, "utf-8");
+
+    await autoExtractAndSave(memory, "Peter here, call me Peter", "ok");
+
+    expect(readFileSync(join(memoryDir(), "IDENTITY.md"), "utf-8")).toBe(identity);
+  });
+
+  it("agent_name → fills the new install's placeholder name", async () => {
     __nextReturn = { agent_name: "Aria" };
-    writeFileSync(
-      join(memoryDir(), "IDENTITY.md"),
-      "# Agent\n- Name: OldAgent\n- Other: thing\n",
-      "utf-8",
-    );
+    writeFileSync(join(memoryDir(), "IDENTITY.md"), "# Agent\n- Name: (not yet named)\n- Other: thing\n", "utf-8");
 
     await autoExtractAndSave(memory, "call yourself Aria", "ok");
 
     const identity = readFileSync(join(memoryDir(), "IDENTITY.md"), "utf-8");
     expect(identity).toContain("- Name: Aria");
-    expect(identity).not.toContain("- Name: OldAgent");
     expect(identity).toContain("- Other: thing"); // other lines untouched
+  });
+
+  it("establishedName reads past a blank or placeholder Name line to a real one", () => {
+    expect(establishedName("- Name:\n- Name: Primal\n")).toBe("Primal");
+    expect(establishedName("- Name: (not yet named)\n")).toBe("");
+    expect(establishedName("# About Me\n- Role: owner\n")).toBe("");
   });
 
   it("agent_name → appends Name bullet to IDENTITY.md when missing", async () => {
@@ -237,7 +250,7 @@ describe("autoExtractAndSave — Phase 2 write paths", () => {
   it("agent_name write that would exceed MAX_PROFILE_CHARS: IDENTITY.md left untouched, name routed to the daily log instead of dropped", async () => {
     const { MAX_PROFILE_CHARS } = await import("./write-safely.js");
     __nextReturn = { agent_name: "Aria" };
-    const huge = "# Agent\n- Name: OldAgent\n" + "x".repeat(MAX_PROFILE_CHARS);
+    const huge = "# Agent\n- Name: (not yet named)\n" + "x".repeat(MAX_PROFILE_CHARS);
     writeFileSync(join(memoryDir(), "IDENTITY.md"), huge, "utf-8");
 
     await autoExtractAndSave(memory, "call yourself Aria", "ok");

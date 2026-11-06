@@ -25,6 +25,7 @@ import type { ChatMode } from "../../session/mode.js";
 import { projectAgentsMd } from "../../context/project-agents-md.js";
 import { projectDocumentsSection } from "../../memory/project-docs/full-text.js";
 import { sessionWorkRootOf } from "../../workspace/paths.js";
+import type { PendingNotification } from "../../ops/pending-notifications.js";
 
 const logger = createLogger("agent-request.prepare-request.sysprompt");
 
@@ -183,7 +184,7 @@ function addProjectSections(builder: SystemPromptBuilder, input: BuildSystemProm
 
 export async function buildSystemPromptWithTelemetry(
   input: BuildSystemPromptInput,
-): Promise<SystemPromptBuildResult> {
+): Promise<SystemPromptBuildResult & { backgroundCompletions: PendingNotification[] }> {
   const providerHint = `\n\n[System: You are currently powered by ${PROVIDER_NAMES[input.resolvedProvider] || input.resolvedProvider}, model: ${input.resolvedModel}.]`;
   const integrationsContext = input.integrations.getAgentContext();
 
@@ -256,6 +257,7 @@ export async function buildSystemPromptWithTelemetry(
   // can narrate them naturally on this turn (per the agent-narrates pattern
   // — see ops/pending-notifications.ts for rationale).
   let backgroundCompletionsBlock = "";
+  let backgroundCompletions: PendingNotification[] = [];
   try {
     const { drainPendingNotifications, formatNotificationsForSystemPrompt } = await import("../../ops/pending-notifications.js");
     const { cancelIdleNudge, markSessionExplicitNotify, recordSessionLastMessage } = await import("../../ops/idle-nudge.js");
@@ -263,6 +265,7 @@ export async function buildSystemPromptWithTelemetry(
     markSessionExplicitNotify(input.sessionId, input.message);
     recordSessionLastMessage(input.sessionId, input.message);
     const pending = drainPendingNotifications(input.sessionId);
+    backgroundCompletions = pending;
     if (pending.length > 0) {
       backgroundCompletionsBlock = formatNotificationsForSystemPrompt(pending);
       logger.info(`[chat] injecting ${pending.length} background completion(s) into system prompt for sess=${input.sessionId}`);
@@ -366,7 +369,9 @@ export async function buildSystemPromptWithTelemetry(
     });
   }
   const built = await contextBuilder.buildWithTelemetry();
-  return built;
+  // What finished is kept in the chat by whoever saves the turn
+  // (completion-carry.ts); this prompt is the only one that drains it.
+  return { ...built, backgroundCompletions };
 }
 
 export async function buildSystemPrompt(input: BuildSystemPromptInput): Promise<string> {

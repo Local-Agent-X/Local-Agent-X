@@ -23,6 +23,7 @@ import { VOICE_FAST_TOOLS, buildVoiceTail, voiceToolManifest } from "./voice-pro
 import type { ProviderId } from "../providers/provider-ids.js";
 import { userAuthoredRows } from "../harness-rows.js";
 import { withRecallCarried } from "../agent-request/recall-carry.js";
+import { withCompletionsCarried } from "../agent-request/completion-carry.js";
 import { OP_TYPE } from "../ops/op-types.js";
 import { ThreatEngine } from "../threat/threat-engine.js";
 import type { VoiceTurnInput, VoiceTurnRunner } from "../voice/voice-session/index.js";
@@ -424,7 +425,7 @@ export async function setupVoiceWs(deps: {
       };
       await commitVoiceTurn({
         session, sessionId, turnSignal: slot.signal, userText: text, replyText: finalAssistantText,
-        rows: withRecallCarried([userRowOf(text, prepared.images), ...carried, assistantRow], prepared.recall),
+        rows: withCompletionsCarried(withRecallCarried([userRowOf(text, prepared.images), ...carried, assistantRow], prepared.recall), prepared.backgroundCompletions),
         turnMessages: await voiceTurnRows(turnOpId),
         memoryManager, saveSession,
       });

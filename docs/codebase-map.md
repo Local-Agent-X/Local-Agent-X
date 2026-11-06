@@ -13,13 +13,13 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1932 non-test source files · 84 oversized · 255 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1933 non-test source files · 84 oversized · 255 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 174 | 29 | XL | 1 |
+| `src/ops/` | 175 | 29 | XL | 1 |
 | `src/security/` | 159 | 60 | XL | 2 |
 | `src/tools/` | 123 | 229 | XL | 9 |
 | `src/tool-execution/` | 89 | 84 | XL | 2 |
@@ -40,7 +40,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/context-manager/` | 29 | 15 | M |  |
 | `src/agent-store/` | 28 | 7 | M | 1 |
 | `src/context/` | 26 | 10 | M |  |
-| `src/agent-request/` | 24 | 15 | L | 3 |
+| `src/agent-request/` | 24 | 16 | L | 3 |
 | `src/classifiers/` | 24 | 16 | L |  |
 | `src/app-runtime/` | 23 | 12 | M |  |
 | `src/sandbox/` | 23 | 15 | L | 1 |
@@ -382,11 +382,11 @@ job. Comments are free: never cut them to fit.
 - `src/test-suite.ts` — 280+ code lines (cap 350)
 - `src/tools/build-app-spawn.ts` — 280+ code lines (cap 350)
 - `src/agency/handler-tools.ts#createHandlerTools` — 100+ own code lines (cap 100)
+- `src/agent-request/prepare-request/build-system-prompt.ts#buildSystemPromptWithTelemetry` — 100+ own code lines (cap 100)
 - `src/auto-build/workflow-resolver.ts#candidateFromEvidence` — 100+ own code lines (cap 100)
 - `src/context/system-prompt-builder.ts#createSystemPromptBuilder` — 100+ own code lines (cap 100)
 - `src/cron/cron-service-execute.ts#runJob` — 100+ own code lines (cap 100)
 - `src/server/voice-ws.ts#runVoiceTurn` — 100+ own code lines (cap 100)
-- `src/agent-request/prepare-request/build-system-prompt.ts#buildSystemPromptWithTelemetry` — 90+ own code lines (cap 100)
 - `src/anthropic-client/stream-cli.ts#streamViaColdSpawn` — 90+ own code lines (cap 100)
 - `src/app-renderer/components.ts#renderComponent` — 90+ own code lines (cap 100)
 - `src/auto-build/orchestrator/manager.ts#startOrchestration` — 90+ own code lines (cap 100)

@@ -69,6 +69,7 @@ export async function runCanonicalChat(input: CanonicalRunInput): Promise<Canoni
         session, ctx, sessionId,
         images: prepared.images.map((im) => ({ name: im.name, url: im.url })),
         recall: prepared.recall,
+        backgroundCompletions: prepared.backgroundCompletions,
         interrupted,
         terminalError,
         abortSignal,
@@ -196,6 +197,7 @@ interface PersistInput {
   images: Array<{ name: string; url: string }>;
   /** Recall this turn showed the model; kept after the user's message. */
   recall?: PreparedAgentRequest["recall"];
+  backgroundCompletions?: PreparedAgentRequest["backgroundCompletions"];
   /** Turn ended by user-stop / abort rather than a clean done. Salvage the
    *  committed work, mark the boundary, and refresh the stale context cache. */
   interrupted?: boolean;
@@ -226,7 +228,7 @@ function sanitizeAssistantRowParam(param: ChatCompletionMessageParam): ChatCompl
 // Exported for the salvage regression test (an interrupted turn must persist
 // its work + boundary marker instead of erasing the turn).
 export async function persistTurnState(input: PersistInput): Promise<void> {
-  const { canonicalOpId, message, session, ctx, sessionId, images, interrupted, terminalError, abortSignal, recall } = input;
+  const { canonicalOpId, message, session, ctx, sessionId, images, interrupted, terminalError, abortSignal, recall, backgroundCompletions } = input;
   // Persist-profile pass over what the MODEL said this turn (leaked template
   // tokens, reasoning tags, hallucinated tool markup, whole-reply repeats —
   // providers/output-sanitize.ts). Applied to this turn's NEW text only: the
@@ -322,9 +324,11 @@ export async function persistTurnState(input: PersistInput): Promise<void> {
     } as ChatCompletionMessageParam);
   }
 
-  // The recall this turn showed the model stays in the chat for later turns.
+  // The recall this turn showed the model, and the background work it was
+  // told finished, stay in the chat for later turns.
   const { withRecallCarried } = await import("../../../agent-request/recall-carry.js");
-  appendTurnToSession(session, withRecallCarried(newChatMessages, recall ?? null));
+  const { withCompletionsCarried } = await import("../../../agent-request/completion-carry.js");
+  appendTurnToSession(session, withCompletionsCarried(withRecallCarried(newChatMessages, recall ?? null), backgroundCompletions));
   session.updatedAt = Date.now();
 
   if (assistantText) {

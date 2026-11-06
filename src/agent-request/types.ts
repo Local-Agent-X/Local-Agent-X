@@ -7,6 +7,7 @@ import type { CredentialSource } from "../auth/auth-provider.js";
 import type { ReasoningEffort } from "../providers/reasoning-effort.js";
 import type { PromptTelemetry } from "../prompt-telemetry.js";
 import type { RecalledMemory } from "../memory/auto-search-context.js";
+import type { PendingNotification } from "../ops/pending-notifications.js";
 import type { RenderedPromptSection } from "../context/system-prompt-builder.js";
 import type { LocalModelCapabilityProfile } from "../local-runtimes/index.js";
 import type { TargetPin } from "../ops/types.js";
@@ -127,6 +128,10 @@ export interface PreparedAgentRequest {
    *  Whoever saves the turn keeps it after the user's message
    *  (recall-carry.ts withRecallCarried). */
   recall: RecalledMemory | null;
+  /** Background work this turn's prompt reported finished (drained once).
+   *  Whoever saves the turn keeps a record of it after the user's message
+   *  (completion-carry.ts withCompletionsCarried). */
+  backgroundCompletions: PendingNotification[];
   /** Content-free prompt sizing persisted with the canonical operation. */
   promptTelemetry: PromptTelemetry;
   /** Exact ordered model-visible sections. Kept in memory for capability-aware

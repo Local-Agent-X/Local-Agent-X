@@ -227,9 +227,8 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     // The tools actually loaded this turn — drives the deferred-tool manifest
     // (allAgentTools − loadedTools) so the model can tool_search anything the
     // filtered schema omits. This is the discovery half of the lazy-load flip.
-    // A lean prep (voice) loads nothing here and ships its own curated belt
-    // without tool_search, so a manifest would tell it to search for ~170
-    // tools it cannot reach; no manifest is the honest prompt there.
+    // A lean prep (voice) loads nothing here: it ships its own belt and
+    // builds the manifest over that belt (server/voice-prompt.ts).
     loadedTools: input.leanPrep ? undefined : toolSel.tools,
     systemPromptOverride: input.systemPromptOverride,
     bridgeContext: input.bridgeContext,
@@ -284,9 +283,49 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     sections: renderedPromptSections.map((section) => section.measurement),
   }));
 
-  // 8. tool_choice pin for an EXPLICIT build route only (/app-build kickoff,
-  // a resolved Product Build continuation action). Nothing guessed from the
-  // message's wording pins a tool.
+  // 8. The tool this turn's first request is pinned to, if any.
+  const toolChoice = turnToolChoice(toolSel, ctx.knownProjectsFound, resolved.provider);
+
+  return {
+    provider: resolved.provider,
+    apiKey: resolved.apiKey,
+    model: resolved.model,
+    targetPin: explicitTargetPin(input.providerOverride, input.modelOverride),
+    codexApiKey: resolved.codexApiKey,
+    customBaseURL: resolved.customBaseURL,
+    systemPrompt,
+    tools: toolSel.tools,
+    cleanHistory,
+    recall: ctx.recall,
+    backgroundCompletions: promptBuild.backgroundCompletions,
+    ...(checkpointed.newCheckpoint ? { newCheckpoint: checkpointed.newCheckpoint } : {}),
+    images,
+    temperature: resolved.temperature,
+    maxIterations: resolved.maxIterations,
+    reasoningEffort: resolved.reasoningEffort,
+    authSource: resolved.authSource,
+    // Carried verbatim: `provider`/`model` above already describe the FALLBACK,
+    // so without this the caller has no way to tell a rerouted turn from one
+    // that ran on exactly what was asked for.
+    providerSwitch: resolved.providerSwitch,
+    toolChoice,
+    promptTelemetry,
+    renderedPromptSections,
+    localModelCapabilityProfile: null,
+  };
+}
+
+/**
+ * The tool a turn's first request is pinned to: an EXPLICIT build route's tool
+ * (/app-build kickoff, a resolved Product Build continuation action; nothing
+ * guessed from the message's wording pins a tool), else the recall search for a
+ * provider that under-calls tools when a known project was found.
+ */
+function turnToolChoice(
+  toolSel: Awaited<ReturnType<typeof selectTurnTools>>,
+  knownProjectsFound: boolean,
+  provider: string,
+): ForcedToolChoice | undefined {
   let toolChoice: ForcedToolChoice | undefined;
   const forcedName = toolSel.forcedToolName;
   if (forcedName) {
@@ -306,38 +345,12 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   // left alone. The adapter releases the pin after turn 0.
   if (shouldForceRecallSearch({
     toolAlreadyForced: !!toolChoice,
-    knownProjectsFound: ctx.knownProjectsFound,
-    provider: resolved.provider,
+    knownProjectsFound,
+    provider,
     toolNames: toolSel.tools.map(t => t.name),
   })) {
     toolChoice = { type: "tool", name: RECALL_TOOL };
-    logger.info(`[recall-force] ${resolved.provider} under-calls tools + known project in message — forcing ${RECALL_TOOL}`);
+    logger.info(`[recall-force] ${provider} under-calls tools + known project in message — forcing ${RECALL_TOOL}`);
   }
-
-  return {
-    provider: resolved.provider,
-    apiKey: resolved.apiKey,
-    model: resolved.model,
-    targetPin: explicitTargetPin(input.providerOverride, input.modelOverride),
-    codexApiKey: resolved.codexApiKey,
-    customBaseURL: resolved.customBaseURL,
-    systemPrompt,
-    tools: toolSel.tools,
-    cleanHistory,
-    recall: ctx.recall,
-    ...(checkpointed.newCheckpoint ? { newCheckpoint: checkpointed.newCheckpoint } : {}),
-    images,
-    temperature: resolved.temperature,
-    maxIterations: resolved.maxIterations,
-    reasoningEffort: resolved.reasoningEffort,
-    authSource: resolved.authSource,
-    // Carried verbatim: `provider`/`model` above already describe the FALLBACK,
-    // so without this the caller has no way to tell a rerouted turn from one
-    // that ran on exactly what was asked for.
-    providerSwitch: resolved.providerSwitch,
-    toolChoice,
-    promptTelemetry,
-    renderedPromptSections,
-    localModelCapabilityProfile: null,
-  };
+  return toolChoice;
 }

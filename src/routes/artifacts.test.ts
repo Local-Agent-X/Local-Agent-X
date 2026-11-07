@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { extractSessionArtifacts } from "./artifacts.js";
+import { extractSessionArtifacts, handleArtifactRoutes } from "./artifacts.js";
+import { signServedMediaPath } from "../server/agent-file-links.js";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import type { ServerContext } from "../server-context.js";
 
 const meta = { id: "s1", title: "Test Session", updatedAt: 1720000000000 };
 
@@ -86,5 +89,25 @@ describe("extractSessionArtifacts", () => {
     ], meta);
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({ type: "image", ref: "/uploads/abc123.png", name: "abc123.png" });
+  });
+});
+
+describe("GET /api/artifacts", () => {
+  it("gives served media a link signed for that file, so the panel never puts the token in a URL", async () => {
+    const session = { id: "s1", title: "T", updatedAt: 1, messages: [
+      { role: "tool", content: "View: /images/cat.png" },
+      { role: "assistant", content: "See https://example.com/page" },
+    ] };
+    const ctx = {
+      config: { authToken: "tok-0123456789" },
+      sessionStore: { list: () => [session], load: () => session },
+    } as unknown as ServerContext;
+    let body = "";
+    const res = { writeHead() { return res; }, setHeader() {}, end(b: string) { body = b; } } as unknown as ServerResponse;
+    await handleArtifactRoutes("GET", new URL("http://127.0.0.1/api/artifacts"), { headers: {} } as IncomingMessage, res, ctx, "operator" as never);
+    const items = JSON.parse(body).artifacts as Array<{ ref: string; openUrl?: string }>;
+    expect(items.find((i) => i.ref === "/images/cat.png")?.openUrl).toBe(`/images/cat.png?sig=${signServedMediaPath("tok-0123456789", "/images/cat.png")}`);
+    expect(items.find((i) => i.ref === "https://example.com/page")?.openUrl).toBeUndefined();
+    expect(body).not.toContain("tok-0123456789");
   });
 });

@@ -13,6 +13,7 @@ import type { RouteHandler } from "../server-context.js";
 import { jsonResponse } from "../server-utils.js";
 import { isSyntheticSessionId } from "../memory/synthetic-sessions.js";
 import { declaredPaths, pathSpecsForCall } from "../tool-registry.js";
+import { signServedMediaPath } from "../server/agent-file-links.js";
 
 export interface ArtifactItem {
   /** image | video | file | link */
@@ -25,6 +26,18 @@ export interface ArtifactItem {
   sessionTitle: string;
   /** Session updatedAt (per-message timestamps are not persisted in the rich form) */
   ts: number;
+  /** For served media: the ref with this one file's signature, the URL the UI
+   *  opens in a window, so no window URL carries the operator token. Added per
+   *  response (it follows the token), never cached. */
+  openUrl?: string;
+}
+
+const SERVED_MEDIA_REF = /^\/(?:images|videos|uploads)\/[^?#]+$/;
+
+/** The item as sent: served media gets its signed openUrl. */
+function withOpenUrl(item: ArtifactItem, operatorToken: string): ArtifactItem {
+  if (!SERVED_MEDIA_REF.test(item.ref)) return item;
+  return { ...item, openUrl: `${item.ref}?sig=${signServedMediaPath(operatorToken, item.ref)}` };
 }
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|svg|ico|avif)$/i;
@@ -165,6 +178,6 @@ export const handleArtifactRoutes: RouteHandler = async (method, url, req, res, 
   for (const id of scanCache.keys()) if (!live.has(id)) scanCache.delete(id);
 
   all.sort((a, b) => b.ts - a.ts);
-  json(200, { artifacts: all.slice(0, MAX_ITEMS), total: all.length });
+  json(200, { artifacts: all.slice(0, MAX_ITEMS).map((item) => withOpenUrl(item, ctx.config.authToken)), total: all.length });
   return true;
 };

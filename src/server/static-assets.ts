@@ -5,7 +5,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { corsHeaders, jsonResponse } from "../server-utils.js";
 import { confineToDir } from "../security/layer/index.js";
 import { getPageBundle, stampAssetTags } from "./static-bundle.js";
-import { verifyAgentFileSignature } from "./agent-file-links.js";
+import { verifyAgentFileSignature, verifyServedMediaSignature } from "./agent-file-links.js";
 import type { LAXConfig } from "../types.js";
 import { UI_PAGE_PERMISSIONS_POLICY } from "./app-serving-policy.js";
 
@@ -33,7 +33,10 @@ export function serveProtectedAssets(method: string, url: URL, req: IncomingMess
   const authorization = req.headers.authorization || "";
   const provided = (authorization.startsWith("Bearer ") ? authorization.slice(7) : "") || url.searchParams.get("token") || "";
   const operatorOk = !!provided && provided.length === config.authToken.length && timingSafeEqual(Buffer.from(provided), Buffer.from(config.authToken));
-  if (!operatorOk) { json(401, { error: "Authentication required" }); return true; }
+  // A link the UI opens in a window carries this one file's signature
+  // (routes/artifacts.ts openUrl), never the operator token.
+  const signedOk = verifyServedMediaSignature(config.authToken, url.pathname, url.searchParams.get("sig") || "");
+  if (!operatorOk && !signedOk) { json(401, { error: "Authentication required" }); return true; }
 
   if (url.pathname.startsWith("/uploads/")) {
     const filename = url.pathname.replace("/uploads/", "");

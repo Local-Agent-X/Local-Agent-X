@@ -42,3 +42,16 @@ export function signAgentFilePath(operatorToken: string, relativePath: string): 
 export function verifyAgentFileSignature(operatorToken: string, relativePath: string, provided: string): boolean {
   return constantTimeEqual(provided, signAgentFilePath(operatorToken, relativePath));
 }
+
+const SERVED_MEDIA_LABEL = "lax-served-media:v1\n";
+
+/** Signature for one served media URL path (/images/…, /videos/…, /uploads/…),
+ *  as the request's pathname. A window opened on it shows that one file, and
+ *  the URL a browser keeps in its history holds no operator token. */
+export function signServedMediaPath(operatorToken: string, pathname: string): string {
+  return hmacHex(operatorToken, SERVED_MEDIA_LABEL + pathname);
+}
+
+export function verifyServedMediaSignature(operatorToken: string, pathname: string, provided: string): boolean {
+  return constantTimeEqual(provided, signServedMediaPath(operatorToken, pathname));
+}

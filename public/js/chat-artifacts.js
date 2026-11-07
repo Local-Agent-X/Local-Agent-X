@@ -131,10 +131,11 @@ function openArtifact(filter, idx) {
     openFileLink(a.ref);
     return;
   }
-  // Served media (/images|/videos|/uploads) — static-assets auth is
-  // header-or-?token=, and a plain window.open can't send headers.
+  // Served media (/images|/videos|/uploads): a window can't send the auth
+  // header, so it opens the link the server signed for this one file
+  // (openUrl). The operator token never goes in a URL a browser keeps.
   if (/^\/(images|videos|uploads)\//.test(a.ref)) {
-    window.open(a.ref + '?token=' + encodeURIComponent(AUTH_TOKEN), '_blank', 'noopener');
+    window.open(a.openUrl || a.ref, '_blank', 'noopener');
     return;
   }
   // Plain file path — copy it so the user can paste into chat or an editor.

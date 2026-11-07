@@ -48,8 +48,8 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/desktop-contract/` | 21 | 10 | M |  |
 | `src/protocols/` | 21 | 52 | XL |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
+| `src/server/` *(entrypoint)* | 19 | 59 | XL | 5 |
 | `src/autonomy/` | 18 | 5 | M |  |
-| `src/server/` *(entrypoint)* | 18 | 59 | XL | 5 |
 | `src/agents/` | 17 | 13 | L |  |
 | `src/net/` | 17 | 11 | L |  |
 | `src/anthropic-client/` | 15 | 22 | L | 2 |

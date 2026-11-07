@@ -48,7 +48,7 @@ describe("selectTools — a code session", () => {
   it("loads the code session kit, tool_search included", async () => {
     expect(names(await turn("fix the failing test"))).toEqual([...KIT].sort());
     expect(KIT).toContain("tool_search");
-    for (const name of ["bash", "read", "write", "edit", "grep", "glob", "structural_search", "update_plan", "wrap_up", "session_start"]) expect(KIT).toContain(name);
+    for (const name of ["bash", "read", "write", "edit", "grep", "glob", "structural_search", "update_plan", "wrap_up", "session_start", "exit_plan_mode", "task_create", "task_update", "task_list", "task_get"]) expect(KIT).toContain(name);
   });
 
   it("keeps the rest of the toolbox one tool_search away, not in every call's schema", () => {
@@ -58,8 +58,10 @@ describe("selectTools — a code session", () => {
     // Lean, but with the code-working tools a coding turn checks its work with:
     // structural_search (who uses a name) and review_changes (its own diff),
     // and session_start: a coding session is where a separate task turns up
-    // (a bug in code you are not changing) and is worth its own session.
-    expect(KIT.length).toBeLessThanOrEqual(12);
+    // (a bug in code you are not changing) and is worth its own session. Plus
+    // exit_plan_mode (the Plan picker's approval card) and the task_* tools
+    // (the step list one task at a time, as the Claude Code CLI keeps it).
+    expect(KIT.length).toBeLessThanOrEqual(17);
   });
 
   it("ships the same set whatever the message says", async () => {

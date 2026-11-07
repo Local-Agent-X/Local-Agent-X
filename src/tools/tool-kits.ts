@@ -62,6 +62,15 @@ export const CODE_SESSION_KIT: ToolSelection = {
     update_plan: "a multi-step change keeps its steps on record, live under the reply; the open-steps gate reads them",
     wrap_up: "closes a turn that changed code with what is done and what is not verified",
     session_start: "offers a separate task (a bug found in passing, a follow-up) its own code session in this folder instead of doing it inline",
+    // The plan ends in an approval card: the user's Plan picker locks a code
+    // session read-only, and only this tool shows them the plan to approve.
+    exit_plan_mode: "ends plan mode (the user's Plan picker) by showing the plan on an approval card; without it the agent must load it by name first",
+    // The same session step list as update_plan, one task per call, with
+    // sub-tasks and a per-task output: the way the Claude Code CLI keeps it.
+    task_create: "adds one task to the session's step list, optionally under a parent task",
+    task_update: "moves one task's status or records its output",
+    task_list: "reads the session's step list back",
+    task_get: "reads one task with its output",
   },
 };
 

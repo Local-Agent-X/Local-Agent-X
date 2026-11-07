@@ -44,7 +44,9 @@ export const sessionStartTool: ToolDefinition = {
     "unrelated to what the user is doing now. Not for the work the user just asked you to do here, and not for a quick lookup. " +
     "`title`: a few words naming the task. `brief`: everything the new chat needs, since it does not see this conversation: the " +
     "goal, the files or area, what you already found, constraints, and what done looks like. The new chat runs its first turn on " +
-    "its own and this chat is told when it finishes. Say in one line why it is worth its own chat; nothing starts until the user taps.",
+    "its own and this chat is told when it finishes. In Code mode it is a code session on this same folder, running while you keep " +
+    "working: offer only work whose files don't overlap what you are changing, and say in the brief which files are its. " +
+    "Say in one line why it is worth its own chat; nothing starts until the user taps.",
   parameters: {
     type: "object",
     properties: {

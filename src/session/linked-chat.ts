@@ -25,6 +25,7 @@ import { isHarnessRow } from "../harness-rows.js";
 import { createLogger } from "../logger.js";
 import type { ServerContext } from "../server-context.js";
 import type { Session } from "../types.js";
+import type { ChatMode } from "./mode.js";
 
 const logger = createLogger("session.linked-chat");
 
@@ -38,6 +39,8 @@ export interface LinkedChatStart {
   sessionId: string;
   title: string;
   brief: string;
+  /** The starting chat's mode: a code session starts a code session. */
+  mode?: ChatMode;
 }
 
 /** The new chat's first message: the brief, saying where it came from. */
@@ -63,7 +66,7 @@ export async function runLinkedChat(ctx: ServerContext, start: LinkedChatStart):
   } else {
     inheritSessionLineage(start.sessionId, start.originId);
     try {
-      await handler(start.sessionId, firstMessage(start), [], { channel: "web" });
+      await handler(start.sessionId, firstMessage(start), [], { channel: "web", ...(start.mode ? { mode: start.mode } : {}) });
       await ctx.flushSession(start.sessionId);
       outcome = outcomeOf(ctx.sessionStore.load(start.sessionId));
     } catch (e) {

@@ -100,6 +100,33 @@ describe("POST /api/sessions/start", () => {
     clearSessionTaint(String(data.sessionId));
   });
 
+  it("started from a code session, is a code session on the same folder", async () => {
+    sessions.set("code-origin", { id: "code-origin", title: "LAX repo", messages: [], createdAt: 0, updatedAt: 0, mode: "code", projectId: "repo-proj" } as Session);
+    let meta: unknown;
+    setChatHandler(async (sessionId, message, _a, m) => {
+      meta = m;
+      sessions.get(sessionId)!.messages.push({ role: "user", content: message }, { role: "assistant", content: "ok" });
+      turnDone();
+    });
+    const done = settled();
+    const { data } = await post({ ...offer, sessionId: "code-origin" });
+    await done;
+    expect(sessions.get(String(data.sessionId))).toMatchObject({ mode: "code", projectId: "repo-proj", startedFrom: "code-origin" });
+    expect(meta).toMatchObject({ mode: "code" });
+    drainPendingNotifications("code-origin");
+  });
+
+  it("started from a chat bound to an app folder, works in that folder", async () => {
+    sessions.set("app-chat", { id: "app-chat", title: "Calendar", messages: [], createdAt: 0, updatedAt: 0, folder: "apps/calendar" } as Session);
+    const done = settled();
+    const { data } = await post({ ...offer, sessionId: "app-chat" });
+    await done;
+    const started = sessions.get(String(data.sessionId))!;
+    expect(started.folder).toBe("apps/calendar");
+    expect(started.mode).toBeUndefined();
+    drainPendingNotifications("app-chat");
+  });
+
   it("refuses an offer without a title or brief, and one from a chat that is gone", async () => {
     expect((await post({ sessionId: "origin", title: "x" })).status).toBe(400);
     expect((await post({ ...offer, sessionId: "../etc" })).status).toBe(400);

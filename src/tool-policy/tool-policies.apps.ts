@@ -204,6 +204,7 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   session_start: {
     kernel: "internal", risk: "safe", capabilities: [], tags: [],
     blurb: { does: "Offer a separate task its own chat, which runs on its own and reports back." },
+    prompt: "When you notice a task of its own while working (a bug in code you are not changing, a follow-up you would otherwise only mention for later), offer it with session_start instead of just naming it or doing it inline. Never for the work the user asked you to do now.",
     rules: [{ id: "allow-session-start", decision: "allow", reason: "Offer a new chat on the reply (no I/O sink; the user starts it)", priority: 50 }],
   },
   code_handoff: {

@@ -8,7 +8,9 @@
  * The offer came from a tool call, so its title and brief are bounded here as
  * the tool bounds them, and the starting chat must exist. A second tap on the
  * same offer (both clients, a double tap) returns the chat the first one
- * started instead of starting another.
+ * started instead of starting another. The new chat works where the starting
+ * one does: started from a code session it is a code session on the same
+ * folder, as Claude Code's own sessions are.
  */
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createHash, randomBytes } from "node:crypto";
@@ -16,6 +18,7 @@ import type { ServerContext } from "../server-context.js";
 import { isValidSessionId, readBody, jsonResponse } from "../server-utils.js";
 import { sessionOfferOf } from "../tools/session-start-tool.js";
 import { runLinkedChat } from "../session/linked-chat.js";
+import { sessionModeOf } from "../session/mode.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("routes.sessions-start");
@@ -50,10 +53,14 @@ export async function handleSessionStart(req: IncomingMessage, res: ServerRespon
   await ctx.saveSession({
     id: sessionId, title: offer.title, messages: [], createdAt: now, updatedAt: now,
     startedFrom: originId,
+    // Where the starting chat works, this one works: a code session's mode and
+    // project (its folder), a chat's bound app folder.
+    ...(sessionModeOf(origin) === "code" ? { mode: "code" as const } : {}),
     ...(origin.projectId ? { projectId: origin.projectId } : {}),
+    ...(origin.folder ? { folder: origin.folder } : {}),
   });
   json(200, { ok: true, sessionId, title: offer.title });
-  void runLinkedChat(ctx, { originId, originTitle: origin.title, sessionId, title: offer.title, brief: offer.brief })
+  void runLinkedChat(ctx, { originId, originTitle: origin.title, sessionId, title: offer.title, brief: offer.brief, mode: sessionModeOf(origin) })
     .catch((e) => logger.warn(`[sessions-start] ${sessionId}: ${(e as Error).message}`));
 }
 

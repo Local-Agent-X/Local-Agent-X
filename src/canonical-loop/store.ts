@@ -25,7 +25,7 @@ import { existsSync, mkdirSync, appendFileSync, readFileSync, writeFileSync, ren
 import { dirname, join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { isHarnessRowKind } from "../harness-rows.js";
-import { tryWithOpLock, withOpLock } from "../ops/op-store.js";
+import { OpLockUnavailableError, tryWithOpLock, withOpLock } from "../ops/op-store.js";
 import {
   canonicalEventsPath,
   opMessagesPath,
@@ -99,7 +99,15 @@ export function appendCanonicalEvent(
   type: CanonicalEventType,
   body: Record<string, unknown> | null = null,
 ): CanonicalEvent {
-  return appendCanonicalEventWithMode(opId, type, body, false);
+  try {
+    return appendCanonicalEventWithMode(opId, type, body, false);
+  } catch (e) {
+    // Like a failed write, a lock another writer held too long is logged and
+    // the event goes unwritten; it never lands unlocked with a seq in use.
+    if (!(e instanceof OpLockUnavailableError)) throw e;
+    logger.warn(`[store] failed to append canonical event for ${opId}: ${e.message}`);
+    return { opId, seq: seqCache.get(opId)?.nextSeq ?? 0, type, ts: new Date().toISOString(), body };
+  }
 }
 
 /** Commit-projection variant: persistence failure is recoverable work, not a

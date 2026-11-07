@@ -147,6 +147,14 @@ function injectedWriteFailure(strict: boolean): AtomicWriteOperations | undefine
 
 const LOCK_STALE_MS = 2_000;
 const LOCK_WAIT_MS = 500;
+/** How long withOpLock waits. Its callers' writes may not be skipped, and a
+ *  dead holder's lock is reclaimed past LOCK_STALE_MS, so only a live writer in
+ *  another process (a slow disk, a stalled event loop) holds it this long. */
+let lockWaitWriteMs = 10_000;
+/** A lock older than this is abandoned whatever its owner looks like: it guards
+ *  one small synchronous write, so no live holder keeps it a minute, and a pid
+ *  the system reused for another program must not hold an op's writes forever. */
+const LOCK_ABANDONED_MS = 60_000;
 const LOCK_RETRY_MS = 10;
 /** An empty lock directory holds no claim: its creator writes its token right
  *  after mkdir, so past this grace it is a release whose rmdir failed (Windows
@@ -174,10 +182,10 @@ function sleepSync(ms: number): void {
  * directory with a unique owner token; stale crashed claims are reclaimed
  * after LOCK_STALE_MS. Contention never executes the mutation unlocked.
  */
-export function tryWithOpLock<T>(opId: string, fn: () => T): OpLockResult<T> {
+export function tryWithOpLock<T>(opId: string, fn: () => T, waitMs = LOCK_WAIT_MS): OpLockResult<T> {
   if (heldLocks.has(opId)) return { acquired: true, value: fn() };
   const lockPath = join(opDir(opId), "operation.lock");
-  const deadline = Date.now() + LOCK_WAIT_MS;
+  const deadline = Date.now() + waitMs;
   const token = randomId("lock");
   for (;;) {
     try {
@@ -199,7 +207,8 @@ export function tryWithOpLock<T>(opId: string, fn: () => T): OpLockResult<T> {
       sleepSync(LOCK_RETRY_MS);
     } catch (e) {
       // The directory was reclaimed between mkdir and the token: try again.
-      if ((e as NodeJS.ErrnoException).code === "ENOENT" && Date.now() < deadline) continue;
+      // With no op directory there is no lock to wait for.
+      if ((e as NodeJS.ErrnoException).code === "ENOENT" && Date.now() < deadline && existsSync(opDir(opId))) continue;
       if ((e as NodeJS.ErrnoException).code !== "EEXIST") {
         logger.warn(`[op-store] cannot create lock for ${opId}: ${(e as Error).message}`);
         cleanupOwnedLock(lockPath, token);
@@ -222,13 +231,31 @@ export function tryWithOpLock<T>(opId: string, fn: () => T): OpLockResult<T> {
   }
 }
 
-/** Legacy general persistence callers retain their fail-open behavior. Lease
- * ownership uses tryWithOpLock directly and never enters this fallback. */
+/** The op's lock could not be taken in time; the mutation did not run. */
+export class OpLockUnavailableError extends Error {
+  constructor(public readonly opId: string) {
+    super(`operation ${opId} is locked by another writer; the change was not made`);
+    this.name = "OpLockUnavailableError";
+  }
+}
+
+/**
+ * The lock for a write that must not be skipped: waits longer than the
+ * try-lock, and throws OpLockUnavailableError rather than run the mutation
+ * unlocked, which let two processes interleave operation.json or hand out the
+ * same event seq. Lease ownership uses tryWithOpLock and decides itself.
+ * An op with no directory yet has no lock to take; its first write creates it.
+ */
 export function withOpLock<T>(opId: string, fn: () => T): T {
-  const result = tryWithOpLock(opId, fn);
+  if (!existsSync(opDir(opId))) return fn();
+  const result = tryWithOpLock(opId, fn, lockWaitWriteMs);
   if (result.acquired) return result.value;
-  logger.warn(`[op-store] lock timeout for ${opId}; proceeding unlocked`);
-  return fn();
+  throw new OpLockUnavailableError(opId);
+}
+
+/** Test seam: how long withOpLock waits. */
+export function _setWriteLockWaitForTest(ms: number | null): void {
+  lockWaitWriteMs = ms ?? 10_000;
 }
 
 function soleClaim(lockPath: string, token: string): boolean {
@@ -279,6 +306,7 @@ function reclaimStaleLock(lockPath: string): boolean {
   }
   if (age <= LOCK_STALE_MS) return false;
   for (const entry of observed) {
+    if (age > LOCK_ABANDONED_MS) break;
     try {
       const owner = JSON.parse(readFileSync(join(lockPath, entry), "utf-8")) as { pid?: unknown };
       if (typeof owner.pid === "number" && isProcessAlive(owner.pid)) return false;

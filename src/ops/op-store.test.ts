@@ -36,7 +36,7 @@ vi.mock("node:fs", async (importActual) => {
 const dataDir = mkdtempSync(join(tmpdir(), "lax-opstore-"));
 process.env.LAX_DATA_DIR = dataDir;
 
-const { writeOp, readOp, listRecentOps, setOpStatus, tryWithOpLock, withOpLock, newOpId, sanitizeIdPrefix } = await import("./op-store.js");
+const { writeOp, readOp, listRecentOps, setOpStatus, tryWithOpLock, withOpLock, newOpId, sanitizeIdPrefix, OpLockUnavailableError, _setWriteLockWaitForTest } = await import("./op-store.js");
 const { persistOpKeepingSignals } = await import("../canonical-loop/index.js");
 
 const opDirOf = (id: string) => join(dataDir, "operations", id);
@@ -198,6 +198,45 @@ describe("withOpLock — per-opId cross-process lockfile", () => {
   });
 });
 
+// GHSA-982r: withOpLock ran the mutation UNLOCKED once its 500 ms wait ran out,
+// so two processes could interleave operation.json or hand out the same seq.
+describe("withOpLock — a write never runs unlocked", () => {
+  const liveLock = (id: string, ageMs = 0) => {
+    mkdirSync(lockOf(id));
+    writeFileSync(join(lockOf(id), "live-token"), JSON.stringify({ token: "live-token", pid: process.pid }));
+    const at = new Date(Date.now() - ageMs);
+    utimesSync(lockOf(id), at, at);
+  };
+
+  it("a live writer holding the lock past the wait gets an error, and the mutation does not run", () => {
+    const id = "op_lock_live_holder";
+    writeOp(mkOp(id));
+    liveLock(id);
+    _setWriteLockWaitForTest(300);
+    let ran = false;
+    try {
+      expect(() => withOpLock(id, () => { ran = true; })).toThrow(OpLockUnavailableError);
+      expect(ran).toBe(false);
+      expect(existsSync(join(lockOf(id), "live-token"))).toBe(true);
+    } finally {
+      _setWriteLockWaitForTest(null);
+      rmSync(lockOf(id), { recursive: true, force: true });
+    }
+  });
+
+  it("a lock a minute old is abandoned even when its pid looks alive (a pid the system reused)", () => {
+    const id = "op_lock_abandoned";
+    writeOp(mkOp(id));
+    liveLock(id, 2 * 60_000);
+    expect(withOpLock(id, () => "written")).toBe("written");
+    expect(existsSync(lockOf(id))).toBe(false);
+  });
+
+  it("an op with no directory yet has no lock to take: its first write runs", () => {
+    expect(withOpLock("op_lock_not_yet_on_disk", () => "first")).toBe("first");
+  });
+});
+
 // On Windows a release's rmdir can fail while a scanner holds the folder: the
 // token is gone, the directory stays, and its mtime reads as a fresh claim.
 describe("withOpLock — an empty lock directory is not a claim", () => {
@@ -240,7 +279,7 @@ describe("withOpLock — an empty lock directory is not a claim", () => {
 });
 
 describe("persistOpKeepingSignals — RMW serialized by the per-op lock", () => {
-  it("waits for a foreign writer's fresh lock before its read→write, then fails open", () => {
+  it("waits for a foreign writer's fresh lock before its read→write, then reclaims it once it is stale", () => {
     const id = "op_persist_lock";
     writeOp(mkOp(id));
     // Simulate a second server mid-RMW on the same op.
@@ -250,7 +289,7 @@ describe("persistOpKeepingSignals — RMW serialized by the per-op lock", () => 
     const elapsed = Date.now() - t0;
     // Pre-fix this returned instantly (~0ms) — no serialization at all.
     expect(elapsed).toBeGreaterThanOrEqual(400);
-    // Fail-open: a leaked lock must not brick persistence.
+    // A leaked lock must not brick persistence: past LOCK_STALE_MS it is reclaimed.
     expect(readOp(id)?.task).toBe("from writer B");
     rmSync(lockOf(id), { force: true });
   });

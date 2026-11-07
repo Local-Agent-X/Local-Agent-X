@@ -48,7 +48,8 @@ import { byteLengthUtf8 } from "./openai-compat/helpers.js";
 import { canonicalToChatParam } from "./openai-compat/canonical-to-chat-param.js";
 import { extendLocalWire, thinkLevelInPrompt, type LocalWireState } from "./openai-compat/local-wire.js";
 import { isLocalModelEndpoint } from "../../local-runtimes/model-endpoint.js";
-import { getLocalModel } from "../../local-runtimes/cache.js";
+import { getLocalModel, ollamaNativeRootForChatBase } from "../../local-runtimes/cache.js";
+import { inlineToolLoads, inlinesToolLoads } from "./openai-compat/local-tool-loads.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { ContextWindowResolution } from "../../context-manager/model-windows.js";
 import type { RequestFit } from "../../context-manager/request-fit.js";
@@ -136,6 +137,22 @@ export class OpenAICompatAdapter implements Adapter {
     return messages;
   }
 
+  /** The round's messages and tools. On a local model whose runtime takes a
+   *  call to a tool outside `tools`, a tool loaded mid-chat is shown in its
+   *  tool_search result instead of the tool list (local-tool-loads.ts). */
+  private wireBody(input: TurnInput, model: string | undefined): Pick<ProviderRequest, "messages" | "tools"> {
+    const messages = this.wireMessages(input, model);
+    const tools = input.tools.map(t => ({
+      name: t.name,
+      description: t.description ?? "",
+      parameters: (t.inputSchema as Record<string, unknown>) ?? {},
+    })) as ProviderRequest["tools"];
+    const { baseURL } = this.opts;
+    const local = baseURL && model ? getLocalModel(baseURL, model) : null;
+    if (!inlinesToolLoads(ollamaNativeRootForChatBase(baseURL) !== null, local)) return { messages, tools };
+    return inlineToolLoads(messages, tools);
+  }
+
   /** The step's thinking profile and the effort it sends, from the step's
    *  hint as this wire can honor it: none on a local level model, whose level
    *  sits in the cached prompt (local-wire.ts thinkLevelInPrompt), so there
@@ -182,12 +199,7 @@ export class OpenAICompatAdapter implements Adapter {
       baseURL,
       model,
       systemPrompt: this.opts.systemPrompt ?? "You are a helpful assistant.",
-      messages: this.wireMessages(input, model),
-      tools: input.tools.map(t => ({
-        name: t.name,
-        description: t.description ?? "",
-        parameters: (t.inputSchema as Record<string, unknown>) ?? {},
-      })) as ProviderRequest["tools"],
+      ...this.wireBody(input, model),
       temperature: sampling?.temperature ?? this.opts.temperature ?? 0.7,
       ...(sampling?.topP != null ? { topP: sampling.topP } : {}),
       ...(sampling?.presencePenalty != null ? { presencePenalty: sampling.presencePenalty } : {}),
@@ -224,7 +236,7 @@ export class OpenAICompatAdapter implements Adapter {
     // all when none is left. See local-cap.ts for the policy.
     applyLocalCap(req, { baseURL, explicitMaxTokens: this.opts.maxTokens, window: preflight.window, fit: preflight.fit });
 
-    const { result, cutOffContinuations } = await this.streamTurn(req, preflight, report);
+    const { result, cutOffContinuations } = await this.streamTurn(req, preflight, report, new Set(input.tools.map(t => t.name)));
     const { assembledText, pendingToolCalls, firstError, providerStop, usagePromptTokens, usageCompletionTokens, usageCachedTokens, firstTokenMs } = result;
 
     // Live tool-capability evidence — AFTER the turn settled, gated on the
@@ -353,6 +365,7 @@ export class OpenAICompatAdapter implements Adapter {
     req: ProviderRequest,
     preflight: { window: ContextWindowResolution; fit: RequestFit },
     report: (r: AdapterReport) => void,
+    callable: Set<string>,
   ): Promise<{ result: StreamOnceResult; cutOffContinuations: number }> {
     const { model, baseURL } = this.opts;
     // On a discovered Ollama runtime a cut-off reply is continued from where
@@ -383,7 +396,7 @@ export class OpenAICompatAdapter implements Adapter {
     // Never mine a guard-stopped stream for tool calls — degenerate output
     // must not be able to dispatch anything.
     if (!result.stoppedByGuard && shouldRescueTextToolCalls(baseURL)) {
-      applyToolCallTextFallback(result, report, model, new Set(req.tools.map(t => t.name)));
+      applyToolCallTextFallback(result, report, model, callable);
     }
 
     // Empty-response retry. Some models (qwen2:7b is the canonical offender)

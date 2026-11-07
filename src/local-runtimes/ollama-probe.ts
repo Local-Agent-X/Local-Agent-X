@@ -177,6 +177,7 @@ export const ollamaProbe: LocalRuntimeProbe = {
     if (tools !== null) result.tools = tools;
     const thinking = show ? parseThinkingSpec(show.thinking, show.capabilities) : null;
     if (thinking !== null) result.thinking = thinking;
+    if (typeof show?.parser === "string" && show.parser) result.toolParser = show.parser;
     return result;
   },
 

@@ -173,6 +173,11 @@ describe("ollamaProbe.probeModel", () => {
     });
   });
 
+  it("records the model's tool-call parser when the runtime names one", async () => {
+    stubFetch({ "/api/ps": { models: [] }, "/api/show": { parser: "qwen3.5" } });
+    expect(await ollamaProbe.probeModel(EP, "qwen3.8:27b")).toEqual({ toolParser: "qwen3.5" });
+  });
+
   it("{} when nothing is known — null never becomes an optimistic default", async () => {
     stubFetch({ "/api/ps": { models: [] }, "/api/show": { model_info: { "q.context_length": 262144 } } });
     expect(await ollamaProbe.probeModel(EP, "m")).toEqual({});

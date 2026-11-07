@@ -51,6 +51,9 @@ export interface LocalModel {
   /** Runtime-declared thinking levels (ThinkingSpec). Absent = the runtime
    *  did not say, and a request leaves `think` to the runtime's default. */
   thinking?: ThinkingSpec;
+  /** The runtime's tool-call parser for this model (Ollama /api/show
+   *  `parser`, e.g. "qwen3.5"). Absent = the runtime did not say. */
+  toolParser?: string;
   /**
    * True only when the runtime AUTHORITATIVELY declares this model embeds
    * and cannot chat. Probes must report such models (marked), never drop

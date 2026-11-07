@@ -75,7 +75,7 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   // "always allow" covers the whole tool, since no call reaches a file, a
   // program, a network or a person. A task carries the session that made it,
   // so the open-steps gate scopes "unfinished work" to this conversation.
-  task_create:    { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["tasks"], blurb: { say: "add a task to refactor the parser", does: "Create a task." }, wholeToolGrant: true, reads: ["session"], runControl: true, prompt: "Use for multi-step work. Tasks persist across messages." },
+  task_create:    { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["tasks"], blurb: { say: "add a task to refactor the parser", does: "Create a task." }, wholeToolGrant: true, reads: ["session"], runControl: true, prompt: "Adds one step to this chat's step list. To lay out work with several steps, send the whole plan with update_plan instead." },
   task_get:       { kernel: "internal", risk: "safe", capabilities: [], tags: ["tasks"], blurb: { does: "Get a task's details." }, liveState: "fresh", reads: ["session"] },
   task_list:      { kernel: "internal", risk: "safe", capabilities: [], tags: ["tasks"], blurb: { does: "List tasks." }, liveState: "fresh", reads: ["session"], loop: { discovery: true } },
   task_update:    { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["tasks"], blurb: { does: "Update a task." }, wholeToolGrant: true, reads: ["session"], runControl: true },

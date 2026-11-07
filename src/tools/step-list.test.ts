@@ -98,3 +98,14 @@ describe("isLedgerTool: the agent's own step list, read from the row's tasks tag
     expect(isLedgerTool("edit")).toBe(false);
   });
 });
+
+describe("the prompt's step-list guidance", () => {
+  // The system prompt carries every task tool's steer (Tool Best Practices).
+  // Two tools both told "use for multi-step work" leave a model choosing
+  // between them, and only update_plan is in a capped local model's set.
+  it("sends a multi-step plan to update_plan alone", async () => {
+    const { promptOf } = await import("../tool-registry.js");
+    expect(promptOf("update_plan")).toMatch(/several steps/);
+    expect(promptOf("task_create")).toMatch(/update_plan instead/);
+  });
+});

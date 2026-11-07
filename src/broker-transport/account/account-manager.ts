@@ -79,6 +79,18 @@ const PAIR_POLL_MS = 2000;
 /** Grace after the challenge expiry to catch a pairing created just before it. */
 const PAIR_GRACE_MS = 5000;
 
+/** This desktop's pairings, newest first. The server keeps every pairing a desktop
+ *  has made — a new phone adds a row and the old one stays — so "the" pairing is the
+ *  newest, and a re-pair is done when a row appears that was not there before. Taking
+ *  the FIRST row for this desktop kept a Mac on a July phone after a second phone
+ *  paired with it (2026-11-06): the poll never saw a change and the new phone's
+ *  "couldn't connect" had no desktop waiting for it at the broker. */
+function pairingsOf(pairings: PairingEntry[], deviceId: string): PairingEntry[] {
+  return pairings.filter((p) => p.desktopDeviceId === deviceId).sort((a, b) => b.createdAt - a.createdAt);
+}
+
+const rowKey = (p: PairingEntry) => `${p.pairingId}|${p.phoneDeviceId}`;
+
 export class AgentxosAccountManager {
   private readonly deps: AccountManagerDeps;
   private loginPrompt: LoginPrompt | null = null;
@@ -162,9 +174,7 @@ export class AgentxosAccountManager {
    *  same phone returns the SAME pairing) — so a pre-existing pairing means we ARE paired and
    *  there is nothing to scan. Sets pairedPhoneId + fires onPaired. Returns whether it found one. */
   private async adoptExistingPairing(state: AccountState): Promise<boolean> {
-    const mine = (await this.deps.api.listPairings(state.sessionToken)).find(
-      (p) => p.desktopDeviceId === state.deviceId,
-    );
+    const [mine] = pairingsOf(await this.deps.api.listPairings(state.sessionToken), state.deviceId);
     if (!mine) return false;
     const next = this.deps.updateState({ pairedPhoneId: mine.phoneDeviceId });
     if (next) this.deps.onPaired?.(next);
@@ -189,15 +199,20 @@ export class AgentxosAccountManager {
     try {
       // Already paired server-side? Adopt it instead of issuing a challenge: the poll below
       // would otherwise find the stale pairing on its first tick and "complete" instantly,
-      // tearing the QR down before you could scan it. A forced re-pair instead SNAPSHOTS the
-      // existing row, so the poll only completes when the row changes (a different phone
-      // redeemed) rather than instantly "finding" the pre-existing pairing.
-      let prior: PairingEntry | null = null;
+      // tearing the QR down before you could scan it. A forced re-pair instead SNAPSHOTS
+      // every existing row, so the poll completes only on a row it has not seen — the
+      // pairing the scanning phone just created — never on a pre-existing one.
+      let seen = new Set<string>();
       if (repair) {
-        prior =
-          (await this.deps.api.listPairings(state.sessionToken)).find(
-            (p) => p.desktopDeviceId === state.deviceId,
-          ) ?? null;
+        const rows = pairingsOf(await this.deps.api.listPairings(state.sessionToken), state.deviceId);
+        // Behind the server? A phone that already redeemed this desktop's QR has a row a
+        // re-scan would only return again (redeem is idempotent) — adopt it, no QR.
+        if (rows[0] && rows[0].phoneDeviceId !== state.pairedPhoneId) {
+          const next = this.deps.updateState({ pairedPhoneId: rows[0].phoneDeviceId });
+          if (next) this.deps.onPaired?.(next);
+          return;
+        }
+        seen = new Set(rows.map(rowKey));
       } else if (await this.adoptExistingPairing(state)) return;
       const issued = await this.deps.api.requestPairingChallenge(state.sessionToken, state.deviceId);
       this.pairing = { qrDataUrl: await this.deps.renderQr(this.withKey(issued.qrPayload)), expiresAt: issued.expiresAt };
@@ -205,10 +220,10 @@ export class AgentxosAccountManager {
       const deadline = issued.expiresAt + PAIR_GRACE_MS;
       while (this.deps.now() < deadline) {
         await this.deps.sleep(PAIR_POLL_MS);
-        const pairings = await this.deps.api.listPairings(state.sessionToken);
-        const mine = pairings.find((p) => p.desktopDeviceId === state.deviceId);
-        if (mine && (!prior || mine.pairingId !== prior.pairingId || mine.phoneDeviceId !== prior.phoneDeviceId)) {
-          const next = this.deps.updateState({ pairedPhoneId: mine.phoneDeviceId });
+        const fresh = pairingsOf(await this.deps.api.listPairings(state.sessionToken), state.deviceId)
+          .find((p) => !seen.has(rowKey(p)));
+        if (fresh) {
+          const next = this.deps.updateState({ pairedPhoneId: fresh.phoneDeviceId });
           if (next) this.deps.onPaired?.(next);
           return;
         }
@@ -245,10 +260,11 @@ export class AgentxosAccountManager {
     if (!state) return;
     this.error = null;
     try {
-      const mine = (await this.deps.api.listPairings(state.sessionToken)).find(
-        (p) => p.desktopDeviceId === state.deviceId,
-      );
-      if (mine) await this.deps.api.revokePairing(state.sessionToken, mine.pairingId);
+      // Every row: revoking only the first left a newer phone's pairing live, and the next
+      // sign-in re-adopted it.
+      for (const p of pairingsOf(await this.deps.api.listPairings(state.sessionToken), state.deviceId)) {
+        await this.deps.api.revokePairing(state.sessionToken, p.pairingId);
+      }
       this.deps.updateState({ pairedPhoneId: undefined, pinnedPhone: undefined, pairingSecret: undefined });
     } catch (e) {
       this.error = (e as Error).message;

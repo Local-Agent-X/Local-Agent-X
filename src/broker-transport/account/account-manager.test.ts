@@ -169,6 +169,54 @@ describe("AgentxosAccountManager — pairing", () => {
     expect(manager.status().error).toBeNull();
   });
 
+  // 2026-11-06: the server KEEPS the old row when a second phone pairs, and lists it
+  // first. Taking the first row for this desktop never saw the new phone; the Mac
+  // stayed on the July phone and the new one got "couldn't connect".
+  it("a re-pair adopts the new phone when the server keeps the old pairing listed first", async () => {
+    let calls = 0;
+    const oldRow = PAIRING({ pairingId: "p-july", phoneDeviceId: "phone-s24", createdAt: 1_783_971_854_587 });
+    const newRow = PAIRING({ pairingId: "p-today", phoneDeviceId: "phone-s10", createdAt: 1_794_009_060_490 });
+    const { manager, getState } = harness({ pairings: () => (++calls >= 3 ? [oldRow, newRow] : [oldRow]) });
+    await manager.startLogin();
+    expect(getState()?.pairedPhoneId).toBe("phone-s24");
+    await manager.startPairing({ force: true });
+    expect(getState()?.pairedPhoneId).toBe("phone-s10");
+  });
+
+  it("a re-pair on a desktop behind the server adopts the phone that already paired, without a QR", async () => {
+    let calls = 0;
+    const oldRow = PAIRING({ pairingId: "p-july", phoneDeviceId: "phone-s24", createdAt: 1 });
+    const newRow = PAIRING({ pairingId: "p-today", phoneDeviceId: "phone-s10", createdAt: 2 });
+    // Login saw only July; the S10 then paired while this desktop missed it.
+    const { manager, getState, challengeCount } = harness({ pairings: () => (++calls >= 2 ? [oldRow, newRow] : [oldRow]) });
+    await manager.startLogin();
+    expect(getState()?.pairedPhoneId).toBe("phone-s24");
+    await manager.startPairing({ force: true });
+    expect(getState()?.pairedPhoneId).toBe("phone-s10");
+    expect(challengeCount()).toBe(0);
+  });
+
+  it("Disconnect revokes every pairing of this desktop, so a sign-in re-adopts none", async () => {
+    const { manager, getState } = harness({ pairings: () => [
+      PAIRING({ pairingId: "p-july", phoneDeviceId: "phone-s24", createdAt: 1 }),
+      PAIRING({ pairingId: "p-today", phoneDeviceId: "phone-s10", createdAt: 2 }),
+    ] });
+    await manager.startLogin();
+    await manager.unpair();
+    expect(getState()?.pairedPhoneId).toBeUndefined();
+    await manager.startLogin();
+    expect(getState()?.pairedPhoneId).toBeUndefined();
+  });
+
+  it("signing in adopts this desktop's newest pairing, not the first listed", async () => {
+    const { manager, getState } = harness({ pairings: () => [
+      PAIRING({ pairingId: "p-july", phoneDeviceId: "phone-s24", createdAt: 1 }),
+      PAIRING({ pairingId: "p-today", phoneDeviceId: "phone-s10", createdAt: 2 }),
+    ] });
+    await manager.startLogin();
+    expect(getState()?.pairedPhoneId).toBe("phone-s10");
+  });
+
   it("unforced startPairing while paired stays a no-op", async () => {
     const { manager, challengeCount } = harness({ pairings: () => [PAIRING()] });
     await manager.startLogin();

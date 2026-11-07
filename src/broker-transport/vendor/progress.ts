@@ -4,8 +4,11 @@
 //     `metadata.plan`, so the newest one in a turn is the list;
 //   - its recap: wrap_up's `metadata.wrapUp`, two or three sentences and, when the
 //     next move is the user's, one question with answer buttons that only send their
-//     words as the user's next message.
-// Both ride the tool result's metadata, on the live `tool_end` and on the tool events
+//     words as the user's next message;
+//   - its offers: session_start's `metadata.sessionOffer` (LAX src/tools/
+//     session-start-tool.ts), a separate task as a card the user taps to start it in
+//     a chat of its own (POST /api/sessions/start), linked to this one.
+// All ride the tool result's metadata, on the live `tool_end` and on the tool events
 // of a reloaded history.
 
 import { asRecord, asString } from "./guards.js";
@@ -54,4 +57,15 @@ export function parseWrapUpMetadata(metadata: unknown): WrapUp | null {
   });
   if (actions.length > 0) wrap.actions = actions;
   return wrap;
+}
+
+/** A separate task offered its own chat: the title and the brief that chat starts from. */
+export type SessionOffer = { title: string; brief: string };
+
+/** The offer in a tool result's metadata, or null when it carries none. */
+export function parseSessionOfferMetadata(metadata: unknown): SessionOffer | null {
+  const o = asRecord(asRecord(metadata)?.sessionOffer);
+  const title = asString(o?.title);
+  const brief = asString(o?.brief);
+  return title && brief ? { title, brief } : null;
 }

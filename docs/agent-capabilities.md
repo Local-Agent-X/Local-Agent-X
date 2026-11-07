@@ -99,6 +99,7 @@ demand via tool search and aren't all listed here.)
 - `task_get` — Get a task's details.
 - `update_plan` — Keep the step list the user sees under the reply.
 - `wrap_up` — End a turn that did work with a short recap and, when needed, one question.
+- `session_start` — Offer a separate task its own chat, which runs on its own and reports back.
 
 ### Agents
 
@@ -151,4 +152,4 @@ demand via tool search and aren't all listed here.)
 - `presentation`
 
 ---
-_71 capabilities · 52 with a description · 19 awaiting a blurb (add one to the tool's policy row)._
+_72 capabilities · 53 with a description · 19 awaiting a blurb (add one to the tool's policy row)._

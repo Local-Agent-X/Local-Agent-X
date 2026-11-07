@@ -69,6 +69,10 @@ export interface PendingNotification {
   // correct the deliverable itself. Never "a task finished"; the history
   // dedup ignores it (its `task` is the parent's).
   verification?: { mismatched: number; checked: number; corrected: boolean };
+  // Set when a chat this one started (session_start, session/linked-chat.ts)
+  // finished its turn: `task` is that chat's title, `summary` the end of its
+  // reply. The user can open it; there is no worker op to query.
+  linkedChat?: { sessionId: string; title: string };
 }
 
 const queues = new Map<string, PendingNotification[]>();
@@ -249,6 +253,14 @@ function formatFinishedOps(notifications: PendingNotification[]): string {
       return (
         `${statusEmoji} Sub-agent \`${n.task.slice(0, 80)}\` ${statusPhrase}.\n` +
         `   ${partial ? "" : "Result: "}${preview}${truncatedNote}`
+      );
+    }
+    if (n.linkedChat) {
+      return (
+        `${statusEmoji} The chat "${n.linkedChat.title.slice(0, 80)}" you started ${n.status === "completed" ? "finished its turn" : statusPhrase}. ` +
+        `The user can open it from the chat list; it keeps its own history.
+` +
+        `   Its reply ended: ${n.summary.slice(0, SUMMARY_PREVIEW_CHARS)}`
       );
     }
     const filesLine = n.filesChanged.length > 0

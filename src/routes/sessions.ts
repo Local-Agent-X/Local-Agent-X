@@ -7,7 +7,7 @@ import { isValidSessionId, safeErrorMessage, safeParseBody, jsonResponse } from 
 import { importSession } from "../session/export.js";
 import { handleSessionReadRoutes } from "./session-read.js";
 import { isExcludedFromSessionSummaries, isHiddenFromChatLists } from "../memory/synthetic-sessions.js";
-import { handleSessionFork } from "./sessions-fork.js";
+import { handleSessionBranchRoutes } from "./session-branches.js";
 
 export const handleSessionRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
@@ -82,29 +82,8 @@ export const handleSessionRoutes: RouteHandler = async (method, url, req, res, c
     return true;
   }
 
-  // Fork session (sessions-fork.ts)
-  if (method === "POST" && url.pathname === "/api/sessions/fork") {
-    await handleSessionFork(req, res, ctx);
-    return true;
-  }
-
-  // Get fork tree
-  if (method === "GET" && url.pathname === "/api/sessions/forks") {
-    const sourceId = url.searchParams.get("sessionId") || "";
-    if (!sourceId) { json(400, { error: "sessionId required" }); return true; }
-    const allSessions = ctx.sessionStore.list();
-    const forks: Array<{ id: string; title: string; forkAtIndex: number; createdAt: number }> = [];
-    for (const meta of allSessions) {
-      const s = ctx.sessionStore.load(meta.id);
-      if (s && s.forkedFrom === sourceId) {
-        forks.push({ id: s.id, title: s.title, forkAtIndex: s.forkAtIndex || 0, createdAt: s.createdAt });
-      }
-    }
-    const thisSession = ctx.sessionStore.load(sourceId);
-    const parent = thisSession?.forkedFrom || null;
-    json(200, { forks, parent });
-    return true;
-  }
+  // Sessions made from another: fork, a started chat, the fork tree (session-branches.ts)
+  if (await handleSessionBranchRoutes(method, url, req, res, ctx)) return true;
 
   // Auto-summarize stale sessions
   if (method === "POST" && url.pathname === "/api/sessions/auto-summarize") {

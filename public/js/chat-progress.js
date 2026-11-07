@@ -14,9 +14,14 @@
 // The two tools themselves are bookkeeping, not activity: isProgressTool keeps
 // them out of the "Agent activity" group.
 //
-// External deps (resolved at call time): esc (shared.js), sendMessage (chat-send.js).
+// Also the offers it makes (session_start's metadata.sessionOffer): a separate task
+// as a card the user taps to start it in a chat of its own, linked to this one.
+// The tap is the only thing that starts it (POST /api/sessions/start).
+//
+// External deps (resolved at call time): esc (shared.js), sendMessage (chat-send.js),
+// apiFetch, chats, saveChats, renderSidebar, selectChat, activeChat (chat.js).
 
-const _PROGRESS_TOOLS = new Set(['update_plan', 'wrap_up']);
+const _PROGRESS_TOOLS = new Set(['update_plan', 'wrap_up', 'session_start']);
 
 function isProgressTool(name) {
   return _PROGRESS_TOOLS.has(name);
@@ -82,5 +87,64 @@ function renderWrapUp(wrap) {
     });
     row.appendChild(btn);
   });
+  return el;
+}
+
+// Every offer the turn made, in order.
+function sessionOffersOf(toolEvents) {
+  return (toolEvents || [])
+    .map((t) => t && t.type === 'end' && t.metadata && t.metadata.sessionOffer)
+    .filter((o) => o && typeof o.title === 'string' && o.title && typeof o.brief === 'string' && o.brief);
+}
+
+// chats and activeChat are app-state.js's script-level bindings, not window properties.
+function _chatList() {
+  return typeof chats !== 'undefined' && Array.isArray(chats) ? chats : [];
+}
+
+function _startedChat(originId, title) {
+  return _chatList().find((c) => c && c.startedFrom === originId && c.title === title) || null;
+}
+
+function _openButton(btn, chatId) {
+  btn.textContent = 'Open';
+  btn.disabled = false;
+  btn.onclick = () => { if (typeof window.selectChat === 'function') window.selectChat(chatId); };
+}
+
+function renderSessionOffer(offer) {
+  const el = document.createElement('div');
+  el.className = 'chat-session-offer';
+  el.innerHTML =
+    `<div class="chat-session-offer-head"><span class="chat-session-offer-label">New chat</span> ${esc(offer.title)}</div>` +
+    `<details class="chat-session-offer-brief" open><summary>Brief</summary><div>${esc(offer.brief)}</div></details>` +
+    '<div class="chat-session-offer-row"><button type="button" class="chat-wrapup-action primary">Start</button></div>';
+  const btn = el.querySelector('button');
+  const originId = (typeof activeChat !== 'undefined' && activeChat && activeChat.id) || '';
+  const prior = _startedChat(originId, offer.title);
+  if (prior) { _openButton(btn, prior.id); return el; }
+  btn.onclick = async () => {
+    btn.disabled = true;
+    btn.textContent = 'Starting…';
+    try {
+      const res = await apiFetch('/api/sessions/start', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sessionId: originId, title: offer.title, brief: offer.brief }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);
+      if (!_startedChat(originId, data.title)) {
+        _chatList().unshift({ id: data.sessionId, title: data.title, messages: [], createdAt: Date.now(), updatedAt: Date.now(), startedFrom: originId });
+        saveChats();
+        renderSidebar();
+      }
+      _openButton(btn, data.sessionId);
+    } catch (e) {
+      btn.disabled = false;
+      btn.textContent = 'Start';
+      el.querySelector('.chat-session-offer-row').insertAdjacentHTML('beforeend', `<span class="chat-session-offer-error">Couldn't start it: ${esc(e.message)}</span>`);
+    }
+  };
   return el;
 }

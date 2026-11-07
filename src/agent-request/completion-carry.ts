@@ -37,7 +37,9 @@ function recordLine(n: PendingNotification): string {
     return `- Re-check of the deliverable for "${clip(n.task, TASK_CHARS)}": ${n.verification.mismatched} of ${n.verification.checked} values `
       + (n.verification.corrected ? "were corrected." : "did not match and were left to correct.");
   }
-  const what = n.subAgent ? `Sub-agent ${n.task}` : `"${clip(n.task, TASK_CHARS)}" (op ${n.opId})`;
+  const what = n.subAgent ? `Sub-agent ${n.task}`
+    : n.linkedChat ? `The chat "${clip(n.linkedChat.title, TASK_CHARS)}" this one started (session ${n.linkedChat.sessionId})`
+    : `"${clip(n.task, TASK_CHARS)}" (op ${n.opId})`;
   return `- ${OUTCOME[n.status]}: ${what}. ${clip(n.summary.trim(), SUMMARY_CHARS)}`;
 }
 

@@ -19,7 +19,10 @@ export interface ChatFrameMeta {
   mode?: ChatMode;
 }
 
-export type ChatHandler = (sessionId: string, message: string, attachments: unknown[], meta?: ChatFrameMeta) => void;
+/** Settles when the turn it started has finished (lifecycle.ts awaits the run);
+ *  the socket path does not wait, a chat started from another does
+ *  (session/linked-chat.ts). */
+export type ChatHandler = (sessionId: string, message: string, attachments: unknown[], meta?: ChatFrameMeta) => void | Promise<void>;
 
 // Set by the server to process WS chat messages.
 let chatHandler: ChatHandler | null = null;

@@ -200,6 +200,12 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   // already wrote (tools/code-handoff-tool.ts). Reads two paths it was given,
   // writes nothing and sends nothing off-box: internal and safe. Deferred (no
   // audience): the prompt names it for the rare turn that needs it.
+  // An offer card only: the user's tap starts the chat (routes/sessions-start.ts).
+  session_start: {
+    kernel: "internal", risk: "safe", capabilities: [], tags: [],
+    blurb: { does: "Offer a separate task its own chat, which runs on its own and reports back." },
+    rules: [{ id: "allow-session-start", decision: "allow", reason: "Offer a new chat on the reply (no I/O sink; the user starts it)", priority: 50 }],
+  },
   code_handoff: {
     kernel: "internal", risk: "safe", capabilities: [], tags: [],
     pathArgs: [{ arg: "folder", action: "read" }, { arg: "brief", action: "read" }],

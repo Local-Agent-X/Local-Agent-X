@@ -162,6 +162,12 @@ function composeNudgeText(items: PendingNotification[]): string {
       ? `Heads up — I re-checked the figures in what I built against their sources and corrected ${count} that didn't match.`
       : `Heads up — I re-checked the figures in what I built against their sources; ${count} don't match and I couldn't correct them automatically. Want me to go through them?`;
   }
+  if (items.length === 1 && items[0].linkedChat) {
+    const n = items[0];
+    return n.status === "completed"
+      ? `Heads up — the "${n.linkedChat!.title.slice(0, 60)}" chat finished its turn. Open it from your chats, or want a rundown here?`
+      : `Heads up — the "${n.linkedChat!.title.slice(0, 60)}" chat hit a snag. Want me to look at what went wrong?`;
+  }
   if (items.length === 1) {
     const n = items[0];
     const taskPreview = n.task.slice(0, 80).trim() + (n.task.length > 80 ? "…" : "");

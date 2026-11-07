@@ -20,7 +20,7 @@
 //   - renderApproval                           (chat-render-approvals.js)
 //   - fileChangesOf, renderFileChangesCard     (chat-file-changes.js)
 //   - cardsOf, renderChatCards                 (chat-cards.js)
-//   - isProgressTool, planOf, wrapUpOf, renderPlanList, renderWrapUp (chat-progress.js)
+//   - isProgressTool, planOf, wrapUpOf, renderPlanList, renderWrapUp, sessionOffersOf, renderSessionOffer (chat-progress.js)
 
 // Build the in-flight assistant bubble from ChatStreamStore state into `parent`.
 // `parent` is either the live #messages container (renderMessages full-render)
@@ -437,6 +437,7 @@ function _renderAssistantToolArtifacts(bodyEl, data) {
       if (steps) bodyEl.appendChild(renderPlanList(steps));
       const wrap = wrapUpOf(allEvents);
       if (wrap) bodyEl.appendChild(renderWrapUp(wrap));
+      for (const offer of sessionOffersOf(allEvents)) bodyEl.appendChild(renderSessionOffer(offer));
     } catch (toolRenderErr) { console.error('[chat] tool card render error:', toolRenderErr); }
   }
   // Chips attach to the last tool card matching the chip's emit time. The

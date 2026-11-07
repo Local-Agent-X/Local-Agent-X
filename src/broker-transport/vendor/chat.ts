@@ -10,7 +10,7 @@ import { asNumber, asRecord, asString } from "./guards.js";
 import { parseApprovalEvent } from "./approval.js";
 import { parseFileChange } from "./file-change.js";
 import { parseCardMetadata, type ChatCard } from "./card.js";
-import { parsePlanMetadata, parseWrapUpMetadata, type PlanStep, type WrapUp } from "./progress.js";
+import { parsePlanMetadata, parseSessionOfferMetadata, parseWrapUpMetadata, type PlanStep, type SessionOffer, type WrapUp } from "./progress.js";
 import type { FileChange } from "./file-change.js";
 import type { ApprovalRequestedEvent, ApprovalResolvedEvent, ApprovalResponseFrame, ApprovalTimeoutEvent } from "./approval.js";
 
@@ -60,6 +60,8 @@ export type ToolEndEvent = {
   plan?: PlanStep[];
   /** The turn's closing recap (wrap_up), read from `metadata.wrapUp`. */
   wrapUp?: WrapUp;
+  /** A separate task offered its own chat (session_start), read from `metadata.sessionOffer`. */
+  sessionOffer?: SessionOffer;
 };
 /** The turn finished. `opId` names it, so a resubscribe can say it already holds it. */
 export type DoneEvent = { type: "done"; usage: TurnUsage; opId?: string };
@@ -164,6 +166,8 @@ function parseToolEnd(raw: Record<string, unknown>): ToolEndEvent | null {
   if (plan !== null) ev.plan = plan;
   const wrapUp = parseWrapUpMetadata(raw.metadata);
   if (wrapUp !== null) ev.wrapUp = wrapUp;
+  const sessionOffer = parseSessionOfferMetadata(raw.metadata);
+  if (sessionOffer !== null) ev.sessionOffer = sessionOffer;
   return ev;
 }
 

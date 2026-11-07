@@ -155,6 +155,8 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   update_plan:     ["main-chat", "spawned-agent"],
   // The recap box is for the person reading the chat; a worker's result is read by its caller.
   wrap_up:         ["main-chat"],
+  // An offer the person reading the chat taps; a worker hands work back to its caller instead.
+  session_start:   ["main-chat"],
 
   // Protocols (collapsed tool, src/protocols/protocol-tool.ts) and MCP
   // administration: demoted to deferred 2026-07-13 — zero fires in 4 wks.

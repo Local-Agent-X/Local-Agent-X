@@ -99,6 +99,21 @@ export function releaseContainerSessionLineage(op: Op): void {
   }
 }
 
+/**
+ * What a child session read, ingested or created follows its result back into
+ * the session that started it: taint, the external-ingestion mark and task
+ * artifacts. Returns what moved, for the caller's log line. Used at a
+ * delegated op's terminal (below) and when a chat started from another
+ * finishes its turn (session/linked-chat.ts).
+ */
+export function returnSessionLineage(childSessionId: string, parentSessionId: string): { taints: number; ingested: boolean; artifacts: number } {
+  return {
+    taints: propagateTaint(childSessionId, parentSessionId),
+    ingested: propagateExternalIngestion(childSessionId, parentSessionId),
+    artifacts: propagateTaskArtifacts(childSessionId, parentSessionId),
+  };
+}
+
 /** Terminal cleanup for an op whose descriptor names a parent session. A
  *  no-op for every other op shape (chat turns, app builds, unattended
  *  workers, harness verifiers). Never throws: the op is already terminal. */
@@ -108,9 +123,7 @@ export function releaseDelegatedSessionLineage(op: Op): void {
   const { sessionId, parentSessionId } = descriptor;
   if (!sessionId || !parentSessionId || sessionId === parentSessionId) return;
   try {
-    const taints = propagateTaint(sessionId, parentSessionId);
-    const ingested = propagateExternalIngestion(sessionId, parentSessionId);
-    const artifacts = propagateTaskArtifacts(sessionId, parentSessionId);
+    const { taints, ingested, artifacts } = returnSessionLineage(sessionId, parentSessionId);
     if (taints > 0 || ingested || artifacts > 0) {
       logger.info(`[lineage] ${op.id} → ${parentSessionId}: ${taints} taint label(s), ingestion ${ingested ? "marked" : "clean"}, ${artifacts} artifact(s)`);
     }

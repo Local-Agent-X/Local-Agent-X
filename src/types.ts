@@ -247,6 +247,10 @@ export interface Session {
   forkedFrom?: string;
   /** Message index at which the fork was taken */
   forkAtIndex?: number;
+  /** The chat that offered this one (session_start, session/linked-chat.ts):
+   *  it is told when this chat finishes its first turn. Not a fork: this chat
+   *  starts from a brief, not from that chat's transcript. */
+  startedFrom?: string;
   /**
    * Project this chat is nested under, if any. Durable home for the
    * chat→project link (previously client-localStorage-only, which made it

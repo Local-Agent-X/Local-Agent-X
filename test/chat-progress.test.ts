@@ -18,7 +18,10 @@ type Progress = {
   wrapUpOf: (events: unknown[]) => Wrap | null;
   renderPlanList: (steps: Step[]) => HTMLElement;
   renderWrapUp: (wrap: Wrap) => HTMLElement;
+  sessionOffersOf: (events: unknown[]) => Offer[];
+  renderSessionOffer: (offer: Offer) => HTMLElement;
 };
+type Offer = { title: string; brief: string };
 
 let p: Progress;
 
@@ -26,7 +29,7 @@ beforeEach(() => {
   g.esc = (s: unknown) => String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/"/g, "&quot;");
   const src = readFileSync(join(here, "../public/js/chat-progress.js"), "utf8");
   // eslint-disable-next-line no-new-func
-  p = new Function(`${src}; return { isProgressTool, planOf, wrapUpOf, renderPlanList, renderWrapUp };`)() as Progress;
+  p = new Function(`${src}; return { isProgressTool, planOf, wrapUpOf, renderPlanList, renderWrapUp, sessionOffersOf, renderSessionOffer };`)() as Progress;
   document.body.innerHTML = '<textarea id="msg-input"></textarea>';
 });
 
@@ -74,5 +77,47 @@ describe("the recap", () => {
     expect(p.isProgressTool("wrap_up")).toBe(true);
     expect(p.isProgressTool("task_create")).toBe(false);
     expect(p.wrapUpOf([{ type: "end", name: "wrap_up", metadata: { wrapUp: { recap: "Done." } } }])).toEqual({ recap: "Done." });
+  });
+});
+
+describe("a separate task offered its own chat", () => {
+  const offer = { title: "Fix <b>Recents</b>", brief: "The sheet overlaps the dock. <img src=x onerror=alert(1)>" };
+
+  it("lists every offer the turn made, and keeps session_start out of the activity group", () => {
+    const events = [
+      { type: "end", name: "session_start", metadata: { sessionOffer: offer } },
+      { type: "end", name: "edit", metadata: {} },
+      { type: "end", name: "session_start", metadata: { sessionOffer: { title: "Docs", brief: "Update the README." } } },
+    ];
+    expect(p.sessionOffersOf(events).map((o) => o.title)).toEqual(["Fix <b>Recents</b>", "Docs"]);
+    expect(p.isProgressTool("session_start")).toBe(true);
+  });
+
+  it("shows the title and the whole brief as text, never as markup", () => {
+    const el = p.renderSessionOffer(offer);
+    expect(el.querySelector("b")).toBeNull();
+    expect(el.querySelector("img")).toBeNull();
+    expect(el.textContent).toContain("Fix <b>Recents</b>");
+    expect(el.querySelector("details")!.hasAttribute("open")).toBe(true);
+  });
+
+  it("starts the chat on a tap, adds it to the list, then opens it", async () => {
+    const chats: Array<Record<string, unknown>> = [];
+    g.chats = chats;
+    g.activeChat = { id: "origin" };
+    g.saveChats = vi.fn();
+    g.renderSidebar = vi.fn();
+    const select = vi.fn();
+    g.selectChat = select;
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ ok: true, sessionId: "task-1", title: offer.title }) }));
+    g.apiFetch = fetchMock;
+    const el = p.renderSessionOffer(offer);
+    const btn = el.querySelector("button")!;
+    btn.click();
+    await vi.waitFor(() => expect(btn.textContent).toBe("Open"));
+    expect(JSON.parse(String((fetchMock.mock.calls[0] as unknown[])[1] && ((fetchMock.mock.calls[0] as unknown[])[1] as { body: string }).body))).toEqual({ sessionId: "origin", title: offer.title, brief: offer.brief });
+    expect(chats).toEqual([expect.objectContaining({ id: "task-1", startedFrom: "origin" })]);
+    btn.click();
+    expect(select).toHaveBeenCalledWith("task-1");
   });
 });

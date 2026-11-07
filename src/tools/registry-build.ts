@@ -47,6 +47,7 @@ import { wrapUpTool } from "./wrap-up.js";
 import { planTools } from "./plan-tools.js";
 import { askUserTool } from "./ask-user-tool.js";
 import { codeHandoffTool } from "./code-handoff-tool.js";
+import { sessionStartTool } from "./session-start-tool.js";
 import { selfEditTool } from "./self-edit-tool.js";
 import { runBuildPlanTool } from "../auto-build/tool.js";
 import { startAppBuildTool, finalizeAppBuildTool } from "../auto-build/app-build-tool.js";
@@ -63,7 +64,7 @@ const _toolSearchTool = createToolSearchTool(unifiedRegistry);
 export const allTools: ToolDefinition[] = applyPrompts([
   readTool, writeTool, editTool, editLinesTool, multiEditTool, bulkReplaceTool, deleteFileTool, restoreFileTool, bashTool, webFetchTool, comparePagesTool,
   globTool, grepTool, structuralSearchTool, reviewChangesTool, webSearchTool, imageSearchTool, _toolSearchTool,
-  selfEditTool, recallTool, askUserTool, codeHandoffTool, runBuildPlanTool, startAppBuildTool, finalizeAppBuildTool,
+  selfEditTool, recallTool, askUserTool, codeHandoffTool, sessionStartTool, runBuildPlanTool, startAppBuildTool, finalizeAppBuildTool,
   buildPlanStatusTool, buildPlanResumeTool,
   viewImageTool, sendVideoTool, sendImageTool, showCardTool, sendFileTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool, computerTool,
   transcribeMediaTool, readVideoFramesTool,

@@ -8,6 +8,7 @@ import { getLaxDir } from "../lax-data-dir.js";
 import type { SandboxMode } from "./types.js";
 import { isSeatbeltAvailable, seatbeltProfileLoads, wrapForSeatbelt } from "./seatbelt.js";
 import { isBwrapAvailable, bwrapEnforces, bwrapGuardedRuns, wrapForBwrap } from "./bwrap.js";
+import { watchMissingPersistence, type PersistenceWatch } from "./created-persistence.js";
 import { currentShellEgressBridge } from "../net/shell-egress-proxy.js";
 import { onWinCageProofSettled, resolveWinCageHelper, winCageEnforces, winCageEnforcesSync, winCageProbePending, winCageProofView, winCageUnusableReason, wrapForWinCage } from "./win-cage.js";
 import { ensureWinCageGrantsSync, WinCageGrantFailedError, WinCageGrantPendingError } from "./win-cage-grants.js";
@@ -276,6 +277,16 @@ export function winCageGrantView(): { grantPending?: true; grantFailure?: string
     throw e;
   }
   return {};
+}
+
+/** The watch for login startup locations a caged command may create where the
+ *  cage could not bind them (created-persistence.ts): only under bwrap, which
+ *  cannot deny creating a file that does not exist. Null under any other cage,
+ *  each of which denies the creation itself. */
+export function watchCreatedPersistence(): PersistenceWatch | null {
+  if (process.platform !== "linux" || !isBwrapAvailable()) return null;
+  const mode = getSandboxStatus().effectiveMode;
+  return mode === "bwrap" || mode === "guarded" ? watchMissingPersistence() : null;
 }
 
 /**

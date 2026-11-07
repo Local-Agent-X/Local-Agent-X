@@ -13,14 +13,14 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1941 non-test source files · 84 oversized · 256 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1942 non-test source files · 84 oversized · 256 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 176 | 29 | XL | 1 |
-| `src/security/` | 159 | 60 | XL | 2 |
+| `src/security/` | 160 | 60 | XL | 2 |
 | `src/tools/` | 127 | 231 | XL | 9 |
 | `src/tool-execution/` | 89 | 84 | XL | 2 |
 | `src/workspace/` | 86 | 3 | M |  |
@@ -43,7 +43,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/agent-request/` | 24 | 16 | L | 3 |
 | `src/classifiers/` | 24 | 16 | L |  |
 | `src/app-runtime/` | 23 | 12 | M |  |
-| `src/sandbox/` | 23 | 15 | L | 1 |
+| `src/sandbox/` | 23 | 16 | L | 1 |
 | `src/broker-transport/` | 22 | 48 | XL |  |
 | `src/desktop-contract/` | 21 | 10 | M |  |
 | `src/protocols/` | 21 | 52 | XL |  |

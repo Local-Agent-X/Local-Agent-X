@@ -28,7 +28,7 @@ import { spawn, type ChildProcessByStdio } from "node:child_process";
 import { statSync } from "node:fs";
 import { extname, isAbsolute, resolve } from "node:path/win32";
 import type { Readable } from "node:stream";
-import { awaitSandboxProof, ensureWinCageGrants, getSandboxMode, wrapSpawnForSandbox, type SandboxMode } from "../sandbox/index.js";
+import { awaitSandboxProof, ensureWinCageGrants, getSandboxMode, watchCreatedPersistence, wrapSpawnForSandbox, type SandboxMode } from "../sandbox/index.js";
 import { underUserProfile } from "../sandbox/win-cage.js";
 import { winCageReadGrants } from "../sandbox/win-cage-grants.js";
 import { killProcessGroup } from "../process-tree-kill.js";
@@ -117,13 +117,18 @@ function program(spec: CagedSpawnSpec, env: Record<string, string>, cwd: string,
 
 function launch(file: string, args: string[], env: Record<string, string>, opts: Pick<CagedSpawnOptions, "cwd" | "detached">): CagedChild {
   const wrapped = wrapSpawnForSandbox(file, args, env);
-  return spawn(wrapped.cmd, wrapped.args, {
+  // Linux's cage cannot stop a missing login startup file being created, so
+  // one the command created is moved aside when it exits.
+  const persistence = watchCreatedPersistence();
+  const child = spawn(wrapped.cmd, wrapped.args, {
     env,
     cwd: opts.cwd,
     windowsHide: true,
     detached: opts.detached ?? false,
     stdio: ["ignore", "pipe", "pipe"],
   });
+  if (persistence) child.once("exit", () => persistence.settle());
+  return child;
 }
 
 /** Step 3, awaited: the trusted shell's grants, on the Windows cage only. */

@@ -76,6 +76,10 @@ export const LAX_DATA_CATALOG: readonly LaxDataEntry[] = [
   // The repository the sync heartbeat pushes memory and chats to over git,
   // a channel the egress gate never sees.
   ...at("blocked", "decides where sync sends your memory and chats", "sync-config.json"),
+  // The paired phone's push token and the key that seals its alerts: a write
+  // here points every inbox alert at another device, and only the phone app
+  // registers or unregisters one (phone-push/index.ts).
+  ...at("blocked", "decides which phone the agent's alerts go to, and holds the key that seals them", "phone-push.json"),
 
   // Read back as instructions the app carries out on this computer.
   ...at("card", "runs commands on every tool call", "hooks.json"),

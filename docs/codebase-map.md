@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1942 non-test source files · 84 oversized · 257 nearing the size cap.
+**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 1947 non-test source files · 84 oversized · 257 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -33,27 +33,27 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/tool-policy/` | 47 | 21 | L |  |
 | `src/local-runtimes/` | 45 | 26 | XL | 1 |
 | `src/threat/` | 43 | 13 | L |  |
-| `src/util/` | 42 | 3 | S |  |
+| `src/util/` | 43 | 3 | S |  |
+| `src/chat-ws/` | 37 | 23 | L |  |
 | `src/auth/` | 36 | 11 | L |  |
-| `src/chat-ws/` | 36 | 23 | L |  |
 | `src/agency/` | 30 | 22 | L |  |
 | `src/context-manager/` | 29 | 15 | M |  |
 | `src/agent-store/` | 28 | 7 | M | 1 |
+| `src/broker-transport/` | 26 | 49 | XL |  |
 | `src/context/` | 26 | 10 | M |  |
 | `src/agent-request/` | 24 | 16 | L | 3 |
 | `src/classifiers/` | 24 | 16 | L |  |
 | `src/app-runtime/` | 23 | 12 | M |  |
 | `src/sandbox/` | 23 | 16 | L | 1 |
-| `src/broker-transport/` | 22 | 48 | XL |  |
 | `src/desktop-contract/` | 21 | 10 | M |  |
 | `src/protocols/` | 21 | 52 | XL |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
 | `src/server/` *(entrypoint)* | 19 | 59 | XL | 5 |
 | `src/autonomy/` | 18 | 5 | M |  |
 | `src/agents/` | 17 | 13 | L |  |
+| `src/inbox/` | 17 | 5 | M |  |
 | `src/net/` | 17 | 11 | L |  |
 | `src/anthropic-client/` | 15 | 22 | L | 2 |
-| `src/inbox/` | 15 | 5 | M |  |
 | `src/voice/` | 15 | 77 | XL | 1 |
 | `src/cognition/` | 14 | 35 | XL | 1 |
 | `src/cron/` | 14 | 14 | L |  |
@@ -86,6 +86,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/conversation/` | 2 | 3 | M |  |
 | `src/llm-dispatch/` | 2 | 2 | M |  |
 | `src/manifest-generator/` | 2 | 8 | M |  |
+| `src/phone-push/` | 2 | 4 | S |  |
 | `src/types/` | 2 | 3 | S |  |
 | `src/pricing/` | 1 | 1 | S |  |
 

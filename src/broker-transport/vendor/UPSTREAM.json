@@ -3,7 +3,7 @@
   "files": {
     "protocol.ts": {
       "upstream": "packages/protocol/src/index.ts",
-      "sha256": "b0305aeca21c55b7b2768816700ea643c7039fd88e8fd0eadec6893ab5346554"
+      "sha256": "4147877eec6745fbb6ad4d4ffb106d7b2932db93ffe3e101e87f451b820d7f3a"
     },
     "guards.ts": {
       "upstream": "packages/protocol/src/guards.ts",
@@ -67,7 +67,7 @@
     },
     "inbox.ts": {
       "upstream": "packages/protocol/src/inbox.ts",
-      "sha256": "b2b0d4e16cdb327ca6ecbc633e83cfd8707ed7b43cf2cf8318741066a0157fec"
+      "sha256": "e0632aa074f9418bbcab2527602f321e43dfa88b570aa45507eb1a61e47526f3"
     },
     "account-api.ts": {
       "upstream": "packages/client/src/account-api.ts",
@@ -104,6 +104,10 @@
     "progress.ts": {
       "upstream": "packages/protocol/src/progress.ts",
       "sha256": "49c60102cb706da22ffa8765314dcd97beb8a983c62f1ee5b5b9bb3a97ae41ba"
+    },
+    "push.ts": {
+      "upstream": "packages/protocol/src/push.ts",
+      "sha256": "149352f014b0a73569c6c3f3e1ff2cf69a0129b11ab32bc8aae50bef3a4df953"
     }
   }
 }

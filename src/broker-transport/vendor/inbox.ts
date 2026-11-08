@@ -17,7 +17,8 @@ import { asNumber, asRecord, asString, type Rec } from "./guards.js";
  *  result link. `update`: a newer desktop version. `notice`: a one-time notice worth keeping
  *  (a default the app changed). A kind this build does not know arrives as `notice`. */
 export type InboxItemKind = "approval" | "agent-message" | "job" | "update" | "notice";
-const KINDS: readonly string[] = ["approval", "agent-message", "job", "update", "notice"];
+export const INBOX_ITEM_KINDS: readonly InboxItemKind[] = ["approval", "agent-message", "job", "update", "notice"];
+const KINDS: readonly string[] = INBOX_ITEM_KINDS;
 
 /** How an approval was answered. `failed`: the user said yes but the call could not run. */
 export type InboxResolution = "approved" | "declined" | "failed";

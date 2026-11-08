@@ -30,6 +30,7 @@ import { clearSoftPlanMode } from "../tools/plan-tools.js";
 import { handleAgentRedirect, handleAgentControl } from "./agent-controls.js";
 import { sendWorkersSnapshot } from "./workers-snapshot.js";
 import { handleInboxFrame } from "./inbox-frames.js";
+import { handlePushFrame } from "../phone-push/index.js";
 import { resolveDurableApproval } from "./approval-durable-resolve.js";
 import type { ScreenAttachment } from "../screen-stream/index.js";
 import { handleProcessRelayAck } from "./process-relay-router.js";
@@ -185,6 +186,8 @@ export function attachMessageRouter(ctx: RouterContext): void {
 
     // The phone's inbox: inbox_list / inbox_read / inbox_act.
     if (await handleInboxFrame(ws, msg)) return;
+    // The phone's alerts: push_register / push_unregister.
+    if (handlePushFrame(ws, msg)) return;
   });
 }
 

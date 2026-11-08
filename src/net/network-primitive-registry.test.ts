@@ -96,6 +96,7 @@ const ACCOUNT_PHONE_AND_CHANNELS: readonly Registered[] = [
   { file: "src/broker-transport/vendor/account-api.ts", uses: ["outbound"], why: "the account API (device login, registration, pairing); vendored wire contract" },
   { file: "src/screen-stream/peer.ts", uses: ["outbound"], why: "WebRTC to the paired phone (screen stream), relayed through the broker's TURN" },
   { file: "src/voice/voice-peer.ts", uses: ["outbound"], why: "WebRTC to the paired phone (voice), relayed through the broker's TURN" },
+  { file: "src/phone-push/send.ts", uses: ["outbound"], why: "the paired phone's alerts, through Expo's push service: data-only, sealed with a key only the phone holds" },
   { file: "src/telegram-bridge/api.ts", uses: ["outbound"], why: "the Telegram Bot API; telegram_send is confined to the owner's authorized chats and judged at dispatch" },
   { file: "src/telegram-bridge/inbound.ts", uses: ["outbound"], why: "downloads an inbound voice note from Telegram's file endpoint" },
   { file: "src/whatsapp-bridge/index.ts", uses: ["outbound"], why: "the WhatsApp Web session; whatsapp_send is confined to the owner's authorized numbers and judged at dispatch" },

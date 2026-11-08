@@ -5,6 +5,7 @@
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { createLogger } from "../logger.js";
+import { EventBus } from "../event-bus.js";
 import { createInboxStore, type InboxStore } from "./store.js";
 import type { InboxCounts, InboxFrame, InboxInput, InboxItem, StoredInboxItem } from "./types.js";
 
@@ -56,6 +57,8 @@ export function postToInbox(input: InboxInput): InboxItem | null {
       broadcast({ type: "inbox_item", item: view, created, ...store.counts() })
         .catch((e) => logger.warn(`[inbox] live frame not sent: ${(e as Error).message}`));
     }
+    // A new item is news beyond the open tabs: the phone alerts hear it here.
+    if (created) void EventBus.emit("inbox:posted", { item: view });
     return view;
   } catch (e) {
     logger.warn(`[inbox] could not record "${input.title}": ${(e as Error).message}`);

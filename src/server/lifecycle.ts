@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { setupChatWebSocket } from "../chat-ws/index.js";
 import { setInboxAnswerer } from "../chat-ws/inbox-frames.js";
 import { actOnInbox, mutateInbox } from "../routes/inbox.js";
+import { startPhonePush } from "../phone-push/index.js";
 import { runSecurityAudit, printAuditReport } from "../security/layer/index.js";
 import { startAriKernel } from "../ari-kernel/index.js";
 import { getSharedAuditTrail } from "../threat/audit-trail.js";
@@ -92,6 +93,8 @@ export function wireWsChat(deps: {
     mutate: (action, id) => mutateInbox(buildCtx(), action, id) !== null,
     act: (id, action) => actOnInbox(buildCtx(), id, action),
   });
+  // A new inbox item also rings the phones that asked for its kind.
+  startPhonePush();
   chatWs.onChat(async (sessionId, message, attachments, meta) => {
     const _imgCount = (attachments || []).filter((a: any) => a?.isImage).length;
     console.log(`[chat-diag] lifecycle onChat sess=${sessionId.slice(-8)} len=${message.length}`);

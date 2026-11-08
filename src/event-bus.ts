@@ -9,6 +9,7 @@
 
 import { createLogger } from "./logger.js";
 import type { AgentResultEvent, AgentSpawnEvent } from "./server/handler-events-agent-result.js";
+import type { InboxItem } from "./inbox/types.js";
 
 const log = createLogger("event-bus");
 
@@ -27,6 +28,9 @@ export interface EventTopics {
    *  restored (agent-store/project-store.ts). Consumer: the project
    *  documents index (memory/project-docs/service.ts). */
   "projects:changed": Record<string, never>;
+  /** A new item reached the user inbox (inbox/index.ts postToInbox).
+   *  Consumer: the phone alerts (phone-push/index.ts). */
+  "inbox:posted": { item: InboxItem };
 }
 
 export type EventName = keyof EventTopics;
@@ -37,7 +41,7 @@ export type EventPattern = `${string}:*`;
  *  EventTopics in both directions. */
 export const EVENT_TOPICS = [
   "handler:agent-spawn", "handler:agent-result", "handler:agent-output", "handler:agent-redirect", "ui:browser",
-  "projects:changed",
+  "projects:changed", "inbox:posted",
 ] as const satisfies readonly EventName[];
 type MissingTopic = Exclude<EventName, (typeof EVENT_TOPICS)[number]>;
 const _everyTopicListed: MissingTopic extends never ? true : never = true;

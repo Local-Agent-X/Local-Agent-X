@@ -37,6 +37,14 @@ export function inboxAgentEscalation(e: {
   });
 }
 
+/** The agent writing to the user from a run with no chat in front of them
+ *  (a reminder from a scheduled mission, a result they asked to be told
+ *  about): the notify_user tool. Pinned until they read it and mark it done;
+ *  the phone rings for it when they turned on "Your agent writes to you". */
+export function inboxAgentNote(n: { title: string; body: string }): boolean {
+  return postToInbox({ kind: "agent-message", title: n.title, body: n.body, needsYou: true }) !== null;
+}
+
 export type JobOutcome = "completed" | "partial" | "failed" | "cancelled";
 
 const OUTCOME_PHRASE: Record<JobOutcome, string> = {

@@ -12,6 +12,14 @@ import type { ToolDefinition, ToolResult } from "../types.js";
 import { blocked } from "../tools/result-helpers.js";
 import { agentMissionRefusal } from "./job-authority.js";
 import { grantSecretPlanFromChat, SECRET_PLAN_PARAMETER } from "./secret-plan-card.js";
+import { inboxAgentNote } from "../inbox/producers.js";
+
+/** How a mission tells the user something at run time: the line every mission
+ *  prompt that should reach the user is written to use (mission_schedule_create). */
+export const NOTIFY_USER_GUIDANCE =
+  "A reminder, or anything the user should hear when the mission runs, goes to them with notify_user " +
+  "(their inbox, and their phone rings for it): write the prompt as 'Call notify_user with title \"Reminder: ...\"'. " +
+  "Use telegram_send or whatsapp_send only when the user asked for that channel.";
 
 const refused = (reason: string): ToolResult => blocked(reason, {
   layer: "job-authority",
@@ -39,8 +47,37 @@ const notFound = (ref: unknown): ToolResult => ({
   isError: true,
 });
 
+/** notify_user: the agent writes to the user in the app from a run with no
+ *  chat in front of them. Registered with the missions because a scheduled
+ *  run is where it is needed; any run whose audience has it may call it. */
+function notifyUserTool(): ToolDefinition {
+  return {
+    name: "notify_user",
+    description:
+      "Write to the user in the app: the message lands in their inbox as 'Your agent writes to you', and their phone rings " +
+      "if they turned that alert on. Use it when a scheduled or background run has something the user should see now: a " +
+      "reminder, or a result they asked to be told about. 'title' is the one line the phone shows; 'message' is optional detail.",
+    parameters: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "One short line, e.g. \"Reminder: feed the cat\"" },
+        message: { type: "string", description: "Optional detail under the title" },
+      },
+      required: ["title"],
+    },
+    async execute(args) {
+      const title = typeof args.title === "string" ? args.title.trim() : "";
+      if (!title) return { content: "notify_user needs a 'title': the line the user reads.", isError: true };
+      const body = typeof args.message === "string" ? args.message.trim() : "";
+      if (!inboxAgentNote({ title, body })) return { content: "The message could not be recorded in the user's inbox.", isError: true };
+      return { content: `Sent to the user: "${title}".` };
+    },
+  };
+}
+
 export function createCronTools(cron: CronService): ToolDefinition[] {
   return [
+    notifyUserTool(),
     {
       name: "mission_schedule_list",
       description: "List all scheduled missions",
@@ -57,7 +94,7 @@ export function createCronTools(cron: CronService): ToolDefinition[] {
     {
       name: "mission_schedule_create",
       compactDescription: "Schedule a recurring mission: `schedule` is an interval ('5m', '1h') or cron ('*/5 * * * *'); `prompt` runs each time; same name updates the job. Each run is a full billed session — pick the longest interval that works.",
-      description: "Schedule a recurring mission. Schedule can be an interval ('5m', '1h', '30s') or cron expression ('*/5 * * * *'). Prompt is what the agent will execute each run. If a job with the same name exists, it will be updated rather than duplicated. Each run is a fresh full-context session billed at the job's model — pick the longest interval that still meets the need, and reserve tight intervals (under ~15m) for genuinely time-sensitive missions.",
+      description: `Schedule a recurring mission. Schedule can be an interval ('5m', '1h', '30s') or cron expression ('*/5 * * * *'). Prompt is what the agent will execute each run. If a job with the same name exists, it will be updated rather than duplicated. Each run is a fresh full-context session billed at the job's model — pick the longest interval that still meets the need, and reserve tight intervals (under ~15m) for genuinely time-sensitive missions. ${NOTIFY_USER_GUIDANCE}`,
       parameters: {
         type: "object",
         properties: {

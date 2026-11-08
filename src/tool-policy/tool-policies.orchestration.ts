@@ -49,6 +49,9 @@ export const TOOL_POLICIES_ORCHESTRATION: Record<string, ToolPolicyRow> = {
   mission_schedule_update:  { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["voice-fast"], reads: ["session"] },
   mission_schedule_toggle:  { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["voice-fast"], blurb: { does: "Enable/disable a scheduled mission." } },
   mission_schedule_reports: { kernel: "internal", risk: "safe", capabilities: [], tags: ["voice-fast"] },
+  // The agent writes to the user in the app (inbox, phone alert): a reminder
+  // from a scheduled mission. Delivers only to the user's own inbox.
+  notify_user:              { kernel: "internal", risk: "safe", capabilities: [], tags: [], destination: [{ to: "user" }], rules: [{ id: "allow-notify-user", decision: "allow", reason: "Writes to the user's own inbox (and their phone alert); nobody else receives it", priority: 50 }] },
 
   // ── MCP administration ──
   // Adds + connects an external MCP server: writes ~/.lax/mcp.json and spawns

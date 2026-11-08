@@ -75,6 +75,9 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   // interactive path is keyword-routed (tool-filter.ts: telegram/whatsapp
   // rules) after zero main-chat fires in 4 wks of telemetry (2026-07-13).
   telegram_send:  ["operator", "spawned-agent"],
+  // The in-app way a scheduled or background run writes to the user (a
+  // reminder): their inbox, and the phone alert for "Your agent writes to you".
+  notify_user:    ["operator", "spawned-agent"],
   whatsapp_send:  ["operator", "spawned-agent"],
   // Platform self-management — scheduled runs (nightly update check) keep
   // these eager; interactive access is keyword-routed (restart/update rules)

@@ -33,30 +33,12 @@ export async function runJob(
   if (!svc.executeHandler) return;
   const scheduledAt = new Date().toISOString();
 
-  if (svc.running.has(job.id)) {
-    recordSkip(svc, job, scheduledAt, opts.manual, "previous run still active");
-    logger.warn(`[cron] Job ${job.name} (${job.id}) skipped — prior run still active`);
-    return;
-  }
-
-  if (svc.running.size >= svc.settings.maxConcurrent) {
-    const count = (svc.concurrencyDeferCount.get(job.id) || 0) + 1;
-    if (count > 3) {
-      svc.concurrencyDeferCount.delete(job.id);
-      recordSkip(svc, job, scheduledAt, opts.manual, `concurrency limit ${svc.settings.maxConcurrent} full after 3 retries`);
-      logger.error(`[cron] Job ${job.name} (${job.id}) skipped — concurrency limit ${svc.settings.maxConcurrent} still full after 3 retries`);
-      return;
-    }
-    svc.concurrencyDeferCount.set(job.id, count);
-    logger.warn(`[cron] Job ${job.name} (${job.id}) deferred — concurrency limit ${svc.settings.maxConcurrent} reached, retry ${count}/3 in 60s`);
-    setTimeout(() => svc.executeJob(job, opts), 60_000);
-    return;
-  }
-  svc.concurrencyDeferCount.delete(job.id);
+  if (!admitRun(svc, job, opts, scheduledAt)) return;
 
   svc.running.add(job.id);
   svc.changes.raise();
   const startedAt = new Date().toISOString();
+  let retryPending = false;
   const startMs = Date.now();
   try {
     logger.info(`[cron] Running job: ${job.name} (${job.id})${opts.manual ? " [manual]" : ""}`);
@@ -132,11 +114,40 @@ export async function runJob(
     });
 
     postCronOutcome(job, errorMessage, false);
-    scheduleTransientRetry(svc, job, opts);
+    retryPending = scheduleTransientRetry(svc, job, opts);
     maybeAutoPause(svc, job);
   } finally {
     svc.running.delete(job.id);
+    if (!opts.manual) finishOneTime(svc, job, retryPending);
   }
+}
+
+/**
+ * May this run start now? Not while the job's previous run is still going
+ * (skipped, recorded). Not while the concurrency limit is full: deferred a
+ * minute at a time, and skipped after the third deferral.
+ */
+function admitRun(svc: CronService, job: CronJob, opts: { manual: boolean; isCatchUp?: boolean }, scheduledAt: string): boolean {
+  if (svc.running.has(job.id)) {
+    recordSkip(svc, job, scheduledAt, opts.manual, "previous run still active");
+    logger.warn(`[cron] Job ${job.name} (${job.id}) skipped — prior run still active`);
+    return false;
+  }
+  if (svc.running.size >= svc.settings.maxConcurrent) {
+    const count = (svc.concurrencyDeferCount.get(job.id) || 0) + 1;
+    if (count > 3) {
+      svc.concurrencyDeferCount.delete(job.id);
+      recordSkip(svc, job, scheduledAt, opts.manual, `concurrency limit ${svc.settings.maxConcurrent} full after 3 retries`);
+      logger.error(`[cron] Job ${job.name} (${job.id}) skipped — concurrency limit ${svc.settings.maxConcurrent} still full after 3 retries`);
+      return false;
+    }
+    svc.concurrencyDeferCount.set(job.id, count);
+    logger.warn(`[cron] Job ${job.name} (${job.id}) deferred — concurrency limit ${svc.settings.maxConcurrent} reached, retry ${count}/3 in 60s`);
+    setTimeout(() => svc.executeJob(job, opts), 60_000);
+    return false;
+  }
+  svc.concurrencyDeferCount.delete(job.id);
+  return true;
 }
 
 /**
@@ -177,12 +188,29 @@ function recordSkip(svc: CronService, job: CronJob, scheduledAt: string, manual:
   });
 }
 
-function scheduleTransientRetry(svc: CronService, job: CronJob, opts: { manual: boolean; isCatchUp?: boolean }): void {
-  if (opts.manual) return; // manual runs surface failure to the caller; no auto-retry
+/**
+ * A one-time mission (job.once) is switched off after its scheduled run, so it
+ * never fires again next year. Peter, 2026-11-08: a run had to find the
+ * off-switch itself, and a "call mom on Nov 3" reminder was still set for every
+ * Nov 3. It is kept, not deleted: a one-time "semiconductor report 30 minutes
+ * before Monday's open" is a report he needs afterwards, and a delete purges
+ * the run history and report with the mission. A failed run waits for its
+ * retry first. A manual "Run now" ends nothing: the date has not come yet.
+ */
+function finishOneTime(svc: CronService, job: CronJob, retryPending: boolean): void {
+  if (!job.once || job.systemJob || !job.enabled) return;
+  if (job.lastStatus !== "success" && retryPending) return;
+  logger.info(`[cron] One-time mission "${job.name}" ran (${job.lastStatus}); switched off, kept with its history and report`);
+  svc.toggle(job.id);
+}
+
+/** Schedule a transient-failure retry. True when one is coming. */
+function scheduleTransientRetry(svc: CronService, job: CronJob, opts: { manual: boolean; isCatchUp?: boolean }): boolean {
+  if (opts.manual) return false; // manual runs surface failure to the caller; no auto-retry
   const attempt = (svc.transientRetryCount.get(job.id) || 0);
   if (attempt >= svc.settings.maxTransientRetries) {
     svc.transientRetryCount.delete(job.id);
-    return;
+    return false;
   }
   const delay = TRANSIENT_BACKOFF_MS[Math.min(attempt, TRANSIENT_BACKOFF_MS.length - 1)];
   svc.transientRetryCount.set(job.id, attempt + 1);
@@ -191,6 +219,7 @@ function scheduleTransientRetry(svc: CronService, job: CronJob, opts: { manual: 
     if (!job.enabled) return;
     svc.executeJob(job, { manual: false }).catch(() => { /* logged inside */ });
   }, delay);
+  return true;
 }
 
 function maybeAutoPause(svc: CronService, job: CronJob): void {

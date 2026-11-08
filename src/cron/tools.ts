@@ -21,6 +21,11 @@ export const NOTIFY_USER_GUIDANCE =
   "(their inbox, and their phone rings for it): write the prompt as 'Call notify_user with title \"Reminder: ...\"'. " +
   "Use telegram_send or whatsapp_send only when the user asked for that channel.";
 
+/** How a one-time mission is made (mission_schedule_create `once`). */
+export const ONE_TIME_GUIDANCE =
+  "For something that should happen one time (a reminder, or a report for a date), pass once: true with a cron for that date and time: " +
+  "the mission switches itself off after it runs and keeps its report, so the prompt never needs to switch it off.";
+
 const refused = (reason: string): ToolResult => blocked(reason, {
   layer: "job-authority",
   recovery: "Only the user can make this change, on the Missions page. Tell them exactly what to change; to add a separate mission instead, create one under a new name.",
@@ -94,7 +99,7 @@ export function createCronTools(cron: CronService): ToolDefinition[] {
     {
       name: "mission_schedule_create",
       compactDescription: "Schedule a recurring mission: `schedule` is an interval ('5m', '1h') or cron ('*/5 * * * *'); `prompt` runs each time; same name updates the job. Each run is a full billed session — pick the longest interval that works.",
-      description: `Schedule a recurring mission. Schedule can be an interval ('5m', '1h', '30s') or cron expression ('*/5 * * * *'). Prompt is what the agent will execute each run. If a job with the same name exists, it will be updated rather than duplicated. Each run is a fresh full-context session billed at the job's model — pick the longest interval that still meets the need, and reserve tight intervals (under ~15m) for genuinely time-sensitive missions. ${NOTIFY_USER_GUIDANCE}`,
+      description: `Schedule a recurring mission. Schedule can be an interval ('5m', '1h', '30s') or cron expression ('*/5 * * * *'). Prompt is what the agent will execute each run. If a job with the same name exists, it will be updated rather than duplicated. Each run is a fresh full-context session billed at the job's model — pick the longest interval that still meets the need, and reserve tight intervals (under ~15m) for genuinely time-sensitive missions. ${ONE_TIME_GUIDANCE} ${NOTIFY_USER_GUIDANCE}`,
       parameters: {
         type: "object",
         properties: {
@@ -103,6 +108,7 @@ export function createCronTools(cron: CronService): ToolDefinition[] {
           prompt: { type: "string", description: "The prompt/instruction to execute each run" },
           timezone: { type: "string", description: "Optional IANA timezone the cron expression runs in (e.g. 'America/New_York', 'Europe/London'). Omit for the server's local time. Ignored for fixed intervals. If the user gives a clock time (e.g. '9am daily'), set this to their timezone so it fires at their local time." },
           secrets: SECRET_PLAN_PARAMETER,
+          once: { type: "boolean", description: "Run one time only, then switch the mission off, keeping its report (a reminder or a report for a date). Default: recurring." },
         },
         required: ["name", "schedule", "prompt"],
       },
@@ -114,9 +120,11 @@ export function createCronTools(cron: CronService): ToolDefinition[] {
         const refusal = agentMissionRefusal({ schedule, prompt }, cron.list().find((j) => j.name === name));
         if (refusal) return refused(refusal);
         const tz = typeof args.timezone === "string" && args.timezone.trim() ? args.timezone.trim() : undefined;
-        const job = cron.create(name, schedule, prompt, undefined, { tz });
+        const once = args.once === true;
+        const job = cron.create(name, schedule, prompt, undefined, { tz, ...(once ? { once } : {}) });
         const keys = await grantSecretPlanFromChat(cron, job, args.secrets, args, "mission_schedule_create");
-        return { content: `Created job "${job.name}" (${job.id}) — runs every ${job.schedule}${job.tz ? ` (${job.tz})` : ""}${keys}` };
+        const when = job.once ? `runs once at ${job.schedule}, then switches itself off` : `runs every ${job.schedule}`;
+        return { content: `Created job "${job.name}" (${job.id}) — ${when}${job.tz ? ` (${job.tz})` : ""}${keys}` };
       },
     },
     {

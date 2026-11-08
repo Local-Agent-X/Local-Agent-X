@@ -53,6 +53,8 @@ export interface CronJobOptions {
   useSignedInBrowser?: boolean;
   /** Already parsed (job-secret-plan.ts parseSecretPlan). */
   secretPlan?: SecretPlanPair[];
+  /** Run one time only (CronJob.once). */
+  once?: boolean;
 }
 
 const logger = createLogger("cron-service");
@@ -265,6 +267,7 @@ export class CronService {
         schedule, prompt,
         ...(opts?.tz !== undefined ? { tz: opts.tz } : {}),
         ...(opts?.secretPlan !== undefined ? { secretPlan: opts.secretPlan } : {}),
+        ...(opts?.once !== undefined ? { once: opts.once } : {}),
       }) || existing;
     }
     // The millisecond alone collided: two missions made in one millisecond (a
@@ -283,6 +286,7 @@ export class CronService {
       ...(opts?.imageEngine ? { imageEngine: opts.imageEngine } : {}),
       ...(opts?.useSignedInBrowser ? { useSignedInBrowser: true } : {}),
       ...(opts?.secretPlan?.length ? { secretPlan: opts.secretPlan } : {}),
+      ...(opts?.once ? { once: true } : {}),
     };
     this.jobs_internal.set(id, job);
     this.saveJobs();

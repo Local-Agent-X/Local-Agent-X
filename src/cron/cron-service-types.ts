@@ -44,6 +44,11 @@ export interface CronJob {
    *  unattended run only (see setSessionProfile). Undefined = inherit the
    *  global profile — under which ask-tier actions block unattended. */
   profile?: ProfileName;
+  /** Runs one time only (a reminder or a report for a date). A date cron
+   *  ("39 12 8 11 *") matches again every year, so the scheduler switches the
+   *  mission off after its scheduled run (cron-service-execute.ts
+   *  finishOneTime), keeping it with its history and report. Undefined = recurring. */
+  once?: boolean;
   lastRun?: string;
   lastResult?: string;
   lastReportPath?: string;

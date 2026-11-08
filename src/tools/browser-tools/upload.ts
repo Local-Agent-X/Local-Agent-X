@@ -7,8 +7,10 @@
  *   - the file-access gate confined `path`/`paths` as a read (workspace /
  *     common / unrestricted, sensitive patterns, vault and at-rest secrets);
  *   - the egress guard scanned them as the call's attachments — a
- *     credential-shaped name or secret-shaped contents refuse the call
- *     (tool-execution/egress-gates.ts probeEgressGuard);
+ *     credential-shaped name or secret-shaped contents put the call to the
+ *     user as an approval card (the page is a destination they are watching),
+ *     refused it when nobody was watching, and refused one of LAX's own
+ *     data-dir files outright (tool-execution/egress-gates.ts probeEgressGuard);
  *   - the private-content gate counted each as a document sent to the page's
  *     site, and the kernel judged `upload` a write (PAGE_WRITE_ACTIONS).
  * This handler canonicalizes the paths the way that gate did (so the file
@@ -26,10 +28,11 @@ import { canonicalizeAttachmentPath, checkAttachmentPaths } from "../http-egress
 import { blocked } from "../result-helpers.js";
 import { ok, err } from "./shared.js";
 
-/** What the model is told when a file is refused as a credential or secret:
- *  the route is the human, never a workaround. */
+/** What the model is told when a file is refused outright (one of LAX's own
+ *  data-dir files, or a credential file with nobody watching): the route is
+ *  the human, never a workaround. */
 export const UPLOAD_REFUSED_RECOVERY =
-  "Credential and secret files are never uploaded by the agent. If the site needs one, " +
+  "This file is not the agent's to upload. If the site needs it, " +
   "ask the user to attach it themselves in the co-driven browser, then continue.";
 
 /** The files an upload call names: `paths` when given, else `path`. Every
@@ -78,10 +81,12 @@ export async function handleUpload(
   }
 
   // Same check the egress gate ran before dispatch, on the canonical inodes
-  // the browser will open: a sensitive path (or a symlink to one) and
-  // secret-shaped text contents are refused here too.
-  const guard = checkAttachmentPaths("browser upload", files, sessionId);
-  if (guard) {
+  // the browser will open. A confirmable finding (the user's own credential
+  // file) was put to the user by that gate before this ran, and an unattended
+  // run never got here, so only a hard finding (one of LAX's own data-dir
+  // files) is this check's to refuse — as http_request treats its own re-scan.
+  const guard = checkAttachmentPaths("browser upload", files, sessionId, { userMayVouch: true });
+  if (guard && !guard.confirmable) {
     return blocked(guard.message, { layer: "egress-guard", recovery: UPLOAD_REFUSED_RECOVERY, userHint: USER_HINTS.outboundContent, ...guard.meta });
   }
 

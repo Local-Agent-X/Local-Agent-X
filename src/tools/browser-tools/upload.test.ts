@@ -1,8 +1,9 @@
 /**
  * The `upload` action at every site a browser action is registered
  * (registration.test.ts lists the sites for emulate), plus the handler's own
- * refusals: no ref, no path, a missing file, a folder, a credential-shaped
- * file, a secret-shaped file, and the canonical path it hands the backend.
+ * refusals: no ref, no path, a missing file, a folder, one of LAX's own
+ * data-dir files; the hand-over of the user's own credential-shaped file the
+ * gate already asked about; and the canonical path it hands the backend.
  */
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -23,6 +24,7 @@ import { sensitivePageActionDecision } from "../../browser/sensitive-pages.js";
 import { deriveAriAction } from "../../tool-execution/ari-action-map.js";
 import { egressPayload } from "../../tool-execution/egress-payload.js";
 import { TOOL_PATH_ARGS, hasCapability, isReadOnlyCall } from "../../tool-registry.js";
+import { getLaxDir } from "../../lax-data-dir.js";
 import { FILE_INPUT_NEEDS_HUMAN } from "../../browser/in-app-actions.js";
 import type { BrowserBackend } from "../../browser/index.js";
 
@@ -37,7 +39,7 @@ describe("browser action registration: upload", () => {
 
   it("2. is described to the model, and the fill refusal points at it", () => {
     expect(BROWSER_TOOL_DESCRIPTION).toContain("- upload:");
-    expect(BROWSER_TOOL_DESCRIPTION).toMatch(/credential and secret files .* are refused/i);
+    expect(BROWSER_TOOL_DESCRIPTION).toMatch(/credential or secret file .* approval card .* refused when nobody is watching/i);
     expect(FILE_INPUT_NEEDS_HUMAN).toContain("action 'upload'");
   });
 
@@ -88,6 +90,7 @@ describe("uploadPathsOf", () => {
 describe("handleUpload", () => {
   let dir: string;
   let cv: string;
+  let priorDataDir: string | undefined;
   beforeAll(() => {
     dir = mkdtempSync(join(tmpdir(), "lax-upload-"));
     cv = join(dir, "cv.pdf");
@@ -95,8 +98,17 @@ describe("handleUpload", () => {
     writeFileSync(join(dir, "service-account.json"), JSON.stringify({ type: "service_account", private_key: "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7\n-----END PRIVATE KEY-----\n" }));
     writeFileSync(join(dir, "id_rsa"), "not really a key");
     mkdirSync(join(dir, "folder"));
+    // The handler stats every file, so the data-dir case needs a real one:
+    // a temp data dir holding an auth.json stands in for ~/.lax.
+    priorDataDir = process.env.LAX_DATA_DIR;
+    process.env.LAX_DATA_DIR = join(dir, "data");
+    mkdirSync(join(dir, "data"));
+    writeFileSync(join(dir, "data", "auth.json"), "{}");
   });
-  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+  afterAll(() => {
+    if (priorDataDir === undefined) delete process.env.LAX_DATA_DIR; else process.env.LAX_DATA_DIR = priorDataDir;
+    rmSync(dir, { recursive: true, force: true });
+  });
 
   function backend(): { manager: BrowserBackend; uploadByRef: ReturnType<typeof vi.fn> } {
     const uploadByRef = vi.fn().mockResolvedValue({ ok: true, text: "[3] upload via id=\"f\" — 1 file: cv.pdf" });
@@ -126,17 +138,28 @@ describe("handleUpload", () => {
     expect(uploadByRef).not.toHaveBeenCalled();
   });
 
-  it("refuses a credential-shaped name and secret-shaped contents as a blocked egress, pointing at the human", async () => {
+  // The user's own credential file reaches this handler only after the egress
+  // gate put it to the user as an approval card (an unattended run was refused
+  // there), so the re-scan here lets a confirmable finding through — the way
+  // http_request treats its own re-scan — and refuses only a hard one.
+  it("hands over the user's own credential-shaped file: the gate already asked", async () => {
     const { manager, uploadByRef } = backend();
     for (const file of ["id_rsa", "service-account.json"]) {
       const res = await handleUpload(manager, { ref: 3, path: join(dir, file) }, "s");
-      expect(res.status, file).toBe("blocked");
-      expect(res.metadata).toMatchObject({ layer: "egress-guard", recovery: UPLOAD_REFUSED_RECOVERY });
-      expect(res.content, file).toContain("sensitive file");
+      expect(res.status, file).not.toBe("blocked");
+      expect(uploadByRef).toHaveBeenLastCalledWith(3, [expect.stringMatching(new RegExp(`${file}$`))]);
     }
-    // One bad file in a list refuses the whole call.
-    const mixed = await handleUpload(manager, { ref: 3, paths: [cv, join(dir, "id_rsa")] }, "s");
-    expect(mixed.status).toBe("blocked");
+  });
+
+  it("refuses one of LAX's own data-dir files outright, alone or in a list, pointing at the human", async () => {
+    const { manager, uploadByRef } = backend();
+    const own = join(getLaxDir(), "auth.json");
+    for (const paths of [[own], [cv, own]]) {
+      const res = await handleUpload(manager, { ref: 3, paths }, "s");
+      expect(res.status, paths.join()).toBe("blocked");
+      expect(res.metadata).toMatchObject({ layer: "egress-guard", recovery: UPLOAD_REFUSED_RECOVERY });
+      expect(res.content).toContain("sensitive file");
+    }
     expect(uploadByRef).not.toHaveBeenCalled();
   });
 

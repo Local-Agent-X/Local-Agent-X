@@ -11,6 +11,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { CAN_CREATE_FILE_SYMLINK } from "../symlink-capabilities.test-helper.js";
 import { egressGuardGate, canaryEgressGate } from "./enforce-policy.js";
+import { probeEgressGuard } from "./egress-gates.js";
 import { egressPayload } from "./egress-payload.js";
 import { checkAttachmentPaths } from "../tools/http-egress-guard.js";
 import { scanForSecrets, registerRedactedSecretValue, unregisterRedactedSecretValue } from "../security/secrets/index.js";
@@ -166,6 +167,66 @@ describe("egressGuardGate — outbound secret scan + sensitive attachment (every
 
   it("is a no-op for non-egress tools", () => {
     expect(egressGuardGate(makeCtx("read", { path: "/tmp/x" }, sessionId)).kind).toBe("continue");
+  });
+});
+
+// A credential file of the user's own, bound for the page they are watching in
+// the co-driven browser, is theirs to send (Peter, 2026-11-08: "card approval
+// sounds right for this situation"): the gate defers it to the approval phase,
+// which asks an attended run and refuses an unattended one. Any other sink
+// keeps the refusal, and one of LAX's own data-dir files is refused everywhere.
+describe("egressGuardGate — the user's own credential file to the page they are watching", () => {
+  const sessionId = "cap-class-egress-vouch";
+  let dir: string;
+  let key: string;
+  beforeAll(() => {
+    dir = mkdtempSync(join(tmpdir(), "lax-egress-vouch-"));
+    key = join(dir, "agentxos-push.json");
+    writeFileSync(key, JSON.stringify({
+      type: "service_account",
+      private_key: "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7\n-----END PRIVATE KEY-----\n",
+    }));
+  });
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("a browser upload of it continues to the approval phase, with the file named in the ask", () => {
+    const ctx = makeCtx("browser", { action: "upload", ref: 3, path: key }, sessionId);
+    expect(egressGuardGate(ctx).kind).toBe("continue");
+    expect(ctx.result).toBeUndefined();
+    expect(ctx.policyApprovalReason).toContain("agentxos-push.json");
+    expect(ctx.policyApprovalReason).toContain("needs the user's approval");
+  });
+
+  it("the probe reports it as confirmable, so an all-confirmable aggregate asks too", () => {
+    const b = probeEgressGuard(makeCtx("browser", { action: "upload", ref: 3, paths: [key] }, sessionId));
+    expect(b?.confirmable).toBe(true);
+    expect(b?.meta?.blocked_by).toBe("sensitive-attachment");
+  });
+
+  it("the same file as an email attachment is still refused: the recipient is not in front of the user", () => {
+    const ctx = makeCtx("email_send", { to: "a@b.com", subject: "x", body: "key attached", attachments: JSON.stringify([key]) }, sessionId);
+    expect(egressGuardGate(ctx).kind).toBe("halt");
+    expect(ctx.result?.metadata?.blocked_by).toBe("sensitive-attachment");
+    expect(ctx.policyApprovalReason).toBeUndefined();
+  });
+
+  it("one of LAX's own data-dir files is refused even for the watched page, alone or in a list", () => {
+    const own = join(getLaxDir(), "auth.json");
+    for (const paths of [[own], [key, own]]) {
+      const ctx = makeCtx("browser", { action: "upload", ref: 3, paths }, sessionId);
+      expect(egressGuardGate(ctx).kind, paths.join()).toBe("halt");
+      expect(ctx.result?.metadata?.blocked_by).toBe("sensitive-attachment");
+      expect(ctx.policyApprovalReason).toBeUndefined();
+    }
+  });
+
+  it("checkAttachmentPaths without the option keeps the refusal shape (bridges, media forward)", () => {
+    const plain = checkAttachmentPaths("bridge:test image forward", [key], undefined);
+    expect(plain?.confirmable).toBeUndefined();
+    expect(plain?.message).toContain("Refusing");
+    const vouched = checkAttachmentPaths("browser", [key], undefined, { userMayVouch: true });
+    expect(vouched?.confirmable).toBe(true);
+    expect(vouched?.message).not.toContain("Refusing");
   });
 });
 

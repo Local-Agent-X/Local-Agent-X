@@ -18,7 +18,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { containsNulByte } from "../binary-sniff.js";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { scanForSecrets, decodedPayloadViews, matchTier, type SecretMatch } from "../security/secrets/index.js";
 import { outboundPayloadParts } from "../security/secrets/index.js";
 import { matchEgressList } from "../security/layer/index.js";
@@ -412,8 +412,27 @@ function isProbablyBinary(buf: Buffer): boolean {
   return containsNulByte(buf);
 }
 
-export function checkAttachmentPaths(sink: string, paths: readonly string[], sessionId: string | undefined): GuardBlock | null {
+/** Attachment judgments a caller may soften: `userMayVouch` says the sink
+ *  delivers to a destination the user is looking at (the page in the
+ *  co-driven browser), so a credential file of the USER'S OWN is put to them
+ *  as an approval instead of refused; the app's own data-dir files (its vault,
+ *  tokens, keys) are refused whatever the option says. */
+export interface AttachmentCheckOptions {
+  userMayVouch?: boolean;
+}
+
+/** True when `p` lies inside the LAX data dir: the app's own files, which no
+ *  user request makes sendable. Case-blind on Windows, where paths are. */
+function underLaxDir(p: string): boolean {
+  const fold = (s: string) => (process.platform === "win32" ? resolve(s).toLowerCase() : resolve(s));
+  const rel = relative(fold(getLaxDir()), fold(p));
+  return rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+}
+
+export function checkAttachmentPaths(sink: string, paths: readonly string[], sessionId: string | undefined, opts: AttachmentCheckOptions = {}): GuardBlock | null {
   const offending: string[] = [];
+  // Offending paths that are the app's own (under the data dir): never confirmable.
+  const appOwned: string[] = [];
   for (const p of paths) {
     let real: string;
     try {
@@ -428,7 +447,11 @@ export function checkAttachmentPaths(sink: string, paths: readonly string[], ses
     }
     // Check BOTH the realpath (catches a symlink to a sensitive target) and the
     // supplied string (catches a sensitive literal even if it doesn't exist yet).
-    if (isSensitiveAttachmentPath(real) || isSensitiveAttachmentPath(p)) { offending.push(p); continue; }
+    if (isSensitiveAttachmentPath(real) || isSensitiveAttachmentPath(p)) {
+      offending.push(p);
+      if (underLaxDir(real) || underLaxDir(p)) appOwned.push(p);
+      continue;
+    }
 
     // Byte scan: the path may be innocent while the CONTENTS are a secret.
     try {
@@ -442,7 +465,9 @@ export function checkAttachmentPaths(sink: string, paths: readonly string[], ses
       // keystores) are caught by the PATH leg above (extension/dir), not by scanning
       // their opaque bytes, so skipping the text scan here loses no real coverage.
       if (!isProbablyBinary(slice) && !scanForSecrets(slice.toString("utf-8")).clean) {
-        offending.push(p); continue;
+        offending.push(p);
+        if (underLaxDir(real)) appOwned.push(p);
+        continue;
       }
     } catch {
       // Unreadable / not-a-file: the email tool's own readFile will surface the
@@ -450,11 +475,25 @@ export function checkAttachmentPaths(sink: string, paths: readonly string[], ses
     }
   }
   if (offending.length === 0) return null;
+  const meta = { sink, blocked_by: "sensitive-attachment", paths: offending };
+  // The user's own credential file, bound for a destination they are watching:
+  // their call, as an approval card (attended) or a refusal (unattended), the
+  // way an unrecognized recipient is theirs to vouch for. The app's own files
+  // are nobody's to send: one of them in the list keeps the hard refusal.
+  if (opts.userMayVouch && appOwned.length === 0) {
+    const one = offending.length === 1;
+    return {
+      message:
+        `${offending.join(", ")} ${one ? "is a credential or secret file" : "are credential or secret files"} ` +
+        `(by name, or by secret-shaped contents such as a private key); sending ${one ? "it" : "them"} needs the user's approval`,
+      meta, confirmable: true,
+    };
+  }
   return {
     message:
       `Refusing ${sink}: cannot attach sensitive file(s) (${offending.join(", ")}). ` +
       `Credential / secret files (.env, SSH keys, ~/.lax secrets, keychains), symlinks to them, ` +
       `or files whose contents are secret-shaped may not be sent off-box as attachments.`,
-    meta: { sink, blocked_by: "sensitive-attachment", paths: offending },
+    meta,
   };
 }

@@ -82,13 +82,22 @@ export function probeEgressGuard(ctx: ToolCallContext): EgressBlocker | null {
 
   const { text, attachmentPaths } = egressPayload(tc.name, args as Record<string, unknown>);
   // Sensitive-attachment check (Spec F): a sink that reads+sends a file path.
+  // A credential file of the user's own, bound for the page they are watching
+  // in the co-driven browser (the row's `browser-page` destination), is theirs
+  // to send: the check marks it confirmable and the approval phase asks them,
+  // or refuses it when nobody is watching. An email recipient or a bridge is
+  // not in front of them, so every other sink keeps the refusal; the app's own
+  // data-dir files are refused everywhere.
   if (attachmentPaths.length > 0) {
-    const att = checkAttachmentPaths(tc.name, attachmentPaths, ctx.sessionId);
+    const watched = (destinationSpecsOf(tc.name, args as Record<string, unknown>) ?? []).some((d) => d.to === "browser-page");
+    const att = checkAttachmentPaths(tc.name, attachmentPaths, ctx.sessionId, { userMayVouch: watched });
     if (att) {
       return {
         layer: "egress-guard", label: "egress guard", reason: att.message,
-        recovery: "Remove the sensitive file from the attachment list — credential/secret files may not be sent off-box.",
-        userHint: USER_HINTS.outboundContent, meta: att.meta,
+        recovery: att.confirmable
+          ? "The user is being asked whether this file may be sent; there is nothing for you to change."
+          : "Remove the sensitive file from the attachment list — credential/secret files may not be sent off-box.",
+        userHint: USER_HINTS.outboundContent, meta: att.meta, confirmable: att.confirmable,
       };
     }
   }

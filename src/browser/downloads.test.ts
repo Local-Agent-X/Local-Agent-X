@@ -89,7 +89,29 @@ describe("browser download quarantine", () => {
       suggestedFilename: "report.pdf", contentType: "image/png", stream: stream("%PDF-1.7\nbody"),
     });
     expect(result.status).toBe("rejected");
-    expect(result.reason).toMatch(/content type does not match/i);
+    expect(result.reason).toMatch(/content type "image\/png" does not match/i);
+  });
+
+  it("releases a file whose declared type is not a media type at all", async () => {
+    // A page can give a Blob any string as its type; Google Cloud's console
+    // serves service-account keys as "attachment/json". That label claims
+    // nothing about the bytes, so it cannot contradict the signature check.
+    const paths = dirs();
+    const result = await inspectBrowserDownload({
+      ...paths, sessionId: "unregistered", sourceUrl: "blob:https://console.cloud.google.com/9df455a7",
+      pageUrl: "https://console.cloud.google.com/iam-admin/serviceaccounts", suggestedFilename: "project-key.json",
+      contentType: "attachment/json", stream: stream('{"type": "service_account"}'),
+    });
+    expect(result.status).toBe("released");
+    expect(existsSync(join(paths.releaseDir, "project-key.json"))).toBe(true);
+
+    const spoof = dirs();
+    const stillChecked = await inspectBrowserDownload({
+      ...spoof, sessionId: "unregistered-exe", sourceUrl: "blob:https://files.test/1", pageUrl: "https://files.test/",
+      suggestedFilename: "notes.json", contentType: "attachment/json", stream: stream(Buffer.from("MZsetup")),
+    });
+    expect(stillChecked.status).toBe("rejected");
+    expect(stillChecked.reason).toMatch(/executable/i);
   });
 
   it("removes oversized and interrupted partial files", async () => {

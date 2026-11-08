@@ -127,6 +127,19 @@ const MIME_TYPES: Record<string, Set<string>> = {
   zip: new Set(["application/zip", "application/x-zip-compressed", "application/vnd.openxmlformats-officedocument.wordprocessingml.document", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/vnd.oasis.opendocument.text", "application/vnd.oasis.opendocument.spreadsheet", "application/vnd.oasis.opendocument.presentation"]),
 };
 
+/**
+ * Does the declared content type claim anything the signature check can
+ * contradict? application/octet-stream says nothing, and so does a label
+ * outside the registered top-level media types: a page can give a Blob any
+ * string as its type (Google Cloud's console hands out service-account keys
+ * as "attachment/json"), and a string that is not a media type is not a
+ * claim about the bytes, so it is not a mismatch either.
+ */
+function declaresType(mime: string): boolean {
+  if (!mime || mime === "application/octet-stream") return false;
+  return /^(application|audio|font|image|message|model|multipart|text|video)\/[\w.+-]+$/.test(mime);
+}
+
 function policy(filename: string, declared: string, detected: string, zip: ZipInspection | null, zipError?: string): { status: DownloadStatus; reason: string } {
   const ext = extname(filename).toLowerCase();
   if (detected === "executable" || [".exe", ".msi", ".dll", ".com", ".scr", ".bat", ".cmd", ".ps1", ".sh", ".js", ".vbs", ".jar"].includes(ext)) {
@@ -144,8 +157,8 @@ function policy(filename: string, declared: string, detected: string, zip: ZipIn
     return { status: "rejected", reason: `File extension does not match detected ${detected} content.` };
   }
   const mime = declared.split(";", 1)[0].trim().toLowerCase();
-  if (mime && mime !== "application/octet-stream" && !MIME_TYPES[detected]?.has(mime)) {
-    return { status: "rejected", reason: `Declared content type does not match detected ${detected} content.` };
+  if (declaresType(mime) && !MIME_TYPES[detected]?.has(mime)) {
+    return { status: "rejected", reason: `Declared content type "${mime}" does not match detected ${detected} content.` };
   }
   if (detected === "html") {
     return { status: "quarantined", reason: "Active HTML or script content requires explicit approval before release." };

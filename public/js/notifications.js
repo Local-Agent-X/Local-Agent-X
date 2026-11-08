@@ -67,9 +67,19 @@ function handleInboxFrame(msg) {
   if (typeof msg.unread === 'number') _inboxUnread = msg.unread;
   renderNotifications();
   updateNotifBadge();
-  if (item.needsYou && !item.resolvedAt && window.desktop && typeof window.desktop.showNotification === 'function') {
+  if (item.needsYou && !item.resolvedAt && !liveCardAsks(item) && window.desktop && typeof window.desktop.showNotification === 'function') {
     window.desktop.showNotification(item.title, String(item.body || '').slice(0, 100));
   }
+}
+
+// An approval item whose chat still shows a pending card is that card's copy
+// for the phone (src/inbox/live-approval.ts): the desktop app already raised
+// its own toast for the card, so the bell does not raise a second one.
+function liveCardAsks(item) {
+  var sid = item.kind === 'approval' && item.link && item.link.sessionId;
+  if (!sid || typeof ChatStreamStore === 'undefined') return false;
+  var entry = ChatStreamStore.get(sid);
+  return !!(entry && entry.approvals && entry.approvals.some(function (a) { return a.status === 'pending'; }));
 }
 
 function inboxIsPinned(n) { return !!n.needsYou && !n.resolvedAt; }

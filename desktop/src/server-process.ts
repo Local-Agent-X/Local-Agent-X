@@ -73,6 +73,15 @@ export function panicAbortServer(): void {
   catch (e) { console.warn("[desktop] panic-abort send failed:", e); }
 }
 
+/** Tell the server the user walked away from this approval card, so it copies
+ *  the card to the inbox and the phone is alerted (approval-presence.ts).
+ *  Fire-and-forget; a no-op when the server isn't running. */
+export function approvalAwayToServer(approvalId: string): void {
+  const message: MainToServerMessage = { type: "lax:approval-away", approvalId };
+  try { serverProcess?.send?.(message); }
+  catch (e) { console.warn("[desktop] approval-away send failed:", e); }
+}
+
 // GUI-launched macOS apps miss brew/nvm/asdf paths. Windows upgrades install
 // portable Node under LOCALAPPDATA and update the registry PATH, which the
 // running process never reloads. Use the same augmented PATH for the node-floor

@@ -56,10 +56,15 @@ export interface CaptureScreenReply {
 /** The desktop PANIC hotkey: abort every run and disarm computer control; no reply. */
 export interface PanicAbortMessage { type: "lax:panic-abort" }
 
-export type MainToServerMessage = TrashItemReply | ProbeAppReply | CaptureScreenReply | PanicAbortMessage;
+/** A chat's approval card is still unanswered and the whole machine has had
+ *  no keyboard or mouse input for a while: copy the card to the inbox so the
+ *  phone is alerted (src/inbox/live-approval.ts); no reply. */
+export interface ApprovalAwayMessage { type: "lax:approval-away"; approvalId: string }
+
+export type MainToServerMessage = TrashItemReply | ProbeAppReply | CaptureScreenReply | PanicAbortMessage | ApprovalAwayMessage;
 
 export const MAIN_TO_SERVER_TYPES = [
-  "lax:trash-item-result", "lax:probe-app-result", "lax:capture-screen-result", "lax:panic-abort",
+  "lax:trash-item-result", "lax:probe-app-result", "lax:capture-screen-result", "lax:panic-abort", "lax:approval-away",
 ] as const satisfies readonly MainToServerMessage["type"][];
 
 export function isServerToMainMessage(msg: unknown): msg is ServerToMainMessage {

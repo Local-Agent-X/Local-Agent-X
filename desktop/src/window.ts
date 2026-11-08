@@ -10,7 +10,7 @@
 // Windows/Linux: keep the JS-injected branded titlebar (the did-finish-
 // load handler below) and use titleBarOverlay for the min/max/X buttons.
 
-import { BrowserWindow, Menu, MenuItem } from "electron";
+import { app, BrowserWindow, Menu, MenuItem } from "electron";
 import { join } from "path";
 import { ICON_PATH, getLAXConfig, reloadLAXConfig } from "./config";
 import { bgForTheme, overlayForTheme } from "./theme";
@@ -357,6 +357,31 @@ export function showWindow(): void {
   } else {
     createWindow();
   }
+}
+
+/**
+ * Bring LAX to the front from outside it (a toast click): restore a minimized
+ * window, show a hidden one, and take focus. Windows refuses focus to an app
+ * in the background and only flashes its button, so the window is put on top
+ * for the moment it takes focus.
+ */
+export function bringToFront(): void {
+  if (!mainWindow) { createWindow(); return; }
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  if (process.platform === "win32") {
+    mainWindow.setAlwaysOnTop(true);
+    mainWindow.focus();
+    mainWindow.setAlwaysOnTop(false);
+  } else {
+    app.focus({ steal: true });
+    mainWindow.focus();
+  }
+}
+
+/** LAX is the window the user is looking at: shown, not minimized, focused. */
+export function mainWindowInFront(): boolean {
+  return !!mainWindow && !mainWindow.isDestroyed() && mainWindow.isVisible() && !mainWindow.isMinimized() && mainWindow.isFocused();
 }
 
 export function toggleWindow(): void {

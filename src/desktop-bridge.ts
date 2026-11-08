@@ -46,6 +46,7 @@ const pendingProbes = new Map<number, (reply: ProbeAppReply) => void>();
 const pendingCaptures = new Map<number, (reply: CaptureScreenReply) => void>();
 let listenerAttached = false;
 let panicHandler: (() => void) | null = null;
+let approvalAwayHandler: ((approvalId: string) => void) | null = null;
 
 export function desktopBridgeAvailable(): boolean {
   return process.env[DESKTOP_ENV.BRIDGE] === "1" && typeof process.send === "function";
@@ -77,6 +78,11 @@ function ensureListener(): void {
         try { panicHandler?.(); }
         catch (e) { logger.warn(`[bridge] panic handler failed: ${(e as Error).message}`); }
         return;
+      case "lax:approval-away":
+        if (typeof msg.approvalId !== "string" || !msg.approvalId) return;
+        try { approvalAwayHandler?.(msg.approvalId); }
+        catch (e) { logger.warn(`[bridge] approval-away handler failed: ${(e as Error).message}`); }
+        return;
     }
   });
 }
@@ -88,6 +94,14 @@ function ensureListener(): void {
  *  any trashItem request this session. */
 export function registerDesktopPanicHandler(handler: () => void): void {
   panicHandler = handler;
+  ensureListener();
+}
+
+/** Register the server-side handler for `lax:approval-away`: Electron main
+ *  sends it when a card has waited while nobody touched the computer
+ *  (desktop/src/approval-presence.ts). Wired once at boot (server/index.ts). */
+export function registerDesktopApprovalAwayHandler(handler: (approvalId: string) => void): void {
+  approvalAwayHandler = handler;
   ensureListener();
 }
 

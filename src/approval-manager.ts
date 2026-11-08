@@ -93,6 +93,9 @@ interface PendingApproval {
   toolName: string;
   args: Record<string, unknown>;
   alwaysAsk: boolean;
+  /** The card's sentence (approval-card-text.ts), for a copy of the card
+   *  sent elsewhere (the inbox item the phone is alerted with). */
+  context: string;
   /** Canonical op this card blocks, when the caller is op-scoped. Keys the
    *  durable pendingApproval column + canonical events. */
   opId?: string;
@@ -242,12 +245,13 @@ class ApprovalManager {
           this.recordDurableResolve(p, id, false, "timeout");
           opts.emit({ type: "approval_timeout", approvalId: id, toolName: opts.toolName, toolCallId: opts.toolCallId });
           resolve({ approved: false, reason: "timeout" });
+          notifySettled(id);
         }
         // Honest window: a carried-over ask times out when the ORIGINAL
         // window ends, not a fresh 5 minutes after the re-ask.
       }, Math.max(1, requestedAt + APPROVAL_TIMEOUT_MS - Date.now()));
 
-      this.pending.set(id, { resolve, timer, sessionId: opts.sessionId, toolName: opts.toolName, args: opts.args, alwaysAsk: !!opts.alwaysAsk, opId: opts.opId, emit: opts.emit });
+      this.pending.set(id, { resolve, timer, sessionId: opts.sessionId, toolName: opts.toolName, args: opts.args, alwaysAsk: !!opts.alwaysAsk, context: opts.context, opId: opts.opId, emit: opts.emit });
 
       opts.emit({
         type: "approval_requested",
@@ -322,6 +326,7 @@ class ApprovalManager {
         p.emit({ type: "approval_resolved", approvalId: id, toolName: p.toolName, approved: false, reason: "superseded" });
       } catch { /* a dead emitter must not block the resolution */ }
       p.resolve({ approved: false, reason: "superseded" });
+      notifySettled(id);
       denied++;
     }
     return denied;
@@ -371,6 +376,7 @@ class ApprovalManager {
       this.suppressed.set(ekey, { ts: Date.now(), reason: "declined" });
       p.resolve({ approved: false, reason: "declined" });
     }
+    notifySettled(id);
     return true;
   }
 
@@ -389,12 +395,36 @@ class ApprovalManager {
         this.recordDurableResolve(p, id, false, "timeout");
         p.resolve({ approved: false, reason: "timeout" });
         this.pending.delete(id);
+        notifySettled(id);
       }
     }
   }
 
   /** List pending approvals (for diagnostics / stale cleanup). */
   pendingCount(): number { return this.pending.size; }
+
+  /** A pending card as the user reads it, or undefined once it settled. */
+  pendingCard(id: string): { sessionId: string; toolName: string; context: string } | undefined {
+    const p = this.pending.get(id);
+    return p ? { sessionId: p.sessionId, toolName: p.toolName, context: p.context } : undefined;
+  }
+}
+
+// Who hears that a card settled, however it settled (an answer, the
+// deadline, a chat reply, the session ending): the inbox closes the copy of
+// the card it sent to the phone (inbox/live-approval.ts). A listener that
+// throws never blocks the card.
+const settledListeners = new Set<(approvalId: string) => void>();
+
+export function onApprovalSettled(listener: (approvalId: string) => void): () => void {
+  settledListeners.add(listener);
+  return () => { settledListeners.delete(listener); };
+}
+
+function notifySettled(approvalId: string): void {
+  for (const listener of settledListeners) {
+    try { listener(approvalId); } catch (e) { logger.warn(`[approval] settle listener failed: ${(e as Error).message}`); }
+  }
 }
 
 let instance: ApprovalManager | null = null;

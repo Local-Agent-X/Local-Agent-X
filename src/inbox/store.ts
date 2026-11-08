@@ -50,7 +50,7 @@ export interface InboxStore {
 }
 
 export type ApprovalClaim =
-  | { kind: "claimed"; item: StoredInboxItem & { deferredCall: DeferredCallRecord } }
+  | { kind: "claimed"; item: StoredInboxItem }
   | { kind: "missing" | "not-approval" | "answered" };
 
 export function isPinned(item: StoredInboxItem): boolean {
@@ -92,7 +92,8 @@ function sameContent(item: StoredInboxItem, next: ReturnType<typeof fromInput>):
     && item.needsYou === next.needsYou
     && JSON.stringify(item.link ?? null) === JSON.stringify(next.link ?? null)
     && JSON.stringify(item.actions ?? null) === JSON.stringify(next.actions ?? null)
-    && JSON.stringify(item.deferredCall ?? null) === JSON.stringify(next.deferredCall ?? null);
+    && JSON.stringify(item.deferredCall ?? null) === JSON.stringify(next.deferredCall ?? null)
+    && item.liveApprovalId === next.liveApprovalId;
 }
 
 function fromInput(input: InboxInput): Omit<StoredInboxItem, "id" | "createdAt"> {
@@ -105,6 +106,7 @@ function fromInput(input: InboxInput): Omit<StoredInboxItem, "id" | "createdAt">
     ...(input.actions && input.actions.length > 0 ? { actions: input.actions } : {}),
     ...(input.key ? { key: input.key } : {}),
     ...(input.deferredCall ? { deferredCall: input.deferredCall } : {}),
+    ...(input.liveApprovalId ? { liveApprovalId: input.liveApprovalId } : {}),
   };
 }
 
@@ -190,12 +192,12 @@ export function createInboxStore(filePath: string, clock: () => number = Date.no
     claimApproval: (id, resolution) => mutate((items, now): ApprovalClaim => {
       const item = items.find((candidate) => candidate.id === id);
       if (!item) return { kind: "missing" };
-      if (item.kind !== "approval" || !item.deferredCall) return { kind: "not-approval" };
+      if (item.kind !== "approval" || (!item.deferredCall && !item.liveApprovalId)) return { kind: "not-approval" };
       if (!isPinned(item)) return { kind: "answered" };
       item.resolvedAt = now;
       item.resolution = resolution;
       if (item.readAt === undefined) item.readAt = now;
-      return { kind: "claimed", item: item as StoredInboxItem & { deferredCall: DeferredCallRecord } };
+      return { kind: "claimed", item };
     }),
   };
 }

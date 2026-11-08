@@ -48,6 +48,11 @@ function dispatchChatStreamEvent(msg) {
   // dispatcher's bumpActivity for envelopes carrying _opId. (No seq
   // tracking: lastSeenSeq was removed from the store — 2026-07-13 audit.)
   ChatStreamStore.applyEvent(sessionId, event);
+  // The desktop app reaches the user about a card wherever they are
+  // (approval-presence-bridge.js).
+  if (typeof event.type === 'string' && event.type.indexOf('approval_') === 0 && typeof window.reportApprovalEvent === 'function') {
+    window.reportApprovalEvent(sessionId, event);
+  }
 
   const viewing = !!(activeChat && activeChat.id === sessionId);
 

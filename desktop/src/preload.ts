@@ -50,6 +50,17 @@ contextBridge.exposeInMainWorld("desktop", {
   showNotification: (title: string, body: string) =>
     ipcRenderer.invoke("show-notification", title, body),
 
+  // A chat's approval card, reported so main can reach the user wherever
+  // they are (approval-presence.ts): a toast when LAX is behind, the phone
+  // when nobody is at the computer. onFocusApproval fires when the user
+  // clicks that toast: show them the card.
+  approvalPending: (card: { approvalId: string; sessionId: string; context: string; toolName: string; expiresAt?: number }) =>
+    ipcRenderer.invoke("approval-pending", card),
+  approvalSettled: (approvalId: string) => ipcRenderer.invoke("approval-settled", approvalId),
+  onFocusApproval: (cb: (target: { approvalId: string; sessionId: string }) => void) => {
+    ipcRenderer.on("focus-approval", (_e, target) => cb(target));
+  },
+
   // macOS-only TCC prompt trigger. Renderer awaits this before getUserMedia
   // so the OS dialog actually appears the first time mic/camera is used —
   // without it, hardened-runtime Electron silently denies. Returns true on

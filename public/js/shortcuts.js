@@ -225,8 +225,16 @@ function requestNotificationPermission() {
 }
 
 function notifyTaskComplete(title) {
-  if (!notificationsEnabled || document.hasFocus()) return;
+  if (document.hasFocus()) return;
   if (Date.now() - taskStartTime < LONG_TASK_THRESHOLD) return;
+  // In the desktop app the toast is the app's own: a click on it restores and
+  // raises the window. A web Notification's click can only call window.focus(),
+  // which neither un-minimizes the window nor brings it in front of another app.
+  if (window.desktop && typeof window.desktop.showNotification === 'function') {
+    window.desktop.showNotification('Agent X — Task Complete', title || 'Your agent has finished responding.');
+    return;
+  }
+  if (!notificationsEnabled) return;
   const n = new Notification('Agent X — Task Complete', {
     body: title || 'Your agent has finished responding.',
     icon: '/favicon.ico',

@@ -19,6 +19,8 @@ import type { RouteHandler, ServerContext } from "../server-context.js";
 import { jsonResponse, safeParseBody } from "../server-utils.js";
 import { inboxStore, listInbox, toInboxView, type InboxFrame } from "../inbox/index.js";
 import { approveInboxItem, declineInboxItem, INBOX_REFUSAL_TEXT, type InboxActResult } from "../inbox/approvals.js";
+import { answerLiveApproval, liveApprovalOf } from "../inbox/live-approval.js";
+import { getApprovalManager } from "../approval-manager.js";
 import { dispatchApprovedCall, resolveApprovedTool } from "../tool-execution/index.js";
 import { SecurityLayer } from "../security/index.js";
 import { loadFileAccessModeAtLeast } from "../security/layer/index.js";
@@ -62,6 +64,13 @@ export function mutateInbox(ctx: ServerContext, action: InboxMutation, id: strin
  *  every unattended run gets (cron runner, ops tools), that session's threat
  *  state. Decline runs nothing. Either answer is broadcast once claimed. */
 export async function actOnInbox(ctx: ServerContext, id: string, action: "approve" | "decline"): Promise<InboxActResult> {
+  // A copy of a chat's live card answers that card; nothing runs from here
+  // (the card's own turn runs the call on the answer).
+  if (liveApprovalOf(id)) {
+    return answerLiveApproval(id, action === "approve",
+      (approvalId, approved) => getApprovalManager().resolveApproval(approvalId, approved),
+      () => broadcastChanged(ctx, action, id));
+  }
   if (action === "decline") {
     const result = declineInboxItem(id);
     if (result.ok) broadcastChanged(ctx, "decline", id);

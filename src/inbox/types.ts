@@ -93,6 +93,9 @@ export interface StoredInboxItem extends InboxItem {
   key?: string;
   dismissedAt?: number;
   deferredCall?: DeferredCallRecord;
+  /** For a copy of a chat's live approval card (live-approval.ts): the card
+   *  it answers. Never leaves the server, like `deferredCall`. */
+  liveApprovalId?: string;
 }
 
 export interface InboxInput {
@@ -105,6 +108,7 @@ export interface InboxInput {
   /** Stable producer key: a repeat with the same key updates the item. */
   key?: string;
   deferredCall?: DeferredCallRecord;
+  liveApprovalId?: string;
 }
 
 export interface InboxCounts {

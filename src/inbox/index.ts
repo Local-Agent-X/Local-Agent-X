@@ -28,7 +28,7 @@ export function inboxStore(): InboxStore {
 /** What a client may see: the producer key, the dismiss stamp and the
  *  deferred-call record stay on the server. */
 export function toInboxView(item: StoredInboxItem): InboxItem {
-  const { key: _key, dismissedAt: _dismissed, deferredCall: _call, ...view } = item;
+  const { key: _key, dismissedAt: _dismissed, deferredCall: _call, liveApprovalId: _live, ...view } = item;
   return view;
 }
 

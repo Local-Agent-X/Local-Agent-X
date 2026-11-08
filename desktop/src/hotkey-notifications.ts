@@ -7,6 +7,7 @@ import { existsSync } from "fs";
 import { ICON_PATH } from "./config";
 import { getSetting } from "./settings";
 import { panicAbortServer } from "./server-process";
+import { bringToFront } from "./window";
 
 export function registerHotkey(toggleAction: () => void): void {
   const hotkey = getSetting("globalHotkey");
@@ -37,8 +38,27 @@ export function registerPanicHotkey(): void {
   }
 }
 
-export function showNotification(title: string, body: string): void {
-  if (!Notification.isSupported()) return;
+// A shown toast stays referenced until it closes: Electron drops the click
+// handler of a Notification that was garbage-collected, so a click on an
+// older toast did nothing.
+const shown = new Set<Notification>();
+
+/**
+ * A native toast. Clicking it brings LAX to the front (restored if minimized)
+ * and then runs `onClick`, if given. Returns the toast so its owner can close
+ * it, or null where the OS has no notifications.
+ */
+export function showNotification(title: string, body: string, onClick?: () => void): Notification | null {
+  if (!Notification.isSupported()) return null;
   const icon = existsSync(ICON_PATH) ? nativeImage.createFromPath(ICON_PATH) : undefined;
-  new Notification({ title, body, icon }).show();
+  const toast = new Notification({ title, body, icon });
+  shown.add(toast);
+  toast.on("click", () => {
+    shown.delete(toast);
+    bringToFront();
+    try { onClick?.(); } catch (e) { console.warn("[desktop] toast click handler failed:", e); }
+  });
+  toast.on("close", () => { shown.delete(toast); });
+  toast.show();
+  return toast;
 }

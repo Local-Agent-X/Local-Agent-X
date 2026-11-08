@@ -20,6 +20,7 @@ import {
 } from "./server-process";
 import { showNotification, registerHotkey, registerPanicHotkey } from "./hotkey-notifications";
 import { getMainWindow, toggleWindow, reapplyMainTitleBarOverlay, stepMainZoom, setMainChromeTint } from "./window";
+import { setupApprovalPresenceIPC } from "./approval-presence-ipc";
 import { registerAutostart, unregisterAutostart } from "./autostart";
 import {
   isNativeSpeechAvailable,
@@ -34,6 +35,7 @@ export function setupIPC(): void {
   setupBrowserIPC();
   setupTerminalIPC();
   setupNativeUpdaterIPC();
+  setupApprovalPresenceIPC();
   ipcMain.handle("get-server-status", async () => {
     return {
       running: await isServerRunning(),

@@ -108,8 +108,8 @@ const OUTCOME_PHRASE: Record<string, string> = {
   ok: "ran", running: "started", blocked: "was blocked", declined: "was declined", timeout: "timed out",
 };
 
-function postApprovedResult(item: StoredInboxItem & { deferredCall: DeferredCallRecord }, title: string, detail: string, failed: boolean): InboxItem | null {
-  const call = item.deferredCall;
+function postApprovedResult(item: StoredInboxItem, title: string, detail: string, failed: boolean): InboxItem | null {
+  const call = item.deferredCall as DeferredCallRecord;
   return postToInbox({
     kind: "job",
     title,
@@ -158,6 +158,7 @@ export async function approveInboxItem(id: string, deps: ApproveDeps): Promise<I
   if (claim.kind !== "claimed") return { ok: false, refused: claim.kind };
   deps.onAnswered?.();
   const call = claim.item.deferredCall;
+  if (!call) return { ok: false, refused: "not-approval" };
   if (!runnable) {
     const error = `There is no tool named "${call.toolName}" any more (it was renamed or removed), so nothing ran.`;
     const posted = postApprovedResult(claim.item, `Your approved ${call.toolName} call could not run`, error, true);

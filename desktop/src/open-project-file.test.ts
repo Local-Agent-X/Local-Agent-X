@@ -36,6 +36,7 @@ vi.mock("./window", () => ({}));
 vi.mock("./browser-ipc", () => ({ setupBrowserIPC: () => undefined }));
 vi.mock("./terminal-pty", () => ({ setupTerminalIPC: () => undefined }));
 vi.mock("./native-updater", () => ({ setupNativeUpdaterIPC: () => undefined }));
+vi.mock("./approval-presence-ipc", () => ({ setupApprovalPresenceIPC: () => undefined }));
 vi.mock("./settings", () => ({}));
 vi.mock("./theme", () => ({}));
 vi.mock("./server-process", () => ({}));

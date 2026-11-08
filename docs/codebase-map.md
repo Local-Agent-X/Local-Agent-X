@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1942 non-test source files · 84 oversized · 256 nearing the size cap.
+**Totals:** 69 top-level dirs · 69 live · 0 with no live importer · 1942 non-test source files · 84 oversized · 257 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -387,7 +387,6 @@ job. Comments are free: never cut them to fit.
 - `src/auto-build/workflow-resolver.ts#candidateFromEvidence` — 100+ own code lines (cap 100)
 - `src/context/system-prompt-builder.ts#createSystemPromptBuilder` — 100+ own code lines (cap 100)
 - `src/cron/cron-service-execute.ts#runJob` — 100+ own code lines (cap 100)
-- `src/server/voice-ws.ts#runVoiceTurn` — 100+ own code lines (cap 100)
 - `src/anthropic-client/stream-cli.ts#streamViaColdSpawn` — 90+ own code lines (cap 100)
 - `src/app-renderer/components.ts#renderComponent` — 90+ own code lines (cap 100)
 - `src/auto-build/orchestrator/manager.ts#startOrchestration` — 90+ own code lines (cap 100)
@@ -421,6 +420,7 @@ job. Comments are free: never cut them to fit.
 - `src/security/layer/network-policy.ts#evaluateWebFetch` — 90+ own code lines (cap 100)
 - `src/security/layer/shell-policy.ts#evaluateShellCommand` — 90+ own code lines (cap 100)
 - `src/server/inbound-channel-runner.ts#runInboundChannelTurn` — 90+ own code lines (cap 100)
+- `src/server/voice-ws.ts#runVoiceTurn` — 90+ own code lines (cap 100)
 - `src/tool-execution/run-sandboxed.ts#runSandboxedPhase` — 90+ own code lines (cap 100)
 - `src/tools/email-send-tool.ts#emailSend.execute` — 90+ own code lines (cap 100)
 - `src/tools/read-write-tools.ts#readTool.execute` — 90+ own code lines (cap 100)
@@ -579,6 +579,7 @@ job. Comments are free: never cut them to fit.
 - `src/tools/process-session.ts#startSession` — 60+ own code lines (cap 100)
 - `src/tools/process-tools-defs.ts#processRestartTool.execute` — 60+ own code lines (cap 100)
 - `src/tools/telegram-tools.ts#telegramSend.execute` — 60+ own code lines (cap 100)
-- `src/voice/audio-ws.ts#ws.on:callback@253` — 60+ own code lines (cap 100)
+- `src/voice/audio-ws.ts#ws.on:callback@259` — 60+ own code lines (cap 100)
 - `src/voice/voice-session/settings.ts#resolveVoiceSettings` — 60+ own code lines (cap 100)
+- `src/voice/voice-session/turn-runner.ts#runAgentTurn` — 60+ own code lines (cap 100)
 

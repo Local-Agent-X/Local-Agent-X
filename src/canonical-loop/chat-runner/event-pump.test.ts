@@ -50,7 +50,7 @@ describe("event pump op-stream mapping", () => {
     const pump = createEventPump("op-1");
     listeners.get("op-1")!({
       stopped: true,
-      reason: "Local model output degenerated — stream stopped early",
+      reason: "Model output degenerated — stream stopped early",
       debug: "tail repetition: trailing 100-char block repeated 3x consecutively",
       firedBy: "stream-guard",
     });
@@ -58,7 +58,7 @@ describe("event pump op-stream mapping", () => {
     expect(events).toEqual([
       {
         type: "stopped",
-        reason: "Local model output degenerated — stream stopped early",
+        reason: "Model output degenerated — stream stopped early",
         debug: "tail repetition: trailing 100-char block repeated 3x consecutively",
         firedBy: "stream-guard",
       },

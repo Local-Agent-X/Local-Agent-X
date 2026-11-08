@@ -1,10 +1,11 @@
 /**
  * Degenerate-output stream guard — incremental loop/garble detection over a
- * LIVE local-model stream.
+ * LIVE model stream.
  *
- * Motivation: a local model can degenerate mid-stream (observed: a local
- * Gemma looping the same sentence verbatim for 41 seconds until the user hit
- * abort). The max_tokens guard rail (openai-http.ts) bounds the damage; this
+ * Motivation: a model can degenerate mid-stream (observed: a local Gemma
+ * looping the same sentence verbatim for 41 seconds until the user hit
+ * abort; Grok 4.7 repeating one sentence 170 times on a voice turn). The
+ * max_tokens guard rail (openai-http.ts) bounds the damage; this
  * guard cuts it within seconds. Sibling in spirit to context-manager/
  * llm-rewrite-guard.ts's detectDegenerateRewrite, which screens a COMPLETED
  * rewrite post-hoc — this one watches the tail of an in-flight stream so the
@@ -12,8 +13,8 @@
  * rewrite guard's whole-text duplicate-line / gzip signals don't apply
  * incrementally.)
  *
- * Only ever armed for LOCAL endpoints (see stream-once.ts), and deliberately
- * conservative: legit prose, code, JSON, markdown tables, and non-Latin
+ * Armed on every endpoint of the OpenAI-compatible adapter (stream-once.ts),
+ * and deliberately conservative: legit prose, code, JSON, markdown tables, and non-Latin
  * scripts (CJK counts as letters via \p{L}) must never trip it. A missed
  * loop is bounded by max_tokens; a false trip kills a healthy answer — so
  * every detector carries an extra quality gate beyond its headline ratio.
@@ -36,7 +37,7 @@
 
 /** User-facing one-liner for the `stopped` notice when the guard trips. */
 export const DEGENERATE_STREAM_STOP_REASON =
-  "Local model output degenerated — stream stopped early";
+  "Model output degenerated — stream stopped early";
 
 /** The stop a degenerate reply ends with, whichever side caught it: this
  *  guard, or the runtime's own (below). Not a provider's string. The turn

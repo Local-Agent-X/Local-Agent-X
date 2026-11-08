@@ -1,11 +1,11 @@
 import { sanitizeModelOutput, stripLeakedSpecialTokensStreaming } from "../providers/output-sanitize.js";
 import { categoryOf, isReadOnlyCall } from "../tool-registry.js";
 
-/** Spoken when the degenerate-output guard stops a local reply mid-stream.
- *  Voice has no inline-card surface, so a guard stop that would otherwise end
- *  in abrupt silence is voiced instead. */
+/** Spoken when the degenerate-output guard stops a reply mid-stream. Voice
+ *  has no inline-card surface, so a guard stop that would otherwise end in
+ *  abrupt silence is voiced instead. */
 export const VOICE_GUARD_STOP_NOTICE =
-  " Sorry — my local model glitched there, so I stopped early.";
+  " Sorry — I started repeating myself there, so I stopped.";
 
 /** Spoken when a lookup starts and the model has said nothing since the last
  *  one, so the user hears that work is happening instead of silence. Keyed by

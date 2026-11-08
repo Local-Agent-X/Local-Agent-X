@@ -1,4 +1,4 @@
-// Degenerate-stream guard WIRING: the guard arms only for local endpoints,
+// Degenerate-stream guard WIRING: the guard arms on local and hosted endpoints,
 // trips mid-stream, tears the transport down early, preserves the partial
 // text, surfaces exactly ONE `stopped` marker on the op-stream bus, and the
 // turn ends cleanly (done, no retries) instead of error.
@@ -144,7 +144,7 @@ describe("streamOnce degenerate guard", () => {
     expect(result.providerStop).toBeUndefined();
   });
 
-  it("cloud endpoint: guard is not armed — identical degenerate stream runs to completion", async () => {
+  it("cloud endpoint: a hosted model's loop is stopped too", async () => {
     const state: FakeStreamState = { yielded: 0, closedEarly: false };
     streamMock.mockImplementation(degenerateStream(state, 30));
     const reports: AdapterReport[] = [];
@@ -153,10 +153,26 @@ describe("streamOnce degenerate guard", () => {
       isAborted: () => false,
     });
 
+    expect(result.stoppedByGuard).toMatch(/tail repetition/);
+    expect(result.providerStop).toBe(DEGENERATE_STOP);
+    expect(state.closedEarly).toBe(true);
+    expect(state.yielded).toBeLessThan(30);
+    expect(markerReports(reports)).toHaveLength(1);
+  });
+
+  it("cloud endpoint: a healthy reply runs to completion", async () => {
+    streamMock.mockImplementation(async function* () {
+      for (const delta of ["Yeah, I hear you, Peter. ", "Loud and clear. ", "What's up?"]) yield { type: "text" as const, delta };
+      yield { type: "done" as const, stopReason: "stop" };
+    });
+    const reports: AdapterReport[] = [];
+
+    const result = await streamOnce(req("https://api.llm-cloud.example/v1"), (r) => reports.push(r), {
+      isAborted: () => false,
+    });
+
     expect(result.stoppedByGuard).toBeUndefined();
-    expect(state.closedEarly).toBe(false);
-    expect(state.yielded).toBe(30);
-    expect(result.assembledText.length).toBe(30 * LOOP_BLOCK.length);
+    expect(result.assembledText).toBe("Yeah, I hear you, Peter. Loud and clear. What's up?");
     expect(markerReports(reports)).toHaveLength(0);
   });
 });

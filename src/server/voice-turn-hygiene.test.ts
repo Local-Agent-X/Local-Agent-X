@@ -57,7 +57,7 @@ describe("VoiceTurnHygiene", () => {
     expect(notice).toBe(VOICE_GUARD_STOP_NOTICE);
     const stored = h.finalize();
     expect(stored).toContain("Here is the");
-    expect(stored).toContain("glitched");
+    expect(stored).toContain("repeating myself");
   });
 
   it("finalize trims surrounding whitespace", () => {

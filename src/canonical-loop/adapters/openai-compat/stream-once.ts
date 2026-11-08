@@ -55,14 +55,14 @@ export async function streamOnce(
     interruptedByInject: false,
     stoppedByGuard: undefined,
   };
-  // Degenerate-output guard — LOCAL endpoints only (a local model can loop
-  // verbatim or emit garble indefinitely; cloud frontier models don't, and
-  // a false trip there would cut a healthy paid stream). Watches answer-text
-  // deltas only: reasoning models legitimately produce repetitive
-  // chain-of-thought, and thinking is bounded by the local output cap
-  // (local-cap.ts) regardless.
+  // Degenerate-output guard, on every endpoint: a local model can loop
+  // verbatim or emit garble indefinitely, and so can a hosted one (Grok
+  // 4.7 repeated one sentence 170 times on a voice turn until its 4,096-token
+  // cap, 2026-11-07). Watches answer-text deltas only: reasoning models
+  // legitimately produce repetitive chain-of-thought, bounded by the output
+  // cap regardless.
   const local = isLocalModelEndpoint(req.baseURL);
-  const guard = local ? createDegenerateStreamGuard() : null;
+  const guard = createDegenerateStreamGuard();
   // A background call to this model now would wait behind this request, so
   // short-budget classifiers skip instead of queueing (residency.ts).
   const endServing = local ? markServingChat(req.model) : undefined;
@@ -89,17 +89,15 @@ export async function streamOnce(
         if (!ev.delta) continue;
         out.assembledText += ev.delta;
         report({ kind: "stream_chunk", body: { delta: ev.delta } });
-        if (guard) {
-          const verdict = guard.feed(ev.delta);
-          if (verdict.tripped) {
-            // Same teardown mechanism as the inject interrupt below: breaking
-            // the loop return()s the generator chain, which aborts the SDK's
-            // in-flight HTTP request via its own AbortController. Text
-            // streamed so far stays in assembledText, so the partial reply
-            // still finalizes.
-            stopDegenerate(out, report, req.model, verdict.reason, "stream-guard");
-            break;
-          }
+        const verdict = guard.feed(ev.delta);
+        if (verdict.tripped) {
+          // Same teardown mechanism as the inject interrupt below: breaking
+          // the loop return()s the generator chain, which aborts the SDK's
+          // in-flight HTTP request via its own AbortController. Text
+          // streamed so far stays in assembledText, so the partial reply
+          // still finalizes.
+          stopDegenerate(out, report, req.model, verdict.reason, "stream-guard");
+          break;
         }
         continue;
       }
@@ -185,7 +183,7 @@ function stopDegenerate(
 ): void {
   out.stoppedByGuard = reason;
   out.providerStop = DEGENERATE_STOP;
-  logger.warn(`[${firedBy}] ${model}: ${reason} — stopping local stream early`);
+  logger.warn(`[${firedBy}] ${model}: ${reason} — stopping stream early`);
   report({
     kind: "stream_chunk",
     body: { stopped: true, reason: DEGENERATE_STREAM_STOP_REASON, debug: reason, firedBy },

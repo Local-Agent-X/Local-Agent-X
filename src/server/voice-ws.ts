@@ -268,11 +268,11 @@ export async function setupVoiceWs(deps: {
           // A card the agent showed: drawn in the chat as the reply is spoken.
           onCard(event.metadata.card);
         } else if (event.type === "stopped" && event.firedBy === "stream-guard") {
-          // The degenerate-output guard tore a local stream down mid-reply.
+          // The degenerate-output guard tore a looping stream down mid-reply.
           // Voice has no card surface, so speak a short honest notice instead
           // of ending in abrupt silence. Never fires on user barge-in — that
           // path sets `aborted` via the abort signal, not this event.
-          logger.info(`[voice-ws] stream guard stopped a degenerate local reply (${sessionId}); spoke a notice`);
+          logger.info(`[voice-ws] stream guard stopped a degenerate reply (${sessionId}); spoke a notice`);
           onDelta(hygiene.guardStopped());
         } else if (event.type === "approval_requested") {
           // Voice has no approval UI yet, and the approval timeout is 5 min —

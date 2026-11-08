@@ -138,3 +138,55 @@ describe("recordFileChanges", () => {
     expect(() => recordFileChanges(ctx("write", {}))).not.toThrow();
   });
 });
+
+// 2026-11-08: a downloaded key's private key sat in the rollback store for hours
+// after its delete. A credential file (the egress guard's judgment, data-lineage/
+// paths.ts isCredentialShapedFile) is never copied aside in plaintext: deleted by
+// the name the user gave, nothing is kept; otherwise the copy is sealed.
+describe("a credential file is never copied aside in plaintext", () => {
+  const FAKE_KEY = `-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7fakefakefake
+-----END PRIVATE KEY-----`;
+  const said = (text: string) => ({ priorMessages: [{ role: "user" as const, content: text }] });
+
+  it("deleted by the name the user gave: final, no copy", async () => {
+    const key = join(dir, "agentxos-4c218-9d8a76b91793.json");
+    writeFileSync(key, FAKE_KEY);
+    await captureRollbackPhase(ctx("delete_file", { path: key }, said("delete agentxos-4c218-9d8a76b91793.json")));
+    expect(capturedPaths()).toEqual([{ path: resolveAgentPath(key, "sess-1"), keep: "final" }]);
+  });
+
+  it("a shell rm of it by name is final too", async () => {
+    const key = join(dir, "service-account.json");
+    writeFileSync(key, FAKE_KEY);
+    await captureRollbackPhase(ctx("bash", { command: "rm -f service-account.json", _cwd: dir }, said("please delete service-account.json for good")));
+    expect(capturedPaths()).toEqual([{ path: join(dir, "service-account.json"), keep: "final" }]);
+  });
+
+  it("deleted or changed by the agent on its own: sealed", async () => {
+    const key = join(dir, "service-account.json");
+    writeFileSync(key, FAKE_KEY);
+    await captureRollbackPhase(ctx("delete_file", { path: key }, said("clean up the downloads folder")));
+    expect(capturedPaths()).toEqual([{ path: resolveAgentPath(key, "sess-1"), keep: "seal" }]);
+    await captureRollbackPhase(ctx("write", { path: key, content: "{}" }, said("delete service-account.json")));
+    expect(capturedPaths(), "a write is a change the user asked for, not a wish that nothing remain").toEqual([{ path: resolveAgentPath(key, "sess-1"), keep: "seal" }]);
+  });
+
+  it("an ordinary file is a plain copy, as before, named or not", async () => {
+    const notes = join(dir, "notes.md");
+    writeFileSync(notes, "hello");
+    await captureRollbackPhase(ctx("delete_file", { path: notes }, said("delete notes.md")));
+    expect(capturedPaths()).toEqual([resolveAgentPath(notes, "sess-1")]);
+  });
+
+  it("recordFileChanges names a final delete, so the notice can say it is gone for good", () => {
+    const onEvent = vi.fn();
+    recordCapture.mockReturnValueOnce(contract([
+      { type: "final", original: "/w/key.json", reason: "named" },
+      { type: "file-backup", original: "/w/a.ts", backup: "/r/0-a.ts.bak" },
+    ]));
+    const c = ctx("bash", {}, { onEvent });
+    recordFileChanges(c);
+    expect(onEvent).toHaveBeenCalledWith({ type: "file_changes", sessionId: "sess-1", opId: c.operationId, files: ["/w/key.json", "/w/a.ts"], final: ["/w/key.json"] });
+  });
+});

@@ -34,6 +34,7 @@ import { getLaxDir } from "../lax-data-dir.js";
 import { getRuntimeConfig } from "../config.js";
 import { evaluateFileAccess, loadFileAccessMode } from "../security/layer/index.js";
 import { moveToTrash } from "../safe-delete.js";
+import { SEALED_TTL_MS, openBackup, sealBackup } from "./rollback-seal.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("autonomy-rollback");
@@ -56,9 +57,22 @@ const RETENTION_MS = 30 * 24 * 3_600_000;
 const PRUNE_EVERY_MS = 3_600_000;
 
 export type RollbackArtifact =
-  | { type: "file-backup"; original: string; backup: string }
+  /** `sealed`: the backup is encrypted (rollback-seal.ts) and expires at
+   *  `expiresAt`; absent, a plain copy kept for the whole retention window. */
+  | { type: "file-backup"; original: string; backup: string; sealed?: true; expiresAt?: number }
   | { type: "created"; original: string }
+  /** A credential file the user named for deletion: the delete is on record,
+   *  and no copy was kept, so nothing can undo it. */
+  | { type: "final"; original: string; reason: string }
   | { type: "none"; reason: string };
+
+/** How a captured file's bytes are kept: a plain copy (the default), sealed
+ *  (a credential file the agent changes on its own), or not at all (`final`:
+ *  a credential file the user named for deletion). Decided by the caller
+ *  (tool-execution/capture-rollback.ts), which knows the request. */
+export type CaptureKeep = "copy" | "seal" | "final";
+export type CapturePath = string | { path: string; keep: CaptureKeep };
+const KEEP_RANK: Record<CaptureKeep, number> = { copy: 0, seal: 1, final: 2 };
 
 export interface RollbackCall {
   toolCallId: string;
@@ -85,14 +99,20 @@ function statBefore(p: string): Before {
   catch { return { exists: false, size: 0, mtimeMs: 0 }; }
 }
 
-function captureFile(toolCallId: string, filePath: string, n: number): RollbackArtifact {
+function captureFile(toolCallId: string, filePath: string, n: number, keep: CaptureKeep, now: number): RollbackArtifact {
   try {
     if (!existsSync(filePath)) return { type: "created", original: filePath };
     const st = statSync(filePath);
     if (st.isDirectory()) return { type: "none", reason: `${filePath} is a folder: a deleted folder goes to the trash, and restore_file brings it back` };
     if (st.size > MAX_BACKUP_BYTES) return { type: "none", reason: `${filePath} is ${st.size} bytes, over the ${MAX_BACKUP_BYTES}-byte backup cap` };
+    if (keep === "final") return { type: "final", original: filePath, reason: "a credential file the user named for deletion: no copy is kept" };
     const dir = join(ROLLBACK_DIR, toolCallId);
     ensureDir(dir);
+    if (keep === "seal") {
+      const backup = join(dir, `${n}-${basename(filePath)}.sealed`);
+      sealBackup(filePath, backup, toolCallId);
+      return { type: "file-backup", original: filePath, backup, sealed: true, expiresAt: now + SEALED_TTL_MS };
+    }
     const backup = join(dir, `${n}-${basename(filePath)}.bak`);
     copyFileSync(filePath, backup);
     return { type: "file-backup", original: filePath, backup };
@@ -100,6 +120,15 @@ function captureFile(toolCallId: string, filePath: string, n: number): RollbackA
     return { type: "none", reason: `backup of ${filePath} failed: ${(e as Error).message}` };
   }
 }
+
+/** The bytes a backup holds, opened when sealed. Throws when it cannot be read. */
+export function backupBytes(toolCallId: string, a: Extract<RollbackArtifact, { type: "file-backup" }>): Buffer {
+  return a.sealed ? openBackup(a.backup, toolCallId) : readFileSync(a.backup);
+}
+
+/** A sealed backup past its time: swept by the prune, refused by a restore. */
+const expired = (a: RollbackArtifact, now: number): boolean =>
+  a.type === "file-backup" && a.sealed === true && typeof a.expiresAt === "number" && a.expiresAt <= now;
 
 let lastPruneAt = 0;
 
@@ -114,25 +143,33 @@ export interface PendingCapture {
  * resolved the way the tool resolves them. Null when the call names no file.
  * Nothing is on record until recordCapture.
  */
-export function captureBeforeCall(call: RollbackCall, paths: readonly string[], now = Date.now()): PendingCapture | null {
+export function captureBeforeCall(call: RollbackCall, paths: readonly CapturePath[], now = Date.now()): PendingCapture | null {
   if (paths.length === 0) return null;
   ensureDir(ROLLBACK_DIR);
   if (now - lastPruneAt > PRUNE_EVERY_MS) pruneRollbacks(now);
   if (!TOOL_CALL_ID.test(call.toolCallId)) {
     return { call, ts: now, entries: [{ path: null, before: statBefore(""), artifact: { type: "none", reason: "the tool call id cannot name a backup directory" } }] };
   }
-  const entries = [...new Set(paths)].map((p, i) => ({ path: p, before: statBefore(p), artifact: captureFile(call.toolCallId, p, i) }));
+  const keeps = new Map<string, CaptureKeep>();
+  for (const p of paths) {
+    const path = typeof p === "string" ? p : p.path;
+    const keep = typeof p === "string" ? "copy" : p.keep;
+    // A path named twice keeps the stricter rule: a copy of what any
+    // spelling says is a credential is still a copy of a credential.
+    if (KEEP_RANK[keep] > KEEP_RANK[keeps.get(path) ?? "copy"] || !keeps.has(path)) keeps.set(path, keep);
+  }
+  const entries = [...keeps].map(([p, keep], i) => ({ path: p, before: statBefore(p), artifact: captureFile(call.toolCallId, p, i, keep, now) }));
   return { call, ts: now, entries };
 }
 
-function changedSince(path: string, before: Before, artifact: RollbackArtifact): boolean {
+function changedSince(toolCallId: string, path: string, before: Before, artifact: RollbackArtifact): boolean {
   const now = statBefore(path);
   if (now.exists !== before.exists) return true;
   if (!now.exists) return false;
   if (now.size !== before.size || now.mtimeMs !== before.mtimeMs) return true;
   if (artifact.type !== "file-backup") return false;
   // Same size and time stamp: a rewrite inside one clock tick. The bytes decide.
-  try { return !readFileSync(path).equals(readFileSync(artifact.backup)); } catch { return true; }
+  try { return !readFileSync(path).equals(backupBytes(toolCallId, artifact)); } catch { return true; }
 }
 
 /**
@@ -144,7 +181,7 @@ export function recordCapture(pending: PendingCapture | null): RollbackContract 
   if (!pending) return null;
   const kept: RollbackArtifact[] = [];
   for (const { path, before, artifact } of pending.entries) {
-    if (path && changedSince(path, before, artifact)) kept.push(artifact);
+    if (path && changedSince(pending.call.toolCallId, path, before, artifact)) kept.push(artifact);
     else if (artifact.type === "file-backup") rmSync(artifact.backup, { force: true });
   }
   if (kept.length === 0) {
@@ -160,12 +197,28 @@ export function recordCapture(pending: PendingCapture | null): RollbackContract 
   return contract;
 }
 
-/** Drop contracts older than the retention window, with their backups. */
+/** A contract with every sealed backup past its time swept: the bytes are
+ *  removed and the artifact keeps only the fact, so the index still says the
+ *  file was changed and the Settings list says why it cannot come back. */
+function sweepExpired(c: RollbackContract, now: number): { contract: RollbackContract; swept: boolean } {
+  if (!c.artifacts.some((a) => expired(a, now))) return { contract: c, swept: false };
+  const artifacts = c.artifacts.map((a): RollbackArtifact => {
+    if (!expired(a, now) || a.type !== "file-backup") return a;
+    if (TOOL_CALL_ID.test(c.toolCallId) && dirname(resolve(a.backup)) === join(ROLLBACK_DIR, c.toolCallId)) rmSync(a.backup, { force: true });
+    return { type: "none", reason: `the sealed backup of ${a.original} expired after ${SEALED_TTL_MS / 3_600_000} hours` };
+  });
+  return { contract: { ...c, artifacts }, swept: true };
+}
+
+/** Drop contracts older than the retention window, with their backups, and
+ *  the sealed backups past their shorter window. */
 export function pruneRollbacks(now = Date.now()): number {
   lastPruneAt = now;
   const all = readContracts();
-  const keep = all.filter((c) => now - c.ts < RETENTION_MS);
-  if (keep.length === all.length) return 0;
+  const live = all.filter((c) => now - c.ts < RETENTION_MS);
+  const sweeps = live.map((c) => sweepExpired(c, now));
+  const keep = sweeps.map((s) => s.contract);
+  if (keep.length === all.length && !sweeps.some((s) => s.swept)) return 0;
   const kept = new Set(keep.map((c) => c.toolCallId));
   for (const c of all) {
     if (!kept.has(c.toolCallId) && TOOL_CALL_ID.test(c.toolCallId)) {
@@ -226,10 +279,12 @@ export type RestoreResult =
  */
 function undoTarget(toolCallId: string, a: RollbackArtifact, sessionId?: string): { target: string } | { error: string } {
   if (a.type === "none") return { error: "no-op artifact" };
+  if (a.type === "final") return { error: `${a.original} cannot come back: ${a.reason}` };
   if (typeof a.original !== "string" || !isAbsolute(a.original)) return { error: "the contract's file paths are malformed" };
   if (a.type === "file-backup") {
     if (typeof a.backup !== "string") return { error: "the contract's file paths are malformed" };
     if (dirname(resolve(a.backup)) !== join(ROLLBACK_DIR, toolCallId)) return { error: `not a backup of this call: ${a.backup}` };
+    if (expired(a, Date.now())) return { error: `the sealed backup of ${a.original} expired` };
     if (!existsSync(a.backup)) return { error: `backup missing: ${a.backup}` };
     if (!lstatSync(a.backup).isFile()) return { error: `backup is not a regular file: ${a.backup}` };
   }
@@ -245,7 +300,8 @@ export async function undoArtifact(toolCallId: string, a: RollbackArtifact, sess
   if ("error" in to) return { ok: false, error: to.error };
   try {
     if (a.type === "file-backup") {
-      copyFileSync(a.backup, to.target);
+      if (a.sealed) writeFileSync(to.target, backupBytes(toolCallId, a));
+      else copyFileSync(a.backup, to.target);
     } else if (existsSync(to.target) && !(await moveToTrash(to.target, "undo"))) {
       return { ok: false, error: `could not move ${to.target} to the trash` };
     }

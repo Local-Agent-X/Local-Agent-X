@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { homedir } from "node:os";
 import { captureBeforeCall, loadRestoredIds, recordCapture } from "./rollback.js";
@@ -101,5 +101,24 @@ describe("rewindToBeforeOp", () => {
     const r = await rewindToBeforeOp(session, op);
     expect(r.ok && r.failed.map((f) => f.path)).toEqual([outside]);
     expect(loadRestoredIds().has(id)).toBe(false);
+  });
+});
+
+// A credential file deleted at the user's word kept no copy (rollback.ts `final`):
+// the rewind lists and touches the other files, and leaves that one gone.
+describe("a final delete", () => {
+  it("is on record but not the rewind's to undo", async () => {
+    const dir = work(), session = uniq("s"), op = uniq("op");
+    const key = join(dir, "key.json"), notes = join(dir, "notes.md");
+    writeFileSync(key, "secret"); writeFileSync(notes, "before");
+    const pending = captureBeforeCall({ toolCallId: uniq("tc"), tool: "delete_file", sessionId: session, opId: op }, [{ path: key, keep: "final" }]);
+    rmSync(key);
+    recordCapture(pending);
+    agentWrite(session, op, notes, "after");
+    expect(planRewind(session, op)!.files).toEqual([notes]);
+    expect(changesSinceOp(session, op)).toEqual([{ path: notes, before: "before" }]);
+    expect(await rewindToBeforeOp(session, op)).toMatchObject({ ok: true, restored: [notes], removed: [], failed: [] });
+    expect(readFileSync(notes, "utf-8")).toBe("before");
+    expect(existsSync(key)).toBe(false);
   });
 });

@@ -344,3 +344,41 @@ describe("sticky session taint — no decay window", () => {
     clearSessionTaint("sticky-child");
   });
 });
+
+// The rollback store asks the same question the egress guard asks before a file
+// leaves the machine, of a file on disk: is this a credential, by path or by
+// what it holds? One answer for sending and for copying aside (autonomy/rollback.ts).
+describe("isCredentialShapedFile — the egress guard's judgment, for a file on disk", async () => {
+  const { isCredentialShapedFile } = await import("./paths.js");
+  const { mkdirSync, mkdtempSync, writeFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const dir = mkdtempSync(join(tmpdir(), "lax-credential-shaped-"));
+  const FAKE_KEY = `-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7fakefakefake
+-----END PRIVATE KEY-----`;
+
+  it("by path: a .env, whatever it holds", () => {
+    const env = join(dir, ".env");
+    writeFileSync(env, "PORT=3000");
+    expect(isCredentialShapedFile(env)).toBe(true);
+  });
+
+  it("by contents: a private key in an innocently named file", () => {
+    const key = join(dir, "agentxos-4c218-9d8a76b91793.json");
+    writeFileSync(key, JSON.stringify({ type: "service_account", private_key: FAKE_KEY }));
+    expect(isCredentialShapedFile(key)).toBe(true);
+  });
+
+  it("ordinary text, binary bytes, a folder and a missing file are not", () => {
+    const notes = join(dir, "notes.md");
+    writeFileSync(notes, ["# Notes", "", "Buy milk. Call the plumber on Tuesday."].join(String.fromCharCode(10)));
+    expect(isCredentialShapedFile(notes)).toBe(false);
+    const png = join(dir, "photo.png");
+    writeFileSync(png, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0, 0x1a, 0x0a, 0, 0xff, 0xd8, 0x7f, 0x33, 0x91, 0xac, 0xbb, 0x02, 0, 0x5e]));
+    expect(isCredentialShapedFile(png)).toBe(false);
+    mkdirSync(join(dir, "folder"));
+    expect(isCredentialShapedFile(join(dir, "folder"))).toBe(false);
+    expect(isCredentialShapedFile(join(dir, "gone.txt"))).toBe(false);
+  });
+});

@@ -11,8 +11,9 @@ function rollbackArtifactSummary(artifacts) {
     return `<span style="color:var(--muted)">${escapeHtml(reason)}</span>`;
   }
   return useful.map(a => {
-    if (a.type === 'file-backup') return `file: ${escapeHtml(a.original)}`;
+    if (a.type === 'file-backup') return `${a.sealed ? 'file (sealed copy, kept 24 h)' : 'file'}: ${escapeHtml(a.original)}`;
     if (a.type === 'created') return `new file: ${escapeHtml(a.original)}`;
+    if (a.type === 'final') return `deleted for good, no copy kept: ${escapeHtml(a.original)}`;
     return escapeHtml(a.type);
   }).join(', ');
 }

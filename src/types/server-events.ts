@@ -160,7 +160,9 @@ export type ServerEvent =
   // A call in request `opId` of session `sessionId` changed these files, and their bytes from before
   // are kept (tool-execution/capture-rollback.ts). The chat gathers a request's
   // calls into one line with an Undo that rewinds them (POST /api/rollback/rewind).
-  | { type: "file_changes"; sessionId: string; opId: string; files: string[] }
+  // `final`: those of the files deleted for good, with no copy kept (a
+  // credential file the user named), so the notice says Undo cannot bring them back.
+  | { type: "file_changes"; sessionId: string; opId: string; files: string[]; final?: string[] }
   // A publish ran with pre-publish review findings (tool-execution/
   // publish-review-gate.ts announcePublishReview). The chat keeps them under
   // the reply, so the user has them whether or not the model repeats them.

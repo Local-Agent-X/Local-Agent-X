@@ -77,8 +77,13 @@ function renderChangesNotice(n) {
   el.className = 'delete-notice changes-notice';
   el.setAttribute('data-id', n.id || '');
   const files = Array.isArray(n.files) ? n.files : [];
+  // A credential file deleted at the user's word keeps no copy (src/autonomy/
+  // rollback.ts `final`): it is listed, marked, and Undo leaves it gone.
+  const final = Array.isArray(n.final) ? n.final : [];
+  const undoable = files.filter(f => !final.includes(f));
   const count = files.length + ' file' + (files.length === 1 ? '' : 's');
-  const names = files.map(f => '<span class="delete-notice-file" title="' + esc(f) + '">' + esc(_noticeBaseName(f)) + '</span>').join(', ');
+  const names = files.map(f => '<span class="delete-notice-file" title="' + esc(f) + '">' + esc(_noticeBaseName(f))
+    + (final.includes(f) ? ' (deleted for good)' : '') + '</span>').join(', ');
 
   const paint = () => {
     if (n.status === 'undone') {
@@ -87,10 +92,13 @@ function renderChangesNotice(n) {
         + (n.error ? '<div class="delete-notice-error">' + esc(n.error) + '</div>' : '');
       return;
     }
-    el.innerHTML = '<span class="delete-notice-text">Changed ' + count + ': ' + names + '.</span>'
-      + '<button class="delete-notice-undo" type="button">Undo</button>'
+    const note = final.length === 0 ? ''
+      : ' <span class="delete-notice-final">' + (final.length === 1 ? 'The file marked' : 'The files marked') + ' deleted for good kept no copy and cannot be brought back.</span>';
+    el.innerHTML = '<span class="delete-notice-text">Changed ' + count + ': ' + names + '.' + note + '</span>'
+      + (undoable.length > 0 ? '<button class="delete-notice-undo" type="button">Undo</button>' : '')
       + (n.error ? '<div class="delete-notice-error">' + esc(n.error) + '</div>' : '');
-    el.querySelector('.delete-notice-undo').addEventListener('click', undo);
+    const btn = el.querySelector('.delete-notice-undo');
+    if (btn) btn.addEventListener('click', undo);
   };
 
   const rewind = async (preview) => {

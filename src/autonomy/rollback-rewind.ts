@@ -15,14 +15,17 @@
  * restorable; every other contract in the range is spent (rollback.ts).
  */
 
-import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import {
-  loadRestoredIds, markRestored, readContracts, undoArtifact,
+  backupBytes, loadRestoredIds, markRestored, readContracts, undoArtifact,
   type RollbackArtifact, type RollbackContract,
 } from "./rollback.js";
 
-type Undoable = Exclude<RollbackArtifact, { type: "none" }>;
+/** An artifact with bytes to put back or a file to remove. A `final` delete
+ *  (a credential file the user named) kept nothing, so a rewind has nothing
+ *  to do for it; a `none` was never captured. */
+type Undoable = Exclude<RollbackArtifact, { type: "none" } | { type: "final" }>;
+const undoable = (a: RollbackArtifact): a is Undoable => a.type !== "none" && a.type !== "final";
 
 interface RewindRange {
   contracts: RollbackContract[];
@@ -42,7 +45,7 @@ function rewindRange(sessionId: string, opId: string): RewindRange | null {
   const firsts = new Map<string, { toolCallId: string; artifact: Undoable }>();
   for (const c of contracts) {
     for (const a of c.artifacts) {
-      if (a.type === "none") continue;
+      if (!undoable(a)) continue;
       const key = fileKey(a.original);
       if (!firsts.has(key)) firsts.set(key, { toolCallId: c.toolCallId, artifact: a });
     }
@@ -72,10 +75,10 @@ export function planRewind(sessionId: string, opId: string): RewindPlan | null {
 export function changesSinceOp(sessionId: string, opId: string): Array<{ path: string; before: string | null }> {
   const range = rewindRange(sessionId, opId);
   if (!range) return [];
-  return [...range.firsts.values()].flatMap(({ artifact }): Array<{ path: string; before: string | null }> => {
+  return [...range.firsts.values()].flatMap(({ toolCallId, artifact }): Array<{ path: string; before: string | null }> => {
     if (artifact.type === "created") return [{ path: artifact.original, before: null }];
-    try { return [{ path: artifact.original, before: readFileSync(artifact.backup, "utf-8") }]; }
-    catch { return []; } // pruned or removed backup: no before to diff against
+    try { return [{ path: artifact.original, before: backupBytes(toolCallId, artifact).toString("utf-8") }]; }
+    catch { return []; } // pruned, removed or expired backup: no before to diff against
   });
 }
 

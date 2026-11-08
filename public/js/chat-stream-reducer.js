@@ -70,8 +70,11 @@
       const notices = e.notices || (e.notices = []);
       const id = 'fc-' + event.opId;
       let n = notices.find(x => x.id === id);
-      if (!n) { n = { id, kind: 'changes', sessionId: event.sessionId, opId: event.opId, files: [], status: 'changed' }; notices.push(n); }
+      if (!n) { n = { id, kind: 'changes', sessionId: event.sessionId, opId: event.opId, files: [], final: [], status: 'changed' }; notices.push(n); }
       for (const f of event.files) if (!n.files.includes(f)) n.files.push(f);
+      // Files deleted for good, with no copy kept: the notice names them as not undoable.
+      if (!Array.isArray(n.final)) n.final = [];
+      for (const f of (Array.isArray(event.final) ? event.final : [])) if (!n.final.includes(f)) n.final.push(f);
       return;
     }
     let notice = null;

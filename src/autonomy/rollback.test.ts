@@ -300,3 +300,80 @@ describe("restore trusts nothing the index names", () => {
     }
   });
 });
+
+// 2026-11-08: the agent deleted a downloaded service-account key and its private
+// key sat in plaintext under ~/.lax/rollback/ for hours. A credential file's copy
+// is sealed and short-lived (rollback-seal.ts), or, deleted at the user's word,
+// not kept at all. Which applies is the caller's call (CapturePath.keep).
+describe("a credential file's copy", async () => {
+  const { openBackup } = await import("./rollback-seal.js");
+  const FAKE_KEY = `-----BEGIN PRIVATE KEY-----
+MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7fakefakefake
+-----END PRIVATE KEY-----`;
+  const DAY = 24 * 3_600_000;
+  const trackedIds: string[] = [];
+  afterEach(() => { while (trackedIds.length) cleanup(trackedIds.pop()!); });
+
+  it("sealed: the backup on disk is ciphertext that opens only for its call, and a restore puts the bytes back", async () => {
+    const id = freshId(); trackedIds.push(id);
+    const target = homeFile(`lax-rb-sealed-${id}.json`);
+    writeFileSync(target, FAKE_KEY);
+    const now = Date.now();
+    const pending = captureBeforeCall(call(id, "delete_file"), [{ path: target, keep: "seal" }], now)!;
+    const a = pending.entries[0].artifact;
+    expect(a).toMatchObject({ type: "file-backup", original: target, sealed: true, expiresAt: now + DAY });
+    if (a.type !== "file-backup") throw new Error("not a backup");
+    expect(a.backup.endsWith(".sealed")).toBe(true);
+    expect(readFileSync(a.backup).includes("PRIVATE KEY")).toBe(false);
+    expect(openBackup(a.backup, id).toString("utf-8")).toBe(FAKE_KEY);
+    expect(() => openBackup(a.backup, "another-call")).toThrow();
+    rmSync(target);
+    expect(recordCapture(pending)!.artifacts).toEqual([a]);
+    expect((await restoreRollback(id)).ok).toBe(true);
+    expect(readFileSync(target, "utf-8")).toBe(FAKE_KEY);
+    rmSync(target, { force: true });
+  });
+
+  it("final: nothing is kept, the delete is on record, and nothing can undo it", async () => {
+    const id = freshId(); trackedIds.push(id);
+    const target = homeFile(`lax-rb-final-${id}.json`);
+    writeFileSync(target, FAKE_KEY);
+    const pending = captureBeforeCall(call(id, "delete_file"), [{ path: target, keep: "final" }])!;
+    rmSync(target);
+    expect(recordCapture(pending)!.artifacts).toEqual([{ type: "final", original: target, reason: expect.stringContaining("no copy is kept") }]);
+    expect(existsSync(join(ROLLBACK_DIR_PATH, id)), "no backup folder was made for it").toBe(false);
+    expect((await restoreRollback(id)).ok).toBe(false);
+    expect(existsSync(target)).toBe(false);
+  });
+
+  it("the sweep: past 24 hours the sealed backup is gone, the record says why, and a restore refuses", async () => {
+    const id = freshId(); trackedIds.push(id);
+    const target = homeFile(`lax-rb-sweep-${id}.json`);
+    writeFileSync(target, FAKE_KEY);
+    const now = Date.now();
+    const pending = captureBeforeCall(call(id), [{ path: target, keep: "seal" }], now)!;
+    writeFileSync(target, "rotated");
+    const a = recordCapture(pending)!.artifacts[0];
+    if (a.type !== "file-backup") throw new Error("not a backup");
+    expect(pruneRollbacks(now + DAY - 1), "still inside the window").toBe(0);
+    expect(existsSync(a.backup)).toBe(true);
+    pruneRollbacks(now + DAY + 1);
+    expect(existsSync(a.backup)).toBe(false);
+    expect(readContracts().find((c) => c.toolCallId === id)!.artifacts).toEqual([{ type: "none", reason: expect.stringContaining("expired") }]);
+    expect((await restoreRollback(id)).ok).toBe(false);
+    expect(readFileSync(target, "utf-8")).toBe("rotated");
+    rmSync(target, { force: true });
+  });
+
+  it("a path named twice keeps the stricter rule", () => {
+    const id = freshId(); trackedIds.push(id);
+    const target = homeFile(`lax-rb-rank-${id}.json`);
+    writeFileSync(target, FAKE_KEY);
+    const entries = captureBeforeCall(call(id), [target, { path: target, keep: "seal" }, target])!.entries;
+    expect(entries).toHaveLength(1);
+    expect(entries[0].artifact).toMatchObject({ type: "file-backup", sealed: true });
+    const finalFirst = captureBeforeCall(call(id), [{ path: target, keep: "final" }, { path: target, keep: "seal" }])!.entries;
+    expect(finalFirst[0].artifact.type).toBe("final");
+    rmSync(target, { force: true });
+  });
+});

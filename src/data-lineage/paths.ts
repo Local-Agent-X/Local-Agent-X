@@ -8,6 +8,8 @@
  */
 
 import { homedir } from "node:os";
+import { readFileSync, statSync } from "node:fs";
+import { containsNulByte } from "../binary-sniff.js";
 import { scanForSecrets } from "../security/secrets/index.js";
 import { isAppAtRestSecretBasename } from "../security/secrets/index.js";
 import { classifySensitivePath, isAppAtRestSecretUnderLax } from "../security/layer/index.js";
@@ -158,6 +160,28 @@ export function isSensitiveAttachmentPath(filePath: string): boolean {
   }
 
   return false;
+}
+
+/**
+ * Is this file, on disk, a credential: by its path ({@link
+ * isSensitiveAttachmentPath}) or by secret-shaped text in its head? The same
+ * two legs the egress guard's attachment check runs before a file leaves the
+ * machine (tools/http-egress-guard.ts checkAttachmentPaths), so "what is a
+ * credential file" has one answer whether the file is being sent or copied
+ * aside for an undo (autonomy/rollback.ts). A binary file is judged by its
+ * path alone: its bytes decoded as text are noise the entropy pass would flag.
+ * A path with nothing readable behind it is judged by its path alone too.
+ */
+export function isCredentialShapedFile(filePath: string): boolean {
+  if (isSensitiveAttachmentPath(filePath)) return true;
+  try {
+    if (!statSync(filePath).isFile()) return false;
+    const buf = readFileSync(filePath);
+    const head = buf.length > SECRET_SCAN_CAP ? buf.subarray(0, SECRET_SCAN_CAP) : buf;
+    return !containsNulByte(head) && !scanForSecrets(head.toString("utf-8")).clean;
+  } catch {
+    return false; /* unreadable or gone: nothing in it to judge */
+  }
 }
 
 function looksLikePathToken(token: string): boolean {

@@ -18,7 +18,7 @@
 
 import { existsSync, readFileSync } from "node:fs";
 import { containsNulByte } from "../binary-sniff.js";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { basename, isAbsolute, join, relative, resolve } from "node:path";
 import { scanForSecrets, decodedPayloadViews, matchTier, type SecretMatch } from "../security/secrets/index.js";
 import { outboundPayloadParts } from "../security/secrets/index.js";
 import { matchEgressList } from "../security/layer/index.js";
@@ -419,6 +419,25 @@ function isProbablyBinary(buf: Buffer): boolean {
  *  tokens, keys) are refused whatever the option says. */
 export interface AttachmentCheckOptions {
   userMayVouch?: boolean;
+  /** Where the file goes, as the user knows it (the open page's host), for
+   *  the approval card's sentence. */
+  destination?: string;
+}
+
+/** Why one file was flagged, in words for the card: what its contents hold
+ *  (the scanner's pattern names, never a value), else its name. */
+function whyFlagged(byContents: readonly SecretMatch[] | null): string {
+  if (!byContents) return "its name marks it as a credential file";
+  const kinds = [...new Set(byContents.map((m) => m.pattern))].slice(0, 3);
+  return kinds.length > 0 ? `it contains ${kinds.join(", ")}` : "its contents look like a secret";
+}
+
+/** The approval card's sentence for the user's own credential files: which
+ *  file goes where, and what each holds. */
+function vouchMessage(findings: ReadonlyArray<{ path: string; why: string }>, destination: string | undefined): string {
+  const to = destination ? ` to ${destination}` : " to the page open in the browser";
+  const lines = findings.map((f) => `${basename(f.path)} (${f.why})`);
+  return `Sending ${lines.join("; ")}${to} needs your approval. Approve only if you meant to give this site that file.`;
 }
 
 /** True when `p` lies inside the LAX data dir: the app's own files, which no
@@ -433,6 +452,8 @@ export function checkAttachmentPaths(sink: string, paths: readonly string[], ses
   const offending: string[] = [];
   // Offending paths that are the app's own (under the data dir): never confirmable.
   const appOwned: string[] = [];
+  // Why each offending path was flagged, for the approval card.
+  const findings: Array<{ path: string; why: string }> = [];
   for (const p of paths) {
     let real: string;
     try {
@@ -449,6 +470,7 @@ export function checkAttachmentPaths(sink: string, paths: readonly string[], ses
     // supplied string (catches a sensitive literal even if it doesn't exist yet).
     if (isSensitiveAttachmentPath(real) || isSensitiveAttachmentPath(p)) {
       offending.push(p);
+      findings.push({ path: p, why: whyFlagged(null) });
       if (underLaxDir(real) || underLaxDir(p)) appOwned.push(p);
       continue;
     }
@@ -464,8 +486,10 @@ export function checkAttachmentPaths(sink: string, paths: readonly string[], ses
       // / send_video / email_send-of-an-image. Binary secret CONTAINERS (.enc vault,
       // keystores) are caught by the PATH leg above (extension/dir), not by scanning
       // their opaque bytes, so skipping the text scan here loses no real coverage.
-      if (!isProbablyBinary(slice) && !scanForSecrets(slice.toString("utf-8")).clean) {
+      const scan = isProbablyBinary(slice) ? null : scanForSecrets(slice.toString("utf-8"));
+      if (scan && !scan.clean) {
         offending.push(p);
+        findings.push({ path: p, why: whyFlagged(scan.matches) });
         if (underLaxDir(real)) appOwned.push(p);
         continue;
       }
@@ -481,13 +505,7 @@ export function checkAttachmentPaths(sink: string, paths: readonly string[], ses
   // way an unrecognized recipient is theirs to vouch for. The app's own files
   // are nobody's to send: one of them in the list keeps the hard refusal.
   if (opts.userMayVouch && appOwned.length === 0) {
-    const one = offending.length === 1;
-    return {
-      message:
-        `${offending.join(", ")} ${one ? "is a credential or secret file" : "are credential or secret files"} ` +
-        `(by name, or by secret-shaped contents such as a private key); sending ${one ? "it" : "them"} needs the user's approval`,
-      meta, confirmable: true,
-    };
+    return { message: vouchMessage(findings, opts.destination), meta, confirmable: true };
   }
   return {
     message:

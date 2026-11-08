@@ -59,6 +59,7 @@ const logger = createLogger("approval-manager");
 
 // Re-exported so existing importers of the approval surface keep one address.
 import { beginApprovalWait } from "./approval-wait.js";
+import { withoutInternalArgs } from "./tool-execution/internal-args.js";
 
 /**
  * WHY a denial carries a reason: `requestApproval` resolves false on three
@@ -206,7 +207,9 @@ class ApprovalManager {
     if (existing) return existing;
 
     const id = `apr-${this.nextId++}-${Date.now()}`;
-    const argsPreview = JSON.stringify(opts.args).slice(0, 500);
+    // The card shows what the model asked for; the dispatcher's own `_` keys
+    // (session, tool-call id, call context) are not part of it.
+    const argsPreview = JSON.stringify(withoutInternalArgs(opts.args)).slice(0, 500);
     // Load the durable bridge BEFORE registering the card: every settle path
     // (approve/deny/timeout/superseded/teardown) is synchronous, and this
     // await lets them record durably without one. Best-effort: a failed load

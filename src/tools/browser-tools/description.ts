@@ -20,7 +20,10 @@ export function describeBrowserCall(args: Record<string, unknown>): string {
   if (a === "evaluate") return `Run script in browser: ${String(args.script || "").slice(0, 80)}`;
   if (a === "upload") {
     const files = [args.path, ...(Array.isArray(args.paths) ? args.paths : [])].filter((p): p is string => typeof p === "string" && p !== "");
-    return `Upload to the open page: ${files.join(", ") || "(no file named)"}`;
+    if (files.length === 0) return "Upload to the open page: (no file named)";
+    const names = files.map((f) => f.split(/[\\/]/).pop() || f);
+    const dirs = [...new Set(files.map((f) => f.slice(0, Math.max(0, f.length - (f.split(/[\\/]/).pop() || "").length - 1))))];
+    return `Upload ${names.join(", ")} into the open page${dirs.length === 1 && dirs[0] ? `, from ${dirs[0]}` : ""}`;
   }
   if (a === "emulate") {
     const device = args.device ? String(args.device) : "";

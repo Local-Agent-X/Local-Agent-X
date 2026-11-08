@@ -71,8 +71,8 @@ describe("browser action registration: upload", () => {
   });
 
   it("6. names the file on the approval card", () => {
-    expect(describeBrowserCall({ action: "upload", ref: 3, path: "C:\\docs\\cv.pdf" })).toBe("Upload to the open page: C:\\docs\\cv.pdf");
-    expect(describeBrowserCall({ action: "upload", ref: 3, paths: ["a.png", "b.png"] })).toBe("Upload to the open page: a.png, b.png");
+    expect(describeBrowserCall({ action: "upload", ref: 3, path: "C:\\docs\\cv.pdf" })).toBe("Upload cv.pdf into the open page, from C:\\docs");
+    expect(describeBrowserCall({ action: "upload", ref: 3, paths: ["a.png", "b.png"] })).toBe("Upload a.png, b.png into the open page");
   });
 });
 

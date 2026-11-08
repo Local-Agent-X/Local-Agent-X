@@ -22,7 +22,7 @@ import { checkCanariesInPayload, recordCanaryExfilAudit } from "../threat/canari
 import { judgeEgress, type EgressJudgement } from "../net/egress-judge.js";
 import { destinationSpecsOf, hasCapability, requestMethodOf } from "../tool-registry.js";
 import { checkOutboundRequest, checkOutboundPayload, checkOutboundEmail, checkAttachmentPaths, hostOf, isTrustedDestination, recipientFields, type GuardBlock } from "../tools/http-egress-guard.js";
-import { vouchedFor } from "../browser/site-provenance.js";
+import { lastBrowserPageUrl, vouchedFor } from "../browser/site-provenance.js";
 import { egressPayload } from "./egress-payload.js";
 import { recordEgressBlocks } from "./egress-block-audit.js";
 import { outboundSecretRecovery } from "./stored-secret-route.js";
@@ -90,7 +90,7 @@ export function probeEgressGuard(ctx: ToolCallContext): EgressBlocker | null {
   // data-dir files are refused everywhere.
   if (attachmentPaths.length > 0) {
     const watched = (destinationSpecsOf(tc.name, args as Record<string, unknown>) ?? []).some((d) => d.to === "browser-page");
-    const att = checkAttachmentPaths(tc.name, attachmentPaths, ctx.sessionId, { userMayVouch: watched });
+    const att = checkAttachmentPaths(tc.name, attachmentPaths, ctx.sessionId, { userMayVouch: watched, ...(watched ? { destination: pageHost(args as Record<string, unknown>, ctx.sessionId) } : {}) });
     if (att) {
       return {
         layer: "egress-guard", label: "egress guard", reason: att.message,
@@ -140,6 +140,14 @@ export function probeEgressGuard(ctx: ToolCallContext): EgressBlocker | null {
     userHint: USER_HINTS.outboundContent, meta: block.meta,
     confirmable: block.confirmable,
   };
+}
+
+// The site a browser call acts on, for the approval card: the call's own url,
+// else the page the session's browser last stood on. Undefined when neither
+// names one (the card then says "the page open in the browser").
+function pageHost(args: Record<string, unknown>, sessionId: string | undefined): string | undefined {
+  const url = typeof args.url === "string" && args.url ? args.url : lastBrowserPageUrl(sessionId ?? "");
+  try { return new URL(url).host || undefined; } catch { return undefined; }
 }
 
 // Data-lineage taint floor. Completeness-guarded Option B+

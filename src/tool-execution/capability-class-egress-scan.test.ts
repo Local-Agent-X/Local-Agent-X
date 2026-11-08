@@ -12,6 +12,7 @@ import { tmpdir } from "node:os";
 import { CAN_CREATE_FILE_SYMLINK } from "../symlink-capabilities.test-helper.js";
 import { egressGuardGate, canaryEgressGate } from "./enforce-policy.js";
 import { probeEgressGuard } from "./egress-gates.js";
+import { _clearSiteProvenance, recordSiteTokens } from "../browser/site-provenance.js";
 import { egressPayload } from "./egress-payload.js";
 import { checkAttachmentPaths } from "../tools/http-egress-guard.js";
 import { scanForSecrets, registerRedactedSecretValue, unregisterRedactedSecretValue } from "../security/secrets/index.js";
@@ -189,12 +190,27 @@ describe("egressGuardGate — the user's own credential file to the page they ar
   });
   afterAll(() => rmSync(dir, { recursive: true, force: true }));
 
-  it("a browser upload of it continues to the approval phase, with the file named in the ask", () => {
+  it("a browser upload of it continues to the approval phase, with the file, the site and what it holds in the ask", () => {
+    _clearSiteProvenance();
+    recordSiteTokens(sessionId, "https://expo.dev/accounts/me/credentials", "");
     const ctx = makeCtx("browser", { action: "upload", ref: 3, path: key }, sessionId);
     expect(egressGuardGate(ctx).kind).toBe("continue");
     expect(ctx.result).toBeUndefined();
-    expect(ctx.policyApprovalReason).toContain("agentxos-push.json");
-    expect(ctx.policyApprovalReason).toContain("needs the user's approval");
+    // Peter, 2026-11-08: the first card named the path twice and never the site.
+    expect(ctx.policyApprovalReason).toBe(
+      "Sending agentxos-push.json (it contains GCP Service Account, Private Key (PEM), Private Key Marker (PEM)) to expo.dev needs your approval. " +
+      "Approve only if you meant to give this site that file.",
+    );
+    _clearSiteProvenance();
+  });
+
+  it("names the page as 'the page open in the browser' when none was recorded, and a name-only finding by its name", () => {
+    _clearSiteProvenance();
+    const idRsa = join(dir, "id_rsa");
+    writeFileSync(idRsa, "not really a key");
+    const ctx = makeCtx("browser", { action: "upload", ref: 3, path: idRsa }, sessionId);
+    expect(egressGuardGate(ctx).kind).toBe("continue");
+    expect(ctx.policyApprovalReason).toContain("id_rsa (its name marks it as a credential file) to the page open in the browser");
   });
 
   it("the probe reports it as confirmable, so an all-confirmable aggregate asks too", () => {

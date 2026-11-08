@@ -68,6 +68,45 @@ export const ACC_EXACT_SRC = `(el, lname) => {
 }`;
 
 /**
+ * The role+name and visible-text strategies of the resolution chain, as one
+ * in-page function: each runs twice, first for an element whose name IS the
+ * ref's name, then for one whose name merely contains it (ACC_EXACT_SRC says
+ * why). Returns the first candidate `finish` accepts, or null. In-page source.
+ */
+const NAME_STRATEGIES_SRC = `({ p, roots, vis, finish, acc, accExact, ROLE_SEL, lname, lnameNorm }) => {
+	const firstHit = (selector, named, via, skip) => {
+		for (const root of roots) {
+			for (const el of root.doc.querySelectorAll(selector)) {
+				if (!vis(el) || !named(el) || (skip && skip(el))) continue;
+				const hit = finish(el, root, via);
+				if (hit) return hit;
+				break; // this root's first candidate failed its hit-test: try the next root
+			}
+		}
+		return null;
+	};
+	if (p.role && p.name && ROLE_SEL[p.role]) {
+		for (const named of [(el) => accExact(el, lnameNorm), (el) => acc(el).includes(lname)]) {
+			const hit = firstHit(ROLE_SEL[p.role], named, "role");
+			if (hit) return hit;
+		}
+	}
+	if (p.op === "click" && p.name) {
+		// A container whose child also carries the name is not the target: the child is.
+		const hasNamedChild = (el) => [...el.children].some((c) => (c.textContent || "").toLowerCase().includes(lname));
+		const textPasses = [
+			(el) => (el.textContent || "").replace(/\\s+/g, " ").trim().toLowerCase() === lnameNorm,
+			(el) => (el.textContent || "").toLowerCase().includes(lname),
+		];
+		for (const named of textPasses) {
+			const hit = firstHit("a,button,[role],label,summary,span,div,li,td,th", named, "text", hasNamedChild);
+			if (hit) return hit;
+		}
+	}
+	return null;
+}`;
+
+/**
  * The whole ref resolution chain in ONE round-trip: EXACT stable identifier →
  * role+name → visible text (click only) → XPath → stored coords (click only),
  * each strategy searching the ref's frame roots (main document for main-frame
@@ -103,6 +142,7 @@ export function resolutionScript(ref: DurableRef, op: "click" | "fill", mark?: n
 	const occluded = [];
 	const lname = (p.name || "").toLowerCase();
 	const lnameNorm = lname.replace(/\\s+/g, " ").trim();
+	const byName = ${NAME_STRATEGIES_SRC};
 ${OCCLUSION_HELPERS}
 ${FRAME_HELPERS}
 ${EXACT_MATCH_HELPER}
@@ -199,39 +239,9 @@ ${EXACT_MATCH_HELPER}
 		const hit = exactMatch(roots, p.exact, vis, finish, p.cx, p.cy);
 		if (hit) return hit;
 	}
-	// Name strategies run twice: an element whose name IS the ref's name, then
-	// one whose name merely contains it (ACC_EXACT_SRC says why).
-	const passes = [(el) => accExact(el, lnameNorm), (el) => acc(el).includes(lname)];
-	if (p.role && p.name && ROLE_SEL[p.role]) {
-		for (const named of passes) {
-			for (const root of roots) {
-				for (const el of root.doc.querySelectorAll(ROLE_SEL[p.role])) {
-					if (!vis(el) || !named(el)) continue;
-					const hit = finish(el, root, "role");
-					if (hit) return hit;
-					break;
-				}
-			}
-		}
-	}
-	if (p.op === "click" && p.name) {
-		const textPasses = [
-			(el) => (el.textContent || "").replace(/\\s+/g, " ").trim().toLowerCase() === lnameNorm,
-			(el) => (el.textContent || "").toLowerCase().includes(lname),
-		];
-		for (const named of textPasses) {
-			for (const root of roots) {
-				for (const el of root.doc.querySelectorAll("a,button,[role],label,summary,span,div,li,td,th")) {
-					if (!vis(el) || !named(el)) continue;
-					let inner = false;
-					for (const c of el.children) if ((c.textContent || "").toLowerCase().includes(lname)) { inner = true; break; }
-					if (inner) continue;
-					const hit = finish(el, root, "text");
-					if (hit) return hit;
-					break;
-				}
-			}
-		}
+	{
+		const hit = byName({ p, roots, vis, finish, acc, accExact, ROLE_SEL, lname, lnameNorm });
+		if (hit) return hit;
 	}
 	if (p.xpath) {
 		for (const root of roots) {

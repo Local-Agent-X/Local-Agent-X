@@ -192,6 +192,23 @@ export function shellCommandOf(name: string, args: Record<string, unknown>): str
   return typeof value === "string" ? value : undefined;
 }
 
+/** A question a call put to the user, as its row's asksUser declares it. */
+export interface AskedQuestion {
+  text: string;
+  /** The chat draws it itself (a recap box), so the reply must not repeat it. */
+  drawnByClient: boolean;
+}
+
+/** The question this call puts to the user, read from the arg its row's
+ *  asksUser names; undefined for a tool that asks none, or a call whose
+ *  question is blank (a wrap_up that only recaps). */
+export function askedQuestionOf(name: string, args: Record<string, unknown>): AskedQuestion | undefined {
+  const asks = TOOL_POLICIES[name]?.asksUser;
+  const value = asks ? args[asks.arg] : undefined;
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  return { text: value.trim(), drawnByClient: asks!.drawnByClient === true };
+}
+
 /** Does this tool's call return only once its shell command has exited, so
  *  what the command did is settled when the result arrives (bash)? */
 export function waitsForShellCommand(name: string): boolean {

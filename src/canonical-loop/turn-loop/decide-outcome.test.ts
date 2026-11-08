@@ -2068,3 +2068,56 @@ describe("decideTurnOutcome — a tool call the runtime could not parse", () => 
     expect(r.terminalReason).toBe("error");
   });
 });
+
+// ── wrap_up with an `ask` is a question too (its row's asksUser), so the turn
+//    ends on it. The live failure (2026-11-08): the agent wrapped up with
+//    "Have you uploaded the key?" and a button, wrote a closing line, the
+//    open-steps nudge pushed it on, and it created the key it had just told the
+//    user it would leave to them. ───────────────────────────────────────────
+describe("decideTurnOutcome — a wrap_up that asked ends the turn on the question", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const ASK = "Have you created the key and uploaded it to Expo?";
+  const wrapCall = (args: Record<string, unknown>): ToolCall => ({ toolCallId: "wrap1", tool: "wrap_up", args });
+  const wrapResult: CommitTurnMessage = {
+    messageId: "tr-wrap1", role: "tool", content: { toolCallId: "wrap1", text: "[ok]\nShown to the user as the turn's recap." },
+  } as unknown as CommitTurnMessage;
+  const wrapSummary = (resultStatus = "ok") =>
+    [{ tool: "wrap_up", toolCallId: "wrap1", resultStatus }] as unknown as ToolCallSummary[];
+  const NARRATION = "Only the Expo upload is left, and it needs you.";
+  const wrapped = (args: Record<string, unknown>, over: Partial<DecideOutcomeInput> = {}) =>
+    input({
+      toolCalls: [wrapCall(args)],
+      toolMessages: [wrapResult],
+      toolSummary: wrapSummary(),
+      finalized: [{ messageId: "am1", role: "assistant", content: { text: NARRATION } }],
+      assistantText: NARRATION,
+      modelSignaledDone: false,
+      modelWantsToContinue: true,
+      ...over,
+    });
+  const assistantTexts = (r: { allMessages: CommitTurnMessage[] }) =>
+    r.allMessages.filter((m) => m.role === "assistant").map((m) => (m.content as { text?: string })?.text ?? "");
+
+  it("terminates on an ask with buttons even though the provider said tool_use", async () => {
+    const r = await decideTurnOutcome(wrapped({ recap: "The key is yours to create.", ask: ASK, actions: ["Done"] }));
+    expect(r.terminalReason).toBe("done");
+  });
+
+  it("does not repeat the ask in the reply: the recap box draws it", async () => {
+    const r = await decideTurnOutcome(wrapped({ recap: "The key is yours to create.", ask: ASK }));
+    expect(r.terminalReason).toBe("done");
+    expect(assistantTexts(r)).toEqual([NARRATION]);
+    expect(publishStreamChunk).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ delta: expect.stringContaining(ASK) }));
+  });
+
+  it("a recap with no ask is not a question: the turn goes on as before", async () => {
+    const r = await decideTurnOutcome(wrapped({ recap: "The key is created and uploaded." }));
+    expect(r.terminalReason).toBeNull();
+  });
+
+  it("an ask whose call did not reach the user never terminates", async () => {
+    const r = await decideTurnOutcome(wrapped({ recap: "Recap.", ask: ASK }, { toolSummary: wrapSummary("blocked") }));
+    expect(r.terminalReason).toBeNull();
+  });
+});

@@ -1,5 +1,6 @@
 /**
- * The ask_user terminal — the half of `ask_user` (src/tools/ask-user-tool.ts)
+ * The ask-user terminal — the half of a question tool (`ask_user`,
+ * src/tools/ask-user-tool.ts; `wrap_up` with an `ask`, src/tools/wrap-up.ts)
  * that lives in the turn loop.
  *
  * The tool itself only validates and echoes; it has no way to stop a turn.
@@ -9,9 +10,15 @@
  * BLOCKED on the user", so a question asked mid-turn was narration the loop
  * drove straight past: the agent asked, read back its own tool result, guessed,
  * and built on the guess (the live "production Clover token, or sandbox first?"
- * run). This module supplies the two pieces decide-outcome needs to end the turn
- * on the question instead: which questions were actually PUT to the user, and
- * how to make one of them the visible answer.
+ * run). A wrap_up that asked with buttons went the same way one step later:
+ * the model wrote a closing line, the open-steps nudge pushed it on, and it
+ * did the step it had just told the user it would leave to them (2026-11-08).
+ * This module supplies the two pieces decide-outcome needs to end the turn on
+ * the question instead: which questions were actually PUT to the user, and how
+ * to make one of them the visible answer.
+ *
+ * Which tools ask, and from which arg, is each tool's row (`asksUser`,
+ * tool-policies.types.ts), read through askedQuestionOf — never a name here.
  *
  * Split out of decide-outcome.ts; sibling to silent-tool-check.ts, which is
  * the other per-tool input to termination.
@@ -20,10 +27,8 @@ import { randomUUID } from "node:crypto";
 import type { ToolCall } from "../contract-types.js";
 import type { CommitTurnMessage } from "../checkpoint.js";
 import type { ToolCallSummary } from "../types.js";
+import { askedQuestionOf, type AskedQuestion } from "../../tool-registry.js";
 import { publishStreamChunk } from "../event-emitter.js";
-
-/** The tool whose successful call means "the user has to decide this one". */
-export const ASK_USER_TOOL = "ask_user";
 
 /**
  * Questions the agent actually PUT to the user this turn, in call order.
@@ -47,15 +52,14 @@ export const ASK_USER_TOOL = "ask_user";
 export function collectAskedQuestions(
   toolCalls: ToolCall[],
   toolSummary: ToolCallSummary[],
-): string[] {
-  const out: string[] = [];
+): AskedQuestion[] {
+  const out: AskedQuestion[] = [];
   toolCalls.forEach((call, idx) => {
-    if (call.tool !== ASK_USER_TOOL) return;
     const summary = toolSummary[idx];
-    if (!summary || summary.tool !== ASK_USER_TOOL || summary.resultStatus !== "ok") return;
-    const question = (call.args as { question?: unknown } | null)?.question;
-    if (typeof question !== "string" || !question.trim()) return;
-    out.push(question.trim());
+    if (!summary || summary.tool !== call.tool || summary.resultStatus !== "ok") return;
+    const args = call.args && typeof call.args === "object" ? (call.args as Record<string, unknown>) : {};
+    const asked = askedQuestionOf(call.tool, args);
+    if (asked) out.push(asked);
   });
   return out;
 }
@@ -66,7 +70,8 @@ export function collectAskedQuestions(
  * uses (publish a delta, push one assistant message) rather than
  * replaceAssistantText — the narration is the model's own words, and a question
  * is an addition to them, not a correction of them. A question the model already
- * wrote out verbatim in its narration is skipped so it isn't shown twice.
+ * wrote out verbatim in its narration is skipped so it isn't shown twice, and so
+ * is one the chat draws itself (wrap_up's box carries its own question).
  *
  * `delta` (not `{text}`) because every subscribeOpStream consumer forwards a
  * chunk only on a non-empty delta or `replace:true` — same reason the epilogue
@@ -76,10 +81,10 @@ export function appendQuestionAsAnswer(
   opId: string,
   turnIdx: number,
   assistantText: string,
-  questions: string[],
+  questions: AskedQuestion[],
   allMessages: CommitTurnMessage[],
 ): void {
-  const text = questions.filter(q => !assistantText.includes(q)).join("\n\n");
+  const text = questions.filter(q => !q.drawnByClient && !assistantText.includes(q.text)).map(q => q.text).join("\n\n");
   if (!text) return;
   publishStreamChunk(opId, { delta: assistantText.trim().length > 0 ? `\n\n${text}` : text });
   allMessages.push({

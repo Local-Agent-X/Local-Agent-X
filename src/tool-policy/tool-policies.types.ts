@@ -345,6 +345,13 @@ interface ToolPolicyRowFacts {
    *  the turn, so the heap guard never does. Absent: refused like any call.
    *  Never a sensitive read or external content (heap-guard.test.ts). */
   runControl?: true;
+  /** The call puts a question to the user and waits for the answer: the arg
+   *  holding it. A succeeded call ends the turn on that question
+   *  (turn-loop/ask-user-terminal.ts): the missing input is the user's answer,
+   *  so one more turn could only guess, or do a step the user was just told is
+   *  theirs. `drawnByClient`: the chat draws the question itself (wrap_up's
+   *  recap box), so the terminal does not append it to the reply. */
+  asksUser?: { arg: string; drawnByClient?: true };
   /** See CommittingSpec. Absent: committing by risk tier, the conservative
    *  reading. Each spec needs the row facts it reads (committing-tool-check.test.ts). */
   committing?: CommittingSpec;

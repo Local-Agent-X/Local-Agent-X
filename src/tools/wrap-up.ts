@@ -8,7 +8,9 @@
  *
  * It also completes the step in progress on the session's step list (task-tools.ts):
  * the turn is over. A step still pending stays open, so the open-steps gate still
- * sees declared work left undone.
+ * sees declared work left undone — unless the call asked: a succeeded call with an
+ * `ask` ends the turn on the question (turn-loop/ask-user-terminal.ts, through the
+ * row's `asksUser`), so the pending steps wait for the answer instead of a nudge.
  */
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { sessionIdOf } from "../tool-execution/internal-args.js";

@@ -100,6 +100,9 @@ describe("open-steps gate", () => {
     expect(res.message).toContain("2 steps");
     expect(res.message).toContain("Write the parser");
     expect(res.message).toContain("Add tests");
+    // The push is what made a model do the step it had just told the user it
+    // would leave to them (2026-11-08): the push itself says not to.
+    expect(res.message).toContain("A step you told the user you would leave to them is theirs: do not do it.");
   });
 
   it("does not re-nudge the same open set twice (no-progress guard)", async () => {

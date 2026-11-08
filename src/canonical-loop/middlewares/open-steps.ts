@@ -120,7 +120,8 @@ export const openStepsMiddleware: CanonicalMiddleware = {
       `done. If a step is already finished, mark it complete with ${ctx.toolNames.has("update_plan") ? "update_plan" : "task_update"}. If you ` +
       "are genuinely blocked on one, state the specific blocker instead of stopping silently. " +
       "If you are waiting on the user's answer, do not repeat your question (it is already on their " +
-      "screen): finish every step that does not depend on it, then stop.";
+      "screen): finish every step that does not depend on it, then stop. A step you told the user " +
+      "you would leave to them is theirs: do not do it.";
 
     return { kind: "nudge", message, reason: "open-steps" };
   },

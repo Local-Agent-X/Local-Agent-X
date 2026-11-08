@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 1950 non-test source files · 84 oversized · 258 nearing the size cap.
+**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 1950 non-test source files · 84 oversized · 259 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -22,7 +22,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/ops/` | 176 | 29 | XL | 1 |
 | `src/security/` | 160 | 60 | XL | 2 |
 | `src/tools/` | 127 | 232 | XL | 9 |
-| `src/tool-execution/` | 89 | 84 | XL | 2 |
+| `src/tool-execution/` | 90 | 84 | XL | 2 |
 | `src/workspace/` | 86 | 3 | M |  |
 | `src/canonical-loop/` | 83 | 283 | XL | 11 |
 | `src/providers/` | 74 | 27 | L | 1 |
@@ -360,9 +360,11 @@ job. Comments are free: never cut them to fit.
 - `src/memory/index-facts.ts` — 300+ code lines (cap 350)
 - `src/routes/connector-proxy.ts` — 300+ code lines (cap 350)
 - `src/tools/document-tools.ts` — 300+ code lines (cap 350)
+- `src/tools/http-egress-guard.ts` — 300+ code lines (cap 350)
 - `src/tools/presentation-tools.ts` — 300+ code lines (cap 350)
 - `src/api-docs.ts` — 290+ code lines (cap 350)
 - `src/auth/storage.ts` — 290+ code lines (cap 350)
+- `src/browser/in-app-resolve-scripts.ts` — 290+ code lines (cap 350)
 - `src/canonical-loop/turn-commit-store.ts` — 290+ code lines (cap 350)
 - `src/mcp-client/manifest.ts` — 290+ code lines (cap 350)
 - `src/memory/index-schema-migrations.ts` — 290+ code lines (cap 350)
@@ -371,7 +373,6 @@ job. Comments are free: never cut them to fit.
 - `src/protocols/skills-install.ts` — 290+ code lines (cap 350)
 - `src/telegram-bridge/bridge.ts` — 290+ code lines (cap 350)
 - `src/tool-execution/sensitive-read-taint.ts` — 290+ code lines (cap 350)
-- `src/tools/http-egress-guard.ts` — 290+ code lines (cap 350)
 - `src/browser/runtime.ts` — 280+ code lines (cap 350)
 - `src/canonical-loop/scheduler.ts` — 280+ code lines (cap 350)
 - `src/context/system-prompt-builder.ts` — 280+ code lines (cap 350)

@@ -52,6 +52,22 @@ export const ACC_MATCH_SRC = `(el) => {
 }`;
 
 /**
+ * True when one of the element's name sources IS `lname` (whitespace
+ * collapsed, case-blind), not merely contains it. A ref named "Save" must
+ * click the Save button before a "Choose saved key" tab that comes earlier in
+ * the page: a substring match alone clicked the tab, and Expo's credential
+ * dialog switched views instead of saving (2026-11-08). In-page source.
+ */
+export const ACC_EXACT_SRC = `(el, lname) => {
+	if (!lname) return false;
+	const at = (n) => (el && el.getAttribute && el.getAttribute(n)) || "";
+	const norm = (t) => String(t || "").replace(/\\s+/g, " ").trim().toLowerCase();
+	const names = [at("aria-label"), at("placeholder"), at("name"), at("title"), (el && el.value) || "", (el && el.textContent) || ""];
+	for (const n of names) if (norm(n) === lname) return true;
+	return false;
+}`;
+
+/**
  * The whole ref resolution chain in ONE round-trip: EXACT stable identifier →
  * role+name → visible text (click only) → XPath → stored coords (click only),
  * each strategy searching the ref's frame roots (main document for main-frame
@@ -86,6 +102,7 @@ export function resolutionScript(ref: DurableRef, op: "click" | "fill", mark?: n
 	const p = ${params};
 	const occluded = [];
 	const lname = (p.name || "").toLowerCase();
+	const lnameNorm = lname.replace(/\\s+/g, " ").trim();
 ${OCCLUSION_HELPERS}
 ${FRAME_HELPERS}
 ${EXACT_MATCH_HELPER}
@@ -102,6 +119,7 @@ ${EXACT_MATCH_HELPER}
 		return s.visibility !== "hidden" && s.display !== "none";
 	};
 	const acc = ${ACC_MATCH_SRC};
+	const accExact = ${ACC_EXACT_SRC};
 	const ROLE_SEL = {
 		button: 'button,[role="button"],input[type="button"],input[type="submit"],input[type="reset"]',
 		link: 'a[href],[role="link"]',
@@ -181,27 +199,37 @@ ${EXACT_MATCH_HELPER}
 		const hit = exactMatch(roots, p.exact, vis, finish, p.cx, p.cy);
 		if (hit) return hit;
 	}
+	// Name strategies run twice: an element whose name IS the ref's name, then
+	// one whose name merely contains it (ACC_EXACT_SRC says why).
+	const passes = [(el) => accExact(el, lnameNorm), (el) => acc(el).includes(lname)];
 	if (p.role && p.name && ROLE_SEL[p.role]) {
-		for (const root of roots) {
-			for (const el of root.doc.querySelectorAll(ROLE_SEL[p.role])) {
-				if (!vis(el) || !acc(el).includes(lname)) continue;
-				const hit = finish(el, root, "role");
-				if (hit) return hit;
-				break;
+		for (const named of passes) {
+			for (const root of roots) {
+				for (const el of root.doc.querySelectorAll(ROLE_SEL[p.role])) {
+					if (!vis(el) || !named(el)) continue;
+					const hit = finish(el, root, "role");
+					if (hit) return hit;
+					break;
+				}
 			}
 		}
 	}
 	if (p.op === "click" && p.name) {
-		for (const root of roots) {
-			for (const el of root.doc.querySelectorAll("a,button,[role],label,summary,span,div,li,td,th")) {
-				if (!vis(el)) continue;
-				if (!(el.textContent || "").toLowerCase().includes(lname)) continue;
-				let inner = false;
-				for (const c of el.children) if ((c.textContent || "").toLowerCase().includes(lname)) { inner = true; break; }
-				if (inner) continue;
-				const hit = finish(el, root, "text");
-				if (hit) return hit;
-				break;
+		const textPasses = [
+			(el) => (el.textContent || "").replace(/\\s+/g, " ").trim().toLowerCase() === lnameNorm,
+			(el) => (el.textContent || "").toLowerCase().includes(lname),
+		];
+		for (const named of textPasses) {
+			for (const root of roots) {
+				for (const el of root.doc.querySelectorAll("a,button,[role],label,summary,span,div,li,td,th")) {
+					if (!vis(el) || !named(el)) continue;
+					let inner = false;
+					for (const c of el.children) if ((c.textContent || "").toLowerCase().includes(lname)) { inner = true; break; }
+					if (inner) continue;
+					const hit = finish(el, root, "text");
+					if (hit) return hit;
+					break;
+				}
 			}
 		}
 	}

@@ -265,24 +265,31 @@ async function tryResolutionChain(
     } catch (e) { if (e instanceof PasswordFieldRefused) throw e; /* else fall through */ }
   }
 
+  // An element whose name IS the ref's name before one that merely contains
+  // it: a "Choose saved key" tab must not take a click meant for "Save"
+  // (in-app-resolve-scripts.ts ACC_EXACT_SRC, 2026-11-08).
   if (ref.role && ref.name) {
-    try {
-      const loc = root.getByRole(ref.role as Parameters<Page["getByRole"]>[0], { name: ref.name, exact: false });
-      if ((await loc.count()) > 0) {
-        await act(loc.first());
-        return { ok: true, via: "role", message: `[${ref.id}] ${op} via role/name (${ref.role} "${ref.name}")${viaSuffix}` };
-      }
-    } catch (e) { if (e instanceof PasswordFieldRefused) throw e; /* else fall through */ }
+    for (const exact of [true, false]) {
+      try {
+        const loc = root.getByRole(ref.role as Parameters<Page["getByRole"]>[0], { name: ref.name, exact });
+        if ((await loc.count()) > 0) {
+          await act(loc.first());
+          return { ok: true, via: "role", message: `[${ref.id}] ${op} via role/name (${ref.role} "${ref.name}")${viaSuffix}` };
+        }
+      } catch (e) { if (e instanceof PasswordFieldRefused) throw e; /* else fall through */ }
+    }
   }
 
   if (pointable && ref.name) {
-    try {
-      const loc = root.getByText(ref.name, { exact: false });
-      if ((await loc.count()) > 0) {
-        await act(loc.first());
-        return { ok: true, via: "text", message: `[${ref.id}] ${op} via visible text "${ref.name}"${viaSuffix}` };
-      }
-    } catch (e) { if (e instanceof PasswordFieldRefused) throw e; /* else fall through */ }
+    for (const exact of [true, false]) {
+      try {
+        const loc = root.getByText(ref.name, { exact });
+        if ((await loc.count()) > 0) {
+          await act(loc.first());
+          return { ok: true, via: "text", message: `[${ref.id}] ${op} via visible text "${ref.name}"${viaSuffix}` };
+        }
+      } catch (e) { if (e instanceof PasswordFieldRefused) throw e; /* else fall through */ }
+    }
   }
 
   if (ref.xpath) {

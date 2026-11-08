@@ -25,6 +25,13 @@ export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyRow> = {
     kernel: "http", ariAction: { arg: "action", writes: [...PAGE_WRITE_ACTIONS], as: "post" }, risk: "network-read", capabilities: ["egress"], tags: ["web-browse", "voice-fast"], essentialRank: 6, blurb: { say: "open google.com and search for X", does: "Drive a real browser." }, timeoutMs: 30_000, liveState: "poll", externalContent: true, destination: [{ to: "browser-page", arg: "url" }],
     // The element a click or fill acts on: the page never receives the ref or selector.
     localArgs: ["action", "ref", "selector"],
+    // upload hands a local file to the page it is on: the path is confined as
+    // a read by the file-access gate, and as the call's declared read it is
+    // the attachment the egress guard scans (credential-shaped names, vault and
+    // at-rest secrets, secret-shaped contents) before it may leave for the
+    // row's live browser-page destination. browser-tools/upload.ts re-runs
+    // that scan beside the chooser hand-off.
+    pathArgs: [{ arg: "path", action: "read", whenGiven: true }, { arg: "paths", action: "read", whenGiven: true }],
     reads: ["session"], killSwitch: "enableBrowser", committing: "commit-button", loop: { spinProne: true }, category: "browser",
     rules: [
       { id: "flag-browser-evaluate", action: "evaluate", decision: "allow", reason: "Browser JS evaluation — autonomous by default (guarded by CSP, sensitive-page gating at the browser-tool layer, and the read-into-context blocklist — not a per-call modal). Rule kept so the supervised-mode layer can re-arm a confirm.", priority: 100 },

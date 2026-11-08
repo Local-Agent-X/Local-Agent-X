@@ -82,6 +82,23 @@ export interface BrowserReadConsoleRequest { type: "lax:browser-read-console"; i
 export interface BrowserReadNetworkRequest { type: "lax:browser-read-network"; id: number; viewId: string }
 /** Beforeunload dialog queue: list pending, or accept/dismiss the next entry. */
 export interface BrowserDialogsRequest { type: "lax:browser-dialogs"; id: number; viewId: string; op: "list" | "accept" | "dismiss" }
+/** Hand local files to the page's file chooser, as Playwright's setInputFiles
+ *  does; no OS picker opens. `files` are absolute paths the server has already
+ *  confined and scanned. The target is either an `<input type=file>` the
+ *  server stamped with `data-lax-ref="<mark>"` (reached through the DOM
+ *  domain, so a hidden input behind a styled button counts) or the view-DIP
+ *  point of a control whose click opens the chooser: the desktop intercepts
+ *  the dialog that click opens and answers it with the files. Either way the
+ *  input that received them carries the mark afterwards, so the server can
+ *  read back what landed. */
+export interface BrowserUploadRequest {
+  type: "lax:browser-upload";
+  id: number;
+  viewId: string;
+  files: string[];
+  mark: string;
+  target: { kind: "input" } | { kind: "click"; x: number; y: number };
+}
 /** The server's answer to a per-hop egress ask (below). */
 export interface BrowserEgressAskResult { type: "lax:browser-egress-ask-result"; id: number; allowed: boolean }
 /** Announce (no id, no reply): the off-loop egress worker's pipe endpoint,
@@ -91,13 +108,13 @@ export interface BrowserEgressEndpointAnnounce { type: "lax:browser-egress-endpo
 export type BrowserBridgeMessage =
   | BrowserLifecycleRequest | BrowserNavigateRequest | BrowserExecRequest | BrowserInputRequest
   | BrowserCaptureRequest | BrowserClearPartitionRequest | BrowserAbortRequest
-  | BrowserReadConsoleRequest | BrowserReadNetworkRequest | BrowserDialogsRequest
+  | BrowserReadConsoleRequest | BrowserReadNetworkRequest | BrowserDialogsRequest | BrowserUploadRequest
   | BrowserEgressAskResult | BrowserEgressEndpointAnnounce;
 
 export const BROWSER_MESSAGE_TYPES = [
   "lax:browser-lifecycle", "lax:browser-navigate", "lax:browser-exec", "lax:browser-input",
   "lax:browser-capture", "lax:browser-clear-partition", "lax:browser-abort",
-  "lax:browser-read-console", "lax:browser-read-network", "lax:browser-dialogs",
+  "lax:browser-read-console", "lax:browser-read-network", "lax:browser-dialogs", "lax:browser-upload",
   "lax:browser-egress-ask-result", "lax:browser-egress-endpoint",
 ] as const satisfies readonly BrowserBridgeMessage["type"][];
 
@@ -151,12 +168,16 @@ export interface BridgeReply {
   network?: { entries: BridgeNetworkEntry[]; inFlight: number };
   dialogs?: InAppDialogSummary[];
   handled?: InAppDialogSummary | null;
+  /** Upload op: how the files reached the page — straight into the marked
+   *  input, or through the chooser the click opened. */
+  uploadedVia?: "input" | "chooser";
 }
 
 export const BROWSER_RESULT_TYPES = [
   "lax:browser-lifecycle-result", "lax:browser-navigate-result", "lax:browser-exec-result",
   "lax:browser-input-result", "lax:browser-capture-result", "lax:browser-clear-partition-result",
   "lax:browser-read-console-result", "lax:browser-read-network-result", "lax:browser-dialogs-result",
+  "lax:browser-upload-result",
 ] as const;
 
 /** Per-hop egress ask: the desktop partition fails closed and asks the server

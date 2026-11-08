@@ -61,3 +61,15 @@ export function dispatchAgentInput(
 	else wc.focus(); // keys follow focus — see the routing rule above
 	wc.sendInputEvent(event);
 }
+
+/** One real left click at view-DIP (x, y): move, down, up. The same three
+ *  events the server sends one by one for a click, for a desktop-side caller
+ *  that must click and listen in one breath (the upload's chooser intercept). */
+export function dispatchAgentClick(wc: WebContents, x: number, y: number, onMouse: (x: number, y: number) => void): void {
+	const events: ElectronInputEvent[] = [
+		{ type: "mouseMove", x, y },
+		{ type: "mouseDown", x, y, button: "left", clickCount: 1 },
+		{ type: "mouseUp", x, y, button: "left", clickCount: 1 },
+	];
+	for (const event of events) dispatchAgentInput(wc, event, onMouse);
+}

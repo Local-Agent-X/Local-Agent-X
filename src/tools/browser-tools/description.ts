@@ -18,6 +18,10 @@ export function describeBrowserCall(args: Record<string, unknown>): string {
   }
   if (a === "navigate") return `Open website: ${args.url || ""}`;
   if (a === "evaluate") return `Run script in browser: ${String(args.script || "").slice(0, 80)}`;
+  if (a === "upload") {
+    const files = [args.path, ...(Array.isArray(args.paths) ? args.paths : [])].filter((p): p is string => typeof p === "string" && p !== "");
+    return `Upload to the open page: ${files.join(", ") || "(no file named)"}`;
+  }
   if (a === "emulate") {
     const device = args.device ? String(args.device) : "";
     const size = args.viewport_width && args.viewport_height ? `${args.viewport_width}x${args.viewport_height}` : "";
@@ -45,6 +49,7 @@ export const BROWSER_TOOL_DESCRIPTION =
   "- click_text: Click element by visible text (set 'text'). Good for popups/modals.\n" +
   "- fill: Fill input by ref (set 'ref' + 'value') or CSS selector (set 'selector' + 'value').\n" +
   "- select: Choose dropdown option by ref (set 'ref' + 'value') or CSS selector (set 'selector' + 'value').\n" +
+  "- upload: Hand a LOCAL FILE to the page's file chooser (set 'ref' + 'path'; several files: 'paths'). The ref is the file input itself or the button/drop zone that opens the picker — no OS dialog opens, the file lands in the input as if the user had picked it. The file must be one you may read; credential and secret files (keys, .env, service-account JSON) are refused — ask the user to attach those themselves. Never 'fill' a file input with a path.\n" +
   "- extract: Get visible text from the page or a specific element. On a large page, pass 'find' to get only the matching lines instead of the whole page.\n" +
   "- screenshot: Capture the current page — the image is returned INLINE, so you SEE the page in this one call (no view_image or screen_capture needed). A full-resolution PNG is also saved; use its path with view_image to re-view later or send_image to share it.\n" +
   "- images: List the page's pictures (its preview image first), each with alt text and the link it sits in — the addresses to put on a show_card.\n" +
@@ -94,7 +99,7 @@ export const BROWSER_TOOL_PARAMETERS = {
   properties: {
     action: {
       type: "string",
-      enum: ["navigate", "new_tab", "snapshot", "click", "click_text", "fill", "select", "extract", "screenshot", "evaluate", "act", "observe", "emulate", "layout_report", "images", "scroll", "tabs", "switch_tab", "close_tab", "info", "read_console", "read_network", "read_response", "downloads", "release_download", "dialog_accept", "dialog_dismiss", "history", "bookmark_add", "bookmarks", "close"],
+      enum: ["navigate", "new_tab", "snapshot", "click", "click_text", "fill", "select", "upload", "extract", "screenshot", "evaluate", "act", "observe", "emulate", "layout_report", "images", "scroll", "tabs", "switch_tab", "close_tab", "info", "read_console", "read_network", "read_response", "downloads", "release_download", "dialog_accept", "dialog_dismiss", "history", "bookmark_add", "bookmarks", "close"],
       description: "The browser action to perform. Use 'snapshot' to see interactive elements with ref numbers, then 'click' with a ref. Use 'new_tab' to open a URL in a new tab without closing the current one.",
     },
     url: {
@@ -138,6 +143,15 @@ export const BROWSER_TOOL_PARAMETERS = {
     script: {
       type: "string",
       description: "JavaScript code to evaluate in the page (required for 'evaluate')",
+    },
+    path: {
+      type: "string",
+      description: "For 'upload': the local file to hand to the page's file chooser (absolute, or relative to the project).",
+    },
+    paths: {
+      type: "array",
+      items: { type: "string" },
+      description: "For 'upload': several local files at once, for a multi-file input. Takes precedence over 'path' when both are set.",
     },
     full: {
       type: "boolean",

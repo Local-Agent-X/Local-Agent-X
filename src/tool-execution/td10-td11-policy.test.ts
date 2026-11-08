@@ -37,7 +37,7 @@ describe("TD-11 · deriveAriAction — action derived from args, not the static 
   });
 
   it("maps browser by sub-action: mutating actions → post, passive → get", () => {
-    for (const a of ["click", "click_text", "fill", "select", "evaluate", "act", "dialog_accept", "bookmark_add", "release_download"]) {
+    for (const a of ["click", "click_text", "fill", "select", "upload", "evaluate", "act", "dialog_accept", "bookmark_add", "release_download"]) {
       expect(deriveAriAction("browser", { action: a })).toBe("post");
     }
     for (const a of ["navigate", "read", "screenshot", "scroll", "dialog_dismiss", "emulate"]) {

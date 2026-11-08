@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 1947 non-test source files · 84 oversized · 256 nearing the size cap.
+**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 1950 non-test source files · 84 oversized · 257 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -21,7 +21,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 176 | 29 | XL | 1 |
 | `src/security/` | 160 | 60 | XL | 2 |
-| `src/tools/` | 127 | 231 | XL | 9 |
+| `src/tools/` | 127 | 232 | XL | 9 |
 | `src/tool-execution/` | 89 | 84 | XL | 2 |
 | `src/workspace/` | 86 | 3 | M |  |
 | `src/canonical-loop/` | 83 | 283 | XL | 11 |
@@ -29,7 +29,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/session/` | 59 | 10 | M |  |
 | `src/data-lineage/` | 57 | 12 | L |  |
 | `src/memory/` | 54 | 151 | XL | 5 |
-| `src/browser/` | 48 | 89 | XL | 5 |
+| `src/browser/` | 49 | 91 | XL | 5 |
 | `src/tool-policy/` | 47 | 21 | L |  |
 | `src/local-runtimes/` | 45 | 26 | XL | 1 |
 | `src/threat/` | 43 | 13 | L |  |
@@ -45,7 +45,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/classifiers/` | 24 | 16 | L |  |
 | `src/app-runtime/` | 23 | 12 | M |  |
 | `src/sandbox/` | 23 | 16 | L | 1 |
-| `src/desktop-contract/` | 21 | 10 | M |  |
+| `src/desktop-contract/` | 22 | 10 | M |  |
 | `src/protocols/` | 21 | 52 | XL |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
 | `src/server/` *(entrypoint)* | 19 | 59 | XL | 5 |
@@ -345,6 +345,7 @@ job. Comments are free: never cut them to fit.
 - `src/protocols/learned-lifecycle.ts` — 320+ code lines (cap 350)
 - `src/tools/edit-tools.ts` — 320+ code lines (cap 350)
 - `src/auto-build/workflow-resolver.ts` — 310+ code lines (cap 350)
+- `src/browser/manager.ts` — 310+ code lines (cap 350)
 - `src/cognition/cross-session-learning/service.ts` — 310+ code lines (cap 350)
 - `src/protocols/index.ts` — 310+ code lines (cap 350)
 - `src/security/layer/security-audit.ts` — 310+ code lines (cap 350)
@@ -354,7 +355,6 @@ job. Comments are free: never cut them to fit.
 - `src/whatsapp-bridge/index.ts` — 310+ code lines (cap 350)
 - `src/auto-build/orchestrator/manager.ts` — 300+ code lines (cap 350)
 - `src/autopilot/loop.ts` — 300+ code lines (cap 350)
-- `src/browser/manager.ts` — 300+ code lines (cap 350)
 - `src/canonical-loop/process-execution-backend.ts` — 300+ code lines (cap 350)
 - `src/cron/cron-service.ts` — 300+ code lines (cap 350)
 - `src/memory/index-facts.ts` — 300+ code lines (cap 350)
@@ -526,6 +526,7 @@ job. Comments are free: never cut them to fit.
 - `src/auto-build/orchestrator/resume.ts#tryResumeOne` — 60+ own code lines (cap 100)
 - `src/auto-build/orchestrator/tools.ts#buildPlanResumeTool.execute` — 60+ own code lines (cap 100)
 - `src/autopilot/round-agent.ts#runAutopilotRound` — 60+ own code lines (cap 100)
+- `src/browser/actions.ts#tryResolutionChain` — 60+ own code lines (cap 100)
 - `src/browser/iframe-detector.ts#listIframes` — 60+ own code lines (cap 100)
 - `src/browser/secret-capture.ts#createBrowserSecretCaptureTool` — 60+ own code lines (cap 100)
 - `src/browser/secret-capture.ts#withBrowserLock:callback` — 60+ own code lines (cap 100)

@@ -18,24 +18,24 @@ import {
 	BridgeDeadlineError,
 	BridgeOpError, BridgeTimeoutError, BridgeUnavailableError, BridgeViewClosedError,
 	CAPTURE_TIMEOUT_MS, CLEAR_PARTITION_TIMEOUT_MS, EXEC_TIMEOUT_MS, INPUT_TIMEOUT_MS,
-	LIFECYCLE_TIMEOUT_MS, NAVIGATE_DESKTOP_TIMEOUT_MS, NAVIGATE_REPLY_GRACE_MS,
+	LIFECYCLE_TIMEOUT_MS, NAVIGATE_DESKTOP_TIMEOUT_MS, NAVIGATE_REPLY_GRACE_MS, UPLOAD_TIMEOUT_MS,
 	RESULT_TYPES,
 	type BridgeInputEvent, type BridgeReply, type BridgeRect, type BrowserInputResult,
 	type BrowserLifecycleOp, type BrowserLifecycleResult, type BrowserNavigateResult,
-	type InAppDialogSummary, type UserActiveResult,
+	type BrowserUploadRequest, type InAppDialogSummary, type UserActiveResult,
 } from "./bridge-client-contract.js";
 
 export {
 	BridgeDeadlineError,
 	BridgeOpError, BridgeTimeoutError, BridgeUnavailableError, BridgeViewClosedError,
 	CAPTURE_TIMEOUT_MS, CLEAR_PARTITION_TIMEOUT_MS, EXEC_TIMEOUT_MS, INPUT_TIMEOUT_MS,
-	LIFECYCLE_TIMEOUT_MS, NAVIGATE_DESKTOP_TIMEOUT_MS, NAVIGATE_REPLY_GRACE_MS,
+	LIFECYCLE_TIMEOUT_MS, NAVIGATE_DESKTOP_TIMEOUT_MS, NAVIGATE_REPLY_GRACE_MS, UPLOAD_TIMEOUT_MS,
 } from "./bridge-client-contract.js";
 export type {
 	BridgeInputEvent, BridgeInputModifier, BridgeKeyEvent, BridgeMouseEvent,
 	BridgeMouseWheelEvent, BridgePingResult, BridgeRect, BrowserInputResult,
 	BrowserLifecycleOp, BrowserLifecycleResult, BrowserNavigateResult,
-	BrowserViewInfo, InAppDialogSummary, UserActiveResult,
+	BrowserUploadRequest, BrowserViewInfo, InAppDialogSummary, UserActiveResult,
 } from "./bridge-client-contract.js";
 
 const logger = createLogger("browser-bridge");
@@ -276,6 +276,18 @@ export async function browserExec(
 export async function browserInput(viewId: string, event: BridgeInputEvent): Promise<BrowserInputResult> {
 	const reply = await request("input", viewId, { type: "lax:browser-input", viewId, event }, INPUT_TIMEOUT_MS);
 	return reply.userActive === true ? { userActive: true } : undefined;
+}
+
+/** Hand already-confined local files to the page's file chooser: into the
+ *  input stamped `mark`, or through the chooser a real click at the target
+ *  point opens (desktop/src/browser-file-upload.ts). Resolves how the files
+ *  got in; rejects with the desktop's reason when they did not. */
+export async function browserUpload(
+	viewId: string,
+	upload: Pick<BrowserUploadRequest, "files" | "mark" | "target">,
+): Promise<"input" | "chooser" | undefined> {
+	const reply = await request("upload", viewId, { type: "lax:browser-upload", viewId, ...upload }, UPLOAD_TIMEOUT_MS);
+	return reply.uploadedVia;
 }
 
 /** Returns the view's current paint as a base64 PNG. */

@@ -63,12 +63,12 @@ export const CREDENTIAL_CAPTURE_BLOCKED =
 	"or focus is inside an embedded frame (treated as credential-bearing since its " +
 	"contents can't be inspected). Ask the user to click elsewhere first.";
 
-/** File pickers are native chrome — no input-event or DOM path can drive them
- *  safely. Route to the human (the CDP path has no file-input strategy either;
- *  every locator strategy fails there). */
+/** A file picker is native chrome: no typed value and no DOM write reaches it,
+ *  so a fill is refused and pointed at the one action that does (in-app-
+ *  upload.ts hands the file over the DevTools protocol, as setInputFiles does). */
 export const FILE_INPUT_NEEDS_HUMAN =
-	"is a file input — file uploads must be done by the user. Ask them to attach the file " +
-	"in the co-driven browser, then continue.";
+	"is a file input — a fill cannot reach it. Use action 'upload' with this ref and 'path' " +
+	"(a local file you may read) to hand it the file.";
 
 const RESOLVE_RETRY_DELAY_MS = 1_500; // CDP parity: actions.ts waits 1.5s before its second chain pass
 const CLICK_TEXT_BUDGET_MS = 12_000; // CDP parity: actions.ts CLICK_TEXT_BUDGET
@@ -181,22 +181,25 @@ export async function isViewUserActive(viewId: string): Promise<boolean> {
  *  refusal is signalled by the EXACT USER_TOOK_WHEEL text — the tool layer
  *  (act.ts) matches it to stamp ToolResult metadata.userActive and reset the
  *  progress breaker. Keep this the single carrier of the signal. */
-function userTookWheel(): InteractionResult {
+export function userTookWheel(): InteractionResult {
 	return { ok: false, text: USER_TOOK_WHEEL };
 }
 
 /** Misses carry the LAST pass's occluder diagnostics ("strategy:occluder"),
  *  threaded into the model-facing failure so "occluded" names the actual
- *  obstruction instead of reading as a site bug. */
-async function resolveWithRetry(
+ *  obstruction instead of reading as a site bug. `mark` stamps the element
+ *  the chain settles on (resolutionScript's data-lax-ref) for a caller that
+ *  then acts on it by selector. */
+export async function resolveWithRetry(
 	ctx: InAppActionContext,
 	ref: DurableRef,
 	op: "click" | "fill",
+	mark?: number | string,
 ): Promise<ResolveOutcome> {
 	const delay = ctx.retryDelayMs ?? RESOLVE_RETRY_DELAY_MS;
 	let lastOccluded: string[] = [];
 	for (let attempt = 0; attempt < 3; attempt++) {
-		const out = asResolveOutcome(await execChecked(ctx.viewId, resolutionScript(ref, op)));
+		const out = asResolveOutcome(await execChecked(ctx.viewId, resolutionScript(ref, op, mark)));
 		if (out.found) return out;
 		lastOccluded = out.occluded ?? [];
 		if (lastOccluded.length > 0) {
@@ -212,7 +215,7 @@ async function resolveWithRetry(
 	return { found: false, occluded: lastOccluded };
 }
 
-function viaMessage(ref: DurableRef, op: "click" | "fill", hit: ResolvedTarget): string {
+export function viaMessage(ref: DurableRef, op: "click" | "fill" | "upload", hit: ResolvedTarget): string {
 	// A benign overlapper took the hit-test — say so, so an unexpected outcome
 	// reads as "clicked the thing on top" instead of a silent mystery.
 	const through = hit.through ? ` (through overlapping ${hit.through})` : "";
@@ -222,11 +225,11 @@ function viaMessage(ref: DurableRef, op: "click" | "fill", hit: ResolvedTarget):
 		case "role":
 			return `[${ref.id}] ${op} via role/name (${ref.role} "${ref.name}")${through}`;
 		case "text":
-			return `[${ref.id}] click via visible text "${ref.name}"${through}`;
+			return `[${ref.id}] ${op} via visible text "${ref.name}"${through}`;
 		case "xpath":
 			return `[${ref.id}] ${op} via XPath${through}`;
 		case "coords":
-			return `[${ref.id}] click via coords (${hit.x},${hit.y}) — layout-dependent, verify result`;
+			return `[${ref.id}] ${op} via coords (${hit.x},${hit.y}) — layout-dependent, verify result`;
 	}
 }
 
@@ -238,7 +241,7 @@ function viaMessage(ref: DurableRef, op: "click" | "fill", hit: ResolvedTarget):
  * "take a fresh observation". An unrecoverable id fails WITH the fresh
  * snapshot so the retry has real refs to aim at.
  */
-async function resolveRefOrFail(
+export async function resolveRefOrFail(
 	ctx: InAppActionContext,
 	refId: number,
 ): Promise<{ ref: DurableRef; note: string } | { fail: InteractionResult }> {
@@ -261,7 +264,7 @@ async function resolveRefOrFail(
 	};
 }
 
-async function failedWithSnapshot(ctx: InAppActionContext, ref: DurableRef, occluded: string[] = []): Promise<InteractionResult> {
+export async function failedWithSnapshot(ctx: InAppActionContext, ref: DurableRef, occluded: string[] = []): Promise<InteractionResult> {
 	const refreshed = ObservationRegistry.format(await ctx.registry.observe(ctx.page));
 	// Name what intercepted each strategy's hit-test. Without this the model
 	// reads "all strategies failed" as a broken site; with it, a real overlay

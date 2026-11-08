@@ -68,7 +68,7 @@ export const ACC_MATCH_SRC = `(el) => {
  * index path that rots on re-render, coords rot on re-layout. When the element
  * published a durable identifier (stable-ids.ts) there is nothing to guess at.
  */
-export function resolutionScript(ref: DurableRef, op: "click" | "fill", mark?: number): string {
+export function resolutionScript(ref: DurableRef, op: "click" | "fill", mark?: number | string): string {
 	const params = JSON.stringify({
 		mark,
 		role: ref.role,

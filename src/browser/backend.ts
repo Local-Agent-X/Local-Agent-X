@@ -61,6 +61,12 @@ export interface BrowserBackend {
   fillByRef(ref: number, value: string): Promise<InteractionResult>;
   select(selector: string, value: string): Promise<string>;
   selectByRef(ref: number, value: string): Promise<InteractionResult>;
+  /** Hand local files to the file chooser a ref names — the `<input
+   *  type=file>` itself (hidden or not) or the control whose click opens the
+   *  picker — the way Playwright's setInputFiles does; no OS dialog opens.
+   *  `files` are absolute paths the tool layer has already confined and
+   *  scanned (tools/browser-tools/upload.ts): a backend only delivers them. */
+  uploadByRef(ref: number, files: string[]): Promise<InteractionResult>;
   scroll(opts: ScrollOptions): Promise<string>;
 
   // ── Page reads / tabs ──

@@ -50,7 +50,7 @@ describe("the kernel's verdict on every browser action", () => {
 
   it("pins the writes: every action whose bytes reach the page or commit state", () => {
     expect([...PAGE_WRITE_ACTIONS].sort()).toEqual(
-      ["act", "bookmark_add", "click", "click_text", "dialog_accept", "evaluate", "fill", "release_download", "select"],
+      ["act", "bookmark_add", "click", "click_text", "dialog_accept", "evaluate", "fill", "release_download", "select", "upload"],
     );
   });
 
@@ -80,7 +80,7 @@ describe("browser action tables", () => {
 
   it("pins the advancing actions that must be progress-tracked", () => {
     expect([...TRACKED_ACTIONS].sort()).toEqual(
-      ["act", "click", "click_text", "fill", "scroll", "select"],
+      ["act", "click", "click_text", "fill", "scroll", "select", "upload"],
     );
   });
 
@@ -94,7 +94,7 @@ describe("browser action tables", () => {
     expect([...HUMAN_VERIFICATION_BLOCKED_ACTIONS].sort()).toEqual(
       [
         "act", "click", "click_text", "dialog_accept", "dialog_dismiss", "emulate",
-        "evaluate", "fill", "images", "layout_report", "scroll", "select",
+        "evaluate", "fill", "images", "layout_report", "scroll", "select", "upload",
       ].sort(),
     );
   });
@@ -149,6 +149,6 @@ describe("browser action tables", () => {
 
   it("keeps evaluate gated after every bypass attempt above", () => {
     expect(HUMAN_VERIFICATION_BLOCKED_ACTIONS.has("evaluate")).toBe(true);
-    expect(HUMAN_VERIFICATION_BLOCKED_ACTIONS.size).toBe(12);
+    expect(HUMAN_VERIFICATION_BLOCKED_ACTIONS.size).toBe(13);
   });
 });

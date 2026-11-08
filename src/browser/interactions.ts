@@ -6,7 +6,8 @@
  */
 import type { Page } from "playwright";
 import { ObservationRegistry } from "./observation.js";
-import { clickRef, fillRef, clickByText as clickByTextAction } from "./actions.js";
+import { clickRef, fillRef, uploadRef, clickByText as clickByTextAction } from "./actions.js";
+import { basename } from "node:path";
 import { waitForStability } from "./stability.js";
 import type { InteractionResult, ScrollOptions } from "./backend.js";
 
@@ -105,6 +106,24 @@ async function writeRefOn(
     return { ok: false, text: `${result.message}\n\nCurrent page:\n\n${refreshed}` };
   }
   return { ok: true, text: `${result.message} — ${wrote}` };
+}
+
+/** Ref-addressed upload (actions.ts uploadRef): clickRefOn's retry and
+ *  snapshot shape, naming the files that went in. */
+export async function uploadRefOn(page: Page, registry: ObservationRegistry, ref: number, files: string[]): Promise<InteractionResult> {
+  let result = await uploadRef(page, registry, ref, files);
+  if (!result.ok) {
+    await registry.observe(page);
+    result = await uploadRef(page, registry, ref, files);
+  }
+  if (!result.ok) {
+    const refreshed = ObservationRegistry.format(await registry.observe(page));
+    return { ok: false, text: `${result.message}\n\nCurrent page:\n\n${refreshed}` };
+  }
+  await waitForStability(page, { maxWait: 2500 });
+  const after = ObservationRegistry.format(await registry.observe(page));
+  const listed = files.map((f) => basename(f)).join(", ");
+  return { ok: true, text: `${result.message} — ${files.length} file${files.length === 1 ? "" : "s"}: ${listed}\nPage: ${page.url()}\n\n${after}` };
 }
 
 export async function clickTextOn(page: Page, registry: ObservationRegistry, text: string): Promise<InteractionResult> {

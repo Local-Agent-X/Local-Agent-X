@@ -8,7 +8,7 @@ import { BROWSER_RESULT_TYPES } from "../desktop-contract/browser-bridge.js";
 export type {
 	BridgeConsoleEntry, BridgeInputEvent, BridgeInputModifier, BridgeKeyEvent, BridgeMouseEvent,
 	BridgeMouseWheelEvent, BridgeNetworkEntry, BridgePingResult, BridgeRect, BridgeReply,
-	BrowserLifecycleOp, BrowserViewInfo, InAppDialogSummary,
+	BrowserLifecycleOp, BrowserUploadRequest, BrowserViewInfo, InAppDialogSummary,
 } from "../desktop-contract/browser-bridge.js";
 
 // navigate: the desktop enforces its own load deadline (sent in the message);
@@ -19,6 +19,9 @@ export const NAVIGATE_REPLY_GRACE_MS = 3_000;
 export const EXEC_TIMEOUT_MS = 10_000;
 export const INPUT_TIMEOUT_MS = 5_000;
 export const CAPTURE_TIMEOUT_MS = 10_000;
+// upload: the desktop waits up to CHOOSER_WAIT_MS (4 s) for a click to open
+// the chooser, then a few DOM round-trips; the ceiling leaves room for both.
+export const UPLOAD_TIMEOUT_MS = 8_000;
 // Blanking every partition view before clearing storage needs a longer ceiling.
 export const CLEAR_PARTITION_TIMEOUT_MS = 12_000;
 

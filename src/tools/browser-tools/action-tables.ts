@@ -61,7 +61,9 @@ export const RESET_ACTIONS = sealedTable(["navigate", "new_tab", "switch_tab", "
 // READS (snapshot / observe / extract / screenshot / info / tabs) are excluded:
 // a read never "tries to move the page", and blocking the agent's own
 // re-perceive recovery move with the stall error is the opposite of helpful.
-export const TRACKED_ACTIONS = sealedTable(["click", "click_text", "fill", "select", "scroll", "act"]);
+// upload counts too: a file landing in an input moves its value, so a dead
+// one that changed nothing is caught like a dead fill.
+export const TRACKED_ACTIONS = sealedTable(["click", "click_text", "fill", "select", "upload", "scroll", "act"]);
 // layout_report belongs here: it evaluates a fixed script that reads geometry,
 // computed style, stylesheets and matching media queries. The tool's declared
 // effect class for it is "read-only"; the no-mutation proof and its limits are
@@ -97,11 +99,12 @@ export const HUMAN_VERIFICATION_BLOCKED_ACTIONS = sealedTable([
 // of these two tables — a new action without a verdict fails the build.
 //
 // A write carries model-chosen bytes into the page or commits state: a click
-// (by ref or by text), a typed or selected value, page script, an `act`
-// instruction, a prompt() answer, a bookmark (the model's title and url into a
-// persistent store), and releasing a download from quarantine onto disk.
+// (by ref or by text), a typed or selected value, a local file handed to the
+// page's file chooser, page script, an `act` instruction, a prompt() answer,
+// a bookmark (the model's title and url into a persistent store), and
+// releasing a download from quarantine onto disk.
 export const PAGE_WRITE_ACTIONS = sealedTable([
-  "click", "click_text", "fill", "select", "evaluate", "act", "dialog_accept", "bookmark_add", "release_download",
+  "click", "click_text", "fill", "select", "upload", "evaluate", "act", "dialog_accept", "bookmark_add", "release_download",
 ]);
 // A get moves to or reads a page: navigation (the URL still goes through the
 // outbound scans as a GET), every read-only action, a scroll, the download

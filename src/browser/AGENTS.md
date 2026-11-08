@@ -19,6 +19,7 @@
 | `secret-ops.ts` | `secret-fill.ts`, `secret-capture.ts`, `src/tools/browser-tools/index.ts` | `secret-ops.test.ts`, `secret-fill.test.ts`, `secret-capture.test.ts` |
 | `runtime.ts` (the shared Chrome process) | `launcher.ts`, `continuity-cache.ts` | `continuity-persistence.test.ts` |
 | `bridge-client.ts` | `desktop/src/browser-views.ts`, `bridge-client-contract.ts` | `bridge-client.test.ts` |
+| `in-app-upload.ts` / `in-app-upload-scripts.ts` (the mark the desktop finds the upload target by) | `desktop/src/browser-file-upload.ts`, `src/tools/browser-tools/upload.ts` (the path judgments), `actions.ts` `uploadRef` (CDP parity) | `in-app-upload.test.ts`, `desktop/src/browser-file-upload.test.ts`, `src/tools/browser-tools/upload.test.ts` |
 | `job-browser-profile.ts` / `session-owner-registry.ts` job paths | `src/cron/cron-service.ts` (`delete`), `src/routes/bridges/cron.ts` | `job-browser-profile.test.ts`, `job-profile-delete-race.test.ts`, `test/cron-service.test.ts`, `src/routes/bridges/cron-agent.test.ts` |
 
 ## Tests

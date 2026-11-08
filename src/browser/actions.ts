@@ -20,8 +20,10 @@ import { waitForStability } from "./stability.js";
 import { stableSelectors } from "./stable-ids.js";
 import { PASSWORD_FIELD_REFUSAL, PasswordFieldRefused, isPasswordFieldType } from "./password-field-rule.js";
 
-/** What the resolution chain does once it has narrowed to one element. */
-type RefOp = "click" | "fill" | "select";
+/** What the resolution chain does once it has narrowed to one element.
+ *  `upload` hands files to the element: into a file input directly, or
+ *  through the chooser a click on it opens. */
+type RefOp = "click" | "fill" | "select" | "upload";
 
 export interface ActionResult {
   ok: boolean;
@@ -31,6 +33,9 @@ export interface ActionResult {
 
 const CLICK_TIMEOUT = 8_000;
 const SCROLL_TIMEOUT = 2_000;
+// A control that opens a file chooser does so on the click; the wait covers a
+// page that fetches something first. Under the per-action budget.
+const CHOOSER_TIMEOUT = 4_000;
 
 // Overall wall-clock budget for the whole multi-selector / multi-scroll text
 // search. Each probe that MATCHES an element but can't click it (a covered or
@@ -84,13 +89,35 @@ export async function clickRef(
   if (!ref) {
     return { ok: false, via: "none", message: `Ref [${refId}] not found — take a fresh observation` };
   }
+  return resolveTwice(page, ref, refId, "click");
+}
 
+/** Hand local files to the ref: a file input gets them directly (hidden or
+ *  not — identity, not pixels, is what an upload needs), any other control is
+ *  clicked and the chooser it opens is answered. `files` were confined and
+ *  scanned by the tool layer. */
+export async function uploadRef(
+  page: Page,
+  registry: ObservationRegistry,
+  refId: number,
+  files: string[],
+): Promise<ActionResult> {
+  const ref = registry.recoverStaleRef(refId);
+  if (!ref) {
+    return { ok: false, via: "none", message: `Ref [${refId}] not found — take a fresh observation` };
+  }
+  return resolveTwice(page, ref, refId, "upload", "", files);
+}
+
+/** One chain pass, then (CDP parity with the in-app driver) a second after
+ *  1.5 s for a page still settling. */
+async function resolveTwice(page: Page, ref: DurableRef, refId: number, op: RefOp, value = "", files: string[] = []): Promise<ActionResult> {
   await scrollRefIntoView(page, ref);
-  const trace = await tryResolutionChain(page, ref, "click");
+  const trace = await tryResolutionChain(page, ref, op, value, files);
   if (trace.ok) return { ...trace, message: trace.message + staleNote(refId, ref) };
 
   await page.waitForTimeout(1500);
-  const retry = await tryResolutionChain(page, ref, "click");
+  const retry = await tryResolutionChain(page, ref, op, value, files);
   return retry.ok ? { ...retry, message: retry.message + staleNote(refId, ref) } : retry;
 }
 
@@ -169,9 +196,10 @@ async function pickStable(loc: Locator, ref: DurableRef): Promise<Locator | null
 /** Apply the op to a resolved locator. `select` is a distinct DOM operation —
  *  a <select> cannot be typed into — but from the model's side it is the same
  *  "put this value in this ref" intent as fill, so it shares the whole chain. */
-async function applyOp(loc: Locator, op: RefOp, value: string): Promise<void> {
+async function applyOp(page: Page, loc: Locator, op: RefOp, value: string, files: string[]): Promise<void> {
   if (op === "click") await loc.click({ timeout: CLICK_TIMEOUT });
   else if (op === "select") await loc.selectOption(value, { timeout: CLICK_TIMEOUT });
+  else if (op === "upload") await uploadInto(page, loc, files);
   else {
     // The element itself decides, whatever the snapshot recorded.
     if (isPasswordFieldType(await loc.getAttribute("type", { timeout: CLICK_TIMEOUT }))) throw new PasswordFieldRefused();
@@ -179,12 +207,40 @@ async function applyOp(loc: Locator, op: RefOp, value: string): Promise<void> {
   }
 }
 
+/** Files into the element: straight into a file input (Playwright resolves a
+ *  label to its control), otherwise through the chooser a click on it opens. */
+async function uploadInto(page: Page, loc: Locator, files: string[]): Promise<void> {
+  const isFileInput = await loc
+    .evaluate((el) => el.tagName === "INPUT" && String((el as unknown as { type?: string }).type).toLowerCase() === "file")
+    .catch(() => false);
+  if (isFileInput) {
+    await loc.setInputFiles(files, { timeout: CLICK_TIMEOUT });
+    return;
+  }
+  await viaFileChooser(page, files, () => loc.click({ timeout: CLICK_TIMEOUT }));
+}
+
+/** Answer the file chooser `trigger` opens with `files`; no OS picker shows. */
+async function viaFileChooser(page: Page, files: string[], trigger: () => Promise<void>): Promise<void> {
+  const opened = page.waitForEvent("filechooser", { timeout: CHOOSER_TIMEOUT });
+  opened.catch(() => { /* awaited below; a failed trigger must not leave it unhandled */ });
+  await trigger();
+  const chooser = await opened;
+  if (!chooser.isMultiple() && files.length > 1) throw new Error("the page's file chooser takes ONE file — pass a single path");
+  await chooser.setFiles(files);
+}
+
 async function tryResolutionChain(
   page: Page,
   ref: DurableRef,
   op: RefOp,
-  value = ""
+  value = "",
+  files: string[] = [],
 ): Promise<ActionResult> {
+  // click and upload both land on a visible control, so both may fall back to
+  // its rendered text and to its observed point.
+  const pointable = op === "click" || op === "upload";
+  const act = (loc: Locator) => applyOp(page, loc, op, value, files);
   // Pick the right frame up front — main page or same-origin iframe.
   // The role/text/xpath locators all need to be scoped to the frame that
   // actually contains the element; otherwise Playwright queries the main
@@ -204,7 +260,7 @@ async function tryResolutionChain(
     try {
       const loc = await pickStable(root.locator(s.sel), ref);
       if (!loc) continue;
-      await applyOp(loc, op, value);
+      await act(loc);
       return { ok: true, via: "exact", message: `[${ref.id}] ${op} via ${s.key}${viaSuffix}` };
     } catch (e) { if (e instanceof PasswordFieldRefused) throw e; /* else fall through */ }
   }
@@ -213,18 +269,18 @@ async function tryResolutionChain(
     try {
       const loc = root.getByRole(ref.role as Parameters<Page["getByRole"]>[0], { name: ref.name, exact: false });
       if ((await loc.count()) > 0) {
-        await applyOp(loc.first(), op, value);
+        await act(loc.first());
         return { ok: true, via: "role", message: `[${ref.id}] ${op} via role/name (${ref.role} "${ref.name}")${viaSuffix}` };
       }
     } catch (e) { if (e instanceof PasswordFieldRefused) throw e; /* else fall through */ }
   }
 
-  if (op === "click" && ref.name) {
+  if (pointable && ref.name) {
     try {
       const loc = root.getByText(ref.name, { exact: false });
       if ((await loc.count()) > 0) {
-        await loc.first().click({ timeout: CLICK_TIMEOUT });
-        return { ok: true, via: "text", message: `[${ref.id}] click via visible text "${ref.name}"${viaSuffix}` };
+        await act(loc.first());
+        return { ok: true, via: "text", message: `[${ref.id}] ${op} via visible text "${ref.name}"${viaSuffix}` };
       }
     } catch (e) { if (e instanceof PasswordFieldRefused) throw e; /* else fall through */ }
   }
@@ -233,7 +289,7 @@ async function tryResolutionChain(
     try {
       const loc = root.locator(`xpath=${ref.xpath}`);
       if ((await loc.count()) > 0) {
-        await applyOp(loc.first(), op, value);
+        await act(loc.first());
         return { ok: true, via: "xpath", message: `[${ref.id}] ${op} via XPath${viaSuffix}` };
       }
     } catch (e) { if (e instanceof PasswordFieldRefused) throw e; /* else fall through */ }
@@ -244,11 +300,14 @@ async function tryResolutionChain(
   // hits the iframe pixel correctly regardless of which frame owns the
   // element. `fill` has no coords path because there's no "type at this
   // pixel" — keep the limitation; agents that need iframe-fill use the
-  // role/xpath paths above which now route via root.
-  if (op === "click" && ref.rect.width > 0 && ref.rect.height > 0) {
+  // role/xpath paths above which now route via root. An upload clicks the
+  // point the same way and answers the chooser that click opens.
+  if (pointable && ref.rect.width > 0 && ref.rect.height > 0) {
     try {
-      await page.mouse.click(ref.rect.x, ref.rect.y);
-      return { ok: true, via: "coords", message: `[${ref.id}] click via coords (${ref.rect.x},${ref.rect.y})${viaSuffix} — layout-dependent, verify result` };
+      const clickPoint = () => page.mouse.click(ref.rect.x, ref.rect.y);
+      if (op === "upload") await viaFileChooser(page, files, clickPoint);
+      else await clickPoint();
+      return { ok: true, via: "coords", message: `[${ref.id}] ${op} via coords (${ref.rect.x},${ref.rect.y})${viaSuffix} — layout-dependent, verify result` };
     } catch (e) { if (e instanceof PasswordFieldRefused) throw e; /* else fall through */ }
   }
 

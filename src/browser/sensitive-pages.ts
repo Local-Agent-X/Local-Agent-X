@@ -56,7 +56,7 @@ export interface SensitivePageDecision {
 // vault page that is a high-risk action on the user's live session (it drops
 // their login), so it takes the same approval path as a click or a fill.
 const MUTATING_BROWSER_ACTIONS = new Set([
-  "click", "click_text", "fill", "select", "act", "dialog_accept", "emulate",
+  "click", "click_text", "fill", "select", "upload", "act", "dialog_accept", "emulate",
 ]);
 // read_console/read_network belong here too: a secret-bearing page's console
 // output and request URLs are page-controlled channels that can carry the

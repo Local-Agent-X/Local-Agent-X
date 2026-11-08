@@ -12,6 +12,7 @@
  *                      post-dispatch progress guard
  *   navigation.ts    — navigate, new_tab, snapshot
  *   interact.ts      — click, click_text, fill, select, scroll
+ *   upload.ts        — upload (a local file into the page's file chooser)
  *   page.ts          — extract, screenshot, evaluate, info, tabs, switch_tab,
  *                      dialog_accept, dialog_dismiss, close
  *   act.ts           — act (natural-language)
@@ -60,6 +61,7 @@ import {
   handleReleaseDownload,
 } from "./page.js";
 import { handleAct } from "./act.js";
+import { handleUpload } from "./upload.js";
 import { handleEmulate } from "./emulate.js";
 import { withEmulationNotice } from "./emulation-banner.js";
 import { handleLayoutReport } from "./layout-report.js";
@@ -176,6 +178,7 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
             case "click_text": return await handleClickText(manager, args);
             case "fill": return await handleFill(manager, args);
             case "select": return await handleSelect(manager, args);
+            case "upload": return await handleUpload(manager, args, sessionId);
             case "extract": return await handleExtract(manager, args);
             case "screenshot": return await handleScreenshot(manager, getSecretBrowserOps(sessionId));
             case "evaluate": return await handleEvaluate(manager, args, getSecretBrowserOps(sessionId));
@@ -202,7 +205,7 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
             case "read_response": return await handleReadResponse(manager, args);
             default:
               return err(
-                `Unknown action: "${action}". Valid actions: navigate, click, fill, select, extract, screenshot, evaluate, act, observe, emulate, layout_report, tabs, switch_tab, info, close`
+                `Unknown action: "${action}". Valid actions: navigate, click, fill, select, upload, extract, screenshot, evaluate, act, observe, emulate, layout_report, tabs, switch_tab, info, close`
               );
           }
           });

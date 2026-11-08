@@ -6,7 +6,8 @@
  * pool (browser-views.ts) on behalf of the server child:
  *   lifecycle / navigate / exec / input / capture / abort /
  *   read-console / read-network (browser-perception.ts rings) /
- *   dialogs (browser-dialogs.ts beforeunload queue).
+ *   dialogs (browser-dialogs.ts beforeunload queue) /
+ *   upload (browser-file-upload.ts, files into a page's file chooser).
  *
  * Also wires the per-partition egress guard (browser-partition.ts) to
  * the server's canonical URL policy: wireBrowserEgressEvaluator installs
@@ -48,7 +49,8 @@ import {
 	setBrowserUiEventSink,
 } from "./browser-perception";
 import { isUserActive, markAgentAction, markAgentInput, showAgentCursor } from "./in-app-browser";
-import { dispatchAgentInput, toElectronInputEvent } from "./browser-agent-input";
+import { dispatchAgentClick, dispatchAgentInput, toElectronInputEvent } from "./browser-agent-input";
+import { uploadIntoView } from "./browser-file-upload";
 import { settleNavigation } from "./navigate-settle";
 
 // Isolated world for agent scripts — never the main world, so page JS
@@ -171,6 +173,21 @@ export async function handleBrowserBridgeMessage(proc: ChildProcess, msg: Browse
 		}
 		case "lax:browser-clear-partition": {
 			reply(proc, "lax:browser-clear-partition-result", msg.id, () => clearPartition(msg.partition));
+			return;
+		}
+		case "lax:browser-upload": {
+			// The agent handing a file to the page is the agent acting in the
+			// view, like a navigate or an exec; a click target is agent input,
+			// banked before dispatch for the same reason as the input op.
+			markAgentAction(msg.viewId);
+			reply(proc, "lax:browser-upload-result", msg.id, async () => {
+				const wc = requireWebContents(msg.viewId);
+				const outcome = await uploadIntoView(wc.debugger, msg, (x, y) => {
+					markAgentInput(msg.viewId);
+					dispatchAgentClick(wc, x, y, (cx, cy) => showAgentCursor(wc, cx, cy));
+				});
+				return { ...outcome };
+			});
 			return;
 		}
 		case "lax:browser-dialogs": {

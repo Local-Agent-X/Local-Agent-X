@@ -73,6 +73,7 @@ import {
 	type InAppActionContext,
 } from "./in-app-actions.js";
 import { scrollInApp } from "./in-app-scroll.js";
+import { uploadRefInApp } from "./in-app-upload.js";
 import { clickSelectorOrTextFallback, fillSelectorInApp, selectOptionInApp } from "./in-app-selector-actions.js";
 import type { BrowserBackend, InteractionResult, ScrollOptions } from "./backend.js";
 import type { BrowserEngine } from "./launcher.js";
@@ -263,6 +264,12 @@ export class ElectronInAppBackend implements BrowserBackend {
 	async clickByText(text: string): Promise<InteractionResult> {
 		await this.ensureView();
 		return clickTextInApp(this.actionContext(), text);
+	}
+
+	/** Files into the page's chooser over the DevTools protocol (in-app-upload.ts). */
+	async uploadByRef(ref: number, files: string[]): Promise<InteractionResult> {
+		await this.ensureView();
+		return uploadRefInApp(this.actionContext(), ref, files);
 	}
 
 	async scroll(opts: ScrollOptions): Promise<string> {

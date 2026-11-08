@@ -22,7 +22,7 @@ src/auto-build/loop/run.ts#runBuildLoop 136
 src/autopilot/loop.ts#runAutopilotLoop 200
 src/benchmark-longmemeval.ts#main 102
 src/browser/extract-script.ts 355
-src/browser/in-app-resolve-scripts.ts#resolutionScript 210
+src/browser/in-app-resolve-scripts.ts#resolutionScript 192
 src/browser/layout-report.ts#buildLayoutReportScript 308
 src/browser/observation.ts#ObservationRegistry.observeInner 111
 src/browser/secret-fill.ts#withBrowserLock:callback 125

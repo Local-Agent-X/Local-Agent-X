@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 1947 non-test source files · 84 oversized · 257 nearing the size cap.
+**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 1947 non-test source files · 84 oversized · 256 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -371,7 +371,6 @@ job. Comments are free: never cut them to fit.
 - `src/protocols/skills-install.ts` — 290+ code lines (cap 350)
 - `src/telegram-bridge/bridge.ts` — 290+ code lines (cap 350)
 - `src/tool-execution/sensitive-read-taint.ts` — 290+ code lines (cap 350)
-- `src/browser/in-app-resolve-scripts.ts` — 280+ code lines (cap 350)
 - `src/browser/runtime.ts` — 280+ code lines (cap 350)
 - `src/canonical-loop/scheduler.ts` — 280+ code lines (cap 350)
 - `src/context/system-prompt-builder.ts` — 280+ code lines (cap 350)

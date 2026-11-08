@@ -135,9 +135,27 @@ describe("resolutionScript hit-test contract", () => {
 		expect(out.occluded).toContain("role:div#modal-backdrop");
 	});
 
-	it("clicks THROUGH a benign overlapper (small unrelated sibling within the target's bounds)", () => {
-		// An icon/ripple-style span sitting on top of the link: same footprint,
-		// no overlay markers. A human click lands on it — so must ours.
+	it("moves the click to a point a benign overlapper leaves clear (a decoration over the centre)", () => {
+		// A decorative image over the middle of the button, as Firebase's config
+		// download button has: a click at the centre lands on the image and the
+		// button never fires. The target is (100,100,80,20); the image covers
+		// x 120..160.
+		const button = el("button", { textContent: "download google-services.json" });
+		const arrow = el("img", { className: "config-file-arrow", rect: { left: 120, top: 100, width: 40, height: 20 } });
+		const atPoint = (x: number, y: number) => (x >= 120 && x < 160 && y >= 100 && y < 120 ? arrow : button);
+		const doc = fakeDocument({ byRole: [button], atPoint });
+		const out = runResolution(mkRef({ role: "button", name: "Download google-services.json" }), doc) as {
+			found: boolean; via?: string; through?: string; x: number; y: number;
+		};
+		expect(out).toMatchObject({ found: true, via: "role" });
+		expect(out.through).toBeUndefined();
+		expect([out.x, out.y]).not.toEqual([140, 110]);
+		expect(atPoint(out.x, out.y)).toBe(button);
+	});
+
+	it("clicks the centre anyway, and says so, when a benign overlapper covers every probe", () => {
+		// An icon/ripple-style span with the link's whole footprint and no
+		// overlay markers: there is no clear point, so the click goes through it.
 		const link = el("a", { textContent: "purchase orders" });
 		const icon = el("span", { className: "btn-icon" });
 		const doc = fakeDocument({ byRole: [link], atPoint: () => icon });
@@ -344,6 +362,17 @@ describe("same-origin iframe descent (Stripe/embedded-editor/consent-in-iframe c
 		const doc = fakeDocument({ byRole: [], atPoint: () => backdrop, frames: [frame] });
 		const out = runTextSearch("Pay now", doc) as { found: boolean };
 		expect(out.found).toBe(false);
+	});
+
+	it("click_text moves the click to a point a benign overlapper leaves clear", () => {
+		const btn = el("button", { textContent: "Download google-services.json" });
+		const arrow = el("img", { className: "config-file-arrow", rect: { left: 120, top: 100, width: 40, height: 20 } });
+		const atPoint = (x: number, y: number) => (x >= 120 && x < 160 && y >= 100 && y < 120 ? arrow : btn);
+		const doc = fakeDocument({ byRole: [btn], atPoint });
+		const out = runTextSearch("Download google-services.json", doc) as { found: boolean; x: number; y: number };
+		expect(out.found).toBe(true);
+		expect([out.x, out.y]).not.toEqual([140, 110]);
+		expect(atPoint(out.x, out.y)).toBe(btn);
 	});
 
 	it("click_text finds text living only inside an iframe and returns MAIN-page coords", () => {

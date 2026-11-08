@@ -87,17 +87,58 @@ export const EXACT_MATCH_HELPER = `
  * Occlusion classification, shared by resolutionScript and textSearchScript
  * (in-app-resolve-scripts.ts). A failed hit-test does NOT always mean a
  * blocking overlay: cosmetic siblings (icons, ripple spans, styled sibling
- * elements) routinely sit on top of the target without being DOM-related —
- * and a HUMAN click lands on exactly that topmost element. Those are BENIGN:
- * dispatch the click at the point anyway. Blocking overlays (modals,
- * backdrops, toasts, full-viewport fixed layers) stay refused, so the model
- * gets the named occluder instead of a blind click. Benign requires the
- * overlapper to be small (≤2× the target's area) and to sit mostly WITHIN the
- * target's bounds — a nav bar or banner covering the point fails both and
+ * elements) routinely sit on top of the target without being DOM-related.
+ * Those are BENIGN, but a real click still lands on whatever is on top: an
+ * unrelated sibling over the centre takes the click and the target's handler
+ * never runs. So a benign overlap moves the click to a point of the target
+ * the overlapper leaves clear (clearPointIn); only when it covers every probe
+ * is the centre clicked anyway, and the result says so. Blocking overlays
+ * (modals, backdrops, toasts, full-viewport fixed layers) stay refused, so
+ * the model gets the named occluder instead of a blind click. Benign requires
+ * the overlapper to be small (≤2× the target's area) and to sit mostly WITHIN
+ * the target's bounds — a nav bar or banner covering the point fails both and
  * stays a refusal. overlayLike sizes against the element's OWN document
  * (frame-local viewport for iframe candidates).
  */
 export const OCCLUSION_HELPERS = `
+	// elementFromPoint returns the shadow HOST chain's innermost node; contains()
+	// never crosses shadow boundaries, so a hit is resolved up through its hosts
+	// before the relatedness check.
+	const hostOf = (n) => {
+		let m = n;
+		while (m && m.getRootNode) {
+			const root = m.getRootNode();
+			if (!root || !root.host) break;
+			m = root.host;
+		}
+		return m;
+	};
+	// Would a click on \`hit\` reach \`el\`? Yes for el itself, a node inside it
+	// (the event bubbles up), a node it is inside (the ancestor's handler), the
+	// same through a shadow host chain, or a <label for> that points at it.
+	const relatedHit = (el, hit) => {
+		if (!hit) return false;
+		const rel = (n) => !!n && (n === el || (el.contains && el.contains(n)) || (n.contains && n.contains(el)));
+		const host = hostOf(hit);
+		const label = hit.closest ? hit.closest("label") : null;
+		return rel(hit) || (host !== hit && rel(host)) || (!!label && !!el.id && label.getAttribute("for") === el.id);
+	};
+	// A point of the target that a benign overlapper leaves clear, probing its
+	// own area centre-outward (a decorative arrow over a console's download
+	// button took every click sent at the centre, 2026-11-07). Null when the
+	// overlapper covers every probe.
+	const clearPointIn = (el, r, dd) => {
+		const doc = dd || document;
+		for (const fy of [0.5, 0.25, 0.75, 0.1, 0.9]) {
+			for (const fx of [0.5, 0.25, 0.75, 0.1, 0.9]) {
+				if (fx === 0.5 && fy === 0.5) continue;
+				const x = r.left + r.width * fx, y = r.top + r.height * fy;
+				const hit = doc.elementFromPoint(x, y);
+				if (relatedHit(el, hit)) return { x, y, hit };
+			}
+		}
+		return null;
+	};
 	const overlayLike = (n, dd) => {
 		const de = (dd || document).documentElement;
 		const vw = (de && de.clientWidth) || 1;

@@ -56,8 +56,10 @@ export const ACC_MATCH_SRC = `(el) => {
  * role+name → visible text (click only) → XPath → stored coords (click only),
  * each strategy searching the ref's frame roots (main document for main-frame
  * refs). Each candidate is scrolled into view, re-measured, and hit-tested with
- * its document's elementFromPoint; an occluded candidate is recorded in
- * `occluded` and the chain falls through instead of blind-clicking. Returns
+ * its document's elementFromPoint; a click whose centre a cosmetic sibling
+ * took moves to a clear point of the candidate (OCCLUSION_HELPERS), and an
+ * occluded candidate is recorded in `occluded` and the chain falls through
+ * instead of blind-clicking. Returns
  * {found:true, via, key?, x, y, w, h, dpr, zoom, tag, type, editable} (CSS px,
  * MAIN-page viewport-relative) or {found:false, occluded}.
  *
@@ -111,18 +113,6 @@ ${EXACT_MATCH_HELPER}
 		menuitem: '[role="menuitem"]',
 		tab: '[role="tab"]',
 	};
-	// Pierce shadow DOM: elementFromPoint returns the shadow HOST chain's
-	// innermost node; contains() never crosses shadow boundaries, so resolve
-	// the hit up through its shadow hosts before the relatedness check.
-	const hostOf = (n) => {
-		let m = n;
-		while (m && m.getRootNode) {
-			const root = m.getRootNode();
-			if (!root || !root.host) break;
-			m = root.host;
-		}
-		return m;
-	};
 	// Name the occluder — "occluded" alone sent the model blaming the site.
 	const describe = (n) => {
 		if (!n) return "nothing";
@@ -145,18 +135,18 @@ ${EXACT_MATCH_HELPER}
 		// that point and every strategy false-positives as "occluded".
 		if (el.scrollIntoView) el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
 		const r = el.getBoundingClientRect();
-		const x = typeof px === "number" ? px : r.left + r.width / 2;
-		const y = typeof py === "number" ? py : r.top + r.height / 2;
-		const hit = root.doc.elementFromPoint(x, y);
-		const label = hit && hit.closest ? hit.closest("label") : null;
-		const hitHost = hostOf(hit);
-		const related = !!hit && (hit === el
-			|| (el.contains && el.contains(hit))
-			|| (hit.contains && hit.contains(el))
-			|| (hitHost !== hit && !!hitHost && (hitHost === el
-				|| (el.contains && el.contains(hitHost))
-				|| (hitHost.contains && hitHost.contains(el))))
-			|| (!!label && !!el.id && label.getAttribute("for") === el.id));
+		let x = typeof px === "number" ? px : r.left + r.width / 2;
+		let y = typeof py === "number" ? py : r.top + r.height / 2;
+		let hit = root.doc.elementFromPoint(x, y);
+		let through;
+		if (!relatedHit(el, hit) && p.op === "click" && benignOverlap(hit, r, root.doc)) {
+			// A cosmetic sibling took the centre, and a real click would land on
+			// IT: move to a point of the target it leaves clear. Only when it
+			// covers every probe is the centre clicked anyway, and the result
+			// names what the click went through.
+			const clear = clearPointIn(el, r, root.doc);
+			if (clear) { x = clear.x; y = clear.y; hit = clear.hit; } else through = describe(hit);
+		}
 		// Frame offset AFTER the scroll — the iframe's rect moves with it.
 		const o = frameOffset(root);
 		// F1 guard: a frame candidate scrollIntoView could not bring into the
@@ -175,23 +165,17 @@ ${EXACT_MATCH_HELPER}
 			occluded.push(via + ":covered-frame:" + describe(cover.hit));
 			return null;
 		}
-		if (!related) {
-			if (p.op === "click" && benignOverlap(hit, r, root.doc)) {
-				const e2 = env();
-				return { found: true, via, x: x + o.dx, y: y + o.dy, w: r.width, h: r.height, dpr: e2.dpr, zoom: e2.zoom,
-					tag: el.tagName || "",
-					type: ((el.getAttribute && el.getAttribute("type")) || "").toLowerCase(),
-					editable: el.isContentEditable === true,
-					through: describe(hit) };
-			}
+		if (!through && !relatedHit(el, hit)) {
 			occluded.push(via + ":" + describe(hit));
 			return null;
 		}
 		const e = env();
-		return { found: true, via, x: x + o.dx, y: y + o.dy, w: r.width, h: r.height, dpr: e.dpr, zoom: e.zoom,
+		const res = { found: true, via, x: x + o.dx, y: y + o.dy, w: r.width, h: r.height, dpr: e.dpr, zoom: e.zoom,
 			tag: el.tagName || "",
 			type: ((el.getAttribute && el.getAttribute("type")) || "").toLowerCase(),
 			editable: el.isContentEditable === true };
+		if (through) res.through = through;
+		return res;
 	};
 	if (p.exact && p.exact.length) {
 		const hit = exactMatch(roots, p.exact, vis, finish, p.cx, p.cy);
@@ -333,10 +317,15 @@ ${FRAME_HELPERS}
 		// re-measure below (same hazard as resolutionScript's finish()).
 		if (el.scrollIntoView) el.scrollIntoView({ block: "center", inline: "center", behavior: "instant" });
 		const r = el.getBoundingClientRect();
-		const x = r.left + r.width / 2, y = r.top + r.height / 2;
+		let x = r.left + r.width / 2, y = r.top + r.height / 2;
 		const hit = root.doc.elementFromPoint(x, y);
-		const related = !!hit && (hit === el || (el.contains && el.contains(hit)) || (hit.contains && hit.contains(el)));
-		if (!related && !benignOverlap(hit, r, root.doc)) continue;
+		if (!relatedHit(el, hit)) {
+			if (!benignOverlap(hit, r, root.doc)) continue;
+			// A cosmetic sibling took the centre and would take the click: use a
+			// point of the target it leaves clear when there is one.
+			const clear = clearPointIn(el, r, root.doc);
+			if (clear) { x = clear.x; y = clear.y; }
+		}
 		const o = frameOffset(root); // AFTER the scroll — the frame rect moves with it
 		if (mainViewportMiss(root, x + o.dx, y + o.dy)) continue; // offscreen frame — never a dead-air click
 		// A main-document overlay above the iframe is invisible to the

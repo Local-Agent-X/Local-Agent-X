@@ -150,9 +150,14 @@ describe("shrinkToolsForTier — medium manifest size", () => {
     // model never laid out its steps or said what it left unchecked, the
     // Terminal-Bench 2.0 loss class against Hermes. ~440 tokens, under 0.3% of
     // the 172k window the local 27B runs at. The ceiling moved 10,200 → 10,600.
+    //
+    // Re-measured 2026-11-08: 10,652. browser gained `path` and `paths`, the
+    // file a medium model hands to a page's file chooser through the new
+    // upload action; without them on the wire a form that wants a document
+    // from disk ends the run. ~50 tokens. The ceiling moved 10,600 → 10,700.
     expect(before).toBeGreaterThan(12_000);
     expect(after).toBeLessThanOrEqual(before / 2);
-    expect(after).toBeLessThanOrEqual(10_600);
+    expect(after).toBeLessThanOrEqual(10_700);
   });
 
   it("shortens parameter descriptions past the cap and leaves shorter ones verbatim", () => {

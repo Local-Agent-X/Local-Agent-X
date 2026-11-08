@@ -9,7 +9,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 
 process.env.LAX_DATA_DIR = mkdtempSync(join(tmpdir(), "lax-unnamed-preauth-"));
@@ -345,5 +345,45 @@ describe("the profile decides whether an un-named delete asks", () => {
   it("ask (Normal): the one card, as before", async () => {
     await preauthorizeUnnamedDeletes(base);
     expect(requests).toHaveLength(1);
+  });
+});
+
+// 2026-11-08: under Power, a shell delete of a key the agent had trashed was
+// sent back to delete_file — which puts files IN the trash — three times. A
+// file already in the trash has no undoable route: it asks, whatever the profile.
+describe("a shell delete of a file already in the trash asks under every profile", async () => {
+  const { appendTrashJournal } = await import("../trash-journal.js");
+  const dest = join(process.env.LAX_DATA_DIR!, "trash", "2026-11-08", "agentxos-4c218-9d8a76b91793.json");
+  appendTrashJournal({ original: join(tmpdir(), "Downloads", "agentxos-4c218-9d8a76b91793.json"), tier: "lax", dest, kind: "file" });
+  mkdirSync(dirname(dest), { recursive: true });
+  writeFileSync(dest, "{}");
+  const rmTrashed = [{ id: "pt1", name: "bash", arguments: JSON.stringify({ command: `rm -f "${dest.replace(/\\/g, "/")}"` }) }];
+  // The fixture's trash sits in the OS temp dir, where a shell delete asks
+  // nothing; a real trash never does, so temp is moved off it.
+  beforeEach(() => { for (const name of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(name, join(process.env.LAX_DATA_DIR!, "elsewhere")); });
+  afterEach(() => vi.unstubAllEnvs());
+
+  it("allow (Power): one card, saying the delete is permanent, and the answer decides the call", async () => {
+    profile.destructive = "allow";
+    answer = { approved: true };
+    await preauthorizeUnnamedDeletes({ ...base, toolCalls: rmTrashed });
+    expect(requests).toHaveLength(1);
+    expect(requests[0].context).toMatch(/permanently delete a file already in the trash/);
+    expect(takeUnnamedDeleteDecision("pt1")).toEqual({ approved: true });
+  });
+
+  it("allow, named by the name the user knows: no card, it runs", async () => {
+    profile.destructive = "allow";
+    const named: ChatCompletionMessageParam[] = [{ role: "user", content: "delete agentxos-4c218-9d8a76b91793.json" }];
+    await preauthorizeUnnamedDeletes({ ...base, toolCalls: rmTrashed, priorMessages: named });
+    expect(requests).toHaveLength(0);
+    expect(takeUnnamedDeleteDecision("pt1")).toBeUndefined();
+  });
+
+  it("allow, unattended: refused — nobody can be asked, and nothing can undo it", async () => {
+    profile.destructive = "allow";
+    await preauthorizeUnnamedDeletes({ ...base, toolCalls: rmTrashed, callContext: "cron" });
+    expect(requests).toHaveLength(0);
+    expect(takeUnnamedDeleteDecision("pt1")).toEqual({ approved: false, reason: undefined });
   });
 });

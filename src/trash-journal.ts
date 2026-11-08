@@ -111,6 +111,17 @@ export function findTrashEntry(ref: string, opts: { kind?: "file" | "record" } =
   return matches.length ? matches[matches.length - 1] : null;
 }
 
+/** The reverse lookup: the original path of the newest deletion whose bytes
+ *  now sit at `dest` (the `$R` file in the Recycle Bin, the copy under
+ *  ~/.lax/trash). Null when no journalled deletion put anything there. Paths
+ *  compare case-blind on Windows, where they are. */
+export function trashedOriginalOf(dest: string): string | null {
+  const fold = (p: string) => (process.platform === "win32" ? resolve(p).toLowerCase() : resolve(p));
+  const wanted = fold(dest);
+  const matches = readTrashJournal().filter((e) => e.kind === "file" && e.dest !== null && fold(e.dest) === wanted);
+  return matches.length ? matches[matches.length - 1].original : null;
+}
+
 /** Deletions still worth offering a restore for, newest first. Entries whose
  *  bytes we can name and no longer find are dropped — offering a restore that
  *  cannot work is worse than saying nothing. */

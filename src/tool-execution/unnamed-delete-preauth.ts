@@ -66,55 +66,62 @@ export async function preauthorizeUnnamedDeletes(opts: {
   // A profile that denies destructive refuses each call in the approval phase.
   // One that allows it runs every delete_file — to the trash, announced with
   // Undo — and turns a shell delete of a file the user did not name back to
-  // delete_file, the only delete that can be undone; no card either way.
+  // delete_file, the only delete that can be undone; no card either way. The
+  // one exception is a shell delete of a file already IN the trash (`permanent`,
+  // trashed-target.ts): delete_file is no route for it and the last copy goes,
+  // so it is put to the user under every profile (Peter, 2026-10-02: when the
+  // risk is "we're not sure", a card, not a hard block).
   const rule = getRiskDecision("destructive", opts.sessionId);
   if (decisionDenies(rule)) return noticed;
+  let asking = gated;
+  const trashed: NoticedDelete[] = [];
   if (!decisionRequiresPrompt(rule)) {
-    const trashed: NoticedDelete[] = [];
+    asking = [];
     for (const c of gated) {
       const shell = !opts.toolCalls.some((tc) => tc.id === c.id && tc.name === GATED_DELETE_TOOL);
-      if (shell) recordUnnamedDeleteDecision(c.id, { approved: false, reason: "use-delete-file" });
+      if (shell && c.permanent) asking.push(c);
+      else if (shell) recordUnnamedDeleteDecision(c.id, { approved: false, reason: "use-delete-file" });
       else if (c.folderFiles !== undefined && !canNotice) recordUnnamedDeleteDecision(c.id, { approved: false, reason: undefined });
       else trashed.push({ id: c.id, path: c.path });
     }
-    return canNotice ? [...noticed, ...trashed] : noticed;
   }
+  const announced = canNotice ? [...noticed, ...trashed] : noticed;
+  if (asking.length === 0) return announced;
   // Interactive dispatch only, like the irreversible floor: an unattended run
   // is governed by its autonomy profile, which already blocks an unanswerable ask.
   if (opts.callContext !== "local" || !gateAppliesToModel(opts.modelId)) {
     // No one can answer a card here. File deletes keep whatever the autonomy
     // profile allows, as before; a FOLDER delete is refused — it only became
     // possible on 2026-09-25, with a card, and must not become possible with
-    // no one watching.
-    for (const c of gated) {
-      if (c.folderFiles !== undefined) recordUnnamedDeleteDecision(c.id, { approved: false, reason: undefined });
+    // no one watching — and so is a permanent delete, for the same reason.
+    for (const c of asking) {
+      if (c.folderFiles !== undefined || c.permanent) recordUnnamedDeleteDecision(c.id, { approved: false, reason: undefined });
     }
-    return noticed;
+    return announced;
   }
 
   // No event sink means no way to show a card, so an answer can never arrive.
   // Refuse rather than let a sink-less dispatch confirm its own delete.
   if (!opts.onEvent) {
-    for (const c of gated) recordUnnamedDeleteDecision(c.id, { approved: false, reason: undefined });
-    return noticed;
+    for (const c of asking) recordUnnamedDeleteDecision(c.id, { approved: false, reason: undefined });
+    return announced;
   }
 
   const outcome = await getApprovalManager().requestApprovalDetailed({
     toolName: GATED_DELETE_TOOL,
-    toolCallId: gated[0].id,
+    toolCallId: asking[0].id,
     sessionId: opts.sessionId || "default",
-    context: describeUnnamedDeletesForHuman(gated),
-    args: { paths: gated.map((c) => c.path) },
-    // Reached only when the profile asks; a remembered grant must not cover
-    // the next, different set of files.
+    context: describeUnnamedDeletesForHuman(asking),
+    args: { paths: asking.map((c) => c.path) },
+    // A remembered grant must not cover the next, different set of files.
     alwaysAsk: true,
     opId: opts.operationId,
     emit: opts.onEvent,
   });
-  for (const c of gated) {
+  for (const c of asking) {
     recordUnnamedDeleteDecision(c.id, outcome.approved ? { approved: true } : { approved: false, reason: outcome.reason });
   }
-  return noticed;
+  return announced;
 }
 
 /** After the batch: one notice, with Undo, for every noticed delete that went

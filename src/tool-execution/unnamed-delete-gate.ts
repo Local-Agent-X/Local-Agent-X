@@ -45,6 +45,7 @@ import { shellDeletes, shellDeleteTargets } from "../security/layer/shell-delete
 import { commandsBashRuns } from "../security/layer/shell-source-text.js";
 import { agentMadeFolderHoldsOnlyNew } from "./agent-made-folder.js";
 import { disposableFileDeletes } from "./disposable-tree-delete.js";
+import { trashedTarget } from "./trashed-target.js";
 import { isTaskArtifact } from "../data-lineage/task-artifacts.js";
 import type { ToolDefinition } from "../types.js";
 import { coerceArgs, repairJson, repairMarkerKeys } from "./arg-repair.js";
@@ -120,6 +121,10 @@ export interface UnnamedDeleteCall {
    *  during this request that the agent's file tools did not record (a script
    *  wrote it), deleted to the trash. */
   notice?: true;
+  /** A shell delete of a file already in a trash (trashed-target.ts): the last
+   *  copy goes, and "use delete_file instead" is no route. It asks, whatever
+   *  the profile, where someone can answer. */
+  permanent?: true;
 }
 
 type ArgSchema = Parameters<typeof repairMarkerKeys>[1];
@@ -287,8 +292,12 @@ export function unnamedDeletes(
       if (tc.name === GATED_DELETE_TOOL && absent(path, scope.sessionId)) continue;
       if (disposable.includes(path)) continue;
       const folderFiles = tc.name === GATED_DELETE_TOOL ? folderTarget(path, scope.sessionId) : null;
+      // A file already in a trash is known to the user by the name it had
+      // before, never by the name the trash gave it.
+      const trashed = shellArgs ? trashedTarget(placed.get(path) ?? path, scope.sessionId) : null;
       if (folderFiles !== null) out.push({ id: tc.id, path, folderFiles });
-      else if (userNamedFile(userText, path)) continue;
+      else if (userNamedFile(userText, path) || (trashed?.original != null && userNamedFile(userText, trashed.original))) continue;
+      else if (trashed) out.push({ id: tc.id, path, permanent: true });
       else if (trusted && agentCreated(scope.sessionId!, placed.get(path) ?? path)) own.push({ id: tc.id, path });
       else if (trusted && tc.name === GATED_DELETE_TOOL && scope.requestStartedAt !== undefined
         && createdSince(path, scope.requestStartedAt, scope.sessionId)) noticed.push({ id: tc.id, path, notice: true });
@@ -331,10 +340,22 @@ export function describeUnnamedDeletesForHuman(calls: readonly UnnamedDeleteCall
     );
   }
   const list = calls.map((c) => `  • ${c.path}`).join("\n");
+  const one = calls.length === 1;
+  if (calls.every((c) => c.permanent)) {
+    return (
+      `The model wants to permanently delete ${one ? "a file" : `${calls.length} files`} already in the trash that you did not name:\n${list}\n` +
+      `This cannot be undone: the trash holds the only copy. Approve to delete ${one ? "it" : "all of them"} for good, ` +
+      `or decline and tell it which files you meant.`
+    );
+  }
+  const permanent = calls.filter((c) => c.permanent);
   return (
-    `The model wants to delete ${calls.length} file${calls.length === 1 ? "" : "s"} you did not name:\n${list}\n` +
-    `Approve to delete ${calls.length === 1 ? "it" : "all of them"}, or decline and tell it which files you meant. ` +
-    `Deleted files go to the trash and can be restored.`
+    `The model wants to delete ${calls.length} file${one ? "" : "s"} you did not name:\n${list}\n` +
+    `Approve to delete ${one ? "it" : "all of them"}, or decline and tell it which files you meant. ` +
+    (permanent.length === 0
+      ? `Deleted files go to the trash and can be restored.`
+      : `Deleted files go to the trash and can be restored, except ${permanent.map((c) => c.path).join(", ")}: ` +
+        `already in the trash, so ${permanent.length === 1 ? "it" : "they"} would be gone for good.`)
   );
 }
 

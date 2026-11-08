@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 1951 non-test source files · 84 oversized · 259 nearing the size cap.
+**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 1952 non-test source files · 84 oversized · 260 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -22,8 +22,8 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/ops/` | 176 | 29 | XL | 1 |
 | `src/security/` | 160 | 60 | XL | 2 |
 | `src/tools/` | 127 | 232 | XL | 9 |
-| `src/tool-execution/` | 90 | 84 | XL | 2 |
-| `src/workspace/` | 86 | 3 | M |  |
+| `src/tool-execution/` | 90 | 85 | XL | 2 |
+| `src/workspace/` | 87 | 3 | M |  |
 | `src/canonical-loop/` | 83 | 283 | XL | 11 |
 | `src/providers/` | 74 | 27 | L | 1 |
 | `src/session/` | 59 | 10 | M |  |
@@ -571,6 +571,7 @@ job. Comments are free: never cut them to fit.
 - `src/server/workspace-app-serving.ts#serveWorkspaceApp` — 60+ own code lines (cap 100)
 - `src/tool-execution/arg-repair.ts#coerceArgs` — 60+ own code lines (cap 100)
 - `src/tool-execution/arg-repair.ts#repairJson` — 60+ own code lines (cap 100)
+- `src/tool-execution/unnamed-delete-preauth.ts#preauthorizeUnnamedDeletes` — 60+ own code lines (cap 100)
 - `src/tools/app-tools/runtime.ts#appQuery.execute` — 60+ own code lines (cap 100)
 - `src/tools/email-compose-tools.ts#emailSetup.execute` — 60+ own code lines (cap 100)
 - `src/tools/email-delete-sweep.ts#movePage` — 60+ own code lines (cap 100)

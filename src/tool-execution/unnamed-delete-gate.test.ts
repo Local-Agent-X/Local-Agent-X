@@ -291,3 +291,45 @@ describe("a delete of nothing asks nothing", () => {
     for (const command of commands) expect(unnamedDeletes([sh("t", command)], [user(VAGUE)]), command).toEqual([]);
   });
 });
+
+// 2026-11-08: the agent trashed a downloaded key, the Recycle Bin renamed it
+// `$R6V7H9Q.json`, and "delete agentxos-4c218-9d8a76b91793.json" was refused
+// three times: the user's name could not match the bin's. A trashed file is
+// known by the name it had, and an un-named one is the last copy going.
+describe("a file already in the trash", async () => {
+  const { appendTrashJournal } = await import("../trash-journal.js");
+  const sh = (id: string, command: string) => ({ id, name: "bash", arguments: JSON.stringify({ command }) });
+  const original = join(homedir(), "Documents", "Local Agent X", "workspace", "downloads", "agentxos-4c218-9d8a76b91793.json");
+  const dest = join(process.env.LAX_DATA_DIR!, "trash", "2026-11-08", "agentxos-4c218-9d8a76b91793.json");
+  appendTrashJournal({ original, tier: "lax", dest, kind: "file" });
+  mkdirSync(dirname(dest), { recursive: true });
+  writeFileSync(dest, "{}");
+  const rm = sh("tr1", `rm -f "${dest.replace(/\\/g, "/")}"`);
+  // The fixture's trash sits in the OS temp dir, where a shell delete asks
+  // nothing; a real trash never does, so temp is moved off it for the gate.
+  const offTemp = <T,>(run: () => T): T => {
+    for (const name of ["TMPDIR", "TEMP", "TMP"]) vi.stubEnv(name, join(process.env.LAX_DATA_DIR!, "elsewhere"));
+    try { return run(); } finally { vi.unstubAllEnvs(); }
+  };
+
+  it("is named by the name the user knows it by, and the shell delete runs with no card", () => {
+    expect(offTemp(() => unnamedDeletes([rm], [user("delete agentxos-4c218-9d8a76b91793.json")]))).toEqual([]);
+    expect(offTemp(() => unnamedDeletes([rm], [user("please remove workspace/downloads/agentxos-4c218-9d8a76b91793.json for good")]))).toEqual([]);
+  });
+
+  it("un-named, it is a permanent delete — the trash holds the only copy", () => {
+    const permanent = [{ id: "tr1", path: dest.replace(/\\/g, "/"), permanent: true }];
+    expect(offTemp(() => unnamedDeletes([rm], [user(VAGUE)]))).toEqual(permanent);
+    expect(offTemp(() => unnamedDeletes([rm], [user("Retry with those names")])), "a button that carries no name").toEqual(permanent);
+  });
+
+  it("the card says so", async () => {
+    const { describeUnnamedDeletesForHuman } = await import("./unnamed-delete-gate.js");
+    const alone = describeUnnamedDeletesForHuman([{ id: "a", path: dest, permanent: true }]);
+    expect(alone).toMatch(/permanently delete a file already in the trash/);
+    expect(alone).toMatch(/cannot be undone/);
+    expect(alone).not.toMatch(/can be restored/);
+    const mixed = describeUnnamedDeletesForHuman([{ id: "a", path: "notes.md" }, { id: "b", path: dest, permanent: true }]);
+    expect(mixed).toMatch(/can be restored, except .*agentxos-4c218-9d8a76b91793\.json: already in the trash/);
+  });
+});

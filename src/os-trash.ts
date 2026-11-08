@@ -183,6 +183,21 @@ export function findInWindowsBin(original: string, binRoot = join(parse(original
   return best?.path ?? null;
 }
 
+/** The path a Recycle Bin item came from, given the item itself: its `$R`
+ *  file or its `$I` sidecar, under `<root>$Recycle.Bin/<sid>/`. The bin
+ *  renames what it holds, so the item's own name tells the user nothing;
+ *  the sidecar beside it is the name they know. Null for anything else. */
+export function recycledOriginalOf(path: string): string | null {
+  const name = basename(path);
+  const dir = dirname(path);
+  if (!/^\$[IR]/i.test(name) || basename(dirname(dir)).toLowerCase() !== "$recycle.bin") return null;
+  try {
+    return parseRecycleSidecar(readFileSync(join(dir, `$I${name.slice(2)}`)))?.original ?? null;
+  } catch {
+    return null; /* no sidecar: not a bin item we can name */
+  }
+}
+
 /** Test seam: stand in for the Recycle Bin lookup (null restores the real one). */
 export function _setBinLocatorForTest(fn: BinLocator | null): void {
   binLocator = fn ?? findInWindowsBin;

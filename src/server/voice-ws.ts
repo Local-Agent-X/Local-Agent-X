@@ -145,6 +145,19 @@ async function planSpokenTurn(prepared: PreparedRequest, config: LAXConfig, allA
   return { voiceModel, voiceTools, voiceSplit, voicePromptTelemetry };
 }
 
+/** Continuation merge (turn-runner armed it): the turn's text re-includes the
+ *  barged-over utterance, so retract the interrupted turn's rows — via the
+ *  canonical retractLastTurn, never a hand-splice — so the merged turn
+ *  REPLACES them. Guarded on the tail actually being that turn: if any other
+ *  writer slipped a row in, keep history intact (mild duplication beats
+ *  deleting someone else's turn). */
+function retractContinuedTurn(session: Session, continuationOf: string): void {
+  const lastUser = [...userAuthoredRows(session.messages)].reverse().find((m) => m.role === "user");
+  if (!lastUser || typeof lastUser.content !== "string" || lastUser.content !== continuationOf) return;
+  const retracted = retractLastTurn(session.messages, { includeUser: true });
+  if (retracted.removed > 0) session.messages = retracted.messages;
+}
+
 export async function setupVoiceWs(deps: {
   server: Server;
   config: LAXConfig;
@@ -193,7 +206,7 @@ export async function setupVoiceWs(deps: {
     // end-of-turn memory pass, and the threat engine with its canary watch. It
     // differs in having no fallback chain (voice picks the configured provider;
     // an error surfaces as agent_error to the client, which will retry).
-    const runVoiceTurn = async ({ text, attachments, continuationOf, onDelta, onVisual, onCard }: VoiceTurnInput, sessionId: string, slot: VoiceTurnSlot, clock: VoiceTurnClock) => {
+    const runVoiceTurn = async ({ text, attachments, continuationOf, device, onDelta, onVisual, onCard }: VoiceTurnInput, sessionId: string, slot: VoiceTurnSlot, clock: VoiceTurnClock) => {
       // Durable, continuous memory: load the persisted thread from the same
       // store text chat uses, rather than a per-connection in-memory history
       // that resets on every reconnect. The client sends the chat thread's own
@@ -204,22 +217,11 @@ export async function setupVoiceWs(deps: {
       const session = getOrCreateSession(sessionId);
       clock.mark("load");
 
-      // Continuation merge (turn-runner armed it): this turn's text re-includes
-      // the barged-over utterance, so retract the interrupted turn's rows —
-      // via the canonical retractLastTurn, never a hand-splice — so the merged
-      // turn REPLACES them. Guarded on the tail actually being that turn: if
-      // any other writer slipped a row in, keep history intact (mild
-      // duplication beats deleting someone else's turn).
-      if (continuationOf) {
-        const lastUser = [...userAuthoredRows(session.messages)].reverse().find((m) => m.role === "user");
-        if (lastUser && typeof lastUser.content === "string" && lastUser.content === continuationOf) {
-          const retracted = retractLastTurn(session.messages, { includeUser: true });
-          if (retracted.removed > 0) session.messages = retracted.messages;
-        }
-      }
+      if (continuationOf) retractContinuedTurn(session, continuationOf);
 
       const prepared = await prepareAgentRequest({
         channel: "voice",
+        voiceDevice: device,
         message: text,
         sessionMessages: session.messages,
         sessionId,

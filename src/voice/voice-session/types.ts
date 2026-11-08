@@ -5,6 +5,7 @@
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { VoiceAttachment } from "../audio-ws.js";
+import type { VoiceDevice } from "../../channel-context.js";
 
 export interface VoiceTurnInput {
   text: string;
@@ -17,6 +18,8 @@ export interface VoiceTurnInput {
    *  the merged turn replaces them instead of duplicating the words. */
   continuationOf?: string;
   history: ChatCompletionMessageParam[];
+  /** The device the call runs on (VoiceSessionContext.device). */
+  device: VoiceDevice;
   onDelta: (text: string) => void;
   /** Forwarded by the agent when it calls voice_visual — bridges the
    *  tool's side-effect event back to the WebSocket so the browser can

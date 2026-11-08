@@ -13,7 +13,7 @@ import type { LocalModelCapabilityProfile } from "../local-runtimes/index.js";
 import type { TargetPin } from "../ops/types.js";
 import type { ProviderSwitch } from "./resolve-provider.js";
 
-import type { ChannelId } from "../channel-context.js";
+import type { ChannelId, VoiceDevice } from "../channel-context.js";
 import type { ChatMode } from "../session/mode.js";
 
 /** Alias of the canonical channel union (src/channel-context.ts). */
@@ -22,6 +22,9 @@ export type ChannelKind = ChannelId;
 export interface AgentRequestInput {
   /** Which entry point is calling */
   channel: ChannelKind;
+  /** A voice turn's device (the phone app or the desktop), from the transport
+   *  that carried the call; drives the channel block's device line. */
+  voiceDevice?: VoiceDevice;
   /** The user's message */
   message: string;
   /** Session messages (raw, will be sanitized) */

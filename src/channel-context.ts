@@ -46,6 +46,10 @@ export function parseFrameOrigin(value: unknown): ChannelId | null {
     : null;
 }
 
+/** The device a voice call runs on, known from the transport that carries it:
+ *  the broker link is the phone app, the local voice socket is the desktop. */
+export type VoiceDevice = "phone" | "desktop";
+
 /** Human-readable surface names (UI labels, identity linking, prompt text). */
 export const CHANNEL_DISPLAY_NAMES: Record<ChannelId, string> = {
   web: "Desktop app",
@@ -73,12 +77,13 @@ const SURFACE_PROSE: Record<ChannelId, string> = {
     "cards, and approval cards, but the screen is narrow: keep replies compact and avoid wide tables or " +
     "long code dumps. Tools still run on the desktop; files you create live there, not on the phone. " +
     "When the user asks for a document from the PC (Word, Excel, PDF, …), call send_file — it stages the " +
-    "file so a tappable card appears in their chat.",
+    "file so a tappable card appears in their chat. \"My camera\" means the phone's camera: camera_capture " +
+    "is the desktop's webcam, so to see something ask them to send a photo.",
   voice:
-    "This is a live VOICE conversation: your reply is spoken aloud. No visual UI exists — never use " +
-    "markdown, lists, tables, code blocks, links, or emoji; keep answers short and conversational. " +
-    "There are no clickable approval cards: if an action needs approval, say so and ask the user to " +
-    "approve it from the desktop or phone app.",
+    "This is a live VOICE conversation: your reply is spoken aloud. Never use markdown, lists, tables, " +
+    "code blocks, links, or emoji; keep answers short and conversational. Nothing visual reaches the " +
+    "user except cards you show. There are no clickable approval cards: if an action needs approval, " +
+    "say so and ask the user to approve it from the desktop or phone app.",
   telegram:
     "The user is messaging over Telegram, usually from their phone and away from the desktop — they " +
     "cannot see the PC screen. No clickable approval cards; actions needing approval must be confirmed " +
@@ -102,6 +107,20 @@ const SURFACE_PROSE: Record<ChannelId, string> = {
     "conversational padding.",
 };
 
+/** Where a voice call's user is, and whose camera "my camera" is. A phone call
+ *  carries the phone camera's frame with the user's words while they have it
+ *  open (voice/voice-session/utterance-media.ts). */
+const VOICE_DEVICE_PROSE: Record<VoiceDevice, string> = {
+  phone:
+    " The call is from the AgentX PHONE app: the user is on their phone, typically away from the " +
+    "desktop, and cannot see its screen. \"My camera\" means the phone's camera: while they have it " +
+    "open on the call, its picture arrives with their words. If no picture came with their words, ask " +
+    "them to turn the camera on in the call. camera_capture is the desktop's webcam, not theirs.",
+  desktop:
+    " The call is in the desktop app: the user is at this computer, so camera_capture is their webcam " +
+    "and screen_capture shows what they see.",
+};
+
 /** One line of hard limits derived from the formatter's config table. */
 function formattingLine(channel: ChannelId): string {
   const config = getChannelConfig(channel);
@@ -113,14 +132,16 @@ function formattingLine(channel: ChannelId): string {
 
 /**
  * The per-turn grounding block for the system prompt. Pure + exported for
- * testing; every ChannelId renders a non-empty block.
+ * testing; every ChannelId renders a non-empty block. A voice turn names the
+ * device its call runs on when the caller knows it.
  */
-export function channelContextBlock(channel: ChannelId): string {
+export function channelContextBlock(channel: ChannelId, voiceDevice?: VoiceDevice): string {
   const name = CHANNEL_DISPLAY_NAMES[channel];
   const prose = SURFACE_PROSE[channel];
+  const device = channel === "voice" && voiceDevice ? VOICE_DEVICE_PROSE[voiceDevice] : "";
   return harnessNotice(
     "CHANNEL",
-    `Surface: ${name}. ${prose}${formattingLine(channel)}`,
+    `Surface: ${name}. ${prose}${device}${formattingLine(channel)}`,
   );
 }
 

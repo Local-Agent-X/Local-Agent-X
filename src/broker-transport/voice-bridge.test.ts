@@ -67,7 +67,7 @@ describe("VoiceBridge — session lifecycle over the data channel", () => {
     const { transport, getCtx, getSession } = makeBridge();
     transport.emit({ type: "hello", sessionId: "s1", mode: "chat", clientStt: false });
     expect(getSession()).not.toBeNull();
-    expect(getCtx()).toMatchObject({ sessionId: "s1", mode: "chat", clientStt: false });
+    expect(getCtx()).toMatchObject({ sessionId: "s1", device: "phone", mode: "chat", clientStt: false });
     expect(transport.events).toContainEqual({ type: "ready", sessionId: "s1", mode: "chat" });
   });
 

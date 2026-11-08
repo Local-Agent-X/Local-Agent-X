@@ -205,8 +205,8 @@ export const listMonitorsTool: ToolDefinition = {
 export const cameraCaptureTool: ToolDefinition = {
   name: "camera_capture",
   description:
-    "Take a photo from the webcam. Returns the image for visual analysis. " +
-    "Use this when the user asks you to see them, take a photo, or use the camera. " +
+    "Take a photo from this computer's webcam — the desktop's, never the phone's camera. Returns the image for visual analysis. " +
+    "Use this when the user at this computer asks you to see them, take a photo, or use the camera. " +
     "Windows only (captures through ffmpeg's DirectShow input) — refused on macOS and Linux. " +
     "On WhatsApp/Telegram the captured photo is delivered to the user automatically — do NOT also call send_image for it.",
   parameters: {

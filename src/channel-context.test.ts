@@ -31,6 +31,23 @@ describe("channelContextBlock", () => {
     expect(block).toContain("markdown");
   });
 
+  it("tells a phone call's model the user is on their phone and their camera is the phone's", () => {
+    const block = channelContextBlock("voice", "phone");
+    expect(block).toContain("PHONE app");
+    expect(block).toContain("\"My camera\" means the phone's camera");
+    expect(block).toContain("camera_capture is the desktop's webcam, not theirs");
+  });
+
+  it("tells a desktop call's model the user is at this computer", () => {
+    const block = channelContextBlock("voice", "desktop");
+    expect(block).toContain("at this computer");
+    expect(block).not.toContain("PHONE");
+  });
+
+  it("names a device only on a voice turn", () => {
+    expect(channelContextBlock("web", "phone")).toBe(channelContextBlock("web"));
+  });
+
   it("derives hard limits from the formatter config (telegram 4096)", () => {
     expect(channelContextBlock("telegram")).toContain("4096");
   });

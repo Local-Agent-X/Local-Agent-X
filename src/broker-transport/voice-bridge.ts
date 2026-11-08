@@ -148,6 +148,7 @@ export class VoiceBridge implements VoiceChannel {
     };
     this.session = this.deps.sessionFactory({
       sessionId,
+      device: "phone",
       mode,
       clientStt,
       // Audio rides the media track; the router paces TTS at the snooped engine rate and

@@ -35,6 +35,7 @@ import { createLogger } from "../logger.js";
 import { isLoopbackOrigin } from "../server-utils.js";
 import { authorizeUpgrade, WS_UNAUTHORIZED } from "../server/ws-operator-auth.js";
 import { createPeerAudioRouter } from "./voice-peer-session.js";
+import type { VoiceDevice } from "../channel-context.js";
 const logger = createLogger("voice.audio-ws");
 
 /** A photo or file the user showed the agent on the call (or the camera's frame),
@@ -67,6 +68,10 @@ export interface VoiceSession {
 
 export interface VoiceSessionContext {
   sessionId: string;
+  /** The device the call runs on, set by the transport that opened it (the
+   *  broker bridge is the phone app, this socket the desktop), never by a
+   *  client claim. */
+  device: VoiceDevice;
   /** Session intent. "chat" runs the full STT → LLM → TTS pipeline.
    *  "dictate" runs STT only — Whisper finals fire as `final` events for
    *  the client to consume into a textarea, but the agent + TTS never
@@ -215,6 +220,7 @@ export function setupVoiceWebSocket(server: Server, authToken: string, maxPayloa
 
     const ctx: VoiceSessionContext = {
       get sessionId() { return sessionId; },
+      device: "desktop",
       sendAudio(frame: Int16Array) {
         if (closed || ws.readyState !== ws.OPEN) return;
         // Send as binary. ws will transmit the raw bytes.
@@ -283,6 +289,7 @@ export function setupVoiceWebSocket(server: Server, authToken: string, maxPayloa
           const router = createPeerAudioRouter(() => peer);
           session = sessionFactory({
             sessionId,
+            device: "desktop",
             mode,
             clientStt,
             sendAudio: reqTransport === "webrtc" ? router.sendAudio : ctx.sendAudio,

@@ -125,6 +125,40 @@ async function buildTurnMemory(
   return ctx;
 }
 
+/**
+ * Memory-curate nudge detection (Stage 1 regex + Stage 2 LLM). Its RETURN
+ * value is empty unless LAX_MEMORY_INPROMPT_NUDGE=1; its only other effect is
+ * a per-session boost counter the (post-reply) end-of-turn pass reads. So
+ * awaiting it just added ~1.5-2s of pre-model latency for nothing
+ * user-visible. Fire-and-forget by default; the boost lands long before
+ * end-of-turn. Only block on it when the in-prompt nudge is actually on.
+ * Lean callers (voice) never block on it, but still run it in the
+ * background: the boost is the end-of-turn pass's only trigger, so skipping
+ * it meant no fact was ever extracted from a spoken conversation.
+ */
+async function curateNudge(
+  input: AgentRequestInput,
+  resolved: { provider: string; model: string; apiKey: string },
+  stepStart: (label: string) => () => void,
+): Promise<string> {
+  const curateInput = {
+    message: input.message,
+    sessionMessages: input.sessionMessages,
+    sessionId: input.sessionId,
+    resolvedProvider: resolved.provider,
+    resolvedModel: resolved.model,
+    resolvedApiKey: resolved.apiKey,
+  };
+  if (input.leanPrep || process.env.LAX_MEMORY_INPROMPT_NUDGE !== "1") {
+    void detectAndBoostCurate(curateInput).catch(() => {});
+    return "";
+  }
+  const end = stepStart("detectAndBoostCurate");
+  const block = await detectAndBoostCurate(curateInput);
+  end();
+  return block;
+}
+
 export async function prepareAgentRequest(input: AgentRequestInput): Promise<PreparedAgentRequest> {
   // Per-step timing logs. Added 2026-05-27 after IDE-mode chat turns wedged
   // somewhere inside this pipeline with zero breadcrumbs: only the entry
@@ -186,37 +220,15 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   // 4. Build per-turn memory + context (skip heavy parts for bridges/cron).
   const ctx = await buildTurnMemory(input, resolved, toolSel.tier, protocolSuggestion, stepStart);
 
-  // 5. Memory-curate nudge detection (Stage 1 regex + Stage 2 LLM). Its
-  // RETURN value is empty unless LAX_MEMORY_INPROMPT_NUDGE=1; its only other
-  // effect is a per-session boost counter the (post-reply) end-of-turn pass
-  // reads. So awaiting it just added ~1.5-2s of pre-model latency for nothing
-  // user-visible. Fire-and-forget by default; the boost lands long before
-  // end-of-turn. Only block on it when the in-prompt nudge is actually on.
-  // Lean callers (voice) never block on it, but still run it in the
-  // background: the boost is the end-of-turn pass's only trigger, so skipping
-  // it meant no fact was ever extracted from a spoken conversation.
-  let memoryCurateBlock = "";
-  const curateInput = {
-    message: input.message,
-    sessionMessages: input.sessionMessages,
-    sessionId: input.sessionId,
-    resolvedProvider: resolved.provider,
-    resolvedModel: resolved.model,
-    resolvedApiKey: resolved.apiKey,
-  };
-  if (!input.leanPrep && process.env.LAX_MEMORY_INPROMPT_NUDGE === "1") {
-    end = stepStart("detectAndBoostCurate");
-    memoryCurateBlock = await detectAndBoostCurate(curateInput);
-    end();
-  } else {
-    void detectAndBoostCurate(curateInput).catch(() => {});
-  }
+  // 5. Memory-curate nudge detection.
+  const memoryCurateBlock = await curateNudge(input, resolved, stepStart);
 
   // 6. Build the final system prompt (base + blocks + provider rider +
   // explicit build-route directive if applicable).
   end = stepStart("buildSystemPrompt");
   const promptBuild = await buildSystemPromptWithTelemetry({
     channel: input.channel,
+    voiceDevice: input.voiceDevice,
     mode: input.mode,
     message: input.message,
     sessionId: input.sessionId,

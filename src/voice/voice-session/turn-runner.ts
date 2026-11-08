@@ -331,6 +331,7 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
         continuationOf,
         history,
         sessionId: sid,
+        device: ctx.device,
         signal: turn.signal,
         onDelta: (delta) => {
           if (isClosed() || turn.signal.aborted || !delta) return;

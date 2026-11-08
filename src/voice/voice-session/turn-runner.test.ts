@@ -15,6 +15,7 @@ function harness(opts: { mode?: "chat" | "dictate"; queued?: boolean; pendingCou
   const feeds: string[] = [];
   const ctx = {
     sessionId: "test-sess",
+    device: "phone",
     mode: opts.mode ?? "chat",
     sendAudio: () => {},
     sendEvent: (e: Record<string, unknown>) => { events.push(e); },
@@ -69,6 +70,17 @@ describe("voice turn machine", () => {
 
     expect(seen[0]).toBe(0);     // first turn starts empty
     expect(seen[1]).toBe(2);     // second turn sees the first exchange
+  });
+
+  it("tells the turn which device the call runs on", async () => {
+    const h = harness();
+    const devices: string[] = [];
+    const recordingRun: VoiceTurnRunner = async (input) => { devices.push(input.device); return twoDeltaRun(input); };
+    const machine = createVoiceTurnMachine({ ctx: h.ctx, runTurn: recordingRun, speaker: h.speaker, cancelTts: () => {}, isClosed: () => false, logger });
+
+    await machine.handleFinalTranscript("can you see my camera");
+
+    expect(devices).toEqual(["phone"]);
   });
 
   it("dictate mode emits only `final` — no agent turn", async () => {

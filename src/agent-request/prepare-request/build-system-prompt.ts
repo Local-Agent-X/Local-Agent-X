@@ -19,7 +19,7 @@ import {
   type RenderedPromptSection,
   type SystemPromptBuildResult,
 } from "../../context/system-prompt-builder.js";
-import { channelContextBlock } from "../../channel-context.js";
+import { channelContextBlock, type VoiceDevice } from "../../channel-context.js";
 import type { ChannelKind } from "../types.js";
 import type { ChatMode } from "../../session/mode.js";
 import { projectAgentsMd } from "../../context/project-agents-md.js";
@@ -128,6 +128,8 @@ export function stableSystemPrefixLength(
 export interface BuildSystemPromptInput {
   /** Which surface this turn arrived on — drives the channel-context section. */
   channel: ChannelKind;
+  /** A voice turn's device: the channel section's device line. */
+  voiceDevice?: VoiceDevice;
   /** The session's mode: which base-prompt parts it carries (context/prompt-mode.ts). */
   mode?: ChatMode;
   message: string;
@@ -335,7 +337,7 @@ export async function buildSystemPromptWithTelemetry(
       smartContext: input.smartContext,
       memoryContext: input.memoryContext,
       notificationHint,
-      channelContext: channelContextBlock(input.channel),
+      channelContext: channelContextBlock(input.channel, input.voiceDevice),
       bridgeContext: input.bridgeContext,
       mode: input.mode,
     });

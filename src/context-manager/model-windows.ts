@@ -48,8 +48,8 @@ const MODEL_CONTEXTS: Record<string, number> = {
   "gpt-4o-mini": 128_000,
   "o3-pro": 200_000,
   // xAI — docs.x.ai/docs/models, read 2026-09-27: grok-4.7 / 4.6 500k;
-  // grok-4.5 / 4.3 / 4.20 1M; grok-build-0.1 256k (grok-code-fast-1 is its
-  // alias, 256k on its own page). The undated grok-4.20 ids and
+  // grok-4.5 / 4.3 / 4.20 1M; grok-build-0.1 256k (its old name
+  // grok-code-fast-1 was retired 2026-05-15). The undated grok-4.20 ids and
   // grok-code-fast are LiteLLM-only aliases of the dated rows.
   // Probed 2026-10-31 (tmp/window-probe-xai.ts over the SuperGrok sign-in,
   // logs in reports/): grok-4.5 refuses 983,199 tokens with "input_too_large
@@ -70,7 +70,6 @@ const MODEL_CONTEXTS: Record<string, number> = {
   "grok-4.20-non-reasoning": 1_000_000,
   "grok-4.20-multi-agent": 1_000_000,
   "grok-4.20": 1_000_000,
-  "grok-code-fast-1": 256_000,
   "grok-code-fast": 256_000,
   "grok-build-0.1": 256_000,
   // Anthropic — the Models API / model catalog rates every model from Opus 4.6

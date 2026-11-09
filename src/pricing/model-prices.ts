@@ -111,7 +111,6 @@ export const PRICING: Record<string, ModelPricing> = {
   "grok-4.20-non-reasoning": { input: 1.25, output: 2.5, cacheRead: 0.16 },
   "grok-4.20-multi-agent": { input: 1.25, output: 2.5, cacheRead: 0.16 },
   "grok-4.20": { input: 1.25, output: 2.5, cacheRead: 0.16 },
-  "grok-code-fast-1": { input: 1, output: 2, cacheRead: 0.2 },
   "grok-code-fast": { input: 1, output: 2, cacheRead: 0.2 },
   "grok-build-0.1": { input: 1, output: 2, cacheRead: 0.2 }, // x.ai/api, verified 2026-09-27
   // Gemini (≤200k context tier — ai.google.dev/gemini-api/docs/pricing, read

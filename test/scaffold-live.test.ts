@@ -79,7 +79,9 @@ function scaffold(framework: string, creator: string, dir: string): string {
 }
 
 const onlyOwnershipFailed = (out: string): boolean =>
-  /check-structure: 1 of 4 checks failed/.test(out) && /check-module-owners: \d+ module\(s\) with no owner/.test(out);
+  // "1 of N": the count is however many checks the kit runs (it was hard-coded
+  // at 4, and every creator with an unowned module failed when the kit grew a fifth).
+  /check-structure: 1 of \d+ checks failed/.test(out) && /check-module-owners: \d+ module\(s\) with no owner/.test(out);
 
 function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {

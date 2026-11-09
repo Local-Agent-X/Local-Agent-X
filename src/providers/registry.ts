@@ -154,8 +154,8 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
       // Coding-specialist models — selectable so the app-builder can run on a
       // model trained for agentic coding instead of the generalist grok-4.3.
       // resolveBuildModel honors whatever's selected, so picking one here drives
-      // the build path. grok-code-fast-1: GA, SWE-Bench-Verified 70.8%, cheap.
-      "grok-code-fast-1",
+      // the build path. grok-code-fast-1, its old name, was retired by xAI on
+      // 2026-05-15 (LiteLLM deprecation_date; the pricing recheck went red).
       "grok-build-0.1",
     ],
     // Multi-agent/heavy tier: served via a deferred (async) completion flow,

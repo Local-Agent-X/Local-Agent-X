@@ -46,7 +46,7 @@ describe("resolveBuildModel — dynamic-catalog providers honor the selection", 
 
 describe("resolveBuildModel — static-catalog providers keep validating (no regression)", () => {
   it("passes through a model that IS in the provider's static list", () => {
-    expect(resolveBuildModel("xai", "grok-code-fast-1")).toBe("grok-code-fast-1");
+    expect(resolveBuildModel("xai", "grok-build-0.1")).toBe("grok-build-0.1");
     expect(resolveBuildModel("anthropic", PROVIDERS.anthropic.models[0])).toBe(PROVIDERS.anthropic.models[0]);
   });
 

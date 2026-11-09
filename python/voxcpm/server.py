@@ -62,19 +62,40 @@ def _detect_gpu() -> str:
 _model = None
 _whisper = None
 
+# The model each start loads, pinned to one upstream commit. Loading "main"
+# made every start depend on upstream: OpenBMB pushed a new VoxCPM2 revision
+# on 2026-11-09, each start then began a ~4.6 GB download, the download died
+# partway (the process exited with nothing in the log), and the sidecar never
+# came up although the version it had run on since 2026-11-02 was on disk.
+# Moving to a newer revision is a deliberate change here, with a listen test.
+MODELS = (
+    ("openbmb/VoxCPM2", "32279effe8c19989596f05d353d1447f51d9e915"),
+    ("openbmb/VoxCPM-0.5B", None),
+)
+
+
+def _model_dir(repo_id, revision):
+    """The local folder of `repo_id` at `revision`: the cached copy when it is
+    complete, otherwise that exact revision downloaded once."""
+    from huggingface_hub import snapshot_download
+    try:
+        return snapshot_download(repo_id, revision=revision, local_files_only=True)
+    except Exception:
+        return snapshot_download(repo_id, revision=revision)
+
 
 def _load_model():
-    """Returns the loaded VoxCPM model. First call downloads weights (~2GB)
-    and takes ~15-20s; subsequent calls are instant."""
+    """Returns the loaded VoxCPM model. First call downloads weights (~4.6GB)
+    unless they are cached; subsequent calls are instant."""
     global _model
     if _model is not None:
         return _model
     from voxcpm import VoxCPM
     t0 = time.time()
     last_err = None
-    for model_id in ("openbmb/VoxCPM2", "openbmb/VoxCPM-0.5B"):
+    for model_id, revision in MODELS:
         try:
-            _model = VoxCPM.from_pretrained(model_id)
+            _model = VoxCPM.from_pretrained(_model_dir(model_id, revision))
             log.info(f"loaded {model_id} in {time.time() - t0:.1f}s "
                      f"(sr={_model.tts_model.sample_rate})")
             return _model

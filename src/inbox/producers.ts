@@ -113,6 +113,12 @@ export function inboxWithheldOutput(o: { key: string; program: string; secrets: 
   });
 }
 
+/** Memory needs the user: a daily snapshot failed its checks, or memory had
+ *  to be restored at start (db-backup.ts). `key` keeps one item per cause. */
+export function inboxMemoryAlert(a: { key: string; title: string; body: string }): void {
+  postToInbox({ kind: "notice", title: a.title, body: a.body, needsYou: true, key: a.key });
+}
+
 export function inboxUserNotice(n: { id: string; text: string }): boolean {
   return postToInbox({ kind: "notice", title: n.text, body: "", needsYou: false, key: `notice:${n.id}` }) !== null;
 }

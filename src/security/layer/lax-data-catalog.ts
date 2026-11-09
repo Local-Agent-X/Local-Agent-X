@@ -120,7 +120,7 @@ export const LAX_DATA_CATALOG: readonly LaxDataEntry[] = [
   ...at("card", ACCOUNT, "anthropic-auth.json", "xai-auth.json", "agentxos-account.json", "agentxos-identity.json", "email.json",
     "secrets-vault.json", "whatsapp-auth"),
   ...at("card", AUDIT, "audit", "ari-audit.db"),
-  ...at("card", REMEMBERS, "memory", "memory.db", "memory-atlas.cache.json", "memory-compressed", "memory-tiers.json", "sessions",
+  ...at("card", REMEMBERS, "memory", "memory.db", "memory-backups", "memory-atlas.cache.json", "memory-compressed", "memory-tiers.json", "sessions",
     "sessions-archive", "dream-state.json", "consolidation-log.json", "cross-session-data.json", "capability-gaps.jsonl",
     "contradiction-history.json", "correction-history.json", "corrections.json", "emotional-history.json", "inside-references.json",
     "language-style.json", "milestones.json", "narratives.json", "proactive-patterns.json", "schedule-profile.json",

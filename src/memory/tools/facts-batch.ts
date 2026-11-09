@@ -26,7 +26,7 @@ export function saveFactsBatch(
   memory: MemoryIndex,
   facts: string[],
   contexts: MemoryPromotionContext[],
-  opts: { kind?: FactKind; confidence: number; sourceFile: string; target: string; sourceMessageId?: string },
+  opts: { kind?: FactKind; confidence: number; sourceFile: string; target: string; sourceMessageId?: string; by?: "agent" | "background" },
 ): BatchFactResult[] {
   return facts.map((fact, i) => {
     if (i >= MAX_FACTS_PER_CALL) {
@@ -45,6 +45,7 @@ export function saveFactsBatch(
         sourceFile: opts.sourceFile,
         promotion,
         sourceMessageId: opts.sourceMessageId,
+        by: opts.by,
       });
       if (!result.ok) {
         return { fact, status: "skipped" as const, detail: `not saved (${result.error ?? "unknown error"})` };
@@ -61,4 +62,19 @@ export function saveFactsBatch(
       throw e;
     }
   });
+}
+
+/** What a batched `remember` tells the model: how many landed, then each fact
+ *  on its own line, so it never claims more than was saved. An error when
+ *  none landed. */
+export function batchReport(results: BatchFactResult[], label: string): { content: string; isError: boolean } {
+  const savedCount = results.filter((r) => r.status === "saved").length;
+  const lines = results.map((r) =>
+    r.status === "saved"
+      ? `SAVED ${r.detail}`
+      : r.status === "blocked"
+        ? `BLOCKED (${r.detail}): ${r.fact.slice(0, 80)}`
+        : `NOT SAVED (${r.detail}): ${r.fact.slice(0, 80)}`,
+  );
+  return { content: `Remembered ${savedCount}/${results.length} facts [${label}]:\n` + lines.join("\n"), isError: savedCount === 0 };
 }

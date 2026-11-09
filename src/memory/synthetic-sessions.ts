@@ -108,3 +108,17 @@ const TRANSCRIPT_SEARCH_EXCLUDED: readonly string[] =
 export function isExcludedFromTranscriptSearch(id: string): boolean {
   return TRANSCRIPT_SEARCH_EXCLUDED.some((p) => id.startsWith(p));
 }
+
+// ── Memory authority — who may change what the user said (the SIXTH reader) ──
+//
+// A dream or a skill review is a turn no person started: its "user message"
+// is a prompt the harness wrote, holding old transcripts, so words in it are
+// not the user asking for anything. update_fact / forget from such a session
+// may change only what a model wrote (index-facts-invalidate.ts
+// backgroundMayEnd). An eval dry-run plays a live user and a cron job's prompt
+// is the user's own task text, so both act as the user's turn.
+const ACTS_WITHOUT_USER: readonly string[] = ["dream-", "skill-review-"];
+
+export function actsWithoutUser(id: string): boolean {
+  return ACTS_WITHOUT_USER.some((p) => id.startsWith(p));
+}

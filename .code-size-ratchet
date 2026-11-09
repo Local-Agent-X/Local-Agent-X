@@ -45,7 +45,6 @@ src/memory/context.ts#buildContextBlockParts 128
 src/memory/date-parser.ts#parseDateRange 102
 src/memory/index-schema-migrations.ts#db.transaction:callback 259
 src/memory/tools/facts.ts#createFactsTools 108
-src/memory/tools/facts.ts#remember.execute 103
 src/ops/tools/op-submit-async.ts#opSubmitAsyncTool.execute 114
 src/plugin-system.ts 366
 src/plugin-system.ts#PluginManager.loadPluginAtPath 136

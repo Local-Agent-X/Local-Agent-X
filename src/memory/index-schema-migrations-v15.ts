@@ -1,9 +1,11 @@
 /**
- * Memory schema steps v15–v20 (split from index-schema-migrations.ts):
- * the retrieval and provenance repairs of October 2026. Runs inside
- * migrateSchema's transaction, after the earlier steps.
+ * Memory schema steps v15–v21 (split from index-schema-migrations.ts):
+ * the retrieval and provenance repairs of October 2026, and the change log
+ * of November. Runs inside migrateSchema's transaction, after the earlier
+ * steps.
  */
 import type Database from "better-sqlite3";
+import { installFactEvents, logPastEnds } from "./fact-events.js";
 
 export function migrateRetrievalAndProvenance(db: InstanceType<typeof Database>, fromVersion: number): void {
   if (fromVersion < 15) {
@@ -58,5 +60,15 @@ export function migrateRetrievalAndProvenance(db: InstanceType<typeof Database>,
     // re-extracts each one once and fills the table.
     db.exec(`CREATE TABLE IF NOT EXISTS project_doc_text (path TEXT PRIMARY KEY, file TEXT NOT NULL, text TEXT NOT NULL)`);
     try { db.exec(`UPDATE files SET hash = '' WHERE source = 'project-doc'`); } catch {}
+  }
+
+  if (fromVersion < 21) {
+    // v21: the memory change log (fact-events.ts): every create, change, end
+    // and delete of a fact, with the row before and after, for history and
+    // undo. initSchema re-creates its triggers on every open as well, so a
+    // facts column a later step adds is captured. Ends made before the log
+    // existed are logged too, so they can be undone.
+    installFactEvents(db);
+    logPastEnds(db);
   }
 }

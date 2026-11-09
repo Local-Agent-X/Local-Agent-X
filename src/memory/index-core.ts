@@ -24,6 +24,7 @@ import * as ImportRecall from "./import-recall.js";
 import { getLayout } from "./atlas-layout.js";
 import { MemoryFactsBase } from "./index-core/facts-base.js";
 import { BackgroundReembed } from "./index-core-reembed.js";
+import { restoreFacts, snapshotFacts, type RestoreResult, type SnapshotResult } from "./db-backup.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory.index-core");
@@ -43,6 +44,10 @@ export class MemoryIndex extends MemoryFactsBase {
     hasVec: () => this.hasVec,
   });
   protected dirty = true;
+  /** Set when the database could not be opened this start: where the broken
+   *  file went, and what was restored from a snapshot (null: nothing could
+   *  be). The server tells the user. */
+  recovery: { movedTo: string; restored: RestoreResult | null } | null = null;
   protected hasFts = false;
   private hasVec = false;
   private watcherHandle: WatcherHandle = { watcher: null, debounceTimer: null };
@@ -65,7 +70,8 @@ export class MemoryIndex extends MemoryFactsBase {
     }
 
     const dbPath = join(dataDir, "memory.db");
-    this.db = openDatabaseSafe(dbPath);
+    let movedTo: string | null = null;
+    this.db = openDatabaseSafe(dbPath, (to) => { movedTo = to; });
     this.db.pragma("journal_mode = WAL");
     this.db.pragma("busy_timeout = 5000");
     // Boot-time WAL truncation: nothing else checkpoints memory.db, so a WAL
@@ -77,6 +83,7 @@ export class MemoryIndex extends MemoryFactsBase {
     }
 
     this.hasFts = Schema.initSchema(this.db).hasFts;
+    if (movedTo !== null) this.recovery = { movedTo, restored: restoreFacts(this.db, this.hasFts) };
 
     startWatcher(this.memoryDir, () => { this.dirty = true; }, this.watcherHandle);
 
@@ -201,8 +208,6 @@ export class MemoryIndex extends MemoryFactsBase {
       hasVec: this.hasVec,
       memoryDir: this.memoryDir,
       dataDir: this.dataDir,
-      entitiesDir: this.entitiesDir,
-      reindexEntity: (slug) => this.reindexThroughUniversal("entity", slug),
       sessionDeltas: this.sessionDeltas,
       dirtyRef,
       syncInProgressRef,
@@ -359,6 +364,11 @@ export class MemoryIndex extends MemoryFactsBase {
 
   topEntities(limit = 8): Array<{ slug: string; mentions: number }> {
     return topEntities(this.db, limit);
+  }
+
+  /** Today's snapshot of the facts nothing can rebuild (db-backup.ts). */
+  snapshotFacts(): SnapshotResult {
+    return snapshotFacts(this.db);
   }
 
   markDirty(): void {

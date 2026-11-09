@@ -7,10 +7,17 @@ import { atomicWriteFileSync, slugify } from "./utils.js";
 import { recallByEntity } from "./index-facts.js";
 import { localDate } from "./retrieval-format.js";
 import { factTrustSuffix } from "./fact-provenance-label.js";
+import { eraseFactHistory, withFactActor } from "./fact-events.js";
 
 export const MAX_FACTS_PER_ENTITY = 50;
 export const MAX_FACTS_PER_KIND = 15;
 
+/**
+ * Erase facts at the user's explicit request (memory_forget, confirmed): the
+ * one path that deletes a fact. The change log keeps that each was there and
+ * when it went, not what it said, and sync never brings it back from another
+ * machine (fact-events.ts eraseFactHistory).
+ */
 export function forgetFacts(
   db: InstanceType<typeof Database>,
   hasFts: boolean,
@@ -19,17 +26,21 @@ export function forgetFacts(
   reindexEntity: (slug: string) => void,
   pattern: string
 ): number {
-  const facts = db.prepare("SELECT id, content FROM facts WHERE content LIKE ?").all(`%${pattern}%`) as Array<{ id: number; content: string }>;
+  const facts = db.prepare("SELECT id, kind, content, entities FROM facts WHERE content LIKE ?").all(`%${pattern}%`) as
+    Array<{ id: number; kind: string; content: string; entities: string }>;
   const affectedEntities = new Set<string>();
-  for (const f of facts) {
-    const mentions = db.prepare("SELECT entity_slug FROM entity_mentions WHERE fact_id = ?").all(f.id) as Array<{ entity_slug: string }>;
-    for (const m of mentions) affectedEntities.add(m.entity_slug);
-    db.prepare("DELETE FROM entity_mentions WHERE fact_id = ?").run(f.id);
-    if (hasFts) try { db.prepare("DELETE FROM facts_fts WHERE rowid = ?").run(f.id); } catch {}
-    const hash = createHash("sha256").update(f.content).digest("hex");
-    try { db.prepare("DELETE FROM embedding_cache WHERE hash = ?").run(hash); } catch {}
-    db.prepare("DELETE FROM facts WHERE id = ?").run(f.id);
-  }
+  withFactActor(db, "user:erase", () => {
+    for (const f of facts) {
+      const mentions = db.prepare("SELECT entity_slug FROM entity_mentions WHERE fact_id = ?").all(f.id) as Array<{ entity_slug: string }>;
+      for (const m of mentions) affectedEntities.add(m.entity_slug);
+      db.prepare("DELETE FROM entity_mentions WHERE fact_id = ?").run(f.id);
+      if (hasFts) try { db.prepare("DELETE FROM facts_fts WHERE rowid = ?").run(f.id); } catch {}
+      const hash = createHash("sha256").update(f.content).digest("hex");
+      try { db.prepare("DELETE FROM embedding_cache WHERE hash = ?").run(hash); } catch {}
+      db.prepare("DELETE FROM facts WHERE id = ?").run(f.id);
+    }
+    eraseFactHistory(db, facts);
+  });
   refreshEntityPagesAfterDelete(db, entitiesDir, setDirty, reindexEntity, affectedEntities);
   return facts.length;
 }

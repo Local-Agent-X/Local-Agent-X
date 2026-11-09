@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { MemoryIndex } from "../memory/index.js";
 import { importFactsFromSync } from "./facts-sync.js";
+import { authorizeTestFactMutations } from "../memory/test-promotion.test-helper.js";
 
 let root = "";
 let memory: MemoryIndex;
@@ -48,5 +49,29 @@ describe("a fact synced from another machine", () => {
     const hits = db.prepare("SELECT f.content FROM facts_fts fts JOIN facts f ON f.id = fts.rowid WHERE facts_fts MATCH ?")
       .all("resume") as Array<{ content: string }>;
     expect(hits.map((h) => h.content)).toEqual([remoteFact.content]);
+  });
+
+  it("keeps where it came from, and is logged as sync's change", () => {
+    const withOrigin = { ...remoteFact, provenance: "assistant", occurred_at: 1_699_000_000_000, source_message_id: "msg-7" };
+    writeFileSync(join(root, "sync", "facts.jsonl"), `${JSON.stringify(withOrigin)}\n`);
+    memory.close();
+    importFactsFromSync(join(root, "data"), join(root, "sync"));
+    memory = new MemoryIndex(join(root, "data"), { minScore: -1 });
+    const db = memory["db"] as import("better-sqlite3").Database;
+    expect(db.prepare("SELECT provenance, occurred_at, source_message_id FROM facts").get())
+      .toEqual({ provenance: "assistant", occurred_at: 1_699_000_000_000, source_message_id: "msg-7" });
+    expect(memory.memoryChanges({ ops: ["create"] })[0].actor).toBe("sync");
+  });
+
+  it("does not come back here once the user erased it here", () => {
+    authorizeTestFactMutations(memory);
+    memory.rememberFact(remoteFact.content, { kind: "observation", sourceFile: "agent-tool:user-statement" });
+    const db = memory["db"] as import("better-sqlite3").Database;
+    const row = db.prepare("SELECT kind, content, entities FROM facts").get() as { kind: string; content: string; entities: string };
+    expect(memory.forgetFacts("resume")).toBe(1);
+    writeFileSync(join(root, "sync", "facts.jsonl"), `${JSON.stringify({ ...remoteFact, ...row })}\n`);
+    memory.close();
+
+    expect(importFactsFromSync(join(root, "data"), join(root, "sync"))).toMatchObject({ inserted: 0, skipped: 1 });
   });
 });

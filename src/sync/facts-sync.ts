@@ -2,6 +2,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openDatabaseSafe } from "../memory/index-db.js";
 import { slugify } from "../memory/utils.js";
+import { installFactEvents, isErased, withFactActor } from "../memory/fact-events.js";
 import { createLogger } from "../logger.js";
 
 // Sync the `facts` table (and derived entity_mentions) across machines via
@@ -37,6 +38,9 @@ interface FactRow {
   valid_to: number | null;
   invalidated_by: number | null;
   invalidation_reason: string | null;
+  provenance: string | null;
+  occurred_at: number | null;
+  source_message_id: string | null;
 }
 
 interface ExportedFact {
@@ -55,6 +59,13 @@ interface ExportedFact {
   valid_from: number | null;
   valid_to: number | null;
   invalidation_reason: string | null;
+  // Where the fact came from: whose words, when it happened, the message it
+  // was saved from. Without them an imported fact had no origin, so a
+  // model's own note read as something the user said (memory audit
+  // 2026-11-08, finding 5). Absent in files written before they were added.
+  provenance?: string | null;
+  occurred_at?: number | null;
+  source_message_id?: string | null;
   // `invalidated_by` is encoded as the natural identity of the
   // replacement fact, not a local row ID — IDs differ per machine. The
   // import resolves this to a local row ID in a second pass.
@@ -103,6 +114,9 @@ export function exportFactsForSync(dataDir: string, syncDir: string): { exported
         valid_from: f.valid_from,
         valid_to: f.valid_to,
         invalidation_reason: f.invalidation_reason,
+        provenance: f.provenance,
+        occurred_at: f.occurred_at,
+        source_message_id: f.source_message_id,
         invalidated_by_key: invalidatedByKey,
       };
       lines.push(JSON.stringify(exported));
@@ -159,8 +173,9 @@ export function importFactsFromSync(dataDir: string, syncDir: string): { inserte
       const insertStmt = db.prepare(
         `INSERT INTO facts (kind, content, entities, confidence, evidence_for, evidence_against,
                             source_file, source_line, timestamp, last_updated,
-                            valid_from, valid_to, invalidation_reason)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+                            valid_from, valid_to, invalidation_reason,
+                            provenance, occurred_at, source_message_id)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       );
       const updateStmt = db.prepare(
         `UPDATE facts SET valid_to = ?, invalidation_reason = ?, last_updated = ?
@@ -177,12 +192,16 @@ export function importFactsFromSync(dataDir: string, syncDir: string): { inserte
           | undefined;
 
         if (!existing) {
+          // Erased here at the user's request: another machine's copy is not
+          // a reason to bring it back.
+          if (isErased(db, r)) { skipped++; continue; }
           try {
             const res = insertStmt.run(
               r.kind, r.content, r.entities, r.confidence,
               r.evidence_for, r.evidence_against,
               r.source_file, r.source_line, r.timestamp, r.last_updated,
-              r.valid_from, r.valid_to, r.invalidation_reason
+              r.valid_from, r.valid_to, r.invalidation_reason,
+              r.provenance ?? null, r.occurred_at ?? null, r.source_message_id ?? null
             );
             const newId = res.lastInsertRowid as number;
             idForKey.set(key, newId);
@@ -241,7 +260,8 @@ export function importFactsFromSync(dataDir: string, syncDir: string): { inserte
       }
     });
 
-    txn();
+    installFactEvents(db);
+    withFactActor(db, "sync", txn);
 
     return { inserted, updated, skipped };
   } finally {

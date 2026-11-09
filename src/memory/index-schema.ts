@@ -1,5 +1,6 @@
 import type Database from "better-sqlite3";
 import { CURRENT_SCHEMA_VERSION, migrateSchema } from "./index-schema-migrations.js";
+import { installFactEvents } from "./fact-events.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory.index-schema");
@@ -64,6 +65,8 @@ export function initSchema(
   }
   // v16 dropped both tables to change their tokenizer; refill from the source rows.
   if (hasFts && existingVersion > 0 && existingVersion < 16) rebuildFtsIndex(db, hasFts);
+  // After every migration, so the change log's triggers copy every column.
+  installFactEvents(db);
 
   logger.info(`[memory] Schema migration complete (v${CURRENT_SCHEMA_VERSION})`);
   return { hasFts };

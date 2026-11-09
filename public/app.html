@@ -724,6 +724,19 @@
             <div class="learned-workflows-empty">Loading learned workflows…</div>
           </div>
         </div>
+        <div class="section-card learned-workflows-card memory-changes-card">
+          <div class="learned-workflows-head">
+            <div>
+              <div class="section-title">Memory changes</div>
+              <div class="section-desc">Every memory the agent or a background job changed, retired or removed, with who did it and why. Undo puts it back.</div>
+            </div>
+            <div class="learned-workflows-status" id="memory-changes-status" aria-live="polite"></div>
+          </div>
+          <input id="memory-changes-search" type="search" class="field-input memory-changes-search" placeholder="Find a memory…" aria-label="Find a memory change">
+          <div class="learned-workflows-list memory-changes-list" id="memory-changes-list">
+            <div class="learned-workflows-empty">Loading memory changes…</div>
+          </div>
+        </div>
         <div id="mem-core-card" class="mem-core-fullrow"></div>
         <div class="mem-brain" id="mem-brain">
           <canvas id="mb-canvas"></canvas>
@@ -1900,6 +1913,7 @@
 <script src="/js/settings-usage.js?v=v1"></script>
 <script src="/js/settings-learning-mode.js?v=v1"></script>
 <script src="/js/settings-learned-workflows.js?v=v1"></script>
+<script src="/js/settings-memory-changes.js?v=v1"></script>
 <script src="/js/settings-permissions.js?v=v1"></script>
 <script src="/js/settings-search.js?v=v1"></script>
 <script src="/js/settings-integrations.js?v=v1"></script>

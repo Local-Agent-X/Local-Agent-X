@@ -3,6 +3,7 @@ import type { FactKind, RetainedFact } from "./types.js";
 import { DEFAULT_MEMORY_CONFIG } from "./types.js";
 import { rowToFact, slugify } from "./utils.js";
 import { retain, invalidateFact } from "./index-facts.js";
+import { backgroundMayEnd } from "./index-facts-invalidate.js";
 import { isUserReported } from "./fact-provenance-label.js";
 import { findContradictions } from "./contradiction-sweep.js";
 
@@ -33,6 +34,8 @@ const KIND_PREFIX: Record<FactKind, string> = {
   opinion: "O",
   observation: "S",
 };
+
+const BACKGROUND_REFUSAL = "this runs without the user, and the fact is something the user said: only the user can change or forget it";
 
 export interface OneFactResult {
   ok: boolean;
@@ -68,7 +71,7 @@ export function rememberFact(
   db: InstanceType<typeof Database>,
   hasFts: boolean,
   content: string,
-  opts?: { kind?: FactKind; confidence?: number; sourceFile?: string; promotion?: MemoryPromotionContext }
+  opts?: { kind?: FactKind; confidence?: number; sourceFile?: string; promotion?: MemoryPromotionContext; by?: "agent" | "background" }
 ): OneFactResult {
   const trimmed = content.trim();
   if (trimmed.length < 3) return { ok: false, error: "content too short (min 3 chars)" };
@@ -84,7 +87,7 @@ export function rememberFact(
     return { ok: false, error: "fact already exists or failed to insert" };
   }
   const newFact = facts[0];
-  if (newFact.id !== undefined) autoInvalidateContradicting(db, newFact);
+  if (newFact.id !== undefined) autoInvalidateContradicting(db, newFact, opts?.by ?? "agent");
   const tagged = newFact as RetainedFact & { indexFailed?: boolean; indexError?: string };
   return {
     ok: true,
@@ -105,6 +108,7 @@ export function rememberFact(
 function autoInvalidateContradicting(
   db: InstanceType<typeof Database>,
   newFact: RetainedFact,
+  by: "agent" | "background",
 ): void {
   const newId = newFact.id!;
   const candidates = findCandidatesForContradictionCheck(db, newFact);
@@ -132,11 +136,11 @@ function autoInvalidateContradicting(
     const dropped = candidates.find((c) => c.id === p.drop);
     if (dropped && (dropped.provenance == null || isUserReported(dropped))
       && !(dropped.kind === "opinion" && newFact.kind === "opinion")) continue;
-    invalidateFact(db, p.drop, {
-      by: "agent",
+    if (!invalidateFact(db, p.drop, {
+      by,
       reason: `superseded by remember #${newId}: auto-detected contradiction (overlap=${p.overlap.toFixed(2)})`,
       replacedBy: newId,
-    });
+    })) continue;
     contradictionLogger.info(
       `[contradiction] facts: invalidated #${p.drop} ("${candidates.find(c => c.id === p.drop)?.content.slice(0, 60)}") ` +
       `superseded by #${newId} ("${newFact.content.slice(0, 60)}"), overlap=${p.overlap.toFixed(2)}`,
@@ -193,7 +197,7 @@ export function updateFact(
   hasFts: boolean,
   query: string,
   newContent: string,
-  opts?: { kind?: FactKind; confidence?: number; sourceFile?: string; promotion?: MemoryPromotionContext }
+  opts?: { kind?: FactKind; confidence?: number; sourceFile?: string; promotion?: MemoryPromotionContext; by?: "agent" | "background" }
 ): OneFactResult {
   const trimmed = newContent.trim();
   if (trimmed.length < 3) return { ok: false, error: "new content too short (min 3 chars)" };
@@ -211,6 +215,10 @@ export function updateFact(
     };
   }
   const oldFact = found.fact!;
+  const by = opts?.by ?? "agent";
+  // Checked before the replacement is saved, so a refused update leaves no
+  // second copy behind.
+  if (by === "background" && !backgroundMayEnd(db, oldFact.id!)) return { ok: false, error: BACKGROUND_REFUSAL };
   const kind = opts?.kind ?? oldFact.kind;
   const confidence = opts?.confidence ?? oldFact.confidence;
   const bullet = formatBullet(trimmed, kind, confidence);
@@ -223,7 +231,7 @@ export function updateFact(
   }
   const newFact = inheritEntities(db, newFacts[0], oldFact.entities);
   invalidateFact(db, oldFact.id!, {
-    by: "agent",
+    by,
     reason: `superseded by ${newFact.id}: agent update_fact`,
     replacedBy: newFact.id,
   });
@@ -252,7 +260,8 @@ function inheritEntities(db: InstanceType<typeof Database>, fact: RetainedFact, 
 
 export function forgetFact(
   db: InstanceType<typeof Database>,
-  query: string
+  query: string,
+  by: "agent" | "background" = "agent",
 ): OneFactResult {
   const found = findOneFactByContent(db, query);
   if (found.matches === 0) {
@@ -267,7 +276,7 @@ export function forgetFact(
     };
   }
   const oldFact = found.fact!;
-  invalidateFact(db, oldFact.id!, { by: "agent", reason: "agent forget" });
+  if (!invalidateFact(db, oldFact.id!, { by, reason: "agent forget" })) return { ok: false, error: BACKGROUND_REFUSAL };
   return { ok: true, fact: oldFact, oldFactId: oldFact.id };
 }
 

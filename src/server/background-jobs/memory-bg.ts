@@ -7,9 +7,6 @@ import { userAuthoredRows } from "../../harness-rows.js";
 
 const logger = createLogger("server.background-jobs.memory-bg");
 
-// Retention window for soft-invalidated facts before hard purge. Generous so
-// recallAsOf can still surface recently-superseded beliefs.
-const PURGE_RETENTION_MS = 30 * 24 * 60 * 60 * 1000;
 // Stored facts the supersede sweep examines per run (memory-bg polls every
 // 6h): a backlog of a few thousand clears in about a week, one resolver call
 // each, and new facts are taken first.
@@ -23,7 +20,31 @@ export interface MemoryBgDeps {
 
 export function makeRunMemBg(deps: MemoryBgDeps): () => Promise<void> {
   const { dataDir, sessionStore, memoryIndex } = deps;
+  let recoveryReported = false;
   return async () => {
+    // First, before anything below changes memory: today's snapshot of the
+    // facts nothing can rebuild (memory/db-backup.ts).
+    try {
+      const { inboxMemoryAlert } = await import("../../inbox/producers.js");
+      if (memoryIndex.recovery && !recoveryReported) {
+        recoveryReported = true;
+        const { movedTo, restored } = memoryIndex.recovery;
+        inboxMemoryAlert({
+          key: "memory-recovery",
+          title: restored ? "Memory was restored from a backup" : "Memory could not be opened and started empty",
+          body: (restored
+            ? `The memory database could not be opened at start. ${restored.facts} memories were restored from ${restored.from}; anything saved after that backup is not in it.`
+            : "The memory database could not be opened at start, and no backup passed its checks, so memory started empty.")
+            + ` The unreadable file was kept at ${movedTo}.`,
+        });
+      }
+      const snap = memoryIndex.snapshotFacts();
+      if (snap.status === "written") logger.info(`[memory-bg] Snapshot: ${snap.facts} facts → ${snap.path}`);
+      if (snap.status === "failed") {
+        logger.warn(`[memory-bg] Snapshot failed: ${snap.error}`);
+        inboxMemoryAlert({ key: "memory-snapshot", title: "Today's memory backup failed", body: `The daily backup of your memories could not be written or did not pass its checks: ${snap.error}` });
+      }
+    } catch (e) { logger.warn("[memory-bg] Snapshot:", (e as Error).message); }
     try { const { MemoryOrchestrator: MO } = await import("../../orchestrator/orchestrator.js"); const r = MO.getInstance().runBackground(memoryIndex); logger.info(`[memory-bg] ${r.totalTimeMs}ms`); } catch (e) { logger.warn("[memory-bg]", (e as Error).message); }
     // Consolidation stages via the shared pipeline: algorithmic consolidate,
     // the supersede sweep (memory keeps itself current — the owner's call,
@@ -43,16 +64,6 @@ export function makeRunMemBg(deps: MemoryBgDeps): () => Promise<void> {
         logger.info(`[memory-bg] Consolidation: merged=${consolidation.mergedCount} promoted=${consolidation.promotedCount}`);
       }
     } catch (e) { logger.warn("[memory-bg] Consolidation:", (e as Error).message); }
-    try {
-      // GC for the bitemporal facts store. invalidateFact only soft-deletes
-      // (sets valid_to), keeping rows queryable via recallAsOf; nothing else
-      // ever removed them, so invalidated facts accumulated forever. Purge
-      // those past a generous retention window — 30d is long enough that any
-      // realistic "what did I believe last week" recall still resolves before
-      // the row is reclaimed. memory-bg polls every 6h, well finer than daily.
-      const purged = memoryIndex.purgeInvalidatedFacts(PURGE_RETENTION_MS);
-      if (purged > 0) logger.info(`[memory-bg] Purged ${purged} long-invalidated facts (>${PURGE_RETENTION_MS / (24 * 60 * 60 * 1000)}d)`);
-    } catch (e) { logger.warn("[memory-bg] Purge invalidated facts:", (e as Error).message); }
     try {
       // Internal scratch (dream-/cron-/eval_/skill-review-) never enters
       // session summaries — a chatty cron transcript is not user memory, and

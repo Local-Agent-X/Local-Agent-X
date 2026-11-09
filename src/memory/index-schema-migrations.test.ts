@@ -73,7 +73,7 @@ describe("schema v12 fact provenance migration", () => {
       const rows = db.prepare("SELECT provenance FROM facts ORDER BY id").all() as Array<{ provenance: string | null }>;
       expect(rows).toEqual([{ provenance: null }, { provenance: null }]);
       expect(schemaVersion(db)).toBe(CURRENT_SCHEMA_VERSION);
-      expect(CURRENT_SCHEMA_VERSION).toBe(20);
+      expect(CURRENT_SCHEMA_VERSION).toBe(21);
     } finally {
       db.close();
     }
@@ -275,7 +275,7 @@ describe("schema v20 project document text", () => {
       const hashes = db.prepare("SELECT path, hash FROM files ORDER BY path").all();
       expect(hashes).toEqual([{ path: "memory/x.md", hash: "keep" }, { path: "project/proj-a/docs/a.md", hash: "" }]);
       db.prepare("INSERT INTO project_doc_text (path, file, text) VALUES ('project/proj-a/docs/a.md', '/w/a.md', 'body')").run();
-      expect(schemaVersion(db)).toBe(20);
+      expect(schemaVersion(db)).toBe(CURRENT_SCHEMA_VERSION);
     } finally {
       db.close();
     }

@@ -38,6 +38,9 @@ export const TOOL_POLICIES_MEMORY: Record<string, ToolPolicyRow> = {
   // remember/update_fact also record the user message they answered
   // (facts.source_message_id), so a fact points at the words it came from.
   memory_save:           { kernel: "database", ariAction: "mutate", risk: "workspace-write", capabilities: [], tags: [], essentialRank: 8, blurb: { say: "remember that I prefer tabs over spaces", does: "Save a fact to memory." }, reads: ["session"], memoryWrite: true },
+  // The change log: list (read) or undo one change (a write the log itself
+  // records, so an undo can be undone). Undo asks unless the user asked for it.
+  memory_changes:        { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["memory-facts"], reads: ["session"], blurb: { say: "what happened to my reta dose?", does: "Show how a memory changed, who changed it and why, and undo a change." } },
   memory_consolidate:    { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [], blurb: { say: "consolidate recent conversations", does: "Extract durable facts from recent chunks." } },
   memory_discover:       { kernel: "internal", risk: "safe", capabilities: [], tags: [] },
   memory_dream:          { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [], blurb: { say: "dream now", does: "Tidy stored facts + launch the deep agentic reflection over recent transcripts." } },
@@ -61,7 +64,7 @@ export const TOOL_POLICIES_MEMORY: Record<string, ToolPolicyRow> = {
   // update_fact, not forget"). LM Studio eval 2026-10-18 (qwen3.6-27b, medium
   // tier): forget shipped without it, and told the boat had moved to slip 31
   // the model saved the new slip beside the old one, so slip 14 stayed current.
-  forget:      { kernel: "internal", risk: "destructive", capabilities: [], tags: ["memory-facts"], essentialRank: 16, memoryWrite: true, companions: ["update_fact"], undo: { recoverable: "a soft delete of one fact; its history is kept" }, rules: [{ id: "allow-forget", decision: "allow", reason: "Soft-delete a fact in the Facts DB (internal)", priority: 50 }] },
+  forget:      { kernel: "internal", risk: "destructive", capabilities: [], tags: ["memory-facts"], essentialRank: 16, reads: ["session"], memoryWrite: true, companions: ["update_fact"], undo: { recoverable: "a soft delete of one fact; its history is kept" }, rules: [{ id: "allow-forget", decision: "allow", reason: "Soft-delete a fact in the Facts DB (internal)", priority: 50 }] },
 
   // ── Self-edit — sandboxed, but the merge mutates running source ──
   // Its intent gate checks the task against the last exchange; an autopilot

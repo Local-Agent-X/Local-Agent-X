@@ -71,8 +71,9 @@ function makeDeps(ids: string[]) {
     },
   } as unknown as SessionStore;
   const memoryIndex = {
-    purgeInvalidatedFacts: () => 0,
     atlasLayout: async () => null,
+    recovery: null,
+    snapshotFacts: () => ({ status: "exists", path: "" }),
   } as unknown as MemoryIndex;
   return { dataDir, sessionStore, memoryIndex };
 }

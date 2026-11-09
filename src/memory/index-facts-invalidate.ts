@@ -3,13 +3,18 @@ import { createLogger } from "../logger.js";
 import { isUserReported } from "./fact-provenance-label.js";
 import { tokenizeStrict } from "./text-utils.js";
 import { namesSameSubject } from "./same-subject.js";
+import { withFactActor } from "./fact-events.js";
 
 const logger = createLogger("memory.index-facts");
 
 /** Who is ending a fact's validity. "agent": an in-turn action on the user's
  *  words — update_fact, forget, or remember's contradiction pass. "resolver":
- *  a model's off-turn judgement in retainSmart (background extraction). */
-export type InvalidationActor = "agent" | "resolver";
+ *  a model's off-turn judgement in retainSmart (background extraction) or the
+ *  supersede sweep. "background": a tool call no live user turn made — the
+ *  nightly dream, a scheduled job, an eval — whose "user message" is a prompt
+ *  the harness wrote, so it is not the user's say-so. "user": the user, in
+ *  their own controls (undo, an explicit request handled in code). */
+export type InvalidationActor = "agent" | "resolver" | "background" | "user";
 
 /** The statement a resolver judged to replace an existing fact: its origin,
  *  when it was said (its event date when known, else when it was saved), and
@@ -55,6 +60,35 @@ export function resolverMayEnd(db: InstanceType<typeof Database>, id: number, re
   return modelsOwn || isUserReported({ provenance: replacing.provenance, sourceFile: replacing.sourceFile });
 }
 
+/**
+ * Whether a job no live user turn started may end fact `id`: only a fact a
+ * model wrote on its own account. What the user said is ended by the user, in
+ * a turn, or by a resolver that passes resolverMayEnd. The nightly dream's
+ * prompt holds old transcripts and tells it to use `forget`, so the in-turn
+ * confirmation (fact-confirmation.ts) read it as the user asking (memory
+ * audit 2026-11-08, finding 4).
+ */
+export function backgroundMayEnd(db: InstanceType<typeof Database>, id: number): boolean {
+  const row = db.prepare("SELECT provenance, source_file FROM facts WHERE id = ?")
+    .get(id) as { provenance: string | null; source_file: string } | undefined;
+  if (!row) return true;
+  return row.provenance === "assistant" && !isUserReported({ provenance: row.provenance, sourceFile: row.source_file });
+}
+
+/** Every end of a fact passes here, and the rules for who may end what are
+ *  checked here, not by each caller. */
+/** How many facts are current and how many ended. Ended facts are history and
+ *  never deleted by upkeep: a fact can leave the database only at the user's
+ *  explicit request (memory_forget). The 30-day purge of ended facts and the
+ *  365-day deletion of every fact are gone (memory audit 2026-11-08). */
+export function validityStats(
+  db: InstanceType<typeof Database>
+): { valid: number; invalidated: number } {
+  const valid = (db.prepare("SELECT COUNT(*) as n FROM facts WHERE valid_to IS NULL").get() as { n: number }).n;
+  const invalidated = (db.prepare("SELECT COUNT(*) as n FROM facts WHERE valid_to IS NOT NULL").get() as { n: number }).n;
+  return { valid, invalidated };
+}
+
 export function invalidateFact(
   db: InstanceType<typeof Database>,
   id: number,
@@ -64,15 +98,18 @@ export function invalidateFact(
     logger.info(`[memory] resolver may not end fact #${id}: ${opts.reason ?? ""}`);
     return false;
   }
+  if (opts.by === "background" && !backgroundMayEnd(db, id)) {
+    logger.info(`[memory] a background job may not end what the user said (#${id}): ${opts.reason ?? ""}`);
+    return false;
+  }
   const at = (opts.at || new Date()).getTime();
-  const r = db
+  return withFactActor(db, opts.by, () => db
     .prepare(
       `UPDATE facts
        SET valid_to = ?, invalidated_by = ?, invalidation_reason = ?, last_updated = ?
        WHERE id = ? AND valid_to IS NULL`
     )
-    .run(at, opts.replacedBy ?? null, opts.reason ?? null, at, id);
-  return r.changes > 0;
+    .run(at, opts.replacedBy ?? null, opts.reason ?? null, at, id).changes > 0, { unlessSet: true });
 }
 
 /** Words that carry the claim however short — tokenizeStrict drops both:

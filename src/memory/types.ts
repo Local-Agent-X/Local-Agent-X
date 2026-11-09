@@ -47,10 +47,6 @@ export interface MemoryConfig {
   sessionDeltaBytes: number;
   sessionDeltaMessages: number;
 
-  // Fact retention
-  factRetentionDays: number;
-  lowConfidenceThreshold: number;
-
   // Per-turn context injection ceilings (buildContextBlock). These bound
   // prompt cost on every turn — raise only with a measured before/after on
   // per-turn token size, not because more recall "seems better".
@@ -88,9 +84,6 @@ export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
 
   sessionDeltaBytes: 100_000,
   sessionDeltaMessages: 50,
-
-  factRetentionDays: 365,
-  lowConfidenceThreshold: 0.1,
 
   dailyLogTailChars: 1500,
   coreFactsLimit: 60,

@@ -15,7 +15,9 @@ import * as Facts from "../index-facts.js";
 import * as FactsMutate from "../index-facts-mutate.js";
 import * as Relations from "../index-relations.js";
 import * as Reflectx from "../index-reflect.js";
-import { updateEntityPage } from "../index-forget.js";
+import { refreshEntityPagesAfterDelete, updateEntityPage } from "../index-forget.js";
+import { listFactEvents, withFactActor, type FactEvent, type FactEventOp } from "../fact-events.js";
+import { undoFactEvent, type UndoResult } from "../fact-undo.js";
 import { rowToFact, slugify } from "../utils.js";
 import { scoreFact, type ImportanceScore } from "../cognitive/importance/index.js";
 import type { MemoryPromotionContext } from "../promotion-gate.js";
@@ -94,17 +96,30 @@ export abstract class MemoryFactsBase {
     return Facts.validityStats(this.db);
   }
 
-  purgeInvalidatedFacts(olderThanMs: number): number {
-    return Facts.purgeInvalidatedFacts(this.db, this.hasFts, olderThanMs);
+  // ── Change log (fact-events.ts) ──
+
+  /** Memory changes, newest first; see listFactEvents. */
+  memoryChanges(opts?: { limit?: number; ops?: FactEventOp[]; factId?: number; contains?: string; beforeId?: number }): FactEvent[] {
+    return listFactEvents(this.db, opts);
+  }
+
+  /** Undo change `eventId` as `actor` and rebuild the pages that show it. */
+  undoMemoryChange(eventId: number, actor: string): UndoResult {
+    const result = undoFactEvent(this.db, this.hasFts, eventId, actor);
+    if (result.ok) {
+      refreshEntityPagesAfterDelete(this.db, this.entitiesDir, () => { this.dirty = true; },
+        (s) => { this.reindexThroughUniversal("entity", s).catch(() => {}); }, result.entities.map(slugify).filter(Boolean));
+    }
+    return result;
   }
 
   // ── Single-fact agent API (used by remember / update_fact / forget tools) ──
 
   rememberFact(
     content: string,
-    opts?: { kind?: FactKind; confidence?: number; sourceFile?: string; promotion?: MemoryPromotionContext; sourceMessageId?: string }
+    opts?: { kind?: FactKind; confidence?: number; sourceFile?: string; promotion?: MemoryPromotionContext; sourceMessageId?: string; by?: "agent" | "background" }
   ): FactsMutate.OneFactResult {
-    const result = FactsMutate.rememberFact(this.db, this.hasFts, content, opts);
+    const result = withFactActor(this.db, opts?.by ?? "agent", () => FactsMutate.rememberFact(this.db, this.hasFts, content, opts), { unlessSet: true });
     if (result.fact) this.recordSourceMessage(result.fact, opts?.sourceMessageId);
     if (result.fact) this.refreshEntityPages([result.fact]);
     return result;
@@ -113,9 +128,9 @@ export abstract class MemoryFactsBase {
   updateFact(
     query: string,
     newContent: string,
-    opts?: { kind?: FactKind; confidence?: number; sourceFile?: string; promotion?: MemoryPromotionContext; sourceMessageId?: string }
+    opts?: { kind?: FactKind; confidence?: number; sourceFile?: string; promotion?: MemoryPromotionContext; sourceMessageId?: string; by?: "agent" | "background" }
   ): FactsMutate.OneFactResult {
-    const result = FactsMutate.updateFact(this.db, this.hasFts, query, newContent, opts);
+    const result = withFactActor(this.db, opts?.by ?? "agent", () => FactsMutate.updateFact(this.db, this.hasFts, query, newContent, opts), { unlessSet: true });
     if (result.fact) this.recordSourceMessage(result.fact, opts?.sourceMessageId);
     if (result.fact) this.refreshEntityPages([result.fact, ...this.factsById([result.oldFactId])]);
     return result;
@@ -126,8 +141,8 @@ export abstract class MemoryFactsBase {
     return FactsMutate.findOneFactByContent(this.db, query);
   }
 
-  forgetFact(query: string): FactsMutate.OneFactResult {
-    const result = FactsMutate.forgetFact(this.db, query);
+  forgetFact(query: string, by: "agent" | "background" = "agent"): FactsMutate.OneFactResult {
+    const result = withFactActor(this.db, by, () => FactsMutate.forgetFact(this.db, query, by), { unlessSet: true });
     if (result.fact) this.refreshEntityPages([result.fact]);
     return result;
   }

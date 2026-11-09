@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 1956 non-test source files · 84 oversized · 260 nearing the size cap.
+**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 1960 non-test source files · 83 oversized · 262 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -22,13 +22,13 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/ops/` | 176 | 29 | XL | 1 |
 | `src/security/` | 161 | 60 | XL | 2 |
 | `src/tools/` | 128 | 232 | XL | 9 |
-| `src/tool-execution/` | 90 | 85 | XL | 2 |
+| `src/tool-execution/` | 91 | 85 | XL | 2 |
 | `src/workspace/` | 87 | 3 | M |  |
 | `src/canonical-loop/` | 83 | 283 | XL | 11 |
 | `src/providers/` | 74 | 27 | L | 1 |
 | `src/session/` | 59 | 10 | M |  |
 | `src/data-lineage/` | 58 | 12 | L |  |
-| `src/memory/` | 54 | 153 | XL | 5 |
+| `src/memory/` | 55 | 156 | XL | 4 |
 | `src/browser/` | 49 | 91 | XL | 5 |
 | `src/tool-policy/` | 47 | 21 | L |  |
 | `src/local-runtimes/` | 45 | 26 | XL | 1 |
@@ -47,8 +47,8 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/sandbox/` | 23 | 16 | L | 1 |
 | `src/desktop-contract/` | 22 | 10 | M |  |
 | `src/protocols/` | 21 | 52 | XL |  |
+| `src/inbox/` | 20 | 6 | M |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
-| `src/inbox/` | 19 | 6 | M |  |
 | `src/server/` *(entrypoint)* | 19 | 60 | XL | 5 |
 | `src/autonomy/` | 18 | 6 | M |  |
 | `src/agents/` | 17 | 13 | L |  |
@@ -63,7 +63,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/integrations/` | 12 | 15 | M |  |
 | `src/whatsapp-bridge/` | 12 | 8 | M | 1 |
 | `src/agent-loop/` | 11 | 1 | S |  |
-| `src/routes/` | 11 | 101 | XL | 17 |
+| `src/routes/` | 11 | 102 | XL | 17 |
 | `src/persistence/` | 10 | 2 | S |  |
 | `src/sync/` | 10 | 22 | L | 1 |
 | `src/codex-client/` | 9 | 7 | M |  |
@@ -271,7 +271,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/memory/date-parser.ts#parseDateRange`
 - `src/memory/index-schema-migrations.ts#db.transaction:callback`
 - `src/memory/tools/facts.ts#createFactsTools`
-- `src/memory/tools/facts.ts#remember.execute`
 - `src/ops/tools/op-submit-async.ts#opSubmitAsyncTool.execute`
 - `src/plugin-system.ts`
 - `src/plugin-system.ts#PluginManager.loadPluginAtPath`
@@ -367,6 +366,7 @@ job. Comments are free: never cut them to fit.
 - `src/browser/in-app-resolve-scripts.ts` — 290+ code lines (cap 350)
 - `src/canonical-loop/turn-commit-store.ts` — 290+ code lines (cap 350)
 - `src/mcp-client/manifest.ts` — 290+ code lines (cap 350)
+- `src/memory/index-core.ts` — 290+ code lines (cap 350)
 - `src/memory/index-schema-migrations.ts` — 290+ code lines (cap 350)
 - `src/memory/tools/save.ts` — 290+ code lines (cap 350)
 - `src/ops/operation-requirements.ts` — 290+ code lines (cap 350)
@@ -377,7 +377,6 @@ job. Comments are free: never cut them to fit.
 - `src/canonical-loop/scheduler.ts` — 280+ code lines (cap 350)
 - `src/context/system-prompt-builder.ts` — 280+ code lines (cap 350)
 - `src/mcp-client/index.ts` — 280+ code lines (cap 350)
-- `src/memory/index-core.ts` — 280+ code lines (cap 350)
 - `src/memory/promotion-gate.ts` — 280+ code lines (cap 350)
 - `src/protocols/builder.ts` — 280+ code lines (cap 350)
 - `src/screen-capture.ts` — 280+ code lines (cap 350)
@@ -408,6 +407,7 @@ job. Comments are free: never cut them to fit.
 - `src/memory/extract.ts#runExtraction` — 90+ own code lines (cap 100)
 - `src/memory/index-facts.ts#retain` — 90+ own code lines (cap 100)
 - `src/memory/personality.ts#dedupeProfileLines` — 90+ own code lines (cap 100)
+- `src/memory/tools/facts.ts#remember.execute` — 90+ own code lines (cap 100)
 - `src/memory/tools/save.ts#createSaveTools` — 90+ own code lines (cap 100)
 - `src/memory/tools/save.ts#withProfileWrite:callback@213` — 90+ own code lines (cap 100)
 - `src/protocols/builder.ts#createBuilderTools` — 90+ own code lines (cap 100)
@@ -507,6 +507,7 @@ job. Comments are free: never cut them to fit.
 - `src/routes/mcp-servers.ts#handleMcpServerRoutes` — 70+ own code lines (cap 100)
 - `src/screen-capture.ts#captureScreen` — 70+ own code lines (cap 100)
 - `src/security/layer/shell-nested-commands.ts#splitNestedCommands` — 70+ own code lines (cap 100)
+- `src/server/background-jobs/memory-bg.ts#makeRunMemBg:returned` — 70+ own code lines (cap 100)
 - `src/server/background-jobs/skill-review.ts#runSingleReview` — 70+ own code lines (cap 100)
 - `src/server/bootstrap-tools.ts#bootstrapTools` — 70+ own code lines (cap 100)
 - `src/server/request-auth.ts#authorizeRequest` — 70+ own code lines (cap 100)

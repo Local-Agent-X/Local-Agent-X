@@ -24,6 +24,7 @@ import type { ResolverDecision } from "./resolver.js";
 import { rowToFact } from "./utils.js";
 import { findResolverCandidates, type ResolverCandidateRow } from "./resolver-candidates.js";
 import { invalidateFact } from "./index-facts-invalidate.js";
+import { withFactActor } from "./fact-events.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("memory.supersede-sweep");
@@ -91,7 +92,7 @@ export async function sweepSupersededFacts(
       if (candidates.length > 0) {
         const decision = await resolve(fact.content, candidates);
         if ((decision.op === "UPDATE" || decision.op === "DELETE") && decision.targetId !== undefined) {
-          const ended = invalidateFact(db, decision.targetId, {
+          const ended = withFactActor(db, "sweep", () => invalidateFact(db, decision.targetId!, {
             by: "resolver",
             reason: `superseded by ${id} (sweep): ${decision.reason}`,
             replacedBy: id,
@@ -99,7 +100,7 @@ export async function sweepSupersededFacts(
               provenance: fact.provenance ?? null, sourceFile: fact.sourceFile, occurredAt: fact.occurredAt ?? null, savedAt: fact.timestamp,
               content: fact.content, entities: fact.entities, userNames,
             },
-          });
+          }));
           if (ended) {
             logger.info(`[memory] fact #${decision.targetId} replaced by #${id} (sweep): ${decision.reason}`);
             result.ended.push(rowToFact(factById.get(decision.targetId) as Record<string, unknown>));

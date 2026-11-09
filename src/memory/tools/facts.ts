@@ -3,7 +3,7 @@ import type { FactKind } from "../types.js";
 import { displayContent } from "../utils.js";
 import { isUserReported } from "../fact-provenance-label.js";
 import { looksLikeMultiFactBlob, normalizeFactLine, splitMultiFactBlob } from "../fact-split.js";
-import { saveFactsBatch } from "./facts-batch.js";
+import { batchReport, saveFactsBatch } from "./facts-batch.js";
 import { confirmForget, confirmUpdate } from "./fact-confirmation.js";
 import { runMemoryGate, MemoryWriteBlocked } from "../write-safely.js";
 import {
@@ -15,11 +15,17 @@ import {
 } from "../promotion-gate.js";
 import type { MemoryPromotionContext } from "../promotion-gate.js";
 import { sessionIdOf, userMessageIdOf } from "../../tool-execution/internal-args.js";
+import { actsWithoutUser } from "../synthetic-sessions.js";
 
 // Agent-facing fact tools. Sit on top of the Facts DB primitives
 // (rememberFact / updateFact / forgetFact in index-facts-mutate.ts, plus
 // the bulk retain path via fact-split.ts for batched `remember` calls).
 // Each tool maps one user-visible verb to the canonical DB write path.
+
+/** A call from a session no person started may change only what a model wrote. */
+function actorOf(args: Record<string, unknown>): "agent" | "background" {
+  return actsWithoutUser(sessionIdOf(args) ?? "") ? "background" : "agent";
+}
 
 const VALID_KINDS: FactKind[] = ["world", "experience", "opinion", "observation"];
 const VALID_PROVENANCE = ["user_statement", "tool_observation", "inference"] as const;
@@ -194,6 +200,7 @@ export function createFactsTools(memory: MemoryIndex) {
               sourceFile: authorizedSource(provenance, promotion),
               promotion,
               sourceMessageId: userMessageIdOf(args),
+              by: actorOf(args),
             });
             if (!result.ok) {
               return { content: formatToolError("remember failed", result), isError: true };
@@ -224,22 +231,11 @@ export function createFactsTools(memory: MemoryIndex) {
             sourceMessageId: userMessageIdOf(args),
             sourceFile: authorizedSource(provenance, promotion),
             target,
+            by: actorOf(args),
           });
-          const savedCount = results.filter((r) => r.status === "saved").length;
-          if (savedCount > 0) memory.markDirty();
-          const lines = results.map((r) =>
-            r.status === "saved"
-              ? `SAVED ${r.detail}`
-              : r.status === "blocked"
-                ? `BLOCKED (${r.detail}): ${r.fact.slice(0, 80)}`
-                : `NOT SAVED (${r.detail}): ${r.fact.slice(0, 80)}`,
-          );
-          return {
-            content:
-              `Remembered ${savedCount}/${results.length} facts [${kind ?? "observation"}, c=${confidence}, provenance=${provenance}]:\n` +
-              lines.join("\n"),
-            isError: savedCount === 0,
-          };
+          const report = batchReport(results, `${kind ?? "observation"}, c=${confidence}, provenance=${provenance}`);
+          if (!report.isError) memory.markDirty();
+          return { content: report.content, isError: report.isError };
         } catch (e) {
           if (e instanceof MemoryWriteBlocked) {
             return { content: `BLOCKED: ${e.reason}`, isError: true };
@@ -324,6 +320,7 @@ export function createFactsTools(memory: MemoryIndex) {
             sourceFile: authorizedSource(provenance, promotion),
             promotion,
             sourceMessageId: userMessageIdOf(args),
+            by: actorOf(args),
           });
           if (!result.ok) {
             return { content: formatToolError("update_fact failed", result), isError: true };
@@ -369,7 +366,7 @@ export function createFactsTools(memory: MemoryIndex) {
       async execute(args: Record<string, unknown>) {
         const query = String(args.query || "").trim();
         if (!query) return { content: "query is required", isError: true };
-        const result = memory.forgetFact(query);
+        const result = memory.forgetFact(query, actorOf(args));
         if (!result.ok) {
           return { content: formatToolError("forget failed", result), isError: true };
         }

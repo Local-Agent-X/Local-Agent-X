@@ -11,7 +11,8 @@ vi.mock("./bridge-client.js", async (importOriginal) => {
 });
 
 import { browserLifecycle, type BrowserViewInfo } from "./bridge-client.js";
-import { closeMergedTab, formatTabsListing, mergeTabs, switchMergedTab } from "./in-app-tab-merge.js";
+import { closeMergedTab, formatTabsListing, mergeTabs, surfaceActiveTab, switchMergedTab } from "./in-app-tab-merge.js";
+import { _resetOffScreenSessions, noteBrowserSurface } from "./off-screen-sessions.js";
 import { TabList } from "./in-app-tabs.js";
 
 const FIRST_ID = "view-sess-9-work";
@@ -289,5 +290,21 @@ describe("closeMergedTab — close ONE tab by merged index", () => {
 		const out = await closeMergedTab(list, 1);
 		expect(out).toBe("Closed tab [1]: [sensitive page withheld]");
 		expect(out).not.toContain("bitwarden");
+	});
+});
+
+describe("surfaceActiveTab — off-screen sessions", () => {
+	afterEach(() => { _resetOffScreenSessions(); });
+
+	it("a session browsing from the phone never asks the desktop to show its tab", async () => {
+		vi.mocked(browserLifecycle).mockResolvedValue({});
+		vi.mocked(browserLifecycle).mockClear();
+		noteBrowserSurface("sess-phone", "mobile");
+		surfaceActiveTab("view-sess-phone-main-t1", "sess-phone");
+		expect(vi.mocked(browserLifecycle).mock.calls.filter(([op]) => op === "show")).toHaveLength(0);
+
+		noteBrowserSurface("sess-phone", "web"); // the same thread, typed at the desktop
+		surfaceActiveTab("view-sess-phone-main-t1", "sess-phone");
+		expect(browserLifecycle).toHaveBeenCalledWith("show", "view-sess-phone-main-t1", { sessionId: "sess-phone" });
 	});
 });

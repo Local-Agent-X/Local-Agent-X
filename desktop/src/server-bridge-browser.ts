@@ -35,6 +35,7 @@ import {
 	type BrowserViewInfo,
 } from "./browser-views";
 import { autoSurfaceAgentView } from "./browser-ipc";
+import { navigateOffersSurface } from "./browser-surface-policy";
 import { attachDialogInterception, detachDialogState, handleDialog, listDialogs } from "./browser-dialogs";
 import { wireDownloadBridge } from "./browser-downloads-bridge";
 import { prepareEmbeddedChromeIdentityForNavigation } from "./embedded-chrome-identity";
@@ -381,8 +382,9 @@ async function navigate(msg: BrowserNavigateRequest): Promise<Record<string, unk
 			// Successful AGENT navigate → offer the view to the renderer's anchor.
 			// browser-ipc owns the policy; sessionId SEEDS the per-session anchor —
 			// (the first surface is usually a navigate, so a later new_tab/switch has
-			// an anchor to follow).
-			if (listBrowserViews().some((v) => v.viewId === msg.viewId && v.agentDriven)) {
+			// an anchor to follow). A quiet navigate (the user is away from the
+			// desktop, browsing from the phone) never surfaces.
+			if (navigateOffersSurface(listBrowserViews().find((v) => v.viewId === msg.viewId), msg.quiet)) {
 				autoSurfaceAgentView(msg.viewId, msg.sessionId);
 			}
 		},

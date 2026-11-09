@@ -4,6 +4,7 @@
 import { createLogger } from "../logger.js";
 import { DESKTOP_ENV } from "../desktop-contract/env.js";
 import { answerEgressAsk } from "./bridge-egress.js";
+import { isBrowserOffScreen } from "./off-screen-sessions.js";
 import { browserContainerRelayActivated, relayBrowserAbort, relayBrowserRequest, type BrowserRelayRequest } from "./container-bridge-relay.js";
 import { startEgressWorkerHost } from "./egress-worker-host.js";
 import {
@@ -216,7 +217,10 @@ export async function browserLifecycle(
 export async function browserNavigate(viewId: string, url: string, sessionId?: string): Promise<BrowserNavigateResult> {
 	// sessionId lets the desktop navigate-onSuccess SEED this session's anchor —
 	// the first surface is usually a navigate, so a later new_tab/switch follows.
-	const reply = await request("navigate", viewId, { type: "lax:browser-navigate", viewId, url, timeoutMs: NAVIGATE_DESKTOP_TIMEOUT_MS, sessionId }, NAVIGATE_DESKTOP_TIMEOUT_MS + NAVIGATE_REPLY_GRACE_MS);
+	// quiet: the session browses off screen (off-screen-sessions.ts) — the
+	// desktop must not surface the view when the load succeeds.
+	const quiet = isBrowserOffScreen(sessionId);
+	const reply = await request("navigate", viewId, { type: "lax:browser-navigate", viewId, url, timeoutMs: NAVIGATE_DESKTOP_TIMEOUT_MS, sessionId, ...(quiet ? { quiet } : {}) }, NAVIGATE_DESKTOP_TIMEOUT_MS + NAVIGATE_REPLY_GRACE_MS);
 	return { url: reply.url ?? "", title: reply.title ?? "", ...(typeof reply.status === "number" ? { status: reply.status } : {}) };
 }
 

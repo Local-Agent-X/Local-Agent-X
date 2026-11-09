@@ -55,3 +55,11 @@ export function decideAgentSurface(ctx: SurfaceContext): boolean {
 export function isSessionAgentView(currentViewId: string, sessionId?: string): boolean {
 	return !!sessionId && currentViewId.startsWith(`view-${sessionId}-`);
 }
+
+/** Does a successful agent navigate offer its view to the anchor at all? Only
+ *  an agent-driven view, and never a quiet navigate: the session's user is away
+ *  from the desktop (browsing from the phone), so the pane must not change under
+ *  whoever comes back to it. */
+export function navigateOffersSurface(view: { agentDriven: boolean } | undefined, quiet: boolean | undefined): boolean {
+	return !quiet && view?.agentDriven === true;
+}

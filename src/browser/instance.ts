@@ -5,6 +5,7 @@ import { ElectronInAppBackend } from "./in-app-backend.js";
 import { sessionIdFromViewId, setAgentViewClosedHandler } from "./bridge-perception.js";
 import { assertJobBrowserProfileOpen, jobBrowserPartition, jobBrowserProfileDir, resolveBrowserProfile, resolveBrowserSessionId } from "./session-owner-registry.js";
 import { closeSharedBrowser, forceKillSharedBrowser } from "./runtime.js";
+import { forgetOffScreenBrowser, touchOffScreenBrowser } from "./off-screen-sessions.js";
 import { clearAllSessionEmulation, clearSessionEmulation, getSessionEmulation } from "./emulation.js";
 import {
 	forgetAllReportedRoutes,
@@ -172,7 +173,11 @@ export function getBrowserManager(sessionId: string = "default"): BrowserBackend
 	// arms share the same persistent login identity.
 	const route = routeForSession(key);
 	reportBrowserRoute(key, route);
-	if (route.kind === "in-app") return ensureInAppBackend(key);
+	if (route.kind === "in-app") {
+		// An off-screen session's views close once it stops using them.
+		touchOffScreenBrowser(key, closeBrowser);
+		return ensureInAppBackend(key);
+	}
 	return ensureCdpManager(key, route.reason === "windows-chat-chrome");
 }
 
@@ -268,6 +273,7 @@ async function closeBrowserSession(key: string): Promise<void> {
 	// inherit the previous session's phone viewport / spoofed user agent.
 	clearSessionEmulation(key);
 	emulatedCdpKeys.delete(key);
+	forgetOffScreenBrowser(key);
 	// A session can (rarely) have entries of both kinds — e.g. the mode flipped
 	// mid-session. Close whichever exist.
 	const inApp = inAppBackends.get(key);

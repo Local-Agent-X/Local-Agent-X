@@ -72,7 +72,9 @@ export interface BrowserLifecycleRequest {
    *  profile when absent. A scheduled job's views name the job's own. */
   partition?: string;
 }
-export interface BrowserNavigateRequest { type: "lax:browser-navigate"; id: number; viewId: string; url: string; timeoutMs?: number; sessionId?: string }
+/** quiet: the session browses off screen (src/browser/off-screen-sessions.ts), so a
+ *  successful load must not surface the view in the Browser pane. */
+export interface BrowserNavigateRequest { type: "lax:browser-navigate"; id: number; viewId: string; url: string; timeoutMs?: number; sessionId?: string; quiet?: boolean }
 export interface BrowserExecRequest { type: "lax:browser-exec"; id: number; viewId: string; script: string; world?: "isolated"; allFrames?: boolean }
 export interface BrowserInputRequest { type: "lax:browser-input"; id: number; viewId: string; event: BridgeInputEvent }
 export interface BrowserCaptureRequest { type: "lax:browser-capture"; id: number; viewId: string }

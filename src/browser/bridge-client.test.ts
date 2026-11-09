@@ -39,6 +39,7 @@ import {
 	requestDesktopBrowserBridge,
 } from "./bridge-client.js";
 import { EventBus } from "../event-bus.js";
+import { _resetOffScreenSessions, noteBrowserSurface } from "./off-screen-sessions.js";
 import { recordSensitiveRead, clearSessionTaint } from "../data-lineage/index.js";
 
 const originalSend = process.send;
@@ -116,6 +117,22 @@ describe("browser bridge client — happy paths", () => {
 		expect(msg).toMatchObject({ type: "lax:browser-navigate", viewId: "v1", url: "https://example.com/", timeoutMs: NAVIGATE_DESKTOP_TIMEOUT_MS });
 		receive({ type: "lax:browser-navigate-result", id: msg.id, ok: true, url: "https://example.com/", title: "Example" });
 		await expect(p).resolves.toEqual({ url: "https://example.com/", title: "Example" });
+	});
+
+	it("navigate is quiet for a session browsing from the phone, so the desktop does not surface it", async () => {
+		noteBrowserSurface("sess-phone", "mobile");
+		try {
+			const p = browserNavigate("v1", "https://example.com/", "sess-phone");
+			expect(lastSent()).toMatchObject({ type: "lax:browser-navigate", sessionId: "sess-phone", quiet: true });
+			receive({ type: "lax:browser-navigate-result", id: lastSent().id, ok: true, url: "https://example.com/", title: "Example" });
+			await p;
+			const typed = browserNavigate("v1", "https://example.com/", "sess-desk");
+			expect(lastSent().quiet).toBeUndefined();
+			receive({ type: "lax:browser-navigate-result", id: lastSent().id, ok: true, url: "https://example.com/", title: "Example" });
+			await typed;
+		} finally {
+			_resetOffScreenSessions();
+		}
 	});
 
 	it("navigate passes the desktop's real HTTP status through when present", async () => {

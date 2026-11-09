@@ -28,6 +28,7 @@ import { detectAndBoostCurate } from "./prepare-request/curate-nudge.js";
 import { buildSystemPromptWithTelemetry } from "./prepare-request/build-system-prompt.js";
 import { createPromptTelemetry, logPromptTelemetry } from "../prompt-telemetry.js";
 import { appendSystemPromptSection } from "../context/system-prompt-builder.js";
+import { noteBrowserSurface } from "../browser/off-screen-sessions.js";
 
 const logger = createLogger("agent-request.prepare-request");
 
@@ -159,17 +160,23 @@ async function curateNudge(
   return block;
 }
 
-export async function prepareAgentRequest(input: AgentRequestInput): Promise<PreparedAgentRequest> {
-  // Per-step timing logs. Added 2026-05-27 after IDE-mode chat turns wedged
-  // somewhere inside this pipeline with zero breadcrumbs: only the entry
-  // [retry] log fired, then nothing until server restart. Tag each step
-  // with the sessionId slice so IDE vs chat hangs are distinguishable.
-  const sessTag = input.sessionId.slice(0, 16);
-  const stepStart = (label: string): (() => void) => {
+/**
+ * Per-step timing logs. Added 2026-05-27 after IDE-mode chat turns wedged
+ * somewhere inside this pipeline with zero breadcrumbs: only the entry
+ * [retry] log fired, then nothing until server restart. Tag each step
+ * with the sessionId slice so IDE vs chat hangs are distinguishable.
+ */
+function stepTimer(sessionId: string): (label: string) => () => void {
+  const sessTag = sessionId.slice(0, 16);
+  return (label) => {
     const t = Date.now();
     logger.info(`[step] ${label} START sess=${sessTag}`);
     return () => logger.info(`[step] ${label} ${Date.now() - t}ms sess=${sessTag}`);
   };
+}
+
+export async function prepareAgentRequest(input: AgentRequestInput): Promise<PreparedAgentRequest> {
+  const stepStart = stepTimer(input.sessionId);
 
   // 1. Resolve provider + keys
   let end = stepStart("resolveProvider");
@@ -216,6 +223,9 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   const protocolSuggestion = input.leanPrep ? null : getLearnedProtocolSuggestion(input.message);
 
   const toolSel = await selectTurnTools(input, resolved, cleanHistory, protocolSuggestion, stepStart);
+
+  // The turn's browsing stays off the desktop's screen when its user is away.
+  noteBrowserSurface(input.sessionId, input.channel, input.voiceDevice);
 
   // 4. Build per-turn memory + context (skip heavy parts for bridges/cron).
   const ctx = await buildTurnMemory(input, resolved, toolSel.tier, protocolSuggestion, stepStart);

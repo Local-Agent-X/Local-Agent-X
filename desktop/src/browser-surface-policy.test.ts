@@ -6,7 +6,7 @@
 // entry cross-matched the anchor and stole the user's hand-navigated page. With
 // no stored state there is nothing to go stale, so the whole steal class is gone.
 import { describe, expect, it } from "vitest";
-import { decideAgentSurface, isSessionAgentView } from "./browser-surface-policy";
+import { decideAgentSurface, isSessionAgentView, navigateOffersSurface } from "./browser-surface-policy";
 
 describe("isSessionAgentView", () => {
 	it("matches the surfacing session's own agent tabs (first tab and new tabs)", () => {
@@ -73,5 +73,17 @@ describe("scenarios (isSessionAgentView + decideAgentSurface together)", () => {
 	it("an unattributed surface (no sessionId) follows a blank foreground but not a real page", () => {
 		expect(surface("foreground", undefined, true, true)).toBe(true);
 		expect(surface("foreground", undefined, true, false)).toBe(false);
+	});
+});
+
+describe("navigateOffersSurface", () => {
+	it("an agent's navigate offers its view; a quiet one (user on the phone) never does", () => {
+		expect(navigateOffersSurface({ agentDriven: true }, undefined)).toBe(true);
+		expect(navigateOffersSurface({ agentDriven: true }, true)).toBe(false);
+	});
+
+	it("a user's own view or a vanished view is never offered", () => {
+		expect(navigateOffersSurface({ agentDriven: false }, undefined)).toBe(false);
+		expect(navigateOffersSurface(undefined, undefined)).toBe(false);
 	});
 });

@@ -13,6 +13,7 @@ import { browserLifecycle, type BrowserViewInfo } from "./bridge-client.js";
 import { sensitivePageStub } from "./guards.js";
 import { registerAdoptedView } from "./bridge-perception.js";
 import { TabList, type InAppTab } from "./in-app-tabs.js";
+import { isBrowserOffScreen } from "./off-screen-sessions.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("browser.in-app-tab-merge");
@@ -103,6 +104,8 @@ export type MergedSwitchResult =
  *  agent's OWN active-tab change fires this; merely LISTING adopted user tabs
  *  must not. */
 export function surfaceActiveTab(viewId: string, sessionId?: string): void {
+	// A session whose user is away from the desktop browses off screen.
+	if (isBrowserOffScreen(sessionId)) return;
 	browserLifecycle("show", viewId, { sessionId }).catch(() => { /* UI hint — never fails the action */ });
 }
 

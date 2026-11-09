@@ -249,7 +249,8 @@ export class SecurityLayer {
     let decision: SecurityDecision;
     // An http-class tool addressed by URL (its row's site destination) is
     // judged by where the URL points, and a call naming none is refused: the
-    // gate cannot judge a destination it cannot see.
+    // gate cannot judge a destination it cannot see. (An optional site the
+    // call leaves out is not among its specs: destinationSpecsOf.)
     const site = kernelClass === "http" ? destinationSpecsOf(toolName, args)?.find((d) => d.to === "site") : undefined;
 
     // Tools whose ARGUMENTS carry the routing signal (command, url) get an

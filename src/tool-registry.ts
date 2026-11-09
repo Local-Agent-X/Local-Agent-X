@@ -407,8 +407,13 @@ export function destinationSpecsOf(name: string, args: Record<string, unknown>):
   if (!specs) return undefined;
   const action = String(args.action ?? "");
   const scoped = specs.filter((s) => s.forActions?.includes(action));
-  return scoped.length > 0 ? scoped : specs.filter((s) => !s.forActions);
+  // An optional site the call leaves out is a site it does not reach: every
+  // card without a picture was refused as "invalid URL" (2026-11-09).
+  return (scoped.length > 0 ? scoped : specs.filter((s) => !s.forActions))
+    .filter((s) => !(s.to === "site" && s.optional && !addressGiven(args[s.arg])));
 }
+
+const addressGiven = (value: unknown): boolean => typeof value === "string" && value.trim() !== "";
 
 /**
  * Build-time invariant: no single tool may be BOTH an egress sink AND a

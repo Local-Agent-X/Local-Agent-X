@@ -150,6 +150,15 @@ describe("SecurityLayer kernel-class dispatch", () => {
       expect(sec.evaluate({ toolName: "web_fetch", args: {}, sessionId: "t" }).allowed).toBe(false);
     });
 
+    it("a card without a picture reaches no site and is shown; a picture is still SSRF-checked (2026-11-09)", () => {
+      const sec = makeLayer();
+      const links = [{ label: "View on Amazon", url: "https://www.amazon.com/clp/B0D5ZXVQYR" }];
+      expect(sec.evaluate({ toolName: "show_card", args: { title: "LMNT Sparkling", links }, sessionId: "t" }).allowed).toBe(true);
+      expect(sec.evaluate({ toolName: "show_card", args: { title: "LMNT Sparkling", image: "  ", links }, sessionId: "t" }).allowed).toBe(true);
+      expect(sec.evaluate({ toolName: "show_card", args: { title: "x", image: "http://169.254.169.254/latest" }, sessionId: "t" }).allowed).toBe(false);
+      expect(sec.evaluate({ toolName: "show_card", args: { title: "x", image: "not a url" }, sessionId: "t" }).allowed).toBe(false);
+    });
+
     it("an http tool whose row names no site still passes with no URL (its destination is fixed inside it)", () => {
       const sec = makeLayer();
       expect(sec.evaluate({ toolName: "email_folders", args: {}, sessionId: "t" }).allowed).toBe(true);

@@ -102,7 +102,10 @@ export type OutputKind = "command" | "http-body" | "file-content" | "mailbox";
  * vouches for tokens the destination site showed.
  *   site           — the site the URL in `arg` reaches. `allowlisted`: the host
  *                    allowlist exempts it, and the call is scanned as a request
- *                    (url, method, body, headers)
+ *                    (url, method, body, headers). `optional`: the tool reaches
+ *                    the site only when `arg` is given (show_card's picture), so
+ *                    a call without it reaches no site and is not refused for
+ *                    naming none
  *   recipients     — every email address in `args`; the user's own address and
  *                    allowlisted domains are trusted
  *   chat           — a messaging chat the user authorized in Settings, by `arg`
@@ -124,7 +127,7 @@ export type OutputKind = "command" | "http-body" | "file-content" | "mailbox";
  * unscoped ones.
  */
 export type DestinationSpec = (
-  | { to: "site"; arg: string; allowlisted?: true }
+  | { to: "site"; arg: string; allowlisted?: true; optional?: true }
   | { to: "recipients"; args: readonly string[] }
   | { to: "chat"; app: "Telegram" | "WhatsApp"; arg: string }
   | { to: "user"; message?: true }

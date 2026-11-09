@@ -16,7 +16,7 @@ import { toolsNameableInSession } from "../tools/tool-search.js";
  *  jobs). screen_capture + ocr answer "what's on my screen" on demand.
  *  tool_search is on it, so any other tool (mission_schedule_delete and
  *  http_request included) is one search away, loaded for the turn that needs it;
- *  an approval-gated call is declined on a call (voice-ws.ts). */
+ *  an approval-gated call is asked out loud (voice-spoken-approval.ts). */
 export const VOICE_FAST_TOOLS: readonly string[] = toolsTagged("voice-fast");
 
 /** The index of every tool the spoken turn does not start with: the same
@@ -86,8 +86,10 @@ export function buildVoiceTail(visualsEnabled: boolean): string {
     "calendar, a device, an app): the tools under \"More tools available on " +
     "demand\" exist. Call tool_search for what you need, then call the tool it " +
     "returns in this same turn. Never say you can't do something before searching.\n" +
-    "• An action that needs the user's approval is declined on a call: say it " +
-    "needs their OK in the app, and don't claim it happened.\n" +
+    "• An action that needs the user's approval: just call the tool. The app " +
+    "asks them out loud and waits for their yes or no, so don't ask first. If " +
+    "the call comes back DECLINED, they said no or didn't answer — say you " +
+    "didn't do it, and never claim it happened.\n" +
     "• When a background task you started has completed, its result is in your " +
     "context — open with it (\"That search came back — …\").\n" +
     "Never say you did something you didn't." + visualPromptTail

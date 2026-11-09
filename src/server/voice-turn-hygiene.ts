@@ -75,6 +75,14 @@ export class VoiceTurnHygiene {
     return line;
   }
 
+  /** A line the harness speaks itself (a spoken approval question). It enters
+   *  the stored text, since the user heard it. */
+  said(line: string): string {
+    this.raw += line;
+    this.spokeSinceLookup = true;
+    return line;
+  }
+
   /** The stream guard stopped a degenerate reply. Returns the notice to speak;
    *  it also enters the stored text so the transcript records the cutoff. */
   guardStopped(): string {

@@ -132,6 +132,11 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
   let currentUtterance = "";
   let continuation: { text: string; at: number } | null = null;
 
+  // A question the turn spoke and is waiting on (a spoken approval): the
+  // user's next final is its answer, not a new turn, and their speaking is
+  // not a barge-in.
+  let answerWaiter: ((text: string | null) => void) | null = null;
+
   function clearTimer(): void {
     if (pendingClearTimer) { clearTimeout(pendingClearTimer); pendingClearTimer = null; }
   }
@@ -145,7 +150,8 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
   }
 
   function interrupt(): void {
-    if (isClosed() || !activeTurn) return;
+    // Speaking to answer the turn's question must not cancel the turn asking it.
+    if (isClosed() || !activeTurn || answerWaiter) return;
     logger.info(`[turn] ${sid}: barge-in → interrupting agent`);
     // Heard-time: zero until first audio actually shipped, then wall-clock
     // since it started playing. A reply cut this early means the user was
@@ -276,6 +282,12 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
       discardUtterance("noise-only final");
       return;
     }
+    if (answerWaiter) {
+      logger.info(`[turn] ${sid}: answer to the turn's question: "${utterance.slice(0, 40)}"`);
+      ctx.sendEvent(sttMs != null ? { type: "final", text: utterance, sttMs } : { type: "final", text: utterance });
+      answerWaiter(utterance);
+      return;
+    }
     if (activeTurn) {
       logger.info(`[turn] ${sid}: ignoring final while turn in progress: "${utterance.slice(0, 40)}"`);
       return;
@@ -301,6 +313,28 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
       return;
     }
     await runAgentTurn(turnText, continuationOf, sttMs);
+  }
+
+  /** The user's next words as the answer to what `turn` just asked. The question
+   *  is spoken first: the model stream is paused on it, so nothing else would
+   *  flush the sentence buffer. */
+  function awaitAnswer(turn: AbortController, timeoutMs: number, cancel: AbortSignal): Promise<string | null> {
+    speaker.flushTail();
+    answerWaiter?.(null);
+    return new Promise((resolve) => {
+      const settle = (text: string | null): void => {
+        if (answerWaiter !== settle) return;
+        answerWaiter = null;
+        clearTimeout(timer);
+        resolve(text);
+      };
+      const timer = setTimeout(() => settle(null), timeoutMs);
+      answerWaiter = settle;
+      for (const signal of [turn.signal, cancel]) {
+        if (signal.aborted) settle(null);
+        else signal.addEventListener("abort", () => settle(null), { once: true });
+      }
+    });
   }
 
   /** The model turn for `turnText`, from agent_start to the playback hand-off.
@@ -347,7 +381,9 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
           if (isClosed() || turn.signal.aborted) return;
           ctx.sendEvent({ type: "card", card });
         },
+        ...(ctx.mode === "dictate" ? {} : { awaitAnswer: (timeoutMs, cancel) => awaitAnswer(turn, timeoutMs, cancel) }),
       });
+      answerWaiter?.(null);
 
       if (turn.signal.aborted) {
         // Barge-in landed mid-turn. runTurn returns updatedHistory whose last
@@ -383,6 +419,7 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
       // that already fired.
       if (ttsDrained || (speaker.pendingCount && speaker.pendingCount() === 0)) markTtsDrained();
     } catch (e) {
+      answerWaiter?.(null);
       speaker.reset();
       const msg = (e as Error).message || String(e);
       if (turn.signal.aborted) {

@@ -318,3 +318,63 @@ describe("voice turn machine — continuation merge", () => {
   });
 });
 
+
+describe("voice turn machine — a question the turn asked", () => {
+  /** A turn that asks a question mid-run and returns what it heard. */
+  function askingRun(heard: Array<string | null>, timeoutMs = 10_000): VoiceTurnRunner {
+    return async ({ onDelta, awaitAnswer, history }) => {
+      onDelta("Should I send it?");
+      heard.push(await awaitAnswer!(timeoutMs, new AbortController().signal));
+      return { assistantText: "Sent.", updatedHistory: [...history, { role: "assistant", content: "Sent." }] };
+    };
+  }
+
+  it("the user's next words answer the question: no new turn, and the asking turn finishes", async () => {
+    const h = harness();
+    const heard: Array<string | null> = [];
+    const runs: string[] = [];
+    const runTurn: VoiceTurnRunner = async (input) => { runs.push(input.text); return askingRun(heard)(input); };
+    const machine = createVoiceTurnMachine({ ctx: h.ctx, runTurn, speaker: h.speaker, cancelTts: () => {}, isClosed: () => false, logger });
+
+    const turn = machine.handleFinalTranscript("email Bob the notes");
+    await new Promise((r) => setTimeout(r, 0));
+    await machine.handleFinalTranscript("yes go ahead");
+    await turn;
+
+    expect(heard).toEqual(["yes go ahead"]);
+    expect(runs).toEqual(["email Bob the notes"]);
+    expect(h.types()).toContain("assistant_done");
+    expect(h.events.filter((e) => e.type === "final").map((e) => e.text)).toEqual(["email Bob the notes", "yes go ahead"]);
+  });
+
+  it("speaking the answer is not a barge-in", async () => {
+    const h = harness();
+    const heard: Array<string | null> = [];
+    let cancelled = false;
+    const machine = createVoiceTurnMachine({ ctx: h.ctx, runTurn: askingRun(heard), speaker: h.speaker, cancelTts: () => { cancelled = true; }, isClosed: () => false, logger });
+
+    const turn = machine.handleFinalTranscript("email Bob the notes");
+    await new Promise((r) => setTimeout(r, 0));
+    machine.interrupt();
+    await machine.handleFinalTranscript("yes");
+    await turn;
+
+    expect(cancelled).toBe(false);
+    expect(h.types()).not.toContain("assistant_interrupted");
+    expect(heard).toEqual(["yes"]);
+  });
+
+  it("no answer in the window resolves null, and the next words start a turn again", async () => {
+    const h = harness();
+    const heard: Array<string | null> = [];
+    const runs: string[] = [];
+    const runTurn: VoiceTurnRunner = async (input) => { runs.push(input.text); return input.text === "email Bob" ? askingRun(heard, 5)(input) : twoDeltaRun(input); };
+    const machine = createVoiceTurnMachine({ ctx: h.ctx, runTurn, speaker: h.speaker, cancelTts: () => {}, isClosed: () => false, logger });
+
+    await machine.handleFinalTranscript("email Bob");
+    await machine.handleFinalTranscript("what's the weather");
+
+    expect(heard).toEqual([null]);
+    expect(runs).toEqual(["email Bob", "what's the weather"]);
+  });
+});

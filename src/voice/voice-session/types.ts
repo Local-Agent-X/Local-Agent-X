@@ -27,6 +27,10 @@ export interface VoiceTurnInput {
   onVisual?: (kind: "emoji" | "text" | "shape" | "mood", value: string, durationMs: number) => void;
   /** A card the agent showed (show_card's metadata.card): drawn in the chat, not spoken. */
   onCard?: (card: Record<string, unknown>) => void;
+  /** Wait for the user's next words as the answer to a question the turn just
+   *  spoke (a spoken approval): they do not start a turn and do not barge in.
+   *  Resolves null when the window closes, the turn ends, or `cancel` fires. */
+  awaitAnswer?: (timeoutMs: number, cancel: AbortSignal) => Promise<string | null>;
   signal: AbortSignal;
   sessionId: string;
 }

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { AgentOptions } from "../providers/types.js";
 import { runAgentViaCanonical } from "../canonical-loop/index.js";
-import { getApprovalManager } from "../approval-manager.js";
+import { createSpokenApprovals } from "./voice-spoken-approval.js";
 import type { LAXConfig, ServerEvent, ToolDefinition, Session } from "../types.js";
 import type { MemoryIndex, MemoryManager } from "../memory/index.js";
 import type { SecretsStore } from "../secrets.js";
@@ -206,7 +206,7 @@ export async function setupVoiceWs(deps: {
     // end-of-turn memory pass, and the threat engine with its canary watch. It
     // differs in having no fallback chain (voice picks the configured provider;
     // an error surfaces as agent_error to the client, which will retry).
-    const runVoiceTurn = async ({ text, attachments, continuationOf, device, onDelta, onVisual, onCard }: VoiceTurnInput, sessionId: string, slot: VoiceTurnSlot, clock: VoiceTurnClock) => {
+    const runVoiceTurn = async ({ text, attachments, continuationOf, device, onDelta, onVisual, onCard, awaitAnswer }: VoiceTurnInput, sessionId: string, slot: VoiceTurnSlot, clock: VoiceTurnClock) => {
       // Durable, continuous memory: load the persisted thread from the same
       // store text chat uses, rather than a per-connection in-memory history
       // that resets on every reconnect. The client sends the chat thread's own
@@ -254,6 +254,7 @@ export async function setupVoiceWs(deps: {
       const hygiene = new VoiceTurnHygiene();
       const threatEngine = new ThreatEngine(dataDir, sessionId);
       const canaryTripped = canaryWatch(threatEngine, slot.abort);
+      const approvals = createSpokenApprovals({ speak: (line) => onDelta(hygiene.said(line)), awaitAnswer, turnSignal: slot.signal, log: (line) => logger.info(line) });
       const onEvent = (event: ServerEvent) => {
         if (event.type === "stream" && "delta" in event && event.delta) {
           clock.firstToken();
@@ -277,14 +278,11 @@ export async function setupVoiceWs(deps: {
           logger.info(`[voice-ws] stream guard stopped a degenerate reply (${sessionId}); spoke a notice`);
           onDelta(hygiene.guardStopped());
         } else if (event.type === "approval_requested") {
-          // Voice has no approval UI yet, and the approval timeout is 5 min —
-          // letting it ride would hang the turn in silence. Decline immediately
-          // so an approval-gated tool blocks cleanly; the prompt tells the agent
-          // to say the action needs approval. This is the exact seam the verbal
-          // "yes/no" approval renderer will replace (speak the prompt + capture
-          // the spoken answer) instead of auto-declining.
-          logger.info(`[voice-ws] auto-declining approval for ${event.toolName} (no voice approval UI yet)`);
-          getApprovalManager().resolveApproval(event.approvalId, false);
+          // Asked out loud; the user's next words answer it (voice-spoken-approval.ts).
+          approvals.requested(event);
+        } else if (event.type === "approval_resolved" || event.type === "approval_timeout") {
+          // Answered on a card or timed out: stop waiting for a spoken answer.
+          approvals.settled(event.approvalId);
         }
       };
 

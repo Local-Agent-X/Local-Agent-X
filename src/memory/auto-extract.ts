@@ -18,6 +18,7 @@ import { externalContentVerdict } from "../data-lineage/external.js";
 
 import { createLogger } from "../logger.js";
 import { withProfileWrite } from "./profile-write-queue.js";
+import { establishedName } from "./profile-name.js";
 const logger = createLogger("memory.auto-extract");
 
 type PromotionFor = (content: string, target: string, key: string, confidence: number) => MemoryPromotionContext | null;
@@ -28,18 +29,6 @@ const PROFILE_NAME = {
   agent: { file: "IDENTITY.md", target: "memory:profile:identity", key: "agent_name", label: "IDENTITY" },
 } as const;
 
-/** A Name line's value that is no name: blank, or the new install's "(not yet named)". */
-const UNNAMED = /^(\(not yet named\))?$/i;
-
-/** The name a profile already gives (any `- Name:` line with a real value; the files
- *  have held two), or "" when it gives none. */
-export function establishedName(content: string): string {
-  for (const m of content.matchAll(/^- Name:[ \t]*(.*)$/gm)) {
-    const value = (m[1] ?? "").trim();
-    if (!UNNAMED.test(value)) return value;
-  }
-  return "";
-}
 
 /**
  * Fill in a profile's Name (the user's in USER.md, the agent's in IDENTITY.md) from

@@ -139,7 +139,7 @@ export async function retainSmart(
   text: string,
   sourceFile: string,
   sourceLine = 0,
-  opts?: { candidateLimit?: number; resolverOpts?: { provider?: "ollama" | "anthropic" | "openai" | "auto"; model?: string }; promotion?: MemoryPromotionContext; occurredAt?: number | null; sourceMessageId?: string }
+  opts?: { candidateLimit?: number; resolverOpts?: { provider?: "ollama" | "anthropic" | "openai" | "auto"; model?: string }; promotion?: MemoryPromotionContext; occurredAt?: number | null; sourceMessageId?: string; userNames?: string[] }
 ): Promise<{ facts: RetainedFact[]; decisions: Array<{ content: string; op: string; targetId?: number; reason: string }> }> {
   assertMemoryPromotionAllowed(text, opts?.promotion?.target ?? "memory:retain", opts?.promotion);
   const { resolveFact } = await import("./resolver.js");
@@ -178,7 +178,10 @@ export async function retainSmart(
     // misjudged as an update of the cousin fact was lost, with the agent
     // claiming it saved (9115bd39).
     let op = decision.op;
-    const replacing = { provenance: opts?.promotion?.origin ?? null, sourceFile, occurredAt: opts?.occurredAt ?? null, savedAt: Date.now() };
+    const replacing = {
+      provenance: opts?.promotion?.origin ?? null, sourceFile, occurredAt: opts?.occurredAt ?? null, savedAt: Date.now(),
+      content: parsed.content, entities: validEntities, userNames: opts?.userNames ?? [],
+    };
     if ((op === "UPDATE" || op === "DELETE") && decision.targetId !== undefined
       && !resolverMayEnd(db, decision.targetId, replacing)) {
       if (alreadySaid(parsed.content, candidates)) {

@@ -2,6 +2,7 @@ import type Database from "better-sqlite3";
 import { createLogger } from "../logger.js";
 import { isUserReported } from "./fact-provenance-label.js";
 import { tokenizeStrict } from "./text-utils.js";
+import { namesSameSubject } from "./same-subject.js";
 
 const logger = createLogger("memory.index-facts");
 
@@ -10,13 +11,17 @@ const logger = createLogger("memory.index-facts");
  *  a model's off-turn judgement in retainSmart (background extraction). */
 export type InvalidationActor = "agent" | "resolver";
 
-/** The statement a resolver judged to replace an existing fact: its origin, and
- *  when it was said (its event date when known, else when it was saved). */
+/** The statement a resolver judged to replace an existing fact: its origin,
+ *  when it was said (its event date when known, else when it was saved), and
+ *  what it says, with the names the user goes by (same-subject.ts). */
 export interface ReplacingStatement {
   provenance: string | null;
   sourceFile: string;
   occurredAt: number | null;
   savedAt: number;
+  content: string;
+  entities: string[];
+  userNames: string[];
 }
 
 /**
@@ -36,12 +41,16 @@ export interface ReplacingStatement {
  *   words; a newer statement of the user's (a new vial replacing an old one,
  *   2026-11-04) is the user correcting themselves. An ended fact stays on its
  *   entity page as history, so a wrong call is visible, not lost.
+ * - Same subject: the statement names everything the fact is filed under
+ *   (same-subject.ts). Live 2026-11-05: a "semaglutide" restatement ended the
+ *   user's reta dose record.
  */
 export function resolverMayEnd(db: InstanceType<typeof Database>, id: number, replacing: ReplacingStatement): boolean {
-  const row = db.prepare("SELECT provenance, source_file, occurred_at, timestamp FROM facts WHERE id = ?")
-    .get(id) as { provenance: string | null; source_file: string; occurred_at: number | null; timestamp: number } | undefined;
+  const row = db.prepare("SELECT provenance, source_file, occurred_at, timestamp, entities FROM facts WHERE id = ?")
+    .get(id) as { provenance: string | null; source_file: string; occurred_at: number | null; timestamp: number; entities: string | null } | undefined;
   if (!row) return true;
   if ((row.occurred_at ?? row.timestamp) > (replacing.occurredAt ?? replacing.savedAt)) return false;
+  if (!namesSameSubject({ entities: JSON.parse(row.entities || "[]") as string[] }, replacing, replacing.userNames)) return false;
   const modelsOwn = row.provenance === "assistant" && !isUserReported({ provenance: row.provenance, sourceFile: row.source_file });
   return modelsOwn || isUserReported({ provenance: replacing.provenance, sourceFile: replacing.sourceFile });
 }

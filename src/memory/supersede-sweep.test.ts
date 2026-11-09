@@ -43,6 +43,39 @@ const replaces = (newer: string, older: number): Resolve => async (content, cand
     ? { op: "UPDATE", targetId: older, reason: "new vial" }
     : { op: "ADD", reason: "unrelated" };
 
+/** File a stored fact under exactly these entities. */
+function tag(id: number, entities: string[]): void {
+  db().prepare("UPDATE facts SET entities = ? WHERE id = ?").run(JSON.stringify(entities), id);
+  db().prepare("DELETE FROM entity_mentions WHERE fact_id = ?").run(id);
+  for (const e of entities) db().prepare("INSERT INTO entity_mentions (fact_id, entity_slug) VALUES (?, ?)").run(id, e);
+}
+
+describe("sweepSupersededFacts — a replacement must be about the same thing", () => {
+  it("a restatement naming another drug does not end the user's reta record (2026-11-05)", async () => {
+    const reta = stored("Peter uses a 50 mg reta vial with 2 mL bac water on a U-100 syringe", 1_000);
+    tag(reta, ["reta", "peter", "u-100"]);
+    const wrong = stored("User's semaglutide protocol now uses a 50mg vial mixed with 2mL bac water on a U-100 syringe", 2_000);
+    tag(wrong, ["u-100"]);
+
+    const r = await sweepSupersededFacts(db(), hasFts(), replaces("semaglutide", reta), 10, ["Peter"]);
+
+    expect(r.ended).toEqual([]);
+    expect(row(reta).valid_to).toBeNull();
+  });
+
+  it("still ends it for a newer statement of the same vial, by its full name and as \"the user\"", async () => {
+    const reta = stored("Peter uses a 20 mg reta vial with 1 mL bac water", 1_000);
+    tag(reta, ["reta", "peter"]);
+    const newer = stored("User's retatrutide vial is now 50 mg with 2 mL bac water", 2_000);
+    tag(newer, ["retatrutide"]);
+
+    const r = await sweepSupersededFacts(db(), hasFts(), replaces("50 mg", reta), 10, ["Peter"]);
+
+    expect(r.ended.map((f) => f.id)).toEqual([reta]);
+    expect(row(reta).invalidated_by).toBe(newer);
+  });
+});
+
 describe("sweepSupersededFacts — stored facts keep memory current on their own", () => {
   it("ends a stored fact that a newer stored statement of the user's replaces, recording the replacement", async () => {
     // 2026-11-04: the May and October retatrutide vials were both current.

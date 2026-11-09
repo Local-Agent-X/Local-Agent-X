@@ -78,6 +78,7 @@ export async function sweepSupersededFacts(
   hasFts: boolean,
   resolve: Resolve,
   budget: number,
+  userNames: string[] = [],
 ): Promise<SweepResult> {
   const result: SweepResult = { examined: 0, ended: [], replacing: [], backlogLeft: false };
   const factById = db.prepare("SELECT * FROM facts WHERE id = ?");
@@ -94,7 +95,10 @@ export async function sweepSupersededFacts(
             by: "resolver",
             reason: `superseded by ${id} (sweep): ${decision.reason}`,
             replacedBy: id,
-            replacing: { provenance: fact.provenance ?? null, sourceFile: fact.sourceFile, occurredAt: fact.occurredAt ?? null, savedAt: fact.timestamp },
+            replacing: {
+              provenance: fact.provenance ?? null, sourceFile: fact.sourceFile, occurredAt: fact.occurredAt ?? null, savedAt: fact.timestamp,
+              content: fact.content, entities: fact.entities, userNames,
+            },
           });
           if (ended) {
             logger.info(`[memory] fact #${decision.targetId} replaced by #${id} (sweep): ${decision.reason}`);

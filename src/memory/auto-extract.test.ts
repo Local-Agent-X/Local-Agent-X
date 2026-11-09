@@ -72,7 +72,8 @@ vi.mock("./resolver.js", () => ({
 }));
 
 const { MemoryIndex } = await import("../memory/index.js");
-const { autoExtractAndSave, establishedName } = await import("./auto-extract.js");
+const { autoExtractAndSave } = await import("./auto-extract.js");
+const { establishedName } = await import("./profile-name.js");
 const { recordExternalIngestion, clearExternalIngestion } = await import("../data-lineage/external.js");
 const { TAINTED_FACT_SOURCE_PREFIX } = await import("./fact-provenance-label.js");
 

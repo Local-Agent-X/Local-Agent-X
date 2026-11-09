@@ -19,6 +19,8 @@ import { updateEntityPage } from "../index-forget.js";
 import { rowToFact, slugify } from "../utils.js";
 import { scoreFact, type ImportanceScore } from "../cognitive/importance/index.js";
 import type { MemoryPromotionContext } from "../promotion-gate.js";
+import { join } from "node:path";
+import { userNameIn } from "../profile-name.js";
 
 export abstract class MemoryFactsBase {
   protected abstract db: InstanceType<typeof Database>;
@@ -48,9 +50,16 @@ export abstract class MemoryFactsBase {
     sourceLine = 0,
     opts?: { candidateLimit?: number; resolverOpts?: { provider?: "ollama" | "anthropic" | "openai" | "auto"; model?: string }; promotion?: MemoryPromotionContext; occurredAt?: number | null; sourceMessageId?: string }
   ): Promise<{ facts: RetainedFact[]; decisions: Array<{ content: string; op: string; targetId?: number; reason: string }> }> {
-    const result = await Facts.retainSmart(this.db, this.hasFts, text, sourceFile, sourceLine, opts);
+    const result = await Facts.retainSmart(this.db, this.hasFts, text, sourceFile, sourceLine, { ...opts, userNames: this.userNames() });
     this.refreshEntityPages(result.facts);
     return result;
+  }
+
+  /** The names the user goes by in facts, for the resolver's same-subject rule:
+   *  the Name in USER.md, which sits two levels above the entity pages. */
+  private userNames(): string[] {
+    const name = userNameIn(join(this.entitiesDir, "..", ".."));
+    return name ? [name] : [];
   }
 
   // ── RECALL ──
@@ -218,7 +227,7 @@ export abstract class MemoryFactsBase {
   async sweepSupersededFacts(budget: number): Promise<{ examined: number; replaced: number; backlogLeft: boolean }> {
     const { resolveFact } = await import("../resolver.js");
     const { sweepSupersededFacts } = await import("../supersede-sweep.js");
-    const r = await sweepSupersededFacts(this.db, this.hasFts, (content, candidates) => resolveFact(content, candidates), budget);
+    const r = await sweepSupersededFacts(this.db, this.hasFts, (content, candidates) => resolveFact(content, candidates), budget, this.userNames());
     this.refreshEntityPages([...r.ended, ...r.replacing]);
     return { examined: r.examined, replaced: r.ended.length, backlogLeft: r.backlogLeft };
   }

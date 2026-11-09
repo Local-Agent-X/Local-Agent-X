@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 1953 non-test source files · 84 oversized · 260 nearing the size cap.
+**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 1954 non-test source files · 84 oversized · 260 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -21,7 +21,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 176 | 29 | XL | 1 |
 | `src/security/` | 161 | 60 | XL | 2 |
-| `src/tools/` | 127 | 232 | XL | 9 |
+| `src/tools/` | 128 | 232 | XL | 9 |
 | `src/tool-execution/` | 90 | 85 | XL | 2 |
 | `src/workspace/` | 87 | 3 | M |  |
 | `src/canonical-loop/` | 83 | 283 | XL | 11 |
@@ -49,7 +49,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/protocols/` | 21 | 52 | XL |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
 | `src/inbox/` | 19 | 6 | M |  |
-| `src/server/` *(entrypoint)* | 19 | 59 | XL | 5 |
+| `src/server/` *(entrypoint)* | 19 | 60 | XL | 5 |
 | `src/autonomy/` | 18 | 6 | M |  |
 | `src/agents/` | 17 | 13 | L |  |
 | `src/net/` | 17 | 11 | L |  |
@@ -70,11 +70,11 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/plugin-system/` | 9 | 10 | L | 1 |
 | `src/screen-stream/` | 9 | 11 | L |  |
 | `src/agent-guards/` | 8 | 12 | L |  |
+| `src/app-renderer/` | 8 | 7 | M | 1 |
 | `src/autopilot/` | 8 | 14 | L | 1 |
 | `src/bridge-voice/` | 8 | 5 | S |  |
 | `src/mcp-client/` | 8 | 11 | L | 1 |
 | `src/telegram-bridge/` | 8 | 6 | M |  |
-| `src/app-renderer/` | 7 | 7 | M | 1 |
 | `src/auto-build/` | 7 | 52 | XL | 3 |
 | `src/android/` | 6 | 7 | M |  |
 | `src/credentials/` | 6 | 1 | S |  |

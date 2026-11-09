@@ -8,6 +8,7 @@ import { getPageBundle, stampAssetTags } from "./static-bundle.js";
 import { verifyAgentFileSignature, verifyServedMediaSignature } from "./agent-file-links.js";
 import type { LAXConfig } from "../types.js";
 import { UI_PAGE_PERMISSIONS_POLICY } from "./app-serving-policy.js";
+import { serveDocumentView } from "./document-view.js";
 
 const UPLOAD_CONTENT_TYPES: Record<string, string> = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml", bmp: "image/bmp", pdf: "application/pdf", txt: "text/plain", json: "application/json", csv: "text/csv", md: "text/markdown", rtf: "application/rtf", docx: "application/vnd.openxmlformats-officedocument.wordprocessingml.document", doc: "application/msword", xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", xls: "application/vnd.ms-excel", pptx: "application/vnd.openxmlformats-officedocument.presentationml.presentation", ppt: "application/vnd.ms-powerpoint" };
 const MEDIA_CONTENT_TYPES: Record<string, string> = { mp4: "video/mp4", webm: "video/webm", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp", svg: "image/svg+xml" };
@@ -44,6 +45,7 @@ export function serveProtectedAssets(method: string, url: URL, req: IncomingMess
     const file = confineToDir(join(dataDir, "uploads"), filename);
     if (!file) { json(403, { error: "Path traversal blocked" }); return true; }
     if (!existsSync(file)) { json(404, { error: "File not found" }); return true; }
+    if (url.searchParams.get("view") === "html") { void serveDocumentView(file, res); return true; }
     const ext = (filename.split(".").pop() || "").toLowerCase();
     const headers: Record<string, string> = { ...corsHeaders(req), "Content-Type": UPLOAD_CONTENT_TYPES[ext] || "application/octet-stream", "Cache-Control": "public, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff" };
     // Documents staged by send_file download rather than render inline — same
@@ -82,6 +84,7 @@ export function serveAgentFile(method: string, url: URL, req: IncomingMessage, r
   const file = confineToDir(resolve(config.workspace), filePath);
   if (!file || filePath.includes("\x00")) { json(403, { error: "Path traversal blocked" }); return true; }
   if (!existsSync(file)) { json(404, { error: "File not found" }); return true; }
+  if (url.searchParams.get("view") === "html") { void serveDocumentView(file, res); return true; }
   const ext = (file.split(".").pop() || "").toLowerCase();
   const filename = file.split(/[/\\]/).pop() || "download";
   // no-referrer: the signature in this URL stays off every request the document makes.

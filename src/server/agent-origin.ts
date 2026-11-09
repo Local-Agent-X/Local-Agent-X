@@ -189,6 +189,8 @@ export function routeUiAgentPaths(method: string, url: URL, req: IncomingMessage
     catch { jsonResponse(res, 400, { error: "The file path is not valid URL encoding." }, req); return true; }
     const target = new URL(url.pathname, agentOrigin());
     target.searchParams.set("sig", signAgentFilePath(config.authToken, rel));
+    // The readable view of a document (server/document-view.ts) survives the hop.
+    if (url.searchParams.get("view") === "html") target.searchParams.set("view", "html");
     redirect(res, target.href);
     return true;
   }

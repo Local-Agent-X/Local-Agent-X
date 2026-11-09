@@ -161,6 +161,12 @@ describe("the UI origin refuses agent paths", () => {
     expect(location).not.toContain(ft);
   });
 
+  it("keeps the readable view of a document across the hop, and nothing else the request carried", async () => {
+    const ft = deriveFilesLinkCapability(OP_TOKEN);
+    const res = await ui(`/files/reports/cheat-sheet.docx?ft=${ft}&view=html&other=1`);
+    expect(res.headers.get("location")).toBe(`${agentOrigin()}${signed("reports/cheat-sheet.docx")}&view=html`);
+  });
+
   it("answers 400, not silence, for a /files path that is not valid URL encoding", async () => {
     const ft = deriveFilesLinkCapability(OP_TOKEN);
     const res = await ui(`/files/reports/%E0%A4%A.html?ft=${ft}`);

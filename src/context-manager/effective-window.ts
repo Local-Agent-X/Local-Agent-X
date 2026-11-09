@@ -59,6 +59,9 @@ export const SUBSCRIPTION_PROVEN_WINDOWS: Record<string, number> = {
   // Probe 2026-10-31: 949,073 input tokens served; the answer was a refusal
   // of the nonsense padding, a model verdict on an accepted prompt.
   "claude-fable-5-1": 949_000,
+  // Probe 2026-11-09 (reports/window-probe-fable-5-2-2026-11-09.txt): 649,385
+  // then 949,073 input tokens served, "OK" answered.
+  "claude-fable-5-2": 949_000,
   // Probe 2026-10-31: 649,385 then 949,073 input tokens served, "OK" answered.
   "claude-sonnet-5-5": 949_000,
   // Deliberate probe 2026-10-26 (tmp/window-probe.ts through the stream

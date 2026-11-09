@@ -21,7 +21,8 @@ import { buildContextBlock } from "./context.js";
 import { getLaxDir } from "../lax-data-dir.js";
 import {
   renderKnownEntitiesBody,
-  findCutoffMisses,
+  scanMentionedEntities,
+  slugCandidates,
   type EntityScanResult,
 } from "./entity-context.js";
 import type { RetainedFact } from "./types.js";
@@ -57,7 +58,7 @@ function makeFact(id: number, content: string, entities: string[] = []): Retaine
 
 function makeScan(overrides: Partial<EntityScanResult>): EntityScanResult {
   return {
-    mentionedEntities: [], entityFacts: new Map(), scannedSlugs: new Set(),
+    mentionedEntities: [], entityFacts: new Map(),
     totalEntities: 0, scannedEntities: 0, ...overrides,
   };
 }
@@ -166,24 +167,61 @@ describe("renderKnownEntitiesBody", () => {
   });
 });
 
-describe("findCutoffMisses", () => {
-  it("reports a slug that word-matches the message but sits past the scan window", () => {
+/** Many entities each mentioned more often than the one under test, so a
+ *  most-mentioned window of any size below `count` would leave it out. */
+function crowdOut(count: number, mentionsEach: number): void {
+  const factIds: number[] = [];
+  for (let m = 0; m < mentionsEach; m++) {
+    const r = memory.rememberFact(`Filler note number ${m} about the weather in town ${"abcdefghij"[m]}`, { kind: "observation", confidence: 0.2 });
+    expect(r.ok).toBe(true);
+    factIds.push((memory["db"].prepare("SELECT MAX(id) AS id FROM facts").get() as { id: number }).id);
+  }
+  const insert = memory["db"].prepare("INSERT INTO entity_mentions (fact_id, entity_slug) VALUES (?, ?)");
+  for (let i = 0; i < count; i++) for (const id of factIds) insert.run(id, `crowd${i}`);
+}
+
+describe("scanMentionedEntities", () => {
+  it("recognizes an entity mentioned less often than hundreds of others", () => {
     memory.rememberFact("Zzslug is an obscure side project @zzslug", { kind: "world", confidence: 0.9 });
-    const scan = makeScan({
-      scannedSlugs: new Set(["somethingelse"]),
-      totalEntities: 300,
-      scannedEntities: 200,
-    });
-    expect(findCutoffMisses(memory, "tell me about zzslug", scan)).toEqual(["zzslug"]);
+    crowdOut(250, 3);
+    const scan = scanMentionedEntities(memory, "tell me about zzslug");
+    expect(scan.mentionedEntities).toEqual(["zzslug"]);
+    expect(scan.entityFacts.get("zzslug")?.[0]?.content).toContain("obscure side project");
+    expect(scan.scannedEntities).toBe(scan.totalEntities);
   });
 
-  it("returns nothing when the scan window covered every entity", () => {
-    memory.rememberFact("Zzslug is an obscure side project @zzslug", { kind: "world", confidence: 0.9 });
-    const scan = makeScan({
-      scannedSlugs: new Set(["zzslug"]),
-      totalEntities: 1,
-      scannedEntities: 1,
+  it("puts the user's own dose record in front of the agent when the message names the product (2026-11-08)", async () => {
+    // The incident: "reta" ranked 219th by mentions, past a top-200 window,
+    // so the user's record never rendered and the agent answered from an old
+    // chat about their mother's vial (2.5 mL) instead of theirs (2 mL).
+    memory.rememberFact(
+      "Peter now uses a 50mg reta vial reconstituted with 2mL bac water, so 5mg = 20 units @reta",
+      { kind: "world", confidence: 0.3 },
+    );
+    crowdOut(250, 9);
+    const block = await buildContextBlock(memory, {
+      skipDailyLog: true,
+      userMessage: "i have my glow not klow tesa and reta 50mg how much bac water am i using for each",
     });
-    expect(findCutoffMisses(memory, "tell me about zzslug", scan)).toEqual([]);
+    const known = extractKnownEntities(block);
+    expect(known).toContain("reta:");
+    expect(known).toContain("reconstituted with 2mL bac water");
+  });
+
+  it("matches a hyphenated name however the message spaces it, most-mentioned first", () => {
+    memory.rememberFact("BPC-157 is in the Glow blend @bpc-157 @glow", { kind: "world", confidence: 0.9 });
+    memory.rememberFact("Glow is a 70 mg vial @glow", { kind: "world", confidence: 0.9 });
+    expect(scanMentionedEntities(memory, "how much bpc 157 is in my glow").mentionedEntities).toEqual(["glow", "bpc-157"]);
+    expect(scanMentionedEntities(memory, "bpc-157 dose").mentionedEntities).toEqual(["bpc-157"]);
+  });
+});
+
+describe("slugCandidates", () => {
+  it("joins runs of up to five words the way slugify does, whole words only", () => {
+    const c = slugCandidates("Is reta-glow OK? retatrutide");
+    expect(c).toEqual(expect.arrayContaining(["reta", "glow", "reta-glow", "reta-glow-ok", "retatrutide"]));
+    expect(c).not.toContain("ret");
+    expect(slugCandidates("a b c d e f").some((s) => s.split("-").length > 5)).toBe(false);
+    expect(slugCandidates("ok")).toEqual([]);
   });
 });

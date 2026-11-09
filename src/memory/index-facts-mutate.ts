@@ -221,13 +221,33 @@ export function updateFact(
   if (newFacts.length === 0) {
     return { ok: false, error: "new content is duplicate of an existing fact" };
   }
-  const newFact = newFacts[0];
+  const newFact = inheritEntities(db, newFacts[0], oldFact.entities);
   invalidateFact(db, oldFact.id!, {
     by: "agent",
     reason: `superseded by ${newFact.id}: agent update_fact`,
     replacedBy: newFact.id,
   });
   return { ok: true, fact: newFact, newFactId: newFact.id, oldFactId: oldFact.id };
+}
+
+/**
+ * A correction is still about what the fact it replaces was about, so it keeps
+ * that fact's entities as well as any its own wording yields. Entities are
+ * derived from the text, and a lowercase name never links ("reta" in "Peter
+ * uses a 50 mg reta vial"), so an update left the user's dose record off the
+ * reta page and name recall never showed it again (2026-10-21, found 11-08).
+ */
+function inheritEntities(db: InstanceType<typeof Database>, fact: RetainedFact, from: string[]): RetainedFact {
+  const entities = [...fact.entities];
+  for (const e of from) if (!entities.includes(e)) entities.push(e);
+  if (entities.length === fact.entities.length) return fact;
+  db.prepare("UPDATE facts SET entities = ? WHERE id = ?").run(JSON.stringify(entities), fact.id);
+  const mention = db.prepare("INSERT OR IGNORE INTO entity_mentions (fact_id, entity_slug) VALUES (?, ?)");
+  for (const e of entities) {
+    const slug = slugify(e);
+    if (slug) mention.run(fact.id, slug);
+  }
+  return { ...fact, entities };
 }
 
 export function forgetFact(

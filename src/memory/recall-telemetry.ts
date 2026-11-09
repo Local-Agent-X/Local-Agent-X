@@ -10,13 +10,10 @@
  * two can be joined per session:
  *   - which entity slugs the scan matched, and how many facts rendered
  *     inline into <known_entities> (vs deduped against <core_memory>)
- *   - zero-match turns, including slugs that word-match the message but
- *     sit past the top-N scan cutoff — the evidence for/against widening
- *     that cutoff before paying for a real matcher
+ *   - zero-match turns
  *
  * Read it with:
  *   jq -s 'map(select(.factsRendered > 0)) | length' ~/.lax/telemetry/memory-recall.jsonl
- *   jq -s '[.[] | .cutoffMisses[]?] | group_by(.) | map({slug: .[0], n: length})' ~/.lax/telemetry/memory-recall.jsonl
  */
 
 import { appendFileSync, existsSync, mkdirSync } from "node:fs";
@@ -26,7 +23,7 @@ import { getLaxDir } from "../lax-data-dir.js";
 export interface MemoryRecallEvent {
   ts: string; // ISO
   sessionId?: string;
-  /** Entity slugs the top-N scan matched in this turn's user message. */
+  /** Entity slugs the scan matched in this turn's user message. */
   matched: string[];
   /** Fact lines rendered inline into <known_entities> this turn. */
   factsRendered: number;
@@ -36,8 +33,6 @@ export interface MemoryRecallEvent {
   bytesInjected: number;
   totalEntities: number;
   scannedEntities: number;
-  /** Slugs matching the message but beyond the scan cutoff (recognition misses). */
-  cutoffMisses?: string[];
   /**
    * Which recall path emitted the event. Absent = the per-turn entity scan
    * in buildContextBlock (the original emitter). "auto-search" = the

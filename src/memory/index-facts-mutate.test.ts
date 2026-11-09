@@ -236,6 +236,24 @@ describe("single-line fact invariant at the sink", () => {
   });
 });
 
+describe("updateFact keeps what the fact was about", () => {
+  it("a correction whose wording names the entity only in lowercase stays on that entity's page (2026-10-21)", () => {
+    // Live: "reta Peter now uses a 50mg reta vial … 2mL" was updated to
+    // "Peter uses a 50 mg reta vial … 2 mL …" and the new fact lost "reta",
+    // so name recall for reta never showed the user's dose record again.
+    const first = memory.rememberFact("@reta Peter now uses a 50mg reta vial with 2mL bac water", { kind: "observation" });
+    expect(first.ok).toBe(true);
+    expect(first.fact!.entities).toContain("reta");
+
+    const r = memory.updateFact("now uses a 50mg reta vial", "Peter uses a 50 mg reta vial with 2 mL bac water, 25 units twice weekly");
+    expect(r.ok).toBe(true);
+    expect(r.fact!.entities).toContain("reta");
+    expect(memory.recallByEntity("reta", 5).map((f) => f.content)).toEqual([
+      expect.stringContaining("25 units twice weekly"),
+    ]);
+  });
+});
+
 describe("rememberFact exclusive-slot supersede", () => {
   function validTo(factId: number): number | null {
     const db = memory["db"];

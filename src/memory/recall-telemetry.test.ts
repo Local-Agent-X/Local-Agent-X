@@ -53,12 +53,12 @@ describe("logMemoryRecall", () => {
   });
 
   it("accumulates across calls — earlier lines survive later writes (restart-safety contract)", () => {
-    logMemoryRecall({ matched: [], factsRendered: 0, factsDeduped: 0, bytesInjected: 0, totalEntities: 5, scannedEntities: 5, cutoffMisses: ["ghost"] });
+    logMemoryRecall({ matched: ["ghost"], factsRendered: 0, factsDeduped: 0, bytesInjected: 0, totalEntities: 5, scannedEntities: 5 });
     logMemoryRecall({ matched: ["a"], factsRendered: 1, factsDeduped: 0, bytesInjected: 40, totalEntities: 5, scannedEntities: 5 });
 
     const lines = readFileSync(FILE(), "utf-8").trim().split("\n");
     expect(lines).toHaveLength(2);
-    expect(JSON.parse(lines[0]).cutoffMisses).toEqual(["ghost"]);
+    expect(JSON.parse(lines[0]).matched).toEqual(["ghost"]);
     expect(JSON.parse(lines[1]).matched).toEqual(["a"]);
   });
 

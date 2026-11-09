@@ -13,29 +13,54 @@ import type { MemoryIndex } from "./index-core.js";
 import type { RetainedFact } from "./types.js";
 import { factTrustSuffix } from "./fact-provenance-label.js";
 
-/**
- * Most-mentioned-first scan window. Entities past this cutoff are
- * invisible to the free path — misses are logged as telemetry
- * `cutoffMisses` (recall-telemetry.ts) so widening it is an evidence
- * decision, not a guess.
- */
-export const ENTITY_SCAN_LIMIT = 200;
 /** Per-entity fact fetch cap — one name must not flood the prompt or
  * trigger a 100-row reinforce update. */
 export const FACTS_PER_ENTITY = 5;
+/** Longest slug, in words: the corpus's longest is five (`a-b-c-d-e`). */
+const MAX_SLUG_WORDS = 5;
+/** Bound parameters per IN-list query, well under SQLite's variable limit. */
+const LOOKUP_BATCH = 500;
 
 export interface EntityScanResult {
   mentionedEntities: string[];
   /** slug → facts fetched by recallByEntity (recall order preserved). */
   entityFacts: Map<string, RetainedFact[]>;
-  /** The slugs the scan window actually covered (for miss detection). */
-  scannedSlugs: Set<string>;
   totalEntities: number;
   scannedEntities: number;
 }
 
 function emptyScan(total = 0): EntityScanResult {
-  return { mentionedEntities: [], entityFacts: new Map(), scannedSlugs: new Set(), totalEntities: total, scannedEntities: 0 };
+  return { mentionedEntities: [], entityFacts: new Map(), totalEntities: total, scannedEntities: 0 };
+}
+
+/**
+ * Every slug the message could name: each run of one to MAX_SLUG_WORDS
+ * consecutive words, joined the way slugify joins them (`bpc 157` and
+ * `bpc-157` both give `bpc-157`). Word boundaries come from the split, so
+ * `reta` is never found inside `retatrutide`.
+ */
+export function slugCandidates(message: string): string[] {
+  const words = message.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+  const out = new Set<string>();
+  for (let i = 0; i < words.length; i++) {
+    for (let n = 1; n <= MAX_SLUG_WORDS && i + n <= words.length; n++) {
+      const slug = words.slice(i, i + n).join("-");
+      if (slug.length >= 3) out.add(slug);
+    }
+  }
+  return [...out];
+}
+
+/** The candidates that are known entities, most-mentioned first. */
+function knownSlugs(memory: MemoryIndex, candidates: string[]): string[] {
+  const found: Array<{ entity_slug: string; mentions: number }> = [];
+  for (let i = 0; i < candidates.length; i += LOOKUP_BATCH) {
+    const batch = candidates.slice(i, i + LOOKUP_BATCH);
+    found.push(...(memory["db"]
+      .prepare(`SELECT entity_slug, COUNT(*) AS mentions FROM entity_mentions WHERE entity_slug IN (${batch.map(() => "?").join(",")}) GROUP BY entity_slug`)
+      .all(...batch) as Array<{ entity_slug: string; mentions: number }>));
+  }
+  return found.sort((a, b) => b.mentions - a.mentions || a.entity_slug.localeCompare(b.entity_slug)).map((r) => r.entity_slug);
 }
 
 /**
@@ -49,26 +74,13 @@ export function scanMentionedEntities(memory: MemoryIndex, userMessage?: string)
   const stats = memory.getStats();
   if (stats.totalEntities === 0) return emptyScan();
 
-  // Most-mentioned first — the old `ORDER BY entity_slug LIMIT 200`
-  // silently ignored every entity past the first 200 alphabetically.
-  const entitySlugs = memory["db"]
-    .prepare(
-      "SELECT entity_slug, COUNT(*) AS mentions FROM entity_mentions GROUP BY entity_slug ORDER BY mentions DESC LIMIT ?"
-    )
-    .all(ENTITY_SCAN_LIMIT) as Array<{ entity_slug: string }>;
-  const scannedSlugs = new Set(entitySlugs.map((e) => e.entity_slug));
-  const msgLower = userMessage.toLowerCase();
-  const mentionedEntities = entitySlugs
-    .map((e) => e.entity_slug)
-    .filter((slug) => {
-      if (!slug || slug.length < 3) return false;
-      // Word-boundary match, not naive substring — `includes` reinforced
-      // 'art' via 'start' and 'ann' via 'planning', bumping last_updated
-      // on the wrong facts and corrupting hot-score ranking for the
-      // ~30-day decay half-life.
-      const esc = slug.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      return new RegExp(`\\b${esc}\\b`).test(msgLower);
-    });
+  // Every known entity the message names, looked up by its words. A
+  // most-mentioned top-200 window stood here: with 1,224 entities, a user's
+  // own record of "reta" (rank 219) was never shown, and the agent answered
+  // a dose question from an old chat about someone else's vial (2026-11-08).
+  // Whole-word candidates, not substrings: `includes` once reinforced 'art'
+  // via 'start', bumping the wrong facts' hot-score.
+  const mentionedEntities = knownSlugs(memory, slugCandidates(userMessage));
 
   const entityFacts = new Map<string, RetainedFact[]>();
   const factIds = new Set<number>();
@@ -82,9 +94,8 @@ export function scanMentionedEntities(memory: MemoryIndex, userMessage?: string)
   return {
     mentionedEntities,
     entityFacts,
-    scannedSlugs,
     totalEntities: stats.totalEntities,
-    scannedEntities: entitySlugs.length,
+    scannedEntities: stats.totalEntities,
   };
 }
 
@@ -137,30 +148,4 @@ export function renderKnownEntitiesBody(
   }
   const body = parts.join("\n");
   return { body, factsRendered, factsDeduped, bytes: body.length };
-}
-
-/**
- * Telemetry-only: slugs that word-match the message but sit past the
- * top-N scan window — the entities the free path failed to recognize.
- * Single-token slugs only (indexed IN-list lookup); good enough to
- * measure whether the cutoff costs recognition before paying for a real
- * matcher. Never throws.
- */
-export function findCutoffMisses(
-  memory: MemoryIndex,
-  userMessage: string | undefined,
-  scan: EntityScanResult,
-): string[] {
-  try {
-    if (!userMessage || scan.totalEntities <= scan.scannedEntities) return [];
-    const words = [...new Set(userMessage.toLowerCase().match(/[a-z0-9][a-z0-9_-]{2,}/g) ?? [])].slice(0, 64);
-    if (words.length === 0) return [];
-    const placeholders = words.map(() => "?").join(",");
-    const rows = memory["db"]
-      .prepare(`SELECT DISTINCT entity_slug FROM entity_mentions WHERE entity_slug IN (${placeholders})`)
-      .all(...words) as Array<{ entity_slug: string }>;
-    return rows.map((r) => r.entity_slug).filter((s) => !scan.scannedSlugs.has(s));
-  } catch {
-    return [];
-  }
 }

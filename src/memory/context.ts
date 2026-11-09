@@ -7,7 +7,7 @@ import { projectDocsDir } from "./project-docs/folders.js";
 import type { FactKind } from "./types.js";
 import { factTrustSuffix } from "./fact-provenance-label.js";
 import { safeReadTextFile } from "./utils.js";
-import { scanMentionedEntities, renderKnownEntitiesBody, findCutoffMisses } from "./entity-context.js";
+import { scanMentionedEntities, renderKnownEntitiesBody } from "./entity-context.js";
 import { logMemoryRecall } from "./recall-telemetry.js";
 import { localDate } from "./retrieval-format.js";
 
@@ -326,11 +326,9 @@ export async function buildContextBlockParts(
       bytesInjected: render.bytes,
       totalEntities: entityScan.totalEntities,
       scannedEntities: entityScan.scannedEntities,
-      cutoffMisses: findCutoffMisses(memory, opts.userMessage, entityScan),
     });
   } else if (entityScan.scannedEntities > 0) {
-    // Zero matches is the interesting datapoint — log it (with cutoff-miss
-    // detection) so "term mentioned but not recognized" is measurable.
+    // Zero matches is the interesting datapoint — log it.
     logMemoryRecall({
       sessionId: opts.sessionId,
       matched: [],
@@ -339,7 +337,6 @@ export async function buildContextBlockParts(
       bytesInjected: 0,
       totalEntities: entityScan.totalEntities,
       scannedEntities: entityScan.scannedEntities,
-      cutoffMisses: findCutoffMisses(memory, opts.userMessage, entityScan),
     });
   }
 

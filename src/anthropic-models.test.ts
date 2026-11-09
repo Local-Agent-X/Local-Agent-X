@@ -439,6 +439,20 @@ describe("Fable 5.1 / Mythos 5.1 — same collision, same rule", () => {
   });
 });
 
+// Fable 5.2 (added 2026-11-09, when the weekly pricing recheck found it upstream).
+describe("Fable 5.2 — its own id, the Fable request shape, the 128K ceiling", () => {
+  it("keeps its identity and its dotted and [1m] aliases", () => {
+    expect(normalizeAnthropicModel("claude-fable-5-2")).toBe("claude-fable-5-2");
+    expect(normalizeAnthropicModel("claude-fable.5.2")).toBe("claude-fable-5-2");
+    expect(normalizeAnthropicModel("claude-fable-5-2[1m]")).toBe("claude-fable-5-2");
+  });
+
+  it("never sends thinking off, and streams up to 128K", () => {
+    expect(anthropicThinkingOffMode("claude-fable-5-2")).toBe("always-on");
+    expect(anthropicMaxOutputTokens("claude-fable-5-2")).toBe(128_000);
+  });
+});
+
 // Sonnet 5.5 and Haiku 5.5 (added 2026-10-26, when the weekly pricing recheck
 // found them upstream). The rules are prefix patterns, so `sonnet-5` already
 // matched `claude-sonnet-5-5` and put Sonnet 5's `thinking: {type: "disabled"}`

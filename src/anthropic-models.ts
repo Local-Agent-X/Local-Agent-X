@@ -37,6 +37,11 @@ export function normalizeAnthropicModel(model: string, mode: AnthropicAuthMode =
   // outright, and the API's default effort drops to `medium`. Tested BEFORE
   // the opus-5 branch below — see matchesModelRef for why the order matters.
   if (matchesModelRef(lower, ["claude-opus-5-5", "claude-opus-5.5"]) || lower === "claude-opus-5-5[1m]") return "claude-opus-5-5";
+  // Fable 5.2 — the current Fable ($8/$40, cache reads $0.20; 1M/128K, thinking
+  // always on). Its history-editing check binds replayed thinking blocks on
+  // every account; LAX never replays them (signatures are not kept), so it has
+  // nothing to trip.
+  if (matchesModelRef(lower, ["claude-fable-5-2", "claude-fable.5.2"]) || lower === "claude-fable-5-2[1m]") return "claude-fable-5-2";
   // Fable 5.1 / Mythos 5.1 — same 1M/128K/always-on shape as their .0 siblings
   // under their own ids. Listed so the dated-snapshot rule can't leave them
   // unnormalized and falling back to the 8K output floor.
@@ -306,7 +311,7 @@ export function anthropicMaxOutputTokens(model: string): number {
   if (matchesModelRef(id, ["claude-haiku-4-5"])) return 64_000;
   if (
     matchesModelRef(id, [
-      "claude-fable-5", "claude-fable-5-1", "claude-mythos-5", "claude-mythos-5-1",
+      "claude-fable-5", "claude-fable-5-1", "claude-fable-5-2", "claude-mythos-5", "claude-mythos-5-1",
       "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-sonnet-5", "claude-haiku-5-5",
       "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-opus-4-5",
       "claude-sonnet-4-6", "claude-sonnet-4-5",

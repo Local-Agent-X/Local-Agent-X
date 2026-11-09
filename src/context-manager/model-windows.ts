@@ -78,6 +78,7 @@ const MODEL_CONTEXTS: Record<string, number> = {
   "claude-opus-5-5": 1_000_000,
   "claude-fable-5": 1_000_000,
   "claude-fable-5-1": 1_000_000,
+  "claude-fable-5-2": 1_000_000,
   "claude-mythos-5-1": 1_000_000,
   "claude-mythos-5": 1_000_000,
   "claude-sonnet-5-5": 1_000_000,

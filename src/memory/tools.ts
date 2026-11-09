@@ -14,7 +14,7 @@ import { createProcessTools } from "./tools/process.js";
 import { createIngestTool } from "./tools/ingest.js";
 import { createDiscoverTool } from "./tools/discover.js";
 import { createForgetImportsTool } from "./tools/forget-imports.js";
-import { createChangesTool } from "./tools/changes.js";
+import { createChangesTool, createUndoTool } from "./tools/changes.js";
 
 export function createMemoryTools(memory: MemoryIndex) {
   const search = createSearchTools(memory);
@@ -55,5 +55,6 @@ export function createMemoryTools(memory: MemoryIndex) {
     forgetImports,
     byName(process, "memory_consolidate"),
     createChangesTool(memory),
+    createUndoTool(memory),
   ];
 }

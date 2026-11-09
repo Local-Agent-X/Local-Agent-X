@@ -115,6 +115,8 @@ function handleSettingsChanged(msg) {
     if (typeof selectedJob !== 'undefined' && selectedJob) refreshSelectedCronJob();
     else loadCronJobs();
   }
+  // A memory change was undone (another tab, the agent): the Memory changes list re-reads.
+  if (msg.settings.memoryChanges && typeof window.refreshMemoryChanges === 'function') window.refreshMemoryChanges();
 }
 
 // Settings the Tool Policy card draws besides the three kill-switches above;

@@ -38,9 +38,11 @@ export const TOOL_POLICIES_MEMORY: Record<string, ToolPolicyRow> = {
   // remember/update_fact also record the user message they answered
   // (facts.source_message_id), so a fact points at the words it came from.
   memory_save:           { kernel: "database", ariAction: "mutate", risk: "workspace-write", capabilities: [], tags: [], essentialRank: 8, blurb: { say: "remember that I prefer tabs over spaces", does: "Save a fact to memory." }, reads: ["session"], memoryWrite: true },
-  // The change log: list (read) or undo one change (a write the log itself
-  // records, so an undo can be undone). Undo asks unless the user asked for it.
-  memory_changes:        { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["memory-facts"], reads: ["session"], blurb: { say: "what happened to my reta dose?", does: "Show how a memory changed, who changed it and why, and undo a change." } },
+  // The change log (memory/fact-events.ts): memory_changes only reads, so its
+  // list always reaches the model; memory_undo reverses one change (logged
+  // itself, so an undo can be undone) and asks unless the user asked for it.
+  memory_changes:        { kernel: "internal", risk: "safe", capabilities: [], tags: ["memory-search"], blurb: { say: "what happened to my reta dose?", does: "Show how a memory changed, who changed it and why." }, loop: { discovery: true } },
+  memory_undo:           { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["memory-facts"], reads: ["session"], companions: ["memory_changes"], blurb: { say: "put my old reta dose back", does: "Undo one memory change." } },
   memory_consolidate:    { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [], blurb: { say: "consolidate recent conversations", does: "Extract durable facts from recent chunks." } },
   memory_discover:       { kernel: "internal", risk: "safe", capabilities: [], tags: [] },
   memory_dream:          { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [], blurb: { say: "dream now", does: "Tidy stored facts + launch the deep agentic reflection over recent transcripts." } },

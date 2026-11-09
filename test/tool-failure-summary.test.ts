@@ -492,8 +492,11 @@ describe("collectToolFailures — memory writes are bookkeeping, not a terminato
   it("KNOWN GAP: the pinned list IS the derived gap — an eighth name cannot slip in unnoticed", () => {
     // Derived from the registry rather than restated, so a newly-registered
     // memory_* write tool fails HERE instead of quietly widening the gap.
+    // memory_undo terminates on purpose: undoing a memory change is the work the
+    // user asked for, and its result (what is current now) is said to them.
+    const TERMINATES_ON_PURPOSE = new Set(["memory_undo"]);
     const derived = Object.keys(TOOLS)
-      .filter(n => n.startsWith("memory_") && isMutationTool(n) && !isMemoryWrite(n))
+      .filter(n => n.startsWith("memory_") && isMutationTool(n) && !isMemoryWrite(n) && !TERMINATES_ON_PURPOSE.has(n))
       .sort();
     expect(derived).toEqual([...KNOWN_GAP_MEMORY_TOOLS].sort());
   });

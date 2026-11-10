@@ -20,7 +20,7 @@
  * cached for a second per process.
  */
 import { createHash } from "node:crypto";
-import { readdirSync, readFileSync, rmSync } from "node:fs";
+import { readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { atomicWriteFileSync, ensureDirFor } from "../util/json-store.js";
@@ -41,6 +41,11 @@ export interface Claim {
   path: string;
   source: "declared" | "written";
   since: string;
+  /** For a written file: its size and mtime right after this holder's last
+   *  write. A file still in that state was last written by this holder, which
+   *  is how a change seen later in a shared folder is credited to the agent
+   *  that made it and not to whoever looked next (`lastWrittenByOther`). */
+  left?: string;
 }
 
 export interface WorkHolder {
@@ -166,7 +171,7 @@ export function recordClaims(input: ClaimInput): void {
   const described = describeFromOp(input.opId);
   for (const [repoKey, { checkout, rels }] of byRepo) {
     const prior = readAll().find((h) => h.sessionId === input.sessionId && h.repoKey === repoKey);
-    const claims = mergeClaims(prior?.claims ?? [], rels, input.source, stamp);
+    const claims = mergeClaims(prior?.claims ?? [], rels, input.source, stamp, checkout);
     write({
       v: 1, sessionId: input.sessionId, repoKey, checkout,
       kind: input.opId ? described.kind : input.kind ?? prior?.kind ?? described.kind,
@@ -179,16 +184,39 @@ export function recordClaims(input: ClaimInput): void {
   }
 }
 
-function mergeClaims(prior: Claim[], rels: string[], source: Claim["source"], stamp: string): Claim[] {
+/** A file's size and mtime, or "gone". */
+export function fileState(absPath: string): string {
+  try {
+    const st = statSync(absPath);
+    return `${st.size}:${st.mtimeMs}`;
+  } catch {
+    return "gone";
+  }
+}
+
+function mergeClaims(prior: Claim[], rels: string[], source: Claim["source"], stamp: string, checkout: string): Claim[] {
   const out = [...prior];
   for (const rel of rels) {
     const key = normRepoPath(rel);
     const at = out.findIndex((c) => normRepoPath(c.path) === key);
+    const left = source === "written" ? { left: fileState(join(checkout, rel)) } : {};
     // A written claim on a path declared earlier keeps its earlier `since`.
-    if (at >= 0) { if (source === "written") out[at] = { ...out[at], source }; continue; }
-    out.push({ path: rel, source, since: stamp });
+    if (at >= 0) { if (source === "written") out[at] = { ...out[at], source, ...left }; continue; }
+    out.push({ path: rel, source, since: stamp, ...left });
   }
   return out.slice(-MAX_CLAIMS);
+}
+
+/** Whether `absPath` is still as another agent in the same checkout left it:
+ *  the change is theirs, already claimed, and not `sessionId`'s to be credited
+ *  with for having looked at the folder afterwards. */
+export function lastWrittenByOther(sessionId: string, absPath: string, fallbackRoot?: string): boolean {
+  const place = locateInRepo(absPath, fallbackRoot);
+  if (!place) return false;
+  const target = normRepoPath(place.rel);
+  const state = fileState(absPath);
+  return readAll().some((h) => h.sessionId !== sessionId && h.repoKey === place.repoKey && sameDir(h.checkout, place.checkout)
+    && h.claims.some((c) => c.left === state && normRepoPath(c.path) === target));
 }
 
 /** A turn of `sessionId` started on `opId`: its holders are current again. */

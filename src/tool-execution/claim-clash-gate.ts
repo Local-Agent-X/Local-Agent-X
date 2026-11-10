@@ -70,7 +70,7 @@ function askReason(clashes: Clash[]): string {
   const c = clashes[0];
   const more = clashes.length > 1 ? ` (and ${clashes.length - 1} more)` : "";
   return `${who(c).replace(/\*\*/g, "")} is changing \`${c.path}\`${more} in this same folder`
-    + `${c.other.task ? ` (task: ${c.other.task})` : ""}; writing it now can overwrite their unfinished edit`;
+    + `${c.other.task ? ` (task: ${c.other.task})` : ""}; writing it now can overwrite their unfinished edit (this chat can work in its own copy instead: the strip above the chat offers it)`;
 }
 
 /** Run before approval: raise clashes with other live agents' claims. */

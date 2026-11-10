@@ -14,6 +14,7 @@ import { locateInRepo } from "./repo-locate.js";
 import { holdersOfSession, liveHolders, type HolderView } from "./work-claims.js";
 import { notesSince, type HandoverNote } from "./handover-notes.js";
 import { normRepoPath, repoPathsOverlap } from "./path-overlap.js";
+import { ownCopyOf } from "./chat-own-copy.js";
 
 const MAX_NOTES = 8;
 const NOTE_CHARS = 300;
@@ -52,9 +53,23 @@ function noteLine(n: HandoverNote): string {
   return `- [${n.at.slice(11, 16)} UTC] ${n.displayName}: ${n.text.slice(0, NOTE_CHARS)}${about}`;
 }
 
+/** A chat that works in its own copy of the project is told where, on every
+ *  turn: paths it used before the move point at the shared folder, which it
+ *  can no longer write (agency/chat-own-copy.ts). */
+function ownCopyLines(sessionId: string): string[] {
+  const copy = ownCopyOf(sessionId);
+  if (!copy) return [];
+  const fwd = (p: string) => p.replace(/\\/g, "/");
+  return [
+    `You work in your own copy of this project: ${fwd(copy.path)} (branch ${copy.branch}), not in ${fwd(copy.repoRoot)}.`,
+    `A path under ${fwd(copy.repoRoot)} from earlier in this conversation is the same file under ${fwd(copy.path)}; use relative paths. `
+      + `Your changes reach ${copy.baseBranch} when the user merges this copy back, not before.`,
+  ];
+}
+
 /** The section for `sessionId`'s next turn; marks the notes it shows as read. */
 export function otherAgentsSection(sessionId: string): string {
-  const parts: string[] = [];
+  const parts: string[] = ownCopyLines(sessionId);
   const mine = holdersOfSession(sessionId).flatMap((h) => h.claims.map((c) => normRepoPath(c.path)));
   for (const repoKey of reposOfSession(sessionId)) {
     const others = liveHolders(repoKey).filter((h) => h.sessionId !== sessionId && h.state !== "recent");

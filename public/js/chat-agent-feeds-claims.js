@@ -70,10 +70,50 @@ function otherAgentsStripHtml(rows) {
   return '<span class="other-agents-label">Also working here:</span>' + items.join('');
 }
 
+// A chat's own copy of its project (src/agency/chat-own-copy.ts): offered when
+// another chat writes the same folder, and merged back or left from here.
+var ownCopyState = null;
+var ownCopyMessage = '';
+
+function ownCopyHtml(state, message) {
+  var html = '';
+  if (state && state.copy) {
+    html = '<span class="own-copy" title="This chat edits its own copy of the project. Nothing reaches ' + esc(state.copy.baseBranch) + ' until you merge it back.">'
+      + 'Own copy &middot; <code>' + esc(state.copy.branch) + '</code></span>'
+      + '<button type="button" class="own-copy-btn" onclick="ownCopyAction(\'merge\')">Merge back</button>'
+      + '<button type="button" class="own-copy-btn quiet" onclick="ownCopyAction(\'leave\')" title="Drop the copy without merging. Its branch is kept if it has unmerged work.">Leave</button>';
+  } else if (state && (state.sharesFolderWith || []).length) {
+    html = '<span class="own-copy warn" title="Both chats edit the very same files on disk.">Same folder as ' + esc(state.sharesFolderWith.join(', ')) + '</span>'
+      + '<button type="button" class="own-copy-btn" onclick="ownCopyAction(\'start\')" title="Give this chat its own copy of the project (a git worktree from the last commit). Merge it back when its work is done.">Work in own copy</button>';
+  }
+  if (message) html += '<span class="own-copy-msg">' + esc(message) + '</span>';
+  return html;
+}
+
+async function ownCopyAction(action) {
+  var chatId = workClaimsChatId();
+  if (!chatId) return;
+  ownCopyMessage = action === 'merge' ? 'Merging…' : '';
+  renderOtherAgentsStrip();
+  try {
+    var res = await apiFetch('/api/work-claims/own-copy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sessionId: chatId, action: action }),
+    });
+    var data = await res.json();
+    if (!res.ok) ownCopyMessage = data.error || 'That did not work.';
+    else if (action === 'merge') ownCopyMessage = 'Merged ' + (data.files || 0) + ' file(s)' + (data.overlapNote || '') + '.';
+    else if (action === 'leave') ownCopyMessage = data.branchKept ? 'Left. Unmerged work is kept on branch ' + data.branchKept + '.' : 'Left.';
+    else ownCopyMessage = 'This chat now works in its own copy.';
+  } catch (e) { ownCopyMessage = 'Could not reach the server.'; }
+  await refreshWorkClaims();
+}
+
 function renderOtherAgentsStrip() {
   var host = document.getElementById('other-agents-strip');
   if (!host) return;
-  var html = otherAgentsStripHtml(otherAgentsRows);
+  var html = otherAgentsStripHtml(otherAgentsRows) + ownCopyHtml(ownCopyState, ownCopyMessage);
   host.innerHTML = html;
   host.style.display = html ? '' : 'none';
 }
@@ -86,6 +126,8 @@ async function refreshWorkClaims() {
     var data = await res.json();
     workClaimsRows = Array.isArray(data.holders) ? data.holders : [];
     otherAgentsRows = Array.isArray(data.others) ? data.others : [];
+    ownCopyState = data.ownCopy || null;
+    if (chatId !== otherAgentsForChat) ownCopyMessage = '';
     otherAgentsForChat = chatId;
     renderWorkClaims();
     renderOtherAgentsStrip();

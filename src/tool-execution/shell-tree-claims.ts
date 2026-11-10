@@ -13,6 +13,7 @@ import { shellRunDir } from "./create-target-path.js";
 import { sessionWorkRootOf } from "../workspace/paths.js";
 import { locateInRepo } from "../agency/repo-locate.js";
 import { baselineTree, changedSinceLastLook } from "../agency/tree-changes.js";
+import { lastWrittenByOther } from "../agency/work-claims.js";
 
 type ShellCall = Pick<ToolCallContext, "tc" | "args" | "sessionId">;
 
@@ -26,17 +27,29 @@ function shellCheckout(ctx: ShellCall): string | null {
   return place && !place.repoKey.startsWith("dir:") ? place.checkout : null;
 }
 
-/** Before a shell command runs: what the checkout looks like, if this session
- *  has not looked yet. */
+/** Before a shell command runs: look at the checkout again and keep nothing.
+ *  Whatever changed since this session's last look was not this command, so
+ *  only what changes from here to the look after it can be credited to it. */
 export function baselineBeforeShell(ctx: ShellCall): void {
   try {
     const checkout = shellCheckout(ctx);
-    if (checkout) baselineTree(ctx.sessionId!, checkout);
+    if (!checkout) return;
+    baselineTree(ctx.sessionId!, checkout);
+    changedSinceLastLook(ctx.sessionId!, checkout);
   } catch { /* coordination is best-effort */ }
 }
 
-/** After a shell command ran: the files that changed since the last look, absolute. */
+/**
+ * After a shell command ran: the files it changed, absolute. A file that is
+ * still exactly as another agent in the same folder left it (its own write,
+ * recorded on its claim) is that agent's, not this command's: two chats in
+ * one folder are each credited only with what they changed. What remains
+ * uncertain is two commands changing files in one folder at the same moment.
+ */
 export function pathsShellChanged(ctx: ShellCall): string[] {
   const checkout = shellCheckout(ctx);
-  return checkout ? changedSinceLastLook(ctx.sessionId!, checkout).map((rel) => join(checkout, rel)) : [];
+  if (!checkout) return [];
+  return changedSinceLastLook(ctx.sessionId!, checkout)
+    .map((rel) => join(checkout, rel))
+    .filter((abs) => !lastWrittenByOther(ctx.sessionId!, abs));
 }

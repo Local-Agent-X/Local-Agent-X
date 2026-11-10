@@ -13,29 +13,29 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 1982 non-test source files · 83 oversized · 265 nearing the size cap.
+**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 1984 non-test source files · 83 oversized · 265 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 177 | 29 | XL | 1 |
-| `src/security/` | 162 | 60 | XL | 2 |
+| `src/security/` | 163 | 60 | XL | 2 |
 | `src/tools/` | 129 | 233 | XL | 9 |
 | `src/tool-execution/` | 94 | 88 | XL | 2 |
 | `src/workspace/` | 91 | 3 | M |  |
 | `src/canonical-loop/` | 84 | 283 | XL | 11 |
 | `src/providers/` | 76 | 27 | L | 1 |
-| `src/session/` | 60 | 11 | M |  |
+| `src/session/` | 61 | 11 | M |  |
 | `src/data-lineage/` | 59 | 12 | L |  |
 | `src/memory/` | 55 | 156 | XL | 4 |
 | `src/browser/` | 51 | 93 | XL | 5 |
 | `src/tool-policy/` | 47 | 21 | L |  |
-| `src/util/` | 46 | 3 | S |  |
+| `src/util/` | 47 | 3 | S |  |
 | `src/local-runtimes/` | 45 | 26 | XL | 1 |
 | `src/threat/` | 44 | 13 | L |  |
-| `src/agency/` | 38 | 31 | L |  |
-| `src/chat-ws/` | 38 | 23 | L |  |
+| `src/agency/` | 41 | 32 | XL |  |
+| `src/chat-ws/` | 39 | 23 | L |  |
 | `src/auth/` | 36 | 11 | L |  |
 | `src/context-manager/` | 29 | 15 | M |  |
 | `src/agent-store/` | 28 | 7 | M | 1 |
@@ -61,7 +61,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/app-scaffold/` | 12 | 7 | M |  |
 | `src/ari-kernel/` | 12 | 12 | M |  |
 | `src/integrations/` | 12 | 15 | M |  |
-| `src/routes/` | 12 | 104 | XL | 17 |
+| `src/routes/` | 12 | 105 | XL | 17 |
 | `src/whatsapp-bridge/` | 12 | 8 | M | 1 |
 | `src/agent-loop/` | 11 | 1 | S |  |
 | `src/persistence/` | 11 | 2 | S |  |

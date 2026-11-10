@@ -26,6 +26,7 @@ import { workspacePath } from "../config.js";
 import { ProjectStore } from "../agent-store/project-store.js";
 import { sessionWorkRootOf, setSessionWorkRoot } from "../workspace/paths.js";
 import { sessionModeOf, type ChatMode } from "./mode.js";
+import { ownCopyFolder } from "../agency/chat-own-copy.js";
 
 /** A real directory at `named` (absolute, or relative to the workspace), or nothing. */
 function realFolder(named: string | undefined): string | undefined {
@@ -66,12 +67,20 @@ export interface ProjectFolderSession {
   folder?: string;
 }
 
-/** Anchor a session at its project folder. Returns the folder, if any. */
-export function stampSessionProjectFolder(session: ProjectFolderSession): string | undefined {
+/** The project folder a session's record names (never its own copy), if any. */
+export function sessionProjectFolder(session: ProjectFolderSession): string | undefined {
   if (session.id.startsWith("ide-")) return undefined;
-  const folder = sessionModeOf(session) === "code"
+  return sessionModeOf(session) === "code"
     ? codeSessionFolder(session.projectId ? ProjectStore.getInstance().get(session.projectId)?.workspace : undefined)
     : chatSessionFolder(session.folder);
+}
+
+/** Anchor a session at its project folder: its own copy of the project when it
+ *  has one (agency/chat-own-copy.ts), else the folder itself. Returns the
+ *  folder, if any. */
+export function stampSessionProjectFolder(session: ProjectFolderSession): string | undefined {
+  if (session.id.startsWith("ide-")) return undefined;
+  const folder = ownCopyFolder(session.id) ?? sessionProjectFolder(session);
   if (folder) setSessionWorkRoot(session.id, folder);
   return folder;
 }

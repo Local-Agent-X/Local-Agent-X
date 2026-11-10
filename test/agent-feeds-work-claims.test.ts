@@ -16,17 +16,19 @@ const miscJs = readFileSync(join(here, "../public/js/chat-ws-handler-misc.js"), 
 const esc = (s: unknown) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
 let rows: unknown[] = [];
 let others: unknown[] = [];
-const apiFetch = vi.fn(async (_url: string) => ({ ok: true, json: async () => ({ holders: rows, others }) }));
+let ownCopy: unknown = null;
+const apiFetch = vi.fn(async (_url: string, _init?: unknown) => ({ ok: true, json: async () => ({ holders: rows, others, ownCopy }) }));
 
-type Claims = { refreshWorkClaims: () => Promise<void>; workClaimsHtml: (r: unknown[]) => string };
+type Claims = { refreshWorkClaims: () => Promise<void>; workClaimsHtml: (r: unknown[]) => string; ownCopyAction: (a: string) => Promise<void> };
 function load(): Claims {
-  return new Function("esc", "apiFetch", "setInterval", `${claimsJs}\nreturn { refreshWorkClaims, workClaimsHtml };`)(esc, apiFetch, () => 0);
+  return new Function("esc", "apiFetch", "setInterval", `${claimsJs}\nreturn { refreshWorkClaims, workClaimsHtml, ownCopyAction };`)(esc, apiFetch, () => 0);
 }
 
 beforeEach(() => {
   document.body.innerHTML = `<div id="work-claims" style="display:none"></div><span id="other-agents-strip" style="display:none"></span>`;
   apiFetch.mockClear();
   others = [];
+  ownCopy = null;
   (window as { activeChat?: unknown }).activeChat = null;
 });
 
@@ -48,6 +50,24 @@ describe("the chat window's strip of the other agents in its project", () => {
     expect(agents[0].textContent).toContain("Fix STT");
     expect(agents[0].querySelector("code")?.textContent).toBe("src/voice/stt.ts");
     expect(agents[1].querySelector(".other-agent-warn")).toBeNull();
+  });
+
+  it("offers the chat its own copy when another chat writes the same folder, and merges it back from there", async () => {
+    (window as { activeChat?: unknown }).activeChat = { id: "chat-me" };
+    ownCopy = { copy: null, sharesFolderWith: ["Voice chat"] };
+    const claims = load();
+    await claims.refreshWorkClaims();
+    const strip = document.getElementById("other-agents-strip")!;
+    expect(strip.textContent).toContain("Same folder as Voice chat");
+    expect(strip.querySelector(".own-copy-btn")?.textContent).toBe("Work in own copy");
+
+    ownCopy = { copy: { branch: "chat/ab12", baseBranch: "main" }, sharesFolderWith: [] };
+    await claims.ownCopyAction("start");
+    expect(apiFetch.mock.calls.some((c) => c[0] === "/api/work-claims/own-copy" && JSON.parse((c[1] as { body: string }).body).action === "start")).toBe(true);
+    expect(strip.textContent).toContain("Own copy");
+    expect(strip.textContent).toContain("chat/ab12");
+    expect([...strip.querySelectorAll(".own-copy-btn")].map((b) => b.textContent)).toEqual(["Merge back", "Leave"]);
+    expect(strip.textContent).toContain("This chat now works in its own copy.");
   });
 
   it("is hidden when the chat works alone", async () => {

@@ -16,6 +16,7 @@ import { PROVIDER_IDS, type ProviderId } from "../../../providers/provider-ids.j
 import type { ChannelKind } from "../../../agent-request/types.js";
 import { sessionModeOf } from "../../../session/mode.js";
 import { stampSessionProjectFolder, takeBoundFolder } from "../../../session/project-folder.js";
+import { anchorOwnCopy } from "../../../agency/chat-own-copy.js";
 import type { Session } from "../../../types.js";
 
 const logger = createLogger("routes.chat.run-turn");
@@ -80,6 +81,9 @@ function applyRequestToSession(session: Session, args: RunChatTurnArgs, message:
   }
   // A session works in its project folder (session/project-folder.ts).
   stampSessionProjectFolder({ id: args.sessionId, mode: session.mode, projectId: session.projectId, folder: session.folder });
+  // A chat with its own copy of the project writes there, fenced off the
+  // parent repo (agency/chat-own-copy.ts).
+  anchorOwnCopy(args.ctx.security, args.sessionId);
 }
 
 /** A folder a tool bound the chat to during the turn becomes the session's (session/project-folder.ts). */

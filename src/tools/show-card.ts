@@ -7,6 +7,9 @@
  * rides the tool result's `metadata.card` (persisted with the tool row like any
  * result metadata) and a call forwards it (server/voice-ws.ts).
  *
+ * The picture is found by the tool, not the model (card-picture.ts): an image search,
+ * then the linked page in a hidden browser tab, then a picture the model passed.
+ *
  * The image is the one thing fetched off this computer. It goes through the hardened
  * egress path (canonicalFetch: SSRF pin, redirect re-checks, the strict allowlist)
  * and is saved under the workspace's images/cards, served as /images/cards/<file>
@@ -26,6 +29,10 @@ import { getRuntimeConfig } from "../config.js";
 import { canonicalFetch } from "./web-egress.js";
 import { confineToDir } from "../security/layer/index.js";
 import { createLogger } from "../logger.js";
+import { sessionIdOf } from "../tool-execution/internal-args.js";
+import { findCardPicture } from "./card-picture.js";
+import { searchWebImages } from "./image-search-tool.js";
+import { pagePicture } from "../browser/page-picture.js";
 
 const logger = createLogger("tools.show-card");
 
@@ -126,15 +133,16 @@ export const showCardTool: ToolDefinition = {
     "distance) and up to 3 links (store page, recipe, directions, article), with the source site. Use it whenever a picture " +
     "or a link helps more than words: products to compare, a recipe, a place, a person, a news story, a result you found. " +
     "One card per item; call it once for each of a few options. On a voice call the card is SHOWN, not spoken: say briefly " +
-    "what you are showing ('here are three gliders') and don't read the card's details aloud. `image` is the image's web " +
-    "address (from the page you found it on) or an /images path you made; the desktop fetches and keeps it. Links only " +
-    "open pages: showing a store link never buys anything.",
+    "what you are showing ('here are three gliders') and don't read the card's details aloud. Give the card its link: " +
+    "the card finds its own picture from it (an image search, then the linked page), so don't look for pictures " +
+    "yourself. `image` is only for a card with no link: a web address or an /images path you made. Links only open " +
+    "pages: showing a store link never buys anything.",
   parameters: {
     type: "object",
     properties: {
       title: { type: "string", description: "What the card is about (a product name, a recipe, a place)." },
       subtitle: { type: "string", description: "One short line under the title." },
-      image: { type: "string", description: "The image: its https address, or an /images/... path." },
+      image: { type: "string", description: "Only for a card with no link: its https address, or an /images/... path. A card with a link finds its own picture." },
       facts: {
         type: "array",
         description: "Up to 4 short label/value pairs, e.g. {label:'Price', value:'$189'}.",
@@ -152,14 +160,17 @@ export const showCardTool: ToolDefinition = {
   async execute(args): Promise<ToolResult> {
     const card = cardOf(args);
     if (card === null) return { content: "show_card needs a title.", isError: true };
+    const modelImage = typeof args.image === "string" && args.image.trim() ? args.image.trim() : undefined;
+    const picture = await findCardPicture(card, modelImage, sessionIdOf(args) ?? "default", {
+      search: searchWebImages,
+      page: pagePicture,
+      save: (source) => cardImage(source),
+    });
     let note = "";
-    if (typeof args.image === "string" && args.image.trim()) {
-      try {
-        card.image = await cardImage(args.image.trim());
-      } catch (e) {
-        note = ` (without its image: ${(e as Error).message})`;
-        logger.info(`[show_card] "${card.title}" shown without its image: ${(e as Error).message}`);
-      }
+    if (picture) card.image = picture;
+    else {
+      note = " (without a picture: none could be found)";
+      logger.info(`[show_card] "${card.title}" shown without a picture`);
     }
     return { content: `Shown to the user as a card: "${card.title}"${note}.`, metadata: { card } };
   },

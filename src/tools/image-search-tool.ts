@@ -12,7 +12,7 @@ import { wrapExternalContent } from "../sanitize.js";
  * Commons (keyless, license-clean — the always-available safety net).
  */
 
-interface ImageHit {
+export interface ImageHit {
   url: string;
   title: string;
   width: number;
@@ -22,6 +22,8 @@ interface ImageHit {
    *  routinely tarpit non-browser TLS fingerprints; the engine's own CDN
    *  serves everyone — this is the auto-fallback the acquirer uses. */
   fallback?: string;
+  /** The web page the picture is on (Brave, DuckDuckGo). */
+  page?: string;
 }
 
 const UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/125.0 Safari/537.36";
@@ -35,7 +37,7 @@ async function braveImages(query: string, max: number, apiKey: string, signal: A
   return (json.results ?? []).slice(0, max).flatMap((r) => {
     const url = r.properties?.url ?? r.thumbnail?.src;
     const thumb = r.thumbnail?.src;
-    return url ? [{ url, title: r.title ?? "", width: 0, height: 0, source: r.url ?? "brave", fallback: thumb && thumb !== url ? thumb : undefined }] : [];
+    return url ? [{ url, title: r.title ?? "", width: 0, height: 0, source: r.url ?? "brave", fallback: thumb && thumb !== url ? thumb : undefined, page: r.url }] : [];
   });
 }
 
@@ -49,10 +51,11 @@ async function ddgImages(query: string, max: number, signal: AbortSignal): Promi
   const res = await canonicalFetch(`https://duckduckgo.com/i.js?l=us-en&o=json&q=${enc(query)}&vqd=${vqd}&f=,,,&p=1`, {
     headers: { "User-Agent": UA, Accept: "application/json", Referer: "https://duckduckgo.com/" }, signal,
   });
-  const json = (await res.json()) as { results?: { image: string; thumbnail?: string; title?: string; width?: number; height?: number; source?: string }[] };
+  const json = (await res.json()) as { results?: { image: string; thumbnail?: string; title?: string; width?: number; height?: number; source?: string; url?: string }[] };
   return (json.results ?? []).slice(0, max).map((r) => ({
     url: r.image, title: r.title ?? "", width: r.width ?? 0, height: r.height ?? 0, source: r.source ?? "duckduckgo",
     fallback: r.thumbnail && r.thumbnail !== r.image ? r.thumbnail : undefined,
+    ...(r.url ? { page: r.url } : {}),
   }));
 }
 
@@ -78,6 +81,21 @@ async function wikimediaImages(query: string, max: number, signal: AbortSignal):
 }
 
 type Provider = "brave" | "ddg" | "wikimedia";
+
+/** Web image results for a query from the general search engines (Brave when
+ *  keyed, then DuckDuckGo): the first that answers. No Wikimedia, whose
+ *  license-clean files are the wrong pictures for a product or a place. Empty
+ *  when none answers. */
+export async function searchWebImages(query: string, max: number, signal: AbortSignal): Promise<ImageHit[]> {
+  const key = process.env.BRAVE_API_KEY;
+  for (const p of (key ? ["brave", "ddg"] : ["ddg"]) as Provider[]) {
+    try {
+      const hits = dedupe(await run(p, query, max, key, signal));
+      if (hits.length) return hits.slice(0, max);
+    } catch { /* that engine failed or was refused: the next one answers */ }
+  }
+  return [];
+}
 
 async function run(p: Provider, q: string, max: number, key: string | undefined, signal: AbortSignal): Promise<ImageHit[]> {
   if (p === "brave") return key ? braveImages(q, max, key, signal) : [];

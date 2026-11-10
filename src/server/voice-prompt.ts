@@ -62,7 +62,7 @@ export function buildVoiceTail(visualsEnabled: boolean): string {
     "(\"stop calling me X\", \"call me Y\"), set it with memory_set_user_field " +
     "(Name); a name in a translation or language test is not theirs.\n" +
     "• Things worth seeing (products to compare, a recipe, a place, a person, a " +
-    "story): show each with show_card (its image, a few facts, links) and say only " +
+    "story): show each with show_card (a few facts and its link; the card finds its own picture) and say only " +
     "what you're showing (\"here are three\"); the user sees the cards, so don't " +
     "read prices or links aloud.\n" +
     "• Opening or using a website (\"open google\", \"pull up youtube\", \"search " +

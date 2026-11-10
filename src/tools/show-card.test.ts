@@ -9,7 +9,10 @@ import { join } from "node:path";
 
 let workspace = "";
 vi.mock("../config.js", () => ({ getRuntimeConfig: () => ({ workspace }) }));
-const { cardImage, cardOf } = await import("./show-card.js");
+vi.mock("./image-search-tool.js", () => ({ searchWebImages: vi.fn(async () => []) }));
+vi.mock("../browser/page-picture.js", () => ({ pagePicture: vi.fn(async () => null) }));
+const { cardImage, cardOf, showCardTool } = await import("./show-card.js");
+const { searchWebImages } = await import("./image-search-tool.js");
 
 beforeEach(() => { workspace = mkdtempSync(join(tmpdir(), "lax-show-card-")); });
 afterEach(() => { rmSync(workspace, { recursive: true, force: true }); });
@@ -54,5 +57,28 @@ describe("cardImage", () => {
     writeFileSync(join(workspace, "images", "made.png"), "png");
     expect(await cardImage("/images/made.png")).toBe("/images/made.png");
     await expect(cardImage("/images/../secret.txt")).rejects.toThrow(/no such image/);
+  });
+});
+
+describe("show_card finds its own picture", () => {
+  const saved = (name: string) => {
+    mkdirSync(join(workspace, "images"), { recursive: true });
+    writeFileSync(join(workspace, "images", name), "png");
+    return `/images/${name}`;
+  };
+
+  it("a card with a link gets the picture the tool found, not the one the model passed", async () => {
+    const found = saved("found.png");
+    const model = saved("model.png");
+    vi.mocked(searchWebImages).mockResolvedValueOnce([{ url: "https://store.example/p.jpg", fallback: found, title: "", width: 0, height: 0, source: "x" }]);
+    const r = await showCardTool.execute({ title: "LMNT Sparkling", image: model, links: [{ label: "Amazon", url: "https://www.amazon.com/dp/B0" }] });
+    expect((r.metadata as { card: { image?: string } }).card.image).toBe(found);
+  });
+
+  it("a card nothing could be found for is still shown, without a picture", async () => {
+    const r = await showCardTool.execute({ title: "LMNT Sparkling", links: [{ label: "Amazon", url: "https://www.amazon.com/dp/B0" }] });
+    expect((r.metadata as { card: { image?: string } }).card.image).toBeUndefined();
+    expect(r.content).toContain("without a picture");
+    expect(r.isError).toBeUndefined();
   });
 });

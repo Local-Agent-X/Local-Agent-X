@@ -52,6 +52,13 @@ export function markBrowserOffScreen(sessionId: string): void {
   offScreen.add(resolveBrowserSessionId(sessionId));
 }
 
+/** A one-off session is done for good: drop its mark and any timer. */
+export function releaseOffScreenSession(sessionId: string): void {
+  const key = resolveBrowserSessionId(sessionId);
+  offScreen.delete(key);
+  clearIdleTimer(key);
+}
+
 export function isBrowserOffScreen(sessionId: string | undefined): boolean {
   return sessionId !== undefined && offScreen.has(resolveBrowserSessionId(sessionId));
 }

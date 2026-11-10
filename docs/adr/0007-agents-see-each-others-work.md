@@ -254,6 +254,64 @@ coordination layer adds a heads-up when two agents start the same heavy command
 (`npm run build`, the full test suite) in one repo within a minute, in the same
 edit-time note.
 
+Those caps count agents *working at the same instant*, not windows open: a chat
+waiting for the user's next message holds no slot. The hard ceiling today is
+the global 12 (`maxConcurrentAgents` is clamped to 12 because
+`MAX_CONCURRENT_WORKTREES` in `src/agency/worktree-core.ts` is 12); the chat
+cap is settable up to 20 but the global ceiling wins. Raising past 12 is a code
+change to both, and only worth it once usage limits allow it.
+
+### 7. A lead agent answers coordination questions instead of the user
+
+With six agents, the questions of §2, §5 and §6 (share this file? take a
+worktree? merge despite overlap?) would reach the user many times an hour. A
+**lead** answers them instead.
+
+The lead is not a new kind of agent. Two owners already do half of it:
+
+- **The project roster's manager** (`src/project-rosters.ts`,
+  `src/agents/escalation-core.ts`): agents escalate `to: "manager"`, the stall
+  watchdog wakes the manager, and escalates past it to the user at twice the
+  threshold.
+- **The app-build orchestrator** (`src/auto-build/`): splits a goal into chunks
+  with file footprints, schedules them into non-overlapping waves
+  (`planWaves`, `conflict-graph.ts`), runs them in worktrees and merges them in
+  order.
+
+The lead is the roster manager role given to one agent per repo, with three
+jobs:
+
+1. **Answer coordination questions.** When a lead is live in the repo, the §2
+   same-checkout question, the §6 worktree offer and a §5 overlap go to the lead
+   through the escalation path, not to the user. It decides by written rules,
+   in this order: never let two agents write one checkout (move the later one
+   to a worktree); when two branches overlap, merge the smaller first and tell
+   the other to rebase onto it; when two agents claim one area for different
+   goals, pause the later one and post a note to both. It posts every decision
+   as a hand-over note, so the user can read why.
+2. **Delegate.** Given a goal ("ship phone alerts and fix the STT latency"), it
+   splits it into tasks with declared areas, schedules them with `planWaves` so
+   no two running tasks claim the same area, and starts each as a worker, each
+   one a row in the agents panel that can be opened as its own chat window.
+   It can also hand a task to a chat the user already has open, by sending that
+   chat a message (the inject queue, `src/agent-loop/inject-queue.ts`), shown in
+   that chat as coming from the lead.
+3. **Watch.** It reads the claim store, the notes and the workers' progress;
+   when a worker stalls or two drift into one area it steps in by the same
+   rules.
+
+**What the lead never decides.** A coordination question is about who works
+where and in what order. Everything the app asks the user today for safety
+stays the user's: tool approval cards, a write to a control file, a secret's
+first use at a new destination, anything parked in the inbox by
+`deferred-call.ts`. The lead cannot approve those for a worker, and an agent
+cannot escalate one to the lead to get around the user. Product, money,
+security and taste questions from workers also go past the lead to the user's
+inbox, the way the stall watchdog already escalates past a manager.
+
+Without a lead in the repo, coordination questions come to the user as §2–§6
+describe.
+
 ### Module
 
 `src/agency/` owns parallel agents and their isolation; coordination joins it:
@@ -299,3 +357,5 @@ isolation" row gains these, and `src/agency/` gets an `AGENTS.md` naming them.
    an agentxos contract change and a mobile build.
 5. **A second chat on a held folder: offer a worktree (proposed), or give it
    one without asking?**
+6. **The lead: one chat the user marks as lead (proposed), or one started
+   automatically whenever three or more agents work in a repo?**

@@ -324,7 +324,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     images,
     temperature: resolved.temperature,
     maxIterations: resolved.maxIterations,
-    reasoningEffort: resolved.reasoningEffort,
+    reasoningEffort: input.reasoningEffortOverride ?? resolved.reasoningEffort,
     authSource: resolved.authSource,
     // Carried verbatim: `provider`/`model` above already describe the FALLBACK,
     // so without this the caller has no way to tell a rerouted turn from one

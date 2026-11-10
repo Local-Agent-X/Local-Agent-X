@@ -165,6 +165,20 @@ describe("resolveProvider — provider-switch surfacing (PR-12)", () => {
     expect(res.model).toBe("grok-4.3-fast");
   });
 
+  it("reports an override whose provider has no credential, never running its model on the default", async () => {
+    // A chat pinned to Grok (ADR 0007 §8) after the xAI sign-in lapsed: the
+    // saved default is Claude and has creds. The turn used to run quietly on
+    // Claude with the model name chosen for Grok.
+    savedSettings = { provider: "anthropic" };
+    credsPresent.add("anthropic");
+
+    const res = await resolveProvider(CONFIG, SECRETS, "/tmp", "xai", "grok-4.3");
+
+    expect(res.provider).toBe("anthropic");
+    expect(res.providerSwitch).toEqual({ from: "xai", to: "anthropic", reason: "credential-unavailable" });
+    expect(res.model).toBe("claude-opus-4-8");
+  });
+
   it("treats an intentional caller override as a non-switch and keeps its modelOverride", async () => {
     // saved=openai, but caller explicitly overrides to anthropic (which HAS creds).
     savedSettings = { provider: "openai" };

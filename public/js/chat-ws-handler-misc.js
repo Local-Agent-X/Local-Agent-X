@@ -23,6 +23,8 @@ function handleSettingsChanged(msg) {
     _providersCacheTime = 0;
     if (typeof loadProviders === 'function') loadProviders().then(() => updateStatusBar()).catch(() => {});
   }
+  // One chat's own model changed (chat-model-pin.js): redraw if it is on screen.
+  if (msg.settings.sessionModel && typeof laxOnSessionModelChanged === 'function') laxOnSessionModelChanged(msg.settings.sessionModel);
   // A local-runtime sweep found a different set (bootstrap-services.ts): the
   // picker re-reads the list, so "Local Models" appears without the user
   // having to switch provider first.

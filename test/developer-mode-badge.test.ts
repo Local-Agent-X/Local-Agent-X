@@ -11,7 +11,10 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const statusBarJs = readFileSync(join(here, "../public/js/chat-status-bar.js"), "utf8");
+// The status bar reads the chat on screen's model through chat-model-pin.js,
+// which app.html loads just before it.
+const statusBarJs = readFileSync(join(here, "../public/js/chat-model-pin.js"), "utf8")
+  + "\n" + readFileSync(join(here, "../public/js/chat-status-bar.js"), "utf8");
 const miscJs = readFileSync(join(here, "../public/js/chat-ws-handler-misc.js"), "utf8");
 const toolPolicyJs = readFileSync(join(here, "../public/js/settings-tool-policy.js"), "utf8");
 

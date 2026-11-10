@@ -1,15 +1,16 @@
 import type { RouteHandler } from "../../server-context.js";
-import { jsonResponse, readBody } from "../../server-utils.js";
+import { jsonResponse } from "../../server-utils.js";
 import { getRuntimeConfig } from "../../config.js";
-import { loadSettings, saveSettings } from "../../settings.js";
+import { loadSettings } from "../../settings.js";
 import { isEmbeddingModel } from "../../canonical-loop/public/op-facts.js";
 import type { ProviderId } from "../../providers/provider-ids.js";
 import { PROVIDERS, providerRegistryView } from "../../providers/registry.js";
 import { refreshCloudOllama, getCachedCloudModels } from "../../ollama-cloud.js";
 import { getLocalRuntimes, localRuntimesSettling, localRuntimesStale, refreshLocalRuntimes } from "../../local-runtimes/index.js";
-import { isLocalOnlyMode, localProviderDecision, LOCAL_ONLY_BLOCK_MESSAGE } from "../../local-only-policy.js";
+import { isLocalOnlyMode, localProviderDecision } from "../../local-only-policy.js";
 import { CATALOG_PROVIDERS, catalogStale, pickerModelsFor, refreshProviderCatalog } from "../../providers/model-catalog.js";
 import { handleLocalRuntimesRoutes, modelsWithCertification } from "./local-runtimes.js";
+import { chatModelChoice, handleDefaultModelRoute, handleSessionModelRoute } from "./session-model.js";
 
 export const handleProvidersRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
@@ -88,6 +89,10 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
       const reg = PROVIDERS[currentProvider as ProviderId];
       if (reg?.defaultModel) currentModel = reg.defaultModel;
     }
+    // A chat with a model of its own shows that one (session-model.ts).
+    const choice = chatModelChoice(url.searchParams.get("session"), { provider: currentProvider, model: currentModel });
+    currentProvider = choice.current.provider;
+    currentModel = choice.current.model;
     const hasGeminiKey = hasCreds("gemini");
     const hasCustomKey = hasCreds("custom");
     // Provider list, labels, and model arrays derived from PROVIDERS so
@@ -171,48 +176,12 @@ export const handleProvidersRoutes: RouteHandler = async (method, url, req, res,
     // localSettling: the local sweep has not judged every endpoint yet (first
     // boot sweep pending, or its probes were starved), so a missing "local"
     // entry is not an answer — the picker asks again (chat-status-bar.js).
-    json(200, { providers, current: { provider: currentProvider, model: currentModel }, localOnlyMode: localOnly, localSettling: localRuntimesSettling() }); return true;
+    json(200, { providers, current: choice.current, default: choice.default, localOnlyMode: localOnly, localSettling: localRuntimesSettling() }); return true;
   }
 
   // Switch provider
-  if (method === "POST" && url.pathname === "/api/providers/switch") {
-    let body: Record<string, unknown>;
-    try { body = JSON.parse(await readBody(req)); } catch { json(400, { error: "Invalid JSON" }); return true; }
-    let provider = String(body.provider || "");
-    let model = String(body.model || "");
-    if (!provider) { json(400, { error: "provider required" }); return true; }
-    const customBaseUrl = String(loadSettings().customBaseUrl || "");
-    const localDecision = localProviderDecision(provider, getRuntimeConfig(), customBaseUrl);
-    if (!localDecision.allowed) { json(403, { error: localDecision.reason || LOCAL_ONLY_BLOCK_MESSAGE, code: "LOCAL_ONLY" }); return true; }
-
-    // Alias: if the user (or agent) asks for "openai" but only OAuth-based
-    // Codex is configured, route to codex. Avoids saving a broken
-    // provider=openai/model=gpt-5.4 config that dies on every turn.
-    if (provider === "openai" && !hasCreds("openai") && hasCreds("codex")) { provider = "codex"; model = model || PROVIDERS.codex.defaultModel; }
-
-    const settings = { ...loadSettings() };
-    // If no model specified, auto-pick the first model for the new provider —
-    // otherwise we'd leave the previous provider's model (e.g. gpt-5.4)
-    // paired with a different provider (anthropic) and every next turn would
-    // 404 on "model doesn't exist".
-    if (!model) {
-      // Auto-pick the flagship model from the registry. When PROVIDERS
-      // gains a new entry, the dropdown picks up its defaultModel
-      // without needing to edit this file.
-      const reg = PROVIDERS[provider as ProviderId];
-      model = (reg?.defaultModel) || String(settings.model || "");
-    }
-    settings.provider = provider;
-    if (model) settings.model = model;
-    saveSettings(settings);
-    // Broadcast so every open browser tab (bottom status bar, model selector)
-    // updates instantly instead of staying on the stale provider.
-    try {
-      const { broadcastAll } = await import("../../chat-ws/index.js");
-      broadcastAll({ type: "settings_changed", settings: { provider, model } });
-    } catch {}
-    json(200, { ok: true, provider, model: model || settings.model }); return true;
-  }
+  if (await handleSessionModelRoute(method, url, req, res)) return true;
+  if (await handleDefaultModelRoute(method, url, req, res, hasCreds)) return true;
 
   // Provider registry — labels + model lists, no creds gating. Lets the Apps
   // gallery dropdown and the Settings model picker render every provider

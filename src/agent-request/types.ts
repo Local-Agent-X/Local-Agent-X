@@ -79,6 +79,9 @@ export interface AgentRequestInput {
   providerOverride?: string;
   /** Force a specific model. Pairs with providerOverride. */
   modelOverride?: string;
+  /** Thinking depth for this turn in place of settings.reasoningEffort (a
+   *  chat's own pin, session/model-pin.ts). */
+  reasoningEffortOverride?: ReasoningEffort;
   /*
    * (compactedSummary / compactedAt were here before. Compaction now lives
    * as a leading system message in sessionMessages — see types.ts

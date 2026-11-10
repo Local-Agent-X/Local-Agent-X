@@ -115,6 +115,10 @@ export async function resolveProvider(
   // modelOverride is meant for the new provider): a forced fallback means the
   // requested provider could not be honored at all. The fallback chain itself
   // is shared with the classifier context seam — see credential-reroute.ts.
+  // An override whose provider has no credential falls to the saved provider
+  // above without any reroute: that too leaves what was asked for (a chat's
+  // pinned model, ADR 0007 §8), so it is a fallback, not a quiet default.
+  const overrideUnhonored = !isLocalOnlyMode(config) && !!requestedProvider && provider !== requestedProvider;
   const reroute = isLocalOnlyMode(config)
     ? { provider: provider as ProviderId, rerouted: false }
     : rerouteToCredentialedProvider(provider, hasCredsFor, { allowCodexFallback: !config.openaiApiKey });
@@ -140,7 +144,7 @@ export async function resolveProvider(
     const found = await resolveCredential(requestedProvider, { configOpenAIKey: config.openaiApiKey });
     if (found?.credential) rescued = { provider: requestedProvider, credential: found };
   }
-  const forcedFallback = reroute.rerouted && !rescued;
+  const forcedFallback = (reroute.rerouted || overrideUnhonored) && !rescued;
   if (forcedFallback) providerWasOverridden = true;
   // A rescue that lands on something other than the saved provider is an
   // honored caller override arriving late (the override branch above skipped it
@@ -227,6 +231,14 @@ export async function resolveProvider(
     }
   }
 
+  return { provider, apiKey, model, codexApiKey, customBaseURL, ...savedTurnTuning(saved, config), authSource, providerSwitch };
+}
+
+/** The turn's sampling settings from settings.json, over the config defaults. */
+function savedTurnTuning(
+  saved: Record<string, unknown>,
+  config: LAXConfig,
+): { temperature: number; maxIterations: number; reasoningEffort: ReasoningEffort } {
   const temperature = typeof saved.temperature === "number" ? saved.temperature : config.temperature;
   const reasoningEffort = normalizeReasoningEffort(saved.reasoningEffort);
   // settings.json is read schema-less, so legacy saved caps (old UI default 25)
@@ -236,6 +248,5 @@ export async function resolveProvider(
     MIN_MAX_ITERATIONS,
     typeof saved.maxIterations === "number" ? saved.maxIterations : config.maxIterations,
   );
-
-  return { provider, apiKey, model, codexApiKey, customBaseURL, temperature, maxIterations, reasoningEffort, authSource, providerSwitch };
+  return { temperature, maxIterations, reasoningEffort };
 }

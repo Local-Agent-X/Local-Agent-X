@@ -1,6 +1,7 @@
 # ADR 0007 — Agents that work in parallel see each other's work
 
-Status: Proposed — 2026-11-09 (awaiting the owner's OK before any code)
+Status: Accepted — 2026-11-09, with the proposed answer to every question
+below. Built in the order of question 8; stage 1 (each chat's own model) first.
 
 ## Context
 
@@ -406,6 +407,8 @@ isolation" row gains these, and `src/agency/` gets an `AGENTS.md` naming them.
 - **Writes a shell command hides** are seen at the end of the turn, not before.
 
 ## Questions for the owner
+
+Answered 2026-11-09: the proposed answer to each.
 
 1. **Same-folder clash in an attended chat: ask, or note?** Proposed: ask. A
    note alone lets the second chat overwrite the first's half-finished edit.

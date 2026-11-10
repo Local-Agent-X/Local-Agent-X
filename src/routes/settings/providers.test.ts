@@ -12,6 +12,9 @@
  */
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Readable } from "node:stream";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 import type { ProviderId } from "../../providers/provider-ids.js";
 import type { SecretsStore } from "../../secrets.js";
@@ -72,7 +75,14 @@ vi.mock("../../auth/xai.js", () => ({
   loadXaiTokens: authMocks.loadXaiTokens,
   getXaiApiKey: async () => "",
 }));
-vi.mock("../../chat-ws/index.js", () => ({ broadcastAll: () => {} }));
+const broadcasts = vi.hoisted(() => [] as unknown[]);
+vi.mock("../../chat-ws/index.js", () => ({ broadcastAll: (frame: unknown) => { broadcasts.push(frame); } }));
+// Each chat's own model (session/model-pin.ts), kept in a temp file per run.
+const pinFile = vi.hoisted(() => ({ path: "" }));
+vi.mock("../../session/model-pin.js", async (orig) => {
+  const real = await orig<typeof import("../../session/model-pin.js")>();
+  return { ...real, sessionModelPins: () => real.createModelPinStore(pinFile.path) };
+});
 // The route kicks a background catalog refresh for a stale key-based provider;
 // these tests are about the credential gate, so the refresh is a no-op here.
 vi.mock("../../providers/model-catalog.js", async (orig) => ({
@@ -146,6 +156,8 @@ const probe = (id: ProviderId, store: SecretsStore, openaiApiKey?: string) =>
   PROVIDERS[id].auth.hasCredential({ secretsStore: store, configOpenAIKey: openaiApiKey });
 
 beforeEach(() => {
+  pinFile.path = join(mkdtempSync(join(tmpdir(), "lax-pins-")), "pins.json");
+  broadcasts.length = 0;
   settingsBag = {};
   savedSettings.length = 0;
   authMocks.loadTokens.mockReset().mockReturnValue(null);
@@ -246,5 +258,48 @@ describe("POST /api/providers/switch — the openai→codex alias uses the same 
 
     expect(result.body).toMatchObject({ provider: "openai" });
     expect(savedSettings.at(-1)).toMatchObject({ provider: "openai" });
+  });
+});
+
+describe("each chat keeps its own model (ADR 0007 §8)", () => {
+  const store = () => makeStore({ XAI_API_KEY: "xai-real" });
+  beforeEach(() => { authMocks.isAnthropicCliAuthenticated.mockReturnValue(true); });
+
+  it("a chat's pick changes that chat, not the default or another chat", async () => {
+    settingsBag = { provider: "anthropic", model: "claude-opus-5-5" };
+    const set = await request("POST", "/api/providers/session-model", store(), { sessionId: "chat-a", provider: "xai", model: "grok-4.3", effort: "high" });
+    expect(set).toMatchObject({ status: 200, body: { sessionId: "chat-a", provider: "xai", model: "grok-4.3", effort: "high" } });
+    expect(savedSettings).toEqual([]);
+
+    const a = await request("GET", "/api/providers?session=chat-a", store());
+    expect(a.body.current).toMatchObject({ provider: "xai", model: "grok-4.3", effort: "high", pinned: true });
+    expect(a.body.default).toMatchObject({ provider: "anthropic", model: "claude-opus-5-5", pinned: false });
+    expect((a.body.providers as Array<{ id: string; active: boolean }>).find(p => p.active)?.id).toBe("xai");
+
+    const b = await request("GET", "/api/providers?session=chat-b", store());
+    expect(b.body.current).toMatchObject({ provider: "anthropic", model: "claude-opus-5-5", pinned: false });
+  });
+
+  it("tells every tab which chat changed, and clear puts it back on the default", async () => {
+    settingsBag = { provider: "anthropic", model: "claude-opus-5-5" };
+    await request("POST", "/api/providers/session-model", store(), { sessionId: "chat-a", provider: "xai" });
+    expect(broadcasts.at(-1)).toEqual({ type: "settings_changed", settings: { sessionModel: { sessionId: "chat-a", provider: "xai", model: "", effort: null } } });
+
+    const cleared = await request("POST", "/api/providers/session-model", store(), { sessionId: "chat-a", clear: true });
+    expect(cleared.body).toMatchObject({ sessionId: "chat-a", provider: null });
+    const a = await request("GET", "/api/providers?session=chat-a", store());
+    expect(a.body.current).toMatchObject({ provider: "anthropic", pinned: false });
+  });
+
+  it("an empty model means the provider's default model", async () => {
+    await request("POST", "/api/providers/session-model", store(), { sessionId: "chat-a", provider: "xai" });
+    const a = await request("GET", "/api/providers?session=chat-a", store());
+    expect(a.body.current).toMatchObject({ provider: "xai", model: PROVIDERS.xai.defaultModel });
+  });
+
+  it("refuses an unknown provider, a bad effort and a path-shaped session id", async () => {
+    expect((await request("POST", "/api/providers/session-model", store(), { sessionId: "chat-a", provider: "nope" })).status).toBe(400);
+    expect((await request("POST", "/api/providers/session-model", store(), { sessionId: "chat-a", provider: "xai", effort: "huge" })).status).toBe(400);
+    expect((await request("POST", "/api/providers/session-model", store(), { sessionId: "../etc", provider: "xai" })).status).toBe(400);
   });
 });

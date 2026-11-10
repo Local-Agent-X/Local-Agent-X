@@ -22,12 +22,13 @@ let serverStartTime = Date.now();
 // (chat-composer-menus.js). Order = menu order.
 const LAX_EFFORT_LEVELS = [['minimal', 'Minimal'], ['low', 'Low'], ['medium', 'Medium'], ['high', 'High'], ['xhigh', 'Max']];
 
-function laxGetSavedEffort() {
-  try { return JSON.parse(localStorage.getItem('lax_settings') || '{}').reasoningEffort || 'medium'; } catch { return 'medium'; }
-}
+// The chat on screen's thinking depth: its own, else the default (chat-model-pin.js).
+function laxGetSavedEffort() { return laxChatEffort(); }
 
 let _providersCache = null;
 let _providersCacheTime = 0;
+// The chat the cached list was fetched for: its `current` is that chat's model.
+let _providersCacheSession = '';
 
 // The one warning look for status-bar badges (weak model, developer mode).
 const STATUS_WARN_BADGE_STYLE = 'background:#fef3c7;color:#92400e;border:1px solid #fbbf24;padding:2px 8px;border-radius:10px';
@@ -88,11 +89,13 @@ function initStatusBar() {
 }
 
 async function loadProviders() {
-  if (_providersCache && Date.now() - _providersCacheTime < 30000) return _providersCache;
+  if (_providersCache && _providersCacheSession === laxChatId() && Date.now() - _providersCacheTime < 30000) return _providersCache;
   try {
-    const res = await apiFetch('/api/providers');
+    const forChat = laxChatId();
+    const res = await apiFetch(laxProvidersUrl());
     const data = await res.json();
     _providersCache = data;
+    _providersCacheSession = forChat;
     // Only an incomplete result is left non-fresh (time 0) so the next call
     // refetches — a complete one is held for the 30s TTL. This is what stops
     // the boxes rendering empty for the whole warm-up window on cold boot.
@@ -181,7 +184,7 @@ function updateStatusBar(force) {
     }
   }
   const tokenInfo = window.lastContextStatus ? `${(window.lastContextStatus.usedTokens / 1000).toFixed(0)}K tokens` : '';
-  const data = _providersCache;
+  const data = laxProvidersForChat(_providersCache);
   const currentProvider = data?.current?.provider || '—';
   const currentModel = data?.current?.model || '—';
   const activeP = laxResolveActiveProvider(data);
@@ -369,8 +372,11 @@ async function quickSwitchEffort(effort) {
 // Single switch path for the cascade menu (chat-composer-menus.js): provider
 // and model always travel together (a model only exists under its provider),
 // effort rides along when the user picked one from the flyout.
+// With a chat open it sets that chat's model only (chat-model-pin.js); with
+// none it sets the default.
 async function laxSwitchModel(providerId, model, effort) {
   try {
+    if (await laxSetChatModel(providerId, model, effort)) { await refreshProviderPicker(); return; }
     await apiFetch('/api/providers/switch', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

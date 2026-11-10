@@ -11,7 +11,7 @@ public/js/chat-voice-mic.js#startVoiceMode 139
 public/js/chat-voice-ws-handler.js#handleVoiceWsMessage 190
 src/agent-request/prepare-request.ts#prepareAgentRequest 101
 src/agent-request/prepare-request/tool-selection.ts#selectTools 109
-src/agent-request/resolve-provider.ts#resolveProvider 114
+src/agent-request/resolve-provider.ts#resolveProvider 109
 src/agent-store/template-defaults.ts#builtInTemplateDefaults 170
 src/anthropic-client/stream-api.ts#streamViaAPI 204
 src/anthropic-client/stream-cli/stream-parse.ts#processStreamLine 106
@@ -65,7 +65,7 @@ src/routes/security.ts#handleSecurityRoutes 163
 src/routes/sessions.ts#handleSessionRoutes 122
 src/routes/settings/local-runtimes.ts#handleLocalRuntimesRoutes 122
 src/routes/settings/preferences.ts#handlePreferencesRoutes 165
-src/routes/settings/providers.ts#handleProvidersRoutes 130
+src/routes/settings/providers.ts#handleProvidersRoutes 111
 src/routes/settings/system.ts#handleSystemRoutes 116
 src/sandbox/docker-execution-runtime.ts 363
 src/security/layer/file-access.ts#evaluateFileAccess 105

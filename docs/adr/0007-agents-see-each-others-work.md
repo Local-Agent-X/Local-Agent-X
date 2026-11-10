@@ -3,6 +3,21 @@
 Status: Accepted — 2026-11-09, with the proposed answer to every question
 below. Built in the order of question 8; stage 1 (each chat's own model) first.
 
+## Build status
+
+| Stage | What | State |
+|---|---|---|
+| 1 | Each chat keeps its own model (§8) | Built 2026-11-09 |
+| 2 | Claims with op-lease liveness (§1); the check on every write (§2); hand-over notes, the `work_note` tool, the turn-start section for chats and the briefing section for workers (§3); the "working on" strip in the agents panel (§4, desktop); the merge overlap report and `merged` note (§5) | Built 2026-11-09 |
+| 2, not yet | The phone's view (§4: an agentxos contract change, then a mobile build). Written claims for files a shell command changes without naming them (the post-turn `git status` sweep of §2). A `finished` note when a worker ends. Declared claims from a spawn's `touches` and a fan-out chunk's footprint. The worktree offer and the per-window strip of §6. | Open |
+| 3 | The orchestrator (§7) | Open |
+| 4 | Collab mode (§9) | Open |
+
+As built, a holder is keyed by the session its tool calls run in (`sessionId`
+plus repo), not by `session:<id>` / `op:<id>`; a chat's display name is its
+task until something names it; notes are one file per repo per day, kept 14
+days, with no 200-note cap.
+
 ## Context
 
 LAX runs agents in parallel: sub-agents (`agent_spawn`), fan-out workers, the

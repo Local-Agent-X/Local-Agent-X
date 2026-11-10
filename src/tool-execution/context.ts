@@ -50,6 +50,12 @@ export interface ToolCallContext {
    * re-runs the security + validation gates on the rewritten call. */
   hookRewrittenArgs?: Record<string, unknown>;
 
+  /** Set by the claim check (claim-clash-gate.ts) when this call writes files
+   *  another agent working in parallel is changing: the clashes it raised, and
+   *  the note that leads the result. */
+  claimClashes?: import("../agency/work-claims.js").Clash[];
+  coordinationNote?: string;
+
   /** Set by the approval phase when this call publishes (publish-review-gate.ts):
    * the pre-publish review, noted onto the tool result after it runs. */
   publishReview?: import("../canonical-loop/public/publish-review.js").PublishReview;

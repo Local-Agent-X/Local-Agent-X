@@ -26,6 +26,7 @@ import { projectAgentsMd } from "../../context/project-agents-md.js";
 import { projectDocumentsSection } from "../../memory/project-docs/full-text.js";
 import { sessionWorkRootOf } from "../../workspace/paths.js";
 import type { PendingNotification } from "../../ops/pending-notifications.js";
+import { otherAgentsSection } from "../../agency/other-agents-block.js";
 
 const logger = createLogger("agent-request.prepare-request.sysprompt");
 
@@ -184,6 +185,29 @@ function addProjectSections(builder: SystemPromptBuilder, input: BuildSystemProm
   }
 }
 
+/**
+ * Drain pending background-op completions for this session so the agent can
+ * narrate them naturally on this turn (per the agent-narrates pattern — see
+ * ops/pending-notifications.ts for rationale).
+ */
+async function drainBackgroundCompletions(
+  input: Pick<BuildSystemPromptInput, "sessionId" | "message">,
+): Promise<{ block: string; pending: PendingNotification[] }> {
+  try {
+    const { drainPendingNotifications, formatNotificationsForSystemPrompt } = await import("../../ops/pending-notifications.js");
+    const { cancelIdleNudge, markSessionExplicitNotify, recordSessionLastMessage } = await import("../../ops/idle-nudge.js");
+    cancelIdleNudge(input.sessionId);
+    markSessionExplicitNotify(input.sessionId, input.message);
+    recordSessionLastMessage(input.sessionId, input.message);
+    const pending = drainPendingNotifications(input.sessionId);
+    if (pending.length === 0) return { block: "", pending };
+    logger.info(`[chat] injecting ${pending.length} background completion(s) into system prompt for sess=${input.sessionId}`);
+    return { block: formatNotificationsForSystemPrompt(pending), pending };
+  } catch {
+    return { block: "", pending: [] }; // best-effort
+  }
+}
+
 export async function buildSystemPromptWithTelemetry(
   input: BuildSystemPromptInput,
 ): Promise<SystemPromptBuildResult & { backgroundCompletions: PendingNotification[] }> {
@@ -255,24 +279,11 @@ export async function buildSystemPromptWithTelemetry(
   // belt over those suspenders. Removed and measured rather than relocated —
   // if memory-cross-session regresses, the words go in a trailing row.
 
-  // Drain pending background-op completions for this session so the agent
-  // can narrate them naturally on this turn (per the agent-narrates pattern
-  // — see ops/pending-notifications.ts for rationale).
-  let backgroundCompletionsBlock = "";
-  let backgroundCompletions: PendingNotification[] = [];
-  try {
-    const { drainPendingNotifications, formatNotificationsForSystemPrompt } = await import("../../ops/pending-notifications.js");
-    const { cancelIdleNudge, markSessionExplicitNotify, recordSessionLastMessage } = await import("../../ops/idle-nudge.js");
-    cancelIdleNudge(input.sessionId);
-    markSessionExplicitNotify(input.sessionId, input.message);
-    recordSessionLastMessage(input.sessionId, input.message);
-    const pending = drainPendingNotifications(input.sessionId);
-    backgroundCompletions = pending;
-    if (pending.length > 0) {
-      backgroundCompletionsBlock = formatNotificationsForSystemPrompt(pending);
-      logger.info(`[chat] injecting ${pending.length} background completion(s) into system prompt for sess=${input.sessionId}`);
-    }
-  } catch { /* best-effort */ }
+  const { block: backgroundCompletionsBlock, pending: backgroundCompletions } = await drainBackgroundCompletions(input);
+  // The other agents working in this chat's project and their new hand-over
+  // notes (agency/other-agents-block.ts); empty when the chat works alone.
+  let otherAgentsBlock = "";
+  try { otherAgentsBlock = otherAgentsSection(input.sessionId); } catch { /* best-effort */ }
 
   // Short-reply context handling moved to the base system prompt. Two
   // constitutional rules in config/system-prompt.md ("Directives are commands"
@@ -345,6 +356,7 @@ export async function buildSystemPromptWithTelemetry(
 
   for (const [id, label, policy, text] of [
     ["background-completions", "Background Completions", "required", backgroundCompletionsBlock],
+    ["other-agents", "Other Agents", "degradable", otherAgentsBlock],
     ["short-reply-context", "Short Reply Context", "required", shortReplyContextBlock],
     ["memory-curate", "Memory Curate", "degradable", input.memoryCurateBlock],
     ["file-access", "File Access", "required", fileAccessBlock],

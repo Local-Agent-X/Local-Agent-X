@@ -4,6 +4,7 @@ import { allTools, createHttpRequestTool, buildToolRegistry } from "../tools.js"
 import { appTools } from "./app-tools/index.js";
 import { issueTools } from "./issue-tools/index.js";
 import { agentEscalate } from "../agents/escalate-tool.js";
+import { workNoteTool } from "../agency/work-note-tool.js";
 import { imageTools } from "./image-tools/index.js";
 import { createSecretTools } from "./secret-tools.js";
 import { createBrowserTools } from "./browser-tools/index.js";
@@ -166,7 +167,8 @@ export const plugins: ToolPlugin[] = [
   },
   {
     id: "handlers",
-    register() { return createHandlerTools(); },
+    // work_note: the hand-over note between agents working in one project (ADR 0007).
+    register() { return [...createHandlerTools(), workNoteTool]; },
   },
   {
     id: "apps",

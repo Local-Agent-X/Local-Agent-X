@@ -18,6 +18,7 @@
 ## Coupled to
 | If you change | Also check | Guard |
 |---|---|---|
+| what a call's write targets are (`write-targets.ts`) | the control-file gate and the claim check (`claim-clash-gate.ts`) judge the same set; the claim check asks the user only when another live agent writes the same checkout, and otherwise puts a note on the result (`ctx.coordinationNote`, joined ahead of the injection note in `audit-tool-call.ts`); a successful write is recorded as the session's claim in `run-sandboxed.ts` | `claim-clash-gate.test.ts`, `control-file-gate.test.ts`, `src/agency/work-claims.test.ts` |
 | a row's `ariAction` (read by `ari-action-map.ts`) | `HOST_CAPABILITY_MANIFEST` in `src/ari-kernel/manifest.ts` | `ari-action-map.test.ts` |
 | a row's `reads` (read by `resolve-tool.ts` `injectSessionState`; `cwd` with `shellCommand` also by the worktree gate in `enforce-policy.ts`) | every tool body calling a stamp accessor; `TOOL_PATH_ARGS` | `session-scoped-tools.test.ts` |
 | a stamp's name or shape (`internal-args.ts` accessors) | the stamping sites named in `internal-args.test.ts` WRITERS (`resolve-tool.ts`, `tool-runner.ts`, `enforce-policy.ts`, `run-sandboxed.ts`, `plugins.ts`, `browser-tools/gates.ts`) | `internal-args.test.ts` |

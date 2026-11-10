@@ -308,6 +308,7 @@ export const auditPhase: Phase = async (ctx) => {
   const media = mediaRefOf(ctx.result!._media);
   ctx.onEvent?.({ type: "tool_end", toolName: ctx.tc.name, toolCallId: ctx.tc.id, result: ctx.result!.content, allowed: ctx.allowed, status: statusOf(ctx.result!), metadata: ctx.result!.metadata, ...(media ? { media } : {}) });
   harvestChip(ctx);
-  shapeMsg(ctx, screenToolResult(ctx));
+  // Notes that lead the result: another agent's work it touched (claim-clash-gate.ts), then the injection screen.
+  shapeMsg(ctx, [ctx.coordinationNote, screenToolResult(ctx)].filter(Boolean).join("\n") || undefined);
   return CONTINUE;
 };

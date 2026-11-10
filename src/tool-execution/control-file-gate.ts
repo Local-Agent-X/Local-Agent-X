@@ -11,7 +11,7 @@
 // file the user named in this turn's message is the change they asked for,
 // and asks nothing while the session has read nothing off-box.
 //
-// The targets are every non-read path the policy table declares for the tool
+// The targets (write-targets.ts) are every non-read path the policy table declares for the tool
 // (TOOL_PATH_ARGS, the specs the file-access gate confines, delete included),
 // resolved as the tool resolves them; the classifiers then name the file each
 // reaches on disk. bulk_replace discovers the rest of its targets under its
@@ -24,42 +24,13 @@ import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { relative } from "node:path";
 import type { ToolCallContext } from "./context.js";
-import { declaredPaths, pathSpecsForCall, shellCommandOf } from "../tool-registry.js";
-import { resolveAgentPath } from "../workspace/paths.js";
+import { writeTargets } from "./write-targets.js";
 import { laxApprovalGatedFile } from "../security/layer/lax-control-files.js";
-import { shellMutationTargets } from "../security/layer/shell-mutation-guard.js";
 import { persistenceLocationJudge, type PersistenceLocationOf } from "../security/layer/persistence-locations.js";
 import { pathIsWithin } from "../security/layer/file-access.js";
-import { findTrashEntry } from "../trash-journal.js";
-import { restoreRef } from "../tools/restore-file-tool.js";
 import { hasExternalIngestion } from "../data-lineage/external.js";
 import { currentHumanText, userNamedFile } from "./unnamed-delete-gate.js";
 
-function writeTargets(ctx: ToolCallContext): Array<{ path: string; deletes: boolean }> {
-  const { name } = ctx.tc;
-  const out: Array<{ path: string; deletes: boolean }> = [];
-  for (const spec of pathSpecsForCall(name, ctx.args)) {
-    if (spec.action === "read") continue;
-    // A non-string element is refused by the file-access gate before this runs.
-    for (const raw of declaredPaths(ctx.args, spec) ?? []) {
-      out.push({ path: resolveAgentPath(raw, ctx.sessionId), deletes: spec.action === "delete_file" });
-    }
-  }
-  if (name === "restore_file") {
-    const original = findTrashEntry(restoreRef(ctx.args), { kind: "file" })?.original;
-    if (original) out.push({ path: original, deletes: false });
-  }
-  // A shell command's own write targets — a redirect, a cp/mv destination, an
-  // rm operand — are judged the same way the file tools' paths are, so the
-  // card asks about `echo … > ~/.lax/hooks.json` as it asks about a `write`.
-  const command = shellCommandOf(name, ctx.args);
-  if (command) {
-    for (const { path, verb } of shellMutationTargets(command)) {
-      out.push({ path, deletes: verb === "rm" || verb === "unlink" || verb === "shred" });
-    }
-  }
-  return out;
-}
 
 function gatedFile(path: string, startupFileOf: PersistenceLocationOf): { path: string; controls: string } | null {
   const lax = laxApprovalGatedFile(path);

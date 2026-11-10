@@ -188,6 +188,7 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   // project_brief_update demoted 2026-07-13 (0 fires/4wks) — the \bproject\b
   // keyword rule resurfaces the whole project_ family on project messages.
   agent_status: ["main-chat"],
+  work_note:    ["main-chat", "spawned-agent"],
   // agent_cancel stays eager — same watch-and-cancel contract as op_kill.
   agent_cancel: ["main-chat"],
   agent_output: ["main-chat"],

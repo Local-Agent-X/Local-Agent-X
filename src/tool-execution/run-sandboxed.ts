@@ -26,6 +26,7 @@ import { createLogger } from "../logger.js";
 import { parkNeedsUser, parkOrRefuse, takeUserGrant } from "./deferred-call.js";
 import { createToolRunner } from "./tool-runner.js";
 import { enrollCreatedFiles, statCreateTargets } from "./created-files.js";
+import { recordWrittenClaims } from "./claim-clash-gate.js";
 import { checkShellDeleteHappened } from "./verify-shell-deletes.js";
 import { editPinsContent } from "./edit-pins-content.js";
 
@@ -230,6 +231,7 @@ export const runSandboxedPhase: Phase = async (ctx) => {
     try { recordFileSeen(sessionId, resolveAgentPath(seenPath, sessionId), view); } catch { /* freshness is best-effort */ }
   }
   enrollCreatedFiles(sessionId, pendingCreates, result);
+  recordWrittenClaims(ctx, result);
   try { recordToolStat(tc.name, sessionId || "default", succeeded, durationMs, result.isError ? result.content?.slice(0, 200) : undefined); } catch { /* tracker should never break the call */ }
   try { recordRateLimit(tc.name, sessionId); } catch { /* same */ }
   if (succeeded) {

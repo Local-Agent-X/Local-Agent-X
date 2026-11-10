@@ -114,6 +114,7 @@ demand via tool search and aren't all listed here.)
 - `project_add_agent` — Add an agent to a project.
 - `project_brief_read`
 - `agent_status` — Check a spawned agent's status.
+- `work_note` — Tell the other agents working in this project what you changed and why. _e.g._ "tell the other agents you changed the login flow"
 - `agent_cancel` — Cancel a spawned agent.
 - `agent_output` — Get a spawned agent's output.
 
@@ -152,4 +153,4 @@ demand via tool search and aren't all listed here.)
 - `presentation`
 
 ---
-_72 capabilities · 53 with a description · 19 awaiting a blurb (add one to the tool's policy row)._
+_73 capabilities · 54 with a description · 19 awaiting a blurb (add one to the tool's policy row)._

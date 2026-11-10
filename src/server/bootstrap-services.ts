@@ -388,6 +388,9 @@ export async function bootstrapServices(config: LAXConfig): Promise<Bootstrapped
     setInterval(warmRuntimes, 60_000).unref();
   }).catch(() => {});
 
+  // Open tabs re-read who is working on what when it changes (routes/agents/work-claims.ts).
+  void import("../routes/agents/work-claims.js").then((m) => m.wireWorkClaimsBroadcast()).catch(() => {});
+
   startWindowsCageProof().catch((e) => logger.warn(`[sandbox] cage proof start failed: ${(e as Error).message}`));
 
   // Index every chat project's documents and keep them current, so a project

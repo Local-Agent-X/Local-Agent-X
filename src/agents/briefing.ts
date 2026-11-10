@@ -29,6 +29,7 @@ import type { MemoryIndex } from "../memory/index.js";
 import type { SecretsStore } from "../secrets.js";
 import { readProjectBrief } from "../memory/project-brief.js";
 import { createLogger } from "../logger.js";
+import { otherAgentsSection } from "../agency/other-agents-block.js";
 
 const logger = createLogger("agents.briefing");
 
@@ -51,6 +52,9 @@ export interface BriefingDeps {
   integrations?: { getAgentContext(opts: { reachableWith: ReadonlySet<string> }): string };
   /** The names of the tools the agent was given. */
   toolNames?: readonly string[];
+  /** The run's session, once its work folder is set: the other agents working
+   *  in that project are listed (agency/other-agents-block.ts). */
+  sessionId?: string;
 }
 
 function cap(text: string, max: number): string {
@@ -130,5 +134,15 @@ export async function buildBriefing(deps: BriefingDeps): Promise<string> {
     }
   }
 
-  return `\n\n--- BRIEFING ---\nUser: ${userBlock}\nFacts: ${factsBlock}${relevantBlock}\nSecrets: ${secrets}\n--- END ---\n${projectBlock}${integrationsBlock}`;
+  return `\n\n--- BRIEFING ---\nUser: ${userBlock}\nFacts: ${factsBlock}${relevantBlock}\nSecrets: ${secrets}\n--- END ---\n${projectBlock}${integrationsBlock}${otherAgents(deps.sessionId)}`;
+}
+
+function otherAgents(sessionId: string | undefined): string {
+  if (!sessionId) return "";
+  try {
+    const block = otherAgentsSection(sessionId);
+    return block ? `\n${block}\n` : "";
+  } catch {
+    return ""; // coordination is best-effort: a briefing never fails for it
+  }
 }

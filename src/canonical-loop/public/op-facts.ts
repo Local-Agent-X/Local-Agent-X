@@ -37,3 +37,7 @@ export { getMiddlewareState } from "../middlewares/state.js";
 // run reads it (server/handler-events-agent-result.ts), as the background-op
 // observer does inside the loop. Its source reads the op store and config.
 export { resultUrlOfOp } from "../session-bridge-extractors.js";
+
+// Whether an op's worker stopped heartbeating (a leaf over the op store), for
+// the claims parallel agents hold on files while they work (agency/work-claims.ts).
+export { isLeaseExpired } from "../lease.js";

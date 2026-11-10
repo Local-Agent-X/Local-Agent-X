@@ -1,6 +1,7 @@
 import { buildContextPack } from "../../ops/context-pack-builder.js";
 import { getRetryPolicy } from "../../ops/heartbeat.js";
 import { newOpId, writeOp } from "../../ops/op-store.js";
+import { touchHolders } from "../../agency/work-claims.js";
 import { trackOpForSession } from "../../ops/session-bridge.js";
 import type { Op, OpVisibility } from "../../ops/types.js";
 import type { CanonicalChatContext } from "../chat-runner.js";
@@ -90,6 +91,8 @@ export async function createChatOp(ctx: CanonicalChatContext): Promise<CreatedCh
   }
   recordUserLinks(ctx.sessionId, ctx.message);
   writeOp(op);
+  // The chat is on a new turn: its claims on files are current again (ADR 0007).
+  try { touchHolders(ctx.sessionId, op.id); } catch { /* coordination never fails a turn */ }
   // On a local wire the prompt's per-op sections are a row of the
   // conversation, not of this request (local-prompt-split.ts).
   const split = localPromptSplit(ctx.prepared, ctx.sessionId);

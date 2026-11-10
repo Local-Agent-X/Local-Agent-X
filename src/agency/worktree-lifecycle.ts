@@ -10,6 +10,7 @@ import { join } from "node:path";
 import { activeWorktrees, git, logger, MAX_CONCURRENT_WORKTREES, WORKTREE_BASE, worktreeSlotAvailable } from "./worktree-core.js";
 import { linkDirectoryInto, listCheckedOutBranches, unlinkSharedJunctions } from "./worktree-junctions.js";
 import { claimRecoveredWorktree, forgetWorktreeOwnership, ownsWorktree, registerWorktreeOwnership } from "./worktree-recovery.js";
+import { findMergeOverlaps, noteMerged, overlapSummary, type MergeOverlap } from "./merge-overlap.js";
 
 /** Cut `branch` at HEAD and check it out at `wtPath`. When the checkout is
  *  refused (a crashed run left a directory at the path), the branch just cut
@@ -67,7 +68,7 @@ export function createWorktree(agentId: string, repoDir?: string): { path: strin
 }
 
 /** Merge agent's changes back to the stored base branch */
-export function mergeWorktree(agentId: string): { merged: boolean; files: number; error?: string } {
+export function mergeWorktree(agentId: string): { merged: boolean; files: number; error?: string; overlaps?: MergeOverlap[]; overlapNote?: string } {
   const wt = activeWorktrees.get(agentId);
   if (!wt) return { merged: false, files: 0, error: "No worktree found" };
   if (!ownsWorktree(wt)) {
@@ -106,6 +107,11 @@ export function mergeWorktree(agentId: string): { merged: boolean; files: number
     // worktree — conflicts stay here, never in the user's checkout — which
     // makes the agent branch a strict descendant of base, then advance base
     // by a pure fast-forward that cannot conflict.
+    // What this merge overlaps, read before the base is merged in: files both
+    // sides changed (git merges those cleanly and tells nobody) and files
+    // another live agent claims (merge-overlap.ts). Reported, never a block.
+    const mergeFacts = { repoRoot: wt.repoRoot, worktreePath: wt.path, branch: wt.branch, baseBranch: wt.baseBranch, baseSha, headSha };
+    const { changed, overlaps } = findMergeOverlaps(mergeFacts);
     try {
       git(["merge", wt.baseBranch, "--no-edit"], wt.path);
       const mergedHead = git(["rev-parse", "HEAD"], wt.path);
@@ -133,9 +139,10 @@ export function mergeWorktree(agentId: string): { merged: boolean; files: number
         git(["update-ref", `refs/heads/${wt.baseBranch}`, mergedHead], wt.repoRoot);
       }
       logger.info(`[worktree] Merged ${fileCount} files from ${agentId} into ${wt.baseBranch}`);
+      noteMerged(mergeFacts, changed, overlaps);
       wt.mergedSuccessfully = true;
       cleanupWorktree(agentId);
-      return { merged: true, files: fileCount };
+      return { merged: true, files: fileCount, ...(overlaps.length ? { overlaps, overlapNote: overlapSummary(overlaps) } : {}) };
     } catch (mergeErr) {
       // Abort any half-finished worktree-side merge so the preserved agent
       // branch is left clean for the user to merge manually. If no merge was

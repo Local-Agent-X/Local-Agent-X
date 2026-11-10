@@ -188,7 +188,7 @@ export function registerHandlerEvents(deps: {
         briefing = await buildBriefing({
           dataDir, memoryIndex, secretsStore, task,
           project: agentProject ? { id: agentProject.id, name: agentProject.name } : null,
-          integrations, toolNames: spawnedTools.map((t) => t.name),
+          integrations, toolNames: spawnedTools.map((t) => t.name), sessionId: runSessionId,
         });
       } catch (e) {
         logger.warn(`[handler] briefing assembly failed for ${agentId}: ${(e as Error).message}`);
@@ -264,7 +264,7 @@ export function registerHandlerEvents(deps: {
           const mergeResult = mergeWorktree(agentId);
           if (!mergeResult.merged && mergeResult.error) mergeFailure = mergeResult.error;
           const mergeMsg = mergeResult.merged
-            ? (mergeResult.files > 0 ? `[Merged ${mergeResult.files} files back to main]` : "[No file changes]")
+            ? (mergeResult.files > 0 ? `[Merged ${mergeResult.files} files back to main${mergeResult.overlapNote ?? ""}]` : "[No file changes]")
             : `[Merge failed: ${mergeResult.error}]`;
           eventBus.emit("handler:agent-output", { agentId, output: mergeMsg });
           if (!mergeResult.merged && mergeResult.files > 0) mergeSuccess = false;

@@ -1731,6 +1731,22 @@ body.agent-feeds-resizing .agent-feeds{transition:none!important}
 .artifact-session{font-size:.62rem;color:var(--muted);opacity:.75;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .agent-feeds-list{flex:1;overflow-y:auto;padding:8px;display:flex;flex-direction:column;gap:8px;scrollbar-width:thin;scrollbar-color:var(--scroll-thumb) transparent}
 .agent-feed-card{background:var(--surface-2);border:1px solid var(--border);border-left:3px solid var(--muted);border-radius:8px;padding:10px 12px;transition:all .2s}
+/* Who is working on what (chat-agent-feeds-claims.js): one row per chat or
+   worker in a project, its areas, and a warning where two overlap. */
+.work-claims{padding:8px 8px 0;display:flex;flex-direction:column;gap:6px;max-height:40%;overflow-y:auto;scrollbar-width:thin;scrollbar-color:var(--scroll-thumb) transparent}
+.work-claims-title{font-size:10px;letter-spacing:.08em;color:var(--muted);padding:0 2px}
+.work-claim-row{background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:12px}
+.work-claim-row.clash{border-color:#f59e0b}
+.work-claim-head{display:flex;align-items:center;gap:6px;min-width:0}
+.work-claim-dot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--muted)}
+.work-claim-row.active .work-claim-dot{background:var(--accent)}
+.work-claim-row.idle .work-claim-dot{background:var(--accent);opacity:.45}
+.work-claim-name{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.work-claim-meta{flex:none;margin-left:auto;color:var(--muted);font-size:11px}
+.work-claim-task{color:var(--muted);margin-top:3px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.work-claim-areas{margin-top:4px;display:flex;flex-wrap:wrap;gap:4px}
+.work-claim-areas code{font-size:11px;padding:1px 5px;border-radius:4px;background:var(--surface);border:1px solid var(--border)}
+.work-claim-clash{margin-top:4px;color:#b45309;font-size:11px}
 /* C6 run-lineage tree: nest cards spawned by an op under it. The connector on
    .agent-feed-children is a static 1px rail by default; when the subtree has an
    actively-working descendant it lights up and bright accent pulses FLOW

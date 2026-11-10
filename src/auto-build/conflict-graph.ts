@@ -52,6 +52,7 @@
  */
 
 import type { ParsedChunk } from "./plan-parser.js";
+import { normRepoPath as normPath, repoPathsOverlap as pathsOverlap } from "../agency/path-overlap.js";
 
 export interface ChunkWave {
   /** Chunks safe to build in parallel within this wave (input order preserved). */
@@ -180,32 +181,4 @@ function conflictsWith(fp: string[], wavePaths: string[]): boolean {
     }
   }
   return false;
-}
-
-/** Overlap on ALREADY-NORMALIZED paths: exact equality or directory-segment containment. */
-function pathsOverlap(a: string, b: string): boolean {
-  if (!a || !b) return true; // defensive: an empty path is treated conservatively
-  if (a === b) return true;
-  return a.startsWith(b + "/") || b.startsWith(a + "/");
-}
-
-/**
- * Normalize a repo-relative path for comparison. Idempotent.
- *
- * Case-folds (`.toLowerCase()`): on a case-INSENSITIVE filesystem (macOS —
- * LAX's platform — and Windows) `SRC/DB/x.ts` and `src/db/x.ts` are the SAME
- * file, so they MUST be seen as conflicting or the scheduler would parallelize
- * two chunks editing one file → merge corruption. Case-folding is strictly
- * more conservative: on case-sensitive Linux it may serialize two genuinely
- * different-case files that could have run in parallel, but serializing
- * non-conflicting chunks only costs ordering, never correctness.
- */
-function normPath(p: string): string {
-  return p
-    .trim()
-    .replace(/\\/g, "/")
-    .replace(/^\.\//, "")
-    .replace(/\/+/g, "/")
-    .replace(/\/+$/, "")
-    .toLowerCase();
 }

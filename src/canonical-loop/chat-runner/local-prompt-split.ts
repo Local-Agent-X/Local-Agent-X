@@ -35,6 +35,7 @@ export const TRAILING_SECTION_IDS: ReadonlySet<string> = new Set([
   "memory-orchestrator",
   "notifications",
   "background-completions",
+  "other-agents",
   "memory-curate",
   "turn-directive",
   "short-reply-context",

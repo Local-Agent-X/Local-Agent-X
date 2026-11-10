@@ -49,7 +49,9 @@ export type GlobalFrame =
   | { type: "agent-update"; agentId: string; status?: string; totalTokens?: number; [key: string]: unknown }
   | { type: "agent-output"; agentId: string; output: string }
   | ({ type: "agent-complete"; displayName: string; sessionId: string; parentAgentId: string | null } & AgentResultEvent)
-  | WorkersSnapshotFrame;
+  | WorkersSnapshotFrame
+  /** A holder of work claims changed: re-read /api/work-claims (routes/agents/work-claims.ts). */
+  | { type: "work_claims_changed" };
 
 export type GlobalFrameType = GlobalFrame["type"];
 
@@ -60,6 +62,7 @@ export const GLOBAL_FRAME_TYPES = [
   "sidebar_clear_chats", "app-files-changed", "app:state", "app:event", "projects_changed", "learning_changed",
   "history_changed", "system_health", "inbox_item", "inbox_changed",
   "agent-spawn", "agent-update", "agent-output", "agent-complete", "workers_snapshot",
+  "work_claims_changed",
 ] as const satisfies readonly GlobalFrameType[];
 
 type MissingFromList = Exclude<GlobalFrameType, (typeof GLOBAL_FRAME_TYPES)[number]>;

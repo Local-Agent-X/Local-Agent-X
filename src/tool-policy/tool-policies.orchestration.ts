@@ -38,6 +38,10 @@ export const TOOL_POLICIES_ORCHESTRATION: Record<string, ToolPolicyRow> = {
   // Wakes another agent through the canonical invoke door; the calling RUN
   // (spawn lineage) is derived from the trusted session.
   agent_wakeup:    { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["team"], reads: ["session"] },
+  // A hand-over note (and optional claim) to the other agents working in the
+  // same project (ADR 0007): it changes nothing the user owns, and whoever
+  // shows it to a model frames it as another agent's words.
+  work_note:       { kernel: "internal", risk: "safe", capabilities: [], tags: ["team"], reads: ["session", "operation"], blurb: { say: "tell the other agents you changed the login flow", does: "Tell the other agents working in this project what you changed and why." }, rules: [{ id: "allow-work-note", decision: "allow", reason: "Hand-over note to the other agents in this project", priority: 50 }] },
   agent_whoami:    { kernel: "internal", risk: "safe", capabilities: [], tags: ["team"], loop: { discovery: true } },
 
   // ── Mission schedules ──

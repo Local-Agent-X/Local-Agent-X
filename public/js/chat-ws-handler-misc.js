@@ -197,6 +197,11 @@ function handleAppFilesChanged(msg) {
 }
 
 function handleAgentFeedEvent(msg) {
+  // Who is working on what changed (chat-agent-feeds-claims.js).
+  if (msg.type === 'work_claims_changed') {
+    if (typeof refreshWorkClaims === 'function') refreshWorkClaims();
+    return;
+  }
   if (msg.type === 'workers_snapshot') {
     if (typeof reconcileAgentFeeds === 'function') reconcileAgentFeeds(msg.workers);
   } else if (msg.type === 'agent-spawn' && msg.agentId) {

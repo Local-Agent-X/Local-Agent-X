@@ -15,6 +15,7 @@ import { holdersOfSession, liveHolders, type HolderView } from "./work-claims.js
 import { notesSince, type HandoverNote } from "./handover-notes.js";
 import { normRepoPath, repoPathsOverlap } from "./path-overlap.js";
 import { ownCopyOf } from "./chat-own-copy.js";
+import { orchestratorBrief } from "./orchestrator-brief.js";
 
 const MAX_NOTES = 8;
 const NOTE_CHARS = 300;
@@ -92,13 +93,15 @@ export function otherAgentsSection(sessionId: string): string {
       parts.push(...shown.map(noteLine));
     }
   }
-  if (parts.length === 0) return "";
-  return [
+  const brief = orchestratorBrief(sessionId, areasOf);
+  if (parts.length === 0) return brief;
+  const section = [
     "--- OTHER AGENTS ---",
     ...parts,
     "Keep your changes compatible with theirs. When you change something they rely on, say what and why with work_note.",
     "--- END OTHER AGENTS ---",
   ].join("\n");
+  return brief ? `${brief}\n${section}` : section;
 }
 
 /** Test seam. */

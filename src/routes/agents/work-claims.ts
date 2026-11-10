@@ -18,6 +18,7 @@ import { liveHolders, setClaimsChangedListener, type HolderView } from "../../ag
 import { areasOf, reposOfSession } from "../../agency/other-agents-block.js";
 import { normRepoPath, repoPathsOverlap } from "../../agency/path-overlap.js";
 import { handleOwnCopyRoutes, ownCopyView } from "./own-copy.js";
+import { handleOrchestratorRoutes, orchestratorView } from "./orchestrator.js";
 
 export interface WorkClaimRow {
   sessionId: string;
@@ -72,9 +73,12 @@ export function othersInProjectOf(sessionId: string): Array<WorkClaimRow & { cla
 
 export const handleWorkClaimRoutes: RouteHandler = async (method, url, req, res, ctx, role) => {
   if (await handleOwnCopyRoutes(method, url, req, res, ctx, role)) return true;
+  if (await handleOrchestratorRoutes(method, url, req, res, ctx, role)) return true;
   if (method !== "GET" || url.pathname !== "/api/work-claims") return false;
   const session = url.searchParams.get("session");
-  const forChat = session ? { others: othersInProjectOf(session), ownCopy: ownCopyView(ctx, session) } : {};
+  const forChat = session
+    ? { others: othersInProjectOf(session), ownCopy: ownCopyView(ctx, session), orchestrator: orchestratorView(ctx, session) }
+    : {};
   jsonResponse(res, 200, { holders: workClaimRows(), ...forChat }, req);
   return true;
 };

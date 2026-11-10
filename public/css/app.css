@@ -1761,6 +1761,9 @@ body.agent-feeds-resizing .agent-feeds{transition:none!important}
 .own-copy-btn.quiet{border-color:var(--border);color:var(--muted)}
 .own-copy-btn:hover{background:var(--surface-2)}
 .own-copy-msg{color:var(--muted)}
+.orchestrator-badge{padding:2px 8px;border-radius:6px;border:1px solid var(--accent);color:var(--accent);font-weight:600}
+.orchestrator-badge.other{border-color:var(--border);color:var(--muted);font-weight:400}
+.orchestrator-routing{font:inherit;min-width:280px;padding:2px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface-2);color:inherit}
 /* C6 run-lineage tree: nest cards spawned by an op under it. The connector on
    .agent-feed-children is a static 1px rail by default; when the subtree has an
    actively-working descendant it lights up and bright accent pulses FLOW

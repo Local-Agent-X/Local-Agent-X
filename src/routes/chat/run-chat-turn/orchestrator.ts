@@ -15,8 +15,9 @@ import { PROVIDERS } from "../../../providers/registry.js";
 import { PROVIDER_IDS, type ProviderId } from "../../../providers/provider-ids.js";
 import type { ChannelKind } from "../../../agent-request/types.js";
 import { sessionModeOf } from "../../../session/mode.js";
-import { stampSessionProjectFolder, takeBoundFolder } from "../../../session/project-folder.js";
+import { sessionProjectFolder, stampSessionProjectFolder, takeBoundFolder } from "../../../session/project-folder.js";
 import { anchorOwnCopy } from "../../../agency/chat-own-copy.js";
+import { applyFolderRule } from "../../../agency/orchestrator-role.js";
 import type { Session } from "../../../types.js";
 
 const logger = createLogger("routes.chat.run-turn");
@@ -79,8 +80,17 @@ function applyRequestToSession(session: Session, args: RunChatTurnArgs, message:
     const pid = typeof args.projectId === "string" && args.projectId ? args.projectId : undefined;
     if (session.projectId !== pid) { session.projectId = pid; void args.ctx.saveSession(session); }
   }
+  // A project with an orchestrator never has two chats writing one folder: the
+  // later one is moved to its own copy before this turn stamps its folder
+  // (agency/orchestrator-role.ts).
+  const anchor = { id: args.sessionId, mode: session.mode, projectId: session.projectId, folder: session.folder };
+  try {
+    const shared = sessionProjectFolder(anchor);
+    const moved = shared ? applyFolderRule(args.sessionId, shared, session.title) : null;
+    if (moved) logger.info(`[orchestrator] ${moved}`);
+  } catch (e) { logger.warn(`[orchestrator] folder rule failed: ${(e as Error).message}`); }
   // A session works in its project folder (session/project-folder.ts).
-  stampSessionProjectFolder({ id: args.sessionId, mode: session.mode, projectId: session.projectId, folder: session.folder });
+  stampSessionProjectFolder(anchor);
   // A chat with its own copy of the project writes there, fenced off the
   // parent repo (agency/chat-own-copy.ts).
   anchorOwnCopy(args.ctx.security, args.sessionId);

@@ -24,6 +24,7 @@ import { invokeAgent, awaitAgentRunning, AgentNotFoundError, callerRunIdFromSess
 import { allowedToolMatcher, resolveToolsForRequest } from "../tools/tool-search.js";
 import { unifiedRegistry } from "../tools/registry.js";
 import { taskNeedsArtifactEdit, canEditArtifacts, spawnMismatchMessage } from "./spawn-guard.js";
+import { modelPinFromArg } from "./spawn-model.js";
 import { Handler } from "../agency/handler.js";
 import { delegationFrom } from "../ops/delegation.js";
 import { AgentTemplateStore } from "../agent-store/index.js";
@@ -129,6 +130,10 @@ export function createAgentTools(): ToolDefinition[] {
             type: "array", items: { type: "string" },
             description: "Files or folders (relative to work_dir) this agent will change. Claimed for it from the start, so other agents working in the project are told who is on them.",
           },
+          model: {
+            type: "string",
+            description: "The model this run uses, as `provider/model` (e.g. `xai/grok-4.3`, `anthropic/claude-opus-5-5`). Leave it off to use the agent's own default. Use it when the user asked for a particular model on this task.",
+          },
         },
         required: ["agent", "task"],
       },
@@ -137,6 +142,8 @@ export function createAgentTools(): ToolDefinition[] {
           const sessionFromArgs = sessionIdOf(args);
           const scope = parseScope(args);
           const task = String(args.task);
+          const picked = modelPinFromArg(args.model);
+          if (picked && "error" in picked) return err(picked.error);
           // Router-correctness guard: a task that needs an existing artifact
           // edited must go to a worker that can locate + edit one in the run
           // this spawn creates — a delegated run (server/handler-events.ts),
@@ -160,6 +167,7 @@ export function createAgentTools(): ToolDefinition[] {
               nameOverride: args.name_override ? String(args.name_override) : undefined,
               workDir: typeof args.work_dir === "string" && args.work_dir.trim() ? args.work_dir : undefined,
               touches: Array.isArray(args.touches) ? args.touches.filter((p): p is string => typeof p === "string") : undefined,
+              ...(picked ? { modelOverride: picked.pin } : {}),
               // The task is this agent's words, not the user's: the run inherits
               // the user's bans from the op calling us instead.
               delegation: delegationFrom(

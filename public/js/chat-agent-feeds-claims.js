@@ -110,10 +110,70 @@ async function ownCopyAction(action) {
   await refreshWorkClaims();
 }
 
+// The orchestrator role of this chat's project (src/agency/orchestrator-role.ts):
+// one chat hands work to the others and settles who works where. Taken and
+// released here, with the user's model preferences ("Codex for UI, Claude for
+// the server") kept beside it.
+var orchestratorState = null;
+var orchestratorEditing = false;
+
+function orchestratorHtml(state, editing) {
+  if (!state || !state.available) return '';
+  if (state.mine) {
+    var html = '<span class="orchestrator-badge" title="This chat hands work to other agents and settles who works where in this project.">&#9672; Orchestrator</span>'
+      + '<button type="button" class="own-copy-btn quiet" onclick="orchestratorEdit()" title="' + esc(state.routing ? 'Model preferences: ' + state.routing : 'Say which model should do what') + '">Models</button>'
+      + '<button type="button" class="own-copy-btn quiet" onclick="orchestratorAction(\'release\')">Release</button>';
+    if (editing) {
+      html += '<input id="orchestrator-routing" class="orchestrator-routing" type="text" maxlength="1000" placeholder="e.g. Codex for UI, Claude for the server, Grok for research" value="' + esc(state.routing || '') + '"'
+        + ' onkeydown="if(event.key===\'Enter\')orchestratorSaveRouting()"/>'
+        + '<button type="button" class="own-copy-btn" onclick="orchestratorSaveRouting()">Save</button>';
+    }
+    return html;
+  }
+  if (state.heldBy) return '<span class="orchestrator-badge other" title="That chat hands out the work in this project.">&#9672; Orchestrator: ' + esc(state.heldBy) + '</span>';
+  return '<button type="button" class="own-copy-btn quiet" onclick="orchestratorAction(\'take\')" title="Make this chat the orchestrator of its project: it hands work to other agents, each on the model you choose, and settles who works where without asking you each time.">&#9672; Orchestrate</button>';
+}
+
+async function orchestratorPost(payload) {
+  var chatId = workClaimsChatId();
+  if (!chatId) return;
+  payload.sessionId = chatId;
+  try {
+    var res = await apiFetch('/api/work-claims/orchestrator', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) { var data = await res.json(); ownCopyMessage = data.error || 'That did not work.'; }
+  } catch (e) { ownCopyMessage = 'Could not reach the server.'; }
+  await refreshWorkClaims();
+}
+
+function orchestratorAction(action) {
+  orchestratorEditing = false;
+  return orchestratorPost({ action: action });
+}
+
+function orchestratorEdit() {
+  orchestratorEditing = !orchestratorEditing;
+  renderOtherAgentsStrip();
+  var input = document.getElementById('orchestrator-routing');
+  if (input) input.focus();
+}
+
+function orchestratorSaveRouting() {
+  var input = document.getElementById('orchestrator-routing');
+  orchestratorEditing = false;
+  return orchestratorPost({ action: 'take', routing: input ? input.value : '' });
+}
+
 function renderOtherAgentsStrip() {
   var host = document.getElementById('other-agents-strip');
   if (!host) return;
-  var html = otherAgentsStripHtml(otherAgentsRows) + ownCopyHtml(ownCopyState, ownCopyMessage);
+  // Typing the model preferences: a refresh must not wipe the field.
+  var typing = document.getElementById('orchestrator-routing');
+  if (typing && document.activeElement === typing && orchestratorEditing) return;
+  var html = otherAgentsStripHtml(otherAgentsRows) + ownCopyHtml(ownCopyState, ownCopyMessage) + orchestratorHtml(orchestratorState, orchestratorEditing);
   host.innerHTML = html;
   host.style.display = html ? '' : 'none';
 }
@@ -127,7 +187,8 @@ async function refreshWorkClaims() {
     workClaimsRows = Array.isArray(data.holders) ? data.holders : [];
     otherAgentsRows = Array.isArray(data.others) ? data.others : [];
     ownCopyState = data.ownCopy || null;
-    if (chatId !== otherAgentsForChat) ownCopyMessage = '';
+    orchestratorState = data.orchestrator || null;
+    if (chatId !== otherAgentsForChat) { ownCopyMessage = ''; orchestratorEditing = false; }
     otherAgentsForChat = chatId;
     renderWorkClaims();
     renderOtherAgentsStrip();

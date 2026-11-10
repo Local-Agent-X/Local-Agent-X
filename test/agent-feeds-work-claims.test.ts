@@ -17,11 +17,15 @@ const esc = (s: unknown) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;
 let rows: unknown[] = [];
 let others: unknown[] = [];
 let ownCopy: unknown = null;
-const apiFetch = vi.fn(async (_url: string, _init?: unknown) => ({ ok: true, json: async () => ({ holders: rows, others, ownCopy }) }));
+let orchestrator: unknown = null;
+const apiFetch = vi.fn(async (_url: string, _init?: unknown) => ({ ok: true, json: async () => ({ holders: rows, others, ownCopy, orchestrator }) }));
 
-type Claims = { refreshWorkClaims: () => Promise<void>; workClaimsHtml: (r: unknown[]) => string; ownCopyAction: (a: string) => Promise<void> };
+type Claims = {
+  refreshWorkClaims: () => Promise<void>; workClaimsHtml: (r: unknown[]) => string;
+  ownCopyAction: (a: string) => Promise<void>; orchestratorAction: (a: string) => Promise<void>;
+};
 function load(): Claims {
-  return new Function("esc", "apiFetch", "setInterval", `${claimsJs}\nreturn { refreshWorkClaims, workClaimsHtml, ownCopyAction };`)(esc, apiFetch, () => 0);
+  return new Function("esc", "apiFetch", "setInterval", `${claimsJs}\nreturn { refreshWorkClaims, workClaimsHtml, ownCopyAction, orchestratorAction };`)(esc, apiFetch, () => 0);
 }
 
 beforeEach(() => {
@@ -29,6 +33,7 @@ beforeEach(() => {
   apiFetch.mockClear();
   others = [];
   ownCopy = null;
+  orchestrator = null;
   (window as { activeChat?: unknown }).activeChat = null;
 });
 
@@ -68,6 +73,28 @@ describe("the chat window's strip of the other agents in its project", () => {
     expect(strip.textContent).toContain("chat/ab12");
     expect([...strip.querySelectorAll(".own-copy-btn")].map((b) => b.textContent)).toEqual(["Merge back", "Leave"]);
     expect(strip.textContent).toContain("This chat now works in its own copy.");
+  });
+
+  it("lets a chat take the orchestrator role, set model preferences and release it", async () => {
+    (window as { activeChat?: unknown }).activeChat = { id: "chat-me" };
+    orchestrator = { available: true, mine: false, heldBy: null, routing: "" };
+    const claims = load();
+    await claims.refreshWorkClaims();
+    const strip = document.getElementById("other-agents-strip")!;
+    expect(strip.querySelector(".own-copy-btn")?.textContent).toContain("Orchestrate");
+
+    orchestrator = { available: true, mine: true, heldBy: null, routing: "Codex for UI" };
+    await claims.orchestratorAction("take");
+    const sent = apiFetch.mock.calls.find((c) => c[0] === "/api/work-claims/orchestrator");
+    expect(JSON.parse((sent![1] as { body: string }).body)).toEqual({ action: "take", sessionId: "chat-me" });
+    expect(strip.querySelector(".orchestrator-badge")?.textContent).toContain("Orchestrator");
+    expect([...strip.querySelectorAll(".own-copy-btn")].map((b) => b.textContent)).toEqual(["Models", "Release"]);
+
+    // Another chat sees who holds it, and no button to take it by accident.
+    orchestrator = { available: true, mine: false, heldBy: "Lead chat", routing: "" };
+    await claims.refreshWorkClaims();
+    expect(strip.textContent).toContain("Orchestrator: Lead chat");
+    expect(strip.querySelector(".own-copy-btn")).toBeNull();
   });
 
   it("is hidden when the chat works alone", async () => {

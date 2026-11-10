@@ -5,9 +5,11 @@ import { join } from "node:path";
 import type { Op } from "../ops/types.js";
 import { locateInRepo, _resetRepoLocateCacheForTest } from "./repo-locate.js";
 import {
-  CHAT_IDLE_HOLD_MS, RECENT_MS, findClashes, liveHolders, recordClaims, touchHolders,
+  CHAT_IDLE_HOLD_MS, RECENT_MS, WORKER_START_GRACE_MS, findClashes, liveHolders, noteSessionOp, recordClaims, touchHolders,
   _resetWorkClaimsForTest, _setWorkClaimsForTest,
 } from "./work-claims.js";
+import { noteRunFinished, _resetFinishedNotesForTest } from "./finished-note.js";
+import { notesSince, postNote, _resetHandoverNotesForTest, _setHandoverNotesForTest } from "./handover-notes.js";
 
 let root: string;
 let main: string;
@@ -106,3 +108,45 @@ describe("claims between parallel agents", () => {
     expect(liveHolders()[0]).toMatchObject({ state: "active", displayName: "Voice chat", task: "second" });
   });
 });
+
+describe("a worker's area declared when it is spawned", () => {
+  it("is held as a working agent's before it has run a tool, then follows its op", () => {
+    recordClaims({ sessionId: "agent-9", kind: "worker", paths: [join(wt, "src", "voice")], source: "declared" });
+    expect(liveHolders()[0]).toMatchObject({ kind: "worker", state: "active" });
+    expect(findClashes("chat-a", [join(main, "src", "voice", "vad.ts")])).toHaveLength(1);
+
+    clock += WORKER_START_GRACE_MS + 1;
+    expect(liveHolders()[0].state).toBe("recent");
+
+    op("op-9", "agent", "running", "Rework voice", new Date(Date.now() + 60_000).toISOString());
+    noteSessionOp("agent-9", "op-9");
+    expect(liveHolders()[0]).toMatchObject({ state: "active", opId: "op-9", task: "Rework voice", kind: "worker" });
+  });
+});
+
+describe("a run that ends", () => {
+  beforeEach(() => { _resetFinishedNotesForTest(); _setHandoverNotesForTest({ dir: join(root, "notes") }); });
+  afterEach(() => _resetHandoverNotesForTest());
+
+  it("tells the others what it changed, once", () => {
+    op("op-w", "agent", "running", "Fix STT latency", new Date(Date.now() + 60_000).toISOString());
+    recordClaims({ sessionId: "agent-1", opId: "op-w", paths: [join(wt, "src", "voice", "stt.ts")], source: "written" });
+    noteRunFinished("agent-1");
+    noteRunFinished("agent-1");
+    const notes = notesSince(liveHolders()[0].repoKey);
+    expect(notes).toHaveLength(1);
+    expect(notes[0]).toMatchObject({ kind: "finished", paths: ["src/voice/stt.ts"], text: "Finished: Fix STT latency. Changed 1 file(s) in wt1." });
+  });
+
+  it("says nothing more when its merge already announced it, or when it wrote nothing", () => {
+    op("op-w", "agent", "running", "Fix STT latency", new Date(Date.now() + 60_000).toISOString());
+    recordClaims({ sessionId: "agent-1", opId: "op-w", paths: [join(wt, "a.ts")], source: "written" });
+    recordClaims({ sessionId: "agent-2", kind: "worker", paths: [join(wt, "b")], source: "declared" });
+    const repoKey = liveHolders()[0].repoKey;
+    postNote({ sessionId: "agent-1", displayName: "x", repoKey, paths: ["a.ts"], text: "Merged", kind: "merged" });
+    noteRunFinished("agent-1");
+    noteRunFinished("agent-2");
+    expect(notesSince(repoKey).map((n) => n.kind)).toEqual(["merged"]);
+  });
+});
+

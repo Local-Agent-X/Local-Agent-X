@@ -21,7 +21,8 @@
  */
 import type { ToolCallContext } from "./context.js";
 import { writeTargets } from "./write-targets.js";
-import { findClashes, recordClaims, type Clash } from "../agency/work-claims.js";
+import { baselineBeforeShell, pathsShellChanged } from "./shell-tree-claims.js";
+import { findClashes, noteSessionOp, recordClaims, type Clash } from "../agency/work-claims.js";
 import { latestNoteBy } from "../agency/handover-notes.js";
 import { normRepoPath } from "../agency/path-overlap.js";
 import { sessionWorkRootOf } from "../workspace/paths.js";
@@ -57,11 +58,11 @@ function noteLine(c: Clash): string {
 }
 
 /** The note that leads the result of a write into another agent's area. */
-export function clashNote(clashes: Clash[]): string {
+export function clashNote(clashes: Clash[], after = false): string {
   const lines = clashes.map((c) =>
     `- \`${c.path}\` is also being changed by ${who(c)}${c.other.task ? `, on: ${c.other.task}` : ""}`
     + `${c.sameCheckout ? " — in this same folder" : ""}.${noteLine(c)}`);
-  return `[Other agents] ${clashes.length === 1 ? "A file this call writes is" : "Files this call writes are"} in another agent's work:\n${lines.join("\n")}\n`
+  return `[Other agents] ${clashes.length === 1 ? `A file this call ${after ? "changed" : "writes"} is` : `Files this call ${after ? "changed" : "writes"} are`} in another agent's work:\n${lines.join("\n")}\n`
     + "Keep your change compatible with theirs, and tell them what you changed and why with `work_note`.";
 }
 
@@ -75,6 +76,8 @@ function askReason(clashes: Clash[]): string {
 /** Run before approval: raise clashes with other live agents' claims. */
 export function claimClashGate(ctx: ToolCallContext): void {
   if (!ctx.sessionId) return;
+  try { noteSessionOp(ctx.sessionId, ctx.operationId); } catch { /* coordination is best-effort */ }
+  baselineBeforeShell(ctx);
   const targets = writeTargets(ctx).map((t) => t.path);
   if (targets.length === 0) return;
   const seen = raised.get(scopeOf(ctx));
@@ -92,11 +95,26 @@ export function claimClashGate(ctx: ToolCallContext): void {
   ctx.coordinationNote = clashNote(fresh);
 }
 
-/** Run after the tool: a write that went through is this session's claim. */
+/** A shell command changed files it never named, and some are in another
+ *  agent's work: it could not be told before, so its result says so now. */
+function noteUnnamedClashes(ctx: ToolCallContext, changed: string[]): void {
+  if (changed.length === 0) return;
+  const seen = raised.get(scopeOf(ctx));
+  const fresh = findClashes(ctx.sessionId!, changed, sessionWorkRootOf(ctx.sessionId)).filter((c) => !seen?.has(clashKey(c)));
+  if (fresh.length === 0) return;
+  markRaised(scopeOf(ctx), fresh);
+  const note = clashNote(fresh, true);
+  ctx.coordinationNote = ctx.coordinationNote ? `${ctx.coordinationNote}\n${note}` : note;
+}
+
+/** Run after the tool: a write that went through is this session's claim, and
+ *  so is every file its shell command changed without naming (shell-tree-claims.ts). */
 export function recordWrittenClaims(ctx: ToolCallContext, result: ToolResult): void {
   if (!ctx.sessionId || result.isError || ctx.resultReused) return;
   try {
-    const targets = writeTargets(ctx).map((t) => t.path);
+    const unnamed = pathsShellChanged(ctx);
+    noteUnnamedClashes(ctx, unnamed);
+    const targets = [...writeTargets(ctx).map((t) => t.path), ...unnamed];
     if (targets.length === 0) return;
     recordClaims({
       sessionId: ctx.sessionId, opId: ctx.operationId, paths: targets, source: "written",

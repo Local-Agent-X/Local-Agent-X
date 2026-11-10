@@ -63,7 +63,7 @@
     },
     "workers.ts": {
       "upstream": "packages/protocol/src/workers.ts",
-      "sha256": "85de88d912e850a7db93d527e1c5fa351c5bca57b45d117c35023f33be671e63"
+      "sha256": "3dd10a7240946d416eddc39a769fc950f2bda523571ea89124bfcf576fd52cf6"
     },
     "inbox.ts": {
       "upstream": "packages/protocol/src/inbox.ts",

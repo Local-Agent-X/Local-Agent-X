@@ -9,7 +9,8 @@ below. Built in the order of question 8; stage 1 (each chat's own model) first.
 |---|---|---|
 | 1 | Each chat keeps its own model (§8) | Built 2026-11-09 |
 | 2 | Claims with op-lease liveness (§1); the check on every write (§2); hand-over notes, the `work_note` tool, the turn-start section for chats and the briefing section for workers (§3); the "working on" strip in the agents panel (§4, desktop); the merge overlap report and `merged` note (§5) | Built 2026-11-09 |
-| 2, not yet | The phone's view (§4: an agentxos contract change, then a mobile build). Written claims for files a shell command changes without naming them (the post-turn `git status` sweep of §2). A `finished` note when a worker ends. Declared claims from a spawn's `touches` and a fan-out chunk's footprint. The worktree offer and the per-window strip of §6. | Open |
+| 2, rest | Files a shell command changes without naming them become claims (a look at the checkout after each completed command, `agency/tree-changes.ts`, not a post-turn sweep). A `finished` note when a worker's run ends. A spawn's declared area (`agent_spawn`'s `touches`), held from the moment the worker starts. The strip in each chat window (§6). The phone's worker cards (§4): `areas` and `clashesWith` on the agentxos workers snapshot, drawn by agentxos-mobile; it reaches phones with the next over-the-air update or build. | Built 2026-11-09 |
+| 2, not yet | The worktree offer for a second chat on a held folder (§6): a code session's Preview tab serves the project folder, so a chat moved to a worktree needs a decision on what its preview shows and when it merges back. Declared claims from a fan-out chunk's footprint (chunks in one wave are already disjoint, and what each writes is claimed as it writes). | Open |
 | 3 | The orchestrator (§7) | Open |
 | 4 | Collab mode (§9) | Open |
 

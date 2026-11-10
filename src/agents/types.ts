@@ -141,6 +141,10 @@ export interface InvokeOpts {
    *  refuses roots, the home folder, LAX's source and secret locations. Wins
    *  over workRoot and the definition's LAX worktree. */
   workDir?: string;
+  /** Files or folders the run is started to change, relative to its work
+   *  folder: claimed for it from the start (agency/agent-workspace.ts), so
+   *  other agents writing there are told who is on it. */
+  touches?: string[];
   /** True when `task` is harness-composed prose (auto-build chunk workers),
    *  not something the user typed. Threaded to the op as
    *  taskProvenance="harness" so the instruction-ledger middleware skips

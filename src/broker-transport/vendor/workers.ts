@@ -86,6 +86,11 @@ export type WorkerSnapshot = {
   /** The latest line of what it is doing. */
   lastLine?: string;
   totalTokens?: number;
+  /** The files or folders it is changing in its project (repo-relative), a few
+   *  at most. Absent when it has changed nothing yet. */
+  areas?: string[];
+  /** The other agents (chats or workers, by name) changing the same files. */
+  clashesWith?: string[];
 };
 
 /** The answer to `workers_list`: every live worker, complete. */
@@ -192,7 +197,16 @@ function parseWorkerSnapshot(raw: unknown): WorkerSnapshot | null {
   }
   const totalTokens = asNumber(rec.totalTokens);
   if (totalTokens !== null) snap.totalTokens = totalTokens;
+  for (const key of ["areas", "clashesWith"] as const) {
+    const names = stringList(rec[key]);
+    if (names.length > 0) snap[key] = names;
+  }
   return snap;
+}
+
+/** The strings of a list; anything else in it, or a non-list, is dropped. */
+function stringList(raw: unknown): string[] {
+  return Array.isArray(raw) ? raw.filter((v): v is string => typeof v === "string" && v !== "") : [];
 }
 
 /** A `workers_snapshot` frame, or null for any other frame. A malformed entry is

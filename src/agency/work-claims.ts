@@ -32,6 +32,7 @@ import { normRepoPath, repoPathsOverlap } from "./path-overlap.js";
 
 export const CHAT_IDLE_HOLD_MS = 30 * 60_000;
 export const RECENT_MS = 2 * 60 * 60_000;
+export const WORKER_START_GRACE_MS = 5 * 60_000;
 const MAX_CLAIMS = 200;
 const READ_CACHE_MS = 1_000;
 
@@ -109,6 +110,9 @@ export function holderState(h: WorkHolder): HolderState {
   const working = op && ["pending", "running", "paused", "needs-input"].includes(op.status) && !isLeaseExpired(op);
   if (working) return "active";
   const age = now() - Date.parse(h.lastActiveAt);
+  // A worker that declared its area at spawn has no op on record until its
+  // first tool call: it is starting, not gone.
+  if (h.kind === "worker" && !h.opId && age <= WORKER_START_GRACE_MS) return "active";
   if (h.kind === "chat" && age <= CHAT_IDLE_HOLD_MS) return "idle";
   return age <= RECENT_MS ? "recent" : "gone";
 }
@@ -143,6 +147,8 @@ export interface ClaimInput {
   /** The session's project folder, for files in no git repo. */
   fallbackRoot?: string;
   displayName?: string;
+  /** For a claim made before the holder's op exists (a spawn's declared area). */
+  kind?: WorkHolder["kind"];
 }
 
 /** Record claims on `paths`, one holder per repo they fall in. */
@@ -163,7 +169,7 @@ export function recordClaims(input: ClaimInput): void {
     const claims = mergeClaims(prior?.claims ?? [], rels, input.source, stamp);
     write({
       v: 1, sessionId: input.sessionId, repoKey, checkout,
-      kind: described.kind,
+      kind: input.opId ? described.kind : input.kind ?? prior?.kind ?? described.kind,
       displayName: input.displayName ?? prior?.displayName ?? (described.task.slice(0, 60) || input.sessionId),
       task: described.task || prior?.task || "",
       ...(input.opId ? { opId: input.opId } : prior?.opId ? { opId: prior.opId } : {}),
@@ -193,6 +199,17 @@ export function touchHolders(sessionId: string, opId: string, displayName?: stri
     if (h.sessionId !== sessionId) continue;
     write({ ...h, opId, lastActiveAt: stamp, ...(described.task ? { task: described.task } : {}), ...(displayName ? { displayName } : {}) });
   }
+}
+
+const sessionOps = new Map<string, string>();
+
+/** A tool call of `sessionId` ran under `opId`: attach it to the session's
+ *  holders if they do not carry it yet (a claim declared at spawn has none). */
+export function noteSessionOp(sessionId: string, opId: string | undefined): void {
+  if (!opId || sessionOps.get(sessionId) === opId) return;
+  if (sessionOps.size >= 2_000) sessionOps.clear();
+  sessionOps.set(sessionId, opId);
+  if (holdersOfSession(sessionId).some((h) => h.opId !== opId)) touchHolders(sessionId, opId);
 }
 
 export interface Clash {
@@ -257,7 +274,7 @@ export function _setWorkClaimsForTest(opts: { dir?: string | null; clock?: () =>
 }
 
 export function _resetWorkClaimsForTest(): void {
-  dirOverride = null; now = Date.now; opReader = null; cache = null;
+  dirOverride = null; now = Date.now; opReader = null; cache = null; sessionOps.clear();
   if (notifyTimer) clearTimeout(notifyTimer);
   notifyTimer = null; onChanged = null;
 }

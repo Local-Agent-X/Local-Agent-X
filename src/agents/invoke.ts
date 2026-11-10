@@ -144,6 +144,7 @@ export function invokeDefinition(
       modelOverride,
       workRoot: opts.workRoot,
       workDir: opts.workDir,
+      touches: opts.touches,
       harnessAuthoredTask: opts.harnessAuthoredTask,
       delegation: opts.delegation,
     },

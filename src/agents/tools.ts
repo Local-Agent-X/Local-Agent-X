@@ -125,6 +125,10 @@ export function createAgentTools(): ToolDefinition[] {
               "there. A git repo is isolated automatically: the agent works in its own worktree and the changes " +
               "merge back when it finishes.",
           },
+          touches: {
+            type: "array", items: { type: "string" },
+            description: "Files or folders (relative to work_dir) this agent will change. Claimed for it from the start, so other agents working in the project are told who is on them.",
+          },
         },
         required: ["agent", "task"],
       },
@@ -155,6 +159,7 @@ export function createAgentTools(): ToolDefinition[] {
               scope,
               nameOverride: args.name_override ? String(args.name_override) : undefined,
               workDir: typeof args.work_dir === "string" && args.work_dir.trim() ? args.work_dir : undefined,
+              touches: Array.isArray(args.touches) ? args.touches.filter((p): p is string => typeof p === "string") : undefined,
               // The task is this agent's words, not the user's: the run inherits
               // the user's bans from the op calling us instead.
               delegation: delegationFrom(

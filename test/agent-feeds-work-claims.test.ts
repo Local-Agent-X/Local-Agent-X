@@ -15,7 +15,8 @@ const miscJs = readFileSync(join(here, "../public/js/chat-ws-handler-misc.js"), 
 
 const esc = (s: unknown) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
 let rows: unknown[] = [];
-const apiFetch = vi.fn(async () => ({ ok: true, json: async () => ({ holders: rows }) }));
+let others: unknown[] = [];
+const apiFetch = vi.fn(async (_url: string) => ({ ok: true, json: async () => ({ holders: rows, others }) }));
 
 type Claims = { refreshWorkClaims: () => Promise<void>; workClaimsHtml: (r: unknown[]) => string };
 function load(): Claims {
@@ -23,8 +24,37 @@ function load(): Claims {
 }
 
 beforeEach(() => {
-  document.body.innerHTML = `<div id="work-claims" style="display:none"></div>`;
+  document.body.innerHTML = `<div id="work-claims" style="display:none"></div><span id="other-agents-strip" style="display:none"></span>`;
   apiFetch.mockClear();
+  others = [];
+  (window as { activeChat?: unknown }).activeChat = null;
+});
+
+describe("the chat window's strip of the other agents in its project", () => {
+  it("asks for this chat's project and flags an agent in the same files", async () => {
+    (window as { activeChat?: unknown }).activeChat = { id: "chat-me" };
+    others = [
+      { sessionId: "agent-1", displayName: "Fix STT", task: "swap whisper", state: "active", areas: ["src/voice/stt.ts"], clashesWithMe: true },
+      { sessionId: "chat-d", displayName: "Docs", task: "", state: "idle", areas: [], clashesWithMe: false },
+    ];
+    await load().refreshWorkClaims();
+    expect(apiFetch.mock.calls[0][0]).toBe("/api/work-claims?session=chat-me");
+    const strip = document.getElementById("other-agents-strip")!;
+    expect(strip.style.display).toBe("");
+    expect(strip.textContent).toContain("Also working here:");
+    const agents = [...strip.querySelectorAll(".other-agent")];
+    expect(agents).toHaveLength(2);
+    expect(agents[0].className).toContain("clash");
+    expect(agents[0].textContent).toContain("Fix STT");
+    expect(agents[0].querySelector("code")?.textContent).toBe("src/voice/stt.ts");
+    expect(agents[1].querySelector(".other-agent-warn")).toBeNull();
+  });
+
+  it("is hidden when the chat works alone", async () => {
+    (window as { activeChat?: unknown }).activeChat = { id: "chat-me" };
+    await load().refreshWorkClaims();
+    expect(document.getElementById("other-agents-strip")!.style.display).toBe("none");
+  });
 });
 
 describe("who is working on what", () => {

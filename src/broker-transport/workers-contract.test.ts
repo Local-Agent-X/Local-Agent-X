@@ -57,4 +57,23 @@ describe("workers contract with the phone", () => {
       ],
     });
   });
+
+  it("a worker's row says what it is changing and who else is in the same files, and the phone reads it", () => {
+    const frame = buildWorkersSnapshot({
+      canonical: () => [{ opId: "op_1", sessionId: "s1", task: "Build", status: "running" }, { opId: "op_2", sessionId: "s1", task: "Docs", status: "running" }],
+      autopilot: () => [],
+      agents: () => [{ id: "field-agent-1-x", name: "Fix STT", sessionId: "s1", startedAt: Date.UTC(2026, 9, 26) }],
+      claims: () => [
+        { sessionId: "chat-x", opId: "op_1", areas: ["src/app/"], clashesWith: [] },
+        // A named agent's holder is its run session, `agent-<id>`.
+        { sessionId: "agent-field-agent-1-x", opId: "op_inner", areas: ["src/voice/stt.ts"], clashesWith: ["Voice chat"] },
+      ],
+    });
+    const parsed = parseWorkersSnapshot(JSON.parse(JSON.stringify(frame)))!;
+    expect(parsed.workers.map((w) => [w.opId, w.areas, w.clashesWith])).toEqual([
+      ["op_1", ["src/app/"], undefined],
+      ["op_2", undefined, undefined],
+      ["field-agent-1-x", ["src/voice/stt.ts"], ["Voice chat"]],
+    ]);
+  });
 });

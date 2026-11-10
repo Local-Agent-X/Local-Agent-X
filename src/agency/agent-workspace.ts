@@ -21,6 +21,8 @@ import { isAbsolute, join, parse, relative, resolve } from "node:path";
 import { workspaceRoot } from "../config.js";
 import { isSensitiveAttachmentPath } from "../data-lineage/index.js";
 import { projectRoot, setSessionWorkRoot, clearSessionWorkRoot } from "../workspace/paths.js";
+import { noteRunFinished } from "./finished-note.js";
+import { recordClaims } from "./work-claims.js";
 import type { SecurityLayer } from "../security/index.js";
 import { git } from "./worktree-core.js";
 import { createWorktree } from "./worktree-lifecycle.js";
@@ -110,7 +112,13 @@ function anchor(security: SecurityLayer, runSessionId: string, path: string): vo
  * then the template's own LAX worktree. Registered under the run's session id
  * — the id the delegated-shell gate checks.
  */
-export function provisionAgentWorkspace(opts: {
+export function provisionAgentWorkspace(opts: ProvisionOpts): AgentWorkspace {
+  const ws = provisionFolder(opts);
+  declareTouches(ws, opts);
+  return ws;
+}
+
+interface ProvisionOpts {
   agentId: string;
   runSessionId: string;
   security: SecurityLayer;
@@ -119,7 +127,26 @@ export function provisionAgentWorkspace(opts: {
   workRoot?: string;
   /** The workspace a scratch folder is made under (default: the configured one). */
   workspace?: string;
-}): AgentWorkspace {
+  /** Files or folders the run was started to change, relative to its work
+   *  folder or absolute: claimed for it before it writes (work-claims.ts), so
+   *  another agent writing there is told from the start. */
+  touches?: readonly string[];
+}
+
+/** The run's declared area becomes its claim, held as a worker's from the
+ *  moment it starts (ADR 0007 §1). */
+function declareTouches(ws: AgentWorkspace, opts: ProvisionOpts): void {
+  const root = ws.workRoot ?? ws.worktree?.path;
+  if (!root || !opts.touches?.length) return;
+  try {
+    recordClaims({
+      sessionId: opts.runSessionId, kind: "worker", source: "declared", fallbackRoot: root,
+      paths: opts.touches.filter((p) => typeof p === "string" && p.trim() !== "").map((p) => (isAbsolute(p) ? p : join(root, p))),
+    });
+  } catch { /* coordination is best-effort: a run starts without its claim */ }
+}
+
+function provisionFolder(opts: ProvisionOpts): AgentWorkspace {
   const { agentId, runSessionId, security } = opts;
   if (opts.workDir) {
     const plan = planWorkDir(opts.workDir);
@@ -182,6 +209,8 @@ export function provisionAgentWorkspace(opts: {
 /** Undo provisionAgentWorkspace's registrations. Idempotent. A scratch folder
  *  the run left empty is removed; one it wrote into stays for the user. */
 export function releaseAgentWorkspace(ws: AgentWorkspace, security: SecurityLayer, runSessionId: string): void {
+  // The other agents in the project learn what this run changed (finished-note.ts).
+  noteRunFinished(runSessionId);
   if (ws.worktree) {
     security.removeAllowedPath(ws.worktree.path, runSessionId);
     security.releaseFence(runSessionId);

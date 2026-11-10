@@ -1747,6 +1747,14 @@ body.agent-feeds-resizing .agent-feeds{transition:none!important}
 .work-claim-areas{margin-top:4px;display:flex;flex-wrap:wrap;gap:4px}
 .work-claim-areas code{font-size:11px;padding:1px 5px;border-radius:4px;background:var(--surface);border:1px solid var(--border)}
 .work-claim-clash{margin-top:4px;color:#b45309;font-size:11px}
+/* The chat window's strip of the other agents in its project. */
+.other-agents-strip{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:.68rem;font-family:var(--mono);color:var(--muted)}
+.other-agent{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:6px;border:1px solid var(--border);color:var(--text, inherit)}
+.other-agent.active .work-claim-dot{background:var(--accent)}
+.other-agent.idle .work-claim-dot{background:var(--accent);opacity:.45}
+.other-agent.clash{border-color:#f59e0b}
+.other-agent code{font-size:.64rem;opacity:.8}
+.other-agent-warn{color:#b45309}
 /* C6 run-lineage tree: nest cards spawned by an op under it. The connector on
    .agent-feed-children is a static 1px rail by default; when the subtree has an
    actively-working descendant it lights up and bright accent pulses FLOW

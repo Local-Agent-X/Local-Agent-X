@@ -142,7 +142,7 @@ export function registerHandlerEvents(deps: {
     let workspace: AgentWorkspace | null = null;
     try {
       workspace = provisionAgentWorkspace({
-        agentId, runSessionId, security, requiresWorktree, workDir: req.workDir, workRoot: req.workRoot,
+        agentId, runSessionId, security, requiresWorktree, workDir: req.workDir, workRoot: req.workRoot, touches: req.touches,
       });
       workspace.promptBlock += await installWorktreeDependencies(workspace, runSessionId, signal);
       const { resolveProvider } = await import("../agent-request/index.js");

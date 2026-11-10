@@ -21,6 +21,24 @@ export interface WorkersSnapshotSources {
   autopilot: () => { id: string; topic?: string }[];
   /** Named agents still running (agency/handler.ts). */
   agents: () => { id: string; name: string; task?: string; sessionId?: string; startedAt: number }[];
+  /** What each agent is changing and who else is in the same files
+   *  (routes/agents/work-claims.ts); absent in a test that lists none. */
+  claims?: () => { sessionId: string; opId: string | null; areas: string[]; clashesWith: string[] }[];
+}
+
+/** Put each worker's areas and clashes on its row: a worker is the holder
+ *  whose op it is, or whose session is the named agent's (`agent-<id>`). */
+function withClaims(workers: WorkerSnapshot[], claims: NonNullable<ReturnType<NonNullable<WorkersSnapshotSources["claims"]>>>): WorkerSnapshot[] {
+  if (claims.length === 0) return workers;
+  return workers.map((w) => {
+    const row = claims.find((c) => c.opId === w.opId || c.sessionId === `agent-${w.opId}`);
+    if (!row) return w;
+    return {
+      ...w,
+      ...(row.areas.length ? { areas: row.areas } : {}),
+      ...(row.clashesWith.length ? { clashesWith: row.clashesWith } : {}),
+    };
+  });
 }
 
 export function buildWorkersSnapshot(sources: WorkersSnapshotSources): WorkersSnapshotFrame {
@@ -38,16 +56,18 @@ export function buildWorkersSnapshot(sources: WorkersSnapshotSources): WorkersSn
       opType: "agent_spawn", startedAt: new Date(agent.startedAt).toISOString(),
     });
   }
-  return { type: "workers_snapshot", workers };
+  return { type: "workers_snapshot", workers: withClaims(workers, sources.claims?.() ?? []) };
 }
 
 async function defaultSources(): Promise<WorkersSnapshotSources> {
-  const [{ listLiveWorkers }, { listActiveAutopilotOps }, { Handler }] = await Promise.all([
+  const [{ listLiveWorkers }, { listActiveAutopilotOps }, { Handler }, { workClaimRows }] = await Promise.all([
     import("../canonical-loop/index.js"),
     import("../autopilot/loop.js"),
     import("../agency/handler.js"),
+    import("../routes/agents/work-claims.js"),
   ]);
   return {
+    claims: workClaimRows,
     canonical: listLiveWorkers,
     autopilot: () => listActiveAutopilotOps().map((op) => ({ id: op.id, topic: op.autopilot?.topic })),
     agents: () => (Handler.getInstance().getAgentStatus() as FieldAgentStatus[])

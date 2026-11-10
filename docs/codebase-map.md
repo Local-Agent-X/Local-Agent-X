@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 1979 non-test source files · 83 oversized · 265 nearing the size cap.
+**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 1982 non-test source files · 83 oversized · 265 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -22,8 +22,8 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/ops/` | 177 | 29 | XL | 1 |
 | `src/security/` | 162 | 60 | XL | 2 |
 | `src/tools/` | 129 | 233 | XL | 9 |
-| `src/tool-execution/` | 94 | 87 | XL | 2 |
-| `src/workspace/` | 90 | 3 | M |  |
+| `src/tool-execution/` | 94 | 88 | XL | 2 |
+| `src/workspace/` | 91 | 3 | M |  |
 | `src/canonical-loop/` | 84 | 283 | XL | 11 |
 | `src/providers/` | 76 | 27 | L | 1 |
 | `src/session/` | 60 | 11 | M |  |
@@ -34,8 +34,8 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/util/` | 46 | 3 | S |  |
 | `src/local-runtimes/` | 45 | 26 | XL | 1 |
 | `src/threat/` | 44 | 13 | L |  |
+| `src/agency/` | 38 | 31 | L |  |
 | `src/chat-ws/` | 38 | 23 | L |  |
-| `src/agency/` | 37 | 29 | L |  |
 | `src/auth/` | 36 | 11 | L |  |
 | `src/context-manager/` | 29 | 15 | M |  |
 | `src/agent-store/` | 28 | 7 | M | 1 |
@@ -61,10 +61,10 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/app-scaffold/` | 12 | 7 | M |  |
 | `src/ari-kernel/` | 12 | 12 | M |  |
 | `src/integrations/` | 12 | 15 | M |  |
+| `src/routes/` | 12 | 104 | XL | 17 |
 | `src/whatsapp-bridge/` | 12 | 8 | M | 1 |
 | `src/agent-loop/` | 11 | 1 | S |  |
 | `src/persistence/` | 11 | 2 | S |  |
-| `src/routes/` | 11 | 104 | XL | 17 |
 | `src/sync/` | 10 | 22 | L | 1 |
 | `src/codex-client/` | 9 | 7 | M |  |
 | `src/plugin-system/` | 9 | 10 | L | 1 |
@@ -427,6 +427,7 @@ job. Comments are free: never cut them to fit.
 - `src/tools/read-write-tools.ts#readTool.execute` — 90+ own code lines (cap 100)
 - `src/agent-guards/loop-detection.ts#noteToolResults` — 80+ own code lines (cap 100)
 - `src/agent-request/prepare-request/build-system-prompt.ts#buildSystemPromptWithTelemetry` — 80+ own code lines (cap 100)
+- `src/agents/tools.ts#createAgentTools` — 80+ own code lines (cap 100)
 - `src/auth/index.ts#createServer:callback` — 80+ own code lines (cap 100)
 - `src/auto-build/chunk-review/gate-build-exec.ts#runBuildExecGate` — 80+ own code lines (cap 100)
 - `src/broker-transport/vendor/chat.ts#parseEvent` — 80+ own code lines (cap 100)
@@ -461,7 +462,6 @@ job. Comments are free: never cut them to fit.
 - `src/update-extracted-validation.ts#validateExtractedUpdate` — 80+ own code lines (cap 100)
 - `src/agent-guards/loop-detection.ts#checkToolLoops` — 70+ own code lines (cap 100)
 - `src/agents/escalation-core.ts#performEscalation` — 70+ own code lines (cap 100)
-- `src/agents/tools.ts#createAgentTools` — 70+ own code lines (cap 100)
 - `src/anthropic-client/stream-cli/prompt-builder.ts#buildCliPrompt` — 70+ own code lines (cap 100)
 - `src/anthropic-client/warm-pool/stream-prompt.ts#processFrame` — 70+ own code lines (cap 100)
 - `src/anthropic-client/warm-pool/stream-prompt.ts#streamViaWarmPool` — 70+ own code lines (cap 100)
@@ -524,7 +524,7 @@ job. Comments are free: never cut them to fit.
 - `src/tools/setting-tool.ts#settingTool.execute` — 70+ own code lines (cap 100)
 - `src/voice/gpu-session.ts#createGpuSession` — 70+ own code lines (cap 100)
 - `src/voice/tts-model-fetch.ts#doDownload` — 70+ own code lines (cap 100)
-- `src/agency/agent-workspace.ts#provisionAgentWorkspace` — 60+ own code lines (cap 100)
+- `src/agents/invoke.ts#invokeDefinition` — 60+ own code lines (cap 100)
 - `src/auth/anthropic-login.ts#completeAnthropicCliOAuth` — 60+ own code lines (cap 100)
 - `src/auto-build/orchestrator/resume.ts#computeResumeWindow` — 60+ own code lines (cap 100)
 - `src/auto-build/orchestrator/resume.ts#tryResumeOne` — 60+ own code lines (cap 100)

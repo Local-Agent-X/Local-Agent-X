@@ -23,7 +23,8 @@ const FIRST_READ_WINDOW_MS = 24 * 60 * 60_000;
 /** When each session last read each repo's notes (per process). */
 const lastRead = new Map<string, string>();
 
-function reposOf(sessionId: string): string[] {
+/** The repos `sessionId` works in: where it holds claims, and its project folder's. */
+export function reposOfSession(sessionId: string): string[] {
   const keys = new Set(holdersOfSession(sessionId).map((h) => h.repoKey));
   const root = sessionWorkRootOf(sessionId);
   if (root) {
@@ -55,7 +56,7 @@ function noteLine(n: HandoverNote): string {
 export function otherAgentsSection(sessionId: string): string {
   const parts: string[] = [];
   const mine = holdersOfSession(sessionId).flatMap((h) => h.claims.map((c) => normRepoPath(c.path)));
-  for (const repoKey of reposOf(sessionId)) {
+  for (const repoKey of reposOfSession(sessionId)) {
     const others = liveHolders(repoKey).filter((h) => h.sessionId !== sessionId && h.state !== "recent");
     const readKey = `${sessionId}\0${repoKey}`;
     const since = lastRead.get(readKey) ?? new Date(Date.now() - FIRST_READ_WINDOW_MS).toISOString();

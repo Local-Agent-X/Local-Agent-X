@@ -3,6 +3,8 @@
  *
  *   GET /api/work-claims — every live holder (chats and workers): its task,
  *   the areas it claims, its state, and the other holders its claims overlap.
+ *   With `?session=<id>`, also `others`: the agents working in that chat's
+ *   project, for the strip in its window.
  *
  * Open tabs are told to re-read it by a `work_claims_changed` frame whenever
  * a holder changes in this process; the panel also re-reads on a timer, which
@@ -13,7 +15,7 @@ import { basename } from "node:path";
 import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse } from "../../server-utils.js";
 import { liveHolders, setClaimsChangedListener, type HolderView } from "../../agency/work-claims.js";
-import { areasOf } from "../../agency/other-agents-block.js";
+import { areasOf, reposOfSession } from "../../agency/other-agents-block.js";
 import { normRepoPath, repoPathsOverlap } from "../../agency/path-overlap.js";
 
 export interface WorkClaimRow {
@@ -34,9 +36,8 @@ function overlaps(a: HolderView, b: HolderView): boolean {
   return a.claims.some((x) => b.claims.some((y) => repoPathsOverlap(normRepoPath(x.path), normRepoPath(y.path))));
 }
 
-export function workClaimRows(): WorkClaimRow[] {
-  const all = liveHolders();
-  return all.map((h) => ({
+function rowOf(h: HolderView, all: HolderView[]): WorkClaimRow {
+  return {
     sessionId: h.sessionId,
     opId: h.opId ?? null,
     kind: h.kind,
@@ -48,12 +49,30 @@ export function workClaimRows(): WorkClaimRow[] {
     clashesWith: all
       .filter((o) => o !== h && o.repoKey === h.repoKey && o.state !== "recent" && overlaps(h, o))
       .map((o) => o.displayName),
-  }));
+  };
+}
+
+export function workClaimRows(): WorkClaimRow[] {
+  const all = liveHolders();
+  return all.map((h) => rowOf(h, all));
+}
+
+/** The other agents working in the repos `sessionId` works in, each flagged
+ *  when its claims overlap that session's: the strip a chat window shows. */
+export function othersInProjectOf(sessionId: string): Array<WorkClaimRow & { clashesWithMe: boolean }> {
+  const repos = new Set(reposOfSession(sessionId));
+  const all = liveHolders();
+  const here = all.filter((h) => repos.has(h.repoKey) && h.state !== "recent");
+  const mine = here.filter((h) => h.sessionId === sessionId);
+  return here
+    .filter((h) => h.sessionId !== sessionId)
+    .map((h) => ({ ...rowOf(h, all), clashesWithMe: mine.some((m) => m.repoKey === h.repoKey && overlaps(h, m)) }));
 }
 
 export const handleWorkClaimRoutes: RouteHandler = async (method, url, req, res) => {
   if (method !== "GET" || url.pathname !== "/api/work-claims") return false;
-  jsonResponse(res, 200, { holders: workClaimRows() }, req);
+  const session = url.searchParams.get("session");
+  jsonResponse(res, 200, { holders: workClaimRows(), ...(session ? { others: othersInProjectOf(session) } : {}) }, req);
   return true;
 };
 

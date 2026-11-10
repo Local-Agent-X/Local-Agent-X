@@ -53,6 +53,8 @@ export interface AgentRunDriverRequest {
   workRoot?: string;
   /** Mirrors InvokeOpts.workDir — the folder the driver isolates for the run. */
   workDir?: string;
+  /** Mirrors InvokeOpts.touches — the run's declared area of work. */
+  touches?: string[];
   /** Mirrors InvokeOpts.harnessAuthoredTask — the driver forwards it so the
    *  op records taskProvenance="harness" and skips constraint extraction. */
   harnessAuthoredTask?: boolean;

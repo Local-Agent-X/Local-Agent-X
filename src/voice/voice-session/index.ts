@@ -331,6 +331,7 @@ export function createVoiceSessionFactory(runTurn: VoiceTurnRunner, getSecret: S
 
       onAttach: (attachments) => machine.attach(attachments),
       onCameraFrame: (frame) => machine.setCameraFrame(frame),
+      onCameraWatchStop: () => machine.cancelCameraWatch(),
 
       onVoiceSettings(settings: { voice?: string; speed?: number }) {
         // Live voice swap from the chat-bar picker. Adapters that pick

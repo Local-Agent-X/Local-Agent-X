@@ -130,6 +130,9 @@ export class VoiceBridge implements VoiceChannel {
       case "camera":
         this.session?.onCameraFrame?.(frame.frame);
         break;
+      case "camera_watch_stop":
+        this.session?.onCameraWatchStop?.();
+        break;
       case "bye":
         this.endSession();
         break;

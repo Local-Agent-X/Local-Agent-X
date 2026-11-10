@@ -66,6 +66,8 @@ export interface VoiceSession {
   onAttach?(attachments: VoiceAttachment[]): void;
   /** The camera's latest frame while the user has it open on the call; null: closed. */
   onCameraFrame?(frame: string | null): void;
+  /** The user stopped the camera watch from the phone (voice/camera-watch). */
+  onCameraWatchStop?(): void;
   /** Called when the client disconnects or sends bye */
   close(): void;
 }

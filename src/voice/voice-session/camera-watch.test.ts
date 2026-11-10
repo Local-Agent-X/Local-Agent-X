@@ -101,33 +101,70 @@ describe("camera watch: checking", () => {
     expect(h.check).toHaveBeenCalledTimes(2);
   });
 
-  it("when it sees it, says the check's line and stops watching", async () => {
-    const h = harness([{ seen: false, line: "" }, { seen: true, line: "The water's boiling now." }]);
+  it("when it sees it and the next frame agrees, says the check's line and stops watching", async () => {
+    const yes = { seen: true, line: "The water's boiling now." };
+    const h = harness([{ seen: false, line: "" }, yes, yes]);
     h.watch.onFrame(FRAME);
     h.watch.start("the water is boiling");
     await settle();
+    // The interval's check (on the heartbeat) sees it once: not said yet.
     vi.advanceTimersByTime(WATCH_CHECK_EVERY_MS);
+    await settle();
+    expect(h.check).toHaveBeenCalledTimes(2);
+    expect(h.said).toEqual([]);
+    // The confirming check runs on the very next frame, not a full interval later.
+    vi.advanceTimersByTime(2_500);
     h.watch.onFrame(FRAME);
     await settle();
+    expect(h.check).toHaveBeenCalledTimes(3);
     expect(h.said).toEqual(["The water's boiling now."]);
     expect(h.watch.status()).toMatch(/^Not watching\. The last watch saw it: The water's boiling now\./);
 
     vi.advanceTimersByTime(WATCH_CHECK_EVERY_MS);
     h.watch.onFrame(FRAME);
     await settle();
+    expect(h.check).toHaveBeenCalledTimes(3);
+  });
+
+  it("a sighting the next frame does not confirm is not said, and the watch goes on", async () => {
+    const h = harness([{ seen: true, line: "It's boiling." }, { seen: false, line: "" }]);
+    h.watch.onFrame(FRAME);
+    h.watch.start("the water is boiling");
+    await settle();
+    h.watch.onFrame(FRAME);
+    await settle();
+    expect(h.check).toHaveBeenCalledTimes(2);
+    expect(h.said).toEqual([]);
+    expect(h.watch.status()).toMatch(/^Watching for/);
+    // Back to the normal pace: the next frame is not checked at once.
+    h.watch.onFrame(FRAME);
+    await settle();
     expect(h.check).toHaveBeenCalledTimes(2);
   });
 
-  it("a sighting with no line still says what it saw", async () => {
-    const h = harness([{ seen: true, line: "" }]);
+  it("confirms on a new frame, never the one that was already checked", async () => {
+    const h = harness([{ seen: true, line: "It's boiling." }]);
     h.watch.onFrame(FRAME);
     h.watch.start("the water is boiling");
+    await settle();
+    vi.advanceTimersByTime(4_000);
+    await settle();
+    expect(h.check).toHaveBeenCalledTimes(1);
+  });
+
+  it("a sighting with no line still says what it saw", async () => {
+    const h = harness([{ seen: true, line: "" }, { seen: true, line: "" }]);
+    h.watch.onFrame(FRAME);
+    h.watch.start("the water is boiling");
+    await settle();
+    h.watch.onFrame(FRAME);
     await settle();
     expect(h.said).toEqual(["Heads up: the water is boiling."]);
   });
 
   it("gives up, and says so, when the model stops answering", async () => {
     const h = harness([null, null, null]);
+    // (Failed checks keep the normal pace.)
     h.watch.onFrame(FRAME);
     h.watch.start("the water is boiling");
     for (let i = 0; i < 3; i++) {
@@ -207,6 +244,20 @@ describe("camera watch: what ends it", () => {
     const h = harness();
     h.watch.close();
     expect(h.noted).toEqual([]);
+  });
+});
+
+describe("camera watch: what the phone is told", () => {
+  it("what it watches for when it starts, and null whenever it ends", async () => {
+    const changes: Array<string | null> = [];
+    const watch = createCameraWatch({ say: () => {}, check: async () => ({ seen: false, line: "" }), onChange: (w) => changes.push(w) });
+    watch.onFrame(FRAME);
+    watch.start("the water is boiling");
+    watch.start("the cat is back");
+    watch.cancel();
+    watch.start("the oven light is off");
+    watch.onFrame(null);
+    expect(changes).toEqual(["the water is boiling", null, "the cat is back", null, "the oven light is off", null]);
   });
 });
 

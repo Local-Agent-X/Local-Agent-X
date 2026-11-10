@@ -37,9 +37,11 @@ class FakeSession implements VoiceSession {
   settings: Array<{ voice?: string; speed?: number }> = [];
   attached: string[] = [];
   camera: Array<string | null> = [];
+  watchStops = 0;
   closed = 0;
   onAttach(list: Array<{ name: string }>): void { this.attached.push(...list.map((a) => a.name)); }
   onCameraFrame(frame: string | null): void { this.camera.push(frame); }
+  onCameraWatchStop(): void { this.watchStops++; }
   onMicFrame(frame: Int16Array): void { this.mic.push(frame); }
   onEndOfSpeech(): void { this.eos++; }
   onTranscript(text: string, isFinal: boolean): void { this.transcripts.push({ text, isFinal }); }
@@ -150,6 +152,13 @@ describe("VoiceBridge — inbound control → session", () => {
     transport.emit({ type: "camera", frame: null });
     expect(getSession()!.attached).toEqual(["a.jpg"]);
     expect(getSession()!.camera).toEqual(["data:image/jpeg;base64,BBBB", null]);
+  });
+
+  it("passes on the phone stopping the camera watch", () => {
+    const { transport, getSession } = makeBridge();
+    transport.emit({ type: "hello", sessionId: "s1" });
+    transport.emit({ type: "camera_watch_stop" });
+    expect(getSession()!.watchStops).toBe(1);
   });
 
   it("offers the call's voices once it opens, and saves a voice the phone picked to remember", async () => {

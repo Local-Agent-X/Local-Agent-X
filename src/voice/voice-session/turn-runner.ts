@@ -96,6 +96,8 @@ export interface VoiceTurnMachine {
   /** The camera's latest frame while it is open on the call; null when it closed. It
    *  goes with the next turn, and to the call's camera watch (camera-watch.ts). */
   setCameraFrame: UtteranceMedia["setCameraFrame"];
+  /** The user stopped the camera watch from the phone (its "watching for" indicator). */
+  cancelCameraWatch(): void;
   /** Tear down on session close. */
   close(): void;
 }
@@ -109,6 +111,7 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
     say: (text) => speakProactive(text),
     check: deps.watchCheck ?? (async (...a) => (await import("./camera-watch-check.js")).checkWatchFrame(...a)),
     note: (text) => noteInChat(sid, text),
+    onChange: (watching) => { if (!isClosed()) ctx.sendEvent({ type: "camera_watch", watching }); },
   });
   registerCameraWatch(sid, watch);
 
@@ -456,6 +459,7 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
     handleFinalTranscript, discardUtterance, interrupt, noteAudioShipped, markTtsDrained, speakProactive,
     attach: media.attach,
     setCameraFrame: (frame) => { media.setCameraFrame(frame); watch.onFrame(frame); },
+    cancelCameraWatch: () => { watch.cancel(); },
     close,
   };
 }

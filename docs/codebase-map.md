@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 1969 non-test source files · 83 oversized · 263 nearing the size cap.
+**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 1969 non-test source files · 83 oversized · 265 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -361,6 +361,7 @@ job. Comments are free: never cut them to fit.
 - `src/tools/document-tools.ts` — 300+ code lines (cap 350)
 - `src/tools/http-egress-guard.ts` — 300+ code lines (cap 350)
 - `src/tools/presentation-tools.ts` — 300+ code lines (cap 350)
+- `src/voice/voice-session/turn-runner.ts` — 300+ code lines (cap 350)
 - `src/api-docs.ts` — 290+ code lines (cap 350)
 - `src/auth/storage.ts` — 290+ code lines (cap 350)
 - `src/browser/in-app-resolve-scripts.ts` — 290+ code lines (cap 350)
@@ -373,7 +374,6 @@ job. Comments are free: never cut them to fit.
 - `src/protocols/skills-install.ts` — 290+ code lines (cap 350)
 - `src/telegram-bridge/bridge.ts` — 290+ code lines (cap 350)
 - `src/tool-execution/sensitive-read-taint.ts` — 290+ code lines (cap 350)
-- `src/voice/voice-session/turn-runner.ts` — 290+ code lines (cap 350)
 - `src/browser/runtime.ts` — 280+ code lines (cap 350)
 - `src/canonical-loop/scheduler.ts` — 280+ code lines (cap 350)
 - `src/context/system-prompt-builder.ts` — 280+ code lines (cap 350)
@@ -530,6 +530,7 @@ job. Comments are free: never cut them to fit.
 - `src/auto-build/orchestrator/resume.ts#tryResumeOne` — 60+ own code lines (cap 100)
 - `src/auto-build/orchestrator/tools.ts#buildPlanResumeTool.execute` — 60+ own code lines (cap 100)
 - `src/autopilot/round-agent.ts#runAutopilotRound` — 60+ own code lines (cap 100)
+- `src/broker-transport/vendor/voice.ts#parseVoiceEvent` — 60+ own code lines (cap 100)
 - `src/browser/actions.ts#tryResolutionChain` — 60+ own code lines (cap 100)
 - `src/browser/iframe-detector.ts#listIframes` — 60+ own code lines (cap 100)
 - `src/browser/secret-capture.ts#createBrowserSecretCaptureTool` — 60+ own code lines (cap 100)
@@ -585,7 +586,8 @@ job. Comments are free: never cut them to fit.
 - `src/tools/process-session.ts#startSession` — 60+ own code lines (cap 100)
 - `src/tools/process-tools-defs.ts#processRestartTool.execute` — 60+ own code lines (cap 100)
 - `src/tools/telegram-tools.ts#telegramSend.execute` — 60+ own code lines (cap 100)
-- `src/voice/audio-ws.ts#ws.on:callback@263` — 60+ own code lines (cap 100)
+- `src/voice/audio-ws.ts#ws.on:callback@265` — 60+ own code lines (cap 100)
+- `src/voice/voice-session/index.ts#createVoiceSessionFactory:returned` — 60+ own code lines (cap 100)
 - `src/voice/voice-session/settings.ts#resolveVoiceSettings` — 60+ own code lines (cap 100)
 - `src/voice/voice-session/turn-runner.ts#runAgentTurn` — 60+ own code lines (cap 100)
 

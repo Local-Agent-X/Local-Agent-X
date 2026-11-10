@@ -389,10 +389,33 @@ describe("the call's camera watch", () => {
     });
     machine.setCameraFrame("data:image/jpeg;base64,/9j/AAAA");
     expect(cameraWatchFor("test-sess")?.start("the water is boiling")).toMatchObject({ ok: true });
+    // Said once the next frame confirms it.
+    await vi.waitFor(() => expect(h.feeds).toEqual([]));
+    machine.setCameraFrame("data:image/jpeg;base64,/9j/BBBB");
     await vi.waitFor(() => expect(h.feeds).toEqual(["The water's boiling now."]));
     expect(h.events).toContainEqual({ type: "assistant_done", text: "The water's boiling now." });
 
+    expect(h.events.filter((e) => e.type === "camera_watch")).toEqual([
+      { type: "camera_watch", watching: "the water is boiling" },
+      { type: "camera_watch", watching: null },
+    ]);
+
     machine.close();
     expect(cameraWatchFor("test-sess")).toBeUndefined();
+  });
+
+  it("the phone can stop the watch, and is told it stopped", async () => {
+    const { cameraWatchFor } = await import("./camera-watch.js");
+    const h = harness({ queued: false });
+    const machine = createVoiceTurnMachine({
+      ctx: h.ctx, runTurn: twoDeltaRun, speaker: h.speaker, cancelTts: () => {}, isClosed: () => false, logger,
+      watchCheck: async () => ({ seen: false, line: "" }),
+    });
+    machine.setCameraFrame("data:image/jpeg;base64,/9j/AAAA");
+    cameraWatchFor("test-sess")?.start("the water is boiling");
+    machine.cancelCameraWatch();
+    expect(h.events.at(-1)).toEqual({ type: "camera_watch", watching: null });
+    expect(cameraWatchFor("test-sess")?.status()).toMatch(/^Not watching/);
+    machine.close();
   });
 });

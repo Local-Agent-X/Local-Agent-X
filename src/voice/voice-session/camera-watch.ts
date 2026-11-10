@@ -1,7 +1,8 @@
 // "Tell me when X happens" on a call's camera. The user asks ("tell me when the water
 // boils"), the agent starts a watch (camera_watch), and from then on the camera's
 // frames are checked against the condition on the side: no turn per frame, nothing in
-// the chat. When a check sees it, the agent says so on the call and the watch ends.
+// the chat. When a check sees it and the next frame's check agrees, the agent says so on
+// the call and the watch ends.
 //
 // A watch also ends, and says why, when the camera closes, the frames stop coming, the
 // checks keep failing, or its time runs out. The user cancelling it ends it quietly: the
@@ -61,6 +62,9 @@ export interface CameraWatchDeps {
   check: WatchCheck;
   /** Note a line in the chat when nothing can be said (the call ended). */
   note?(text: string): void;
+  /** What it is watching for now, or null: it stopped. Called whenever that changes, so
+   *  the phone can show it (the voice event `camera_watch`). */
+  onChange?(watching: string | null): void;
   now?: () => number;
 }
 
@@ -71,7 +75,11 @@ interface Running {
   heartbeat: ReturnType<typeof setInterval>;
   checking: AbortController | null;
   lastCheckAt: number;
+  /** Which frame (FrameHeld.n) the last check looked at. */
+  checkedFrame: number;
   failedChecks: number;
+  /** A check saw it; the next frame must too before it is said (the line to say). */
+  sighting: string | null;
 }
 
 export function clampWatchMinutes(minutes: number | undefined): number {
@@ -85,7 +93,9 @@ function clock(ms: number): string {
 
 export function createCameraWatch(deps: CameraWatchDeps): CameraWatch {
   const now = deps.now ?? Date.now;
-  let frame: { data: string; at: number } | null = null;
+  // n counts frames, so "the next frame" holds even when two arrive in the same millisecond.
+  let frame: { data: string; at: number; n: number } | null = null;
+  let frames = 0;
   let running: Running | null = null;
   let lastOutcome = "";
   let closed = false;
@@ -99,15 +109,20 @@ export function createCameraWatch(deps: CameraWatchDeps): CameraWatch {
     w.checking?.abort();
     lastOutcome = `${outcome} (${clock(now())})`;
     logger.info(`[camera-watch] ended: ${outcome}`);
+    deps.onChange?.(null);
     if (line) deps.say(line);
   }
 
   function maybeCheck(): void {
     const w = running;
-    if (!w || w.checking || !frame || now() - w.lastCheckAt < WATCH_CHECK_EVERY_MS) return;
+    if (!w || w.checking || !frame) return;
+    // Confirming a sighting looks at the very next frame; otherwise one check per interval.
+    const due = w.sighting !== null ? frame.n > w.checkedFrame : now() - w.lastCheckAt >= WATCH_CHECK_EVERY_MS;
+    if (!due) return;
     const ac = new AbortController();
     w.checking = ac;
     w.lastCheckAt = now();
+    w.checkedFrame = frame.n;
     const shown = frame.data;
     void deps.check(shown, w.condition, ac.signal)
       .catch((e: Error) => {
@@ -129,10 +144,21 @@ export function createCameraWatch(deps: CameraWatchDeps): CameraWatch {
       return;
     }
     w.failedChecks = 0;
-    if (verdict.seen) {
-      finish(`saw it: ${verdict.line}`, verdict.line || `Heads up: ${w.condition}.`);
+    // One frame saying yes is not enough: a misread (a simmer taken for a boil, steam on
+    // the lens, a sign in view that says "YES") rarely survives the next frame too.
+    if (verdict.seen && w.sighting === null) {
+      w.sighting = verdict.line || `Heads up: ${w.condition}.`;
+      logger.info("[camera-watch] seen once; confirming on the next frame");
+      maybeCheck();
       return;
     }
+    if (verdict.seen) {
+      const line = verdict.line || w.sighting!;
+      finish(`saw it: ${line}`, line);
+      return;
+    }
+    if (w.sighting !== null) logger.info("[camera-watch] the next frame did not confirm it; still watching");
+    w.sighting = null;
     maybeCheck();
   }
 
@@ -167,9 +193,12 @@ export function createCameraWatch(deps: CameraWatchDeps): CameraWatch {
         heartbeat: setInterval(heartbeat, HEARTBEAT_MS),
         checking: null,
         lastCheckAt: 0,
+        checkedFrame: 0,
         failedChecks: 0,
+        sighting: null,
       };
       running = w;
+      deps.onChange?.(c);
       logger.info(`[camera-watch] watching for "${c.slice(0, 80)}" up to ${mins} min`);
       maybeCheck();
       return { ok: true, minutes: mins, replaced };
@@ -191,7 +220,7 @@ export function createCameraWatch(deps: CameraWatchDeps): CameraWatch {
 
     onFrame(next) {
       if (closed) return;
-      frame = next === null ? null : { data: next, at: now() };
+      frame = next === null ? null : { data: next, at: now(), n: ++frames };
       if (next === null) {
         const c = running?.condition;
         if (c) finish("stopped: the camera closed", `The camera closed, so I've stopped watching for ${c}.`);

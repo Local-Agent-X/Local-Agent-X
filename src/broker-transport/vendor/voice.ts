@@ -37,6 +37,9 @@ export type VoiceAttachFrame = { type: "attach"; attachments: ChatAttachment[] }
  *  says while it is open goes to the agent with the latest frame, so it sees what they
  *  are pointing the camera at. */
 export type VoiceCameraFrame = { type: "camera"; frame: string | null };
+/** Stop the camera watch running on this call (the user closed the "watching for"
+ *  indicator). The desktop answers with `camera_watch` watching null. */
+export type VoiceCameraWatchStopFrame = { type: "camera_watch_stop" };
 
 export type VoiceControlFrame =
   | VoiceHelloFrame
@@ -45,7 +48,8 @@ export type VoiceControlFrame =
   | VoiceTranscriptFrame
   | VoiceByeFrame
   | VoiceAttachFrame
-  | VoiceCameraFrame;
+  | VoiceCameraFrame
+  | VoiceCameraWatchStopFrame;
 
 // ── desktop → phone ──
 
@@ -85,7 +89,11 @@ export type VoiceServerEvent =
    *  ("" when they never picked one: the desktop's default). */
   | { type: "voices"; voices: VoiceOption[]; current: string }
   /** A card the agent showed during the reply (card.ts): drawn in the chat, not spoken. */
-  | { type: "card"; card: ChatCard };
+  | { type: "card"; card: ChatCard }
+  /** The agent is watching the call's camera for something ("the water is boiling"),
+   *  to say so on the call when it sees it; null: it stopped (it saw it, the camera
+   *  closed, time ran out, or it was cancelled). Sent whenever that changes. */
+  | { type: "camera_watch"; watching: string | null };
 
 // ── builders ──
 
@@ -149,6 +157,8 @@ export function parseVoiceControl(raw: unknown): VoiceControlFrame | null {
       const frame = asString(msg.frame);
       return frame !== null && frame.startsWith("data:image/") && DATA_URL.test(frame) ? { type: "camera", frame } : null;
     }
+    case "camera_watch_stop":
+      return { type: "camera_watch_stop" };
     default:
       return null;
   }
@@ -203,6 +213,11 @@ export function parseVoiceEvent(raw: unknown): VoiceServerEvent | null {
     case "card": {
       const card = parseCard(msg.card);
       return card === null ? null : { type: "card", card };
+    }
+    case "camera_watch": {
+      if (msg.watching === null) return { type: "camera_watch", watching: null };
+      const watching = asString(msg.watching);
+      return watching === null || watching.trim() === "" ? null : { type: "camera_watch", watching };
     }
     case "voices": {
       const voices = (Array.isArray(msg.voices) ? msg.voices : []).flatMap((v): VoiceOption[] => {

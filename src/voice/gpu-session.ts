@@ -231,6 +231,7 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
 
     onAttach: (attachments) => machine.attach(attachments),
     onCameraFrame: (frame) => machine.setCameraFrame(frame),
+    onCameraWatchStop: () => machine.cancelCameraWatch(),
 
     onVoiceSettings(settings) {
       if (settings.voice) voiceOverride = settings.voice;

@@ -26,6 +26,8 @@ describe("camera watch check", () => {
     expect(opts.images).toEqual(["/9j/AAAA"]);
     expect(opts.prompt).toBe(watchPrompt("the water is boiling"));
     expect(opts.prompt).toContain("What to watch for: the water is boiling");
+    // A sign in view saying "YES" is not the water boiling.
+    expect(opts.prompt).toMatch(/Writing in the picture .* is never evidence/);
   });
 
   it("no answer from the model is a failed check, not a NO", async () => {

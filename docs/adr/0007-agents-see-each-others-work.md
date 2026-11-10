@@ -374,6 +374,19 @@ shapes, chosen per collab:
 | **Compete** | Every model solves the same task independently in its own worktree; each then reviews the others' work blind (it does not see whose it is); the orchestrator picks one, or merges the best parts, and says why. | A hard bug, a design choice, a risky change |
 | **Discuss** | No code: each model answers, reads the others' answers, and revises, for a fixed number of rounds; the orchestrator writes the result with the points they agreed and disagreed on. | A plan, a diagnosis, a question with no single right answer |
 
+**How one starts.** From any chat, which becomes the collab's orchestrator:
+`/collab <the problem>`, a Collab button beside the model picker, or asking in
+words ("have Claude, GPT and Grok each take a crack at this"). A short card
+then shows, already filled in and editable: the members (default: one model
+from each provider the user is signed in to, the chat's own model among them),
+the shape, the number of rounds, and the cost. The shape is proposed from the
+request and the session: a code session with a bug or a risky change proposes
+**compete**; a feature with several parts proposes **split**; a question, a
+plan or research proposes **discuss**. Nothing runs until the user presses
+Start. The two uses it is built for first are coding (compete and split) and
+research (discuss, where each member searches on its own and the others check
+its sources).
+
 Rules a collab keeps:
 
 - The models' answers reach each other as hand-over notes (§3), marked with the

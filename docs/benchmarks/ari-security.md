@@ -1,6 +1,6 @@
-# ARI Kernel Security Benchmarks
+# Ari Security Benchmarks
 
-The ARI Kernel is benchmarked as a **control layer** — the thing that contains damage
+Ari is benchmarked as a **control layer** — the thing that contains damage
 when the model is wrong or compromised, not a shield that stops the model from being
 tricked. Measured three ways (June 2026, driven by the local `claude` CLI; the
 red-team and AgentDojo re-measured 2026-10-22 at commit `f00f9ba9`):

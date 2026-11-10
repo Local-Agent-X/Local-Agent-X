@@ -225,12 +225,12 @@ describe("a name that is not a tool is refused before the kernel", () => {
   it("an action called as a tool is pointed at the tool that owns it, with no kernel text", async () => {
     const text = await dispatchText("switch_tab");
     expect(text).toContain('call browser with action="switch_tab"');
-    expect(text).not.toMatch(/ARI kernel|TOOL_CLASS_MAP/);
+    expect(text).not.toMatch(/\[Ari\]|ARI kernel|TOOL_CLASS_MAP/);
   });
 
   it("any other unknown name gets the list of real tool names, with no kernel text", async () => {
     const text = await dispatchText("open_tab_now");
     expect(text).toMatch(/Unknown tool "open_tab_now"|Tool name typo/);
-    expect(text).not.toMatch(/ARI kernel|TOOL_CLASS_MAP/);
+    expect(text).not.toMatch(/\[Ari\]|ARI kernel|TOOL_CLASS_MAP/);
   });
 });

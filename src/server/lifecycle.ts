@@ -202,7 +202,7 @@ export async function startSecurityKernel(deps: { config: LAXConfig; dataDir: st
       sessionId: "system",
       event: "quarantine_state_reset",
       decision: "warn",
-      reason: "Server start: session taint and kernel run state live in process memory. Every quarantine raised before this restart is cleared by it; a block recorded in session history from before this point no longer holds.",
+      reason: "Server start: session taint and Ari's run state live in process memory. Every quarantine raised before this restart is cleared by it; a block recorded in session history from before this point no longer holds.",
     });
     return;
   }

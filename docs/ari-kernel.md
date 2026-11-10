@@ -1,8 +1,14 @@
-# ARI Kernel — what it is, what it does, what it's for
+# Ari — what it is, what it does, what it's for
 
-The ARI Kernel is Local Agent X's in-process security layer. **Every tool call routes
-through it** before it touches your disk, your accounts, or the network. It is the
-deepest defense layer (Layer -1 in [THREAT-MODEL.md](../THREAT-MODEL.md)).
+Ari is Local Agent X's in-process security layer. **Every tool call that can touch your
+disk, your accounts, the network or a shell routes through it** first (file, http,
+shell, database, retrieval and secret-vault classes; internal tools are observed, not
+gated). It is the deepest defense layer (Layer -1 in [THREAT-MODEL.md](../THREAT-MODEL.md)).
+
+It is a policy layer inside the app's own process, not an operating-system kernel. The
+code still carries the older name (`src/ari-kernel/`, `packages/arikernel/`); what makes
+a caged shell's containment kernel-grade is the OS sandbox around it, with Ari's checks
+at the egress proxy that sandbox forces traffic through.
 
 It ships vendored in [`packages/arikernel/`](../packages/arikernel/) (core / runtime /
 taint-tracker / policy-engine / audit-log / tool-executors) and is wired into the

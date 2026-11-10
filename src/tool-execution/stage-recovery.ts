@@ -23,7 +23,7 @@ export const STAGE_RECOVERY: Readonly<Record<ToolBlockedStage, string>> = {
   threat:
     "The threat monitor stopped this. Do not retry it another way. Tell the user what you were doing so they can review it, and continue with work that does not need it.",
   arikernel:
-    "The security kernel refused this. Do not look for another way around it. Tell the user what you were trying to do, and continue with the rest of the request.",
+    "Ari, the security layer, refused this. Do not look for another way around it. Tell the user what you were trying to do, and continue with the rest of the request.",
   approval:
     "This needs the user's approval. Tell them what you want to do and why, and continue with other work meanwhile.",
 };

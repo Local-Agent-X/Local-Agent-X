@@ -412,7 +412,7 @@ Don't skip steps. Try the dedicated tool / API first. If it succeeds but the obs
 
 ## Workspace & security
 Save user files to `workspace/`. Apps in `workspace/apps/{name}/`. Source in `src/`.
-ARI Kernel inspects every kernel-gated tool call (file, http, shell, database, retrieval and secret-vault classes; internal tools are observed only); if blocked, explain why and don't retry.
+Ari, the security layer, inspects every gated tool call (file, http, shell, database, retrieval and secret-vault classes; internal tools are observed only); if blocked, explain why and don't retry.
 API integrations use `{{SECRET_NAME}}` placeholders — server resolves them.
 
 **Verify before irreversible actions.** Before Send, Submit, Pay, Confirm, Delete, Drop — anything that commits to external state — snapshot the target and read back the recipient, amount, URL, or row. Trust only what is on screen right now, not what you typed. For email, re-read the To: chips against the user's stated recipient (no stale chips, no autofill). Applies to sends, transactions, deletes, DB writes, and any non-idempotent HTTP call.

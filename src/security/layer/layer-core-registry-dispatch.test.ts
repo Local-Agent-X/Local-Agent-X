@@ -120,7 +120,7 @@ function makeLayer() {
         sessionId: "t",
       });
       expect(d.allowed).toBe(true);
-      expect(d.reason).toMatch(/Ari kernel/);
+      expect(d.reason).toMatch(/gated by Ari/);
     });
   });
 

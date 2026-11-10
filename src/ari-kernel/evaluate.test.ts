@@ -62,7 +62,7 @@ describe("ariEvaluate: a thrown kernel deny blocks in every mode", () => {
     await startAriKernel(join(dir, "ari-audit.db"), "workspace-assistant", true);
     const r = await ariEvaluate("email_send", "post", EMAIL, ["web"]);
     expect(r.allowed).toBe(false);
-    expect(r.reason).toMatch(/^\[ARI kernel\] Tool call denied: Outbound HTTP writes blocked/);
+    expect(r.reason).toMatch(/^\[Ari\] Tool call denied: Outbound HTTP writes blocked/);
   });
 
   it("still allows a clean call in both modes", async () => {

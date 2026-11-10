@@ -174,7 +174,7 @@ async function testAriKernel(): Promise<StartupTestResult> {
     return {
       name: "ari_kernel",
       status: "pass",
-      details: "ARI kernel data found",
+      details: "Ari data found",
       durationMs: Date.now() - start,
       critical: false,
     };
@@ -183,7 +183,7 @@ async function testAriKernel(): Promise<StartupTestResult> {
   return {
     name: "ari_kernel",
     status: "warn",
-    details: "ARI kernel not yet configured (will initialize on first use)",
+    details: "Ari not yet configured (will initialize on first use)",
     durationMs: Date.now() - start,
     critical: false,
   };

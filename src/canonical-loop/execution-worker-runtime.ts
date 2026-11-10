@@ -87,7 +87,7 @@ export async function runClaimedExecutionWorker(
       config.ariRequired,
     );
     if (!kernelActive && config.ariRequired) {
-      throw new Error("execution worker security kernel is unavailable");
+      throw new Error("Ari is unavailable in the execution worker");
     }
     if (!process.env.LAX_SCOPED_RUNTIME_CREDENTIAL_FILE) {
       getOrInitSecretsStore(getLaxDir());

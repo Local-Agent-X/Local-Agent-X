@@ -224,7 +224,7 @@ export function evaluateByKernelClass(
       // kernel (ARI_ACTION_MAP).
       return {
         allowed: true,
-        reason: `${toolName}: secret-vault-class tool — gated by Ari kernel`,
+        reason: `${toolName}: secret-vault-class tool — gated by Ari`,
       };
   }
 

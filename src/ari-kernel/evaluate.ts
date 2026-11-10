@@ -36,7 +36,7 @@ export async function ariEvaluate(
   const restrictedBefore = readKernelQuarantine(scopeId, false) !== null;
   if (!firewall) {
     if (isAriRequired()) {
-      return { allowed: false, reason: "[ARI kernel] required but not active — tool call blocked", userHint: USER_HINTS.kernel };
+      return { allowed: false, reason: "[Ari] required but not active — tool call blocked", userHint: USER_HINTS.kernel };
     }
     return { allowed: true, reason: "AriKernel not active" };
   }
@@ -49,7 +49,7 @@ export async function ariEvaluate(
   if (toolClass === undefined) {
     return {
       allowed: false,
-      reason: `[ARI kernel] ${toolName} not in TOOL_CLASS_MAP — fail-closed. Classify it (file/http/shell/database/retrieval/secret-vault/internal) in src/ari-kernel/tool-class-map.ts.`,
+      reason: `[Ari] ${toolName} not in TOOL_CLASS_MAP — fail-closed. Classify it (file/http/shell/database/retrieval/secret-vault/internal) in src/ari-kernel/tool-class-map.ts.`,
       userHint: USER_HINTS.kernel,
     };
   }
@@ -91,7 +91,7 @@ export async function ariEvaluate(
       const detail = oneLine(`Tool call denied: ${judged.decision.reason}`);
       return quarantineReason(withQuarantine({
         allowed: false,
-        reason: `[ARI kernel] ${detail}`,
+        reason: `[Ari] ${detail}`,
         userHint: USER_HINTS.kernel,
       }, scopeId, restrictedBefore), detail);
     }
@@ -99,7 +99,7 @@ export async function ariEvaluate(
       const reason = judged.result.error || "Denied by kernel policy";
       return withQuarantine({
         allowed: false,
-        reason: `[ARI kernel] ${reason}`,
+        reason: `[Ari] ${reason}`,
         userHint: USER_HINTS.kernel,
       }, scopeId, restrictedBefore);
     }
@@ -120,7 +120,7 @@ export async function ariEvaluate(
     const detail = oneLine(rawDetail);
     return quarantineReason(withQuarantine({
       allowed: false,
-      reason: `[ARI kernel] evaluation error, blocked in ariRequired mode: ${detail}`,
+      reason: `[Ari] evaluation error, blocked in ariRequired mode: ${detail}`,
       userHint: USER_HINTS.kernel,
     }, scopeId, restrictedBefore), detail);
   }
@@ -140,7 +140,7 @@ function quarantineReason(verdict: AriVerdict, detail: string): AriVerdict {
     : q.trigger === "behavioral_rule"
       ? `run rule ${q.rule} refused this call: ${q.reason}. The run continues: ${q.deniedActions} of ${q.threshold} denials before it is restricted to read-only actions.`
       : `${q.rule ?? q.trigger} fired: ${q.reason}. ${detail}`;
-  return { ...verdict, reason: `[ARI kernel] ${what}` };
+  return { ...verdict, reason: `[Ari] ${what}` };
 }
 
 function withQuarantine(verdict: AriVerdict, scopeId: string | undefined, restrictedBefore: boolean): AriVerdict {

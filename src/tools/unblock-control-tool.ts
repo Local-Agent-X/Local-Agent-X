@@ -37,7 +37,7 @@ export const showUnblockControlTool: ToolDefinition = {
     if (q) {
       return {
         content:
-          `The security kernel has this turn in restricted mode since ${q.restrictedAt} (${q.rule ?? q.trigger}: ${q.reason}). ` +
+          `Ari has this turn in restricted mode since ${q.restrictedAt} (${q.rule ?? q.trigger}: ${q.reason}). ` +
           "No session taint is involved, so there is no control to show and nothing for the user to clear: the kernel run state belongs to this turn and the next user message starts clean. " +
           "Report what was refused and end the turn.",
         status: "ok",

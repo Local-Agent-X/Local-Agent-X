@@ -19,23 +19,23 @@ import type { EgressBlocker } from "./egress-gates.js";
 const UNTRUSTED_TAINT: ReadonlySet<string> = new Set(TAINTED_CONTENT_SOURCES);
 
 export const KERNEL_TAINT_RECOVERY =
-  "The kernel policy denies this outbound action because the session carries untrusted-input taint from an earlier web/email/file read. To clear the taint, ask the user to click \"Declassify & retry\" on this blocked card in the chat — that button is the only declassify control. Do not just retry the same call.";
+  "Ari's policy denies this outbound action because the session carries untrusted-input taint from an earlier web/email/file read. To clear the taint, ask the user to click \"Declassify & retry\" on this blocked card in the chat — that button is the only declassify control. Do not just retry the same call.";
 
 /** A run rule refused this one call; the turn goes on. */
 function ruleRefusalRecovery(q: KernelQuarantine): string {
   const limit = q.threshold ?? "the limit";
-  return `The security kernel's run rule ${q.rule} refused this call: ${q.reason}. Only this call was refused; the turn continues and other calls still run. ` +
-    `This was refusal ${q.deniedActions} of ${limit}: at ${limit} the kernel restricts the rest of the turn to read-only. ` +
+  return `Ari's run rule ${q.rule} refused this call: ${q.reason}. Only this call was refused; the turn continues and other calls still run. ` +
+    `This was refusal ${q.deniedActions} of ${limit}: at ${limit} Ari restricts the rest of the turn to read-only. ` +
     "No session taint is involved, so there is nothing the user can click or clear. Do not retry the same call: report exactly which step was refused and why, then continue with the rest of the task or ask the user how to proceed.";
 }
 
 function quarantineRecovery(q: KernelQuarantine): string {
   const fired = q.rule ? `run rule ${q.rule}` : `denied-action threshold (${q.deniedActions} denials this turn)`;
   const lead = q.trigger === "restricted"
-    ? `The security kernel has kept this turn in restricted mode since ${q.restrictedAt} (${fired}: ${q.reason}), so this call was refused too.`
-    : `The security kernel's ${fired} quarantined this turn: ${q.reason}.`;
-  return `${lead} For the rest of THIS turn the kernel refuses outbound writes, shell and file writes; read-only calls still work. ` +
-    "No session taint is involved, so there is nothing the user can click or clear, and the state is not permanent: the kernel run state belongs to this turn and the next user message starts clean. " +
+    ? `Ari has kept this turn in restricted mode since ${q.restrictedAt} (${fired}: ${q.reason}), so this call was refused too.`
+    : `Ari's ${fired} quarantined this turn: ${q.reason}.`;
+  return `${lead} For the rest of THIS turn Ari refuses outbound writes, shell and file writes; read-only calls still work. ` +
+    "No session taint is involved, so there is nothing the user can click or clear, and the state is not permanent: Ari's run state belongs to this turn and the next user message starts clean. " +
     "Stop retrying blocked calls now — report what was completed and exactly which step this rule stopped, then end the turn so the user can reply to continue.";
 }
 
@@ -76,7 +76,7 @@ export function kernelDenyBlocker(verdict: AriVerdict, kernelTaintLabels: readon
   const d = kernelDeny(verdict, kernelTaintLabels);
   return {
     layer: "arikernel",
-    label: "ARI kernel",
+    label: "Ari",
     reason: verdict.reason,
     recovery: d.recovery,
     userHint: verdict.userHint ?? USER_HINTS.policy,
@@ -95,7 +95,7 @@ export function kernelDenyBlocker(verdict: AriVerdict, kernelTaintLabels: readon
 export function kernelDenyResult(verdict: AriVerdict, kernelTaintLabels: readonly string[]): ToolResult {
   const d = kernelDeny(verdict, kernelTaintLabels);
   return {
-    content: `BLOCKED by ARI kernel: ${verdict.reason}`,
+    content: `BLOCKED by Ari: ${verdict.reason}`,
     isError: true,
     status: "blocked",
     metadata: {

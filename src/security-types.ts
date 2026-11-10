@@ -112,7 +112,7 @@ export const USER_HINTS = {
    *  layer (2026-06-10, image_search). The reason line names the engine-level
    *  cause; the right move is report-the-bug, not edit-your-config. */
   kernel:
-    "The security kernel blocked this tool call — this is an engine-level gate, not your settings. The reason below names the cause; if it mentions a missing mapping or grant, that's an app bug to report (or update the app), not something to fix in ~/.lax.",
+    "Ari, the security layer, blocked this tool call — this is an engine-level gate, not your settings. The reason below names the cause; if it mentions a missing mapping or grant, that's an app bug to report (or update the app), not something to fix in ~/.lax.",
   /** Shell metacharacters, heredoc + script writes, dangerous patterns, obfuscation. */
   // Relayed to the user by the model (result-helpers.ts renders it first in
   // the result). It used to ask the user what they were trying to do, which a

@@ -216,6 +216,44 @@ Neither blocks a merge that git can do. The result carries the list
 next clash, and the agents panel badges both. The existing refusal to
 fast-forward over uncommitted edits in the user's checkout stays as it is.
 
+### 6. Many chats on one screen
+
+The working mode this is for: several chat windows open side by side, each
+agent on a different task in the same project, each able to see the others.
+
+**A second coding chat on a folder another live chat holds gets its own
+worktree.** Two chats writing one folder can only be made safe by asking the
+user at every shared file; with six chats that is a card storm. So when a coding
+chat binds to a project folder (`setSessionWorkRoot`) that another live chat in
+the same repo already holds, LAX offers, once, to give it a worktree of that
+repo on its own branch, merged back through `mergeWorktree` when the user says
+the work is done (or on "merge" in that chat). The first chat keeps the folder
+itself. Declined, the chat shares the folder and the same-checkout row of §2
+applies. With worktrees, the edit-time check is a note, never a question, and
+the only shared moment is the merge (§5).
+
+**Every chat sees the others.** Besides the turn-start line and notes (§3), each
+chat window shows a one-line strip under its header listing the other live
+holders in the same repo (name, task, a clash dot when it overlaps this chat's
+claims), fed by the same `work_claims_changed` frame as the panel.
+
+**How many at once.** What bounds it today, from the code:
+
+| Limit | Value | Where | What happens past it |
+|---|---|---|---|
+| Chats running a turn at the same moment | 10 | `maxInteractiveSessions` (`src/config-schema.ts`), the scheduler's `interactive` lane | The 11th waits in the queue |
+| Sub-agents across all chats | 5 | `maxSubAgents`, the `agent` lane | Queued; six chats each spawning workers share five slots |
+| Everything in flight | 12 | `maxConcurrentAgents`, the global ceiling | Queued |
+| Local model (Ollama) | 1 | `resourceLocksForProvider` → `gpu:0` (`src/ops/provider-matrix.ts`) | Local-model chats run one at a time |
+
+Six chats on hosted models fit inside every limit. What runs out first is
+outside LAX's code: the subscription's usage window (six agents spend it about
+six times as fast) and the machine, when several agents run the full build or
+test suite at once. Neither breaks anything, but both slow everyone. The
+coordination layer adds a heads-up when two agents start the same heavy command
+(`npm run build`, the full test suite) in one repo within a minute, in the same
+edit-time note.
+
 ### Module
 
 `src/agency/` owns parallel agents and their isolation; coordination joins it:
@@ -259,3 +297,5 @@ isolation" row gains these, and `src/agency/` gets an `AGENTS.md` naming them.
    user's yes?**
 4. **Phone in this change, or desktop first and phone after?** The phone needs
    an agentxos contract change and a mobile build.
+5. **A second chat on a held folder: offer a worktree (proposed), or give it
+   one without asking?**

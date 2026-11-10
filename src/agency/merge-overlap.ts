@@ -19,6 +19,7 @@ import { locateInRepo } from "./repo-locate.js";
 import { liveHolders, type HolderView } from "./work-claims.js";
 import { notesSince, postNote } from "./handover-notes.js";
 import { normRepoPath, repoPathsOverlap } from "./path-overlap.js";
+import { raiseToOrchestrator } from "./orchestrator-wake.js";
 
 export interface MergeOverlap {
   path: string;
@@ -108,5 +109,10 @@ export function noteMerged(f: MergeFacts, changed: string[], overlaps: MergeOver
       repoKey, paths: changed, kind: "merged",
       text: `Merged ${f.branch} into ${f.baseBranch}: ${changed.length} file(s)${mine?.task ? ` for "${mine.task}"` : ""}${overlapSummary(overlaps)}.`,
     });
+    // A merge that landed on someone else's files is the orchestrator's to look at.
+    if (overlaps.length > 0) {
+      raiseToOrchestrator(repoKey, `merge|${f.branch}|${f.headSha}`,
+        `"${mine?.displayName ?? f.branch}" merged ${f.branch} into ${f.baseBranch}${overlapSummary(overlaps)}.`);
+    }
   } catch { /* the merge already happened; a note that could not be posted changes nothing */ }
 }

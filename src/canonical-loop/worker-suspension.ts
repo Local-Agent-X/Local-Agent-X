@@ -13,6 +13,7 @@ import type { Op } from "../ops/types.js";
 import { transitionOp } from "./state-machine.js";
 import { recordTerminalOutcome } from "./turn-loop/record-outcome.js";
 import { REPEAT_FAILURE_REASON } from "./middlewares/repeat-failure.js";
+import { raiseAboutOp } from "../agency/orchestrator-wake.js";
 
 /** Op types nobody resumes: a suspension ends them. */
 const ENDED_ON_SUSPEND: ReadonlySet<string> = new Set([OP_TYPE.memoryConsolidation]);
@@ -33,5 +34,8 @@ export function applySuspension(op: Op, reason: string, message: string | undefi
     return "ended";
   }
   transitionOp(op, "paused", `suspended:${reason}`);
+  // A project's orchestrator hears of a worker that stopped (agency/orchestrator-wake.ts).
+  const why = op.canonical.suspension.reason === "blocked" ? "keeps failing the same way" : "stopped making progress";
+  raiseAboutOp(op.id, `suspended|${op.id}|${op.canonical.suspension.suspendedAt}`, (name) => `"${name}" ${why} and is paused. It can be resumed (agent_resume) or cancelled.`);
   return "paused";
 }

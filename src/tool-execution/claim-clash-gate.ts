@@ -24,6 +24,7 @@ import { writeTargets } from "./write-targets.js";
 import { baselineBeforeShell, pathsShellChanged } from "./shell-tree-claims.js";
 import { findClashes, noteSessionOp, recordClaims, type Clash } from "../agency/work-claims.js";
 import { latestNoteBy } from "../agency/handover-notes.js";
+import { raiseClash } from "../agency/orchestrator-wake.js";
 import { normRepoPath } from "../agency/path-overlap.js";
 import { sessionWorkRootOf } from "../workspace/paths.js";
 import type { ToolResult } from "../types.js";
@@ -93,6 +94,15 @@ export function claimClashGate(ctx: ToolCallContext): void {
   markRaised(scopeOf(ctx), fresh.filter((c) => !now.includes(c)));
   ctx.claimClashes = fresh;
   ctx.coordinationNote = clashNote(fresh);
+  tellOrchestrator(ctx.sessionId, fresh);
+}
+
+/** A project's orchestrator hears of two agents in the same files (agency/orchestrator-wake.ts). */
+function tellOrchestrator(sessionId: string, clashes: Clash[]): void {
+  for (const c of clashes) {
+    if (c.other.state === "recent") continue;
+    raiseClash(c.other.repoKey, sessionId, c.other.sessionId, c.other.displayName, c.path, c.sameCheckout);
+  }
 }
 
 /** A shell command changed files it never named, and some are in another
@@ -103,6 +113,7 @@ function noteUnnamedClashes(ctx: ToolCallContext, changed: string[]): void {
   const fresh = findClashes(ctx.sessionId!, changed, sessionWorkRootOf(ctx.sessionId)).filter((c) => !seen?.has(clashKey(c)));
   if (fresh.length === 0) return;
   markRaised(scopeOf(ctx), fresh);
+  tellOrchestrator(ctx.sessionId!, fresh);
   const note = clashNote(fresh, true);
   ctx.coordinationNote = ctx.coordinationNote ? `${ctx.coordinationNote}\n${note}` : note;
 }

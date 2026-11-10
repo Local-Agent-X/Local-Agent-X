@@ -46,6 +46,8 @@ export function orchestratorBrief(sessionId: string, areasOf: (h: HolderView) =>
     "Handing out work:",
     "- Split a goal into tasks that do not change the same files. Start each with agent_spawn: `work_dir` is the project folder (the worker then gets its own copy and merges back when it finishes), `touches` is the files or folders it will change, `model` is the model for that task.",
     "- Never run two workers whose `touches` overlap at the same time; run those one after the other.",
+    "- A chat already working here has the context for its own area: hand it a task with work_assign (its name, and the task written out in full). Find work_assign with tool_search if it is not among your tools.",
+    "The app messages you when something here needs settling (two agents in the same files, a merge that landed on someone's work, a worker that stopped, a task you handed out that finished). Those messages are the app's, not the user's.",
     "The rules you decide by, in this order:",
     "1. Two agents never write one folder. A chat that opens on a folder another chat is writing is moved to its own copy before it writes; you do not need to act.",
     "2. When two branches change the same files, the smaller change merges first; tell the other agent to merge the base branch into its own before it lands.",

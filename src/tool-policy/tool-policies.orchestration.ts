@@ -42,6 +42,11 @@ export const TOOL_POLICIES_ORCHESTRATION: Record<string, ToolPolicyRow> = {
   // same project (ADR 0007): it changes nothing the user owns, and whoever
   // shows it to a model frames it as another agent's words.
   work_note:       { kernel: "internal", risk: "safe", capabilities: [], tags: ["team"], reads: ["session", "operation"], blurb: { say: "tell the other agents you changed the login flow", does: "Tell the other agents working in this project what you changed and why." }, rules: [{ id: "allow-work-note", decision: "allow", reason: "Hand-over note to the other agents in this project", priority: 50 }] },
+  // The project's orchestrator hands a task to a chat already working there
+  // (ADR 0007 §7): the tool itself refuses a caller that is not the
+  // orchestrator and a chat outside its project. Reached through tool_search:
+  // only an orchestrator needs it, and its prompt names it.
+  work_assign:     { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [], reads: ["session"], rules: [{ id: "allow-work-assign", decision: "allow", reason: "The orchestrator hands a task to a chat in its project", priority: 50 }] },
   agent_whoami:    { kernel: "internal", risk: "safe", capabilities: [], tags: ["team"], loop: { discovery: true } },
 
   // ── Mission schedules ──

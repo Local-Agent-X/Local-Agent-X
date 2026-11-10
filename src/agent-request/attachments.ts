@@ -52,10 +52,14 @@ export interface RawAttachment {
   name: string;
   url?: string | null;
   dataUrl?: string | null;
+  /** Seen on this turn only, never kept on the user's row (a call's camera frame). */
+  glance?: true;
 }
 
 export interface ProcessedAttachments {
-  images: Array<{ url: string; filePath?: string; name: string }>;
+  /** `glance`: the model sees it on this turn, and the saved row leaves it out. It is
+   *  still written under uploads: a subscription model reads images by path. */
+  images: Array<{ url: string; filePath?: string; name: string; glance?: true }>;
   fileAttachments: Array<{ name: string; ref: string }>;
   /** Appended to the system prompt; "" when there are no non-image files. */
   fileAttachmentNote: string;
@@ -100,7 +104,7 @@ export function processAttachments(
         // single surfacing point for images. Checking + dropping here too
         // would either surface the failure twice or turn an image-only send
         // into an empty user row (the exact empty-text 400 class).
-        images.push({ name: a.name, url: ref, filePath });
+        images.push({ name: a.name, url: ref, filePath, ...(a.glance ? { glance: true as const } : {}) });
         continue;
       }
       // Non-image refs have NO downstream read — the model is handed the PATH

@@ -20,6 +20,20 @@ import { harnessRowKind, isHarnessRow } from "../harness-rows.js";
 
 const logger = createLogger("server.voice-turn-guard");
 
+/** The user's spoken words as their saved row. Images they showed ride on it the way a
+ *  typed message's do (run-chat-turn persistTurnState), so the chat shows them and the
+ *  next turns can see them again; a glance (a call's camera frame) does not: the agent
+ *  saw it on this turn, and the chat is not a photo roll of everything it looked at. */
+export function spokenUserRow(
+  text: string,
+  images: ReadonlyArray<{ name: string; url: string; glance?: true }>,
+): ChatCompletionMessageParam & { images?: Array<{ name: string; url: string }> } {
+  const kept = images.filter((im) => im.glance !== true);
+  return kept.length > 0
+    ? { role: "user", content: text, images: kept.map((im) => ({ name: im.name, url: im.url })) }
+    : { role: "user", content: text };
+}
+
 /**
  * The rows a spoken turn on a local wire read after the user's message that
  * the next request must replay in place: the recall row the op was seeded with

@@ -27,7 +27,7 @@ import { withCompletionsCarried } from "../agent-request/completion-carry.js";
 import { OP_TYPE } from "../ops/op-types.js";
 import { ThreatEngine } from "../threat/threat-engine.js";
 import type { VoiceTurnInput, VoiceTurnRunner } from "../voice/voice-session/index.js";
-import { VOICE_BUSY_REPLY, canaryWatch, carriedToolRows, carriedHarnessRows, claimVoiceTurn, isCardMetadata, commitVoiceTurn, voiceTurnRows, type VoiceTurnSlot } from "./voice-turn-guard.js";
+import { VOICE_BUSY_REPLY, canaryWatch, carriedToolRows, carriedHarnessRows, claimVoiceTurn, isCardMetadata, commitVoiceTurn, spokenUserRow, voiceTurnRows, type VoiceTurnSlot } from "./voice-turn-guard.js";
 import { createVoiceTurnClock, type VoiceTurnClock } from "./voice-turn-timing.js";
 const logger = createLogger("server.lifecycle");
 
@@ -71,15 +71,6 @@ async function voiceVisualsEnabled(config: LAXConfig): Promise<boolean> {
 }
 
 type PreparedRequest = Awaited<ReturnType<typeof import("../agent-request/index.js").prepareAgentRequest>>;
-
-/** The user's spoken words as their saved row; images they showed ride on it the way a
- *  typed message's do (run-chat-turn persistTurnState), so the chat shows them and the
- *  next turns can see them again. */
-function userRowOf(text: string, images: PreparedRequest["images"]): ChatCompletionMessageParam & { images?: Array<{ name: string; url: string }> } {
-  return images.length > 0
-    ? { role: "user", content: text, images: images.map((im) => ({ name: im.name, url: im.url })) }
-    : { role: "user", content: text };
-}
 
 /** The spoken turn's model, tool belt and prompt, chosen from the prepared request. */
 async function planSpokenTurn(prepared: PreparedRequest, config: LAXConfig, allAgentTools: ToolDefinition[], sessionId: string) {
@@ -231,7 +222,7 @@ export async function setupVoiceWs(deps: {
         // What the user showed the agent on the call (a photo, a file, the camera's
         // frame): the chat's attachment path, so an image is saved under uploads,
         // shown to the model, and kept on the user's row like a typed one.
-        attachments: attachments?.map((a) => ({ isImage: a.isImage, name: a.name, url: a.dataUrl })),
+        attachments: attachments?.map((a) => ({ isImage: a.isImage, name: a.name, url: a.dataUrl, ...(a.glance ? { glance: a.glance } : {}) })),
         uploadsDir: join(dataDir, "uploads"),
         // Voice overrides tools (voiceTools) and the system prompt below, so
         // the intent classifier + memory-curate steps are pure waste on the
@@ -425,7 +416,7 @@ export async function setupVoiceWs(deps: {
       };
       await commitVoiceTurn({
         session, sessionId, turnSignal: slot.signal, userText: text, replyText: finalAssistantText,
-        rows: withCompletionsCarried(withRecallCarried([userRowOf(text, prepared.images), ...carried, assistantRow], prepared.recall), prepared.backgroundCompletions),
+        rows: withCompletionsCarried(withRecallCarried([spokenUserRow(text, prepared.images), ...carried, assistantRow], prepared.recall), prepared.backgroundCompletions),
         turnMessages: await voiceTurnRows(turnOpId),
         memoryManager, saveSession,
       });

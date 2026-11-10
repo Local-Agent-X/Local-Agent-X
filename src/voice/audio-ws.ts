@@ -46,6 +46,10 @@ export interface VoiceAttachment {
   isImage: boolean;
   dataUrl: string;
   size: number;
+  /** A camera frame: the agent sees it on this turn only. It is not kept on the user's
+   *  row, so the chat never shows it and later turns never send it again (the agent
+   *  "has eyes"; Peter, 2026-11-09). A photo the user shares is kept. */
+  glance?: true;
 }
 
 export interface VoiceSession {

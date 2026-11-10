@@ -100,3 +100,20 @@ describe("processAttachments — dangling /uploads refs", () => {
       .toBe("[Attachment pic.jpg could not be read]");
   });
 });
+
+describe("processAttachments — a glance", () => {
+  it("is an image the model gets, marked so the saved row can leave it out", () => {
+    const up = mkdtempSync(join(tmpdir(), "glance-"));
+    try {
+      const r = processAttachments([
+        { isImage: true, name: "camera.jpg", url: "data:image/jpeg;base64,/9j/AAAA", glance: true },
+        { isImage: true, name: "photo.jpg", url: "data:image/jpeg;base64,/9j/BBBB" },
+      ], up);
+      expect(r.images.map((im) => [im.name, im.glance ?? false])).toEqual([["camera.jpg", true], ["photo.jpg", false]]);
+      // Still on disk: a subscription model sees an image only by reading its path.
+      expect(r.images.every((im) => im.filePath !== undefined && existsSync(im.filePath))).toBe(true);
+    } finally {
+      rmSync(up, { recursive: true, force: true });
+    }
+  });
+});

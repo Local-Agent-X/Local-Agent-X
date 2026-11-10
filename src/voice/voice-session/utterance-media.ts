@@ -2,7 +2,8 @@
 // and files they attached (the phone's `attach` frame), and the camera's latest frame
 // while they have it open (`camera`). Each turn takes what is waiting: the attachments
 // once, the camera frame every turn it is open and fresh, so the agent sees what the
-// user is pointing it at when they speak.
+// user is pointing it at when they speak. The frame is a glance: seen on that turn,
+// never kept on the thread (VoiceAttachment.glance).
 //
 // A turn that continues one the user talked over (turn-runner's continuation merge)
 // replaces it, rows and all, so it carries again what that turn carried: without it, a
@@ -25,7 +26,7 @@ export interface UtteranceMedia {
 
 function cameraAttachment(dataUrl: string): VoiceAttachment {
   const type = /^data:([^;,]+)/.exec(dataUrl)?.[1] ?? "image/jpeg";
-  return { name: "camera.jpg", type, isImage: true, dataUrl, size: 0 };
+  return { name: "camera.jpg", type, isImage: true, dataUrl, size: 0, glance: true };
 }
 
 export function createUtteranceMedia(now: () => number = Date.now): UtteranceMedia {
@@ -41,7 +42,7 @@ export function createUtteranceMedia(now: () => number = Date.now): UtteranceMed
       camera = frame === null ? null : { frame, at: now() };
     },
     forTurn(continuing) {
-      const carried = continuing ? lastTaken.filter((a) => a.name !== "camera.jpg") : [];
+      const carried = continuing ? lastTaken.filter((a) => a.glance !== true) : [];
       const live = camera !== null && now() - camera.at < CAMERA_FRESH_MS ? [cameraAttachment(camera.frame)] : [];
       const out = [...carried, ...pending, ...live];
       pending = [];

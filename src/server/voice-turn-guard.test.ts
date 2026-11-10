@@ -6,7 +6,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { acquireTurn, getActiveTurn, getTurnRegistry, releaseTurn, tryAcquireOrReplace } from "../session/turn-lock.js";
 import type { Session } from "../types.js";
-import { canaryWatch, carriedToolRows, carriedHarnessRows, claimVoiceTurn, commitVoiceTurn, isCardMetadata, voiceTurnRows } from "./voice-turn-guard.js";
+import { canaryWatch, carriedToolRows, carriedHarnessRows, claimVoiceTurn, commitVoiceTurn, isCardMetadata, spokenUserRow, voiceTurnRows } from "./voice-turn-guard.js";
 import { markHarnessRow } from "../harness-rows.js";
 import type { ThreatEngine } from "../threat/threat-engine.js";
 
@@ -209,5 +209,21 @@ describe("carriedToolRows: what a spoken turn did, saved like a typed turn's row
     expect(isCardMetadata({ card: { title: "Glider" } })).toBe(true);
     expect(isCardMetadata({ fileChange: {} })).toBe(false);
     expect(isCardMetadata(undefined)).toBe(false);
+  });
+});
+
+describe("spokenUserRow — what the user's spoken message keeps", () => {
+  // Peter, 2026-11-09: each camera frame showed in the chat as a photo, which broke the
+  // feel of the agent having eyes. The agent sees a frame on its turn; the row keeps none.
+  it("keeps a photo the user shared, and leaves out the camera's frame the agent glanced at", () => {
+    const row = spokenUserRow("what is this", [
+      { name: "photo-1.jpg", url: "/uploads/a.jpg" },
+      { name: "camera.jpg", url: "/uploads/b.jpg", glance: true },
+    ]);
+    expect(row).toEqual({ role: "user", content: "what is this", images: [{ name: "photo-1.jpg", url: "/uploads/a.jpg" }] });
+  });
+
+  it("is plain words when all it had were glances", () => {
+    expect(spokenUserRow("do you see it", [{ name: "camera.jpg", url: "/uploads/b.jpg", glance: true }])).toEqual({ role: "user", content: "do you see it" });
   });
 });

@@ -20,6 +20,7 @@ describe("utterance media", () => {
     m.setCameraFrame(FRAME);
     expect(m.forTurn(false).map((a) => a.dataUrl)).toEqual([FRAME]);
     expect(m.forTurn(false).map((a) => a.name)).toEqual(["camera.jpg"]);
+    expect(m.forTurn(false).map((a) => a.glance)).toEqual([true]);
     m.setCameraFrame(null);
     expect(m.forTurn(false)).toEqual([]);
   });

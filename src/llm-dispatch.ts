@@ -91,7 +91,8 @@ export interface DispatchOptions {
   /** Reject Anthropic OAuth tokens — bulk workloads can't use CLI subscriptions. */
   rejectOAuth?: boolean;
   /**
-   * Base64 PNG images (no `data:` prefix) attached BEFORE the prompt text.
+   * Base64 PNG, JPEG, WebP or GIF images (no `data:` prefix) attached BEFORE the
+   * prompt text; each one's type is read from its bytes (hosted.ts imageMediaType).
    * Carried on the Anthropic path (Messages image blocks) AND the OpenAI-compat
    * path (openai/xai → `image_url` blocks), so a vision dispatch works on
    * whichever provider the user is on. When images are present the router grades

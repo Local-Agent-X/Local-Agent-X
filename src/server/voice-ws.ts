@@ -448,5 +448,15 @@ export async function setupVoiceWs(deps: {
     };
 
     setVoiceSessionFactory(createVoiceSessionFactory(voiceTurnRunner, (name) => secretsStore.get(name) || ""));
+
+    // A camera watch whose call ended says so in the call's chat thread, since nothing
+    // can be said then (voice-session/camera-watch.ts).
+    const { setCameraWatchNoter } = await import("../voice/voice-session/camera-watch.js");
+    setCameraWatchNoter((sessionId, text) => {
+      const session = getOrCreateSession(sessionId);
+      session.messages.push({ role: "assistant", content: text });
+      session.updatedAt = Date.now();
+      void saveSession(session);
+    });
   } catch (e) { logger.warn("[voice-ws] setup failed:", (e as Error).message); }
 }

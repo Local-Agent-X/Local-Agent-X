@@ -378,3 +378,21 @@ describe("voice turn machine — a question the turn asked", () => {
     expect(runs).toEqual(["email Bob", "what's the weather"]);
   });
 });
+
+describe("the call's camera watch", () => {
+  it("gets the call's frames, speaks a sighting itself, and goes with the call", async () => {
+    const { cameraWatchFor } = await import("./camera-watch.js");
+    const h = harness({ queued: false });
+    const machine = createVoiceTurnMachine({
+      ctx: h.ctx, runTurn: twoDeltaRun, speaker: h.speaker, cancelTts: () => {}, isClosed: () => false, logger,
+      watchCheck: async () => ({ seen: true, line: "The water's boiling now." }),
+    });
+    machine.setCameraFrame("data:image/jpeg;base64,/9j/AAAA");
+    expect(cameraWatchFor("test-sess")?.start("the water is boiling")).toMatchObject({ ok: true });
+    await vi.waitFor(() => expect(h.feeds).toEqual(["The water's boiling now."]));
+    expect(h.events).toContainEqual({ type: "assistant_done", text: "The water's boiling now." });
+
+    machine.close();
+    expect(cameraWatchFor("test-sess")).toBeUndefined();
+  });
+});

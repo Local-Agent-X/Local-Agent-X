@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock("../auth/resolve.js", () => ({ resolveCredential: mocks.resolveCredential }));
 vi.mock("../anthropic-client/index.js", () => ({ streamAnthropicResponse: mocks.streamAnthropicResponse }));
 
-import { callAnthropic } from "./hosted.js";
+import { callAnthropic, imageMediaType } from "./hosted.js";
 
 // Regression lock: the raw API-key leg used to put the caller's model id on
 // the wire UNNORMALIZED. The Messages API only accepts runtime ids, so every
@@ -116,5 +116,28 @@ describe("callAnthropic subscription leg forwards maxTokens (client stubbed — 
     const opts = mocks.streamAnthropicResponse.mock.calls[0][0] as Record<string, unknown>;
     expect(opts.maxTokens).toBe(200);
     expect(opts.token).toBe("oauth:sub-token");
+  });
+});
+
+// A call's camera frame is JPEG; every image used to be declared image/png, and the
+// Anthropic API refuses an image whose declared type is not what its bytes are.
+describe("dispatch images carry the type their bytes are", () => {
+  const jpeg = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10, 0x4a, 0x46]).toString("base64");
+  const png = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString("base64");
+
+  it("reads JPEG, PNG and WebP from the bytes, PNG when unknown", () => {
+    expect(imageMediaType(jpeg)).toBe("image/jpeg");
+    expect(imageMediaType(png)).toBe("image/png");
+    expect(imageMediaType(Buffer.from([0x52, 0x49, 0x46, 0x46, 0, 0, 0, 0, 0x57, 0x45, 0x42, 0x50]).toString("base64"))).toBe("image/webp");
+    expect(imageMediaType(Buffer.from("hello there").toString("base64"))).toBe("image/png");
+  });
+
+  it("a JPEG on the subscription leg goes as a JPEG data URL", async () => {
+    mocks.resolveCredential.mockResolvedValue({ credential: "oauth:sub-token" });
+    mocks.streamAnthropicResponse.mockImplementation(async function* () { yield { type: "text", delta: "NO" }; });
+    await callAnthropic("anthropic", "look", "claude-opus-5-5", 0, 120, 1000, false, [jpeg]);
+    const opts = mocks.streamAnthropicResponse.mock.calls[0][0] as { messages: Array<{ content: Array<{ type: string; image_url?: { url: string } }> }> };
+    expect(opts.messages[0]!.content[0]!.image_url!.url.startsWith("data:image/jpeg;base64,")).toBe(true);
+    vi.clearAllMocks();
   });
 });

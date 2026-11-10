@@ -20,6 +20,7 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import type { VoiceSessionContext } from "../audio-ws.js";
 import type { VoiceTurnRunner } from "./types.js";
 import { createUtteranceMedia, type UtteranceMedia } from "./utterance-media.js";
+import { createCameraWatch, noteInChat, registerCameraWatch, unregisterCameraWatch, type WatchCheck } from "./camera-watch.js";
 import { collapseLoopedRepeats, stripTranscriptNoise } from "../transcript-noise.js";
 
 // Continuation merge: a barge-in that lands before the user heard more than
@@ -69,6 +70,8 @@ export interface VoiceTurnMachineDeps {
   /** What the user showed the agent, to go with their next words (a fresh holder when
    *  omitted; tests pass one with their own clock). */
   media?: UtteranceMedia;
+  /** How a camera watch checks a frame (camera-watch-check.ts unless a test passes one). */
+  watchCheck?: WatchCheck;
 }
 
 export interface VoiceTurnMachine {
@@ -90,7 +93,8 @@ export interface VoiceTurnMachine {
   speakProactive(text: string): void;
   /** Photos or files the user shared: they go with the next turn. */
   attach: UtteranceMedia["attach"];
-  /** The camera's latest frame while it is open on the call; null when it closed. */
+  /** The camera's latest frame while it is open on the call; null when it closed. It
+   *  goes with the next turn, and to the call's camera watch (camera-watch.ts). */
   setCameraFrame: UtteranceMedia["setCameraFrame"];
   /** Tear down on session close. */
   close(): void;
@@ -100,6 +104,13 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
   const { ctx, runTurn, speaker, cancelTts, isClosed, logger } = deps;
   const sid = ctx.sessionId;
   const media = deps.media ?? createUtteranceMedia();
+  // "Tell me when X happens": watches the camera's frames and speaks up on its own.
+  const watch = createCameraWatch({
+    say: (text) => speakProactive(text),
+    check: deps.watchCheck ?? (async (...a) => (await import("./camera-watch-check.js")).checkWatchFrame(...a)),
+    note: (text) => noteInChat(sid, text),
+  });
+  registerCameraWatch(sid, watch);
 
   let activeTurn: AbortController | null = null;
   let llmDone = false;
@@ -434,6 +445,8 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
   }
 
   function close(): void {
+    watch.close();
+    unregisterCameraWatch(sid, watch);
     clearTimer();
     try { activeTurn?.abort(); } catch { /* already settled */ }
     activeTurn = null;
@@ -441,6 +454,8 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
 
   return {
     handleFinalTranscript, discardUtterance, interrupt, noteAudioShipped, markTtsDrained, speakProactive,
-    attach: media.attach, setCameraFrame: media.setCameraFrame, close,
+    attach: media.attach,
+    setCameraFrame: (frame) => { media.setCameraFrame(frame); watch.onFrame(frame); },
+    close,
   };
 }

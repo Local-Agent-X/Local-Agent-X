@@ -22,6 +22,7 @@ import { isMaxTokensRejection } from "../providers/adapters/openai-param-rejecti
 import type { ProviderId } from "../providers/provider-ids.js";
 import type { ProviderRequest } from "../providers/adapter/types.js";
 import { createLogger } from "../logger.js";
+import { detectMime } from "../tools/shared/image-binary-meta.js";
 
 // Same channel name as llm-dispatch.ts: these lines were emitted under
 // "[llm-dispatch]" before the split and callers grep for them.
@@ -30,10 +31,18 @@ const logger = createLogger("llm-dispatch");
 // Anthropic Messages API user-content shape: a bare string, or content blocks
 // when images ride along (images precede the text so the model reads the
 // question with the pixels already in context).
+/** An image's media type, read from its leading bytes: a camera frame is JPEG, a
+ *  screenshot PNG, and the Anthropic API rejects an image whose declared type is not
+ *  what its bytes are. Unrecognized bytes keep the old default, PNG. */
+export function imageMediaType(base64: string): "image/png" | "image/jpeg" | "image/webp" | "image/gif" {
+  const mime = detectMime(Buffer.from(base64.slice(0, 24), "base64"));
+  return mime === "image/jpeg" || mime === "image/webp" || mime === "image/gif" ? mime : "image/png";
+}
+
 type AnthropicUserContent =
   | string
   | Array<
-      | { type: "image"; source: { type: "base64"; media_type: "image/png"; data: string } }
+      | { type: "image"; source: { type: "base64"; media_type: ReturnType<typeof imageMediaType>; data: string } }
       | { type: "text"; text: string }
     >;
 
@@ -73,7 +82,7 @@ export async function callAnthropic(provider: "anthropic" | "anthropic-api", pro
     // sites produce the exact request body they always have.
     const content: AnthropicUserContent = images && images.length > 0
       ? [
-          ...images.map((data) => ({ type: "image" as const, source: { type: "base64" as const, media_type: "image/png" as const, data } })),
+          ...images.map((data) => ({ type: "image" as const, source: { type: "base64" as const, media_type: imageMediaType(data), data } })),
           { type: "text" as const, text: prompt },
         ]
       : prompt;
@@ -132,7 +141,7 @@ async function callAnthropicViaCliProxy(token: string, prompt: string, model: st
     // them to Anthropic image blocks. No images → bare string, byte-identical.
     const content = images && images.length > 0
       ? [
-          ...images.map((data) => ({ type: "image_url", image_url: { url: `data:image/png;base64,${data}` } })),
+          ...images.map((data) => ({ type: "image_url", image_url: { url: `data:${imageMediaType(data)};base64,${data}` } })),
           { type: "text", text: prompt },
         ]
       : prompt;
@@ -206,7 +215,7 @@ export async function callOpenAICompatible(
     // prompt string, so text dispatches produce a byte-identical body.
     const userContent = images && images.length > 0
       ? [
-          ...images.map((data) => ({ type: "image_url" as const, image_url: { url: `data:image/png;base64,${data}` } })),
+          ...images.map((data) => ({ type: "image_url" as const, image_url: { url: `data:${imageMediaType(data)};base64,${data}` } })),
           { type: "text" as const, text: prompt },
         ]
       : prompt;
@@ -294,7 +303,7 @@ export async function callCodex(prompt: string, model: string, temperature: numb
     // maps them to the Responses-API `input_image` shape the codex endpoint reads.
     const content = images && images.length > 0
       ? [
-          ...images.map((data) => ({ type: "image_url", image_url: { url: `data:image/png;base64,${data}` } })),
+          ...images.map((data) => ({ type: "image_url", image_url: { url: `data:${imageMediaType(data)};base64,${data}` } })),
           { type: "text", text: prompt },
         ]
       : prompt;

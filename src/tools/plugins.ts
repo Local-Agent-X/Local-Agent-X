@@ -134,6 +134,13 @@ export const plugins: ToolPlugin[] = [
     },
   },
   {
+    id: "cameraWatch",
+    async register() {
+      const { createCameraWatchTool } = await import("../voice/camera-watch-tool.js");
+      return [createCameraWatchTool()];
+    },
+  },
+  {
     id: "images",
     register() { return imageTools; },
   },

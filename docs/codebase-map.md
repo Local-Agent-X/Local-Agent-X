@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 1966 non-test source files · 83 oversized · 263 nearing the size cap.
+**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 1969 non-test source files · 83 oversized · 263 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -21,8 +21,8 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 176 | 29 | XL | 1 |
 | `src/security/` | 161 | 60 | XL | 2 |
-| `src/tools/` | 128 | 233 | XL | 9 |
-| `src/tool-execution/` | 92 | 85 | XL | 2 |
+| `src/tools/` | 129 | 233 | XL | 9 |
+| `src/tool-execution/` | 93 | 85 | XL | 2 |
 | `src/workspace/` | 87 | 3 | M |  |
 | `src/canonical-loop/` | 83 | 283 | XL | 11 |
 | `src/providers/` | 76 | 27 | L | 1 |
@@ -54,7 +54,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/agents/` | 17 | 13 | L |  |
 | `src/net/` | 17 | 11 | L |  |
 | `src/anthropic-client/` | 15 | 22 | L | 2 |
-| `src/voice/` | 15 | 77 | XL | 1 |
+| `src/voice/` | 15 | 80 | XL | 1 |
 | `src/cognition/` | 14 | 35 | XL | 1 |
 | `src/cron/` | 14 | 14 | L |  |
 | `src/self-edit/` | 13 | 19 | L | 2 |
@@ -373,6 +373,7 @@ job. Comments are free: never cut them to fit.
 - `src/protocols/skills-install.ts` — 290+ code lines (cap 350)
 - `src/telegram-bridge/bridge.ts` — 290+ code lines (cap 350)
 - `src/tool-execution/sensitive-read-taint.ts` — 290+ code lines (cap 350)
+- `src/voice/voice-session/turn-runner.ts` — 290+ code lines (cap 350)
 - `src/browser/runtime.ts` — 280+ code lines (cap 350)
 - `src/canonical-loop/scheduler.ts` — 280+ code lines (cap 350)
 - `src/context/system-prompt-builder.ts` — 280+ code lines (cap 350)
@@ -383,7 +384,6 @@ job. Comments are free: never cut them to fit.
 - `src/server/bootstrap-services.ts` — 280+ code lines (cap 350)
 - `src/test-suite.ts` — 280+ code lines (cap 350)
 - `src/tools/build-app-spawn.ts` — 280+ code lines (cap 350)
-- `src/voice/voice-session/turn-runner.ts` — 280+ code lines (cap 350)
 - `src/agency/handler-tools.ts#createHandlerTools` — 100+ own code lines (cap 100)
 - `src/agent-request/prepare-request/build-system-prompt.ts#buildSystemPromptWithTelemetry` — 100+ own code lines (cap 100)
 - `src/auto-build/workflow-resolver.ts#candidateFromEvidence` — 100+ own code lines (cap 100)

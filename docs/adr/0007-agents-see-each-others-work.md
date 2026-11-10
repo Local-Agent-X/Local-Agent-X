@@ -312,6 +312,65 @@ inbox, the way the stall watchdog already escalates past a manager.
 Without a lead in the repo, coordination questions come to the user as §2–§6
 describe.
 
+In the UI and from here on the lead is called the **orchestrator**.
+
+### 8. Each chat keeps its own model
+
+Today the model picker is global: `laxSwitchModel` (`public/js/chat-status-bar.js`)
+posts `/api/providers/switch` (`src/routes/settings/providers.ts`), which saves
+`provider` / `model` to settings and broadcasts `settings_changed` to every tab.
+Switching one chat to Grok switches all six.
+
+The per-turn plumbing for a per-chat model already exists: `providerOverride` /
+`modelOverride` on the request (`src/agent-request/types.ts`), resolved by
+`resolve-provider.ts` and kept as the op's `targetPin` (`target-pin.ts`).
+Spawned agents already carry their own `AgentModelPin`. What is missing is a
+place to keep the choice per chat:
+
+- The session records a **model pin** (`provider`, `model`, `effort`) in its
+  metadata. Picking a model in a chat sets that chat's pin and broadcasts it for
+  that session only; other chats are untouched.
+- Every turn of that chat sends its pin as the override. A chat with no pin uses
+  the global default, which is now "the model new chats start with", set in
+  Settings.
+- A pin is never silently replaced: if the pinned provider is unavailable the
+  turn says so and asks, as the no-auto-fallback rule already requires.
+- Each chat window's header, the window strip (§6) and the agents panel show
+  the model each agent runs on.
+
+**The orchestrator picks models too.** The orchestrator has its own pin (the
+chat the user made the orchestrator keeps its model). When it delegates, each
+task can name a model: the user's standing preferences ("Codex for UI, Claude
+for the server, Grok for research"), saved as the orchestrator's routing table,
+or a per-task choice by the user. A worker started with a model keeps it for its
+whole run (`AgentModelPin`); a chat the orchestrator hands a task to keeps its
+own.
+
+### 9. Collab mode: models from different companies on one problem
+
+A collab is a group of agents on **one** problem, each on a different provider
+(for example Claude, GPT through Codex, Grok), run by the orchestrator. Three
+shapes, chosen per collab:
+
+| Shape | What happens | Fits |
+|---|---|---|
+| **Split** | The orchestrator splits the work; each model takes the parts it is assigned, in its own worktree. §1–§5 keep them out of each other's files. | Building a feature with several parts |
+| **Compete** | Every model solves the same task independently in its own worktree; each then reviews the others' work blind (it does not see whose it is); the orchestrator picks one, or merges the best parts, and says why. | A hard bug, a design choice, a risky change |
+| **Discuss** | No code: each model answers, reads the others' answers, and revises, for a fixed number of rounds; the orchestrator writes the result with the points they agreed and disagreed on. | A plan, a diagnosis, a question with no single right answer |
+
+Rules a collab keeps:
+
+- The models' answers reach each other as hand-over notes (§3), marked with the
+  model that wrote them, so each sees who said what.
+- A model reading another model's output reads it as another agent's work, not
+  as instructions: the same untrusted-content rule as any tool result.
+- Each member keeps its pin for the whole collab; a provider that fails is
+  reported and dropped from the collab, never swapped for another.
+- Cost is shown before it starts (members × rounds) and the running token
+  total per member is on each row of the agents panel, as for any worker.
+- The user sees the collab as one group in the agents panel, one row per model,
+  and can open any member as a chat window.
+
 ### Module
 
 `src/agency/` owns parallel agents and their isolation; coordination joins it:
@@ -357,5 +416,10 @@ isolation" row gains these, and `src/agency/` gets an `AGENTS.md` naming them.
    an agentxos contract change and a mobile build.
 5. **A second chat on a held folder: offer a worktree (proposed), or give it
    one without asking?**
-6. **The lead: one chat the user marks as lead (proposed), or one started
-   automatically whenever three or more agents work in a repo?**
+6. **The orchestrator: one chat the user marks as orchestrator (proposed), or
+   one started automatically whenever three or more agents work in a repo?**
+7. **Picking a model in a chat: change only that chat (proposed), with Settings
+   holding the default for new chats?**
+8. **Build order:** proposed per-chat models first (small, useful on its own),
+   then claims, notes and the edit-time check, then the orchestrator, then
+   collab. Phone and merge reporting ride along with the stage they belong to.

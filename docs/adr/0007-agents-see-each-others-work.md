@@ -14,6 +14,7 @@ below. Built in the order of question 8; stage 1 (each chat's own model) first.
 | 2, not built | Declared claims from a fan-out chunk's footprint (chunks in one wave are already disjoint, and what each writes is claimed as it writes). The offer is a button, not a prompt that interrupts: the question of §6 Q5 ("offer, or give one without asking") stays "offer". | By choice |
 | 3, first part | The orchestrator role (§7, `agency/orchestrator-role.ts`): one chat per repo, taken and released from the chat window's strip, with the user's model preferences in words. Its prompt each turn (`orchestrator-brief.ts`): who is working, where they overlap, how to delegate, the rules, what is never its call. A model per delegated task (`agent_spawn`'s `model`, `provider/model`). Rule 1 applied by the harness: a chat that starts a turn on a folder another chat is writing is moved to its own copy first, with a note. | Built 2026-11-09 |
 | 3, second part | The watch job (`agency/orchestrator-wake.ts`): the app messages the orchestrator, marked as the app's and not the user's, when two live agents start changing the same files, when a merge landed on files another agent changed or is changing, when a worker is paused for making no progress, and when a task it handed out settles. Events are gathered for 20 s, a repo's orchestrator is woken at most once per 2 minutes, the same event once, and never mid-turn. Hand-off to a chat already working in the project (`work_assign`, `session/assigned-turn.ts`): into its running turn or as a turn of its own, carrying the orchestrator's taint and ingestion marks; only the orchestrator may call it and only for a chat holding claims in its project. | Built 2026-11-09 |
+| 6, the screen | Tiled chats (`public/js/chat-tiles.js`, rules in `chat-tiles-core.js`, a pane in `chat-tiles-view.js`): two to eight chats side by side on the chat page. The chat on screen stays the one full chat; the others are live views (name, model, state, recent messages, the reply as it is written, a "needs you" mark while an approval waits). Clicking a view opens that chat in its pane's place. One page and one socket: each tiled chat is subscribed, and a turn another window started is read back when it starts and ends. The orchestrator's pane and a pane in the same files as the chat on screen are marked. Remembered per project in the browser. | Built 2026-11-10 |
 | 3, not yet | Rules 2 and 3 are instructions in the orchestrator's prompt, not enforced by the harness. A same-folder clash with a chat that already changed files there still goes to the user. A chat that is open on the project but has changed nothing is not yet a hand-off target (it holds no claim to be found by). A wake-up spends a turn on the orchestrator's model; there is no switch to turn them off short of releasing the role. | Open |
 | 4 | Collab mode (§9) | Open |
 
@@ -256,6 +257,12 @@ the only shared moment is the merge (§5).
 chat window shows a one-line strip under its header listing the other live
 holders in the same repo (name, task, a clash dot when it overlaps this chat's
 claims), fed by the same `work_claims_changed` frame as the panel.
+
+**The screen itself.** The chat page tiles two to eight chats (the Tiles button
+in the chat toolbar). One pane is the chat on screen, whole; the rest are live
+views that a click turns into the chat on screen, in place. A live view is text
+only: cards, approvals and rendered markdown are in the full chat, one click
+away. The browser panel, terminal and voice follow the chat on screen.
 
 **How many at once.** What bounds it today, from the code:
 

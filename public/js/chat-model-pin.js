@@ -61,6 +61,8 @@ async function laxSetChatModel(providerId, model, effort) {
 
 /** Another tab (or the phone) changed a chat's model: redraw if it is this one. */
 function laxOnSessionModelChanged(change) {
+  // A tiled chat's pane shows its model (chat-tiles.js).
+  try { if (change && window.laxChatTiles) window.laxChatTiles.onModelChanged(change.sessionId); } catch {}
   if (!change || change.sessionId !== laxChatId()) return;
   _providersCacheTime = 0;
   try { refreshProviderPicker(); } catch {}

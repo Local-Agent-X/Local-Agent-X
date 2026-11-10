@@ -25,6 +25,8 @@ export interface OrchestratorView {
   mine: boolean;
   /** The chat that holds the role, when it is not this one. */
   heldBy: string | null;
+  /** That chat's id, for a view that marks it among several chats (the tile grid). */
+  heldBySession: string | null;
   routing: string;
 }
 
@@ -38,13 +40,13 @@ function repoKeyOfSession(ctx: Pick<ServerContext, "sessionStore">, sessionId: s
 
 export function orchestratorView(ctx: Pick<ServerContext, "sessionStore">, sessionId: string): OrchestratorView {
   const repoKey = repoKeyOfSession(ctx, sessionId);
-  if (!repoKey) return { available: false, mine: false, heldBy: null, routing: "" };
+  if (!repoKey) return { available: false, mine: false, heldBy: null, heldBySession: null, routing: "" };
   const role = orchestratorOf(repoKey);
-  if (!role) return { available: true, mine: false, heldBy: null, routing: "" };
-  if (role.sessionId === sessionId) return { available: true, mine: true, heldBy: null, routing: role.routing };
+  if (!role) return { available: true, mine: false, heldBy: null, heldBySession: null, routing: "" };
+  if (role.sessionId === sessionId) return { available: true, mine: true, heldBy: null, heldBySession: null, routing: role.routing };
   const holder = liveHolders(repoKey).find((h) => h.sessionId === role.sessionId);
   const title = holder?.displayName ?? ctx.sessionStore.load(role.sessionId)?.title ?? "another chat";
-  return { available: true, mine: false, heldBy: title, routing: "" };
+  return { available: true, mine: false, heldBy: title, heldBySession: role.sessionId, routing: "" };
 }
 
 export const handleOrchestratorRoutes: RouteHandler = async (method, url, req, res, ctx) => {

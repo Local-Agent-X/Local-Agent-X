@@ -147,6 +147,8 @@ function connectChatWs() {
     if (typeof refreshLaxAgent === 'function') refreshLaxAgent();
     startChatWsHeartbeat();
     if (activeChat) ws.send(JSON.stringify({ type: 'subscribe', sessionId: activeChat.id }));
+    // The tiled chats beside it are followed too (chat-tiles.js).
+    try { if (window.laxChatTiles) window.laxChatTiles.onSocketOpen(); } catch {}
     // Reconnect-resume: for any chat ops in flight when the socket dropped,
     // ask the server to replay missed canonical events and re-attach to
     // the live tail.

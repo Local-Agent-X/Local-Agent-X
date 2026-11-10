@@ -176,6 +176,8 @@ function renderOtherAgentsStrip() {
   var html = otherAgentsStripHtml(otherAgentsRows) + ownCopyHtml(ownCopyState, ownCopyMessage) + orchestratorHtml(orchestratorState, orchestratorEditing);
   host.innerHTML = html;
   host.style.display = html ? '' : 'none';
+  // The tile grid marks the orchestrator's pane and a pane in the same files (chat-tiles.js).
+  try { if (window.laxChatTiles) window.laxChatTiles.onClaimsChanged(); } catch (e) { /* the grid repaints on its next event */ }
 }
 
 async function refreshWorkClaims() {

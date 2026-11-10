@@ -193,6 +193,8 @@ function newChat(projectId, mode) {
   // until the agent opens a page in it).
   try { if (window.laxBrowserSessionBind) window.laxBrowserSessionBind.bindSession(activeChat.id); } catch {}
   try { if (window.laxPreviewTab) window.laxPreviewTab.onChatChanged(); } catch {}
+  // The tile grid puts this chat's pane where its live view was (chat-tiles.js).
+  try { if (window.laxChatTiles) window.laxChatTiles.onChatChanged(); } catch {}
   if (window.renderMessages) renderMessages();
   // New chat is never streaming — reset UI
   const stopBtn = document.getElementById('stop-btn');
@@ -255,6 +257,8 @@ function selectChat(id) {
   try { if (window.laxBrowserSessionBind) window.laxBrowserSessionBind.bindSession(id); } catch {}
   // The Preview tab shows this chat's app, if it is a code session on one.
   try { if (window.laxPreviewTab) window.laxPreviewTab.onChatChanged(); } catch {}
+  // The tile grid puts this chat's pane where its live view was (chat-tiles.js).
+  try { if (window.laxChatTiles) window.laxChatTiles.onChatChanged(); } catch {}
   focusChatInput();
   // Lazy hydration: if the sidebar handed us a metadata stub (or a known-stale
   // local copy), fetch the full session JSON now. One fetch per click instead
@@ -277,6 +281,8 @@ function deleteChat(id, e) {
   saveChats(); renderSidebar();
   if (window.renderMessages) renderMessages();
   try { if (window.laxBrowserSessionBind) window.laxBrowserSessionBind.bindSession(activeChat ? activeChat.id : null); } catch {}
+  // A deleted chat leaves the tile grid (chat-tiles.js).
+  try { if (window.laxChatTiles) window.laxChatTiles.onChatChanged(); } catch {}
   apiFetch(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {});
 }
 

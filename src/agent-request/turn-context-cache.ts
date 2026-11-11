@@ -15,6 +15,10 @@
  *     from the stored one by more than a small Hamming distance — a rephrase
  *     of the same topic reuses the entry; a pivot to a different topic
  *     rebuilds so the memories match what the user is now asking about.
+ *   - A turn that continues an utterance the user had not finished (voice: a
+ *     pause read as the end, then more words) reuses the context built for
+ *     the earlier words, whatever the added words do to the fingerprint. The
+ *     entry keeps its age, so a long monologue still rebuilds every 45s.
  *   - TTL: 45s. Long enough to span quick back-and-forth; short enough that
  *     the <current_datetime> baked into the context block never drifts far
  *     and a paused chat re-warms with fresh memory on return.
@@ -123,6 +127,9 @@ function evictIfNeeded(): void {
 export async function buildTurnContextCached(
   memoryManager: MemoryManager,
   input: TurnContextInput,
+  /** `continues`: the earlier words of this same message, when the turn that
+   *  was answering them was cut off by the user still talking. */
+  opts: { continues?: string } = {},
 ): Promise<TurnContext> {
   // Bypass: lite/minimal modes are already cheap; caching them risks staleness
   // on the trivial-tool fast-path with no upside.
@@ -138,10 +145,20 @@ export async function buildTurnContextCached(
       cache.delete(sessionKey);
     } else {
       const incoming = fingerprintContext(input);
+      const age = `age=${Math.round((now - cached.storedAt) / 100) / 10}s`;
       // Within the Hamming budget → same topic, reuse. Beyond it = pivot, refresh.
       if (hammingDistance(cached.contextFingerprint, incoming) <= FINGERPRINT_MATCH_MAX_DISTANCE) {
         cached.hits += 1;
-        logger.info(`[turn-context-cache] HIT sess=${input.sessionId} age=${Math.round((now - cached.storedAt) / 100) / 10}s hits=${cached.hits}`);
+        logger.info(`[turn-context-cache] HIT sess=${input.sessionId} ${age} hits=${cached.hits}`);
+        return cached.context;
+      }
+      // The same message, longer: the entry was built for the words it
+      // continues. It takes the longer message's fingerprint so the next
+      // continuation finds it too.
+      if (opts.continues && hammingDistance(cached.contextFingerprint, fingerprintContext({ ...input, userMessage: opts.continues })) <= FINGERPRINT_MATCH_MAX_DISTANCE) {
+        cached.hits += 1;
+        cached.contextFingerprint = incoming;
+        logger.info(`[turn-context-cache] HIT (continued utterance) sess=${input.sessionId} ${age} hits=${cached.hits}`);
         return cached.context;
       }
     }

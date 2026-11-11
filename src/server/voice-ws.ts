@@ -214,6 +214,7 @@ export async function setupVoiceWs(deps: {
         channel: "voice",
         voiceDevice: device,
         message: text,
+        continuationOf,
         sessionMessages: session.messages,
         sessionId,
         config, dataDir,

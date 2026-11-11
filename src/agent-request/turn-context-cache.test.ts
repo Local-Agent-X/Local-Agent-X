@@ -130,3 +130,51 @@ describe("buildTurnContextCached wallclock backstop", () => {
     expect(build).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("buildTurnContextCached for a continued utterance", () => {
+  beforeEach(() => clearTurnContextCache());
+  afterEach(() => {
+    clearTurnContextCache();
+    vi.useRealTimers();
+  });
+
+  const first = "So I run a supplement store";
+  const second = `${first} and I need something that tells us when inventory is low`;
+  const third = `${second} and works out what to reorder from each vendor every week`;
+
+  it("reuses the context built for the earlier words, through each further continuation", async () => {
+    const { mgr, build } = fakeManager();
+    await buildTurnContextCached(mgr, input(first));
+    const r2 = await buildTurnContextCached(mgr, input(second), { continues: first });
+    const r3 = await buildTurnContextCached(mgr, input(third), { continues: second });
+    expect(build).toHaveBeenCalledTimes(1);
+    expect(r2.memoryContext).toBe("build-1");
+    expect(r3.memoryContext).toBe("build-1");
+  });
+
+  it("rebuilds the same longer message when it is not a continuation", async () => {
+    const { mgr, build } = fakeManager();
+    await buildTurnContextCached(mgr, input(first));
+    await buildTurnContextCached(mgr, input(second));
+    expect(build).toHaveBeenCalledTimes(2);
+  });
+
+  it("rebuilds when the entry was built for other words than the ones continued", async () => {
+    const { mgr, build } = fakeManager();
+    await buildTurnContextCached(mgr, input("Open the mobile app push notification permission prompt flow"));
+    await buildTurnContextCached(mgr, input(second), { continues: first });
+    expect(build).toHaveBeenCalledTimes(2);
+  });
+
+  it("a long monologue still rebuilds once the entry is 45 seconds old", async () => {
+    vi.useFakeTimers();
+    const { mgr, build } = fakeManager();
+    await buildTurnContextCached(mgr, input(first));
+    await vi.advanceTimersByTimeAsync(30_000);
+    await buildTurnContextCached(mgr, input(second), { continues: first });
+    await vi.advanceTimersByTimeAsync(20_000);
+    const r3 = await buildTurnContextCached(mgr, input(third), { continues: second });
+    expect(build).toHaveBeenCalledTimes(2);
+    expect(r3.memoryContext).toBe("build-2");
+  });
+});

@@ -62,6 +62,9 @@ export interface AgentRequestInput {
    *  and topical-relevance judged by keyword instead of a model call. Cuts
    *  ~4 pre-model LLM round-trips off time-to-first-token for those callers. */
   leanPrep?: boolean;
+  /** Voice: the words this message continues, when the user paused, a turn
+   *  started on them, and they kept talking. `message` is the joined text. */
+  continuationOf?: string;
   /** Override system prompt (sub-agents) */
   systemPromptOverride?: string;
   /** Max messages to keep in history (default 30 for bridges, 40 for web) */

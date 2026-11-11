@@ -36,6 +36,9 @@ export interface BuildContextInput {
   protocolSuggestion?: LearnedProtocolSuggestion | null;
   /** Memory relevance by keyword only, no model call (OrchestratorInput.keywordGates). */
   keywordGates?: boolean;
+  /** The earlier words of this message, when the user kept talking over the
+   *  turn that was answering them: their context is reused (turn-context-cache.ts). */
+  continues?: string;
 }
 
 export interface BuildContextResult {
@@ -88,7 +91,7 @@ export async function buildContext(input: BuildContextInput): Promise<BuildConte
     liteMode: !input.skipMemory && input.isTrivialToolRequest,
     minimalMode: input.skipMemory,
     keywordGates: input.keywordGates,
-  });
+  }, { continues: input.continues });
   logger.info(`[step] buildTurnContextCached ${Date.now() - bcT0}ms sess=${input.sessionId.slice(0, 16)}`);
   let contextBlock = turnCtx.contextBlock;
   let contextBlockVolatile = turnCtx.contextBlockVolatile;

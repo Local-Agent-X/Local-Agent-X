@@ -65,7 +65,11 @@ export type VoiceServerEvent =
   /** The voice stack is up; inbound speech audio is at `ttsSampleRate` (0 = none). */
   | { type: "voice_ready"; ttsSampleRate: number }
   | { type: "partial"; text: string }
-  | { type: "final"; text: string; sttMs?: number }
+  /** What the user said, once they stop. `continues` marks words that carry on the
+   *  message before them: a pause was read as its end, a reply started, and the user
+   *  kept talking. `text` is the new words only; they join that message, and the
+   *  reply the pause started is gone. */
+  | { type: "final"; text: string; sttMs?: number; continues?: true }
   | { type: "agent_start" }
   | { type: "assistant_delta"; text: string }
   | { type: "assistant_done"; text: string }
@@ -184,7 +188,7 @@ export function parseVoiceEvent(raw: unknown): VoiceServerEvent | null {
       const text = asString(msg.text);
       if (text === null) return null;
       const sttMs = asNumber(msg.sttMs);
-      return sttMs === null ? { type: "final", text } : { type: "final", text, sttMs };
+      return { type: "final", text, ...(sttMs === null ? {} : { sttMs }), ...(msg.continues === true ? { continues: true as const } : {}) };
     }
     case "assistant_done":
       return { type: "assistant_done", text: asString(msg.text) ?? "" };

@@ -224,6 +224,10 @@ describe("voice turn machine — continuation merge", () => {
 
     expect(inputs[1].text).toBe("I was thinking about this and it keeps bothering me");
     expect(inputs[1].continuationOf).toBe("I was thinking about this");
+    // The client gets only the new words, marked as carrying on the first message.
+    const finals = h.events.filter((e) => e.type === "final");
+    expect(finals[0]).toEqual({ type: "final", text: "I was thinking about this" });
+    expect(finals[1]).toEqual({ type: "final", text: "and it keeps bothering me", continues: true });
   });
 
   // A runTurn whose first TWO calls hang until barge-in aborts them.

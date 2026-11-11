@@ -309,7 +309,8 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
 
     // Continuation merge: this final arrived after a barge-in cut a reply the
     // user had barely heard — treat it as the same thought. The model turn
-    // runs on the JOINED text; the client still shows just the new words.
+    // runs on the JOINED text; the client is sent the new words marked
+    // `continues`, and adds them to the message they carry on.
     let continuationOf: string | undefined;
     if (continuation && Date.now() - continuation.at < CONTINUATION_WINDOW_MS) {
       continuationOf = continuation.text;
@@ -318,7 +319,7 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
     continuation = null;
     const turnText = continuationOf ? `${continuationOf} ${utterance}` : utterance;
 
-    ctx.sendEvent(sttMs != null ? { type: "final", text: utterance, sttMs } : { type: "final", text: utterance });
+    ctx.sendEvent({ type: "final", text: utterance, ...(sttMs != null ? { sttMs } : {}), ...(continuationOf ? { continues: true as const } : {}) });
 
     // Dictate mode: transcript already delivered via `final`; the client routes
     // it into the textarea. Skip agent_start / runTurn / TTS entirely.

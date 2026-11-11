@@ -70,38 +70,7 @@ function handleVoiceWsMessage(e) {
         appendDictatedText(msg.text);
         break;
       }
-      // Voice mode: commit the user's utterance into the thread. If a live
-      // partial bubble is already on screen (streamed from Sherpa partials),
-      // finalize it in place with the corrected Whisper text — no flash of a
-      // second bubble. Otherwise create it now. The agent turn is triggered
-      // server-side off this same final either way; the preview just makes the
-      // STT wait feel responsive instead of dead-air.
-      const empty = document.getElementById('empty');
-      if (empty) empty.remove();
-      let userEl = voicePartialEl;
-      if (userEl) {
-        userEl.classList.remove('voice-partial');
-        const body = userEl.querySelector('.msg-body');
-        if (body) body.textContent = msg.text;
-        voicePartialEl = null;
-      } else if (typeof addMessageEl === 'function') {
-        _voiceStripStalePin();
-        userEl = addMessageEl('user', msg.text);
-      }
-      voiceLastUserEl = userEl || voiceLastUserEl;
-      // Pin the just-spoken utterance near the top so it stays readable — the
-      // user checks here whether their speech transcribed correctly. The reply
-      // streams (and is spoken) below it instead of autoscroll shoving the
-      // utterance off the top.
-      if (userEl && typeof userEl.scrollIntoView === 'function') {
-        userEl.scrollIntoView({ block: 'start' });
-      }
-      if (typeof activeChat !== 'undefined' && activeChat) {
-        const userMessage = { role: 'user', content: msg.text, timestamp: Date.now() };
-        activeChat.messages.push(userMessage);
-        activeChat.updatedAt = userMessage.timestamp;
-        if (typeof broadcastChatUserMessage === 'function') broadcastChatUserMessage(activeChat.id, userMessage);
-      }
+      _voiceCommitUtterance(msg);
       break;
     }
     case 'partial': {
@@ -233,6 +202,7 @@ function handleVoiceWsMessage(e) {
         }
         _voiceBrowserTtsBuf = "";
       }
+      voiceCutReplyEl = msg.type === 'assistant_interrupted' ? voiceCurrentMsgEl : null;
       voiceCurrentMsgEl = null; voiceCurrentMsgBody = null; voiceCurrentMsgText = '';
       break;
     case 'tts_interrupt':
@@ -315,4 +285,75 @@ function showVoiceIssueBanner(text) {
   }
   const span = document.getElementById('voice-issue-banner-text');
   if (span) span.textContent = text;
+}
+
+// A finished utterance on a call, drawn in the thread and kept in the chat's messages.
+function _voiceCommitUtterance(msg) {
+  // Voice mode: commit the user's utterance into the thread. If a live
+  // partial bubble is already on screen (streamed from Sherpa partials),
+  // finalize it in place with the corrected Whisper text — no flash of a
+  // second bubble. Otherwise create it now. The agent turn is triggered
+  // server-side off this same final either way; the preview just makes the
+  // STT wait feel responsive instead of dead-air.
+  const empty = document.getElementById('empty');
+  if (empty) empty.remove();
+  // Words that carry on the message before them (a pause was read as its
+  // end, a reply started, the user kept talking): one message, not two.
+  if (msg.continues && _voiceJoinContinuedBubble(msg.text)) return;
+  let userEl = voicePartialEl;
+  if (userEl) {
+    userEl.classList.remove('voice-partial');
+    const body = userEl.querySelector('.msg-body');
+    if (body) body.textContent = msg.text;
+    voicePartialEl = null;
+  } else if (typeof addMessageEl === 'function') {
+    _voiceStripStalePin();
+    userEl = addMessageEl('user', msg.text);
+  }
+  voiceLastUserEl = userEl || voiceLastUserEl;
+  // Pin the just-spoken utterance near the top so it stays readable — the
+  // user checks here whether their speech transcribed correctly. The reply
+  // streams (and is spoken) below it instead of autoscroll shoving the
+  // utterance off the top.
+  if (userEl && typeof userEl.scrollIntoView === 'function') {
+    userEl.scrollIntoView({ block: 'start' });
+  }
+  if (typeof activeChat !== 'undefined' && activeChat) {
+    const userMessage = { role: 'user', content: msg.text, timestamp: Date.now() };
+    activeChat.messages.push(userMessage);
+    activeChat.updatedAt = userMessage.timestamp;
+    if (typeof broadcastChatUserMessage === 'function') broadcastChatUserMessage(activeChat.id, userMessage);
+  }
+}
+
+// The saved thread after the user kept talking: the reply their pause started
+// is dropped (the server dropped it too) and the new words join their message.
+// Returns false, changing nothing, when the thread does not end that way.
+function voiceJoinContinuedWords(messages, text) {
+  let i = messages.length - 1;
+  if (i >= 0 && messages[i].role === 'assistant') i--;
+  if (i < 0 || messages[i].role !== 'user' || typeof messages[i].content !== 'string') return false;
+  messages[i].content = messages[i].content + ' ' + text;
+  messages.length = i + 1;
+  return true;
+}
+
+// The same on screen: the cut-off reply's bubble and the live preview go, and
+// the new words are added to the bubble they carry on. False = draw them as a
+// new message (no earlier bubble to join).
+function _voiceJoinContinuedBubble(text) {
+  const userEl = voiceLastUserEl;
+  const body = userEl && userEl.isConnected ? userEl.querySelector('.msg-body') : null;
+  if (!body) return false;
+  const cutEl = voiceCutReplyEl || voiceCurrentMsgEl;
+  if (cutEl) { try { cutEl.remove(); } catch {} }
+  voiceCutReplyEl = null; voiceCurrentMsgEl = null; voiceCurrentMsgBody = null; voiceCurrentMsgText = '';
+  if (voicePartialEl) { try { voicePartialEl.remove(); } catch {} voicePartialEl = null; }
+  body.textContent = body.textContent + ' ' + text;
+  if (typeof userEl.scrollIntoView === 'function') userEl.scrollIntoView({ block: 'start' });
+  if (typeof activeChat !== 'undefined' && activeChat && voiceJoinContinuedWords(activeChat.messages, text)) {
+    activeChat.updatedAt = Date.now();
+    if (typeof saveChats === 'function') saveChats();
+  }
+  return true;
 }

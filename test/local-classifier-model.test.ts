@@ -119,7 +119,7 @@ describe("pickLocalClassifierModel — picks from the real cache", () => {
         runtime.models.some((model) => model.id === id)
       )) ?? null,
     }));
-    vi.doMock("../src/local-runtimes/certification-runner.js", () => ({
+    vi.doMock("../src/local-runtimes/certification-publication.js", () => ({
       hasPublishedCertification: (_runtime: { id: string }, model: { id: string }) => (
         model.id.endsWith("cert:3b")
       ),
@@ -146,7 +146,7 @@ describe("pickLocalClassifierModel — picks from the real cache", () => {
         runtime.models.some((model) => model.id === id)
       )) ?? null,
     }));
-    vi.doMock("../src/local-runtimes/certification-runner.js", () => ({
+    vi.doMock("../src/local-runtimes/certification-publication.js", () => ({
       hasPublishedCertification: () => false,
     }));
     const { pickCertifiedLocalClassifierTarget } = await import("../src/local-runtimes/classifier-model.js");
@@ -175,7 +175,7 @@ describe("pickLocalClassifierModel — picks from the real cache", () => {
         runtime.models.some((model) => model.id === id)
       )) ?? null,
     }));
-    vi.doMock("../src/local-runtimes/certification-runner.js", () => ({
+    vi.doMock("../src/local-runtimes/certification-publication.js", () => ({
       hasPublishedCertification: (runtime: { id: string }) => runtime.id === "runtime-b",
     }));
     const {
@@ -205,7 +205,7 @@ describe("pickLocalClassifierModel — picks from the real cache", () => {
     vi.doMock("../src/local-runtimes/cache.js", () => ({
       getLocalRuntimes: () => current,
     }));
-    vi.doMock("../src/local-runtimes/certification-runner.js", () => ({
+    vi.doMock("../src/local-runtimes/certification-publication.js", () => ({
       hasPublishedCertification: () => true,
     }));
     vi.doMock("../src/local-only-policy.js", () => ({

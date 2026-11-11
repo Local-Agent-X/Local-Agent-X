@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 1993 non-test source files · 83 oversized · 265 nearing the size cap.
+**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 1994 non-test source files · 82 oversized · 266 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -32,7 +32,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/browser/` | 51 | 93 | XL | 5 |
 | `src/util/` | 48 | 3 | S |  |
 | `src/tool-policy/` | 47 | 21 | L |  |
-| `src/local-runtimes/` | 45 | 26 | XL | 1 |
+| `src/local-runtimes/` | 45 | 27 | XL |  |
 | `src/agency/` | 44 | 36 | XL |  |
 | `src/threat/` | 44 | 13 | L |  |
 | `src/chat-ws/` | 42 | 23 | L |  |
@@ -265,7 +265,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/canonical-loop/worker.ts#drive`
 - `src/cognition/cross-session-learning/service.ts#CrossSessionLearningService.reconcile`
 - `src/config.ts#loadConfig`
-- `src/local-runtimes/certification-runner.ts`
 - `src/mcp-client/manifest.ts#assessMcpManifest`
 - `src/memory/context.ts#buildContextBlockParts`
 - `src/memory/date-parser.ts#parseDateRange`
@@ -356,6 +355,7 @@ job. Comments are free: never cut them to fit.
 - `src/autopilot/loop.ts` — 300+ code lines (cap 350)
 - `src/canonical-loop/process-execution-backend.ts` — 300+ code lines (cap 350)
 - `src/cron/cron-service.ts` — 300+ code lines (cap 350)
+- `src/local-runtimes/certification-runner.ts` — 300+ code lines (cap 350)
 - `src/memory/index-facts.ts` — 300+ code lines (cap 350)
 - `src/routes/connector-proxy.ts` — 300+ code lines (cap 350)
 - `src/tools/document-tools.ts` — 300+ code lines (cap 350)

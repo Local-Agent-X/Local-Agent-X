@@ -1,10 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { certificationFingerprint } from "./certification-fingerprint.js";
-import {
-  hasPublishedCertification,
-  restorePublishedCertification,
-  restorePublishedCertifications,
-} from "./certification-runner.js";
+import { hasPublishedCertification } from "./certification-publication.js";
+import { restorePublishedCertification, restorePublishedCertifications } from "./certification-runner.js";
 import { CERTIFICATION_SCENARIOS, type LocalModelCertification } from "./certification-types.js";
 import type { LocalRuntimeInfo } from "./types.js";
 
@@ -124,5 +121,23 @@ describe("persisted certification restoration", () => {
       })).toBe(0);
       expect(hasPublishedCertification(current, current.models[0]!)).toBe(false);
     }
+  });
+
+  // 2026-11-11: the first sweep after a start could not judge the Ollama
+  // endpoint and listed other runtimes only; the re-sweep found it, and its
+  // saved certification was skipped as a refresh that had nothing to carry.
+  it("gives a model the previous snapshot did not list the exact check a restart gives it", async () => {
+    const found = runtime();
+    const deps = { store: { read: () => passing(found) }, resolveIdentity: async () => identity };
+    const otherRuntimeOnly = { ...runtime(), id: "openai-compat@127.0.0.1:1234", kind: "openai-compat" as const, models: [{ id: "other", contextWindow: 4096, tools: true }] };
+    expect(await restorePublishedCertifications([otherRuntimeOnly, found], [otherRuntimeOnly], deps)).toBe(1);
+    expect(hasPublishedCertification(found, found.models[0]!)).toBe(true);
+
+    // The check is still exact: a changed identity restores nothing.
+    const again = runtime();
+    expect(await restorePublishedCertifications([again], [otherRuntimeOnly], {
+      ...deps, resolveIdentity: async () => ({ ...identity, modelDigest: "sha256:other" }),
+    })).toBe(0);
+    expect(hasPublishedCertification(again, again.models[0]!)).toBe(false);
   });
 });

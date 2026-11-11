@@ -255,7 +255,7 @@ async function announce(record: SizingRecord, previous: SizingRecord | null, roo
   // size will invalidate it once the model loads at it. Say so, not silently.
   try {
     const { getLocalRuntimes } = await import("./cache.js");
-    const { hasPublishedCertification } = await import("./certification-runner.js");
+    const { hasPublishedCertification } = await import("./certification-publication.js");
     const runtime = getLocalRuntimes()?.find((r) => sizingRoot(r.endpoint.baseUrl) === root);
     const entry = runtime?.models.find((m) => ollamaModelKey(m.id) === ollamaModelKey(model));
     if (runtime && entry && hasPublishedCertification(runtime, entry)) {

@@ -24,7 +24,7 @@
  */
 import { getLocalRuntimes } from "./cache.js";
 import { DISPATCH_MODEL_MAX_BYTES } from "./residency.js";
-import { hasPublishedCertification } from "./certification-runner.js";
+import { hasPublishedCertification } from "./certification-publication.js";
 import { isLocalOnlyMode, isLoopbackUrl } from "../local-only-policy.js";
 import type { LocalRuntimeInfo, LocalRuntimeKind } from "./types.js";
 

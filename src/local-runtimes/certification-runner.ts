@@ -1,7 +1,11 @@
+import { certificationFingerprint } from "./certification-fingerprint.js";
 import {
-  certificationFingerprint,
-  certificationSelectionFingerprint,
-} from "./certification-fingerprint.js";
+  canCarryPublishedSelection,
+  hasPublishedCertification,
+  passedCertification,
+  publishCertification,
+  unpublishCertification,
+} from "./certification-publication.js";
 import { LOCAL_MODEL_CERTIFICATION_SCENARIOS } from "./certification-scenarios.js";
 import { LocalCertificationStore } from "./certification-store.js";
 import { localCertificationTransport } from "./certification-transport.js";
@@ -98,80 +102,6 @@ export interface CertificationRunInput {
 }
 
 let queue: Promise<void> = Promise.resolve();
-interface PublishedCertification {
-  certificationHash: string;
-  selectionHash: string;
-}
-const publishedCertifications = new WeakMap<
-  LocalRuntimeInfo,
-  WeakMap<LocalModel, PublishedCertification>
->();
-
-function unpublishCertification(input: CertificationRunInput): void {
-  const model = input.runtime.models.find((candidate) => candidate.id === input.model);
-  if (model) publishedCertifications.get(input.runtime)?.delete(model);
-}
-
-function passedCertification(result: LocalModelCertification): boolean {
-  return result.fingerprint.reusable
-    && result.passedCount === LOCAL_MODEL_CERTIFICATION_SCENARIOS.length
-    && LOCAL_MODEL_CERTIFICATION_CONTRACT.scenarios.every((id) => result.scenarios[id]?.passed);
-}
-
-function publishCertification(input: CertificationRunInput, result: LocalModelCertification): void {
-  if (!passedCertification(result)) return;
-  const model = input.runtime.models.find((candidate) => candidate.id === input.model);
-  if (!model) return;
-  let published = publishedCertifications.get(input.runtime);
-  if (!published) {
-    published = new WeakMap<LocalModel, PublishedCertification>();
-    publishedCertifications.set(input.runtime, published);
-  }
-  published.set(model, {
-    certificationHash: result.fingerprint.hash,
-    selectionHash: certificationSelectionFingerprint(input.runtime, input.model, result.fingerprint.hash),
-  });
-}
-
-function canCarryPublishedSelection(
-  previousRuntime: LocalRuntimeInfo,
-  previousModel: LocalModel,
-  runtime: LocalRuntimeInfo,
-  model: LocalModel,
-): boolean {
-  const published = publishedCertifications.get(previousRuntime)?.get(previousModel);
-  if (!published) return false;
-  return published.selectionHash === certificationSelectionFingerprint(
-    previousRuntime,
-    previousModel.id,
-    published.certificationHash,
-  ) && published.selectionHash === certificationSelectionFingerprint(
-    runtime,
-    model.id,
-    published.certificationHash,
-  );
-}
-
-/**
- * A process-local proof that this exact discovery snapshot passed the current
- * certification contract. It deliberately cannot revive persisted evidence:
- * choosing a background model must never probe a runtime on its hot path.
- */
-export function hasPublishedCertification(runtime: LocalRuntimeInfo, model: LocalModel, contract: CertificationContract = LOCAL_MODEL_CERTIFICATION_CONTRACT): boolean {
-  return publishedCertificationSelectionHash(runtime, model, contract) !== null;
-}
-export function publishedCertificationSelectionHash(runtime: LocalRuntimeInfo, model: LocalModel, contract: CertificationContract = LOCAL_MODEL_CERTIFICATION_CONTRACT): string | null {
-  const published = publishedCertifications.get(runtime)?.get(model);
-  if (!published) return null;
-  const current = certificationSelectionFingerprint(
-    runtime,
-    model.id,
-    published.certificationHash,
-    contract,
-  );
-  return current === published.selectionHash ? current : null;
-}
-
 async function defaultIdentity(
   runtime: LocalRuntimeInfo,
   model: string,
@@ -220,15 +150,20 @@ export async function restorePublishedCertification(
   if (!cached || cached.fingerprint.hash !== fingerprint.hash || !passedCertification(cached)) {
     return false;
   }
-  publishCertification(input, cached);
+  publishCertification(input.runtime, input.model, cached);
   const model = input.runtime.models.find((candidate) => candidate.id === input.model)!;
   return hasPublishedCertification(input.runtime, model);
 }
 
 /**
  * Rehydrate a new discovery snapshot in the background. On restart every
- * model is checked for an exact persisted hit. On refresh, only selections
- * that were published on the preceding snapshot are eligible to carry.
+ * model is checked for an exact persisted hit. On refresh, a model the
+ * preceding snapshot already listed on this runtime carries only a selection
+ * that was published there; one it did not list is new to this process and
+ * gets the exact persisted check a restart gives it. Without that, a runtime
+ * the first sweep after a start could not judge (discovery's deadline, a busy
+ * boot: cache.ts) was found by the re-sweep as a refresh, and its saved
+ * certification was never restored until the next start (2026-11-11).
  */
 export async function restorePublishedCertifications(
   runtimes: readonly LocalRuntimeInfo[],
@@ -238,7 +173,10 @@ export async function restorePublishedCertifications(
   let restored = 0;
   for (const runtime of runtimes) {
     for (const model of runtime.models) {
-      if (previousRuntimes && !previousRuntimes.some((previousRuntime) => (
+      const listedBefore = previousRuntimes?.some((previousRuntime) => (
+        previousRuntime.id === runtime.id && previousRuntime.models.some((previousModel) => previousModel.id === model.id)
+      )) ?? false;
+      if (listedBefore && !previousRuntimes!.some((previousRuntime) => (
         previousRuntime.models.some((previousModel) => (
           previousModel.id === model.id
           && canCarryPublishedSelection(previousRuntime, previousModel, runtime, model)
@@ -300,7 +238,7 @@ export async function certifyLocalModel(
   deps: CertificationRunnerDeps = {},
 ): Promise<LocalModelCertification> {
   return runExclusive(async () => {
-    unpublishCertification(input);
+    unpublishCertification(input.runtime, input.model);
     const now = deps.now ?? Date.now;
     const transport = deps.transport ?? localCertificationTransport;
     const store = deps.store ?? new LocalCertificationStore();
@@ -321,7 +259,7 @@ export async function certifyLocalModel(
     const fingerprint = certificationFingerprint(input.runtime, input.model, identity);
     const cached = fingerprint.reusable && !parentSignal.aborted ? store.read(fingerprint.hash) : null;
     if (cached) {
-      publishCertification(input, cached);
+      publishCertification(input.runtime, input.model, cached);
       return cached;
     }
 
@@ -391,7 +329,7 @@ export async function certifyLocalModel(
     if (!values.some((value) => value.failure && TRANSIENT_FAILURES.has(value.failure))) {
       store.write(result);
     }
-    publishCertification(input, result);
+    publishCertification(input.runtime, input.model, result);
     return result;
   });
 }

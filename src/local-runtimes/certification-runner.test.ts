@@ -2,11 +2,8 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import {
-  certifyLocalModel,
-  hasPublishedCertification,
-  publishedCertificationSelectionHash,
-} from "./certification-runner.js";
+import { certifyLocalModel } from "./certification-runner.js";
+import { hasPublishedCertification, publishedCertificationSelectionHash } from "./certification-publication.js";
 import { LocalCertificationStore } from "./certification-store.js";
 import type {
   CertificationIdentity,

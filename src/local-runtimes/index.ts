@@ -15,10 +15,9 @@ export {
   type ManualRuntimeEntry,
 } from "./endpoints.js";
 export { discoverLocalRuntimes } from "./discovery.js";
+export { hasPublishedCertification, publishedCertificationSelectionHash } from "./certification-publication.js";
 export {
   certifyLocalModel,
-  hasPublishedCertification,
-  publishedCertificationSelectionHash,
   restorePublishedCertification,
   restorePublishedCertifications,
   type CertificationRunInput,

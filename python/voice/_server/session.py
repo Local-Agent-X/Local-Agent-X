@@ -87,6 +87,15 @@ class Session:
                 continue
             try:
                 samples, sample_rate, prep_ms = await fut
+            except asyncio.CancelledError:
+                # A cancelled sentence is skipped; only a cancel of this
+                # streamer itself (stop_tts_worker) ends it. Ending it on the
+                # sentence's cancel left the next reply queued with no one
+                # to stream it.
+                task = asyncio.current_task()
+                if not fut.cancelled() or (task is not None and task.cancelling()):
+                    raise
+                continue
             except Exception as e:
                 await self._send({"type": "error", "message": f"tts: {e}"})
                 await self._send({"type": "audio_done", "id": sentence_id, "ms": prep_ms if isinstance(prep_ms, int) else 0, "cancelled": False})
@@ -113,7 +122,18 @@ class Session:
         If a clone sidecar is down or errors, falls back to the built-in
         Kokoro voice and tells the client (tts_fallback) — degraded voice
         beats a silent reply, but the user must know.
-        Resolves the Future with (samples, sample_rate, prep_ms_int)."""
+        Resolves the Future with (samples, sample_rate, prep_ms_int).
+        A cancel (barge-in) cancels the Future too: CancelledError is not an
+        Exception, so it skipped the handler below and left the Future
+        pending, and the streamer, already waiting on it, waited forever.
+        Every later reply was queued and never spoken (2026-11-11)."""
+        try:
+            await self._prep_one_unguarded(text, sentence_id, voice, speed, fut)
+        finally:
+            if not fut.done():
+                fut.cancel()
+
+    async def _prep_one_unguarded(self, text: str, sentence_id: int, voice: str, speed: float, fut):
         async with self.tts_prep_sem:
             t0 = time.time()
             try:

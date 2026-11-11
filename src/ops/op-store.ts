@@ -398,7 +398,8 @@ export function newOpId(prefix = "op"): string {
   return randomId(sanitizeIdPrefix(prefix));
 }
 
-const TERMINAL_STATUSES: OpStatus[] = ["completed", "failed", "cancelled"];
+/** The statuses an op never leaves: the state machine has no transition out of them. */
+export const TERMINAL_STATUSES: readonly OpStatus[] = ["completed", "failed", "cancelled"];
 
 export interface PruneResult {
   pruned: number;

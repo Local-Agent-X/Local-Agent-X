@@ -99,6 +99,31 @@ describe("createPreBlessScanner — the op-store scan behind every vault destina
     expect(reads).toEqual(["op_a", "op_a"]);
   });
 
+  it("never looks again at an op it read as finished, so a scan does not grow with past ops", () => {
+    write("op_done", op("completed", ["OLD"]), 1000);
+    write("op_failed", op("failed"), 1000);
+    write("op_cancelled", op("cancelled"), 1000);
+    write("op_live", op("running", ["GH_TOKEN"]), 1000);
+    scan();
+    // Removing the records proves the next scan never stats them: a stat that
+    // failed would drop the op and re-read it once the record came back.
+    for (const id of ["op_done", "op_failed", "op_cancelled"]) rmSync(join(dir, id, "operation.json"));
+    reads = [];
+    expect(scan()).toEqual(new Set(["GH_TOKEN"]));
+    write("op_done", op("running", ["OLD"]), 2000);
+    expect(scan()).toEqual(new Set(["GH_TOKEN"]));
+    expect(reads).toEqual([]);
+  });
+
+  it("keeps watching an op that is waiting or paused, which can still start running", () => {
+    write("op_a", op("pending", ["GH_TOKEN"]), 1000);
+    write("op_b", op("paused", ["NPM_TOKEN"]), 1000);
+    expect(scan()).toEqual(new Set());
+    write("op_a", op("running", ["GH_TOKEN"]), 2000);
+    write("op_b", op("running", ["NPM_TOKEN"]), 2000);
+    expect(scan()).toEqual(new Set(["GH_TOKEN", "NPM_TOKEN"]));
+  });
+
   it("drops an op whose directory was pruned", () => {
     write("op_a", op("running", ["GH_TOKEN"]), 1000);
     scan();

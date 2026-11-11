@@ -23,7 +23,7 @@
 
 import { readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { OPS_BASE, readOp } from "./op-store.js";
+import { OPS_BASE, TERMINAL_STATUSES, readOp } from "./op-store.js";
 import type { Op } from "./types.js";
 
 /**
@@ -49,16 +49,22 @@ export function collectPreBlessedSecrets(ops: Iterable<Op>): Set<string> {
  * each IMAP tool's availability predicate makes one, so a chat or voice turn
  * asked it six times while building its prompt. listOps() parses every op
  * ever run (2,095 files, 107 MB on the owner's machine), ~450 ms a call, and
- * that was 2.7 s of every turn's wait before its first word. A stat of every
- * file is ~20 ms. Liveness still comes from disk, so an op a worker process
- * moves to or from "running" is seen on the next call: the supervisor writes
- * operation.json by tmp + rename, which changes its mtime.
+ * that was 2.7 s of every turn's wait before its first word. Liveness still
+ * comes from disk, so an op a worker process moves to or from "running" is
+ * seen on the next call: the supervisor writes operation.json by tmp + rename,
+ * which changes its mtime.
+ *
+ * An op read once in a terminal status is never looked at again: the state
+ * machine has no transition out of one, so it can never bless. Without that a
+ * stat of every op ever run was ~75 ms a call at 3,844 ops and grew with each
+ * op, and a spoken turn made twelve calls. What is left is one directory
+ * listing and a stat per op still in flight.
  */
 export function createPreBlessScanner(
   opsDir: string,
   read: (opId: string) => Op | null,
 ): () => Set<string> {
-  const seen = new Map<string, { mtimeMs: number; size: number; names: readonly string[] }>();
+  const seen = new Map<string, { mtimeMs: number; size: number; names: readonly string[]; settled: boolean }>();
   return () => {
     let ids: string[];
     try { ids = readdirSync(opsDir); } catch { return new Set(); } // no ops dir yet: nothing is running
@@ -66,12 +72,18 @@ export function createPreBlessScanner(
     for (const id of seen.keys()) if (!present.has(id)) seen.delete(id);
     const result = new Set<string>();
     for (const id of ids) {
+      let entry = seen.get(id);
+      if (entry?.settled) continue;
       let stat;
       try { stat = statSync(join(opsDir, id, "operation.json")); } catch { seen.delete(id); continue; } // dir without a record yet
-      let entry = seen.get(id);
       if (!entry || entry.mtimeMs !== stat.mtimeMs || entry.size !== stat.size) {
         const op = read(id);
-        entry = { mtimeMs: stat.mtimeMs, size: stat.size, names: op ? [...collectPreBlessedSecrets([op])] : [] };
+        entry = {
+          mtimeMs: stat.mtimeMs,
+          size: stat.size,
+          names: op ? [...collectPreBlessedSecrets([op])] : [],
+          settled: !!op && TERMINAL_STATUSES.includes(op.status),
+        };
         seen.set(id, entry);
       }
       for (const name of entry.names) result.add(name);

@@ -154,6 +154,12 @@ export const HARNESS_MARKERS: readonly HarnessMarker[] = [
     emitter: "canonical-loop/turn-loop/situational-awareness.ts",
   },
   {
+    id: "turn-context-tail",
+    pattern: /\[From the app, not from the user: this turn's context\.[^\]\n]{0,120}\]/g,
+    sample: "[From the app, not from the user: this turn's context. It continues your system prompt and has the same standing.]",
+    emitter: "anthropic-client/cache-breakpoints.ts withSystemTail (a spoken turn's per-turn system tail)",
+  },
+  {
     id: "automatic-check",
     pattern: /\[automatic check\]/gi,
     sample: "[automatic check] 1 tool call in your last turn returned a non-ok status.",

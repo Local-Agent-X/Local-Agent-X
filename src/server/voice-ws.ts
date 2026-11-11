@@ -19,7 +19,8 @@ import { createPromptTelemetry } from "../prompt-telemetry.js";
 import { buildVoicePromptSplit } from "./voice-prompt-plan.js";
 import { retractLastTurn } from "../memory/retract-last-turn.js";
 import { resolveVoiceModel, voiceMaxTokens } from "./voice-model.js";
-import { VOICE_FAST_TOOLS, buildVoiceTail, voiceToolManifest } from "./voice-prompt.js";
+import { buildVoiceTail } from "./voice-prompt.js";
+import { spokenTurnAbility } from "./spoken-turn-options.js";
 import type { ProviderId } from "../providers/provider-ids.js";
 import { userAuthoredRows } from "../harness-rows.js";
 import { withRecallCarried } from "../agent-request/recall-carry.js";
@@ -73,7 +74,7 @@ async function voiceVisualsEnabled(config: LAXConfig): Promise<boolean> {
 type PreparedRequest = Awaited<ReturnType<typeof import("../agent-request/index.js").prepareAgentRequest>>;
 
 /** The spoken turn's model, tool belt and prompt, chosen from the prepared request. */
-async function planSpokenTurn(prepared: PreparedRequest, config: LAXConfig, allAgentTools: ToolDefinition[], sessionId: string) {
+async function planSpokenTurn(prepared: PreparedRequest, config: LAXConfig, allAgentTools: ToolDefinition[]) {
   // Spoken-turn model: the selected provider's FAST tier, not the chat
   // model. A reasoning chat model (gpt-5.6-sol) thinks 13-16s before
   // speaking — dead air. resolveVoiceModel swaps in the provider's declared
@@ -95,45 +96,14 @@ async function planSpokenTurn(prepared: PreparedRequest, config: LAXConfig, allA
   // reloads the model this turn is about to use.
   if (prepared.provider === "local") warmModel(config.ollamaUrl, voiceModel);
 
-  // Voice has the SAME tools as text chat (full parity). The old "tools
-  // mostly off" policy was a vestige of a weaker harness: it was meant to
-  // stop a runaway tool-loop and a mid-conversation setting change, but the
-  // op budget + wall-clock ceiling now bound runaway, and the tool-policy /
-  // approval / rbac gates (all wired into this canonical run) enforce safety
-  // identically in voice and text — so a request shouldn't behave
-  // differently just because it was spoken. With no real tools the agent
-  // FABRICATED actions it couldn't perform ("opened it"); parity fixes that.
-  // The visuals toggle only governs the one cosmetic tool (voice_visual).
+  // The turn's tools and settings are the typed turn's (spoken-turn-options.ts);
+  // the prepared prompt already carries the index of every tool not loaded,
+  // for tool_search. Voice adds only how it talks (voice-prompt.ts).
   const visualsEnabled = await voiceVisualsEnabled(config);
-  // Governor: a voice turn is FAST and tool-light. It answers / does quick
-  // lookups inline, drives the agent's OWN browser for web tasks, and
-  // DELEGATES genuinely heavy/long work to a background worker
-  // (op_submit_async) instead of grinding the full 169-tool agentic loop on
-  // the voice critical path — which produced 13-22s silences and tool-parse
-  // failures.
-  //
-  // `browser` drives the agent's own visible Chrome (its own persistent
-  // profile, controllable over CDP) — so "open google" then "search it"
-  // works as one flow, in a window the agent can actually act on. NOT the
-  // user's real browser: open_url (OS launch → real browser) was removed
-  // because the agent can't control what it opens there — a dead end. Nor
-  // http_request on the belt (the model abused it to fake browser control via
-  // invented localhost endpoints, then hallucinated success).
-  // Mission scheduling is on the belt because it's a QUICK direct call,
-  // and delegating it is impossible by design: scheduling is deliberately
-  // excluded from the delegated-worker belt (mission_schedule_* is denied —
-  // an unattended worker must not install recurring jobs), so a
-  // "check/set up my 2am mission" spawn could never do it. It stays a
-  // direct voice call.
-  // Everything else is one tool_search away (it is on the belt): the tail
-  // carries the index of what it can load, and a hit joins the op's tools
-  // for the rest of this turn (canonical-loop/tool-augmentation.ts).
-  // Voice belt + spoken-mode prompt tail (voice-prompt.ts).
-  const voiceTools = allAgentTools.filter(t =>
-    (VOICE_FAST_TOOLS as readonly string[]).includes(t.name) || (visualsEnabled && t.name === "voice_visual"));
-  const voiceTail = buildVoiceTail(visualsEnabled) + voiceToolManifest(allAgentTools, voiceTools, sessionId);
-  const { voiceSplit, voicePromptTelemetry } = voicePromptFor(prepared, voiceTail, voiceModel, voiceTools, allAgentTools.length);
-  return { voiceModel, voiceTools, voiceSplit, voicePromptTelemetry };
+  const ability = spokenTurnAbility(prepared, visualsEnabled);
+  const voiceTail = buildVoiceTail(visualsEnabled);
+  const { voiceSplit, voicePromptTelemetry } = voicePromptFor(prepared, voiceTail, voiceModel, ability.tools, allAgentTools.length);
+  return { voiceModel, ability, voiceSplit, voicePromptTelemetry };
 }
 
 /** Continuation merge (turn-runner armed it): the turn's text re-includes the
@@ -225,9 +195,8 @@ export async function setupVoiceWs(deps: {
         // shown to the model, and kept on the user's row like a typed one.
         attachments: attachments?.map((a) => ({ isImage: a.isImage, name: a.name, url: a.dataUrl, ...(a.glance ? { glance: a.glance } : {}) })),
         uploadsDir: join(dataDir, "uploads"),
-        // Voice overrides tools (voiceTools) and the system prompt below, so
-        // the intent classifier + memory-curate steps are pure waste on the
-        // voice critical path. Lean prep skips them — keeps persona/memory.
+        // No model call before the turn's own (memory relevance by keyword):
+        // each was seconds of silence. Tools and prompt are a typed turn's.
         leanPrep: true,
       });
 
@@ -236,7 +205,7 @@ export async function setupVoiceWs(deps: {
       }
 
       clock.mark("prepare");
-      const { voiceModel, voiceTools, voiceSplit, voicePromptTelemetry } = await planSpokenTurn(prepared, config, allAgentTools, sessionId);
+      const { voiceModel, ability, voiceSplit, voicePromptTelemetry } = await planSpokenTurn(prepared, config, allAgentTools);
       clock.mark("plan");
       const voiceSystemPrompt = voiceSplit.systemPrompt;
       const voiceRenderedPromptSections = voiceSplit.sections;
@@ -313,56 +282,24 @@ export async function setupVoiceWs(deps: {
           provider: prepared.provider as AgentOptions["provider"],
           baseURL: prepared.customBaseURL,
           systemPrompt: voiceSystemPrompt,
-          tools: voiceTools,
+          // What the turn can do is the typed turn's: its tools, steps, sampling,
+          // reasoning, first-tool pin and no forced opening tool call
+          // (spoken-turn-options.ts). Voice has no effort of its own: "low" made
+          // a spoken turn search once and give up where a typed one kept looking
+          // (2026-11-11).
+          ...ability,
           ...(prepared.images.length > 0 ? { images: prepared.images as AgentOptions["images"] } : {}),
           security, toolPolicy, rbac, threatEngine,
           sessionId,
           callContext: "local",
-          // Budget: a quick lookup (web_search → speak) or delegate-and-ack
-          // (op_submit_async → speak) needs ~2; a browser flow needs room for
-          // navigate → observe → maybe one more action → speak. 8 covers an
-          // open-and-act without inviting the deep agentic grind (genuinely long
-          // work delegates to a worker, so a voice turn still stays shallow).
-          maxIterations: 8,
-          temperature: prepared.temperature,
-          // Per provider (voice-model.ts): tight for a local runtime, room to
-          // think for a hosted model. Explicit caps are never raised by the
-          // local-window clamp, so a small window stays safe too.
+          // A local runtime keeps a tight cap, where a degenerate model can
+          // loop; a hosted one has none, as a typed turn has none (voice-model.ts).
           maxTokens: voiceMaxTokens(prepared.provider as ProviderId),
           // Anthropic text chat already uses direct HTTP OAuth for interactive
           // turns. Voice must do the same: the CLI warm-pool path is for
           // background agentic work and can sit silent while a subprocess
           // starts or wedges, leaving the user with no spoken response.
           preferAnthropicDirectHttp: true,
-          // Thinking time is dead air in a spoken reply — the user sits in
-          // silence while the model reasons about how to say two sentences.
-          // This asks for the SHORT PATH declaratively; the client resolves
-          // it into whatever lever the resolved model actually has
-          // (planAnthropicReasoning). That conditionality is load-bearing:
-          //   - On an effort-capable model (Opus 5 et al) it becomes adaptive
-          //     thinking + output_config.effort "low". A voice turn SENDS
-          //     TOOLS (voiceTools above), and Anthropic documents that with
-          //     `thinking:{type:"disabled"}` Opus 5 "occasionally writes a
-          //     tool call into its visible text instead of a tool_use block:
-          //     the turn succeeds, the call never runs, no error is raised" —
-          //     a tool call the user HEARS and that never executes. The
-          //     documented fix is the opposite lever: "Turning thinking on and
-          //     lowering effort fixes both and still cuts cost."
-          //   - On a NON-ADAPTIVE model it becomes an omitted `thinking` param
-          //     — the pre-existing behavior, and hazard-free there because
-          //     those models have no adaptive mode to strand a call in text.
-          //     This is the branch voice takes BY DEFAULT: resolveVoiceModel
-          //     falls through to the provider's fast tier (anthropic →
-          //     claude-haiku-4-5). The `voiceModel` setting ("chat", or an
-          //     Opus id) puts voice on the adaptive branch, and its thinking
-          //     counts against maxTokens above.
-          // Sending an unconditional effort here instead would drop haiku into
-          // the legacy budget_tokens arm.
-          // The classifier lane (classify-with-llm.ts) keeps disableThinking:
-          // it sends NO tools, so the hazard cannot bite there.
-          // Genuinely heavy work still delegates to op_submit_async workers,
-          // which keep their full effort budget.
-          effort: "low",
           // Prompt-cache profile from the split above (see buildVoicePromptSplit).
           // The per-turn sections go at the end of the conversation, not in front
           // of it, so the thread so far is read from cache (cache-breakpoints.ts

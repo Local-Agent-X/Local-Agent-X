@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach, vi } from "vitest";
 
 import { streamViaAPI } from "./stream-api.js";
-import { resolveVoiceModel, voiceMaxTokens } from "../server/voice-model.js";
+import { resolveVoiceModel } from "../server/voice-model.js";
 import { PROVIDERS } from "../providers/registry.js";
 import type { StreamEvent, StreamOptions } from "./types.js";
 
@@ -521,9 +521,9 @@ describe("streamViaAPI — short-path effort resolution", () => {
   ]);
 
   const voiceTools = [{ name: "voice_visual", description: "show", parameters: { type: "object" } }];
-  // The real voice turn shape (voice-ws.ts): the Anthropic voice cap and the
-  // configured spoken-turn temperature.
-  const VOICE_MAX_TOKENS = voiceMaxTokens("anthropic");
+  // A short-path turn with an explicit output cap (the shape voice used before
+  // it took the typed turn's settings) and the configured temperature.
+  const VOICE_MAX_TOKENS = 4096;
   const VOICE_TEMPERATURE = 0.7;
 
   // ── The model voice ACTUALLY runs on ───────────────────────────────────

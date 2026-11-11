@@ -51,9 +51,9 @@ describe("voiceMaxTokens", () => {
 		expect(voiceMaxTokens("local")).toBe(600);
 	});
 
-	it("leaves a hosted model room to think and call a tool before it speaks", () => {
+	it("gives a hosted model no cap of its own, as a typed turn has none", () => {
 		for (const p of ["anthropic", "anthropic-api", "codex", "openai", "xai", "gemini"] as const) {
-			expect(voiceMaxTokens(p)).toBeGreaterThanOrEqual(4096);
+			expect(voiceMaxTokens(p)).toBeUndefined();
 		}
 	});
 });

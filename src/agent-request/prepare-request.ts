@@ -29,6 +29,8 @@ import { buildSystemPromptWithTelemetry } from "./prepare-request/build-system-p
 import { createPromptTelemetry, logPromptTelemetry } from "../prompt-telemetry.js";
 import { appendSystemPromptSection } from "../context/system-prompt-builder.js";
 import { noteBrowserSurface } from "../browser/off-screen-sessions.js";
+import { toolsTagged } from "../tool-registry.js";
+import type { ToolDefinition } from "../types.js";
 
 const logger = createLogger("agent-request.prepare-request");
 
@@ -56,8 +58,9 @@ export function shouldForceRecallSearch(opts: {
   );
 }
 
-/** This turn's tools: none for a lean prep (its caller ships its own belt),
- *  otherwise the per-turn selection (prepare-request/tool-selection.ts). */
+/** This turn's tools: the per-turn selection (prepare-request/tool-selection.ts),
+ *  the same for a spoken turn as for a typed one. A spoken turn also loads the
+ *  tools tagged `voice-fast`, the ones a call reaches for without searching. */
 async function selectTurnTools(
   input: AgentRequestInput,
   resolved: { provider: string; model: string },
@@ -65,15 +68,31 @@ async function selectTurnTools(
   protocolSuggestion: ReturnType<typeof getLearnedProtocolSuggestion>,
   stepStart: (label: string) => () => void,
 ): Promise<ToolSelectionResult> {
-  if (input.leanPrep) {
-    const { classifyModel } = await import("../model-tiers.js");
-    return {
-      tools: [],
-      tier: classifyModel(resolved.model) as ToolSelectionResult["tier"],
-      productBuildTurn: null,
-      isBridge: false,
-    };
-  }
+  const toolSel = await selectMessageTools(input, resolved, cleanHistory, protocolSuggestion, stepStart);
+  return { ...toolSel, tools: withSpokenTools(toolSel.tools, input.channel, input.allAgentTools) };
+}
+
+/** A spoken turn's tools: the typed selection, plus the `voice-fast` tools
+ *  it lacks. Any other channel's selection is returned as it is. */
+export function withSpokenTools(
+  selected: ToolDefinition[],
+  channel: AgentRequestInput["channel"],
+  allAgentTools: ToolDefinition[],
+  spokenNames: readonly string[] = toolsTagged("voice-fast"),
+): ToolDefinition[] {
+  if (channel !== "voice") return selected;
+  const loaded = new Set(selected.map((t) => t.name));
+  const spoken = new Set(spokenNames);
+  return [...selected, ...allAgentTools.filter((t) => spoken.has(t.name) && !loaded.has(t.name))];
+}
+
+async function selectMessageTools(
+  input: AgentRequestInput,
+  resolved: { provider: string; model: string },
+  cleanHistory: readonly { role: string; content?: unknown }[],
+  protocolSuggestion: ReturnType<typeof getLearnedProtocolSuggestion>,
+  stepStart: (label: string) => () => void,
+): Promise<ToolSelectionResult> {
   // A slash-command methodology (e.g. /app-build) runs across MANY turns, but
   // only its FIRST turn carries the marker. Treat the whole session as
   // methodology-active once ANY prior user turn was a slash-command expansion.
@@ -214,14 +233,13 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
   // 3. Tool selection (tier filter + RAG re-rank + explicit build routes). Must
   // run before build-context so we know the tier (weak-tier context strip) and
   // before system-prompt build so an explicit build route's directive lands.
-  //
-  // Lean callers (voice) override tools + prompt downstream, so selection is
-  // wasted work on their critical path. Skip it; just compute the tier (cheap,
-  // sync) which build-context still needs for the weak-model strip.
+  // A spoken turn selects too (about 20 ms): it used to skip this and run on
+  // a hand-picked belt of 18 tools where a typed turn had 74, and said it
+  // couldn't do what typing the same words then did (2026-11-11).
   // The learned-workflow suggestion is computed ONCE per turn, here, because
   // two later steps need it: tool selection (the nudge's `protocol` tool must
   // be in the schema) and build-context (the nudge text itself).
-  const protocolSuggestion = input.leanPrep ? null : getLearnedProtocolSuggestion(input.message);
+  const protocolSuggestion = getLearnedProtocolSuggestion(input.message);
 
   const toolSel = await selectTurnTools(input, resolved, cleanHistory, protocolSuggestion, stepStart);
 
@@ -250,9 +268,7 @@ export async function prepareAgentRequest(input: AgentRequestInput): Promise<Pre
     // The tools actually loaded this turn — drives the deferred-tool manifest
     // (allAgentTools − loadedTools) so the model can tool_search anything the
     // filtered schema omits. This is the discovery half of the lazy-load flip.
-    // A lean prep (voice) loads nothing here: it ships its own belt and
-    // builds the manifest over that belt (server/voice-prompt.ts).
-    loadedTools: input.leanPrep ? undefined : toolSel.tools,
+    loadedTools: toolSel.tools,
     systemPromptOverride: input.systemPromptOverride,
     bridgeContext: input.bridgeContext,
     resolvedProvider: resolved.provider,

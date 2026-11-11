@@ -88,6 +88,21 @@ describe("registerProviderAdapter", () => {
     expect(mocks.registerAdapterForOp).toHaveBeenCalledWith("op-voice", expect.any(Function));
   });
 
+  it("a delegated agent must call a tool first; a chat turn that says so may just answer", async () => {
+    const base = { provider: "anthropic", model: "claude-opus-4-8", apiKey: "oauth:test", authSource: "oauth" };
+    await registerProviderAdapter({ id: "op-agent" } as Op, base as CanonicalAgentOptions, "s");
+    expect(mocks.createProviderAdapterFactory).toHaveBeenLastCalledWith(
+      expect.anything(), expect.objectContaining({ requireToolOnFirstTurn: true }));
+    const pin = { type: "tool" as const, name: "search_past_sessions" };
+    await registerProviderAdapter({ id: "op-voice" } as Op, {
+      ...base, requireToolOnFirstTurn: false, reasoningEffort: "medium", forcedToolChoice: pin,
+    } as CanonicalAgentOptions, "s");
+    expect(mocks.createProviderAdapterFactory).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ requireToolOnFirstTurn: false, reasoningEffort: "medium", forcedToolChoice: pin }),
+    );
+  });
+
   it("uses one resolved local target for prompt evidence and durable identity", async () => {
     const first: ResolvedProviderRuntime = {
       identity: {

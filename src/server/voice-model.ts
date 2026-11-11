@@ -51,9 +51,11 @@ export function resolveVoiceModel(
  * tokens both sit inside max_tokens. With voiceModel "chat" on Opus 5.5, an
  * action request thought past 600, was cut off three times at max_tokens
  * before any tool call, and the user waited 18s for a reply that never acted
- * (2026-11-02). Hosted models get room to think and call a tool; how long the
- * spoken answer is stays the voice prompt's job.
+ * (2026-11-02). A hosted model gets what a typed turn gets (no cap of its
+ * own): a spoken turn thinks as a typed one does (spoken-turn-options.ts), and
+ * a fixed 4096 would cut that thinking off. How long the spoken answer is
+ * stays the voice prompt's job.
  */
-export function voiceMaxTokens(provider: ProviderId): number {
-  return provider === "local" ? 600 : 4096;
+export function voiceMaxTokens(provider: ProviderId): number | undefined {
+  return provider === "local" ? 600 : undefined;
 }

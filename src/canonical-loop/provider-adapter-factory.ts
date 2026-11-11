@@ -15,6 +15,7 @@ import type { LocalModelCapabilityProfile } from "../local-runtimes/index.js";
 import type { AdapterFactory } from "./runtime.js";
 import { API_BASE as ANTHROPIC_API_BASE } from "../anthropic-client/request.js";
 import type { AnthropicEffort } from "../anthropic-models.js";
+import type { ReasoningEffort } from "../providers/reasoning-effort.js";
 import { CODEX_URL } from "../codex-client/types.js";
 import { GEMINI_BASE } from "./adapters/gemini-native-transport.js";
 import {
@@ -52,6 +53,11 @@ interface ProviderAdapterOptions extends ProviderRuntimeOptions {
   systemStablePrefixLen?: number;
   cacheConversation?: boolean;
   systemTailInMessages?: boolean;
+  /** The user's reasoning setting, as a typed chat turn sends it to Codex and
+   *  OpenAI-compatible runtimes (the short path above still wins). */
+  reasoningEffort?: ReasoningEffort;
+  /** The tool the turn's first request is pinned to, as chat pins it. */
+  forcedToolChoice?: { type: "tool"; name: string };
 }
 
 /**
@@ -185,6 +191,7 @@ export async function createProviderAdapterFactory(
       systemStablePrefixLen: options.systemStablePrefixLen,
       cacheConversation: options.cacheConversation,
       systemTailInMessages: options.systemTailInMessages,
+      forcedToolChoice: options.forcedToolChoice,
       transport,
     });
   }
@@ -201,9 +208,10 @@ export async function createProviderAdapterFactory(
       sessionId: options.sessionId ?? identity.sessionId,
       // Short path, cross-provider: Codex has no thinking on/off switch — the
       // equivalent is forcing low reasoning effort ("low", not "minimal":
-      // gpt-5.6 rejects minimal). Unset callers keep today's behavior
-      // (adapter/CLI defaults).
-      reasoningEffort: shortPath(options) ? "low" : undefined,
+      // gpt-5.6 rejects minimal). Otherwise the caller's setting, or the
+      // adapter/CLI default when it gives none.
+      reasoningEffort: shortPath(options) ? "low" : options.reasoningEffort,
+      forcedToolChoice: options.forcedToolChoice,
       transport,
     });
   }
@@ -218,6 +226,7 @@ export async function createProviderAdapterFactory(
       // Short path, cross-provider: Gemini's knob is this boolean.
       thinking: !shortPath(options) && isReasoningModel("gemini", identity.model),
       sessionId: options.sessionId ?? identity.sessionId,
+      forcedToolChoice: options.forcedToolChoice,
     });
   }
 
@@ -238,7 +247,8 @@ export async function createProviderAdapterFactory(
     // Short path, cross-provider: forwarded as reasoning_effort "low" on the
     // wire; the HTTP adapter capability-gates it away for models that 400 on
     // the parameter, so local/older models are unaffected.
-    reasoningEffort: shortPath(options) ? "low" : undefined,
+    reasoningEffort: shortPath(options) ? "low" : options.reasoningEffort,
+    forcedToolChoice: options.forcedToolChoice,
   });
 }
 

@@ -153,7 +153,7 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   camera_watch:   { kernel: "internal", risk: "safe", capabilities: [], tags: ["voice-fast"], reads: ["session"], rules: [{ id: "allow-camera-watch", decision: "allow", reason: "Watches the call's camera for what the user asked; speaks on the call", priority: 50 }] },
   // Morphing the sphere is the whole effect: a voice turn that drove a wrap-up
   // after it re-spoke its reply.
-  voice_visual:   { kernel: "internal", risk: "safe", capabilities: [], tags: [], reads: ["session"], loop: { silent: true }, rules: [{ id: "allow-voice-visual", decision: "allow", reason: "Particle visualizer (UI-only side effect, rate-limited)", priority: 50 }] },
+  voice_visual:   { kernel: "internal", risk: "safe", capabilities: [], tags: ["voice-fast"], reads: ["session"], loop: { silent: true }, rules: [{ id: "allow-voice-visual", decision: "allow", reason: "Particle visualizer (UI-only side effect, rate-limited)", priority: 50 }] },
   session_status: { kernel: "internal", risk: "safe", capabilities: [], tags: [], liveState: "poll", reads: ["session"], runControl: true, rules: [{ id: "allow-session-status", decision: "allow", reason: "Current session info", priority: 50 }] },
   // Re-surfaces the session's block notice / declassify control. UI-only:
   // it reads taint + kernel run state and never clears either (the click is

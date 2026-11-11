@@ -56,11 +56,10 @@ export interface AgentRequestInput {
   bridgeTools: ToolDefinition[];
   /** Skip heavy memory orchestrator (bridges, cron) */
   skipMemory?: boolean;
-  /** Lean prep: skip the intent classifier + memory-curate steps whose
-   *  output the caller discards (voice overrides tools + prompt). Keeps
-   *  memory/context + system-prompt build, with the memory step's follow-up
-   *  and topical-relevance judged by keyword instead of a model call. Cuts
-   *  ~4 pre-model LLM round-trips off time-to-first-token for those callers. */
+  /** Lean prep (voice): no model call before the turn's own. The memory
+   *  step's follow-up and topical-relevance are judged by keyword, and the
+   *  memory-curate check runs in the background. Tools, prompt and the
+   *  deferred-tool index are prepared exactly as for a typed turn. */
   leanPrep?: boolean;
   /** Voice: the words this message continues, when the user paused, a turn
    *  started on them, and they kept talking. `message` is the joined text. */

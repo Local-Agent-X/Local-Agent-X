@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 1994 non-test source files · 82 oversized · 266 nearing the size cap.
+**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 1995 non-test source files · 82 oversized · 265 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -21,7 +21,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 178 | 29 | XL | 1 |
 | `src/security/` | 163 | 60 | XL | 2 |
-| `src/tools/` | 129 | 233 | XL | 9 |
+| `src/tools/` | 128 | 233 | XL | 9 |
 | `src/tool-execution/` | 95 | 88 | XL | 2 |
 | `src/workspace/` | 91 | 3 | M |  |
 | `src/canonical-loop/` | 85 | 283 | XL | 11 |
@@ -40,8 +40,8 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/context-manager/` | 29 | 15 | M |  |
 | `src/agent-store/` | 28 | 7 | M | 1 |
 | `src/broker-transport/` | 27 | 49 | XL |  |
+| `src/agent-request/` | 26 | 16 | L | 3 |
 | `src/context/` | 26 | 10 | M |  |
-| `src/agent-request/` | 24 | 16 | L | 3 |
 | `src/classifiers/` | 24 | 16 | L |  |
 | `src/app-runtime/` | 23 | 12 | M |  |
 | `src/sandbox/` | 23 | 16 | L | 1 |
@@ -49,7 +49,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/protocols/` | 21 | 52 | XL |  |
 | `src/inbox/` | 20 | 6 | M |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
-| `src/server/` *(entrypoint)* | 19 | 61 | XL | 5 |
+| `src/server/` *(entrypoint)* | 19 | 62 | XL | 5 |
 | `src/autonomy/` | 18 | 6 | M |  |
 | `src/agents/` | 17 | 14 | L |  |
 | `src/net/` | 17 | 11 | L |  |
@@ -326,9 +326,9 @@ job. Comments are free: never cut them to fit.
 
 - `src/agency/worktree-recovery.ts` — 340+ code lines (cap 350)
 - `src/browser/downloads.ts` — 340+ code lines (cap 350)
+- `src/canonical-loop/provider-adapter-factory.ts` — 340+ code lines (cap 350)
 - `src/canonical-loop/checkpoint.ts` — 330+ code lines (cap 350)
 - `src/canonical-loop/container-runtime-projection.ts` — 330+ code lines (cap 350)
-- `src/canonical-loop/provider-adapter-factory.ts` — 330+ code lines (cap 350)
 - `src/cognition/cross-session-learning/learner.ts` — 330+ code lines (cap 350)
 - `src/memory/tools/facts.ts` — 330+ code lines (cap 350)
 - `src/net/egress-proxy-core.ts` — 330+ code lines (cap 350)
@@ -570,7 +570,6 @@ job. Comments are free: never cut them to fit.
 - `src/sandbox/docker-execution-runtime.ts#DockerCliExecutionRuntime.create` — 60+ own code lines (cap 100)
 - `src/security/layer/network-dns.ts#resolveAndPinHost` — 60+ own code lines (cap 100)
 - `src/server/bridge-media-forward.ts#forwardBridgeMedia` — 60+ own code lines (cap 100)
-- `src/server/voice-prompt.ts#buildVoiceTail` — 60+ own code lines (cap 100)
 - `src/server/workspace-app-serving.ts#serveWorkspaceApp` — 60+ own code lines (cap 100)
 - `src/tool-execution/arg-repair.ts#coerceArgs` — 60+ own code lines (cap 100)
 - `src/tool-execution/arg-repair.ts#repairJson` — 60+ own code lines (cap 100)

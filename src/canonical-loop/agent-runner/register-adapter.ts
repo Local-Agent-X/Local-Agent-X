@@ -94,7 +94,9 @@ export async function registerProviderAdapter(
     systemStablePrefixLen: options.systemStablePrefixLen,
     cacheConversation: options.cacheConversation,
     systemTailInMessages: options.systemTailInMessages,
-    requireToolOnFirstTurn: true,
+    reasoningEffort: options.reasoningEffort,
+    forcedToolChoice: options.forcedToolChoice,
+    requireToolOnFirstTurn: options.requireToolOnFirstTurn !== false,
   });
   registerAdapterForOp(op.id, factory);
 }

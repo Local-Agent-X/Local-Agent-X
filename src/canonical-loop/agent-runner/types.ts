@@ -4,6 +4,8 @@ import type { CallContext } from "../../tool-execution/context.js";
 import type { RenderedPromptSection } from "../../context/system-prompt-builder.js";
 import type { LocalModelCapabilityProfile } from "../../local-runtimes/index.js";
 import type { AnthropicEffort } from "../../anthropic-models.js";
+import type { ReasoningEffort } from "../../providers/reasoning-effort.js";
+import type { ForcedToolChoice } from "../../agent-request/types.js";
 
 export interface CanonicalAgentOptions extends AgentOptions {
   /** Caller-declared exact provider/model pin, distinct from a resolved default. */
@@ -29,6 +31,14 @@ export interface CanonicalAgentOptions extends AgentOptions {
    *  disableThinking: voice sends tools, and a disabled-thinking Opus 5 can
    *  write a tool call into visible text where it never executes. */
   effort?: AnthropicEffort;
+  /** The user's reasoning setting for Codex and OpenAI-compatible runtimes, as
+   *  a typed chat turn sends it (prepared.reasoningEffort). */
+  reasoningEffort?: ReasoningEffort;
+  /** The tool the first request is pinned to (prepared.toolChoice), as chat pins it. */
+  forcedToolChoice?: ForcedToolChoice;
+  /** Turn 0 must call some tool when none is pinned. On unless false: a
+   *  delegated agent must act, but a chat turn (voice) may simply answer. */
+  requireToolOnFirstTurn?: boolean;
   /** Byte length of the stable prefix of systemPrompt (section-boundary
    *  aligned). Enables the two-block system prompt-cache split on the
    *  Anthropic direct-HTTP path. */

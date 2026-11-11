@@ -324,7 +324,7 @@ describe("disableThinking short-path mapping (cross-provider)", () => {
 // so "low" must land on the SAME short path the boolean used — otherwise the
 // switch silently restores full reasoning latency on Codex/Gemini/OpenAI voice.
 describe("effort short-path mapping (cross-provider)", () => {
-	async function buildFactory(runtime: "codex" | "anthropic", opts: { disableThinking?: boolean; effort?: "low" | "medium" | "high" | "xhigh" | "max" }) {
+	async function buildFactory(runtime: "codex" | "anthropic", opts: { disableThinking?: boolean; effort?: "low" | "medium" | "high" | "xhigh" | "max"; reasoningEffort?: "low" | "medium" | "high"; forcedToolChoice?: { type: "tool"; name: string } }) {
 		const authSource = runtime === "codex" ? "oauth" : "env";
 		const resolved = await resolveProviderRuntime(runtime, "exact-model", {
 			apiKey: "credential-must-stay-pinned",
@@ -373,6 +373,27 @@ describe("effort short-path mapping (cross-provider)", () => {
 			);
 		},
 	);
+
+	// A spoken turn runs with the typed turn's settings (server/spoken-turn-options.ts):
+	// the user's reasoning setting and the first-tool pin reach the adapter as
+	// they do on a chat turn.
+	it("passes the caller's reasoning setting to Codex, and the short path still wins", async () => {
+		await buildFactory("codex", { reasoningEffort: "medium" });
+		expect(fixture.createCodexAdapter).toHaveBeenLastCalledWith(
+			expect.objectContaining({ reasoningEffort: "medium" }),
+		);
+		await buildFactory("codex", { reasoningEffort: "high", effort: "low" });
+		expect(fixture.createCodexAdapter).toHaveBeenLastCalledWith(
+			expect.objectContaining({ reasoningEffort: "low" }),
+		);
+	});
+
+	it.each(["codex", "anthropic"] as const)("passes the first-tool pin to the %s adapter", async (runtime) => {
+		const pin = { type: "tool" as const, name: "search_past_sessions" };
+		await buildFactory(runtime, { forcedToolChoice: pin });
+		const adapter = runtime === "codex" ? fixture.createCodexAdapter : fixture.createAnthropicAdapter;
+		expect(adapter).toHaveBeenLastCalledWith(expect.objectContaining({ forcedToolChoice: pin }));
+	});
 
 	it("the disableThinking short path still works on its own", async () => {
 		await buildFactory("codex", { disableThinking: true });

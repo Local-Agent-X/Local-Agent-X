@@ -20,9 +20,16 @@
 //
 // Which chats are tiled is remembered per project, in this browser.
 //
+// Tiles belong to the Lab (the sidebar's code side, sidebar-mode.js): the
+// panes share a project folder, which is what makes seeing them together
+// useful. Only Lab sessions are tiled, the Tiles button shows on a Lab session
+// only, and opening an ordinary chat puts the grid away until the next Lab
+// session is opened.
+//
 // External deps: ChatTilesCore (chat-tiles-core.js); chatTileEl, paintChatTile,
 // paintChatTileHead (chat-tiles-view.js); chats, selectChat, newChat
-// (app-state.js, app-sidebar-actions.js); hydrateChat (app-sync.js);
+// (app-state.js, app-sidebar-actions.js); chatModeOf (sidebar-mode.js);
+// hydrateChat (app-sync.js);
 // ChatStreamStore; apiFetch (shared.js); orchestratorState, otherAgentsRows
 // (chat-agent-feeds-claims.js).
 
@@ -42,6 +49,10 @@ var laxChatTiles = (function () {
   function active() { try { return window.activeChat || null; } catch (e) { return null; } }
   function chatOf(id) { return (typeof chats !== 'undefined' && Array.isArray(chats) ? chats : []).find(function (c) { return c.id === id; }) || null; }
   function projectKey() { var a = active(); return (a && a.projectId) || 'none'; }
+  function isLab(c) { return !!c && chatModeOf(c) === 'code'; }
+  function labChats() { return (typeof chats !== 'undefined' && Array.isArray(chats) ? chats : []).filter(isLab); }
+  /** The grid is on and the chat on screen is a Lab session. */
+  function showing() { return on && isLab(active()); }
 
   function loadSaved() {
     try { return JSON.parse(localStorage.getItem(STORE_KEY) || '{}') || {}; } catch (e) { return {}; }
@@ -51,7 +62,7 @@ var laxChatTiles = (function () {
       var saved = loadSaved();
       saved.on = on;
       saved.byProject = saved.byProject || {};
-      if (on) saved.byProject[projectKey()] = ids;
+      if (showing()) saved.byProject[projectKey()] = ids;
       localStorage.setItem(STORE_KEY, JSON.stringify(saved));
     } catch (e) { /* private mode or a full store: the grid still works, unremembered */ }
   }
@@ -88,7 +99,7 @@ var laxChatTiles = (function () {
 
   function paint(id) {
     paintQueued[id] = false;
-    if (!on) return;
+    if (!showing()) return;
     if (id === focusedId) {
       var head = document.getElementById('chat-tile-head');
       if (head) paintChatTileHead(head, infoOf(id));
@@ -170,21 +181,23 @@ var laxChatTiles = (function () {
     var grid = document.getElementById('chat-tiles');
     var main = document.getElementById('chat-main');
     if (!grid || !main) return;
-    ids = ChatTilesCore.pruned(ids, typeof chats !== 'undefined' ? chats : []);
+    ids = ChatTilesCore.pruned(ids, labChats());
     var a = active();
-    focusedId = a ? a.id : '';
-    document.body.classList.toggle('chat-tiles-on', on);
+    var show = showing();
+    // An ordinary chat on screen leaves the pane it would return to as it was.
+    if (show) focusedId = a.id;
+    document.body.classList.toggle('chat-tiles-on', show);
     var toggle = document.getElementById('chat-tiles-toggle');
-    if (toggle) toggle.classList.toggle('on', on);
+    if (toggle) { toggle.classList.toggle('on', show); toggle.style.display = isLab(a) ? '' : 'none'; }
     var addBtn = document.getElementById('chat-tiles-add');
-    if (addBtn) addBtn.style.display = on && ids.length < ChatTilesCore.MAX_TILES ? '' : 'none';
+    if (addBtn) addBtn.style.display = show && ids.length < ChatTilesCore.MAX_TILES ? '' : 'none';
     Array.prototype.slice.call(grid.querySelectorAll('.chat-tile')).forEach(function (el) {
-      if (!on || ids.indexOf(el.dataset.session) === -1) el.remove();
+      if (!show || ids.indexOf(el.dataset.session) === -1) el.remove();
     });
     main.style.order = '';
     grid.style.removeProperty('--tile-cols');
     grid.style.removeProperty('--tile-rows');
-    if (!on) { closeAddMenu(); return; }
+    if (!show) { closeAddMenu(); return; }
     var shape = ChatTilesCore.gridShape(ids.length);
     grid.style.setProperty('--tile-cols', String(shape.cols));
     grid.style.setProperty('--tile-rows', String(shape.rows));
@@ -200,25 +213,32 @@ var laxChatTiles = (function () {
     save();
   }
 
+  /** The panes the grid opens with: the ones remembered for this project, else
+   *  the project's Lab sessions. */
+  function fill() {
+    var remembered = ChatTilesCore.pruned((loadSaved().byProject || {})[projectKey()] || [], labChats());
+    var a = active();
+    ids = remembered.length > 1 ? ChatTilesCore.withChat(remembered, remembered[0], a && a.id)
+      : ChatTilesCore.projectChats(labChats(), a);
+  }
+
   function toggle() {
+    if (!on && !isLab(active())) return;
     on = !on;
-    if (on) {
-      var remembered = ChatTilesCore.pruned((loadSaved().byProject || {})[projectKey()] || [], typeof chats !== 'undefined' ? chats : []);
-      var a = active();
-      ids = remembered.length > 1 ? ChatTilesCore.withChat(remembered, remembered[0], a && a.id)
-        : ChatTilesCore.projectChats(typeof chats !== 'undefined' ? chats : [], a);
-    }
+    if (on) fill();
     layout();
     save();
   }
 
   /** The chat on screen changed (selectChat, newChat, deleteChat). */
   function onChatChanged() {
-    if (!on) return;
     var a = active();
+    if (!on || (a && !isLab(a))) { layout(); return; }
     if (!a) {
-      ids = ChatTilesCore.pruned(ids, typeof chats !== 'undefined' ? chats : []);
+      ids = ChatTilesCore.pruned(ids, labChats());
       if (ids.length && typeof selectChat === 'function') { selectChat(ids[0]); return; }
+    } else if (!ids.length) {
+      fill();
     } else if (addNext) {
       ids = ChatTilesCore.added(ids, a.id);
       if (ids.indexOf(a.id) === -1) ids = ChatTilesCore.withChat(ids, focusedId, a.id);
@@ -244,14 +264,14 @@ var laxChatTiles = (function () {
   }
   function addProject() {
     closeAddMenu();
-    ChatTilesCore.projectChats(typeof chats !== 'undefined' ? chats : [], active()).forEach(function (id) { ids = ChatTilesCore.added(ids, id); });
+    ChatTilesCore.projectChats(labChats(), active()).forEach(function (id) { ids = ChatTilesCore.added(ids, id); });
     layout();
   }
   function addNew() {
     closeAddMenu();
     var a = active();
     addNext = true;
-    if (typeof newChat === 'function') newChat(a && a.projectId ? a.projectId : undefined, a && a.mode === 'code' ? 'code' : undefined);
+    if (typeof newChat === 'function') newChat(a && a.projectId ? a.projectId : undefined, 'code');
   }
 
   // ── The "+ Chat" menu ──
@@ -276,10 +296,10 @@ var laxChatTiles = (function () {
     menu.id = 'chat-tiles-menu';
     menu.className = 'chat-tiles-menu';
     var a = active();
-    if (a && a.projectId) menu.appendChild(menuItem('All chats in this project', addProject));
-    menu.appendChild(menuItem('New chat', addNew));
-    ChatTilesCore.addable(typeof chats !== 'undefined' ? chats : [], ids, 12).forEach(function (c) {
-      menu.appendChild(menuItem(c.title || 'Chat', function () { add(c.id); }));
+    if (a && a.projectId) menu.appendChild(menuItem('All sessions in this project', addProject));
+    menu.appendChild(menuItem('New session', addNew));
+    ChatTilesCore.addable(labChats(), ids, 12).forEach(function (c) {
+      menu.appendChild(menuItem(c.title || 'Session', function () { add(c.id); }));
     });
     var box = anchor.getBoundingClientRect();
     menu.style.top = (box.bottom + 4) + 'px';
@@ -305,16 +325,16 @@ var laxChatTiles = (function () {
       if (!e.target.closest || (!e.target.closest('#chat-tiles-menu') && !e.target.closest('#chat-tiles-add'))) closeAddMenu();
     });
     ChatStreamStore.subscribeAll(onStoreEvent);
-    if (loadSaved().on) {
-      // The chat list and the chat on screen are restored after this script
-      // runs; the grid comes back with the first chat that opens.
-      var restore = setInterval(function () {
-        if (!active()) return;
-        clearInterval(restore);
-        if (!on) toggle();
-      }, 300);
-      setTimeout(function () { clearInterval(restore); }, 15000);
-    }
+    // The chat list and the chat on screen are restored after this script
+    // runs: the Tiles button shows, and a grid left on comes back, with the
+    // first chat that opens (at once on a Lab session, else on the next one).
+    var restore = setInterval(function () {
+      if (!active()) return;
+      clearInterval(restore);
+      if (!on && loadSaved().on) { on = true; if (isLab(active())) fill(); }
+      layout();
+    }, 300);
+    setTimeout(function () { clearInterval(restore); }, 15000);
   }
 
   if (typeof document !== 'undefined') {

@@ -15,7 +15,7 @@ const coreJs = read("public/js/chat-tiles-core.js");
 const viewJs = read("public/js/chat-tiles-view.js");
 const tilesJs = read("public/js/chat-tiles.js");
 
-type Chat = { id: string; title: string; projectId?: string; updatedAt?: number; archived?: boolean; messages: Array<Record<string, unknown>>; _needsHydrate?: boolean };
+type Chat = { id: string; title: string; projectId?: string; mode?: string; updatedAt?: number; archived?: boolean; messages: Array<Record<string, unknown>>; _needsHydrate?: boolean };
 type Entry = { status: string; content: string; toolEvents: unknown[]; approvals: unknown[]; liveAnchorIndex: number };
 type Core = {
   MAX_TILES: number;
@@ -33,7 +33,8 @@ type Tiles = {
 };
 
 const core: Core = new Function(`${coreJs}\nreturn ChatTilesCore;`)();
-const chat = (id: string, over: Partial<Chat> = {}): Chat => ({ id, title: `Title ${id}`, projectId: "p1", updatedAt: 1, messages: [], ...over });
+// A Lab session (mode "code"): the only kind the grid holds.
+const chat = (id: string, over: Partial<Chat> = {}): Chat => ({ id, title: `Title ${id}`, projectId: "p1", mode: "code", updatedAt: 1, messages: [], ...over });
 const entry = (over: Partial<Entry> = {}): Entry => ({ status: "idle", content: "", toolEvents: [], approvals: [], liveAnchorIndex: -1, ...over });
 
 describe("the rules of the tile grid", () => {
@@ -115,23 +116,81 @@ describe("the tile grid on the chat page", () => {
   const tile = (id: string) => document.querySelector<HTMLElement>(`.chat-tile[data-session="${id}"]`)!;
   const main = () => document.getElementById("chat-main")!;
   const emit = (id: string, e: Entry) => { entries[id] = e; storeCb(id, e); };
+  const toggleBtn = () => document.getElementById("chat-tiles-toggle")!;
+  // sidebar-mode.js's rule, and the page's wait for the first chat to open.
+  const chatModeOf = (c: Chat | null) => (c && (c.mode === "code" || c.id.startsWith("ide-")) ? "code" : "chat");
+  let firstChatOpened: () => void;
+  const load = () => new Function("chats", "selectChat", "newChat", "hydrateChat", "ChatStreamStore", "apiFetch", "WebSocket", "requestAnimationFrame", "chatModeOf", "setInterval", "clearInterval",
+    `${coreJs}\n${viewJs}\n${tilesJs}\nreturn laxChatTiles;`)(chats, selectChat, newChat, hydrateChat, store, apiFetch, { OPEN: 1 }, (fn: () => void) => fn(), chatModeOf,
+    (fn: () => void) => { firstChatOpened = fn; return 1; }, () => {});
+  const newChat = vi.fn();
 
   beforeEach(() => {
     localStorage.clear();
     document.body.className = "";
-    document.body.innerHTML = `<button id="chat-tiles-add" style="display:none"></button><button id="chat-tiles-toggle"></button>
+    document.body.innerHTML = `<button id="chat-tiles-add" style="display:none"></button><button id="chat-tiles-toggle" style="display:none"></button>
       <div id="chat-tiles"><div id="chat-main"><div id="chat-tile-head"><span class="chat-tile-title"></span><span class="chat-tile-orch"></span>
       <span class="chat-tile-clash"></span><span class="chat-tile-state"></span><span class="chat-tile-model"></span></div></div></div>`;
-    chats = [chat("a", { updatedAt: 9 }), chat("b", { updatedAt: 5, messages: [{ role: "user", content: "hello b" }] }), chat("c", { updatedAt: 3 }), chat("z", { projectId: "p2" })];
+    chats = [chat("a", { updatedAt: 9 }), chat("b", { updatedAt: 5, messages: [{ role: "user", content: "hello b" }] }), chat("c", { updatedAt: 3 }), chat("z", { projectId: "p2" }),
+      chat("plain", { mode: undefined, updatedAt: 8 })];
     entries = {};
     hydrated = [];
     finishHydrate = [];
     sent.length = 0;
-    selectChat.mockClear(); hydrateChat.mockClear(); apiFetch.mockClear();
+    selectChat.mockClear(); hydrateChat.mockClear(); apiFetch.mockClear(); newChat.mockClear();
     (window as { activeChat?: unknown }).activeChat = chats[0];
     (window as { chatWs?: unknown }).chatWs = { readyState: 1, send: (raw: string) => sent.push(JSON.parse(raw)) };
-    tiles = new Function("chats", "selectChat", "newChat", "hydrateChat", "ChatStreamStore", "apiFetch", "WebSocket", "requestAnimationFrame",
-      `${coreJs}\n${viewJs}\n${tilesJs}\nreturn laxChatTiles;`)(chats, selectChat, vi.fn(), hydrateChat, store, apiFetch, { OPEN: 1 }, (fn: () => void) => fn());
+    tiles = load();
+    firstChatOpened();
+  });
+
+  it("offers tiles on a Lab session only, and holds Lab sessions only", () => {
+    expect(toggleBtn().style.display).toBe("");
+    selectChat("plain");
+    expect(toggleBtn().style.display).toBe("none");
+    tiles.toggle();
+    expect(tiles.isOn()).toBe(false);
+    expect(document.body.classList.contains("chat-tiles-on")).toBe(false);
+
+    selectChat("a");
+    tiles.toggle();
+    expect(tiles.tiles()).toEqual(["a", "b", "c"]);
+    tiles.openAddMenu();
+    const offered = [...document.querySelectorAll(".chat-tiles-menu-item")].map((b) => b.textContent);
+    expect(offered).toEqual(["All sessions in this project", "New session", "Title z"]);
+    (document.querySelectorAll<HTMLElement>(".chat-tiles-menu-item")[1]).click();
+    expect(newChat).toHaveBeenCalledWith("p1", "code");
+  });
+
+  it("puts the grid away on an ordinary chat and brings it back, as it was, on the next Lab session", () => {
+    tiles.toggle();
+    tile("b").click();
+    selectChat("plain");
+    expect(document.body.classList.contains("chat-tiles-on")).toBe(false);
+    expect(document.querySelectorAll(".chat-tile")).toHaveLength(0);
+    expect(main().style.order).toBe("");
+    expect(tiles.isOn()).toBe(true);
+    expect(JSON.parse(localStorage.getItem("lax_chat_tiles_v1")!).byProject).toEqual({ p1: ["a", "b", "c"] });
+
+    selectChat("c");
+    expect(document.body.classList.contains("chat-tiles-on")).toBe(true);
+    expect(tiles.tiles()).toEqual(["a", "b", "c"]);
+    expect(main().style.order).toBe("2");
+  });
+
+  it("comes back after a reload once a Lab session is on screen", () => {
+    tiles.toggle();
+    tile("c").querySelector<HTMLElement>(".chat-tile-close")!.click();
+    document.querySelectorAll(".chat-tile").forEach((el) => el.remove());
+    document.body.className = "";
+    (window as { activeChat?: unknown }).activeChat = chats[4];
+    tiles = load();
+    firstChatOpened();
+    expect(document.body.classList.contains("chat-tiles-on")).toBe(false);
+    expect(toggleBtn().style.display).toBe("none");
+    selectChat("b");
+    expect(document.body.classList.contains("chat-tiles-on")).toBe(true);
+    expect(tiles.tiles()).toEqual(["a", "b"]);
   });
 
   it("turns the page into a grid of the project's chats, the one on screen in its own pane", () => {

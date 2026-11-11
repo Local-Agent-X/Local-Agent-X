@@ -47,11 +47,11 @@ describe("the Code mode handoff notice", () => {
 		g.saveChats = vi.fn();
 		const n: Notice = { id: "ch-tc-1", kind: "handoff", folder: EVENT.folder, brief: EVENT.brief, status: "offered" };
 		const el = render(n);
-		expect(el.textContent).toContain("Continue in Code mode");
+		expect(el.textContent).toContain("Continue in the Lab");
 		(el.querySelector(".handoff-notice-open") as HTMLButtonElement).click();
 		await vi.waitFor(() => expect(n.status).toBe("opened"));
 		expect(calls).toEqual([["chat-1", null, { folder: EVENT.folder, brief: EVENT.brief }]]);
-		expect(el.textContent).toContain("Moved to Code mode");
+		expect(el.textContent).toContain("Moved to the Lab");
 		expect(el.querySelector(".handoff-notice-open")).toBeNull();
 	});
 

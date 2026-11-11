@@ -138,7 +138,7 @@ function resultLinkHtml(rawUrl) {
   // An app's result also opens its code session with the app in Preview
   // (sidebar-mode.js handles the click).
   var appId = appIdOfResultUrl(rawUrl);
-  return appId ? link + ' <button type="button" class="result-open-code" data-open-code="' + esc(appId) + '">Open in Code</button>' : link;
+  return appId ? link + ' <button type="button" class="result-open-code" data-open-code="' + esc(appId) + '">Open in Lab</button>' : link;
 }
 
 // The app a result URL opens (/apps/<id>/…, on the UI or the agent origin), or null.

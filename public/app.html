@@ -103,11 +103,12 @@
 <!-- ═══ SIDEBAR (persists across all pages) ═══ -->
 <div id="sidebar" role="navigation" aria-label="Sidebar navigation">
   <div id="sidebar-header"></div>
-  <!-- Chat / Code toggle (sidebar-mode.js) and the New row it labels. -->
+  <!-- Chat / Lab toggle (sidebar-mode.js) and the New row it labels. The Lab
+       is the code side: its sessions are mode "code" (src/session/mode.ts). -->
   <div id="sidebar-brand">
-    <div id="sidebar-mode-toggle" role="group" aria-label="Chat or code sessions">
+    <div id="sidebar-mode-toggle" role="group" aria-label="Chat or Lab sessions">
       <button id="sidebar-mode-chat" class="sidebar-mode-btn active" onclick="setSidebarMode('chat')" aria-pressed="true">Chat</button>
-      <button id="sidebar-mode-code" class="sidebar-mode-btn" onclick="setSidebarMode('code')" aria-pressed="false">Code</button>
+      <button id="sidebar-mode-code" class="sidebar-mode-btn" onclick="setSidebarMode('code')" aria-pressed="false">Lab</button>
     </div>
     <button id="new-chat-btn" onclick="newFromSidebar()"><span aria-hidden="true">+</span> <span id="new-chat-label">New chat</span></button>
   </div>
@@ -220,9 +221,9 @@
       <div id="chat-toolbar">
         <!-- The other agents working in this chat's project (chat-agent-feeds-claims.js). -->
         <span id="other-agents-strip" class="other-agents-strip" style="display:none"></span>
-        <!-- Several chats side by side (chat-tiles.js). -->
-        <button type="button" id="chat-tiles-add" class="chat-tiles-btn" style="display:none" onclick="laxChatTiles.openAddMenu()" title="Add a chat to the grid">+ Chat</button>
-        <button type="button" id="chat-tiles-toggle" class="chat-tiles-btn" onclick="laxChatTiles.toggle()" title="Show the chats of this project side by side, up to eight. Click a pane to work in it.">&#9638; Tiles</button>
+        <!-- Several Lab sessions side by side (chat-tiles.js); shown on a Lab session only. -->
+        <button type="button" id="chat-tiles-add" class="chat-tiles-btn" style="display:none" onclick="laxChatTiles.openAddMenu()" title="Add a session to the grid">+ Session</button>
+        <button type="button" id="chat-tiles-toggle" class="chat-tiles-btn" style="display:none" onclick="laxChatTiles.toggle()" title="Show the sessions of this project side by side, up to eight. Click a pane to work in it.">&#9638; Tiles</button>
         <span id="mood-indicator" title="Detected mood" style="display:none;font-size:.65rem;font-family:var(--mono);padding:3px 8px;border-radius:6px;border:1px solid var(--border);color:var(--muted)"></span>
         <span id="smart-ctx-indicator" title="Smart context active" style="display:none;font-size:.65rem;font-family:var(--mono);padding:3px 8px;border-radius:6px;border:1px solid var(--accent-dim);color:var(--accent)">CTX</span>
       </div>
@@ -1789,10 +1790,10 @@
      app.js runs the top-level boot last, so it must come after all
      function-defining modules. -->
 <script src="/js/app-state.js?v=v2"></script>
-<script src="/js/sidebar-mode.js?v=v5"></script>
+<script src="/js/sidebar-mode.js?v=v6"></script>
 <script src="/js/app-sync.js?v=v5"></script>
-<script src="/js/app-sidebar-actions.js?v=v6"></script>
-<script src="/js/app-sidebar-render.js?v=v4"></script>
+<script src="/js/app-sidebar-actions.js?v=v7"></script>
+<script src="/js/app-sidebar-render.js?v=v5"></script>
 <script src="/js/app-sidebar-project-files.js?v=v2"></script>
 <script src="/js/app.js?v=va7"></script>
 <script src="/js/home-launcher.js?v=v1"></script>
@@ -1809,7 +1810,7 @@
 <!-- chat-agent-feeds split: render + actions before core so the core's
      _renderAgentFeedsList sees renderAgentCard and updateAgentFeed's
      control-button HTML references on*Agent handlers. -->
-<script src="/js/chat-agent-feeds-render.js?v=v4"></script>
+<script src="/js/chat-agent-feeds-render.js?v=v5"></script>
 <script src="/js/chat-agent-feeds-ambient.js?v=v2"></script>
 <script src="/js/chat-agent-feeds-jobs.js?v=v1"></script>
 <script src="/js/chat-agent-feeds-actions.js?v=v3"></script>
@@ -1818,9 +1819,9 @@
 <script src="/js/chat-agent-feeds-resize.js?v=v1"></script>
 <script src="/js/chat-agent-feeds-sync.js?v=v1"></script>
 <script src="/js/chat-agent-feeds-claims.js?v=v5"></script>
-<script src="/js/chat-tiles-core.js?v=v1"></script>
+<script src="/js/chat-tiles-core.js?v=v2"></script>
 <script src="/js/chat-tiles-view.js?v=v1"></script>
-<script src="/js/chat-tiles.js?v=v1"></script>
+<script src="/js/chat-tiles.js?v=v2"></script>
 <script src="/js/chat-artifacts.js?v=v4"></script>
 <script src="/js/browser-tab-strip.js?v=v5"></script>
 <script src="/js/browser-workspace.js?v=v1"></script>
@@ -1886,7 +1887,7 @@
 <script src="/js/chat-render-shell-preview.js?v=v1"></script>
 <script src="/js/chat-render-approvals.js?v=v4"></script>
 <script src="/js/approval-presence-bridge.js?v=v1"></script>
-<script src="/js/chat-render-notices.js?v=v5"></script>
+<script src="/js/chat-render-notices.js?v=v6"></script>
 <script src="/js/chat-learning-notices.js?v=v1"></script>
 <script src="/js/chat-file-changes.js?v=v1"></script>
 <script src="/js/chat-cards.js?v=v1"></script>
@@ -1968,7 +1969,7 @@
 <script src="/js/protocols-packs.js"></script>
 <script src="/js/protocols.js"></script>
 <script src="/js/notifications.js"></script>
-<script src="/js/apps.js?v=v2"></script>
+<script src="/js/apps.js?v=v3"></script>
 <script src="/js/apps-search.js?v=v1"></script>
 <script src="/js/apps-build-entry.js"></script>
 <!-- apps-ide split: core (state + lifecycle) loads first, then the WS

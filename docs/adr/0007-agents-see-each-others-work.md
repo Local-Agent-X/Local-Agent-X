@@ -264,6 +264,14 @@ views that a click turns into the chat on screen, in place. A live view is text
 only: cards, approvals and rendered markdown are in the full chat, one click
 away. The browser panel, terminal and voice follow the chat on screen.
 
+Tiles belong to the Lab, the name on screen for the sidebar's code side since
+2026-11-10 (the session mode is still `code`; only the label changed). Panes
+are useful when they share something, and Lab sessions share a project folder;
+ordinary chats share nothing, so the button is not offered on one, only Lab
+sessions can be panes, and opening an ordinary chat puts the grid away until
+the next Lab session is opened. Collab (§9) is the second way into tiles, where
+the panes share a problem instead of a folder.
+
 **How many at once.** What bounds it today, from the code:
 
 | Limit | Value | Where | What happens past it |

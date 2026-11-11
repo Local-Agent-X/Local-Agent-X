@@ -92,7 +92,7 @@ describe("egressGuardGate — outbound secret scan + sensitive attachment (every
     const ctx = makeCtx("email_send", { to: "a@b.com", subject: "x", body: `here: ${SECRET}` }, sessionId);
     expect(egressGuardGate(ctx).kind).toBe("continue");
     expect(ctx.policyApprovalReason).toMatch(/a@b\.com/);
-    expect(ctx.policyApprovalReason).toMatch(/secret-shaped content/);
+    expect(ctx.policyApprovalReason).toMatch(/looks like a password or access key/);
   });
 
   it("routes a hardcoded secret in an email_send HTML body to approval (E5, confirmable downgrade)", () => {
@@ -102,7 +102,7 @@ describe("egressGuardGate — outbound secret scan + sensitive attachment (every
     const ctx = makeCtx("email_send", { to: "a@b.com", subject: "x", body: "see below", html: `<p>key: ${SECRET}</p>` }, sessionId);
     expect(egressGuardGate(ctx).kind).toBe("continue");
     expect(ctx.policyApprovalReason).toMatch(/a@b\.com/);
-    expect(ctx.policyApprovalReason).toMatch(/secret-shaped content/);
+    expect(ctx.policyApprovalReason).toMatch(/looks like a password or access key/);
   });
 
   it("extracts EVERY payload-bearing email_send field, including html and bcc (E5)", () => {
@@ -365,7 +365,7 @@ describe("egressGuardGate — known-secret-value (the user's ACTUAL stored secre
   it("a key-shape guess to a recipient the user has not trusted goes to the user on a card", () => {
     const ctx = makeCtx("email_send", { to: "a@b.com", subject: "x", body: `key=${SHAPE}` }, sessionId);
     expect(egressGuardGate(ctx).kind).toBe("continue");
-    expect(ctx.policyApprovalReason).toMatch(/secret-shaped content/);
+    expect(ctx.policyApprovalReason).toMatch(/looks like a password or access key/);
   });
 
   it("a stored secret sent to a site the user has not trusted is refused; a key shape is asked", () => {

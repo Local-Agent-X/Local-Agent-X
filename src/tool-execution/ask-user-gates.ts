@@ -17,14 +17,14 @@ import { controlFileGate } from "./control-file-gate.js";
 import { claimClashGate } from "./claim-clash-gate.js";
 import { injectionExposureGate } from "./injection-exposure.js";
 import { mcpSecretUseGate } from "../tools/mcp-admin-tools.js";
+import { addApprovalReason } from "./approval-card-text.js";
 
 /** Only the tool can see what a call would touch — which fact a substring
  *  selects and whose it is — so the tool says why this one needs the user. */
 export function toolConfirmationGate(ctx: Pick<ToolCallContext, "tool" | "args" | "priorMessages" | "policyApprovalReason">): void {
   const reason = ctx.tool?.confirmWithUser?.(ctx.args, { userText: currentHumanText(ctx.priorMessages) });
   if (!reason) return;
-  if (!ctx.policyApprovalReason) ctx.policyApprovalReason = reason;
-  else if (!ctx.policyApprovalReason.includes(reason)) ctx.policyApprovalReason += `; ${reason}`;
+  addApprovalReason(ctx, reason);
 }
 
 export async function askUserGates(ctx: ToolCallContext): Promise<void> {

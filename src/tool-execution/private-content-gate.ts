@@ -28,6 +28,7 @@ import {
 import { isTrustedDestination, isTrustedEmailRecipient } from "../tools/http-egress-guard.js";
 import { getOwnEmailAddresses } from "../tools/email-config.js";
 import { currentHumanText } from "./unnamed-delete-gate.js";
+import { addApprovalReason, andList } from "./approval-card-text.js";
 import { registrableDomain } from "../browser/registrable-domain.js";
 import { destinationsOf, payloadOf, sendsOffBox, type PrivateGateDeps } from "./private-content-destinations.js";
 import { describeDestination, destinationKey, type Destination } from "./send-destinations.js";
@@ -146,13 +147,17 @@ export async function privateContentGate(ctx: ToolCallContext, deps: PrivateGate
   if (dests.size === 0) return CONTINUE;
   pendingShares.set(ctx, shares);
 
-  const reason = `This ${ctx.tc.name} would send text from ${[...sources].join(", ")} to ${[...dests].join(", ")}, which you have not chosen in this chat. `
-    + "Approve it only if you meant to share that content there"
+  // The question first, in the user's terms: the card used to open with the
+  // tool's name and "which you have not chosen", and read as a second ask for
+  // a send the user had just asked for (2026-11-10). What it asks is whether
+  // the address the agent found is the right one.
+  const one = dests.size === 1;
+  const reason = `Send text from ${andList([...sources])} to ${andList([...dests])}? `
+    + `You haven't named ${one ? "that address" : "those addresses"} in this chat, so check ${one ? "it is" : "they are"} where you meant this to go. `
     + (remembered.size > 0
-      ? `; a yes also covers sending it again in this session to ${[...remembered].join(", ")} only`
-      : "; a yes covers this call only");
-  if (!ctx.policyApprovalReason) ctx.policyApprovalReason = reason;
-  else if (!ctx.policyApprovalReason.includes(reason)) ctx.policyApprovalReason += `; ${reason}`;
+      ? `A yes also lets the agent send it to ${andList([...remembered])} again in this chat.`
+      : "A yes covers this one send only.");
+  addApprovalReason(ctx, reason);
   return CONTINUE;
 }
 

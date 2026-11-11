@@ -50,8 +50,8 @@ describe("a send whose destination the gate cannot name is asked about, never wa
     readEmail();
     const reason = await verdict(ctx("process_start", { command: `echo "${STATEMENT}"` }));
     expect(reason).toMatch(/to an unknown destination/);
-    expect(reason).not.toMatch(/a yes also covers/);
-    expect(reason).toMatch(/a yes covers this call only/);
+    expect(reason).not.toMatch(/A yes also lets/);
+    expect(reason).toMatch(/A yes covers this one send only\./);
   });
 });
 
@@ -62,7 +62,7 @@ describe("the computer tool", () => {
     readEmail();
     const reason = await verdict(ctx("computer", { action: "type", text: STATEMENT }), app);
     expect(reason).toMatch(/to chrome \("Apply now - Acme Careers - Google Chrome"\)/);
-    expect(reason).toMatch(/a yes covers this call only/);
+    expect(reason).toMatch(/A yes covers this one send only\./);
   });
 
   it("where the OS will not say which app has the foreground, the destination is unknown", async () => {

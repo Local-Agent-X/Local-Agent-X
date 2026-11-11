@@ -127,8 +127,8 @@ describe("egress-guard refusals send a trusted destination to the user, never to
   it("a secret mailed to a recipient not on the list", () => {
     const blocker = probeEgressGuard(makeCtx("email_send", { to: "someone@elsewhere.example", subject: "s", body: `key=${SECRET}` }, "sess-route-mail"));
     expect(blocker?.confirmable).toBe(true);
-    expect(blocker?.reason).toContain(`the sites allowed in ${WEB_ACCESS} are trusted`);
-    expect(blocker?.reason).toContain(`A recipient's domain that should always receive such data can be allowed in ${WEB_ACCESS}.`);
+    expect(blocker?.reason).toContain(`the sites allowed in ${WEB_ACCESS})`);
+    expect(blocker?.reason).toContain(`To stop being asked about a domain, allow it in ${WEB_ACCESS}.`);
     noFileRoute(blocker?.reason);
   });
 });

@@ -206,7 +206,7 @@ export function sensitivePageActionDecision(rawUrl: string, action: string): Sen
     if (level === "ask") {
       return {
         disposition: "approval-required", category: sensitive.category, page: sensitive.page, unlocksRead: true,
-        reason: `Reading this ${sensitive.category} page reveals its contents to the model, so browserSecrecy="ask" requires your approval.`,
+        reason: `The agent wants to read this ${sensitive.category} page, and whatever it reads goes to the AI model. Approve only if you want it to see this page.`,
       };
     }
     return {
@@ -224,7 +224,7 @@ export function sensitivePageActionDecision(rawUrl: string, action: string): Sen
     if (level === "open") return { disposition: "allow", category: sensitive.category, page: sensitive.page };
     return {
       disposition: "approval-required", category: sensitive.category, page: sensitive.page,
-      reason: `This high-risk browser action targets a ${sensitive.category} page.`,
+      reason: `The agent wants to act on a ${sensitive.category} page (click, type or submit). Approve only if you asked for this.`,
     };
   }
   return { disposition: "allow", category: sensitive.category, page: sensitive.page };

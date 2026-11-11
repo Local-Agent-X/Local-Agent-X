@@ -1,6 +1,7 @@
 import type { ToolDefinition, ToolResult } from "../types.js";
 import type { MCPServerConfig } from "../mcp-client/types.js";
 import type { ToolCallContext } from "../tool-execution/context.js";
+import { addApprovalReason } from "../tool-execution/approval-card-text.js";
 import { MCPManager, expandPlaceholders } from "../mcp-client/index.js";
 
 const NAME_RE = /^[a-zA-Z0-9_-]{1,64}$/;
@@ -62,11 +63,10 @@ export function mcpSecretUseGate(ctx: Pick<ToolCallContext, "tc" | "args" | "pol
   if (secrets.length === 0) return;
   const one = secrets.length === 1;
   const commandLine = [server.config.command, ...(server.config.args ?? [])].join(" ");
-  const reason = `This mcp_add_server call gives the vault ${one ? "secret" : "secrets"} ${secrets.join(", ")} to MCP server "${server.name}", `
-    + `a program the agent chose: \`${commandLine}\`. Nothing checks where that program sends ${one ? "it" : "them"}. `
+  const reason = `The agent wants to connect the MCP server "${server.name}" and give it your saved ${one ? "secret" : "secrets"} ${secrets.join(", ")}. `
+    + `The server is a program the agent chose: \`${commandLine}\`. Nothing checks where that program sends ${one ? "it" : "them"}. `
     + `Approve it only if you asked to connect this server with ${one ? "that secret" : "those secrets"}.`;
-  if (!ctx.policyApprovalReason) ctx.policyApprovalReason = reason;
-  else if (!ctx.policyApprovalReason.includes(reason)) ctx.policyApprovalReason += `; ${reason}`;
+  addApprovalReason(ctx, reason);
 }
 
 /**

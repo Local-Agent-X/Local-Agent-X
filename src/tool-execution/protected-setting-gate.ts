@@ -112,7 +112,7 @@ export function describeChange(field: string, value: unknown, current: unknown):
     case "enableRemoteControl":
       return "Allow a paired phone to drive your mouse and keyboard (enableRemoteControl)?";
     case "supervisedBrowser":
-      return "Let browser.evaluate run without asking (supervisedBrowser off)?";
+      return "Let the agent run its own scripts on any web page without asking (turns Supervised browser off)?";
     case "browserSecrecy":
       return `Change the agent's sensitive-page read policy (browserSecrecy → "${String(value)}")?`;
     case "browserMode":

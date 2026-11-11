@@ -329,9 +329,12 @@ export function checkOutboundEmail(
 
   const kinds = scan.clean ? "" : [...new Set(scan.matches.map((m) => m.pattern))].join(", ");
   const what = scan.clean
-    ? "sensitive personal data (financial account or SSN)"
-    : `secret-shaped content (${kinds})`;
-  const dest = untrusted.length > 0 ? untrusted.join(", ") : "no parseable recipient";
+    ? "sensitive personal data (a financial account number or SSN)"
+    : `something that looks like a password or access key (${kinds})`;
+  const many = untrusted.length > 1;
+  const to = untrusted.length > 0
+    ? `The email to ${untrusted.join(", ")} contains ${what}, and ${many ? "those addresses aren't" : "that address isn't"} on your trusted list`
+    : `This email contains ${what}, and no recipient address in it could be read to check against your trusted list`;
   // The user's own stored secret (or content too big to inspect) going to a
   // stranger is not a question to put on a card: it is refused, and allowing
   // the recipient is the way to send it.
@@ -339,12 +342,11 @@ export function checkOutboundEmail(
   const ask = tier !== "control";
   return {
     message:
-      `email_send to ${dest}: the message content contains ${what} and the recipient is not a ` +
-      `trusted destination (your own address and the sites allowed in Settings → Security → Web access are trusted). ` +
+      `${to} (your own address and the sites allowed in Settings → Security → Web access). ` +
       (ask
-        ? `Confirm the send only if these recipients are meant to receive this content; otherwise remove it. `
+        ? `Approve only if ${many ? "they are all" : "the recipient is"} meant to receive it. `
         : `It carries one of your stored secrets, or encoded content too large to check, so it is refused; remove it, or send a stored secret by placeholder to a trusted recipient. `) +
-      `A recipient's domain that should always receive such data can be allowed in Settings → Security → Web access.`,
+      `To stop being asked about a domain, allow it in Settings → Security → Web access.`,
     meta: {
       sink: "email_send",
       blocked_by: scan.clean ? "data-egress-guard" : "outbound-secret-scan",

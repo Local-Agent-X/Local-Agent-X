@@ -135,7 +135,7 @@ describe("PreToolUse arg rewrite — applied and re-screened", () => {
     const ctx = ctxFor({ path: "~/.lax/mcp.json", content: "{}" });
 
     expect((await enforcePolicyPhase(ctx)).kind).toBe("continue");
-    expect(ctx.policyApprovalReason).toContain("This write call changes ~/.lax/mcp.json");
+    expect(ctx.policyApprovalReason).toContain("The agent wants to change ~/.lax/mcp.json");
   });
 
   it("a rewrite that redirects a write onto such a file is caught by the re-screen", async () => {
@@ -143,7 +143,7 @@ describe("PreToolUse arg rewrite — applied and re-screened", () => {
     const ctx = ctxFor({ path: "notes.txt", content: "x" });
 
     expect((await enforcePolicyPhase(ctx)).kind).toBe("continue");
-    expect(ctx.policyApprovalReason).toContain("This write call changes ~/.lax/hooks.json");
+    expect(ctx.policyApprovalReason).toContain("The agent wants to change ~/.lax/hooks.json");
   });
 
   it("a blocking hook still blocks (rewrite support does not weaken the veto)", async () => {
@@ -174,7 +174,7 @@ describe("the gates judge the args the tool runs with", () => {
 
     expect((await enforcePolicyPhase(ctx)).kind).toBe("continue");
     expect(ctx.args).toEqual({ path: "~/.lax/hooks.json", content: "x" });
-    expect(ctx.policyApprovalReason).toContain("This write call changes ~/.lax/hooks.json");
+    expect(ctx.policyApprovalReason).toContain("The agent wants to change ~/.lax/hooks.json");
     expect(preDispatchArgs(0)).toEqual(ctx.args);
   });
 
@@ -184,7 +184,7 @@ describe("the gates judge the args the tool runs with", () => {
 
     expect((await enforcePolicyPhase(ctx)).kind).toBe("continue");
     expect(ctx.args).toEqual({ path: "~/.lax/hooks.json", content: "x" });
-    expect(ctx.policyApprovalReason).toContain("This write call changes ~/.lax/hooks.json");
+    expect(ctx.policyApprovalReason).toContain("The agent wants to change ~/.lax/hooks.json");
     expect(preDispatchArgs(1)).toEqual(ctx.args);
   });
 

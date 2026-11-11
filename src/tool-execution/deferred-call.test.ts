@@ -220,8 +220,8 @@ describe("a gate inside the tool that found no one to ask", () => {
   const stub = (name: string, execute: ToolDefinition["execute"], readOnly = false) =>
     ({ name, description: "stub", parameters: { type: "object", properties: {} }, readOnly, execute }) as unknown as ToolDefinition;
   const taskList = stub("task_list", async () => ({ content: "no tasks" }), true);
-  const REASON = "This high-risk browser action targets a financial account page. (click on https://www.chase.com/pay)";
-  const refusal = () => blocked("BLOCKED: This high-risk browser action targets a financial account page. Explicit approval is unavailable in this run.", {
+  const REASON = "The agent wants to act on a financial account page (click, type or submit). Approve only if you asked for this. (click on https://www.chase.com/pay)";
+  const refusal = () => blocked("BLOCKED: The agent wants to act on a financial account page (click, type or submit). Approve only if you asked for this. Explicit approval is unavailable in this run.", {
     layer: "browser-sensitive-page", browserStatus: "approval-required", recovery: "This run cannot ask the user.",
   });
 

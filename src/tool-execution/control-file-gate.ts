@@ -25,6 +25,7 @@ import { homedir } from "node:os";
 import { relative } from "node:path";
 import type { ToolCallContext } from "./context.js";
 import { writeTargets } from "./write-targets.js";
+import { addApprovalReason } from "./approval-card-text.js";
 import { laxApprovalGatedFile } from "../security/layer/lax-control-files.js";
 import { persistenceLocationJudge, type PersistenceLocationOf } from "../security/layer/persistence-locations.js";
 import { pathIsWithin } from "../security/layer/file-access.js";
@@ -70,9 +71,7 @@ export function controlFileGate(ctx: ToolCallContext): void {
     // card would ask whether they asked for the change they just asked for
     // (Peter's call, 2026-10-26). Every other gated target still asks.
     if (said && (userNamedFile(said, target.path) || userNamedFile(said, file.path))) continue;
-    const reason = `This ${ctx.tc.name} call ${target.deletes ? "deletes" : "changes"} ${shown(file.path)}, which ${file.controls}. `
-      + "Approve it only if you asked for this change.";
-    if (!ctx.policyApprovalReason) ctx.policyApprovalReason = reason;
-    else if (!ctx.policyApprovalReason.includes(reason)) ctx.policyApprovalReason += `; ${reason}`;
+    addApprovalReason(ctx, `The agent wants to ${target.deletes ? "delete" : "change"} ${shown(file.path)}, which ${file.controls}. `
+      + "Approve it only if you asked for this change.");
   }
 }

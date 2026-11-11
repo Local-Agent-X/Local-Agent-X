@@ -27,6 +27,7 @@ import { statusOf } from "../tools/result-helpers.js";
 import type { ToolResult } from "../types.js";
 import type { ToolCallContext } from "./context.js";
 import { humanMessageCount } from "./unnamed-delete-gate.js";
+import { addApprovalReason } from "./approval-card-text.js";
 
 interface Exposure {
   /** The tool and what it was pointed at, as the card names it. */
@@ -118,9 +119,8 @@ export function injectionExposureGate(ctx: ToolCallContext): void {
   if (!profile.askAfterInjectionExposure.includes(risk)) return;
   const decision = decide(profile, risk);
   if (decision !== "allow" && decision !== "allow-with-rollback") return;
-  const reason = `this follows text in the ${exposure.source} result that looked like an injected instruction; approve only if you asked for this`;
-  if (!ctx.policyApprovalReason) ctx.policyApprovalReason = reason;
-  else if (!ctx.policyApprovalReason.includes(reason)) ctx.policyApprovalReason += `; ${reason}`;
+  addApprovalReason(ctx, `Text in what ${exposure.source} returned looked like an injected instruction, orders planted there for the agent, `
+    + "and this action came after it. Approve it only if you asked for this.");
 }
 
 export function _clearInjectionExposureForTests(): void {

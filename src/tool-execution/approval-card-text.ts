@@ -22,6 +22,7 @@ import { shellDeletes, type ShellDelete } from "../security/layer/shell-delete-t
 import { deleteLine } from "./delete-prefix.js";
 import { shellTreeDeleteScope } from "./tree-delete-scope.js";
 import { proofText } from "./shell-proof-text.js";
+import { argsLine } from "./approval-context.js";
 
 /** The destructive reasons that are not deletes (approval-decision.ts
  *  DESTRUCTIVE_COMMAND_PATTERNS), each in plain words. A delete's words come
@@ -39,10 +40,15 @@ const PLAIN: Record<string, string> = {
 const PROFILE_ASKS = "Your security profile asks before a command like this runs.";
 const NAMED_TARGETS = 6;
 
+/** "a", "a and b", "a, b and c": how a card names several things. */
+export function andList(items: readonly string[]): string {
+  return items.length <= 1 ? items.join("") : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
+}
+
 function list(items: string[]): string {
   const shown = items.slice(0, NAMED_TARGETS).map((t) => `"${t}"`);
   if (items.length > NAMED_TARGETS) shown.push(`${items.length - NAMED_TARGETS} more`);
-  return shown.length <= 1 ? shown.join("") : `${shown.slice(0, -1).join(", ")} and ${shown[shown.length - 1]}`;
+  return andList(shown);
 }
 
 function describeDelete(d: ShellDelete): string {
@@ -99,7 +105,28 @@ export function approvalCardText(input: CardTextInput): { context: string; previ
   const tail = preview ? "" : input.line;
   if (destructive) return { context: headline(tail), preview };
   // The gate's reason is the card's sentence: a "Policy approval required:"
-  // label in front of it told the user nothing they could act on.
-  if (input.policyReason) return { context: `${input.policyReason.replace(/\.$/, "")}. ${tail}`.trim(), preview };
+  // label in front of it told the user nothing they could act on. A raw
+  // `name: {json}` line after it repeats the args the card already lists,
+  // cut mid-word at 80 characters (2026-11-10), so only a real description
+  // of the call follows the reason.
+  if (input.policyReason) {
+    const after = tail === argsLine(toolName, args) ? "" : tail;
+    return { context: `${asSentence(input.policyReason)} ${after}`.trim(), preview };
+  }
   return { context: preview ? PROFILE_ASKS : input.line, preview };
+}
+
+/**
+ * Put `reason` to the user on this call's card. Every ask-the-user gate adds
+ * its reason here; reasons are whole sentences, so two read as two sentences,
+ * and the same reason is never added twice (a hook rewrite re-screens).
+ */
+export function addApprovalReason(ctx: { policyApprovalReason?: string }, reason: string): void {
+  const sentence = asSentence(reason);
+  if (!ctx.policyApprovalReason) ctx.policyApprovalReason = sentence;
+  else if (!ctx.policyApprovalReason.includes(sentence)) ctx.policyApprovalReason = `${asSentence(ctx.policyApprovalReason)} ${sentence}`;
+}
+
+function asSentence(text: string): string {
+  return /[.?!]$/.test(text) ? text : `${text}.`;
 }

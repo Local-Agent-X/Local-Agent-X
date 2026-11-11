@@ -46,7 +46,7 @@ describe("supervised browser gate (end-to-end pre-dispatch)", () => {
 			expect(e).toBeInstanceOf(ToolBlocked);
 			expect((e as ToolBlocked).disposition).toBe("approval-required");
 			expect((e as ToolBlocked).message).toContain("APPROVAL REQUIRED");
-			expect((e as ToolBlocked).reason).toContain("Supervised browser mode");
+			expect((e as ToolBlocked).reason).toContain("Supervised browser mode asks first");
 		}
 	});
 
@@ -91,7 +91,7 @@ describe("supervisedEvaluateBlock (unit)", () => {
 	it("returns a block on a non-trusted origin when supervised", async () => {
 		const block = await supervisedEvaluateBlock(true, call, () => "https://example.com/");
 		expect(block).not.toBeNull();
-		expect(block!.reason).toContain("browser.evaluate");
+		expect(block!.reason).toContain("run its own script");
 	});
 
 	it("returns null on a trusted origin when supervised", async () => {

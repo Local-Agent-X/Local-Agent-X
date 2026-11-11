@@ -28,6 +28,7 @@ import { raiseClash } from "../agency/orchestrator-wake.js";
 import { normRepoPath } from "../agency/path-overlap.js";
 import { sessionWorkRootOf } from "../workspace/paths.js";
 import type { ToolResult } from "../types.js";
+import { addApprovalReason } from "./approval-card-text.js";
 
 const raised = new Map<string, Set<string>>();
 const RAISED_CAP = 500;
@@ -71,7 +72,8 @@ function askReason(clashes: Clash[]): string {
   const c = clashes[0];
   const more = clashes.length > 1 ? ` (and ${clashes.length - 1} more)` : "";
   return `${who(c).replace(/\*\*/g, "")} is changing \`${c.path}\`${more} in this same folder`
-    + `${c.other.task ? ` (task: ${c.other.task})` : ""}; writing it now can overwrite their unfinished edit (this chat can work in its own copy instead: the strip above the chat offers it)`;
+    + `${c.other.task ? `, working on: ${c.other.task}` : ""}. Writing it now could overwrite their unfinished edit. `
+    + "To keep out of each other's way, deny this and switch this chat to its own copy from the strip above the chat.";
 }
 
 /** Run before approval: raise clashes with other live agents' claims. */
@@ -87,8 +89,7 @@ export function claimClashGate(ctx: ToolCallContext): void {
   if (fresh.length === 0) return;
   const now = fresh.filter((c) => c.sameCheckout && c.other.state !== "recent");
   if (now.length > 0) {
-    const reason = askReason(now);
-    ctx.policyApprovalReason = ctx.policyApprovalReason ? `${ctx.policyApprovalReason}; ${reason}` : reason;
+    addApprovalReason(ctx, askReason(now));
   }
   // A note is shown once; a question is settled once the write goes through.
   markRaised(scopeOf(ctx), fresh.filter((c) => !now.includes(c)));

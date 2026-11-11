@@ -4,7 +4,8 @@
 import { describe, it, expect } from "vitest";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { approvalCardText, destructiveExplanation } from "./approval-card-text.js";
+import { addApprovalReason, andList, approvalCardText, destructiveExplanation } from "./approval-card-text.js";
+import { argsLine } from "./approval-context.js";
 import { destructiveOperationReason } from "../approval-decision.js";
 
 const dir = join(tmpdir(), "lax-card-text");
@@ -99,5 +100,39 @@ describe("the card for a shell ask", () => {
     const out = approvalCardText({ toolName: "bash", args, destructive: "git force-push", line: "", review });
     expect(out.context).toMatch(/^⚠ Cannot be undone — Overwrites the branch's history on the remote.*\(git force-push\) Pre-publish review: GREEN\.$/);
     expect(out.preview).toBe(review.preview);
+  });
+});
+
+// A gate's reason is the card's sentence. The raw `name: {json}` line used to
+// follow it, cut at 80 characters mid-word, repeating the args the card lists
+// below (2026-11-10).
+describe("the card for a gate's reason", () => {
+  const args = { to: "tesa@example.com", subject: "Thank you", body: "Hi" };
+  const reason = "Send text from an email you read to tesa@example.com? You haven't named that address in this chat.";
+
+  it("is the reason alone when the tool has no description of its own", () => {
+    const out = approvalCardText({ toolName: "email_send", args, destructive: null, policyReason: reason, line: argsLine("email_send", args) });
+    expect(out.context).toBe(reason);
+    expect(out.context).not.toContain("{");
+  });
+
+  it("keeps a tool's own description of the call after the reason", () => {
+    const out = approvalCardText({ toolName: "write", args: { path: "a.txt" }, destructive: null, policyReason: "The agent wants to change a.txt", line: "Write a.txt" });
+    expect(out.context).toBe("The agent wants to change a.txt. Write a.txt");
+  });
+});
+
+describe("several gates asking about one call", () => {
+  it("reads as sentences, each once", () => {
+    const ctx: { policyApprovalReason?: string } = { policyApprovalReason: "a policy rule asks" };
+    addApprovalReason(ctx, "The agent wants to change ~/.bashrc, which runs commands. Approve it only if you asked for this change.");
+    addApprovalReason(ctx, "The agent wants to change ~/.bashrc, which runs commands. Approve it only if you asked for this change.");
+    expect(ctx.policyApprovalReason).toBe("a policy rule asks. The agent wants to change ~/.bashrc, which runs commands. Approve it only if you asked for this change.");
+  });
+
+  it("names several things the way a sentence does", () => {
+    expect(andList(["a"])).toBe("a");
+    expect(andList(["a", "b"])).toBe("a and b");
+    expect(andList(["a", "b", "c"])).toBe("a, b and c");
   });
 });

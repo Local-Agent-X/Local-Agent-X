@@ -13,5 +13,10 @@ export function getRiskLevel(_toolName: string, _args: Record<string, unknown>, 
 export function buildApprovalContext(tool: ToolDefinition | undefined, toolName: string, args: Record<string, unknown>): string {
   const command = shellCommandOf(toolName, args);
   if (command !== undefined) return `Run command: "${command.slice(0, 150)}"`;
-  return tool?.describeCall?.(args) ?? `${toolName}: ${JSON.stringify(withoutInternalArgs(args)).slice(0, 80)}`;
+  return tool?.describeCall?.(args) ?? argsLine(toolName, args);
+}
+
+/** The line for a tool with no describeCall: its name and raw arguments. */
+export function argsLine(toolName: string, args: Record<string, unknown>): string {
+  return `${toolName}: ${JSON.stringify(withoutInternalArgs(args)).slice(0, 80)}`;
 }

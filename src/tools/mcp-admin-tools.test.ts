@@ -64,7 +64,7 @@ function reasonFor(args: Record<string, unknown>, name?: string): string | undef
 describe("the reason an mcp_add_server call is put to the user", () => {
   it("names the secret, the server and the command it goes to", () => {
     expect(reasonFor(GITHUB)).toBe(
-      'This mcp_add_server call gives the vault secret GITHUB_TOKEN to MCP server "github", a program the agent chose: '
+      'The agent wants to connect the MCP server "github" and give it your saved secret GITHUB_TOKEN. The server is a program the agent chose: '
       + "`npx -y @modelcontextprotocol/server-github`. Nothing checks where that program sends it. "
       + "Approve it only if you asked to connect this server with that secret.",
     );
@@ -78,7 +78,7 @@ describe("the reason an mcp_add_server call is put to the user", () => {
       env: { TOKEN: "Bearer ${secret:API_TOKEN}", SAME: "${secret:API_TOKEN}" },
       executionMode: "sandboxed",
     });
-    expect(reason).toContain("gives the vault secrets API_TOKEN, DB_LAUNCHER, POSTGRES_URL to MCP server \"db\"");
+    expect(reason).toContain("connect the MCP server \"db\" and give it your saved secrets API_TOKEN, DB_LAUNCHER, POSTGRES_URL");
     expect(reason).toContain("`${secret:DB_LAUNCHER} --url ${secret:POSTGRES_URL}`");
     expect(reason).toContain("sends them");
   });
@@ -96,7 +96,7 @@ describe("the reason an mcp_add_server call is put to the user", () => {
     mcpSecretUseGate(c);
     mcpSecretUseGate(c);
     expect(c.policyApprovalReason?.split("GITHUB_TOKEN")).toHaveLength(2);
-    expect(c.policyApprovalReason).toMatch(/^an earlier reason; This mcp_add_server call gives/);
+    expect(c.policyApprovalReason).toMatch(/^an earlier reason. The agent wants to connect/);
   });
 });
 

@@ -28,6 +28,7 @@ import { recordEgressBlocks } from "./egress-block-audit.js";
 import { outboundSecretRecovery } from "./stored-secret-route.js";
 import type { PhaseOutcome, ToolCallContext } from "./context.js";
 import { terminate, CONTINUE } from "./context.js";
+import { addApprovalReason } from "./approval-card-text.js";
 
 // One outbound blocker: the layer that enforces it, a human label for the
 // single-gate "BLOCKED by <label>" line, the specific reason, recovery guidance,
@@ -219,9 +220,7 @@ function canaryBlocker(ctx: ToolCallContext, judged: EgressJudgement): EgressBlo
 // property (a silent run can never confirm its own exfil). Idempotent under the
 // hook-rewrite re-screen: the same reason is never appended twice.
 function deferToApproval(ctx: ToolCallContext, blockers: EgressBlocker[]): PhaseOutcome {
-  const reason = blockers.map((b) => b.reason).join(" ");
-  if (!ctx.policyApprovalReason) ctx.policyApprovalReason = reason;
-  else if (!ctx.policyApprovalReason.includes(reason)) ctx.policyApprovalReason += `; ${reason}`;
+  addApprovalReason(ctx, blockers.map((b) => b.reason).join(" "));
   return CONTINUE;
 }
 

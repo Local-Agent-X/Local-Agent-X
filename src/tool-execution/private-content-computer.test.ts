@@ -64,8 +64,8 @@ describe("the clipboard a paste chord sends", () => {
 
     readEmail();
     const reason = await verdict(paste(), notes);
-    expect(reason).toMatch(/send text from the clipboard \(the check could not read it\) to Notes/);
-    expect(reason).toMatch(/a yes covers this call only/);
+    expect(reason).toMatch(/Send text from the clipboard \(the check could not read it\) to Notes/);
+    expect(reason).toMatch(/A yes covers this one send only\./);
     expect(await verdict(ctx("computer", { action: "type", text: "hello" }), notes)).toBeUndefined();
   });
 });

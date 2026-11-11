@@ -39,7 +39,7 @@ export async function supervisedEvaluateBlock(
 
 	return {
 		reason:
-			"Supervised browser mode is on: running JavaScript (browser.evaluate) on a page whose origin is not on the trusted-origin allowlist requires the user's approval.",
+			"The agent wants to run its own script on a page from a site that isn't on your trusted list. Supervised browser mode asks first. Approve only if you expect the agent to be working on this page.",
 		recovery:
 			"Ask the user to approve this browser.evaluate, or navigate to a trusted origin first. To make the browser autonomous again, the user can turn Supervised Browser off in Settings → Security. Don't flip it off yourself to get past this block.",
 	};

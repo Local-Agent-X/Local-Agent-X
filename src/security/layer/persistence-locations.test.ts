@@ -69,12 +69,12 @@ describe("a file-tool write to a startup file", () => {
   it("is put to the user, naming the file and what it runs, for every location the finding named", () => {
     for (const { path, runs } of NAMED) {
       const reason = reasonFor(path);
-      expect(reason, path).toContain(`This write call changes ${shown(path)}, which `);
+      expect(reason, path).toContain(`The agent wants to change ${shown(path)}, which `);
       expect(reason, path).toMatch(runs);
       expect(reason, path).toContain("Approve it only if you asked for this change.");
     }
-    expect(reasonFor(join(HOME, ".bashrc"), "edit")).toContain("This edit call changes ~/.bashrc");
-    expect(reasonFor(join(HOME, ".bashrc"), "delete_file")).toContain("This delete_file call deletes ~/.bashrc");
+    expect(reasonFor(join(HOME, ".bashrc"), "edit")).toContain("The agent wants to change ~/.bashrc");
+    expect(reasonFor(join(HOME, ".bashrc"), "delete_file")).toContain("The agent wants to delete ~/.bashrc");
   });
 
   it("is put to the user for every location on the list", () => {
@@ -115,7 +115,7 @@ describe("a file-tool write to a startup file", () => {
     const project = mkdtempSync(join(tmpdir(), "lax-persist-link-"));
     cleanup.push(() => { unlinkSync(join(project, "cfg")); rmSync(project, { recursive: true, force: true }); });
     symlinkSync(autostart, join(project, "cfg"), "junction");
-    expect(reasonFor(join(project, "cfg", "evil.desktop"))).toContain("changes ~/.config/autostart/evil.desktop, which starts programs");
+    expect(reasonFor(join(project, "cfg", "evil.desktop"))).toContain("wants to change ~/.config/autostart/evil.desktop, which starts programs");
   });
 
   it.skipIf(process.platform !== "win32" && process.platform !== "darwin")("in any casing, where the volume answers to any", () => {

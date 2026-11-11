@@ -52,7 +52,7 @@ describe("a remembered yes", () => {
       expect(await run(fill(field), `https://jobs.acme.example/apply/step-${field}`, true, cards)).toBe("continue");
     }
     expect(cards.count).toBe(1);
-    expect(cards.texts[0]).toContain("a yes also covers sending it again in this session to jobs.acme.example only");
+    expect(cards.texts[0]).toContain("A yes also lets the agent send it to jobs.acme.example again in this chat.");
 
     expect(await run(fill(11), "https://jobs.other.example/apply", true, cards)).toBe("continue");
     expect(cards.count).toBe(2);
@@ -86,7 +86,7 @@ describe("a remembered yes", () => {
     const type = (part: number): ToolCallContext => ctx("computer", { action: "type", text: `${RESUME_TEXT} (part ${part})` }, "type my resume summary into the application");
     const form: ForegroundApp = { name: "chrome", title: "Apply - Acme Careers - Google Chrome" };
     expect(await run(type(1), form, true, cards)).toBe("continue");
-    expect(cards.texts[0]).toContain("a yes covers this call only");
+    expect(cards.texts[0]).toContain("A yes covers this one send only.");
     expect(await run(type(2), { name: "chrome", title: "Collector - attacker.example - Google Chrome" }, false, cards)).toBe("halt");
     expect(await run(type(3), form, true, cards)).toBe("continue");
     expect(cards.count).toBe(3);

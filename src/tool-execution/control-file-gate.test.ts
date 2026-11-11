@@ -60,19 +60,19 @@ describe("a write to a file the app acts on", () => {
   it("names the file and what it controls, for every gated file", () => {
     for (const f of GATED) {
       const reason = reasonFor("write", { path: join(LAX, f.rel), content: "{}" });
-      expect(reason, f.rel).toContain(`This write call changes ${f.shown}, which `);
+      expect(reason, f.rel).toContain(`The agent wants to change ${f.shown}, which `);
       expect(reason, f.rel).toMatch(f.effect);
       expect(reason, f.rel).toContain("Approve it only if you asked for this change.");
     }
-    expect(reasonFor("edit", { path: HOOKS, old_string: "a", new_string: "b" })).toContain("This edit call changes ~/.lax/hooks.json");
-    expect(reasonFor("write", { path: "~/.lax/hooks.json", content: "{}" })).toContain("changes ~/.lax/hooks.json");
+    expect(reasonFor("edit", { path: HOOKS, old_string: "a", new_string: "b" })).toContain("The agent wants to change ~/.lax/hooks.json");
+    expect(reasonFor("write", { path: "~/.lax/hooks.json", content: "{}" })).toContain("wants to change ~/.lax/hooks.json");
   });
 
   it("covers every declared write target: a delete, a restore destination, a document output", () => {
-    expect(reasonFor("delete_file", { path: HOOKS })).toContain("This delete_file call deletes ~/.lax/hooks.json");
-    expect(reasonFor("restore_file", { path: "notes.txt", destination: join(LAX, "mcp.json") })).toContain("changes ~/.lax/mcp.json");
+    expect(reasonFor("delete_file", { path: HOOKS })).toContain("The agent wants to delete ~/.lax/hooks.json");
+    expect(reasonFor("restore_file", { path: "notes.txt", destination: join(LAX, "mcp.json") })).toContain("wants to change ~/.lax/mcp.json");
     expect(reasonFor("document", { action: "template", template_path: "t.docx", output_path: join(LAX, "plugins", "registry.json") }))
-      .toContain("changes ~/.lax/plugins/registry.json");
+      .toContain("wants to change ~/.lax/plugins/registry.json");
     const both = reasonFor("restore_file", { path: HOOKS, destination: join(LAX, "mcp-local-trust.json") });
     expect(both).toContain("~/.lax/hooks.json");
     expect(both).toContain("~/.lax/mcp-local-trust.json");
@@ -82,7 +82,7 @@ describe("a write to a file the app acts on", () => {
     const project = mkdtempSync(join(tmpdir(), "lax-ctl-link-"));
     cleanup.push(() => rmSync(project, { recursive: true, force: true }));
     symlinkSync(LAX, join(project, "cfg"), "junction");
-    expect(reasonFor("write", { path: join(project, "cfg", "hooks.json"), content: "{}" })).toContain("changes ~/.lax/hooks.json");
+    expect(reasonFor("write", { path: join(project, "cfg", "hooks.json"), content: "{}" })).toContain("wants to change ~/.lax/hooks.json");
   });
 });
 
@@ -90,13 +90,13 @@ describe("a write to a file the app acts on", () => {
 // them through unchanged), so each must name the file it reaches.
 describe.skipIf(process.platform !== "win32")("other Windows spellings of the same file", () => {
   it("an NTFS stream suffix on the file or the folder, including a file that does not exist yet", () => {
-    expect(reasonFor("write", { path: `${HOOKS}::$DATA`, content: "{}" })).toContain("changes ~/.lax/hooks.json");
-    expect(reasonFor("write", { path: join(`${LAX}::$INDEX_ALLOCATION`, "hooks.json"), content: "{}" })).toContain("changes ~/.lax/hooks.json");
+    expect(reasonFor("write", { path: `${HOOKS}::$DATA`, content: "{}" })).toContain("wants to change ~/.lax/hooks.json");
+    expect(reasonFor("write", { path: join(`${LAX}::$INDEX_ALLOCATION`, "hooks.json"), content: "{}" })).toContain("wants to change ~/.lax/hooks.json");
     expect(reasonFor("write", { path: join(`${LAX}:$I30:$INDEX_ALLOCATION`, "plugins", "registry.json"), content: "{}" }))
-      .toContain("changes ~/.lax/plugins/registry.json");
+      .toContain("wants to change ~/.lax/plugins/registry.json");
     expect(existsSync(join(LAX, "mcp.json"))).toBe(false);
-    expect(reasonFor("write", { path: `${join(LAX, "mcp.json")}::$DATA`, content: "{}" })).toContain("changes ~/.lax/mcp.json");
-    expect(reasonFor("delete_file", { path: `${HOOKS}::$DATA` })).toContain("deletes ~/.lax/hooks.json");
+    expect(reasonFor("write", { path: `${join(LAX, "mcp.json")}::$DATA`, content: "{}" })).toContain("wants to change ~/.lax/mcp.json");
+    expect(reasonFor("delete_file", { path: `${HOOKS}::$DATA` })).toContain("wants to delete ~/.lax/hooks.json");
   });
 
   it("an 8.3 short name for the data dir or the file, where the volume keeps them", (t) => {
@@ -106,10 +106,10 @@ describe.skipIf(process.platform !== "win32")("other Windows spellings of the sa
     const shortFile = join(LAX, "HOOKS~1.JSO");
     const sameAs = (a: string, b: string) => existsSync(a) && realpathSync.native(a) === realpathSync.native(b);
     if (!sameAs(shortDir, LAX) || !sameAs(shortFile, HOOKS)) return t.skip();
-    expect(reasonFor("write", { path: join(shortDir, "hooks.json"), content: "{}" })).toContain("changes ~/.lax/hooks.json");
-    expect(reasonFor("write", { path: join(shortDir, "mcp-local-trust.json"), content: "{}" })).toContain("changes ~/.lax/mcp-local-trust.json");
-    expect(reasonFor("edit", { path: shortFile, old_string: "{", new_string: "[" })).toContain("changes ~/.lax/hooks.json");
-    expect(reasonFor("delete_file", { path: shortFile })).toContain("deletes ~/.lax/hooks.json");
+    expect(reasonFor("write", { path: join(shortDir, "hooks.json"), content: "{}" })).toContain("wants to change ~/.lax/hooks.json");
+    expect(reasonFor("write", { path: join(shortDir, "mcp-local-trust.json"), content: "{}" })).toContain("wants to change ~/.lax/mcp-local-trust.json");
+    expect(reasonFor("edit", { path: shortFile, old_string: "{", new_string: "[" })).toContain("wants to change ~/.lax/hooks.json");
+    expect(reasonFor("delete_file", { path: shortFile })).toContain("wants to delete ~/.lax/hooks.json");
   });
 });
 
@@ -132,7 +132,7 @@ describe("a restore that lands on a file the app acts on", () => {
     cleanup.push(() => rmSync(elsewhere, { recursive: true, force: true }));
     for (const path of [join(elsewhere, "hooks.json"), "hooks.json"]) {
       expect(reasonFor("restore_file", { path }), path)
-        .toContain("This restore_file call changes ~/.lax/hooks.json, which runs commands on every tool call.");
+        .toContain("The agent wants to change ~/.lax/hooks.json, which runs commands on every tool call.");
     }
   });
 
@@ -159,9 +159,9 @@ describe("a restore that lands on a file the app acts on", () => {
 // team 2026-10-13, C2).
 describe("a shell command that writes a file the app acts on", () => {
   it("is put to the user for a redirect, a copy and a delete, naming the file", () => {
-    expect(reasonFor("bash", { command: `echo '{}' > ${HOOKS}` })).toContain("This bash call changes ~/.lax/hooks.json, which runs commands on every tool call");
-    expect(reasonFor("bash", { command: `cp /tmp/mcp.json ${join(LAX, "mcp.json")}` })).toContain("This bash call changes ~/.lax/mcp.json");
-    expect(reasonFor("bash", { command: `rm -f ${HOOKS}` })).toContain("This bash call deletes ~/.lax/hooks.json");
+    expect(reasonFor("bash", { command: `echo '{}' > ${HOOKS}` })).toContain("The agent wants to change ~/.lax/hooks.json, which runs commands on every tool call");
+    expect(reasonFor("bash", { command: `cp /tmp/mcp.json ${join(LAX, "mcp.json")}` })).toContain("The agent wants to change ~/.lax/mcp.json");
+    expect(reasonFor("bash", { command: `rm -f ${HOOKS}` })).toContain("The agent wants to delete ~/.lax/hooks.json");
   });
 
   it("asks nothing of a command that reads the file, or writes elsewhere", () => {
@@ -175,11 +175,11 @@ describe("a shell command that writes a file the app acts on", () => {
   it("is put to the user for a git config or git remote write, naming the config file", () => {
     const syncRepo = join(LAX, "sync-repo");
     const changes = (command: string): string | undefined => reasonFor("bash", { command });
-    expect(changes(`git -C ${syncRepo} config remote.origin.pushurl https://evil.example/x.git`)).toContain("changes ~/.lax/sync-repo/.git/config");
+    expect(changes(`git -C ${syncRepo} config remote.origin.pushurl https://evil.example/x.git`)).toContain("wants to change ~/.lax/sync-repo/.git/config");
     expect(changes(`git -C ${syncRepo} config --add url.https://evil.example/.insteadOf https://github.com/`)).toContain("~/.lax/sync-repo/.git/config");
     expect(changes(`git -C ${syncRepo} remote set-url --push origin https://evil.example/x.git`)).toContain("~/.lax/sync-repo/.git/config");
     expect(changes(`git -C ${syncRepo} config set core.hooksPath /tmp/h`)).toContain("~/.lax/sync-repo/.git/config");
-    expect(changes("git config --global core.hooksPath /tmp/h")).toContain("changes ~/.gitconfig, which can run commands every time git runs");
+    expect(changes("git config --global core.hooksPath /tmp/h")).toContain("wants to change ~/.gitconfig, which can run commands every time git runs");
     expect(changes(`git config --file ${join(LAX, "hooks.json")} a.b c`)).toContain("~/.lax/hooks.json");
   });
 
@@ -214,15 +214,15 @@ describe("everything else in the data dir", () => {
     ];
     for (const [rel, controls] of cases) {
       expect(reasonFor("write", { path: join(LAX, rel), content: "{}" }), rel)
-        .toContain(`This write call changes ~/.lax/${rel.replace(/\\/g, "/")}, which ${controls}. Approve it only if you asked for this change.`);
+        .toContain(`The agent wants to change ~/.lax/${rel.replace(/\\/g, "/")}, which ${controls}. Approve it only if you asked for this change.`);
     }
   });
 
   it("a location nothing names yet is put to the user too", () => {
     expect(reasonFor("write", { path: join(LAX, "notes.md"), content: "x" }))
-      .toContain("changes ~/.lax/notes.md, which Local Agent X keeps for itself and reads back.");
+      .toContain("wants to change ~/.lax/notes.md, which Local Agent X keeps for itself and reads back.");
     expect(reasonFor("edit", { path: join(LAX, "next-feature", "state.json"), old_string: "a", new_string: "b" }))
-      .toContain("changes ~/.lax/next-feature/state.json, which Local Agent X keeps for itself and reads back.");
+      .toContain("wants to change ~/.lax/next-feature/state.json, which Local Agent X keeps for itself and reads back.");
   });
 
   it("the agent's working data is written with no card", () => {
@@ -237,7 +237,7 @@ describe("everything else in the data dir", () => {
     const link = join(LAX, "uploads", "cfg");
     symlinkSync(LAX, link, "junction");
     cleanup.push(() => unlinkSync(link));
-    expect(reasonFor("write", { path: join(link, "hooks.json"), content: "{}" })).toContain("changes ~/.lax/hooks.json, which runs commands");
+    expect(reasonFor("write", { path: join(link, "hooks.json"), content: "{}" })).toContain("wants to change ~/.lax/hooks.json, which runs commands");
   });
 });
 
@@ -280,7 +280,7 @@ describe("the approval phase carries the reason out", () => {
     expect((await requireApprovalPhase(c)).kind).toBe("continue");
     const cards = events.filter((e): e is Extract<ServerEvent, { type: "approval_requested" }> => e.type === "approval_requested");
     expect(cards).toHaveLength(1);
-    expect(cards[0]?.context).toContain("This write call changes ~/.lax/hooks.json, which runs commands on every tool call.");
+    expect(cards[0]?.context).toContain("The agent wants to change ~/.lax/hooks.json, which runs commands on every tool call.");
 
     const plain = ctx("write", { path: join(LAX, "uploads", "notes.md"), content: "x" }, "local", s, (e) => events.push(e));
     controlFileGate(plain);

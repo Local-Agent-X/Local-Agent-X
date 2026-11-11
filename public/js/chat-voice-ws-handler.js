@@ -74,6 +74,7 @@ function handleVoiceWsMessage(e) {
       break;
     }
     case 'partial': {
+      if (!dictateMode && _voiceShowContinuedWords(msg.text || '')) break;
       if (!msg.text) break;
       // Dictate mode: ghost preview row below the textarea; `final` commits it
       // to the textarea.
@@ -85,28 +86,7 @@ function handleVoiceWsMessage(e) {
         }
         break;
       }
-      // Voice mode: live transcription preview. Stream the recognized words
-      // into a dimmed user bubble so the wait for the final Whisper commit
-      // feels responsive (masks STT latency — it does NOT change when the agent
-      // turn fires; that's still server-side off the `final`). The bubble is
-      // finalized in place by the `final` case, or dropped on the next
-      // vad_speech_start if no final arrives.
-      const empty = document.getElementById('empty');
-      if (empty) empty.remove();
-      if (!voicePartialEl) {
-        if (typeof addMessageEl !== 'function') break;
-        _voiceStripStalePin();
-        voicePartialEl = addMessageEl('user', msg.text);
-        if (voicePartialEl) {
-          voicePartialEl.classList.add('voice-partial');
-          if (typeof voicePartialEl.scrollIntoView === 'function') {
-            voicePartialEl.scrollIntoView({ block: 'start' });
-          }
-        }
-      } else {
-        const body = voicePartialEl.querySelector('.msg-body');
-        if (body) body.textContent = msg.text;
-      }
+      _voiceShowLivePreview(msg.text);
       break;
     }
     case 'agent_start': {
@@ -114,6 +94,7 @@ function handleVoiceWsMessage(e) {
       // tries to start a turn, just drop the events instead of injecting
       // a phantom assistant bubble into the chat thread.
       if (dictateMode) break;
+      _voiceStopContinuing();
       // Any live-partial bubble still on screen here is an orphan — the real
       // utterance was already committed by `final` (that's what triggered this
       // turn), so a leftover preview is echo/noise that would otherwise sit
@@ -207,6 +188,7 @@ function handleVoiceWsMessage(e) {
       break;
     case 'tts_interrupt':
       if (voicePlaybackNode) voicePlaybackNode.port.postMessage({ cmd: 'flush' });
+      if (msg.continues) _voiceStartContinuing();
       break;
     case 'playback_complete':
     case 'tts_idle':
@@ -287,6 +269,32 @@ function showVoiceIssueBanner(text) {
   if (span) span.textContent = text;
 }
 
+// What the user is saying right now, as a dimmed message of its own.
+function _voiceShowLivePreview(text) {
+  // Voice mode: live transcription preview. Stream the recognized words
+  // into a dimmed user bubble so the wait for the final Whisper commit
+  // feels responsive (masks STT latency — it does NOT change when the agent
+  // turn fires; that's still server-side off the `final`). The bubble is
+  // finalized in place by the `final` case, or dropped on the next
+  // vad_speech_start if no final arrives.
+  const empty = document.getElementById('empty');
+  if (empty) empty.remove();
+  if (!voicePartialEl) {
+    if (typeof addMessageEl !== 'function') return;
+    _voiceStripStalePin();
+    voicePartialEl = addMessageEl('user', text);
+    if (voicePartialEl) {
+      voicePartialEl.classList.add('voice-partial');
+      if (typeof voicePartialEl.scrollIntoView === 'function') {
+        voicePartialEl.scrollIntoView({ block: 'start' });
+      }
+    }
+  } else {
+    const body = voicePartialEl.querySelector('.msg-body');
+    if (body) body.textContent = text;
+  }
+}
+
 // A finished utterance on a call, drawn in the thread and kept in the chat's messages.
 function _voiceCommitUtterance(msg) {
   // Voice mode: commit the user's utterance into the thread. If a live
@@ -300,6 +308,7 @@ function _voiceCommitUtterance(msg) {
   // Words that carry on the message before them (a pause was read as its
   // end, a reply started, the user kept talking): one message, not two.
   if (msg.continues && _voiceJoinContinuedBubble(msg.text)) return;
+  _voiceStopContinuing();
   let userEl = voicePartialEl;
   if (userEl) {
     userEl.classList.remove('voice-partial');
@@ -349,11 +358,43 @@ function _voiceJoinContinuedBubble(text) {
   if (cutEl) { try { cutEl.remove(); } catch {} }
   voiceCutReplyEl = null; voiceCurrentMsgEl = null; voiceCurrentMsgBody = null; voiceCurrentMsgText = '';
   if (voicePartialEl) { try { voicePartialEl.remove(); } catch {} voicePartialEl = null; }
-  body.textContent = body.textContent + ' ' + text;
+  body.textContent = (voiceContinuing ? voiceContinuing.base : body.textContent) + ' ' + text;
+  voiceContinuing = null;
   if (typeof userEl.scrollIntoView === 'function') userEl.scrollIntoView({ block: 'start' });
   if (typeof activeChat !== 'undefined' && activeChat && voiceJoinContinuedWords(activeChat.messages, text)) {
     activeChat.updatedAt = Date.now();
     if (typeof saveChats === 'function') saveChats();
   }
   return true;
+}
+
+// The user spoke over a reply before hearing it (`tts_interrupt` marked
+// `continues`): that reply's bubble goes now, and until their words are final
+// the live preview is drawn inside the message it carries on, so there is one
+// bubble filling with words and never a second.
+function _voiceStartContinuing() {
+  const userEl = voiceLastUserEl;
+  const body = userEl && userEl.isConnected ? userEl.querySelector('.msg-body') : null;
+  if (!body) return;
+  if (voiceCurrentMsgEl) { try { voiceCurrentMsgEl.remove(); } catch {} }
+  voiceCutReplyEl = null; voiceCurrentMsgEl = null; voiceCurrentMsgBody = null;
+  if (voicePartialEl) { try { voicePartialEl.remove(); } catch {} voicePartialEl = null; }
+  voiceContinuing = { body, base: body.textContent };
+}
+
+// Live words while continuing: the message's own words, then what is being
+// said. False when not continuing, so the caller draws the usual preview.
+function _voiceShowContinuedWords(text) {
+  if (!voiceContinuing) return false;
+  if (!voiceContinuing.body.isConnected) { voiceContinuing = null; return false; }
+  voiceContinuing.body.textContent = text ? voiceContinuing.base + ' ' + text : voiceContinuing.base;
+  return true;
+}
+
+// The continuation ended without final words (the sound was noise and the
+// reply is being made again): the message goes back to what was said.
+function _voiceStopContinuing() {
+  if (!voiceContinuing) return;
+  if (voiceContinuing.body.isConnected) voiceContinuing.body.textContent = voiceContinuing.base;
+  voiceContinuing = null;
 }

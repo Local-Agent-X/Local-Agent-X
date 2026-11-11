@@ -77,8 +77,11 @@ export type VoiceServerEvent =
   | { type: "assistant_interrupted" }
   | { type: "vad_speech_start" }
   | { type: "vad_speech_end" }
-  /** Drop any buffered speech audio (barge-in). */
-  | { type: "tts_interrupt" }
+  /** Drop any buffered speech audio (barge-in). `continues`: the user spoke before
+   *  they had heard the reply, so that reply is gone and what they say now carries on
+   *  their last message: its live words belong in that message, and its `final` comes
+   *  marked `continues` too. */
+  | { type: "tts_interrupt"; continues?: true }
   | { type: "tts_idle" }
   | { type: "playback_complete" }
   /** The turn or the voice stack failed; the call can't go on as it was. */
@@ -196,10 +199,11 @@ export function parseVoiceEvent(raw: unknown): VoiceServerEvent | null {
     case "assistant_interrupted":
     case "vad_speech_start":
     case "vad_speech_end":
-    case "tts_interrupt":
     case "tts_idle":
     case "playback_complete":
       return { type: msg.type };
+    case "tts_interrupt":
+      return msg.continues === true ? { type: "tts_interrupt", continues: true } : { type: "tts_interrupt" };
     case "agent_error":
     case "voice_error":
       return { type: msg.type, message: asString(msg.message) ?? "The voice pipeline hit an error." };

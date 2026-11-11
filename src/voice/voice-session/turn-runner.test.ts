@@ -227,7 +227,9 @@ describe("voice turn machine — continuation merge", () => {
     // The client gets only the new words, marked as carrying on the first message.
     const finals = h.events.filter((e) => e.type === "final");
     expect(finals[0]).toEqual({ type: "final", text: "I was thinking about this" });
-    expect(finals[1]).toEqual({ type: "final", text: "and it keeps bothering me", continues: true });
+    expect(finals[1]).toEqual({ type: "final", text: "and it keeps bothering me", continues: true });
+    // And it was told at the barge-in, so the live words go in the first message.
+    expect(h.events.find((e) => e.type === "tts_interrupt")).toEqual({ type: "tts_interrupt", continues: true });
   });
 
   // A runTurn whose first TWO calls hang until barge-in aborts them.

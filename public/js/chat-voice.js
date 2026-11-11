@@ -59,6 +59,7 @@ let voiceCurrentMsgText = '';
 let voicePartialEl = null;     // live user bubble streaming Sherpa partials, finalized on `final`
 let voiceLastUserEl = null;    // committed utterance bubble — re-pinned to top on agent_start
 let voiceCutReplyEl = null;    // the reply bubble a barge-in cut off, removed if the user was still talking
+let voiceContinuing = null;    // { body, base }: the user's bubble being continued and its words before the live ones
 let _voiceSilenceTimer = null; // sphere → idle if no audio frame for 800ms
 // Browser-tier voice chat uses Web Speech API for STT (same as dictate) so the
 // "no install" promise actually holds. Server still runs the LLM + TTS, only

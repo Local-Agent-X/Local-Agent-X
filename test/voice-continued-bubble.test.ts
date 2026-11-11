@@ -27,16 +27,27 @@ interface Page {
   voiceCutReplyEl: Element | null;
   voiceCurrentMsgEl: Element | null;
   voicePartialEl: Element | null;
+  voiceContinuing: { body: Element; base: string } | null;
   activeChat: { messages: Message[]; updatedAt: number } | null;
 }
 
 /** The two functions, run against a page's voice globals. */
-function load(page: Page): { joinWords(messages: Message[], text: string): boolean; joinBubble(text: string): boolean } {
+interface Loaded {
+  joinWords(messages: Message[], text: string): boolean;
+  joinBubble(text: string): boolean;
+  start(): void;
+  show(text: string): boolean;
+  stop(): void;
+}
+function load(page: Page): Loaded {
   const body = `with (page) {
     let voiceCurrentMsgBody = null, voiceCurrentMsgText = '';
     ${sourceOf("voiceJoinContinuedWords")}
     ${sourceOf("_voiceJoinContinuedBubble")}
-    return { joinWords: voiceJoinContinuedWords, joinBubble: _voiceJoinContinuedBubble };
+    ${sourceOf("_voiceStartContinuing")}
+    ${sourceOf("_voiceShowContinuedWords")}
+    ${sourceOf("_voiceStopContinuing")}
+    return { joinWords: voiceJoinContinuedWords, joinBubble: _voiceJoinContinuedBubble, start: _voiceStartContinuing, show: _voiceShowContinuedWords, stop: _voiceStopContinuing };
   }`;
   return new Function("page", body)(page);
 }
@@ -56,7 +67,7 @@ describe("a continued voice message", () => {
   beforeEach(() => { document.body.innerHTML = ""; });
 
   it("joins the new words to the saved message and drops the reply the pause started", () => {
-    const { joinWords } = load({ voiceLastUserEl: null, voiceCutReplyEl: null, voiceCurrentMsgEl: null, voicePartialEl: null, activeChat: null });
+    const { joinWords } = load({ voiceLastUserEl: null, voiceCutReplyEl: null, voiceCurrentMsgEl: null, voicePartialEl: null, voiceContinuing: null, activeChat: null });
     const heard: Message[] = [{ role: "user", content: "I run a store" }, { role: "assistant", content: "Sure" }];
     expect(joinWords(heard, "and need a reorder report")).toBe(true);
     expect(heard).toEqual([{ role: "user", content: "I run a store and need a reorder report" }]);
@@ -68,7 +79,7 @@ describe("a continued voice message", () => {
   });
 
   it("leaves a thread that does not end in the user's message alone", () => {
-    const { joinWords } = load({ voiceLastUserEl: null, voiceCutReplyEl: null, voiceCurrentMsgEl: null, voicePartialEl: null, activeChat: null });
+    const { joinWords } = load({ voiceLastUserEl: null, voiceCutReplyEl: null, voiceCurrentMsgEl: null, voicePartialEl: null, voiceContinuing: null, activeChat: null });
     const thread: Message[] = [{ role: "assistant", content: "one" }, { role: "assistant", content: "two" }];
     expect(joinWords(thread, "more")).toBe(false);
     expect(thread).toHaveLength(2);
@@ -80,7 +91,7 @@ describe("a continued voice message", () => {
     const cut = bubble("assistant", "");
     const preview = bubble("user", "and need a");
     const page: Page = {
-      voiceLastUserEl: user, voiceCutReplyEl: cut, voiceCurrentMsgEl: null, voicePartialEl: preview,
+      voiceLastUserEl: user, voiceCutReplyEl: cut, voiceCurrentMsgEl: null, voicePartialEl: preview, voiceContinuing: null,
       activeChat: { messages: [{ role: "user", content: "I run a store" }], updatedAt: 0 },
     };
     expect(load(page).joinBubble("and need a reorder report")).toBe(true);
@@ -91,8 +102,46 @@ describe("a continued voice message", () => {
     expect(page.activeChat?.messages).toEqual([{ role: "user", content: "I run a store and need a reorder report" }]);
   });
 
+  it("fills the same bubble while the user keeps talking: no second bubble at any point", () => {
+    const user = bubble("user", "I run a store");
+    const reply = bubble("assistant", "");
+    const page: Page = {
+      voiceLastUserEl: user, voiceCutReplyEl: null, voiceCurrentMsgEl: reply, voicePartialEl: null, voiceContinuing: null,
+      activeChat: { messages: [{ role: "user", content: "I run a store" }], updatedAt: 0 },
+    };
+    const voice = load(page);
+    const text = () => user.querySelector(".msg-body")?.textContent;
+
+    voice.start(); // tts_interrupt marked `continues`
+    expect(document.querySelectorAll(".msg")).toHaveLength(1);
+    expect(voice.show("and need")).toBe(true);
+    expect(text()).toBe("I run a store and need");
+    expect(voice.show("and need a reorder")).toBe(true);
+    expect(text()).toBe("I run a store and need a reorder");
+    expect(document.querySelectorAll(".msg")).toHaveLength(1);
+
+    expect(voice.joinBubble("and need a reorder report")).toBe(true); // the final
+    expect(text()).toBe("I run a store and need a reorder report");
+    expect(page.voiceContinuing).toBeNull();
+    expect(voice.show("next")).toBe(false);
+  });
+
+  it("puts the message back when the sound was noise and no words came", () => {
+    const user = bubble("user", "I run a store");
+    const page: Page = { voiceLastUserEl: user, voiceCutReplyEl: null, voiceCurrentMsgEl: null, voicePartialEl: null, voiceContinuing: null, activeChat: null };
+    const voice = load(page);
+    voice.start();
+    voice.show("uh");
+    voice.show("");
+    expect(user.querySelector(".msg-body")?.textContent).toBe("I run a store");
+    voice.show("mm");
+    voice.stop(); // the reply is made again (agent_start)
+    expect(user.querySelector(".msg-body")?.textContent).toBe("I run a store");
+    expect(voice.show("later")).toBe(false);
+  });
+
   it("draws a new bubble when there is none to join", () => {
-    const page: Page = { voiceLastUserEl: null, voiceCutReplyEl: null, voiceCurrentMsgEl: null, voicePartialEl: null, activeChat: null };
+    const page: Page = { voiceLastUserEl: null, voiceCutReplyEl: null, voiceCurrentMsgEl: null, voicePartialEl: null, voiceContinuing: null, activeChat: null };
     expect(load(page).joinBubble("hello")).toBe(false);
   });
 });

@@ -171,7 +171,8 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
     // since it started playing. A reply cut this early means the user was
     // continuing their thought — arm the merge for the next final.
     const heardMs = firstAudioMs === 0 ? 0 : Math.max(0, Date.now() - (turnStartTs + firstAudioMs));
-    if (ctx.mode !== "dictate" && currentUtterance && heardMs < CONTINUATION_MAX_HEARD_MS) {
+    const continues = ctx.mode !== "dictate" && !!currentUtterance && heardMs < CONTINUATION_MAX_HEARD_MS;
+    if (continues) {
       continuation = { text: currentUtterance, at: Date.now() };
       logger.info(`[turn] ${sid}: continuation armed (heard ${heardMs}ms of reply)`);
     }
@@ -180,7 +181,9 @@ export function createVoiceTurnMachine(deps: VoiceTurnMachineDeps): VoiceTurnMac
     speaker.reset();
     try { activeTurn.abort(); } catch { /* already settled */ }
     try { cancelTts(); } catch { /* engine already idle */ }
-    ctx.sendEvent({ type: "tts_interrupt" });
+    // Told now, not at the final: the client shows the words being said in the
+    // message they carry on, instead of starting a second one.
+    ctx.sendEvent(continues ? { type: "tts_interrupt", continues: true } : { type: "tts_interrupt" });
     finishTurn();
   }
 

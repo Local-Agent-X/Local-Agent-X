@@ -35,6 +35,12 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
   // finals come from the sidecar's own endpointed transcription.
   let inUtterance = false;
   let nextSentenceId = 1;
+  // Every piece up to this id belongs to a reply that was cancelled. The sidecar acts on
+  // a cancel when its loop gets to it, which can be seconds later (it was transcribing
+  // the user's barge-in on the GPU the cloned voice was using), and by then it has
+  // synthesized and sent those pieces: the user heard the cancelled reply, then the one
+  // that replaced it (2026-11-10). So what a cancelled piece sends is dropped here.
+  let cancelledThroughId = 0;
   const pendingFrames: Int16Array[] = [];
 
   // Background-voice filter, the same one the in-process engine runs: the
@@ -100,7 +106,10 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
     ctx,
     runTurn,
     speaker,
-    cancelTts: () => { try { bridge?.cancelTTS(); } catch { /* already idle */ } },
+    cancelTts: () => {
+      cancelledThroughId = nextSentenceId - 1;
+      try { bridge?.cancelTTS(); } catch { /* already idle */ }
+    },
     isClosed: () => closed,
     logger,
   });
@@ -146,11 +155,14 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
       // The machine emits the `final` event (with sttMs) after its guards.
       void machine.handleFinalTranscript(text, ms);
     },
-    onAudioChunk: (pcm, sr /*, id, isFinal */) => {
+    onAudioChunk: (pcm, sr, id /*, isFinal */) => {
+      if (id <= cancelledThroughId) return;
       ctx.sendAudio(pcm);
       machine.noteAudioShipped((pcm.length / (sr || 24000)) * 1000);
     },
-    onAudioDone: (_sentenceId, _ms, _cancelled) => {
+    onAudioDone: (sentenceId, _ms, _cancelled) => {
+      // A cancelled piece finishing late is not one of the current reply's.
+      if (sentenceId <= cancelledThroughId) return;
       pendingTtsCount = Math.max(0, pendingTtsCount - 1);
       // Last chunk drained — the machine's drain signal (it gates on llmDone +
       // an active turn internally and schedules the real end-of-playback).

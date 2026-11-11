@@ -17,12 +17,17 @@
 // /api/code-folders lists the code-session folders and adds one (routes/agents/
 // projects.ts), so a code session started on the phone works in a folder: it
 // exposes a folder's id, name and path, and no other project field or route.
+// /api/voices/setup/call-system reads and starts the voice system the user's
+// saved voice needs (routes/bridges/voice-setup/call-system.ts), so a call from
+// the phone works when the desktop restarted with its sidecars down. It starts
+// only what is installed and already chosen, names no tier, and the rest of
+// /api/voices/setup (install, repair, stop, any tier by name) stays out.
 // The broker phone is NOT an operator: nothing else on the operator API is in.
 
 import { isSensitivePath } from "../data-lineage/index.js";
 
 /** Endpoints the broker http-tunnel may proxy to loopback. */
-export const DEVICE_HTTP_PREFIXES = ["/api/apps", "/apps/", "/api/sessions", "/api/providers", "/uploads/", "/videos/", "/images/", "/files/", "/api/workspace/browse", "/api/code-folders"];
+export const DEVICE_HTTP_PREFIXES = ["/api/apps", "/apps/", "/api/sessions", "/api/providers", "/uploads/", "/videos/", "/images/", "/files/", "/api/workspace/browse", "/api/code-folders", "/api/voices/setup/call-system"];
 
 export function isDeviceAllowedPath(pathname: string): boolean {
   if (!DEVICE_HTTP_PREFIXES.some((p) => pathname === p || pathname.startsWith(p))) return false;

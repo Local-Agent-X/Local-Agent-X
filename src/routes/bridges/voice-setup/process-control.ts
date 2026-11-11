@@ -259,8 +259,23 @@ export type StartOutcome =
  * previous LAX run because we now spawn detached), adopt it — skip the spawn
  * and return ok. This prevents starting two sidecars on the same port and
  * makes the picker resilient to LAX hot-reloads.
+ *
+ * A start already under way for the tier is joined, not repeated: a second
+ * start begins by killing the tier, so it would kill a sidecar that is still
+ * cold-starting. Two starts at once happen once the paired phone can start the
+ * voice system too (call-system.ts) while the desktop's Settings can.
  */
-export async function startTierAndWait(tier: VoiceTier): Promise<StartOutcome> {
+export function startTierAndWait(tier: VoiceTier): Promise<StartOutcome> {
+  const pending = startsInFlight.get(tier.id);
+  if (pending) return pending;
+  const start = spawnTierAndWait(tier).finally(() => startsInFlight.delete(tier.id));
+  startsInFlight.set(tier.id, start);
+  return start;
+}
+
+const startsInFlight = new Map<string, Promise<StartOutcome>>();
+
+async function spawnTierAndWait(tier: VoiceTier): Promise<StartOutcome> {
   // Adopt an existing healthy sidecar instead of double-spawning.
   const existing = await probeHealth(tier.healthUrl);
   if (existing.ok) {

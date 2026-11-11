@@ -178,7 +178,8 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
       ctx.sendEvent({ type: "voice_error", message });
     },
     onDisconnect: () => {
-      if (!closed) ctx.sendEvent({ type: "voice_error", message: "GPU sidecar disconnected" });
+      // `cause` lets the phone offer to start it (agentxos VoiceErrorCause).
+      if (!closed) ctx.sendEvent({ type: "voice_error", message: "The voice system on your computer stopped.", cause: "voice-system-off" });
     },
   }, undefined, { stt: !clientStt });
 
@@ -189,9 +190,10 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
     // event so the user sees what's wrong without digging in server logs.
     if (e.code === "ECONNREFUSED") {
       logger.info(`[gpu-session] ${ctx.sessionId}: GPU sidecar not running on :${process.env.LAX_VOICE_PORT || 7008}`);
-    } else {
-      logger.error(`[gpu-session] ${ctx.sessionId}: bridge init failed: ${e.message}`);
+      if (!closed) ctx.sendEvent({ type: "voice_error", message: "The voice system on your computer isn't running.", cause: "voice-system-off" });
+      return;
     }
+    logger.error(`[gpu-session] ${ctx.sessionId}: bridge init failed: ${e.message}`);
     if (!closed) ctx.sendEvent({ type: "voice_error", message: `GPU sidecar unavailable: ${e.message}. Make sure the Python sidecar is running on ${process.env.LAX_VOICE_PORT || 7008}.` });
   });
 

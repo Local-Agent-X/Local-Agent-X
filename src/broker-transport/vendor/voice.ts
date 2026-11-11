@@ -59,6 +59,9 @@ export type VoiceVisualKind = "emoji" | "text" | "shape" | "mood";
  *  a picker lists it under ("Your voices", "American", "British", ...). */
 export type VoiceOption = { id: string; name: string; group: string };
 
+/** Why a voice_error happened, when the phone can act on it. */
+export type VoiceErrorCause = "voice-system-off";
+
 export type VoiceServerEvent =
   /** The session opened. */
   | { type: "ready"; sessionId: string; mode: VoiceMode }
@@ -85,7 +88,10 @@ export type VoiceServerEvent =
   | { type: "tts_idle" }
   | { type: "playback_complete" }
   /** The turn or the voice stack failed; the call can't go on as it was. */
-  | { type: "agent_error" | "voice_error"; message: string }
+  | { type: "agent_error"; message: string }
+  /** `cause` "voice-system-off": the desktop's voice system is not running, so the
+   *  phone can offer to start it (VOICE_SYSTEM_START_PATH) instead of only the message. */
+  | { type: "voice_error"; message: string; cause?: VoiceErrorCause }
   /** One stage failed and the call goes on: speech synthesis (tts), live transcription
    *  (stt), or the final transcription of an utterance (whisper, so that utterance is
    *  lost). Show it; don't end the call. */
@@ -205,8 +211,11 @@ export function parseVoiceEvent(raw: unknown): VoiceServerEvent | null {
     case "tts_interrupt":
       return msg.continues === true ? { type: "tts_interrupt", continues: true } : { type: "tts_interrupt" };
     case "agent_error":
-    case "voice_error":
       return { type: msg.type, message: asString(msg.message) ?? "The voice pipeline hit an error." };
+    case "voice_error": {
+      const message = asString(msg.message) ?? "The voice pipeline hit an error.";
+      return msg.cause === "voice-system-off" ? { type: "voice_error", message, cause: "voice-system-off" } : { type: "voice_error", message };
+    }
     case "tts_error":
     case "stt_error":
     case "whisper_error":
@@ -239,4 +248,45 @@ export function parseVoiceEvent(raw: unknown): VoiceServerEvent | null {
     default:
       return null;
   }
+}
+
+// ── the desktop's voice system, over the http tunnel ──
+
+/** What the voice system for this desktop's calls is doing (GET, through the device http
+ *  tunnel). It is the one the user's saved voice needs: a cloned voice needs its clone
+ *  engine and the speech server, any other voice the speech server, and the built-in
+ *  voice nothing at all. The phone names no part of it. */
+export const VOICE_SYSTEM_PATH = "/api/voices/setup/call-system";
+/** Start that voice system (POST, no body). It answers at once with the status, usually
+ *  "starting": a cold start takes minutes, longer than a tunnel request may wait, so the
+ *  phone reads VOICE_SYSTEM_PATH until it settles. */
+export const VOICE_SYSTEM_START_PATH = "/api/voices/setup/call-system/start";
+
+export type VoiceSystemState =
+  /** Calls use the voice built into the desktop app: nothing to start. */
+  | "built-in"
+  | "running"
+  | "starting"
+  | "stopped"
+  /** Needs installing on the desktop first; the phone can't do that. */
+  | "not-installed"
+  /** The last start failed; `message` says why. */
+  | "failed";
+
+export interface VoiceSystemStatus {
+  state: VoiceSystemState;
+  /** What it is, for the user: "Cloned voice (VoxCPM)". */
+  label: string;
+  message?: string;
+}
+
+const VOICE_SYSTEM_STATES: ReadonlySet<string> = new Set(["built-in", "running", "starting", "stopped", "not-installed", "failed"]);
+
+export function parseVoiceSystemStatus(raw: unknown): VoiceSystemStatus | null {
+  const msg = asRecord(raw);
+  if (msg === null || typeof msg.state !== "string" || !VOICE_SYSTEM_STATES.has(msg.state)) return null;
+  const label = asString(msg.label);
+  if (label === null) return null;
+  const message = asString(msg.message);
+  return { state: msg.state as VoiceSystemState, label, ...(message ? { message } : {}) };
 }

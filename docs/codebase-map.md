@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 1992 non-test source files · 83 oversized · 265 nearing the size cap.
+**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 1993 non-test source files · 83 oversized · 265 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -39,7 +39,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/auth/` | 36 | 11 | L |  |
 | `src/context-manager/` | 29 | 15 | M |  |
 | `src/agent-store/` | 28 | 7 | M | 1 |
-| `src/broker-transport/` | 26 | 49 | XL |  |
+| `src/broker-transport/` | 27 | 49 | XL |  |
 | `src/context/` | 26 | 10 | M |  |
 | `src/agent-request/` | 24 | 16 | L | 3 |
 | `src/classifiers/` | 24 | 16 | L |  |
@@ -53,8 +53,8 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/autonomy/` | 18 | 6 | M |  |
 | `src/agents/` | 17 | 14 | L |  |
 | `src/net/` | 17 | 11 | L |  |
+| `src/voice/` | 16 | 80 | XL | 1 |
 | `src/anthropic-client/` | 15 | 22 | L | 2 |
-| `src/voice/` | 15 | 80 | XL | 1 |
 | `src/cognition/` | 14 | 35 | XL | 1 |
 | `src/cron/` | 14 | 14 | L |  |
 | `src/self-edit/` | 13 | 19 | L | 2 |
@@ -62,7 +62,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/app-scaffold/` | 12 | 7 | M |  |
 | `src/ari-kernel/` | 12 | 12 | M |  |
 | `src/integrations/` | 12 | 15 | M |  |
-| `src/routes/` | 12 | 106 | XL | 17 |
+| `src/routes/` | 12 | 107 | XL | 17 |
 | `src/whatsapp-bridge/` | 12 | 8 | M | 1 |
 | `src/persistence/` | 11 | 2 | S |  |
 | `src/sync/` | 10 | 22 | L | 1 |

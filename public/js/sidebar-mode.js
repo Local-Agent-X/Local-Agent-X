@@ -1,5 +1,4 @@
-// ── App Shell: the sidebar's Chat / Lab toggle ──
-// The Lab is the name on screen for the code side: its sessions are mode "code".
+// ── App Shell: the sidebar's Chat / Code toggle ──
 // A session is a chat or a code session (src/session/mode.ts), fixed when it
 // is created. The toggle picks which side the sidebar shows: the chat side is
 // the sidebar as it always was; the code side lists code sessions grouped by
@@ -39,7 +38,7 @@ function renderSidebarModeToggle() {
     btn.setAttribute('aria-pressed', String(sidebarMode === m));
   }
   const label = document.getElementById('new-chat-label');
-  if (label) label.textContent = sidebarMode === 'code' ? 'New Lab session' : 'New chat';
+  if (label) label.textContent = sidebarMode === 'code' ? 'New code session' : 'New chat';
   // Pinned apps, chat projects, chat search, the messaging bridges and the
   // Conversations heading belong to the chat side; the code side's groups
   // carry their own headings.

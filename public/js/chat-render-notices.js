@@ -256,13 +256,13 @@ function renderHandoffNotice(n) {
   const paint = () => {
     if (n.status === 'opened') {
       el.classList.add('settled');
-      el.innerHTML = '<span class="handoff-notice-text">Moved to the Lab: a session on' + where + ', starting from ' + esc(n.brief || '') + '.</span>';
+      el.innerHTML = '<span class="handoff-notice-text">Moved to Code mode: a session on ' + where + ', starting from ' + esc(n.brief || '') + '.</span>';
       return;
     }
     el.innerHTML =
-      '<span class="handoff-notice-text">This work fits the Lab better: a session on' + where
+      '<span class="handoff-notice-text">This work fits Code mode better: a session on ' + where
       + ' that starts from the handoff ' + esc(n.brief || '') + '.</span>'
-      + '<button class="handoff-notice-open" type="button">Continue in the Lab</button>'
+      + '<button class="handoff-notice-open" type="button">Continue in Code mode</button>'
       + (n.error ? '<div class="learning-notice-error">' + esc(n.error) + '</div>' : '');
     el.querySelector('.handoff-notice-open').addEventListener('click', open);
   };
@@ -272,7 +272,7 @@ function renderHandoffNotice(n) {
     const opened = chatId && typeof continueInCodeSession === 'function'
       ? await continueInCodeSession(chatId, null, { folder: n.folder, brief: n.brief })
       : false;
-    if (opened) { n.status = 'opened'; delete n.error; } else { n.error = 'Could not open the Lab session. Try the sidebar\u2019s Lab tab.'; }
+    if (opened) { n.status = 'opened'; delete n.error; } else { n.error = 'Could not open the code session. Try the sidebar\u2019s Code tab.'; }
     try { if (typeof saveChats === 'function') saveChats(); } catch { /* the notice still shows the outcome */ }
     paint();
   };

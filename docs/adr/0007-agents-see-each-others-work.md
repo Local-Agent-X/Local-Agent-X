@@ -264,13 +264,17 @@ views that a click turns into the chat on screen, in place. A live view is text
 only: cards, approvals and rendered markdown are in the full chat, one click
 away. The browser panel, terminal and voice follow the chat on screen.
 
-Tiles belong to the Lab, the name on screen for the sidebar's code side since
-2026-11-10 (the session mode is still `code`; only the label changed). Panes
-are useful when they share something, and Lab sessions share a project folder;
-ordinary chats share nothing, so the button is not offered on one, only Lab
-sessions can be panes, and opening an ordinary chat puts the grid away until
-the next Lab session is opened. Collab (§9) is the second way into tiles, where
-the panes share a problem instead of a folder.
+Tiles are offered where the panes share something. Code sessions share a
+project folder, so the Tiles button shows on a code session, only code sessions
+can be panes there, and opening an ordinary chat puts the grid away until the
+next code session is opened. An ordinary chat on its own shares nothing and
+gets no button. A collab started from a chat (§9) is the second way into
+tiles: its panes are ordinary chats that share a problem instead of a folder
+(not built).
+
+The sidebar's code side was labelled "Lab" for a day (2026-11-10) on the idea
+that research collabs would live there, then put back to "Code" (2026-11-11)
+when the owner decided research stays in chat (§9).
 
 **How many at once.** What bounds it today, from the code:
 
@@ -405,6 +409,16 @@ plan or research proposes **discuss**. Nothing runs until the user presses
 Start. The two uses it is built for first are coding (compete and split) and
 research (discuss, where each member searches on its own and the others check
 its sources).
+
+**Where a collab runs** (owner, 2026-11-11). A coding collab's members are
+code sessions on the project folder. A research collab runs in chat: its
+members are ordinary chats, one per model, tiled (§6), all on the same
+question, with a shared findings sheet each writes to and reads. A code
+session leaves out the parts of the prompt research leans on (the browser,
+memory and past chats, the general way of working: `src/context/prompt-mode.ts`),
+and an ordinary chat carries them, so research members are chats and the code
+side stays for coding. No new session kind, and the mode value `code` is not
+renamed.
 
 Rules a collab keeps:
 

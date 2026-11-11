@@ -27,10 +27,10 @@ const isFile = (p: string) => existsSync(p) && statSync(p).isFile();
 export const codeHandoffTool: ToolDefinition = {
   name: "code_handoff",
   description:
-    "Offer to continue this chat's coding work in the Lab (code mode), a session bound to one project folder with a coding prompt. " +
+    "Offer to continue this chat's coding work in Code mode, a session bound to one project folder with a coding prompt. " +
     "First write a handoff brief inside the repo (e.g. docs/handoff/<date>-<topic>.md): the goal, the repo path, what is done " +
     "(with commit ids), what is left in order, decisions and why, known bugs, and what needs the user's OK. Then call this with " +
-    "the repo folder and the brief. The user gets a \"Continue in the Lab\" button; the new session starts from the brief.",
+    "the repo folder and the brief. The user gets a \"Continue in Code mode\" button; the new session starts from the brief.",
   parameters: {
     type: "object",
     properties: {
@@ -50,8 +50,8 @@ export const codeHandoffTool: ToolDefinition = {
     }
     onEventOf(args)?.({ type: "code_handoff", toolCallId: toolCallIdOf(args) ?? "", folder, brief: rel.replace(/\\/g, "/") });
     return ok(
-      `Offered: a "Continue in the Lab" button is under your reply; it opens a Lab session on ${folder} starting from ${rel}. ` +
-      "Say in a line why the Lab suits this work. The user decides; if they keep going here, keep going here.",
+      `Offered: a "Continue in Code mode" button is under your reply; it opens a code session on ${folder} starting from ${rel}. ` +
+      "Say in a line why Code mode suits this work. The user decides; if they keep going here, keep going here.",
     );
   },
 };

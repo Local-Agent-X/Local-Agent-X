@@ -62,7 +62,7 @@ describe("sidebar-mode.js", () => {
     const { api, els, store, renders } = load({ chats: [], projects: [] });
     api.setSidebarMode("code");
     expect(store.get("lax_sidebar_mode")).toBe("code");
-    expect(els.get("new-chat-label")!.textContent).toBe("New Lab session");
+    expect(els.get("new-chat-label")!.textContent).toBe("New code session");
     for (const id of ["pinned-section", "projects-section", "chat-search-bar", "mobile-section", "chats-header"]) {
       expect(els.get(id)!.classes.has("hidden-in-code-mode"), id).toBe(true);
     }

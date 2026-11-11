@@ -33,7 +33,7 @@ type Tiles = {
 };
 
 const core: Core = new Function(`${coreJs}\nreturn ChatTilesCore;`)();
-// A Lab session (mode "code"): the only kind the grid holds.
+// A code session (mode "code"): the only kind the grid holds.
 const chat = (id: string, over: Partial<Chat> = {}): Chat => ({ id, title: `Title ${id}`, projectId: "p1", mode: "code", updatedAt: 1, messages: [], ...over });
 const entry = (over: Partial<Entry> = {}): Entry => ({ status: "idle", content: "", toolEvents: [], approvals: [], liveAnchorIndex: -1, ...over });
 
@@ -144,7 +144,7 @@ describe("the tile grid on the chat page", () => {
     firstChatOpened();
   });
 
-  it("offers tiles on a Lab session only, and holds Lab sessions only", () => {
+  it("offers tiles on a code session only, and holds code sessions only", () => {
     expect(toggleBtn().style.display).toBe("");
     selectChat("plain");
     expect(toggleBtn().style.display).toBe("none");
@@ -162,7 +162,7 @@ describe("the tile grid on the chat page", () => {
     expect(newChat).toHaveBeenCalledWith("p1", "code");
   });
 
-  it("puts the grid away on an ordinary chat and brings it back, as it was, on the next Lab session", () => {
+  it("puts the grid away on an ordinary chat and brings it back, as it was, on the next code session", () => {
     tiles.toggle();
     tile("b").click();
     selectChat("plain");
@@ -178,7 +178,7 @@ describe("the tile grid on the chat page", () => {
     expect(main().style.order).toBe("2");
   });
 
-  it("comes back after a reload once a Lab session is on screen", () => {
+  it("comes back after a reload once a code session is on screen", () => {
     tiles.toggle();
     tile("c").querySelector<HTMLElement>(".chat-tile-close")!.click();
     document.querySelectorAll(".chat-tile").forEach((el) => el.remove());

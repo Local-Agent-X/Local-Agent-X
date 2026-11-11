@@ -82,11 +82,28 @@ describe("VoiceTurnHygiene.lookupStarted — no silent lookups", () => {
     expect(h.lookupStarted("web_search")).toBeNull();
   });
 
-  it("says it is still looking on a second silent lookup, then stops at two", () => {
+  // "Let me check." answered "we already had this talk", and "Still looking."
+  // ran straight into "I don't have his email" (2026-11-11): a line names
+  // what is being looked at.
+  it("says what each lookup looks at", () => {
+    expect(new VoiceTurnHygiene().lookupStarted("search_past_sessions")).toBe("Looking back through our chats. ");
+    expect(new VoiceTurnHygiene().lookupStarted("memory_search")).toBe("Checking my notes. ");
+    expect(new VoiceTurnHygiene().lookupStarted("email_search")).toBe("Checking your email. ");
+    expect(new VoiceTurnHygiene().lookupStarted("web_search")).toBe("Searching the web. ");
+  });
+
+  it("names a second silent lookup only when it looks somewhere new, then stops at two", () => {
     const h = new VoiceTurnHygiene();
-    expect(h.lookupStarted("browser")).not.toBeNull();
-    expect(h.lookupStarted("browser")).toBe("Still looking. ");
-    expect(h.lookupStarted("browser")).toBeNull();
+    expect(h.lookupStarted("memory_search")).toBe("Checking my notes. ");
+    expect(h.lookupStarted("search_past_sessions")).toBe("Now looking back through our chats. ");
+    expect(h.lookupStarted("search_past_sessions")).toBeNull();
+    expect(h.lookupStarted("email_search")).toBeNull();
+  });
+
+  it("says nothing more for another lookup of the same kind", () => {
+    const h = new VoiceTurnHygiene();
+    expect(h.lookupStarted("search_past_sessions")).not.toBeNull();
+    expect(h.lookupStarted("search_past_sessions")).toBeNull();
   });
 
   it("fills the next silent gap after the model spoke before an earlier lookup", () => {
@@ -99,10 +116,5 @@ describe("VoiceTurnHygiene.lookupStarted — no silent lookups", () => {
   it("never fills for the sphere or an action (a fact save, a hand-off, scheduling)", () => {
     const h = new VoiceTurnHygiene();
     for (const t of ["voice_visual", "remember", "op_submit_async", "mission_schedule_create"]) expect(h.lookupStarted(t)).toBeNull();
-  });
-
-  it("varies the line from one turn to the next", () => {
-    const lines = new Set(Array.from({ length: 3 }, () => new VoiceTurnHygiene().lookupStarted("web_search")));
-    expect(lines.size).toBeGreaterThan(1);
   });
 });

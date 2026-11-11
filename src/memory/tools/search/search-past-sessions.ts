@@ -63,7 +63,9 @@ async function exactSearchResult(memory: MemoryIndex, phrase: string, max: numbe
   if (hits.length === 0) {
     return `<past_sessions_exact phrase="${attr}" matches="0">No stored chat contains this text. Exact mode matches it word for word (case aside); try a shorter piece of it, or search by meaning with the query arg.</past_sessions_exact>`;
   }
-  const shown = hits.slice(0, max);
+  // This chat is mostly already in front of the agent: its matches come after
+  // every other chat's, so they fill only the slots the other chats leave.
+  const shown = [...hits.filter((h) => h.sessionId !== sessionId), ...hits.filter((h) => h.sessionId === sessionId)].slice(0, max);
   const here = (sid: string) => (sid === sessionId ? " (THIS chat)" : "");
   const chatLines = chats.slice(0, CHAT_LIST_MAX).map((c) => `- ${JSON.stringify(c.title)} session=${c.sessionId}${here(c.sessionId)}: ${c.messages} message(s)`);
   if (chats.length > CHAT_LIST_MAX) chatLines.push(`- …and ${chats.length - CHAT_LIST_MAX} more chats`);
@@ -71,7 +73,7 @@ async function exactSearchResult(memory: MemoryIndex, phrase: string, max: numbe
     `[${i + 1}] date=${JSON.stringify(h.createdAt)} chat=${JSON.stringify(h.title)} session=${h.sessionId}${here(h.sessionId)} role=${h.role}` +
     `${h.tool ? ` tool=${h.tool}` : ""}${h.messageId ? ` message_id=${h.messageId}` : ""}${h.count > 1 ? ` occurrences=${h.count}` : ""}\n${h.excerpt}`);
   const body =
-    `${hits.length} message(s) in ${chats.length} chat(s) contain this text${hits.length > shown.length ? `; the newest ${shown.length} are shown (raise max_results, up to ${EXACT_MAX}, or narrow with since)` : ""}.\n` +
+    `${hits.length} message(s) in ${chats.length} chat(s) contain this text${hits.length > shown.length ? `; the newest ${shown.length} are shown, other chats before this one (raise max_results, up to ${EXACT_MAX}, or narrow with since)` : ""}.\n` +
     `Snippets are from PRIOR chats unless marked THIS chat: background reference, not the current conversation. Read one in full with message_id.\n\n` +
     `Chats with matches:\n${chatLines.join("\n")}\n\n${hitBlocks.join("\n\n")}`;
   const delivered = maskedForDelivery(body);

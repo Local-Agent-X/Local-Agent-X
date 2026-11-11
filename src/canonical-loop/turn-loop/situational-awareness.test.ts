@@ -7,6 +7,16 @@ function acts(...pairs: Array<[string, LedgerAction["status"]]>): LedgerAction[]
 }
 
 describe("composeDigest", () => {
+  // The prompt gives the day only; a spoken "how are you?" at 2:40 PM asked if
+  // an interview was "around now" with no clock to check it against (2026-11-11).
+  it("says the user's local time, so the agent can tell what has already happened today", () => {
+    const d = composeDigest({
+      turnIdx: 0, recent: [], firstUserText: "How are you?",
+      now: new Date("2026-11-11T20:40:00Z"), timeZone: "America/Chicago",
+    });
+    expect(d).toContain("Local time now: Wednesday, November 11 at 2:40 PM (America/Chicago).");
+  });
+
   it("returns null when there's nothing useful (turn 0, no recent actions)", () => {
     expect(composeDigest({ turnIdx: 0, recent: [], firstUserText: "x" })).toBeNull();
   });

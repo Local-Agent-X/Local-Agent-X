@@ -120,6 +120,7 @@ export async function buildSituationalAwareness(op: Op, turnIdx: number): Promis
   const digest = composeDigest({
     turnIdx, recent, firstUserText, successCriteria, constraints, restateAfter, openTasks, missingFiles,
     gitStatus: gitStatus ?? undefined,
+    now: new Date(),
   });
   // Debug seam: the digest is ephemeral (injected into the prompt, never
   // persisted), so this log is the only way to observe what the model actually
@@ -145,6 +146,10 @@ export function composeDigest(input: {
   gitStatus?: string;
   /** Files the request names that are not on disk now (request-named-paths.ts). */
   missingFiles?: string[];
+  /** The clock, rendered as the user's local time. */
+  now?: Date;
+  /** IANA zone for `now`; the server's own by default. */
+  timeZone?: string;
 }): string | null {
   const { turnIdx, recent, firstUserText } = input;
   const successCriteria = input.successCriteria ?? [];
@@ -152,6 +157,12 @@ export function composeDigest(input: {
   const openTasks = input.openTasks ?? [];
   const restateAfter = input.restateAfter ?? GOAL_RESTATE_AFTER_TURN_DEFAULT;
   const lines: string[] = [];
+
+  // The system prompt says the day only (a clock there would change its bytes
+  // every minute and void the cache), so without this line the agent could not
+  // tell whether a 2:30 meeting had happened yet. This digest is rebuilt every
+  // turn below the cache breakpoint, where a changing clock costs nothing.
+  if (input.now) lines.push(`Local time now: ${localTimeLine(input.now, input.timeZone)}.`);
 
   // Pace only earns its line once we're past the first model turn of the
   // request — "Turn 1" is noise.
@@ -193,6 +204,14 @@ function openStepsLine(openTasks: { id: string; description: string }[]): string
   });
   const more = openTasks.length > OPEN_STEPS_CAP ? ` (+${openTasks.length - OPEN_STEPS_CAP} more)` : "";
   return `Open plan steps still to finish${more}:\n  ${shown.join("\n  ")}`;
+}
+
+function localTimeLine(now: Date, timeZone?: string): string {
+  const tz = timeZone || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const when = now.toLocaleString("en-US", {
+    timeZone: tz, weekday: "long", month: "long", day: "numeric", hour: "numeric", minute: "2-digit",
+  });
+  return `${when} (${tz})`;
 }
 
 function bulletLine(label: string, items: string[]): string | null {

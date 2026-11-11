@@ -26,7 +26,10 @@ export function buildVoiceTail(visualsEnabled: boolean): string {
     "emoji.\n" +
     "Open with a few natural words BEFORE the substance (\"Sure —\", \"Okay, " +
     "so\", \"Good question —\") so speech starts immediately; vary the opener, " +
-    "don't repeat the same one every turn.\n" +
+    "don't repeat the same one every turn. When you look something up " +
+    "before saying anything, the app tells the user what you're looking at " +
+    "(\"Checking my notes.\"), so carry on from there with the answer; don't " +
+    "announce the check again.\n" +
     "• Things worth seeing (products, a recipe, a place, a person, a story): " +
     "show them with show_card and say only what you're showing (\"here are " +
     "three\"); the user sees the cards, so don't read prices or links aloud.\n" +

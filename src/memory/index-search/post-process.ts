@@ -49,6 +49,19 @@ export function postProcess(
     results = applySessionGrouping(results);
   }
 
+  // `since` keeps hits said on or after that day, by each hit's own local day
+  // (a chat transcript's path holds no date). It read only a date-named file's
+  // name, so every chat passed: a spoken "how did the interview go" searched
+  // since yesterday and got the day before's practice questions, and the
+  // debrief never made the cut (2026-11-11). Applied before the top-N cut.
+  if (options?.since) {
+    const sinceDay = options.since.toISOString().slice(0, 10);
+    results = results.filter((r) => {
+      const day = chunkLocalDay(r.metadata) ?? basename(r.path).match(/^(\d{4}-\d{2}-\d{2})/)?.[1];
+      return !day || day >= sinceDay;
+    });
+  }
+
   if (options?.query) {
     const range = parseDateRange(options.query);
     if (range) {
@@ -79,15 +92,6 @@ export function postProcess(
 
   if (config.mmrEnabled) {
     results = mmrRerank(results, maxResults, config.mmrLambda);
-  }
-
-  if (options?.since) {
-    const sinceMs = options.since.getTime();
-    results = results.filter((r) => {
-      const dateMatch = basename(r.path).match(/^(\d{4}-\d{2}-\d{2})/);
-      if (!dateMatch) return true;
-      return new Date(dateMatch[1]).getTime() >= sinceMs;
-    });
   }
 
   if (options?.entities && options.entities.length > 0) {

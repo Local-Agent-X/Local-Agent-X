@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 1995 non-test source files · 82 oversized · 265 nearing the size cap.
+**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 1996 non-test source files · 81 oversized · 266 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -28,7 +28,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/providers/` | 77 | 27 | L | 1 |
 | `src/session/` | 64 | 12 | M |  |
 | `src/data-lineage/` | 59 | 12 | L |  |
-| `src/memory/` | 55 | 157 | XL | 4 |
+| `src/memory/` | 55 | 158 | XL | 3 |
 | `src/browser/` | 51 | 93 | XL | 5 |
 | `src/util/` | 48 | 3 | S |  |
 | `src/tool-policy/` | 47 | 21 | L |  |
@@ -266,7 +266,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/cognition/cross-session-learning/service.ts#CrossSessionLearningService.reconcile`
 - `src/config.ts#loadConfig`
 - `src/mcp-client/manifest.ts#assessMcpManifest`
-- `src/memory/context.ts#buildContextBlockParts`
 - `src/memory/date-parser.ts#parseDateRange`
 - `src/memory/index-schema-migrations.ts#db.transaction:callback`
 - `src/memory/tools/facts.ts#createFactsTools`
@@ -441,6 +440,7 @@ job. Comments are free: never cut them to fit.
 - `src/cron/cron-service-execute.ts#runJob` — 80+ own code lines (cap 100)
 - `src/mcp-client/connection.ts#MCPConnection.connect` — 80+ own code lines (cap 100)
 - `src/memory/cognitive/proactive/suggestions.ts#analyzeContext` — 80+ own code lines (cap 100)
+- `src/memory/context.ts#buildContextBlockParts` — 80+ own code lines (cap 100)
 - `src/memory/index-facts.ts#retainSmart` — 80+ own code lines (cap 100)
 - `src/memory/index-search/search.ts#searchInIndex` — 80+ own code lines (cap 100)
 - `src/memory/tools/forget.ts#memory_forget.execute` — 80+ own code lines (cap 100)

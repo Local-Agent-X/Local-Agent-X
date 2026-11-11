@@ -10,6 +10,8 @@ describe("voice mode prompt section", () => {
     expect(tail).toContain("show_card");
     // Approvals are asked out loud by the app, not by the model first.
     expect(tail).toContain("DECLINED");
+    // The app names a silent lookup out loud; the reply carries on from it.
+    expect(tail).toContain("the app tells the user what you're looking at");
   });
 
   it("restates no routing rule of the main prompt", () => {

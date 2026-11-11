@@ -91,14 +91,31 @@ describe("search_past_sessions exact", () => {
   const run = (d: string, args: Record<string, unknown>) =>
     searchPastSessionsTool({ dataDir: d } as unknown as MemoryIndex).execute({ ...args, _sessionId: "chat-b" });
 
-  it("lists every chat with a count, marks the current chat, and caps the messages shown", async () => {
+  it("lists every chat with a count, marks the current chat, and caps the messages shown, other chats first", async () => {
     const out = (await run(setup(embeddings), { exact: "Cloud Embeddings", max_results: 2 })).content;
     expect(out).toContain('matches="5" chats="3"');
-    expect(out).toContain("5 message(s) in 3 chat(s) contain this text; the newest 2 are shown");
+    expect(out).toContain("5 message(s) in 3 chat(s) contain this text; the newest 2 are shown, other chats before this one");
     expect(out).toMatch(/"later" session=chat-b \(THIS chat\): 1 message/);
-    expect(out).toContain("message_id=um-3");
+    // The current chat's newer match waits behind the older chats' matches:
+    // a spoken search's own chat filled the slots and hid yesterday's (2026-11-11).
     expect(out).toContain("message_id=tm-1");
-    expect(out).not.toContain("message_id=am-1");
+    expect(out).toContain("message_id=am-1");
+    expect(out).not.toContain("message_id=um-3");
+    const all = (await run(setup(embeddings), { exact: "Cloud Embeddings" })).content;
+    expect(all.indexOf("message_id=cm-1")).toBeLessThan(all.indexOf("message_id=um-3"));
+  });
+
+  it("does not count an earlier past-chat search, its call or its result, as a match", async () => {
+    const d = setup({
+      "chat-old": [meta("chat-old", "drill"), msg("um-d", "2026-11-10T21:16:31.000Z", { role: "user", content: "the interview is over, it went well" })],
+      "chat-b": [
+        meta("chat-b", "now"),
+        msg("am-e", "2026-11-11T20:41:09.000Z", { role: "assistant", content: "", tool_calls: [{ id: "e1", type: "function", function: { name: "search_past_sessions", arguments: "{\"exact\":\"interview\"}" } }] }),
+        msg("tm-e", "2026-11-11T20:41:10.000Z", { role: "tool", tool_call_id: "e1", content: "<past_sessions_exact phrase=\"interview\">…</past_sessions_exact>" }),
+      ],
+    });
+    const { hits } = await exactPastSearch(d, "interview");
+    expect(hits.map((h) => h.messageId)).toEqual(["um-d"]);
   });
 
   it("masks a secret in old tool output, wraps the result as external content, and marks the session", async () => {

@@ -40,7 +40,6 @@ src/canonical-loop/worker.ts#drive 184
 src/cognition/cross-session-learning/service.ts#CrossSessionLearningService.reconcile 152
 src/config.ts#loadConfig 132
 src/mcp-client/manifest.ts#assessMcpManifest 118
-src/memory/context.ts#buildContextBlockParts 128
 src/memory/date-parser.ts#parseDateRange 102
 src/memory/index-schema-migrations.ts#db.transaction:callback 259
 src/memory/tools/facts.ts#createFactsTools 108

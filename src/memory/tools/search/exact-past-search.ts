@@ -55,12 +55,20 @@ type ToolCall = { id?: string; function?: { name?: string; arguments?: string } 
 const toolCallsOf = (m: ChatCompletionMessageParam): ToolCall[] =>
   m.role === "assistant" && Array.isArray((m as { tool_calls?: unknown }).tool_calls) ? (m as { tool_calls: ToolCall[] }).tool_calls : [];
 
+/** A past-chat search's own call and result only repeat what it searched
+ *  for and the messages it found. Counted as matches, an agent's earlier
+ *  tries took most of the newest slots and pushed out the message they were
+ *  looking for (a spoken "how did the interview go", 2026-11-11). */
+const SEARCH_ECHO_TOOL = "search_past_sessions";
+
 /** What a message says, as searched: an assistant row's tool calls read as
  *  `name(arguments)`, the commands and paths the agent sent. */
 function searchableText(m: ChatCompletionMessageParam): string {
   const body = partsText(m.content);
   if (m.role === "user") return stripHarnessScaffolding(body);
-  const calls = toolCallsOf(m).map((c) => `${c.function?.name ?? "tool"}(${c.function?.arguments ?? ""})`);
+  const calls = toolCallsOf(m)
+    .filter((c) => c.function?.name !== SEARCH_ECHO_TOOL)
+    .map((c) => `${c.function?.name ?? "tool"}(${c.function?.arguments ?? ""})`);
   return [body, ...calls].filter(Boolean).join("\n");
 }
 
@@ -86,6 +94,7 @@ function hitsIn(rows: SessionLogRow[], sessionId: string, needle: string, since:
     for (const c of toolCallsOf(m)) if (c.id && c.function?.name) toolNames.set(c.id, c.function.name);
     if (isHarnessRow(m) || (m.role !== "user" && m.role !== "assistant" && m.role !== "tool")) continue;
     if (since && Date.parse(row.createdAt) < since) continue;
+    if (m.role === "tool" && toolNames.get((m as { tool_call_id?: string }).tool_call_id ?? "") === SEARCH_ECHO_TOOL) continue;
     const text = searchableText(m);
     const at = occurrences(text.toLowerCase(), needle);
     if (at.length === 0) continue;

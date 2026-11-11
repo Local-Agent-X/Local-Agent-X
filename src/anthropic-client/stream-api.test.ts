@@ -842,3 +842,88 @@ describe("streamViaAPI — a forced tool and thinking never go out together", ()
     expect((cap.calls[0].body.thinking as { type: string }).type).toBe("adaptive");
   });
 });
+
+// A spoken turn is a new request every time, with a new per-turn tail on its
+// system prompt (recalled memory, the clock). In front of the conversation,
+// that tail kept the whole thread from ever being read from cache.
+describe("streamViaAPI: the system prompt's per-turn tail at the end of the conversation (systemTailInMessages)", () => {
+  const done = sse([
+    { type: "content_block_delta", delta: { type: "text_delta", text: "hi" } },
+    { type: "message_delta", usage: { output_tokens: 1 }, delta: { stop_reason: "end_turn" } },
+  ]);
+  const STABLE = "STABLE-PART";
+  const turn = (tail: string, messages: Array<{ role: "user" | "assistant"; content: string }>) => ({
+    token: "sk-ant-api03-real",
+    systemPrompt: STABLE + tail,
+    systemStablePrefixLen: STABLE.length,
+    systemTailInMessages: true,
+    cacheConversation: true,
+    messages,
+  });
+  type Wire = { system: unknown[]; messages: Array<{ role: string; content: unknown }> };
+
+  it("sends only the stable block as system, and the tail as the last text of the user's row", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect(turn("<memory>one</memory>", [
+      { role: "user", content: "first" },
+      { role: "assistant", content: "reply" },
+      { role: "user", content: "second" },
+    ]));
+    const body = cap.calls[0].body as unknown as Wire;
+    expect(body.system).toEqual([{ type: "text", text: STABLE, cache_control: { type: "ephemeral", ttl: "1h" } }]);
+    const last = body.messages[2].content as Array<{ type: string; text: string }>;
+    expect(last[0]).toEqual({ type: "text", text: "second" });
+    expect(last[1].text.endsWith("<memory>one</memory>")).toBe(true);
+    expect(last[1].text.startsWith("[From the app, not from the user")).toBe(true);
+    // The breakpoint sits beneath the row the tail landed on.
+    expect(body.messages[1].content).toEqual([{ type: "text", text: "reply", cache_control: { type: "ephemeral" } }]);
+  });
+
+  it("the next turn's request repeats everything up to this turn's breakpoint, byte for byte", async () => {
+    const cap = stubFetchCapturing(done);
+    const history = [
+      { role: "user" as const, content: "first" },
+      { role: "assistant" as const, content: "reply" },
+    ];
+    await collect(turn("<memory>one</memory>", [...history, { role: "user", content: "second" }]));
+    await collect(turn("<memory>two, different</memory>", [
+      ...history,
+      { role: "user", content: "second" },
+      { role: "assistant", content: "second reply" },
+      { role: "user", content: "third" },
+    ]));
+    const [a, b] = cap.calls.map((c) => c.body as unknown as Wire);
+    const plain = (m: { content: unknown }) => JSON.stringify(m).replace(/,"cache_control":\{[^}]*\}/g, "");
+    // Turn 1 cached [system, first, reply]; turn 2 sends those same bytes first.
+    expect(JSON.stringify(b.system)).toBe(JSON.stringify(a.system));
+    expect(b.messages.slice(0, 2).map(plain)).toEqual(a.messages.slice(0, 2).map(plain));
+    // And the row turn 1's tail rode on is, in turn 2, just what the user said.
+    expect(b.messages[2].content).toBe("second");
+  });
+
+  it("joins a tool-result row too, after its results", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({
+      ...turn("<memory>one</memory>", []),
+      messages: [
+        { role: "user", content: "look it up" },
+        { role: "assistant", content: null, tool_calls: [{ id: "toolu_1", type: "function", function: { name: "web_search", arguments: "{}" } }] },
+        { role: "tool", tool_call_id: "toolu_1", content: "found" },
+      ],
+    } as Parameters<typeof collect>[0]);
+    const body = cap.calls[0].body as unknown as Wire;
+    const last = body.messages[body.messages.length - 1];
+    const blocks = last.content as Array<{ type: string; text?: string }>;
+    expect(last.role).toBe("user");
+    expect(blocks[0].type).toBe("tool_result");
+    expect(blocks[blocks.length - 1].text?.endsWith("<memory>one</memory>")).toBe(true);
+  });
+
+  it("without a split point the prompt is sent as before, whole, in system", async () => {
+    const cap = stubFetchCapturing(done);
+    await collect({ token: "sk-ant-api03-real", systemPrompt: "ONE-BLOCK", systemTailInMessages: true, messages: [{ role: "user", content: "hi" }] });
+    const body = cap.calls[0].body as unknown as Wire;
+    expect(body.system).toEqual([{ type: "text", text: "ONE-BLOCK", cache_control: { type: "ephemeral" } }]);
+    expect(body.messages[0].content).toBe("hi");
+  });
+});

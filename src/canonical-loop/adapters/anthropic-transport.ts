@@ -181,6 +181,7 @@ function cacheFieldsOf(req: AnthropicTransportRequest) {
   return {
     systemStablePrefixLen: req.systemStablePrefixLen,
     cacheConversation: req.cacheConversation,
+    systemTailInMessages: req.systemTailInMessages,
     ephemeralTailMessages: req.ephemeralTailMessages,
     cacheFrontierIndex: frontier >= 0 ? frontier : undefined,
   };

@@ -37,6 +37,11 @@ export interface CanonicalAgentOptions extends AgentOptions {
    *  AnthropicAdapterOptions.cacheConversation): pass false only for a caller
    *  whose system prompt changes turn to turn. */
   cacheConversation?: boolean;
+  /** The system prompt's per-turn tail (from systemStablePrefixLen on) goes at the
+   *  end of the conversation on the Anthropic direct-HTTP path, so a caller whose
+   *  every turn is a new request with a new tail (voice) still reads its history
+   *  from cache (AnthropicAdapterOptions.systemTailInMessages). */
+  systemTailInMessages?: boolean;
   /** The turn is saved into a chat thread whose next request replays it
    *  (voice). On a local wire its prompt is then split as chat's is
    *  (chat-runner/local-prompt-split.ts): the session-stable sections are the

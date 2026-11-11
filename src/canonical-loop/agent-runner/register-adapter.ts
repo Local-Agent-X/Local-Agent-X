@@ -93,6 +93,7 @@ export async function registerProviderAdapter(
     effort: options.effort,
     systemStablePrefixLen: options.systemStablePrefixLen,
     cacheConversation: options.cacheConversation,
+    systemTailInMessages: options.systemTailInMessages,
     requireToolOnFirstTurn: true,
   });
   registerAdapterForOp(op.id, factory);

@@ -86,6 +86,13 @@ export interface StreamOptions {
    *  system prompt is byte-stable across turns (see systemStablePrefixLen) —
    *  the messages tier can only hit when everything before it matches. */
   cacheConversation?: boolean;
+  /** Send the system prompt's tail (everything from systemStablePrefixLen on) as
+   *  the last text of the conversation instead of as a system block, so a tail
+   *  that changes every turn no longer sits in front of the history and the
+   *  history can be read from cache across turns (cache-breakpoints.ts
+   *  withSystemTail). For a caller whose every turn is a new request with a new
+   *  tail (voice). Needs a valid systemStablePrefixLen; ignored without one. */
+  systemTailInMessages?: boolean;
   /** How many messages at the END of `messages` are EPHEMERAL — regenerated
    *  every turn, so byte-different next turn even when the conversation is
    *  otherwise unchanged (the canonical loop's situational-awareness digest is

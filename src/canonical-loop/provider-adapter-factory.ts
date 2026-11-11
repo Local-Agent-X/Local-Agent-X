@@ -51,6 +51,7 @@ interface ProviderAdapterOptions extends ProviderRuntimeOptions {
    *  stable-prefix-first prompt ordering helps those on its own). */
   systemStablePrefixLen?: number;
   cacheConversation?: boolean;
+  systemTailInMessages?: boolean;
 }
 
 /**
@@ -183,6 +184,7 @@ export async function createProviderAdapterFactory(
       effort: options.effort,
       systemStablePrefixLen: options.systemStablePrefixLen,
       cacheConversation: options.cacheConversation,
+      systemTailInMessages: options.systemTailInMessages,
       transport,
     });
   }

@@ -364,8 +364,13 @@ export async function setupVoiceWs(deps: {
           // which keep their full effort budget.
           effort: "low",
           // Prompt-cache profile from the split above (see buildVoicePromptSplit).
+          // The per-turn sections go at the end of the conversation, not in front
+          // of it, so the thread so far is read from cache (cache-breakpoints.ts
+          // withSystemTail). Without a split point the prompt is one block that
+          // changes every turn, and a breakpoint under it would only ever write.
           systemStablePrefixLen: voiceSplit.stableLen,
-          cacheConversation: voiceSplit.fullyStable,
+          systemTailInMessages: true,
+          cacheConversation: voiceSplit.fullyStable || voiceSplit.stableLen !== undefined,
           signal: slot.signal,
           onEvent,
           opType: OP_TYPE.voiceTurn,

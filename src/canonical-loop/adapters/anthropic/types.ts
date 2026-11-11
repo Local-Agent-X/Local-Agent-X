@@ -54,6 +54,10 @@ export interface AnthropicTransportRequest {
   /** Mark the last message with a cache breakpoint (history-tier caching).
    *  Only useful when the system prompt is byte-stable across turns. */
   cacheConversation?: boolean;
+  /** See StreamOptions.systemTailInMessages (anthropic-client/types.ts): the system
+   *  prompt's per-turn tail goes at the end of the conversation, so the history
+   *  before it is read from cache across turns. */
+  systemTailInMessages?: boolean;
   /** Number of trailing `messages` entries that are rebuilt every turn and are
    *  therefore NOT byte-stable (the situational-awareness digest; 0 or 1). The
    *  cacheConversation breakpoint moves below them. Per-TURN — sourced from
@@ -178,6 +182,10 @@ export interface AnthropicAdapterOptions {
    *  turn: an app build billed 656k of its 783k input tokens at the full rate
    *  (2026-10-14). Pass false only for a caller whose prompt changes per turn. */
   cacheConversation?: boolean;
+  /** See StreamOptions.systemTailInMessages (anthropic-client/types.ts): the system
+   *  prompt's per-turn tail goes at the end of the conversation, so the history
+   *  before it is read from cache across turns. */
+  systemTailInMessages?: boolean;
 }
 
 // ── Stream-consume result ────────────────────────────────────────────────

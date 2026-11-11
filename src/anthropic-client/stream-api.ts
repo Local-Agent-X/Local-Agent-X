@@ -7,7 +7,7 @@ import {
 } from "./oauth-direct.js";
 import type { AnthropicMessage } from "./types.js";
 import type { StreamEvent, StreamOptions } from "./types.js";
-import { hasStableSystemSplit, markConversationCache, splitSystemBlocks } from "./cache-breakpoints.js";
+import { hasStableSystemSplit, markConversationCache, splitSystemBlocks, withSystemTail, type SystemBlock } from "./cache-breakpoints.js";
 import { createLogger } from "../logger.js";
 import { toAnthropicTools } from "../providers/shared/tool-shape.js";
 import { deferSearchLoads } from "./deferred-tools.js";
@@ -72,8 +72,33 @@ function convertedFrontier(messages: StreamOptions["messages"], index: number | 
   return n > 0 ? n - 1 : undefined;
 }
 
+/** The request's `system` and `messages`, with the cache breakpoints where they
+ *  pay (cache-breakpoints.ts). With systemTailInMessages and a valid split
+ *  point, the system prompt's per-turn tail rides at the end of the
+ *  conversation: the row it lands on is volatile, so at least one trailing row
+ *  is ephemeral and the conversation breakpoint goes beneath it. */
+function cachedPromptParts(options: StreamOptions, converted: AnthropicMessage[], oauth: boolean): { system: SystemBlock[] | undefined; messages: AnthropicMessage[] } {
+  const { systemPrompt, systemStablePrefixLen, cacheConversation, ephemeralTailMessages, messages, cacheFrontierIndex } = options;
+  const tailInMessages = !!options.systemTailInMessages && !!systemPrompt && hasStableSystemSplit(systemPrompt, systemStablePrefixLen);
+  const own = systemPrompt ? splitSystemBlocks(systemPrompt, systemStablePrefixLen, tailInMessages) : undefined;
+  const system: SystemBlock[] | undefined = oauth
+    ? own
+      ? [{ type: "text", text: CLAUDE_CODE_SYSTEM_PREFIX }, ...own]
+      : [{ type: "text", text: CLAUDE_CODE_SYSTEM_PREFIX, cache_control: { type: "ephemeral" } }]
+    : own;
+  return {
+    system,
+    messages: markConversationCache(
+      tailInMessages ? withSystemTail(converted, systemPrompt!.slice(systemStablePrefixLen)) : converted,
+      cacheConversation,
+      tailInMessages ? Math.max(1, ephemeralTailMessages ?? 0) : ephemeralTailMessages,
+      convertedFrontier(messages, cacheFrontierIndex),
+    ),
+  };
+}
+
 export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<StreamEvent> {
-  const { token, model, messages, systemPrompt, tools, maxTokens, toolChoice, forcedToolName, signal, temperature, disableThinking, effort, systemStablePrefixLen, cacheConversation, ephemeralTailMessages, cacheFrontierIndex } = options;
+  const { token, model, messages, systemPrompt, tools, maxTokens, toolChoice, forcedToolName, signal, temperature, disableThinking, effort, systemStablePrefixLen } = options;
   // Subscription OAuth tokens reach the Messages API only when the request wears
   // Claude Code's identity (Bearer + betas + UA + system prefix). This is the
   // only subscription path that streams real thinking text. See oauth-direct.ts.
@@ -166,14 +191,7 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
     // breakpoint moves onto the stable block so tail churn no longer misses
     // the whole system tier. The single-string seam that deferred this for
     // text chat is unchanged; a number survives it where a marker couldn't.
-    system: oauth
-      ? systemPrompt
-        ? [{ type: "text", text: CLAUDE_CODE_SYSTEM_PREFIX }, ...splitSystemBlocks(systemPrompt, systemStablePrefixLen)]
-        : [{ type: "text", text: CLAUDE_CODE_SYSTEM_PREFIX, cache_control: { type: "ephemeral" } }]
-      : systemPrompt
-        ? splitSystemBlocks(systemPrompt, systemStablePrefixLen)
-        : undefined,
-    messages: markConversationCache(view.messages, cacheConversation, ephemeralTailMessages, convertedFrontier(messages, cacheFrontierIndex)),
+    ...cachedPromptParts(options, view.messages, oauth),
     stream: true,
     // Thinking lets the model reason about blockers before acting. Adaptive
     // family (Fable 5, Opus 5, Opus 4.6/4.7/4.8, Sonnet 5, Sonnet 4.6): send

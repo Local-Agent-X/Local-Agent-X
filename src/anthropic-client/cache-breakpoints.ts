@@ -27,14 +27,36 @@ export function hasStableSystemSplit(systemPrompt: string, stableLen?: number): 
 // the breakpoint (the long-standing behavior). With one: [stable w/ breakpoint,
 // volatile tail uncached], so a per-turn tail rewrite costs only the tail
 // instead of missing the whole tools+system tier.
-export function splitSystemBlocks(systemPrompt: string, stableLen?: number): SystemBlock[] {
+export function splitSystemBlocks(systemPrompt: string, stableLen?: number, tailInMessages = false): SystemBlock[] {
   if (hasStableSystemSplit(systemPrompt, stableLen)) {
-    return [
-      { type: "text", text: systemPrompt.slice(0, stableLen), cache_control: { type: "ephemeral", ttl: "1h" } },
-      { type: "text", text: systemPrompt.slice(stableLen) },
-    ];
+    const stable: SystemBlock = { type: "text", text: systemPrompt.slice(0, stableLen), cache_control: { type: "ephemeral", ttl: "1h" } };
+    // The tail travels at the end of the conversation instead (withSystemTail).
+    return tailInMessages ? [stable] : [stable, { type: "text", text: systemPrompt.slice(stableLen) }];
   }
   return [{ type: "text", text: systemPrompt, cache_control: { type: "ephemeral" } }];
+}
+
+/** What opens the system prompt's per-turn tail when it is sent in the conversation. */
+export const SYSTEM_TAIL_HEADER =
+  "[From the app, not from the user: this turn's context. It continues your system prompt and has the same standing.]\n";
+
+// The system prompt's per-turn tail (memory recalled for this message, the
+// clock, notices), sent as the last text of the last user row instead of as a
+// system block. A system block that changes every turn sits IN FRONT of the
+// conversation, so nothing after it can be read from cache: a spoken turn
+// re-sent its whole thread uncached every time, 10K tokens on a fresh thread
+// and 120K on a long one, and the wait for the first word grew with it
+// (2026-11-10). At the end, everything before it is byte-identical turn over
+// turn. The row it lands on is volatile: the caller counts it in the
+// ephemeral tail so the breakpoint sits beneath it.
+export function withSystemTail(messages: AnthropicMessage[], tail: string): AnthropicMessage[] {
+  const block: AnthropicContent = { type: "text", text: SYSTEM_TAIL_HEADER + tail };
+  const last = messages[messages.length - 1];
+  if (!last || last.role !== "user") return [...messages, { role: "user", content: [block] }];
+  const own: AnthropicContent[] = typeof last.content === "string"
+    ? (last.content ? [{ type: "text", text: last.content }] : [])
+    : last.content;
+  return [...messages.slice(0, -1), { ...last, content: [...own, block] }];
 }
 
 // Message-tier breakpoint: mark the last block of the last STABLE message so

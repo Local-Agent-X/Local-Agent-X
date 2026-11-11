@@ -27,6 +27,12 @@ describe("voice tool belt", () => {
     expect(tail).toContain("show_card");
   });
 
+  it("tells the spoken model to search the user's mail for a person's address before asking for it", () => {
+    // A spoken "email Tyler" checked only memory and said it had no address;
+    // Tyler's messages in the inbox had it (2026-11-11).
+    expect(buildVoiceTail(false)).toMatch(/email address[\s\S]*email_search[\s\S]*before asking the user/);
+  });
+
   it("can search for any other tool, so a spoken turn is never stuck with the belt it started with", () => {
     // A voice call failed a lookup because the tool it needed was not on the belt
     // and it had no way to load one.

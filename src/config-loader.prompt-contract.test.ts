@@ -105,3 +105,13 @@ describe("cross-seam contract — supervisor expectations match worker rules", (
     }
   });
 });
+
+describe("prompt contract — a missing fact is searched for before the user is asked", () => {
+  it("sends the agent to the user's mail for a person's address before it says it doesn't have one", () => {
+    // "Email Tyler" got "I don't have his email" after memory alone came back
+    // empty; his messages in the inbox carried it (2026-11-11).
+    const rule = prompt.match(/\*\*Recall failure ≠ absence\.\*\*[^\n]*/)?.[0] ?? "";
+    expect(rule).toContain("`email_search`");
+    expect(rule).toContain("before asking the user for an address");
+  });
+});

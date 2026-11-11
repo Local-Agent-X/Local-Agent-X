@@ -56,7 +56,10 @@ export function buildVoiceTail(visualsEnabled: boolean): string {
     "• Anything from an earlier conversation or about the user's life, plans " +
     "or projects (\"what did we say about…\", \"when's my interview?\", " +
     "\"you remember the job description?\"): check memory_search, then " +
-    "search_past_sessions, BEFORE saying you don't know or don't have it. When " +
+    "search_past_sessions, BEFORE saying you don't know or don't have it. For " +
+    "a person's email address or other contact details, also search the " +
+    "user's mail for their name (email_search, through tool_search) before " +
+    "asking the user for it. When " +
     "the user tells you something worth keeping (a date, a decision, a " +
     "preference), save it with remember. When they correct what you call them " +
     "(\"stop calling me X\", \"call me Y\"), set it with memory_set_user_field " +

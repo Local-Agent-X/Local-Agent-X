@@ -202,6 +202,11 @@ function handleAgentFeedEvent(msg) {
     if (typeof refreshWorkClaims === 'function') refreshWorkClaims();
     return;
   }
+  // A collab started, moved on a round or ended (chat-collab.js).
+  if (msg.type === 'collab_changed') {
+    if (window.laxCollab) window.laxCollab.refresh();
+    return;
+  }
   if (msg.type === 'workers_snapshot') {
     if (typeof reconcileAgentFeeds === 'function') reconcileAgentFeeds(msg.workers);
   } else if (msg.type === 'agent-spawn' && msg.agentId) {

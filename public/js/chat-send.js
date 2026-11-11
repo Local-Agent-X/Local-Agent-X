@@ -21,6 +21,8 @@
 //   - detectMood                       (chat-extras.js)
 
 async function sendMessage() {
+  // `/collab <question>` opens the collab card instead of sending (chat-collab.js).
+  if (window.laxCollab && window.laxCollab.takeCommand()) return;
   const activeIsStreaming = !!(activeChat && ChatStreamStore.isStreaming(activeChat.id));
   // Step 4 — interject during own-turn:
   // If the active chat is currently streaming (main agent mid-tool-loop),

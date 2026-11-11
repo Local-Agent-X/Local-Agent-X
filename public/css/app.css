@@ -1764,6 +1764,21 @@ body.agent-feeds-resizing .agent-feeds{transition:none!important}
 .orchestrator-badge{padding:2px 8px;border-radius:6px;border:1px solid var(--accent);color:var(--accent);font-weight:600}
 .orchestrator-badge.other{border-color:var(--border);color:var(--muted);font-weight:400}
 .orchestrator-routing{font:inherit;min-width:280px;padding:2px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface-2);color:inherit}
+/* ── The collab card (chat-collab.js) ── */
+.collab-card{position:fixed;inset:0;z-index:9000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.35)}
+.collab-card-box{width:min(520px,92vw);max-height:86vh;overflow:auto;display:flex;flex-direction:column;gap:10px;padding:18px;border-radius:12px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:.82rem}
+.collab-card-title{font-weight:600;font-size:.95rem}
+.collab-card-note{color:var(--muted);line-height:1.45}
+.collab-card-error{color:var(--danger,#c0392b)}
+.collab-card-error:empty{display:none}
+.collab-question{font:inherit;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--surface-2);color:inherit;resize:vertical}
+.collab-member{display:flex;align-items:center;gap:8px}
+.collab-provider{min-width:120px}
+.collab-model,.collab-rounds select{font:inherit;flex:1;min-width:0;padding:3px 6px;border-radius:6px;border:1px solid var(--border);background:var(--surface-2);color:inherit}
+.collab-rounds select{flex:none}
+.collab-card-actions{display:flex;justify-content:flex-end;gap:8px}
+.collab-card-actions .own-copy-btn{padding:5px 14px}
+.collab-card-actions .own-copy-btn:disabled{opacity:.5;cursor:default}
 /* ── Tiled chats (chat-tiles.js) ──
    #chat-tiles wraps #chat-main. Off, it is display:contents: #chat-main is laid
    out by #page-chat exactly as before. On, it is a grid of #chat-main (the chat

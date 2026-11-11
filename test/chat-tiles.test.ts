@@ -29,7 +29,7 @@ type Core = {
 };
 type Tiles = {
   toggle: () => void; onChatChanged: () => void; onSocketOpen: () => void; closeFocused: () => void;
-  openAddMenu: () => void; isOn: () => boolean; tiles: () => string[];
+  openAddMenu: () => void; isOn: () => boolean; tiles: () => string[]; showGroup: () => void;
 };
 
 const core: Core = new Function(`${coreJs}\nreturn ChatTilesCore;`)();
@@ -191,6 +191,46 @@ describe("the tile grid on the chat page", () => {
     selectChat("b");
     expect(document.body.classList.contains("chat-tiles-on")).toBe(true);
     expect(tiles.tiles()).toEqual(["a", "b"]);
+  });
+
+  it("tiles a collab's chats together, and goes back to the code sessions' panes on a code session", () => {
+    const group = { id: "collab-1", chatIds: ["host", "m1", "m2"] };
+    chats.push(chat("host", { mode: undefined, projectId: undefined }), chat("m1", { mode: undefined, projectId: undefined }), chat("m2", { mode: undefined, projectId: undefined }));
+    (window as { laxCollab?: unknown }).laxCollab = { of: (id: string) => (group.chatIds.includes(id) ? group : null) };
+    try {
+      tiles.toggle();
+      expect(tiles.tiles()).toEqual(["a", "b", "c"]);
+
+      selectChat("host");
+      expect(toggleBtn().style.display).toBe("");
+      expect(tiles.tiles()).toEqual(["host", "m1", "m2"]);
+      expect(document.body.classList.contains("chat-tiles-on")).toBe(true);
+      // A collab's panes are its chats: nothing to add.
+      expect(document.getElementById("chat-tiles-add")!.style.display).toBe("none");
+      tile("m2").click();
+      expect(tiles.tiles()).toEqual(["host", "m1", "m2"]);
+
+      selectChat("plain");
+      expect(document.body.classList.contains("chat-tiles-on")).toBe(false);
+      selectChat("b");
+      expect(tiles.tiles()).toEqual(["a", "b", "c"]);
+    } finally {
+      delete (window as { laxCollab?: unknown }).laxCollab;
+    }
+  });
+
+  it("opens the grid on a collab that just started, from a chat with tiles off", () => {
+    const group = { id: "collab-2", chatIds: ["plain", "m1"] };
+    chats.push(chat("m1", { mode: undefined, projectId: undefined }));
+    (window as { laxCollab?: unknown }).laxCollab = { of: (id: string) => (group.chatIds.includes(id) ? group : null) };
+    try {
+      selectChat("plain");
+      tiles.showGroup();
+      expect(tiles.isOn()).toBe(true);
+      expect(tiles.tiles()).toEqual(["plain", "m1"]);
+    } finally {
+      delete (window as { laxCollab?: unknown }).laxCollab;
+    }
   });
 
   it("turns the page into a grid of the project's chats, the one on screen in its own pane", () => {

@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 1996 non-test source files · 81 oversized · 266 nearing the size cap.
+**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 1999 non-test source files · 81 oversized · 266 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -24,18 +24,18 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/tools/` | 128 | 233 | XL | 9 |
 | `src/tool-execution/` | 95 | 88 | XL | 2 |
 | `src/workspace/` | 91 | 3 | M |  |
-| `src/canonical-loop/` | 85 | 283 | XL | 11 |
-| `src/providers/` | 77 | 27 | L | 1 |
-| `src/session/` | 64 | 12 | M |  |
+| `src/canonical-loop/` | 86 | 283 | XL | 11 |
+| `src/providers/` | 79 | 27 | L | 1 |
+| `src/session/` | 65 | 13 | L |  |
 | `src/data-lineage/` | 59 | 12 | L |  |
 | `src/memory/` | 55 | 158 | XL | 3 |
 | `src/browser/` | 51 | 93 | XL | 5 |
-| `src/util/` | 48 | 3 | S |  |
+| `src/util/` | 49 | 3 | S |  |
 | `src/tool-policy/` | 47 | 21 | L |  |
+| `src/agency/` | 46 | 37 | XL |  |
 | `src/local-runtimes/` | 45 | 27 | XL |  |
-| `src/agency/` | 44 | 36 | XL |  |
+| `src/chat-ws/` | 44 | 23 | L |  |
 | `src/threat/` | 44 | 13 | L |  |
-| `src/chat-ws/` | 42 | 23 | L |  |
 | `src/auth/` | 36 | 11 | L |  |
 | `src/context-manager/` | 29 | 15 | M |  |
 | `src/agent-store/` | 28 | 7 | M | 1 |
@@ -62,7 +62,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/app-scaffold/` | 12 | 7 | M |  |
 | `src/ari-kernel/` | 12 | 12 | M |  |
 | `src/integrations/` | 12 | 15 | M |  |
-| `src/routes/` | 12 | 107 | XL | 17 |
+| `src/routes/` | 12 | 108 | XL | 17 |
 | `src/whatsapp-bridge/` | 12 | 8 | M | 1 |
 | `src/persistence/` | 11 | 2 | S |  |
 | `src/sync/` | 10 | 22 | L | 1 |

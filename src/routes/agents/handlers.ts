@@ -7,6 +7,7 @@ import { handleProjectRoutes } from "./projects.js";
 import { handleProjectFileRoutes } from "./project-files.js";
 import { handleChatStatusRoutes } from "./chats.js";
 import { handleWorkClaimRoutes } from "./work-claims.js";
+import { handleCollabRoutes } from "./collab.js";
 
 const SUB_HANDLERS: RouteHandler[] = [
   handleAgentHistoryRoutes,
@@ -17,6 +18,7 @@ const SUB_HANDLERS: RouteHandler[] = [
   handleProjectFileRoutes,
   handleChatStatusRoutes,
   handleWorkClaimRoutes,
+  handleCollabRoutes,
 ];
 
 export const handleAgentRoutes: RouteHandler = async (method, url, req, res, ctx, role) => {

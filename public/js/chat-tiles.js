@@ -20,16 +20,16 @@
 //
 // Which chats are tiled is remembered per project, in this browser.
 //
-// Tiles belong to the sidebar's code side (sidebar-mode.js): the
-// panes share a project folder, which is what makes seeing them together
-// useful. Only code sessions are tiled, the Tiles button shows on a code session
-// only, and opening an ordinary chat puts the grid away until the next code
-// session is opened.
+// Panes are offered where they share something. Code sessions (the sidebar's
+// code side, sidebar-mode.js) share a project folder: the Tiles button shows
+// on one and only code sessions are its panes. The chats of a collab
+// (chat-collab.js) share a question: the grid holds exactly those. Any other
+// chat on screen puts the grid away until a chat that tiles is opened again.
 //
 // External deps: ChatTilesCore (chat-tiles-core.js); chatTileEl, paintChatTile,
 // paintChatTileHead (chat-tiles-view.js); chats, selectChat, newChat
 // (app-state.js, app-sidebar-actions.js); chatModeOf (sidebar-mode.js);
-// hydrateChat (app-sync.js);
+// hydrateChat (app-sync.js); laxCollab (chat-collab.js);
 // ChatStreamStore; apiFetch (shared.js); orchestratorState, otherAgentsRows
 // (chat-agent-feeds-claims.js).
 
@@ -41,6 +41,7 @@ var laxChatTiles = (function () {
   var ids = [];
   var focusedId = '';
   var addNext = false;
+  var shownKey = '';
   var models = {};
   var lastStatus = {};
   var keepReply = {};
@@ -48,11 +49,21 @@ var laxChatTiles = (function () {
 
   function active() { try { return window.activeChat || null; } catch (e) { return null; } }
   function chatOf(id) { return (typeof chats !== 'undefined' && Array.isArray(chats) ? chats : []).find(function (c) { return c.id === id; }) || null; }
-  function projectKey() { var a = active(); return (a && a.projectId) || 'none'; }
   function isCode(c) { return !!c && chatModeOf(c) === 'code'; }
-  function codeChats() { return (typeof chats !== 'undefined' && Array.isArray(chats) ? chats : []).filter(isCode); }
-  /** The grid is on and the chat on screen is a code session. */
-  function showing() { return on && isCode(active()); }
+  /** The collab `c` is part of ({id, chatIds}), or null. */
+  function collabOf(c) { try { return (c && window.laxCollab && window.laxCollab.of(c.id)) || null; } catch (e) { return null; } }
+  function tileable(c) { return isCode(c) || !!collabOf(c); }
+  /** What the panes beside `a` share: its collab, or the code side. */
+  function groupKey(a) { var g = collabOf(a); return g ? g.id : 'code'; }
+  function projectKey() { var a = active(); var g = collabOf(a); return g ? g.id : (a && a.projectId) || 'none'; }
+  /** The chats that can be panes beside the chat on screen: its collab's, else the code sessions. */
+  function pool() {
+    var all = typeof chats !== 'undefined' && Array.isArray(chats) ? chats : [];
+    var g = collabOf(active());
+    return g ? all.filter(function (c) { return g.chatIds.indexOf(c.id) !== -1; }) : all.filter(isCode);
+  }
+  /** The grid is on and the chat on screen is one that tiles. */
+  function showing() { return on && tileable(active()); }
 
   function loadSaved() {
     try { return JSON.parse(localStorage.getItem(STORE_KEY) || '{}') || {}; } catch (e) { return {}; }
@@ -181,16 +192,16 @@ var laxChatTiles = (function () {
     var grid = document.getElementById('chat-tiles');
     var main = document.getElementById('chat-main');
     if (!grid || !main) return;
-    ids = ChatTilesCore.pruned(ids, codeChats());
     var a = active();
     var show = showing();
-    // An ordinary chat on screen leaves the pane it would return to as it was.
-    if (show) focusedId = a.id;
+    // Any other chat on screen leaves the panes, and the one it would return to, as they were.
+    if (show) { ids = ChatTilesCore.pruned(ids, pool()); focusedId = a.id; }
     document.body.classList.toggle('chat-tiles-on', show);
     var toggle = document.getElementById('chat-tiles-toggle');
-    if (toggle) { toggle.classList.toggle('on', show); toggle.style.display = isCode(a) ? '' : 'none'; }
+    if (toggle) { toggle.classList.toggle('on', show); toggle.style.display = tileable(a) ? '' : 'none'; }
     var addBtn = document.getElementById('chat-tiles-add');
-    if (addBtn) addBtn.style.display = show && ids.length < ChatTilesCore.MAX_TILES ? '' : 'none';
+    // A collab's panes are its chats: there is nothing to add.
+    if (addBtn) addBtn.style.display = show && !collabOf(a) && ids.length < ChatTilesCore.MAX_TILES ? '' : 'none';
     Array.prototype.slice.call(grid.querySelectorAll('.chat-tile')).forEach(function (el) {
       if (!show || ids.indexOf(el.dataset.session) === -1) el.remove();
     });
@@ -213,17 +224,20 @@ var laxChatTiles = (function () {
     save();
   }
 
-  /** The panes the grid opens with: the ones remembered for this project, else
-   *  the project's code sessions. */
+  /** The panes the grid opens with: the ones remembered for this project or
+   *  collab, else the collab's chats or the project's code sessions. */
   function fill() {
-    var remembered = ChatTilesCore.pruned((loadSaved().byProject || {})[projectKey()] || [], codeChats());
+    var remembered = ChatTilesCore.pruned((loadSaved().byProject || {})[projectKey()] || [], pool());
     var a = active();
+    var g = collabOf(a);
+    shownKey = groupKey(a);
     ids = remembered.length > 1 ? ChatTilesCore.withChat(remembered, remembered[0], a && a.id)
-      : ChatTilesCore.projectChats(codeChats(), a);
+      : g ? ChatTilesCore.pruned(g.chatIds, pool())
+      : ChatTilesCore.projectChats(pool(), a);
   }
 
   function toggle() {
-    if (!on && !isCode(active())) return;
+    if (!on && !tileable(active())) return;
     on = !on;
     if (on) fill();
     layout();
@@ -233,9 +247,11 @@ var laxChatTiles = (function () {
   /** The chat on screen changed (selectChat, newChat, deleteChat). */
   function onChatChanged() {
     var a = active();
-    if (!on || (a && !isCode(a))) { layout(); return; }
+    if (!on || (a && !tileable(a))) { layout(); return; }
+    // From a code session to a collab's chat, or back: the other group's panes.
+    if (a && ids.length && groupKey(a) !== shownKey) { fill(); addNext = false; layout(); return; }
     if (!a) {
-      ids = ChatTilesCore.pruned(ids, codeChats());
+      ids = ChatTilesCore.pruned(ids, pool());
       if (ids.length && typeof selectChat === 'function') { selectChat(ids[0]); return; }
     } else if (!ids.length) {
       fill();
@@ -264,7 +280,7 @@ var laxChatTiles = (function () {
   }
   function addProject() {
     closeAddMenu();
-    ChatTilesCore.projectChats(codeChats(), active()).forEach(function (id) { ids = ChatTilesCore.added(ids, id); });
+    ChatTilesCore.projectChats(pool(), active()).forEach(function (id) { ids = ChatTilesCore.added(ids, id); });
     layout();
   }
   function addNew() {
@@ -298,7 +314,7 @@ var laxChatTiles = (function () {
     var a = active();
     if (a && a.projectId) menu.appendChild(menuItem('All sessions in this project', addProject));
     menu.appendChild(menuItem('New session', addNew));
-    ChatTilesCore.addable(codeChats(), ids, 12).forEach(function (c) {
+    ChatTilesCore.addable(pool(), ids, 12).forEach(function (c) {
       menu.appendChild(menuItem(c.title || 'Session', function () { add(c.id); }));
     });
     var box = anchor.getBoundingClientRect();
@@ -331,7 +347,7 @@ var laxChatTiles = (function () {
     var restore = setInterval(function () {
       if (!active()) return;
       clearInterval(restore);
-      if (!on && loadSaved().on) { on = true; if (isCode(active())) fill(); }
+      if (!on && loadSaved().on) { on = true; if (tileable(active())) fill(); }
       layout();
     }, 300);
     setTimeout(function () { clearInterval(restore); }, 15000);
@@ -347,6 +363,8 @@ var laxChatTiles = (function () {
     onSocketOpen: function () { if (on) ids.forEach(follow); },
     onModelChanged: function (id) { if (on && ids.indexOf(id) !== -1) fetchModel(id); },
     onClaimsChanged: function () { if (on) ids.forEach(queuePaint); },
+    /** Show the chat on screen with the rest of its group (a collab just started). */
+    showGroup: function () { if (!tileable(active())) return; on = true; fill(); layout(); save(); },
     isOn: function () { return on; }, tiles: function () { return ids.slice(); },
   };
 })();

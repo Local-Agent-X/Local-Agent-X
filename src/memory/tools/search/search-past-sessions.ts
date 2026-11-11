@@ -4,6 +4,7 @@ import { findMatchingApps } from "./app-matcher.js";
 import { excerptNote } from "../../retrieval-format.js";
 import { readPastMessage } from "./past-message.js";
 import { exactPastSearch } from "./exact-past-search.js";
+import { unshownNewer, unshownNewerNote } from "./unshown-newer.js";
 import { sessionIdOf } from "../../../tool-execution/internal-args.js";
 import { withholdSecretValues, secretsMaskedNote } from "../../../data-lineage/index.js";
 import { recordExternalIngestion } from "../../../data-lineage/external.js";
@@ -37,6 +38,8 @@ export function searchPastSessions(
   });
 }
 
+/** How far below the cut a by-meaning search looks for newer chats it is not showing. */
+const BELOW_CUT = 15;
 const EXACT_DEFAULT = 20;
 const EXACT_MAX = 100;
 const CHAT_LIST_MAX = 50;
@@ -120,10 +123,12 @@ export function searchPastSessionsTool(memory: MemoryIndex) {
       const query = String(args.query || "");
       const maxResults = (args.max_results as number) || 5;
 
-      const [sessionResults, appMatches] = await Promise.all([
-        searchPastSessions(memory, query, { maxResults, since, sessionId }),
+      const [ranked, appMatches] = await Promise.all([
+        searchPastSessions(memory, query, { maxResults: maxResults + BELOW_CUT, since, sessionId }),
         findMatchingApps(query),
       ]);
+      const sessionResults = ranked.slice(0, maxResults);
+      const cutNote = unshownNewerNote(unshownNewer(sessionResults, ranked.slice(maxResults)));
 
       if (sessionResults.length === 0 && appMatches.length === 0) {
         return {
@@ -167,6 +172,7 @@ export function searchPastSessionsTool(memory: MemoryIndex) {
             ? `BUILT APPS: ${appMatches.length} app folder(s) matched the query. Read their files (workspace/apps/<name>/index.html etc.) if you need actual build details.\n`
             : "") +
           `\n` + formatted + "\n" +
+          cutNote +
           appsBlock +
           `</past_sessions>`,
       };

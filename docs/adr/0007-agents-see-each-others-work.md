@@ -16,8 +16,8 @@ below. Built in the order of question 8; stage 1 (each chat's own model) first.
 | 3, second part | The watch job (`agency/orchestrator-wake.ts`): the app messages the orchestrator, marked as the app's and not the user's, when two live agents start changing the same files, when a merge landed on files another agent changed or is changing, when a worker is paused for making no progress, and when a task it handed out settles. Events are gathered for 20 s, a repo's orchestrator is woken at most once per 2 minutes, the same event once, and never mid-turn. Hand-off to a chat already working in the project (`work_assign`, `session/assigned-turn.ts`): into its running turn or as a turn of its own, carrying the orchestrator's taint and ingestion marks; only the orchestrator may call it and only for a chat holding claims in its project. | Built 2026-11-09 |
 | 6, the screen | Tiled chats (`public/js/chat-tiles.js`, rules in `chat-tiles-core.js`, a pane in `chat-tiles-view.js`): two to eight chats side by side on the chat page. The chat on screen stays the one full chat; the others are live views (name, model, state, recent messages, the reply as it is written, a "needs you" mark while an approval waits). Clicking a view opens that chat in its pane's place. One page and one socket: each tiled chat is subscribed, and a turn another window started is read back when it starts and ends. The orchestrator's pane and a pane in the same files as the chat on screen are marked. Remembered per project in the browser. | Built 2026-11-10 |
 | 3, not yet | Rules 2 and 3 are instructions in the orchestrator's prompt, not enforced by the harness. A same-folder clash with a chat that already changed files there still goes to the user. A chat that is open on the project but has changed nothing is not yet a hand-off target (it holds no claim to be found by). A wake-up spends a turn on the orchestrator's model; there is no switch to turn them off short of releasing the role. | Open |
-| 4, research | A research collab started from an ordinary chat (§9, the **discuss** shape): the Collab button in the chat toolbar or `/collab <question>` opens a card (two to four models, each from a provider the user is signed in to; one to three rounds; the number of turns it will run), and nothing runs until Start. One ordinary chat is made per model, pinned to it (`routes/agents/collab.ts`). Each round every member runs a turn at once; the next round sends each the others' answers, fenced as other agents' work; after the last the starting chat writes the result (`agency/collab.ts` the record and messages, `session/collab-run.ts` the rounds). A member whose turn fails or gives no answer is dropped and named. The chat's toolbar says where the collab is and has Stop. The collab's chats tile together (`public/js/chat-collab.js`, `chat-tiles.js`). | Built 2026-11-11 |
-| 4, not yet | The coding shapes (**split**, **compete**) and starting a collab from a code session. Starting one by asking in words (no tool for the agent). The collab as one group in the agents panel, with a running token total per member. The phone. A collab cut off by a restart is closed, not resumed. The members' answers reach each other in the round's message, not as hand-over notes (§3 notes are per repo; a research collab has none). | Open |
+| 4, research | A research collab started from an ordinary chat (§9): the Collab button in the chat toolbar or `/collab <question>` opens a card (two to four models, each from a provider the user is signed in to; the steps; the depth; the turns it will run), and nothing runs until Start. One ordinary chat is made per model, pinned to it (`routes/agents/collab.ts`). The starting chat does no research. Steps, each a turn in every member chat at once (`session/collab-run.ts`): **research** (the same question to each; a report ending in its key claims, one per line, which the app reads; one more ask when it finds none), **challenge** (each opens the others' sources and marks every claim confirmed, challenged or unverified), **answer** (each concedes or defends its challenged claims, as fact or as judgment), then up to two rounds between the two sides of each dispute of fact, ended early when nobody moved. The app keeps every claim's state (`agency/collab-claims.ts`) and sends the starting chat the reports and that record (`agency/collab-messages.ts`); its result must name every open dispute by id, and the app checks, asks once for any left out, and notes what is still missing. Depth **deep** gives each member the one written research method (`agency/research-method.ts`), which the researcher role and the Deep Researcher template now carry too (a saved template still on its first prompt is moved to it). A member whose turn fails is dropped and named; a long report is cut in the middle, keeping its opening and its claims. The toolbar says where the collab is and has Stop, and the collab's chats tile together (`public/js/chat-collab.js`, `chat-tiles.js`). | Built 2026-11-11 |
+| 4, not yet | The coding shapes (**split**, **compete**) and starting a collab from a code session. Starting one by asking in words (no tool for the agent). The collab as one group in the agents panel, with a running token total per member. The phone. A collab cut off by a restart is closed, not resumed. Not run against real models yet: whether models keep to the line formats the app reads is unmeasured. | Open |
 
 As built, a holder is keyed by the session its tool calls run in (`sessionId`
 plus repo), not by `session:<id>` / `op:<id>`; a chat's display name is its
@@ -414,12 +414,26 @@ its sources).
 **Where a collab runs** (owner, 2026-11-11). A coding collab's members are
 code sessions on the project folder. A research collab runs in chat: its
 members are ordinary chats, one per model, tiled (§6), all on the same
-question, with a shared findings sheet each writes to and reads. A code
+question, with the record the app keeps of every claim each makes. A code
 session leaves out the parts of the prompt research leans on (the browser,
 memory and past chats, the general way of working: `src/context/prompt-mode.ts`),
 and an ordinary chat carries them, so research members are chats and the code
 side stays for coding. No new session kind, and the mode value `code` is not
 renamed.
+
+**How a research collab runs** (owner, 2026-11-11). Every member gets the
+same question: models from different companies make different mistakes, so
+what they agree on is evidence and what they dispute is where to look. Giving
+each a different angle would make a difference in their answers unreadable (the
+angle, or the model?). The chat the collab is started from takes no part in the
+research, so it has no finding of its own to favour: it starts the members,
+and when they are done it compiles their reports, rules on a dispute only from
+the evidence the two sides put forward, and says plainly which disputes stay
+open. In that turn it does no research; afterwards it is an ordinary chat. A
+model changes its position for evidence, never because it is outnumbered. A
+dispute of judgment (the same facts weighed differently) gets no further
+round and goes to the user with both sides. "Confirmed" means another model
+opened the source and it says what was claimed, not that it is true.
 
 Rules a collab keeps:
 

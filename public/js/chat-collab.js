@@ -2,11 +2,11 @@
 //
 // A collab (ADR 0007 §9, src/agency/collab.ts) is started from an ordinary
 // chat: the Collab button in the chat toolbar, or `/collab <the question>` in
-// the message box. A card shows what will run (the models, the rounds, how
+// the message box. A card shows what will run (the models, the steps, the depth, how
 // many turns that is) and nothing starts until Start. The server then makes
-// one chat per model and runs the rounds; this chat writes the result.
+// one chat per model and runs the steps; this chat writes the result.
 //
-// Here: the card, the strip that says where the collab is (round, Stop), and
+// Here: the card, the strip that says where the collab is (step, Stop), and
 // the list of collabs the tile grid reads to put a collab's chats side by
 // side (chat-tiles.js). Re-read on a `collab_changed` frame.
 //
@@ -21,7 +21,7 @@ var laxCollab = (function () {
 
   function active() { try { return window.activeChat || null; } catch (e) { return null; } }
   function chatList() { return typeof chats !== 'undefined' && Array.isArray(chats) ? chats : []; }
-  function isLive(c) { return c.state === 'running' || c.state === 'writing'; }
+  function isLive(c) { return c.state === 'running'; }
 
   /** The newest collab the chat is part of ({id, chatIds, ...}), or null. */
   function of(chatId) {
@@ -32,16 +32,24 @@ var laxCollab = (function () {
   /** One line saying where a collab is. */
   function statusText(c) {
     var n = c.members.filter(function (m) { return !m.dropped; }).length;
-    if (c.state === 'running') return 'Collab: round ' + Math.max(1, c.round) + ' of ' + c.rounds + ', ' + n + (n === 1 ? ' model' : ' models');
-    if (c.state === 'writing') return 'Collab: writing the result';
-    if (c.state === 'done') return 'Collab finished';
-    return 'Collab stopped' + (c.note ? ': ' + c.note : '');
+    var models = n + (n === 1 ? ' model' : ' models');
+    if (c.state === 'done') return 'Collab finished' + (c.note ? ': ' + c.note : '');
+    if (c.state !== 'running') return 'Collab stopped' + (c.note ? ': ' + c.note : '');
+    if (c.phase === 'challenge') return 'Collab: ' + models + ' checking each other’s claims';
+    if (c.phase === 'answer') return 'Collab: answering ' + c.disputed + (c.disputed === 1 ? ' challenge' : ' challenges');
+    if (c.phase === 'dispute') return 'Collab: settling ' + c.disputed + (c.disputed === 1 ? ' dispute' : ' disputes') + ', round ' + c.disputeRound + ' of 2';
+    if (c.phase === 'writing') return 'Collab: writing the result';
+    return 'Collab: ' + models + ' researching';
   }
 
-  /** How many turns a collab of this size runs, in words. */
-  function costText(members, rounds) {
-    return members + ' models x ' + rounds + (rounds === 1 ? ' round' : ' rounds') + ' = ' + (members * rounds)
-      + ' research turns, then one turn in this chat to write the result. Each turn is billed to that model’s account.';
+  /** The turns a collab of this size runs, in words. `steps`: 1 research,
+   *  2 and challenge, 3 and answer. */
+  function costText(members, steps, depth) {
+    var parts = [members + ' research turns' + (depth === 'deep' ? ' (deep: each takes longer)' : '')];
+    if (steps >= 2) parts.push(members + ' turns checking each other’s claims');
+    if (steps >= 3) parts.push('up to ' + (members * 3) + ' short turns answering challenges and settling what is still disputed');
+    parts.push('one turn in this chat to write the result');
+    return parts.join(', then ') + '. Each turn is billed to that model’s account.';
   }
 
   /** The members a new card starts with: this chat's model, then one from each other provider. */
@@ -137,6 +145,17 @@ var laxCollab = (function () {
     return row;
   }
 
+  /** A labelled choice on the card; `options` are [value, text], the first chosen. */
+  function choice(box, label, options) {
+    var row = el('label', 'collab-choice', label);
+    var pick = el('select');
+    options.forEach(function (o) { var opt = el('option', '', o[1]); opt.value = o[0]; pick.appendChild(opt); });
+    pick.value = options[0][0];
+    row.appendChild(pick);
+    box.appendChild(row);
+    return pick;
+  }
+
   function picked(card) {
     return Array.prototype.slice.call(card.querySelectorAll('.collab-member')).filter(function (row) {
       return row.querySelector('input').checked;
@@ -150,18 +169,14 @@ var laxCollab = (function () {
     card.id = 'collab-card';
     var box = el('div', 'collab-card-box');
     box.appendChild(el('div', 'collab-card-title', 'Collab: several models on one question'));
-    box.appendChild(el('div', 'collab-card-note', 'Each model researches the question in its own chat, reads the others’ answers and revises. This chat then writes the result: what they agreed on, where they differ, and the sources.'));
+    box.appendChild(el('div', 'collab-card-note', 'Each model researches the same question in its own chat. They then check each other’s claims and answer the challenges. This chat does no research: it compiles their reports and says what was confirmed, what was conceded and what is still disputed.'));
     var q = el('textarea', 'collab-question');
     q.value = question; q.rows = 3; q.maxLength = 4000; q.placeholder = 'What should they research?';
     box.appendChild(q);
     var picks = defaultPicks(data.providers, data.current);
     (data.providers || []).forEach(function (p) { box.appendChild(memberRow(p, picks.indexOf(p.id) !== -1, data.current)); });
-    var roundsRow = el('label', 'collab-rounds', 'Rounds ');
-    var rounds = el('select');
-    [1, 2, 3].forEach(function (n) { var o = el('option', '', String(n)); o.value = String(n); rounds.appendChild(o); });
-    rounds.value = '2';
-    roundsRow.appendChild(rounds);
-    box.appendChild(roundsRow);
+    var steps = choice(box, 'Steps ', [['3', 'Research, challenge and answer'], ['2', 'Research and challenge'], ['1', 'Research only']]);
+    var depth = choice(box, 'Depth ', [['standard', 'Standard'], ['deep', 'Deep: plan, search wide, try to refute, full report']]);
     var cost = el('div', 'collab-card-note');
     var error = el('div', 'collab-card-error');
     var start = el('button', 'own-copy-btn', 'Start');
@@ -170,7 +185,7 @@ var laxCollab = (function () {
     cancel.type = 'button';
     function update() {
       var n = picked(card).length;
-      cost.textContent = n < 2 ? 'Pick at least two models.' : n > MAX_MEMBERS ? 'Pick at most ' + MAX_MEMBERS + ' models.' : costText(n, Number(rounds.value));
+      cost.textContent = n < 2 ? 'Pick at least two models.' : n > MAX_MEMBERS ? 'Pick at most ' + MAX_MEMBERS + ' models.' : costText(n, Number(steps.value), depth.value);
       start.disabled = n < 2 || n > MAX_MEMBERS || !q.value.trim();
     }
     box.addEventListener('change', update);
@@ -179,7 +194,7 @@ var laxCollab = (function () {
     start.addEventListener('click', function () {
       start.disabled = true;
       error.textContent = '';
-      begin(q.value.trim(), picked(card), Number(rounds.value)).then(function (problem) {
+      begin(q.value.trim(), picked(card), Number(steps.value), depth.value).then(function (problem) {
         if (!problem) { closeCard(); return; }
         error.textContent = problem;
         update();
@@ -208,12 +223,12 @@ var laxCollab = (function () {
   }
 
   /** Start it. Resolves to '' when it started, else what went wrong. */
-  function begin(question, members, rounds) {
+  function begin(question, members, steps, depth) {
     var a = active();
     if (!a) return Promise.resolve('Open a chat first.');
     return apiFetch('/api/collab/start', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId: a.id, question: question, members: members, rounds: rounds }),
+      body: JSON.stringify({ sessionId: a.id, question: question, members: members, steps: steps, depth: depth }),
     }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); }).then(function (out) {
       if (!out.ok || !out.data.collab) return out.data.error || 'The collab could not start.';
       collabs = collabs.filter(function (c) { return c.id !== out.data.collab.id; }).concat([out.data.collab]);

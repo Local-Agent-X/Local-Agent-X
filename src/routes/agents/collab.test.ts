@@ -35,22 +35,27 @@ describe("the members a collab starts with", () => {
 });
 
 describe("what a tab is told about a collab", () => {
-  it("lists the host's chat then each member's, with how far each has got", () => {
+  it("lists the host's chat then each member's, where it is, and how many claims are still disputed", () => {
     const c: Collab = {
-      id: "collab-1", hostId: "host", hostTitle: "Host", question: "Q?", rounds: 2, round: 1, state: "running", startedAt: "2026-11-11T00:00:00.000Z",
+      id: "collab-1", hostId: "host", hostTitle: "Host", question: "Q?", steps: 3, depth: "deep", phase: "answer", disputeRound: 0,
+      state: "running", startedAt: "2026-11-11T00:00:00.000Z",
       members: [
-        { sessionId: "m1", provider: "anthropic", model: "o", label: "o", answers: ["one"] },
-        { sessionId: "m2", provider: "xai", model: "g", label: "g", answers: [], dropped: "it gave no answer" },
+        { sessionId: "m1", provider: "anthropic", model: "o", label: "o", letter: "A", report: "THE REPORT TEXT" },
+        { sessionId: "m2", provider: "xai", model: "g", label: "g", letter: "B", report: "", dropped: "it gave no answer" },
+      ],
+      claims: [
+        { id: "A1", owner: "A", text: "x", source: "", verdicts: [{ by: "B", verdict: "challenged", why: "no", source: "" }] },
+        { id: "A2", owner: "A", text: "y", source: "", verdicts: [{ by: "B", verdict: "confirmed", why: "", source: "" }] },
       ],
     };
     const view = collabView(c);
     expect(view.chatIds).toEqual(["host", "m1", "m2"]);
+    expect(view).toMatchObject({ steps: 3, depth: "deep", phase: "answer", claims: 2, disputed: 1, note: "" });
     expect(view.members).toEqual([
-      { sessionId: "m1", label: "o", provider: "anthropic", model: "o", answered: 1, dropped: "" },
-      { sessionId: "m2", label: "g", provider: "xai", model: "g", answered: 0, dropped: "it gave no answer" },
+      { sessionId: "m1", label: "o", provider: "anthropic", model: "o", reported: true, dropped: "" },
+      { sessionId: "m2", label: "g", provider: "xai", model: "g", reported: false, dropped: "it gave no answer" },
     ]);
-    // The answers themselves stay on the server: each is in its member's chat.
-    expect(JSON.stringify(view)).not.toContain("one");
-    expect(view.note).toBe("");
+    // The reports themselves stay on the server: each is in its member's chat.
+    expect(JSON.stringify(view)).not.toContain("THE REPORT TEXT");
   });
 });

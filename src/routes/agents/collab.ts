@@ -2,10 +2,11 @@
  * Collabs, for the chat window (ADR 0007 §9, agency/collab.ts).
  *
  *   GET  /api/collab                 every collab on record, newest last
- *   POST /api/collab/start  {sessionId, question, members: [{provider, model}], rounds}
+ *   POST /api/collab/start  {sessionId, question, members: [{provider, model}], steps, depth}
  *        The chat `sessionId` becomes the collab's host. One ordinary chat is
- *        made per member, pinned to its model, and the rounds start; nothing
- *        is waited for. Refused from a code session: a research collab's
+ *        made per member, pinned to its model, and the research starts;
+ *        nothing is waited for. `steps` is 1 (research only), 2 (and
+ *        challenge) or 3 (and answer); `depth` is "standard" or "deep". Refused from a code session: a research collab's
  *        members are chats.
  *   POST /api/collab/stop   {id}
  *
@@ -23,9 +24,10 @@ import { sessionModeOf } from "../../session/mode.js";
 import { closeIfCutOff, runCollab, setCollabChangedListener, stopCollab } from "../../session/collab-run.js";
 import {
   chatIdsOf, getCollab, listCollabs, liveCollabHostedBy, saveNewCollab,
-  COLLAB_MAX_MEMBERS, COLLAB_MAX_ROUNDS, COLLAB_MIN_MEMBERS, COLLAB_QUESTION_MAX,
-  type Collab, type CollabMember,
+  COLLAB_MAX_MEMBERS, COLLAB_MIN_MEMBERS, COLLAB_QUESTION_MAX, COLLAB_REPORT_MAX,
+  type Collab, type CollabDepth, type CollabMember, type CollabSteps,
 } from "../../agency/collab.js";
+import { openDisputes } from "../../agency/collab-claims.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("routes.collab");
@@ -34,20 +36,26 @@ export interface CollabView {
   id: string;
   hostId: string;
   question: string;
-  rounds: number;
-  round: number;
+  steps: CollabSteps;
+  depth: CollabDepth;
+  phase: Collab["phase"];
+  disputeRound: number;
   state: Collab["state"];
   note: string;
+  /** How many key claims are on record, and how many are still disputed. */
+  claims: number;
+  disputed: number;
   /** The host chat, then each member's chat: what the tile grid shows together. */
   chatIds: string[];
-  members: Array<{ sessionId: string; label: string; provider: string; model: string; answered: number; dropped: string }>;
+  members: Array<{ sessionId: string; label: string; provider: string; model: string; reported: boolean; dropped: string }>;
 }
 
 export function collabView(c: Collab): CollabView {
   return {
-    id: c.id, hostId: c.hostId, question: c.question, rounds: c.rounds, round: c.round, state: c.state, note: c.note ?? "",
+    id: c.id, hostId: c.hostId, question: c.question, steps: c.steps, depth: c.depth, phase: c.phase, disputeRound: c.disputeRound,
+    state: c.state, note: c.note ?? "", claims: c.claims.length, disputed: openDisputes(c).length,
     chatIds: chatIdsOf(c),
-    members: c.members.map((m) => ({ sessionId: m.sessionId, label: m.label, provider: m.provider, model: m.model, answered: m.answers.length, dropped: m.dropped ?? "" })),
+    members: c.members.map((m) => ({ sessionId: m.sessionId, label: m.label, provider: m.provider, model: m.model, reported: !!m.report, dropped: m.dropped ?? "" })),
   };
 }
 
@@ -94,8 +102,10 @@ async function start(ctx: ServerContext, body: Record<string, unknown>): Promise
   const question = typeof body.question === "string" ? body.question.trim() : "";
   if (!question) return { status: 400, data: { error: "Say what the collab should research." } };
   if (question.length > COLLAB_QUESTION_MAX) return { status: 400, data: { error: `The question is limited to ${COLLAB_QUESTION_MAX} characters.` } };
-  const rounds = Number(body.rounds);
-  if (!Number.isInteger(rounds) || rounds < 1 || rounds > COLLAB_MAX_ROUNDS) return { status: 400, data: { error: `Rounds must be 1 to ${COLLAB_MAX_ROUNDS}.` } };
+  const steps = Number(body.steps);
+  if (steps !== 1 && steps !== 2 && steps !== 3) return { status: 400, data: { error: "steps must be 1 (research), 2 (and challenge) or 3 (and answer)." } };
+  const depth = body.depth;
+  if (typeof depth !== "string" || !(depth in COLLAB_REPORT_MAX)) return { status: 400, data: { error: "depth must be standard or deep." } };
   const customBaseUrl = String(loadSettings().customBaseUrl || "");
   const usable = (p: CollabMember["provider"]) =>
     localProviderDecision(p, getRuntimeConfig(), customBaseUrl).allowed
@@ -122,9 +132,12 @@ async function start(ctx: ServerContext, body: Record<string, unknown>): Promise
       startedFrom: hostId, ...(host.projectId ? { projectId: host.projectId } : {}),
     });
     sessionModelPins().set(sessionId, { provider: m.provider, model: m.model });
-    members.push({ ...m, sessionId, answers: [] });
+    members.push({ ...m, sessionId, letter: "ABCD"[i], report: "" });
   }
-  const collab: Collab = { id, hostId, hostTitle: short(host.title || "this chat", 80), question, rounds, round: 0, state: "running", members, startedAt: new Date(now).toISOString() };
+  const collab: Collab = {
+    id, hostId, hostTitle: short(host.title || "this chat", 80), question, steps, depth: depth as CollabDepth,
+    phase: "research", disputeRound: 0, state: "running", members, claims: [], startedAt: new Date(now).toISOString(),
+  };
   saveNewCollab(collab);
   setCollabChangedListener((changed) => void broadcastChanged(changed));
   void runCollab(ctx, id).catch((e) => logger.warn(`[collab ${id}] ${(e as Error).message}`));

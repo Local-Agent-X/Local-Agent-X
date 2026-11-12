@@ -10,7 +10,7 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { TEMPLATES_FILE } from "./paths.js";
 import { ProjectRosterStore } from "../project-rosters.js";
-import { builtInTemplateDefaults } from "./template-defaults.js";
+import { builtInTemplateDefaults, deepResearcherPromptRefresh } from "./template-defaults.js";
 import { OFFICE_KIT } from "../tools/tool-kits.js";
 import { renderPersonaPrompt, appBuilderPersonaRefresh } from "../tools/render-builder-prompt.js";
 import { readTrashRecord, trashRecord } from "../safe-delete.js";
@@ -57,7 +57,7 @@ export class AgentTemplateStore {
   private static instance: AgentTemplateStore;
   private templates: AgentTemplate[] = [];
 
-  private constructor() { this.load(); this.migrateStripDeprecatedOrgFields(); this.migrateAppBuilderTools(); this.migrateWorkerOfficeTools(); this.migrateAppBuilderCodexStrategy(); this.migrateAppBuilderAnthropicStrategy(); this.migrateManagerModel(); this.migrateAppBuilderPersona(); this.seedDefaults(); }
+  private constructor() { this.load(); this.migrateStripDeprecatedOrgFields(); this.migrateAppBuilderTools(); this.migrateWorkerOfficeTools(); this.migrateAppBuilderCodexStrategy(); this.migrateAppBuilderAnthropicStrategy(); this.migrateManagerModel(); this.migrateAppBuilderPersona(); this.migrateDeepResearcherMethod(); this.seedDefaults(); }
 
   /**
    * Strip deprecated org-membership fields from persisted templates.
@@ -194,6 +194,23 @@ export class AgentTemplateStore {
     t.updatedAt = Date.now();
     this.persist();
     logger.info("[agents] refreshed app-builder persona from code");
+  }
+
+  /**
+   * Move a saved Deep Researcher from its first prompt to the shared research
+   * method (agency/research-method.ts). seedDefaults never touches an existing
+   * template, so an already-seeded store kept the old, shallower prompt. Only
+   * a prompt still starting with the old opening is rewritten, and only that
+   * opening: the user's own prompt, or their edits after it, are left alone.
+   */
+  private migrateDeepResearcherMethod(): void {
+    const t = this.templates.find(x => x.id === "builtin-deep-researcher");
+    const next = t ? deepResearcherPromptRefresh(t.systemPrompt) : null;
+    if (!t || next === null) return;
+    t.systemPrompt = next;
+    t.updatedAt = Date.now();
+    this.persist();
+    logger.info("[agents] moved the Deep Researcher to the shared research method");
   }
 
   static getInstance(): AgentTemplateStore {

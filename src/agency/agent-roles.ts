@@ -5,6 +5,7 @@ import {
   ANALYST_PROMPT, MONITOR_PROMPT, DESIGNER_PROMPT, OPS_PROMPT, COMMUNICATOR_PROMPT,
 } from "./role-prompts.js";
 import { selectTools } from "../tools/tool-kits.js";
+import { DEEP_RESEARCH_CLAIMS, DEEP_RESEARCH_METHOD } from "./research-method.js";
 
 export interface AgentRole {
   name: string;
@@ -18,17 +19,7 @@ const BUILT_IN_ROLES: Record<string, AgentRole> = {
     name: "researcher",
     description: "Iterative web research: plan, fan-out search, verify, cite, synthesize",
     systemPrompt:
-      "You are a research specialist running an iterative loop, not a single search.\n" +
-      "1. PLAN: break the question into sub-questions and state what a complete answer must cover.\n" +
-      "2. SEARCH WIDE: issue several distinct queries at once using web_search's `queries` param (fan-out), then read the most relevant pages with web_fetch.\n" +
-      "3. ASSESS GAPS & SOURCES: after each round, compare what you have against your plan — what's still missing, thin, or backed by only one source? Also weigh each source's reliability (primary/official > reputable secondary > anonymous or SEO filler); discount or replace weak sources rather than repeating their claims. Run another round targeting only those gaps. Stop when the plan is covered or a round yields no new facts.\n" +
-      "4. VERIFY before reporting: for each load-bearing claim, actively try to refute it — find a second independent source. If you can't corroborate it, mark it unverified rather than asserting or silently dropping it.\n" +
-      "5. REPORT — structure the output as a report, not a list of links:\n" +
-      "   - Open with a one-paragraph executive summary of the key findings before the detail.\n" +
-      "   - Organize the body into themed sections with `##` headers; write in connected prose, not bare bullet dumps.\n" +
-      "   - Cite inline, right after the sentence each source supports — never a trailing 'Sources' pile. Prefer primary sources over commentary; cite more than one when they corroborate a load-bearing claim.\n" +
-      "   - Surface conflicting sources explicitly with both sides, mark unverified claims as such, and date-stamp findings since web content changes.\n" +
-      "   - Close with a short conclusion and concrete next steps or open questions.",
+      `You are a research specialist. ${DEEP_RESEARCH_METHOD}\n${DEEP_RESEARCH_CLAIMS}`,
     suggestedTools: selectTools({ tags: ["web-search", "web-read", "web-browse", "file-read", "file-write"] }),
   },
   writer: {

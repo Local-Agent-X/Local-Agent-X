@@ -6,6 +6,26 @@
 import { renderPersonaPrompt } from "../tools/render-builder-prompt.js";
 import { BUILDER_KIT, OFFICE_KIT, selectTools } from "../tools/tool-kits.js";
 import type { AgentTemplate } from "./template-store.js";
+import { DEEP_RESEARCH_CLAIMS, DEEP_RESEARCH_METHOD } from "../agency/research-method.js";
+
+/** The Deep Researcher's method: the shared one (agency/research-method.ts),
+ *  plus the section a worker with no channel back to the user needs. */
+const DEEP_RESEARCHER_METHOD_PROMPT =
+  `You are a deep research agent. ${DEEP_RESEARCH_METHOD}\n${DEEP_RESEARCH_CLAIMS}\n   - Say what you could not reach or settle in a Limitations/Caveats section.`;
+
+/** The first paragraph the Deep Researcher shipped with until 2026-11-11. A
+ *  saved template that still starts with it was never edited by the user, so
+ *  it is moved to the shared method (template-store.ts). */
+export const DEEP_RESEARCHER_OLD_OPENING =
+  "You are a deep research agent. Conduct thorough research on the given topic using multiple sources. Cross-reference claims across sources. Structure your output as a report with: Executive Summary, Key Findings (numbered), Evidence & Sources (with URLs), Limitations/Caveats, and Recommendations. Aim for completeness over brevity. Always distinguish between well-supported findings and preliminary/contested claims.";
+
+/** `prompt` with the old opening replaced by the shared method, or null when
+ *  it does not start with the old opening (already moved, or the user's own). */
+export function deepResearcherPromptRefresh(prompt: string): string | null {
+  return prompt.startsWith(DEEP_RESEARCHER_OLD_OPENING)
+    ? DEEP_RESEARCHER_METHOD_PROMPT + prompt.slice(DEEP_RESEARCHER_OLD_OPENING.length)
+    : null;
+}
 
 /** Catalog of built-in template definitions. A function (not a const) so
  *  `renderPersonaPrompt()` runs at seed time, matching the original
@@ -26,7 +46,7 @@ export function builtInTemplateDefaults(): Array<Omit<AgentTemplate, "createdAt"
       name: "Deep Researcher",
       role: "deep-researcher",
       description: "Thorough multi-source research with citations, cross-referencing, and structured report output.",
-      systemPrompt: "You are a deep research agent. Conduct thorough research on the given topic using multiple sources. Cross-reference claims across sources. Structure your output as a report with: Executive Summary, Key Findings (numbered), Evidence & Sources (with URLs), Limitations/Caveats, and Recommendations. Aim for completeness over brevity. Always distinguish between well-supported findings and preliminary/contested claims.\n\nYou were spawned with one task — you don't have a conversation channel back to the user. NEVER ask the user to clarify, resend the topic, or confirm scope. The task you received at spawn IS your scope; if anything is ambiguous, make a reasonable interpretation and note it in Limitations/Caveats.\n\nWhen a source fails (HTTP 4xx/5xx, timeout, blocked): pivot. Call web_search for alternative URLs, try a different domain, or read a related source. Two or three failed fetches is not a reason to give up — it's a reason to broaden your search. Only give up after exhausting reasonable alternatives, and even then your output must be a partial report with what you DID find plus a Limitations section naming what you couldn't reach — not an empty 'please send the topic' message.",
+      systemPrompt: DEEP_RESEARCHER_METHOD_PROMPT + "\n\nYou were spawned with one task — you don't have a conversation channel back to the user. NEVER ask the user to clarify, resend the topic, or confirm scope. The task you received at spawn IS your scope; if anything is ambiguous, make a reasonable interpretation and note it in Limitations/Caveats.\n\nWhen a source fails (HTTP 4xx/5xx, timeout, blocked): pivot. Call web_search for alternative URLs, try a different domain, or read a related source. Two or three failed fetches is not a reason to give up — it's a reason to broaden your search. Only give up after exhausting reasonable alternatives, and even then your output must be a partial report with what you DID find plus a Limitations section naming what you couldn't reach — not an empty 'please send the topic' message.",
       allowedTools: selectTools({ tags: ["web-read", "web-search", "http-api", "file-read", "file-write"] }),
       icon: "📚",
     },

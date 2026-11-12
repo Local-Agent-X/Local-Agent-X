@@ -1774,8 +1774,8 @@ body.agent-feeds-resizing .agent-feeds{transition:none!important}
 .collab-question{font:inherit;padding:8px;border-radius:8px;border:1px solid var(--border);background:var(--surface-2);color:inherit;resize:vertical}
 .collab-member{display:flex;align-items:center;gap:8px}
 .collab-provider{min-width:120px}
-.collab-model,.collab-rounds select{font:inherit;flex:1;min-width:0;padding:3px 6px;border-radius:6px;border:1px solid var(--border);background:var(--surface-2);color:inherit}
-.collab-rounds select{flex:none}
+.collab-model,.collab-choice select{font:inherit;flex:1;min-width:0;padding:3px 6px;border-radius:6px;border:1px solid var(--border);background:var(--surface-2);color:inherit}
+.collab-choice select{flex:none}
 .collab-card-actions{display:flex;justify-content:flex-end;gap:8px}
 .collab-card-actions .own-copy-btn{padding:5px 14px}
 .collab-card-actions .own-copy-btn:disabled{opacity:.5;cursor:default}

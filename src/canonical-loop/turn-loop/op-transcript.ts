@@ -63,7 +63,7 @@ const SECRET_WINDOW = 2048;
  */
 const OMISSION_MARKER_COST = 34;
 
-interface TranscriptEntry {
+export interface TranscriptEntry {
   /** The ordered steps and the user's own words — the procedure itself.
    *  Omitting one is a completeness claim and costs a marker; omitting agent
    *  prose or a tool result claims nothing and is silent. */
@@ -81,7 +81,7 @@ interface TranscriptEntry {
   cost: number;
 }
 
-function makeEntry(procedural: boolean, label: string, raw: string, max: number): TranscriptEntry {
+export function makeEntry(procedural: boolean, label: string, raw: string, max: number): TranscriptEntry {
   // Registered vault values are scrubbed from the FULL raw text, unwindowed and
   // before any collapse or clip. This pass must never be positional: whitespace
   // collapse MOVES a secret relative to any window measured on the raw string,
@@ -107,13 +107,18 @@ function makeEntry(procedural: boolean, label: string, raw: string, max: number)
   };
 }
 
-function renderEntry(e: TranscriptEntry, redact: (s: string) => string): string {
+export function renderEntry(e: TranscriptEntry, redact: (s: string) => string): string {
   // Redact BEFORE the clip. Entries that were never cut skip this and ride the
   // single whole-transcript pass instead — that is the cost control that keeps
   // the redactors off every dropped entry.
   if (!e.hint) return e.label + e.flat;
   const safe = redact(e.flat);
   return e.label + (safe.length > e.max ? safe.slice(0, e.max) : safe) + e.hint;
+}
+
+/** Both redactors, in the order every rendered transcript applies them. */
+export function redactTranscriptText(s: string): string {
+  return redactString(redactKnownSecrets(s)).redacted;
 }
 
 /** Indices ordered by distance from the centre, closest first. */
@@ -191,7 +196,7 @@ export function renderOpTranscript(
   followUpOpIds: readonly string[] = [],
 ): string {
   const entries = [...collectTranscriptEntries(opId), ...followUpOpIds.flatMap(collectFollowUpEntries)];
-  const redact = (s: string): string => redactString(redactKnownSecrets(s)).redacted;
+  const redact = redactTranscriptText;
 
   // Converge on the cap rather than slicing the tail off: redaction can GROW
   // text (a 7-char registered value becomes "[REDACTED_SECRET]"), and a tail

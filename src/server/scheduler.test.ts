@@ -214,7 +214,7 @@ describe("registered background jobs declare an overlap policy", () => {
       others.map(([name, policy]) => `${name}=${policy}`),
       "every other registered job reconciles single-writer state: a dropped tick is free, a concurrent one races",
     ).toEqual(others.map(([name]) => `${name}=skip`));
-    expect(Object.keys(JOB_OVERLAP), "all seven registered jobs are enumerated").toHaveLength(7);
+    expect(Object.keys(JOB_OVERLAP), "all eight registered jobs are enumerated").toHaveLength(8);
   });
 });
 

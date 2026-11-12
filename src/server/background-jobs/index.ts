@@ -43,7 +43,8 @@ export type RegisteredJobName =
   | "memory-write-canary"
   | "dream-check"
   | "skill-review"
-  | "protocol-curator";
+  | "protocol-curator"
+  | "failure-review";
 
 /**
  * Overlap policy for every registered job, in one place. Not documentation —
@@ -53,7 +54,7 @@ export type RegisteredJobName =
  *
  * The distinction that matters: "skip" is right when the next tick is
  * EQUIVALENT to the one in flight; "self-guarded" is right when the repeated
- * tick IS the job's recovery mechanism. Six of these reconcile single-writer
+ * tick IS the job's recovery mechanism. Seven of these reconcile single-writer
  * state — one does not.
  *
  *   memory-bg (skip)
@@ -99,6 +100,11 @@ export type RegisteredJobName =
  *     concurrent passes would race. shouldCurate() gates work to ~daily but is
  *     a CADENCE gate, not a lock: it grants no exclusion and has no recovery
  *     deadline, so it cannot stand in for the latch the way dream's lock can.
+ *
+ *   failure-review (skip)
+ *     The one-time backfill appends past failures to the tool-usage log; two
+ *     passes at once would both find a call missing and both write it. A
+ *     dropped tick costs an hour: the next one finds the same work.
  */
 export const JOB_OVERLAP: Record<RegisteredJobName, OverlapPolicy> = {
   "memory-bg": "skip",
@@ -108,12 +114,48 @@ export const JOB_OVERLAP: Record<RegisteredJobName, OverlapPolicy> = {
   "dream-check": "self-guarded",
   "skill-review": "skip",
   "protocol-curator": "skip",
+  "failure-review": "skip",
 };
 
 /** Name + declared policy in one spread, so a registration can never carry a
  *  name whose policy was decided somewhere else. */
 function withOverlapPolicy(name: RegisteredJobName): { name: RegisteredJobName; overlap: OverlapPolicy } {
   return { name, overlap: JOB_OVERLAP[name] };
+}
+
+/**
+ * Upkeep of what the agent has learned, both on the shared foreground-idle
+ * gate: the protocol curator (catalog lifecycle and its advisory report) and
+ * the failure review (what keeps going wrong across chats).
+ */
+function registerLearningUpkeep(scheduler: JobScheduler, foregroundIdle: () => boolean): void {
+  scheduler.register({
+    ...withOverlapPolicy("protocol-curator"),
+    intervalMs: 6 * 60 * 60 * 1000, // poll every 6h; shouldCurate() gates actual work to ~daily
+    startupDelayMs: 10 * 60 * 1000,
+    shouldRun: foregroundIdle,
+    run: async () => {
+      try {
+        const { shouldCurate, runCurator } = await import("../../protocols/curator.js");
+        if (!shouldCurate()) return;
+        const r = await runCurator();
+        logger.info(`[curator] pass: archived=${r.transitions.archived.length} purged=${r.transitions.purged.length} clusters=${r.clusters.length} report=${r.reportPath}`);
+      } catch (e) { logger.warn("[curator]", (e as Error).message); }
+    },
+  });
+
+  scheduler.register({
+    ...withOverlapPolicy("failure-review"),
+    // Polled hourly so a busy machine still gets an idle hour; the pass
+    // decides whether there is anything to do (failure-backfill.ts runs once).
+    intervalMs: 60 * 60 * 1000,
+    startupDelayMs: 15 * 60 * 1000,
+    shouldRun: foregroundIdle,
+    run: async () => {
+      const { backfillToolFailures } = await import("./failure-backfill.js");
+      await backfillToolFailures();
+    },
+  });
 }
 
 /** Idle threshold (ms) below which the LLM-heavy background lane is suppressed. */
@@ -302,20 +344,7 @@ export function startBackgroundJobs(deps: {
     },
   });
 
-  scheduler.register({
-    ...withOverlapPolicy("protocol-curator"),
-    intervalMs: 6 * 60 * 60 * 1000, // poll every 6h; shouldCurate() gates actual work to ~daily
-    startupDelayMs: 10 * 60 * 1000,
-    shouldRun: foregroundIdle,
-    run: async () => {
-      try {
-        const { shouldCurate, runCurator } = await import("../../protocols/curator.js");
-        if (!shouldCurate()) return;
-        const r = await runCurator();
-        logger.info(`[curator] pass: archived=${r.transitions.archived.length} purged=${r.transitions.purged.length} clusters=${r.clusters.length} report=${r.reportPath}`);
-      } catch (e) { logger.warn("[curator]", (e as Error).message); }
-    },
-  });
+  registerLearningUpkeep(scheduler, foregroundIdle);
 
   // Backfill scans every file and re-embeds — see decideBackfill in
   // ./backfill-gate.ts for the two contention preconditions, and why embedder

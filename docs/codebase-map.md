@@ -13,18 +13,18 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 2006 non-test source files · 81 oversized · 266 nearing the size cap.
+**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 2009 non-test source files · 80 oversized · 267 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 178 | 29 | XL | 1 |
+| `src/ops/` | 179 | 29 | XL | 1 |
 | `src/security/` | 163 | 60 | XL | 2 |
-| `src/tools/` | 130 | 234 | XL | 9 |
-| `src/tool-execution/` | 97 | 89 | XL | 2 |
+| `src/tools/` | 131 | 234 | XL | 9 |
+| `src/tool-execution/` | 99 | 89 | XL | 2 |
 | `src/workspace/` | 91 | 3 | M |  |
-| `src/canonical-loop/` | 86 | 283 | XL | 11 |
+| `src/canonical-loop/` | 87 | 285 | XL | 11 |
 | `src/providers/` | 79 | 27 | L | 1 |
 | `src/session/` | 65 | 13 | L |  |
 | `src/data-lineage/` | 59 | 12 | L |  |
@@ -49,13 +49,13 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/protocols/` | 21 | 52 | XL |  |
 | `src/inbox/` | 20 | 6 | M |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
-| `src/server/` *(entrypoint)* | 19 | 62 | XL | 5 |
+| `src/server/` *(entrypoint)* | 19 | 63 | XL | 4 |
 | `src/autonomy/` | 18 | 6 | M |  |
 | `src/agents/` | 17 | 14 | L |  |
 | `src/net/` | 17 | 11 | L |  |
+| `src/cognition/` | 16 | 36 | XL | 1 |
 | `src/voice/` | 16 | 80 | XL | 1 |
 | `src/anthropic-client/` | 15 | 22 | L | 2 |
-| `src/cognition/` | 15 | 36 | XL | 1 |
 | `src/cron/` | 14 | 14 | L |  |
 | `src/self-edit/` | 13 | 19 | L | 2 |
 | `src/agent-loop/` | 12 | 1 | S |  |
@@ -297,7 +297,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/self-edit/sandbox.ts#runSelfEditInSandbox`
 - `src/self-edit/tool.ts#selfEditTool.execute`
 - `src/server/background-jobs/cron-runner.ts#cronService.onExecute:callback`
-- `src/server/background-jobs/index.ts#startBackgroundJobs`
 - `src/server/bootstrap-services.ts#initOrRefreshEmbeddingProvider`
 - `src/server/handler-events.ts#agentRunDriver`
 - `src/server/index.ts#startServer`
@@ -419,6 +418,7 @@ job. Comments are free: never cut them to fit.
 - `src/screen-stream/signaling-machine.ts#signalingReducer` — 90+ own code lines (cap 100)
 - `src/security/layer/network-policy.ts#evaluateWebFetch` — 90+ own code lines (cap 100)
 - `src/security/layer/shell-policy.ts#evaluateShellCommand` — 90+ own code lines (cap 100)
+- `src/server/background-jobs/index.ts#startBackgroundJobs` — 90+ own code lines (cap 100)
 - `src/server/inbound-channel-runner.ts#runInboundChannelTurn` — 90+ own code lines (cap 100)
 - `src/server/voice-ws.ts#runVoiceTurn` — 90+ own code lines (cap 100)
 - `src/tool-execution/run-sandboxed.ts#runSandboxedPhase` — 90+ own code lines (cap 100)

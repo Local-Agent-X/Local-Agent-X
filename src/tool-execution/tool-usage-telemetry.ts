@@ -16,13 +16,17 @@
  * Read it with: jq -s 'group_by(.tool) | map({tool: .[0].tool, n: length}) | sort_by(-.n)' ~/.lax/telemetry/tool-usage.jsonl
  */
 
-import { appendFileSync, createReadStream, existsSync, mkdirSync } from "node:fs";
+import { appendFileSync, createReadStream, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { getLaxDir } from "../lax-data-dir.js";
 
 const DIR = join(getLaxDir(), "telemetry");
 const FILE = join(DIR, "tool-usage.jsonl");
+/** Present once the failures of past runs have been written into the log
+ *  (server/background-jobs/failure-backfill.ts). Losing it costs one rescan:
+ *  the backfill never writes a call the log already holds. */
+const BACKFILL_MARK = join(DIR, "failures-backfilled");
 
 /** Which failure a failed call was. Only a line carrying this is ever counted
  *  as a failure: lines written before it existed say "error" and nothing more. */
@@ -106,4 +110,15 @@ export async function readToolFailures(sinceMs: number, file: string = FILE): Pr
     if (event) out.push(event);
   }
   return out;
+}
+
+export function failureBackfillDone(): boolean {
+  return existsSync(BACKFILL_MARK);
+}
+
+export function markFailureBackfillDone(): void {
+  try {
+    ensure();
+    writeFileSync(BACKFILL_MARK, new Date().toISOString());
+  } catch { /* a lost mark is a rescan, not an error */ }
 }

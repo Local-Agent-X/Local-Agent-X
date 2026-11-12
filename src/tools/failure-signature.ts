@@ -45,6 +45,27 @@ export function failureReason(content: string): string {
   return line.trim().slice(0, MAX_FAILURE_REASON_CHARS);
 }
 
+const FAILURE_STATUSES: ReadonlySet<string> = new Set(["error", "blocked", "timeout"]);
+
+/**
+ * Whether a call's outcome is a failure of the agent's: it errored, timed out,
+ * or was refused by a gate. Not one:
+ *  - a call the user declined or stopped (`declined`, `cancelled`): a person
+ *    said no, nothing is wrong with the call;
+ *  - a call waiting on a person (layer `approval`): parked in the inbox or
+ *    refused for want of someone to ask, the same call runs once they answer.
+ * One rule for the live record (tool-execution/failure-record.ts) and the read
+ * of a past run (canonical-loop/turn-loop/op-tool-failures.ts).
+ */
+export function countsAsFailure(status: string, layer: string | undefined): boolean {
+  return FAILURE_STATUSES.has(status) && layer !== "approval";
+}
+
+/** The `action` of a one-tool-many-actions family (browser, protocol, office). */
+export function actionOf(args: Record<string, unknown>): string | undefined {
+  return typeof args.action === "string" ? args.action : undefined;
+}
+
 export interface FailureIdentity {
   tool: string;
   /** `args.action` of a one-tool-many-actions family (browser, protocol, office). */

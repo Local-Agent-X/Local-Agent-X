@@ -1764,6 +1764,11 @@ body.agent-feeds-resizing .agent-feeds{transition:none!important}
 .orchestrator-badge{padding:2px 8px;border-radius:6px;border:1px solid var(--accent);color:var(--accent);font-weight:600}
 .orchestrator-badge.other{border-color:var(--border);color:var(--muted);font-weight:400}
 .orchestrator-routing{font:inherit;min-width:280px;padding:2px 8px;border-radius:6px;border:1px solid var(--border);background:var(--surface-2);color:inherit}
+/* A collab's model chats, listed under the chat it was started from (app-sidebar-render.js). */
+.chat-item.collab-sub{margin-left:18px;padding-top:5px;padding-bottom:5px;font-size:.74rem;border-left:1px solid var(--border);border-radius:0 8px 8px 0}
+/* A pane is moved by dragging its head onto another (chat-tiles-drag.js). */
+body.chat-tiles-on .chat-tile-head{cursor:grab}
+body.chat-tiles-dragging .chat-tile,body.chat-tiles-dragging #chat-main{outline:1px dashed var(--accent)}
 /* ── The collab card (chat-collab.js) ── */
 .collab-card{position:fixed;inset:0;z-index:9000;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,.35)}
 .collab-card-box{width:min(520px,92vw);max-height:86vh;overflow:auto;display:flex;flex-direction:column;gap:10px;padding:18px;border-radius:12px;border:1px solid var(--border);background:var(--surface);color:var(--text);font-size:.82rem}

@@ -9,7 +9,7 @@ import {
 } from "./collab.js";
 import { applyResponses, applyVerdicts, parseClaims } from "./collab-claims.js";
 import {
-  answerMessage, challengeMessage, claimsRecord, claimsRepairMessage, disputeMessage, missingDisputesMessage, researchMessage, resultMessage,
+  answerMessage, challengeMessage, claimsRecord, claimsRepairMessage, disputeMessage, missingDisputesMessage, researchMessage, resultMessage, startedNote,
 } from "./collab-messages.js";
 import { DEEP_RESEARCH_METHOD } from "./research-method.js";
 
@@ -96,6 +96,14 @@ describe("the research message", () => {
     expect(researchMessage(deep, deep.members[0])).toContain(DEEP_RESEARCH_METHOD);
     const standard = collab();
     expect(researchMessage(standard, standard.members[0])).not.toContain("SEARCH WIDE");
+  });
+
+  it("the starting chat is told what is now running, by the models' names and the steps chosen", () => {
+    const full = startedNote(collab({ depth: "deep" }));
+    expect(full).toContain("Collab started (deep research): opus, gpt, grok are each researching this in their own chat.");
+    expect(full).toContain("check each other's claims and answer the challenges");
+    expect(full).toContain("This chat does no research.");
+    expect(startedNote(collab({ steps: 1 }))).not.toContain("check each other");
   });
 
   it("research only says the report goes to the starting chat; the repair asks for the claims alone", () => {

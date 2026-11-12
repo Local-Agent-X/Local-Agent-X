@@ -18,7 +18,9 @@
 //     chat.messages here, so the chat is re-read when its turn starts (for the
 //     prompt) and when it ends (for the reply).
 //
-// Which chats are tiled is remembered per project, in this browser.
+// Which chats are tiled, and in what order, is remembered per project (or
+// collab), in this browser. A pane is moved by dragging its head onto another
+// (chat-tiles-drag.js).
 //
 // Panes are offered where they share something. Code sessions (the sidebar's
 // code side, sidebar-mode.js) share a project folder: the Tiles button shows
@@ -29,7 +31,8 @@
 // External deps: ChatTilesCore (chat-tiles-core.js); chatTileEl, paintChatTile,
 // paintChatTileHead (chat-tiles-view.js); chats, selectChat, newChat
 // (app-state.js, app-sidebar-actions.js); chatModeOf (sidebar-mode.js);
-// hydrateChat (app-sync.js); laxCollab (chat-collab.js);
+// hydrateChat (app-sync.js); laxCollab (chat-collab.js); ChatTilesDrag
+// (chat-tiles-drag.js);
 // ChatStreamStore; apiFetch (shared.js); orchestratorState, otherAgentsRows
 // (chat-agent-feeds-claims.js).
 
@@ -200,8 +203,9 @@ var laxChatTiles = (function () {
     var toggle = document.getElementById('chat-tiles-toggle');
     if (toggle) { toggle.classList.toggle('on', show); toggle.style.display = tileable(a) ? '' : 'none'; }
     var addBtn = document.getElementById('chat-tiles-add');
-    // A collab's panes are its chats: there is nothing to add.
-    if (addBtn) addBtn.style.display = show && !collabOf(a) && ids.length < ChatTilesCore.MAX_TILES ? '' : 'none';
+    // A collab's panes are its chats: the button is there to bring back one that was closed.
+    var roomToAdd = ids.length < ChatTilesCore.MAX_TILES && (!collabOf(a) || ChatTilesCore.addable(pool(), ids, 1).length > 0);
+    if (addBtn) { addBtn.style.display = show && roomToAdd ? '' : 'none'; addBtn.textContent = collabOf(a) ? '+ Chat' : '+ Session'; }
     Array.prototype.slice.call(grid.querySelectorAll('.chat-tile')).forEach(function (el) {
       if (!show || ids.indexOf(el.dataset.session) === -1) el.remove();
     });
@@ -312,8 +316,12 @@ var laxChatTiles = (function () {
     menu.id = 'chat-tiles-menu';
     menu.className = 'chat-tiles-menu';
     var a = active();
-    if (a && a.projectId) menu.appendChild(menuItem('All sessions in this project', addProject));
-    menu.appendChild(menuItem('New session', addNew));
+    if (collabOf(a)) {
+      menu.appendChild(menuItem('All chats of this collab', function () { pool().forEach(function (c) { add(c.id); }); }));
+    } else {
+      if (a && a.projectId) menu.appendChild(menuItem('All sessions in this project', addProject));
+      menu.appendChild(menuItem('New session', addNew));
+    }
     ChatTilesCore.addable(pool(), ids, 12).forEach(function (c) {
       menu.appendChild(menuItem(c.title || 'Session', function () { add(c.id); }));
     });
@@ -340,6 +348,7 @@ var laxChatTiles = (function () {
     document.addEventListener('click', function (e) {
       if (!e.target.closest || (!e.target.closest('#chat-tiles-menu') && !e.target.closest('#chat-tiles-add'))) closeAddMenu();
     });
+    ChatTilesDrag.wire(grid, function () { return focusedId; }, function (from, to) { ids = ChatTilesCore.moved(ids, from, to); layout(); });
     ChatStreamStore.subscribeAll(onStoreEvent);
     // The chat list and the chat on screen are restored after this script
     // runs: the Tiles button shows, and a grid left on comes back, with the

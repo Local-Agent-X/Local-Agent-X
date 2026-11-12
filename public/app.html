@@ -37,7 +37,7 @@
 <link rel="preload" href="/hero-master.png" as="image"/>
 <link rel="icon" type="image/x-icon" href="/favicon.ico"/>
 <link rel="icon" type="image/png" sizes="192x192" href="/favicon.png"/>
-<link rel="stylesheet" href="/css/app.css?v=vb52"/>
+<link rel="stylesheet" href="/css/app.css?v=vb53"/>
 <link rel="stylesheet" href="/css/browser-workspace.css?v=v2"/>
 <link rel="stylesheet" href="/vendor/xterm/xterm.css?v=v1"/>
 <link rel="stylesheet" href="/css/voice-sphere.css?v=vb2"/>
@@ -205,7 +205,7 @@
     <div id="chat-tiles">
     <div id="chat-main">
       <!-- This chat's pane header, shown only in the tile grid. -->
-      <div id="chat-tile-head" class="chat-tile-head">
+      <div id="chat-tile-head" class="chat-tile-head" draggable="true">
         <span class="chat-tile-dot"></span><span class="chat-tile-title"></span><span class="chat-tile-orch"></span><span class="chat-tile-clash"></span><span class="chat-tile-state"></span><span class="chat-tile-model"></span>
         <button type="button" class="chat-tile-close" onclick="laxChatTiles.closeFocused()" title="Close this pane (the chat keeps running)" aria-label="Close this pane">&times;</button>
       </div>
@@ -1807,7 +1807,7 @@
 <script src="/js/sidebar-mode.js?v=v7"></script>
 <script src="/js/app-sync.js?v=v5"></script>
 <script src="/js/app-sidebar-actions.js?v=v8"></script>
-<script src="/js/app-sidebar-render.js?v=v6"></script>
+<script src="/js/app-sidebar-render.js?v=v7"></script>
 <script src="/js/app-sidebar-project-files.js?v=v2"></script>
 <script src="/js/app.js?v=va7"></script>
 <script src="/js/home-launcher.js?v=v1"></script>
@@ -1833,10 +1833,11 @@
 <script src="/js/chat-agent-feeds-resize.js?v=v1"></script>
 <script src="/js/chat-agent-feeds-sync.js?v=v1"></script>
 <script src="/js/chat-agent-feeds-claims.js?v=v5"></script>
-<script src="/js/chat-tiles-core.js?v=v2"></script>
-<script src="/js/chat-tiles-view.js?v=v1"></script>
-<script src="/js/chat-collab.js?v=v2"></script>
-<script src="/js/chat-tiles.js?v=v4"></script>
+<script src="/js/chat-tiles-core.js?v=v3"></script>
+<script src="/js/chat-tiles-view.js?v=v2"></script>
+<script src="/js/chat-tiles-drag.js?v=v1"></script>
+<script src="/js/chat-collab.js?v=v3"></script>
+<script src="/js/chat-tiles.js?v=v5"></script>
 <script src="/js/chat-artifacts.js?v=v4"></script>
 <script src="/js/browser-tab-strip.js?v=v5"></script>
 <script src="/js/browser-workspace.js?v=v1"></script>

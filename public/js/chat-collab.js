@@ -7,17 +7,24 @@
 // one chat per model and runs the steps; this chat writes the result.
 //
 // Here: the card, the strip that says where the collab is (step, Stop), and
-// the list of collabs the tile grid reads to put a collab's chats side by
-// side (chat-tiles.js). Re-read on a `collab_changed` frame.
+// the list of collabs. The tile grid reads it to put a collab's chats side by
+// side (chat-tiles.js), opened by itself the first time a chat of a running
+// collab is on screen; the sidebar reads it to list each model's chat under
+// the chat the collab was started from (app-sidebar-render.js). Re-read on a
+// `collab_changed` frame.
 //
 // External deps: apiFetch (shared-api.js); chats, saveChats, renderSidebar
 // (app-state.js, app-sidebar-render.js); chatModeOf (sidebar-mode.js);
-// syncChatsFromServer (app-sync.js); laxChatTiles (chat-tiles.js).
+// syncChatsFromServer, hydrateChat (app-sync.js); laxChatTiles (chat-tiles.js).
 
 var laxCollab = (function () {
   var MAX_MEMBERS = 4;
   var collabs = [];
   var paintedFor = '';
+  // The collabs already read (null before the first read), and the ones the
+  // tile grid was opened for.
+  var known = null;
+  var tiled = {};
 
   function active() { try { return window.activeChat || null; } catch (e) { return null; } }
   function chatList() { return typeof chats !== 'undefined' && Array.isArray(chats) ? chats : []; }
@@ -63,12 +70,12 @@ var laxCollab = (function () {
   // ── The collabs on record ──
 
   /** A member chat the server made is not in this page's list until it is added. */
-  function adopt(c, titles) {
+  function adopt(c) {
     var added = false;
     c.members.forEach(function (m) {
       if (chatList().some(function (x) { return x.id === m.sessionId; })) return;
       var now = Date.now();
-      chatList().unshift({ id: m.sessionId, title: (titles && titles[m.sessionId]) || m.label, messages: [], createdAt: now, updatedAt: now, startedFrom: c.hostId, _needsHydrate: true });
+      chatList().unshift({ id: m.sessionId, title: m.label, messages: [], createdAt: now, updatedAt: now, startedFrom: c.hostId, _needsHydrate: true });
       added = true;
     });
     if (!added) return;
@@ -80,10 +87,54 @@ var laxCollab = (function () {
     return apiFetch('/api/collab').then(function (res) { return res && res.ok ? res.json() : null; }).then(function (data) {
       if (!data || !Array.isArray(data.collabs)) return;
       collabs = data.collabs;
-      collabs.filter(isLive).forEach(function (c) { adopt(c); });
+      var fresh = known ? collabs.filter(function (c) { return !known[c.id]; }) : [];
+      known = {};
+      collabs.forEach(function (c) { known[c.id] = true; });
+      collabs.filter(isLive).forEach(adopt);
+      fresh.forEach(rereadHost);
       paint();
+      showTiles();
       try { if (window.laxChatTiles) window.laxChatTiles.onChatChanged(); } catch (e) {}
     }).catch(function () { /* the next frame asks again */ });
+  }
+
+  /** A collab just started: the app saved the question into the chat it was
+   *  started from, so that chat is read again. */
+  function rereadHost(c) {
+    var host = chatList().filter(function (x) { return x.id === c.hostId; })[0];
+    if (!host || typeof hydrateChat !== 'function') return;
+    host._needsHydrate = true;
+    var a = active();
+    if (a && a.id === host.id) Promise.resolve(hydrateChat(host, { force: true })).catch(function () {});
+  }
+
+  /** A chat of a running collab is on screen: show all of its chats side by
+   *  side. Once per collab, so turning the grid off afterwards stays off. */
+  function showTiles() {
+    var a = active();
+    var c = a ? of(a.id) : null;
+    if (!c || !isLive(c) || tiled[c.id]) return;
+    tiled[c.id] = true;
+    try { if (window.laxChatTiles) window.laxChatTiles.showGroup(); } catch (e) {}
+  }
+
+  /** `list` with each model's chat taken out and kept under the chat its
+   *  collab was started from, when that chat is in the list too. */
+  function nest(list) {
+    var listed = {};
+    list.forEach(function (c) { listed[c.id] = true; });
+    var top = [];
+    var under = {};
+    list.forEach(function (c) {
+      var k = of(c.id);
+      if (k && k.hostId !== c.id && listed[k.hostId]) (under[k.hostId] = under[k.hostId] || []).push(c);
+      else top.push(c);
+    });
+    Object.keys(under).forEach(function (hostId) {
+      var order = of(hostId).chatIds;
+      under[hostId].sort(function (x, y) { return order.indexOf(x.id) - order.indexOf(y.id); });
+    });
+    return { top: top, under: under };
   }
 
   // ── The strip and the button ──
@@ -232,9 +283,12 @@ var laxCollab = (function () {
     }).then(function (res) { return res.json().then(function (data) { return { ok: res.ok, data: data }; }); }).then(function (out) {
       if (!out.ok || !out.data.collab) return out.data.error || 'The collab could not start.';
       collabs = collabs.filter(function (c) { return c.id !== out.data.collab.id; }).concat([out.data.collab]);
-      adopt(out.data.collab, out.data.titles);
+      known = known || {};
+      known[out.data.collab.id] = true;
+      adopt(out.data.collab);
+      rereadHost(out.data.collab);
       paint();
-      try { if (window.laxChatTiles) window.laxChatTiles.showGroup(); } catch (e) {}
+      showTiles();
       try { if (typeof syncChatsFromServer === 'function') syncChatsFromServer(); } catch (e) {}
       return '';
     }).catch(function () { return 'Could not reach the server.'; });
@@ -254,7 +308,7 @@ var laxCollab = (function () {
   function init() {
     refresh();
     // Another chat was opened: its strip is a different collab's, or none.
-    setInterval(function () { var a = active(); if ((a ? a.id : '') !== paintedFor) paint(); }, 1000);
+    setInterval(function () { var a = active(); if ((a ? a.id : '') !== paintedFor) { paint(); showTiles(); } }, 1000);
   }
 
   if (typeof document !== 'undefined') {
@@ -262,5 +316,5 @@ var laxCollab = (function () {
     else init();
   }
 
-  return { of: of, open: function () { open(''); }, takeCommand: takeCommand, refresh: refresh, statusText: statusText, costText: costText, defaultPicks: defaultPicks };
+  return { of: of, nest: nest, open: function () { open(''); }, takeCommand: takeCommand, refresh: refresh, statusText: statusText, costText: costText, defaultPicks: defaultPicks };
 })();

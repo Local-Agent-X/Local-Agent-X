@@ -487,3 +487,26 @@ describe("orchestrator project filing", () => {
     expect(session.projectId).toBe("proj-2");
   });
 });
+
+/**
+ * The title of a chat on its first message. A chat the app started from another
+ * (a session offer, a collab member) was named when it was made; its first
+ * message is the app's brief, which is not a title.
+ */
+describe("orchestrator session title", () => {
+  const run = (ctx: unknown, sessionId: string, message: string) =>
+    runChatTurn({ sessionId, message, attachments: [], projectId: undefined, ctx: ctx as never, requestRole: "operator", sseSink: null });
+
+  it("names a new chat after its first message", async () => {
+    const { ctx, session } = makeCtx(() => {});
+    await run(ctx, "session-title-plain", "What is the capital of France?");
+    expect(session.title).toBe("What is the capital of France?");
+  });
+
+  it("keeps the name of a chat that was started from another", async () => {
+    const { ctx, session } = makeCtx(() => {});
+    Object.assign(session, { title: "grok-4.7", startedFrom: "chat-host" });
+    await run(ctx, "session-title-started", "(Collab, research. Sent by the app, not typed by the user.)");
+    expect(session.title).toBe("grok-4.7");
+  });
+});

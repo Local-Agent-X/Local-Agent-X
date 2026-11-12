@@ -28,6 +28,8 @@ import {
   type Collab, type CollabDepth, type CollabMember, type CollabSteps,
 } from "../../agency/collab.js";
 import { openDisputes } from "../../agency/collab-claims.js";
+import { startedNote } from "../../agency/collab-messages.js";
+import { hasActiveTurn } from "../../session/turn-lock.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("routes.collab");
@@ -96,53 +98,73 @@ async function broadcastChanged(id: string): Promise<void> {
   } catch { /* no socket server in tests */ }
 }
 
-async function start(ctx: ServerContext, body: Record<string, unknown>): Promise<{ status: number; data: unknown }> {
+interface StartRequest {
+  hostId: string;
+  question: string;
+  steps: CollabSteps;
+  depth: CollabDepth;
+  members: Picked[];
+}
+
+/** What a start request asks for, or what is wrong with it. */
+function readStart(ctx: ServerContext, body: Record<string, unknown>): StartRequest | { error: string } {
   const hostId = body.sessionId;
-  if (!isPinnableSessionId(hostId)) return { status: 400, data: { error: "sessionId required" } };
+  if (!isPinnableSessionId(hostId)) return { error: "sessionId required" };
   const question = typeof body.question === "string" ? body.question.trim() : "";
-  if (!question) return { status: 400, data: { error: "Say what the collab should research." } };
-  if (question.length > COLLAB_QUESTION_MAX) return { status: 400, data: { error: `The question is limited to ${COLLAB_QUESTION_MAX} characters.` } };
+  if (!question) return { error: "Say what the collab should research." };
+  if (question.length > COLLAB_QUESTION_MAX) return { error: `The question is limited to ${COLLAB_QUESTION_MAX} characters.` };
   const steps = Number(body.steps);
-  if (steps !== 1 && steps !== 2 && steps !== 3) return { status: 400, data: { error: "steps must be 1 (research), 2 (and challenge) or 3 (and answer)." } };
+  if (steps !== 1 && steps !== 2 && steps !== 3) return { error: "steps must be 1 (research), 2 (and challenge) or 3 (and answer)." };
   const depth = body.depth;
-  if (typeof depth !== "string" || !(depth in COLLAB_REPORT_MAX)) return { status: 400, data: { error: "depth must be standard or deep." } };
+  if (typeof depth !== "string" || !(depth in COLLAB_REPORT_MAX)) return { error: "depth must be standard or deep." };
   const customBaseUrl = String(loadSettings().customBaseUrl || "");
   const usable = (p: CollabMember["provider"]) =>
     localProviderDecision(p, getRuntimeConfig(), customBaseUrl).allowed
     && PROVIDERS[p].auth.hasCredential({ secretsStore: ctx.secretsStore, configOpenAIKey: ctx.config.openaiApiKey });
   const parsed = parseMembers(body.members, usable);
-  if ("error" in parsed) return { status: 400, data: { error: parsed.error } };
+  if ("error" in parsed) return { error: parsed.error };
+  return { hostId, question, steps, depth: depth as CollabDepth, members: parsed.members };
+}
 
+async function start(ctx: ServerContext, body: Record<string, unknown>): Promise<{ status: number; data: unknown }> {
+  const asked = readStart(ctx, body);
+  if ("error" in asked) return { status: 400, data: { error: asked.error } };
+  const { hostId, question } = asked;
   const now = Date.now();
-  let host = ctx.sessionStore.load(hostId);
-  if (host && sessionModeOf(host) === "code") return { status: 409, data: { error: "Start a research collab from a chat, not a code session." } };
+  // A chat the user has not written in yet exists only in their browser.
+  const host = ctx.sessionStore.load(hostId) ?? { id: hostId, title: short(question, 60), messages: [], createdAt: now, updatedAt: now };
+  if (sessionModeOf(host) === "code") return { status: 409, data: { error: "Start a research collab from a chat, not a code session." } };
   if (liveCollabHostedBy(hostId)) return { status: 409, data: { error: "This chat already has a collab running. Stop it first." } };
-  if (!host) {
-    // A chat the user has not written in yet exists only in their browser.
-    host = { id: hostId, title: short(question, 60), messages: [], createdAt: now, updatedAt: now };
-    await ctx.saveSession(host);
-  }
+  // A turn rewrites the whole chat when it ends: rows saved under it would be lost.
+  if (hasActiveTurn(hostId)) return { status: 409, data: { error: "This chat is in the middle of a turn. Start the collab when it has finished." } };
 
   const id = `collab-${randomBytes(6).toString("hex")}`;
   const members: CollabMember[] = [];
-  for (const [i, m] of parsed.members.entries()) {
+  for (const [i, m] of asked.members.entries()) {
     const sessionId = `${id}-m${i + 1}`;
+    // Named after its model: the chat list shows it under the chat that started the collab.
     await ctx.saveSession({
-      id: sessionId, title: `${m.label}: ${short(question, 48)}`, messages: [], createdAt: now, updatedAt: now,
+      id: sessionId, title: m.label, messages: [], createdAt: now, updatedAt: now,
       startedFrom: hostId, ...(host.projectId ? { projectId: host.projectId } : {}),
     });
     sessionModelPins().set(sessionId, { provider: m.provider, model: m.model });
     members.push({ ...m, sessionId, letter: "ABCD"[i], report: "" });
   }
   const collab: Collab = {
-    id, hostId, hostTitle: short(host.title || "this chat", 80), question, steps, depth: depth as CollabDepth,
+    id, hostId, hostTitle: short(host.title || "this chat", 80), question, steps: asked.steps, depth: asked.depth,
     phase: "research", disputeRound: 0, state: "running", members, claims: [], startedAt: new Date(now).toISOString(),
   };
+  // The question was typed on the collab card, not in the chat: put it in the
+  // chat it was asked from, with what is now running, so that chat reads as
+  // the thread the result will land in.
+  host.messages.push({ role: "user", content: question }, { role: "assistant", content: startedNote(collab) });
+  host.updatedAt = now;
+  await ctx.saveSession(host);
   saveNewCollab(collab);
   setCollabChangedListener((changed) => void broadcastChanged(changed));
   void runCollab(ctx, id).catch((e) => logger.warn(`[collab ${id}] ${(e as Error).message}`));
   await broadcastChanged(id);
-  return { status: 200, data: { ok: true, collab: collabView(collab), titles: Object.fromEntries(members.map((m) => [m.sessionId, `${m.label}: ${short(question, 48)}`])) } };
+  return { status: 200, data: { ok: true, collab: collabView(collab) } };
 }
 
 export const handleCollabRoutes: RouteHandler = async (method, url, req, res, ctx) => {

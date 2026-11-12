@@ -11,12 +11,12 @@ import { dirname, join } from "node:path";
 const here = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(join(here, "../public/js/chat-collab.js"), "utf8");
 
-type Chat = { id: string; title: string; mode?: string; messages: unknown[]; startedFrom?: string };
+type Chat = { id: string; title: string; mode?: string; messages: unknown[]; startedFrom?: string; _needsHydrate?: boolean };
 type View = { id: string; hostId: string; question: string; steps: number; depth: string; phase: string; disputeRound: number; state: string; note: string;
   claims: number; disputed: number; chatIds: string[];
   members: Array<{ sessionId: string; label: string; provider: string; model: string; reported: boolean; dropped: string }> };
 type Api = {
-  of: (id: string) => View | null; open: () => void; takeCommand: () => boolean; refresh: () => Promise<void>;
+  of: (id: string) => View | null; nest: (list: Chat[]) => { top: Chat[]; under: Record<string, Chat[]> }; open: () => void; takeCommand: () => boolean; refresh: () => Promise<void>;
   statusText: (c: View) => string; costText: (members: number, steps: number, depth: string) => string;
   defaultPicks: (providers: Array<{ id: string }>, current: { provider: string } | null) => string[];
 };
@@ -49,8 +49,9 @@ describe("the collab card on the chat page", () => {
     return { ok: url === "/api/collab/start" ? startAnswer.ok : true, json: async () => data };
   });
   const chatModeOf = (c: Chat | null) => (c && c.mode === "code" ? "code" : "chat");
-  const load = (): Api => new Function("chats", "apiFetch", "chatModeOf", "saveChats", "renderSidebar", "syncChatsFromServer", "setInterval",
-    `${src}\nreturn laxCollab;`)(chats, apiFetch, chatModeOf, () => {}, () => {}, () => {}, () => 1);
+  const hydrateChat = vi.fn(async (_chat: Chat, _opts?: { force?: boolean }) => {});
+  const load = (): Api => new Function("chats", "apiFetch", "chatModeOf", "saveChats", "renderSidebar", "syncChatsFromServer", "setInterval", "hydrateChat",
+    `${src}\nreturn laxCollab;`)(chats, apiFetch, chatModeOf, () => {}, () => {}, () => {}, () => 1, hydrateChat);
   const open = (id: string) => { (window as { activeChat?: unknown }).activeChat = chats.find((c) => c.id === id) ?? null; };
   const btn = () => document.getElementById("chat-collab-btn")!;
   const strip = () => document.getElementById("collab-strip")!;
@@ -60,8 +61,8 @@ describe("the collab card on the chat page", () => {
     chats = [{ id: "host", title: "Host", messages: [] }, { id: "code-1", title: "Repo", mode: "code", messages: [] }, { id: "solo", title: "Solo", messages: [] }];
     onRecord = [];
     posts = [];
-    startAnswer = { ok: true, data: { ok: true, collab: view(), titles: { m1: "opus: Which battery?", m2: "grok: Which battery?" } } };
-    apiFetch.mockClear(); tiles.onChatChanged.mockClear(); tiles.showGroup.mockClear();
+    startAnswer = { ok: true, data: { ok: true, collab: view() } };
+    apiFetch.mockClear(); tiles.onChatChanged.mockClear(); tiles.showGroup.mockClear(); hydrateChat.mockClear();
     (window as { laxChatTiles?: unknown }).laxChatTiles = tiles;
     open("solo");
     api = load();
@@ -106,8 +107,10 @@ describe("the collab card on the chat page", () => {
     expect(posts).toEqual([{ url: "/api/collab/start", body: { sessionId: "host", question: "Which battery?", steps: 3, depth: "deep",
       members: [{ provider: "anthropic", model: "opus" }, { provider: "xai", model: "grok" }, { provider: "codex", model: "gpt" }] } }]);
     expect(document.getElementById("collab-card")).toBeNull();
-    expect(chats.filter((c) => c.startedFrom === "host").map((c) => c.title).sort()).toEqual(["grok: Which battery?", "opus: Which battery?"]);
-    expect(tiles.showGroup).toHaveBeenCalled();
+    // Each model's chat is named after its model, and the chat it was asked from is read again for the question.
+    expect(chats.filter((c) => c.startedFrom === "host").map((c) => c.title).sort()).toEqual(["grok", "opus"]);
+    expect(hydrateChat).toHaveBeenCalledWith(chats.find((c) => c.id === "host"), { force: true });
+    expect(tiles.showGroup).toHaveBeenCalledTimes(1);
     expect(api.of("m2")?.id).toBe("collab-1");
     expect(strip().textContent).toContain("Collab: 2 models researching");
     // The host waits for the collab it is running; a member's chat never offers one.
@@ -148,5 +151,75 @@ describe("the collab card on the chat page", () => {
     expect(strip().querySelector("button")).toBeNull();
     // Finished: the host may start another.
     expect(btn().style.display).toBe("");
+  });
+});
+
+describe("a collab in the chat list and the tile grid", () => {
+  const collab = { id: "collab-1", hostId: "host", question: "Q", steps: 3, depth: "standard", phase: "research", disputeRound: 0, state: "running", note: "",
+    claims: 0, disputed: 0, chatIds: ["host", "m1", "m2"],
+    members: [
+      { sessionId: "m1", label: "opus", provider: "anthropic", model: "opus", reported: false, dropped: "" },
+      { sessionId: "m2", label: "grok", provider: "xai", model: "grok", reported: false, dropped: "" },
+    ] };
+  const chat = (id: string): Chat => ({ id, title: id, messages: [] });
+  const flush = async () => { for (let i = 0; i < 6; i++) await Promise.resolve(); };
+  let chats: Chat[];
+  let onRecord: unknown[];
+  const tiles = { onChatChanged: vi.fn(), showGroup: vi.fn() };
+  const hydrateChat = vi.fn(async (_chat: Chat, _opts?: { force?: boolean }) => {});
+  let tick: () => void;
+  const boot = (): Api => new Function("chats", "apiFetch", "chatModeOf", "saveChats", "renderSidebar", "syncChatsFromServer", "setInterval", "hydrateChat",
+    `${src}\nreturn laxCollab;`)(chats, async () => ({ ok: true, json: async () => ({ collabs: onRecord }) }), () => "chat", () => {}, () => {}, () => {},
+    (fn: () => void) => { tick = fn; return 1; }, hydrateChat);
+
+  beforeEach(() => {
+    document.body.innerHTML = `<span id="collab-strip"></span><button id="chat-collab-btn"></button>`;
+    chats = [chat("other"), chat("m2"), chat("host"), chat("m1")];
+    onRecord = [];
+    tiles.onChatChanged.mockClear(); tiles.showGroup.mockClear(); hydrateChat.mockClear();
+    (window as { laxChatTiles?: unknown }).laxChatTiles = tiles;
+    (window as { activeChat?: unknown }).activeChat = chats[0];
+  });
+
+  it("lists each model's chat under the chat the collab was started from, in the collab's order", async () => {
+    onRecord = [collab];
+    const api = boot();
+    await flush();
+    const nested = api.nest(chats);
+    expect(nested.top.map((c) => c.id)).toEqual(["other", "host"]);
+    expect(nested.under.host!.map((c) => c.id)).toEqual(["m1", "m2"]);
+    // With the starting chat filtered out (a search, an archive), its models' chats stand on their own.
+    expect(api.nest(chats.filter((c) => c.id !== "host")).top.map((c) => c.id)).toEqual(["other", "m2", "m1"]);
+  });
+
+  it("opens the tile grid the first time a chat of a running collab is on screen, and only then", async () => {
+    onRecord = [collab];
+    const api = boot();
+    await flush();
+    expect(tiles.showGroup).not.toHaveBeenCalled();
+    (window as { activeChat?: unknown }).activeChat = chats[2];
+    tick();
+    expect(tiles.showGroup).toHaveBeenCalledTimes(1);
+    // Turned off by the user afterwards, it stays off: other chats of the collab do not reopen it.
+    (window as { activeChat?: unknown }).activeChat = chats[3];
+    tick();
+    await api.refresh();
+    expect(tiles.showGroup).toHaveBeenCalledTimes(1);
+  });
+
+  it("a collab started elsewhere (the phone) is picked up: its chats are added and its main chat is read again", async () => {
+    chats = [chat("host")];
+    (window as { activeChat?: unknown }).activeChat = chats[0];
+    const api = boot();
+    await flush();
+    expect(hydrateChat).not.toHaveBeenCalled();
+    onRecord = [collab];
+    await api.refresh();
+    expect(chats.map((c) => c.id).sort()).toEqual(["host", "m1", "m2"]);
+    expect(chats.find((c) => c.id === "m1")!.title).toBe("opus");
+    expect(hydrateChat).toHaveBeenCalledWith(chats.find((c) => c.id === "host"), { force: true });
+    expect(tiles.showGroup).toHaveBeenCalledTimes(1);
+    // A finished collab opens no grid.
+    expect(api.of("m2")?.state).toBe("running");
   });
 });

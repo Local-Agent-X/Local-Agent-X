@@ -37,6 +37,17 @@ var ChatTilesCore = (function () {
     return ids.concat([chatId]);
   }
 
+  /** `ids` with `fromId` moved to where `toId` is: dragging a pane onto another. */
+  function moved(ids, fromId, toId) {
+    var from = ids.indexOf(fromId);
+    var to = ids.indexOf(toId);
+    if (from === -1 || to === -1 || from === to) return ids.slice();
+    var next = ids.slice();
+    next.splice(from, 1);
+    next.splice(to, 0, fromId);
+    return next;
+  }
+
   function without(ids, chatId) {
     return ids.filter(function (id) { return id !== chatId; });
   }
@@ -112,7 +123,7 @@ var ChatTilesCore = (function () {
   }
 
   return {
-    MAX_TILES: MAX_TILES, gridShape: gridShape, withChat: withChat, added: added, without: without,
+    MAX_TILES: MAX_TILES, gridShape: gridShape, withChat: withChat, added: added, moved: moved, without: without,
     pruned: pruned, projectChats: projectChats, addable: addable, tileState: tileState,
     runningTool: runningTool, viewRows: viewRows,
   };

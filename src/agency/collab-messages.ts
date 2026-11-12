@@ -39,6 +39,15 @@ function disputeLines(c: Collab, x: Claim): string {
   return [claimLine(x), defence, ...sides].join("\n");
 }
 
+/** The line the starting chat shows under the question once a collab is running. Written by the app. */
+export function startedNote(c: Collab): string {
+  const names = c.members.map((m) => m.label).join(", ");
+  const after = c.steps === 1 ? "" : c.steps === 2
+    ? " They then check each other's claims."
+    : " They then check each other's claims and answer the challenges.";
+  return `Collab started${c.depth === "deep" ? " (deep research)" : ""}: ${names} are each researching this in their own chat.${after} This chat does no research. When they are done, the result is written here: what was confirmed, what was conceded and what is still disputed.`;
+}
+
 export function researchMessage(c: Collab, me: CollabMember): string {
   const others = activeMembers(c).filter((m) => m.sessionId !== me.sessionId).map((m) => `"${m.label}"`).join(", ");
   return [

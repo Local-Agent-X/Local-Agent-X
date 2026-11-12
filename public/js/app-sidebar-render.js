@@ -82,6 +82,8 @@ function renderChatList() {
   const waChats = unassigned.filter(c => c.id && c.id.startsWith('wa-'));
   const tgChats = unassigned.filter(c => c.id && c.id.startsWith('tg-'));
   const regularChats = unassigned.filter(c => !c.id || (!c.id.startsWith('wa-') && !c.id.startsWith('tg-')));
+  // A collab's model chats are listed under the chat it was started from (chat-collab.js).
+  const nested = window.laxCollab ? window.laxCollab.nest(regularChats) : { top: regularChats, under: {} };
 
   // Sort: pinned first, then by date
   const sortWithPins = (arr) => {
@@ -145,7 +147,7 @@ function renderChatList() {
   const weekStart = todayStart - 7 * 86400000;
 
   const groups = { pinned: [], today: [], yesterday: [], week: [], older: [] };
-  for (const c of sortWithPins(regularChats)) {
+  for (const c of sortWithPins(nested.top)) {
     if (pinnedChatIds.includes(c.id)) { groups.pinned.push(c); continue; }
     const t = c.updatedAt || c.createdAt || 0;
     if (t >= todayStart) groups.today.push(c);
@@ -155,9 +157,11 @@ function renderChatList() {
   }
 
   let html = '';
+  const renderSub = (c) => renderItem(c).replace('class="chat-item ', 'class="chat-item collab-sub ');
+  const renderWithSubs = (c) => renderItem(c) + (nested.under[c.id] || []).map(renderSub).join('');
   const renderGroup = (label, items) => {
     if (items.length === 0) return '';
-    return `<div class="chat-group-label">${label}</div>` + items.map(renderItem).join('');
+    return `<div class="chat-group-label">${label}</div>` + items.map(renderWithSubs).join('');
   };
   html += renderGroup('Pinned', groups.pinned);
   html += renderGroup('Today', groups.today);

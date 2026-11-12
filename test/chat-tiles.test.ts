@@ -13,6 +13,7 @@ const here = dirname(fileURLToPath(import.meta.url));
 const read = (p: string) => readFileSync(join(here, "..", p), "utf8");
 const coreJs = read("public/js/chat-tiles-core.js");
 const viewJs = read("public/js/chat-tiles-view.js");
+const dragJs = read("public/js/chat-tiles-drag.js");
 const tilesJs = read("public/js/chat-tiles.js");
 
 type Chat = { id: string; title: string; projectId?: string; mode?: string; updatedAt?: number; archived?: boolean; messages: Array<Record<string, unknown>>; _needsHydrate?: boolean };
@@ -22,6 +23,7 @@ type Core = {
   gridShape: (n: number) => { cols: number; rows: number };
   withChat: (ids: string[], focused: string, id: string | null) => string[];
   added: (ids: string[], id: string) => string[];
+  moved: (ids: string[], from: string, to: string) => string[];
   pruned: (ids: string[], chats: Chat[]) => string[];
   projectChats: (chats: Chat[], active: Chat | null) => string[];
   tileState: (e: Partial<Entry> | null) => string;
@@ -50,6 +52,13 @@ describe("the rules of the tile grid", () => {
     expect(core.withChat(["a", "b", "c"], "b", "z")).toEqual(["a", "z", "c"]);
     expect(core.withChat(["a", "b"], "", "z")).toEqual(["a", "b", "z"]);
     expect(core.withChat(["a", "b"], "a", null)).toEqual(["a", "b"]);
+  });
+
+  it("moves a dragged pane to where it was dropped, and leaves the rest in order", () => {
+    expect(core.moved(["a", "b", "c", "d"], "a", "c")).toEqual(["b", "c", "a", "d"]);
+    expect(core.moved(["a", "b", "c", "d"], "d", "b")).toEqual(["a", "d", "b", "c"]);
+    expect(core.moved(["a", "b"], "a", "a")).toEqual(["a", "b"]);
+    expect(core.moved(["a", "b"], "a", "gone")).toEqual(["a", "b"]);
   });
 
   it("holds at most eight, and drops a chat that was deleted or archived", () => {
@@ -121,7 +130,7 @@ describe("the tile grid on the chat page", () => {
   const chatModeOf = (c: Chat | null) => (c && (c.mode === "code" || c.id.startsWith("ide-")) ? "code" : "chat");
   let firstChatOpened: () => void;
   const load = () => new Function("chats", "selectChat", "newChat", "hydrateChat", "ChatStreamStore", "apiFetch", "WebSocket", "requestAnimationFrame", "chatModeOf", "setInterval", "clearInterval",
-    `${coreJs}\n${viewJs}\n${tilesJs}\nreturn laxChatTiles;`)(chats, selectChat, newChat, hydrateChat, store, apiFetch, { OPEN: 1 }, (fn: () => void) => fn(), chatModeOf,
+    `${coreJs}\n${viewJs}\n${dragJs}\n${tilesJs}\nreturn laxChatTiles;`)(chats, selectChat, newChat, hydrateChat, store, apiFetch, { OPEN: 1 }, (fn: () => void) => fn(), chatModeOf,
     (fn: () => void) => { firstChatOpened = fn; return 1; }, () => {});
   const newChat = vi.fn();
 
@@ -129,7 +138,7 @@ describe("the tile grid on the chat page", () => {
     localStorage.clear();
     document.body.className = "";
     document.body.innerHTML = `<button id="chat-tiles-add" style="display:none"></button><button id="chat-tiles-toggle" style="display:none"></button>
-      <div id="chat-tiles"><div id="chat-main"><div id="chat-tile-head"><span class="chat-tile-title"></span><span class="chat-tile-orch"></span>
+      <div id="chat-tiles"><div id="chat-main"><div id="chat-tile-head" class="chat-tile-head"><span class="chat-tile-title"></span><span class="chat-tile-orch"></span>
       <span class="chat-tile-clash"></span><span class="chat-tile-state"></span><span class="chat-tile-model"></span></div></div></div>`;
     chats = [chat("a", { updatedAt: 9 }), chat("b", { updatedAt: 5, messages: [{ role: "user", content: "hello b" }] }), chat("c", { updatedAt: 3 }), chat("z", { projectId: "p2" }),
       chat("plain", { mode: undefined, updatedAt: 8 })];
@@ -205,10 +214,21 @@ describe("the tile grid on the chat page", () => {
       expect(toggleBtn().style.display).toBe("");
       expect(tiles.tiles()).toEqual(["host", "m1", "m2"]);
       expect(document.body.classList.contains("chat-tiles-on")).toBe(true);
-      // A collab's panes are its chats: nothing to add.
+      // A collab's panes are its chats: nothing to add while all of them are showing.
       expect(document.getElementById("chat-tiles-add")!.style.display).toBe("none");
       tile("m2").click();
       expect(tiles.tiles()).toEqual(["host", "m1", "m2"]);
+
+      // A closed pane can be brought back.
+      tile("m1").querySelector<HTMLElement>(".chat-tile-close")!.click();
+      expect(tiles.tiles()).toEqual(["host", "m2"]);
+      const addBtn = document.getElementById("chat-tiles-add")!;
+      expect(addBtn.style.display).toBe("");
+      expect(addBtn.textContent).toBe("+ Chat");
+      tiles.openAddMenu();
+      expect([...document.querySelectorAll(".chat-tiles-menu-item")].map((b) => b.textContent)).toEqual(["All chats of this collab", "Title m1"]);
+      (document.querySelectorAll<HTMLElement>(".chat-tiles-menu-item")[1]).click();
+      expect(tiles.tiles()).toEqual(["host", "m2", "m1"]);
 
       selectChat("plain");
       expect(document.body.classList.contains("chat-tiles-on")).toBe(false);
@@ -231,6 +251,34 @@ describe("the tile grid on the chat page", () => {
     } finally {
       delete (window as { laxCollab?: unknown }).laxCollab;
     }
+  });
+
+  it("moves a pane dragged by its head onto another, the chat on screen's too", () => {
+    tiles.toggle();
+    expect(tiles.tiles()).toEqual(["a", "b", "c"]);
+    const fire = (type: string, target: Element) => {
+      const e = new Event(type, { bubbles: true, cancelable: true });
+      target.dispatchEvent(e);
+      return e;
+    };
+    // A live view's head, dropped on the last pane.
+    fire("dragstart", tile("b").querySelector(".chat-tile-head")!);
+    expect(document.body.classList.contains("chat-tiles-dragging")).toBe(true);
+    expect(fire("dragover", tile("c")).defaultPrevented).toBe(true);
+    fire("drop", tile("c"));
+    expect(tiles.tiles()).toEqual(["a", "c", "b"]);
+    expect(document.body.classList.contains("chat-tiles-dragging")).toBe(false);
+    expect(tile("b").style.order).toBe("2");
+    // The chat on screen, by its own head, dropped on a live view.
+    fire("dragstart", document.getElementById("chat-tile-head")!);
+    fire("drop", tile("b"));
+    expect(tiles.tiles()).toEqual(["c", "b", "a"]);
+    expect(main().style.order).toBe("2");
+    // A drag that did not start on a head moves nothing.
+    fire("dragstart", tile("b").querySelector(".chat-tile-body")!);
+    expect(fire("dragover", tile("c")).defaultPrevented).toBe(false);
+    fire("drop", tile("c"));
+    expect(tiles.tiles()).toEqual(["c", "b", "a"]);
   });
 
   it("turns the page into a grid of the project's chats, the one on screen in its own pane", () => {

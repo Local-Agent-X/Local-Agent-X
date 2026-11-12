@@ -26,6 +26,8 @@ function chatTileEl(sessionId) {
   el.setAttribute('role', 'button');
   var head = document.createElement('div');
   head.className = 'chat-tile-head';
+  // Dragged by its head onto another pane to move it (chat-tiles-drag.js).
+  head.draggable = true;
   head.appendChild(chatTileSpan('chat-tile-dot'));
   head.appendChild(chatTileSpan('chat-tile-title'));
   head.appendChild(chatTileSpan('chat-tile-orch'));

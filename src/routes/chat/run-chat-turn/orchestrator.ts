@@ -66,7 +66,10 @@ const reconnectHint = (channel: ChannelKind, label: string): string =>
 /** The request's durable facts onto the session it addresses. */
 function applyRequestToSession(session: Session, args: RunChatTurnArgs, message: string): void {
   if (session.messages.length === 0) {
-    session.title = args.sessionTitle ?? (message.slice(0, 60) + (message.length > 60 ? "..." : ""));
+    // A chat the app started from another (a session offer, a collab member) was
+    // named when it was made: its first message is the app's brief, not a title.
+    const named = session.startedFrom && session.title ? session.title : null;
+    session.title = args.sessionTitle ?? named ?? (message.slice(0, 60) + (message.length > 60 ? "..." : ""));
     // The mode is fixed here, on the session's first message (session/mode.ts).
     if (args.mode === "code") session.mode = "code";
   }

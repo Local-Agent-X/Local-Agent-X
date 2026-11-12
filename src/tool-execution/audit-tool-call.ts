@@ -8,7 +8,8 @@ import { USER_HINTS, isBlockLayer, type ToolResult, type ToolChip } from "../typ
 import { renderToolResultForModel, statusOf, withMetadata } from "../tools/result-helpers.js";
 import { getActivePluginToolMetadata } from "../plugin-system/tool-metadata.js";
 import { getHookEngine } from "../hooks/hook-engine.js";
-import { logToolUsage } from "./tool-usage-telemetry.js";
+import { logToolUsage, type ToolFailureFields } from "./tool-usage-telemetry.js";
+import { knownFailureNote } from "./known-failure-note.js";
 import { failureRecordOf } from "./failure-record.js";
 import { actionOf } from "../tools/failure-signature.js";
 import { appendProvenance, type ProvenanceSource } from "../data-lineage/provenance.js";
@@ -234,7 +235,7 @@ export function shapeMsg(ctx: ToolCallContext, note?: string): void {
   }
 }
 
-function recordUsage(ctx: ToolCallContext): void {
+function recordUsage(ctx: ToolCallContext, failure: ToolFailureFields | undefined): void {
   logToolUsage({
     tool: ctx.tc.name,
     action: actionOf(ctx.args),
@@ -242,7 +243,7 @@ function recordUsage(ctx: ToolCallContext): void {
     durationMs: ctx.startedAt ? Date.now() - ctx.startedAt : undefined,
     sessionId: ctx.sessionId,
     callContext: ctx.callContext,
-    failure: failureRecordOf(ctx),
+    failure,
   });
 }
 
@@ -306,12 +307,14 @@ export const auditPhase: Phase = async (ctx) => {
   evaluateThreat(ctx);
   applyBudget(ctx);
   firePostHook(ctx);
-  recordUsage(ctx);
+  const failure = failureRecordOf(ctx);
+  recordUsage(ctx, failure);
   recordProvenance(ctx);
   const media = mediaRefOf(ctx.result!._media);
   ctx.onEvent?.({ type: "tool_end", toolName: ctx.tc.name, toolCallId: ctx.tc.id, result: ctx.result!.content, allowed: ctx.allowed, status: statusOf(ctx.result!), metadata: ctx.result!.metadata, ...(media ? { media } : {}) });
   harvestChip(ctx);
-  // Notes that lead the result: another agent's work it touched (claim-clash-gate.ts), then the injection screen.
-  shapeMsg(ctx, [ctx.coordinationNote, screenToolResult(ctx)].filter(Boolean).join("\n") || undefined);
+  // Notes that lead the result: another agent's work it touched (claim-clash-gate.ts), a lesson
+  // the user kept for this exact failure (known-failure-note.ts), then the injection screen.
+  shapeMsg(ctx, [ctx.coordinationNote, knownFailureNote(ctx, failure), screenToolResult(ctx)].filter(Boolean).join("\n") || undefined);
   return CONTINUE;
 };

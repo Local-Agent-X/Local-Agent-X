@@ -121,7 +121,7 @@ export const LAX_DATA_CATALOG: readonly LaxDataEntry[] = [
     "secrets-vault.json", "whatsapp-auth"),
   ...at("card", AUDIT, "audit", "ari-audit.db"),
   ...at("card", REMEMBERS, "memory", "memory.db", "memory-backups", "memory-atlas.cache.json", "memory-compressed", "memory-tiers.json", "sessions",
-    "sessions-archive", "dream-state.json", "consolidation-log.json", "cross-session-data.json", "capability-gaps.jsonl",
+    "sessions-archive", "dream-state.json", "consolidation-log.json", "cross-session-data.json", "capability-gaps.jsonl", "known-failures.json",
     "contradiction-history.json", "correction-history.json", "corrections.json", "emotional-history.json", "inside-references.json",
     "language-style.json", "milestones.json", "narratives.json", "proactive-patterns.json", "schedule-profile.json",
     "shared-history.json", "topic-frequencies.json", "trust-engine.json", "unspoken-detector.json", "upcoming-events.json",

@@ -119,6 +119,8 @@ function handleSettingsChanged(msg) {
   }
   // A memory change was undone (another tab, the agent): the Memory changes list re-reads.
   if (msg.settings.memoryChanges && typeof window.refreshMemoryChanges === 'function') window.refreshMemoryChanges();
+  // A lesson was kept or discarded (another tab), or the failure review proposed one: the Recurring problems list re-reads.
+  if (msg.settings.recurringProblems && typeof window.refreshRecurringProblems === 'function') window.refreshRecurringProblems();
 }
 
 // Settings the Tool Policy card draws besides the three kill-switches above;

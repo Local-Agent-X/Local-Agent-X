@@ -71,6 +71,27 @@ describe("collectToolFailures", () => {
     expect(r.failures[0].reason).toMatch(/old_string found 2 times/);
   });
 
+  // A lesson the user kept for a failure is put AFTER the tool's output
+  // (tool-execution/known-failure-note.ts). The reason this reads, and the
+  // constraint ledger keys on, must stay the error itself.
+  it("reads the error, not a kept lesson that follows it", () => {
+    const r = collectToolFailures(
+      [tm([
+        "[error, exit_code=127]",
+        "python3: command not found",
+        "[Seen before] This call has failed this way in 4 earlier chats on this computer. The note below was kept from them.",
+        "python3 is not on PATH on this computer; python runs the same interpreter.",
+      ].join("\n"))],
+      [{ tool: "bash" }],
+    );
+    expect(r.failures).toEqual([{ tool: "bash", reason: "python3: command not found" }]);
+  });
+
+  it("takes the first line that says anything as the reason", () => {
+    const r = collectToolFailures([tm("[error]\n\n   old_string found 2 times   \nin a.ts")], [{ tool: "edit" }]);
+    expect(r.failures[0].reason).toBe("old_string found 2 times");
+  });
+
   it("treats legacy ok results (no status header) as ok", () => {
     const r = collectToolFailures(
       [tm("Wrote /a/b.txt")],

@@ -16,7 +16,6 @@ import {
 } from "../cognition/cross-session-learning/known-failures.js";
 import { clusterToolFailures } from "../cognition/cross-session-learning/failure-patterns.js";
 import { failureReason } from "../tools/failure-signature.js";
-import { collectToolFailures } from "../canonical-loop/turn-loop/tool-failure-summary.js";
 import type { ToolDefinition, ToolResult } from "../types.js";
 
 const LESSON = "python3 is not on PATH on this computer; python runs the same interpreter.";
@@ -75,13 +74,11 @@ describe("a kept lesson reaches the next run that hits the same failure", () => 
     expect(noted.content).toContain("[Seen before] This call has failed this way in 3 earlier chats on this computer.");
     expect(noted.content).toContain(LESSON);
     // The note follows the tool's own output: the result's first line is still
-    // the error, which is what the failure nudge, the constraint ledger and
-    // the repeat-failure breaker read, and what the next record is keyed on.
+    // the error. failureReason is what the failure nudge and the constraint
+    // ledger read it with (test/tool-failure-summary.test.ts holds that side),
+    // and what the next record is keyed on.
     expect(noted.content.indexOf("python3: command not found")).toBeLessThan(noted.content.indexOf("[Seen before]"));
     expect(failureReason(noted.content)).toBe("python3: command not found");
-    expect(collectToolFailures(
-      [{ content: noted.content } as never], [{ tool: "run_stub" }],
-    ).failures).toEqual([{ tool: "run_stub", reason: "python3: command not found" }]);
 
     // Once per run for the same work, and the retry working counts as the lesson helping.
     expect((await call(FAILED, "chat-e", "op-e")).content).not.toContain("[Seen before]");

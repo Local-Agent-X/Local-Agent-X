@@ -101,7 +101,9 @@ export const handleMemoryProblemRoutes: RouteHandler = async (method, url, req, 
   try { body = await safeParseBody(req); } catch { body = null; }
   const decision = decisionOf(body);
   if (!decision) { json(400, { error: "Invalid action" }); return true; }
-  const lesson = decideLesson(action[1], decision);
+  let lesson: KnownFailure | null;
+  try { lesson = decideLesson(action[1], decision); }
+  catch { json(500, { error: "The lesson could not be saved" }); return true; } // the store's lock timed out
   if (!lesson) { json(404, { error: "No lesson for that problem" }); return true; }
   inboxLessonAnswered(lesson.signature);
   ctx.broadcastAll({ type: "settings_changed", settings: { recurringProblems: true } });

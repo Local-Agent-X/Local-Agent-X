@@ -28,6 +28,7 @@ import { getLaxDir } from "../../lax-data-dir.js";
 import { createJsonStore } from "../../util/json-store.js";
 import { runMemoryGate } from "../../memory/write-safely.js";
 import { createInternalMemoryContext } from "../../memory/promotion-gate.js";
+import { withLearnedLifecycleTransaction } from "../../protocols/learned-lifecycle-transaction.js";
 import type { FailurePattern } from "./failure-patterns.js";
 
 export const MAX_LESSON_CHARS = 300;
@@ -79,6 +80,27 @@ function store() {
   });
 }
 
+/** Kept lessons as last read, for the lookup under "Delivery" below. */
+let cache: { mtimeMs: number; kept: Map<string, KnownFailure> } | null = null;
+
+/**
+ * Every change to the file, as one read-modify-write under the learning
+ * stores' cross-process lock (protocols/learned-lifecycle-transaction.ts).
+ * More than one process writes here: the server (the review, the user's Keep
+ * or Discard) and any worker child whose failed call is shown a lesson.
+ * Without the lock a worker counting a showing could write back the state it
+ * read a moment before the user discarded the lesson, and bring it back.
+ */
+function mutate<R>(change: (draft: KnownFailureStore) => R): R {
+  try {
+    return withLearnedLifecycleTransaction(() => store().mutate(change));
+  } finally {
+    // This process just changed the file; the next lookup re-reads it. The
+    // mtime check alone is not enough: two writes can land in one timestamp.
+    cache = null;
+  }
+}
+
 export function listKnownFailures(): KnownFailure[] {
   return store().load().failures;
 }
@@ -88,7 +110,7 @@ export function lastFailureReviewAt(): number {
 }
 
 export function noteFailureReviewRan(now: number): void {
-  store().mutate((draft) => { draft.lastReviewAt = now; });
+  mutate((draft) => { draft.lastReviewAt = now; });
 }
 
 /**
@@ -141,7 +163,7 @@ export function recordFailureReview(pattern: FailurePattern, review: ReviewVerdi
     ...(lesson ? { lesson, state: "proposed" as const } : {}),
     sessions: pattern.sessions, count: pattern.count, reviewedAt: now, shown: 0, recovered: 0,
   };
-  store().mutate((draft) => {
+  mutate((draft) => {
     draft.failures = [...draft.failures.filter((f) => f.signature !== record.signature), record];
   });
   return record;
@@ -152,7 +174,7 @@ export type LessonDecision = "keep" | "discard";
 /** The user's answer to a lesson. Keeping one again starts its count over.
  *  Null when there is no lesson under that signature. */
 export function decideLesson(signature: string, decision: LessonDecision): KnownFailure | null {
-  return store().mutate((draft) => {
+  return mutate((draft) => {
     const known = draft.failures.find((f) => f.signature === signature);
     if (!known || known.verdict !== "lesson") return null;
     if (decision === "keep" && known.state !== "kept") { known.shown = 0; known.recovered = 0; }
@@ -164,10 +186,9 @@ export function decideLesson(signature: string, decision: LessonDecision): Known
 // ── Delivery ──
 //
 // The lookup runs on every failed tool call, so kept lessons are held in
-// memory and re-read only when the file changes (its mtime). A worker child
-// process loads its own copy the first time one of its calls fails.
-
-let cache: { mtimeMs: number; kept: Map<string, KnownFailure> } | null = null;
+// memory and re-read when the file changes: at once after a write by this
+// process (mutate drops the copy), by its mtime after a write by another. A
+// worker child process loads its own copy the first time one of its calls fails.
 
 function keptLessons(): Map<string, KnownFailure> {
   let mtimeMs = 0;
@@ -190,7 +211,7 @@ function hasStoppedHelping(known: KnownFailure): boolean {
  */
 export function takeLessonFor(signature: string): KnownFailure | undefined {
   if (!keptLessons().has(signature)) return undefined;
-  return store().mutate((draft) => {
+  return mutate((draft) => {
     const known = draft.failures.find((f) => f.signature === signature);
     if (!known || known.state !== "kept" || !known.lesson) return undefined;
     if (hasStoppedHelping(known)) { known.state = "retired"; return undefined; }
@@ -201,7 +222,7 @@ export function takeLessonFor(signature: string): KnownFailure | undefined {
 
 /** The same work succeeded in a run that was shown this lesson. */
 export function noteLessonHelped(signature: string): void {
-  store().mutate((draft) => {
+  mutate((draft) => {
     const known = draft.failures.find((f) => f.signature === signature);
     if (known && known.recovered < known.shown) known.recovered += 1;
   });

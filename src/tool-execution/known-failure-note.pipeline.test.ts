@@ -1,7 +1,7 @@
 // The whole seam, through the real dispatch pipeline: a call fails → the usage
 // log says which failure it was → a lesson for that signature is proposed,
 // then kept → the same failure in another run comes back with the lesson
-// leading its result → the same work then succeeding is counted → a discarded
+// after its error → the same work then succeeding is counted → a discarded
 // lesson is silent again. Each half is unit-tested where it lives; this is the
 // test that fails if the record and the lookup ever stop agreeing on what
 // "the same failure" is.
@@ -15,6 +15,8 @@ import {
   decideLesson, listKnownFailures, recordFailureReview,
 } from "../cognition/cross-session-learning/known-failures.js";
 import { clusterToolFailures } from "../cognition/cross-session-learning/failure-patterns.js";
+import { failureReason } from "../tools/failure-signature.js";
+import { collectToolFailures } from "../canonical-loop/turn-loop/tool-failure-summary.js";
 import type { ToolDefinition, ToolResult } from "../types.js";
 
 const LESSON = "python3 is not on PATH on this computer; python runs the same interpreter.";
@@ -48,7 +50,7 @@ describe("a kept lesson reaches the next run that hits the same failure", () => 
   afterAll(() => setAriRequired(true));
   beforeEach(() => { _clearDedupCacheForTests(); _resetKnownFailureNotes(); });
 
-  it("records the failure, stays silent until the lesson is kept, then leads the result with it", async () => {
+  it("records the failure, stays silent until the lesson is kept, then puts it after the error", async () => {
     // Three chats hit it. Nothing is known yet, so nothing is said.
     for (const chat of ["chat-a", "chat-b", "chat-c"]) {
       const failed = await call(FAILED, chat, `op-${chat}`);
@@ -72,9 +74,14 @@ describe("a kept lesson reaches the next run that hits the same failure", () => 
     expect(noted.status).toBe("error");
     expect(noted.content).toContain("[Seen before] This call has failed this way in 3 earlier chats on this computer.");
     expect(noted.content).toContain(LESSON);
-    // The note leads; the tool's own output is still there, after it.
-    expect(noted.content.indexOf("[Seen before]")).toBeLessThan(noted.content.indexOf("python3: command not found"));
-    expect(noted.content.indexOf(LESSON)).toBeLessThan(noted.content.lastIndexOf("python3: command not found"));
+    // The note follows the tool's own output: the result's first line is still
+    // the error, which is what the failure nudge, the constraint ledger and
+    // the repeat-failure breaker read, and what the next record is keyed on.
+    expect(noted.content.indexOf("python3: command not found")).toBeLessThan(noted.content.indexOf("[Seen before]"));
+    expect(failureReason(noted.content)).toBe("python3: command not found");
+    expect(collectToolFailures(
+      [{ content: noted.content } as never], [{ tool: "run_stub" }],
+    ).failures).toEqual([{ tool: "run_stub", reason: "python3: command not found" }]);
 
     // Once per run for the same work, and the retry working counts as the lesson helping.
     expect((await call(FAILED, "chat-e", "op-e")).content).not.toContain("[Seen before]");

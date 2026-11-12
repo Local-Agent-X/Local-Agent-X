@@ -52,7 +52,8 @@
 //     on every turn.
 
 import type { CommitTurnMessage } from "../checkpoint.js";
-import { BLOCKED_CALL_RULE, withoutResultHeader } from "../../tools/result-helpers.js";
+import { BLOCKED_CALL_RULE } from "../../tools/result-helpers.js";
+import { failureReason } from "../../tools/failure-signature.js";
 import { extractToolResultText, toolResultStatus } from "./content-extract.js";
 import { isMutationTool } from "../../tool-mutation-check.js";
 import { isLedgerTool } from "../../committing-tool-check.js";
@@ -199,9 +200,11 @@ export function collectToolFailures(
     }
     // A cancelled call neither succeeded nor failed: the user stopped it.
     if (status === "cancelled") continue;
-    // Strip the rendered status header + collapse multi-line content so the
-    // nudge stays short; full failure is still in the tool_result row.
-    const firstLine = withoutResultHeader(text).split("\n")[0].slice(0, 200);
+    // The failure's first line, without the rendered status header, so the
+    // nudge stays short; full failure is still in the tool_result row. The same
+    // extractor the usage log keys a failure on (tools/failure-signature.ts),
+    // so the in-run ledger and the cross-chat count read one "reason".
+    const firstLine = failureReason(text);
     failures.push(status === "declined"
       ? { tool: toolName, reason: firstLine, declined: true }
       : status === "blocked"

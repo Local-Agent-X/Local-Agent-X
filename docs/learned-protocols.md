@@ -216,9 +216,11 @@ nothing else; a lesson is not a protocol and never enters the catalog.
    `noise`. A refused (`blocked`) call is listed but never reviewed.
 4. **Keep.** A lesson is `proposed` until the user keeps it (inbox item plus
    Settings → Memory → Recurring problems). In either `learningMode`.
-5. **Deliver.** A kept lesson leads the result of a call that just failed the
-   same way, fenced as recalled data, once per run for the same work. It is
-   never in the prompt of a turn that did not hit the failure.
+5. **Deliver.** A kept lesson follows the error in the result of a call that
+   just failed the same way, fenced as recalled data, once per run for the same
+   work. After the error, never before: the result's first line is what the
+   failure nudge, the constraint ledger and the repeat-failure breaker read. It
+   is never in the prompt of a turn that did not hit the failure.
 6. **Retire.** The same work succeeding later in that run is a recovery. A
    lesson shown 5 times that helped less than 2 times in 5 retires itself.
 
@@ -234,7 +236,7 @@ the review off. Counting, the list, and lessons already kept are untouched.
 | `src/tools/failure-signature.ts` | The one normalizer and signature, shared with the in-run constraint ledger. |
 | `src/tool-execution/failure-record.ts` | What a failed call adds to the usage log. |
 | `src/cognition/cross-session-learning/failure-patterns.ts` | Groups the window's failures and decides which are recurring. |
-| `src/cognition/cross-session-learning/known-failures.ts` | Verdicts, lessons and their state at `~/.lax/known-failures.json`; the retire rule. |
+| `src/cognition/cross-session-learning/known-failures.ts` | Verdicts, lessons and their state at `~/.lax/known-failures.json`, written under the learned-lifecycle cross-process lock; the retire rule. |
 | `src/canonical-loop/public/op-tool-failures.ts` | Reads a past run's failed calls and renders one as evidence. |
 | `src/server/background-jobs/failure-backfill.ts` | One-time: writes the last two weeks of past failures into the log. |
 | `src/server/background-jobs/failure-review.ts` | The daily pass; `failure-review-prompt.ts` is its static prompt and reply parser. |

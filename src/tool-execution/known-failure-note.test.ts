@@ -37,7 +37,7 @@ beforeEach(() => {
 });
 
 describe("knownFailureNote", () => {
-  it("leads a failed result with the kept lesson, fenced as data", () => {
+  it("gives the kept lesson for a failed result, fenced as data", () => {
     const note = knownFailureNote(ctxWith(err("python3: command not found")), failure);
     expect(note).toContain("[Seen before] This call has failed this way in 4 earlier chats on this computer.");
     expect(note).toContain(LESSON);

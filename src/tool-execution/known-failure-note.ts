@@ -1,12 +1,18 @@
 /**
- * The note that leads a failed result when this exact failure has a lesson the
- * user kept (cognition/cross-session-learning/known-failures.ts): what failed
- * before, in other chats, and what worked instead.
+ * The note that follows a failed result when this exact failure has a lesson
+ * the user kept (cognition/cross-session-learning/known-failures.ts): what
+ * failed before, in other chats, and what worked instead.
  *
  * This is the only place a lesson reaches the agent. It rides the result of
  * the call that failed, so a turn that never hits the failure never pays for
- * it, and it is one of the notes the audit phase already joins ahead of a
- * result (audit-tool-call.ts), not a new nudge.
+ * it, and it is one of the notes the audit phase already puts on a result's
+ * rendered text (audit-tool-call.ts), not a new nudge.
+ *
+ * It comes AFTER the tool's own output, never before. The first line of a
+ * failed result is what the failure nudge and the constraint ledger
+ * (turn-loop/tool-failure-summary.ts), the repeat-failure breaker and the
+ * read of a past run (turn-loop/op-tool-failures.ts) take as "the error"; a
+ * note ahead of it would be read as the error by all four.
  *
  * The lesson is a model's words about past tool output, so it is fenced as
  * recalled data, never stated as the harness's own instruction.

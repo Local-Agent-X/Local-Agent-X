@@ -199,8 +199,12 @@ function harvestChip(ctx: ToolCallContext): void {
 /** Exported for the envelope contract test: the single/multi image split is
  *  the seam that decides what the model actually SEES from a tool call.
  *  `note` (the result screen's, injection-exposure.ts) leads the rendered
- *  text only; the result itself keeps the tool's exact output. */
-export function shapeMsg(ctx: ToolCallContext, note?: string): void {
+ *  text only; the result itself keeps the tool's exact output. `after` follows
+ *  the tool's output instead: a kept lesson about a failure
+ *  (known-failure-note.ts) must not become the result's first line, which is
+ *  what the failure nudge, the constraint ledger and the repeat-failure
+ *  breaker read as "the error". */
+export function shapeMsg(ctx: ToolCallContext, note?: string, after?: string): void {
   const { tc } = ctx;
   const result = ctx.result!;
   const imageData = (result as ToolResultWithImage)._image;
@@ -214,7 +218,9 @@ export function shapeMsg(ctx: ToolCallContext, note?: string): void {
   // tools omit _media, so they stay vision-only.
   const content = imageData
     ? `Image loaded: ${imageData.path}\nQuestion: ${imageData.question}`
-    : renderToolResultForModel(note ? { ...result, content: `${note}\n${result.content}` } : result);
+    : renderToolResultForModel(note || after
+      ? { ...result, content: [note, result.content, after].filter(Boolean).join("\n") }
+      : result);
   ctx.msgs.push(toolMessage(tc.id, result, content));
   // _image additionally feeds the model the bytes as a user-vision message.
   if (imageData) {
@@ -313,8 +319,8 @@ export const auditPhase: Phase = async (ctx) => {
   const media = mediaRefOf(ctx.result!._media);
   ctx.onEvent?.({ type: "tool_end", toolName: ctx.tc.name, toolCallId: ctx.tc.id, result: ctx.result!.content, allowed: ctx.allowed, status: statusOf(ctx.result!), metadata: ctx.result!.metadata, ...(media ? { media } : {}) });
   harvestChip(ctx);
-  // Notes that lead the result: another agent's work it touched (claim-clash-gate.ts), a lesson
-  // the user kept for this exact failure (known-failure-note.ts), then the injection screen.
-  shapeMsg(ctx, [ctx.coordinationNote, knownFailureNote(ctx, failure), screenToolResult(ctx)].filter(Boolean).join("\n") || undefined);
+  // Notes that lead the result: another agent's work it touched (claim-clash-gate.ts), then the
+  // injection screen. After the result: a lesson the user kept for this exact failure.
+  shapeMsg(ctx, [ctx.coordinationNote, screenToolResult(ctx)].filter(Boolean).join("\n") || undefined, knownFailureNote(ctx, failure));
   return CONTINUE;
 };

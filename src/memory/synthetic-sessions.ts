@@ -109,6 +109,24 @@ export function isExcludedFromTranscriptSearch(id: string): boolean {
   return TRANSCRIPT_SEARCH_EXCLUDED.some((p) => id.startsWith(p));
 }
 
+// ── Failure counts — whose failed tool calls are the agent's work (the SEVENTH reader) ──
+//
+// A tool call that fails the same way in several chats is counted as one
+// recurring problem (cognition/cross-session-learning/failure-patterns.ts). A
+// dream, a skill review or an eval dry-run is the harness working for itself:
+// a failure there says nothing about the user's work, and an eval would count
+// its own fixtures. A cron- run is a job the USER scheduled and an ide- chat
+// is a real conversation, so a failure in either is one the user would want
+// to know keeps happening. The same set as transcript search today, kept as
+// its own predicate so a search change can never move what counts as a
+// recurring problem.
+const FAILURE_COUNT_EXCLUDED: readonly string[] =
+  INTERNAL_SCRATCH_PREFIXES.filter((p) => p !== "cron-");
+
+export function isExcludedFromFailureCounts(id: string): boolean {
+  return FAILURE_COUNT_EXCLUDED.some((p) => id.startsWith(p));
+}
+
 // ── Memory authority — who may change what the user said (the SIXTH reader) ──
 //
 // A dream or a skill review is a turn no person started: its "user message"

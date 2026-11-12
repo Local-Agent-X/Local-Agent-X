@@ -1,7 +1,6 @@
 import { describe, it, expect } from "vitest";
-import {
-  createConstraintLedger, formatConstraintReminder, noteFailures, normalizeReason,
-} from "./constraint-ledger.js";
+import { createConstraintLedger, formatConstraintReminder, noteFailures } from "./constraint-ledger.js";
+import { normalizeReason } from "../../tools/failure-signature.js";
 
 /** The exact write-gate rejection from the recorded 160-turn op, which the
  *  agent hit 14 times because nothing carried the lesson between turns. */

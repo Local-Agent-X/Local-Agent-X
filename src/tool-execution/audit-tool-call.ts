@@ -9,6 +9,7 @@ import { renderToolResultForModel, statusOf, withMetadata } from "../tools/resul
 import { getActivePluginToolMetadata } from "../plugin-system/tool-metadata.js";
 import { getHookEngine } from "../hooks/hook-engine.js";
 import { logToolUsage } from "./tool-usage-telemetry.js";
+import { actionOf, failureRecordOf } from "./failure-record.js";
 import { appendProvenance, type ProvenanceSource } from "../data-lineage/provenance.js";
 import { createTargetPath } from "./create-target-path.js";
 import { capWithSpill } from "../tools/result-spill.js";
@@ -235,11 +236,12 @@ export function shapeMsg(ctx: ToolCallContext, note?: string): void {
 function recordUsage(ctx: ToolCallContext): void {
   logToolUsage({
     tool: ctx.tc.name,
-    action: typeof ctx.args.action === "string" ? ctx.args.action : undefined,
+    action: actionOf(ctx.args),
     status: statusOf(ctx.result!),
     durationMs: ctx.startedAt ? Date.now() - ctx.startedAt : undefined,
     sessionId: ctx.sessionId,
     callContext: ctx.callContext,
+    failure: failureRecordOf(ctx),
   });
 }
 

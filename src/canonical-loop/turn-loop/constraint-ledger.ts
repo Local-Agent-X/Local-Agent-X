@@ -23,6 +23,8 @@
  * of context, not a capability.
  */
 
+import { normalizeReason } from "../../tools/failure-signature.js";
+
 /** Repeats of one normalized reason before it counts as a standing constraint.
  *  Two, because the second identical refusal is the first evidence that
  *  retrying is not a strategy — and the point is to catch it early, not to
@@ -44,27 +46,6 @@ export interface ConstraintLedger {
 
 export function createConstraintLedger(): ConstraintLedger {
   return { seen: new Map() };
-}
-
-/**
- * Collapse the incidental parts of a refusal so two instances of the SAME gate
- * match even though they name different files.
- *
- * The recorded run renamed its scratch harness every lap (`_mt.html`,
- * `_prod.html`, `_h.html`), so a raw-string key would have recorded fourteen
- * distinct "constraints" and recognized none of them. Quoted spans, path-like
- * runs, and digits are the parts that varied; the gate's own sentence is what
- * stayed constant.
- */
-export function normalizeReason(reason: string): string {
-  return reason
-    .toLowerCase()
-    .replace(/["'`][^"'`]*["'`]/g, "<q>")           // quoted values
-    .replace(/[a-z]:[\\/][^\s,;)]+/g, "<path>")      // windows absolute paths
-    .replace(/(?:[\w.-]*[\\/])+[\w.-]+/g, "<path>")  // any other path-like run
-    .replace(/\d+/g, "<n>")
-    .replace(/\s+/g, " ")
-    .trim();
 }
 
 /**

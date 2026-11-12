@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 2002 non-test source files · 81 oversized · 266 nearing the size cap.
+**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 2006 non-test source files · 81 oversized · 266 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -21,14 +21,14 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 178 | 29 | XL | 1 |
 | `src/security/` | 163 | 60 | XL | 2 |
-| `src/tools/` | 128 | 233 | XL | 9 |
-| `src/tool-execution/` | 95 | 88 | XL | 2 |
+| `src/tools/` | 130 | 234 | XL | 9 |
+| `src/tool-execution/` | 97 | 89 | XL | 2 |
 | `src/workspace/` | 91 | 3 | M |  |
 | `src/canonical-loop/` | 86 | 283 | XL | 11 |
 | `src/providers/` | 79 | 27 | L | 1 |
 | `src/session/` | 65 | 13 | L |  |
 | `src/data-lineage/` | 59 | 12 | L |  |
-| `src/memory/` | 55 | 158 | XL | 3 |
+| `src/memory/` | 56 | 158 | XL | 3 |
 | `src/browser/` | 51 | 93 | XL | 5 |
 | `src/util/` | 49 | 3 | S |  |
 | `src/agency/` | 47 | 40 | XL |  |
@@ -55,14 +55,14 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/net/` | 17 | 11 | L |  |
 | `src/voice/` | 16 | 80 | XL | 1 |
 | `src/anthropic-client/` | 15 | 22 | L | 2 |
-| `src/cognition/` | 14 | 35 | XL | 1 |
+| `src/cognition/` | 15 | 36 | XL | 1 |
 | `src/cron/` | 14 | 14 | L |  |
 | `src/self-edit/` | 13 | 19 | L | 2 |
 | `src/agent-loop/` | 12 | 1 | S |  |
 | `src/app-scaffold/` | 12 | 7 | M |  |
 | `src/ari-kernel/` | 12 | 12 | M |  |
 | `src/integrations/` | 12 | 15 | M |  |
-| `src/routes/` | 12 | 108 | XL | 17 |
+| `src/routes/` | 12 | 109 | XL | 17 |
 | `src/whatsapp-bridge/` | 12 | 8 | M | 1 |
 | `src/persistence/` | 11 | 2 | S |  |
 | `src/sync/` | 10 | 22 | L | 1 |

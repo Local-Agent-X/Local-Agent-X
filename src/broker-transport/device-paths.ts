@@ -22,12 +22,17 @@
 // the phone works when the desktop restarted with its sidecars down. It starts
 // only what is installed and already chosen, names no tier, and the rest of
 // /api/voices/setup (install, repair, stop, any tier by name) stays out.
+// /api/collab lists the collabs and starts or stops one (routes/agents/collab.ts),
+// so a research collab can be started from the phone as from a desktop chat. It
+// answers with each collab's question, members and step, never a report's text,
+// and a member can only be a model the desktop is signed in to. The phone
+// already starts chats and drives the agent; this starts several at once.
 // The broker phone is NOT an operator: nothing else on the operator API is in.
 
 import { isSensitivePath } from "../data-lineage/index.js";
 
 /** Endpoints the broker http-tunnel may proxy to loopback. */
-export const DEVICE_HTTP_PREFIXES = ["/api/apps", "/apps/", "/api/sessions", "/api/providers", "/uploads/", "/videos/", "/images/", "/files/", "/api/workspace/browse", "/api/code-folders", "/api/voices/setup/call-system"];
+export const DEVICE_HTTP_PREFIXES = ["/api/apps", "/apps/", "/api/sessions", "/api/providers", "/uploads/", "/videos/", "/images/", "/files/", "/api/workspace/browse", "/api/code-folders", "/api/voices/setup/call-system", "/api/collab"];
 
 export function isDeviceAllowedPath(pathname: string): boolean {
   if (!DEVICE_HTTP_PREFIXES.some((p) => pathname === p || pathname.startsWith(p))) return false;

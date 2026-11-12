@@ -94,6 +94,9 @@ function renderMessage(msg, ctx) {
   if (msg.role === 'user') {
     const displayText = msg.attachments ? msg.content.replace(/^Attached files:\n[\s\S]*?\n\n/, '') : msg.content;
     const userEl = addMessageEl('user', displayText, msg.attachments, msg.timestamp);
+    // A message the app sent (a collab's brief) is drawn as one line (chat-app-message.js).
+    const appNote = typeof laxAppMessage !== 'undefined' ? laxAppMessage.summaryOf(displayText) : null;
+    if (userEl && appNote) return laxAppMessage.apply(userEl, displayText, appNote);
     // Pending mid-turn inject: dim the bubble until the server's
     // inject_consumed event drops _queueState. See chat-send.js inject
     // path + chat-ws-handler.js inject_consumed branch. The injectId stamp

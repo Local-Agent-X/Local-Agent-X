@@ -281,6 +281,18 @@ describe("the tile grid on the chat page", () => {
     expect(tiles.tiles()).toEqual(["c", "b", "a"]);
   });
 
+  it("shows a message the app sent as its one-line summary in a live view", () => {
+    (globalThis as { laxAppMessage?: unknown }).laxAppMessage = { summaryOf: (t: unknown) => (typeof t === "string" && t.startsWith("(Collab") ? "Collab: the brief for research" : null) };
+    try {
+      chats[1].messages = [{ role: "user", content: "(Collab, research. Sent by the app, not typed by the user.)\n\n" + "x".repeat(9000) }, { role: "assistant", content: "My report" }];
+      tiles.toggle();
+      const rows = [...tile("b").querySelectorAll(".chat-tile-text")].map((el) => el.textContent);
+      expect(rows).toEqual(["Collab: the brief for research", "My report"]);
+    } finally {
+      delete (globalThis as { laxAppMessage?: unknown }).laxAppMessage;
+    }
+  });
+
   it("turns the page into a grid of the project's chats, the one on screen in its own pane", () => {
     tiles.toggle();
     expect(document.body.classList.contains("chat-tiles-on")).toBe(true);

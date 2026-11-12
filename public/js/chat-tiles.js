@@ -32,7 +32,7 @@
 // paintChatTileHead (chat-tiles-view.js); chats, selectChat, newChat
 // (app-state.js, app-sidebar-actions.js); chatModeOf (sidebar-mode.js);
 // hydrateChat (app-sync.js); laxCollab (chat-collab.js); ChatTilesDrag
-// (chat-tiles-drag.js);
+// (chat-tiles-drag.js); laxAppMessage (chat-app-message.js);
 // ChatStreamStore; apiFetch (shared.js); orchestratorState, otherAgentsRows
 // (chat-agent-feeds-claims.js).
 
@@ -91,6 +91,16 @@ var laxChatTiles = (function () {
     return rows.some(function (r) { return r.sessionId === id && r.clashesWithMe; });
   }
 
+  /** The chat's recent messages for a live view: a message the app sent is its
+   *  one-line summary there too (chat-app-message.js). */
+  function forView(chat) {
+    if (!chat || typeof laxAppMessage === 'undefined') return chat;
+    return { messages: (chat.messages || []).slice(-3 * VIEW_ROWS).map(function (m) {
+      var note = m && m.role === 'user' ? laxAppMessage.summaryOf(m.content) : null;
+      return note ? { role: 'user', content: note } : m;
+    }) };
+  }
+
   function infoOf(id) {
     var chat = chatOf(id);
     var entry = ChatStreamStore.get(id);
@@ -100,7 +110,7 @@ var laxChatTiles = (function () {
       state: ChatTilesCore.tileState(entry),
       orchestrator: orchestratorId() === id,
       clash: clashes(id),
-      rows: ChatTilesCore.viewRows(chat, entry, VIEW_ROWS, !!keepReply[id]),
+      rows: ChatTilesCore.viewRows(forView(chat), entry, VIEW_ROWS, !!keepReply[id]),
     };
   }
 

@@ -28,6 +28,11 @@ vi.mock("../cognition/cross-session-learning/known-failures.js", () => ({
   },
 }));
 
+const answered: string[] = [];
+vi.mock("../inbox/producers.js", () => ({
+  inboxLessonAnswered: (signature: string) => { answered.push(signature); },
+}));
+
 const { handleMemoryProblemRoutes } = await import("./memory-problems.js");
 
 const DAY = 24 * 60 * 60 * 1000;
@@ -57,7 +62,7 @@ async function call(method: string, path: string, body?: unknown, role: Role = "
   return { handled, status: res.statusCode, body: res.body ? JSON.parse(res.body) : null };
 }
 
-beforeEach(() => { failures = []; gaps = []; known = []; readSince = 0; broadcastAll.mockReset(); });
+beforeEach(() => { failures = []; gaps = []; known = []; readSince = 0; answered.length = 0; broadcastAll.mockReset(); });
 
 describe("/api/memory/problems", () => {
   it("lists a failure that keeps happening, with its counts and without run ids", async () => {
@@ -118,6 +123,8 @@ describe("lessons", () => {
     const kept = await call("POST", "/api/memory/problems/abcdef0123456789/action", { action: "keep" });
     expect(kept).toMatchObject({ status: 200, body: { lesson: { state: "kept" } } });
     expect(broadcastAll).toHaveBeenCalledWith({ type: "settings_changed", settings: { recurringProblems: true } });
+    // The inbox item that asked is answered.
+    expect(answered).toEqual(["abcdef0123456789"]);
     const discarded = await call("POST", "/api/memory/problems/abcdef0123456789/action", { action: "discard" });
     expect(discarded.body.lesson.state).toBe("discarded");
   });
@@ -131,5 +138,6 @@ describe("lessons", () => {
     expect((await call("GET", "/api/memory/problems/abcdef0123456789/action")).status).toBe(405);
     expect(known[0].state).toBe("proposed");
     expect(broadcastAll).not.toHaveBeenCalled();
+    expect(answered).toEqual([]);
   });
 });

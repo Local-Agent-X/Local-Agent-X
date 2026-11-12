@@ -121,6 +121,8 @@ export function describeChange(field: string, value: unknown, current: unknown):
       return `Change how newly learned skills activate (learningMode → "${String(value)}")?`;
     case "skillReviewEnabled":
       return "Resume reviewing finished turns for reusable procedures (skillReviewEnabled)?";
+    case "failureReviewEnabled":
+      return "Resume reviewing tool calls that keep failing across chats for lessons (failureReviewEnabled)?";
     case "enableUiEventBus":
       return "Let your UI activity be summarized into the agent's context (enableUiEventBus)?";
     case "dailyBudgetUsd":

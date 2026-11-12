@@ -48,6 +48,10 @@ export const configSchema = z.object({
    *  reusable procedure. Independent of learningMode, which governs how an
    *  already-learned procedure activates. */
   skillReviewEnabled: z.boolean().default(true),
+  /** Whether a tool call that keeps failing the same way across chats is
+   *  reviewed in the background for a lesson. Off stops new lessons only: the
+   *  count of recurring problems and lessons already kept are untouched. */
+  failureReviewEnabled: z.boolean().default(true),
   retentionDays: z.number().int().min(7).max(365).default(90),
   logLevel: z.enum(["basic", "detailed", "full-audit"]).default("basic"),
   /** Bash sandbox mode. "guarded" (default, macOS/Linux) runs bash under a

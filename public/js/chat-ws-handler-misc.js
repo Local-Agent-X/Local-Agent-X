@@ -79,6 +79,9 @@ function handleSettingsChanged(msg) {
   if ('skillReviewEnabled' in msg.settings && typeof renderSkillReviewEnabled === 'function') {
     renderSkillReviewEnabled(msg.settings.skillReviewEnabled);
   }
+  if ('failureReviewEnabled' in msg.settings && typeof renderFailureReviewEnabled === 'function') {
+    renderFailureReviewEnabled(msg.settings.failureReviewEnabled);
+  }
   // The classifier model pin (Settings → AI & Models → Local Runtimes): the
   // picker repaints from the broadcast value, over the models it last listed.
   if ('localClassifierModel' in msg.settings && typeof renderLocalClassifierModel === 'function') {

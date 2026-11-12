@@ -54,6 +54,8 @@ export interface LAXConfig {
   learningMode: "assisted" | "autonomous";
   /** Whether finished chat turns are reviewed in the background for reusable procedures. */
   skillReviewEnabled: boolean;
+  /** Whether a tool call that keeps failing the same way across chats is reviewed in the background for a lesson. */
+  failureReviewEnabled: boolean;
   retentionDays: number;
   logLevel: "basic" | "detailed" | "full-audit";
   sandboxMode: SandboxMode;

@@ -13,46 +13,46 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 2011 non-test source files · 80 oversized · 267 nearing the size cap.
+**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 2014 non-test source files · 80 oversized · 266 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 179 | 29 | XL | 1 |
-| `src/security/` | 163 | 60 | XL | 2 |
+| `src/ops/` | 180 | 29 | XL | 1 |
+| `src/security/` | 164 | 60 | XL | 2 |
 | `src/tools/` | 132 | 234 | XL | 9 |
-| `src/tool-execution/` | 99 | 90 | XL | 2 |
+| `src/tool-execution/` | 100 | 90 | XL | 2 |
 | `src/workspace/` | 91 | 3 | M |  |
-| `src/canonical-loop/` | 87 | 285 | XL | 11 |
+| `src/canonical-loop/` | 89 | 285 | XL | 11 |
 | `src/providers/` | 79 | 27 | L | 1 |
 | `src/session/` | 65 | 13 | L |  |
 | `src/data-lineage/` | 59 | 12 | L |  |
 | `src/memory/` | 57 | 158 | XL | 3 |
 | `src/browser/` | 51 | 93 | XL | 5 |
 | `src/util/` | 50 | 3 | S |  |
+| `src/tool-policy/` | 48 | 21 | L |  |
 | `src/agency/` | 47 | 40 | XL |  |
-| `src/tool-policy/` | 47 | 21 | L |  |
+| `src/chat-ws/` | 45 | 23 | L |  |
 | `src/local-runtimes/` | 45 | 27 | XL |  |
-| `src/chat-ws/` | 44 | 23 | L |  |
 | `src/threat/` | 44 | 13 | L |  |
 | `src/auth/` | 36 | 11 | L |  |
 | `src/context-manager/` | 29 | 15 | M |  |
 | `src/agent-store/` | 28 | 7 | M | 1 |
+| `src/context/` | 28 | 10 | M |  |
 | `src/broker-transport/` | 27 | 49 | XL |  |
-| `src/context/` | 27 | 10 | M |  |
 | `src/agent-request/` | 26 | 16 | L | 3 |
 | `src/classifiers/` | 24 | 16 | L |  |
 | `src/app-runtime/` | 23 | 12 | M |  |
 | `src/sandbox/` | 23 | 16 | L | 1 |
 | `src/desktop-contract/` | 22 | 10 | M |  |
+| `src/inbox/` | 22 | 6 | M |  |
 | `src/protocols/` | 21 | 52 | XL |  |
-| `src/inbox/` | 20 | 6 | M |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
-| `src/server/` *(entrypoint)* | 19 | 63 | XL | 4 |
+| `src/cognition/` | 19 | 37 | XL | 1 |
+| `src/server/` *(entrypoint)* | 19 | 66 | XL | 4 |
 | `src/autonomy/` | 18 | 6 | M |  |
 | `src/agents/` | 17 | 14 | L |  |
-| `src/cognition/` | 17 | 37 | XL | 1 |
 | `src/net/` | 17 | 11 | L |  |
 | `src/voice/` | 16 | 80 | XL | 1 |
 | `src/anthropic-client/` | 15 | 22 | L | 2 |
@@ -385,6 +385,7 @@ job. Comments are free: never cut them to fit.
 - `src/agency/handler-tools.ts#createHandlerTools` — 100+ own code lines (cap 100)
 - `src/auto-build/workflow-resolver.ts#candidateFromEvidence` — 100+ own code lines (cap 100)
 - `src/context/system-prompt-builder.ts#createSystemPromptBuilder` — 100+ own code lines (cap 100)
+- `src/server/background-jobs/index.ts#startBackgroundJobs` — 100+ own code lines (cap 100)
 - `src/anthropic-client/stream-cli.ts#streamViaColdSpawn` — 90+ own code lines (cap 100)
 - `src/app-renderer/components.ts#renderComponent` — 90+ own code lines (cap 100)
 - `src/auto-build/orchestrator/manager.ts#startOrchestration` — 90+ own code lines (cap 100)
@@ -418,7 +419,6 @@ job. Comments are free: never cut them to fit.
 - `src/screen-stream/signaling-machine.ts#signalingReducer` — 90+ own code lines (cap 100)
 - `src/security/layer/network-policy.ts#evaluateWebFetch` — 90+ own code lines (cap 100)
 - `src/security/layer/shell-policy.ts#evaluateShellCommand` — 90+ own code lines (cap 100)
-- `src/server/background-jobs/index.ts#startBackgroundJobs` — 90+ own code lines (cap 100)
 - `src/server/inbound-channel-runner.ts#runInboundChannelTurn` — 90+ own code lines (cap 100)
 - `src/server/voice-ws.ts#runVoiceTurn` — 90+ own code lines (cap 100)
 - `src/tool-execution/run-sandboxed.ts#runSandboxedPhase` — 90+ own code lines (cap 100)
@@ -510,7 +510,6 @@ job. Comments are free: never cut them to fit.
 - `src/screen-capture.ts#captureScreen` — 70+ own code lines (cap 100)
 - `src/security/layer/shell-nested-commands.ts#splitNestedCommands` — 70+ own code lines (cap 100)
 - `src/server/background-jobs/memory-bg.ts#makeRunMemBg:returned` — 70+ own code lines (cap 100)
-- `src/server/background-jobs/skill-review.ts#runSingleReview` — 70+ own code lines (cap 100)
 - `src/server/bootstrap-tools.ts#bootstrapTools` — 70+ own code lines (cap 100)
 - `src/server/request-auth.ts#authorizeRequest` — 70+ own code lines (cap 100)
 - `src/sync/facts-sync.ts#db.transaction:callback` — 70+ own code lines (cap 100)

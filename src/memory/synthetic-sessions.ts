@@ -23,7 +23,10 @@
 // SKILL_REVIEW_SESSION_PREFIX (added 2026-09-01: skill-review transcripts
 // are internal scratch exactly like dream output — prefix-pinned against the
 // minter in test/synthetic-sessions.test.ts like the others).
-export const SYNTHETIC_SESSION_PREFIXES = ["dream-", "cron-", "ide-", "eval_", "skill-review-"] as const;
+// `failure-review-` mirrors background-jobs/failure-review.ts
+// FAILURE_REVIEW_SESSION_PREFIX: its transcript is a harness prompt holding
+// other chats' failed calls, internal scratch like a skill review's.
+export const SYNTHETIC_SESSION_PREFIXES = ["dream-", "cron-", "ide-", "eval_", "skill-review-", "failure-review-"] as const;
 
 export function isSyntheticSessionId(id: string): boolean {
   return SYNTHETIC_SESSION_PREFIXES.some((p) => id.startsWith(p));

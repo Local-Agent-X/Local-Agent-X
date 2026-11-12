@@ -28,11 +28,8 @@
  * in skill-review-prompt.ts, the narrowed tool in skill-review-tool.ts, and the
  * failure breaker in skill-review-breaker.ts.
  */
-import { type AgentOptions } from "../../providers/types.js";
-import { runAgentViaCanonical } from "../../canonical-loop/index.js";
-import { renderPromptSection } from "../../context/system-prompt-builder.js";
 import { SecurityLayer } from "../../security/index.js";
-import type { AgentTurn, LAXConfig, ServerEvent, ToolDefinition } from "../../types.js";
+import type { LAXConfig, ServerEvent, ToolDefinition } from "../../types.js";
 import type { SecretsStore } from "../../secrets.js";
 import type { ToolPolicy } from "../../tool-policy/index.js";
 import { createLogger } from "../../logger.js";
@@ -55,6 +52,7 @@ import {
 import { renderOpTranscript, TRANSCRIPT_CHAR_CAP } from "../../canonical-loop/public/op-transcript.js";
 import { broadcastToSession } from "../../ops/session-bridge.js";
 import { OP_TYPE } from "../../ops/op-types.js";
+import { DEFAULT_REVIEW_TIMEOUT_MS, reviewFailure, runReviewFork } from "./review-fork.js";
 
 const logger = createLogger("server.background-jobs.skill-review");
 
@@ -65,30 +63,6 @@ export const SKILL_REVIEW_POLL_INTERVAL_MS = 5 * 60 * 1000; // 5min
 /** Reviews drained per scheduler tick. Bounds the cost of a burst. */
 const MAX_REVIEWS_PER_PASS = 3;
 
-/**
- * Wall-clock ceiling per review, enforced HERE because canonical's is not
- * enforced for us.
- *
- * `options.wallClockMs` lands on the op's budget, but worker.ts arms the
- * deadline timer only for `op.lane === "interactive"`, so on the background
- * lane `deadlineExceeded` can never be set. `maxIterations` is no better: the
- * worker's `continuing = op.lane !== "interactive"` makes a background op emit
- * an `iteration_checkpoint`, reset its counter, and keep going — the value is a
- * logging cadence, not a cap. And a middleware `suspend` parks the op in
- * `paused`, which is not a terminal state, so `runAgentViaCanonical`'s
- * `while (terminal === null)` would never resolve and this pass would hang for
- * the life of the process.
- *
- * One timeout closes all three: it aborts the signal (which canonical routes to
- * opCancel, so the op actually stops rather than being merely abandoned) and it
- * resolves the pass either way. Without it a review runs the MAIN model with no
- * turn ceiling and no clock — which is not the trade P1 made.
- *
- * The lane-scoped wall clock in worker.ts is a repo-wide defect owned
- * elsewhere; this is the fix that fits inside this job's footprint.
- */
-export const DEFAULT_REVIEW_TIMEOUT_MS = 5 * 60 * 1000;
-
 export interface SkillReviewDeps {
   config: LAXConfig;
   dataDir: string;
@@ -96,7 +70,7 @@ export interface SkillReviewDeps {
   security: SecurityLayer;
   toolPolicy: ToolPolicy;
   allAgentTools: ToolDefinition[];
-  /** Per-review wall-clock ceiling. Defaults to DEFAULT_REVIEW_TIMEOUT_MS. */
+  /** Per-review wall-clock ceiling. Defaults to DEFAULT_REVIEW_TIMEOUT_MS (review-fork.ts). */
   timeoutMs?: number;
   /** Renders the reviewed op plus its follow-up turns. Defaults to the
    *  canonical op-transcript renderer. */
@@ -193,15 +167,6 @@ export async function runSkillReviewPass(options: { force?: boolean } = {}): Pro
 let reviewSeq = 0;
 
 async function runSingleReview(request: SkillReviewRequest, d: SkillReviewDeps): Promise<void> {
-  const { resolveProvider } = await import("../../agent-request/index.js");
-  const { provider, apiKey, model } = await resolveProvider(d.config, d.secretsStore, d.dataDir);
-
-  // MAIN model, not backgroundModelFor(). A deliberate divergence from
-  // dream-check, which uses the cheap per-provider background model: writing a
-  // playbook someone will follow is a judgement task, and a bad protocol is
-  // worse than none. Cost is bounded instead by the idle gate, the per-pass
-  // batch cap, and a static prompt + static tool list that shares the
-  // provider's 5-minute prefix cache across forks.
   const forkSessionId = `${SKILL_REVIEW_SESSION_PREFIX}${Date.now()}-${reviewSeq++}`;
   const notify = d.notify ?? broadcastToSession;
   const tools = buildReviewTools(d.allAgentTools, {
@@ -222,70 +187,21 @@ async function runSingleReview(request: SkillReviewRequest, d: SkillReviewDeps):
   // hand-kept list, and deterministic so forks share the cached prefix.
   const systemPrompt = buildSkillReviewSystemPrompt(d.allAgentTools);
 
-  // The only real ceiling this job has — see DEFAULT_REVIEW_TIMEOUT_MS. Abort
-  // fires opCancel through canonical so the op genuinely stops; the race
-  // guarantees this pass resolves even if the op parks in a non-terminal state.
-  const timeoutMs = d.timeoutMs ?? DEFAULT_REVIEW_TIMEOUT_MS;
-  const abort = new AbortController();
-  let timedOut = false;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const expiry = new Promise<"timeout">((resolve) => {
-    timer = setTimeout(() => { timedOut = true; abort.abort(); resolve("timeout"); }, timeoutMs);
-  });
-
   logger.info(`[skill-review] Reviewing session ${request.sessionId} (${request.toolSequence.length} tool calls, ${request.followUpOpIds.length} later turns)`);
-  const run = runAgentViaCanonical(
-    buildSkillReviewMessage({
+  const outcome = await runReviewFork({
+    forkSessionId,
+    message: buildSkillReviewMessage({
       sessionId: request.sessionId,
       toolSequence: request.toolSequence,
       transcript,
     }),
-    [],
-    {
-      apiKey,
-      model,
-      provider: provider as AgentOptions["provider"],
-      systemPrompt,
-      renderedPromptSections: [renderPromptSection({
-        id: "skill-review",
-        label: "Protocol Review",
-        type: "static",
-        policy: "required",
-        text: systemPrompt,
-      })],
-      tools,
-      security: d.security,
-      toolPolicy: d.toolPolicy,
-      sessionId: forkSessionId,
-      signal: abort.signal,
-      // Both of these are honoured only on the interactive lane; kept because
-      // maxIterations still drives checkpoint cadence and wallClockMs is the
-      // right declared budget if the worker's lane gate is ever fixed. Neither
-      // is load-bearing — the timeout above is.
-      maxIterations: 12,
-      wallClockMs: timeoutMs,
-      temperature: 0.3,
-      callContext: "delegated",
-      opType: OP_TYPE.skillReview,
-      lane: "background",
-      // The transcript is machine-composed, not user-typed — the
-      // instruction-ledger middleware must not mine constraints out of it.
-      harnessAuthoredTask: true,
-    },
-  );
-
-  let outcome: Awaited<typeof run> | "timeout";
-  try {
-    outcome = await Promise.race([run, expiry]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-
-  if (timedOut || outcome === "timeout") {
-    // Don't let the abandoned run reject unhandled once it unwinds.
-    void run.catch(() => { /* already accounted for as a timeout */ });
-    throw new Error(`review exceeded ${timeoutMs}ms and was cancelled`);
-  }
+    systemPrompt,
+    section: { id: "skill-review", label: "Protocol Review" },
+    tools,
+    opType: OP_TYPE.skillReview,
+    maxIterations: 12,
+    timeoutMs: d.timeoutMs ?? DEFAULT_REVIEW_TIMEOUT_MS,
+  }, d);
 
   const wrote = outcome.messages.filter(
     (m) => m.role === "assistant" && Array.isArray((m as { tool_calls?: unknown[] }).tool_calls),
@@ -295,41 +211,6 @@ async function runSingleReview(request: SkillReviewRequest, d: SkillReviewDeps):
     throw new Error(`fork ${forkSessionId} ${failure} after ${wrote} tool-calling turns`);
   }
   logger.info(`[skill-review] Session ${request.sessionId} reviewed (${wrote} tool-calling turns)`);
-}
-
-/** Longest slice of the op's error message the failure line carries. Middleware
- *  abort messages are model-facing nudge paragraphs; mirrors event-pump's cap. */
-const FAILURE_MESSAGE_MAX = 240;
-
-/**
- * Why a resolved run is still a failed review, or null when it succeeded.
- *
- * `runAgentViaCanonical` resolves on ANY terminal state — `failed` (a
- * middleware abort such as repeat-output / loop-detection / thrash-guard, an
- * exhausted adapter, a worker exception) and `cancelled` included — and folds
- * the terminal into `stopReason` (agent-runner/collect-result.ts mapStopReason:
- * succeeded→end_turn, cancelled→abort, failed→error; the fold is injective, so
- * the terminal is recovered here without touching the runner). The fold also
- * maps a `failed` carrying error code `max_turns_exceeded` to `max_iterations`,
- * but nothing in src/ emits that code today — the branch below is defensive
- * (a failed terminal by construction), not a path a review can currently hit.
- * When the loop emitted an `error` event the runner also returns it as
- * `errorMessage` = `<code>: <message>` — for a middleware abort that is
- * `middleware-abort: <the middleware's message>`, the closest the seam gets to
- * the abort reason. The op id itself is not returned; the fork session id is
- * unique per review and is what the runner logs the op id against.
- *
- * Before this check a run that resolved at all counted as reviewed, so a night
- * of middleware-aborted ops (every one `failed`, idle-nudge saying "hit a
- * snag") logged `pass: reviewed=1 failed=0`.
- */
-function reviewFailure(outcome: AgentTurn): string | null {
-  if (outcome.stopReason === "abort") return "ended cancelled (stopReason=abort)";
-  if (outcome.stopReason === "error" || outcome.stopReason === "max_iterations") {
-    const detail = outcome.errorMessage ? `: ${outcome.errorMessage.slice(0, FAILURE_MESSAGE_MAX)}` : "";
-    return `ended failed (stopReason=${outcome.stopReason}${detail})`;
-  }
-  return null;
 }
 
 /**

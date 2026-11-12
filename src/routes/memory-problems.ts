@@ -19,6 +19,7 @@ import { readCapabilityGaps, type CapabilityGap } from "../cognition/cross-sessi
 import {
   decideLesson, listKnownFailures, type KnownFailure, type LessonDecision,
 } from "../cognition/cross-session-learning/known-failures.js";
+import { inboxLessonAnswered } from "../inbox/producers.js";
 
 /** Gaps listed, newest first. */
 const MAX_GAPS_SHOWN = 30;
@@ -102,6 +103,7 @@ export const handleMemoryProblemRoutes: RouteHandler = async (method, url, req, 
   if (!decision) { json(400, { error: "Invalid action" }); return true; }
   const lesson = decideLesson(action[1], decision);
   if (!lesson) { json(404, { error: "No lesson for that problem" }); return true; }
+  inboxLessonAnswered(lesson.signature);
   ctx.broadcastAll({ type: "settings_changed", settings: { recurringProblems: true } });
   json(200, { lesson: lessonView(lesson) });
   return true;

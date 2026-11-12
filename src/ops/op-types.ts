@@ -25,6 +25,8 @@ export const OP_TYPE = {
   memoryConsolidation: "memory_consolidation",
   /** The background skill reviewer (server/background-jobs/skill-review.ts). */
   skillReview: "skill_review",
+  /** The background review of a tool call that keeps failing across chats (server/background-jobs/failure-review.ts). */
+  failureReview: "failure_review",
   /** A self-repair run (server/background-jobs/self-edit-surgeon-runner.ts). */
   selfEdit: "self_edit",
   /** An auto-build orchestration (auto-build/orchestrator/manager.ts). */

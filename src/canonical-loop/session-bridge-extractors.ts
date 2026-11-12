@@ -250,12 +250,16 @@ export function extractFinalAssistantText(opId: string, maxChars = 2000): string
  *                 family, so every client saw "Worker: <untrusted-recalled-
  *                 data …> FAILED" cards plus a "hit a snag" idle nudge.
  *
+ *   failure_review  background-jobs/failure-review.ts — the same shape and
+ *                 the same reason: a headless fork whose task text is a
+ *                 fenced block of other chats' failed calls.
+ *
  * NOT here on purpose: memory_consolidation — its bg_op_queued/started (with
  * opType) are the only feed for the ambient "dreaming" group
  * (public/js/chat-agent-feeds-ambient.js). Suppressing it empties that group.
  */
 const SIDEBAR_SUPPRESSED_OP_TYPES: ReadonlySet<string> = new Set([
-  OP_TYPE.chatTurn, OP_TYPE.agentSpawn, OP_TYPE.voiceTurn, OP_TYPE.skillReview,
+  OP_TYPE.chatTurn, OP_TYPE.agentSpawn, OP_TYPE.voiceTurn, OP_TYPE.skillReview, OP_TYPE.failureReview,
 ]);
 
 export function isSidebarSuppressedOpType(opType: string): boolean {

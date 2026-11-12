@@ -110,8 +110,8 @@ export interface ReviewVerdict {
 
 /**
  * Put a review's verdict on record. A lesson is stored as `proposed`, its text
- * through the memory write gate; text the gate refuses makes the verdict an
- * app gap, with the refusal as the reason. Returns what was stored.
+ * through the memory write gate; text the gate refuses makes the verdict
+ * noise, with the refusal as the reason. Returns what was stored.
  */
 export function recordFailureReview(pattern: FailurePattern, review: ReviewVerdict, now: number): KnownFailure {
   let verdict = review.verdict;
@@ -127,7 +127,9 @@ export function recordFailureReview(pattern: FailurePattern, review: ReviewVerdi
       }).trim();
       if (!lesson) throw new Error("the lesson was empty");
     } catch (e) {
-      verdict = "app_gap";
+      // Not an app gap: nothing was learned about the tool, only that this
+      // text may not be stored. Noise is looked at again if the failure spreads.
+      verdict = "noise";
       why = `The lesson was not stored: ${(e as Error).message}`.slice(0, MAX_LESSON_CHARS);
       lesson = undefined;
     }

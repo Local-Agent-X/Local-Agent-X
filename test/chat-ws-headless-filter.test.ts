@@ -89,7 +89,7 @@ describe("chat-ws headless (eval_) session filtering", () => {
 });
 
 describe("chat-ws headless filtering of background-job sessions (skill-review-, dream-)", () => {
-  const HEADLESS = ["skill-review-123", "dream-456", "dream-456-b0", EVAL_SESSION];
+  const HEADLESS = ["skill-review-123", "failure-review-123-0", "dream-456", "dream-456-b0", EVAL_SESSION];
   const DELIVERABLE = ["chat-abc", "skill-reviewer", "dreamer", "ide-todo-app"];
 
   it("broadcastActiveChats omits every headless prefix and keeps every real session", () => {
@@ -157,7 +157,7 @@ describe("cron- sessions: hidden chat row, unmuted transport", () => {
   });
 
   it("headless ⊂ hidden: everything transport-muted is also list-hidden (the reverse is false for cron-)", () => {
-    for (const id of [EVAL_SESSION, "skill-review-123", "dream-456"]) {
+    for (const id of [EVAL_SESSION, "skill-review-123", "failure-review-123-0", "dream-456"]) {
       expect(isHeadlessSession(id)).toBe(true);
       expect(isHiddenFromChatLists(id)).toBe(true);
     }

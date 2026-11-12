@@ -52,6 +52,14 @@ export const CONTROL_SETTINGS: ReadonlyArray<FlippableSetting> = [
     description: "Whether finished chat turns are reviewed in the background for reusable procedures. Off stops new learned-workflow drafts; existing ones are untouched",
   },
   {
+    field: "failureReviewEnabled",
+    owner: "protected", where: SKILL_LEARNING,
+    validate: z.boolean(),
+    runtime: true,
+    broadcast: true,
+    description: "Whether a tool call that keeps failing the same way across chats is reviewed in the background for a lesson. Off stops new lessons; the count of recurring problems and lessons already kept are untouched",
+  },
+  {
     field: "bridgeVoicePreference",
     owner: "agent",
     // Keep the "sovits"→"auto" coercion in lockstep with config-schema.ts:

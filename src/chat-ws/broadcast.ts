@@ -116,7 +116,7 @@ function drainPendingStops(): void {
 // chats over this socket. "Hidden from chat lists" (UI concern, cron
 // included) and "never interrupts the user" (this list) are separate
 // concerns — do not merge them.
-const HEADLESS_SESSION_PREFIXES = ["eval_", "skill-review-", "dream-"] as const;
+const HEADLESS_SESSION_PREFIXES = ["eval_", "skill-review-", "failure-review-", "dream-"] as const;
 export function isHeadlessSession(sessionId: string): boolean {
   return HEADLESS_SESSION_PREFIXES.some(p => sessionId.startsWith(p));
 }

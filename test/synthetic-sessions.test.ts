@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { randomId } from "../src/util/ids.js";
 import {
   CHAT_LIST_HIDDEN_PREFIXES,
+  isExcludedFromFailureCounts,
   isExcludedFromSessionSummaries,
   isExcludedFromTranscriptSearch,
   isHiddenFromChatLists,
@@ -57,7 +58,7 @@ describe("isSyntheticSessionId", () => {
 // test/chat-ws-headless-filter.test.ts pin the two sides.
 describe("isHiddenFromChatLists — hidden from active_chats and /api/sessions/search", () => {
   it("hides every synthetic prefix except ide-", () => {
-    expect([...CHAT_LIST_HIDDEN_PREFIXES].sort()).toEqual(["cron-", "dream-", "eval_", "skill-review-"]);
+    expect([...CHAT_LIST_HIDDEN_PREFIXES].sort()).toEqual(["cron-", "dream-", "eval_", "failure-review-", "skill-review-"]);
     for (const prefix of CHAT_LIST_HIDDEN_PREFIXES) {
       expect(isHiddenFromChatLists(`${prefix}1780687489740`)).toBe(true);
     }
@@ -70,6 +71,18 @@ describe("isHiddenFromChatLists — hidden from active_chats and /api/sessions/s
   it("skill-review- (SKILL_REVIEW_SESSION_PREFIX, background-jobs/skill-review.ts) is synthetic AND hidden", () => {
     expect(isSyntheticSessionId("skill-review-1756687489740-0")).toBe(true);
     expect(isHiddenFromChatLists("skill-review-1756687489740-0")).toBe(true);
+  });
+
+  it("failure-review- (FAILURE_REVIEW_SESSION_PREFIX, background-jobs/failure-review.ts) is synthetic, hidden, and never counted as a chat's failure", async () => {
+    const { FAILURE_REVIEW_SESSION_PREFIX } = await import("../src/server/background-jobs/failure-review-prompt.js");
+    const id = `${FAILURE_REVIEW_SESSION_PREFIX}1762000000000-0`;
+    expect(isSyntheticSessionId(id)).toBe(true);
+    expect(isHiddenFromChatLists(id)).toBe(true);
+    expect(isExcludedFromTranscriptSearch(id)).toBe(true);
+    expect(isExcludedFromFailureCounts(id)).toBe(true);
+    // The user's own work is counted: a scheduled job's run and an app-builder chat.
+    expect(isExcludedFromFailureCounts(`cron-daily-report-${Date.now()}`)).toBe(false);
+    expect(isExcludedFromFailureCounts("ide-todo-app")).toBe(false);
   });
 
   it("ide- is synthetic (memory + persisted sidebar list) but NOT hidden from live chat lists", () => {

@@ -193,3 +193,52 @@ Read at `src/orchestrator/signals-meta.ts` (reconcile driver) and
 | POST | `/api/memory/learning/:id/action` | **operator only** (`403` otherwise) | `{action, versionId?, expectedActiveVersionId}`; actions `activate\|reject\|archive\|restore\|rollback`; CAS → `409` on stale; broadcasts `learning_changed`. |
 
 Ids match `^learned-[a-f0-9]{20}$`; `versionId`s are UUIDs.
+
+## Recurring problems and lessons (the failure review)
+
+Everything above learns from runs that worked. This is the other half: a tool
+call that fails the same way in several chats. It shares the Settings card and
+nothing else; a lesson is not a protocol and never enters the catalog.
+
+**The flow**
+
+1. **Record.** Every failed call in `~/.lax/telemetry/tool-usage.jsonl` says
+   which failure it was: a signature over the tool, its action, the status, the
+   gate that refused it and the normalized first line of the result. A call the
+   user declined, one waiting on a person, and a replayed result are not counted.
+2. **Count.** No model. A failure is *recurring* at 3 chats on 2 calendar days,
+   seen in the last 3 days, within a 14-day window. The dream, skill-review,
+   eval and failure-review sessions are not counted; a scheduled job's run and
+   an app-builder chat are.
+3. **Review.** About once a day, on the foreground-idle gate, up to 5 recurring
+   failures nothing has been decided about get one tool-less fork each on the
+   user's main model. Its reply is one JSON object: `lesson`, `app_gap` or
+   `noise`. A refused (`blocked`) call is listed but never reviewed.
+4. **Keep.** A lesson is `proposed` until the user keeps it (inbox item plus
+   Settings → Memory → Recurring problems). In either `learningMode`.
+5. **Deliver.** A kept lesson leads the result of a call that just failed the
+   same way, fenced as recalled data, once per run for the same work. It is
+   never in the prompt of a turn that did not hit the failure.
+6. **Retire.** The same work succeeding later in that run is a recovery. A
+   lesson shown 5 times that helped less than 2 times in 5 retires itself.
+
+**Enforced in code, not the prompt:** a lesson needs a sample in which the same
+call then succeeded, its text passes the memory write gate, and it is at most
+300 characters. Anything else is stored as noise.
+
+`failureReviewEnabled` (default `true`; runtime, broadcast, protected) turns
+the review off. Counting, the list, and lessons already kept are untouched.
+
+| File | Responsibility |
+|---|---|
+| `src/tools/failure-signature.ts` | The one normalizer and signature, shared with the in-run constraint ledger. |
+| `src/tool-execution/failure-record.ts` | What a failed call adds to the usage log. |
+| `src/cognition/cross-session-learning/failure-patterns.ts` | Groups the window's failures and decides which are recurring. |
+| `src/cognition/cross-session-learning/known-failures.ts` | Verdicts, lessons and their state at `~/.lax/known-failures.json`; the retire rule. |
+| `src/canonical-loop/public/op-tool-failures.ts` | Reads a past run's failed calls and renders one as evidence. |
+| `src/server/background-jobs/failure-backfill.ts` | One-time: writes the last two weeks of past failures into the log. |
+| `src/server/background-jobs/failure-review.ts` | The daily pass; `failure-review-prompt.ts` is its static prompt and reply parser. |
+| `src/server/background-jobs/review-fork.ts` | The timeout and failed-run rule both review jobs fork under. |
+| `src/tool-execution/known-failure-note.ts` | Puts a kept lesson on a failed result and counts recoveries. |
+| `src/routes/memory-problems.ts` | `GET /api/memory/problems`; `POST /api/memory/problems/:signature/action` `{action: keep\|discard}`, operator only, broadcasts `settings_changed`. |
+| `public/js/settings-recurring-problems.js` | The Recurring problems list with Keep and Discard. |

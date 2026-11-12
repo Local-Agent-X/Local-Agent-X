@@ -23,6 +23,7 @@ import {
   getSkillReviewBreakerState,
   SKILL_REVIEW_POLL_INTERVAL_MS,
 } from "./skill-review.js";
+import { registerFailureReviewRunner, runFailureReviewPass } from "./failure-review.js";
 import { attemptBackfill, BACKFILL_BOOT_SETTLE_MS } from "./backfill-gate.js";
 import { setLearningNoticesForSession } from "../../chat-ws/state.js";
 import { pendingLearningNotices } from "../../protocols/learned-review-drafting.js";
@@ -103,8 +104,11 @@ export type RegisteredJobName =
  *
  *   failure-review (skip)
  *     The one-time backfill appends past failures to the tool-usage log; two
- *     passes at once would both find a call missing and both write it. A
- *     dropped tick costs an hour: the next one finds the same work.
+ *     passes at once would both find a call missing and both write it, and two
+ *     reviews at once would both find the same failure unreviewed and both
+ *     spend a model call on it. A dropped tick costs an hour: the next one
+ *     finds the same work. Each review fork settles under review-fork.ts's
+ *     timeout, so a pass cannot wedge the slot.
  */
 export const JOB_OVERLAP: Record<RegisteredJobName, OverlapPolicy> = {
   "memory-bg": "skip",
@@ -146,14 +150,19 @@ function registerLearningUpkeep(scheduler: JobScheduler, foregroundIdle: () => b
 
   scheduler.register({
     ...withOverlapPolicy("failure-review"),
-    // Polled hourly so a busy machine still gets an idle hour; the pass
-    // decides whether there is anything to do (failure-backfill.ts runs once).
+    // Polled hourly so a busy machine still gets an idle hour; each half
+    // decides whether there is anything to do (failure-backfill.ts runs once,
+    // failure-review.ts at most once a day and only for what is new).
     intervalMs: 60 * 60 * 1000,
     startupDelayMs: 15 * 60 * 1000,
     shouldRun: foregroundIdle,
     run: async () => {
       const { backfillToolFailures } = await import("./failure-backfill.js");
       await backfillToolFailures();
+      const r = await runFailureReviewPass();
+      if (r.reviewed > 0 || r.failed > 0) {
+        logger.info(`[failure-review] pass: reviewed=${r.reviewed} proposed=${r.proposed} failed=${r.failed}`);
+      }
     },
   });
 }
@@ -259,6 +268,8 @@ export function startBackgroundJobs(deps: {
   registerSkillReviewRunner({
     config, dataDir, secretsStore, security, toolPolicy, allAgentTools,
   });
+  // What keeps going wrong across chats, reviewed about once a day.
+  registerFailureReviewRunner({ config, dataDir, secretsStore, security, toolPolicy });
   // A review's "Learned a workflow" notice can fire while nobody is
   // connected; the chat session snapshot re-delivers the ones still pending.
   setLearningNoticesForSession(pendingLearningNotices);

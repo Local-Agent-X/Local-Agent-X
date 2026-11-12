@@ -54,7 +54,7 @@ const FIELDS = [...PROTECTED_SETTINGS];
 // CURRENT holds. Covering every field is asserted below.
 const WIDENING: Record<string, unknown> = {
   enableShell: true, enableHttp: true, enableBrowser: true, enableComputerControl: true,
-  enableRemoteControl: true, enableUiEventBus: true, skillReviewEnabled: true, developer_mode: true,
+  enableRemoteControl: true, enableUiEventBus: true, skillReviewEnabled: true, failureReviewEnabled: true, developer_mode: true,
   localOnlyMode: false, supervisedBrowser: false, learningMode: "autonomous", browserSecrecy: "open",
   browserMode: "advanced-shared", toolApproval: "auto",
   embeddingProvider: "openai", embeddingModel: "text-embedding-3-small", voiceMode: "browser",

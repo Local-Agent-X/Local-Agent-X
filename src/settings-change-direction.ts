@@ -39,6 +39,7 @@ export const PROTECTED_TIGHTENING: Readonly<Record<string, Tightening>> = {
   enableRemoteControl: { safe: false },
   enableUiEventBus: { safe: false },
   skillReviewEnabled: { safe: false },
+  failureReviewEnabled: { safe: false },
   developer_mode: { safe: false },
   allowPaidMediaApis: { safe: false },
   localOnlyMode: { safe: true },

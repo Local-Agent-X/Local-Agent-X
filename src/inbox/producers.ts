@@ -119,6 +119,29 @@ export function inboxMemoryAlert(a: { key: string; title: string; body: string }
   postToInbox({ kind: "notice", title: a.title, body: a.body, needsYou: true, key: a.key });
 }
 
+const lessonKey = (signature: string): string => `lesson:${signature}`;
+
+/**
+ * The failure review wrote a lesson for a tool call that keeps failing across
+ * chats (server/background-jobs/failure-review.ts). Nothing reaches the agent
+ * until the user keeps it, so the item stays until they answer; `key` keeps
+ * one item per failure.
+ */
+export function inboxLessonProposed(l: { signature: string; tool: string; lesson: string; sessions: number }): void {
+  postToInbox({
+    kind: "notice",
+    title: `A lesson is waiting for you: ${l.tool} keeps failing the same way`,
+    body: `It failed the same way in ${l.sessions} chats. The note the agent would be shown the next time it happens:\n\n${l.lesson}\n\nKeep or discard it in Settings → Memory → Recurring problems.`,
+    needsYou: true,
+    key: lessonKey(l.signature),
+  });
+}
+
+/** The user kept or discarded the lesson: the item asking them is answered. */
+export function inboxLessonAnswered(signature: string): void {
+  resolveInboxWhere((item) => item.key === lessonKey(signature));
+}
+
 export function inboxUserNotice(n: { id: string; text: string }): boolean {
   return postToInbox({ kind: "notice", title: n.text, body: "", needsYou: false, key: `notice:${n.id}` }) !== null;
 }

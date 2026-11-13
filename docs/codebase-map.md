@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 2017 non-test source files · 80 oversized · 265 nearing the size cap.
+**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 2018 non-test source files · 80 oversized · 265 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -28,7 +28,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/providers/` | 79 | 27 | L | 1 |
 | `src/session/` | 67 | 13 | L |  |
 | `src/data-lineage/` | 59 | 12 | L |  |
-| `src/memory/` | 57 | 159 | XL | 3 |
+| `src/memory/` | 57 | 160 | XL | 3 |
 | `src/browser/` | 51 | 93 | XL | 5 |
 | `src/util/` | 51 | 3 | S |  |
 | `src/tool-policy/` | 48 | 21 | L |  |
@@ -494,6 +494,7 @@ job. Comments are free: never cut them to fit.
 - `src/cron/tools.ts#createCronTools` — 70+ own code lines (cap 100)
 - `src/keychain.ts#getOrCreateMasterKey` — 70+ own code lines (cap 100)
 - `src/memory/auto-search-context.ts#autoSearchContext` — 70+ own code lines (cap 100)
+- `src/memory/dream.ts#buildDreamPromptForBatch` — 70+ own code lines (cap 100)
 - `src/memory/manager.ts#MemoryManager.buildTurnContext` — 70+ own code lines (cap 100)
 - `src/memory/tools/search/memory-recall.ts#memory_recall.execute` — 70+ own code lines (cap 100)
 - `src/ops/tools/shared.ts#configureDelegatedRuntime` — 70+ own code lines (cap 100)
@@ -552,7 +553,6 @@ job. Comments are free: never cut them to fit.
 - `src/manifest-generator/summary.ts#getManifestSummary` — 60+ own code lines (cap 100)
 - `src/mcp-bridge.ts#handleRequest` — 60+ own code lines (cap 100)
 - `src/mcp-client/integrity.ts#verifyOrTrust` — 60+ own code lines (cap 100)
-- `src/memory/dream.ts#buildDreamPromptForBatch` — 60+ own code lines (cap 100)
 - `src/memory/index-search/post-process.ts#postProcess` — 60+ own code lines (cap 100)
 - `src/memory/index-search/vector-search-worker.ts#scanChunks` — 60+ own code lines (cap 100)
 - `src/memory/index-sync.ts#syncIndex` — 60+ own code lines (cap 100)

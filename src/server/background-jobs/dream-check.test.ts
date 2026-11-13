@@ -18,6 +18,7 @@ const mocks = vi.hoisted(() => ({
   })),
   runner: undefined as ((opts: { force?: boolean }) => Promise<{ ran: boolean }>) | undefined,
   transcripts: [] as Array<{ id: string; text: string }>,
+  completeDream: vi.fn(),
 }));
 
 vi.mock("../../canonical-loop/index.js", () => ({ runAgentViaCanonical: mocks.runAgent }));
@@ -30,7 +31,7 @@ vi.mock("../../memory/dream.js", () => ({
   registerDreamRunner: (runner: DreamRunner) => { mocks.runner = runner; },
   shouldDream: () => true,
   startDream: () => {},
-  completeDream: () => {},
+  completeDream: mocks.completeDream,
   failDream: () => {},
   buildDreamPrompt: () => "# Dream: Memory Consolidation\n\nReview the recent sessions.",
   buildDreamPromptForBatch: (_batch: unknown, i: number, total: number) =>
@@ -109,5 +110,20 @@ describe("dream op provenance", () => {
       // The task really is harness prose, which is why the flag matters.
       expect(userMessage).toContain("Dream: Memory Consolidation");
     }
+  });
+
+  // What a finished dream read is recorded, so the next one does not mine the
+  // same messages again and save them a second time in other words.
+  it("records the sessions a finished dream was sent", async () => {
+    const { registerDreamRunnerForServer } = await import("./dream-check.js");
+    mocks.transcripts = [{ id: "s1", text: "user: hi" }];
+    mocks.completeDream.mockClear();
+    registerDreamRunnerForServer({
+      config: {} as never, dataDir: ".", sessionStore: { list: () => [] } as never,
+      secretsStore: {} as never, security: {} as never, toolPolicy: {} as never,
+      allAgentTools: [], saveSession: async () => {},
+    });
+    await mocks.runner!({ force: true });
+    expect(mocks.completeDream).toHaveBeenCalledWith(0, mocks.transcripts);
   });
 });

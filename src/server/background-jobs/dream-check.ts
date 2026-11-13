@@ -120,7 +120,7 @@ export function registerDreamRunnerForServer(deps: DreamCheckDeps): void {
       } catch (e) { logger.warn("[dream] Post-dream reindex failed:", (e as Error).message); }
 
       const recentCount = sessionStore.list().filter(s => s.updatedAt > Date.now() - 24 * 60 * 60 * 1000).length;
-      completeDream(recentCount);
+      completeDream(recentCount, transcripts);
       logger.info(`[dream] Memory consolidation finished (${batches.length} batch(es))`);
       return { ran: true, batches: batches.length, sessionsReviewed: recentCount };
     } catch (e) {

@@ -17,11 +17,10 @@
  * MemoryIndex → universal-index → searchable immediately).
  */
 import { existsSync, readFileSync, writeFileSync, readdirSync, statSync } from "node:fs";
-import { isSyntheticSessionId } from "./synthetic-sessions.js";
 import { join } from "node:path";
-import { extractSessionPairs, type ConversationMessage } from "./chunking.js";
-import { readSessionLogRows, sessionLogMeta } from "./session-log-rows.js";
 import { getLaxDir } from "../lax-data-dir.js";
+import { countUnreviewedSessions, readUnreviewedSessions, withReviewed, type ReviewMarks, type SessionTranscript } from "./dream-review-marks.js";
+export type { SessionTranscript } from "./dream-review-marks.js";
 import { runMemoryGate } from "./write-safely.js";
 import { createLogger } from "../logger.js";
 import { createInternalMemoryContext } from "./promotion-gate.js";
@@ -50,6 +49,8 @@ interface DreamState {
   lastDreamSessionCount: number;
   dreaming: boolean;
   dreamStartedAt?: number; // Track when dream started for crash recovery
+  /** How far finished dreams have read each session (dream-review-marks.ts). */
+  reviewed?: ReviewMarks;
 }
 
 function loadDreamState(): DreamState {
@@ -69,17 +70,11 @@ function saveDreamState(state: DreamState): void {
   writeFileSync(DREAM_STATE_PATH, gated, "utf-8");
 }
 
-/** Count sessions modified since the last dream */
-function countRecentSessions(since: number): number {
+/** Sessions no finished dream has read since they last changed. */
+function countUnreadSessions(state: DreamState): number {
   if (!existsSync(SESSIONS_DIR)) return 0;
-  try {
-    return readdirSync(SESSIONS_DIR)
-      .filter((f) => f.endsWith(".jsonl"))
-      .filter((f) => {
-        try { return statSync(join(SESSIONS_DIR, f)).mtimeMs > since; }
-        catch { return false; }
-      }).length;
-  } catch { return 0; }
+  try { return countUnreviewedSessions(SESSIONS_DIR, loadReviewMarks(state)); }
+  catch { return 0; } // sessions dir unreadable: nothing to dream about
 }
 
 /**
@@ -108,57 +103,25 @@ export function shouldDream(minHours = 6, minSessions = 2): boolean {
   }
   const hoursSince = (Date.now() - state.lastDreamAt) / 3_600_000;
   if (hoursSince < minHours) return false;
-  const sessions = countRecentSessions(state.lastDreamAt);
-  return sessions >= minSessions;
+  return countUnreadSessions(state) >= minSessions;
 }
 
 // ── Raw transcript reading ───────────────────────────────────────────────
 
-export interface SessionTranscript {
-  sessionId: string;
-  date: string | undefined;
-  title: string | undefined;
-  pairs: ConversationMessage[];
-  approxTokens: number;
+/** What finished dreams have read. Before marks existed, the sessions changed
+ *  up to the last dream count as read: those dreams sent them. */
+function loadReviewMarks(state: DreamState = loadDreamState()): ReviewMarks {
+  return state.reviewed ?? { from: state.lastDreamAt, sessions: {} };
 }
 
 /**
- * List the N most recently-modified session JSONs and extract their
- * full message pairs. Replaces the old "first 500 chars of each
- * session summary" approach so detail-rich content survives.
+ * Up to N sessions with messages no finished dream has read, most recently
+ * changed first, each with only those messages (full, not summaries, so
+ * detail survives) and a few already-read ones before them as context.
  */
 export function listRecentSessionTranscripts(n = DEFAULT_SESSION_COUNT): SessionTranscript[] {
   if (!existsSync(SESSIONS_DIR)) return [];
-
-  const candidates = readdirSync(SESSIONS_DIR)
-    // Exclude generated/internal sessions — above all dream-*.jsonl. Without
-    // this, each dream re-ingested prior dreams' embedded transcripts and the
-    // file grew exponentially (one hit 150 MB). See synthetic-sessions.ts.
-    .filter((f) => f.endsWith(".jsonl") && !isSyntheticSessionId(f))
-    .map((f) => {
-      const fullPath = join(SESSIONS_DIR, f);
-      try {
-        const stat = statSync(fullPath);
-        return { file: f, mtime: stat.mtimeMs };
-      } catch { return null; }
-    })
-    .filter((x): x is { file: string; mtime: number } => x !== null)
-    .sort((a, b) => b.mtime - a.mtime)
-    .slice(0, n);
-
-  const out: SessionTranscript[] = [];
-  for (const { file } of candidates) {
-    const fullPath = join(SESSIONS_DIR, file);
-    const sessionId = file.replace(/\.jsonl$/, "");
-    const meta = sessionLogMeta(readSessionLogRows(fullPath) ?? []);
-    const date = meta && typeof meta.createdAt === "number" ? new Date(meta.createdAt).toISOString().split("T")[0] : undefined;
-    const title = typeof meta?.title === "string" ? meta.title : undefined;
-    const pairs = extractSessionPairs(fullPath);
-    if (pairs.length < 2) continue;
-    const charCount = pairs.reduce((sum, m) => sum + m.content.length, 0);
-    out.push({ sessionId, date, title, pairs, approxTokens: Math.ceil(charCount / 4) });
-  }
-  return out;
+  return readUnreviewedSessions(SESSIONS_DIR, loadReviewMarks(), n);
 }
 
 /**
@@ -206,12 +169,11 @@ export function buildDreamBatches(
   return batches;
 }
 
-function formatTranscriptForPrompt(t: SessionTranscript): string {
+export function formatTranscriptForPrompt(t: SessionTranscript): string {
   const header = `### Session ${t.sessionId}${t.date ? ` (${t.date})` : ""}${t.title ? ` — ${t.title}` : ""}`;
-  const body = t.pairs
-    .map((m) => `[${m.role}] ${m.content}`)
-    .join("\n");
-  return `${header}\n${body}`;
+  const lines = (messages: SessionTranscript["pairs"]) => messages.map((m) => `[${m.role}] ${m.content}`).join("\n");
+  if (t.earlier.length === 0) return `${header}\n${lines(t.pairs)}`;
+  return `${header}\n#### Earlier (already reviewed by a past dream: context only, save nothing from it)\n${lines(t.earlier)}\n#### New since the last dream\n${lines(t.pairs)}`;
 }
 
 function listMemoryFilesSnapshot(): string[] {
@@ -255,9 +217,13 @@ have already written to these files. Read them before deciding what to add.
 
 ## Phase 2 — Review Raw Transcripts
 
-You have ${batch.length} session(s) in this batch. These are FULL transcripts,
-not summaries — preserve the specifics (numbers, names, exact phrasings,
-hardware decisions, design choices) that summaries normally lose.
+You have ${batch.length} session(s) in this batch. These are the FULL messages
+said since the last dream, not summaries — preserve the specifics (numbers,
+names, exact phrasings, hardware decisions, design choices) that summaries
+normally lose. A section marked "Earlier (already reviewed …)" was read by a
+past dream and is there only so the new messages make sense: save nothing from
+it, and before saving anything search memory, since a past dream may have
+saved it in other words.
 
 ${transcriptBlock}
 
@@ -330,12 +296,15 @@ export function startDream(): void {
   saveDreamState(state);
 }
 
-/** Mark dream as completed */
-export function completeDream(sessionCount: number): void {
+/** Mark dream as completed, recording how far it read each session it was sent.
+ *  Only a finished dream records: a failed one's sessions are sent again. */
+export function completeDream(sessionCount: number, read: SessionTranscript[] = []): void {
+  const state = loadDreamState();
   saveDreamState({
     lastDreamAt: Date.now(),
     lastDreamSessionCount: sessionCount,
     dreaming: false,
+    reviewed: withReviewed(loadReviewMarks(state), read),
   });
   logger.info(`[dream] Consolidation complete. Reviewed ${sessionCount} sessions.`);
 }

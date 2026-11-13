@@ -26,6 +26,7 @@ function section(id: string, text: string, type: "static" | "dynamic" = "dynamic
 function emittedSectionIds(): Set<string> {
   const files = [
     "src/context/system-prompt-builder.ts",
+    "src/context/recall-reflex-section.ts",
     "src/agent-request/prepare-request/build-system-prompt.ts",
     "src/agent-request/prepare-request.ts",
     "src/canonical-loop/chat-runner/create-op.ts",

@@ -325,8 +325,9 @@ export class AgentSync {
     if (this.heartbeatTimer) { clearInterval(this.heartbeatTimer); this.heartbeatTimer = null; }
   }
 
-  async onChatEnd(): Promise<void> {
-    if (!isLocalOnlyMode() && this.config.enabled && this.config.interval === "after_chat") this.push().catch(() => {});
+  /** The "after each chat" interval: a chat turn ended. Debounced like any other change. */
+  onChatEnd(): void {
+    if (!isLocalOnlyMode() && this.config.enabled && this.config.interval === "after_chat") this.notifyChange("chat-end");
   }
 
   private pushDebounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -348,9 +349,15 @@ export class AgentSync {
     if (this.pushDebounceTimer) clearTimeout(this.pushDebounceTimer);
     this.pushDebounceTimer = setTimeout(() => {
       this.pushDebounceTimer = null;
+      // A push already running has copied its files: this change would be
+      // left for some later one. Wait it out and push again.
+      if (this.isSyncing) { this.notifyChange("after-running-sync"); return; }
       const reasons = this.lastChangeReasons.splice(0).join(", ");
       logger.info(`[sync] push-on-change firing: ${reasons}`);
-      this.push().catch((e) => logger.warn(`[sync] push-on-change failed: ${(e as Error).message}`));
+      // push() reports a failure in its result rather than throwing.
+      this.push()
+        .then((r) => { if (!r.success) logger.warn(`[sync] push-on-change failed: ${r.message.slice(0, 300)}`); })
+        .catch((e) => logger.warn(`[sync] push-on-change failed: ${(e as Error).message}`));
     }, 5_000);
   }
 

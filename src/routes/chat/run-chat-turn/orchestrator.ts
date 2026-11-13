@@ -105,6 +105,11 @@ function keepBoundFolder(session: Session, ctx: RunChatTurnArgs["ctx"]): void {
   if (folder && session.folder !== folder) { session.folder = folder; void ctx.saveSession(session); }
 }
 
+/** The "after each chat" sync interval: a turn that ran is the only thing that pushes when a chat ends. */
+function queueAfterChatSync(ctx: RunChatTurnArgs["ctx"]): void {
+  try { ctx.agentSync.onChatEnd(); } catch (e) { logger.warn(`[sync] after-chat push not queued: ${(e as Error).message}`); }
+}
+
 export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
   const { sessionId, attachments, projectId, ctx, requestRole, sseSink } = args;
   const channel = args.channel ?? "web";
@@ -376,7 +381,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
     emitTurnError(safeErrorMessage(e));
   } finally {
     // A folder bound during the turn (only a turn that ran could) is kept before the lock goes.
-    if (lockHeld) { keepBoundFolder(session, ctx); releaseTurnLock(sessionId); }
+    if (lockHeld) { keepBoundFolder(session, ctx); releaseTurnLock(sessionId); queueAfterChatSync(ctx); }
     if (onEventInstalled) ctx.setActiveOnEvent(sessionId, undefined);
     if (runtimeInstalled) ctx.setActiveRuntime(sessionId, undefined);
     if (retryCtxAttached) detachRetryContext(sessionId);

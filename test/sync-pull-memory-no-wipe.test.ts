@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, existsSync, rmSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { pullMemoryDir } from "../src/sync/pull-files/pull-memory.js";
+import { readSyncedNotes, recordSyncedNotes } from "../src/sync/synced-notes.js";
 
 // Seam: sync pull → memory delete-reconciliation → local memory dir on disk.
 // Regression (C2): the delete loop reconciled against `remoteMemFiles`, which
@@ -39,9 +40,11 @@ describe("pullMemoryDir — no wipe when remote has no memory dir", () => {
     expect(existsSync(join(dataDir, "memory", "note-b.md"))).toBe(true);
   });
 
-  it("still removes a note absent from a PRESENT remote memory dir", () => {
+  it("still removes a note the remote held at the last sync and no longer does", () => {
     writeLocal("note-a.md", "local note a");
     writeLocal("note-b.md", "local note b");
+    // Both notes were in the repo at this machine's last push or pull.
+    recordSyncedNotes(dataDir, ["note-a.md", "note-b.md"]);
 
     // Remote memory/ exists and contains only note-a.md → note-b was truly
     // removed remotely and must be reconciled away. This proves the fix did
@@ -53,5 +56,30 @@ describe("pullMemoryDir — no wipe when remote has no memory dir", () => {
 
     expect(existsSync(join(dataDir, "memory", "note-a.md"))).toBe(true);
     expect(existsSync(join(dataDir, "memory", "note-b.md"))).toBe(false);
+  });
+
+  // 2026-11-13: pushes had not run for days, and every startup pull deleted the
+  // day's note (2026-11-13.md) because the remote did not have it yet.
+  it("keeps a note written here that never reached the remote", () => {
+    writeLocal("2026-11-12.md", "yesterday, pushed");
+    writeLocal("2026-11-13.md", "today, not pushed yet");
+    recordSyncedNotes(dataDir, ["2026-11-12.md"]);
+    mkdirSync(join(syncDir, "memory"), { recursive: true });
+    writeFileSync(join(syncDir, "memory", "2026-11-12.md"), "yesterday, pushed", "utf-8");
+
+    pullMemoryDir(dataDir, syncDir);
+
+    expect(readFileSync(join(dataDir, "memory", "2026-11-13.md"), "utf-8")).toBe("today, not pushed yet");
+  });
+
+  it("deletes nothing on a machine with no record yet, then records what the remote holds", () => {
+    writeLocal("note-b.md", "local note b");
+    mkdirSync(join(syncDir, "memory"), { recursive: true });
+    writeFileSync(join(syncDir, "memory", "note-a.md"), "remote note a", "utf-8");
+
+    pullMemoryDir(dataDir, syncDir);
+
+    expect(existsSync(join(dataDir, "memory", "note-b.md"))).toBe(true);
+    expect([...(readSyncedNotes(dataDir) ?? [])]).toEqual(["note-a.md"]);
   });
 });

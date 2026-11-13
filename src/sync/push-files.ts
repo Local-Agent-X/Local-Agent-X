@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { createLogger } from "../logger.js";
@@ -14,6 +14,7 @@ import {
 import { engineCheckoutMarker, mirrorDir, pruneSkippedDirs } from "./mirror.js";
 import { exportFactsForSync } from "./facts-sync.js";
 import { tombstonePaths, writeTombstonesForDeletedApps } from "./tombstones.js";
+import { readSyncedNotes, recordSyncedNotes } from "./synced-notes.js";
 
 const logger = createLogger("sync.push-files");
 
@@ -22,9 +23,23 @@ const logger = createLogger("sync.push-files");
 // jams the whole sync, so it's excluded rather than allowed to wedge backups.
 const MAX_SESSION_SYNC_BYTES = 10 * 1024 * 1024;
 
+// A push runs after every chat turn, and rewriting every session log each time
+// read and wrote the whole sessions folder (478 MB on one machine, 2026-11-13)
+// on the server's thread. The copy takes the source's mtime, so it is skipped
+// until either side is written again.
+function copyIfChanged(src: string, dest: string, size: number, mtimeMs: number): void {
+  try {
+    const d = statSync(dest);
+    if (d.size === size && Math.abs(d.mtimeMs - mtimeMs) < 1) return;
+  } catch { /* no copy yet */ }
+  writeFileSync(dest, readFileSync(src));
+  utimesSync(dest, new Date(), new Date(mtimeMs));
+}
+
 // ── Push direction: local → sync repo (with deletion propagation) ──
 
-export async function copyToSync(dataDir: string, syncDir: string, config: SyncConfig): Promise<void> {
+/** memory/*.md into the repo, and the notes deleted here out of it. */
+function pushMemoryNotes(dataDir: string, syncDir: string): void {
   const memDir = join(dataDir, "memory");
   const syncMemDir = join(syncDir, "memory");
   if (!existsSync(syncMemDir)) mkdirSync(syncMemDir, { recursive: true });
@@ -48,11 +63,24 @@ export async function copyToSync(dataDir: string, syncDir: string, config: SyncC
   // Listing retired files here makes the deletion eventually-consistent —
   // first sync from any machine after this lands strips the file from
   // the shared repo, so subsequent pulls don't bring it back.
+  // "Deleted locally" means this machine had the note at its last push or
+  // pull: a note another machine added, which arrived in the repo with this
+  // push's own `git pull` and has not been pulled into memory/ yet, is not a
+  // local deletion and stays (synced-notes.ts).
+  const synced = readSyncedNotes(dataDir);
   for (const f of readdirSync(syncMemDir)) {
-    if (f.endsWith(".md") && (!localMemFiles.has(f) || SYNC_SKIP_MEMORY_FILES.has(f))) {
+    if (f.endsWith(".md") && ((!localMemFiles.has(f) && synced?.has(f)) || SYNC_SKIP_MEMORY_FILES.has(f))) {
       unlinkSync(join(syncMemDir, f));
     }
   }
+  // Both sides now hold the local notes: a later pull may delete any of them
+  // that another machine removes. A note only the repo holds is left out, so
+  // the next push cannot take it for a local deletion before a pull brings it in.
+  recordSyncedNotes(dataDir, localMemFiles);
+}
+
+export async function copyToSync(dataDir: string, syncDir: string, config: SyncConfig): Promise<void> {
+  pushMemoryNotes(dataDir, syncDir);
 
   // Sidebar pins (user-level UI state — per-user, not per-machine).
   // Extract just the `sidebarPins` key from settings.json and ship it
@@ -92,11 +120,12 @@ export async function copyToSync(dataDir: string, syncDir: string, config: SyncC
         // was the real one) bloats the push pack past the git timeout, so
         // every push fails, commits strand, and the whole sync wedges. One
         // pathological file must never be able to brick all of sync — skip it.
-        if (statSync(src).size > MAX_SESSION_SYNC_BYTES) {
-          logger.warn(`[sync] skipping oversized session ${f} (${(statSync(src).size / 1048576).toFixed(0)} MB > ${MAX_SESSION_SYNC_BYTES / 1048576} MB cap)`);
+        const st = statSync(src);
+        if (st.size > MAX_SESSION_SYNC_BYTES) {
+          logger.warn(`[sync] skipping oversized session ${f} (${(st.size / 1048576).toFixed(0)} MB > ${MAX_SESSION_SYNC_BYTES / 1048576} MB cap)`);
           continue;
         }
-        writeFileSync(join(syncSessDir, f), readFileSync(src, "utf-8"));
+        copyIfChanged(src, join(syncSessDir, f), st.size, st.mtimeMs);
       }
     }
   }

@@ -129,6 +129,7 @@ function makeCtx(onEmit: (id: string, ev: ServerEvent) => void) {
     setActiveRuntime: vi.fn(),
     setActiveBrowserSessionId: vi.fn(),
     dataDir: "/tmp",
+    agentSync: { onChatEnd: vi.fn() },
     chatWs: {
       startChat: vi.fn(),
       emit: vi.fn((id: string, ev: ServerEvent) => onEmit(id, ev)),
@@ -291,6 +292,34 @@ describe("orchestrator provider truth (C2.1)", () => {
       type: "turn_provider", provider: "local", model: "qwen2:7b",
       rerouted: true, requestedProvider: "xai",
     });
+  });
+});
+
+/**
+ * The "after each chat" sync interval. Its only caller was removed with the
+ * legacy chat path on 2026-05-12, and for six months a push ran only when the
+ * app shut down cleanly (found 2026-11-13).
+ */
+describe("orchestrator after-chat sync", () => {
+  it("tells sync a turn ended once the turn ran", async () => {
+    const { ctx } = makeCtx(() => {});
+    await runChatTurn({
+      sessionId: SESSION_TRUTH, message: "hello", attachments: [],
+      projectId: null, ctx: ctx as never, requestRole: "operator", sseSink: null,
+    });
+    expect(ctx.agentSync.onChatEnd).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not for a turn the lock refused", async () => {
+    const priorAbort = new AbortController();
+    expect(getTurnRegistry().acquireTurn(SESSION_REFUSED, priorAbort, "prior")).toBe(true);
+    getTurnRegistry().markIteration(SESSION_REFUSED, ["bash"]);
+    const { ctx } = makeCtx(() => {});
+    await runChatTurn({
+      sessionId: SESSION_REFUSED, message: "again", attachments: [],
+      projectId: null, ctx: ctx as never, requestRole: "operator", sseSink: null,
+    });
+    expect(ctx.agentSync.onChatEnd).not.toHaveBeenCalled();
   });
 });
 

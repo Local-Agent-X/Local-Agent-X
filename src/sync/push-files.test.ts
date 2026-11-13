@@ -9,7 +9,7 @@
 // the real workspaceRoot() and would copy the user's entire workspace into a
 // temp dir. Reaching the prune with workspace sync OFF is the stronger case
 // anyway — it is the branch the first wiring missed.
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -18,6 +18,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { copyToSync } from "./push-files.js";
 import { engineCheckoutMarker } from "./mirror.js";
 import { DEFAULT_CONFIG, type SyncConfig } from "./constants.js";
+import { readSyncedNotes, recordSyncedNotes } from "./synced-notes.js";
 import { getRuntimeConfig, setRuntimeConfig } from "../config.js";
 import type { LAXConfig } from "../types.js";
 
@@ -88,6 +89,57 @@ describe("the workspace push refuses an engine checkout", () => {
     }
     expect(existsSync(join(syncDir, "workspace", "src"))).toBe(false);
     expect(existsSync(join(syncDir, "workspace", "notes.md"))).toBe(false);
+  });
+});
+
+describe("copyToSync and memory notes", () => {
+  function dirs(): { dataDir: string; syncDir: string } {
+    root = mkdtempSync(join(tmpdir(), "lax-push-notes-"));
+    const dataDir = join(root, "data"); const syncDir = join(root, "sync");
+    mkdirSync(join(dataDir, "memory"), { recursive: true });
+    mkdirSync(join(syncDir, "memory"), { recursive: true });
+    return { dataDir, syncDir };
+  }
+  const off = config({ syncWorkspace: false, syncProtocols: false, syncSessions: false });
+
+  it("removes from the repo a note deleted here, and keeps one another machine added", async () => {
+    const { dataDir, syncDir } = dirs();
+    writeFileSync(join(dataDir, "memory", "kept.md"), "kept");
+    recordSyncedNotes(dataDir, ["kept.md", "deleted-here.md"]);
+    writeFileSync(join(syncDir, "memory", "deleted-here.md"), "old");
+    // Arrived with this push's own git pull; never pulled into memory/ here.
+    writeFileSync(join(syncDir, "memory", "from-other-machine.md"), "new");
+
+    await copyToSync(dataDir, syncDir, off);
+
+    expect(existsSync(join(syncDir, "memory", "deleted-here.md"))).toBe(false);
+    expect(existsSync(join(syncDir, "memory", "from-other-machine.md"))).toBe(true);
+    expect([...(readSyncedNotes(dataDir) ?? [])]).toEqual(["kept.md"]);
+  });
+});
+
+describe("copyToSync copies a session log only when it changed", () => {
+  it("leaves an unchanged copy alone and replaces it once the source is written", async () => {
+    root = mkdtempSync(join(tmpdir(), "lax-push-unchanged-"));
+    const dataDir = join(root, "data"); const syncDir = join(root, "sync");
+    mkdirSync(join(dataDir, "sessions"), { recursive: true }); mkdirSync(syncDir, { recursive: true });
+    const src = join(dataDir, "sessions", "s1.jsonl");
+    const dest = join(syncDir, "sessions", "s1.jsonl");
+    writeFileSync(src, "one\n");
+    utimesSync(src, new Date(), new Date(Date.now() - 60_000));
+    const sessionsOnly = config({ syncWorkspace: false, syncProtocols: false, syncSessions: true });
+
+    await copyToSync(dataDir, syncDir, sessionsOnly);
+    expect(readFileSync(dest, "utf-8")).toBe("one\n");
+    // Same size and time as the source: a second push must not rewrite it.
+    const before = statSync(dest);
+    writeFileSync(dest, "ONE\n"); utimesSync(dest, before.atime, before.mtime);
+    await copyToSync(dataDir, syncDir, sessionsOnly);
+    expect(readFileSync(dest, "utf-8")).toBe("ONE\n");
+
+    writeFileSync(src, "one\ntwo\n");
+    await copyToSync(dataDir, syncDir, sessionsOnly);
+    expect(readFileSync(dest, "utf-8")).toBe("one\ntwo\n");
   });
 });
 

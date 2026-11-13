@@ -6,6 +6,7 @@ import { unionMerge } from "../mirror.js";
 import { writeMemorySafely, MemoryWriteBlocked } from "../../memory/write-safely.js";
 import { createInternalMemoryContext } from "../../memory/promotion-gate.js";
 import { checkMemoryTaint } from "../../sanitize.js";
+import { readSyncedNotes, recordSyncedNotes } from "../synced-notes.js";
 
 const logger = createLogger("sync.pull-files.memory");
 
@@ -89,18 +90,20 @@ export function pullMemoryDir(dataDir: string, syncDir: string): void {
     }
 
     // Delete-reconciliation lives INSIDE the syncMemDir-exists guard. A
-    // present remote memory dir is the manifest of what should exist; a note
-    // absent from it was genuinely removed remotely (even an empty remote dir
-    // means "everything was deleted") and is unlinked locally. A MISSING
-    // remote memory dir is not an empty manifest — it means the remote has no
-    // memory state yet (fresh/empty sync repo). Reconciling against it deleted
-    // every local note before the first push ever ran, wiping notes on startup
-    // when pointing sync at a new repo. Skip deletion entirely in that case.
+    // MISSING remote memory dir is not an empty manifest — it means the remote
+    // has no memory state yet (fresh/empty sync repo). Reconciling against it
+    // deleted every local note before the first push ever ran.
+    //
+    // Absent from the remote is not enough either: a note written here and
+    // not yet pushed is absent too. Only a note the repo held at this
+    // machine's last push or pull was removed elsewhere (synced-notes.ts).
+    const synced = readSyncedNotes(dataDir);
     for (const f of readdirSync(memDir)) {
-      if (f.endsWith(".md") && !remoteMemFiles.has(f)) {
+      if (f.endsWith(".md") && !remoteMemFiles.has(f) && synced?.has(f)) {
         logger.info(`[sync] Deleting ${f} (removed from remote)`);
         unlinkSync(join(memDir, f));
       }
     }
+    recordSyncedNotes(dataDir, remoteMemFiles);
   }
 }

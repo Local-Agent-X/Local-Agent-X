@@ -74,7 +74,7 @@ src/server/background-jobs/cron-runner.ts#cronService.onExecute:callback 166
 src/server/bootstrap-services.ts#initOrRefreshEmbeddingProvider 107
 src/server/handler-events.ts#agentRunDriver 125
 src/server/index.ts#startServer 131
-src/sync/push-files.ts#copyToSync 122
+src/sync/push-files.ts#copyToSync 106
 src/tool-execution/pre-dispatch.ts#assertToolCallAllowed 184
 src/tool-execution/require-approval.ts#requireApprovalPhase 182
 src/tools/app-tools/app-template.ts#renderStarterHtml 119

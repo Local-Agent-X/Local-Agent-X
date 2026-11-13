@@ -38,7 +38,7 @@ const EXEMPT_REASONS = new Set(["adapter-retry"]);
  * Guards whose firing is bounded BY CONSTRUCTION, so they do not draw on the
  * shared pool. The budget exists to cap guards that could fire without limit;
  * these two cannot, and they are the ones that END a stuck op:
- *   budget-ladder   three rungs (25/50/75%) plus one dry-stop, ever;
+ *   budget-ladder   three rungs (25/50/75%), each silent unless progress is flat;
  *   loop-detection  NUDGE_CEILING warnings, then it aborts the turn.
  *
  * In a flat first-come pool they lost to cheaper voices. muse's grade-school

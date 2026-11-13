@@ -76,18 +76,38 @@ describe("budget-ladder — rungs", () => {
     expect(r.kind).toBe("continue");
   });
 
-  it("fires a self-assessment at 25% of the budget", async () => {
+  it("says nothing at the first rung: there is no earlier count to compare with", async () => {
     setEvidence(opId, 5);
-    const r = await budgetLadderMiddleware.beforeTurn!(ctxAt(40, opId));
-    expect(r.kind).toBe("nudge");
-    expect((r as { message: string }).message).toContain("25%");
+    expect((await budgetLadderMiddleware.beforeTurn!(ctxAt(40, opId))).kind).toBe("continue");
   });
 
-  it("fires each rung at most once", async () => {
+  it("says nothing at a rung the op reached with new results", async () => {
     setEvidence(opId, 5);
-    expect((await budgetLadderMiddleware.beforeTurn!(ctxAt(40, opId))).kind).toBe("nudge");
-    expect((await budgetLadderMiddleware.beforeTurn!(ctxAt(41, opId))).kind).toBe("continue");
-    expect((await budgetLadderMiddleware.beforeTurn!(ctxAt(50, opId))).kind).toBe("continue");
+    await budgetLadderMiddleware.beforeTurn!(ctxAt(40, opId));
+    setEvidence(opId, 20);
+    expect((await budgetLadderMiddleware.beforeTurn!(ctxAt(80, opId))).kind).toBe("continue");
+    setEvidence(opId, 45);
+    expect((await budgetLadderMiddleware.beforeTurn!(ctxAt(120, opId))).kind).toBe("continue");
+  });
+
+  it("asks for a self-assessment at a rung with nothing new, without naming a percentage or a budget", async () => {
+    setEvidence(opId, 5);
+    await budgetLadderMiddleware.beforeTurn!(ctxAt(40, opId));
+    const r = await budgetLadderMiddleware.beforeTurn!(ctxAt(80, opId));
+    expect(r.kind).toBe("nudge");
+    expect((r as { reason?: string }).reason).toBe("budget-ladder");
+    const message = (r as { message: string }).message;
+    expect(message).toContain("produced nothing new");
+    expect(message).toContain("What is the goal");
+    expect(message).not.toMatch(/\d+%|budget/i);
+  });
+
+  it("checks each rung at most once", async () => {
+    setEvidence(opId, 5);
+    await budgetLadderMiddleware.beforeTurn!(ctxAt(40, opId));
+    expect((await budgetLadderMiddleware.beforeTurn!(ctxAt(80, opId))).kind).toBe("nudge");
+    expect((await budgetLadderMiddleware.beforeTurn!(ctxAt(81, opId))).kind).toBe("continue");
+    expect((await budgetLadderMiddleware.beforeTurn!(ctxAt(90, opId))).kind).toBe("continue");
   });
 
   it("skips the ladder entirely on a small budget", async () => {
@@ -112,12 +132,12 @@ describe("budget-ladder — rungs", () => {
 describe("budget-ladder — dry-rung stop", () => {
   it("tells the agent to stop and ask after two rungs with no new evidence", async () => {
     setEvidence(opId, 40);
-    // 25% — first rung, no prior count to compare against.
+    // 25% — first rung, no prior count to compare against: silent.
     const first = await budgetLadderMiddleware.beforeTurn!(ctxAt(40, opId));
-    expect((first as { message: string }).message).toContain("25%");
-    // 50% — evidence unchanged: one dry rung, still a normal assessment.
+    expect(first.kind).toBe("continue");
+    // 50% — evidence unchanged: one dry rung, the self-assessment.
     const second = await budgetLadderMiddleware.beforeTurn!(ctxAt(80, opId));
-    expect((second as { message: string }).message).toContain("50%");
+    expect((second as { reason?: string }).reason).toBe("budget-ladder");
     // 75% — a second consecutive dry rung: stop and ask.
     const third = await budgetLadderMiddleware.beforeTurn!(ctxAt(120, opId));
     expect(third.kind).toBe("nudge");
@@ -132,39 +152,46 @@ describe("budget-ladder — dry-rung stop", () => {
     await budgetLadderMiddleware.beforeTurn!(ctxAt(80, opId));
     setEvidence(opId, 60); // and again
     const third = await budgetLadderMiddleware.beforeTurn!(ctxAt(120, opId));
-    expect((third as { reason?: string }).reason).toBe("budget-ladder");
-    expect((third as { message: string }).message).toContain("75%");
+    expect(third.kind).toBe("continue");
   });
 
-  it("cannot fire the dry stop on the first rung alone", async () => {
+  it("a flat rung followed by progress starts over: the next flat rung asks, it does not stop", async () => {
+    setEvidence(opId, 10);
+    await budgetLadderMiddleware.beforeTurn!(ctxAt(40, opId));
+    const flat = await budgetLadderMiddleware.beforeTurn!(ctxAt(80, opId));
+    expect((flat as { reason?: string }).reason).toBe("budget-ladder");
+    setEvidence(opId, 30); // the op moved again after being asked
+    expect((await budgetLadderMiddleware.beforeTurn!(ctxAt(120, opId))).kind).toBe("continue");
+  });
+
+  it("cannot fire anything on the first rung alone", async () => {
     setEvidence(opId, 0); // no evidence at all yet
     const first = await budgetLadderMiddleware.beforeTurn!(ctxAt(40, opId));
-    expect((first as { reason?: string }).reason).toBe("budget-ladder");
+    expect(first.kind).toBe("continue");
   });
 
   it("keeps a productive op alive past 256 distinct results, where the Set size would have called it dry", async () => {
     const loop = loopOf(opId);
-    const reasonAt = async (turn: number) =>
-      (await budgetLadderMiddleware.beforeTurn!(ctxAt(turn, opId)) as { reason?: string }).reason;
+    const kindAt = async (turn: number) => (await budgetLadderMiddleware.beforeTurn!(ctxAt(turn, opId))).kind;
 
     // 25% rung: already past the cap — the Set is saturated from here on.
     learn(opId, 270);
     expect(loop.seenResultSigs.size).toBe(RESULT_SIG_MEMORY);
-    expect(await reasonAt(40)).toBe("budget-ladder");
+    expect(await kindAt(40)).toBe("continue");
 
     // 50% rung: 40 more distinct results. The Set's size has not moved; the
     // counter has. Reading .size here would count this as the first dry rung.
     learn(opId, 40);
     expect(loop.seenResultSigs.size).toBe(RESULT_SIG_MEMORY);
     expect(loop.progressTotal).toBe(310);
-    expect(await reasonAt(80)).toBe("budget-ladder");
+    expect(await kindAt(80)).toBe("continue");
 
     // 75% rung: still learning every turn. Under .size this would be the
     // second consecutive dry rung and the op would be told to stop.
     learn(opId, 40);
     expect(loop.seenResultSigs.size).toBe(RESULT_SIG_MEMORY);
     expect(loop.progressTotal).toBe(350);
-    expect(await reasonAt(120)).toBe("budget-ladder");
+    expect(await kindAt(120)).toBe("continue");
   });
 
   // Same regression as checkpoint-stop.test.ts "write-only work is progress":
@@ -172,8 +199,7 @@ describe("budget-ladder — dry-rung stop", () => {
   // read as two dry rungs here either.
   it("does not call an op dry when every turn between rungs wrote a NEW file", async () => {
     const loop = loopOf(opId);
-    const reasonAt = async (turn: number) =>
-      (await budgetLadderMiddleware.beforeTurn!(ctxAt(turn, opId)) as { reason?: string }).reason;
+    const kindAt = async (turn: number) => (await budgetLadderMiddleware.beforeTurn!(ctxAt(turn, opId))).kind;
     let n = 0;
     const scaffold = (files: number) => {
       for (let i = 0; i < files; i++) {
@@ -185,11 +211,11 @@ describe("budget-ladder — dry-rung stop", () => {
       }
     };
     scaffold(4);
-    expect(await reasonAt(40)).toBe("budget-ladder");
+    expect(await kindAt(40)).toBe("continue");
     scaffold(4);
-    expect(await reasonAt(80)).toBe("budget-ladder");
+    expect(await kindAt(80)).toBe("continue");
     scaffold(4);
-    expect(await reasonAt(120)).toBe("budget-ladder"); // not "budget-ladder-dry"
+    expect(await kindAt(120)).toBe("continue"); // neither asked nor stopped
     expect(loop.seenResultSigs.size).toBe(0); // the SET still excludes the write's "ok"
     expect(loop.progressTotal).toBe(12);
   });
@@ -199,7 +225,7 @@ describe("budget-ladder — dry-rung stop", () => {
       (await budgetLadderMiddleware.beforeTurn!(ctxAt(turn, opId)) as { reason?: string }).reason;
 
     learn(opId, 300);
-    expect(await reasonAt(40)).toBe("budget-ladder");
+    expect(await reasonAt(40)).toBeUndefined(); // first rung: silent
     repeat(opId, 20); // nothing new between the rungs
     expect(await reasonAt(80)).toBe("budget-ladder"); // one dry rung
     repeat(opId, 20);

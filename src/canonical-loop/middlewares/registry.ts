@@ -90,7 +90,8 @@ const DEFAULT_STACK: StackEntry[] = [
   // committed source edit, so they don't contend).
   { order: 150, mw: verifyGateMiddleware },
   { order: 190, mw: openStepsMiddleware },
-  // Forced self-assessment at 25/50/75% of the iteration budget, and an
+  // Progress checked at 25/50/75% of the iteration budget: silent while the op
+  // learns or builds, a self-assessment at a rung with nothing new, and an
   // honest stop when two consecutive rungs learn nothing new. All lanes:
   // the budget wall that prompted it fires on interactive ops, and the
   // same no-progress spend happens unattended on worker ops.

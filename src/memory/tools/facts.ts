@@ -200,8 +200,11 @@ export function createFactsTools(memory: MemoryIndex) {
             if (!result.ok) {
               return { content: formatToolError("remember failed", result), isError: true };
             }
-            memory.markDirty();
             const f = result.fact!;
+            if (result.alreadySaved) {
+              return { content: `Already saved as #${f.id}, nothing added: ${displayContent(f).slice(0, 80)}` };
+            }
+            memory.markDirty();
             if (result.indexFailed) {
               return {
                 content:

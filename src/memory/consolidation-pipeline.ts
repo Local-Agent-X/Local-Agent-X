@@ -6,7 +6,9 @@
  *                    dedup/contradiction resolver (runExtraction). Opt-in.
  *   2. consolidate — zero-LLM Jaccard merge + contradiction count over today's
  *                    daily-log facts (MemoryConsolidator). Writes no pages.
- *   3. supersede   — stored facts end the older facts they make stale, kept as
+ *   3. repeats     — a stored fact an older current fact already says is ended
+ *                    as a repeat of it (fact-repeats.ts). Zero-LLM, bounded.
+ *      supersede   — stored facts end the older facts they make stale, kept as
  *                    history (supersede-sweep.ts). LLM, bounded per run.
  *   4. reflect     — rebuild entity pages from the Facts DB + opinion confidence.
  *
@@ -31,6 +33,8 @@ export interface ConsolidationOptions {
   extract?: ExtractionOptions;
   /** Run the algorithmic consolidate stage (default true). */
   consolidate?: boolean;
+  /** Present → end repeats among this many stored facts. Absent → skip it. */
+  repeats?: number;
   /** Present → run the supersede sweep over this many stored facts. Absent → skip it. */
   supersede?: number;
   /** Run reflect (default true / 7 days). A number sets the lookback days. */
@@ -42,6 +46,7 @@ export interface ConsolidationOptions {
 export interface ConsolidationSummary {
   extraction?: ExtractionResult;
   consolidation?: ConsolidationReport;
+  repeats?: { examined: number; ended: number; backlogLeft: boolean };
   supersession?: { examined: number; replaced: number; backlogLeft: boolean };
   reflection?: { entitiesUpdated: string[]; opinionsUpdated: number };
   operational?: { ingested: number; scanned: number };
@@ -64,6 +69,11 @@ export async function runConsolidation(
   if (opts.consolidate !== false) {
     const { MemoryConsolidator } = await import("./cognitive/consolidation/index.js");
     summary.consolidation = MemoryConsolidator.getInstance().consolidate();
+  }
+
+  // Before the supersede sweep, so no resolver call is spent on a repeat.
+  if (opts.repeats) {
+    summary.repeats = await memory.sweepRepeatedFacts(opts.repeats);
   }
 
   if (opts.supersede) {

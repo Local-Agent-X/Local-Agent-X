@@ -17,8 +17,9 @@ import type { MemoryPromotionContext } from "../promotion-gate.js";
 
 export interface BatchFactResult {
   fact: string;
-  status: "saved" | "blocked" | "skipped";
-  /** saved: "#id: content"; blocked: the gate's reason; skipped: why nothing landed. */
+  status: "saved" | "already" | "blocked" | "skipped";
+  /** saved / already: "#id: content" (already: a current fact that said it);
+   *  blocked: the gate's reason; skipped: why nothing landed. */
   detail: string;
 }
 
@@ -51,6 +52,9 @@ export function saveFactsBatch(
         return { fact, status: "skipped" as const, detail: `not saved (${result.error ?? "unknown error"})` };
       }
       const f = result.fact!;
+      if (result.alreadySaved) {
+        return { fact, status: "already" as const, detail: `#${f.id}: ${displayContent(f).slice(0, 80)}` };
+      }
       const indexNote = result.indexFailed
         ? ` (keyword index failed: ${result.indexError ?? "facts_fts insert error"})`
         : "";
@@ -66,15 +70,18 @@ export function saveFactsBatch(
 
 /** What a batched `remember` tells the model: how many landed, then each fact
  *  on its own line, so it never claims more than was saved. An error when
- *  none landed. */
+ *  none landed and none was already in memory. */
 export function batchReport(results: BatchFactResult[], label: string): { content: string; isError: boolean } {
   const savedCount = results.filter((r) => r.status === "saved").length;
+  const inMemory = savedCount + results.filter((r) => r.status === "already").length;
   const lines = results.map((r) =>
     r.status === "saved"
       ? `SAVED ${r.detail}`
+      : r.status === "already"
+        ? `ALREADY SAVED, nothing added: ${r.detail}`
       : r.status === "blocked"
         ? `BLOCKED (${r.detail}): ${r.fact.slice(0, 80)}`
         : `NOT SAVED (${r.detail}): ${r.fact.slice(0, 80)}`,
   );
-  return { content: `Remembered ${savedCount}/${results.length} facts [${label}]:\n` + lines.join("\n"), isError: savedCount === 0 };
+  return { content: `Remembered ${savedCount}/${results.length} facts [${label}]:\n` + lines.join("\n"), isError: inMemory === 0 };
 }

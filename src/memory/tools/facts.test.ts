@@ -142,14 +142,14 @@ describe("remember multi-fact batching (one round trip, zero retries)", () => {
     expect(spy.mock.calls.some(([content]) => /previous instructions/i.test(String(content)))).toBe(false);
   });
 
-  it("reports an in-batch duplicate as NOT SAVED instead of claiming it landed", async () => {
+  it("reports an in-batch duplicate as already saved instead of claiming it landed", async () => {
     const tool = rememberTool();
     const res = await tool.execute({
       facts: ["User drinks black coffee only", "User drinks black coffee only"],
     });
 
     expect(res.content).toMatch(/^Remembered 1\/2 facts/);
-    expect(res.content).toMatch(/^NOT SAVED /m);
+    expect(res.content).toMatch(/^ALREADY SAVED, nothing added: #\d+/m);
   });
 
   it("saves content and a different facts[] item as two facts of one call", async () => {

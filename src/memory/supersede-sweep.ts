@@ -25,12 +25,14 @@ import { rowToFact } from "./utils.js";
 import { findResolverCandidates, type ResolverCandidateRow } from "./resolver-candidates.js";
 import { invalidateFact } from "./index-facts-invalidate.js";
 import { withFactActor } from "./fact-events.js";
+import { findRepeatOf } from "./fact-repeats.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("memory.supersede-sweep");
 
-const NEWEST_SEEN = "supersede_sweep_newest_seen";
-const BACKLOG_BELOW = "supersede_sweep_backlog_below";
+interface SweepMarks { newestSeen: string; backlogBelow: string }
+const SUPERSEDE_MARKS: SweepMarks = { newestSeen: "supersede_sweep_newest_seen", backlogBelow: "supersede_sweep_backlog_below" };
+const REPEAT_MARKS: SweepMarks = { newestSeen: "repeat_sweep_newest_seen", backlogBelow: "repeat_sweep_backlog_below" };
 const CANDIDATES = 5;
 
 export type Resolve = (content: string, candidates: ResolverCandidateRow[]) => Promise<ResolverDecision>;
@@ -54,16 +56,16 @@ function writeMark(db: InstanceType<typeof Database>, key: string, value: number
 }
 
 /** The next facts to examine: new ones oldest first, then the backlog newest first. */
-function nextBatch(db: InstanceType<typeof Database>, budget: number): Array<{ fact: RetainedFact; fresh: boolean }> {
+function nextBatch(db: InstanceType<typeof Database>, budget: number, marks: SweepMarks): Array<{ fact: RetainedFact; fresh: boolean }> {
   const maxId = (db.prepare("SELECT COALESCE(MAX(id), 0) AS m FROM facts").get() as { m: number }).m;
-  let newest = readMark(db, NEWEST_SEEN);
+  let newest = readMark(db, marks.newestSeen);
   if (newest === null) {
     // First run: everything stored is backlog.
     newest = maxId;
-    writeMark(db, NEWEST_SEEN, maxId);
-    writeMark(db, BACKLOG_BELOW, maxId + 1);
+    writeMark(db, marks.newestSeen, maxId);
+    writeMark(db, marks.backlogBelow, maxId + 1);
   }
-  const below = readMark(db, BACKLOG_BELOW) ?? 0;
+  const below = readMark(db, marks.backlogBelow) ?? 0;
   const fresh = db.prepare("SELECT * FROM facts WHERE id > ? AND valid_to IS NULL ORDER BY id ASC LIMIT ?")
     .all(newest, budget) as Array<Record<string, unknown>>;
   const backlog = db.prepare("SELECT * FROM facts WHERE id < ? AND valid_to IS NULL ORDER BY id DESC LIMIT ?")
@@ -83,7 +85,7 @@ export async function sweepSupersededFacts(
 ): Promise<SweepResult> {
   const result: SweepResult = { examined: 0, ended: [], replacing: [], backlogLeft: false };
   const factById = db.prepare("SELECT * FROM facts WHERE id = ?");
-  for (const { fact, fresh } of nextBatch(db, budget)) {
+  for (const { fact, fresh } of nextBatch(db, budget, SUPERSEDE_MARKS)) {
     const id = fact.id!;
     const stillCurrent = (factById.get(id) as { valid_to: number | null } | undefined)?.valid_to == null;
     if (stillCurrent) {
@@ -109,9 +111,56 @@ export async function sweepSupersededFacts(
         }
       }
     }
-    writeMark(db, fresh ? NEWEST_SEEN : BACKLOG_BELOW, id);
+    writeMark(db, fresh ? SUPERSEDE_MARKS.newestSeen : SUPERSEDE_MARKS.backlogBelow, id);
   }
-  const below = readMark(db, BACKLOG_BELOW) ?? 0;
-  result.backlogLeft = (db.prepare("SELECT 1 FROM facts WHERE id < ? AND valid_to IS NULL LIMIT 1").get(below)) !== undefined;
+  result.backlogLeft = backlogLeft(db, SUPERSEDE_MARKS);
+  return result;
+}
+
+function backlogLeft(db: InstanceType<typeof Database>, marks: SweepMarks): boolean {
+  const below = readMark(db, marks.backlogBelow) ?? 0;
+  return (db.prepare("SELECT 1 FROM facts WHERE id < ? AND valid_to IS NULL LIMIT 1").get(below)) !== undefined;
+}
+
+export interface RepeatSweepResult {
+  examined: number;
+  /** The facts this run ended as repeats, and the older facts that say them. */
+  ended: RetainedFact[];
+  kept: RetainedFact[];
+  backlogLeft: boolean;
+}
+
+/**
+ * End each of up to `budget` stored facts that an older current fact already
+ * says (fact-repeats.ts), as a repeat of it. No model call, so it can take far
+ * more facts per run than the resolver sweep; it has its own place in the
+ * facts and works through everything stored once, newest first, then keeps up
+ * with new saves. Runs before the resolver sweep so no model call is spent on
+ * a repeat. Each fact takes tens of milliseconds on a large memory (a run of
+ * 500 held the server's one thread for 12–25 s in a dry run, 2026-11-13), so
+ * the thread is handed back after each one.
+ */
+export async function sweepRepeatedFacts(db: InstanceType<typeof Database>, hasFts: boolean, budget: number): Promise<RepeatSweepResult> {
+  const result: RepeatSweepResult = { examined: 0, ended: [], kept: [], backlogLeft: false };
+  const factById = db.prepare("SELECT * FROM facts WHERE id = ?");
+  for (const { fact, fresh } of nextBatch(db, budget, REPEAT_MARKS)) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    const id = fact.id!;
+    if ((factById.get(id) as { valid_to: number | null } | undefined)?.valid_to == null) {
+      result.examined++;
+      const kept = findRepeatOf(db, hasFts, {
+        content: fact.content, entities: fact.entities, provenance: fact.provenance ?? null, sourceFile: fact.sourceFile,
+      }, { olderThan: fact.timestamp, excludeId: id });
+      if (kept?.id !== undefined && withFactActor(db, "sweep", () => invalidateFact(db, id, {
+        by: "repeat", reason: `repeats #${kept.id} (repeat sweep)`, replacedBy: kept.id,
+      }))) {
+        logger.info(`[memory] fact #${id} ended as a repeat of #${kept.id}`);
+        result.ended.push(rowToFact(factById.get(id) as Record<string, unknown>));
+        result.kept.push(kept);
+      }
+    }
+    writeMark(db, fresh ? REPEAT_MARKS.newestSeen : REPEAT_MARKS.backlogBelow, id);
+  }
+  result.backlogLeft = backlogLeft(db, REPEAT_MARKS);
   return result;
 }

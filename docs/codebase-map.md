@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 2018 non-test source files · 80 oversized · 265 nearing the size cap.
+**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 2019 non-test source files · 80 oversized · 266 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -28,7 +28,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/providers/` | 79 | 27 | L | 1 |
 | `src/session/` | 67 | 13 | L |  |
 | `src/data-lineage/` | 59 | 12 | L |  |
-| `src/memory/` | 57 | 160 | XL | 3 |
+| `src/memory/` | 57 | 161 | XL | 3 |
 | `src/browser/` | 51 | 93 | XL | 5 |
 | `src/util/` | 51 | 3 | S |  |
 | `src/tool-policy/` | 48 | 21 | L |  |
@@ -375,6 +375,7 @@ job. Comments are free: never cut them to fit.
 - `src/browser/runtime.ts` — 280+ code lines (cap 350)
 - `src/canonical-loop/scheduler.ts` — 280+ code lines (cap 350)
 - `src/mcp-client/index.ts` — 280+ code lines (cap 350)
+- `src/memory/index-facts-mutate.ts` — 280+ code lines (cap 350)
 - `src/memory/promotion-gate.ts` — 280+ code lines (cap 350)
 - `src/protocols/builder.ts` — 280+ code lines (cap 350)
 - `src/screen-capture.ts` — 280+ code lines (cap 350)
@@ -405,6 +406,7 @@ job. Comments are free: never cut them to fit.
 - `src/memory/extract.ts#runExtraction` — 90+ own code lines (cap 100)
 - `src/memory/index-facts.ts#retain` — 90+ own code lines (cap 100)
 - `src/memory/personality.ts#dedupeProfileLines` — 90+ own code lines (cap 100)
+- `src/memory/tools/facts.ts#remember.execute` — 90+ own code lines (cap 100)
 - `src/memory/tools/save.ts#createSaveTools` — 90+ own code lines (cap 100)
 - `src/memory/tools/save.ts#withProfileWrite:callback@213` — 90+ own code lines (cap 100)
 - `src/protocols/builder.ts#createBuilderTools` — 90+ own code lines (cap 100)
@@ -441,7 +443,6 @@ job. Comments are free: never cut them to fit.
 - `src/memory/context.ts#buildContextBlockParts` — 80+ own code lines (cap 100)
 - `src/memory/index-facts.ts#retainSmart` — 80+ own code lines (cap 100)
 - `src/memory/index-search/search.ts#searchInIndex` — 80+ own code lines (cap 100)
-- `src/memory/tools/facts.ts#remember.execute` — 80+ own code lines (cap 100)
 - `src/memory/tools/forget.ts#memory_forget.execute` — 80+ own code lines (cap 100)
 - `src/ops/tools/op-status.ts#opStatusTool.execute` — 80+ own code lines (cap 100)
 - `src/providers/adapters/ollama-native.ts#OllamaNativeAdapter.stream` — 80+ own code lines (cap 100)

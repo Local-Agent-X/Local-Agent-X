@@ -27,6 +27,24 @@ export function isUserReported(fact: { sourceFile?: string; provenance?: string 
 	return fact.provenance === "user_statement" || PARAPHRASED_USER_STATEMENT.test(fact.sourceFile ?? "");
 }
 
+function fromUntrustedSource(sourceFile: string | undefined): boolean {
+	return !!sourceFile && (sourceFile.startsWith(TAINTED_FACT_SOURCE_PREFIX) || sourceFile.startsWith(IMPORTED_FACT_SOURCE_PREFIX));
+}
+
+/**
+ * Whether `kept` stands at least as high as `dropped`, so a statement that only
+ * repeats it can go without losing anything: the user's own word is never
+ * dropped for a model's, nor a clean source for a tainted or imported one
+ * (fact-repeats.ts).
+ */
+export function standsAsHigh(
+	kept: { sourceFile?: string; provenance?: string | null },
+	dropped: { sourceFile?: string; provenance?: string | null },
+): boolean {
+	if (isUserReported(dropped) && !isUserReported(kept)) return false;
+	return !(fromUntrustedSource(kept.sourceFile) && !fromUntrustedSource(dropped.sourceFile));
+}
+
 export function factTrustSuffix(sourceFile: string | undefined): string {
 	if (sourceFile?.startsWith(IMPORTED_FACT_SOURCE_PREFIX)) {
 		return (

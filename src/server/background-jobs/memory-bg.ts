@@ -11,6 +11,11 @@ const logger = createLogger("server.background-jobs.memory-bg");
 // 6h): a backlog of a few thousand clears in about a week, one resolver call
 // each, and new facts are taken first.
 const SUPERSEDE_PER_RUN = 150;
+// Stored facts the repeat sweep examines per run: no model call, two queries
+// of about 20 ms each, the thread handed back between facts. A backlog of
+// ~5,000 clears in about ten runs (under three days); a dry run on live memory
+// ended 1,237 of 4,599 as repeats (2026-11-13).
+const REPEATS_PER_RUN = 500;
 
 export interface MemoryBgDeps {
   dataDir: string;
@@ -53,7 +58,10 @@ export function makeRunMemBg(deps: MemoryBgDeps): () => Promise<void> {
     // user-triggered through the memory_consolidate/memory_dream tools.
     try {
       const { runConsolidation } = await import("../../memory/consolidation-pipeline.js");
-      const { consolidation, reflection, supersession } = await runConsolidation(memoryIndex, { consolidate: true, supersede: SUPERSEDE_PER_RUN, reflect: 7 });
+      const { consolidation, reflection, supersession, repeats } = await runConsolidation(memoryIndex, { consolidate: true, repeats: REPEATS_PER_RUN, supersede: SUPERSEDE_PER_RUN, reflect: 7 });
+      if (repeats && repeats.ended > 0) {
+        logger.info(`[memory-bg] Repeats: ${repeats.ended} ended of ${repeats.examined} examined${repeats.backlogLeft ? " (backlog left)" : ""}`);
+      }
       if (supersession && supersession.replaced > 0) {
         logger.info(`[memory-bg] Supersede: ${supersession.replaced} replaced of ${supersession.examined} examined${supersession.backlogLeft ? " (backlog left)" : ""}`);
       }

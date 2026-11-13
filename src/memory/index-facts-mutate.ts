@@ -6,9 +6,11 @@ import { retain, invalidateFact } from "./index-facts.js";
 import { backgroundMayEnd } from "./index-facts-invalidate.js";
 import { isUserReported } from "./fact-provenance-label.js";
 import { findContradictions } from "./contradiction-sweep.js";
+import { findRepeatOf } from "./fact-repeats.js";
+import { deriveEntitySlugs, loadKnownEntitySlugs } from "./entity-derive.js";
 
 import { createLogger } from "../logger.js";
-import type { MemoryPromotionContext } from "./promotion-gate.js";
+import { assertMemoryPromotionAllowed, type MemoryPromotionContext } from "./promotion-gate.js";
 const contradictionLogger = createLogger("memory.contradiction");
 
 // Hot-score for prompt injection. Confidence × exponential decay on age.
@@ -45,6 +47,8 @@ export interface OneFactResult {
   // so the agent can pick a more specific one without a separate lookup call.
   preview?: string[];
   fact?: RetainedFact;
+  /** remember: `fact` is a current fact that already said this; nothing new was saved. */
+  alreadySaved?: boolean;
   newFactId?: number;
   oldFactId?: number;
   indexFailed?: boolean;
@@ -82,7 +86,24 @@ export function rememberFact(
   if (bulletSpansLines(bullet)) {
     return { ok: false, error: "fact must be a single line (one fact per remember call)" };
   }
-  const facts = retain(db, hasFts, bullet, opts?.sourceFile ?? "agent-tool", 0, opts?.promotion);
+  // A current fact that already says this is the answer: a second copy in
+  // other words is what filled memory with repeats (fact-repeats.ts). It is
+  // reinforced, as a fact that came up again, and nothing new is saved.
+  const sourceFile = opts?.sourceFile ?? "agent-tool";
+  const said = findRepeatOf(db, hasFts, {
+    content: trimmed,
+    entities: deriveEntitySlugs(trimmed, [], loadKnownEntitySlugs(db)),
+    provenance: opts?.promotion?.origin ?? null,
+    sourceFile,
+  });
+  if (said?.id !== undefined) {
+    // The save was asked for and answered: its capability is checked and spent
+    // here exactly as retain() would, so a replay is refused the same way.
+    assertMemoryPromotionAllowed(bullet, opts?.promotion?.target ?? "memory:retain", opts?.promotion);
+    reinforceFacts(db, [said.id]);
+    return { ok: true, fact: said, alreadySaved: true };
+  }
+  const facts = retain(db, hasFts, bullet, sourceFile, 0, opts?.promotion);
   if (facts.length === 0) {
     return { ok: false, error: "fact already exists or failed to insert" };
   }

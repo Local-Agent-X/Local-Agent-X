@@ -120,8 +120,9 @@ export abstract class MemoryFactsBase {
     opts?: { kind?: FactKind; confidence?: number; sourceFile?: string; promotion?: MemoryPromotionContext; sourceMessageId?: string; by?: "agent" | "background" }
   ): FactsMutate.OneFactResult {
     const result = withFactActor(this.db, opts?.by ?? "agent", () => FactsMutate.rememberFact(this.db, this.hasFts, content, opts), { unlessSet: true });
-    if (result.fact) this.recordSourceMessage(result.fact, opts?.sourceMessageId);
-    if (result.fact) this.refreshEntityPages([result.fact]);
+    // A fact that was already saved keeps the message it came from, and its page did not change.
+    if (result.fact && !result.alreadySaved) this.recordSourceMessage(result.fact, opts?.sourceMessageId);
+    if (result.fact && !result.alreadySaved) this.refreshEntityPages([result.fact]);
     return result;
   }
 
@@ -236,6 +237,15 @@ export abstract class MemoryFactsBase {
   }
 
   // ── Supersede sweep ──
+
+  /** End up to `budget` stored facts that an older current fact already says
+   *  (supersede-sweep.ts sweepRepeatedFacts), and rebuild the pages of both. */
+  async sweepRepeatedFacts(budget: number): Promise<{ examined: number; ended: number; backlogLeft: boolean }> {
+    const { sweepRepeatedFacts } = await import("../supersede-sweep.js");
+    const r = await sweepRepeatedFacts(this.db, this.hasFts, budget);
+    this.refreshEntityPages([...r.ended, ...r.kept]);
+    return { examined: r.examined, ended: r.ended.length, backlogLeft: r.backlogLeft };
+  }
 
   /** Let up to `budget` stored facts end the older facts they make stale
    *  (supersede-sweep.ts), and rebuild the pages of both. */

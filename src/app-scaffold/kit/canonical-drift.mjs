@@ -29,6 +29,18 @@
  *   Python  top-level `def` / `class` / UPPER_CASE constants; `_private` is local only.
  *   Go      top-level `func Name(` (no receiver), `type|var|const Name`; exported = Capitalized.
  *   Rust    `pub fn|struct|enum|trait|type|const|static|union name`; local without `pub`.
+ *   Kotlin  top-level `fun|class|interface|object|typealias|val|var Name` (an
+ *           extension `fun T.name` is `name`, a backticked test name is skipped);
+ *           local when `private` or `internal`.
+ *   Java    top-level `public class|interface|enum|record Name`; local without `public`.
+ *   Swift   top-level `public|open func|class|struct|enum|protocol|actor|typealias|let|var Name`;
+ *           local without either.
+ *   C#      `public class|struct|interface|enum|record|delegate Name` at the
+ *           namespace's indent (column 0 or one level in); local without `public`.
+ *   C/C++   column-0 `class|struct|union|enum Name {` and function definitions
+ *           whose `{` is on the line; local when `static`.
+ *   Dart    top-level `class|mixin|enum|extension|typedef Name` and functions;
+ *           local when the name starts with `_`.
  * check-canonical.mjs is the gate; codebase-map.mjs lists the findings.
  */
 import { readFileSync } from "node:fs";
@@ -37,6 +49,16 @@ import { isTestPath, languageOf, walkSource } from "./project-languages.mjs";
 
 const JS_KIND = "(?:declare\\s+)?(?:async\\s+)?(?:abstract\\s+)?(?:function\\*?|const|let|var|class|interface|type|enum)\\s+([A-Za-z_$][\\w$]*)";
 const RS_KIND = "(?:async\\s+)?(?:unsafe\\s+)?(?:fn|struct|enum|trait|type|const|static|union)\\s+(\\w+)";
+const KT_MODS = "(?:(?:data|sealed|enum|abstract|open|inline|value|annotation|suspend|operator|infix|tailrec|const|expect|actual)\\s+)*";
+const KT_KIND = `${KT_MODS}(?:fun|class|interface|object|typealias|val|var)\\s+(?:<[^>\\n]*>\\s*)?(?:[\\w<>?, ]+?\\.)?(\\w+)`;
+const JAVA_KIND = "(?:(?:abstract|final|sealed|non-sealed|strictfp)\\s+)*(?:class|interface|enum|record|@interface)\\s+(\\w+)";
+const SWIFT_KIND = "(?:(?:final|indirect)\\s+)*(?:func|class|struct|enum|protocol|actor|typealias|let|var)\\s+(\\w+)";
+const CS_KIND = "(?:(?:static|sealed|abstract|partial|readonly|ref|unsafe)\\s+)*(?:class|struct|interface|enum|record(?:\\s+struct|\\s+class)?|delegate\\s+[\\w<>\\[\\],? ]+?)\\s+(\\w+)";
+const CS_INDENT = "^(?:\\t| {4})?";
+const C_TYPE = "^(?:typedef\\s+)?(?:class|struct|union|enum(?:\\s+class)?)\\s+(\\w+)\\s*(?:final\\s*)?[:{]";
+const C_FUNC = "[A-Za-z_][\\w:<>,*& ]*?[\\s*&](\\w+)\\s*\\([^;{]*\\)\\s*(?:const\\s*)?(?:noexcept\\s*)?\\{";
+const DART_TYPE = "^(?:(?:abstract|base|final|sealed|interface)\\s+)*(?:class|mixin|enum|extension|typedef)\\s+";
+const DART_FUNC = "\\s*\\([^;]*\\)\\s*(?:async\\*?\\s*)?(?:\\{|=>)";
 
 const DECLARATIONS = {
 	js: {
@@ -54,6 +76,30 @@ const DECLARATIONS = {
 	rust: {
 		exported: new RegExp(`^pub(?:\\([^)]*\\))?\\s+${RS_KIND}`, "gm"),
 		local: new RegExp(`^${RS_KIND}`, "gm"),
+	},
+	kotlin: {
+		exported: new RegExp(`^(?:public\\s+)?${KT_KIND}`, "gm"),
+		local: new RegExp(`^(?:(?:private|internal)\\s+)?${KT_KIND}`, "gm"),
+	},
+	java: {
+		exported: new RegExp(`^public\\s+${JAVA_KIND}`, "gm"),
+		local: new RegExp(`^(?:public\\s+)?${JAVA_KIND}`, "gm"),
+	},
+	swift: {
+		exported: new RegExp(`^(?:public|open)\\s+${SWIFT_KIND}`, "gm"),
+		local: new RegExp(`^(?:(?:public|open|internal|fileprivate|private)\\s+)?${SWIFT_KIND}`, "gm"),
+	},
+	csharp: {
+		exported: new RegExp(`${CS_INDENT}public\\s+${CS_KIND}`, "gm"),
+		local: new RegExp(`${CS_INDENT}(?:(?:public|internal|file)\\s+)?${CS_KIND}`, "gm"),
+	},
+	c: {
+		exported: new RegExp(`${C_TYPE}|^(?!static\\b|return\\b|else\\b)${C_FUNC}`, "gm"),
+		local: new RegExp(`${C_TYPE}|^(?:static\\s+)?${C_FUNC}`, "gm"),
+	},
+	dart: {
+		exported: new RegExp(`${DART_TYPE}([A-Za-z]\\w*)|^(?:[\\w<>?,]+\\s+)?([A-Za-z]\\w*)${DART_FUNC}`, "gm"),
+		local: new RegExp(`${DART_TYPE}(\\w+)|^(?:[\\w<>?,]+\\s+)?(\\w+)${DART_FUNC}`, "gm"),
 	},
 };
 

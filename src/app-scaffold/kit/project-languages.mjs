@@ -5,8 +5,12 @@
  * is, and which folders its builds write. codebase-map.mjs,
  * check-module-owners.mjs, check-doc-paths.mjs, check-structure.mjs and
  * canonical-drift.mjs import
- * this file, so a project copies it beside them; nothing else reads it.
- * Supporting a language is adding a row here, not a special case there.
+ * this file, so a project copies it beside them (with language-paths.mjs and
+ * project-languages-toolchains.mjs, which it imports); nothing else reads it.
+ * Supporting a language is adding a row here, not a special case there. The
+ * rows for languages whose layout a build tool sets (Kotlin, Java, Swift, C#,
+ * C/C++, Dart) live in project-languages-toolchains.mjs, which says what a
+ * module, a root and an import are for each of them.
  *
  * What a module is, per language:
  *   JS/TS, Python  a top-level directory under a source root (`src/auth/`);
@@ -16,7 +20,9 @@
  *                  main.rs and lib.rs are the crate root, not modules.
  *   Go             a package directory, at any depth (`internal/auth/token/`).
  *
- * Default source roots, from the project file at the repo root:
+ * Default source roots, from the project file at the repo root (the
+ * toolchain languages' project files are checked first; then go.mod,
+ * Cargo.toml, the Python files, package.json):
  *   Cargo.toml → src · go.mod → internal/, cmd/, pkg/ (those present) ·
  *   package.json → src, or the framework's layout when there is no src/
  *   (SvelteKit's src/lib, an app/ dir for Next app-router and React Router,
@@ -34,18 +40,17 @@
  */
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { basename, dirname, join, relative, resolve, sep } from "node:path";
+import { firstFile, posix, topLevelDirModule } from "./language-paths.mjs";
+import { TOOLCHAIN_LANGUAGES } from "./project-languages-toolchains.mjs";
 
 // vendor/ and third_party/ hold code we ship but don't own — not mapped, not checked.
 export const SKIP_DIRS = new Set([
 	"node_modules", "dist", "build", ".git", "__pycache__", ".venv", "venv", "coverage", ".next",
 	"vendor", "third_party", "target",
+	// Toolchain caches and generated trees: Gradle, .NET's obj/, SwiftPM, Xcode,
+	// CocoaPods, Dart, CMake's IDE build folders.
+	".gradle", "obj", ".build", "DerivedData", "Pods", ".dart_tool", "cmake-build-debug", "cmake-build-release",
 ]);
-
-const posix = (p) => p.split(sep).join("/");
-// Exact-case: on a case-insensitive filesystem `store/Db.rs` would otherwise
-// "exist" for `store/db.rs`, and the edge would point at a file not in the tree.
-const isFile = (p) => existsSync(p) && statSync(p).isFile() && readdirSync(dirname(p)).includes(basename(p));
-const firstFile = (candidates) => candidates.find(isFile) ?? null;
 
 const JS_EXT = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"];
 const JS_SPEC = /(?:from\s*|import\s*\(\s*|require\s*\(\s*|import\s+)["'`]([^"'`]+)["'`]/g;
@@ -56,15 +61,6 @@ const RS_CRATE_PATH = /\bcrate::(\w+(?:::\w+)*)/g;
 const GO_IMPORT_BLOCK = /^\s*import\s*\(([\s\S]*?)\)/gm;
 const GO_IMPORT_ONE = /^\s*import\s+(?:[\w.]+\s+)?"([^"]+)"/gm;
 const GO_QUOTED = /"([^"]+)"/g;
-
-/** A directory module: the top-level directory under the root; a file directly
- *  under the root is loose (null). */
-function topLevelDirModule(root, parts, repo) {
-	if (parts.length < 2) return null;
-	const dir = join(root, parts[0]);
-	const key = posix(relative(repo, dir));
-	return { key, display: `${key}/`, dir };
-}
 
 function resolveJs(fromFile, spec) {
 	if (!spec.startsWith(".")) return [];
@@ -191,6 +187,10 @@ export const LANGUAGES = [
 		moduleOf: topLevelDirModule,
 		imports: pyTargets,
 	},
+	// Kotlin, Java, Swift, C#, C/C++, Dart. After Python so a requirements.txt
+	// beside a CMakeLists.txt doesn't make a C++ repo a Python one; before Rust
+	// and Go, whose project files are unambiguous.
+	...TOOLCHAIN_LANGUAGES,
 	{
 		id: "rust",
 		extensions: [".rs"],
@@ -239,15 +239,22 @@ export const isSourceFile = (name) => languageOf(name)?.isSource(name) ?? false;
 /** A test by its language's naming rule, or anything under a test directory. */
 export function isTestPath(relPosix) {
 	const base = relPosix.split("/").pop();
-	if (/(^|\/)(__tests__|tests?)\//.test(relPosix)) return true;
+	// tests/, Swift's Tests/, Gradle's src/test/ and src/androidTest/, a .NET test project (App.Tests/).
+	if (/(^|\/)(__tests__|[Tt]ests?|androidTest|[\w.]+\.Tests?)\//.test(relPosix)) return true;
 	return languageOf(base)?.isTest(base) ?? false;
 }
+
+/** Whether a project file of the row's is at the repo root: a name, or a
+ *  pattern for the ones a project names itself (`App.csproj`, `App.xcodeproj`). */
+const hasProjectFile = (lang, repo, entries) =>
+	lang.projectFiles.some((f) => (typeof f === "string" ? existsSync(join(repo, f)) : entries.some((n) => f.test(n))));
 
 /** The project kind's default source roots (repo-relative), from the project
  *  file at the repo root; `src` when nothing identifies the kind. */
 export function defaultRoots(repo) {
+	const entries = existsSync(repo) ? readdirSync(repo) : [];
 	for (const lang of [...LANGUAGES].reverse()) {
-		if (lang.projectFiles.some((f) => existsSync(join(repo, f)))) return lang.roots(repo);
+		if (hasProjectFile(lang, repo, entries)) return lang.roots(repo);
 	}
 	return ["src"];
 }

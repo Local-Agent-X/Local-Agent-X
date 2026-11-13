@@ -178,3 +178,144 @@ describe("Rust code lines and functions", () => {
     expect(m.functions?.map((f) => f.name).sort()).toEqual(["Wrapper::fmt", "helper"]);
   });
 });
+
+describe("Kotlin, Java, Swift, C#, C/C++, Dart code lines and functions", () => {
+  const names = (m: Measured) => m.functions?.map((f) => f.name).sort();
+
+  it("Kotlin: raw strings and nested comments; fun, constructor and init; a trailing lambda belongs to its fun", () => {
+    const m = measure("a.kt", [
+      "/* outer /* nested */ still comment */",
+      "class Store(val db: Db) {",
+      "    init {",
+      '        println("{")',
+      "    }",
+      "    fun save(t: Token): Boolean {",
+      '        val s = """',
+      "            raw { // not a comment",
+      '        """',
+      "        items.forEach { x ->",
+      "            println(x)",
+      "        }",
+      "        return true",
+      "    }",
+      "    fun short() = 1",
+      "}",
+      "fun <T> List<T>.second(): T {",
+      "    return this[1]",
+      "}",
+      "interface Api { fun get(): Int }",
+    ]);
+    expect(m.code).toBe(19);
+    expect(names(m)).toEqual(["Store.init", "Store.save", "second"]);
+    expect(fn(m, "Store.save")).toBe(9);
+  });
+
+  it("Java: control blocks, calls with lambdas and anonymous classes are not functions; text blocks are strings", () => {
+    const m = measure("A.java", [
+      "public class Auth {",
+      "    @Test(timeout = 1) public void check() throws IOException {",
+      "        if (x) { y(); } else if (z) { w(); }",
+      "        try (var r = open()) { r.read(); } catch (Exception e) { throw e; }",
+      "        list.forEach(item -> {",
+      "            log(item);",
+      "        });",
+      "        new Thread(new Runnable() {",
+      "            public void run() { go(); }",
+      "        }).start();",
+      '        String s = """',
+      "            { // still text",
+      '            """;',
+      "    }",
+      "    abstract int size();",
+      "}",
+    ]);
+    expect(names(m)).toEqual(["Auth.check", "run"]);
+    expect(fn(m, "Auth.check")).toBe(12);
+  });
+
+  it("Swift: #raw strings, multi-line strings, init?/deinit, operator funcs, extensions", () => {
+    const m = measure("a.swift", [
+      "struct Profile {",
+      "    init?(raw: String) { self.name = raw }",
+      "    func greet<T>(_ x: T) async throws -> String where T: Equatable {",
+      '        let s = #"raw "{" string"#',
+      '        let m = """',
+      "        multi { line",
+      '        """',
+      '        return "\\(name) {"',
+      "    }",
+      "    static func == (a: Profile, b: Profile) -> Bool { a.name == b.name }",
+      "    deinit { print(1) }",
+      "}",
+      "protocol P { func need() -> Int }",
+      "extension Array { func dedup() -> [Element] { self } }",
+    ]);
+    expect(names(m)).toEqual(["Array.dedup", "Profile.==", "Profile.deinit", "Profile.greet", "Profile.init"]);
+    expect(fn(m, "Profile.greet")).toBe(7);
+  });
+
+  it("C#: verbatim, interpolated and raw strings; Allman braces; a primary-constructor class header is not a function", () => {
+    const m = measure("a.cs", [
+      "public class UsersController(IUserService users) : ControllerBase",
+      "{",
+      '    [HttpGet("{id}")]',
+      "    public async Task<User> Get(int id)",
+      "    {",
+      '        var s = @"verbatim ""{"" string";',
+      '        var t = $"interp {id} }}";',
+      "        foreach (var u in all) { Do(u); }",
+      "        lock (o) { n++; }",
+      "        return await users.Find(id);",
+      "    }",
+      "    public T Map<T>(object o) where T : class",
+      "    {",
+      "        return (T)o;",
+      "    }",
+      "    public int Count => users.Count;",
+      "}",
+    ]);
+    expect(names(m)).toEqual(["UsersController.Get", "UsersController.Map"]);
+    expect(fn(m, "UsersController.Get")).toBe(8);
+  });
+
+  it("C/C++: raw strings, digit separators, initializer lists, out-of-line Type::name, pure virtuals skipped", () => {
+    const m = measure("a.cpp", [
+      '#include "store/db.h"',
+      "class Store : public Base {",
+      "public:",
+      "    Store(int x) : a_(x), b_(2) { auto f = [&](int y) { return y; }; }",
+      "    virtual void pure() = 0;",
+      "};",
+      "Store::Store()",
+      "    : a_(0)",
+      "{",
+      '    const char* s = R"x(raw { )" string)x";',
+      "    long big = 1'000'000;",
+      "    char c = '}';",
+      "}",
+      "static int helper(void) { while (1) { break; } return 0; }",
+    ]);
+    expect(m.code).toBe(14);
+    expect(names(m)).toEqual(["Store.Store", "Store::Store", "helper"]);
+    expect(fn(m, "Store::Store")).toBe(7);
+  });
+
+  it("Dart: raw and triple-quoted strings; callbacks belong to the method", () => {
+    const m = measure("a.dart", [
+      "class HomePage extends StatelessWidget {",
+      "  Widget build(BuildContext context) {",
+      "    final s = r'raw { $x';",
+      "    final m = '''multi",
+      "    { line''';",
+      "    return Button(onPressed: () {",
+      "      setState(() { n++; });",
+      "    });",
+      "  }",
+      "  int get count => 1;",
+      "}",
+      "void main() { runApp(HomePage()); }",
+    ]);
+    expect(names(m)).toEqual(["HomePage.build", "main"]);
+    expect(fn(m, "HomePage.build")).toBe(8);
+  });
+});

@@ -30,9 +30,12 @@ const manifestPath = join(KIT_DIR, "UPSTREAM.json");
  *  suffix so neither vitest, pytest nor tsc treats a template as this repo's code. */
 export const KIT_FILES = {
   "project-languages.mjs": "scripts/project-languages.mjs",
+  "project-languages-toolchains.mjs": "scripts/project-languages-toolchains.mjs",
+  "language-paths.mjs": "scripts/language-paths.mjs",
   "codebase-map.mjs": "scripts/codebase-map.mjs",
   "code-size.mjs": "scripts/code-size.mjs",
   "code-size-cfamily.mjs": "scripts/code-size-cfamily.mjs",
+  "code-size-clike.mjs": "scripts/code-size-clike.mjs",
   "code-size-python.mjs": "scripts/code-size-python.mjs",
   "check-code-size.mjs": "scripts/check-code-size.mjs",
   "check-doc-paths.mjs": "scripts/check-doc-paths.mjs",

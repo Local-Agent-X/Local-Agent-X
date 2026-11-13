@@ -1,7 +1,15 @@
 {
   "project-languages.mjs": {
     "upstream": "scripts/project-languages.mjs",
-    "sha256": "ea86ac28d565285ffad58c197d8ce874abe1e2a4b0a6d8347324a090910bbc3e"
+    "sha256": "540560461c7891a08118d0585a22aa751cbd686f1edbb88cdd06cad609b50c39"
+  },
+  "project-languages-toolchains.mjs": {
+    "upstream": "scripts/project-languages-toolchains.mjs",
+    "sha256": "b80413a70743310424db1d7ad25e50b5cdf609897d2a81b49e6ed8f2475a4433"
+  },
+  "language-paths.mjs": {
+    "upstream": "scripts/language-paths.mjs",
+    "sha256": "7669c8a5cd0658653d4dae8b488e508eadd7c54f7e06090c9de9dff35dcd172c"
   },
   "codebase-map.mjs": {
     "upstream": "scripts/codebase-map.mjs",
@@ -9,11 +17,15 @@
   },
   "code-size.mjs": {
     "upstream": "scripts/code-size.mjs",
-    "sha256": "1d024d4657d57e4143b746677f5d9064247f20678c5b1fbfb4f906ab37f30284"
+    "sha256": "d083ffade49968593ea0d0a76b9f97a7300185e01fe29bd6d920a61ea2994d28"
   },
   "code-size-cfamily.mjs": {
     "upstream": "scripts/code-size-cfamily.mjs",
-    "sha256": "dfafd6ead6c1070791e02d9c121a216f55d90f2d2d841e6f0f274bdd5ba4f0d5"
+    "sha256": "5a62b4530490e16d5602865244cb8396ac2fe1693d7c51a5f2d094e66ddefff0"
+  },
+  "code-size-clike.mjs": {
+    "upstream": "scripts/code-size-clike.mjs",
+    "sha256": "ef80560a4169bc2f22254f9bb659a808e4b442a7fefba0883051167689c53348"
   },
   "code-size-python.mjs": {
     "upstream": "scripts/code-size-python.mjs",
@@ -41,7 +53,7 @@
   },
   "canonical-drift.mjs": {
     "upstream": "scripts/canonical-drift.mjs",
-    "sha256": "6def495744d76203cd88ef035b85dd4c65134bf348c82b5b968e32ab3b3096c3"
+    "sha256": "a815346bde27c72ffd9e24e2f8baf72668807aa566f35258d0ee3409b2bb71b0"
   },
   "code-refs.mjs": {
     "upstream": "scripts/code-refs.mjs",

@@ -112,7 +112,7 @@ function templateEnd(text, from) {
 	return { at: text.length, interpolation: false };
 }
 
-function blockCommentEnd(text, i, nests) {
+export function blockCommentEnd(text, i, nests) {
 	let depth = 0;
 	for (let j = i; j < text.length - 1; j++) {
 		if (text[j] === "/" && text[j + 1] === "*" && (nests || depth === 0)) { depth += 1; j++; continue; }
@@ -127,7 +127,7 @@ function blockCommentEnd(text, i, nests) {
 
 /** End (exclusive) of a quoted literal starting at i, honouring backslash
  *  escapes; a single-line literal ends at an unescaped newline. */
-function quotedEnd(text, i, quote, multiLine) {
+export function quotedEnd(text, i, quote, multiLine) {
 	for (let j = i + 1; j < text.length; j++) {
 		if (text[j] === "\\") { j++; continue; }
 		if (text[j] === quote) return j + 1;
@@ -208,7 +208,7 @@ function rustCharEnd(text, j) {
 // ── Function bodies ─────────────────────────────────────────────────────────
 
 /** Index of the bracket that closes the one at `open`, in masked text. */
-function matchClose(masked, open) {
+export function matchClose(masked, open) {
 	let depth = 0;
 	for (let k = open; k < masked.length; k++) {
 		const ch = masked[k];
@@ -222,7 +222,7 @@ function matchClose(masked, open) {
 }
 
 const ITEM_START = /(^|[{};\]]|\bpub(\([^)]*\))?|\bunsafe|\bdefault)\s*$/;
-const skipSpace = (s, k) => { while (k < s.length && /\s/.test(s[k])) k++; return k; };
+export const skipSpace = (s, k) => { while (k < s.length && /\s/.test(s[k])) k++; return k; };
 const wordAt = (s, k) => { const w = /^[A-Za-z_][A-Za-z0-9_]*/.exec(s.slice(k, k + 200)); return w ? w[0] : ""; };
 
 /** Go: after the parameters, the `{` that opens the body (same line, depth 0,
@@ -334,7 +334,7 @@ function rustFunctions(masked, text) {
 
 /** Each function's own code lines: the non-space masked chars from its
  *  keyword to its closing brace, minus the functions nested inside it. */
-function ownLines(masked, fns) {
+export function ownLines(masked, fns) {
 	const lineStarts = [0];
 	for (let k = 0; k < masked.length; k++) if (masked[k] === "\n") lineStarts.push(k + 1);
 	const lineOf = (pos) => {

@@ -25,14 +25,20 @@
  *   Python  code-size-python.mjs (docstrings and bare strings are comments; def).
  *   Go/Rust code-size-cfamily.mjs (string-, char- and comment-aware; func/fn
  *           bodies by bracket matching).
+ *   Kotlin, Java, Swift, C#, C/C++, Dart
+ *           code-size-clike.mjs (the same masking, each language's strings;
+ *           functions by keyword, or by a name whose parameters open a body).
  *
  * codebase-map.mjs and check-code-size.mjs import this file, so a project
- * copies it with them.
+ * copies it with them (and the counters it imports).
  */
 import { loadTypeScript } from "./typescript-api.mjs";
 import { languageOf } from "./project-languages.mjs";
 import { measureBraceLanguage } from "./code-size-cfamily.mjs";
+import { measureCLike } from "./code-size-clike.mjs";
 import { measurePython } from "./code-size-python.mjs";
+
+const C_LIKE = new Set(["kotlin", "java", "swift", "csharp", "c", "dart"]);
 
 /** The new-project caps. A repo with its own passes its numbers as flags. */
 export const DEFAULT_LIMITS = { maxCode: 400, warnCode: 320, maxFn: 100, warnFn: 60 };
@@ -155,6 +161,7 @@ export function measureSource(file, text, repo = process.cwd()) {
 	const lang = languageOf(file)?.id;
 	if (lang === "python") return { ...measurePython(text), approximate: false };
 	if (lang === "go" || lang === "rust") return { ...measureBraceLanguage(text, lang), approximate: false };
+	if (C_LIKE.has(lang)) return { ...measureCLike(text, lang), approximate: false };
 	const { ts } = loadTypeScript(repo);
 	if (ts) return { ...measureTypeScript(ts, file, text), approximate: false };
 	return { ...measureBraceLanguage(text, "js"), approximate: true };

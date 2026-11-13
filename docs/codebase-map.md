@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 2022 non-test source files · 80 oversized · 266 nearing the size cap.
+**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 2023 non-test source files · 80 oversized · 266 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -65,7 +65,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/routes/` | 12 | 109 | XL | 17 |
 | `src/whatsapp-bridge/` | 12 | 8 | M | 1 |
 | `src/persistence/` | 11 | 2 | S |  |
-| `src/sync/` | 10 | 22 | L | 1 |
+| `src/sync/` | 10 | 23 | L | 1 |
 | `src/codex-client/` | 9 | 7 | M |  |
 | `src/plugin-system/` | 9 | 10 | L | 1 |
 | `src/screen-stream/` | 9 | 11 | L |  |

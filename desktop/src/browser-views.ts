@@ -18,6 +18,7 @@ import { getHardenedPartitionSession, setViewTrustResolver, viewWebPreferences }
 import { viewTrust } from "./browser-download-routing";
 import { managePopups, type PopupTracker } from "./browser-view-popups";
 import { armCoDrive } from "./in-app-browser";
+import { OFFSTAGE_SIZE, parkView, resizeParkedView, unparkView } from "./browser-offstage-host";
 
 export interface BrowserViewInfo {
 	viewId: string;
@@ -204,6 +205,7 @@ export function createBrowserView(
 	};
 	pool.set(viewId, entry);
 	wcTrust.set(entry.wcId, entry.agentDriven);
+	parkView(view, offstageSize(entry));
 	try {
 		viewObserver?.onViewCreated(viewId, view.webContents, entry.agentDriven);
 	} catch {
@@ -255,9 +257,13 @@ export function showBrowserView(viewId: string): void {
 	if (!win || win.isDestroyed()) throw new Error("main window not available");
 	if (attachedId && attachedId !== viewId) {
 		const prev = pool.get(attachedId);
-		if (prev) win.contentView.removeChildView(prev.view);
+		if (prev) {
+			win.contentView.removeChildView(prev.view);
+			parkView(prev.view, offstageSize(prev));
+		}
 		attachedId = null;
 	}
+	unparkView(entry.view);
 	const flipped = attachedId !== viewId;
 	// Order is load-bearing: addChildView paints IMMEDIATELY, so geometry must be
 	// on the view BEFORE it joins the tree (attachChatOverlay does the same).
@@ -294,6 +300,13 @@ export function hideBrowserView(viewId: string): void {
 	if (win && !win.isDestroyed()) win.contentView.removeChildView(entry.view);
 	detachChatOverlay();
 	attachedId = null;
+	parkView(entry.view, offstageSize(entry));
+}
+
+/** The size a detached view renders at offstage: its pane rect once one was
+ *  negotiated (so a screenshot matches what the pane shows), else the default. */
+function offstageSize(entry: PoolEntry): { width: number; height: number } {
+	return entry.boundsNegotiated ? { width: entry.bounds.width, height: entry.bounds.height } : OFFSTAGE_SIZE;
 }
 
 export function setBrowserViewBounds(viewId: string, bounds: Rectangle): void {
@@ -302,7 +315,10 @@ export function setBrowserViewBounds(viewId: string, bounds: Rectangle): void {
 	// The renderer reporting its measured anchor rect IS the negotiation.
 	const firstNegotiation = !entry.boundsNegotiated;
 	entry.boundsNegotiated = true;
-	if (attachedId !== viewId) return;
+	if (attachedId !== viewId) {
+		resizeParkedView(entry.view, offstageSize(entry));
+		return;
+	}
 	entry.view.setBounds(bounds);
 	if (firstNegotiation) entry.view.setVisible(true); // real geometry — safe to paint
 }
@@ -310,6 +326,7 @@ export function setBrowserViewBounds(viewId: string, bounds: Rectangle): void {
 export function closeBrowserView(viewId: string): void {
 	const entry = requireEntry(viewId);
 	if (attachedId === viewId) hideBrowserView(viewId);
+	unparkView(entry.view);
 	entry.popups.closeAll();
 	try {
 		// Observed BEFORE the webContents dies so listener cleanup still has a

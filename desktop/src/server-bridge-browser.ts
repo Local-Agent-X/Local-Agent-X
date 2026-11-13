@@ -221,17 +221,38 @@ export async function handleBrowserBridgeMessage(proc: ChildProcess, msg: Browse
 		case "lax:browser-capture": {
 			reply(proc, "lax:browser-capture-result", msg.id, async () => {
 				const wc = requireWebContents(msg.viewId);
-				let pngB64 = (await wc.capturePage()).toPNG().toString("base64");
-				// A view detached from the window (backgrounded agent view) has no
-				// compositor surface, so capturePage() returns an EMPTY image — the
-				// server saw "desktop returned no image data" (2026-07-20). CDP's
-				// Page.captureScreenshot renders the frame regardless of attachment.
+				// A view with no compositor surface returns an EMPTY image — the
+				// server saw "desktop returned no image data" (2026-07-20) — or
+				// never returns, and the server gave up at the bridge's 10 s
+				// timeout with no image at all. Detached views are parked in a
+				// real-size hidden window now (browser-offstage-host.ts); should
+				// capturePage still come back empty or not come back within
+				// CAPTURE_PAGE_DEADLINE_MS, CDP's Page.captureScreenshot renders
+				// the frame regardless of attachment.
+				let pngB64 = await capturePageWithin(wc, CAPTURE_PAGE_DEADLINE_MS);
 				if (pngB64.length === 0) pngB64 = await captureViaCdp(wc);
 				if (pngB64.length > CAPTURE_MAX_B64) throw new Error(`capture exceeds ${CAPTURE_MAX_B64} base64 bytes`);
 				return { pngB64 };
 			});
 			return;
 		}
+	}
+}
+
+/** How long capturePage gets before the CDP fallback takes over: well inside
+ *  the server's 10 s bridge timeout (src/browser/bridge-client-contract.ts),
+ *  leaving the fallback time to answer. */
+export const CAPTURE_PAGE_DEADLINE_MS = 4_000;
+
+/** capturePage's PNG as base64, or "" when it is empty or not back in time. */
+export async function capturePageWithin(wc: Pick<Electron.WebContents, "capturePage">, ms: number): Promise<string> {
+	let timer: NodeJS.Timeout | undefined;
+	const late = new Promise<"">((resolve) => { timer = setTimeout(() => resolve(""), ms); });
+	try {
+		const shot = wc.capturePage().then((img) => img.toPNG().toString("base64")).catch(() => "");
+		return await Promise.race([shot, late]);
+	} finally {
+		clearTimeout(timer);
 	}
 }
 

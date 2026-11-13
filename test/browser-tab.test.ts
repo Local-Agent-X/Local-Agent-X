@@ -31,6 +31,7 @@ const h = vi.hoisted(() => ({
   poolListener: null as null | (() => void),
   poolList: [] as unknown[],
   trustResolver: null as null | ((id: number) => "user" | "agent" | null),
+  offstageHosts: [] as Array<{ opts: unknown; children: unknown[] }>,
 }));
 
 // Root Vitest resolves Electron to its test-only alias; desktop's own config
@@ -67,6 +68,21 @@ vi.mock("electron", () => {
       setVisible(v: boolean) { this.visible = v; }
       setBackgroundColor() {}
       setBorderRadius() {}
+    },
+    // The hidden host detached views are parked in (browser-offstage-host.ts).
+    // Records its options and children so tests can assert parking.
+    BrowserWindow: class {
+      opts: unknown;
+      destroyed = false;
+      children: unknown[] = [];
+      contentView = {
+        children: this.children,
+        addChildView: (v: unknown) => { if (!this.children.includes(v)) this.children.push(v); },
+        removeChildView: (v: unknown) => { const i = this.children.indexOf(v); if (i >= 0) this.children.splice(i, 1); },
+      };
+      constructor(opts: unknown) { this.opts = opts; h.offstageHosts.push(this); }
+      isDestroyed() { return this.destroyed; }
+      on() {}
     },
   };
 });
@@ -139,7 +155,7 @@ vi.mock("../desktop/src/browser-ipc", async (importOriginal) => {
 });
 
 import { autoSurfaceAgentView, isTrustedBrowserSender, scaleRectToDip, setupBrowserIPC } from "../desktop/src/browser-ipc";
-import { handleBrowserBridgeMessage } from "../desktop/src/server-bridge-browser";
+import { CAPTURE_PAGE_DEADLINE_MS, handleBrowserBridgeMessage } from "../desktop/src/server-bridge-browser";
 
 // The REAL pool module (mocked deps): exercises getAttachedViewId + the
 // pool-change listener seam against actual pool state.
@@ -1007,6 +1023,32 @@ describe("server bridge auto-surface hook + close guard (server-bridge-browser.t
     expect(dbg.detach).toHaveBeenCalled();
   });
 
+  it("capture falls back to CDP when capturePage never comes back", async () => {
+    // A view with no surface could leave capturePage pending forever; the
+    // server then gave up at its 10 s bridge timeout with no image at all.
+    vi.useFakeTimers();
+    try {
+      const wc = makeWc("");
+      (wc as { capturePage?: unknown }).capturePage = () => new Promise(() => {});
+      const dbg = {
+        attached: false,
+        isAttached: () => dbg.attached,
+        attach: vi.fn(() => { dbg.attached = true; }),
+        detach: vi.fn(() => { dbg.attached = false; }),
+        sendCommand: vi.fn(async () => ({ data: "aGFuZw==" })),
+      };
+      (wc as { debugger?: unknown }).debugger = dbg;
+      h.viewsById.set("agent-hang", { webContents: wc });
+      await handleBrowserBridgeMessage(proc as never, { type: "lax:browser-capture", id: 11, viewId: "agent-hang" } as never);
+      await vi.advanceTimersByTimeAsync(CAPTURE_PAGE_DEADLINE_MS + 10);
+      expect(proc.send).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "lax:browser-capture-result", id: 11, ok: true, pngB64: "aGFuZw==" }),
+      );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("capture with a live compositor surface never touches the debugger", async () => {
     const wc = makeWc("");
     (wc as { capturePage?: unknown }).capturePage = async () => ({ toPNG: () => Buffer.from("real-png") });
@@ -1081,6 +1123,28 @@ describe("browser-views pool seams (real module)", () => {
       webContents: { send: () => {} },
       contentView: { addChildView: () => {}, removeChildView: () => {} },
     } as never;
+  });
+
+  it("parks a detached view offstage at a real size, and moves it to the window when shown", () => {
+    realViews.createBrowserView("park-1", { partition: "persist:lax-profile-default", agentDriven: true });
+    try {
+      const view = realViews.getBrowserView("park-1") as unknown as { lastBounds: unknown; visible: boolean | undefined };
+      const host = h.offstageHosts.at(-1)!;
+      expect(host.opts).toMatchObject({ show: false, parent: h.mainWin, paintWhenInitiallyHidden: true });
+      expect(host.children).toContain(view);
+      expect(view.lastBounds).toEqual({ x: 0, y: 0, width: 1280, height: 800 });
+      expect(view.visible).toBe(true);
+      realViews.showBrowserView("park-1");
+      expect(host.children).not.toContain(view);
+      // Negotiated while attached, then hidden: parked at the pane's size.
+      realViews.setBrowserViewBounds("park-1", { x: 10, y: 20, width: 900, height: 700 });
+      realViews.hideBrowserView("park-1");
+      expect(host.children).toContain(view);
+      expect(view.lastBounds).toEqual({ x: 0, y: 0, width: 900, height: 700 });
+    } finally {
+      realViews.closeBrowserView("park-1");
+    }
+    expect(h.offstageHosts.at(-1)!.children).toHaveLength(0);
   });
 
   it("never paints before geometry: un-negotiated show is zero-area + hidden, first bounds report reveals", () => {

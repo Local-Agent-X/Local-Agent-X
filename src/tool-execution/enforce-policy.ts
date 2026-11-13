@@ -304,7 +304,7 @@ function circuitBreakerGate(ctx: ToolCallContext): PhaseOutcome {
     content: `BLOCKED by circuit breaker: ${circuit.reason}`,
     isError: true,
     status: "blocked",
-    metadata: { layer: "circuit-breaker", recovery: "This tool has failed repeatedly in this session. Stop calling it and use an alternative — the breaker will reset after several successful unrelated calls.", userHint: circuit.userHint ?? USER_HINTS.retryExhausted },
+    metadata: { layer: "circuit-breaker", recovery: "This exact call (these arguments) failed repeatedly in this session. The tool itself is not blocked: change the arguments (a different path, command or target), or wait for the cooldown the reason names before repeating it.", userHint: circuit.userHint ?? USER_HINTS.retryExhausted },
   };
   return terminate(ctx, { rendered: "model", result, allowed: false });
 }

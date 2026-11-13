@@ -43,7 +43,25 @@ export interface GeminiNativeRequest {
 // Gemini streams a "thought" part during reasoning; the adapter maps this to a
 // heartbeat (keeps the idle watchdog alive) rather than rendering it. Distinct
 // from the shared TransportEvent so the shared union stays provider-agnostic.
-export type GeminiTransportEvent = TransportEvent | { type: "thinking"; delta?: string };
+// `done` also carries the thought signature of each function call that had one,
+// by call id, for the adapter to keep on the assistant row (row-reasoning.ts).
+export type GeminiTransportEvent = TransportEvent | { type: "thinking"; delta?: string } | GeminiDoneEvent;
+type GeminiDoneEvent = Extract<TransportEvent, { type: "done" }> & { thoughtSignatures?: GeminiCallSignatures };
+
+/**
+ * Thought signatures (Gemini 3; rules checked 2026-11-13 against Google's
+ * thought-signatures guide): the first function call of each step carries one,
+ * and it must come back on that call, in its own part, unchanged, for every
+ * step of the current turn — the turn starts at the latest user content that is
+ * not a function response — or the request is refused (400). A call the API
+ * did not sign (history from another model, a payload over the replay cap)
+ * takes the documented placeholder instead. Text-part signatures are optional
+ * and are not kept: returning one means splitting the row's text into the
+ * parts it streamed in.
+ */
+export type GeminiCallSignatures = Record<string, string>;
+export const SKIP_SIGNATURE_VALIDATOR = "skip_thought_signature_validator";
+const VALIDATES_SIGNATURES = /^gemini-(?:[3-9]|\d{2,})/i;
 
 export interface GeminiNativeTransport {
   stream(req: GeminiNativeRequest): AsyncIterable<GeminiTransportEvent>;
@@ -62,7 +80,27 @@ function dataUrlToInline(url: string): Part | null {
   return { inlineData: { mimeType: m[1], data: m[2] } };
 }
 
-export function toGeminiContents(messages: TransportMessage[]): Content[] {
+export function toGeminiContents(messages: TransportMessage[], model?: string): Content[] {
+  const contents = geminiContents(messages);
+  if (model && VALIDATES_SIGNATURES.test(model)) signCurrentTurn(contents);
+  return contents;
+}
+
+/** Every model step of the current turn must lead its calls with a signed
+ *  one; a step whose first call has none gets the placeholder. */
+function signCurrentTurn(contents: Content[]): void {
+  let turnStart = 0;
+  contents.forEach((c, i) => {
+    if (c.role === "user" && !c.parts.every((p) => "functionResponse" in p)) turnStart = i + 1;
+  });
+  for (const c of contents.slice(turnStart)) {
+    if (c.role !== "model") continue;
+    const first = c.parts.find((p) => "functionCall" in p);
+    if (first && typeof first.thoughtSignature !== "string") first.thoughtSignature = SKIP_SIGNATURE_VALIDATOR;
+  }
+}
+
+function geminiContents(messages: TransportMessage[]): Content[] {
   // tool_result rows carry only toolCallId; Gemini's functionResponse needs the
   // function NAME. Resolve it from the assistant tool_calls earlier in history.
   const idToName = new Map<string, string>();
@@ -103,10 +141,12 @@ export function toGeminiContents(messages: TransportMessage[]): Content[] {
     if (m.role === "assistant") {
       const parts: Part[] = [];
       if (m.content) parts.push({ text: m.content });
+      const signatures = (m.reasoningPayload ?? {}) as GeminiCallSignatures;
       for (const tc of m.toolCalls ?? []) {
         let args: unknown = {};
         try { args = tc.arguments ? JSON.parse(tc.arguments) : {}; } catch { args = {}; }
-        parts.push({ functionCall: { name: tc.name, args } });
+        const sig = signatures[tc.id];
+        parts.push({ functionCall: { name: tc.name, args }, ...(typeof sig === "string" ? { thoughtSignature: sig } : {}) });
       }
       if (parts.length === 0) parts.push({ text: "" });
       contents.push({ role: "model", parts });
@@ -126,7 +166,7 @@ export function toGeminiContents(messages: TransportMessage[]): Content[] {
 
 export function buildGeminiBody(req: GeminiNativeRequest): Record<string, unknown> {
   const body: Record<string, unknown> = {
-    contents: toGeminiContents(req.messages),
+    contents: toGeminiContents(req.messages, req.model),
     generationConfig: {
       temperature: req.temperature ?? 0.7,
       ...(req.thinking ? { thinkingConfig: { includeThoughts: true } } : {}),
@@ -177,6 +217,7 @@ export function defaultGeminiNativeTransport(): GeminiNativeTransport {
       let buf = "";
       let stopReason: string | undefined;
       let usage: { inputTokens: number; outputTokens: number } | undefined;
+      const signatures: GeminiCallSignatures = {};
 
       const handleFrame = function* (json: string): Generator<GeminiTransportEvent> {
         let obj: {
@@ -196,7 +237,10 @@ export function defaultGeminiNativeTransport(): GeminiNativeTransport {
           const fc = (part as { functionCall?: { name: string; args?: unknown } }).functionCall;
           if (fc) {
             synthId = (synthId + 1) % 1_000_000;
-            yield { type: "tool_call", id: `gem_${Date.now().toString(36)}_${synthId.toString(36)}`, name: fc.name, arguments: JSON.stringify(fc.args ?? {}) };
+            const id = `gem_${Date.now().toString(36)}_${synthId.toString(36)}`;
+            const sig = (part as { thoughtSignature?: unknown }).thoughtSignature;
+            if (typeof sig === "string") signatures[id] = sig;
+            yield { type: "tool_call", id, name: fc.name, arguments: JSON.stringify(fc.args ?? {}) };
           }
         }
         if (cand?.finishReason) stopReason = cand.finishReason;
@@ -227,7 +271,7 @@ export function defaultGeminiNativeTransport(): GeminiNativeTransport {
       } catch (e) {
         yield { type: "error", code: "stream_exception", message: (e as Error).message, retryable: false };
       }
-      yield { type: "done", stopReason, ...(usage ? { usage } : {}) };
+      yield { type: "done", stopReason, ...(usage ? { usage } : {}), ...(Object.keys(signatures).length > 0 ? { thoughtSignatures: signatures } : {}) };
     },
   };
 }

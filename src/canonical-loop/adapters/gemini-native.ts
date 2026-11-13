@@ -17,6 +17,9 @@ import { canonicalToTransport } from "./canonical-to-transport.js";
 import { hasInjects } from "../../agent-loop/inject-queue.js";
 import { classifyModelStop, refusalError } from "./model-stop.js";
 import { buildHostedTurnTrace } from "./hosted-turn-trace.js";
+import { finalizeAssistantRow } from "./finalize-assistant.js";
+import { reasoningPayload, replayableReasoning } from "./row-reasoning.js";
+import type { GeminiCallSignatures } from "./gemini-native-transport.js";
 import { parseArgs } from "./tool-call-text-repair.js";
 import { withTransportRetry } from "./transport-retry.js";
 
@@ -71,12 +74,14 @@ export class GeminiNativeAdapter implements Adapter {
     let usageInputTokens: number | undefined;
     let usageOutputTokens: number | undefined;
     let interruptedByInject = false;
+    let signatures: GeminiCallSignatures | undefined;
 
     const req: GeminiNativeRequest = {
       model: this.opts.model,
       apiKey: this.opts.apiKey,
       systemPrompt: this.opts.systemPrompt ?? "You are a helpful assistant.",
-      messages: canonicalToTransport(input.messages, input.pendingRedirect, new Set(input.tools.map(t => t.name))),
+      messages: canonicalToTransport(input.messages, input.pendingRedirect, new Set(input.tools.map(t => t.name)), undefined,
+        replayableReasoning(input.messages, "gemini", this.opts.model, input.ephemeralTailMessages)),
       tools: input.tools.map(t => ({ name: t.name, description: t.description ?? "", parameters: (t.inputSchema as Record<string, unknown>) ?? {} })),
       signal: this.aborter.signal,
       temperature: this.opts.temperature,
@@ -121,6 +126,7 @@ export class GeminiNativeAdapter implements Adapter {
           }
           if (ev.type === "done") {
             providerStop = ev.stopReason;
+            signatures = (ev as { thoughtSignatures?: GeminiCallSignatures }).thoughtSignatures;
             if (ev.usage) { usageInputTokens = ev.usage.inputTokens; usageOutputTokens = ev.usage.outputTokens; }
             // A SAFETY / blocked stop carries no text; without this the turn
             // ended "done" and the user saw silence (model-stop.ts).
@@ -143,14 +149,11 @@ export class GeminiNativeAdapter implements Adapter {
     this.inflight = consume();
     try { await this.inflight; } finally { this.inflight = null; }
 
-    let finalizedMessageId: string | null = null;
-    if (assembledText.length > 0 || pendingToolCalls.length > 0) {
-      finalizedMessageId = `cm-${input.opId}-${input.turnIdx}-${Date.now().toString(36)}`;
-      const content: { text: string; toolCalls?: typeof pendingToolCalls } = { text: assembledText };
-      if (pendingToolCalls.length > 0) content.toolCalls = pendingToolCalls;
-      const msg: CanonicalMessage = { messageId: finalizedMessageId, role: "assistant", content };
-      report({ kind: "message_finalized", message: msg });
-    }
+    const finalizedMessageId = finalizeAssistantRow("cm", input, {
+      text: assembledText,
+      toolCalls: pendingToolCalls,
+      reasoningPayload: signatures && Object.keys(signatures).length > 0 ? reasoningPayload("gemini", req.model, signatures) : undefined,
+    }, report);
 
     let terminalReason: "done" | "error" | undefined;
     if (this.aborted) terminalReason = "error";

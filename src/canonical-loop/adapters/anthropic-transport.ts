@@ -26,6 +26,7 @@ import type {
 import { imagesToOpenAIParts } from "./images-to-openai-parts.js";
 import { randomId } from "../../util/ids.js";
 import type { CredentialSource } from "../../auth/auth-provider.js";
+import type { StreamEvent } from "../../anthropic-client/types.js";
 
 export function defaultAnthropicTransport(pinned?: { credential: string; source: CredentialSource }): AnthropicTransport {
   return {
@@ -134,19 +135,7 @@ export function defaultAnthropicTransport(pinned?: { credential: string; source:
               retryable: false,
             };
           } else if (ev.type === "done") {
-            yield {
-              type: "done",
-              stopReason: ev.stopReason,
-              // Forward usage including cache fields when present.
-              usage: ev.usage
-                ? {
-                    inputTokens: ev.usage.inputTokens,
-                    outputTokens: ev.usage.outputTokens,
-                    cacheReadTokens: ev.usage.cacheReadTokens,
-                    cacheCreateTokens: ev.usage.cacheCreateTokens,
-                  }
-                : undefined,
-            };
+            yield doneEvent(ev);
           } else if (ev.type === "mcp_activity") {
             // The CLI/MCP path executed this tool itself inside the subprocess; we
             // surface its NAME so the canonical loop can categorize the op. It does
@@ -172,6 +161,24 @@ export function defaultAnthropicTransport(pinned?: { credential: string; source:
 
 // ── helpers ──────────────────────────────────────────────────────────────
 
+/** The client's end-of-response event: the stop, the usage with its cache
+ *  fields, and the response's thinking blocks for replay. */
+function doneEvent(ev: StreamEvent): TransportEvent {
+  return {
+    type: "done",
+    stopReason: ev.stopReason,
+    usage: ev.usage
+      ? {
+          inputTokens: ev.usage.inputTokens,
+          outputTokens: ev.usage.outputTokens,
+          cacheReadTokens: ev.usage.cacheReadTokens,
+          cacheCreateTokens: ev.usage.cacheCreateTokens,
+        }
+      : undefined,
+    ...(ev.thinkingBlocks ? { thinkingBlocks: ev.thinkingBlocks } : {}),
+  };
+}
+
 /** The request's prompt-cache fields, as the wire options carry them. Each is
  *  silent to lose (the request still succeeds, the cache just stops hitting),
  *  so they travel together. toOpenAiMessage maps 1:1, so the flagged row's
@@ -194,6 +201,9 @@ function toOpenAiMessage(m: AnthropicTransportRequest["messages"][number]): Chat
   // tool-using turns surface as orphan tool_results and the API rejects
   // the request. Drops tool_calls would break canonical chat for any
   // provider whose history includes a tool turn.
+  // A row's own thinking blocks go back as `_thinking`, which
+  // anthropic-client/request.ts puts first in the assistant message.
+  const thinking = m.role === "assistant" && Array.isArray(m.reasoningPayload) ? { _thinking: m.reasoningPayload } : {};
   if (m.role === "assistant" && m.toolCalls && m.toolCalls.length > 0) {
     return {
       role: "assistant",
@@ -203,8 +213,10 @@ function toOpenAiMessage(m: AnthropicTransportRequest["messages"][number]): Chat
         type: "function" as const,
         function: { name: tc.name, arguments: tc.arguments },
       })),
+      ...thinking,
     } as ChatCompletionMessageParam;
   }
+  if (m.role === "assistant") return { role: "assistant", content: m.content, ...thinking } as ChatCompletionMessageParam;
   if (m.role === "user" && m.images && m.images.length > 0) {
     // Build OpenAI vision multi-part content (text + image_url base64).
     // anthropic-client/request.ts converts these to Anthropic's `image`
@@ -213,7 +225,7 @@ function toOpenAiMessage(m: AnthropicTransportRequest["messages"][number]): Chat
     // unchanged.
     return { role: "user", content: imagesToOpenAIParts(m.content, m.images) } as ChatCompletionMessageParam;
   }
-  if (m.role === "system" || m.role === "user" || m.role === "assistant") {
+  if (m.role === "system" || m.role === "user") {
     return { role: m.role, content: m.content } as ChatCompletionMessageParam;
   }
   // tool

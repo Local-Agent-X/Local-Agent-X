@@ -1,4 +1,5 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
+import type { ThinkingBlock } from "./stream-events.js";
 
 export interface StreamEvent {
   type: "text" | "thinking" | "tool_call" | "mcp_activity" | "done" | "error";
@@ -17,6 +18,9 @@ export interface StreamEvent {
   error?: string;
   /** Stop reason from the API — populated on done/error */
   stopReason?: string;
+  /** done (direct-HTTP path): the response's thinking blocks, unchanged, to
+   *  send back on the next step of the tool loop (stream-events.ts). */
+  thinkingBlocks?: ThinkingBlock[];
 }
 
 export interface StreamOptions {
@@ -124,6 +128,7 @@ export type AnthropicContent = (
   | { type: "image"; source: { type: "base64"; media_type: string; data: string } | { type: "url"; url: string } }
   | { type: "tool_use"; id: string; name: string; input: Record<string, unknown> }
   | { type: "tool_result"; tool_use_id: string; content: string | ToolReference[] }
+  | ThinkingBlock
 ) & { cache_control?: { type: "ephemeral" } };
 
 /** A tool loaded inline: the API expands it into the tool's definition at this

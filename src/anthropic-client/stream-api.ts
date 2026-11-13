@@ -11,6 +11,7 @@ import { hasStableSystemSplit, markConversationCache, splitSystemBlocks, withSys
 import { createLogger } from "../logger.js";
 import { toAnthropicTools } from "../providers/shared/tool-shape.js";
 import { deferSearchLoads } from "./deferred-tools.js";
+import { newSseState, sseEvents } from "./stream-events.js";
 
 const logger = createLogger("anthropic-client.stream-api");
 
@@ -339,18 +340,8 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
     }
     const decoder = new TextDecoder();
     let buffer = "";
-    let currentToolId = "";
-    let currentToolName = "";
-    let currentToolArgs = "";
-    let inputTokens = 0;
-    let outputTokens = 0;
-    // Cache fields stay undefined when the API doesn't report them — "absent"
-    // and "0" are different downstream (context anchoring refuses absent).
-    let cacheReadTokens: number | undefined;
-    let cacheCreateTokens: number | undefined;
-    let stopReason: string | undefined;
-    let sawText = false, sawToolCall = false;
-    let responseText = "";
+    const s = newSseState();
+    const toolName = (wire: string) => (oauth ? fromOAuthWireName(wire, wireToOriginal) : wire);
 
     while (true) {
       const { done, value } = await reader.read();
@@ -368,63 +359,17 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
 
           let parsed: Record<string, unknown>;
           try { parsed = JSON.parse(data); } catch { continue; }
-
-          const eventType = parsed.type as string;
-          if (eventType === "message_start") {
-            const usage = (parsed.message as Record<string, unknown>)?.usage as Record<string, number>;
-            if (usage) {
-              inputTokens = usage.input_tokens || 0;
-              // input_tokens EXCLUDES the cached prefix; the cache read/write
-              // counts arrive here. Without them the turn's recorded usage
-              // undercounts context by the whole cached prefix (tools array +
-              // prior turns) — the CLI path (stream-cli/stream-parse.ts)
-              // already forwards both.
-              if (typeof usage.cache_read_input_tokens === "number") cacheReadTokens = usage.cache_read_input_tokens;
-              if (typeof usage.cache_creation_input_tokens === "number") cacheCreateTokens = usage.cache_creation_input_tokens;
-            }
-          } else if (eventType === "content_block_start") {
-            const block = parsed.content_block as Record<string, unknown>;
-            if (block?.type === "tool_use") {
-              currentToolId = block.id as string;
-              currentToolName = block.name as string;
-              currentToolArgs = "";
-            }
-          } else if (eventType === "content_block_delta") {
-            const delta = parsed.delta as Record<string, unknown>;
-            if (delta?.type === "text_delta") { sawText = true; const t = delta.text as string; responseText += t; yield { type: "text", delta: t }; }
-            // Extended-thinking summary deltas — reasoning, not answer text.
-            // `signature_delta` (block signature) and redacted_thinking carry no
-            // readable text and are intentionally ignored.
-            else if (delta?.type === "thinking_delta" && typeof delta.thinking === "string") { yield { type: "thinking", delta: delta.thinking as string }; }
-            else if (delta?.type === "input_json_delta") currentToolArgs += delta.partial_json as string;
-          } else if (eventType === "content_block_stop") {
-            if (currentToolId) {
-              sawToolCall = true;
-              const emittedName = oauth ? fromOAuthWireName(currentToolName, wireToOriginal) : currentToolName;
-              yield { type: "tool_call", id: currentToolId, name: emittedName, arguments: currentToolArgs };
-              currentToolId = ""; currentToolName = ""; currentToolArgs = "";
-            }
-          } else if (eventType === "message_delta") {
-            const usage = parsed.usage as Record<string, number>;
-            if (usage) {
-              outputTokens = usage.output_tokens || 0;
-              // Some API versions restate cache counts on the final delta —
-              // last-wins keeps whichever frame carried them.
-              if (typeof usage.cache_read_input_tokens === "number") cacheReadTokens = usage.cache_read_input_tokens;
-              if (typeof usage.cache_creation_input_tokens === "number") cacheCreateTokens = usage.cache_creation_input_tokens;
-            }
-            const delta = parsed.delta as Record<string, unknown>;
-            if (delta?.stop_reason) stopReason = delta.stop_reason as string;
-          }
+          yield* sseEvents(parsed, s, toolName);
         }
       }
     }
+    const { inputTokens, outputTokens, cacheReadTokens, cacheCreateTokens, stopReason } = s;
 
     // Diagnostic only: logs why a non-normal response ended. The adapter
     // (canonical-loop/adapters/anthropic) owns what the loop does about it.
     const { classifyAnthropicResponse, logClassification } = await import("../response-classifier.js");
     logClassification("anthropic", resolvedModel, classifyAnthropicResponse({
-      hasText: sawText, hasToolCalls: sawToolCall, stopReason, inputTokens, outputTokens, responseText,
+      hasText: s.sawText, hasToolCalls: s.sawToolCall, stopReason, inputTokens, outputTokens, responseText: s.responseText,
     }));
     // Cache observability: hit ratio = read / (read + creation + input). The
     // three terms partition the full prompt (input_tokens EXCLUDES the cached
@@ -436,7 +381,10 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
       const ratio = total > 0 ? read / total : 0;
       logger.debug(`[cache] model=${resolvedModel} read=${read} created=${cacheCreateTokens ?? 0} uncached=${inputTokens} hit-ratio=${(ratio * 100).toFixed(1)}%`);
     }
-    yield { type: "done", usage: { inputTokens, outputTokens, cacheReadTokens, cacheCreateTokens }, stopReason };
+    yield {
+      type: "done", usage: { inputTokens, outputTokens, cacheReadTokens, cacheCreateTokens }, stopReason,
+      ...(s.thinkingBlocks.length > 0 ? { thinkingBlocks: s.thinkingBlocks } : {}),
+    };
   } catch (e) {
     yield { type: "error", error: `Anthropic error: ${(e as Error).message?.slice(0, 300)}` };
   } finally {

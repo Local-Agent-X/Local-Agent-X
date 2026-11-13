@@ -132,6 +132,7 @@ export async function streamConsume(
       }
       if (ev.type === "done") {
         out.providerStop = ev.stopReason;
+        if (ev.thinkingBlocks && ev.thinkingBlocks.length > 0) out.thinkingBlocks = ev.thinkingBlocks;
         if (ev.usage) {
           out.usageInputTokens = ev.usage.inputTokens;
           out.usageOutputTokens = ev.usage.outputTokens;

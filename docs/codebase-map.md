@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 2023 non-test source files · 80 oversized · 266 nearing the size cap.
+**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 2024 non-test source files · 79 oversized · 267 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -24,7 +24,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/tools/` | 132 | 234 | XL | 9 |
 | `src/tool-execution/` | 100 | 90 | XL | 2 |
 | `src/workspace/` | 91 | 3 | M |  |
-| `src/canonical-loop/` | 89 | 288 | XL | 11 |
+| `src/canonical-loop/` | 89 | 288 | XL | 10 |
 | `src/providers/` | 79 | 27 | L | 1 |
 | `src/session/` | 67 | 13 | L |  |
 | `src/data-lineage/` | 59 | 12 | L |  |
@@ -55,7 +55,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/agents/` | 17 | 14 | L |  |
 | `src/net/` | 17 | 11 | L |  |
 | `src/voice/` | 16 | 80 | XL | 1 |
-| `src/anthropic-client/` | 15 | 22 | L | 2 |
+| `src/anthropic-client/` | 15 | 23 | L | 2 |
 | `src/cron/` | 14 | 14 | L |  |
 | `src/self-edit/` | 13 | 19 | L | 2 |
 | `src/agent-loop/` | 12 | 1 | S |  |
@@ -252,7 +252,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/browser/layout-report.ts#buildLayoutReportScript`
 - `src/browser/observation.ts#ObservationRegistry.observeInner`
 - `src/browser/secret-fill.ts#withBrowserLock:callback`
-- `src/canonical-loop/adapters/anthropic-transport.ts#stream`
 - `src/canonical-loop/adapters/app-build-adapter.ts#CliBuildAdapter.runTurn`
 - `src/canonical-loop/adapters/openai-compat.ts#OpenAICompatAdapter.runTurn`
 - `src/canonical-loop/adapters/openai-compat/canonical-to-chat-param.ts#canonicalToChatParam`
@@ -384,13 +383,14 @@ job. Comments are free: never cut them to fit.
 - `src/tools/build-app-spawn.ts` — 280+ code lines (cap 350)
 - `src/agency/handler-tools.ts#createHandlerTools` — 100+ own code lines (cap 100)
 - `src/auto-build/workflow-resolver.ts#candidateFromEvidence` — 100+ own code lines (cap 100)
+- `src/canonical-loop/adapters/anthropic/stream-consume.ts#streamConsume` — 100+ own code lines (cap 100)
 - `src/server/background-jobs/index.ts#startBackgroundJobs` — 100+ own code lines (cap 100)
 - `src/anthropic-client/stream-cli.ts#streamViaColdSpawn` — 90+ own code lines (cap 100)
 - `src/app-renderer/components.ts#renderComponent` — 90+ own code lines (cap 100)
 - `src/auto-build/orchestrator/manager.ts#startOrchestration` — 90+ own code lines (cap 100)
 - `src/autopilot/start.ts#startAutopilot` — 90+ own code lines (cap 100)
+- `src/canonical-loop/adapters/anthropic-transport.ts#stream` — 90+ own code lines (cap 100)
 - `src/canonical-loop/adapters/anthropic.ts#AnthropicAdapter.runTurn` — 90+ own code lines (cap 100)
-- `src/canonical-loop/adapters/anthropic/stream-consume.ts#streamConsume` — 90+ own code lines (cap 100)
 - `src/canonical-loop/adapters/codex.ts#CodexAdapter.runTurn` — 90+ own code lines (cap 100)
 - `src/canonical-loop/adapters/openai-compat/stream-once.ts#streamOnce` — 90+ own code lines (cap 100)
 - `src/canonical-loop/agent-runner/run.ts#runAgentViaCanonical` — 90+ own code lines (cap 100)

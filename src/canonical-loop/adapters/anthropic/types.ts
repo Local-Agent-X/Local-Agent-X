@@ -132,6 +132,9 @@ export type TransportEvent =
         cacheReadTokens?: number;
         cacheCreateTokens?: number;
       };
+      /** Anthropic direct-HTTP: the response's thinking blocks, unchanged, for
+       *  the adapter to keep on the assistant row (row-reasoning.ts). */
+      thinkingBlocks?: unknown[];
     };
 
 export interface AnthropicTransport {
@@ -205,6 +208,8 @@ export interface StreamConsumeResult {
   assembledThinking: string;
   /** When the first text, thinking or tool call arrived (epoch ms). */
   firstEventAt: number | undefined;
+  /** The response's thinking blocks as the API sent them (direct-HTTP only). */
+  thinkingBlocks?: unknown[];
   toolCallIds: string[];
   /**
    * Full tool calls this turn emitted ({id,name,arguments}) — kept so the

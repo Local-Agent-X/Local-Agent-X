@@ -59,6 +59,8 @@ import { byteLengthUtf8, convertTools } from "./anthropic/helpers.js";
 import { streamConsume } from "./anthropic/stream-consume.js";
 import { classifyModelStop } from "./model-stop.js";
 import { buildHostedTurnTrace } from "./hosted-turn-trace.js";
+import { finalizeAssistantRow } from "./finalize-assistant.js";
+import { reasoningPayload, replayableReasoning } from "./row-reasoning.js";
 
 export {
   ANTHROPIC_ADAPTER_NAME,
@@ -79,6 +81,8 @@ export class AnthropicAdapter implements Adapter {
   readonly version = ANTHROPIC_ADAPTER_VERSION;
 
   private aborted = false;
+  /** Set once the API refused replayed thinking; later steps send none. */
+  private replayOff = false;
   private aborter: AbortController = new AbortController();
   private inflight: Promise<StreamConsumeResult> | null = null;
   private readonly transportPromise: Promise<AnthropicTransport>;
@@ -121,10 +125,12 @@ export class AnthropicAdapter implements Adapter {
     const forcedToolChoice = input.turnIdx === 0 ? this.opts.forcedToolChoice : undefined;
     const model = this.opts.model ?? "claude-opus-4-8";
 
+    const toolNames = new Set(input.tools.map(t => t.name));
+    const replay = this.replayOff ? undefined : replayableReasoning(input.messages, "anthropic", model, input.ephemeralTailMessages);
     const req: AnthropicTransportRequest = {
       model,
       systemPrompt: this.opts.systemPrompt ?? "You are a helpful assistant.",
-      messages: canonicalToTransport(input.messages, input.pendingRedirect, new Set(input.tools.map(t => t.name)), input.cacheFrontierMessageId),
+      messages: canonicalToTransport(input.messages, input.pendingRedirect, toolNames, input.cacheFrontierMessageId, replay),
       tools: convertTools(input.tools),
       signal: this.aborter.signal,
       maxTokens: this.opts.maxTokens,
@@ -146,7 +152,8 @@ export class AnthropicAdapter implements Adapter {
     // and calls adapter.abort("idle-stalled") if no events for IDLE_TIMEOUT_MS.
 
     const startedAt = Date.now();
-    this.inflight = this.runStreamConsume(transport, req, report);
+    this.inflight = this.consumeWithReplay(transport, req, report, () =>
+      canonicalToTransport(input.messages, input.pendingRedirect, toolNames, input.cacheFrontierMessageId), (replay?.size ?? 0) > 0);
     let result: StreamConsumeResult;
     try {
       result = await this.inflight;
@@ -154,27 +161,11 @@ export class AnthropicAdapter implements Adapter {
       this.inflight = null;
     }
 
-    // Finalize the assistant message whenever there is EITHER text OR tool
-    // calls. A tool-only turn (no narration) MUST still finalize, carrying its
-    // toolCalls on content.toolCalls — otherwise the next turn replays the
-    // matching tool_result rows with no tool_use block and the Messages API
-    // 400s ("unexpected tool_use_id … must have a corresponding tool_use
-    // block"). This is the round-trip the CLI proxy path never needed (it
-    // serializes history as text); the direct-HTTP path does. Mirrors Codex.
-    let finalizedMessageId: string | null = null;
-    if (result.assembledText.length > 0 || result.toolCalls.length > 0) {
-      finalizedMessageId = `am-${input.opId}-${input.turnIdx}-${Date.now().toString(36)}`;
-      const content: { text: string; toolCalls?: typeof result.toolCalls } = {
-        text: result.assembledText,
-      };
-      if (result.toolCalls.length > 0) content.toolCalls = result.toolCalls;
-      const msg: CanonicalMessage = {
-        messageId: finalizedMessageId,
-        role: "assistant",
-        content,
-      };
-      report({ kind: "message_finalized", message: msg });
-    }
+    const finalizedMessageId = finalizeAssistantRow("am", input, {
+      text: result.assembledText,
+      toolCalls: result.toolCalls,
+      reasoningPayload: reasoningPayload("anthropic", model, result.thinkingBlocks),
+    }, report);
 
     // Compute terminalReason. Order:
     //   - aborted → error (worker discards the partial turn anyway).
@@ -250,6 +241,32 @@ export class AnthropicAdapter implements Adapter {
 
   // ── internals ──────────────────────────────────────────────────────────
 
+  /**
+   * One step, sending back the tool loop's thinking blocks when there are any.
+   * Should the API refuse them (a 400 naming a thinking block or its
+   * signature) before anything came back, the step is sent again once without
+   * them and replay stays off for this adapter's later steps: the model then
+   * works from the visible text, as it did before replay existed. The refusal
+   * itself is not reported, so the loop does not see a failed turn.
+   */
+  private async consumeWithReplay(
+    transport: AnthropicTransport,
+    req: AnthropicTransportRequest,
+    report: (r: AdapterReport) => void,
+    withoutReplay: () => AnthropicTransportRequest["messages"],
+    replaying: boolean,
+  ): Promise<StreamConsumeResult> {
+    if (!replaying) return this.runStreamConsume(transport, req, report);
+    const held: AdapterReport[] = [];
+    const first = await this.runStreamConsume(transport, req, (r) => (r.kind === "error" ? held.push(r) : report(r)));
+    if (refusedReplay(first)) {
+      this.replayOff = true;
+      return this.runStreamConsume(transport, { ...req, messages: withoutReplay() }, report);
+    }
+    for (const r of held) report(r);
+    return first;
+  }
+
   private async runStreamConsume(
     transport: AnthropicTransport,
     req: AnthropicTransportRequest,
@@ -291,6 +308,12 @@ export class AnthropicAdapter implements Adapter {
     }
     return null;
   }
+}
+
+/** The API refused the replayed thinking, and nothing else came back. */
+function refusedReplay(r: StreamConsumeResult): boolean {
+  return !!r.firstError && r.assembledText.length === 0 && r.toolCalls.length === 0
+    && /\b(thinking|redacted_thinking)\b.*\bblock|\bsignature\b/i.test(r.firstError.message);
 }
 
 /** The turn's trace. Anthropic counts cache reads and writes outside

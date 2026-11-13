@@ -13,7 +13,7 @@ src/agent-request/prepare-request.ts#prepareAgentRequest 101
 src/agent-request/prepare-request/tool-selection.ts#selectTools 109
 src/agent-request/resolve-provider.ts#resolveProvider 109
 src/agent-store/template-defaults.ts#builtInTemplateDefaults 170
-src/anthropic-client/stream-api.ts#streamViaAPI 197
+src/anthropic-client/stream-api.ts#streamViaAPI 157
 src/anthropic-client/stream-cli/stream-parse.ts#processStreamLine 106
 src/app-renderer/client-script.ts#renderClientScript 137
 src/auto-build/app-build-tool.ts#finalize_app_build.execute 129
@@ -26,7 +26,6 @@ src/browser/in-app-resolve-scripts.ts#resolutionScript 175
 src/browser/layout-report.ts#buildLayoutReportScript 308
 src/browser/observation.ts#ObservationRegistry.observeInner 111
 src/browser/secret-fill.ts#withBrowserLock:callback 125
-src/canonical-loop/adapters/anthropic-transport.ts#stream 105
 src/canonical-loop/adapters/app-build-adapter.ts#CliBuildAdapter.runTurn 104
 src/canonical-loop/adapters/openai-compat.ts#OpenAICompatAdapter.runTurn 107
 src/canonical-loop/adapters/openai-compat/canonical-to-chat-param.ts#canonicalToChatParam 101

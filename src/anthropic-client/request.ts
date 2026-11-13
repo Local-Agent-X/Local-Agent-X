@@ -1,5 +1,6 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { AnthropicContent, AnthropicMessage } from "./types.js";
+import type { ThinkingBlock } from "./stream-events.js";
 
 export const API_BASE = "https://api.anthropic.com";
 
@@ -128,6 +129,11 @@ export function convertMessages(messages: ChatCompletionMessageParam[]): Anthrop
           content.push({ type: "tool_use", id: toolId, name: tc.function.name, input });
         }
       }
+      // The row's own thinking blocks (`_thinking`, set only when they are being
+      // sent back: canonical-loop/adapters/row-reasoning.ts) lead the message,
+      // in order and unchanged, as the API requires. Only beside text or a tool
+      // call: a cache breakpoint goes on a message's last block, never on one.
+      if (content.length > 0 && Array.isArray(m._thinking)) content.unshift(...(m._thinking as ThinkingBlock[]));
       if (content.length > 0) result.push({ role: "assistant", content });
     } else if (msg.role === "tool") {
       const m = msg as { tool_call_id: string; content: string };

@@ -4,7 +4,26 @@
 // dedicated tool exists)" hint that sent grok hunting a nonexistent executor.
 
 import { describe, it, expect } from "vitest";
-import { blockedSelfVerifyGuidance } from "./shell-block-guidance.js";
+import { blockedSelfVerifyGuidance, runShellAvailable } from "./shell-block-guidance.js";
+
+describe("runShellAvailable", () => {
+  it("a chat's shell is its own, contained or not, so the redirect never replaces its refusal", () => {
+    // A chat refused `sed -i … && npx tsc` was told "a delegated agent can't run
+    // shell commands" (two recorded runs, 2026-11-01/02); the refusal was the sed.
+    for (const ctx of ["local", "api"] as const) {
+      expect(runShellAvailable(ctx, () => false)).toBe(true);
+      expect(blockedSelfVerifyGuidance("bash", { command: "sed -i s/a/b/ f.ts && npx tsc" }, runShellAvailable(ctx, () => false))).toBeNull();
+    }
+  });
+
+  it("a worker run has a shell only when it is contained", () => {
+    for (const ctx of ["delegated", "cron"] as const) {
+      expect(runShellAvailable(ctx, () => true)).toBe(true);
+      expect(runShellAvailable(ctx, () => false)).toBe(false);
+      expect(blockedSelfVerifyGuidance("bash", { command: "npm test" }, runShellAvailable(ctx, () => false))).not.toBeNull();
+    }
+  });
+});
 
 describe("blockedSelfVerifyGuidance", () => {
   const verifyCommands = [

@@ -10,7 +10,7 @@ import { ariEvaluate, ariObserve, isAriActive, shouldGateInKernel, shouldObserve
 import { checkSessionPolicy } from "../session/policy.js";
 import { getKernelTaintSources } from "../data-lineage/index.js";
 import { anchorsShellAtCwd, hasCapability, pathSpecsForCall } from "../tool-registry.js";
-import { taintedShellBlockReason, knownSecretShellBlock, blockedSelfVerifyGuidance, SHELL_TAINT_DENY_SOURCES } from "./shell-block-guidance.js";
+import { taintedShellBlockReason, knownSecretShellBlock, blockedSelfVerifyGuidance, runShellAvailable, SHELL_TAINT_DENY_SOURCES } from "./shell-block-guidance.js";
 import { allHumanText } from "./unnamed-delete-gate.js";
 import { getHookEngine } from "../hooks/hook-engine.js";
 import { checkCircuit, circuitArgsSig } from "../circuit-breaker.js";
@@ -27,7 +27,6 @@ import { outboundIsTaintFree, withoutUntrustedContent } from "./taint-scope.js";
 import { kernelDenyBlocker, kernelDenyResult } from "./kernel-block.js";
 import { rewritePathForWorktree } from "./worktree-paths.js";
 import { blocked } from "../tools/result-helpers.js";
-import { WORKER_CONTEXTS } from "../security/layer/index.js";
 
 export { egressGuardGate, dataLineageGate, canaryEgressGate } from "./egress-gates.js";
 // Tool lookup + arg validation live in arg-validation.ts;
@@ -252,9 +251,10 @@ async function runPreDispatch(ctx: ToolCallContext): Promise<PhaseOutcome> {
     // containment), the block was NOT "this run can't run shell" — so the
     // redirect would misinform; suppress it and let the real block reason stand
     // (chunk K). delegatedShellContained is the SAME AND the security layer's
-    // delegated-shell gate enforces.
-    const shellAvailable = WORKER_CONTEXTS.has(ctx.callContext) &&
-      !!ctx.security?.delegatedShellContained(ctx.sessionId);
+    // delegated-shell gate enforces. A chat's shell is always its own, so a
+    // refusal there is about the command (a `sed -i` chained before `npx tsc`),
+    // never about the shell: it keeps its real recovery too.
+    const shellAvailable = runShellAvailable(ctx.callContext, () => !!ctx.security?.delegatedShellContained(ctx.sessionId));
     const selfVerify = blockedSelfVerifyGuidance(ctx.tc.name, ctx.args, shellAvailable);
     ctx.allowed = false;
     ctx.result = {

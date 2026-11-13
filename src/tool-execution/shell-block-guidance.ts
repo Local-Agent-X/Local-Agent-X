@@ -10,7 +10,9 @@ import { hasCapability } from "../tool-registry.js";
 import { findTaintInPayload, detectSecretsInOutput } from "../data-lineage/index.js";
 import { registeredOnlyAsSeen, scanKnownSecretValues } from "../security/secrets/index.js";
 import { commandSinksOnlyLocal } from "../security/layer/shell-local-sink.js";
+import { WORKER_CONTEXTS } from "../security/layer/index.js";
 import { storedSecretRoute } from "./stored-secret-route.js";
+import type { CallContext } from "./context.js";
 
 // Kernel taint sources that @arikernel/core's deny-tainted-shell rule treats as
 // tainted content (its `match.taintSources`, the kernel's one shared list). Read
@@ -170,6 +172,13 @@ export function knownSecretShellBlock(toolName: string, args: unknown, userWords
 const SELF_VERIFY_CMD =
   /\b(tsc|tsgo|vitest|jest|eslint|typecheck|type-check)\b|\b(npm|npx|pnpm|yarn|bun|deno)\s+(run\s+)?(build|check|typecheck|type-check|lint|test)\b/i;
 
+/** Whether the run's own shell is available to it, for blockedSelfVerifyGuidance.
+ *  A chat always has one, so a refusal there is about the command and keeps its
+ *  own recovery; a worker run has one only when it is contained. */
+export function runShellAvailable(callContext: CallContext, workerContained: () => boolean): boolean {
+  return !WORKER_CONTEXTS.has(callContext) || workerContained();
+}
+
 /** When a shell-class tool is blocked running the project's build/type-check,
  *  return guidance aligned with the harness's auto-verify (so the model stops
  *  retrying the blocked command); otherwise null. Pure + exported for its test.
@@ -179,8 +188,9 @@ const SELF_VERIFY_CMD =
  *  SecurityLayer.delegatedShellContained). A contained delegated agent CAN run
  *  its verify, so a block it hit was NOT "delegated agents can't run shell" — the
  *  redirect would misinform. Suppress it (return null) and let the caller's real
- *  block reason stand. When shell is genuinely unavailable (no worktree /
- *  unconfined-unacknowledged / cron / non-delegated), the redirect fires. */
+ *  block reason stand. When a worker run's shell is genuinely unavailable (no
+ *  worktree / unconfined-unacknowledged), the redirect fires. The caller
+ *  decides availability with runShellAvailable. */
 export function blockedSelfVerifyGuidance(
   toolName: string,
   args: unknown,

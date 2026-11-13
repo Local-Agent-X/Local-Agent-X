@@ -20,6 +20,7 @@ import { arithmeticSpanEnd, execBasename, resolveRealArgv0, resolveRealArgv0Inde
 import { realpathDeep } from "./file-access.js";
 import { commandPositions, splitRedirections, type CommandPosition } from "./shell-command-positions.js";
 import { laterRunOf, outputFiles } from "./shell-file-runs.js";
+import { editsInPlace } from "./shell-in-place-edit.js";
 import type { InlineEvalPolicy } from "./types.js";
 import { DECODE_EXEC_REFUSAL, ENCODED_PAYLOAD_REFUSAL, NESTED_COMMAND_WAY_OUT } from "./shell-refusals.js";
 
@@ -166,16 +167,6 @@ export function detectScriptWrite(command: string): string | null {
   //    (small one-liners don't trip the silent-noop bug). Heredocs are the
   //    real problem because they swallow newlines + multi-line content.
   return null;
-}
-
-const AWK_FAMILY = new Set(["awk", "gawk", "mawk", "nawk"]);
-
-/** `sed` with `-i` in any short cluster or `--in-place[=suffix]`; awk with
- *  its `inplace` extension. */
-function editsInPlace(p: CommandPosition): boolean {
-  const args = p.words.slice(p.at + 1);
-  if (p.bin === "sed") return args.some((a) => /^-[a-zA-Z]*i/.test(a) || /^--in-place(?:=|$)/.test(a));
-  return AWK_FAMILY.has(p.bin) && args.some((a) => /\binplace\b/i.test(a));
 }
 
 // ── URLs handed to the system browser (shell-rules.ts BROWSER_OPENERS_WITH_URL) ──

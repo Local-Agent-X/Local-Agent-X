@@ -124,4 +124,36 @@ describe("a shell edit redirected to the file tools", () => {
     const inWorkspace = evaluateShellCommandAndPaths("sed -i 's/a/b/' notes.txt", ctx());
     expect(inWorkspace.reason).toMatch(/Use the edit tool/);
   });
+
+  // A recorded chat (2026-11-01): the edit was to a file the edit tool takes,
+  // and a later command in the chain read a container path. The refusal named
+  // the container path as the edit's target and said the file tools were no
+  // way around it.
+  it("judges only what the edit writes, not a path the command reads", () => {
+    setSwitch(undefined);
+    const outside = OUTSIDE_HOME.replace(/\\/g, "/");
+    const chained = evaluateShellCommandAndPaths(`sed -i 's/a/b/' notes.txt; psql -q -f ${outside}`, ctx());
+    expect(chained.allowed).toBe(false);
+    expect(chained.reason).toMatch(/Use the edit tool/);
+    expect(chained.reason).not.toMatch(/refuse that path too/);
+  });
+
+  it("a sed script that looks like a path is not the edit's target", () => {
+    setSwitch(undefined);
+    const d = evaluateShellCommandAndPaths("sed -i /obsolete/d notes.txt", ctx());
+    expect(d.reason).toMatch(/Use the edit tool/);
+  });
+
+  it("still names the real refusal when the script comes by -e", () => {
+    setSwitch(undefined);
+    const d = evaluateShellCommandAndPaths(`sed -i -e 's/a/b/' ${SYSTEM_FILE.replace(/\\/g, "/")}`, ctx());
+    expect(d.reason).toMatch(/write\/edit tools refuse that path too/);
+  });
+
+  it("still names the real refusal for a heredoc redirected to a refused path", () => {
+    setSwitch(undefined);
+    const d = evaluateShellCommandAndPaths(`cat <<'EOF' > ${SYSTEM_FILE.replace(/\\/g, "/")}\nx\nEOF`, ctx());
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toMatch(/write\/edit tools refuse that path too/);
+  });
 });

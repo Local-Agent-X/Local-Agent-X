@@ -7,6 +7,7 @@ import type { FileAccessMode, InlineEvalPolicy } from "./types.js";
 import { evaluateFileAccess } from "./file-access.js";
 import { evaluateShellCommand } from "./shell-policy.js";
 import { detectScriptWrite } from "./shell-detectors.js";
+import { inPlaceEditTargets } from "./shell-in-place-edit.js";
 import {
   execBasename, isShellReparseFlag, resolveRealArgv0Index, splitShellSegments, tokenizeCommand,
 } from "./shell-lex.js";
@@ -148,10 +149,18 @@ export function evaluateShellPaths(command: string, ctx: ShellPathGuardCtx): Sec
  * redirect is a dead end: on Terminal-Bench (nginx-request-logging,
  * 2026-10-19) the model went back and forth between the two refusals for
  * /etc/nginx and gave up. The target's real refusal is reported instead.
+ *
+ * Only what the edit writes is judged: a redirect's target, or the operand of
+ * an in-place editor. A path the command merely reads is not the edit's
+ * target: `sed -i … schema.sql; … psql -f /w/schema.sql` was refused as "this
+ * shell edit targets /w/schema.sql … no way around it", when the edit tool
+ * takes the real file (2026-11-01).
  */
 function redirectOrTargetRefusal(command: string, decision: SecurityDecision, ctx: ShellPathGuardCtx): SecurityDecision {
   if (decision.reason !== detectScriptWrite(command)) return decision;
+  const edited = new Set(inPlaceEditTargets(command).map(expandTilde));
   for (const tok of extractPathTokens(command)) {
+    if (tok.action !== "write" && !edited.has(tok.path)) continue;
     const write = evaluateFileAccess(ctx.workspace, ctx.fileAccessMode, ctx.allowedPathCheck, "write", tok.path, ctx.sessionId);
     if (!write.allowed) {
       return {

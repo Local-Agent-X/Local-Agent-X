@@ -58,6 +58,9 @@ export function canonicalToTransport(
    *  canonical row is flagged `cacheFrontier`, for a provider that places
    *  explicit cache breakpoints. */
   cacheFrontierMessageId?: string,
+  /** Reasoning to send back, by assistant messageId (row-reasoning.ts
+   *  replayableReasoning): rides on that row as `reasoningPayload`. */
+  reasoning?: ReadonlyMap<string, unknown>,
 ): TransportMessage[] {
   const out: TransportMessage[] = [];
   // Image sidecars for tool results are DEFERRED until the consecutive run
@@ -95,27 +98,7 @@ export function canonicalToTransport(
       continue;
     }
     if (m.role === "assistant") {
-      const obj = (c ?? {}) as { text?: unknown; toolCalls?: unknown };
-      const tc = Array.isArray(obj.toolCalls)
-        ? (obj.toolCalls as Array<{ id: string; name: string; arguments: string }>)
-        : undefined;
-      // Layer-3 history-rebuild sanitization. Strip any tool-call shapes
-      // that leaked into content text on a prior turn and replace with a
-      // corrective marker — breaks the feedback loop where claude sees its
-      // own bad output and learns to repeat the pattern.
-      const rawText = extractText(c);
-      const { cleaned, leaks } = sanitizeAssistantTextForRebuild(rawText, validToolNames);
-      if (leaks.length > 0) {
-        sanitizerLogger.info(
-          `stripped ${leaks.length} leak(s) from assistant history: ` +
-          leaks.map(l => `${l.shape}${l.toolName ? `(${l.toolName})` : ""}`).join(", "),
-        );
-      }
-      out.push({
-        role: "assistant",
-        content: cleaned,
-        ...(tc && tc.length > 0 ? { toolCalls: tc } : {}),
-      });
+      out.push(assistantRow(c, validToolNames, reasoning?.get(m.messageId)));
       continue;
     }
     if (m.role === "tool_result") {
@@ -190,6 +173,32 @@ export function canonicalToTransport(
     }
   }
   return out;
+}
+
+/** An assistant row: its text, its tool calls, and its reasoning when that is
+ *  being sent back. */
+function assistantRow(c: unknown, validToolNames: ReadonlySet<string> | undefined, replayed: unknown): TransportMessage {
+  const obj = (c ?? {}) as { text?: unknown; toolCalls?: unknown };
+  const tc = Array.isArray(obj.toolCalls)
+    ? (obj.toolCalls as Array<{ id: string; name: string; arguments: string }>)
+    : undefined;
+  // Layer-3 history-rebuild sanitization. Strip any tool-call shapes
+  // that leaked into content text on a prior turn and replace with a
+  // corrective marker — breaks the feedback loop where claude sees its
+  // own bad output and learns to repeat the pattern.
+  const { cleaned, leaks } = sanitizeAssistantTextForRebuild(extractText(c), validToolNames);
+  if (leaks.length > 0) {
+    sanitizerLogger.info(
+      `stripped ${leaks.length} leak(s) from assistant history: ` +
+      leaks.map(l => `${l.shape}${l.toolName ? `(${l.toolName})` : ""}`).join(", "),
+    );
+  }
+  return {
+    role: "assistant",
+    content: cleaned,
+    ...(tc && tc.length > 0 ? { toolCalls: tc } : {}),
+    ...(replayed !== undefined ? { reasoningPayload: replayed } : {}),
+  };
 }
 
 function extractText(c: unknown): string {

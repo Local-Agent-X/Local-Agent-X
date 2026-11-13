@@ -84,6 +84,10 @@ export interface TransportMessage {
    * underlying client's tool-call shape.
    */
   toolCalls?: Array<{ id: string; name: string; arguments: string }>;
+  /** role === "assistant": this row's own reasoning in its provider's shape,
+   *  to send back (adapters/row-reasoning.ts). Each transport places it where
+   *  its API takes it; set only for the provider and model that produced it. */
+  reasoningPayload?: unknown;
   /**
    * Image attachments riding on this message (only meaningful when
    * role === "user"). Each transport picks them up at request time and

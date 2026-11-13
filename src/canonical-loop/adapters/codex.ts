@@ -10,7 +10,7 @@
  * without resending it as plaintext.
  */
 import type { Adapter, AdapterReport, TurnInput, TurnResult } from "../adapter-contract.js";
-import type { CanonicalMessage, ProviderStateEnvelope } from "../contract-types.js";
+import type { ProviderStateEnvelope } from "../contract-types.js";
 import type { CodexTransport } from "./codex-transport.js";
 import { clampNoneForCloud, DEFAULT_REASONING_EFFORT, type ReasoningEffort } from "../../providers/reasoning-effort.js";
 import type { AnthropicTransportRequest } from "./anthropic.js";
@@ -18,6 +18,8 @@ import { canonicalToTransport } from "./canonical-to-transport.js";
 import { hasInjects } from "../../agent-loop/inject-queue.js";
 import { classifyModelStop, refusalError } from "./model-stop.js";
 import { buildHostedTurnTrace, type HostedTurnOutcome } from "./hosted-turn-trace.js";
+import { finalizeAssistantRow } from "./finalize-assistant.js";
+import { reasoningPayload, replayableReasoning } from "./row-reasoning.js";
 import { parseArgs } from "./tool-call-text-repair.js";
 import { withTransportRetry } from "./transport-retry.js";
 import { resolveStepReasoningEffort } from "../step-effort.js";
@@ -84,6 +86,7 @@ export class CodexAdapter implements Adapter {
     let firstError: { code: string; message: string } | null = null;
     let providerStop: string | undefined;
     let newResponseId: string | undefined;
+    let reasoningItems: unknown[] | undefined;
     let usageInputTokens: number | undefined;
     let usageOutputTokens: number | undefined;
     // Set when the streaming loop breaks because hasInjects() fired. Distinct
@@ -95,10 +98,12 @@ export class CodexAdapter implements Adapter {
 
     const forcedToolChoice = input.turnIdx === 0 ? this.opts.forcedToolChoice : undefined;
 
+    const model = this.opts.model ?? PROVIDERS.codex.defaultModel;
     const req: AnthropicTransportRequest & { previousResponseId?: string; reasoningEffort?: ReasoningEffort } = {
-      model: this.opts.model ?? PROVIDERS.codex.defaultModel,
+      model,
       systemPrompt: this.opts.systemPrompt ?? "You are a helpful assistant.",
-      messages: canonicalToTransport(input.messages, input.pendingRedirect, new Set(input.tools.map(t => t.name))),
+      messages: canonicalToTransport(input.messages, input.pendingRedirect, new Set(input.tools.map(t => t.name)), undefined,
+        replayableReasoning(input.messages, "codex", model, input.ephemeralTailMessages)),
       tools: convertTools(input.tools),
       signal: this.aborter.signal,
       maxTokens: this.opts.maxTokens,
@@ -166,6 +171,7 @@ export class CodexAdapter implements Adapter {
           if (ev.type === "done") {
             providerStop = (ev as { stopReason?: string }).stopReason;
             newResponseId = (ev as { responseId?: string }).responseId;
+            reasoningItems = (ev as { reasoningItems?: unknown[] }).reasoningItems;
             const usage = (ev as { usage?: { inputTokens: number; outputTokens: number } }).usage;
             if (usage) {
               usageInputTokens = usage.inputTokens;
@@ -200,24 +206,11 @@ export class CodexAdapter implements Adapter {
     // STREAM_CLOSED_STOP, and the empty-turn terminal names the sign-in
     // (empty-turn-termination.ts).
 
-    // Finalize an assistant message whenever there is EITHER text OR tool
-    // calls. Earlier this only fired on text, dropping tool-only turns —
-    // which broke the next turn's tool_result chain on Codex (the API
-    // requires the matching function_call item to appear before its
-    // function_call_output).
-    if (assembledText.length > 0 || pendingToolCalls.length > 0) {
-      finalizedMessageId = `cm-${input.opId}-${input.turnIdx}-${Date.now().toString(36)}`;
-      const content: { text: string; toolCalls?: typeof pendingToolCalls } = {
-        text: assembledText,
-      };
-      if (pendingToolCalls.length > 0) content.toolCalls = pendingToolCalls;
-      const msg: CanonicalMessage = {
-        messageId: finalizedMessageId,
-        role: "assistant",
-        content,
-      };
-      report({ kind: "message_finalized", message: msg });
-    }
+    finalizedMessageId = finalizeAssistantRow("cm", input, {
+      text: assembledText,
+      toolCalls: pendingToolCalls,
+      reasoningPayload: reasoningPayload("codex", req.model, reasoningItems),
+    }, report);
 
     let terminalReason: "done" | "error" | undefined;
     if (this.aborted) {

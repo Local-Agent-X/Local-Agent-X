@@ -62,7 +62,7 @@ loop runs zero middlewares.
 
 | Dir | What lives there |
 |---|---|
-| `adapters/` | Provider adapters: `anthropic.ts`, `codex.ts`, `gemini-native.ts`, `openai-compat.ts` (+ `openai-compat/`), `app-build-adapter.ts`, `app-build-verify-adapter.ts`; their `*-transport.ts` files hold the subprocess / HTTP side; `tool-call-text-*.ts` is the one recognizer for tool calls written as text. Each builds its turn's replay trace (`TurnResult.trace`): openai-compat in `openai-compat/turn-trace.ts`, the hosted three through `hosted-turn-trace.ts`. |
+| `adapters/` | Provider adapters: `anthropic.ts`, `codex.ts`, `gemini-native.ts`, `openai-compat.ts` (+ `openai-compat/`), `app-build-adapter.ts`, `app-build-verify-adapter.ts`; their `*-transport.ts` files hold the subprocess / HTTP side; `tool-call-text-*.ts` is the one recognizer for tool calls written as text. Each builds its turn's replay trace (`TurnResult.trace`): openai-compat in `openai-compat/turn-trace.ts`, the hosted three through `hosted-turn-trace.ts`. The hosted three finalize their assistant row through `finalize-assistant.ts`, which keeps the model's reasoning payload on it; `row-reasoning.ts` decides which payloads go back to the model on the next step (same provider and model, current tool loop only). |
 | `chat-runner/` | Chat op creation, history seeding, adapter + runtime registration, the event pump that turns canonical events into `ServerEvent`s. |
 | `agent-runner/` | The same for non-streaming callers: prompt, seed messages, result collection, runtime surface. |
 | `middlewares/` | The safety stack (order below), `host.ts` phase runner, `registry.ts` declaration. |

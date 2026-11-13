@@ -17,6 +17,8 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import type { ReasoningEffort } from "../../providers/reasoning-effort.js";
 import { imagesToOpenAIParts } from "./images-to-openai-parts.js";
 import type { CredentialSource } from "../../auth/auth-provider.js";
+import type { ReasoningItem } from "../../codex-message-convert.js";
+import type { StreamChunk } from "../../providers/adapter/types.js";
 
 export interface CodexTransportRequest extends AnthropicTransportRequest {
   previousResponseId?: string;
@@ -29,7 +31,16 @@ export interface CodexTransport {
   // openai-compat and gemini transports use; the adapter maps it to the
   // canonical `reasoning_chunk` report. Not in the shared TransportEvent
   // contract, so it's unioned in here.
-  stream(req: CodexTransportRequest): AsyncIterable<(TransportEvent | { type: "thinking"; delta: string }) & { responseId?: string }>;
+  // `done` also carries the turn's encrypted reasoning items, for the adapter
+  // to keep on the assistant row and send back next step (row-reasoning.ts).
+  stream(req: CodexTransportRequest): AsyncIterable<(TransportEvent | { type: "thinking"; delta: string }) & { responseId?: string; reasoningItems?: ReasoningItem[] }>;
+}
+
+/** Each reasoning item once: the client yields it as it streams and again in
+ *  its end-of-response list. */
+function addReasoningItem(items: ReasoningItem[], item: ReasoningItem): void {
+  const same = (a: ReasoningItem) => (item.id ? a.id === item.id : a.encrypted_content === item.encrypted_content);
+  if (!items.some(same)) items.push(item);
 }
 
 export function defaultCodexTransport(pinned?: { credential: string; source: CredentialSource }): CodexTransport {
@@ -93,58 +104,7 @@ export function defaultCodexTransport(pinned?: { credential: string; source: Cre
           signal: req.signal,
         });
 
-        // Codex emits a separate `usage` event BEFORE `done`. Buffer it so
-        // we can attach to the canonical `done` frame's optional usage
-        // field — same shape soak-metrics already reads from anthropic.
-        let pendingUsage: { inputTokens: number; outputTokens: number } | undefined;
-
-        for await (const chunk of stream) {
-          if (req.signal?.aborted) return;
-          switch (chunk.type) {
-            case "text":
-              if (chunk.delta) yield { type: "text" as const, delta: chunk.delta };
-              break;
-            case "thinking":
-              if (chunk.delta) yield { type: "thinking" as const, delta: chunk.delta };
-              break;
-            case "tool_call":
-              yield {
-                type: "tool_call" as const,
-                id: chunk.id,
-                name: chunk.name,
-                arguments: chunk.arguments,
-              };
-              break;
-            case "usage": {
-              // Codex CLI's separate usage event — buffer until done.
-              const u = chunk as { promptTokens?: number; completionTokens?: number };
-              pendingUsage = {
-                inputTokens: u.promptTokens ?? 0,
-                outputTokens: u.completionTokens ?? 0,
-              };
-              break;
-            }
-            case "done":
-              yield {
-                type: "done" as const,
-                stopReason: chunk.stopReason,
-                responseId: chunk.responseId,
-                usage: pendingUsage,
-              };
-              return;
-            case "error":
-              yield {
-                type: "error" as const,
-                code: "transport_error",
-                message: scrub(chunk.message),
-                retryable: false,
-              };
-              break;
-            // The end-of-turn "reasoning" item (encrypted replay payload) is
-            // Codex-specific and handled elsewhere; only the live summary
-            // (mapped to "thinking" above) reaches the UI.
-          }
-        }
+        yield* transportEvents(stream, req.signal);
       } catch (e) {
         yield {
           type: "error" as const,
@@ -158,7 +118,68 @@ export function defaultCodexTransport(pinned?: { credential: string; source: Cre
   };
 }
 
-function toOaiMessage(m: AnthropicTransportRequest["messages"][number]): ChatCompletionMessageParam {
+/** The Codex client's stream as transport events. */
+async function* transportEvents(stream: AsyncIterable<StreamChunk>, signal: AbortSignal | undefined) {
+  // Codex emits a separate `usage` event BEFORE `done`. Buffer it so
+  // we can attach to the canonical `done` frame's optional usage
+  // field — same shape soak-metrics already reads from anthropic.
+  let pendingUsage: { inputTokens: number; outputTokens: number } | undefined;
+  const reasoningItems: ReasoningItem[] = [];
+
+  for await (const chunk of stream) {
+    if (signal?.aborted) return;
+    switch (chunk.type) {
+      case "text":
+        if (chunk.delta) yield { type: "text" as const, delta: chunk.delta };
+        break;
+      case "thinking":
+        if (chunk.delta) yield { type: "thinking" as const, delta: chunk.delta };
+        break;
+      case "tool_call":
+        yield {
+          type: "tool_call" as const,
+          id: chunk.id,
+          name: chunk.name,
+          arguments: chunk.arguments,
+        };
+        break;
+      case "usage": {
+        // Codex CLI's separate usage event — buffer until done.
+        const u = chunk as { promptTokens?: number; completionTokens?: number };
+        pendingUsage = {
+          inputTokens: u.promptTokens ?? 0,
+          outputTokens: u.completionTokens ?? 0,
+        };
+        break;
+      }
+      case "reasoning":
+        addReasoningItem(reasoningItems, (chunk as { item: ReasoningItem }).item);
+        break;
+      case "done":
+        yield {
+          type: "done" as const,
+          stopReason: chunk.stopReason,
+          responseId: chunk.responseId,
+          usage: pendingUsage,
+          ...(reasoningItems.length > 0 ? { reasoningItems } : {}),
+        };
+        return;
+      case "error":
+        yield {
+          type: "error" as const,
+          code: "transport_error",
+          message: scrub(chunk.message),
+          retryable: false,
+        };
+        break;
+    }
+  }
+}
+
+export function toOaiMessage(m: AnthropicTransportRequest["messages"][number]): ChatCompletionMessageParam {
+  // A row's own reasoning items go back as `_reasoning`, which
+  // codex-message-convert.ts replays ahead of the row's calls and text.
+  const reasoning = m.role === "assistant" && Array.isArray(m.reasoningPayload) ? { _reasoning: m.reasoningPayload } : {};
   // Assistant turns that emitted tool_calls must round-trip them in the
   // Chat Completions message shape so codex-message-convert.ts sees the
   // tool_calls field and emits matching `function_call` input items.
@@ -172,7 +193,11 @@ function toOaiMessage(m: AnthropicTransportRequest["messages"][number]): ChatCom
         type: "function" as const,
         function: { name: tc.name, arguments: tc.arguments },
       })),
+      ...reasoning,
     } as ChatCompletionMessageParam;
+  }
+  if (m.role === "assistant") {
+    return { role: "assistant", content: m.content, ...reasoning } as ChatCompletionMessageParam;
   }
   if (m.role === "user" && m.images && m.images.length > 0) {
     // gpt-5/gpt-5.5 on the Responses API support vision via input_image
@@ -186,7 +211,7 @@ function toOaiMessage(m: AnthropicTransportRequest["messages"][number]): ChatCom
       content: imagesToOpenAIParts(m.content, m.images),
     } as ChatCompletionMessageParam;
   }
-  if (m.role === "system" || m.role === "user" || m.role === "assistant") {
+  if (m.role === "system" || m.role === "user") {
     return { role: m.role, content: m.content } as ChatCompletionMessageParam;
   }
   return {

@@ -19,6 +19,7 @@ exchange:
 | Approvals on the chat channel | `approval.ts` |
 | How a `replace` frame rewrites a turn's timeline | `timeline.ts` |
 | Voice control plane | `voice.ts` |
+| Agent Sync as the phone presses it: status, Sync now, Force pull, Force push | `memory-sync.ts` |
 | Offline apps: the state snapshot, the bundle, the POST /state body and the merge both devices run | `apps.ts` |
 | The sessions list row and the session-id pattern | `sessions.ts` |
 | Broker signaling client | `broker-client.ts`, `connect-url.ts`, `parse-server-frame.ts`, `socket-adapter.ts`, `index.ts` |

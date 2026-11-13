@@ -27,12 +27,17 @@
 // answers with each collab's question, members and step, never a report's text,
 // and a member can only be a model the desktop is signed in to. The phone
 // already starts chats and drives the agent; this starts several at once.
+// /api/sync/device reads Agent Sync's state and presses its Sync now, Force pull
+// and Force push (sync/device-sync.ts), by the owner's call (2026-11-13), so the
+// user can sync this computer with its repo while away from it. Only the repo
+// this desktop was already set up for: the rest of /api/sync (configure, which
+// names the repo and token, and status, which shows the repo) stays out.
 // The broker phone is NOT an operator: nothing else on the operator API is in.
 
 import { isSensitivePath } from "../data-lineage/index.js";
 
 /** Endpoints the broker http-tunnel may proxy to loopback. */
-export const DEVICE_HTTP_PREFIXES = ["/api/apps", "/apps/", "/api/sessions", "/api/providers", "/uploads/", "/videos/", "/images/", "/files/", "/api/workspace/browse", "/api/code-folders", "/api/voices/setup/call-system", "/api/collab"];
+export const DEVICE_HTTP_PREFIXES = ["/api/apps", "/apps/", "/api/sessions", "/api/providers", "/uploads/", "/videos/", "/images/", "/files/", "/api/workspace/browse", "/api/code-folders", "/api/voices/setup/call-system", "/api/collab", "/api/sync/device"];
 
 export function isDeviceAllowedPath(pathname: string): boolean {
   if (!DEVICE_HTTP_PREFIXES.some((p) => pathname === p || pathname.startsWith(p))) return false;

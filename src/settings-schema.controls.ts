@@ -266,7 +266,7 @@ export const CONTROL_SETTINGS: ReadonlyArray<FlippableSetting> = [
     validate: z.enum(["minimal", "low", "medium", "high", "xhigh"]),
     runtime: false,
     broadcast: true,
-    description: "Thinking depth for reasoning models (gpt-5.x, o-series, grok-4). minimal=fastest, xhigh=deepest (Codex only; clamped to high elsewhere). Default medium",
+    description: "Thinking depth for reasoning models (gpt-5.x, o-series, grok-4, Claude). minimal=fastest, xhigh=deepest (Codex and the Claude models that have it; clamped to high elsewhere). On Claude, minimal runs as low. Default medium",
   },
   {
     field: "developer_mode",

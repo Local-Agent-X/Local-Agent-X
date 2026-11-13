@@ -8,9 +8,13 @@
  *     "Max" tier the Codex CLI exposes on gpt-5.x.
  *   - OpenAI Chat Completions (`reasoning_effort`): xhigh isn't a valid value
  *     there — clamp to high via effortForChatCompletions.
+ *   - Anthropic Messages API (`output_config.effort`): effortForAnthropic,
+ *     among the levels the model accepts.
  *   - Gemini native / Anthropic CLI: not wired to this knob (Gemini keeps its
  *     boolean thinking flag; the Claude CLI owns its own thinking budget).
  */
+import type { AnthropicEffort } from "../anthropic-models.js";
+
 export const REASONING_EFFORTS = ["minimal", "low", "medium", "high", "xhigh"] as const;
 export type ReasoningEffort = (typeof REASONING_EFFORTS)[number];
 
@@ -64,6 +68,26 @@ export function effortForChatCompletions(
   e: WireReasoningEffort,
 ): "none" | "minimal" | "low" | "medium" | "high" {
   return e === "xhigh" ? "high" : e;
+}
+
+/**
+ * The Anthropic `output_config.effort` a think level maps to, among the levels
+ * this model accepts (anthropic-models.ts anthropicEffortLevels). `minimal` has
+ * no Anthropic level and reads as `low`; `xhigh` drops to `high` on a model
+ * without it. `max` is never produced: it is not a level the user can pick.
+ * A model with no effort dial gets nothing, which leaves the field off the
+ * request.
+ *
+ * Until 2026-11-12 the think level reached Codex and the OpenAI-compatible
+ * providers but not Claude: a Claude chat ran at the vendor's default whatever
+ * the setting said (medium on Opus 5.5 and Haiku 5.5, high on the rest).
+ * Owner's call: one setting, every provider.
+ */
+export function effortForAnthropic(e: ReasoningEffort | undefined, supported: readonly AnthropicEffort[]): AnthropicEffort | undefined {
+  if (!e) return undefined;
+  const wanted: AnthropicEffort = e === "minimal" ? "low" : e;
+  if (supported.includes(wanted)) return wanted;
+  return wanted === "xhigh" && supported.includes("high") ? "high" : undefined;
 }
 
 /** An endpoint that has not been measured to accept "none" gets the closest

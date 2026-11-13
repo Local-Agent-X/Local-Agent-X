@@ -162,7 +162,9 @@ const EFFORT_NONE: readonly AnthropicEffort[] = [];
  * Which `output_config.effort` levels a model accepts — the third axis of the
  * one capability map, alongside anthropicUsesAdaptiveThinking and
  * anthropicThinkingOffMode. Effort rides INSIDE `output_config`, never
- * top-level, and omitting it is equivalent to the API default `high`.
+ * top-level, and omitting it leaves the model's own default: `high`, except
+ * Opus 5.5 and Haiku 5.5, which default to `medium` (Anthropic's effort
+ * guide, read 2026-11-12).
  *
  * - Fable 5 / Mythos 5 / Opus 5 / Opus 4.7 / 4.8 / Sonnet 5: all five levels.
  * - Opus 4.6 / Sonnet 4.6: no `xhigh` — that level arrived with Opus 4.7.
@@ -189,8 +191,9 @@ export function anthropicEffortLevels(model: string): readonly AnthropicEffort[]
  *
  * 1. Support — a level the model doesn't accept (any level on Sonnet 4.5 /
  *    Haiku 4.5, `xhigh` on the 4.6 generation) is OMITTED rather than sent and
- *    400'd. Omission means the API default `high` on models that HAVE an
- *    effort dial; on models without one the field simply has no meaning.
+ *    400'd. Omission means the model's own default on models that HAVE an
+ *    effort dial (`high`; `medium` on Opus 5.5 and Haiku 5.5); on models
+ *    without one the field simply has no meaning.
  * 2. Thinking interaction, OPUS 5 ONLY — "`thinking: {type: "disabled"}`
  *    returns 400 when `effort` is `xhigh` or `max`; it is accepted at `high`
  *    or below". This is NOT a family-wide rule: the migration guide is

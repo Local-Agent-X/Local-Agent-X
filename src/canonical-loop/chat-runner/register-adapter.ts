@@ -15,6 +15,8 @@ import { defaultAnthropicTransport } from "../adapters/anthropic-transport.js";
 import type { OpenAICompatTarget } from "../adapters/openai-compat.js";
 import { isAnthropicProvider } from "../../providers/provider-ids.js";
 import { isReasoningModel } from "../../providers/registry.js";
+import { effortForAnthropic } from "../../providers/reasoning-effort.js";
+import { anthropicEffortLevels } from "../../anthropic-models.js";
 import { localPromptSplit } from "./local-prompt-split.js";
 
 export async function registerAdapterForChat(
@@ -41,6 +43,11 @@ export async function registerAdapterForChat(
         sessionId,
         forcedToolChoice,
         transport,
+        // The session's think level, as this model's effort (the same setting
+        // Codex and the OpenAI-compatible providers already receive). Fixed for
+        // the op: a per-step change to top-level effort would invalidate the
+        // conversation cache, so the step-effort hint is not applied here.
+        effort: effortForAnthropic(prepared.reasoningEffort, anthropicEffortLevels(prepared.model)),
         // Chat streams real "Thinking" via the direct-HTTP OAuth path when a
         // subscription token is resolvable; auto-falls back to the CLI proxy
         // otherwise. Sub-agents/builds omit this and stay on the CLI loop.

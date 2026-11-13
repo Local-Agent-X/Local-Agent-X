@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { REASONING_EFFORTS, THINKING_OFF, capEffort, clampNoneForCloud, effortForChatCompletions, normalizeReasoningEffort, type ReasoningEffort } from "./reasoning-effort.js";
+import { REASONING_EFFORTS, THINKING_OFF, capEffort, clampNoneForCloud, effortForAnthropic, effortForChatCompletions, normalizeReasoningEffort, type ReasoningEffort } from "./reasoning-effort.js";
 
 describe("reasoning-effort helpers", () => {
   it("normalizes unknown settings values to medium", () => {
@@ -28,6 +28,32 @@ describe("reasoning-effort helpers", () => {
     expect(capEffort("xhigh", "low")).toBe("low");
     expect(capEffort("minimal", "low")).toBe("minimal"); // no up-shift to the ceiling
     expect(capEffort("low", "low")).toBe("low");
+  });
+});
+
+describe("effortForAnthropic", () => {
+  const FULL = ["low", "medium", "high", "xhigh", "max"] as const;
+  const NO_XHIGH = ["low", "medium", "high", "max"] as const;
+
+  it("passes a level the model accepts through", () => {
+    for (const level of ["low", "medium", "high", "xhigh"] as const) expect(effortForAnthropic(level, FULL)).toBe(level);
+  });
+
+  it("reads minimal as low: Anthropic has no lower level", () => {
+    expect(effortForAnthropic("minimal", FULL)).toBe("low");
+  });
+
+  it("drops xhigh to high on a model without it", () => {
+    expect(effortForAnthropic("xhigh", NO_XHIGH)).toBe("high");
+  });
+
+  it("never produces max, which is not a level the user can pick", () => {
+    for (const level of REASONING_EFFORTS) expect(effortForAnthropic(level, FULL)).not.toBe("max");
+  });
+
+  it("sends nothing to a model with no effort dial, and nothing for no level", () => {
+    for (const level of REASONING_EFFORTS) expect(effortForAnthropic(level, [])).toBeUndefined();
+    expect(effortForAnthropic(undefined, FULL)).toBeUndefined();
   });
 });
 

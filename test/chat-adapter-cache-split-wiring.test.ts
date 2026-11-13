@@ -147,3 +147,31 @@ describe("chat lane wires the system-prompt cache split into the anthropic adapt
     expect(opts.cacheConversation).toBe(true);
   });
 });
+
+// The same join, for the think level. Until 2026-11-12 the session's level
+// reached Codex and the OpenAI-compatible providers and stopped here: deleting
+// the `effort:` line in register-adapter.ts left every Claude chat at the
+// vendor default with a green suite.
+describe("chat lane passes the session's think level to the anthropic adapter", () => {
+  async function effortFor(model: string, reasoningEffort: string): Promise<unknown> {
+    const prepared = { ...preparedAnthropic(), model, reasoningEffort } as unknown as PreparedAgentRequest;
+    await registerAdapterForChat("op-effort-wiring", prepared, "sess-effort-wiring");
+    registered[registered.length - 1].factory();
+    return anthropicOpts[anthropicOpts.length - 1].effort;
+  }
+
+  it("sends the level as the model's effort", async () => {
+    expect(await effortFor("claude-opus-5-5", "medium")).toBe("medium");
+    expect(await effortFor("claude-opus-5-5", "high")).toBe("high");
+    expect(await effortFor("claude-opus-5-5", "xhigh")).toBe("xhigh");
+  });
+
+  it("maps a level the model has no word for to the nearest one it accepts", async () => {
+    expect(await effortFor("claude-opus-5-5", "minimal")).toBe("low");
+    expect(await effortFor("claude-opus-4-6", "xhigh")).toBe("high");
+  });
+
+  it("sends nothing to a model with no effort dial", async () => {
+    expect(await effortFor("claude-sonnet-4-5", "high")).toBeUndefined();
+  });
+});

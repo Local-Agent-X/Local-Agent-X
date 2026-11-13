@@ -3,6 +3,7 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import { createLogger } from "../logger.js";
 import { stripHarnessMarkers, TOOL_RESULT_ROW_PREFIX } from "../harness-text.js";
 import { guardedRewrite } from "./llm-rewrite-guard.js";
+import { currentSummaryBudget, LOCAL_SUMMARY_BUDGET, type SummaryBudget } from "./summary-budget.js";
 
 const logger = createLogger("context-manager");
 
@@ -14,7 +15,7 @@ DECISIONS: bullet list of choices the user explicitly made or approved (technolo
 CONSTRAINTS: bullet list of "must do" / "must not do" rules the user stated. Preserve every "do NOT use X", "always Y", "must support Z". This is the highest-priority section — never drop a constraint.
 FACTS_ABOUT_USER: bullet list of durable user facts mentioned (preferences, projects they own, tools they use). Skip transient mood.
 OUTSTANDING_ASKS: bullet list of work the user requested that wasn't yet completed. An ask marked "[assistant's reply omitted — it was given at the time]" was answered; list it only if a later message shows it still open.
-WORK_DONE: bullet list of what the agent's tool calls changed or established — files created or edited (by path), commands, builds and tests run and whether they passed, errors still unresolved. Paths, names and pass/fail results exactly as they appear.
+WORK_DONE: bullet list of what the agent's tool calls changed or established — files created or edited (by path), commands, builds and tests run and whether they passed, errors still unresolved. Paths, names and pass/fail results exactly as they appear. Mark each change VERIFIED when a test, build or run after it passed, otherwise NOT VERIFIED.
 CURRENT_TASK_STATE: one paragraph — what is the agent in the middle of doing right now?
 
 Rules:
@@ -35,8 +36,13 @@ Rules:
  */
 export async function summarizeOldMessages(
   oldMessages: ChatCompletionMessageParam[],
+  /** The chat model's context window, when the caller knows it: a hosted
+   *  summarizer then reads and writes in proportion (summary-budget.ts).
+   *  Absent → the local bound. */
+  opts: { windowTokens?: number } = {},
 ): Promise<string | null> {
-  const transcript = buildSummaryTranscript(oldMessages);
+  const budget = await currentSummaryBudget(opts.windowTokens);
+  const transcript = buildSummaryTranscript(oldMessages, budget);
 
   const basePrompt = `Conversation segment to summarize (${oldMessages.length} messages):\n\n${transcript}`;
 
@@ -68,8 +74,8 @@ export async function summarizeOldMessages(
           userPrompt: feedback
             ? `${basePrompt}\n\nYour previous summary was rejected: ${feedback}. Produce a corrected summary following the same section rules.`
             : basePrompt,
-          timeoutMs: 30_000,
-          maxResponseChars: 6000,
+          timeoutMs: budget.timeoutMs,
+          maxResponseChars: budget.replyChars,
           envDisableVar: "LAX_LLM_COMPACTION",
           parse: (raw) => {
             const trimmed = raw.trim();
@@ -84,19 +90,14 @@ export async function summarizeOldMessages(
   }
 }
 
-// Transcript size bound. Local summaries run through dispatch at
-// DISPATCH_NUM_CTX (16,384 tokens, local-runtimes/residency.ts), and Ollama silently
-// truncates an over-long prompt from the FRONT, dropping the instructions
-// above. The model then continues the conversation instead of summarizing
+// Transcript size bound: summary-budget.ts. A local summarizer keeps the 30k
+// characters that stay near 10k tokens even for dense snapshot text: Ollama
+// truncates an over-long prompt from the FRONT, dropping the instructions, and
+// the model then continues the conversation instead of summarizing
 // (reproduced 2026-09-14: a ~42k-token head of browser snapshots came back as
-// "Now I'll archive the selected items. [called browser(...)]", which was
-// injected as the summary and derailed the next turns). 30k chars stays near
-// 10k tokens even for dense snapshot text, leaving room for the system prompt
-// and the 6000-char reply.
-const SUMMARY_TRANSCRIPT_CHAR_BUDGET = 30_000;
-// Tool results only need "what they accomplished" (the prompt says so); user
-// rows carry the constraints the summary must never drop, so they keep the most.
-const SUMMARY_CHARS_PER_KIND = { user: 2000, assistant: 800, tool: 400 } as const;
+// "Now I'll archive the selected items. [called browser(...)]"). Tool results
+// only need "what they accomplished" (the prompt says so); user rows carry the
+// constraints the summary must never drop, so they keep the most.
 
 function messageText(m: ChatCompletionMessageParam): string {
   if (typeof m.content === "string") return m.content;
@@ -124,17 +125,17 @@ function clip(text: string, max: number): string {
  *  kept the envelope and cut every retrieved value, leaving a summary that
  *  read like the search had returned nothing (2026-09-23). Framing the
  *  harness wrote tells a summarizer nothing it needs. */
-export function buildSummaryTranscript(messages: ChatCompletionMessageParam[]): string {
+export function buildSummaryTranscript(messages: ChatCompletionMessageParam[], budget: SummaryBudget = LOCAL_SUMMARY_BUDGET): string {
   const rows = messages.map((m) => {
     const text = messageText(m);
     const kind = m.role === "tool" || text.startsWith(TOOL_RESULT_ROW_PREFIX) ? "tool" : m.role === "user" ? "user" : "assistant";
     const body = kind === "tool" ? stripHarnessMarkers(text).trim() : text;
-    return { line: `[${m.role}]: ${clip(body, SUMMARY_CHARS_PER_KIND[kind])}`, isUser: kind === "user", dropped: false };
+    return { line: `[${m.role}]: ${clip(body, budget.rowChars[kind])}`, isUser: kind === "user", dropped: false };
   });
   let total = rows.reduce((sum, r) => sum + r.line.length + 2, 0);
   for (const dropUsers of [false, true]) {
     for (const row of rows) {
-      if (total <= SUMMARY_TRANSCRIPT_CHAR_BUDGET) break;
+      if (total <= budget.transcriptChars) break;
       if (row.dropped || row.isUser !== dropUsers) continue;
       row.dropped = true;
       total -= row.line.length + 2;

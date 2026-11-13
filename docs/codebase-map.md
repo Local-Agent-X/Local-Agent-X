@@ -13,19 +13,19 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 2024 non-test source files · 79 oversized · 267 nearing the size cap.
+**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 2026 non-test source files · 79 oversized · 267 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 180 | 29 | XL | 1 |
+| `src/ops/` | 181 | 29 | XL | 1 |
 | `src/security/` | 163 | 61 | XL | 2 |
 | `src/tools/` | 132 | 234 | XL | 9 |
 | `src/tool-execution/` | 100 | 90 | XL | 2 |
 | `src/workspace/` | 91 | 3 | M |  |
-| `src/canonical-loop/` | 89 | 288 | XL | 10 |
-| `src/providers/` | 79 | 27 | L | 1 |
+| `src/canonical-loop/` | 89 | 289 | XL | 10 |
+| `src/providers/` | 80 | 27 | L | 1 |
 | `src/session/` | 67 | 13 | L |  |
 | `src/data-lineage/` | 59 | 12 | L |  |
 | `src/memory/` | 57 | 161 | XL | 3 |
@@ -37,7 +37,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/local-runtimes/` | 45 | 27 | XL |  |
 | `src/threat/` | 44 | 13 | L |  |
 | `src/auth/` | 36 | 11 | L |  |
-| `src/context-manager/` | 29 | 15 | M |  |
+| `src/context-manager/` | 29 | 16 | M |  |
 | `src/agent-store/` | 28 | 7 | M | 1 |
 | `src/context/` | 28 | 11 | M |  |
 | `src/broker-transport/` | 27 | 49 | XL |  |
@@ -49,9 +49,9 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/inbox/` | 22 | 6 | M |  |
 | `src/protocols/` | 22 | 52 | XL |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
+| `src/autonomy/` | 19 | 6 | M |  |
 | `src/cognition/` | 19 | 37 | XL | 1 |
 | `src/server/` *(entrypoint)* | 19 | 66 | XL | 4 |
-| `src/autonomy/` | 18 | 6 | M |  |
 | `src/agents/` | 17 | 14 | L |  |
 | `src/net/` | 17 | 11 | L |  |
 | `src/voice/` | 16 | 80 | XL | 1 |

@@ -19,6 +19,7 @@ import type { AnthropicTransport } from "../../context-manager/effective-window.
 import type { TokenAnchor } from "../../context-manager/token-estimation.js";
 import { summarizeOldMessages } from "../../context-manager/compaction.js";
 import { clearSummaryCache, reusableSummary, storeSummary } from "./compact-summary-cache.js";
+import { changedFilesLine } from "./changed-files-line.js";
 import {
   breakerGate,
   consumeForcedCompaction,
@@ -278,7 +279,7 @@ async function summarizeOverThreshold(
   let head = messages.slice(0, summarizedCount);
   let recent = messages.slice(summarizedCount);
 
-  const summary = reuse ? reuse.summary : gate.skip ? null : await summarizeOldMessages(toChatParams(head));
+  const summary = reuse ? reuse.summary : gate.skip ? null : await summarizeOldMessages(toChatParams(head), { windowTokens: status.maxTokens });
   // The view MUST shrink when the request cannot fit as-is: the provider (or
   // the adapter's own preflight) already refused it, or the estimate is past
   // the critical band.
@@ -337,6 +338,7 @@ async function summarizeOverThreshold(
     ? `[Earlier conversation auto-summarized to save context — ${head.length} messages${rangeTag}]\n` +
       `${summary}\n` +
       (recent.some(isAuthoredUserRow) ? "" : originalRequestLine(head)) +
+      changedFilesLine(opId) +
       hint +
       `[End of summary. It is your own memory of that stretch, not a message from the user: ` +
       `the asks in it were answered when they were made, or are on your task list. ` +
@@ -344,6 +346,7 @@ async function summarizeOverThreshold(
     : `[Earlier conversation OMITTED to fit the context window — ${head.length} messages${rangeTag}. ` +
       `No summary was available; do not assume what the omitted messages said.]\n` +
       originalRequestLine(head) +
+      changedFilesLine(opId) +
       (hint || `[They cannot be retrieved in this op.]\n`) +
       `[Your most recent messages follow.]`;
 

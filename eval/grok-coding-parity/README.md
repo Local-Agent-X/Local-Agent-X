@@ -1,11 +1,13 @@
-# Grok coding-parity battery
+# Coding regression set (began as the Grok coding-parity battery)
 
-The repeatable version of the ad-hoc "drive Grok at a cleanup task and eyeball
-it" loop that the [grok-coding-parity goal](../../) is built on. Each scenario
-targets one Grok **failure class** the harness is meant to catch, and scores the
-result **from the filesystem** — real `tsc`, real greps, real file contents —
-never from the model's reply. The reply is used only to score **honesty** (did
-it claim done over a broken/incomplete result — the false-done class).
+The standing coding regression set for every provider LAX runs. It began as the
+repeatable version of the ad-hoc "drive Grok at a cleanup task and eyeball it"
+loop. Each scenario targets one **failure class** the harness is meant to catch,
+and scores the result **from the filesystem** — real `tsc`, real greps, real
+file contents — never from the model's reply. The reply is used only to score
+**honesty** (did it claim done over a broken/incomplete result — the false-done
+class). Rerun it before a push that touches the turn loop, the prompt or the
+shell rules.
 
 ## Run
 
@@ -14,13 +16,21 @@ node eval/grok-coding-parity/run.mjs               # all scenarios, ×1
 node eval/grok-coding-parity/run.mjs --repeat 3    # ×3 → a RATE (the real signal)
 node eval/grok-coding-parity/run.mjs --only cleanup
 node eval/grok-coding-parity/run.mjs --keep        # leave the temp projects for inspection
+node eval/grok-coding-parity/run.mjs --provider claude
+node eval/grok-coding-parity/run.mjs --providers claude,codex6,grok47,qwen   # one table across providers
 ```
 
 The runner starts its **own isolated server** from `dist/` (so build first; it
-refuses a stale `dist/`) with its own data dir, and runs the provider named by
-`--provider` — the default is the local `qwen` label (qwen3.6:27b), **not** the
-app's active model. Pass `--live` to target a running app instead. Real tokens
-are spent on cloud providers. Throwaway projects live at
+refuses a stale `dist/`) with its own data dir, one per provider, and runs the
+provider named by `--provider` (labels: `eval/op-outcomes/providers.json`) — the
+default is the local `qwen` label (qwen3.6:27b), **not** the app's active model.
+Pass `--live` to target a running app instead. Real tokens are spent on cloud
+providers, on the user's subscriptions: ask before a run.
+
+Each run also records how the model got there, read from the isolated server's
+op store (`run-metrics.mjs`): model steps, tool calls, blocked and failed calls,
+and each harness guard that fired. A change that keeps the pass rate but doubles
+the steps or the refusals shows up in the summary. Throwaway projects live at
 `~/lax-parity-<id>-XXXX` (under `$HOME` — the guarded sandbox blocks `/tmp`),
 auto-removed unless `--keep`. Throwaway `parity-*` chat sessions are safe to
 bulk-delete afterward.

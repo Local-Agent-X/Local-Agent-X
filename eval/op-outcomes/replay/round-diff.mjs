@@ -2,8 +2,8 @@
 // each round's prompt/cached tokens and where round r's rendered request first
 // differs from round r-1's (system prompt, tools, then messages as JSON).
 import { readFileSync, readdirSync } from "node:fs";
-import { gunzipSync } from "node:zlib";
 import { join } from "node:path";
+import { readTraceFile } from "../../../scripts/lax-trace.mjs";
 
 const root = process.argv[2];
 const ops = readdirSync(root)
@@ -11,7 +11,7 @@ const ops = readdirSync(root)
   .filter(({ op }) => op.type === "chat_turn")
   .sort((a, b) => String(a.op.createdAt).localeCompare(String(b.op.createdAt)));
 
-const trace = (id, i) => JSON.parse(gunzipSync(readFileSync(join(root, id, "op-turns", `${i}.trace.json.gz`))).toString());
+const trace = (id, i) => readTraceFile(join(root, id, "op-turns"), i);
 const turn = (id, i) => JSON.parse(readFileSync(join(root, id, "op-turns", `${i}.json`), "utf8")).turn?.providerState?.providerPayload ?? {};
 const commonPrefix = (a, b) => { let k = 0; while (k < a.length && k < b.length && a[k] === b[k]) k++; return k; };
 

@@ -22,17 +22,40 @@ export function dataDir(argv) {
 function flag(argv, name) { const i = argv.indexOf(name); return i >= 0 ? argv[i + 1] : undefined; }
 function readJson(path) { try { return JSON.parse(readFileSync(path, "utf8")); } catch { return null; } }
 
+/**
+ * One turn's trace from an op's `op-turns` directory, with its whole history.
+ * The store keeps only the rows a step added (`request.messagesFrom` names the
+ * earlier trace holding the rest; src/canonical-loop/turn-trace-store.ts
+ * readTurnTrace is the twin of this). `cache` (a Map) saves re-reading a chain
+ * when every turn of an op is read. When the earlier trace is gone, the stored
+ * rows come back with `messagesFrom` still set: the history is partial.
+ */
+export function readTraceFile(turnsDir, idx, cache = new Map()) {
+  if (cache.has(idx)) return cache.get(idx);
+  const path = join(turnsDir, `${idx}.trace.json.gz`);
+  let trace = null;
+  if (existsSync(path)) { try { trace = JSON.parse(gunzipSync(readFileSync(path)).toString("utf8")); } catch {} }
+  const from = trace?.request?.messagesFrom;
+  if (from && from.turnIdx < idx) {
+    const base = readTraceFile(turnsDir, from.turnIdx, cache);
+    if (base && !base.request.messagesFrom && base.request.messages.length >= from.count) {
+      const { messagesFrom: _named, ...request } = trace.request;
+      trace = { ...trace, request: { ...request, messages: [...base.request.messages.slice(0, from.count), ...trace.request.messages] } };
+    }
+  }
+  cache.set(idx, trace);
+  return trace;
+}
+
 /** Every turn of one op: the committed row plus its trace when present. */
 export function readTurns(opDir) {
   const dir = join(opDir, "op-turns");
   if (!existsSync(dir)) return [];
   const idxs = readdirSync(dir).filter((f) => /^\d+\.json$/.test(f)).map((f) => parseInt(f, 10)).sort((a, b) => a - b);
+  const cache = new Map();
   return idxs.map((idx) => {
     const row = readJson(join(dir, `${idx}.json`))?.turn ?? null;
-    let trace = null;
-    const tracePath = join(dir, `${idx}.trace.json.gz`);
-    if (existsSync(tracePath)) { try { trace = JSON.parse(gunzipSync(readFileSync(tracePath)).toString("utf8")); } catch {} }
-    return { idx, row, trace };
+    return { idx, row, trace: readTraceFile(dir, idx, cache) };
   });
 }
 

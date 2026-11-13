@@ -63,6 +63,32 @@ describe("lax-trace viewer", () => {
     expect(d).toContain("only in B: [glob]");
   });
 
+  // The store keeps only the rows a step added; the viewer and the engine each
+  // put the history back together, and must agree on it.
+  it("rebuilds a step's whole history exactly as the engine's reader does", async () => {
+    const { readTurnTrace } = await import("../src/canonical-loop/turn-trace-store.js");
+    const id = "op_chat_turn_dddd3333";
+    const rows = Array.from({ length: 6 }, (_, i) => ({ role: i % 2 ? "assistant" : "user", content: `row ${i}` }));
+    const dir = join(data, "operations", id);
+    mkdirSync(join(dir, "op-turns"), { recursive: true });
+    writeFileSync(join(dir, "operation.json"), JSON.stringify({ id, type: "chat_turn", status: "completed", createdAt: "2026-09-19T00:00:09.000Z" }));
+    [2, 4, 6].forEach((n, idx) => {
+      writeFileSync(join(dir, "op-turns", `${idx}.json`), JSON.stringify({ turn: { turnIdx: idx } }));
+      publishTurnTrace(id, idx, {
+        model: "claude-opus-5-5",
+        request: { systemPrompt: "s", messages: rows.slice(0, n), tools: [] },
+        response: { rawText: "", text: "", thinking: "", toolCalls: [], error: null },
+        timing: { startedAt: "2026-09-19T00:00:00.000Z", endedAt: "2026-09-19T00:00:00.500Z", modelMs: 500 },
+      });
+    });
+    const turns = viewer.resolveOp(data, "dddd3333").turns;
+    for (const t of turns) {
+      expect(t.trace.request.messages).toEqual(readTurnTrace(id, t.idx)?.request.messages);
+      expect(t.trace.request.messagesFrom).toBeUndefined();
+    }
+    expect(turns[2].trace.request.messages).toEqual(rows);
+  });
+
   it("refuses an ambiguous suffix and names both candidates", () => {
     expect(() => viewer.resolveOp(data, "1111")).toThrow(/ambiguous.*aaaa1111.*cccc1111|ambiguous.*cccc1111.*aaaa1111/);
     expect(() => viewer.resolveOp(data, "zzzz")).toThrow(/no op matches/);

@@ -1,7 +1,8 @@
 // The per-turn trace artifact: written once beside the turn record, gzipped,
 // stamped with the run id, readable back, switchable off, and never able to
 // throw into the commit path that calls it.
-import { mkdtempSync, existsSync, readdirSync } from "node:fs";
+import { mkdtempSync, existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
+import { gunzipSync } from "node:zlib";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, it, expect, beforeAll, afterEach } from "vitest";
@@ -34,7 +35,7 @@ describe("turn trace store", () => {
     expect(publishTurnTrace(id, 3, trace())).toBe(true);
     expect(existsSync(opTurnTracePath(id, 3))).toBe(true);
     const back = readTurnTrace(id, 3);
-    expect(back?.schemaVersion).toBe(1);
+    expect(back?.schemaVersion).toBe(2);
     expect(back?.opId).toBe(id);
     expect(back?.turnIdx).toBe(3);
     expect(back?.runId).toBe(resolveRunId());
@@ -78,6 +79,53 @@ describe("turn trace store", () => {
     expect(publishTurnTrace(off, 0, trace())).toBe(false);
     expect(existsSync(opTurnTracePath(off, 0))).toBe(false);
     expect(readTurnTrace(off, 0)).toBeNull();
+  });
+
+  describe("history stored once", () => {
+    const row = (i: number) => ({ role: i % 2 ? "assistant" : "user", content: `row ${i} ${"x".repeat(200)}` });
+    const withRows = (rows: unknown[]): TurnTrace => ({ ...trace(), request: { ...trace().request, messages: rows } });
+    const stored = (id: string, idx: number) =>
+      JSON.parse(gunzipSync(readFileSync(opTurnTracePath(id, idx))).toString("utf8")) as { request: { messages: unknown[]; messagesFrom?: unknown } };
+
+    it("a step stores only the rows it added, and reads back whole", () => {
+      const id = opId();
+      const h0 = [row(0)], h1 = [...h0, row(1), row(2)], h2 = [...h1, row(3), row(4)];
+      publishTurnTrace(id, 0, withRows(h0));
+      publishTurnTrace(id, 1, withRows(h1));
+      publishTurnTrace(id, 2, withRows(h2));
+      expect(stored(id, 2).request.messages).toEqual([row(3), row(4)]);
+      expect(stored(id, 2).request.messagesFrom).toEqual({ turnIdx: 1, count: 3 });
+      expect(readTurnTrace(id, 2)?.request.messages).toEqual(h2);
+      expect(readTurnTrace(id, 2)?.request.messagesFrom).toBeUndefined();
+      expect(readTurnTrace(id, 1)?.request.messages).toEqual(h1);
+    });
+
+    it("keeps the shared rows only up to the first one that changed", () => {
+      const id = opId();
+      const h0 = [row(0), row(1), { role: "user", content: "digest v1" }];
+      const h1 = [row(0), row(1), { role: "user", content: "digest v2" }, row(3)];
+      publishTurnTrace(id, 0, withRows(h0));
+      publishTurnTrace(id, 1, withRows(h1));
+      expect(stored(id, 1).request.messagesFrom).toEqual({ turnIdx: 0, count: 2 });
+      expect(readTurnTrace(id, 1)?.request.messages).toEqual(h1);
+    });
+
+    it("stores a history whole when nothing is shared (after a compaction)", () => {
+      const id = opId();
+      publishTurnTrace(id, 0, withRows([row(0), row(1)]));
+      publishTurnTrace(id, 1, withRows([{ role: "user", content: "summary" }, row(2)]));
+      expect(stored(id, 1).request.messagesFrom).toBeUndefined();
+    });
+
+    it("says the history is partial when the trace holding its start is gone", () => {
+      const id = opId();
+      publishTurnTrace(id, 0, withRows([row(0)]));
+      publishTurnTrace(id, 1, withRows([row(0), row(1)]));
+      rmSync(opTurnTracePath(id, 0));
+      const back = readTurnTrace(id, 1);
+      expect(back?.request.messages).toEqual([row(1)]);
+      expect(back?.request.messagesFrom).toEqual({ turnIdx: 0, count: 1 });
+    });
   });
 
   it("a trace that cannot be written is dropped, not thrown", () => {

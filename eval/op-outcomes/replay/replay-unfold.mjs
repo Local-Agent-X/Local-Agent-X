@@ -2,15 +2,15 @@
 // [user text][volatile row]; r1u = r0u's rows + r1's rows beyond r0's length.
 // If r1u reuses ~everything, "volatile text is always its own row" is the fix.
 import { readFileSync, readdirSync } from "node:fs";
-import { gunzipSync } from "node:zlib";
 import { join } from "node:path";
+import { readTraceFile } from "../../../scripts/lax-trace.mjs";
 
 const [root, opIdxS, r0S, r1S] = process.argv.slice(2);
 const ops = readdirSync(root)
   .map((id) => ({ id, op: JSON.parse(readFileSync(join(root, id, "operation.json"), "utf8")) }))
   .filter(({ op }) => op.type === "chat_turn")
   .sort((a, b) => String(a.op.createdAt).localeCompare(String(b.op.createdAt)));
-const trace = (i) => JSON.parse(gunzipSync(readFileSync(join(root, ops[Number(opIdxS)].id, "op-turns", `${i}.trace.json.gz`))).toString());
+const trace = (i) => readTraceFile(join(root, ops[Number(opIdxS)].id, "op-turns"), i);
 const t0 = trace(r0S), t1 = trace(r1S);
 
 const last = t0.request.messages.at(-1);

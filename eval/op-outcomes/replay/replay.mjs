@@ -3,8 +3,8 @@
 // Each request is sent as the trace recorded it (system + messages + tools),
 // stream=false, max_tokens=1; prints prompt tokens and cached tokens.
 import { readFileSync, readdirSync } from "node:fs";
-import { gunzipSync } from "node:zlib";
 import { join } from "node:path";
+import { readTraceFile } from "../../../scripts/lax-trace.mjs";
 
 const args = process.argv.slice(2);
 const root = args.shift();
@@ -14,7 +14,7 @@ const ops = readdirSync(root)
   .map((id) => ({ id, op: JSON.parse(readFileSync(join(root, id, "operation.json"), "utf8")) }))
   .filter(({ op }) => op.type === "chat_turn")
   .sort((a, b) => String(a.op.createdAt).localeCompare(String(b.op.createdAt)));
-const trace = (id, i) => JSON.parse(gunzipSync(readFileSync(join(root, id, "op-turns", `${i}.trace.json.gz`))).toString());
+const trace = (id, i) => readTraceFile(join(root, id, "op-turns"), i);
 
 for (let i = 0; i < pairs.length; i += 2) {
   const t = trace(ops[pairs[i]].id, pairs[i + 1]);

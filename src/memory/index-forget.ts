@@ -8,6 +8,7 @@ import { recallByEntity } from "./index-facts.js";
 import { localDate } from "./retrieval-format.js";
 import { factTrustSuffix } from "./fact-provenance-label.js";
 import { eraseFactHistory, withFactActor } from "./fact-events.js";
+import { writeEntityPage } from "./entity-page-write.js";
 
 export const MAX_FACTS_PER_ENTITY = 50;
 export const MAX_FACTS_PER_KIND = 15;
@@ -244,7 +245,11 @@ export function updateEntityPage(
   lines.push(...replacedSection(db, slug));
 
   const entityPath = join(entitiesDir, `${slug}.md`);
-  atomicWriteFileSync(entityPath, lines.join("\n"));
+  // A busy page is rebuilt later from the DB (entity-page-write.ts): the facts
+  // have already landed, so the caller's save stands.
+  const written = writeEntityPage(entityPath, lines.join("\n"),
+    () => updateEntityPage(db, entitiesDir, setDirty, reindexEntity, slug, recentFacts));
+  if (!written) return;
   setDirty();
   reindexEntity(slug);
 }

@@ -57,6 +57,22 @@ afterEach(() => {
   while (opIds.length > 0) rmSync(opDir(opIds.pop()!), { recursive: true, force: true });
 });
 
+describe("an ambiguous outcome says why it is unknown", () => {
+  it("names the tool's own error, not a stopped runtime, when the tool threw", async () => {
+    const operationId = opId("threw");
+    const tool = mutationTool(async () => { throw new Error("EPERM: operation not permitted, rename 'page.md.tmp' -> 'page.md'"); });
+
+    const first = await dispatch(operationId, tool, { value: 1 }, "threw-first");
+    expect(first.status).toBe("blocked");
+    expect(first.content).toContain("the tool failed partway: EPERM: operation not permitted");
+    expect(first.content).not.toContain("runtime stopped");
+
+    // The same call again is still refused, with the same reason.
+    const again = await dispatch(operationId, tool, { value: 1 }, "threw-again");
+    expect(again.content).toContain("the tool failed partway: EPERM");
+  });
+});
+
 describe("side-effect journal integrity and claims", () => {
   it("atomically claims a concurrent identical call so the effect executes once", async () => {
     const operationId = opId("concurrent");

@@ -57,15 +57,21 @@ function waitSync(ms: number): void {
   Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
 }
 
+/** Windows refusing to replace a file for a moment because another handle has
+ *  it open (a reader in this process or another, a scanner, an indexer). */
+export function isFileContentionError(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException | null)?.code;
+  return code === "EPERM" || code === "EBUSY" || code === "EACCES";
+}
+
 function renameAfterContention(source: string, destination: string, operations: AtomicWriteOperations): void {
   for (let attempt = 0; ; attempt += 1) {
     try {
       operations.rename(source, destination);
       return;
     } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
       const delay = RENAME_CONTENTION_DELAYS_MS[attempt];
-      if (!delay || (code !== "EPERM" && code !== "EBUSY" && code !== "EACCES")) throw error;
+      if (!delay || !isFileContentionError(error)) throw error;
       (operations.wait ?? waitSync)(delay);
     }
   }
@@ -75,6 +81,15 @@ const defaultAtomicWriteOperations: AtomicWriteOperations = {
   write: writeFileSync,
   rename: renameSync,
   unlink: unlinkSync,
+};
+
+/** The same operations with the contention retries made back to back, never
+ *  blocking the thread. For a caller that defers a busy write itself: when the
+ *  holder is an async read in this process, a blocking wait keeps that read
+ *  from closing the file and only freezes the server for the length of it. */
+export const ATOMIC_WRITE_WITHOUT_WAITING: AtomicWriteOperations = {
+  ...defaultAtomicWriteOperations,
+  wait: () => {},
 };
 
 /** mkdir -p the parent directory of `filePath`. */

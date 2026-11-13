@@ -194,6 +194,29 @@ export function joinFactsForPromotion(facts: unknown[]): string {
   return facts.map((fact) => normalizeFactLine(fact as string)).filter(Boolean).join("\n");
 }
 
+/**
+ * What a `remember` call saves: the text the approval stamp covers and whether
+ * it is a declared list (facts[], one item per line) or one `content` string
+ * (split by the tool only if it reads as several facts). The approval phase and
+ * the tool both read it here, so they cannot disagree about which was given.
+ *
+ * Models that fill every argument send the one they did not mean empty: a dream
+ * on a strict-schema model (2026-11-02) sent `facts: []` beside its content,
+ * which saved nothing and answered "content is required", and the same sentence
+ * in both, which was refused as "not both" — 62 calls in one run. An empty or
+ * blank facts[] is therefore not given, content that repeats one of the facts
+ * adds nothing, and content that differs is one more fact of the same call.
+ */
+export function rememberRequestOf(args: Record<string, unknown>): { text: string; declared: boolean } {
+  const content = String(args.content || "").trim();
+  const items = Array.isArray(args.facts)
+    ? args.facts.filter((fact): fact is string => typeof fact === "string").map(normalizeFactLine).filter(Boolean)
+    : [];
+  if (items.length === 0) return { text: content, declared: false };
+  const lead = normalizeFactLine(content);
+  return { text: joinFactsForPromotion(lead && !items.includes(lead) ? [lead, ...items] : items), declared: true };
+}
+
 /** Where memory_set_user_field writes: the user's profile, or (profile "identity") the
  *  agent's own. The tool and the request it is checked against both read it here, so
  *  the target a write was allowed for is the one it lands in. */
@@ -210,9 +233,7 @@ export function describeMemoryPromotionRequest(
   let target = "";
   if (toolName === "remember") {
     // Batched saves arrive as facts[]; the capability covers the whole batch.
-    content = Array.isArray(args.facts) && args.facts.length > 0
-      ? joinFactsForPromotion(args.facts)
-      : String(args.content || "").trim();
+    content = rememberRequestOf(args).text;
     target = "memory:retain";
   }
   else if (toolName === "update_fact") { content = String(args.content || "").trim(); target = `memory:update:${String(args.query || "").trim()}`; }

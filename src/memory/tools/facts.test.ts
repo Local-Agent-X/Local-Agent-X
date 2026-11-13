@@ -3,7 +3,7 @@
  *
  * History: a worker crammed ~10 facts into a SINGLE `remember` call as one
  * giant blob. The first fix rejected the blob with a "split it and retry"
- * hint — which cost one extra inference round trip per fact (11 remember
+ * hint â€” which cost one extra inference round trip per fact (11 remember
  * calls measured in one small bugfix session). Now the split happens in code:
  * a multi-line / over-long / many-sentence dump is split into atomic facts
  * and each is gated + saved in the SAME call, with exact per-item reporting.
@@ -75,7 +75,7 @@ describe("remember multi-fact batching (one round trip, zero retries)", () => {
     expect(res.isError).toBe(false);
     expect(res.content).toMatch(/^Remembered 4\/4 facts/);
     expect(res.content).not.toMatch(/retry|NOT applied/i);
-    // Every fact goes through the canonical single-fact sink — one derived
+    // Every fact goes through the canonical single-fact sink â€” one derived
     // capability each, from ONE parent consumed exactly once.
     expect(spy).toHaveBeenCalledTimes(4);
   });
@@ -86,7 +86,7 @@ describe("remember multi-fact batching (one round trip, zero retries)", () => {
     const longLine = "User prefers business-suite-level dashboards " + "x".repeat(420);
     const res = await tool.execute({ content: longLine });
 
-    // Nothing to split on — one long fact beats a retry round trip.
+    // Nothing to split on â€” one long fact beats a retry round trip.
     expect(res.isError).toBeUndefined();
     expect(res.content).toMatch(/^Remembered/);
     expect(spy).toHaveBeenCalledTimes(1);
@@ -152,15 +152,64 @@ describe("remember multi-fact batching (one round trip, zero retries)", () => {
     expect(res.content).toMatch(/^NOT SAVED /m);
   });
 
-  it("refuses a call that passes both content and facts[]", async () => {
+  it("saves content and a different facts[] item as two facts of one call", async () => {
     const tool = rememberTool();
     const res = await tool.execute({
       content: "User likes tea",
       facts: ["User likes coffee"],
     });
 
+    expect(res.isError).toBe(false);
+    expect(res.content).toMatch(/^Remembered 2\/2 facts/);
+    expect(res.content).toContain("User likes tea");
+    expect(res.content).toContain("User likes coffee");
+  });
+});
+
+// A model that fills every argument sends the one it did not mean empty. A
+// dream on a strict-schema model (2026-11-02) made 62 such calls in one run:
+// `facts: []` beside its content saved nothing and answered "content is
+// required"; the same sentence in both was refused as "not both".
+describe("remember with every argument filled in", () => {
+  it("saves content when facts[] is empty", async () => {
+    const spy = vi.spyOn(memory, "rememberFact");
+    const res = await rememberTool().execute({
+      content: "The user wants a @Disneyland exploration game for his son.",
+      facts: [],
+      kind: "observation",
+    });
+    expect(res.isError).toBeFalsy();
+    expect(res.content).toMatch(/^Remembered \[observation/);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("saves facts[] when content is empty", async () => {
+    const res = await rememberTool().execute({
+      content: "",
+      facts: ["The user's son's favorite @Disneyland ride is Astro Orbitor."],
+    });
+    expect(res.isError).toBeFalsy();
+    expect(res.content).toMatch(/^Remembered/);
+  });
+
+  it("saves the fact once when content repeats the only facts[] item", async () => {
+    const spy = vi.spyOn(memory, "rememberFact");
+    const fact = "The user wants as many rides as possible in the @Disneyland game.";
+    const res = await rememberTool().execute({ content: fact, facts: [fact] });
+    expect(res.isError).toBeFalsy();
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("treats blank and non-text facts[] items as not given", async () => {
+    const res = await rememberTool().execute({ content: "User drinks oat milk.", facts: ["  ", 7, null] });
+    expect(res.isError).toBeFalsy();
+    expect(res.content).toMatch(/^Remembered \[/);
+  });
+
+  it("says what to pass when there is nothing to save", async () => {
+    const res = await rememberTool().execute({ content: "", facts: [] });
     expect(res.isError).toBe(true);
-    expect(res.content).toMatch(/either content or facts/);
+    expect(res.content).toMatch(/put one fact in content, or several in facts\[\]/);
   });
 });
 
@@ -169,7 +218,7 @@ describe("remember multi-fact batching (one round trip, zero retries)", () => {
 // rows past the per-fact gate, defeat the per-call fact cap, and desync the
 // per-item report. The fix collapses facts to one line at the sink and
 // derives batch facts from the STAMPED text only.
-describe("remember batch — smuggle / flood / desync / contradiction regressions", () => {
+describe("remember batch â€” smuggle / flood / desync / contradiction regressions", () => {
   it("a single facts[] item with an embedded bullet lands as ONE gate-capped row, not a forged world row", async () => {
     const tool = rememberTool();
     const res = await tool.execute({
@@ -194,7 +243,7 @@ describe("remember batch — smuggle / flood / desync / contradiction regression
       ],
     });
 
-    // 2 declared items in, exactly 2 rows out — the embedded bullet is
+    // 2 declared items in, exactly 2 rows out â€” the embedded bullet is
     // collapsed into its own item's single line, never a third row.
     expect(res.content).toMatch(/^Remembered 2\/2 facts/);
     expect(memory.recallByKind("world")).toHaveLength(0);
@@ -231,13 +280,13 @@ describe("remember batch — smuggle / flood / desync / contradiction regression
 
     // The continuation line joins its own fact rather than becoming a third
     // one, so the report's per-item accounting cannot desync.
-    expect(res.isError).toBe(false);
+    expect(res.isError).toBeFalsy();
     expect(res.content).toMatch(/^Remembered 2\/2 facts/);
     expect(res.content).not.toMatch(/NOT SAVED/);
     expect(res.content).toMatch(/User speaks fluent Spanish and a little conversational French/);
   });
 
-  it("does NOT sentence-split a declared facts[] item — derived count always equals item count", async () => {
+  it("does NOT sentence-split a declared facts[] item â€” derived count always equals item count", async () => {
     const spy = vi.spyOn(memory, "rememberFact");
     const tool = rememberTool();
     // The skeptic's repro: 2 declared items, one with 4 sentences. Pre-fix

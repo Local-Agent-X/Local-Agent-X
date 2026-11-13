@@ -2,13 +2,13 @@ import type { MemoryIndex } from "../../memory/index.js";
 import type { FactKind } from "../types.js";
 import { displayContent } from "../utils.js";
 import { isUserReported } from "../fact-provenance-label.js";
-import { looksLikeMultiFactBlob, normalizeFactLine, splitMultiFactBlob } from "../fact-split.js";
+import { looksLikeMultiFactBlob, splitDeclaredFacts, splitMultiFactBlob } from "../fact-split.js";
 import { batchReport, saveFactsBatch } from "./facts-batch.js";
 import { confirmForget, confirmUpdate } from "./fact-confirmation.js";
 import { runMemoryGate, MemoryWriteBlocked } from "../write-safely.js";
 import {
-  joinFactsForPromotion,
   promotionContextFromToolArgs,
+  rememberRequestOf,
   splitBatchPromotionContext,
   CLEAN_SELF_SOURCE_SUFFIX,
   TAINTED_SOURCE_SUFFIX,
@@ -108,7 +108,7 @@ export function createFactsTools(memory: MemoryIndex) {
       parameters: {
         type: "object",
         properties: {
-          content: { type: "string", description: "The fact to remember, as one sentence (provide either this or facts, not both)" },
+          content: { type: "string", description: "The fact to remember, as one sentence (for several facts use facts instead; leave this empty then)" },
           facts: {
             type: "array",
             items: { type: "string" },
@@ -134,17 +134,13 @@ export function createFactsTools(memory: MemoryIndex) {
         required: [],
       },
       async execute(args: Record<string, unknown>) {
-        const content = String(args.content || "").trim();
-        // Normalized exactly like joinFactsForPromotion normalizes each item,
-        // so the items here, the stamped string, the facts derived from it,
-        // and the rows that land are all the same N strings.
-        const factsArg = Array.isArray(args.facts)
-          ? (args.facts as unknown[]).map((f) => normalizeFactLine(f as string)).filter(Boolean)
-          : undefined;
-        if (content && factsArg?.length) {
-          return { content: "pass either content or facts[], not both", isError: true };
+        // The same reading the approval phase stamped (rememberRequestOf), so
+        // the stamped string, the facts derived from it and the rows that land
+        // are the same N strings.
+        const request = rememberRequestOf(args);
+        if (!request.text) {
+          return { content: "nothing to save: put one fact in content, or several in facts[]", isError: true };
         }
-        if (!content && !factsArg?.length) return { content: "content is required", isError: true };
 
         const kind = args.kind ? (String(args.kind) as FactKind) : undefined;
         if (kind && !VALID_KINDS.includes(kind)) {
@@ -158,17 +154,16 @@ export function createFactsTools(memory: MemoryIndex) {
         const confidence = groundedConfidence(provenance, requestedConfidence);
 
         // The exact string the dispatch approval phase stamped the promotion
-        // capability over (describeMemoryPromotionRequest reads args.content;
-        // a facts[] batch is normalized through the shared join helper).
-        const stampedContent = content || joinFactsForPromotion(args.facts as unknown[]);
+        // capability over (describeMemoryPromotionRequest reads it the same way).
+        const stampedContent = request.text;
         // One round trip, zero retries: a batched call — facts[] or a
         // multi-fact blob in content — is split in code and saved fact by
         // fact. The old "split it and retry" hint cost a full inference
         // round trip per fact. facts[] items are taken as declared (never
         // sentence-split); only an undeclared blob is split further.
-        const atomicFacts =
-          factsArg ?? (looksLikeMultiFactBlob(content) ? splitMultiFactBlob(content) : [content]);
-        if (atomicFacts.length === 0) return { content: "content is required", isError: true };
+        const atomicFacts = request.declared
+          ? splitDeclaredFacts(request.text)
+          : (looksLikeMultiFactBlob(request.text) ? splitMultiFactBlob(request.text) : [request.text]);
 
         try {
           const target = "memory:retain";
@@ -224,7 +219,7 @@ export function createFactsTools(memory: MemoryIndex) {
           // then run each through the canonical single-fact sink. The report
           // never claims more than landed — partial success lists each
           // saved / blocked / skipped fact on its own line.
-          const derived = splitBatchPromotionContext(promotion, factsArg !== undefined);
+          const derived = splitBatchPromotionContext(promotion, request.declared);
           const results = saveFactsBatch(memory, derived.facts, derived.contexts, {
             kind,
             confidence,

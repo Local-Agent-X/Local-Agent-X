@@ -199,10 +199,13 @@ function blockedResult(message: string, metadata: { recovery: string } & Record<
   return blocked(message, { layer: "side-effect-journal", reconciliation_required: true, ...metadata });
 }
 
+/** Says why the outcome is unknown: the tool threw (the reason is its error) or
+ *  the runtime that claimed the call stopped. It used to say "the runtime
+ *  stopped" for both, so a save that threw on a busy file read as a crash. */
 function ambiguousResult(entry: JournalEntry): ToolResult {
   return blockedResult(
-    `Side effect outcome is ambiguous for ${entry.tool} (${entry.toolCallId}). ` +
-      `Execution began before the runtime stopped, and this non-idempotent call cannot be replayed safely. ` +
+    `Side effect outcome is ambiguous for ${entry.tool} (${entry.toolCallId}): ${entry.reconciliationReason}. ` +
+      `This non-idempotent call cannot be replayed safely. ` +
       `Reconcile the external system explicitly, then submit a new call only if the effect is confirmed absent.`,
     {
       effect_fingerprint: entry.effectFingerprint,
@@ -264,7 +267,7 @@ export function prepareSideEffect(
       if (existing.state === "executing" && effect.class === "non-idempotent") {
         existing.state = "ambiguous";
         delete existing.claim;
-        existing.reconciliationReason = "claim owner stopped after execution began without a durable result";
+        existing.reconciliationReason = "the runtime running it stopped after execution began, before it recorded a result";
         existing.updatedAt = new Date().toISOString();
         writeEntry(path, existing);
         return { kind: "blocked", result: ambiguousResult(existing) };
@@ -321,7 +324,7 @@ export function markSideEffectAmbiguous(entry: JournalEntry, reason: string): To
     const { path, current } = currentClaimedEntry(entry);
     current.state = "ambiguous";
     delete current.claim;
-    current.reconciliationReason = reason || "execution outcome is unknown";
+    current.reconciliationReason = reason ? `the tool failed partway: ${reason}` : "the tool failed partway, with no error message";
     current.updatedAt = new Date().toISOString();
     writeEntry(path, current);
     return ambiguousResult(current);

@@ -13,6 +13,28 @@ import type { ServerEvent } from "../types.js";
 import { MemoryIndex } from "./index.js";
 import { createFactsTools } from "./tools/facts.js";
 import { createImportedMemoryContext, createInternalMemoryContext, describePromotionForHuman, joinFactsForPromotion } from "./promotion-gate.js";
+import { describeMemoryPromotionRequest, rememberRequestOf } from "./promotion-gate.js";
+
+// The approval stamp and the remember tool read a call the same way; if they
+// ever differ, the tool refuses a save the user approved.
+describe("rememberRequestOf: which text a remember call saves", () => {
+  const cases: Array<[string, Record<string, unknown>, { text: string; declared: boolean }]> = [
+    ["content only", { content: " User likes tea " }, { text: "User likes tea", declared: false }],
+    ["empty facts[] beside content", { content: "User likes tea", facts: [] }, { text: "User likes tea", declared: false }],
+    ["blank facts[] items", { content: "User likes tea", facts: ["  ", 7] }, { text: "User likes tea", declared: false }],
+    ["facts[] only", { content: "", facts: ["A", "B"] }, { text: "A\nB", declared: true }],
+    ["content repeating a fact", { content: "B", facts: ["A", "B"] }, { text: "A\nB", declared: true }],
+    ["content differing from facts", { content: "C", facts: ["A"] }, { text: "C\nA", declared: true }],
+    ["nothing", { content: "", facts: [] }, { text: "", declared: false }],
+  ];
+  for (const [name, args, expected] of cases) {
+    it(name, () => {
+      expect(rememberRequestOf(args)).toEqual(expected);
+      const request = describeMemoryPromotionRequest("remember", args, "default");
+      expect(request?.content ?? "").toBe(expected.text);
+    });
+  }
+});
 
 let dir: string;
 let memory: MemoryIndex;

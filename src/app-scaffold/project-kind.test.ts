@@ -30,6 +30,16 @@ const fixtures: Record<string, () => void> = {
   sveltekit: () => { file("package.json", "{}"); file("svelte.config.js"); file("src/lib/index.ts"); file("src/routes/+page.svelte"); },
   "next app dir": () => { file("package.json", JSON.stringify({ dependencies: { next: "15" } })); file("app/page.tsx"); },
   "node before any code": () => { file("package.json", "{}"); },
+  "kotlin android": () => { file("settings.gradle.kts"); file("app/src/main/java/com/acme/app/MainActivity.kt"); },
+  "kotlin before any code": () => { file("build.gradle.kts"); },
+  "java maven before any code": () => { file("pom.xml"); },
+  "swift package": () => { file("Package.swift"); file("Sources/App/main.swift"); },
+  "swift xcode": () => { file("Acme.xcodeproj/project.pbxproj"); file("Acme/AcmeApp.swift"); },
+  "csharp solution": () => { file("Acme.sln"); file("src/Acme.Api/Program.cs"); },
+  "csharp project, no src": () => { file("Acme.slnx"); file("Api/Api.csproj"); file("Api/Program.cs"); },
+  "cmake beside requirements.txt": () => { file("CMakeLists.txt"); file("requirements.txt"); file("src/main.cpp"); file("include/acme/api.h"); },
+  dart: () => { file("pubspec.yaml", "name: acme\n"); file("lib/main.dart"); },
+  "cargo beside cmake": () => { file("Cargo.toml"); file("CMakeLists.txt"); file("src/main.rs"); },
   empty: () => {},
 };
 
@@ -64,6 +74,22 @@ describe("detectProjectKind", () => {
     rmSync(dir, { recursive: true, force: true });
     fixtures["node before any code"]();
     expect(detectProjectKind(dir)).toMatchObject({ sourceRoots: ["src"], absentRoots: ["src"] });
+  });
+  it.each([
+    ["kotlin android", { language: "kotlin", sourceRoots: ["app/src/main/java/com/acme/app"], absentRoots: [], sealTest: "compiler" }],
+    ["kotlin before any code", { language: "kotlin", sourceRoots: ["src/main/kotlin"], absentRoots: ["src/main/kotlin"] }],
+    ["java maven before any code", { language: "java", sourceRoots: ["src/main/java"], sealTest: "compiler" }],
+    ["swift package", { language: "swift", sourceRoots: ["Sources"], sealTest: "compiler" }],
+    ["swift xcode", { language: "swift", sourceRoots: ["Acme"] }],
+    ["csharp solution", { language: "csharp", sourceRoots: ["src"], sealTest: "compiler" }],
+    ["csharp project, no src", { language: "csharp", sourceRoots: ["Api"] }],
+    ["cmake beside requirements.txt", { language: "c", sourceRoots: ["src", "include"], sealTest: null }],
+    ["dart", { language: "dart", sourceRoots: ["lib"], sealTest: "compiler" }],
+    ["cargo beside cmake", { language: "rust", sourceRoots: ["src"] }],
+  ] as const)("%s: the build tool's layout, from the kit's own rule", (name, expected) => {
+    fixtures[name]();
+    expect(detectProjectKind(dir)).toMatchObject(expected);
+    expect(hasProjectFile(dir)).toBe(true);
   });
   it("no project file: unknown, the kit's defaults", () => {
     expect(detectProjectKind(dir)).toMatchObject({ language: "unknown", sourceRoots: ["src"], sealTest: null });

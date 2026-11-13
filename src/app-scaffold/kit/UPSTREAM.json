@@ -1,11 +1,11 @@
 {
   "project-languages.mjs": {
     "upstream": "scripts/project-languages.mjs",
-    "sha256": "540560461c7891a08118d0585a22aa751cbd686f1edbb88cdd06cad609b50c39"
+    "sha256": "d6c65fa63f518a0ea1f03edb852e34e26b76591683022ad343e9d0754677def3"
   },
   "project-languages-toolchains.mjs": {
     "upstream": "scripts/project-languages-toolchains.mjs",
-    "sha256": "b80413a70743310424db1d7ad25e50b5cdf609897d2a81b49e6ed8f2475a4433"
+    "sha256": "0c9053326648f975ca5dbf75eba9521415e85b9601ce64519a80b5b4e438ecf9"
   },
   "language-paths.mjs": {
     "upstream": "scripts/language-paths.mjs",

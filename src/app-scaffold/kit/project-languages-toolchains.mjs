@@ -58,11 +58,12 @@ function mainSourceSets(project) {
 	return sets.flatMap((s) => ["kotlin", "java"].map((l) => join(src, s, l))).filter(isDir);
 }
 
-function jvmRoots(repo) {
+/** Before any code, the source set the row's language would create. */
+const jvmRoots = (language) => (repo) => {
 	const projects = [".", ...readdirSync(repo).filter((n) => !n.startsWith(".") && !NOT_A_PACKAGE.has(n) && isDir(join(repo, n)))];
 	const roots = projects.flatMap((p) => mainSourceSets(join(repo, p))).map(packageRoot);
-	return roots.length ? [...new Set(roots.map((r) => posix(relative(repo, r))))] : ["src/main/kotlin"];
-}
+	return roots.length ? [...new Set(roots.map((r) => posix(relative(repo, r))))] : [`src/main/${language}`];
+};
 
 /** The source-set folders above each root, where a package path starts. */
 const sourceSets = (ctx) => (ctx.jvmSets ??= [...new Set(ctx.roots.map((r) => {
@@ -164,7 +165,7 @@ export const TOOLCHAIN_LANGUAGES = [
 		isSource: always,
 		isTest: (base) => /Tests?\.kt$/.test(base),
 		projectFiles: ["settings.gradle.kts", "build.gradle.kts"],
-		roots: jvmRoots,
+		roots: jvmRoots("kotlin"),
 		buildOutputs: ["build", "out", ".gradle"],
 		moduleOf: topLevelDirModule,
 		imports: jvmTargets,
@@ -175,7 +176,7 @@ export const TOOLCHAIN_LANGUAGES = [
 		isSource: always,
 		isTest: (base) => /Tests?\.java$/.test(base),
 		projectFiles: ["pom.xml", "settings.gradle", "build.gradle"],
-		roots: jvmRoots,
+		roots: jvmRoots("java"),
 		buildOutputs: ["build", "out", "target", ".gradle"],
 		moduleOf: topLevelDirModule,
 		imports: jvmTargets,

@@ -43,11 +43,22 @@ const rootName = (o: KitDocOptions, root: string): string =>
 
 const SYMBOL_QUESTION = "Who uses a function, class, type or member";
 
+/** The language server that answers "who uses this" where `refs` (TypeScript) cannot. */
+const LANGUAGE_SERVER: Partial<Record<ProjectLanguage, string>> = {
+  rust: "rust-analyzer, or rename the item and `cargo check`: the compiler lists every use",
+  go: "`gopls references <file>:<line>:<col>`",
+  kotlin: "the IDE's Find usages (`kotlin-lsp`)",
+  java: "the IDE's Find usages (`jdtls`)",
+  swift: "`sourcekit-lsp` (Xcode's Find Call Hierarchy)",
+  csharp: "Roslyn's Find All References (`csharp-ls` or the C# Dev Kit)",
+  c: "`clangd` (find references), fed a `compile_commands.json`",
+  dart: "the Dart analysis server (`dart language-server`), or the IDE's Find usages",
+};
+
 function symbolCommandRow(o: KitDocOptions, run: (script: string, args?: string) => string): string[] {
   if (o.typescript) return [`| ${SYMBOL_QUESTION} (the compiler's answer) | ${run("refs", "<Name>")} (or \`<Class.member>\`, \`--duplicates\`) |`];
-  if (o.language === "rust") return [`| ${SYMBOL_QUESTION} | rust-analyzer, or rename the item and \`cargo check\`: the compiler lists every use (\`refs\` is TypeScript-only) |`];
-  if (o.language === "go") return [`| ${SYMBOL_QUESTION} | \`gopls references <file>:<line>:<col>\` (\`refs\` is TypeScript-only) |`];
-  return [];
+  const server = LANGUAGE_SERVER[o.language];
+  return server ? [`| ${SYMBOL_QUESTION} | ${server} (\`refs\` is TypeScript-only) |`] : [];
 }
 
 function moduleRule(o: KitDocOptions): string {
@@ -72,18 +83,29 @@ function sizeRule(o: KitDocOptions): string {
   ].join("\n");
 }
 
+/** What holds a module boundary where no seal test ships: the language's own
+ *  visibility, or (C/C++) the header layout and review. */
+const COMPILER_BOUNDARY: Partial<Record<ProjectLanguage, string>> = {
+  go: "- **Module boundaries are the compiler's.** A package under `internal/` cannot be imported from outside this module and an unexported name stays in its package, so there is no seal test: `go build` is one. Keep a name unexported until another package needs it.",
+  rust: "- **Module boundaries are the compiler's.** An item is private to its module unless marked `pub` (`pub(crate)` for the crate alone), so there is no seal test: `rustc` is one. Keep an item private until another module needs it.",
+  kotlin: "- **Module boundaries are the compiler's.** `private` stays in its file and `internal` in its Gradle module, so there is no seal test. A module that must be sealed from the rest becomes its own Gradle module with an `internal` inside; keep a declaration `internal` or `private` until another module needs it.",
+  java: "- **Module boundaries are the compiler's.** A class or member without `public` is package-private, so there is no seal test. Keep a class package-private until another package needs it; a module that must be sealed from the rest becomes its own Gradle or Maven module (or a JPMS module that `exports` only its API).",
+  swift: "- **Module boundaries are the compiler's.** A declaration is `internal` to its target unless marked `public`, so there is no seal test: each folder under the source root is a target. Keep a declaration `internal` until another target needs it.",
+  csharp: "- **Module boundaries are the compiler's.** `internal` stays in its project (assembly), so there is no seal test. A module that must be sealed from the rest becomes its own project; keep a type `internal` until another project needs it.",
+  dart: "- **Module boundaries are the compiler's within a file.** A `_name` is private to its library (its file), so there is no seal test. Across modules it is convention: import another module through the file named after it (`lib/<module>/<module>.dart`), not its inner files, and keep a name `_private` until another file needs it.",
+  c: "- **Module boundaries are a header rule, held in review.** A module's public header goes in `include/`; its private headers stay beside its `.c`/`.cpp` files in its folder under `src/`. Include another module only through its public header; the compiler does not check this.",
+};
+
 function boundaryRule(o: KitDocOptions): string[] {
   switch (o.sealTest) {
     case "vitest":
       return [`- **Module boundaries are tested.** \`${o.sourceRoots[0]}/module-seals.test.ts\` holds the seal table (import a module only through its entry) and the forbidden-dependency table; add a row when a module gains outside importers, and export a missing symbol from the entry rather than loosen a seal.`];
     case "pytest":
       return ["- **Module boundaries are tested.** `tests/test_module_seals.py` holds the seal table (import a package only through its public modules) and the forbidden-dependency table; add a row when a package gains outside importers."];
-    case "compiler":
-      return o.language === "go"
-        ? ["- **Module boundaries are the compiler's.** A package under `internal/` cannot be imported from outside this module and an unexported name stays in its package, so there is no seal test: `go build` is one. Keep a name unexported until another package needs it."]
-        : ["- **Module boundaries are the compiler's.** An item is private to its module unless marked `pub` (`pub(crate)` for the crate alone), so there is no seal test: `rustc` is one. Keep an item private until another module needs it."];
-    default:
-      return [];
+    default: {
+      const rule = COMPILER_BOUNDARY[o.language];
+      return rule ? [rule] : [];
+    }
   }
 }
 

@@ -249,14 +249,17 @@ export function isTestPath(relPosix) {
 const hasProjectFile = (lang, repo, entries) =>
 	lang.projectFiles.some((f) => (typeof f === "string" ? existsSync(join(repo, f)) : entries.some((n) => f.test(n))));
 
+/** The row whose project file is at the repo root (later rows win: a
+ *  requirements.txt beside a CMakeLists.txt is a C++ repo), or null. */
+export function projectLanguage(repo) {
+	const entries = existsSync(repo) ? readdirSync(repo) : [];
+	return [...LANGUAGES].reverse().find((lang) => hasProjectFile(lang, repo, entries)) ?? null;
+}
+
 /** The project kind's default source roots (repo-relative), from the project
  *  file at the repo root; `src` when nothing identifies the kind. */
 export function defaultRoots(repo) {
-	const entries = existsSync(repo) ? readdirSync(repo) : [];
-	for (const lang of [...LANGUAGES].reverse()) {
-		if (hasProjectFile(lang, repo, entries)) return lang.roots(repo);
-	}
-	return ["src"];
+	return projectLanguage(repo)?.roots(repo) ?? ["src"];
 }
 
 /** Every source file under `dir`, skipping vendored and generated trees. */

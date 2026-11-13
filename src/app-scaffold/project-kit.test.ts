@@ -187,6 +187,38 @@ describe("the kit follows the project kind", () => {
     expect(read("docs/codebase-map.md")).toContain("| `cmd/app/` | `internal/store/` |");
   });
 
+  it("kotlin: the package root is the docs' root and the check's, a package folder under it is the module", () => {
+    const pkg = "app/src/main/java/com/acme/app";
+    file("settings.gradle.kts", 'rootProject.name = "probe"\n');
+    file(`${pkg}/auth/Login.kt`, "package com.acme.app.auth\nimport com.acme.app.store.Db\nfun login() = Db()\n");
+    file(`${pkg}/store/Db.kt`, "package com.acme.app.store\nclass Db\n");
+    const result = applyProjectKit(dir, { projectName: "Probe" });
+    expect(result.written.some((r) => r.includes("module-seals") || r.includes("test_module_seals"))).toBe(false);
+    const agents = read("AGENTS.md");
+    expect(agents).toContain(`| \`${pkg}/\` |`);
+    expect(agents).toContain("`internal` in its Gradle module");
+    expect(agents).toContain("`kotlin-lsp`");
+    const failing = check(dir);
+    expect(failing.status).toBe(1);
+    expect(failing.out).toContain(`${pkg}/auth/`);
+    appendArchRow(`| Auth | \`${pkg}/auth/\` | login |`);
+    appendArchRow(`| Store | \`${pkg}/store/\` | db |`);
+    expect(check(dir).status, check(dir).out).toBe(0);
+    expect(read("docs/codebase-map.md")).toContain(`| \`${pkg}/auth/\` | \`${pkg}/store/\` |`);
+  });
+
+  it("c/c++: no seal test and no compiler boundary claimed; the header rule is written down instead", () => {
+    file("CMakeLists.txt", "project(probe)\n");
+    file("src/net/socket.c", '#include "acme/net.h"\nint open_socket(void) { return 0; }\n');
+    file("include/acme/net.h", "int open_socket(void);\n");
+    applyProjectKit(dir, { projectName: "Probe" });
+    const agents = read("AGENTS.md");
+    expect(agents).toContain("| `src/`, `include/` |");
+    expect(agents).toContain("a header rule, held in review");
+    expect(agents).not.toContain("are the compiler's");
+    expect(agents).toContain("`clangd`");
+  });
+
   it("a Next app-dir project: app/ is the root the docs name and the check scans", () => {
     file("package.json", JSON.stringify({ dependencies: { next: "15.0.0" } }));
     file("app/page.tsx", "export default function Page() { return null; }\n");

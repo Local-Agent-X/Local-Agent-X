@@ -6,18 +6,36 @@
  * project file is "unknown", which gets the kit's defaults.
  *
  * The root rule is the kit script's own (`kit/project-languages.mjs`,
- * `defaultRoots`), restated here for the docs and the seal test's placement;
- * `project-kind.test.ts` runs the script and fails when the two disagree.
+ * `defaultRoots`). For Node, Python, Rust and Go it is restated here for the
+ * docs and the seal test's placement; the build-tool languages (Kotlin, Java,
+ * Swift, C#, C/C++, Dart) take it from the script itself, whose JVM rule walks
+ * the source tree. `project-kind.test.ts` runs the script and fails when the
+ * two disagree.
  * Not `src/agent-guards/build-command.ts`: that picks the command that verifies
  * a project, this picks where the kit's checks look.
  */
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
 
-export type ProjectLanguage = "node" | "python" | "rust" | "go" | "unknown";
+/** The languages whose layout a build tool sets: the kit's toolchain rows. */
+const TOOLCHAIN_LANGUAGES = ["kotlin", "java", "swift", "csharp", "c", "dart"] as const;
+type ToolchainLanguage = (typeof TOOLCHAIN_LANGUAGES)[number];
+
+export type ProjectLanguage = "node" | "python" | "rust" | "go" | ToolchainLanguage | "unknown";
+
+const kitLanguages = (await import(pathToFileURL(join(dirname(fileURLToPath(import.meta.url)), "kit", "project-languages.mjs")).href)) as {
+  projectLanguage(repo: string): { id: string } | null;
+  defaultRoots(repo: string): string[];
+};
+
+const isToolchainLanguage = (id: string | undefined): id is ToolchainLanguage =>
+  (TOOLCHAIN_LANGUAGES as readonly string[]).includes(id ?? "");
 
 /** The runner the seal test ships for; "compiler" when the language itself
- *  enforces module privacy (Rust `pub`, Go `internal/`) and no test is shipped. */
+ *  enforces module privacy (Rust `pub`, Go `internal/`, Kotlin, Swift and C#
+ *  `internal`, Java package-private, Dart `_private`) and no test is shipped.
+ *  C/C++ has neither: null. */
 export type SealTestRunner = "vitest" | "pytest" | "compiler" | null;
 
 export interface ProjectKind {
@@ -77,6 +95,8 @@ export function detectProjectKind(dir: string): ProjectKind {
     typescript,
   });
   if (!existsSync(dir)) return kind("unknown", ["src"], null);
+  const toolchain = kitLanguages.projectLanguage(dir)?.id;
+  if (isToolchainLanguage(toolchain)) return kind(toolchain, kitLanguages.defaultRoots(dir), toolchain === "c" ? null : "compiler");
   if (existsSync(join(dir, "Cargo.toml"))) return kind("rust", ["src"], "compiler");
   if (existsSync(join(dir, "go.mod"))) {
     const present = GO_ROOTS.filter((r) => existsSync(join(dir, r)));

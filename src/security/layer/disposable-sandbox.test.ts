@@ -10,7 +10,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { evaluateFileAccess } from "./file-access.js";
 import { evaluateShellCommandAndPaths } from "./shell-path-guard.js";
@@ -148,6 +148,93 @@ describe("a shell edit redirected to the file tools", () => {
     setSwitch(undefined);
     const d = evaluateShellCommandAndPaths(`sed -i -e 's/a/b/' ${SYSTEM_FILE.replace(/\\/g, "/")}`, ctx());
     expect(d.reason).toMatch(/write\/edit tools refuse that path too/);
+  });
+
+  // Found 2026-11-12: `cat > <system path> <<'EOF'` passed the security layer
+  // in unrestricted mode while `write` to the same path was refused. The shell
+  // gets the file tools' floors now, in every form a write can take.
+  it("refuses a shell write to a path the file tools refuse, in every write form", () => {
+    setSwitch(undefined);
+    const sys = SYSTEM_FILE.replace(/\\/g, "/");
+    const outside = OUTSIDE_HOME.replace(/\\/g, "/");
+    for (const command of [
+      `cat > ${sys} <<'EOF'\nx\nEOF`,
+      `echo x > ${sys}`,
+      `echo x >> ${outside}`,
+      `printf x | tee ${sys}`,
+      `cp notes.txt ${outside}`,
+      `cd repo && echo x >${sys}`,
+    ]) {
+      const d = evaluateShellCommandAndPaths(command, ctx());
+      expect(d.allowed, command).toBe(false);
+      expect(d.reason, command).toMatch(/write\/edit tools refuse/);
+    }
+  });
+
+  it("still lets the shell write where the file tools may: the workspace, home, temp and /dev/null", () => {
+    setSwitch(undefined);
+    // A real machine's TEMP is under the user's home (Windows: AppData\Local\Temp);
+    // the test setup moves HOME to a throwaway folder, so put TEMP back under it.
+    const home = homedir();
+    const temp = join(home, "AppData", "Local", "Temp");
+    mkdirSync(temp, { recursive: true });
+    const saved = { TEMP: process.env.TEMP, TMP: process.env.TMP, TMPDIR: process.env.TMPDIR };
+    process.env.TEMP = process.env.TMP = process.env.TMPDIR = temp;
+    try {
+      const fwd = (p: string) => p.replace(/\\/g, "/");
+      for (const command of [
+        `echo x > ${fwd(join(workspace, "out.txt"))}`,
+        "echo x > out.txt",
+        `echo x > ${fwd(join(home, "notes.md"))}`,
+        `echo x > ${fwd(join(temp, "lax-probe.mjs"))}`,
+        "node build.js > /dev/null 2>&1",
+        ...(WIN ? ["cat > /tmp/lax-probe.mjs <<'EOF'\nconsole.log(1)\nEOF"] : []),
+      ]) {
+        const d = evaluateShellCommandAndPaths(command, ctx());
+        expect(d.reason, command).not.toMatch(/write\/edit tools refuse/);
+      }
+    } finally {
+      Object.assign(process.env, saved);
+    }
+  });
+
+  // Recorded commands (2026-11) the first cut of the floor misread as writes:
+  // a `>` inside quotes, a subshell's closing paren, and git's own config.
+  it("does not read a quoted '>', a subshell's paren or git's own config as a refused write", () => {
+    setSwitch(undefined);
+    for (const command of [
+      `sed -n '105p' a.test.tsx | sed -E 's/[A-Za-z0-9+\\/_-]{20,}/<LONG>/g'`,
+      `node -e "const p=require('playwright');console.log(Object.keys(p.devices).filter(d=>/iPhone 1[34]/.test(d)).join(' | '))"`,
+      `grep -oE '<nav[^>]*main-navigation[^>]*>' index.html | head -1`,
+      `cd apps/x && (git log --oneline -5 2>/dev/null); ls`,
+      `echo "n=$(ls docs 2>/dev/null | wc -l)"`,
+      `node -e "const re=/a=\\"(\\d)\\"[^>]*>\\s*<b/g; console.log(re)"`,
+      `grep -oiE "url\\(['\\"]?(assets/[^)'\\"]+)" a.css 2>/dev/null | sed -E "s/url\\(['\\"]?//"`,
+      `git -C "C:/Users/someone/CRM" remote set-url origin https://example.com/a.git`,
+    ]) {
+      const d = evaluateShellCommandAndPaths(command, ctx());
+      expect(d.reason, command).not.toMatch(/write\/edit tools refuse/);
+    }
+  });
+
+  it("still refuses a real redirect beside quoted text, and a subshell's real write", () => {
+    setSwitch(undefined);
+    const outside = OUTSIDE_HOME.replace(/\\/g, "/");
+    for (const command of [
+      `echo "a > b" > ${outside}`,
+      `(echo x >${outside})`,
+      `echo x > "${outside}"`,
+    ]) {
+      const d = evaluateShellCommandAndPaths(command, ctx());
+      expect(d.allowed, command).toBe(false);
+      expect(d.reason, command).toMatch(/write\/edit tools refuse/);
+    }
+  });
+
+  it("lifts the floor on a disposable sandbox, as it does for the file tools", () => {
+    setSwitch(true);
+    const d = evaluateShellCommandAndPaths(`echo x > ${OUTSIDE_HOME.replace(/\\/g, "/")}`, ctx());
+    expect(d.allowed).toBe(true);
   });
 
   it("still names the real refusal for a heredoc redirected to a refused path", () => {

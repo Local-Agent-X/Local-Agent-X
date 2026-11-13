@@ -52,6 +52,36 @@ export function stripQuotedSpans(command: string, opts: LexOptions = {}): string
   return out;
 }
 
+/** Stands in for a `<` or `>` that sat inside quotes. */
+const QUOTED_REDIRECT_MASK = "\u0001";
+
+// The command with every `<` and `>` inside a single- or double-quoted span
+// replaced by QUOTED_REDIRECT_MASK, everything else kept, quotes included. The
+// lexers strip quotes before a walk sees a word, so `sed 's/x/<L>/g'` and
+// `node -e "a=>b"` would otherwise read as redirects to `/g` and `b`. A caller
+// that judges every redirect target walks this instead. A redirect inside a
+// quoted `"$(…)"` is masked too: missed, never invented.
+export function maskQuotedRedirects(command: string, opts: LexOptions = {}): string {
+  let out = "";
+  let quote: string | null = null;
+  for (let i = 0; i < command.length; i++) {
+    const c = command[i];
+    if (escapeAt(command, i, quote, opts)) {
+      out += command.slice(i, i + 2);
+      i++;
+      continue;
+    }
+    if (quote) {
+      if (c === quote) quote = null;
+      out += quote && (c === "<" || c === ">") ? QUOTED_REDIRECT_MASK : c;
+    } else {
+      if (c === '"' || c === "'") quote = c;
+      out += c;
+    }
+  }
+  return out;
+}
+
 // Split a command segment into whitespace-delimited tokens, treating a
 // single- or double-quoted span as one opaque token (so the inline script body
 // in `perl -e 'use Socket; ...'` is a single token, not the chain-breaking

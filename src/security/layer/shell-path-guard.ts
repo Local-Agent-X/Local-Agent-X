@@ -9,9 +9,9 @@ import { evaluateShellCommand } from "./shell-policy.js";
 import { detectScriptWrite } from "./shell-detectors.js";
 import { inPlaceEditTargets } from "./shell-in-place-edit.js";
 import {
-  execBasename, isShellReparseFlag, resolveRealArgv0Index, splitShellSegments, tokenizeCommand,
+  execBasename, isShellReparseFlag, maskQuotedRedirects, resolveRealArgv0Index, splitShellSegments, tokenizeCommand,
 } from "./shell-lex.js";
-import { detectControlFileMutation, detectLockedBaselineMutation, detectProtectedEngineMutation } from "./shell-mutation-guard.js";
+import { detectControlFileMutation, detectLockedBaselineMutation, detectProtectedEngineMutation, shellMutationTargets } from "./shell-mutation-guard.js";
 import { shellDeletes } from "./shell-delete-targets.js";
 import { DOS_SWITCH, dosSwitchBlockReason } from "./dos-switch.js";
 
@@ -213,7 +213,62 @@ export function evaluateShellCommandAndPaths(command: string, ctx: ShellPathGuar
   // detectTaskArtifactDelete for scope and best-effort posture.
   const artifact = detectTaskArtifactDelete(command, ctx);
   if (artifact) return { allowed: false, reason: artifact, userHint: USER_HINTS.commandShell };
+  const floor = shellWriteFloorRefusal(command, ctx);
+  if (floor) return floor;
   return evaluateShellPaths(command, ctx);
+}
+
+/**
+ * ALWAYS-ON: every file a shell command would write or delete is judged by the
+ * same decision the write/edit tools get (evaluateFileAccess, action "write").
+ * evaluateShellPaths stands down in unrestricted mode, which left the shell
+ * without the floors unrestricted mode keeps for the file tools: a system
+ * directory, and anywhere outside the user's home. `cat > C:/Windows/…/hosts
+ * <<'EOF'` passed the security layer while `write` to the same path was refused
+ * (found 2026-11-12). Absolute targets only, from the one walk the other
+ * mutation locks read (shellMutationTargets); a relative target lands under the
+ * agent's cwd, which the mode already permits. No new rule: a path the file
+ * tools may write, the shell may too.
+ *
+ * The walk errs toward seeing too many writes, which the other locks can
+ * afford (they match a few exact paths) and this one cannot (it judges every
+ * target). A replay of 2,933 recorded commands (2026-11-13) found these
+ * misreadings, each handled here: a quoted `>` (`sed 's/x/<L>/g'`, `node -e
+ * "a=>b"`) is masked before the walk; a target the tokenizer read past, or a
+ * subshell's closing paren, is cut back to the path (pathTheTargetNames); and
+ * git's own config, which `git remote set-url` writes and the shell may change
+ * in every other mode, is not a file write. After them the replay refused none.
+ */
+function shellWriteFloorRefusal(command: string, ctx: ShellPathGuardCtx): SecurityDecision | null {
+  // The agent's shell is bash on every platform (Git Bash on Windows), so `\"`
+  // inside a double-quoted program does not close it.
+  for (const target of shellMutationTargets(maskQuotedRedirects(command, { posixEscapes: true }))) {
+    if (target.verb === "git") continue;
+    const path = pathTheTargetNames(target.path);
+    const verb = target.verb;
+    if (BENIGN_PATHS.has(path.toLowerCase())) continue;
+    const write = evaluateFileAccess(ctx.workspace, ctx.fileAccessMode, ctx.allowedPathCheck, "write", path, ctx.sessionId);
+    if (!write.allowed) {
+      return {
+        allowed: false,
+        reason: `Blocked: '${verb}' would write "${path}", which the write/edit tools refuse too. ${write.reason}`,
+        userHint: write.userHint ?? USER_HINTS.fileSystem,
+      };
+    }
+  }
+  return null;
+}
+
+/** The path a redirect names, from a word the lexer may have read past it.
+ *  The shared tokenizer reads no backslash escapes, so an escaped quote can
+ *  carry the rest of the line into the target (`/dev/null | sed -E "…`); no
+ *  file name holds a shell operator after a space, so the target ends there.
+ *  Then the `)` that closes a subshell comes off (`/dev/null)` of `(ls
+ *  2>/dev/null)`); a path's own balanced parens (`Program Files (x86)`) stay. */
+function pathTheTargetNames(path: string): string {
+  let p = path.split(/\s+(?:\|\|?|&&|;)(?:\s|$)|;\s/)[0].trimEnd();
+  while (p.endsWith(")") && p.split("(").length < p.split(")").length) p = p.slice(0, -1);
+  return p;
 }
 
 // ── ALWAYS-ON task-artifact delete guard (mode-independent) ──

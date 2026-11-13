@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 2016 non-test source files · 80 oversized · 266 nearing the size cap.
+**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 2017 non-test source files · 80 oversized · 265 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -26,7 +26,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/workspace/` | 91 | 3 | M |  |
 | `src/canonical-loop/` | 89 | 285 | XL | 11 |
 | `src/providers/` | 79 | 27 | L | 1 |
-| `src/session/` | 65 | 13 | L |  |
+| `src/session/` | 67 | 13 | L |  |
 | `src/data-lineage/` | 59 | 12 | L |  |
 | `src/memory/` | 57 | 159 | XL | 3 |
 | `src/browser/` | 51 | 93 | XL | 5 |
@@ -39,7 +39,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/auth/` | 36 | 11 | L |  |
 | `src/context-manager/` | 29 | 15 | M |  |
 | `src/agent-store/` | 28 | 7 | M | 1 |
-| `src/context/` | 28 | 10 | M |  |
+| `src/context/` | 28 | 11 | M |  |
 | `src/broker-transport/` | 27 | 49 | XL |  |
 | `src/agent-request/` | 26 | 16 | L | 3 |
 | `src/classifiers/` | 24 | 16 | L |  |
@@ -374,7 +374,6 @@ job. Comments are free: never cut them to fit.
 - `src/tool-execution/sensitive-read-taint.ts` — 290+ code lines (cap 350)
 - `src/browser/runtime.ts` — 280+ code lines (cap 350)
 - `src/canonical-loop/scheduler.ts` — 280+ code lines (cap 350)
-- `src/context/system-prompt-builder.ts` — 280+ code lines (cap 350)
 - `src/mcp-client/index.ts` — 280+ code lines (cap 350)
 - `src/memory/promotion-gate.ts` — 280+ code lines (cap 350)
 - `src/protocols/builder.ts` — 280+ code lines (cap 350)
@@ -384,7 +383,6 @@ job. Comments are free: never cut them to fit.
 - `src/tools/build-app-spawn.ts` — 280+ code lines (cap 350)
 - `src/agency/handler-tools.ts#createHandlerTools` — 100+ own code lines (cap 100)
 - `src/auto-build/workflow-resolver.ts#candidateFromEvidence` — 100+ own code lines (cap 100)
-- `src/context/system-prompt-builder.ts#createSystemPromptBuilder` — 100+ own code lines (cap 100)
 - `src/server/background-jobs/index.ts#startBackgroundJobs` — 100+ own code lines (cap 100)
 - `src/anthropic-client/stream-cli.ts#streamViaColdSpawn` — 90+ own code lines (cap 100)
 - `src/app-renderer/components.ts#renderComponent` — 90+ own code lines (cap 100)
@@ -401,6 +399,7 @@ job. Comments are free: never cut them to fit.
 - `src/chat-ws/message-router.ts#ws.on:callback` — 90+ own code lines (cap 100)
 - `src/codex-client/index.ts#streamCodexResponse` — 90+ own code lines (cap 100)
 - `src/codex-client/stream-parse.ts#processCodexEvent` — 90+ own code lines (cap 100)
+- `src/context/system-prompt-builder.ts#createSystemPromptBuilder` — 90+ own code lines (cap 100)
 - `src/local-runtimes/certification-runner.ts#runExclusive:callback` — 90+ own code lines (cap 100)
 - `src/memory/auto-extract.ts#autoExtractAndSave` — 90+ own code lines (cap 100)
 - `src/memory/extract.ts#runExtraction` — 90+ own code lines (cap 100)

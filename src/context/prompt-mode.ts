@@ -16,6 +16,7 @@
  */
 import type { ChatMode } from "../session/mode.js";
 import { basePartSlug, basePromptSections } from "../config-loader.js";
+import type { PromptPriority } from "./system-prompt-builder.js";
 
 /** The coding "How to work": in code mode only. */
 export const CODE_MODE_PART = "code-mode";
@@ -36,6 +37,21 @@ const LEFT_OUT_OF_CODE_MODE: ReadonlySet<string> = new Set([
   "self-repair-and-self-extension",
   "delegation",
 ]);
+
+/**
+ * In a code session the coding rules are the job, so they are the last parts a
+ * small window gives up. Their own classes put them first: "Coding discipline"
+ * is `tuning` (shed before anything else) and the coding "How to work" is
+ * `navigation`, so a constrained local window dropped the coding rules and
+ * kept recalled personal facts. As `facts` with no rank in the shed order
+ * (prompt-degradation.ts) they go after every recalled block.
+ */
+const SHED_LAST_IN_CODE_MODE: ReadonlySet<string> = new Set([CODE_MODE_PART, "coding-discipline"]);
+
+/** The budget class a session in `mode` sheds this part under. */
+export function promptPriorityInMode(slug: string, mode: ChatMode, own: PromptPriority | undefined): PromptPriority | undefined {
+  return mode === "code" && SHED_LAST_IN_CODE_MODE.has(slug) ? "facts" : own;
+}
 
 /** Does a session in `mode` carry the base-prompt part with this slug? */
 export function promptPartInMode(slug: string, mode: ChatMode): boolean {

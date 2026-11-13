@@ -141,6 +141,7 @@ async function buildTurnMemory(
     protocolSuggestion,
     keywordGates: input.leanPrep,
     continues: input.continuationOf,
+    mode: input.mode,
   });
   end();
   return ctx;

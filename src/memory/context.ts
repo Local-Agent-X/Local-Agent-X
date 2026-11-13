@@ -81,7 +81,11 @@ function filterDailyLogToSession(content: string, sessionId?: string): string {
  */
 export interface ContextBlockParts { stable: string; volatile: string }
 
-export interface ContextBlockOpts { skipDailyLog?: boolean; sanitizeDailyLog?: boolean; userMessage?: string; sessionId?: string; projectId?: string }
+export interface ContextBlockOpts {
+  skipDailyLog?: boolean; sanitizeDailyLog?: boolean; userMessage?: string; sessionId?: string; projectId?: string;
+  /** Leave the always-on `<core_memory>` dump out (a code session: TurnContextInput.omitCoreMemory). */
+  omitCoreMemory?: boolean;
+}
 
 export async function buildContextBlock(memory: MemoryIndex, opts: ContextBlockOpts = {}): Promise<string> {
   const parts = await buildContextBlockParts(memory, opts);
@@ -177,7 +181,9 @@ export async function buildContextBlockParts(
   // on durable statements (verified May 2026). Rendering from the DB (not a
   // file) keeps the affordance without append-only growth. Which facts, and
   // in what order: core-memory.ts.
-  const core = coreMemoryBody(memory, tz);
+  // Left out whole when the caller says so: nothing is rendered, so nothing
+  // below is skipped as "already in core_memory" either.
+  const core = opts.omitCoreMemory ? { body: "", renderedIds: new Set<number>() } : coreMemoryBody(memory, tz);
   const renderedCoreFactIds = core.renderedIds;
   if (core.body) {
     stableSections.push(

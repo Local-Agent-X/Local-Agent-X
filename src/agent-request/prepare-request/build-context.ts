@@ -16,6 +16,7 @@ import { getLearnedProtocolSuggestion, type LearnedProtocolSuggestion } from "..
 import { identityNamesFrom, renderIdentityNames } from "../../context/identity-names.js";
 import { renderRecalledMemory, type RecalledMemory } from "../../memory/auto-search-context.js";
 import { uncarriedRecall } from "../recall-carry.js";
+import type { ChatMode } from "../../session/mode.js";
 
 const logger = createLogger("agent-request.prepare-request.context");
 
@@ -39,6 +40,9 @@ export interface BuildContextInput {
   /** The earlier words of this message, when the user kept talking over the
    *  turn that was answering them: their context is reused (turn-context-cache.ts). */
   continues?: string;
+  /** The session's mode. A code session does not preload the retained-facts
+   *  dump (TurnContextInput.omitCoreMemory). */
+  mode?: ChatMode;
 }
 
 export interface BuildContextResult {
@@ -91,6 +95,7 @@ export async function buildContext(input: BuildContextInput): Promise<BuildConte
     liteMode: !input.skipMemory && input.isTrivialToolRequest,
     minimalMode: input.skipMemory,
     keywordGates: input.keywordGates,
+    omitCoreMemory: input.mode === "code",
   }, { continues: input.continues });
   logger.info(`[step] buildTurnContextCached ${Date.now() - bcT0}ms sess=${input.sessionId.slice(0, 16)}`);
   let contextBlock = turnCtx.contextBlock;

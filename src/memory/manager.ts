@@ -38,6 +38,13 @@ export interface TurnContextInput {
   /** Orchestrator judges follow-up and topical relevance by keyword only
    *  (OrchestratorInput.keywordGates). */
   keywordGates?: boolean;
+  /** Do not preload the always-on dump of retained facts (`<core_memory>`).
+   *  A code session works in one project folder and that dump was the largest
+   *  part of its prompt (~5k of ~16k tokens on recorded turns, 2026-11-12).
+   *  Nothing becomes unreachable: recall matched to the message still arrives,
+   *  entities the message names still render their facts, and the prompt's
+   *  recall section names the tools that fetch the rest. */
+  omitCoreMemory?: boolean;
 }
 
 export interface TurnContext {
@@ -133,7 +140,7 @@ export class MemoryManager {
 
     if (input.minimalMode) {
       try {
-        ({ stable: out.contextBlock, volatile: out.contextBlockVolatile } = await buildContextBlockParts(this.index, { sessionId: input.sessionId, projectId }));
+        ({ stable: out.contextBlock, volatile: out.contextBlockVolatile } = await buildContextBlockParts(this.index, { sessionId: input.sessionId, projectId, omitCoreMemory: input.omitCoreMemory }));
       } catch (e) {
         logger.warn("buildContextBlock (minimal) failed:", (e as Error).message);
       }
@@ -147,6 +154,7 @@ export class MemoryManager {
           userMessage: input.userMessage,
           sessionId: input.sessionId,
           projectId,
+          omitCoreMemory: input.omitCoreMemory,
         }));
       } catch (e) {
         logger.warn("buildContextBlock (lite) failed:", (e as Error).message);
@@ -181,6 +189,7 @@ export class MemoryManager {
         skipDailyLog: input.skipDailyLog,
         sessionId: input.sessionId,
         projectId,
+        omitCoreMemory: input.omitCoreMemory,
       }).catch((e) => {
         logger.warn("buildContextBlock failed:", (e as Error).message);
         return { stable: "", volatile: "" };

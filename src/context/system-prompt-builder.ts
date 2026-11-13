@@ -9,7 +9,8 @@
 import { createRequire } from "node:module";
 import { measurePromptSection, type PromptSectionTelemetry } from "../prompt-telemetry.js";
 import { basePartSlug, basePromptSections } from "../config-loader.js";
-import { promptPartInMode } from "./prompt-mode.js";
+import { promptPartInMode, promptPriorityInMode } from "./prompt-mode.js";
+import { recallReflexSection } from "./recall-reflex-section.js";
 import type { ChatMode } from "../session/mode.js";
 import { snapshotForSession } from "./session-prompt-snapshot.js";
 import { readAgentRulesSection } from "./agents-md-section.js";
@@ -184,7 +185,8 @@ export class SystemPromptBuilder {
  */
 function addBasePromptParts(builder: SystemPromptBuilder, basePrompt: string, mode: ChatMode): void {
   for (const part of basePromptSections(basePrompt)) {
-    if (promptPartInMode(basePartSlug(part.id), mode)) builder.addSection(part);
+    const slug = basePartSlug(part.id);
+    if (promptPartInMode(slug, mode)) builder.addSection({ ...part, priority: promptPriorityInMode(slug, mode, part.priority) });
   }
 }
 
@@ -358,30 +360,18 @@ export function createSystemPromptBuilder(opts: {
     });
   }
 
-  // Memory-recall reflex. Cross-session recall IS auto-injected now, but only
-  // on task-start turns and only when the message carries 2+ keywords
-  // (src/memory/auto-search-context.ts, wired at memory/manager.ts). This
-  // section covers what injection does not reach — mid-session topic pivots,
-  // and turns where the injected block came back empty — so the model checks
-  // what's actually been built or discussed instead of guessing from URLs and
-  // logos. Sits in the static section so it's cacheable.
-  builder.addSection({
-    id: "recall-reflex", label: "Recall Reflex", type: "static", policy: "required", priority: "safety",
-    build: () => `## Memory-Recall Reflex
-A task-opening turn auto-injects cross-session recall — the RELEVANT MEMORIES block, where entries tagged \`PAST SESSION\` come from earlier conversations. Read that block before reaching for a tool. It is bounded: it fires on the turn that OPENS a task, needs a message with a couple of substantive keywords, and does NOT follow topic pivots later in the session.
-Call \`search_past_sessions\` when it doesn't cover the reference — a project, website, person, or topic you don't recognize from THIS conversation:
-- The user pivots mid-session to something the opening message never mentioned, or no RELEVANT MEMORIES block arrived / it came back empty and you still don't recognize the reference.
-- An image or a domain counts as a reference: the brand you read off it IS the query ("Baddies & Sugar Daddies" → search "baddies sugar daddies"). Search before answering; never describe or guess from the logo or URL alone.
-- The tool also surfaces apps you previously built (workspace/apps/<name>/) — read their files if you need actual build details. Cross-reference the Project Catalog above to see if the brand matches a built app slug.
-- A miss is not proof: say you couldn't find it, never that it wasn't said or that you made it up — the user's account outranks a miss. If the user disputes something you sourced, cite the source and its date; change your answer only for newer or contradicting evidence.`,
-  });
+  // When to search past sessions and memory instead of guessing, and in a code
+  // session what is fetched instead of preloaded (recall-reflex-section.ts).
+  builder.addSection(recallReflexSection(opts.mode ?? "chat"));
 
   // Project catalog — static list of the user's known projects/entities so
   // the agent recognizes them by name without needing a tool call. Pairs
   // with the recall reflex above: this section says "these names you
   // already know exist", and the reflex says "search for the details when
-  // a known name comes up." Cached for 60s in the catalog module.
-  if (opts.memoryDir) {
+  // a known name comes up." Cached for 60s in the catalog module. A code
+  // session works in one project folder and fetches the others by search
+  // (the recall section names the tool).
+  if (opts.memoryDir && opts.mode !== "code") {
     builder.addSection({
       id: "project-catalog", label: "Project Catalog", type: "static", policy: "degradable", priority: "navigation",
       build: async () => {

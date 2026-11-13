@@ -181,8 +181,9 @@ export interface TurnResult {
   /**
    * What this turn sent and what came back, for replay and eval. The adapter
    * only BUILDS it; the store persists it beside the turn record as
-   * `op-turns/<idx>.trace.json.gz` (see turn-trace-store.ts). Absent on
-   * adapters that do not trace yet and on turns that never reached the wire.
+   * `op-turns/<idx>.trace.json.gz` (see turn-trace-store.ts). Built by the
+   * openai-compat adapter and the hosted ones (Anthropic, Codex, Gemini);
+   * absent on turns that never reached the wire.
    */
   trace?: TurnTrace;
 }
@@ -211,6 +212,10 @@ export interface TurnTrace {
      *  adapter reported it: after a learned-unsupported omission or a
      *  self-heal retry this can be smaller than the fields above. */
     sent?: Record<string, unknown>;
+    /** A hosted adapter's settings that shaped the request but are not the
+     *  history or the wire body: the thinking switch, the cache split, the
+     *  transport lane (adapters/hosted-turn-trace.ts). */
+    options?: Record<string, unknown>;
   };
   response: {
     /** Answer text as streamed, before text-tag tool calls were cut out. */

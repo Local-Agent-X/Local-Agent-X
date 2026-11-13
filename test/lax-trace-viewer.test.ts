@@ -87,6 +87,7 @@ describe("lax-trace viewer", () => {
       expect(t.trace.request.messagesFrom).toBeUndefined();
     }
     expect(turns[2].trace.request.messages).toEqual(rows);
+    expect(viewer.renderTurn(turns[2])).toContain("6 messages");
   });
 
   it("refuses an ambiguous suffix and names both candidates", () => {

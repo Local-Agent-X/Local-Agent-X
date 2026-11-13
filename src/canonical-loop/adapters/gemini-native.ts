@@ -16,6 +16,7 @@ import type { GeminiNativeTransport, GeminiNativeRequest } from "./gemini-native
 import { canonicalToTransport } from "./canonical-to-transport.js";
 import { hasInjects } from "../../agent-loop/inject-queue.js";
 import { classifyModelStop, refusalError } from "./model-stop.js";
+import { buildHostedTurnTrace } from "./hosted-turn-trace.js";
 import { parseArgs } from "./tool-call-text-repair.js";
 import { withTransportRetry } from "./transport-retry.js";
 
@@ -61,6 +62,8 @@ export class GeminiNativeAdapter implements Adapter {
     const forcedToolChoice = input.turnIdx === 0 ? this.opts.forcedToolChoice : undefined;
 
     let assembledText = "";
+    let assembledThinking = "";
+    let firstEventAt: number | undefined;
     const toolCallIds: string[] = [];
     const pendingToolCalls: Array<{ id: string; name: string; arguments: string }> = [];
     let firstError: { code: string; message: string } | null = null;
@@ -94,7 +97,11 @@ export class GeminiNativeAdapter implements Adapter {
             try { this.aborter?.abort(); } catch { /* already aborted */ }
             break;
           }
-          if (ev.type === "thinking") { if (ev.delta) report({ kind: "reasoning_chunk", delta: ev.delta }); continue; }
+          if ((ev.type === "text" || ev.type === "thinking" || ev.type === "tool_call") && firstEventAt === undefined) firstEventAt = Date.now();
+          if (ev.type === "thinking") {
+            if (ev.delta) { assembledThinking += ev.delta; report({ kind: "reasoning_chunk", delta: ev.delta }); }
+            continue;
+          }
           if (ev.type === "text") {
             if (ev.delta.length === 0) continue;
             assembledText += ev.delta;
@@ -132,6 +139,7 @@ export class GeminiNativeAdapter implements Adapter {
       }
     };
 
+    const startedAt = Date.now();
     this.inflight = consume();
     try { await this.inflight; } finally { this.inflight = null; }
 
@@ -160,9 +168,29 @@ export class GeminiNativeAdapter implements Adapter {
       ...(usageOutputTokens !== undefined ? { usageOutputTokens } : {}),
     });
 
+    // req carries the API key; the trace copies its fields by name and never it.
+    const trace = buildHostedTurnTrace({
+      model: req.model,
+      systemPrompt: req.systemPrompt,
+      messages: req.messages,
+      tools: req.tools,
+      temperature: req.temperature,
+      toolChoice: req.forcedToolChoice,
+      options: { thinking: req.thinking },
+    }, {
+      text: assembledText,
+      thinking: assembledThinking,
+      toolCalls: pendingToolCalls,
+      stopReason: providerStop,
+      promptTokens: usageInputTokens,
+      completionTokens: usageOutputTokens,
+      firstTokenMs: firstEventAt === undefined ? undefined : firstEventAt - startedAt,
+      error: firstError,
+    }, startedAt);
+
     // Real terminal signal — Gemini's finishReason, normalized. See
     // model-stop.ts; decide-outcome trusts it over the shape inference.
-    return { providerState, terminalReason, modelStop: classifyModelStop(providerStop) };
+    return { providerState, terminalReason, modelStop: classifyModelStop(providerStop), trace };
   }
 
   async abort(reason?: unknown): Promise<void> {

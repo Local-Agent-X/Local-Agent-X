@@ -197,6 +197,10 @@ export interface AnthropicAdapterOptions {
 
 export interface StreamConsumeResult {
   assembledText: string;
+  /** The thinking deltas as streamed, for the turn's trace. */
+  assembledThinking: string;
+  /** When the first text, thinking or tool call arrived (epoch ms). */
+  firstEventAt: number | undefined;
   toolCallIds: string[];
   /**
    * Full tool calls this turn emitted ({id,name,arguments}) — kept so the

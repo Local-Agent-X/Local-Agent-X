@@ -37,6 +37,8 @@ export async function streamConsume(
 ): Promise<StreamConsumeResult> {
   const out: StreamConsumeResult = {
     assembledText: "",
+    assembledThinking: "",
+    firstEventAt: undefined,
     toolCallIds: [],
     toolCalls: [],
     firstError: null,
@@ -74,6 +76,9 @@ export async function streamConsume(
         out.interruptedByInject = true;
         break;
       }
+      if ((ev.type === "text" || ev.type === "thinking" || ev.type === "tool_call") && out.firstEventAt === undefined) {
+        out.firstEventAt = Date.now();
+      }
       if (ev.type === "text") {
         if (ev.delta.length === 0) continue;
         out.assembledText += ev.delta;
@@ -81,7 +86,10 @@ export async function streamConsume(
         continue;
       }
       if (ev.type === "thinking") {
-        if (ev.delta.length > 0) report({ kind: "reasoning_chunk", delta: ev.delta });
+        if (ev.delta.length > 0) {
+          out.assembledThinking += ev.delta;
+          report({ kind: "reasoning_chunk", delta: ev.delta });
+        }
         continue;
       }
       if (ev.type === "tool_call") {

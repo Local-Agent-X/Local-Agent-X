@@ -41,7 +41,7 @@ loop runs zero middlewares.
 | `index.ts` | Front-door barrel plus `canonicalLoopEntry()`. |
 | `types.ts` | State, lane, event (`CanonicalEventType`, `GuardOutcome`), turn-row and message-row shapes. |
 | `schema.ts` | On-disk paths under `~/.lax/operations/<opId>/`: `canonical-events.jsonl`, `op-turns/<idx>.json`, `op-turns/<idx>.trace.json.gz`, `op-messages.jsonl`. |
-| `store.ts` | Append-only event writer/reader (seq assigned under the cross-process op lock) and the turn/message readers. `turn-commit-store.ts` writes the turn row + messages atomically; `turn-trace-store.ts` writes the gzipped replay trace. |
+| `store.ts` | Append-only event writer/reader (seq assigned under the cross-process op lock) and the turn/message readers. `turn-commit-store.ts` writes the turn row + messages atomically; `turn-trace-store.ts` writes the gzipped replay trace, storing only the history rows a step added (`readTurnTrace` rebuilds the rest). |
 | `bus.ts`, `event-emitter.ts` | `emit()` = append + publish on `op_events:{opId}`; `publishStreamChunk()` = bus-only `op_stream:{opId}`, never persisted. |
 | `state-machine.ts` | Sole writer of `op.canonical.state`; validates transitions, emits `state_changed`. |
 | `checkpoint.ts` | `commitTurn()` — idempotent per `(opId, turnIdx)`; writes the turn row, messages, `turn_committed` / `redirect_applied`, terminal transition. |
@@ -62,7 +62,7 @@ loop runs zero middlewares.
 
 | Dir | What lives there |
 |---|---|
-| `adapters/` | Provider adapters: `anthropic.ts`, `codex.ts`, `gemini-native.ts`, `openai-compat.ts` (+ `openai-compat/`), `app-build-adapter.ts`, `app-build-verify-adapter.ts`; their `*-transport.ts` files hold the subprocess / HTTP side; `tool-call-text-*.ts` is the one recognizer for tool calls written as text. |
+| `adapters/` | Provider adapters: `anthropic.ts`, `codex.ts`, `gemini-native.ts`, `openai-compat.ts` (+ `openai-compat/`), `app-build-adapter.ts`, `app-build-verify-adapter.ts`; their `*-transport.ts` files hold the subprocess / HTTP side; `tool-call-text-*.ts` is the one recognizer for tool calls written as text. Each builds its turn's replay trace (`TurnResult.trace`): openai-compat in `openai-compat/turn-trace.ts`, the hosted three through `hosted-turn-trace.ts`. |
 | `chat-runner/` | Chat op creation, history seeding, adapter + runtime registration, the event pump that turns canonical events into `ServerEvent`s. |
 | `agent-runner/` | The same for non-streaming callers: prompt, seed messages, result collection, runtime surface. |
 | `middlewares/` | The safety stack (order below), `host.ts` phase runner, `registry.ts` declaration. |

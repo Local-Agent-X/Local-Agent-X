@@ -17,6 +17,7 @@ import type { AnthropicTransportRequest } from "./anthropic.js";
 import { canonicalToTransport } from "./canonical-to-transport.js";
 import { hasInjects } from "../../agent-loop/inject-queue.js";
 import { classifyModelStop, refusalError } from "./model-stop.js";
+import { buildHostedTurnTrace, type HostedTurnOutcome } from "./hosted-turn-trace.js";
 import { parseArgs } from "./tool-call-text-repair.js";
 import { withTransportRetry } from "./transport-retry.js";
 import { resolveStepReasoningEffort } from "../step-effort.js";
@@ -72,6 +73,8 @@ export class CodexAdapter implements Adapter {
       ?.previousResponseId as string | undefined;
 
     let assembledText = "";
+    let assembledThinking = "";
+    let firstEventAt: number | undefined;
     let finalizedMessageId: string | null = null;
     const toolCallIds: string[] = [];
     // Track full tool_call info (not just IDs) so we can finalize an
@@ -135,6 +138,7 @@ export class CodexAdapter implements Adapter {
             try { this.aborter?.abort(); } catch { /* already aborted */ }
             break;
           }
+          if ((ev.type === "text" || ev.type === "thinking" || ev.type === "tool_call") && firstEventAt === undefined) firstEventAt = Date.now();
           if (ev.type === "text") {
             if ((ev as { delta?: string }).delta?.length === 0) continue;
             assembledText += (ev as { delta: string }).delta;
@@ -143,7 +147,7 @@ export class CodexAdapter implements Adapter {
           }
           if (ev.type === "thinking") {
             const d = (ev as { delta?: string }).delta;
-            if (d) report({ kind: "reasoning_chunk", delta: d });
+            if (d) { assembledThinking += d; report({ kind: "reasoning_chunk", delta: d }); }
             continue;
           }
           if (ev.type === "tool_call") {
@@ -185,6 +189,7 @@ export class CodexAdapter implements Adapter {
       }
     };
 
+    const startedAt = Date.now();
     this.inflight = consume();
     try { await this.inflight; } finally { this.inflight = null; }
 
@@ -254,9 +259,20 @@ export class CodexAdapter implements Adapter {
       terminalReason = "error";
     }
 
+    const trace = codexTrace(req, {
+      text: assembledText,
+      thinking: assembledThinking,
+      toolCalls: pendingToolCalls,
+      stopReason: providerStop,
+      promptTokens: usageInputTokens,
+      completionTokens: usageOutputTokens,
+      firstTokenMs: firstEventAt === undefined ? undefined : firstEventAt - startedAt,
+      error: firstError,
+    }, startedAt);
+
     // Real terminal signal — the model's stop_reason, normalized. See
     // model-stop.ts; decide-outcome trusts it over the shape inference.
-    return { providerState, terminalReason, modelStop: classifyModelStop(providerStop) };
+    return { providerState, terminalReason, modelStop: classifyModelStop(providerStop), trace };
   }
 
   async abort(reason?: unknown): Promise<void> {
@@ -297,6 +313,24 @@ import type { TransportTool } from "./anthropic.js";
 
 function convertTools(tools: TurnInput["tools"]): TransportTool[] {
   return tools.map(t => ({ name: t.name, description: t.description ?? "", parameters: ((t.inputSchema as Record<string, unknown>) ?? {}) }));
+}
+
+/** The turn's trace: the request as handed to the transport, and the answer. */
+function codexTrace(
+  req: AnthropicTransportRequest & { previousResponseId?: string; reasoningEffort?: ReasoningEffort },
+  outcome: HostedTurnOutcome,
+  startedAt: number,
+) {
+  return buildHostedTurnTrace({
+    model: req.model,
+    systemPrompt: req.systemPrompt,
+    messages: req.messages,
+    tools: req.tools,
+    maxTokens: req.maxTokens,
+    reasoningEffort: req.reasoningEffort,
+    toolChoice: req.forcedToolChoice,
+    options: { previousResponseId: req.previousResponseId },
+  }, outcome, startedAt);
 }
 
 function byteLengthUtf8(s: string): number {

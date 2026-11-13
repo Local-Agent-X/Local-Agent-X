@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 2019 non-test source files · 80 oversized · 266 nearing the size cap.
+**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 2020 non-test source files · 80 oversized · 267 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -24,7 +24,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/tools/` | 132 | 234 | XL | 9 |
 | `src/tool-execution/` | 100 | 90 | XL | 2 |
 | `src/workspace/` | 91 | 3 | M |  |
-| `src/canonical-loop/` | 89 | 285 | XL | 11 |
+| `src/canonical-loop/` | 89 | 286 | XL | 11 |
 | `src/providers/` | 79 | 27 | L | 1 |
 | `src/session/` | 67 | 13 | L |  |
 | `src/data-lineage/` | 59 | 12 | L |  |
@@ -393,6 +393,7 @@ job. Comments are free: never cut them to fit.
 - `src/canonical-loop/adapters/anthropic/stream-consume.ts#streamConsume` — 90+ own code lines (cap 100)
 - `src/canonical-loop/adapters/canonical-to-transport.ts#canonicalToTransport` — 90+ own code lines (cap 100)
 - `src/canonical-loop/adapters/codex-transport.ts#stream` — 90+ own code lines (cap 100)
+- `src/canonical-loop/adapters/codex.ts#CodexAdapter.runTurn` — 90+ own code lines (cap 100)
 - `src/canonical-loop/adapters/openai-compat/stream-once.ts#streamOnce` — 90+ own code lines (cap 100)
 - `src/canonical-loop/agent-runner/run.ts#runAgentViaCanonical` — 90+ own code lines (cap 100)
 - `src/canonical-loop/checkpoint.ts#commitOwnedTurn` — 90+ own code lines (cap 100)
@@ -430,7 +431,6 @@ job. Comments are free: never cut them to fit.
 - `src/auth/index.ts#createServer:callback` — 80+ own code lines (cap 100)
 - `src/auto-build/chunk-review/gate-build-exec.ts#runBuildExecGate` — 80+ own code lines (cap 100)
 - `src/broker-transport/vendor/chat.ts#parseEvent` — 80+ own code lines (cap 100)
-- `src/canonical-loop/adapters/codex.ts#CodexAdapter.runTurn` — 80+ own code lines (cap 100)
 - `src/canonical-loop/agent-runner/runtime-surface.ts#rehydrateAgentRuntimeSurface` — 80+ own code lines (cap 100)
 - `src/canonical-loop/agent-runner/seed-messages.ts#seedOpMessages` — 80+ own code lines (cap 100)
 - `src/canonical-loop/chat-runner/seed-messages.ts#seedOpMessages` — 80+ own code lines (cap 100)
@@ -478,6 +478,7 @@ job. Comments are free: never cut them to fit.
 - `src/browser/in-app-resolve-scripts.ts#textSearchScript` — 70+ own code lines (cap 100)
 - `src/browser/launcher.ts#launchAgentChrome` — 70+ own code lines (cap 100)
 - `src/canonical-loop/adapters/app-build-smoke-gate.ts#runAppSmokeGate` — 70+ own code lines (cap 100)
+- `src/canonical-loop/adapters/gemini-native.ts#GeminiNativeAdapter.runTurn` — 70+ own code lines (cap 100)
 - `src/canonical-loop/chat-runner/register-adapter.ts#registerAdapterForChat` — 70+ own code lines (cap 100)
 - `src/canonical-loop/chat-tool-dispatcher.ts#shapeCallResult` — 70+ own code lines (cap 100)
 - `src/canonical-loop/container-execution-backend.ts#ContainerExecutionBackend.launchOrReattach` — 70+ own code lines (cap 100)

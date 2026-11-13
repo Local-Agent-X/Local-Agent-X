@@ -58,6 +58,7 @@ import {
 import { byteLengthUtf8, convertTools } from "./anthropic/helpers.js";
 import { streamConsume } from "./anthropic/stream-consume.js";
 import { classifyModelStop } from "./model-stop.js";
+import { buildHostedTurnTrace } from "./hosted-turn-trace.js";
 
 export {
   ANTHROPIC_ADAPTER_NAME,
@@ -144,6 +145,7 @@ export class AnthropicAdapter implements Adapter {
     // The adapter just yields events; turn-loop watches the report stream
     // and calls adapter.abort("idle-stalled") if no events for IDLE_TIMEOUT_MS.
 
+    const startedAt = Date.now();
     this.inflight = this.runStreamConsume(transport, req, report);
     let result: StreamConsumeResult;
     try {
@@ -235,7 +237,7 @@ export class AnthropicAdapter implements Adapter {
 
     // Real terminal signal — the model's stop_reason, normalized. decide-outcome
     // trusts this over the shape inference when present. See model-stop.ts.
-    return { providerState, terminalReason, modelStop: classifyModelStop(result.providerStop) };
+    return { providerState, terminalReason, modelStop: classifyModelStop(result.providerStop), trace: anthropicTrace(req, result, startedAt) };
   }
 
   async abort(reason?: unknown): Promise<void> {
@@ -289,6 +291,40 @@ export class AnthropicAdapter implements Adapter {
     }
     return null;
   }
+}
+
+/** The turn's trace. Anthropic counts cache reads and writes outside
+ *  input_tokens, so the prompt is their sum. */
+function anthropicTrace(req: AnthropicTransportRequest, r: StreamConsumeResult, startedAt: number) {
+  const cached = r.cacheReadTokens;
+  const prompt = r.usageInputTokens === undefined ? undefined : r.usageInputTokens + (cached ?? 0) + (r.cacheCreateTokens ?? 0);
+  return buildHostedTurnTrace({
+    model: req.model,
+    systemPrompt: req.systemPrompt,
+    messages: req.messages,
+    tools: req.tools,
+    maxTokens: req.maxTokens,
+    reasoningEffort: req.effort,
+    toolChoice: req.forcedToolChoice,
+    options: {
+      disableThinking: req.disableThinking,
+      preferDirectHttp: req.preferDirectHttp,
+      systemStablePrefixLen: req.systemStablePrefixLen,
+      cacheConversation: req.cacheConversation,
+      systemTailInMessages: req.systemTailInMessages,
+      ephemeralTailMessages: req.ephemeralTailMessages,
+    },
+  }, {
+    text: r.assembledText,
+    thinking: r.assembledThinking,
+    toolCalls: r.toolCalls,
+    stopReason: r.providerStop,
+    promptTokens: prompt,
+    completionTokens: r.usageOutputTokens,
+    cachedTokens: cached,
+    firstTokenMs: r.firstEventAt === undefined ? undefined : r.firstEventAt - startedAt,
+    error: r.firstError,
+  }, startedAt);
 }
 
 /** Convenience factory for adapter-factory registration. */

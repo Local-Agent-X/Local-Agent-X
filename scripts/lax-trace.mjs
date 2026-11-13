@@ -132,7 +132,7 @@ const head = (s, n) => (s.length > n ? `${s.slice(0, n)}\n… [${s.length - n} m
 export function renderTurn(t, { prompt = false } = {}) {
   const out = [];
   const tr = t.trace;
-  if (!tr) return `turn ${t.idx}: no trace artifact (tracing off, or an adapter that does not trace yet)`;
+  if (!tr) return `turn ${t.idx}: no trace artifact (tracing off, a turn from before its adapter traced, or one that never reached the model)`;
   out.push(`turn ${t.idx}  run=${tr.runId}  model=${tr.model}  ${tr.baseURL ?? ""}`);
   out.push(`  timing: ${tr.timing.startedAt} → ${tr.timing.endedAt}  modelMs=${tr.timing.modelMs}  ttftMs=${tr.response.ttftMs ?? "-"}`);
   const rq = tr.request;
@@ -144,6 +144,8 @@ export function renderTurn(t, { prompt = false } = {}) {
     const { tools: sentTools, ...sentRest } = rq.sent;
     out.push(`  on the wire: ${JSON.stringify(sentRest)}${Array.isArray(sentTools) ? ` tools=${sentTools.length}` : " tools=none"}`);
   }
+  if (rq.options) out.push(`  options: ${JSON.stringify(rq.options)}`);
+  if (rq.messagesFrom) out.push(`  history PARTIAL: the trace holding its first ${rq.messagesFrom.count} rows (turn ${rq.messagesFrom.turnIdx}) is missing`);
   const rs = tr.response;
   out.push(`  response: stop=${rs.stopReason ?? "-"} usage=${rs.usage ? `${rs.usage.promptTokens ?? "-"} in / ${rs.usage.completionTokens ?? "-"} out / ${rs.usage.cachedTokens ?? "-"} cached` : "none"}` +
     `${rs.promptOverWindow ? " PROMPT-OVER-WINDOW" : ""}${rs.stoppedByGuard ? ` guard=${rs.stoppedByGuard}` : ""}${rs.error ? ` error=${rs.error.code}: ${rs.error.message}` : ""}`);

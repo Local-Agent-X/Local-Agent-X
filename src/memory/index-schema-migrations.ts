@@ -14,7 +14,7 @@ import { migrateRetrievalAndProvenance } from "./index-schema-migrations-v15.js"
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory.index-schema");
 
-export const CURRENT_SCHEMA_VERSION = 21;
+export const CURRENT_SCHEMA_VERSION = 22;
 
 function backfillValidChunkSessionIds(db: InstanceType<typeof Database>): void {
   const rows = db

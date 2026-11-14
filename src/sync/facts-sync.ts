@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { openDatabaseSafe } from "../memory/index-db.js";
 import { slugify } from "../memory/utils.js";
 import { installFactEvents, isErased, withFactActor } from "../memory/fact-events.js";
+import { uniqueEvidenceJson } from "../memory/index-reflect.js";
 import { createLogger } from "../logger.js";
 
 // Sync the `facts` table (and derived entity_mentions) across machines via
@@ -198,7 +199,8 @@ export function importFactsFromSync(dataDir: string, syncDir: string): { inserte
           try {
             const res = insertStmt.run(
               r.kind, r.content, r.entities, r.confidence,
-              r.evidence_for, r.evidence_against,
+              // A machine not yet updated still writes repeated sources.
+              uniqueEvidenceJson(r.evidence_for), r.evidence_against,
               r.source_file, r.source_line, r.timestamp, r.last_updated,
               r.valid_from, r.valid_to, r.invalidation_reason,
               r.provenance ?? null, r.occurred_at ?? null, r.source_message_id ?? null

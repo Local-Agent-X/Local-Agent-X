@@ -73,7 +73,7 @@ describe("schema v12 fact provenance migration", () => {
       const rows = db.prepare("SELECT provenance FROM facts ORDER BY id").all() as Array<{ provenance: string | null }>;
       expect(rows).toEqual([{ provenance: null }, { provenance: null }]);
       expect(schemaVersion(db)).toBe(CURRENT_SCHEMA_VERSION);
-      expect(CURRENT_SCHEMA_VERSION).toBe(21);
+      expect(CURRENT_SCHEMA_VERSION).toBe(22);
     } finally {
       db.close();
     }

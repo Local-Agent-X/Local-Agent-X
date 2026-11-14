@@ -63,6 +63,17 @@ describe("a fact synced from another machine", () => {
     expect(memory.memoryChanges({ ops: ["create"] })[0].actor).toBe("sync");
   });
 
+  it("arrives with each source of its evidence once, from a machine that still repeats them", () => {
+    const repeated = { ...remoteFact, evidence_for: JSON.stringify(["a.md#L1", "a.md#L1", "b.md#L2", "a.md#L1"]) };
+    writeFileSync(join(root, "sync", "facts.jsonl"), `${JSON.stringify(repeated)}\n`);
+    memory.close();
+    importFactsFromSync(join(root, "data"), join(root, "sync"));
+    memory = new MemoryIndex(join(root, "data"), { minScore: -1 });
+    const db = memory["db"] as import("better-sqlite3").Database;
+    expect(JSON.parse((db.prepare("SELECT evidence_for FROM facts").get() as { evidence_for: string }).evidence_for))
+      .toEqual(["a.md#L1", "b.md#L2"]);
+  });
+
   it("does not come back here once the user erased it here", () => {
     authorizeTestFactMutations(memory);
     memory.rememberFact(remoteFact.content, { kind: "observation", sourceFile: "agent-tool:user-statement" });

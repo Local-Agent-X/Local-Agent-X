@@ -6,6 +6,7 @@
  */
 import type Database from "better-sqlite3";
 import { installFactEvents, logPastEnds } from "./fact-events.js";
+import { uniqueEvidenceJson } from "./index-reflect.js";
 
 export function migrateRetrievalAndProvenance(db: InstanceType<typeof Database>, fromVersion: number): void {
   if (fromVersion < 15) {
@@ -70,5 +71,22 @@ export function migrateRetrievalAndProvenance(db: InstanceType<typeof Database>,
     // existed are logged too, so they can be undone.
     installFactEvents(db);
     logPastEnds(db);
+  }
+
+  if (fromVersion < 22) {
+    // v22: each fact's evidence list once per source. Reflection re-added the
+    // same sources on every run (index-reflect.ts, fixed with this step), so
+    // one fact held 10,646 entries of which 23 were distinct, and the list
+    // was 89% of the 40 MB facts sync file. Only repeats go; every distinct
+    // source stays, in the order first seen. evidence_for is upkeep to the
+    // change log (fact-events.ts), so this writes no events.
+    if (db.prepare(`SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'facts'`).get()) {
+      const rows = db.prepare(`SELECT id, evidence_for FROM facts WHERE evidence_for LIKE '%,%'`).all() as Array<{ id: number; evidence_for: string }>;
+      const update = db.prepare(`UPDATE facts SET evidence_for = ? WHERE id = ?`);
+      for (const row of rows) {
+        const unique = uniqueEvidenceJson(row.evidence_for);
+        if (unique !== row.evidence_for) update.run(unique, row.id);
+      }
+    }
   }
 }

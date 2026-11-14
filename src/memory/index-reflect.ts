@@ -44,6 +44,21 @@ export async function reflect(
   return { entitiesUpdated, opinionsUpdated };
 }
 
+/** A fact's evidence list with each source once, in the order first seen. */
+export function uniqueEvidence(list: readonly string[]): string[] {
+  return [...new Set(list)];
+}
+
+/** The same for a stored `evidence_for` column; the text unchanged when it
+ *  holds no repeat or is not a list of sources. */
+export function uniqueEvidenceJson(json: string): string {
+  let list: unknown;
+  try { list = JSON.parse(json); } catch { return json; } // not JSON: left for whoever wrote it
+  if (!Array.isArray(list) || !list.every((s) => typeof s === "string")) return json;
+  const unique = uniqueEvidence(list);
+  return unique.length === list.length ? json : JSON.stringify(unique);
+}
+
 function updateOpinionConfidence(
   db: InstanceType<typeof Database>,
   opinion: RetainedFact,
@@ -58,12 +73,19 @@ function updateOpinionConfidence(
 
   if (related.length === 0) return false;
 
-  const newEvidenceFor = [
+  // Each run looks back over the same days, so most of what it finds is
+  // already on the list. Only a source not there yet is news; with none, the
+  // row is left alone (a re-added list grew one fact to 10,646 entries, 23 of
+  // them distinct, and the facts sync file to 40 MB).
+  const newEvidenceFor = uniqueEvidence([
     ...opinion.evidenceFor,
     ...related
       .filter((f) => f.kind !== "opinion")
       .map((f) => `${f.sourceFile}#L${f.sourceLine}`),
-  ];
+  ]);
+  const unchanged = newEvidenceFor.length === opinion.evidenceFor.length
+    && newEvidenceFor.every((s, i) => s === opinion.evidenceFor[i]);
+  if (unchanged) return false;
 
   db
     .prepare(

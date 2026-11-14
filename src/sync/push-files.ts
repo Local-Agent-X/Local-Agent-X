@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import { createLogger } from "../logger.js";
@@ -15,26 +15,9 @@ import { engineCheckoutMarker, mirrorDir, pruneSkippedDirs } from "./mirror.js";
 import { exportFactsForSync } from "./facts-sync.js";
 import { tombstonePaths, writeTombstonesForDeletedApps } from "./tombstones.js";
 import { readSyncedNotes, recordSyncedNotes } from "./synced-notes.js";
+import { pushSessions } from "./push-sessions.js";
 
 const logger = createLogger("sync.push-files");
-
-// A session log this big is a runaway, not real history (a memory_dream
-// session hit 150 MB). Syncing it blows the push pack past git's timeout and
-// jams the whole sync, so it's excluded rather than allowed to wedge backups.
-const MAX_SESSION_SYNC_BYTES = 10 * 1024 * 1024;
-
-// A push runs after every chat turn, and rewriting every session log each time
-// read and wrote the whole sessions folder (478 MB on one machine, 2026-11-13)
-// on the server's thread. The copy takes the source's mtime, so it is skipped
-// until either side is written again.
-function copyIfChanged(src: string, dest: string, size: number, mtimeMs: number): void {
-  try {
-    const d = statSync(dest);
-    if (d.size === size && Math.abs(d.mtimeMs - mtimeMs) < 1) return;
-  } catch { /* no copy yet */ }
-  writeFileSync(dest, readFileSync(src));
-  utimesSync(dest, new Date(), new Date(mtimeMs));
-}
 
 // ── Push direction: local → sync repo (with deletion propagation) ──
 
@@ -105,30 +88,8 @@ export async function copyToSync(dataDir: string, syncDir: string, config: SyncC
     } catch {}
   }
 
-  if (config.syncSessions) {
-    const sessDir = join(dataDir, "sessions");
-    const syncSessDir = join(syncDir, "sessions");
-    if (!existsSync(syncSessDir)) mkdirSync(syncSessDir, { recursive: true });
-    if (existsSync(sessDir)) {
-      for (const f of readdirSync(sessDir)) {
-        // Sync both .jsonl (current) and .json (legacy/pre-migration) so
-        // round-tripping a sync from an older machine still works. The
-        // `.metadata.*` dotfiles are this machine's list cache, not sessions.
-        if (f.startsWith(".") || (!f.endsWith(".jsonl") && !f.endsWith(".json"))) continue;
-        const src = join(sessDir, f);
-        // Hard size cap. A single runaway log (a 150 MB memory_dream session
-        // was the real one) bloats the push pack past the git timeout, so
-        // every push fails, commits strand, and the whole sync wedges. One
-        // pathological file must never be able to brick all of sync — skip it.
-        const st = statSync(src);
-        if (st.size > MAX_SESSION_SYNC_BYTES) {
-          logger.warn(`[sync] skipping oversized session ${f} (${(st.size / 1048576).toFixed(0)} MB > ${MAX_SESSION_SYNC_BYTES / 1048576} MB cap)`);
-          continue;
-        }
-        copyIfChanged(src, join(syncSessDir, f), st.size, st.mtimeMs);
-      }
-    }
-  }
+  // Only the logs changed here since the last push (push-sessions.ts).
+  if (config.syncSessions) await pushSessions(dataDir, syncDir);
 
   // Unconditional: this cleans the MIRROR, so it must not depend on the source
   // workspace still existing or on workspace sync being on. A machine whose

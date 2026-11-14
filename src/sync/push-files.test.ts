@@ -9,7 +9,7 @@
 // the real workspaceRoot() and would copy the user's entire workspace into a
 // temp dir. Reaching the prune with workspace sync OFF is the stronger case
 // anyway — it is the branch the first wiring missed.
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -118,28 +118,58 @@ describe("copyToSync and memory notes", () => {
   });
 });
 
-describe("copyToSync copies a session log only when it changed", () => {
-  it("leaves an unchanged copy alone and replaces it once the source is written", async () => {
-    root = mkdtempSync(join(tmpdir(), "lax-push-unchanged-"));
+// 2026-11-13: two machines held the same 2,300 chats with different ids on the
+// same rows (the one-time time repair ran on each copy). Each push wrote its
+// own copy over the other's, so the mirror flipped every time sync passed
+// between them, about 7 MB a turn.
+describe("copyToSync writes a session log only when this machine changed it", () => {
+  const meta = (id: string, updatedAt: number) => JSON.stringify({ kind: "meta", id, title: "t", createdAt: 1, updatedAt });
+  const msg = (rowId: string, content: string) => JSON.stringify({ kind: "msg", message: { role: "user", content }, id: rowId, createdAt: "2026-07-21T23:19:36.089Z" });
+  const log = (rowIds: string[], updatedAt = 5) => [meta("s1", updatedAt), ...rowIds.map((r, i) => msg(r, `said ${i}`))].join("\n") + "\n";
+  const sessionsOnly = config({ syncWorkspace: false, syncProtocols: false, syncSessions: true });
+
+  function dirs(): { src: string; dest: string; dataDir: string; syncDir: string } {
+    root = mkdtempSync(join(tmpdir(), "lax-push-sessions-own-"));
     const dataDir = join(root, "data"); const syncDir = join(root, "sync");
-    mkdirSync(join(dataDir, "sessions"), { recursive: true }); mkdirSync(syncDir, { recursive: true });
-    const src = join(dataDir, "sessions", "s1.jsonl");
-    const dest = join(syncDir, "sessions", "s1.jsonl");
-    writeFileSync(src, "one\n");
+    mkdirSync(join(dataDir, "sessions"), { recursive: true }); mkdirSync(join(syncDir, "sessions"), { recursive: true });
+    return { dataDir, syncDir, src: join(dataDir, "sessions", "s1.jsonl"), dest: join(syncDir, "sessions", "s1.jsonl") };
+  }
+
+  it("leaves the other machine's copy when this one is not ahead of it", async () => {
+    const { dataDir, syncDir, src, dest } = dirs();
+    writeFileSync(src, log(["um-1", "cm-2"]));
+    const theirs = log(["sm-aaaa", "sm-bbbb"]);
+    writeFileSync(dest, theirs);
+    await copyToSync(dataDir, syncDir, sessionsOnly);
+    expect(readFileSync(dest, "utf-8")).toBe(theirs);
+    // The other machine pushes again; nothing changed here, so it stays.
+    const again = log(["sm-cccc", "sm-dddd"]);
+    writeFileSync(dest, again);
+    await copyToSync(dataDir, syncDir, sessionsOnly);
+    expect(readFileSync(dest, "utf-8")).toBe(again);
+  });
+
+  it("writes it once this machine adds to the chat, and a log the mirror lacks", async () => {
+    const { dataDir, syncDir, src, dest } = dirs();
+    writeFileSync(src, log(["um-1"]));
     utimesSync(src, new Date(), new Date(Date.now() - 60_000));
-    const sessionsOnly = config({ syncWorkspace: false, syncProtocols: false, syncSessions: true });
+    writeFileSync(dest, log(["sm-aaaa"]));
+    await copyToSync(dataDir, syncDir, sessionsOnly);
+    writeFileSync(src, log(["um-1", "um-2"], 9));
+    await copyToSync(dataDir, syncDir, sessionsOnly);
+    expect(readFileSync(dest, "utf-8")).toBe(log(["um-1", "um-2"], 9));
 
+    writeFileSync(join(dataDir, "sessions", "s2.jsonl"), log(["um-9"]));
     await copyToSync(dataDir, syncDir, sessionsOnly);
-    expect(readFileSync(dest, "utf-8")).toBe("one\n");
-    // Same size and time as the source: a second push must not rewrite it.
-    const before = statSync(dest);
-    writeFileSync(dest, "ONE\n"); utimesSync(dest, before.atime, before.mtime);
-    await copyToSync(dataDir, syncDir, sessionsOnly);
-    expect(readFileSync(dest, "utf-8")).toBe("ONE\n");
+    expect(existsSync(join(syncDir, "sessions", "s2.jsonl"))).toBe(true);
+  });
 
-    writeFileSync(src, "one\ntwo\n");
+  it("writes a local copy that is ahead even with no record of a last push", async () => {
+    const { dataDir, syncDir, src, dest } = dirs();
+    writeFileSync(src, log(["um-1", "um-2"]));
+    writeFileSync(dest, log(["sm-aaaa"]));
     await copyToSync(dataDir, syncDir, sessionsOnly);
-    expect(readFileSync(dest, "utf-8")).toBe("one\ntwo\n");
+    expect(readFileSync(dest, "utf-8")).toBe(log(["um-1", "um-2"]));
   });
 });
 

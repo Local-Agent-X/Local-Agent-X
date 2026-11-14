@@ -7,10 +7,12 @@
 //
 // Isolation: --setting-sources project (no user settings or hooks),
 // --strict-mcp-config (no MCP servers), --no-session-persistence. Permissions
-// are NOT skipped: edits are accepted (acceptEdits) and the shell is limited to
-// an allow-list of the commands these tasks need. `rm` is disallowed outright
-// because the project's node_modules is a junction to the repo's (lib.mjs
-// makeProject) — a delete that followed it would empty the repo's dependencies.
+// are NOT skipped: edits are accepted (acceptEdits), both shells are allowed,
+// and recursive deletes are disallowed because the project's node_modules is a
+// junction to the repo's (lib.mjs makeProject) — a recursive delete that
+// followed it would empty the repo's dependencies. A plain `rm file` (Bash) is
+// how Claude Code deletes a file, so it stays allowed; PowerShell's delete
+// verbs are all disallowed since their recursive form shares the prefix.
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
@@ -36,15 +38,19 @@ export async function driveClaudeCode(prompt, dir, timeoutMs, model) {
     "--setting-sources", "project",
     "--strict-mcp-config",
     "--no-session-persistence",
-    // Edits inside the project are accepted; the shell is limited to what these
-    // tasks run (type-check, tests, node, search). Anything else is denied, not
-    // waited on, since headless there is nobody to ask.
+    // Edits inside the project are accepted, and both shells are allowed: on
+    // Windows Claude Code runs commands through its PowerShell tool, so a
+    // Bash-only allow-list denied even `tsc` (2026-11-13: three tasks failed
+    // with "permission was denied … to run tsc"). Deleting a file is part of
+    // these tasks (LAX does it with delete_file), so a plain delete is allowed.
+    // RECURSIVE deletes are not: the project's node_modules is a junction to the
+    // repo's, and a recursive delete that followed it would empty the repo's
+    // dependencies. Headless, a denied call is refused, never waited on.
     "--permission-mode", "acceptEdits",
-    "--allowedTools", "Read", "Edit", "Write", "Glob", "Grep",
-    "Bash(npx tsc:*)", "Bash(npx vitest:*)", "Bash(npm test:*)", "Bash(npm run:*)",
-    "Bash(node:*)", "Bash(node_modules/.bin/tsc:*)", "Bash(node_modules/.bin/vitest:*)",
-    "Bash(grep:*)", "Bash(ls:*)", "Bash(cat:*)",
-    "--disallowedTools", "Bash(rm:*)",
+    "--allowedTools", "Read", "Edit", "Write", "Glob", "Grep", "Bash", "PowerShell",
+    "--disallowedTools",
+    "Bash(rm -r:*)", "Bash(rm -rf:*)", "Bash(rm -fr:*)", "Bash(rm -R:*)", "Bash(rmdir:*)",
+    "PowerShell(Remove-Item:*)", "PowerShell(rm:*)", "PowerShell(del:*)", "PowerShell(rmdir:*)", "PowerShell(rd:*)",
   ];
   const t0 = Date.now();
   return await new Promise((resolve) => {

@@ -118,6 +118,51 @@ describe("stale-read guard (run-sandboxed integration)", () => {
   });
 });
 
+// The model reads a whole tree in one shell command (`for f in …; do cat "$f"`)
+// and then writes: every write was refused as unseen until the file was read
+// again (about 18 of 26 refusals, LAX vs Claude Code, 2026-11-13). A file whose
+// whole current text the shell showed has been seen; a clipped print has not.
+describe("stale-read guard credits a file a shell command showed whole", () => {
+  const shell = (stdout: string): ToolDefinition => ({
+    name: "bash",
+    description: "test shell",
+    parameters: { type: "object", properties: { command: { type: "string" } } },
+    execute: async () => ({ content: stdout }),
+  }) as unknown as ToolDefinition;
+
+  it("lets a write through after the shell printed the whole current file", async () => {
+    const body = "export const a = 1;\nexport const b = 2;\n";
+    const file = tmpFile(body);
+    const s = freshSession();
+    await run(shell(`=== ${file}\r\n${body.replace(/\n/g, "\r\n")}=== next\n`), { command: "for f in src/*.ts; do cat \"$f\"; done" }, s);
+    const res = await run(writeTool, { path: file, content: "export const a = 2;\n" }, s);
+    expect(res.isError).toBeFalsy();
+    expect(readFileSync(file, "utf-8")).toBe("export const a = 2;\n");
+  });
+
+  it("still refuses when the shell showed only part of the file, or another session saw it", async () => {
+    const body = "line one\nline two\nline three\n";
+    const file = tmpFile(body);
+    const s = freshSession();
+    await run(shell("line one\nline two\n"), { command: "head -2 f.txt" }, s);
+    const partial = await run(writeTool, { path: file, content: "x\n" }, s);
+    expect(partial.metadata?.layer).toBe("stale-read-guard");
+    await run(shell(body), { command: "cat f.txt" }, freshSession());
+    const elsewhere = await run(writeTool, { path: file, content: "x\n" }, s);
+    expect(elsewhere.metadata?.layer).toBe("stale-read-guard");
+    expect(readFileSync(file, "utf-8")).toBe(body);
+  });
+
+  it("refuses when the file changed after the shell showed it", async () => {
+    const file = tmpFile("v1 contents\n");
+    const s = freshSession();
+    await run(shell("v1 contents\n"), { command: "cat f.txt" }, s);
+    writeFileSync(file, "v2 contents, changed underneath\n", "utf-8");
+    const res = await run(writeTool, { path: file, content: "mine\n" }, s);
+    expect(res.metadata?.layer).toBe("stale-read-guard");
+  });
+});
+
 // A whole-file write replaces every byte of an existing file: unseen, it is the
 // same stale mental model as an unseen edit, and the loss is silent (the file
 // is simply gone under the new content). The guard applies because the write

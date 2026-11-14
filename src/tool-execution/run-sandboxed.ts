@@ -17,8 +17,9 @@ import { timeout, blocked, ok } from "../tools/result-helpers.js";
 import { resolveAgentPath } from "../workspace/paths.js";
 import { pathSpecsForCall, shellCommandOf, waitsForShellCommand } from "../tool-registry.js";
 import { isAbsolute } from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { checkFreshness, recordFileSeen, unchangedSinceSeen, seenViewFromReadResult } from "../tools/read-state.js";
+import { recordShellOutput, shellShowedContent } from "../tools/shell-sightings.js";
 import { READ_DEDUP_STUB_LEAD, readContentInView } from "./read-dedup-evidence.js";
 import { getModelView } from "./model-view.js";
 import { attendedHostFallbackNotice, unattendedShellBlock } from "./unattended-shell-gate.js";
@@ -45,6 +46,16 @@ function noticeHostFallback(ctx: Parameters<Phase>[0]): void {
 // The task-artifact pre-stat and enrollment live in created-files.ts, over
 // create-target-path.ts's mapping — shared with the audit phase's provenance
 // recording, one mapping for both.
+
+/** The file's current text was shown whole by a recent shell command; if so the
+ *  session has seen it, and that is recorded like a read. */
+function currentTextShownByShell(sessionId: string | undefined, path: string): boolean {
+  let text: string;
+  try { text = readFileSync(path, "utf-8"); } catch { return false; } // missing or unreadable: the guard decides as before
+  if (!shellShowedContent(sessionId, text)) return false;
+  try { recordFileSeen(sessionId, path); } catch { /* freshness is best-effort */ }
+  return true;
+}
 
 /** The row for a call that threw instead of returning a result. The journal is
  *  always told (a non-idempotent call that was cut off is ambiguous and must
@@ -128,8 +139,11 @@ export const runSandboxedPhase: Phase = async (ctx) => {
     const guarded = resolved !== null && (inPlace || existsSync(resolved));
     const fresh = resolved && guarded ? checkFreshness(sessionId, resolved) : "ok";
     // An unseen file whose edit quotes unique current text is known well
-    // enough (edit-pins-content.ts); a changed one still needs a re-read.
-    if (resolved && fresh !== "ok" && !(fresh === "unseen" && inPlace && editPinsContent(args, resolved))) {
+    // enough (edit-pins-content.ts); a changed one still needs a re-read. A
+    // file whose whole current text a shell command already showed the model
+    // has been seen (shell-sightings.ts), and is recorded so.
+    const shownByShell = resolved !== null && fresh !== "ok" && currentTextShownByShell(sessionId, resolved);
+    if (resolved && fresh !== "ok" && !shownByShell && !(fresh === "unseen" && inPlace && editPinsContent(args, resolved))) {
       const verb = inPlace ? "edit" : "overwrite";
       ctx.result = blocked(
         fresh === "unseen"
@@ -203,6 +217,8 @@ export const runSandboxedPhase: Phase = async (ctx) => {
     const ranCommand = shellCommandOf(tc.name, args);
     if (ctx.result && ranCommand !== undefined && waitsForShellCommand(tc.name)) {
       ctx.result = checkShellDeleteHappened(ranCommand, ctx.result, sessionId);
+      // What the model was shown, for the stale-read guard (shell-sightings.ts).
+      if (!ctx.result.isError && typeof ctx.result.content === "string") recordShellOutput(sessionId, ctx.result.content);
     }
   } catch (e) {
     const reconciliation = runner.reconcile(e);

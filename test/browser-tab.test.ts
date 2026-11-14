@@ -56,7 +56,7 @@ vi.mock("electron", () => {
         close: () => {},
         getURL: () => "",
         getTitle: () => "",
-        loadURL: () => Promise.resolve(),
+        loadURL: vi.fn(() => Promise.resolve()),
         executeJavaScript: () => Promise.resolve(),
         send: () => {},
         setWindowOpenHandler: () => {},
@@ -1125,12 +1125,29 @@ describe("browser-views pool seams (real module)", () => {
     } as never;
   });
 
+  // A view that never loaded anything has no URL, and Electron holds every
+  // executeJavaScript until a load finishes: a page scan before the first
+  // navigate (emulate's CAPTCHA check, a first snapshot) hung until the wedge
+  // timer. A new view loads about:blank at once.
+  it("gives a new view a document before anything scans it", () => {
+    realViews.createBrowserView("blank-1", { partition: "persist:lax-profile-default", agentDriven: true });
+    try {
+      const wc = (realViews.getBrowserView("blank-1") as unknown as { webContents: { loadURL: ReturnType<typeof vi.fn> } }).webContents;
+      expect(wc.loadURL).toHaveBeenCalledWith("about:blank");
+    } finally {
+      realViews.closeBrowserView("blank-1");
+    }
+  });
+
   it("parks a detached view offstage at a real size, and moves it to the window when shown", () => {
     realViews.createBrowserView("park-1", { partition: "persist:lax-profile-default", agentDriven: true });
     try {
       const view = realViews.getBrowserView("park-1") as unknown as { lastBounds: unknown; visible: boolean | undefined };
       const host = h.offstageHosts.at(-1)!;
-      expect(host.opts).toMatchObject({ show: false, parent: h.mainWin, paintWhenInitiallyHidden: true });
+      // The host lives for the process; beforeEach swaps the fake main window,
+      // so assert it has a parent rather than which fake it was.
+      expect(host.opts).toMatchObject({ show: false, paintWhenInitiallyHidden: true });
+      expect((host.opts as { parent?: unknown }).parent).toBeTruthy();
       expect(host.children).toContain(view);
       expect(view.lastBounds).toEqual({ x: 0, y: 0, width: 1280, height: 800 });
       expect(view.visible).toBe(true);

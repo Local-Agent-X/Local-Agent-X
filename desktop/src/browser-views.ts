@@ -179,6 +179,15 @@ export function createBrowserView(
 	// first request already runs under the egress/permission stack.
 	getHardenedPartitionSession(opts.partition);
 	const view = new WebContentsView({ webPreferences: viewWebPreferences(opts.partition) });
+	// Give the view a document at once. Electron runs executeJavaScript (and the
+	// isolated-world variant every page script here uses) only once the page has
+	// a URL and has stopped loading; a view that has never loaded anything has
+	// neither, so the call waits for a load that never comes. Every action that
+	// scanned the page before navigating — the CAPTCHA check `emulate` runs
+	// first, a first `snapshot` — hung until the server's 10 s wedge timer
+	// (live 2026-10-26, 2026-11-11, 2026-11-13). A later navigate aborts this
+	// load, and an abort (-3) is not a navigation failure (navigate-settle.ts).
+	view.webContents.loadURL("about:blank").catch(() => { /* superseded by a navigate */ });
 	armCoDrive(viewId, view.webContents);
 	// Stamp a per-view marker on the top frame: the CDP driver (electron-cdp.ts)
 	// maps a viewId to its Playwright Page by CDP target id (browserViewTargetId)

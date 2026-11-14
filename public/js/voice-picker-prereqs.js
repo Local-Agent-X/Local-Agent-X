@@ -121,7 +121,7 @@ function _autoStartList() {
 function _autoStartSwitch(sidecarId) {
   const on = _autoStartList().includes(sidecarId);
   const note = sidecarId === 'lite' ? '' : ' (starts Lite too)';
-  return `<span style="display:inline-flex;align-items:center;gap:6px;font-size:.7rem;color:var(--muted)" title="Start this sidecar when Local Agent X starts${note}">Auto-start`
+  return `<span style="display:inline-flex;align-items:center;gap:6px;font-size:.7rem;color:var(--muted);white-space:nowrap" title="Start this sidecar when Local Agent X starts${note}">Auto-start`
     + `<div class="toggle${on ? ' on' : ''}" role="switch" aria-checked="${on}" aria-label="Start ${_esc(sidecarId)} when Local Agent X starts" onclick="onSidecarAutoStartToggle('${_esc(sidecarId)}',this)"></div></span>`;
 }
 

@@ -14,7 +14,7 @@
 // how Claude Code deletes a file, so it stays allowed; PowerShell's delete
 // verbs are all disallowed since their recursive form shares the prefix.
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -32,10 +32,12 @@ export function claudeCodeBinary() {
 /** Same shape as lib.mjs driveChat's result, plus `turns` from the CLI. */
 // `effort` pins the CLI's --effort; `appendPromptFile` adds a system prompt
 // from a file (a prompt LAX sent, to see what it alone does to the model).
-export async function driveClaudeCode(prompt, dir, timeoutMs, model, { effort, appendPromptFile } = {}) {
+// `transcriptFile` keeps the whole run (stream-json: every message, its
+// thinking and its usage) for a step-by-step comparison with LAX's traces.
+export async function driveClaudeCode(prompt, dir, timeoutMs, model, { effort, appendPromptFile, transcriptFile } = {}) {
   const args = [
     "-p", prompt,
-    "--output-format", "json",
+    ...(transcriptFile ? ["--output-format", "stream-json", "--verbose"] : ["--output-format", "json"]),
     "--model", model,
     "--setting-sources", "project",
     "--strict-mcp-config",
@@ -67,7 +69,13 @@ export async function driveClaudeCode(prompt, dir, timeoutMs, model, { effort, a
       clearTimeout(timer);
       const secs = Number(((Date.now() - t0) / 1000).toFixed(1));
       let j = null;
-      try { j = JSON.parse(out); } catch { /* not JSON: timeout or crash */ }
+      try {
+        // A stream ends with the same summary object the json format prints.
+        if (transcriptFile) {
+          writeFileSync(transcriptFile, out);
+          j = out.trim().split("\n").map((l) => { try { return JSON.parse(l); } catch { return null; } }).reverse().find((e) => e?.type === "result") ?? null;
+        } else j = JSON.parse(out);
+      } catch { /* not JSON: timeout or crash */ }
       const timedOut = Date.now() - t0 >= timeoutMs;
       const err = timedOut ? `timeout ${timeoutMs}ms`
         : !j ? `claude exited ${code}: ${(errText || out).slice(0, 300)}`

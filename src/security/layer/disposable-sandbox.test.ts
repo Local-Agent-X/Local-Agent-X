@@ -95,6 +95,10 @@ describe("the unrestricted write floors", () => {
 
 describe("a shell edit redirected to the file tools", () => {
   const ctx = () => ({ workspace, fileAccessMode: "unrestricted" as const, allowedPathCheck: () => false, inlineEvalPolicy: "refuse" as const });
+  // The write floor holds under a cage too. The heredoc and subshell shapes
+  // below are refused first by the unconfined POSIX shape rules (a newline, a
+  // subshell), which a cage stands down, so a caged ctx shows the floor itself.
+  const caged = () => ({ ...ctx(), sandboxConfined: true });
   const sedSystem = WIN ? `sed -i "s/a/b/" ${SYSTEM_FILE.replace(/\\/g, "/")}` : `sed -i 's/a/b/' ${SYSTEM_FILE}`;
 
   it("names the target's real refusal when the file tools refuse it too, instead of a dead-end redirect", () => {
@@ -165,7 +169,7 @@ describe("a shell edit redirected to the file tools", () => {
       `cp notes.txt ${outside}`,
       `cd repo && echo x >${sys}`,
     ]) {
-      const d = evaluateShellCommandAndPaths(command, ctx());
+      const d = evaluateShellCommandAndPaths(command, caged());
       expect(d.allowed, command).toBe(false);
       expect(d.reason, command).toMatch(/write\/edit tools refuse/);
     }
@@ -225,7 +229,7 @@ describe("a shell edit redirected to the file tools", () => {
       `(echo x >${outside})`,
       `echo x > "${outside}"`,
     ]) {
-      const d = evaluateShellCommandAndPaths(command, ctx());
+      const d = evaluateShellCommandAndPaths(command, caged());
       expect(d.allowed, command).toBe(false);
       expect(d.reason, command).toMatch(/write\/edit tools refuse/);
     }

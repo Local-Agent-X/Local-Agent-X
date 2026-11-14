@@ -35,15 +35,28 @@ const BOOT_TIMEOUT_MS = 180_000;
  * never PATH, so a fixture CLI on PATH does not shadow it. On 2026-09-23 a 27B
  * run went `npx vercel deploy --temporary`, reached the machine's real Vercel
  * CLI, and made a live anonymous deployment from inside the eval. The shim
- * runs a same-named fixture from binDir and refuses everything else.
+ * runs a same-named fixture from binDir, and the project's own type checker
+ * and test runner (tsc, vitest) from its node_modules/.bin, and refuses
+ * everything else. Without that, a model's `npx tsc` was refused and it spent
+ * two steps finding tsc another way on every TypeScript task (2026-11-14: the
+ * coding battery's LAX side; Claude Code, run with no shim, just ran it).
+ * Local only, never a download, and only those two names.
  */
 const NPX_SHIM = [
   "#!/usr/bin/env bash",
-  "# op-outcomes eval shim: no npm packages run here, only fixture CLIs from this dir.",
+  "# op-outcomes eval shim: no npm packages run here, only fixture CLIs from this dir",
+  "# and the project's own tsc/vitest.",
   'while [ "${1#-}" != "$1" ]; do shift; done',
   'pkg="${1%%@*}"; shift',
   'here="$(cd "$(dirname "$0")" && pwd)"',
   'if [ -n "$pkg" ] && [ -x "$here/$pkg" ]; then exec "$here/$pkg" "$@"; fi',
+  // `npx tsc`, `npx vitest`, and `npx -p typescript tsc` (the flags are
+  // skipped above, so the package is $pkg and the binary the next word).
+  'local_bin="$PWD/node_modules/.bin"',
+  'for b in "$pkg" "$1"; do',
+  '  case "$b" in tsc|vitest) ;; *) continue ;; esac',
+  '  if [ -x "$local_bin/$b" ]; then [ "$b" = "$1" ] && shift; exec "$local_bin/$b" "$@"; fi',
+  'done',
   'echo "npx: package execution is disabled in this evaluation (asked for: ${pkg:-nothing})" >&2; exit 1',
   "",
 ].join("\n");

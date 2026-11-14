@@ -6,6 +6,9 @@
  * `metadata.wrapUp` (live and from history, like show_card's card). A button only
  * sends its words as the user's next message.
  *
+ * A succeeded call ends the turn (its row's `closesTurn`, turn-loop/silent-tool-check.ts):
+ * it goes out in the same response as the final answer, not as a step of its own.
+ *
  * It also completes the step in progress on the session's step list (task-tools.ts):
  * the turn is over. A step still pending stays open, so the open-steps gate still
  * sees declared work left undone — unless the call asked: a succeeded call with an
@@ -40,13 +43,14 @@ export function wrapUpOf(args: Record<string, unknown>): WrapUp | null {
 
 export const wrapUpTool: ToolDefinition = {
   name: "wrap_up",
-  compactDescription: "End a turn that did work: a 2-3 sentence recap the user sees as a box, and optionally one question with 1-2 answer buttons.",
+  compactDescription: "End a turn that did work, with your final answer: a 2-3 sentence recap box, optionally one question with 1-2 answer buttons.",
   description:
     "End a turn in which you changed files, ran commands or did multi-step work: the chat shows a box at the end of your reply " +
     "with `recap` (two or three short sentences: what is now true, then what is not done or not verified) and, only when the next " +
     "move is the user's (a choice, a go-ahead, an approval), one short question in `ask` with one or two short answer buttons in " +
-    "`actions` (1-3 words each, your recommendation first). A button sends its words as the user's reply. Call it last, once, " +
-    "and don't repeat the recap in your text. Skip it for a short answer or plain conversation.",
+    "`actions` (1-3 words each, your recommendation first). A button sends its words as the user's reply. Call it once, in the " +
+    "same response as your final answer: the turn ends when it succeeds, so what the user should read goes in that response's " +
+    "text. Don't repeat the recap there. Skip it for a short answer or plain conversation.",
   parameters: {
     type: "object",
     properties: {

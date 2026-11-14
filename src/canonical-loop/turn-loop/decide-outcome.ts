@@ -24,7 +24,7 @@ import type { Op } from "../../ops/types.js";
 import type { MiddlewareDirective } from "./types.js";
 import { appendNudgeAsUserMessage } from "./nudges.js";
 import { collectToolFailures, nudgeForFailures, resolveTerminatingMutation } from "./tool-failure-summary.js";
-import { isSilentToolCall } from "./silent-tool-check.js";
+import { isSilentToolCall, stepClosedTurn } from "./silent-tool-check.js";
 import { appendQuestionAsAnswer, collectAskedQuestions } from "./ask-user-terminal.js";
 import { applyTerminalEpilogue } from "./terminal-epilogue.js";
 import { runCompletionGates } from "./decide-outcome-run-gates.js";
@@ -299,7 +299,9 @@ export async function decideTurnOutcome(in_: DecideOutcomeInput): Promise<Decide
   // all win over a question, exactly as they win over every other terminator.
   const askedQuestions = collectAskedQuestions(toolCalls, toolSummary);
   if (
-    askedQuestions.length > 0 &&
+    // A step that closed the turn (wrap_up) ends it too, but is no question:
+    // the completion gates below still run for it.
+    (askedQuestions.length > 0 || stepClosedTurn(toolCalls, toolSummary)) &&
     terminalReason === null &&
     !middlewareAborted &&
     !middlewareSuspended

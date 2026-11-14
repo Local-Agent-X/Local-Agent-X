@@ -1,6 +1,6 @@
 /**
  * The finishing checks (spec-probe, spec-audit, regression-audit): skipped for
- * a strong model whose own check passed after its last edit; otherwise started
+ * a frontier model whose own check passed after its last edit; otherwise started
  * together; and an audit's once-per-op chance is spent only when its gate uses
  * the result, so a result dropped because an earlier check re-opened the turn
  * leaves the audit to run on the next "done".
@@ -56,7 +56,7 @@ async function runAll(turnIdx: number) {
   return out;
 }
 
-describe("skipped when a strong model already proved its work", () => {
+describe("skipped when a frontier model already proved its work", () => {
   it("runs none of the three", async () => {
     state.proven = true;
     await runAll(0);
@@ -78,6 +78,15 @@ describe("skipped when a strong model already proved its work", () => {
     state.model = "claude-opus-5-5";
     await runAll(2);
     expect(spec.runSpecAuditGate).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("a vendor's small tier is not frontier", () => {
+  it("still runs them for a proven Haiku, which classifyModel calls strong", async () => {
+    state.proven = true;
+    state.model = "claude-haiku-5-5";
+    await runAll(7);
+    expect(probes.runSpecProbeGate).toHaveBeenCalledTimes(1);
   });
 });
 

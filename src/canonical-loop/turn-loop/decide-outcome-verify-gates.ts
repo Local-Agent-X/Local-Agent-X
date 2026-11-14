@@ -29,7 +29,7 @@ import { appIdsTouchedByTurn, registerOpAppTouch, runRenderVerifyGate, turnTouch
 import { runBuildVerifyGate } from "./build-verify.js";
 import { markSpecAudited } from "./spec-audit.js";
 import { markRegressionAudited } from "./regression-audit.js";
-import { dropFinishingChecks, finishingChecks, provenByStrongModel } from "./finishing-checks.js";
+import { dropFinishingChecks, finishingChecks, provenByFrontierModel } from "./finishing-checks.js";
 import { runDesignVerifyGate } from "./design-verify.js";
 import { opEditedSourceUnverified, opEditedSourcePaths } from "../middlewares/verify-gate.js";
 import { userAuthoredRequest } from "../../slash-commands.js";
@@ -147,9 +147,9 @@ export const specProbeGate: CompletionGate = {
   },
 };
 
-/** The op edited source and a strong model has not already proven it. */
+/** The op edited source and a frontier model has not already proven it. */
 function finishingChecksApply(op: Parameters<CompletionGate["evaluate"]>[0]["op"]): boolean {
-  return opEditedSourcePaths(op.id).length > 0 && !provenByStrongModel(op);
+  return opEditedSourcePaths(op.id).length > 0 && !provenByFrontierModel(op);
 }
 
 /**

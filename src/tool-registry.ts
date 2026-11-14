@@ -209,6 +209,11 @@ export function askedQuestionOf(name: string, args: Record<string, unknown>): As
   return { text: value.trim(), drawnByClient: asks!.drawnByClient === true };
 }
 
+/** Does a succeeded call of this tool end the turn (its row's `closesTurn`)? */
+export function closesTurn(name: string): boolean {
+  return TOOL_POLICIES[name]?.closesTurn === true;
+}
+
 /** Does this tool's call return only once its shell command has exited, so
  *  what the command did is settled when the result arrives (bash)? */
 export function waitsForShellCommand(name: string): boolean {

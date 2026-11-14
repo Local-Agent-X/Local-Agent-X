@@ -1360,6 +1360,53 @@ describe("decideTurnOutcome â€” completion gates vs a question (and the con
   });
 });
 
+// wrap_up goes out with the final answer and ends the turn there: no step of
+// its own to restate the recap. Unlike a question, the gates still run.
+describe("decideTurnOutcome — a succeeded wrap_up closes the turn, and the gates still run", () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  const ANSWER = "Renamed it everywhere; tsc and the tests pass.";
+  const closing = (wrapStatus = "ok", other?: { tool: string; status: string }) => {
+    const calls: ToolCall[] = [{ toolCallId: "w1", tool: "wrap_up", args: { recap: "Renamed; tests pass." } }];
+    const rows = [{ tool: "wrap_up", toolCallId: "w1", resultStatus: wrapStatus }];
+    if (other) {
+      calls.unshift({ toolCallId: "o1", tool: other.tool, args: { command: "npm test" } });
+      rows.unshift({ tool: other.tool, toolCallId: "o1", resultStatus: other.status });
+    }
+    return input({
+      toolCalls: calls,
+      toolMessages: calls.map((c) => ({ messageId: `tr-${c.toolCallId}`, role: "tool", content: { toolCallId: c.toolCallId, text: "[ok]" } }) as unknown as CommitTurnMessage),
+      toolSummary: rows as unknown as ToolCallSummary[],
+      finalized: [{ messageId: "am1", role: "assistant", content: { text: ANSWER } }],
+      assistantText: ANSWER,
+      modelSignaledDone: false,
+      modelWantsToContinue: true,
+    });
+  };
+
+  it("ends the turn though the provider said tool_use", async () => {
+    expect((await decideTurnOutcome(closing())).terminalReason).toBe("done");
+  });
+
+  it("a failed wrap_up, or a failed call beside it, keeps the turn going", async () => {
+    expect((await decideTurnOutcome(closing("error"))).terminalReason).toBeNull();
+    expect((await decideTurnOutcome(closing("ok", { tool: "bash", status: "error" }))).terminalReason).toBeNull();
+  });
+
+  it("a completion gate may still re-open it, unlike a question", async () => {
+    const { earnedDoneNudge } = await import("../middlewares/open-steps.js");
+    const gate = earnedDoneNudge as unknown as ReturnType<typeof vi.fn>;
+    gate.mockReturnValue("Finish the open steps or justify stopping.");
+    try {
+      const r = await decideTurnOutcome(closing());
+      expect(gate).toHaveBeenCalled();
+      expect(r.terminalReason).toBeNull();
+    } finally {
+      gate.mockReturnValue(null);
+    }
+  });
+});
+
 describe("decideTurnOutcome — a done turn whose final text is a tool call written as text", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -2113,9 +2160,9 @@ describe("decideTurnOutcome — a wrap_up that asked ends the turn on the questi
     expect(publishStreamChunk).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ delta: expect.stringContaining(ASK) }));
   });
 
-  it("a recap with no ask is not a question: the turn goes on as before", async () => {
+  it("a recap with no ask is not a question, but still closes the turn (its gates run: see the closing-step block)", async () => {
     const r = await decideTurnOutcome(wrapped({ recap: "The key is created and uploaded." }));
-    expect(r.terminalReason).toBeNull();
+    expect(r.terminalReason).toBe("done");
   });
 
   it("an ask whose call did not reach the user never terminates", async () => {

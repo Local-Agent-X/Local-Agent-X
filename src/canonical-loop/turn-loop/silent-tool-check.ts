@@ -1,5 +1,6 @@
 import type { ToolCall } from "../contract-types.js";
-import { isMemoryWrite, loopFactsOf } from "../../tool-registry.js";
+import type { ToolCallSummary } from "../types.js";
+import { closesTurn, isMemoryWrite, loopFactsOf } from "../../tool-registry.js";
 
 /**
  * Tool calls whose side effect is visible to the user without a follow-up
@@ -32,4 +33,18 @@ export function isSilentToolCall(c: ToolCall): boolean {
     return typeof action === "string" && SILENT_BROWSER_ACTIONS.has(action);
   }
   return false;
+}
+
+/**
+ * A step that closed the turn itself: a tool whose row says `closesTurn`
+ * (wrap_up) succeeded, and so did every other call in the step. The model has
+ * said the work is finished, so feeding the result back only buys a step that
+ * restates it: in the 2026-11-14 coding battery on Opus 5.5, 20 of 117 steps
+ * did nothing but close (130 s of 660). A failed call anywhere in the step
+ * keeps the turn open, since the model has not seen that result, and the
+ * completion gates still run after this and may re-open it.
+ */
+export function stepClosedTurn(toolCalls: ToolCall[], toolSummary: ToolCallSummary[]): boolean {
+  if (!toolCalls.some((c) => closesTurn(c.tool))) return false;
+  return toolCalls.every((c, i) => toolSummary[i]?.tool === c.tool && toolSummary[i].resultStatus === "ok");
 }

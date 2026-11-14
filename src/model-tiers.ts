@@ -98,6 +98,31 @@ function atLeastMajor(model: string, pattern: RegExp, min: number): boolean {
  * again — that's the actual bug class, not the missing tool.
  */
 
+/** A vendor's small tier, by a word of its id: claude-haiku-5-5, gpt-5-mini,
+ *  gpt-5-nano, gemini-3.1-flash-lite, grok-4-fast. */
+const SMALL_TIER_WORDS = new Set(["haiku", "mini", "nano", "flash", "lite", "fast"]);
+
+/**
+ * A vendor's full-size hosted model: Claude Opus/Sonnet/Fable/Mythos, GPT-5+
+ * and o3/o4, Gemini 3+, Grok 4+. Once a check of its own passed after its last
+ * edit, the harness's re-checks of its work stand down for it
+ * (turn-loop/finishing-checks.ts). Narrower than classifyModel's "strong",
+ * which is about handling a large tool catalog: a local or open-weights model
+ * (an id with a runtime's `:` or an `org/` prefix) never qualifies whatever its
+ * profile says, and neither does a vendor's small tier, which keeps every
+ * check. A provider prefix the vendor's own name (`anthropic/…`) is read past.
+ */
+export function isFrontierModel(model: string): boolean {
+  const m = model.toLowerCase().replace(/^(anthropic|openai|codex|google|gemini|xai)\//, "");
+  if (/[:/]/.test(m)) return false;
+  if (m.split(/[-_.]/).some((w) => SMALL_TIER_WORDS.has(w))) return false;
+  return atLeastMajor(m, /^claude-(?:opus|sonnet|fable|mythos)-(\d+)/, 4)
+    || atLeastMajor(m, /^gpt-(\d+)/, 5)
+    || /^o[34]($|-)/.test(m)
+    || atLeastMajor(m, /^gemini-(\d+)/, 3)
+    || atLeastMajor(m, /^grok-(\d+)/, 4);
+}
+
 /**
  * Effective tier for the canonical-loop SPIN GUARDS (loop-detection's
  * repeat / discovery / no-progress thresholds) — a different axis from the

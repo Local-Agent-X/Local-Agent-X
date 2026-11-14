@@ -355,6 +355,12 @@ interface ToolPolicyRowFacts {
    *  theirs. `drawnByClient`: the chat draws the question itself (wrap_up's
    *  recap box), so the terminal does not append it to the reply. */
   asksUser?: { arg: string; drawnByClient?: true };
+  /** The call says the turn's work is finished (wrap_up): when it and every
+   *  other call in its step succeed, the turn ends there instead of feeding the
+   *  result back for one more step (silent-tool-check.ts stepClosedTurn). The
+   *  completion gates still run and may re-open it. Absent: the result is fed
+   *  back like any other. */
+  closesTurn?: true;
   /** See CommittingSpec. Absent: committing by risk tier, the conservative
    *  reading. Each spec needs the row facts it reads (committing-tool-check.test.ts). */
   committing?: CommittingSpec;

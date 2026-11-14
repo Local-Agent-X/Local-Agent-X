@@ -48,12 +48,14 @@ function section(path: string, before: string | null, budget: { lines: number })
 
 export const reviewChangesTool: ToolDefinition = {
   name: "review_changes",
-  compactDescription: "Every file you changed for this request, each with its diff. Review it before saying you're done.",
+  compactDescription: "Every file you changed for this request, with its diff. Review it with your last check, before saying you're done.",
   description:
     "Review everything you changed for the current request before you say it's done: every file you wrote, edited or " +
     "created, each with its diff against what it held before the request. Use it to catch a stray edit, a leftover debug " +
-    "line, or a file you forgot you touched. Read-only. A shell command's changes to files its text does not name are not " +
-    "on record, so check those another way (git diff).",
+    "line, or a file you forgot you touched. Call it in the same step as your last check (the test or build run), not as a " +
+    "step of its own. When a test or build you ran after your last edit already exercised every file you changed, you may " +
+    "skip it. Read-only. A shell command's changes to files its text does not name are not on record, so check those " +
+    "another way (git diff).",
   readOnly: true,
   concurrencySafe: true,
   parameters: { type: "object", properties: {} },

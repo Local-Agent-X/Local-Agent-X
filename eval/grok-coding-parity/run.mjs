@@ -55,6 +55,9 @@ const PROVIDERS = !flag("--live") && opt("--providers") ? opt("--providers").spl
 // code sessions.
 const AGENT = opt("--agent") ?? "lax";
 const CC_MODEL = opt("--model") ?? "claude-opus-5-5";
+// Claude Code only: --effort pins its effort level; --append-prompt <file>
+// adds a system prompt (e.g. one LAX sent) to measure that prompt's effect.
+const CC_OPTS = { effort: opt("--effort") ?? undefined, appendPromptFile: opt("--append-prompt") ?? undefined };
 const MODE = opt("--mode") ?? undefined;
 
 const chosen = scenarios.filter((s) => (ONLY ? s.id.includes(ONLY) : true));
@@ -71,7 +74,7 @@ const laxDriver = (target) => ({
   describe: (run, metrics) => (target.dataDir ? formatMetrics(metrics) : `${run.tools.length} tools`),
 });
 const claudeCodeDriver = () => ({
-  drive: (prompt, dir, _sessionId, timeoutMs) => driveClaudeCode(prompt, dir, timeoutMs, CC_MODEL),
+  drive: (prompt, dir, _sessionId, timeoutMs) => driveClaudeCode(prompt, dir, timeoutMs, CC_MODEL, CC_OPTS),
   metrics: (_sessionId, run) => ({
     steps: run.turns ?? 0, blocked: 0,
     outputTokens: run.usage?.output_tokens, inputTokens: run.usage?.input_tokens,

@@ -30,7 +30,9 @@ export function claudeCodeBinary() {
 }
 
 /** Same shape as lib.mjs driveChat's result, plus `turns` from the CLI. */
-export async function driveClaudeCode(prompt, dir, timeoutMs, model) {
+// `effort` pins the CLI's --effort; `appendPromptFile` adds a system prompt
+// from a file (a prompt LAX sent, to see what it alone does to the model).
+export async function driveClaudeCode(prompt, dir, timeoutMs, model, { effort, appendPromptFile } = {}) {
   const args = [
     "-p", prompt,
     "--output-format", "json",
@@ -51,6 +53,8 @@ export async function driveClaudeCode(prompt, dir, timeoutMs, model) {
     "--disallowedTools",
     "Bash(rm -r:*)", "Bash(rm -rf:*)", "Bash(rm -fr:*)", "Bash(rm -R:*)", "Bash(rmdir:*)",
     "PowerShell(Remove-Item:*)", "PowerShell(rm:*)", "PowerShell(del:*)", "PowerShell(rmdir:*)", "PowerShell(rd:*)",
+    ...(effort ? ["--effort", effort] : []),
+    ...(appendPromptFile ? ["--append-system-prompt-file", appendPromptFile] : []),
   ];
   const t0 = Date.now();
   return await new Promise((resolve) => {

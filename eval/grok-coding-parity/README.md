@@ -27,6 +27,20 @@ default is the local `qwen` label (qwen3.6:27b), **not** the app's active model.
 Pass `--live` to target a running app instead. Real tokens are spent on cloud
 providers, on the user's subscriptions: ask before a run.
 
+**LAX against Claude Code on one model** (the run must be under `tsx`, since the
+rig imports `src/`):
+
+```
+npx tsx eval/grok-coding-parity/run.mjs --provider claude --mode code     # LAX, code mode, Opus 5.5
+npx tsx eval/grok-coding-parity/run.mjs --agent claude-code               # Claude Code CLI, Opus 5.5
+```
+
+The Claude Code side runs the `claude` CLI headless in each throwaway project
+(`claude-code-agent.mjs`): no user settings, hooks or MCP servers, edits
+accepted, the shell limited to an allow-list of what these tasks run, `rm`
+disallowed. Same prompt, files and checks as LAX. An isolated LAX server's
+file access is confined to its own workspace, so LAX's projects are made there.
+
 Each run also records how the model got there, read from the isolated server's
 op store (`run-metrics.mjs`): model steps, tool calls, blocked and failed calls,
 and each harness guard that fired. A change that keeps the pass rate but doubles

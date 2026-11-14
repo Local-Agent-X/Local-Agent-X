@@ -131,10 +131,13 @@ export async function settleTurn(sessionId, target = LIVE(), waitMs = 60_000) {
 
 // ── Throwaway project helpers ──
 
-/** A fresh temp project dir UNDER $HOME (the guarded sandbox blocks writes to
- *  /tmp), with a strict tsconfig and the repo's toolchain junctioned in. */
-export function makeProject(id, files) {
-  const dir = mkdtempSync(join(homedir(), `lax-parity-${id}-`));
+/** A fresh temp project dir, with a strict tsconfig and the repo's toolchain
+ *  junctioned in. `parent` defaults to $HOME (the guarded sandbox blocks
+ *  writes to /tmp); an isolated LAX server passes its own workspace, the one
+ *  folder its file-access mode lets the model touch (eval/op-outcomes/
+ *  isolated.mjs confines every rig server to it). */
+export function makeProject(id, files, parent = homedir()) {
+  const dir = mkdtempSync(join(parent, `lax-parity-${id}-`));
   mkdirSync(join(dir, "src"), { recursive: true });
   // A single junction to the repo's node_modules gives the throwaway project a
   // WORKING toolchain for BOTH the model and the scorer: `node --import tsx

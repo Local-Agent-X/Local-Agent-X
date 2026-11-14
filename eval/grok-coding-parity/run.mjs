@@ -36,6 +36,7 @@ import { fileURLToPath } from "node:url";
 import { scenarios } from "./scenarios.mjs";
 import { health, activeModel, driveChat, makeProject, cleanup, sleep, baseUrl, useRigTarget } from "./lib.mjs";
 import { formatMetrics, runMetrics } from "./run-metrics.mjs";
+import { driveClaudeCode } from "./claude-code-agent.mjs";
 import { resolveRigTarget } from "../op-outcomes/isolated.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -48,26 +49,49 @@ const KEEP = flag("--keep");
 // --providers a,b,c runs the whole set once per provider; otherwise the one
 // --provider (or the rig default) as before.
 const PROVIDERS = !flag("--live") && opt("--providers") ? opt("--providers").split(",").map((s) => s.trim()).filter(Boolean) : [null];
+// --agent claude-code runs the same set through Claude Code itself (headless
+// `claude` CLI, claude-code-agent.mjs) instead of LAX, on --model (default
+// Opus 5.5): the head-to-head on one model. --mode code runs LAX's side as
+// code sessions.
+const AGENT = opt("--agent") ?? "lax";
+const CC_MODEL = opt("--model") ?? "claude-opus-5-5";
+const MODE = opt("--mode") ?? undefined;
 
 const chosen = scenarios.filter((s) => (ONLY ? s.id.includes(ONLY) : true));
 if (chosen.length === 0) { console.error(`No scenario matches --only ${ONLY}. Have: ${scenarios.map((s) => s.id).join(", ")}`); process.exit(2); }
 
-/** Every chosen scenario ×REPEAT on one server. */
-async function runSet(target, model) {
+/** How one scenario run is driven, and what is known about how it went. */
+const laxDriver = (target) => ({
+  // An isolated server's file access is confined to its own workspace; the
+  // project goes there, or the model may not even read it (2026-11-13: every
+  // call blocked, "both files are outside the workspace").
+  projectParent: target.workspace,
+  drive: (prompt, _dir, sessionId, timeoutMs) => driveChat(prompt, sessionId, timeoutMs, undefined, { mode: MODE }),
+  metrics: (sessionId) => runMetrics(target.dataDir, sessionId),
+  describe: (run, metrics) => (target.dataDir ? formatMetrics(metrics) : `${run.tools.length} tools`),
+});
+const claudeCodeDriver = () => ({
+  drive: (prompt, dir, _sessionId, timeoutMs) => driveClaudeCode(prompt, dir, timeoutMs, CC_MODEL),
+  metrics: () => null,
+  describe: (run) => `${run.turns} turns${run.costUsd !== undefined ? `, $${Number(run.costUsd).toFixed(2)} list price` : ""}`,
+});
+
+/** Every chosen scenario ×REPEAT through one driver. */
+async function runSet(driver, model) {
   const results = [];
   for (const s of chosen) {
     const runs = [];
     for (let i = 0; i < REPEAT; i++) {
-      const dir = makeProject(s.id, s.files);
+      const dir = makeProject(s.id, s.files, driver.projectParent);
       const sessionId = `parity-${s.id}-${Math.random().toString(36).slice(2, 8)}`;
-      const run = await driveChat(s.prompt(dir), sessionId, s.timeoutSec * 1000);
+      const run = await driver.drive(s.prompt(dir), dir, sessionId, s.timeoutSec * 1000);
       let scored;
       try { scored = s.check(dir, run); }
       catch (e) { scored = { checks: [{ name: "check threw", pass: false, detail: e.message }], taskPass: false, honest: false }; }
-      const metrics = runMetrics(target.dataDir, sessionId);
+      const metrics = driver.metrics(sessionId) ?? { steps: run.turns ?? 0, blocked: 0 };
       const verdict = run.err ? "ERR" : scored.taskPass ? "PASS" : "FAIL";
       const flags = [scored.honest ? "" : "DISHONEST", run.err ? run.err : ""].filter(Boolean).join(" ");
-      console.log(`  ${verdict.padEnd(4)} ${s.id}${REPEAT > 1 ? ` #${i + 1}` : ""}  ${run.secs}s  ${target.dataDir ? formatMetrics(metrics) : `${run.tools.length} tools`}  ${flags}`);
+      console.log(`  ${verdict.padEnd(4)} ${s.id}${REPEAT > 1 ? ` #${i + 1}` : ""}  ${run.secs}s  ${driver.describe(run, metrics)}  ${flags}`);
       for (const c of scored.checks) console.log(`         ${c.pass ? "✓" : "✗"} ${c.name}${c.pass ? "" : ` — ${c.detail}`}`);
       runs.push({ i, verdict, ...scored, secs: run.secs, tools: run.tools.length, metrics, err: run.err, reply: run.text.slice(0, 300) });
       if (!KEEP) cleanup(dir); else console.log(`         kept: ${dir}`);
@@ -96,7 +120,13 @@ function printSummary({ model, results }) {
 const sets = [];
 let current = null;
 process.on("exit", () => { void current?.stop?.(); });
-for (const label of PROVIDERS) {
+if (AGENT === "claude-code") {
+  const model = `claude-code/${CC_MODEL}`;
+  console.log(`\n  Coding regression set — ${chosen.length} scenario(s) ×${REPEAT} on ${model} (Claude Code CLI, headless)\n`);
+  const set = await runSet(claudeCodeDriver(), model);
+  sets.push({ label: "claude-code", ...set, total: printSummary(set) });
+}
+for (const label of AGENT === "claude-code" ? [] : PROVIDERS) {
   // Isolated by default: this battery drives REAL turns with real tool
   // execution, so on the user's own server it writes their sessions and memory.
   const target = await resolveRigTarget({
@@ -108,8 +138,8 @@ for (const label of PROVIDERS) {
   try {
     if (!(await health())) { console.error(`ERROR: server unreachable at ${baseUrl()}.`); continue; }
     const model = await activeModel();
-    console.log(`\n  Coding regression set — ${chosen.length} scenario(s) ×${REPEAT} on ${model || "unknown model"}  (${baseUrl()})\n`);
-    const set = await runSet(target, model);
+    console.log(`\n  Coding regression set — ${chosen.length} scenario(s) ×${REPEAT} on ${model || "unknown model"}${MODE ? ` (${MODE} mode)` : ""}  (${baseUrl()})\n`);
+    const set = await runSet(laxDriver(target), model);
     sets.push({ label, ...set, total: printSummary(set) });
   } finally {
     await target.stop?.();
@@ -125,3 +155,6 @@ const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19);
 const out = join(__dirname, `results-${stamp}.json`);
 writeFileSync(out, JSON.stringify({ when: stamp, repeat: REPEAT, sets }, null, 2), "utf-8");
 console.log(`\n  full results → ${out}`);
+// Imports open handles (watchers, timers) that keep Node alive after the last
+// run; exit, which also stops the isolated server (the "exit" hook above).
+process.exit(0);

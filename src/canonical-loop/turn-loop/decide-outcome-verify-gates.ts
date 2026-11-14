@@ -27,9 +27,9 @@ import { CONTINUE, gateSource, type CompletionGate } from "./decide-outcome-gate
 import { recordGuardFire } from "./guard-fire.js";
 import { appIdsTouchedByTurn, registerOpAppTouch, runRenderVerifyGate, turnTouchedAppFiles } from "./render-verify.js";
 import { runBuildVerifyGate } from "./build-verify.js";
-import { runSpecProbeGate } from "./spec-probes.js";
-import { runSpecAuditGate } from "./spec-audit.js";
-import { runRegressionAuditGate } from "./regression-audit.js";
+import { markSpecAudited } from "./spec-audit.js";
+import { markRegressionAudited } from "./regression-audit.js";
+import { dropFinishingChecks, finishingChecks, provenByStrongModel } from "./finishing-checks.js";
 import { runDesignVerifyGate } from "./design-verify.js";
 import { opEditedSourceUnverified, opEditedSourcePaths } from "../middlewares/verify-gate.js";
 import { userAuthoredRequest } from "../../slash-commands.js";
@@ -134,16 +134,23 @@ export const buildVerifyGate: CompletionGate = {
  */
 export const specProbeGate: CompletionGate = {
   name: "spec-probe",
-  async evaluate({ op, turnIdx }) {
-    if (opEditedSourcePaths(op.id).length === 0) return CONTINUE;
-    const gate = await runSpecProbeGate(op);
+  async evaluate({ op, turnIdx, signal }) {
+    if (!finishingChecksApply(op)) return CONTINUE;
+    // Starts spec-audit and regression-audit beside it (finishing-checks.ts).
+    const gate = await finishingChecks(op, turnIdx, signal).probe;
     if (gate.shouldRetry) {
+      dropFinishingChecks(op.id, turnIdx);
       if (!appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("spec-probe", "nudge"))) return CONTINUE;
       return { reopen: true };
     }
     return CONTINUE;
   },
 };
+
+/** The op edited source and a strong model has not already proven it. */
+function finishingChecksApply(op: Parameters<CompletionGate["evaluate"]>[0]["op"]): boolean {
+  return opEditedSourcePaths(op.id).length > 0 && !provenByStrongModel(op);
+}
 
 /**
  * Spec-audit gate (the completeness gate). The executable gates above prove the
@@ -157,9 +164,11 @@ export const specProbeGate: CompletionGate = {
 export const specAuditGate: CompletionGate = {
   name: "spec-audit",
   async evaluate({ op, turnIdx, signal }) {
-    if (opEditedSourcePaths(op.id).length === 0) return CONTINUE;
-    const gate = await runSpecAuditGate(op, { signal });
+    if (!finishingChecksApply(op)) return CONTINUE;
+    const gate = await finishingChecks(op, turnIdx, signal).spec;
+    if (gate.ran) markSpecAudited(op.id);
     if (gate.shouldRetry) {
+      dropFinishingChecks(op.id, turnIdx);
       if (!appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("spec-audit", "nudge"))) return CONTINUE;
       return { reopen: true };
     }
@@ -181,8 +190,10 @@ export const specAuditGate: CompletionGate = {
 export const regressionAuditGate: CompletionGate = {
   name: "regression-audit",
   async evaluate({ op, turnIdx, signal }) {
-    if (opEditedSourcePaths(op.id).length === 0) return CONTINUE;
-    const gate = await runRegressionAuditGate(op, { signal });
+    if (!finishingChecksApply(op)) return CONTINUE;
+    const gate = await finishingChecks(op, turnIdx, signal).regression;
+    dropFinishingChecks(op.id, turnIdx); // the last of the three: done with this turn's set
+    if (gate.ran) markRegressionAudited(op.id);
     if (gate.shouldRetry) {
       if (!appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("regression-audit", "nudge"))) return CONTINUE;
       return { reopen: true };

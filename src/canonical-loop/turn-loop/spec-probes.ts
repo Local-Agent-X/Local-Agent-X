@@ -134,6 +134,15 @@ export function probeTargets(absPaths: readonly string[]): string[] {
 
 export type ProbeVerdict = "pass" | "red" | "invalid";
 
+/** The line of an INVALID run's output that says why: the line that names the
+ *  error, not the first line. Node prints the throw site first
+ *  (`node:internal/modules/run_main:107`), and that was all five INVALID
+ *  probes of the 2026-11-13 run logged, so their cause could not be read. */
+export function invalidCause(output: string): string {
+  const lines = output.split("\n").map((l) => l.trim()).filter(Boolean);
+  return lines.find((l) => PROBE_INVALID_RE.test(l) || /\b\w*Error\b|\bERR_[A-Z_]+/.test(l)) ?? lines[0] ?? "(no output)";
+}
+
 /**
  * Map a probe run to a verdict — the load-bearing anti-false-nag decision.
  *   - clean exit ("ok")                 → pass
@@ -364,7 +373,7 @@ export async function runSpecProbeGate(op: Op, opts: SpecProbeOptions = {}): Pro
     // load). Discard it so it never nudges — and forget it, so we don't re-run
     // the same dud on the next done-claim. Logged at warn with the cause: a gate
     // that silently never works (every TS probe, before tsx) must show up.
-    logger.warn(`op=${op.id} spec-probe INVALID, discarded: ${run.output.trim().split("\n").find((l) => l.trim()) ?? "(no output)"}`.slice(0, 300));
+    logger.warn(`op=${op.id} spec-probe INVALID, discarded: ${invalidCause(run.output)}`.slice(0, 300));
     PROBE_CACHE.set(op.id, null);
     return NO_RETRY;
   }

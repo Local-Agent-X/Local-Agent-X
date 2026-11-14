@@ -10,8 +10,22 @@ import {
   clearSpecProbeStateForOp,
   _resetSpecProbeState,
   probeTargets,
+  invalidCause,
   type ProbeVerdict,
 } from "./spec-probes.js";
+
+// Node prints the throw site first; all five INVALID probes of 2026-11-13
+// logged only that line, so their cause could not be read.
+describe("invalidCause", () => {
+  it("names the error line, not Node's throw site", () => {
+    const out = "node:internal/modules/run_main:107\n    triggerUncaughtException(\n    ^\n\nError [ERR_MODULE_NOT_FOUND]: Cannot find module '/p/src/money.js'\n  at x";
+    expect(invalidCause(out)).toBe("Error [ERR_MODULE_NOT_FOUND]: Cannot find module '/p/src/money.js'");
+  });
+  it("falls back to the first line, then to a placeholder", () => {
+    expect(invalidCause("weird output\nmore")).toBe("weird output");
+    expect(invalidCause("  \n")).toBe("(no output)");
+  });
+});
 import type { OracleProbe } from "../../classifiers/oracle-probe-gen.js";
 import type { Op } from "../../ops/types.js";
 

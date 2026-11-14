@@ -117,6 +117,8 @@ export interface SpecAuditGateResult {
   nudge: string;
   /** True when the gate is suppressing this turn's terminal "done" for one retry. */
   shouldRetry: boolean;
+  /** The audit reached the auditor: what spends its once-per-op chance. */
+  ran?: boolean;
 }
 
 export interface SpecAuditOptions {
@@ -126,6 +128,16 @@ export interface SpecAuditOptions {
   /** How a path the request names is described (describeNamedPath). */
   describeNamedPath?: (abs: string) => string;
   signal?: AbortSignal;
+  /** Started early beside the other finishing checks (finishing-checks.ts): do
+   *  not mark the op audited here; the gate that uses the result does
+   *  (markSpecAudited), so a result dropped because an earlier check sent the
+   *  work back leaves the audit to run on the next "done". */
+  deferMark?: boolean;
+}
+
+/** Record that the op's one audit is spent (a deferred run's result was used). */
+export function markSpecAudited(opId: string): void {
+  AUDITED.add(opId);
 }
 
 const NO_RETRY: SpecAuditGateResult = { nudge: "", shouldRetry: false };
@@ -179,17 +191,17 @@ export async function runSpecAuditGate(op: Op, opts: SpecAuditOptions = {}): Pro
   const named = namedPathEvidence(request, (p) => resolveAgentPath(p, sessionId), opts.describeNamedPath);
   if (named) evidence = `${named}\n\n${evidence}`;
 
-  AUDITED.add(op.id);
+  if (!opts.deferMark) AUDITED.add(op.id);
   const audit = opts.audit ?? auditDoneClaim;
   const unmet = await audit({ userRequest: request, evidence, signal: opts.signal });
   if (unmet === null) {
     // Name the no-op: a silent null made a benchmark arm undiagnosable once
     // before (spec-probes, opus 2026-07-02).
     logger.info(`op=${op.id} audit returned no verdict (classifier unavailable or unparseable) — gate is a no-op for this op`);
-    return NO_RETRY;
+    return { ...NO_RETRY, ran: true };
   }
   logger.info(`op=${op.id} fresh-context request audit → ${unmet.length === 0 ? "MET" : `${unmet.length} unmet item(s)`}`);
-  if (unmet.length === 0) return NO_RETRY;
+  if (unmet.length === 0) return { ...NO_RETRY, ran: true };
 
-  return { nudge: formatUnmetForAgent(unmet), shouldRetry: true };
+  return { nudge: formatUnmetForAgent(unmet), shouldRetry: true, ran: true };
 }

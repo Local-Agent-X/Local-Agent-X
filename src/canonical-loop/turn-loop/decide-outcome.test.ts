@@ -46,6 +46,7 @@ vi.mock("../middlewares/verify-gate.js", () => ({
   opDeletedTestDodge: vi.fn(() => false),
   opEditedSourcePaths: vi.fn(() => []),
   opLastCallNamedFailures: vi.fn(() => false),
+  opSourceCheckedSinceLastEdit: vi.fn(() => false),
 }));
 vi.mock("./build-verify.js", () => ({
   runBuildVerifyGate: vi.fn(async () => ({ nudge: "", shouldRetry: false, capReached: false })),
@@ -56,6 +57,7 @@ vi.mock("./spec-probes.js", () => ({
 }));
 vi.mock("./spec-audit.js", () => ({
   runSpecAuditGate: vi.fn(async () => ({ nudge: "", shouldRetry: false })),
+  markSpecAudited: vi.fn(),
 }));
 // Capture the P-1 measurement log line without touching real logging. One
 // shared stub so a test can read `createLogger().info.mock.calls`.

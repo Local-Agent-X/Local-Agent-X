@@ -146,6 +146,8 @@ export interface RegressionAuditGateResult {
   nudge: string;
   /** True when the gate is suppressing this turn's terminal "done" for one retry. */
   shouldRetry: boolean;
+  /** The audit reached the auditor: what spends its once-per-op chance. */
+  ran?: boolean;
 }
 
 export interface RegressionAuditOptions {
@@ -154,6 +156,14 @@ export interface RegressionAuditOptions {
   collectEvidence?: (absPaths: string[], signal?: AbortSignal) => Promise<string>;
   resolveProviderOverride?: typeof resolveRegressionAuditProvider;
   signal?: AbortSignal;
+  /** Started early beside the other finishing checks: the gate that uses the
+   *  result marks the op audited (markRegressionAudited), as in spec-audit.ts. */
+  deferMark?: boolean;
+}
+
+/** Record that the op's one audit is spent (a deferred run's result was used). */
+export function markRegressionAudited(opId: string): void {
+  AUDITED.add(opId);
 }
 
 const NO_RETRY: RegressionAuditGateResult = { nudge: "", shouldRetry: false };
@@ -191,7 +201,7 @@ export async function runRegressionAuditGate(op: Op, opts: RegressionAuditOption
     return NO_RETRY;
   }
 
-  AUDITED.add(op.id);
+  if (!opts.deferMark) AUDITED.add(op.id);
 
   const resolveOverride = opts.resolveProviderOverride ?? resolveRegressionAuditProvider;
   let providerOverride: Awaited<ReturnType<typeof resolveRegressionAuditProvider>>;
@@ -206,10 +216,10 @@ export async function runRegressionAuditGate(op: Op, opts: RegressionAuditOption
   const findings = await audit({ evidence, signal: opts.signal, providerOverride: providerOverride ?? undefined });
   if (findings === null) {
     logger.info(`op=${op.id} regression audit returned no verdict (classifier unavailable or unparseable) — gate is a no-op for this op`);
-    return NO_RETRY;
+    return { ...NO_RETRY, ran: true };
   }
   logger.info(`op=${op.id} fresh-context regression audit (provider=${providerOverride?.provider ?? "same-model"}) → ${findings.length === 0 ? "clean" : `${findings.length} finding(s)`}`);
-  if (findings.length === 0) return NO_RETRY;
+  if (findings.length === 0) return { ...NO_RETRY, ran: true };
 
-  return { nudge: formatFindingsForAgent(findings), shouldRetry: true };
+  return { nudge: formatFindingsForAgent(findings), shouldRetry: true, ran: true };
 }

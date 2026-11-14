@@ -39,6 +39,13 @@ export const REPO_ROOT = resolve(process.cwd());
 export const HOME = homedir();
 export const IS_WIN = platform() === "win32";
 export const PYTHON_EXE = IS_WIN ? "Scripts/python.exe" : "bin/python";
+// What a sidecar runs under. A venv's python.exe is a launcher that starts the
+// real interpreter as its own child; LAX starts the launcher detached, with no
+// console, so that child got a console of its own, shown as a window on the
+// desktop for as long as the sidecar ran (windowsHide reaches only the
+// launcher). pythonw.exe is the same interpreter without a console, and its
+// output still goes to the sidecar log LAX hands it.
+export const SIDECAR_PYTHON_EXE = IS_WIN ? "Scripts/pythonw.exe" : "bin/python";
 export const INSTALLER_EXT = IS_WIN ? "install.ps1" : "install.sh";
 
 export const TIERS: VoiceTier[] = [
@@ -49,7 +56,7 @@ export const TIERS: VoiceTier[] = [
     venvDir: join(HOME, ".lax", "python-voice", "venv"),
     installerPath: join(REPO_ROOT, "python", "voice", INSTALLER_EXT),
     startCmd: () => ({
-      command: join(HOME, ".lax", "python-voice", "venv", PYTHON_EXE),
+      command: join(HOME, ".lax", "python-voice", "venv", SIDECAR_PYTHON_EXE),
       args: [join(REPO_ROOT, "python", "voice", "server.py")],
       env: { ...process.env, LAX_VOICE_PORT: String(Number(process.env.LAX_VOICE_PORT) || 7008) },
     }),
@@ -75,7 +82,7 @@ export const TIERS: VoiceTier[] = [
     // (e.g. by adding __init__.py) we shadow that import and the sidecar
     // crashes with `cannot import name 'ChatterboxTTS' from 'chatterbox'`.
     startCmd: () => ({
-      command: join(HOME, ".lax", "python-chatterbox", "venv", PYTHON_EXE),
+      command: join(HOME, ".lax", "python-chatterbox", "venv", SIDECAR_PYTHON_EXE),
       args: ["-m", "uvicorn", "server:app", "--app-dir", join(REPO_ROOT, "python", "chatterbox"), "--host", "127.0.0.1", "--port", String(Number(process.env.LAX_CHATTERBOX_PORT) || 7010)],
       cwd: join(REPO_ROOT, "python"),
       env: { ...process.env },
@@ -96,7 +103,7 @@ export const TIERS: VoiceTier[] = [
     venvDir: join(HOME, ".lax", "python-voxcpm", "venv"),
     installerPath: join(REPO_ROOT, "python", "voxcpm", INSTALLER_EXT),
     startCmd: () => ({
-      command: join(HOME, ".lax", "python-voxcpm", "venv", PYTHON_EXE),
+      command: join(HOME, ".lax", "python-voxcpm", "venv", SIDECAR_PYTHON_EXE),
       args: [join(REPO_ROOT, "python", "voxcpm", "server.py")],
       cwd: join(REPO_ROOT, "python", "voxcpm"),
       env: { ...process.env },

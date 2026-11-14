@@ -101,9 +101,44 @@ function _renderPrereqRow(p, idx, tierId) {
   if (r.repairable) {
     action += `<button class="action-btn" onclick="onTierPrereqAction('${tierId}','repair-sidecar','${_esc(r.tierId)}',this)" title="Stop, re-run the installer (fixes broken/outdated packages), and restart" style="font-size:.7rem;padding:4px 10px">Repair</button>`;
   }
+  if (r.repairable && _AUTO_START_TIERS.includes(r.tierId)) action += _autoStartSwitch(r.tierId);
 
   return `<div style="display:flex;align-items:center;justify-content:space-between;gap:10px;padding:6px 0;border-top:1px solid var(--border)"><div style="font-size:.78rem">${_esc(p.label)}${p.optional ? ' <span style="color:var(--muted);font-size:.7rem">(optional)</span>' : ''}</div><div style="display:flex;align-items:center;gap:8px">${pill}${action}</div></div>`;
 }
+
+// ── Start with the app ──
+// The voiceSidecarAutoStart setting (voice-setup/auto-start.ts on the server):
+// the sidecars Local Agent X starts when it starts. Shown on installed sidecars.
+const _AUTO_START_TIERS = ['lite', 'studio', 'studio-vox'];
+
+function _autoStartList() {
+  try {
+    const v = JSON.parse(localStorage.getItem('lax_settings') || '{}').voiceSidecarAutoStart;
+    return Array.isArray(v) ? v.filter(id => _AUTO_START_TIERS.includes(id)) : [];
+  } catch { return []; /* unreadable cache: every switch shows off until the next settings load */ }
+}
+
+function _autoStartSwitch(sidecarId) {
+  const on = _autoStartList().includes(sidecarId);
+  const note = sidecarId === 'lite' ? '' : ' (starts Lite too)';
+  return `<span style="display:inline-flex;align-items:center;gap:6px;font-size:.7rem;color:var(--muted)" title="Start this sidecar when Local Agent X starts${note}">Auto-start`
+    + `<div class="toggle${on ? ' on' : ''}" role="switch" aria-checked="${on}" aria-label="Start ${_esc(sidecarId)} when Local Agent X starts" onclick="onSidecarAutoStartToggle('${_esc(sidecarId)}',this)"></div></span>`;
+}
+
+async function onSidecarAutoStartToggle(sidecarId, el) {
+  const on = !el.classList.contains('on');
+  const list = _autoStartList().filter(id => id !== sidecarId);
+  if (on) list.push(sidecarId);
+  el.classList.toggle('on', on);
+  el.setAttribute('aria-checked', String(on));
+  await _persist({ voiceSidecarAutoStart: list });
+  try {
+    const local = JSON.parse(localStorage.getItem('lax_settings') || '{}');
+    local.voiceSidecarAutoStart = list;
+    localStorage.setItem('lax_settings', JSON.stringify(local));
+  } catch { /* the server has it; the cache catches up on the next settings load */ }
+}
+window.onSidecarAutoStartToggle = onSidecarAutoStartToggle;
 
 function _resolveSttProvider(tier) {
   if (!tier?.sttProviders?.length) return null;

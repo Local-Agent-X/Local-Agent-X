@@ -97,6 +97,15 @@ export const PREFERENCE_SETTINGS: ReadonlyArray<FlippableSetting> = [
     description: "Speech-to-text provider (browser, local-whisper, groq, openai, mistral). Empty = the engine's default. groq/openai/mistral send microphone audio to that provider",
   },
   {
+    field: "voiceSidecarAutoStart",
+    owner: "agent",
+    // The ids of voice-setup/tiers.ts's sidecar tiers (voice-setup/auto-start.ts).
+    validate: z.array(z.enum(["lite", "studio", "studio-vox"])),
+    runtime: false,
+    broadcast: true,
+    description: "Voice sidecars started when Local Agent X starts (lite, studio, studio-vox). Empty = none; each is started by hand",
+  },
+  {
     field: "ttsVoice",
     owner: "agent",
     validate: z.string(),

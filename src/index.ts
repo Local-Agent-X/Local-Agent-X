@@ -342,6 +342,14 @@ if (!localModelQualificationBoot && process.env.LAX_SELF_EDIT_PROBE !== "1") {
       } catch (e) {
         logger.warn(`[boot] orphan sidecar reap failed: ${(e as Error).message}`);
       }
+      // After the reap, so a sidecar left from the last run is adopted, not
+      // killed and started again: the ones the user set to start with the app.
+      try {
+        const { autoStartVoiceSidecars } = await import("./routes/bridges/voice-setup/auto-start.js");
+        await autoStartVoiceSidecars();
+      } catch (e) {
+        logger.warn(`[boot] voice sidecar auto-start failed: ${(e as Error).message}`);
+      }
     })();
   }, 6000);
 } else {

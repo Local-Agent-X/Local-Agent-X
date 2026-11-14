@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 2033 non-test source files · 78 oversized · 268 nearing the size cap.
+**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 2034 non-test source files · 78 oversized · 268 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -62,7 +62,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/app-scaffold/` | 12 | 7 | M |  |
 | `src/ari-kernel/` | 12 | 12 | M |  |
 | `src/integrations/` | 12 | 15 | M |  |
-| `src/routes/` | 12 | 109 | XL | 17 |
+| `src/routes/` | 12 | 110 | XL | 17 |
 | `src/whatsapp-bridge/` | 12 | 8 | M | 1 |
 | `src/persistence/` | 11 | 2 | S |  |
 | `src/sync/` | 11 | 26 | L |  |

@@ -124,8 +124,10 @@ async function findSidecarPids(tier: VoiceTier): Promise<SidecarProc[]> {
     const conds = markers
       .map(m => `$_.CommandLine.ToLower().Contains('${m.toLowerCase().replace(/'/g, "''")}')`)
       .join(" -and ");
+    // pythonw.exe is what a sidecar runs under now (tiers.ts SIDECAR_PYTHON_EXE);
+    // python.exe is what earlier builds started, still found after an update.
     const script =
-      `Get-CimInstance Win32_Process -Filter "Name='python.exe'" -ErrorAction SilentlyContinue | ` +
+      `Get-CimInstance Win32_Process -Filter "Name='python.exe' OR Name='pythonw.exe'" -ErrorAction SilentlyContinue | ` +
       `Where-Object { $_.CommandLine -and ${conds} } | ` +
       `ForEach-Object { "$($_.ProcessId),$($_.ParentProcessId)" }`;
     try {

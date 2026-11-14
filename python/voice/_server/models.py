@@ -203,8 +203,11 @@ def _detect_gpu() -> str:
         return ""
     try:
         import subprocess
+        # The sidecar runs without a console (pythonw.exe on Windows), so a
+        # console program it starts would open a window of its own unless told not to.
         r = subprocess.run(["nvidia-smi", "--query-gpu=name", "--format=csv,noheader"],
-                           capture_output=True, text=True, timeout=2)
+                           capture_output=True, text=True, timeout=2,
+                           creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
         if r.returncode == 0 and r.stdout.strip():
             return r.stdout.strip().splitlines()[0].strip()
     except Exception:

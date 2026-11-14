@@ -12,7 +12,8 @@ import {
   execBasename, isShellReparseFlag, maskQuotedRedirects, resolveRealArgv0Index, splitShellSegments, tokenizeCommand,
 } from "./shell-lex.js";
 import { detectControlFileMutation, detectLockedBaselineMutation, detectProtectedEngineMutation, shellMutationTargets } from "./shell-mutation-guard.js";
-import { shellDeletes } from "./shell-delete-targets.js";
+import { positionsWithCwd, shellDeletes } from "./shell-delete-targets.js";
+import { searchPatternOperand } from "./search-pattern-operand.js";
 import { DOS_SWITCH, dosSwitchBlockReason } from "./dos-switch.js";
 
 // ── Best-effort shell file-access confinement (defense in depth) ──
@@ -112,6 +113,31 @@ const MAX_REPARSE_DEPTH = 2;
 interface PathToken {
   path: string;
   action: "read" | "write"; // redirect targets gate as writes; everything else as reads
+  /** The top-level segment the token came from (absent inside a re-parsed
+   *  `bash -c` body), so a relative path can be placed after a `cd`. */
+  segment?: number;
+}
+
+/**
+ * The command's path tokens, a relative one resolved from the folder its
+ * command runs in: `cd <project> && ls ../src` reads <project>/../src, not
+ * <workspace>/../src, which refused it as outside the workspace (2026-11-13).
+ * Placement is positionsWithCwd's, the one the delete rules use: a `cd` it
+ * cannot place, or one a `;` follows, leaves the token as before, relative to
+ * the workspace. Placing also tightens: `cd /etc && cat passwd` now reads
+ * /etc/passwd, which it is, instead of <workspace>/passwd.
+ */
+function placedPathTokens(command: string, workspace: string): PathToken[] {
+  const tokens = extractPathTokens(command);
+  if (!tokens.some((t) => t.segment !== undefined && !isAbsolute(t.path))) return tokens;
+  const cwdOf = new Map<number, string>();
+  for (const { position, cwd } of positionsWithCwd(command, workspace)) {
+    if (position.depth === 0 && !cwdOf.has(position.segment) && typeof cwd === "string") cwdOf.set(position.segment, cwd);
+  }
+  return tokens.map((t) => {
+    const cwd = t.segment === undefined ? undefined : cwdOf.get(t.segment);
+    return cwd && !isAbsolute(t.path) ? { ...t, path: resolve(cwd, t.path) } : t;
+  });
 }
 
 /**
@@ -124,7 +150,7 @@ export function evaluateShellPaths(command: string, ctx: ShellPathGuardCtx): Sec
     return { allowed: true, reason: "Unrestricted mode — shell paths not confined" };
   }
   let switchReason: string | null = null;
-  for (const tok of extractPathTokens(command)) {
+  for (const tok of placedPathTokens(command, ctx.workspace)) {
     const decision = evaluateFileAccess(
       ctx.workspace, ctx.fileAccessMode, ctx.allowedPathCheck, tok.action, tok.path, ctx.sessionId,
     );
@@ -159,7 +185,7 @@ export function evaluateShellPaths(command: string, ctx: ShellPathGuardCtx): Sec
 function redirectOrTargetRefusal(command: string, decision: SecurityDecision, ctx: ShellPathGuardCtx): SecurityDecision {
   if (decision.reason !== detectScriptWrite(command)) return decision;
   const edited = new Set(inPlaceEditTargets(command).map(expandTilde));
-  for (const tok of extractPathTokens(command)) {
+  for (const tok of placedPathTokens(command, ctx.workspace)) {
     if (tok.action !== "write" && !edited.has(tok.path)) continue;
     const write = evaluateFileAccess(ctx.workspace, ctx.fileAccessMode, ctx.allowedPathCheck, "write", tok.path, ctx.sessionId);
     if (!write.allowed) {
@@ -358,9 +384,10 @@ function expandBraces(token: string): string[] {
 // nested re-lex (start at 0).
 function extractPathTokens(command: string, depth = 0): PathToken[] {
   const out: PathToken[] = [];
-  for (const segment of splitShellSegments(command)) {
+  for (const [segIndex, segment] of splitShellSegments(command).entries()) {
     const words = tokenizeCommand(segment);
     if (!words.length) continue;
+    const at = depth === 0 ? { segment: segIndex } : {};
     // TWO verbs, deliberately: the DOS-switch shield keys on the LITERAL head
     // (`timeout /t 5` is the DOS builtin, not the POSIX wrapper of that name), while
     // the re-parse keys on the RESOLVED argv[0] — any command-modifier wrapper
@@ -369,9 +396,11 @@ function extractPathTokens(command: string, depth = 0): PathToken[] {
     const headVerb = execBasename(words[0]);
     const argv0Index = resolveRealArgv0Index(words) ?? 0;
     const shellVerb = execBasename(words[argv0Index]);
+    // A grep/rg search pattern is not a file (search-pattern-operand.ts).
+    const patternAt = searchPatternOperand(words, argv0Index, shellVerb);
     for (let i = 0; i < words.length; i++) {
       let raw = words[i];
-      if (!raw) continue;
+      if (!raw || i === patternAt) continue;
       // Command position: argv[0] is a binary name/path that legitimately lives
       // outside the workspace, so it is exempt — UNLESS a redirect operator is
       // glued to it (`cat</etc/shadow`, `date>/etc/cron.d/pwn`), which the glued/
@@ -401,7 +430,7 @@ function extractPathTokens(command: string, depth = 0): PathToken[] {
       if (glued && glued[1]) {
         const leftRaw = glued[1];
         if (i > 0 && !BENIGN_PATHS.has(leftRaw.toLowerCase()) && looksLikePath(leftRaw)) {
-          out.push({ path: leftRaw, action: "read" });
+          out.push({ path: leftRaw, action: "read", ...at });
         }
         action = glued[3] === "<" ? "read" : "write";
         raw = glued[4];
@@ -438,7 +467,7 @@ function extractPathTokens(command: string, depth = 0): PathToken[] {
 
       raw = expandTilde(raw);
 
-      if (looksLikePath(raw)) out.push({ path: raw, action });
+      if (looksLikePath(raw)) out.push({ path: raw, action, ...at });
     }
   }
   return out;

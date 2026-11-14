@@ -11,6 +11,16 @@ describe("shellShowedContent", () => {
     expect(shellShowedContent("s", "const a = 1;\nconst b = 2;\n")).toBe(true);
   });
 
+  it("reads a whole file printed with line-end marks (cat -A) or line numbers (cat -n)", () => {
+    const file = "const a = 1;\n\tindented$;\n";
+    recordShellOutput("s", "=== a.ts\nconst a = 1;$\n^Iindented$;$\n");
+    expect(shellShowedContent("s", file)).toBe(true);
+    recordShellOutput("t", "     1\tconst a = 1;\n     2\t\tindented$;\n");
+    expect(shellShowedContent("t", file)).toBe(true);
+    recordShellOutput("u", "     1\tconst a = 1;$\n");
+    expect(shellShowedContent("u", file)).toBe(false); // numbered, but only part of it
+  });
+
   it("never credits a fragment, an empty file, or another session", () => {
     recordShellOutput("s", "const a = 1;\n");
     expect(shellShowedContent("s", "const a = 1;\nconst b = 2;\n")).toBe(false);

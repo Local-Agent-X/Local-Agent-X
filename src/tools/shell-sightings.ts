@@ -41,12 +41,25 @@ export function recordShellOutput(sessionId: string | undefined, delivered: stri
   if (recent.size > MAX_SESSIONS) recent.delete(recent.keys().next().value as string);
 }
 
+/** `cat -A`/`-e`/`-E` marks each line end with `$` and a tab as `^I`
+ *  (2026-11-13 rerun: five writes refused after a `cat -A` loop). */
+const undoLineEndMarks = (out: string): string => out.replace(/\$$/gm, "").replace(/\^I/g, "\t");
+/** `cat -n` and `nl` put a right-aligned number and a tab before each line. */
+const undoLineNumbers = (out: string): string => out.replace(/^ *\d+\t/gm, "");
+
+/** The ways a shell can print a file whole: as is, with line-end marks, with
+ *  line numbers, or both. Each still has to hold the file's ENTIRE text. */
+function readings(out: string): string[] {
+  const marked = undoLineEndMarks(out);
+  return [out, marked, undoLineNumbers(out), undoLineNumbers(marked)];
+}
+
 /** Whether `content` (a file's current text) appeared whole in a recent shell
  *  result this session was given. An empty file proves nothing. */
 export function shellShowedContent(sessionId: string | undefined, content: string): boolean {
   const text = normalize(content).replace(/\s+$/, "");
   if (!text) return false;
-  return (recent.get(sessionId || "default") ?? []).some((out) => out.includes(text));
+  return (recent.get(sessionId || "default") ?? []).some((out) => readings(out).some((r) => r.includes(text)));
 }
 
 /** Test-only: forget everything, as a restart does. */

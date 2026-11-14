@@ -203,7 +203,10 @@ must(back.id === 9 && back.name === "a|b c" && back.at === 42, "round-trip survi
     const testRun = testCalls >= 2 ? runVitest(dir, "src/wire/format.test.ts") : { ok: false, output: "test gutted or deleted" };
 
     // Stale-doc handling.
-    const docOldGone = !fileContains(dir, "docs/FORMAT.md", /pipe character|\|.*separat|separat.*\|/i);
+    // The old claim, not any "|" near the word "separator": a correct doc may
+    // say names can now contain "|" (2026-11-14: "Because the separator is a
+    // control character, names may safely contain "|"" was scored stale).
+    const docOldGone = !fileContains(dir, "docs/FORMAT.md", /pipe character|separated by[^.\n]*\||`\d+\|/i);
     const docNew = fileContains(dir, "docs/FORMAT.md", /unit separator|U\+001F|0x1F|\\u001f/i);
 
     // Judgment keep-path: the VISUAL " | " table separator must survive.

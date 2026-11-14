@@ -3,6 +3,7 @@
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { gzipSync } from "node:zlib";
 import { describe, expect, it } from "vitest";
 // @ts-expect-error plain .mjs eval module
 import { formatMetrics, runMetrics } from "../eval/grok-coding-parity/run-metrics.mjs";
@@ -11,7 +12,12 @@ function seedOp(dataDir: string, id: string, sessionId: string, turns: unknown[]
   const dir = join(dataDir, "operations", id);
   mkdirSync(join(dir, "op-turns"), { recursive: true });
   writeFileSync(join(dir, "operation.json"), JSON.stringify({ id, sessionId }));
-  turns.forEach((messages, i) => writeFileSync(join(dir, "op-turns", `${i}.json`), JSON.stringify({ turn: { turnIdx: i }, messages })));
+  turns.forEach((messages, i) => {
+    writeFileSync(join(dir, "op-turns", `${i}.json`), JSON.stringify({ turn: { turnIdx: i }, messages }));
+    // Each step's trace: 300 then 400 output tokens, 2 s then 2.5 s of model time.
+    const trace = { response: { usage: { completionTokens: 300 + 100 * i } }, timing: { modelMs: 2000 + 500 * i } };
+    writeFileSync(join(dir, "op-turns", `${i}.trace.json.gz`), gzipSync(JSON.stringify(trace)));
+  });
   writeFileSync(join(dir, "canonical-events.jsonl"), events.join("\n"));
 }
 
@@ -28,7 +34,7 @@ describe("runMetrics", () => {
     ], [fired("budget-ladder"), fired("budget-ladder"), fired("verify-gate"), "{torn"]);
     seedOp(data, "op_b", "someone-else", [[call("z"), result("z", "[blocked]")]]);
     const m = runMetrics(data, "parity-x");
-    expect(m).toEqual({ ops: 1, steps: 2, toolCalls: 3, blocked: 1, failed: 1, guards: { "budget-ladder": 2, "verify-gate": 1 } });
+    expect(m).toEqual({ ops: 1, steps: 2, toolCalls: 3, blocked: 1, failed: 1, outputTokens: 700, modelSecs: 4.5, guards: { "budget-ladder": 2, "verify-gate": 1 } });
     expect(formatMetrics(m)).toBe("2 steps, 3 calls, 1 blocked, 1 failed, guards: budget-ladder×2, verify-gate×1");
   });
 

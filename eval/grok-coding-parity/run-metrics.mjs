@@ -6,9 +6,20 @@
 //
 // Same sources as scripts/score-guards.mjs: op-turns/<n>.json for the steps
 // and their tool results ("[ok …]", "[blocked …]", "[error …]"), and the
-// `middleware_fired` events in canonical-events.jsonl for the guards.
+// `middleware_fired` events in canonical-events.jsonl for the guards. Each
+// step's trace (op-turns/<n>.trace.json.gz) gives its output tokens and model
+// time, the two numbers Claude Code's CLI reports for its side.
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { gunzipSync } from "node:zlib";
+
+/** Output tokens and model ms of one step, from its trace; zeros without one. */
+function traceCost(turnFile) {
+  try {
+    const t = JSON.parse(gunzipSync(readFileSync(turnFile.replace(/\.json$/, ".trace.json.gz"))).toString("utf8"));
+    return { tokens: t.response?.usage?.completionTokens ?? 0, ms: t.timing?.modelMs ?? 0 };
+  } catch { return { tokens: 0, ms: 0 }; }
+}
 
 function readJson(path) { try { return JSON.parse(readFileSync(path, "utf8")); } catch { return null; } }
 
@@ -40,14 +51,18 @@ function guardsFired(opDir, into) {
   }
 }
 
-/** { ops, steps, toolCalls, blocked, failed, guards: { name: count } } */
+/** { ops, steps, toolCalls, blocked, failed, outputTokens, modelSecs, guards: { name: count } } */
 export function runMetrics(dataDir, sessionId) {
-  const out = { ops: 0, steps: 0, toolCalls: 0, blocked: 0, failed: 0, guards: {} };
+  const out = { ops: 0, steps: 0, toolCalls: 0, blocked: 0, failed: 0, outputTokens: 0, modelSecs: 0, guards: {} };
   if (!dataDir) return out;
+  let modelMs = 0;
   for (const opDir of opDirsFor(dataDir, sessionId)) {
     out.ops += 1;
     for (const file of turnFiles(opDir)) {
       out.steps += 1;
+      const cost = traceCost(file);
+      out.outputTokens += cost.tokens;
+      modelMs += cost.ms;
       for (const m of readJson(file)?.messages ?? []) {
         if (m.role === "assistant") out.toolCalls += m.content?.toolCalls?.length ?? 0;
         if (m.role !== "tool_result") continue;
@@ -58,6 +73,7 @@ export function runMetrics(dataDir, sessionId) {
     }
     guardsFired(opDir, out.guards);
   }
+  out.modelSecs = Number((modelMs / 1000).toFixed(1));
   return out;
 }
 

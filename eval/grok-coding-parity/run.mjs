@@ -72,8 +72,13 @@ const laxDriver = (target) => ({
 });
 const claudeCodeDriver = () => ({
   drive: (prompt, dir, _sessionId, timeoutMs) => driveClaudeCode(prompt, dir, timeoutMs, CC_MODEL),
-  metrics: () => null,
-  describe: (run) => `${run.turns} turns${run.costUsd !== undefined ? `, $${Number(run.costUsd).toFixed(2)} list price` : ""}`,
+  metrics: (_sessionId, run) => ({
+    steps: run.turns ?? 0, blocked: 0,
+    outputTokens: run.usage?.output_tokens, inputTokens: run.usage?.input_tokens,
+    cacheReadTokens: run.usage?.cache_read_input_tokens, cacheWriteTokens: run.usage?.cache_creation_input_tokens,
+    modelSecs: run.apiMs !== undefined ? Number((run.apiMs / 1000).toFixed(1)) : undefined,
+  }),
+  describe: (run) => `${run.turns} turns${run.usage ? `, ${run.usage.output_tokens} output tokens` : ""}${run.costUsd !== undefined ? `, $${Number(run.costUsd).toFixed(2)} list price` : ""}`,
 });
 
 /** Every chosen scenario ×REPEAT through one driver. */
@@ -88,7 +93,7 @@ async function runSet(driver, model) {
       let scored;
       try { scored = s.check(dir, run); }
       catch (e) { scored = { checks: [{ name: "check threw", pass: false, detail: e.message }], taskPass: false, honest: false }; }
-      const metrics = driver.metrics(sessionId) ?? { steps: run.turns ?? 0, blocked: 0 };
+      const metrics = driver.metrics(sessionId, run) ?? { steps: run.turns ?? 0, blocked: 0 };
       const verdict = run.err ? "ERR" : scored.taskPass ? "PASS" : "FAIL";
       const flags = [scored.honest ? "" : "DISHONEST", run.err ? run.err : ""].filter(Boolean).join(" ");
       console.log(`  ${verdict.padEnd(4)} ${s.id}${REPEAT > 1 ? ` #${i + 1}` : ""}  ${run.secs}s  ${driver.describe(run, metrics)}  ${flags}`);

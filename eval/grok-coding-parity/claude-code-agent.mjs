@@ -69,7 +69,9 @@ export async function driveClaudeCode(prompt, dir, timeoutMs, model) {
         : !j ? `claude exited ${code}: ${(errText || out).slice(0, 300)}`
         : j.is_error ? `claude reported an error: ${String(j.result ?? j.subtype ?? "").slice(0, 300)}`
         : "";
-      resolve({ text: String(j?.result ?? "").trim(), tools: [], err, recovered: [], secs, turns: j?.num_turns ?? 0, costUsd: j?.total_cost_usd });
+      // usage and the API time are what the LAX side's traces record per step
+      // (output tokens, model ms), so the two can be compared, not just timed.
+      resolve({ text: String(j?.result ?? "").trim(), tools: [], err, recovered: [], secs, turns: j?.num_turns ?? 0, costUsd: j?.total_cost_usd, usage: j?.usage, apiMs: j?.duration_api_ms });
     });
   });
 }

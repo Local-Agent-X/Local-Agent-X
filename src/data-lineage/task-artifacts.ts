@@ -57,6 +57,22 @@ function canonical(path: string): string {
 	}
 }
 
+/** A file's identity, exact. statSync's plain `ino` is a JS number, and an
+ *  NTFS file id is 64-bit: beyond 2^53 it rounds, so two different files made
+ *  side by side read as one (2026-11-15: 6 such pairs among 400 fresh files on
+ *  the owner's volume, and a user's template read as the agent's own output).
+ *  The bigint stat keeps every bit. */
+function fileId(path: string): { dev: bigint; ino: bigint; birthtimeMs: number } | null {
+	try {
+		const s = statSync(path, { bigint: true });
+		return { dev: s.dev, ino: s.ino, birthtimeMs: Number(s.birthtimeMs) };
+	} catch {
+		return null;
+	}
+}
+
+const sameFile = (a: { dev: bigint; ino: bigint }, b: { dev: bigint; ino: bigint }): boolean => a.dev === b.dev && a.ino === b.ino;
+
 /** Enroll a file the agent itself CREATED (did not exist pre-execute) via a
  *  successful create-class tool call. Caller passes the resolved absolute
  *  target; canonicalized again here so membership never depends on which
@@ -85,17 +101,11 @@ export function isTaskArtifact(sessionId: string, path: string): boolean {
 	if (!set || set.size === 0) return false;
 	const query = canonical(path);
 	if (set.has(query)) return true;
-	let q: { dev: number | bigint; ino: number | bigint };
-	try {
-		q = statSync(query);
-	} catch {
-		return false; // query target doesn't exist — nothing to identity-match
-	}
+	const q = fileId(query);
+	if (!q) return false; // query target doesn't exist — nothing to identity-match
 	for (const stored of set) {
-		try {
-			const s = statSync(stored);
-			if (s.dev === q.dev && s.ino === q.ino) return true;
-		} catch { /* stored artifact since deleted/moved — skip */ }
+		const s = fileId(stored); // null: stored artifact since deleted/moved — skip
+		if (s && sameFile(s, q)) return true;
 	}
 	return false;
 }
@@ -117,25 +127,19 @@ export function unrecordTaskArtifact(sessionId: string, path: string): void {
 	if (!set || set.size === 0) return;
 	const query = canonical(path);
 	if (set.delete(query)) return;
-	let q: { dev: number | bigint; ino: number | bigint };
-	try {
-		q = statSync(query);
-	} catch {
-		return; // gone from disk and not stored under this spelling — nothing to drop
-	}
+	const q = fileId(query);
+	if (!q) return; // gone from disk and not stored under this spelling — nothing to drop
 	for (const stored of set) {
-		try {
-			const s = statSync(stored);
-			if (s.dev === q.dev && s.ino === q.ino) {
-				set.delete(stored);
-				return;
-			}
-		} catch { /* stored artifact since deleted/moved — skip */ }
+		const s = fileId(stored); // null: stored artifact since deleted/moved — skip
+		if (s && sameFile(s, q)) {
+			set.delete(stored);
+			return;
+		}
 	}
 }
 
 /** A folder the agent's own command made: the inode it made, and when. */
-interface FolderIdentity { dev: number; ino: number; birthtimeMs: number }
+interface FolderIdentity { dev: bigint; ino: bigint; birthtimeMs: number }
 
 /** sessionId → canonical folder path → the folder the agent made there. */
 const sessionFolders = new Map<string, Map<string, FolderIdentity>>();
@@ -146,15 +150,16 @@ const sessionFolders = new Map<string, Map<string, FolderIdentity>>();
  *  none records nothing. */
 export function recordAgentFolder(sessionId: string, path: string): void {
 	if (!sessionId || !path) return;
-	let s;
-	try { s = statSync(path); } catch { return; /* gone already: nothing made */ }
-	if (!s.isDirectory() || !(s.birthtimeMs > 0)) return;
+	let isDir = false;
+	try { isDir = statSync(path).isDirectory(); } catch { return; /* gone already: nothing made */ }
+	const s = fileId(path);
+	if (!isDir || !s || !(s.birthtimeMs > 0)) return;
 	let map = sessionFolders.get(sessionId);
 	if (!map) {
 		map = new Map();
 		sessionFolders.set(sessionId, map);
 	}
-	map.set(canonical(path), { dev: s.dev, ino: s.ino, birthtimeMs: s.birthtimeMs });
+	map.set(canonical(path), s);
 }
 
 /** When this session's agent made the folder at `path`, or null: the folder
@@ -163,12 +168,9 @@ export function recordAgentFolder(sessionId: string, path: string): void {
 export function agentFolderBirth(sessionId: string, path: string): number | null {
 	const made = sessionFolders.get(sessionId)?.get(canonical(path));
 	if (!made) return null;
-	try {
-		const s = statSync(path);
-		return s.dev === made.dev && s.ino === made.ino && s.birthtimeMs === made.birthtimeMs ? made.birthtimeMs : null;
-	} catch {
-		return null; // gone: nothing to delete
-	}
+	const s = fileId(path);
+	if (!s) return null; // gone: nothing to delete
+	return sameFile(s, made) && s.birthtimeMs === made.birthtimeMs ? made.birthtimeMs : null;
 }
 
 /** All artifacts recorded for the session (canonical spellings, copy). */

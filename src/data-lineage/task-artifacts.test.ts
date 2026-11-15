@@ -51,6 +51,42 @@ afterAll(() => {
 	for (const dir of tmpRoots) rmSync(dir, { recursive: true, force: true });
 });
 
+// ── File identity is exact ───────────────────────────────────────────────────
+// statSync's number `ino` rounds an NTFS file id past 2^53, so two different
+// files made side by side could share one. The identity fallback then took a
+// user's template for the agent's own output — the flake in "document
+// template enrolls the filled OUTPUT file" (2026-11-15), and on a real
+// install the delete guard's verdict on the user's file.
+describe("task-artifact identity uses exact file ids", () => {
+	it("two different files whose rounded ids collide are not the same artifact", async () => {
+		const { statSync: stat } = await import("node:fs");
+		const dir = tmpRoot();
+		const seen = new Map<number, { path: string; exact: bigint }>();
+		let pair: [string, string] | null = null;
+		for (let i = 0; i < 3000 && !pair; i++) {
+			const p = join(dir, `f${i}.txt`);
+			writeFileSync(p, String(i));
+			const rounded = stat(p).ino;
+			const exact = stat(p, { bigint: true }).ino;
+			const prev = seen.get(rounded);
+			if (prev && prev.exact !== exact) pair = [prev.path, p];
+			seen.set(rounded, { path: p, exact });
+		}
+		if (!pair) {
+			// This volume's file ids fit a JS number (ext4, APFS): no collision to provoke.
+			console.log("[task-artifacts] no rounded-id collision on this volume; nothing to test here");
+			return;
+		}
+		const s = freshSession();
+		recordTaskArtifact(s, pair[0]);
+		expect(isTaskArtifact(s, pair[0])).toBe(true);
+		expect(isTaskArtifact(s, pair[1])).toBe(false);
+		unrecordTaskArtifact(s, pair[1]);
+		expect(isTaskArtifact(s, pair[0])).toBe(true);
+		clearTaskArtifacts(s);
+	});
+});
+
 // ── Registry semantics ───────────────────────────────────────────────────────
 
 describe("task-artifact registry", () => {

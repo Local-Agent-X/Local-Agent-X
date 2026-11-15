@@ -47,14 +47,14 @@ export function addressOf(from: string): string {
 /** Mail that arrived after `prior`, newest MAX_PER_PASS of it. Without a
  *  usable checkpoint (first pass, or the server renumbered the mailbox) it
  *  reads the last FIRST_LOOK_MS instead of the whole mailbox. */
-export async function readNewMail(session: ImapSession, prior: MailCheckpoint | undefined, now: Date): Promise<NewMail> {
+export async function readNewMail(session: ImapSession, prior: MailCheckpoint | undefined, now: Date, folder: string = INBOX): Promise<NewMail> {
   let found = prior
-    ? await session.searchUids(INBOX, { uid: `${prior.lastUid + 1}:*` })
-    : await session.searchUids(INBOX, { since: new Date(now.getTime() - FIRST_LOOK_MS) });
+    ? await session.searchUids(folder, { uid: `${prior.lastUid + 1}:*` })
+    : await session.searchUids(folder, { since: new Date(now.getTime() - FIRST_LOOK_MS) });
   let after = prior?.lastUid ?? 0;
   let fromScratch = !prior;
   if (prior && found.uidValidity !== prior.uidValidity) {
-    found = await session.searchUids(INBOX, { since: new Date(now.getTime() - FIRST_LOOK_MS) });
+    found = await session.searchUids(folder, { since: new Date(now.getTime() - FIRST_LOOK_MS) });
     after = 0;
     fromScratch = true;
   }
@@ -62,9 +62,9 @@ export async function readNewMail(session: ImapSession, prior: MailCheckpoint | 
   const fresh = found.uids.filter((u) => u > after).sort((a, b) => a - b);
   // Starting over, the mark is the newest message in the box, read or not:
   // with a mark of 0 the next pass's "1:*" would be the whole mailbox.
-  const newest = fromScratch ? (await session.searchUids(INBOX, { uid: "*" })).uids : [];
+  const newest = fromScratch ? (await session.searchUids(folder, { uid: "*" })).uids : [];
   const picked = fresh.slice(-MAX_PER_PASS);
-  const page = picked.length > 0 ? await session.fetchMessages(INBOX, picked, picked.length) : { messages: [] };
+  const page = picked.length > 0 ? await session.fetchMessages(folder, picked, picked.length) : { messages: [] };
   return {
     messages: page.messages,
     checkpoint: { uidValidity: found.uidValidity, lastUid: fresh.concat(newest).reduce((m, u) => Math.max(m, u), after) },

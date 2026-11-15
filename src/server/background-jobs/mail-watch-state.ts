@@ -23,8 +23,27 @@ export interface DigestEntry {
   date: string;
 }
 
+/** A mail waiting on an answer (mail-followups.ts): one the user owes, or one
+ *  they sent and are owed. Keyed by Message-ID. */
+export interface FollowUp {
+  account: string;
+  /** Who it is from (owed) or what it was about (awaiting). */
+  from?: string;
+  subject: string;
+  /** Epoch ms it arrived or was sent. */
+  since: number;
+  /** Set once the user was told, so it is said once. */
+  toldAt?: number;
+}
+
 export interface MailWatchState {
   accounts: Record<string, MailCheckpoint>;
+  /** Where reading each account's Sent folder stopped. */
+  sentAccounts: Record<string, MailCheckpoint>;
+  /** Important mail from people the user has not answered yet. */
+  owed: Record<string, FollowUp>;
+  /** Mail the user sent that asks for an answer not yet received. */
+  awaiting: Record<string, FollowUp>;
   /** Sender address → whether the user has sent mail to it, and when that
    *  was last checked (epoch ms). */
   known: Record<string, { known: boolean; checkedAt: number }>;
@@ -41,7 +60,7 @@ export const MAX_KNOWN = 2000;
 export const MAX_DIGEST = 100;
 
 export function emptyState(): MailWatchState {
-  return { accounts: {}, known: {}, digest: { pending: [], skipped: 0 }, usage: { day: "", calls: 0 }, failures: 0 };
+  return { accounts: {}, sentAccounts: {}, owed: {}, awaiting: {}, known: {}, digest: { pending: [], skipped: 0 }, usage: { day: "", calls: 0 }, failures: 0 };
 }
 
 export function mailWatchStatePath(): string {
@@ -55,6 +74,9 @@ export function loadMailWatchState(path: string = mailWatchStatePath()): MailWat
     const base = emptyState();
     return {
       accounts: raw.accounts && typeof raw.accounts === "object" ? raw.accounts : base.accounts,
+      sentAccounts: raw.sentAccounts && typeof raw.sentAccounts === "object" ? raw.sentAccounts : {},
+      owed: raw.owed && typeof raw.owed === "object" ? raw.owed : {},
+      awaiting: raw.awaiting && typeof raw.awaiting === "object" ? raw.awaiting : {},
       known: raw.known && typeof raw.known === "object" ? raw.known : base.known,
       digest: {
         pending: Array.isArray(raw.digest?.pending) ? raw.digest.pending : [],

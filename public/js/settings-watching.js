@@ -6,11 +6,12 @@
     mailWatchEnabled: 'watch-mail-enabled',
     mailWatchLocalOnly: 'watch-mail-local-only',
     travelWatchEnabled: 'watch-travel-enabled',
+    followUpsEnabled: 'watch-followups-enabled',
     quietHoursEnabled: 'watch-quiet-enabled',
   };
   const TIMES = { quietHoursStart: 'watch-quiet-start', quietHoursEnd: 'watch-quiet-end' };
   const NUMBERS = { remindBeforeMinutes: 'watch-remind-minutes' };
-  const DEFAULTS = { mailWatchEnabled: true, mailWatchLocalOnly: false, travelWatchEnabled: true, quietHoursEnabled: true, quietHoursStart: '22:00', quietHoursEnd: '07:00', remindBeforeMinutes: 30 };
+  const DEFAULTS = { mailWatchEnabled: true, mailWatchLocalOnly: false, travelWatchEnabled: true, followUpsEnabled: true, quietHoursEnabled: true, quietHoursStart: '22:00', quietHoursEnd: '07:00', remindBeforeMinutes: 30 };
 
   function renderWatchingSettings(settings) {
     for (const [field, id] of Object.entries(TOGGLES)) {
@@ -67,6 +68,7 @@
     onToggle('watch-mail-enabled', (v) => saveWatchingSetting({ mailWatchEnabled: v }));
     onToggle('watch-mail-local-only', (v) => saveWatchingSetting({ mailWatchLocalOnly: v }));
     onToggle('watch-travel-enabled', (v) => saveWatchingSetting({ travelWatchEnabled: v }));
+    onToggle('watch-followups-enabled', (v) => saveWatchingSetting({ followUpsEnabled: v }));
     onToggle('watch-quiet-enabled', (v) => saveWatchingSetting({ quietHoursEnabled: v }));
     onTime('watch-quiet-start', (v) => saveWatchingSetting({ quietHoursStart: v }));
     onTime('watch-quiet-end', (v) => saveWatchingSetting({ quietHoursEnd: v }));

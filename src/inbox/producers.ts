@@ -207,3 +207,9 @@ export function inboxPlanReminder(r: { key: string; title: string; body: string 
 export function inboxTravelChange(t: { key: string; title: string; body: string }): boolean {
   return postToInbox({ kind: "agent-message", title: clip(t.title, 140), body: t.body, needsYou: false, key: t.key, ringThroughQuietHours: true }) !== null;
 }
+
+/** A reply the user owes or is owed (src/server/background-jobs/mail-followups.ts).
+ *  The agent writing to them, so it rings the phone. Read is enough. */
+export function inboxFollowUp(f: { key: string; title: string; body: string }): boolean {
+  return postToInbox({ kind: "agent-message", title: clip(f.title, 140), body: f.body, needsYou: false, key: f.key }) !== null;
+}

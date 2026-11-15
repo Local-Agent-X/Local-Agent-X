@@ -30,6 +30,14 @@ export const WATCHER_SETTINGS: ReadonlyArray<FlippableSetting> = [
     description: "Triage mail with a model on this machine only, so no email text goes to a cloud model. Off (default) uses the chat model. When no local model is available the mail check is skipped and the inbox says so; it never falls back to the cloud",
   },
   {
+    field: "followUpsEnabled",
+    owner: "protected", where: WATCHING,
+    validate: z.boolean(),
+    runtime: true,
+    broadcast: true,
+    description: "With mail watching on, also read the user's sent mail: a promise with a time (\"I'll send it Friday\") goes on the calendar, and the user is told once about an important mail they have not answered in 2 days or a question they sent with no answer in 3. On by default; uses the same model as mail watching",
+  },
+  {
     field: "travelWatchEnabled",
     owner: "protected", where: WATCHING,
     validate: z.boolean(),

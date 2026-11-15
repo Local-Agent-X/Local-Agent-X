@@ -65,6 +65,8 @@ export interface LAXConfig {
   /** Quiet hours, local time "HH:MM". */
   quietHoursStart: string;
   quietHoursEnd: string;
+  /** Whether sent mail is read for promises and replies owed/awaited are raised. */
+  followUpsEnabled: boolean;
   /** Whether flights are looked up near departure and changes raised. */
   travelWatchEnabled: boolean;
   /** Minutes before a commitment that a reminder is posted; 0 = off. */

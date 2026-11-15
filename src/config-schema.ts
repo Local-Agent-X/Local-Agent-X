@@ -63,6 +63,9 @@ export const configSchema = z.object({
   quietHoursEnabled: z.boolean().default(true),
   quietHoursStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).default("22:00"),
   quietHoursEnd: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).default("07:00"),
+  /** Whether the mail watcher also reads sent mail for promises and
+   *  questions, and raises replies owed and awaited. On by default. */
+  followUpsEnabled: z.boolean().default(true),
   /** Whether flights on the user's calendars are looked up near departure
    *  (web search) and changes raised. On by default. */
   travelWatchEnabled: z.boolean().default(true),

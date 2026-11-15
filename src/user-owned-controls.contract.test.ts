@@ -60,7 +60,7 @@ const WIDENING: Record<string, unknown> = {
   embeddingProvider: "openai", embeddingModel: "text-embedding-3-small", voiceMode: "browser",
   voiceSttProvider: "groq", voiceTier4Provider: "edge-tts",
   allowPaidMediaApis: true,
-  mailWatchEnabled: true, mailWatchLocalOnly: false, travelWatchEnabled: true,
+  mailWatchEnabled: true, mailWatchLocalOnly: false, travelWatchEnabled: true, followUpsEnabled: true,
 };
 const CURRENT: Record<string, unknown> = { toolApproval: "confirm-all", browserMode: "isolated" };
 const readCurrent = (field: string) => CURRENT[field];

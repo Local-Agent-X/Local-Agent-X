@@ -38,6 +38,9 @@ import {
   MAIL_WATCH_SESSION_PREFIX, MAIL_WATCH_SYSTEM_PROMPT, buildMailWatchMessage, parseMailVerdicts, type MailVerdict,
 } from "./mail-watch-prompt.js";
 import { recordPlan } from "../../calendar/plans.js";
+import {
+  SENT_MAIL_SYSTEM_PROMPT, applySentVerdicts, buildSentMessage, checkFollowUps, noteOwed, parseSentVerdicts, readSentMail, type SentBatch,
+} from "./mail-followups.js";
 import { announceClash } from "../../calendar/notice.js";
 import {
   loadMailWatchState, localDay, saveMailWatchState, type MailWatchState,
@@ -122,10 +125,15 @@ interface PassContext {
  *  it covers is judged or queued, so a failed pass reads it again. */
 async function watchAccount(account: MailAccount, ctx: PassContext): Promise<void> {
   const { d, state, now } = ctx;
-  const { mail, known } = await (d.session ?? defaultMailSession)(account.creds, async (s) => {
+  const followUps = getRuntimeConfig().followUpsEnabled;
+  const { mail, known, sent } = await (d.session ?? defaultMailSession)(account.creds, async (s) => {
     const read = await readNewMail(s, state.accounts[account.id], now);
     const senders = read.messages.map((m) => addressOf(m.from));
-    return { mail: read, known: await knownSenders(s, senders, state, now.getTime()) };
+    const knownSet = await knownSenders(s, senders, state, now.getTime());
+    // Replies owed and awaited, checked on the same connection (mail-followups.ts).
+    const sentBatch = followUps ? await readSentMail(s, state, account.id, now) : null;
+    if (followUps) await checkFollowUps(s, state, account.id, sentBatch?.folder ?? null, now);
+    return { mail: read, known: knownSet, sent: sentBatch };
   });
   state.digest.skipped += mail.skipped;
   ctx.result.read += mail.messages.length;
@@ -139,6 +147,32 @@ async function watchAccount(account: MailAccount, ctx: PassContext): Promise<voi
     }
   }
   state.accounts[account.id] = mail.checkpoint;
+  if (sent && sent.messages.length > 0 && state.usage.calls < DAILY_CALL_CAP) {
+    state.usage.calls++;
+    await judgeSent(account, sent, ctx);
+  }
+}
+
+/** One model call over the user's new sent mail: promises go on the
+ *  calendar, questions wait for an answer (mail-followups.ts). */
+async function judgeSent(account: MailAccount, sent: SentBatch, ctx: PassContext): Promise<void> {
+  const { d, now } = ctx;
+  const outcome = await (d.runFork ?? runReviewFork)({
+    forkSessionId: `${MAIL_WATCH_SESSION_PREFIX}sent-${now.getTime()}-${account.id}`,
+    message: buildSentMessage(now, sent),
+    systemPrompt: SENT_MAIL_SYSTEM_PROMPT,
+    section: { id: "mail-watch-sent", label: "Mail Watch (sent)" },
+    tools: [],
+    opType: OP_TYPE.mailWatch,
+    maxIterations: 2,
+    timeoutMs: FORK_TIMEOUT_MS,
+    ...(ctx.localOnly ? { localOnly: {} } : {}),
+  }, d);
+  const failure = reviewFailure(outcome);
+  if (failure) throw new Error(`the sent-mail check ${failure}`);
+  const verdicts = parseSentVerdicts(forkReply(outcome), sent.messages.map((m) => m.uid));
+  if (!verdicts) throw new Error("the model's answer about your sent mail could not be read");
+  await applySentVerdicts(account.id, sent, verdicts, ctx.state, now);
 }
 
 async function judgeAndPost(account: MailAccount, mail: NewMail, known: Set<string>, ctx: PassContext): Promise<number> {
@@ -168,6 +202,7 @@ async function judgeAndPost(account: MailAccount, mail: NewMail, known: Set<stri
   for (const m of mail.messages) {
     const v = byUid.get(m.uid);
     if (!v?.important) { rest.push(m); continue; }
+    if (v.category === "person" || v.category === "job") noteOwed(ctx.state, account.id, m, now);
     const posted = inboxImportantMail({
       account: account.id,
       id: m.messageId ?? `uid-${mail.checkpoint.uidValidity}-${m.uid}`,

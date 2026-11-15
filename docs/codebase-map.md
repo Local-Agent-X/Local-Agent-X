@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2059 non-test source files · 78 oversized · 269 nearing the size cap.
+**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2060 non-test source files · 78 oversized · 269 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -21,7 +21,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 184 | 29 | XL | 1 |
 | `src/security/` | 163 | 62 | XL | 2 |
-| `src/tools/` | 136 | 235 | XL | 9 |
+| `src/tools/` | 137 | 235 | XL | 9 |
 | `src/tool-execution/` | 100 | 90 | XL | 2 |
 | `src/workspace/` | 91 | 3 | M |  |
 | `src/canonical-loop/` | 89 | 292 | XL | 10 |
@@ -39,9 +39,9 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/auth/` | 36 | 11 | L |  |
 | `src/broker-transport/` | 29 | 50 | XL |  |
 | `src/context-manager/` | 29 | 16 | M |  |
+| `src/inbox/` | 29 | 7 | M |  |
 | `src/agent-store/` | 28 | 7 | M | 1 |
 | `src/context/` | 28 | 11 | M |  |
-| `src/inbox/` | 28 | 7 | M |  |
 | `src/agent-request/` | 26 | 16 | L | 3 |
 | `src/classifiers/` | 25 | 17 | L |  |
 | `src/app-runtime/` | 23 | 12 | M |  |
@@ -51,7 +51,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/orchestrator/` | 20 | 24 | L |  |
 | `src/autonomy/` | 19 | 6 | M |  |
 | `src/cognition/` | 19 | 37 | XL | 1 |
-| `src/server/` *(entrypoint)* | 19 | 74 | XL | 4 |
+| `src/server/` *(entrypoint)* | 19 | 75 | XL | 4 |
 | `src/agents/` | 17 | 14 | L |  |
 | `src/net/` | 17 | 11 | L |  |
 | `src/voice/` | 16 | 80 | XL | 1 |
@@ -66,7 +66,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/whatsapp-bridge/` | 12 | 8 | M | 1 |
 | `src/persistence/` | 11 | 2 | S |  |
 | `src/sync/` | 11 | 26 | L |  |
-| `src/calendar/` | 9 | 10 | M |  |
+| `src/calendar/` | 10 | 10 | M |  |
 | `src/codex-client/` | 9 | 7 | M |  |
 | `src/plugin-system/` | 9 | 10 | L | 1 |
 | `src/screen-stream/` | 9 | 11 | L |  |

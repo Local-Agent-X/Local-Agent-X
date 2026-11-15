@@ -22,6 +22,7 @@ import { cancelUpdateLanding, confirmUpdateLanding, prepareUpdateLanding, restor
 import { syncLiveDeps, updateGit } from "./update-live-deps.js";
 import type { GitUpdateResult } from "./update-pipeline.js";
 import type { StagedGitUpdate } from "./update-staging.js";
+import { updateStep } from "./update-progress.js";
 
 const logger = createLogger("update-pipeline");
 
@@ -70,6 +71,7 @@ async function swapIn(liveRoot: string, rel: string): Promise<void> {
 
 export async function landGitUpdate(staged: StagedGitUpdate, repoRoot: string): Promise<LandGitResult> {
   const ids = { fromCommit: staged.base.slice(0, 7), toCommit: staged.target.slice(0, 7), gates: staged.gates };
+  updateStep("land");
   const head = await updateGit("git rev-parse HEAD", repoRoot);
   if (head !== staged.base) {
     return { ok: false, stale: true, ...ids, detail: "This install changed since the update was prepared; it is prepared again." };

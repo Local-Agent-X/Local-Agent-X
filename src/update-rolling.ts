@@ -14,6 +14,7 @@ import { validateExtractedUpdate } from "./update-extracted-validation.js";
 import { syncLiveDeps } from "./update-live-deps.js";
 import type { GitUpdateResult } from "./update-pipeline.js";
 import type { StagedRollingUpdate, StagedUpdate } from "./update-staging.js";
+import { updateStep } from "./update-progress.js";
 
 const logger = createLogger("update-pipeline");
 
@@ -26,7 +27,9 @@ export async function prepareRollingUpdate(installDir: string, authToken: string
   const { commit } = await ota.resolveRollingTarget();
   const ids = { fromCommit: installed.slice(0, 7), toCommit: commit.slice(0, 7) };
   if (installed && installed === commit) return { ok: true, ...ids, detail: "Already up to date." };
+  updateStep("fetch");
   const tarPath = await ota.downloadRollingSource(commit);
+  updateStep("copy");
   let desktopDepsChanged = false;
   let gates: StagedRollingUpdate["gates"] | undefined;
   const staged = await ota.stageExtract(tarPath, commit, async (extractDir) => {
@@ -51,6 +54,7 @@ export interface LandRollingResult extends GitUpdateResult {
 
 export async function landRollingUpdate(staged: StagedRollingUpdate, installDir: string, ota = new OTAManager()): Promise<LandRollingResult> {
   const ids = { fromCommit: staged.base.slice(0, 7), toCommit: staged.target.slice(0, 7), gates: staged.gates };
+  updateStep("land");
   if (((await ota.readInstalledCommit()) || "") !== staged.base) {
     return { ok: false, stale: true, ...ids, detail: "This install changed since the update was prepared; it is prepared again." };
   }

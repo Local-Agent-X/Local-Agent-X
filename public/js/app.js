@@ -373,7 +373,8 @@ async function bannerApplyUpdate() {
   if (window._laxUpdateInFlight) return;
   if (!confirm('Pull the latest version from GitHub? You will be asked to relaunch the app afterward to finish installing.')) return;
   window._laxUpdateInFlight = true;
-  banner.innerHTML = `<span class="update-msg">Updating — downloading and validating in a sandbox. This can take several minutes (longer when dependencies changed). Leave the app open…</span>`;
+  banner.innerHTML = `<span class="update-msg"></span>`;
+  const stopProgress = watchUpdateProgress(banner.querySelector('.update-msg'));
   try {
     const res = await apiFetch('/api/updates/apply', { method: 'POST' });
     const data = await res.json().catch(() => ({}));
@@ -394,6 +395,7 @@ async function bannerApplyUpdate() {
   } catch (e) {
     banner.innerHTML = `<span class="update-msg" style="color:var(--error,#f88)">Update failed: ${esc(e && e.message ? e.message : String(e))}</span> <button class="update-dismiss" onclick="dismissUpdate()" title="Dismiss">&times;</button>`;
   } finally {
+    stopProgress();
     window._laxUpdateInFlight = false;
   }
 }

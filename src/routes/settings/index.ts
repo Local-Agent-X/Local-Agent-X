@@ -1,5 +1,6 @@
 import type { RouteHandler } from "../../server-context.js";
 import { handleSystemRoutes } from "./system.js";
+import { handleUpdateRoutes } from "./updates.js";
 import { handleRollbackRoutes } from "./rollback.js";
 import { handleDecommissionRoutes } from "./decommission.js";
 import { handleDiagnosticsRoutes } from "./diagnostics.js";

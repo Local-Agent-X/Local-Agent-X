@@ -32,6 +32,7 @@ import { discardGitStaged, prepareGitUpdate } from "./update-git-prepare.js";
 import { landGitUpdate } from "./update-git-land.js";
 
 import type { StagedGitUpdate, StagedRollingUpdate } from "./update-staging.js";
+import { beginUpdateProgress, endUpdateProgress } from "./update-progress.js";
 
 export { validateExtractedUpdate } from "./update-extracted-validation.js";
 export type { ExtractValidation } from "./update-extracted-validation.js";
@@ -64,8 +65,10 @@ export async function applyGitUpdate(repoRoot: string, authToken: string): Promi
     return { ok: false, held: true, fromCommit: "", toCommit: "", detail: UPDATE_BUSY };
   }
   try {
+    beginUpdateProgress("installing");
     return await prepareAndLandGit(repoRoot, authToken, `update:${lock.nonce}`);
   } finally {
+    endUpdateProgress();
     await releaseGlobalSelfEditLock(lock.nonce);
   }
 }
@@ -101,6 +104,7 @@ export async function applyRollingUpdate(installDir: string, authToken: string):
   }
   const ota = new OTAManager();
   let staged: StagedRollingUpdate | undefined;
+  beginUpdateProgress("installing");
   try {
     await ota.recoverPendingUpdate(installDir);
     const prepared = await prepareRollingUpdate(installDir, authToken, ota);
@@ -132,6 +136,7 @@ export async function applyRollingUpdate(installDir: string, authToken: string):
     }
     return { ok: false, fromCommit: "", toCommit: "", detail };
   } finally {
+    endUpdateProgress();
     await releaseGlobalSelfEditLock(lock.nonce);
   }
 }

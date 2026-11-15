@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2061 non-test source files · 77 oversized · 268 nearing the size cap.
+**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2062 non-test source files · 76 oversized · 269 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -62,7 +62,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/app-scaffold/` | 12 | 7 | M |  |
 | `src/ari-kernel/` | 12 | 12 | M |  |
 | `src/integrations/` | 12 | 15 | M |  |
-| `src/routes/` | 12 | 111 | XL | 17 |
+| `src/routes/` | 12 | 112 | XL | 16 |
 | `src/whatsapp-bridge/` | 12 | 8 | M | 1 |
 | `src/persistence/` | 11 | 2 | S |  |
 | `src/sync/` | 11 | 26 | L |  |
@@ -227,6 +227,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/update-git-rollback.ts` | S |
 | `src/update-live-deps.ts` | S |
 | `src/update-pipeline.ts` | S |
+| `src/update-progress.ts` | S |
 | `src/update-recovery.ts` | S |
 | `src/update-rollback-prune.ts` | S |
 | `src/update-rollback-state.ts` | S |
@@ -296,7 +297,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/routes/settings/local-runtimes.ts#handleLocalRuntimesRoutes`
 - `src/routes/settings/preferences.ts#handlePreferencesRoutes`
 - `src/routes/settings/providers.ts#handleProvidersRoutes`
-- `src/routes/settings/system.ts#handleSystemRoutes`
 - `src/sandbox/docker-execution-runtime.ts`
 - `src/security/layer/file-access.ts#evaluateFileAccess`
 - `src/security/layer/kernel-class-policy.ts#evaluateByKernelClass`
@@ -420,6 +420,7 @@ job. Comments are free: never cut them to fit.
 - `src/routes/bridges/integrations.ts#handleIntegrationsRoutes` — 90+ own code lines (cap 100)
 - `src/routes/chat/run-chat-turn/canonical-run.ts#persistTurnState` — 90+ own code lines (cap 100)
 - `src/routes/settings/diagnostics.ts#handleDiagnosticsRoutes` — 90+ own code lines (cap 100)
+- `src/routes/settings/system.ts#handleSystemRoutes` — 90+ own code lines (cap 100)
 - `src/routes/workspace-files.ts#handleWorkspaceFilesRoutes` — 90+ own code lines (cap 100)
 - `src/screen-stream/signaling-machine.ts#signalingReducer` — 90+ own code lines (cap 100)
 - `src/security/layer/network-policy.ts#evaluateWebFetch` — 90+ own code lines (cap 100)

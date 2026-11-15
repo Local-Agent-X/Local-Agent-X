@@ -20,6 +20,7 @@ import { rmUpdatePathRetry } from "./update-extracted-validation.js";
 import { updateGit } from "./update-live-deps.js";
 import type { GitUpdateResult, UpdateGates } from "./update-pipeline.js";
 import type { StagedGitUpdate, StagedUpdate } from "./update-staging.js";
+import { recordBuildDuration, updateStep } from "./update-progress.js";
 
 const logger = createLogger("update-pipeline");
 
@@ -52,6 +53,7 @@ async function heldReason(repoRoot: string): Promise<string | null> {
  * the worktree (the click passes its lock's nonce; the background job its own).
  */
 export async function prepareGitUpdate(repoRoot: string, authToken: string, owner: string): Promise<PrepareGitResult> {
+  updateStep("fetch");
   await updateGit("git fetch origin main --quiet", repoRoot);
   const base = await updateGit("git rev-parse HEAD", repoRoot);
   const remote = await updateGit("git rev-parse origin/main", repoRoot);
@@ -60,6 +62,7 @@ export async function prepareGitUpdate(repoRoot: string, authToken: string, owne
   const held = await heldReason(repoRoot);
   if (held) return { ok: false, held: true, ...ids, detail: held };
 
+  updateStep("copy");
   const name = `update-${nowSlug()}`;
   const wt = createNamedWorktree(name, `update/${nowSlug()}`, repoRoot, owner);
   if (!wt) return { ok: false, ...ids, detail: "Failed to create update worktree — see server logs." };
@@ -105,10 +108,14 @@ async function runGitGates(name: string, authToken: string, remote: string): Pro
   let probeProc: ChildProcess | null = null;
   let probeDataDir: string | null = null;
   try {
+    updateStep("deps");
     const deps = await gateDeps(name);
     if (!deps.skipped && !deps.ok) return { ok: false, gates: { deps, build: SKIPPED_GATE, bind: SKIPPED_GATE, smoke: SKIPPED_GATE }, detail: `Update blocked at deps gate: ${deps.detail.slice(0, 600)}` };
+    updateStep("build");
     const build = await gateBuild(name, undefined, "build:runtime");
+    if (build.ok) recordBuildDuration(build.durationMs);
     if (!build.ok) return { ok: false, gates: { deps, build, bind: SKIPPED_GATE, smoke: SKIPPED_GATE }, detail: `Update blocked at build gate: ${build.detail.slice(0, 600)}` };
+    updateStep("test");
     const port = await pickProbePort();
     const bindOutcome = await gateBind(name, port, authToken);
     probeProc = bindOutcome.proc;

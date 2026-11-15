@@ -37,7 +37,7 @@ async function settingsApplyUpdate() {
   if (!confirm('Pull the latest version from GitHub? You will be asked to relaunch the app afterward to finish installing.')) return;
   window._laxUpdateInFlight = true;
   status.style.color = 'var(--muted)';
-  status.innerHTML = 'Updating — downloading and validating in a sandbox. This can take several minutes (longer when dependencies changed). Leave the app open…';
+  const stopProgress = watchUpdateProgress(status);
   try {
     const res = await apiFetch('/api/updates/apply', { method: 'POST' });
     const data = await res.json().catch(() => ({}));
@@ -60,6 +60,7 @@ async function settingsApplyUpdate() {
     status.style.color = 'var(--error, red)';
     status.textContent = 'Update failed: ' + (e && e.message ? e.message : String(e));
   } finally {
+    stopProgress();
     window._laxUpdateInFlight = false;
   }
 }

@@ -11,6 +11,7 @@ import { createLogger } from "./logger.js";
 import { gateBuildAtAsync, gateBindAt, gateSmoke, killProbe, runNpmAt, SKIPPED_GATE, BUILD_TIMEOUT_MS, type GateResult } from "./self-edit/sandbox-gates.js";
 import { pickProbePort } from "./self-edit/sandbox-naming.js";
 import type { UpdateGates } from "./update-pipeline.js";
+import { recordBuildDuration, updateStep } from "./update-progress.js";
 
 const logger = createLogger("update-pipeline");
 
@@ -71,6 +72,7 @@ export async function validateExtractedUpdate(extractDir: string, installDir: st
   try {
     let deps: GateResult;
     if (depsChanged) {
+      updateStep("deps");
       // Async: a synchronous npm ci held the server for its whole run.
       const r = await runNpmAt(extractDir, ["ci"]);
       if (!r.ok) {
@@ -102,6 +104,7 @@ export async function validateExtractedUpdate(extractDir: string, installDir: st
       linkDirectoryInto(join(installDir, "desktop", "node_modules"), join(extractDir, "desktop", "node_modules"));
     }
 
+    updateStep("build");
     const serverBuild = await gateBuildAtAsync(extractDir, undefined, "build:runtime");
     if (!serverBuild.ok) {
       return { ok: false, depsChanged, desktopDepsChanged, detail: `build gate failed: ${serverBuild.detail.slice(0, 600)}`, gates: { deps, build: serverBuild, bind: SKIPPED_GATE, smoke: SKIPPED_GATE } };
@@ -118,6 +121,8 @@ export async function validateExtractedUpdate(extractDir: string, installDir: st
       return { ok: false, depsChanged, desktopDepsChanged, detail: `desktop build gate failed: ${build.detail.slice(0, 600)}`, gates: { deps, build, bind: SKIPPED_GATE, smoke: SKIPPED_GATE } };
     }
 
+    recordBuildDuration(build.durationMs);
+    updateStep("test");
     const port = await pickProbePort();
     const bindOutcome = await gateBindAt(extractDir, port, authToken);
     probeProc = bindOutcome.proc;

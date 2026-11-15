@@ -6,7 +6,14 @@
 // 22050Hz for TTS). If the AudioContext runs faster (48kHz is common), we
 // linearly stretch on read — nearest-neighbor, fine for speech, not hi-fi.
 
-const RING_CAPACITY = 48000 * 10; // 10 seconds headroom at any plausible rate
+// The ring starts at 10 s and doubles when a write would overflow it. The
+// sidecar sends a reply's audio as fast as it synthesizes it, not as fast as
+// it plays: Kokoro made 45 s of a long reply in 8 s (2026-11-15), and a fixed
+// 20 s ring overwrote the unplayed middle, so whole sentences were never
+// heard. Unplayed speech is dropped only past MAX_RING_SECONDS of backlog;
+// a barge-in "flush" empties the ring and returns it to its starting size.
+const RING_CAPACITY = 48000 * 10;
+const MAX_RING_SECONDS = 300;
 
 class PlaybackProcessor extends AudioWorkletProcessor {
   constructor() {
@@ -39,6 +46,7 @@ class PlaybackProcessor extends AudioWorkletProcessor {
         const arr = new Int16Array(e.data.pcm);
         this.writePCM(arr);
       } else if (e.data.cmd === "flush") {
+        if (this.ring.length > RING_CAPACITY) this.ring = new Float32Array(RING_CAPACITY);
         this.writeIdx = 0;
         this.readIdx = 0;
         this.available = 0;
@@ -60,16 +68,32 @@ class PlaybackProcessor extends AudioWorkletProcessor {
   }
 
   writePCM(int16) {
+    if (this.available + int16.length > this.ring.length) this.grow(this.available + int16.length);
+    const cap = this.ring.length;
     for (let i = 0; i < int16.length; i++) {
-      if (this.available >= RING_CAPACITY) {
-        this.readIdx = (this.readIdx + 1) % RING_CAPACITY;
+      if (this.available >= cap) {
+        this.readIdx = (this.readIdx + 1) % cap;
         this.available--;
       }
       this.ring[this.writeIdx] = int16[i] / 0x8000;
-      this.writeIdx = (this.writeIdx + 1) % RING_CAPACITY;
+      this.writeIdx = (this.writeIdx + 1) % cap;
       this.available++;
     }
     this.totalWriteSamples += int16.length;
+  }
+
+  /** Double the ring until it holds `needed` samples (up to the backlog
+   *  limit), keeping the unplayed samples in play order. */
+  grow(needed) {
+    const max = Math.max(RING_CAPACITY, Math.ceil(this.inputRate * MAX_RING_SECONDS));
+    let size = this.ring.length;
+    while (size < needed && size < max) size = Math.min(size * 2, max);
+    if (size === this.ring.length) return;
+    const next = new Float32Array(size);
+    for (let i = 0; i < this.available; i++) next[i] = this.ring[(this.readIdx + i) % this.ring.length];
+    this.ring = next;
+    this.readIdx = 0;
+    this.writeIdx = this.available % size;
   }
 
   process(_inputs, outputs) {
@@ -91,7 +115,7 @@ class PlaybackProcessor extends AudioWorkletProcessor {
       channel[i] = this.ring[this.readIdx];
       this.fractional += 1 / this.upsampleFactor;
       while (this.fractional >= 1 && this.available > 0) {
-        this.readIdx = (this.readIdx + 1) % RING_CAPACITY;
+        this.readIdx = (this.readIdx + 1) % this.ring.length;
         this.available--;
         this.fractional -= 1;
       }

@@ -1,6 +1,6 @@
 import type { ToolDefinition } from "../../types.js";
 import { IssueStore } from "../../agent-store/index.js";
-import { ok } from "./shared.js";
+import { ok } from "../result-helpers.js";
 
 export const issueSearchTool: ToolDefinition = {
   name: "issue_search",

@@ -6,7 +6,8 @@ import type { ToolDefinition, ToolResult } from "../../types.js";
 import { canonicalFetch } from "../web-egress.js";
 import { createLogger } from "../../logger.js";
 import { getRuntimeConfig } from "../../config.js";
-import { ok, err, okWithVideo, resolveMediaProvider, resolveLocalImagePath, imageFileToDataUrl, findRecentLocalImage, workspaceDir, PROMPT_REFS_EARLIER_IMAGE, mediaCallFailed } from "./shared.js";
+import { okWithVideo, resolveMediaProvider, resolveLocalImagePath, imageFileToDataUrl, findRecentLocalImage, workspaceDir, PROMPT_REFS_EARLIER_IMAGE, mediaCallFailed } from "./shared.js";
+import { ok, err } from "../result-helpers.js";
 import { noFreeMediaMessage, paidMediaApisAllowed } from "./paid-media.js";
 
 const xaiLogger = createLogger("image-tools.xai");

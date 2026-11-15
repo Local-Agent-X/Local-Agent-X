@@ -7,7 +7,8 @@ import type { BrowserBackend } from "../../browser/backend.js";
 import { PAGE_IMAGES_SCRIPT } from "../../browser/page-images.js";
 import { scanEvaluateScript, sensitivePageStub } from "../../browser/guards.js";
 import { wrapExternalContent } from "../../sanitize.js";
-import { err, withheld } from "./shared.js";
+import { withheld } from "./shared.js";
+import { err } from "../result-helpers.js";
 
 export async function handlePageImages(manager: BrowserBackend): Promise<ToolResult> {
   const sensitive = sensitivePageStub(manager.getCurrentUrl());

@@ -6,7 +6,8 @@
 
 import type { ToolResult } from "../../types.js";
 import type { BrowserBackend } from "../../browser/index.js";
-import { ok, withheld, humanVerificationRequired } from "./shared.js";
+import { withheld, humanVerificationRequired } from "./shared.js";
+import { ok } from "../result-helpers.js";
 import { sensitivePageStub } from "../../browser/guards.js";
 import { requiresHumanVerification } from "../../browser/human-verification.js";
 

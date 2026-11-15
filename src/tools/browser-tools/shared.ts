@@ -10,15 +10,6 @@ import { HUMAN_VERIFICATION_MESSAGE, HUMAN_VERIFICATION_RECOVERY, snapshotShowsH
 import { SENSITIVE_PAGE_RECOVERY } from "../../browser/sensitive-pages.js";
 import { blocked } from "../result-helpers.js";
 
-
-export function ok(content: string): ToolResult {
-  return { content };
-}
-
-export function err(content: string): ToolResult {
-  return { content, isError: true };
-}
-
 /** A page the secrecy setting withholds, as the refusal the agent reads. */
 export function withheld(stub: string): ToolResult {
   return blocked(stub, { layer: "browser-sensitive-page", browserStatus: "sensitive-content-withheld", recovery: SENSITIVE_PAGE_RECOVERY });

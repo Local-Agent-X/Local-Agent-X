@@ -4,10 +4,8 @@ import type { ToolDefinition, ToolResult } from "../../types.js";
 import { sessionIdOf } from "../../workspace/paths.js";
 import { FormData } from "undici";
 import { canonicalFetch } from "../web-egress.js";
-import {
-  ok, err, okWithImage, resolveMediaProvider, resolveLocalImagePath, mediaProviderLabel, withMediaNote,
-  findRecentLocalImage, workspaceDir, PROMPT_REFS_EARLIER_IMAGE, mediaCallFailed,
-} from "./shared.js";
+import { okWithImage, resolveMediaProvider, resolveLocalImagePath, mediaProviderLabel, withMediaNote, findRecentLocalImage, workspaceDir, PROMPT_REFS_EARLIER_IMAGE, mediaCallFailed } from "./shared.js";
+import { ok, err } from "../result-helpers.js";
 import { requestCodexImage } from "./codex-images.js";
 import { noFreeMediaMessage, paidMediaApisAllowed, PAID_MEDIA_SETTING_LABEL } from "./paid-media.js";
 import { CODEX_IMAGE_MODEL } from "../../codex-client/images.js";

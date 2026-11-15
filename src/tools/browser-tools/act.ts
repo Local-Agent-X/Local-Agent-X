@@ -17,8 +17,7 @@ import type { ToolResult } from "../../types.js";
 import type { BrowserBackend } from "../../browser/index.js";
 import type { DurableRef } from "../../browser/observation.js";
 import { USER_TOOK_WHEEL } from "../../browser/in-app-actions.js";
-import { ok, err } from "./shared.js";
-import { withMetadata } from "../result-helpers.js";
+import { ok, err, withMetadata } from "../result-helpers.js";
 
 // Roles that accept a typed value (fill intent) vs. roles that respond to a
 // click. The click set is deliberately broad; anything it misses is caught by

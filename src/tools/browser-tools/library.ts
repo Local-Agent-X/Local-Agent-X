@@ -13,7 +13,7 @@
 
 import type { ToolResult } from "../../types.js";
 import type { BrowserBackend } from "../../browser/index.js";
-import { ok, err } from "./shared.js";
+import { ok, err } from "../result-helpers.js";
 import { wrapExternalContent } from "../../sanitize.js";
 import { BrowserHistoryStore, type HistoryEntry } from "../../browser/history-store.js";
 import { BrowserBookmarkStore, type BrowserBookmark } from "../../browser/bookmark-store.js";

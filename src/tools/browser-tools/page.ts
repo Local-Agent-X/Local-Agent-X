@@ -11,8 +11,8 @@ import { heldSecretValues, maskHeldSecrets } from "../../browser/evaluate-held-s
 import { closeBrowser } from "../../browser/index.js";
 import { evaluateBlockMessage, scanEvaluateScript, sensitivePageStub } from "../../browser/guards.js";
 import { wrapExternalContent } from "../../sanitize.js";
-import { ok, err, appendPostActionSnapshot, withheld } from "./shared.js";
-import { blocked } from "../result-helpers.js";
+import { appendPostActionSnapshot, withheld } from "./shared.js";
+import { ok, err, blocked } from "../result-helpers.js";
 import { downloadApprovalOf } from "../../tool-execution/internal-args.js";
 
 const EVALUATE_MUTATION =

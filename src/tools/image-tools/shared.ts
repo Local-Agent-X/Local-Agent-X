@@ -1,6 +1,6 @@
 /**
  * Shared helpers for the image-tools modules — provider resolution,
- * ToolResult shorthand, recent-local-image fallback for video gen, and
+ * media results, recent-local-image fallback for video gen, and
  * the prompt regex that signals the user is referring to an earlier image.
  */
 
@@ -17,9 +17,7 @@ import { resolveAgentPath } from "../../workspace/paths.js";
 import { imageEngineSetting, sessionImageEngine, type ImageEngine } from "./image-engine.js";
 import { paidMediaApisAllowed, paidMediaOffMessage } from "./paid-media.js";
 import { EgressRedirectBlocked, egressBlockedResult } from "../web-egress.js";
-
-export function ok(content: string): ToolResult { return { content }; }
-export function err(content: string): ToolResult { return { content, isError: true }; }
+import { ok, err } from "../result-helpers.js";
 
 /** A media call that threw, as the tool's result. Strict web access refusing
  *  a host (the provider API, or the host it hands the file back from) is the

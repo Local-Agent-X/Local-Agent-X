@@ -12,11 +12,10 @@
 
 import type { ServerEvent, ToolResult } from "../../types.js";
 import type { BrowserBackend } from "../../browser/index.js";
-import { err } from "./shared.js";
+import { err, blocked, declined, needsUser } from "../result-helpers.js";
 import { recordProgress, resetProgress } from "../../browser/progress-tracker.js";
 import { sensitivePageActionDecision } from "../../browser/guards.js";
 import { getApprovalManager } from "../../approval-manager.js";
-import { blocked, declined, needsUser } from "../result-helpers.js";
 import { HUMAN_VERIFICATION_MESSAGE, HUMAN_VERIFICATION_RECOVERY, requiresHumanVerification } from "../../browser/human-verification.js";
 import { RESET_ACTIONS, TRACKED_ACTIONS, READ_ONLY_ACTIONS, HUMAN_VERIFICATION_BLOCKED_ACTIONS } from "./action-tables.js";
 import { decisionRequiresPrompt, getRiskDecision } from "../../approval-decision.js";

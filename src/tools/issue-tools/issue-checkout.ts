@@ -1,6 +1,6 @@
 import type { ToolDefinition } from "../../types.js";
 import { IssueStore } from "../../agent-store/index.js";
-import { ok, err } from "./shared.js";
+import { ok, err } from "../result-helpers.js";
 
 export const issueCheckoutTool: ToolDefinition = {
   name: "issue_checkout",

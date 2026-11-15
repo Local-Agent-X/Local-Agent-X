@@ -8,7 +8,8 @@
 import type { ToolResult } from "../../types.js";
 import { buildCodexImageRequest, readCodexImageResponse } from "../../codex-client/images.js";
 import { canonicalFetch } from "../web-egress.js";
-import { err, mediaCallFailed } from "./shared.js";
+import { mediaCallFailed } from "./shared.js";
+import { err } from "../result-helpers.js";
 
 // Codex's own tool description gives an image a few minutes and its first
 // wait 120 s; the generate_image / edit_image policy rows allow for this.

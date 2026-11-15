@@ -1,6 +1,7 @@
 import type { ToolDefinition } from "../../types.js";
 import { IssueStore, type IssueStatus } from "../../agent-store/index.js";
-import { ok, canAccessIssue } from "./shared.js";
+import { canAccessIssue } from "./shared.js";
+import { ok } from "../result-helpers.js";
 
 export const issueListTool: ToolDefinition = {
   name: "issue_list",

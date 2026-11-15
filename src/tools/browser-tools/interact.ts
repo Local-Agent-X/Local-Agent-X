@@ -6,7 +6,8 @@
 
 import type { ToolResult } from "../../types.js";
 import type { BrowserBackend } from "../../browser/index.js";
-import { ok, err, appendPostActionSnapshot, listInputRefs } from "./shared.js";
+import { appendPostActionSnapshot, listInputRefs } from "./shared.js";
+import { ok, err } from "../result-helpers.js";
 
 export async function handleClick(
   manager: BrowserBackend,

@@ -25,8 +25,7 @@ import type { ToolResult } from "../../types.js";
 import { USER_HINTS } from "../../types.js";
 import type { BrowserBackend } from "../../browser/index.js";
 import { canonicalizeAttachmentPath, checkAttachmentPaths } from "../http-egress-guard.js";
-import { blocked } from "../result-helpers.js";
-import { ok, err } from "./shared.js";
+import { blocked, ok, err } from "../result-helpers.js";
 
 /** What the model is told when a file is refused outright (one of LAX's own
  *  data-dir files, or a credential file with nobody watching): the route is

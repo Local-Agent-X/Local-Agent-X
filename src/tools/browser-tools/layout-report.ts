@@ -32,7 +32,8 @@ import type { BrowserBackend } from "../../browser/backend.js";
 import { LAYOUT_REPORT_SCRIPT } from "../../browser/layout-report.js";
 import { scanEvaluateScript, sensitivePageStub } from "../../browser/guards.js";
 import { wrapExternalContent } from "../../sanitize.js";
-import { err, withheld } from "./shared.js";
+import { withheld } from "./shared.js";
+import { err } from "../result-helpers.js";
 
 // The dispatcher (index.ts) hands each action the session id; this handler
 // keys nothing on it (see the header: no per-session profile is printed).

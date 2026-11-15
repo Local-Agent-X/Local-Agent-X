@@ -39,7 +39,7 @@ import { resolveBrowserSessionId } from "../../browser/session-owner-registry.js
 import { describeEmulation, getSessionEmulation, resolveEmulationProfile, setSessionEmulation } from "../../browser/emulation.js";
 import { USER_AGENTS } from "../../browser/launcher.js";
 import { isBlankish } from "../../browser/blankish.js";
-import { ok, err } from "./shared.js";
+import { ok, err } from "../result-helpers.js";
 
 /** The in-app view is the browser the USER is looking at, and its page is a
  *  bridge adapter with a read-only viewportSize() (in-app-observe.ts). Nothing

@@ -1,14 +1,10 @@
 /**
- * Shared helpers for the issue-tools modules — ToolResult shorthand and
- * project-scope resolvers used across every issue/agent tool.
+ * Shared helpers for the issue-tools modules — project-scope resolvers used
+ * across every issue/agent tool.
  */
 
-import type { ToolResult } from "../../types.js";
 import { ProjectStore } from "../../agent-store/index.js";
 import { ProjectRosterStore } from "../../project-rosters.js";
-
-export function ok(content: string): ToolResult { return { content }; }
-export function err(content: string): ToolResult { return { content, isError: true }; }
 
 /** Return the roster entry for an (agent, issue) pair when the issue is
  *  scoped to a project. reportsTo / heartbeat live on the roster, not

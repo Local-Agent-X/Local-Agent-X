@@ -1,7 +1,7 @@
 import type { ToolDefinition } from "../../types.js";
 import { IssueStore, AgentTemplateStore, ProjectStore } from "../../agent-store/index.js";
 import { ProjectRosterStore } from "../../project-rosters.js";
-import { ok, err } from "./shared.js";
+import { ok, err } from "../result-helpers.js";
 import { sessionIdOf } from "../../tool-execution/internal-args.js";
 
 export const agentWakeupTool: ToolDefinition = {

@@ -1,7 +1,8 @@
 import type { ToolDefinition } from "../../types.js";
 import { IssueStore, AgentTemplateStore, type IssueStatus } from "../../agent-store/index.js";
 import { ProjectRosterStore } from "../../project-rosters.js";
-import { ok, err, rosterForIssue } from "./shared.js";
+import { rosterForIssue } from "./shared.js";
+import { ok, err } from "../result-helpers.js";
 import { sessionIdOf } from "../../tool-execution/internal-args.js";
 
 export const issueUpdateTool: ToolDefinition = {

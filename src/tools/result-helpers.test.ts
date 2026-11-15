@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { declined, blocked, statusOf, parseStatusHeader, renderToolResultForModel } from "./result-helpers.js";
+import { declined, blocked, err, ok, statusOf, parseStatusHeader, renderToolResultForModel } from "./result-helpers.js";
 import { USER_HINTS } from "../types.js";
 
 // Regression for the "declined" status (user said no to THIS call, distinct
@@ -30,5 +30,21 @@ describe("declined tool-result status", () => {
     const d = renderToolResultForModel(declined("DECLINED by user: bash"));
     expect(parseStatusHeader(b)).toBe("blocked");
     expect(parseStatusHeader(d)).toBe("declined");
+  });
+});
+
+// Two success renderings, each load-bearing: a bare ok() renders verbatim
+// (grep's "No matches found." and the replayed tool message are matched from
+// position 0), and the app tools' ok() carries an [ok] header (without it Grok
+// re-verified finished work in a loop, 69cdccba3). One ok() for both breaks one.
+describe("ok() success rendering", () => {
+  it("renders a bare ok() verbatim and an err() with its header", () => {
+    expect(renderToolResultForModel(ok("No matches found."))).toBe("No matches found.");
+    expect(renderToolResultForModel(err("boom"))).toBe("[error]\nboom");
+  });
+
+  it("gives an app tool's success an [ok] header", async () => {
+    const { ok: appOk } = await import("./app-tools/shared.js");
+    expect(renderToolResultForModel(appOk("Pinned."))).toBe("[ok]\nPinned.");
   });
 });

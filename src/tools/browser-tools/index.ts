@@ -27,8 +27,8 @@ import type { BrowserEngine, WedgeRecoveryOutcome } from "../../browser/index.js
 import { getToolTimeout } from "../../tool-execution/tool-timeout.js";
 import { withBridgeDeadline } from "../../browser/bridge-deadline.js";
 import { raceWedgeDeadline, WEDGED } from "./wedge-deadline.js";
-import { VALID_ENGINES, err, withheld } from "./shared.js";
-import { blocked } from "../result-helpers.js";
+import { VALID_ENGINES, withheld } from "./shared.js";
+import { err, blocked } from "../result-helpers.js";
 import {
   BROWSER_TOOL_NAME,
   BROWSER_TOOL_DESCRIPTION,

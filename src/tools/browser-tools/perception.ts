@@ -10,7 +10,7 @@
 import type { ToolResult } from "../../types.js";
 import type { BrowserBackend } from "../../browser/index.js";
 import { wrapExternalContent } from "../../sanitize.js";
-import { err } from "./shared.js";
+import { err } from "../result-helpers.js";
 
 // Defensive on getCurrentUrl (required on the real interface, but test
 // doubles / a future backend variant may not implement it) — mirrors the

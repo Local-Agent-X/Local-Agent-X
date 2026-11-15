@@ -3,8 +3,8 @@
 // contradictions within an entity's facts.
 
 import { type FactEntry, type MergedFact } from "./types.js";
-import { jaccardSimilarity } from "./utils.js";
-import { tokenizeBasic, jaccardSimilarity as jaccardOfSets } from "../../text-utils.js";
+import { textSimilarity } from "./utils.js";
+import { tokenizeBasic, jaccardSimilarity } from "../../text-utils.js";
 import { loadSqliteFacts, loadAllRecentFacts } from "./load-facts.js";
 
 /** Each fact's words, split once. The pair loops below split both texts for every
@@ -19,7 +19,7 @@ function similarAtLeast(a: Set<string>, b: Set<string>, min: number): boolean {
   const smaller = Math.min(a.size, b.size);
   const larger = Math.max(a.size, b.size);
   if (larger > 0 && smaller < min * larger) return false;
-  return jaccardOfSets(a, b) >= min;
+  return jaccardSimilarity(a, b) >= min;
 }
 
 export function mergeRelatedFacts(facts: FactEntry[]): MergedFact[] {
@@ -129,7 +129,7 @@ export function countContradictions(group: FactEntry[]): number {
       // Multiple facts about same category for same entity — potential contradiction
       for (let i = 0; i < matching.length; i++) {
         for (let j = i + 1; j < matching.length; j++) {
-          const sim = jaccardSimilarity(matching[i].content, matching[j].content);
+          const sim = textSimilarity(matching[i].content, matching[j].content);
           if (sim < 0.5) count++; // Low similarity = likely contradiction
         }
       }

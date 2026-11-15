@@ -31,7 +31,8 @@ import {
   type FactEntry,
   type MergedFact,
 } from "./types.js";
-import { ensureDirs, jaccardSimilarity, slugify } from "./utils.js";
+import { ensureDirs, textSimilarity } from "./utils.js";
+import { slugify } from "../../utils.js";
 import { loadTodayFacts } from "./load-facts.js";
 import { countContradictions, getPromotionCandidates, mergeRelatedFacts } from "./analyze.js";
 
@@ -77,7 +78,7 @@ export class MemoryConsolidator {
     for (const [, group] of grouped) {
       for (let i = 0; i < group.length; i++) {
         for (let j = i + 1; j < group.length; j++) {
-          const sim = jaccardSimilarity(group[i].content, group[j].content);
+          const sim = textSimilarity(group[i].content, group[j].content);
           if (sim > 0.3 && sim < 0.7) {
             // Reinforcing but not duplicate — boost confidence
             group[i].confidence = Math.min(1, group[i].confidence + 0.1);

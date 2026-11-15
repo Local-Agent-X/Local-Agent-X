@@ -227,16 +227,6 @@ export function cosineSimilarity(a: number[], b: number[]): number {
   return denom === 0 ? 0 : dot / denom;
 }
 
-export function tokenize(text: string): Set<string> {
-  return new Set(
-    text
-      .toLowerCase()
-      .replace(/[^\p{L}\p{N}\s_]/gu, " ")
-      .split(/\s+/)
-      .filter((t) => t.length > 1 && !STOP_WORDS.has(t))
-  );
-}
-
 // ── Score normalization ──
 
 export function bm25RankToScore(rank: number): number {

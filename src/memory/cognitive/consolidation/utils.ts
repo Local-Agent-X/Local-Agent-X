@@ -1,9 +1,10 @@
 // Tiny shared helpers. ensureDirs guarantees the on-disk layout exists
-// before any reader/writer runs; slugify and todayDateStr are formatting
-// primitives shared by the fact readers and the consolidation log.
+// before any reader/writer runs; todayDateStr is a formatting primitive
+// shared by the fact readers and the consolidation log. Entity slugs come
+// from memory/utils.ts slugify, the one the entity pages are named by.
 
 import { existsSync, mkdirSync } from "node:fs";
-import { tokenizeBasic, jaccardSimilarity as jaccardSim } from "../../text-utils.js";
+import { tokenizeBasic, jaccardSimilarity } from "../../text-utils.js";
 import { LAX_DIR, MEMORY_DIR } from "./types.js";
 
 export function ensureDirs(): void {
@@ -12,17 +13,11 @@ export function ensureDirs(): void {
   }
 }
 
-export function slugify(name: string): string {
-  return name
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
-}
-
 export function todayDateStr(): string {
   return new Date().toISOString().split("T")[0];
 }
 
-export function jaccardSimilarity(a: string, b: string): number {
-  return jaccardSim(tokenizeBasic(a), tokenizeBasic(b));
+/** Word overlap of two texts: the shared Jaccard over tokenizeBasic's words. */
+export function textSimilarity(a: string, b: string): number {
+  return jaccardSimilarity(tokenizeBasic(a), tokenizeBasic(b));
 }

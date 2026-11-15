@@ -3,7 +3,7 @@
 // what comparing every pair's text gives.
 import { describe, expect, it } from "vitest";
 import { mergeRelatedFacts } from "./analyze.js";
-import { jaccardSimilarity } from "./utils.js";
+import { textSimilarity } from "./utils.js";
 import type { FactEntry } from "./types.js";
 
 const fact = (content: string): FactEntry => ({ content, confidence: 0.5, accessCount: 1, createdAt: 0 });
@@ -17,7 +17,7 @@ function groupsByFullComparison(facts: FactEntry[], min: number): string[][] {
     const group = [facts[i]!.content];
     used.add(i);
     for (let j = i + 1; j < facts.length; j++) {
-      if (!used.has(j) && jaccardSimilarity(facts[i]!.content, facts[j]!.content) >= min) {
+      if (!used.has(j) && textSimilarity(facts[i]!.content, facts[j]!.content) >= min) {
         group.push(facts[j]!.content);
         used.add(j);
       }

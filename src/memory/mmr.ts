@@ -31,7 +31,7 @@
 interface Scored { score: number; snippet: string }
 
 import { jaccardSimilarity as jaccard } from "./text-utils.js";
-import { tokenize } from "./utils.js";
+import { extractKeywords } from "./utils.js";
 
 /**
  * Re-rank candidates using MMR. Returns at most `k` items.
@@ -47,7 +47,7 @@ export function mmrRerank<T extends Scored>(
   if (k <= 0) return [];
 
   // Precompute token bags once per candidate — reused across the greedy loop
-  const tokens = candidates.map(c => tokenize(c.snippet));
+  const tokens = candidates.map(c => new Set(extractKeywords(c.snippet)));
 
   // Normalize relevance to [0, 1] so λ*relevance vs (1-λ)*sim is comparable
   const maxScore = Math.max(...candidates.map(c => c.score), 1e-6);

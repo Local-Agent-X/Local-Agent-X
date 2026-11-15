@@ -130,3 +130,28 @@ describe("htmlToText renders what a reader would see", () => {
     expect(htmlToText("<p>5 &lt; 6 &amp;amp; &lt;b&gt;</p>")).toBe("5 < 6 &amp; <b>");
   });
 });
+
+// The other readers of the shared htmlToText (2026-11-15: it became the mail
+// renderer for everyone). A search result's title and snippet and a caption
+// line are inline HTML: their words and entities come through once, nothing
+// added or doubled.
+describe("htmlToText for inline HTML: search snippets and captions", () => {
+  it("renders a search snippet's highlights and entities as plain words", () => {
+    expect(htmlToText("Local <b>Agent</b> X &mdash; runs &amp; builds <b>apps</b>")).toBe("Local Agent X \u2014 runs & builds apps");
+  });
+
+  it("decodes a caption line once, leaving a double-escaped entity as one level of escaping", () => {
+    expect(htmlToText("I&#39;m here &amp;&amp; ready")).toBe("I'm here && ready");
+    expect(htmlToText("it&amp;#39;s")).toBe("it&#39;s");
+  });
+
+  it("keeps a caption's line break", () => {
+    expect(htmlToText("first line\nsecond line")).toBe("first line\nsecond line");
+  });
+
+  it("reads a title on its own, for a reader that names the document by it", async () => {
+    const { htmlTitle } = await import("../src/app-renderer/sanitize.js");
+    expect(htmlTitle("<html><head><title> Q3 &amp; Q4 </title></head><body>x</body></html>")).toBe("Q3 & Q4");
+    expect(htmlTitle("<p>no title</p>")).toBe("");
+  });
+});

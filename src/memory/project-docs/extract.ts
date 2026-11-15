@@ -8,7 +8,7 @@ import { extname } from "node:path";
 import { PDFParse } from "pdf-parse";
 import { readValidatedFile } from "../../security/layer/index.js";
 import { extractOfficeText } from "../../tools/office-text.js";
-import { htmlToText } from "../../app-renderer/sanitize.js";
+import { htmlTitle, htmlToText } from "../../app-renderer/sanitize.js";
 import { recognizeText } from "../../tools/ocr-tool.js";
 
 const TEXT_EXTENSIONS = new Set([".md", ".markdown", ".txt", ".csv", ".tsv", ".json", ".yaml", ".yml", ".xml"]);
@@ -63,7 +63,11 @@ export async function documentText(absPath: string): Promise<string> {
   } else if (OFFICE_EXTENSIONS.has(ext)) {
     text = await extractOfficeText(absPath, bytes);
   } else if (HTML_EXTENSIONS.has(ext)) {
-    text = htmlToText(bytes.toString("utf-8"));
+    // The page's title names the document; htmlToText leaves it out, as a browser does.
+    const html = bytes.toString("utf-8");
+    const title = htmlTitle(html);
+    const body = htmlToText(html);
+    text = title && !body.startsWith(title) ? `${title}\n\n${body}` : body;
   } else {
     text = bytes.toString("utf-8");
   }

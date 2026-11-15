@@ -46,6 +46,17 @@ describe("documentText", () => {
     expect(text).not.toContain("<");
   });
 
+  // The shared htmlToText drops <title>, as a browser does; the title names the
+  // document, so the index keeps it as the first line (2026-11-15).
+  it("keeps an HTML page's title as its first line, and drops scripts and styles", async () => {
+    const html = join(dir, "titled.html");
+    writeFileSync(html, "<html><head><title>Q3 Launch &amp; Pricing</title><style>p{color:red}</style></head><body><script>var x=1</script><p>Ships in May.</p></body></html>");
+    const text = await documentText(html);
+    expect(text.split("\n")[0]).toBe("Q3 Launch & Pricing");
+    expect(text).toContain("Ships in May.");
+    expect(text).not.toMatch(/color:red|var x/);
+  });
+
   it("reads the words in an image", async () => {
     const png = join(dir, "invoice.png");
     writeFileSync(png, readFileSync(invoicePng));

@@ -110,6 +110,17 @@ export function htmlToText(html: string): string {
     .trim();
 }
 
+/**
+ * An HTML document's <title>, as text, or "". htmlToText drops it (a browser
+ * never shows it in the page, and a mail's title repeats its subject); a
+ * reader that names the document by it, like the project-document index,
+ * asks for it here.
+ */
+export function htmlTitle(html: string): string {
+  const m = /<title\b[^>]*>([\s\S]*?)<\/title>/i.exec(html);
+  return m ? htmlToText(m[1]) : "";
+}
+
 /** Escape a value for use in a JS string literal */
 export function escapeJs(s: string): string {
   return s

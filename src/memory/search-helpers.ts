@@ -9,7 +9,7 @@ import type {
   CanonicalSource, Chunk, ChunkMetadata, ChunkSourceType, MemoryProvenance,
   MemorySearchResult, MemoryTaintStatus, MemoryTrustStatus,
 } from "./types.js";
-import { sha256, tokenize, normalizeScores } from "./utils.js";
+import { sha256 } from "./utils.js";
 import { jaccardSimilarity } from "./text-utils.js";
 import { describeWhen, excerptAround } from "./retrieval-format.js";
 
@@ -306,50 +306,4 @@ export function applyTemporalQueryBoost(results: MemorySearchResult[], query: st
   }
   results.sort((a, b) => b.score - a.score);
   return results;
-}
-
-// ── MMR diversity re-ranking ──
-
-export function mmrRerank(
-  results: MemorySearchResult[],
-  limit: number,
-  lambda: number
-): MemorySearchResult[] {
-  if (results.length <= 1) return results;
-
-  const scored = results.map((r) => ({ ...r }));
-  normalizeScores(scored);
-
-  const tokenSets = scored.map((r) => tokenize(r.snippet));
-
-  const selected: number[] = [];
-  const remaining = new Set(scored.map((_, i) => i));
-
-  while (selected.length < limit && remaining.size > 0) {
-    let bestIdx = -1;
-    let bestMmr = -Infinity;
-
-    for (const idx of remaining) {
-      const relevance = scored[idx].score;
-      let maxSim = 0;
-      for (const selIdx of selected) {
-        const sim = jaccardSimilarity(tokenSets[idx], tokenSets[selIdx]);
-        if (sim > maxSim) maxSim = sim;
-      }
-      const mmr = lambda * relevance - (1 - lambda) * maxSim;
-      if (mmr > bestMmr || (mmr === bestMmr && results[idx].score > results[bestIdx]?.score)) {
-        bestMmr = mmr;
-        bestIdx = idx;
-      }
-    }
-
-    if (bestIdx >= 0) {
-      selected.push(bestIdx);
-      remaining.delete(bestIdx);
-    } else {
-      break;
-    }
-  }
-
-  return selected.map((i) => results[i]);
 }

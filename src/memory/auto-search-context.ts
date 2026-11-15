@@ -190,9 +190,8 @@ export async function autoSearchContext(
     // rerank here: greedy MMR's first three picks don't depend on k, and in
     // this branch the score normalization matches the same-session-only pool
     // (a strictly-max-scoring cross candidate would have won the first pick,
-    // contradicting crossInjected === 0; likewise the no-rerank shortcut at
-    // candidates.length <= k always injects cross), so slicing reproduces
-    // the taskStart=false output byte-for-byte.
+    // contradicting crossInjected === 0), so slicing reproduces the
+    // taskStart=false output byte-for-byte.
     if (crossOnly.length > 0 && crossInjected === 0) {
       results = results.slice(0, BASE_K);
     }

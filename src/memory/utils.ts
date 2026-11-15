@@ -244,16 +244,3 @@ export function bm25RankToScore(rank: number): number {
   return Math.max(0, Math.min(1, relevance / (1 + Math.abs(relevance))));
 }
 
-export function normalizeScores(results: { score: number }[]): void {
-  if (results.length === 0) return;
-  const max = Math.max(...results.map((r) => r.score));
-  const min = Math.min(...results.map((r) => r.score));
-  const range = max - min;
-  if (range === 0) {
-    for (const r of results) r.score = 1;
-    return;
-  }
-  for (const r of results) {
-    r.score = (r.score - min) / range;
-  }
-}

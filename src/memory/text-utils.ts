@@ -5,7 +5,7 @@
  *   - tokenizeBasic: punctuation→space, length > 2, no stopwords.
  *     Used for fact-merge dedup and tier query-match where stopwords carry signal.
  *   - tokenizeStrict: alpha-numeric only, length ≥ 3, common-word stopwords removed.
- *     Used for diversity scoring (MMR), where "the/and/is" would dominate Jaccard.
+ *     Used for fact-overlap checks, where "the/and/is" would dominate Jaccard.
  *
  * Plus jaccardSimilarity, which works on any Iterable<string>.
  */

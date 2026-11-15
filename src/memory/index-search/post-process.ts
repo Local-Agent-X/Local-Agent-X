@@ -2,8 +2,9 @@ import { basename } from "node:path";
 import type Database from "better-sqlite3";
 import { PROFILE_SOURCES, type FactKind, type MemoryConfig, type MemorySearchResult } from "../types.js";
 import {
-  applyTemporalDecay, applyTemporalQueryBoost, mmrRerank,
+  applyTemporalDecay, applyTemporalQueryBoost,
 } from "../search-helpers.js";
+import { mmrRerank } from "../mmr.js";
 import { parseDateRange, dateInRange } from "../date-parser.js";
 import { slugify } from "../utils.js";
 import { chunkLocalDay } from "../retrieval-format.js";

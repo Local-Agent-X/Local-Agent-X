@@ -19,11 +19,19 @@
  * carry embeddings at this layer) diversifies. If two candidates share
  * >70% of their tokens, the second one gets penalized and a different
  * topic bubbles up instead.
+ *
+ * The one MMR for memory: auto-recall picks its few snippets with it, and
+ * memory_search's post-process orders its pool with it before the final cut.
+ * It always ranks, even when every candidate fits in k, because search asks
+ * for more than it returns and relies on the order to sink near duplicates
+ * below that cut. Tokens are Unicode-aware: an ASCII-only tokenizer leaves
+ * non-Latin snippets empty, and two empty bags score as identical.
  */
 
 interface Scored { score: number; snippet: string }
 
-import { tokenizeStrict, jaccardSimilarity as jaccard } from "./text-utils.js";
+import { jaccardSimilarity as jaccard } from "./text-utils.js";
+import { tokenize } from "./utils.js";
 
 /**
  * Re-rank candidates using MMR. Returns at most `k` items.
@@ -36,10 +44,10 @@ export function mmrRerank<T extends Scored>(
   k: number,
   lambda = 0.7,
 ): T[] {
-  if (candidates.length <= k || k <= 0) return candidates.slice(0, k);
+  if (k <= 0) return [];
 
   // Precompute token bags once per candidate — reused across the greedy loop
-  const tokens = candidates.map(c => tokenizeStrict(c.snippet));
+  const tokens = candidates.map(c => tokenize(c.snippet));
 
   // Normalize relevance to [0, 1] so λ*relevance vs (1-λ)*sim is comparable
   const maxScore = Math.max(...candidates.map(c => c.score), 1e-6);

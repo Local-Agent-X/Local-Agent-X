@@ -4,7 +4,7 @@
  * Two tokenizers, intentionally distinct:
  *   - tokenizeBasic: punctuation→space, length > 2, no stopwords.
  *     Used for fact-merge dedup and tier query-match where stopwords carry signal.
- *   - tokenizeStrict: alpha-numeric only, length ≥ 3, common-word stopwords removed.
+ *   - tokenizeStrict: letters and digits in any script, common-word stopwords removed.
  *     Used for fact-overlap checks, where "the/and/is" would dominate Jaccard.
  *
  * Plus jaccardSimilarity, which works on any Iterable<string>.
@@ -26,11 +26,19 @@ export function tokenizeBasic(text: string): string[] {
     .filter((w) => w.length > 2);
 }
 
-/** Lowercase, split on non-alphanumeric, keep tokens of length ≥ 3 that aren't stopwords. */
+/** Scripts whose every character is a syllable or a morpheme: a two-character
+ *  word in them (서울, 東京) carries meaning the way a long Latin word does. */
+const SYLLABIC = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u;
+
+/** Lowercase, split on anything but a letter, mark or digit in any script — the
+ *  words the facts index's unicode61 tokenizer sees — and keep the ones that
+ *  aren't stopwords: of length ≥ 3, or any length in a syllabic script. Splitting
+ *  on ASCII alone left a Russian or Korean fact with no words, so every check
+ *  built on these read it as saying nothing new. */
 export function tokenizeStrict(text: string): Set<string> {
   const out = new Set<string>();
-  for (const w of text.toLowerCase().split(/[^a-z0-9]+/)) {
-    if (w.length >= 3 && !STRICT_STOPWORDS.has(w)) out.add(w);
+  for (const w of text.toLowerCase().split(/[^\p{L}\p{M}\p{N}]+/u)) {
+    if ((w.length >= 3 || (w && SYLLABIC.test(w))) && !STRICT_STOPWORDS.has(w)) out.add(w);
   }
   return out;
 }

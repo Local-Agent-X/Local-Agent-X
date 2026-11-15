@@ -144,6 +144,14 @@ describe("a resolver's background guess cannot end what the user said", () => {
     expect(liveCount()).toBe(1);
   });
 
+  it("a refused change written in another script is kept, not read as repeating a current fact", async () => {
+    const slip = seed("@Odalys keeps her sailboat at slip 14", "user_statement");
+    vi.mocked(resolveFact).mockResolvedValueOnce({ op: "UPDATE", targetId: slip, reason: "new info about Odalys" });
+    const { facts } = await memory.retainSmart("- W @Odalys живёт в Лиссабоне", "auto-extract");
+    expect(live(slip)).toBe(true);
+    expect(facts.map((f) => f.content)).toEqual(["Odalys живёт в Лиссабоне"]);
+  });
+
   it("a resolver DELETE on a user statement ends nothing", async () => {
     const slip = seed("@Odalys keeps the Kestrel Nine at slip 14", "user_statement");
     vi.mocked(resolveFact).mockResolvedValueOnce({ op: "DELETE", targetId: slip, reason: "contradicts" });

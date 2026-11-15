@@ -133,6 +133,12 @@ describe("update_fact asks before changing something the user said, unless they 
       "Actually I misspoke when I told you that — she moved it last spring, it's at slip 31 now.")).toBeNull();
   });
 
+  it("asks for, and runs, a change written in a non-Latin script the same way", () => {
+    seed("@Odalys keeps the Kestrel Nine at slip 14", "user_statement");
+    expect(askUpdate("slip 14", "Odalys продала лодку", "спасибо")).toContain("change something you told it");
+    expect(askUpdate("slip 14", "Odalys продала лодку", "она продала лодку")).toBeNull();
+  });
+
   it("runs a rewording that adds nothing, and any change to a fact a model wrote", () => {
     seed("@Odalys keeps the Kestrel Nine at slip 14", "user_statement");
     expect(askUpdate("slip 14", "Odalys keeps the Kestrel Nine at slip 14", "thanks")).toBeNull();

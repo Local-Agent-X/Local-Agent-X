@@ -115,7 +115,8 @@ const existsBySuffix = (spec) => {
 	return false;
 };
 
-const docs = process.argv.slice(2).length ? process.argv.slice(2).map((p) => resolve(REPO, p)) : defaultDocs();
+const named = process.argv.slice(2).filter((a) => !a.startsWith("--"));
+const docs = named.length ? named.map((p) => resolve(REPO, p)) : defaultDocs();
 const misses = [];
 for (const doc of docs) {
 	const lines = readFileSync(doc, "utf8").split("\n");

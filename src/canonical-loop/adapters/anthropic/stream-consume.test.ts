@@ -103,6 +103,17 @@ describe("streamConsume error messages go through the shared credential redactor
     expect(result.firstError?.message).toContain("req_011CSHn9xYzAbCdEfGhIjKlMn");
   });
 
+  // The two shapes the adapter's own redactor also masked (acbef40a7 moved it to
+  // the shared catalog): a bearer token and an `oauth:` token. Prose that only
+  // mentions a bearer token stays readable.
+  it("masks a bearer token and an oauth: token, and leaves prose about them alone", async () => {
+    const msg = "upstream 401: Authorization: Bearer abcDEF0123456789ghiJKL456 rejected; irc PASS oauth:x1y2z3w4v5u6t7s8r9q0; send a Bearer token";
+    const transport = transportYielding([{ type: "error", code: "upstream", message: msg }] as TransportEvent[]);
+    const result = await streamConsume(transport, makeReq(), () => {}, { isAborted: () => false });
+    expect(result.firstError?.message).not.toMatch(/abcDEF0123456789ghiJKL456|x1y2z3w4v5u6t7s8r9q0/);
+    expect(result.firstError?.message).toContain("send a Bearer token");
+  });
+
   it("masks a key in a thrown transport error too", async () => {
     const transport: AnthropicTransport = { async *stream() { throw new Error(leak); } };
     const result = await streamConsume(transport, makeReq(), () => {}, { isAborted: () => false });

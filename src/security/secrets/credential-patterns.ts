@@ -159,7 +159,12 @@ export const CREDENTIAL_PATTERNS: readonly CredentialPattern[] = [
   { type: "database", name: "Database Connection String", regex: /(?:mongodb|postgres|mysql|redis):\/\/[^\s"']{10,}/gi },
 
   // ── Generic shapes ──
+  // The 20-character floor is deliberate: every real bearer token is longer,
+  // and without it ordinary prose ("Bearer token") would be redacted too.
   { type: "generic", name: "Bearer Token", regex: /Bearer\s+([a-zA-Z0-9._\-]{20,})/gi },
+  // `oauth:<token>` (chat-platform OAuth). The Anthropic adapter's own redactor
+  // masked it before provider errors moved to this catalog (acbef40a7).
+  { type: "generic", name: "OAuth Token (oauth: prefix)", regex: /\boauth:([a-zA-Z0-9_\-.]{16,})/gi },
   // Basic auth carries base64(user:password) — same leak class as Bearer.
   { type: "generic", name: "Basic Auth Header", regex: /Basic\s+([A-Za-z0-9+/]{16,}={0,2})/g },
   // Requires a real URL scheme and userinfo chars that can't span JSON/prose

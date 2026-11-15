@@ -13,13 +13,13 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2056 non-test source files · 78 oversized · 268 nearing the size cap.
+**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2059 non-test source files · 78 oversized · 269 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 183 | 29 | XL | 1 |
+| `src/ops/` | 184 | 29 | XL | 1 |
 | `src/security/` | 163 | 62 | XL | 2 |
 | `src/tools/` | 136 | 235 | XL | 9 |
 | `src/tool-execution/` | 100 | 90 | XL | 2 |
@@ -29,7 +29,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/session/` | 67 | 13 | L |  |
 | `src/data-lineage/` | 60 | 12 | L |  |
 | `src/memory/` | 59 | 162 | XL | 3 |
-| `src/util/` | 54 | 3 | S |  |
+| `src/util/` | 55 | 3 | S |  |
 | `src/browser/` | 51 | 93 | XL | 5 |
 | `src/tool-policy/` | 48 | 21 | L |  |
 | `src/agency/` | 47 | 40 | XL |  |
@@ -41,7 +41,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/context-manager/` | 29 | 16 | M |  |
 | `src/agent-store/` | 28 | 7 | M | 1 |
 | `src/context/` | 28 | 11 | M |  |
-| `src/inbox/` | 27 | 7 | M |  |
+| `src/inbox/` | 28 | 7 | M |  |
 | `src/agent-request/` | 26 | 16 | L | 3 |
 | `src/classifiers/` | 25 | 17 | L |  |
 | `src/app-runtime/` | 23 | 12 | M |  |
@@ -51,7 +51,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/orchestrator/` | 20 | 24 | L |  |
 | `src/autonomy/` | 19 | 6 | M |  |
 | `src/cognition/` | 19 | 37 | XL | 1 |
-| `src/server/` *(entrypoint)* | 19 | 71 | XL | 4 |
+| `src/server/` *(entrypoint)* | 19 | 74 | XL | 4 |
 | `src/agents/` | 17 | 14 | L |  |
 | `src/net/` | 17 | 11 | L |  |
 | `src/voice/` | 16 | 80 | XL | 1 |
@@ -66,6 +66,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/whatsapp-bridge/` | 12 | 8 | M | 1 |
 | `src/persistence/` | 11 | 2 | S |  |
 | `src/sync/` | 11 | 26 | L |  |
+| `src/calendar/` | 9 | 10 | M |  |
 | `src/codex-client/` | 9 | 7 | M |  |
 | `src/plugin-system/` | 9 | 10 | L | 1 |
 | `src/screen-stream/` | 9 | 11 | L |  |
@@ -73,7 +74,6 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/app-renderer/` | 8 | 7 | M | 1 |
 | `src/autopilot/` | 8 | 14 | L | 1 |
 | `src/bridge-voice/` | 8 | 5 | S |  |
-| `src/calendar/` | 8 | 10 | M |  |
 | `src/mcp-client/` | 8 | 11 | L | 1 |
 | `src/telegram-bridge/` | 8 | 6 | M |  |
 | `src/auto-build/` | 7 | 52 | XL | 3 |
@@ -370,6 +370,7 @@ job. Comments are free: never cut them to fit.
 - `src/memory/tools/save.ts` — 290+ code lines (cap 350)
 - `src/ops/operation-requirements.ts` — 290+ code lines (cap 350)
 - `src/protocols/skills-install.ts` — 290+ code lines (cap 350)
+- `src/server/background-jobs/index.ts` — 290+ code lines (cap 350)
 - `src/telegram-bridge/bridge.ts` — 290+ code lines (cap 350)
 - `src/tool-execution/sensitive-read-taint.ts` — 290+ code lines (cap 350)
 - `src/browser/runtime.ts` — 280+ code lines (cap 350)

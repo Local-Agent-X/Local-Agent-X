@@ -26,6 +26,8 @@ import {
 import { registerFailureReviewRunner, runFailureReviewPass, type FailureReviewDeps } from "./failure-review.js";
 import { registerMailWatchRunner, runMailWatchPass, MAIL_WATCH_INTERVAL_MS, type MailWatchDeps } from "./mail-watch.js";
 import { runPlanReminderPass, PLAN_REMINDER_INTERVAL_MS } from "./plan-reminders.js";
+import { registerTravelWatchRunner, runTravelWatchPass, TRAVEL_WATCH_INTERVAL_MS } from "./travel-watch.js";
+import { toolsTagged } from "../../tool-registry.js";
 import { attemptBackfill, BACKFILL_BOOT_SETTLE_MS } from "./backfill-gate.js";
 import { setLearningNoticesForSession } from "../../chat-ws/state.js";
 import { pendingLearningNotices } from "../../protocols/learned-review-drafting.js";
@@ -49,7 +51,8 @@ export type RegisteredJobName =
   | "protocol-curator"
   | "failure-review"
   | "mail-watch"
-  | "plan-reminders";
+  | "plan-reminders"
+  | "travel-watch";
 
 /**
  * Overlap policy for every registered job, in one place. Not documentation —
@@ -114,6 +117,10 @@ export type RegisteredJobName =
  *     finds the same work. Each review fork settles under review-fork.ts's
  *     timeout, so a pass cannot wedge the slot.
  *
+ *   travel-watch (skip)
+ *     Two passes at once would both look up the same flight (a model run each)
+ *     before either recorded it. A dropped tick costs ten minutes.
+ *
  *   plan-reminders (skip)
  *     Reads every calendar and posts reminders keyed per event occurrence, so
  *     a second pass at once would only find them posted. A dropped tick costs
@@ -136,6 +143,7 @@ export const JOB_OVERLAP: Record<RegisteredJobName, OverlapPolicy> = {
   "failure-review": "skip",
   "mail-watch": "skip",
   "plan-reminders": "skip",
+  "travel-watch": "skip",
 };
 
 /** Name + declared policy in one spread, so a registration can never carry a
@@ -195,9 +203,9 @@ function registerLearningUpkeep(scheduler: JobScheduler, foregroundIdle: () => b
  */
 function registerWatchers(
   scheduler: JobScheduler,
-  deps: Omit<MailWatchDeps, "foregroundBusy"> & { sessionStore: Pick<SessionStore, "list"> },
+  deps: Omit<MailWatchDeps, "foregroundBusy"> & { sessionStore: Pick<SessionStore, "list">; allAgentTools: ToolDefinition[] },
 ): void {
-  const { config, dataDir, secretsStore, security, toolPolicy, sessionStore } = deps;
+  const { config, dataDir, secretsStore, security, toolPolicy, sessionStore, allAgentTools } = deps;
   registerMailWatchRunner({
     config, dataDir, secretsStore, security, toolPolicy, foregroundBusy: () => isForegroundBusy(sessionStore),
   });
@@ -208,6 +216,24 @@ function registerWatchers(
     run: async () => {
       const r = await runMailWatchPass();
       if (r.read > 0 || r.failed) logger.info(`[mail-watch] pass: read=${r.read} important=${r.important} failed=${r.failed}`);
+    },
+  });
+  // Flights near departure, looked up with the read-only web tools only
+  // (travel-watch.ts): chosen by what the tools are for, never by name.
+  const webRead = new Set(toolsTagged("web-search", "web-read"));
+  registerTravelWatchRunner({
+    config, dataDir, secretsStore, security, toolPolicy,
+    webTools: () => allAgentTools.filter((t) => webRead.has(t.name)),
+  });
+  scheduler.register({
+    ...withOverlapPolicy("travel-watch"),
+    intervalMs: TRAVEL_WATCH_INTERVAL_MS,
+    startupDelayMs: 3 * 60 * 1000,
+    run: async () => {
+      try {
+        const r = await runTravelWatchPass();
+        if (r.looked > 0) logger.info(`[travel-watch] looked up ${r.looked} flight(s), ${r.alerts} change(s)`);
+      } catch (e) { logger.warn("[travel-watch]", (e as Error).message); }
     },
   });
   // Reminders before commitments on every calendar (plan-reminders.ts).

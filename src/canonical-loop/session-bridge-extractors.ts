@@ -258,13 +258,16 @@ export function extractFinalAssistantText(opId: string, maxChars = 2000): string
  *                 ~15 minutes: a headless fork whose task text is the user's
  *                 new mail, fenced as external content.
  *
+ *   travel_watch  background-jobs/travel-watch.ts — a flight-status lookup
+ *                 with read-only web tools, near each flight's departure.
+ *
  * NOT here on purpose: memory_consolidation — its bg_op_queued/started (with
  * opType) are the only feed for the ambient "dreaming" group
  * (public/js/chat-agent-feeds-ambient.js). Suppressing it empties that group.
  */
 const SIDEBAR_SUPPRESSED_OP_TYPES: ReadonlySet<string> = new Set([
   OP_TYPE.chatTurn, OP_TYPE.agentSpawn, OP_TYPE.voiceTurn, OP_TYPE.skillReview, OP_TYPE.failureReview,
-  OP_TYPE.mailWatch,
+  OP_TYPE.mailWatch, OP_TYPE.travelWatch,
 ]);
 
 export function isSidebarSuppressedOpType(opType: string): boolean {

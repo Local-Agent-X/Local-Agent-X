@@ -43,6 +43,8 @@ export const PROTECTED_TIGHTENING: Readonly<Record<string, Tightening>> = {
   // Off reads no mail; local-only keeps the mail it reads on this machine.
   mailWatchEnabled: { safe: false },
   mailWatchLocalOnly: { safe: true },
+  // Off sends no flight number to a web search.
+  travelWatchEnabled: { safe: false },
   developer_mode: { safe: false },
   allowPaidMediaApis: { safe: false },
   localOnlyMode: { safe: true },

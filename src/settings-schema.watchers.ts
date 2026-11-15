@@ -30,6 +30,14 @@ export const WATCHER_SETTINGS: ReadonlyArray<FlippableSetting> = [
     description: "Triage mail with a model on this machine only, so no email text goes to a cloud model. Off (default) uses the chat model. When no local model is available the mail check is skipped and the inbox says so; it never falls back to the cloud",
   },
   {
+    field: "travelWatchEnabled",
+    owner: "protected", where: WATCHING,
+    validate: z.boolean(),
+    runtime: true,
+    broadcast: true,
+    description: "From a day before each flight on the user's calendars (connected calendars, and itineraries the mail watcher found), look up its live status on the web and raise a delay, cancellation, diversion, new departure time or gate change in the inbox and on the phone, even in quiet hours. On by default; sends the flight number and date to a web search",
+  },
+  {
     field: "remindBeforeMinutes",
     owner: "agent",
     validate: z.number().int().min(0).max(24 * 60),

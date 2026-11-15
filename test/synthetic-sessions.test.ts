@@ -58,7 +58,7 @@ describe("isSyntheticSessionId", () => {
 // test/chat-ws-headless-filter.test.ts pin the two sides.
 describe("isHiddenFromChatLists — hidden from active_chats and /api/sessions/search", () => {
   it("hides every synthetic prefix except ide-", () => {
-    expect([...CHAT_LIST_HIDDEN_PREFIXES].sort()).toEqual(["cron-", "dream-", "eval_", "failure-review-", "mail-watch-", "skill-review-"]);
+    expect([...CHAT_LIST_HIDDEN_PREFIXES].sort()).toEqual(["cron-", "dream-", "eval_", "failure-review-", "mail-watch-", "skill-review-", "travel-watch-"]);
     for (const prefix of CHAT_LIST_HIDDEN_PREFIXES) {
       expect(isHiddenFromChatLists(`${prefix}1780687489740`)).toBe(true);
     }
@@ -94,6 +94,9 @@ describe("isHiddenFromChatLists — hidden from active_chats and /api/sessions/s
     expect(isExcludedFromTranscriptSearch(id)).toBe(true);
     expect(isExcludedFromFailureCounts(id)).toBe(true);
     expect(isHeadlessSession(id)).toBe(true);
+    const { TRAVEL_WATCH_SESSION_PREFIX } = await import("../src/server/background-jobs/travel-watch-prompt.js");
+    const travel = `${TRAVEL_WATCH_SESSION_PREFIX}1762000000000-AA12`;
+    expect(isSyntheticSessionId(travel) && isHiddenFromChatLists(travel) && isHeadlessSession(travel)).toBe(true);
   });
 
   it("ide- is synthetic (memory + persisted sidebar list) but NOT hidden from live chat lists", () => {

@@ -201,3 +201,9 @@ export function inboxPlanClash(c: { key: string; title: string; body: string }):
 export function inboxPlanReminder(r: { key: string; title: string; body: string }): boolean {
   return postToInbox({ kind: "agent-message", title: clip(r.title, 140), body: r.body, needsYou: false, key: r.key }) !== null;
 }
+
+/** A flight changed (src/server/background-jobs/travel-watch.ts): rings the
+ *  phone even in quiet hours. Read is enough. */
+export function inboxTravelChange(t: { key: string; title: string; body: string }): boolean {
+  return postToInbox({ kind: "agent-message", title: clip(t.title, 140), body: t.body, needsYou: false, key: t.key, ringThroughQuietHours: true }) !== null;
+}

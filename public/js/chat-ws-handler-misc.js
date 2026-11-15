@@ -92,7 +92,7 @@ function handleSettingsChanged(msg) {
     renderFailureReviewEnabled(msg.settings.failureReviewEnabled);
   }
   // Watching for you (Settings → General): the mail watcher's switches and quiet hours.
-  if (('mailWatchEnabled' in msg.settings || 'mailWatchLocalOnly' in msg.settings || 'quietHoursEnabled' in msg.settings
+  if (('mailWatchEnabled' in msg.settings || 'mailWatchLocalOnly' in msg.settings || 'travelWatchEnabled' in msg.settings || 'quietHoursEnabled' in msg.settings
     || 'quietHoursStart' in msg.settings || 'quietHoursEnd' in msg.settings || 'remindBeforeMinutes' in msg.settings) && typeof renderWatchingSettings === 'function') {
     renderWatchingSettings(msg.settings);
   }

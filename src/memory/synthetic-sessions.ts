@@ -29,7 +29,9 @@
 // `mail-watch-` mirrors background-jobs/mail-watch-prompt.ts
 // MAIL_WATCH_SESSION_PREFIX: its transcript is the user's new mail, fenced as
 // external content. Never memory, never recalled into a chat as one of theirs.
-export const SYNTHETIC_SESSION_PREFIXES = ["dream-", "cron-", "ide-", "eval_", "skill-review-", "failure-review-", "mail-watch-"] as const;
+// `travel-watch-` mirrors background-jobs/travel-watch-prompt.ts
+// TRAVEL_WATCH_SESSION_PREFIX: a flight-status lookup over web pages.
+export const SYNTHETIC_SESSION_PREFIXES = ["dream-", "cron-", "ide-", "eval_", "skill-review-", "failure-review-", "mail-watch-", "travel-watch-"] as const;
 
 export function isSyntheticSessionId(id: string): boolean {
   return SYNTHETIC_SESSION_PREFIXES.some((p) => id.startsWith(p));

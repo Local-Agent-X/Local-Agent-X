@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2044 non-test source files · 78 oversized · 268 nearing the size cap.
+**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2045 non-test source files · 78 oversized · 268 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -27,13 +27,13 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/canonical-loop/` | 89 | 291 | XL | 10 |
 | `src/providers/` | 80 | 27 | L | 1 |
 | `src/session/` | 67 | 13 | L |  |
-| `src/data-lineage/` | 59 | 12 | L |  |
+| `src/data-lineage/` | 60 | 12 | L |  |
 | `src/memory/` | 58 | 162 | XL | 3 |
 | `src/util/` | 53 | 3 | S |  |
 | `src/browser/` | 51 | 93 | XL | 5 |
 | `src/tool-policy/` | 48 | 21 | L |  |
 | `src/agency/` | 47 | 40 | XL |  |
-| `src/chat-ws/` | 45 | 23 | L |  |
+| `src/chat-ws/` | 46 | 23 | L |  |
 | `src/local-runtimes/` | 45 | 27 | XL |  |
 | `src/threat/` | 44 | 13 | L |  |
 | `src/auth/` | 36 | 11 | L |  |
@@ -42,7 +42,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/agent-store/` | 28 | 7 | M | 1 |
 | `src/context/` | 28 | 11 | M |  |
 | `src/agent-request/` | 26 | 16 | L | 3 |
-| `src/inbox/` | 25 | 6 | M |  |
+| `src/inbox/` | 25 | 7 | M |  |
 | `src/classifiers/` | 24 | 16 | L |  |
 | `src/app-runtime/` | 23 | 12 | M |  |
 | `src/sandbox/` | 23 | 16 | L | 1 |

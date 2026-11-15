@@ -127,6 +127,7 @@ function renderInboxItem(n) {
     + '<div class="notif-actions">' + actions
     + (state ? '<span class="notif-resolution">' + esc(state) + '</span>' : '')
     + (pinned && !awaiting ? '<button type="button" class="notif-btn" data-inbox-act="resolve">Done</button>' : '')
+    + (n.kind !== 'approval' ? '<button type="button" class="notif-btn" data-inbox-reply>' + (n.link && n.link.sessionId ? 'Reply in chat' : 'Reply') + '</button>' : '')
     + (unread ? '<button type="button" class="notif-btn" data-inbox-act="read">Mark read</button>' : '')
     + (awaiting ? '' : '<button type="button" class="notif-btn" data-inbox-act="dismiss">Dismiss</button>')
     + '</div></div>';
@@ -230,6 +231,8 @@ function bindInboxList(el) {
     if (answer) { ev.stopPropagation(); answerInboxApproval(id, answer.getAttribute('data-inbox-answer')); return; }
     var btn = ev.target.closest('[data-inbox-act]');
     if (btn) { ev.stopPropagation(); inboxAct(id, btn.getAttribute('data-inbox-act')); return; }
+    // Reply opens a chat about the item (inbox-reply.js).
+    if (ev.target.closest('[data-inbox-reply]')) { ev.stopPropagation(); if (typeof openInboxReply === 'function') openInboxReply(row, id); return; }
     if (ev.target.closest('button')) return;
     var n = findInboxItem(id);
     if (!n) return;

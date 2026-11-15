@@ -7,6 +7,8 @@
 // POST /api/inbox/resolve       { id } → the user dealt with it
 // POST /api/inbox/act           { id, action: "approve" | "decline" } → answer
 //                               an approval (src/inbox/approvals.ts)
+// POST /api/inbox/reply         { id, text } → open (or continue) a chat about
+//                               the item, the user's words first (src/inbox/reply.ts)
 //
 // Every mutation broadcasts `inbox_changed` with the new counts so every open
 // tab redraws. The phone's inbox frames (src/chat-ws/inbox-frames.ts) land on
@@ -25,6 +27,12 @@ import { dispatchApprovedCall, resolveApprovedTool } from "../tool-execution/ind
 import { SecurityLayer } from "../security/index.js";
 import { loadFileAccessModeAtLeast } from "../security/layer/index.js";
 import { ThreatEngine } from "../threat/threat-engine.js";
+import { replyToInboxItem, type InboxReplyResult } from "../inbox/reply.js";
+import { getChatHandler } from "../chat-ws/chat-handler.js";
+import { recordExternalIngestion } from "../data-lineage/external.js";
+import { createLogger } from "../logger.js";
+
+const logger = createLogger("routes.inbox");
 
 type ChangedFrame = Extract<InboxFrame, { type: "inbox_changed" }>;
 /** The bell's plain answers: everything but Approve and Decline. */
@@ -89,6 +97,27 @@ export async function actOnInbox(ctx: ServerContext, id: string, action: "approv
   });
 }
 
+/** Reply to an item: open (or continue) the chat about it, and tell every tab
+ *  the item now links there. One function for the bell and the phone. */
+export async function replyFromInbox(ctx: ServerContext, id: string, text: string): Promise<InboxReplyResult> {
+  const result = await replyToInboxItem(id, text, {
+    chatExists: (sessionId) => ctx.sessionStore.load(sessionId) !== null,
+    createChat: async ({ id: sessionId, title }) => {
+      const now = Date.now();
+      await ctx.saveSession({ id: sessionId, title, messages: [], createdAt: now, updatedAt: now });
+    },
+    send: (sessionId, message) => {
+      const handler = getChatHandler();
+      if (!handler) { logger.warn(`[inbox] reply chat ${sessionId}: the chat runner is not up`); return; }
+      void Promise.resolve(handler(sessionId, message, [], { channel: "web" }))
+        .catch((e) => logger.warn(`[inbox] reply chat ${sessionId}: ${(e as Error).message}`));
+    },
+    markExternal: (sessionId) => recordExternalIngestion(sessionId),
+  });
+  if (result.ok) broadcastChanged(ctx, "read", id);
+  return result;
+}
+
 export const handleInboxRoutes: RouteHandler = async (method, url, req, res, ctx, role) => {
   if (url.pathname !== "/api/inbox" && !url.pathname.startsWith("/api/inbox/")) return false;
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
@@ -97,17 +126,24 @@ export const handleInboxRoutes: RouteHandler = async (method, url, req, res, ctx
   if (method === "GET" && url.pathname === "/api/inbox") { json(200, listInbox()); return true; }
 
   const isAct = method === "POST" && url.pathname === "/api/inbox/act";
+  const isReply = method === "POST" && url.pathname === "/api/inbox/reply";
   const mutation = method === "POST" ? MUTATION_PATHS[url.pathname] : undefined;
-  if (!mutation && !isAct) return false;
+  if (!mutation && !isAct && !isReply) return false;
   if (role !== "operator" && role !== "user") { json(403, { error: "Answering the inbox requires operator or user role" }); return true; }
 
   let id = "";
   let body: Record<string, unknown> | null = {};
-  if (isAct || mutation !== "read_all") {
+  if (isAct || isReply || mutation !== "read_all") {
     body = await safeParseBody(req);
     if (body === null) { json(400, { error: "Invalid JSON" }); return true; }
     id = typeof body.id === "string" ? body.id : "";
     if (!id) { json(400, { error: "id is required" }); return true; }
+  }
+  if (isReply) {
+    const result = await replyFromInbox(ctx, id, typeof body.text === "string" ? body.text : "");
+    if (!result.ok) { json(result.refused === "missing" ? 404 : 400, { error: result.refused === "missing" ? `No inbox item ${id}` : "Write something to reply." }); return true; }
+    json(200, result);
+    return true;
   }
   if (isAct) {
     const action = body.action;

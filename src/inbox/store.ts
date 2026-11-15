@@ -41,6 +41,9 @@ export interface InboxStore {
   markAllRead(): number;
   dismiss(id: string): boolean;
   resolve(id: string): boolean;
+  /** The chat the user's reply to this item opened (reply.ts): its Open goes
+   *  there, and a second reply continues it. Marks the item read. */
+  linkReplyChat(id: string, sessionId: string): boolean;
   /** Resolve every open item `match` selects; returns how many changed. */
   resolveWhere(match: (item: StoredInboxItem) => boolean): number;
   /** Answer an open approval: resolves it with `resolution` in the same
@@ -176,6 +179,11 @@ export function createInboxStore(filePath: string, clock: () => number = Date.no
     }),
     resolve: (id) => touch(id, (item, now) => {
       if (item.resolvedAt === undefined) item.resolvedAt = now;
+      if (item.readAt === undefined) item.readAt = now;
+      return true;
+    }),
+    linkReplyChat: (id, sessionId) => touch(id, (item, now) => {
+      item.link = { ...(item.link ?? {}), sessionId };
       if (item.readAt === undefined) item.readAt = now;
       return true;
     }),

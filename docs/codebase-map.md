@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2061 non-test source files · 78 oversized · 269 nearing the size cap.
+**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2061 non-test source files · 77 oversized · 269 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -31,8 +31,8 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/memory/` | 59 | 162 | XL | 3 |
 | `src/util/` | 56 | 3 | S |  |
 | `src/browser/` | 51 | 93 | XL | 5 |
+| `src/agency/` | 48 | 40 | XL |  |
 | `src/tool-policy/` | 48 | 21 | L |  |
-| `src/agency/` | 47 | 40 | XL |  |
 | `src/chat-ws/` | 46 | 23 | L |  |
 | `src/local-runtimes/` | 45 | 27 | XL |  |
 | `src/threat/` | 44 | 13 | L |  |
@@ -56,8 +56,8 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/net/` | 17 | 11 | L |  |
 | `src/voice/` | 16 | 80 | XL | 1 |
 | `src/anthropic-client/` | 15 | 23 | L | 2 |
+| `src/self-edit/` | 15 | 19 | L | 2 |
 | `src/cron/` | 14 | 14 | L |  |
-| `src/self-edit/` | 13 | 19 | L | 2 |
 | `src/agent-loop/` | 12 | 1 | S |  |
 | `src/app-scaffold/` | 12 | 7 | M |  |
 | `src/ari-kernel/` | 12 | 12 | M |  |
@@ -222,13 +222,17 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/trash-restore.ts` | S |
 | `src/types.ts` | S |
 | `src/update-extracted-validation.ts` | S |
+| `src/update-git-land.ts` | S |
+| `src/update-git-prepare.ts` | S |
 | `src/update-git-rollback.ts` | S |
+| `src/update-live-deps.ts` | S |
 | `src/update-pipeline.ts` | S |
 | `src/update-recovery.ts` | S |
 | `src/update-rollback-prune.ts` | S |
 | `src/update-rollback-state.ts` | S |
 | `src/update-rollback.ts` | M |
 | `src/update-service.ts` | S |
+| `src/update-staging.ts` | S |
 | `src/user-notice.ts` | S |
 | `src/worker-session.ts` | S |
 
@@ -312,7 +316,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/tools/read-imports.ts#buildImportAppendix`
 - `src/tools/secret-tools.ts#createSecretTools`
 - `src/tools/shell-tool.ts#bashTool.execute`
-- `src/update-pipeline.ts#applyGitUpdate`
 - `src/voice/voice-session/model-init.ts#initializeVoiceStack`
 - `src/whatsapp-bridge/message-handler.ts#handleMessagesUpsert`
 

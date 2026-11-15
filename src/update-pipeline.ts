@@ -20,30 +20,24 @@
  * exist — if they do, the update is held and says why.
  */
 
-import type { ChildProcess } from "node:child_process";
 import { join } from "node:path";
-import {
-  createNamedWorktree, mergeWorktree, cleanupWorktree, getMergeBaseInfo,
-  getBranchHead, runRepoBuildAsync, runDesktopTscBuildAsync,
-} from "./agency/worktree.js";
 import { OTAManager } from "./ota-update.js";
-import { gateDeps, gateBuild, gateBind, gateSmoke, killProbe, runNpmAt, SKIPPED_GATE, BUILD_TIMEOUT_MS, type GateResult } from "./self-edit/sandbox-gates.js";
+import type { GateResult } from "./self-edit/sandbox-gates.js";
 import { acquireGlobalSelfEditLock, releaseGlobalSelfEditLock } from "./self-edit/global-lock.js";
-import { cancelUpdateLanding, confirmUpdateLanding, prepareUpdateLanding, restoreUpdateLanding, type PreparedUpdateLanding } from "./update-git-rollback.js";
-import { nowSlug, pickProbePort } from "./self-edit/sandbox-naming.js";
-import { getSetting } from "./settings.js";
-import { recordDesktopPrebuildOutcome } from "./desktop-prebuild-marker.js";
 import { getLaxDir } from "./lax-data-dir.js";
 import { recordUpdateFailure, recordUpdateSuccess, repairStuckUpdateState, markRepairAttempted, REPAIR_THRESHOLD } from "./update-recovery.js";
-import { composeGitArgs, execGit } from "./git-safety.js";
 import { createLogger } from "./logger.js";
-import { rmUpdatePathRetry, validateExtractedUpdate } from "./update-extracted-validation.js";
+import { validateExtractedUpdate } from "./update-extracted-validation.js";
+import { discardGitStaged, prepareGitUpdate } from "./update-git-prepare.js";
+import { landGitUpdate } from "./update-git-land.js";
+import { syncLiveDeps } from "./update-live-deps.js";
+import type { StagedGitUpdate } from "./update-staging.js";
 
 export { validateExtractedUpdate } from "./update-extracted-validation.js";
 export type { ExtractValidation } from "./update-extracted-validation.js";
+export { isDeferrableFileLock, syncLiveDeps } from "./update-live-deps.js";
 
 const logger = createLogger("update-pipeline");
-const GIT_TIMEOUT_MS = 60_000;
 const UPDATE_BUSY =
   "Another update or self_edit is currently running on this machine. " +
   "Updates are applied one at a time — wait for it to finish, then try again.";
@@ -61,207 +55,41 @@ export interface GitUpdateResult {
   gates?: UpdateGates;
 }
 
-/** A `git ...` command in `cwd`, off the event loop (the fetch waits on the network). */
-async function sh(cmd: string, cwd: string, timeoutMs = GIT_TIMEOUT_MS): Promise<string> {
-  return (await execGit(composeGitArgs(cmd.replace(/^git\s+/, "")), { cwd, timeout: timeoutMs })).trim();
-}
-
-/** A Windows file lock (a loaded native module, AV, or the file indexer), as
- *  opposed to a real dependency error. The update can DEFER these to next-launch
- *  reconcile; it must NOT revert over them. */
-export function isDeferrableFileLock(msg: string): boolean {
-  return /EBUSY|EPERM|EACCES|resource busy or locked/i.test(msg);
-}
-
-/**
- * Sync the LIVE install's node_modules to the just-applied lockfile.
- *
- * `npm install` (incremental), NEVER `npm ci`: ci wipes node_modules and so must
- * unlink EVERY native module — including ones the running server holds loaded
- * (sqlite-vec's vec0.dll) — which Windows refuses with EPERM. install touches
- * only what changed.
- *
- * Returns deferred=true when the ONLY failure was a Windows file lock on a
- * loaded native module the update bumped: the lockfile on disk is already
- * current, and the next launch's pre-server reconcile (desktop/src/reconcile.ts)
- * reinstalls deps BEFORE the server child loads any native module, where the
- * in-place swap is safe. Rethrows any other npm error (a real dependency
- * problem). Shared by the git and rolling paths so both defer identically
- * instead of one reverting where the other defers.
- */
-export async function syncLiveDeps(installDir: string): Promise<{ deferred: boolean }> {
-  // Async: a synchronous install held the server for its whole run (19-28 s
-  // freezes logged during one update).
-  const r = await runNpmAt(installDir, ["install"]);
-  if (r.ok) return { deferred: false };
-  const msg = r.stderr || r.stdout || "npm install failed";
-  if (!isDeferrableFileLock(msg)) throw new Error(msg.slice(-1500));
-  logger.warn(`[update] live npm install hit a file lock; deferring deps to next-launch reconcile: ${msg.split("\n")[0]}`);
-  return { deferred: true };
-}
-
 export async function applyGitUpdate(repoRoot: string, authToken: string): Promise<GitUpdateResult> {
-  // Same machine-wide lock as the self_edit sandbox: both build into the
-  // shared node_modules and mutate main, so they must never run concurrently.
+  // Same machine-wide lock as the self_edit sandbox: landing mutates main and
+  // the shared node_modules, so it must never run beside another mutation.
   const lock = await acquireGlobalSelfEditLock({ task: "platform update" });
   if (!lock.acquired) {
     logger.info(`[update] refused — lock held by ${JSON.stringify(lock.holder ?? "unknown")}`);
     return { ok: false, held: true, fromCommit: "", toCommit: "", detail: UPDATE_BUSY };
   }
-
-  const name = `update-${nowSlug()}`;
-  const branch = `update/${nowSlug()}`;
-  let probeProc: ChildProcess | null = null;
-  let probeDataDir: string | null = null;
-  let prepared: PreparedUpdateLanding | null = null;
-
   try {
-    await sh("git fetch origin main --quiet", repoRoot);
-    const fromCommit = await sh("git rev-parse HEAD", repoRoot);
-    const remote = await sh("git rev-parse origin/main", repoRoot);
-    if (fromCommit === remote) {
-      return { ok: true, fromCommit: fromCommit.slice(0, 7), toCommit: remote.slice(0, 7), detail: "Already up to date." };
-    }
-    // Tracked changes only (-uno): untracked files can't corrupt a merge of
-    // tracked content, and a rare add/untracked filename collision makes the
-    // landing merge itself fail loudly. Counting untracked here left installs
-    // permanently un-updatable over stray files (live case: a workspace
-    // symlink the old .gitignore pattern didn't cover).
-    const dirty = await sh("git status --porcelain --untracked-files=no", repoRoot);
-    if (dirty) {
-      return { ok: false, held: true, fromCommit: fromCommit.slice(0, 7), toCommit: remote.slice(0, 7), detail: "Local uncommitted changes to tracked files detected. Commit or stash before updating." };
-    }
-    const localAhead = await sh("git rev-list --count origin/main..HEAD", repoRoot) !== "0";
-    if (localAhead && getSetting("developer_mode") !== true) {
-      return {
-        ok: false, held: true, fromCommit: fromCommit.slice(0, 7), toCommit: remote.slice(0, 7),
-        detail:
-          "This install has local commits not on origin/main (likely past self_edits) and developer_mode is off. " +
-          "Enable developer_mode to merge the update with the local changes, or reset to the official release " +
-          "(`git log origin/main..HEAD` shows what would be discarded, then `git reset --hard origin/main`).",
-      };
-    }
-
-    const wt = createNamedWorktree(name, branch, repoRoot, `update:${lock.nonce}`);
-    if (!wt) {
-      return { ok: false, fromCommit: fromCommit.slice(0, 7), toCommit: remote.slice(0, 7), detail: "Failed to create update worktree — see server logs." };
-    }
-
-    // Merge the update into the candidate tree. With no local commits this
-    // fast-forwards the branch to origin/main exactly; with developer_mode
-    // commits it produces the merged tree the gates need to validate. A
-    // conflict means the update genuinely collides with a local edit — hold
-    // with the resolution path instead of silently picking a side.
-    try {
-      await sh("git merge origin/main --no-edit", wt.path);
-    } catch (e) {
-      try { await sh("git merge --abort", wt.path); } catch { /* nothing in progress */ }
-      cleanupWorktree(name);
-      const msg = (e as { stderr?: string; stdout?: string; message: string });
-      return {
-        ok: false, held: true, fromCommit: fromCommit.slice(0, 7), toCommit: remote.slice(0, 7),
-        detail:
-          `Update conflicts with local commits and was NOT applied.\n` +
-          `${(msg.stdout || msg.stderr || msg.message).slice(-600)}\n` +
-          `Resolve manually: git merge origin/main (in the repo), fix conflicts, commit — then restart.`,
-      };
-    }
-
-    logger.info(`[update] validating ${remote.slice(0, 7)} in worktree ${name}`);
-    const deps = await gateDeps(name);
-    if (!deps.skipped && !deps.ok) {
-      cleanupWorktree(name);
-      return { ok: false, fromCommit: fromCommit.slice(0, 7), toCommit: remote.slice(0, 7), gates: { deps, build: SKIPPED_GATE, bind: SKIPPED_GATE, smoke: SKIPPED_GATE }, detail: `Update blocked at deps gate: ${deps.detail.slice(0, 600)}` };
-    }
-    const build = await gateBuild(name, undefined, "build:runtime");
-    if (!build.ok) {
-      cleanupWorktree(name);
-      return { ok: false, fromCommit: fromCommit.slice(0, 7), toCommit: remote.slice(0, 7), gates: { deps, build, bind: SKIPPED_GATE, smoke: SKIPPED_GATE }, detail: `Update blocked at build gate: ${build.detail.slice(0, 600)}` };
-    }
-    const port = await pickProbePort();
-    const bindOutcome = await gateBind(name, port, authToken);
-    probeProc = bindOutcome.proc;
-    probeDataDir = bindOutcome.dataDir;
-    if (!bindOutcome.result.ok) {
-      cleanupWorktree(name);
-      return { ok: false, fromCommit: fromCommit.slice(0, 7), toCommit: remote.slice(0, 7), gates: { deps, build, bind: bindOutcome.result, smoke: SKIPPED_GATE }, detail: `Update blocked at bind gate: ${bindOutcome.result.detail.slice(0, 600)}` };
-    }
-    const smoke = await gateSmoke(port, authToken);
-    await killProbe(probeProc);
-    probeProc = null;
-    if (!smoke.ok) {
-      cleanupWorktree(name);
-      return { ok: false, fromCommit: fromCommit.slice(0, 7), toCommit: remote.slice(0, 7), gates: { deps, build, bind: bindOutcome.result, smoke }, detail: `Update blocked at smoke gate: ${smoke.detail.slice(0, 600)}` };
-    }
-    const gates: UpdateGates = { deps, build, bind: bindOutcome.result, smoke };
-
-    const mergeInfo = await getMergeBaseInfo(name);
-    if (mergeInfo) {
-      prepared = prepareUpdateLanding(wt.path, mergeInfo);
-    }
-    const merge = mergeWorktree(name);
-    if (!merge.merged) {
-      if (mergeInfo) cancelUpdateLanding(mergeInfo);
-      prepared = null;
-      return { ok: false, fromCommit: fromCommit.slice(0, 7), toCommit: remote.slice(0, 7), gates, detail: `Gates passed but landing failed: ${merge.error || "unknown"}` };
-    }
-
-    // The gated install ran against the worktree's ISOLATED deps; the live
-    // tree's node_modules still has the old set. Sync it before rebuilding via
-    // syncLiveDeps — a Windows file lock on a loaded native module the update
-    // bumped DEFERS to next-launch reconcile (same as the rolling path) instead
-    // of reverting; only a real dependency error reverts.
-    if (!deps.skipped) {
-      try {
-        await syncLiveDeps(repoRoot);
-      } catch (e) {
-        if (mergeInfo) {
-          restoreUpdateLanding(mergeInfo);
-          await syncLiveDeps(repoRoot).catch(() => { /* old lockfile restored, next boot retries */ });
-          prepared = null;
-        }
-        return { ok: false, fromCommit: fromCommit.slice(0, 7), toCommit: remote.slice(0, 7), gates, detail: `Update reverted — dependency install on the live tree failed: ${(e as Error).message.slice(0, 600)}` };
-      }
-    }
-    if (mergeInfo) {
-      const rebuilt = await runRepoBuildAsync(mergeInfo.repoRoot, BUILD_TIMEOUT_MS);
-      if (!rebuilt.ok) {
-        restoreUpdateLanding(mergeInfo);
-        if (!deps.skipped) await syncLiveDeps(repoRoot).catch(() => { /* old lockfile restored, next boot retries */ });
-        prepared = null;
-        return { ok: false, fromCommit: fromCommit.slice(0, 7), toCommit: remote.slice(0, 7), gates, detail: `Update reverted — post-merge rebuild failed: ${rebuilt.detail.slice(0, 600)}` };
-      }
-      const postSha = getBranchHead(mergeInfo.repoRoot, mergeInfo.baseBranch);
-      confirmUpdateLanding(mergeInfo, postSha, merge.files);
-      prepared = null;
-
-      // Pre-build desktop/dist for updates that touch the Electron main, so the
-      // restart is a single clean boot — reconcile's desktopDistIsFresh skip
-      // then avoids the rebuild + relaunch (the second cold boot). Runs before
-      // this function returns "Restart to finish", so the user can't restart
-      // into a half-written dist. Non-fatal: the server update already landed;
-      // a failure leaves the prior dist intact (--noEmitOnError), next-boot
-      // reconcile rebuilds it, and the recorded marker makes that boot loud.
-      if (await sh(`git diff --name-only ${mergeInfo.sha} ${postSha} -- desktop/src`, repoRoot)) {
-        const dt = await runDesktopTscBuildAsync(repoRoot, BUILD_TIMEOUT_MS);
-        recordDesktopPrebuildOutcome(dt.ok, dt.detail);
-      }
-    }
-
-    const toCommit = await sh("git rev-parse HEAD", repoRoot);
-    logger.info(`[update] applied ${fromCommit.slice(0, 7)} → ${toCommit.slice(0, 7)} (${merge.files} files)`);
-    return { ok: true, fromCommit: fromCommit.slice(0, 7), toCommit: toCommit.slice(0, 7), gates, detail: `Updated (${merge.files} files). Restart to finish.` };
-  } catch (e) {
-    if (prepared) {
-      restoreUpdateLanding(prepared);
-      prepared = null;
-    }
-    return { ok: false, fromCommit: "", toCommit: "", detail: `Update pipeline crashed: ${(e as Error).message}` };
+    return await prepareAndLandGit(repoRoot, authToken, `update:${lock.nonce}`);
   } finally {
-    await killProbe(probeProc);
-    if (probeDataDir) await rmUpdatePathRetry(probeDataDir, "probe data dir");
     await releaseGlobalSelfEditLock(lock.nonce);
   }
+}
+
+/** The full git route under a held lock: prepare a candidate, then land it. */
+async function prepareAndLandGit(repoRoot: string, authToken: string, owner: string): Promise<GitUpdateResult> {
+  let staged: StagedGitUpdate | undefined;
+  try {
+    const prepared = await prepareGitUpdate(repoRoot, authToken, owner);
+    staged = prepared.staged;
+    if (!staged) return withoutStaged(prepared);
+    const landed = await landGitUpdate(staged, repoRoot);
+    if (!landed.ok) await discardGitStaged(staged, repoRoot);
+    staged = undefined;
+    return { ok: landed.ok, held: landed.held, fromCommit: landed.fromCommit, toCommit: landed.toCommit, detail: landed.detail, gates: landed.gates };
+  } catch (e) {
+    if (staged) await discardGitStaged(staged, repoRoot).catch(() => { /* swept at next boot */ });
+    return { ok: false, fromCommit: "", toCommit: "", detail: `Update pipeline crashed: ${(e as Error).message}` };
+  }
+}
+
+function withoutStaged(r: GitUpdateResult & { staged?: unknown }): GitUpdateResult {
+  const { staged: _staged, ...rest } = r;
+  return rest;
 }
 
 /** Tarball updates share the self-edit lock and the canonical validation gates. */

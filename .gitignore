@@ -6,6 +6,8 @@
 node_modules
 dist/
 dist.prev/
+# A landing update's prepared build output, swapped in for dist/ (src/update-git-land.ts).
+dist.next/
 .env
 voice-models/
 *.log

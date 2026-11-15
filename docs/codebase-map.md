@@ -20,7 +20,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 184 | 29 | XL | 1 |
-| `src/security/` | 163 | 62 | XL | 2 |
+| `src/security/` | 164 | 62 | XL | 2 |
 | `src/tools/` | 137 | 235 | XL | 9 |
 | `src/tool-execution/` | 100 | 90 | XL | 2 |
 | `src/workspace/` | 91 | 3 | M |  |
@@ -58,6 +58,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/voice/` | 16 | 80 | XL | 1 |
 | `src/anthropic-client/` | 15 | 23 | L | 2 |
 | `src/cron/` | 14 | 14 | L |  |
+| `src/app-renderer/` | 13 | 7 | M | 1 |
 | `src/agent-loop/` | 12 | 1 | S |  |
 | `src/app-scaffold/` | 12 | 7 | M |  |
 | `src/ari-kernel/` | 12 | 12 | M |  |
@@ -71,7 +72,6 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/plugin-system/` | 9 | 10 | L | 1 |
 | `src/screen-stream/` | 9 | 11 | L |  |
 | `src/agent-guards/` | 8 | 12 | L |  |
-| `src/app-renderer/` | 8 | 7 | M | 1 |
 | `src/autopilot/` | 8 | 14 | L | 1 |
 | `src/bridge-voice/` | 8 | 5 | S |  |
 | `src/mcp-client/` | 8 | 11 | L | 1 |

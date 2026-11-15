@@ -131,7 +131,9 @@ async function main(): Promise<number> {
   return 0;
 }
 
+// Exit once stdout has drained: process.exit with output still queued for a
+// pipe (`refs -- --duplicates | head`) dropped the end of the listing.
 main().then((code) => {
   intel.dispose();
-  process.exit(code);
+  process.stdout.write("", () => process.exit(code));
 });

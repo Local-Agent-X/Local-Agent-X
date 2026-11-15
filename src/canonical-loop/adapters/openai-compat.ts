@@ -44,7 +44,6 @@ import {
   type OpenAICompatAdapterOptions,
   type StreamOnceResult,
 } from "./openai-compat/types.js";
-import { byteLengthUtf8 } from "./openai-compat/helpers.js";
 import { canonicalToChatParam } from "./openai-compat/canonical-to-chat-param.js";
 import { extendLocalWire, thinkLevelInPrompt, type LocalWireState } from "./openai-compat/local-wire.js";
 import { isLocalModelEndpoint } from "../../local-runtimes/model-endpoint.js";
@@ -352,7 +351,7 @@ export class OpenAICompatAdapter implements Adapter {
   }
 
   private checkProviderStateSize(env: ProviderStateEnvelope): string | null {
-    const size = byteLengthUtf8(JSON.stringify(env));
+    const size = Buffer.byteLength(JSON.stringify(env), "utf8");
     return size > PROVIDER_STATE_MAX_BYTES
       ? `provider_state size ${size} bytes exceeds cap ${PROVIDER_STATE_MAX_BYTES}`
       : null;

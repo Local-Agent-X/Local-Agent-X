@@ -17,7 +17,7 @@ import { hasInjects } from "../../../agent-loop/inject-queue.js";
 import { refusalError } from "../model-stop.js";
 import { parseArgs } from "../tool-call-text-repair.js";
 import { withTransportRetry } from "../transport-retry.js";
-import { redactSecrets } from "./helpers.js";
+import { redactCredentials } from "../../../security/secrets/credentials.js";
 import type {
   AnthropicTransport,
   AnthropicTransportRequest,
@@ -120,12 +120,12 @@ export async function streamConsume(
         // Routine errors come through as adapter_reports (PRD §15 H).
         // We capture the FIRST error and propagate via TurnResult.
         if (!out.firstError) {
-          out.firstError = { code: ev.code, message: redactSecrets(ev.message) };
+          out.firstError = { code: ev.code, message: redactCredentials(ev.message) };
         }
         report({
           kind: "error",
           code: ev.code,
-          message: redactSecrets(ev.message),
+          message: redactCredentials(ev.message),
           retryable: ev.retryable === true,
         });
         continue;
@@ -151,7 +151,7 @@ export async function streamConsume(
     // Defensive: contract H says routine errors come via report,
     // not exceptions. If the transport throws, convert into an error
     // report and proceed. We never re-throw out of runTurn.
-    const message = redactSecrets((e as Error).message ?? String(e));
+    const message = redactCredentials((e as Error).message ?? String(e));
     if (!out.firstError) out.firstError = { code: "transport_exception", message };
     report({ kind: "error", code: "transport_exception", message, retryable: false });
   }

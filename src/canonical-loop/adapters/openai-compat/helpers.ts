@@ -1,8 +1,6 @@
 // Tiny shared utilities. extractText probes the common content shapes
-// (string, {text}) for canonical messages; byteLengthUtf8 sizes the
-// provider_state envelope without allocating an encoded buffer. The
-// tool-args JSON guard every adapter uses is parseArgs in
-// ../tool-call-text-repair.ts.
+// (string, {text}) for canonical messages. The tool-args JSON guard every
+// adapter uses is parseArgs in ../tool-call-text-repair.ts.
 
 export function extractText(c: unknown): string {
   if (c == null) return "";
@@ -12,16 +10,4 @@ export function extractText(c: unknown): string {
     return typeof v === "string" ? v : "";
   }
   return "";
-}
-
-export function byteLengthUtf8(s: string): number {
-  let len = 0;
-  for (let i = 0; i < s.length; i++) {
-    const code = s.charCodeAt(i);
-    if (code < 0x80) len += 1;
-    else if (code < 0x800) len += 2;
-    else if (code >= 0xd800 && code <= 0xdbff) { len += 4; i++; }
-    else len += 3;
-  }
-  return len;
 }

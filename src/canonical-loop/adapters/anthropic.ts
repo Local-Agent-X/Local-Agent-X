@@ -55,7 +55,7 @@ import {
   type AnthropicTransportRequest,
   type StreamConsumeResult,
 } from "./anthropic/types.js";
-import { byteLengthUtf8, convertTools } from "./anthropic/helpers.js";
+import { convertTools } from "./anthropic/helpers.js";
 import { streamConsume } from "./anthropic/stream-consume.js";
 import { classifyModelStop } from "./model-stop.js";
 import { buildHostedTurnTrace } from "./hosted-turn-trace.js";
@@ -302,7 +302,7 @@ export class AnthropicAdapter implements Adapter {
 
   private checkProviderStateSize(env: ProviderStateEnvelope): string | null {
     const max = this.opts.providerStateMaxBytes ?? PROVIDER_STATE_MAX_BYTES_DEFAULT;
-    const size = byteLengthUtf8(JSON.stringify(env));
+    const size = Buffer.byteLength(JSON.stringify(env), "utf8");
     if (size > max) {
       return `provider_state size ${size} bytes exceeds cap ${max}`;
     }

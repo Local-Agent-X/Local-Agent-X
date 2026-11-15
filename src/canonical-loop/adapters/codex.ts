@@ -292,7 +292,7 @@ export class CodexAdapter implements Adapter {
 
   private checkProviderStateSize(env: ProviderStateEnvelope): string | null {
     const max = this.opts.providerStateMaxBytes ?? CODEX_PROVIDER_STATE_MAX_BYTES;
-    const size = byteLengthUtf8(JSON.stringify(env));
+    const size = Buffer.byteLength(JSON.stringify(env), "utf8");
     return size > max ? `provider_state size ${size} bytes exceeds cap ${max}` : null;
   }
 }
@@ -324,18 +324,6 @@ function codexTrace(
     toolChoice: req.forcedToolChoice,
     options: { previousResponseId: req.previousResponseId },
   }, outcome, startedAt);
-}
-
-function byteLengthUtf8(s: string): number {
-  let len = 0;
-  for (let i = 0; i < s.length; i++) {
-    const code = s.charCodeAt(i);
-    if (code < 0x80) len += 1;
-    else if (code < 0x800) len += 2;
-    else if (code >= 0xd800 && code <= 0xdbff) { len += 4; i++; }
-    else len += 3;
-  }
-  return len;
 }
 
 export function createCodexAdapter(opts: CodexAdapterOptions = {}): CodexAdapter {

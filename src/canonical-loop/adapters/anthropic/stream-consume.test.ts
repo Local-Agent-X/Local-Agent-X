@@ -92,3 +92,21 @@ describe("streamConsume tool-call args go through the shared repairing guard", (
     expect(await argsOf(raw)).toEqual({ _raw: raw });
   });
 });
+
+describe("streamConsume error messages go through the shared credential redactor", () => {
+  const leak = "proxy said: OPENAI_API_KEY=sk-proj-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789AbCd, then sk-ant-api03-AbCdEfGhIjKlMnOpQrStUvWxYz0123456789 (request_id: req_011CSHn9xYzAbCdEfGhIjKlMn)";
+
+  it("masks every known key shape, not only Anthropic's, and keeps the request id", async () => {
+    const transport = transportYielding([{ type: "error", code: "upstream", message: leak }] as TransportEvent[]);
+    const result = await streamConsume(transport, makeReq(), () => {}, { isAborted: () => false });
+    expect(result.firstError?.message).not.toMatch(/sk-proj-AbCd|sk-ant-api03-AbCd/);
+    expect(result.firstError?.message).toContain("req_011CSHn9xYzAbCdEfGhIjKlMn");
+  });
+
+  it("masks a key in a thrown transport error too", async () => {
+    const transport: AnthropicTransport = { async *stream() { throw new Error(leak); } };
+    const result = await streamConsume(transport, makeReq(), () => {}, { isAborted: () => false });
+    expect(result.firstError?.code).toBe("transport_exception");
+    expect(result.firstError?.message).not.toMatch(/sk-proj-AbCd|sk-ant-api03-AbCd/);
+  });
+});

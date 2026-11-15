@@ -16,8 +16,9 @@ vi.mock("../src/voice/tier4/kitten-engine.js", () => ({
   KITTEN_MODEL_ID: "onnx-community/kitten-tts-nano-0.1-ONNX",
 }));
 
-import { createTier4, listTtsProviders } from "../src/voice/tier4/tier4-factory.js";
-import { hasTtsProvider } from "../src/voice/tier4/registry.js";
+// tier4-factory registers the built-in providers as it loads; registry.ts lists them.
+import { createTier4 } from "../src/voice/tier4/tier4-factory.js";
+import { hasTtsProvider, listTtsProviders } from "../src/voice/tier4/registry.js";
 import { snapshotTier4Diag } from "../src/voice/tier4/streaming-tts.js";
 import {
   KITTEN_VOICES,

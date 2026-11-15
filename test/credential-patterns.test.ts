@@ -86,6 +86,7 @@ describe("credential-patterns — inline value redaction", () => {
     ["SendGrid", `SG.${TAIL}.${TAIL}`],
     ["JWT", `eyJ${"a".repeat(20)}.eyJ${"b".repeat(20)}.${"c".repeat(20)}`],
     ["Bearer header", `Authorization: Bearer ${TAIL}${TAIL}`],
+    ["oauth: token", `PASS oauth:${TAIL}${TAIL}`],
     ["Basic header", `Authorization: Basic ${TAIL}${TAIL}==`],
     ["api_key=value", `api_key="${TAIL}abc"`],
     ["client_secret base64", `client_secret: ${"A".repeat(40)}=`],

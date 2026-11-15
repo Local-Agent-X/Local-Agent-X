@@ -8,7 +8,7 @@
  * call sites the first pass missed are actually wired to them, by
  * intercepting the spawned argv / command string:
  *   - auto-build/git-helpers.ts  (caged spawn argv — commit/add/init)
- *   - update-service.ts          (execSync string — fetch origin main)
+ *   - update-service.ts          (async execFile argv — fetch origin main)
  */
 
 import { EventEmitter } from "node:events";
@@ -18,7 +18,7 @@ const spawnCalls: Array<{ cmd: string; args: string[] }> = [];
 const execCalls: string[] = [];
 const execSyncImpl = vi.fn<(cmd: string) => string>();
 
-// Override ONLY execSync + spawn; keep every other
+// Override ONLY execSync, execFile + spawn; keep every other
 // child_process export real so unrelated importers (process-tree-kill etc.)
 // still load.
 vi.mock("node:child_process", async (importActual) => {
@@ -29,6 +29,13 @@ vi.mock("node:child_process", async (importActual) => {
       execCalls.push(cmd);
       void rest;
       return execSyncImpl(cmd);
+    },
+    // execGit (git-safety.ts): the update check runs git off the event loop.
+    execFile: (file: string, args: string[], _opts: unknown, cb: (err: Error | null, stdout: string, stderr: string) => void) => {
+      const cmd = [file, ...args].join(" ");
+      execCalls.push(cmd);
+      setImmediate(() => { try { cb(null, execSyncImpl(cmd), ""); } catch (e) { cb(e as Error, "", ""); } });
+      return new EventEmitter();
     },
     spawn: (cmd: string, args: string[]) => {
       spawnCalls.push({ cmd, args });

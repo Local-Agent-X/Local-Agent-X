@@ -15,7 +15,7 @@ import { pathToFileURL } from "node:url";
 import { safeErrorMessage } from "./server-utils.js";
 import { DESKTOP_ENV } from "./desktop-contract/env.js";
 import { isLocalOnlyMode, LOCAL_ONLY_BLOCK_MESSAGE } from "./local-only-policy.js";
-import { gitSafeCmd } from "./git-safety.js";
+import { composeGitArgs, execGit } from "./git-safety.js";
 import { inboxUpdateAvailable, inboxUpdateCurrent } from "./inbox/producers.js";
 
 export interface UpdateCheckResult {
@@ -153,13 +153,15 @@ async function checkForUpdateOnce(force: boolean): Promise<UpdateCheckResult> {
     return { localVersion: "0.0.0", localCommit: "", remoteVersion: "0.0.0", remoteCommit: "", updateAvailable: false, releaseNotes: "", error: LOCAL_ONLY_BLOCK_MESSAGE };
   }
   try {
-    const { execSync } = await import("node:child_process");
     const repoRoot = process.cwd();
+    // Async: the check runs on the server while the user works, and a
+    // synchronous fetch held every request until the network answered.
+    const git = async (cmd: string, timeout?: number): Promise<string> => (await execGit(composeGitArgs(cmd), { cwd: repoRoot, timeout })).trim();
     const localPkg = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf-8")) as { version?: string };
     const localVersion = localPkg.version || "0.0.0";
 
     let localCommit = "";
-    try { localCommit = execSync(gitSafeCmd("git rev-parse --short HEAD"), { cwd: repoRoot, encoding: "utf-8" }).trim(); }
+    try { localCommit = await git("rev-parse --short HEAD"); }
     catch {
       // Not a git checkout (rolling/tarball) — compare the last-installed
       // commit to the newest CI-proven commit (the published rolling pointer,
@@ -191,16 +193,16 @@ async function checkForUpdateOnce(force: boolean): Promise<UpdateCheckResult> {
 
     let remoteVersion = localVersion, remoteCommit = "", updateAvailable = false, releaseNotes = "", checkError: string | undefined;
     try {
-      execSync(gitSafeCmd("git fetch origin main --quiet"), { cwd: repoRoot, encoding: "utf-8", timeout: 30000 });
-      remoteCommit = execSync(gitSafeCmd("git rev-parse --short origin/main"), { cwd: repoRoot, encoding: "utf-8" }).trim();
+      await git("fetch origin main --quiet", 30000);
+      remoteCommit = await git("rev-parse --short origin/main");
       try {
-        const remotePkgRaw = execSync(gitSafeCmd("git show origin/main:package.json"), { cwd: repoRoot, encoding: "utf-8" });
+        const remotePkgRaw = await git("show origin/main:package.json");
         remoteVersion = (JSON.parse(remotePkgRaw) as { version?: string }).version || localVersion;
       } catch { /* remote package.json may be missing — keep localVersion */ }
-      try { releaseNotes = execSync(gitSafeCmd("git log -1 --format=%s origin/main"), { cwd: repoRoot, encoding: "utf-8" }).trim(); } catch { /* non-fatal */ }
+      try { releaseNotes = await git("log -1 --format=%s origin/main"); } catch { /* non-fatal */ }
       // "Behind", not "different": a developer_mode install carries local commits,
       // so an update exists only when origin/main has commits this install lacks.
-      const behind = parseInt(execSync(gitSafeCmd("git rev-list --count HEAD..origin/main"), { cwd: repoRoot, encoding: "utf-8" }).trim(), 10) || 0;
+      const behind = parseInt(await git("rev-list --count HEAD..origin/main"), 10) || 0;
       updateAvailable = behind > 0;
     } catch (e) {
       const err = e as { stderr?: Buffer | string; message: string };
@@ -227,14 +229,13 @@ export async function applyUpdateNow(): Promise<ApplyUpdateResult> {
   if (isLocalOnlyMode()) {
     return { ok: false, held: true, fromCommit: "", toCommit: "", detail: LOCAL_ONLY_BLOCK_MESSAGE };
   }
-  const { execSync } = await import("node:child_process");
   const { getRuntimeConfig } = await import("./config.js");
   const repoRoot = process.cwd();
   const authToken = getRuntimeConfig().authToken;
   bustUpdateCache();
 
   let isGitCheckout = true;
-  try { execSync(gitSafeCmd("git rev-parse --short HEAD"), { cwd: repoRoot, encoding: "utf-8" }); } catch { isGitCheckout = false; }
+  try { await execGit(composeGitArgs("rev-parse --short HEAD"), { cwd: repoRoot }); } catch { isGitCheckout = false; }
 
   if (!isGitCheckout) {
     const { applyRollingUpdate } = await import("./update-pipeline.js");

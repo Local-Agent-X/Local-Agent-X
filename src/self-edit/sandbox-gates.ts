@@ -53,12 +53,20 @@ export const SKIPPED_GATE: GateResult = { ok: false, skipped: true, durationMs: 
 // (isolateNodeModules) and run a real `npm ci` in an isolated dir. A failing
 // install blocks the merge.
 
-interface GateRun { ok: boolean; durationMs: number; stdout: string; stderr: string }
+export interface GateRun { ok: boolean; durationMs: number; stdout: string; stderr: string }
 
 async function runGateCommand(name: string, args: string[], signal: AbortSignal | undefined, env: NodeJS.ProcessEnv): Promise<GateRun> {
   const cwd = getWorktreePath(name);
   if (!cwd) return { ok: false, durationMs: 0, stdout: "", stderr: "worktree path not found" };
   return runGateCommandAt(cwd, args, signal, env);
+}
+
+/** An npm command in `cwd` that never holds the event loop, for the update
+ *  paths' installs (`ci` in a candidate, `install` on the live tree). The
+ *  caller's own environment: an update comes from the project's own origin, not
+ *  from a self_edit child. */
+export function runNpmAt(cwd: string, args: string[]): Promise<GateRun> {
+  return runGateCommandAt(cwd, args, undefined, process.env);
 }
 
 /** The ONE npm-gate runner. Registered worktrees resolve their path first

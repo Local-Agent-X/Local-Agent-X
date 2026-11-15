@@ -18,10 +18,12 @@
  *   gitSafeCmd     — shell command strings (execSync)
  *
  * and {@link gitExecutable}, the program the argv runners spawn, with
- * {@link execGitSync}, the one synchronous runner.
+ * {@link execGitSync}, the one synchronous runner, and {@link execGit}, the one
+ * asynchronous runner (for anything a server request or background job waits
+ * on: a synchronous git fetch holds the whole server until the network answers).
  */
 
-import { execFileSync, type ExecFileSyncOptionsWithStringEncoding } from "node:child_process";
+import { execFile, execFileSync, type ExecFileSyncOptionsWithStringEncoding } from "node:child_process";
 import { statSync } from "node:fs";
 import { resolve } from "node:path";
 
@@ -98,4 +100,23 @@ export function execGitSync(args: string[], options: ExecFileSyncOptionsWithStri
     if (err.pid && (err.code === "ETIMEDOUT" || err.code === "ENOBUFS")) killOrphansOfSync(err.pid, startedAt, Date.now());
     throw e;
   }
+}
+
+/**
+ * {@link execGitSync} without holding the event loop: git runs while the server
+ * keeps answering. Takes the full argv (pass it through {@link composeGitArgs});
+ * resolves with stdout, rejects with git's stderr attached on a non-zero exit.
+ */
+export function execGit(args: string[], options: { cwd: string; timeout?: number; maxBuffer?: number }): Promise<string> {
+  const startedAt = Date.now();
+  return new Promise((resolveRun, rejectRun) => {
+    const child = execFile(gitExecutable(), args, {
+      cwd: options.cwd, encoding: "utf-8", windowsHide: true,
+      timeout: options.timeout ?? 60_000, maxBuffer: options.maxBuffer ?? 10 * 1024 * 1024,
+    }, (err, stdout, stderr) => {
+      if (!err) { resolveRun(stdout); return; }
+      if ((err as { killed?: boolean }).killed && child.pid) killOrphansOfSync(child.pid, startedAt, Date.now());
+      rejectRun(Object.assign(err, { stdout, stderr }));
+    });
+  });
 }

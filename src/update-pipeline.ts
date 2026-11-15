@@ -20,14 +20,14 @@
  * exist — if they do, the update is held and says why.
  */
 
-import { execSync, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { join } from "node:path";
 import {
   createNamedWorktree, mergeWorktree, cleanupWorktree, getMergeBaseInfo,
   getBranchHead, runRepoBuildAsync, runDesktopTscBuildAsync,
 } from "./agency/worktree.js";
 import { OTAManager } from "./ota-update.js";
-import { gateDeps, gateBuild, gateBind, gateSmoke, killProbe, SKIPPED_GATE, BUILD_TIMEOUT_MS, type GateResult } from "./self-edit/sandbox-gates.js";
+import { gateDeps, gateBuild, gateBind, gateSmoke, killProbe, runNpmAt, SKIPPED_GATE, BUILD_TIMEOUT_MS, type GateResult } from "./self-edit/sandbox-gates.js";
 import { acquireGlobalSelfEditLock, releaseGlobalSelfEditLock } from "./self-edit/global-lock.js";
 import { cancelUpdateLanding, confirmUpdateLanding, prepareUpdateLanding, restoreUpdateLanding, type PreparedUpdateLanding } from "./update-git-rollback.js";
 import { nowSlug, pickProbePort } from "./self-edit/sandbox-naming.js";
@@ -35,7 +35,7 @@ import { getSetting } from "./settings.js";
 import { recordDesktopPrebuildOutcome } from "./desktop-prebuild-marker.js";
 import { getLaxDir } from "./lax-data-dir.js";
 import { recordUpdateFailure, recordUpdateSuccess, repairStuckUpdateState, markRepairAttempted, REPAIR_THRESHOLD } from "./update-recovery.js";
-import { gitSafeCmd } from "./git-safety.js";
+import { composeGitArgs, execGit } from "./git-safety.js";
 import { createLogger } from "./logger.js";
 import { rmUpdatePathRetry, validateExtractedUpdate } from "./update-extracted-validation.js";
 
@@ -61,8 +61,9 @@ export interface GitUpdateResult {
   gates?: UpdateGates;
 }
 
-function sh(cmd: string, cwd: string, timeoutMs = GIT_TIMEOUT_MS): string {
-  return execSync(gitSafeCmd(cmd), { cwd, encoding: "utf-8", timeout: timeoutMs, windowsHide: true, maxBuffer: 10 * 1024 * 1024 }).trim();
+/** A `git ...` command in `cwd`, off the event loop (the fetch waits on the network). */
+async function sh(cmd: string, cwd: string, timeoutMs = GIT_TIMEOUT_MS): Promise<string> {
+  return (await execGit(composeGitArgs(cmd.replace(/^git\s+/, "")), { cwd, timeout: timeoutMs })).trim();
 }
 
 /** A Windows file lock (a loaded native module, AV, or the file indexer), as
@@ -88,16 +89,15 @@ export function isDeferrableFileLock(msg: string): boolean {
  * problem). Shared by the git and rolling paths so both defer identically
  * instead of one reverting where the other defers.
  */
-function syncLiveDeps(installDir: string): { deferred: boolean } {
-  try {
-    execSync("npm install", { cwd: installDir, encoding: "utf-8", timeout: BUILD_TIMEOUT_MS, windowsHide: true, maxBuffer: 10 * 1024 * 1024 });
-    return { deferred: false };
-  } catch (e) {
-    const msg = (e as Error).message || "";
-    if (!isDeferrableFileLock(msg)) throw e;
-    logger.warn(`[update] live npm install hit a file lock; deferring deps to next-launch reconcile: ${msg.split("\n")[0]}`);
-    return { deferred: true };
-  }
+export async function syncLiveDeps(installDir: string): Promise<{ deferred: boolean }> {
+  // Async: a synchronous install held the server for its whole run (19-28 s
+  // freezes logged during one update).
+  const r = await runNpmAt(installDir, ["install"]);
+  if (r.ok) return { deferred: false };
+  const msg = r.stderr || r.stdout || "npm install failed";
+  if (!isDeferrableFileLock(msg)) throw new Error(msg.slice(-1500));
+  logger.warn(`[update] live npm install hit a file lock; deferring deps to next-launch reconcile: ${msg.split("\n")[0]}`);
+  return { deferred: true };
 }
 
 export async function applyGitUpdate(repoRoot: string, authToken: string): Promise<GitUpdateResult> {
@@ -116,9 +116,9 @@ export async function applyGitUpdate(repoRoot: string, authToken: string): Promi
   let prepared: PreparedUpdateLanding | null = null;
 
   try {
-    sh("git fetch origin main --quiet", repoRoot);
-    const fromCommit = sh("git rev-parse HEAD", repoRoot);
-    const remote = sh("git rev-parse origin/main", repoRoot);
+    await sh("git fetch origin main --quiet", repoRoot);
+    const fromCommit = await sh("git rev-parse HEAD", repoRoot);
+    const remote = await sh("git rev-parse origin/main", repoRoot);
     if (fromCommit === remote) {
       return { ok: true, fromCommit: fromCommit.slice(0, 7), toCommit: remote.slice(0, 7), detail: "Already up to date." };
     }
@@ -127,11 +127,11 @@ export async function applyGitUpdate(repoRoot: string, authToken: string): Promi
     // landing merge itself fail loudly. Counting untracked here left installs
     // permanently un-updatable over stray files (live case: a workspace
     // symlink the old .gitignore pattern didn't cover).
-    const dirty = sh("git status --porcelain --untracked-files=no", repoRoot);
+    const dirty = await sh("git status --porcelain --untracked-files=no", repoRoot);
     if (dirty) {
       return { ok: false, held: true, fromCommit: fromCommit.slice(0, 7), toCommit: remote.slice(0, 7), detail: "Local uncommitted changes to tracked files detected. Commit or stash before updating." };
     }
-    const localAhead = sh("git rev-list --count origin/main..HEAD", repoRoot) !== "0";
+    const localAhead = await sh("git rev-list --count origin/main..HEAD", repoRoot) !== "0";
     if (localAhead && getSetting("developer_mode") !== true) {
       return {
         ok: false, held: true, fromCommit: fromCommit.slice(0, 7), toCommit: remote.slice(0, 7),
@@ -153,9 +153,9 @@ export async function applyGitUpdate(repoRoot: string, authToken: string): Promi
     // conflict means the update genuinely collides with a local edit — hold
     // with the resolution path instead of silently picking a side.
     try {
-      sh("git merge origin/main --no-edit", wt.path);
+      await sh("git merge origin/main --no-edit", wt.path);
     } catch (e) {
-      try { sh("git merge --abort", wt.path); } catch { /* nothing in progress */ }
+      try { await sh("git merge --abort", wt.path); } catch { /* nothing in progress */ }
       cleanupWorktree(name);
       const msg = (e as { stderr?: string; stdout?: string; message: string });
       return {
@@ -213,11 +213,11 @@ export async function applyGitUpdate(repoRoot: string, authToken: string): Promi
     // of reverting; only a real dependency error reverts.
     if (!deps.skipped) {
       try {
-        syncLiveDeps(repoRoot);
+        await syncLiveDeps(repoRoot);
       } catch (e) {
         if (mergeInfo) {
           restoreUpdateLanding(mergeInfo);
-          try { syncLiveDeps(repoRoot); } catch { /* old lockfile restored, next boot retries */ }
+          await syncLiveDeps(repoRoot).catch(() => { /* old lockfile restored, next boot retries */ });
           prepared = null;
         }
         return { ok: false, fromCommit: fromCommit.slice(0, 7), toCommit: remote.slice(0, 7), gates, detail: `Update reverted — dependency install on the live tree failed: ${(e as Error).message.slice(0, 600)}` };
@@ -227,7 +227,7 @@ export async function applyGitUpdate(repoRoot: string, authToken: string): Promi
       const rebuilt = await runRepoBuildAsync(mergeInfo.repoRoot, BUILD_TIMEOUT_MS);
       if (!rebuilt.ok) {
         restoreUpdateLanding(mergeInfo);
-        if (!deps.skipped) { try { syncLiveDeps(repoRoot); } catch { /* old lockfile restored, next boot retries */ } }
+        if (!deps.skipped) await syncLiveDeps(repoRoot).catch(() => { /* old lockfile restored, next boot retries */ });
         prepared = null;
         return { ok: false, fromCommit: fromCommit.slice(0, 7), toCommit: remote.slice(0, 7), gates, detail: `Update reverted — post-merge rebuild failed: ${rebuilt.detail.slice(0, 600)}` };
       }
@@ -242,13 +242,13 @@ export async function applyGitUpdate(repoRoot: string, authToken: string): Promi
       // into a half-written dist. Non-fatal: the server update already landed;
       // a failure leaves the prior dist intact (--noEmitOnError), next-boot
       // reconcile rebuilds it, and the recorded marker makes that boot loud.
-      if (sh(`git diff --name-only ${mergeInfo.sha} ${postSha} -- desktop/src`, repoRoot)) {
+      if (await sh(`git diff --name-only ${mergeInfo.sha} ${postSha} -- desktop/src`, repoRoot)) {
         const dt = await runDesktopTscBuildAsync(repoRoot, BUILD_TIMEOUT_MS);
         recordDesktopPrebuildOutcome(dt.ok, dt.detail);
       }
     }
 
-    const toCommit = sh("git rev-parse HEAD", repoRoot);
+    const toCommit = await sh("git rev-parse HEAD", repoRoot);
     logger.info(`[update] applied ${fromCommit.slice(0, 7)} → ${toCommit.slice(0, 7)} (${merge.files} files)`);
     return { ok: true, fromCommit: fromCommit.slice(0, 7), toCommit: toCommit.slice(0, 7), gates, detail: `Updated (${merge.files} files). Restart to finish.` };
   } catch (e) {
@@ -291,8 +291,8 @@ export async function applyRollingUpdate(installDir: string, authToken: string):
       },
     );
     try {
-      if (depsChanged) syncLiveDeps(installDir);
-      if (desktopDepsChanged) syncLiveDeps(join(installDir, "desktop"));
+      if (depsChanged) await syncLiveDeps(installDir);
+      if (desktopDepsChanged) await syncLiveDeps(join(installDir, "desktop"));
       await ota.writeInstalledCommit(commit);
       await ota.confirmUpdate(commit);
     } catch (error) {

@@ -1,13 +1,14 @@
 /** Validate and build a rolling source candidate before it can overwrite the live install. */
 
-import { execSync, type ChildProcess } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
+import type { ChildProcess } from "node:child_process";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import { runDesktopTscBuildAsync } from "./agency/worktree.js";
 import { linkDirectoryInto, unlinkSharedJunctions } from "./agency/worktree-junctions.js";
 import { createLogger } from "./logger.js";
-import { gateBuildAtAsync, gateBindAt, gateSmoke, killProbe, SKIPPED_GATE, BUILD_TIMEOUT_MS, type GateResult } from "./self-edit/sandbox-gates.js";
+import { gateBuildAtAsync, gateBindAt, gateSmoke, killProbe, runNpmAt, SKIPPED_GATE, BUILD_TIMEOUT_MS, type GateResult } from "./self-edit/sandbox-gates.js";
 import { pickProbePort } from "./self-edit/sandbox-naming.js";
 import type { UpdateGates } from "./update-pipeline.js";
 
@@ -25,7 +26,7 @@ export interface ExtractValidation {
  * never decide whether an otherwise valid update succeeds. */
 export async function rmUpdatePathRetry(path: string, label: string): Promise<void> {
   for (let attempt = 0; ; attempt++) {
-    try { rmSync(path, { recursive: true, force: true }); return; }
+    try { await rm(path, { recursive: true, force: true }); return; }
     catch (e) {
       if (attempt >= 5) {
         logger.warn(`[update] could not remove ${label} at ${path}: ${(e as Error).message}`);
@@ -70,15 +71,13 @@ export async function validateExtractedUpdate(extractDir: string, installDir: st
   try {
     let deps: GateResult;
     if (depsChanged) {
-      const start = Date.now();
-      try {
-        execSync("npm ci", { cwd: extractDir, encoding: "utf-8", timeout: BUILD_TIMEOUT_MS, windowsHide: true, maxBuffer: 10 * 1024 * 1024 });
-        deps = { ok: true, skipped: false, durationMs: Date.now() - start, detail: "isolated npm ci passed" };
-      } catch (e) {
-        const err = e as { stdout?: string; stderr?: string; message: string };
-        const detail = (err.stderr || err.stdout || err.message).slice(-1500);
-        return { ok: false, depsChanged, desktopDepsChanged, detail: `deps gate failed: ${detail.slice(0, 600)}`, gates: { deps: { ok: false, skipped: false, durationMs: Date.now() - start, detail }, build: SKIPPED_GATE, bind: SKIPPED_GATE, smoke: SKIPPED_GATE } };
+      // Async: a synchronous npm ci held the server for its whole run.
+      const r = await runNpmAt(extractDir, ["ci"]);
+      if (!r.ok) {
+        const detail = (r.stderr || r.stdout || "npm ci failed").slice(-1500);
+        return { ok: false, depsChanged, desktopDepsChanged, detail: `deps gate failed: ${detail.slice(0, 600)}`, gates: { deps: { ok: false, skipped: false, durationMs: r.durationMs, detail }, build: SKIPPED_GATE, bind: SKIPPED_GATE, smoke: SKIPPED_GATE } };
       }
+      deps = { ok: true, skipped: false, durationMs: r.durationMs, detail: "isolated npm ci passed" };
     } else {
       deps = { ok: true, skipped: true, durationMs: 0, detail: "no dependency changes" };
       linkDirectoryInto(join(installDir, "node_modules"), join(extractDir, "node_modules"));
@@ -94,11 +93,9 @@ export async function validateExtractedUpdate(extractDir: string, installDir: st
     }
 
     if (desktopDepsChanged) {
-      try {
-        execSync("npm ci", { cwd: join(extractDir, "desktop"), encoding: "utf-8", timeout: BUILD_TIMEOUT_MS, windowsHide: true, maxBuffer: 10 * 1024 * 1024 });
-      } catch (e) {
-        const err = e as { stdout?: string; stderr?: string; message: string };
-        const detail = (err.stderr || err.stdout || err.message).slice(-1500);
+      const r = await runNpmAt(join(extractDir, "desktop"), ["ci"]);
+      if (!r.ok) {
+        const detail = (r.stderr || r.stdout || "npm ci failed").slice(-1500);
         return { ok: false, depsChanged, desktopDepsChanged, detail: `desktop deps gate failed: ${detail.slice(0, 600)}`, gates: { deps, build: SKIPPED_GATE, bind: SKIPPED_GATE, smoke: SKIPPED_GATE } };
       }
     } else {

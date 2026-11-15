@@ -7,18 +7,25 @@ import { join } from "node:path";
 
 const git = { remoteCommit: "def5678", version: "9.9.9", behind: "3", failFetch: false };
 
+function answer(cmd: string): string {
+  if (/rev-parse --short HEAD/.test(cmd)) return "abc1234\n";
+  if (/fetch origin main/.test(cmd)) { if (git.failFetch) throw new Error("fatal: unable to access"); return ""; }
+  if (/rev-parse --short origin\/main/.test(cmd)) return `${git.remoteCommit}\n`;
+  if (/show origin\/main:package\.json/.test(cmd)) return JSON.stringify({ version: git.version });
+  if (/log -1/.test(cmd)) return "subject line\n";
+  if (/rev-list --count/.test(cmd)) return `${git.behind}\n`;
+  return "";
+}
+
 vi.mock("node:child_process", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:child_process")>();
   return {
     ...actual,
-    execSync: (cmd: string) => {
-      if (/rev-parse --short HEAD/.test(cmd)) return "abc1234\n";
-      if (/fetch origin main/.test(cmd)) { if (git.failFetch) throw new Error("fatal: unable to access"); return ""; }
-      if (/rev-parse --short origin\/main/.test(cmd)) return `${git.remoteCommit}\n`;
-      if (/show origin\/main:package\.json/.test(cmd)) return JSON.stringify({ version: git.version });
-      if (/log -1/.test(cmd)) return "subject line\n";
-      if (/rev-list --count/.test(cmd)) return `${git.behind}\n`;
-      return "";
+    // execGit (git-safety.ts) runs git through execFile, off the event loop.
+    execFile: (file: string, args: string[], _opts: unknown, cb: (err: Error | null, stdout: string, stderr: string) => void) => {
+      const cmd = [file, ...args].join(" ");
+      setImmediate(() => { try { cb(null, answer(cmd), ""); } catch (e) { cb(e as Error, "", ""); } });
+      return {};
     },
   };
 });

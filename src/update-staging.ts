@@ -42,6 +42,8 @@ export interface StagedRollingUpdate extends StagedBase {
   route: "rolling";
   /** The extracted, validated tree waiting to be copied over the install. */
   extractDir: string;
+  /** The downloaded asset's name, recorded in the update history. */
+  version: string;
   depsChanged: boolean;
   desktopDepsChanged: boolean;
 }

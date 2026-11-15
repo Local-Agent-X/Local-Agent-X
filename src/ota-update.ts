@@ -144,6 +144,7 @@ export class OTAManager {
     }
   }
 
+  /** Extract + validate, then copy over the install: the two halves below, back to back. */
   async applyUpdate(
     tarPath: string,
     installDir: string,
@@ -154,6 +155,21 @@ export class OTAManager {
      *  removes the extract and throws — the install is never touched. */
     validate?: (extractDir: string) => Promise<{ ok: boolean; detail: string; depsChanged: boolean }>
   ): Promise<{ depsChanged: boolean }> {
+    const staged = await this.stageExtract(tarPath, expectedCommit, validate);
+    await this.landExtract(staged.extractDir, installDir, currentVersion, expectedCommit, staged.version);
+    return { depsChanged: staged.depsChanged };
+  }
+
+  /**
+   * First half: extract the verified tarball into its own folder and validate
+   * it there, without touching the install. The folder is kept for
+   * {@link landExtract}; a prepared update waits in it (update-staging.ts).
+   */
+  async stageExtract(
+    tarPath: string,
+    expectedCommit: string,
+    validate?: (extractDir: string) => Promise<{ ok: boolean; detail: string; depsChanged: boolean }>
+  ): Promise<{ extractDir: string; depsChanged: boolean; version: string }> {
     // Integrity gate: never extract bytes over the live install dir unless they
     // are bound to a resolved commit. The rolling path resolves the CI pointer
     // → sha, downloads that sha's checksum-verified asset, and passes the sha
@@ -166,9 +182,8 @@ export class OTAManager {
       );
     }
 
-    await this.recoverPendingUpdate(installDir);
-
     // Extract first so we can back up exactly what this update will overwrite.
+    await this.init();
     const extractDir = join(this.updatesDir, `extract-${Date.now()}`);
     await mkdir(extractDir, { recursive: true });
 
@@ -191,6 +206,17 @@ export class OTAManager {
         throw new Error(`Update rejected — extracted source failed validation: ${verdict.detail}`);
       }
     }
+    const version = tarPath.match(/([^/\\]+)\.tar\.gz$/)?.[1] ?? "unknown";
+    return { extractDir, depsChanged, version };
+  }
+
+  /**
+   * Second half: copy a validated extract over the install, under the durable
+   * rollback transaction, and record it. A pending transaction from an
+   * interrupted earlier update is recovered first.
+   */
+  async landExtract(extractDir: string, installDir: string, currentVersion: string, expectedCommit: string, version: string): Promise<void> {
+    await this.recoverPendingUpdate(installDir);
 
     // Back up ONLY the install files this update overwrites — never the whole
     // install dir. For desktop builds the install dir IS the Electron userData
@@ -230,12 +256,11 @@ export class OTAManager {
     }
 
     // record in history
-    const newVersion = tarPath.match(/([^/\\]+)\.tar\.gz$/)?.[1] ?? "unknown";
     try {
       const applied = await this.rollback.read(installDir);
       if (!applied || applied.status !== "applied") throw new Error("Applied update transaction is missing.");
       await upsertAppliedHistory(this.historyPath, {
-        version: newVersion,
+        version,
         appliedAt: new Date().toISOString(),
         status: "applied",
         previousVersion: currentVersion,
@@ -250,7 +275,11 @@ export class OTAManager {
 
     // clean up extract dir
     await rmBestEffort(extractDir);
-    return { depsChanged };
+  }
+
+  /** Removes a prepared extract that will not be landed. */
+  async discardExtract(extractDir: string): Promise<void> {
+    await rmBestEffort(extractDir);
   }
 
   async confirmUpdate(commit: string): Promise<void> {

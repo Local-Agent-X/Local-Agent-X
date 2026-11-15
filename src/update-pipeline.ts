@@ -20,18 +20,18 @@
  * exist — if they do, the update is held and says why.
  */
 
-import { join } from "node:path";
+
 import { OTAManager } from "./ota-update.js";
 import type { GateResult } from "./self-edit/sandbox-gates.js";
 import { acquireGlobalSelfEditLock, releaseGlobalSelfEditLock } from "./self-edit/global-lock.js";
 import { getLaxDir } from "./lax-data-dir.js";
 import { recordUpdateFailure, recordUpdateSuccess, repairStuckUpdateState, markRepairAttempted, REPAIR_THRESHOLD } from "./update-recovery.js";
 import { createLogger } from "./logger.js";
-import { validateExtractedUpdate } from "./update-extracted-validation.js";
+import { discardRollingStaged, landRollingUpdate, prepareRollingUpdate } from "./update-rolling.js";
 import { discardGitStaged, prepareGitUpdate } from "./update-git-prepare.js";
 import { landGitUpdate } from "./update-git-land.js";
-import { syncLiveDeps } from "./update-live-deps.js";
-import type { StagedGitUpdate } from "./update-staging.js";
+
+import type { StagedGitUpdate, StagedRollingUpdate } from "./update-staging.js";
 
 export { validateExtractedUpdate } from "./update-extracted-validation.js";
 export type { ExtractValidation } from "./update-extracted-validation.js";
@@ -99,38 +99,22 @@ export async function applyRollingUpdate(installDir: string, authToken: string):
     logger.info(`[update] rolling refused — lock held by ${JSON.stringify(lock.holder ?? "unknown")}`);
     return { ok: false, held: true, fromCommit: "", toCommit: "", detail: UPDATE_BUSY };
   }
+  const ota = new OTAManager();
+  let staged: StagedRollingUpdate | undefined;
   try {
-    const ota = new OTAManager();
     await ota.recoverPendingUpdate(installDir);
-    const installed = (await ota.readInstalledCommit()) || "";
-    const { commit } = await ota.resolveRollingTarget();
-    if (installed && installed === commit) {
-      recordUpdateSuccess(getLaxDir());
-      return { ok: true, fromCommit: installed.slice(0, 7), toCommit: commit.slice(0, 7), detail: "Already up to date." };
+    const prepared = await prepareRollingUpdate(installDir, authToken, ota);
+    staged = prepared.staged;
+    if (!staged) {
+      if (prepared.ok) recordUpdateSuccess(getLaxDir());
+      return withoutStaged(prepared);
     }
-    const tarPath = await ota.downloadRollingSource(commit);
-    let desktopDepsChanged = false;
-    const { depsChanged } = await ota.applyUpdate(
-      tarPath, installDir, installed || "rolling", commit,
-      async (extractDir) => {
-        const verdict = await validateExtractedUpdate(extractDir, installDir, authToken);
-        desktopDepsChanged = verdict.desktopDepsChanged;
-        return verdict;
-      },
-    );
-    try {
-      if (depsChanged) await syncLiveDeps(installDir);
-      if (desktopDepsChanged) await syncLiveDeps(join(installDir, "desktop"));
-      await ota.writeInstalledCommit(commit);
-      await ota.confirmUpdate(commit);
-    } catch (error) {
-      await ota.rollbackUpdate(installDir, commit);
-      throw new Error(`Update rolled back after post-copy verification failed: ${(error as Error).message}`);
-    }
-    logger.info(`[update] rolling applied ${installed.slice(0, 7) || "(fresh)"} → ${commit.slice(0, 7)}`);
+    const landed = await landRollingUpdate(staged, installDir, ota);
+    staged = undefined;
     recordUpdateSuccess(getLaxDir());
-    return { ok: true, fromCommit: installed.slice(0, 7), toCommit: commit.slice(0, 7), detail: "Updated from main (validated) — relaunch to finish." };
+    return { ok: landed.ok, fromCommit: landed.fromCommit, toCommit: landed.toCommit, detail: landed.detail, gates: landed.gates };
   } catch (e) {
+    if (staged) await discardRollingStaged(staged, ota).catch(() => { /* removed by the next prepare */ });
     // Local-only self-repair: notice a failing-update streak and, past the
     // threshold, clear the transient state a stuck update leaves behind (rollback
     // journal + half-downloaded payload) so the NEXT attempt starts clean. No

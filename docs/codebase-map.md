@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2061 non-test source files · 77 oversized · 269 nearing the size cap.
+**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2061 non-test source files · 77 oversized · 268 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -165,7 +165,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/ota-extract.ts` | S |
 | `src/ota-rolling-pointer.ts` | S |
 | `src/ota-update-state.ts` | S |
-| `src/ota-update.ts` | S |
+| `src/ota-update.ts` | M |
 | `src/platform-root.ts` | S |
 | `src/plugin-system.ts` | M |
 | `src/probe-self-destruct.ts` | S |
@@ -231,6 +231,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/update-rollback-prune.ts` | S |
 | `src/update-rollback-state.ts` | S |
 | `src/update-rollback.ts` | M |
+| `src/update-rolling.ts` | S |
 | `src/update-service.ts` | S |
 | `src/update-staging.ts` | S |
 | `src/user-notice.ts` | S |
@@ -506,7 +507,6 @@ job. Comments are free: never cut them to fit.
 - `src/memory/tools/search/memory-recall.ts#memory_recall.execute` — 70+ own code lines (cap 100)
 - `src/ops/tools/shared.ts#configureDelegatedRuntime` — 70+ own code lines (cap 100)
 - `src/orchestrator/process-message-impl.ts#processMessageImpl` — 70+ own code lines (cap 100)
-- `src/ota-update.ts#OTAManager.applyUpdate` — 70+ own code lines (cap 100)
 - `src/protocols/index.ts#createCoreProtocolTools` — 70+ own code lines (cap 100)
 - `src/protocols/learned-refinement.ts#passesPromotion` — 70+ own code lines (cap 100)
 - `src/protocols/stats-tools.ts#protocol_stats.execute` — 70+ own code lines (cap 100)

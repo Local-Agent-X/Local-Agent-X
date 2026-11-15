@@ -423,3 +423,35 @@ describe("OTAManager — only CI-published, verified bytes are installable", () 
     expect(calls[0]).toContain(`lax-source-${SHA}.tar.gz.sha256`);
   });
 });
+
+// A download prepared in the background waits, validated, in its own folder;
+// the install changes only when it is landed (update-rolling.ts).
+describe("OTAManager — stage, then land", () => {
+  it("stages without touching the install, lands the staged tree, and can discard one instead", async () => {
+    const root = realpathSync(mkdtempSync(join(tmpdir(), "lax-ota-stage-")));
+    const installDir = join(root, "install");
+    const pkgDir = join(root, "pkg");
+    mkdirSync(join(installDir, "src"), { recursive: true });
+    mkdirSync(join(pkgDir, "src"), { recursive: true });
+    writeFileSync(join(installDir, "src", "app.ts"), "OLD");
+    writeFileSync(join(pkgDir, "src", "app.ts"), "NEW");
+    execFileSync("tar", ["czf", "rel.tar.gz", "pkg"], { cwd: root });
+    const target = "deadbeefcafebabe0000000000000000feedface";
+    const m = new OTAManager("o", "r", join(root, "lax"));
+
+    const staged = await m.stageExtract(join(root, "rel.tar.gz"), target, async () => ({ ok: true, detail: "", depsChanged: false }));
+    expect(readFileSync(join(installDir, "src", "app.ts"), "utf-8")).toBe("OLD");
+    expect(existsSync(staged.extractDir)).toBe(true);
+    expect(staged.version).toBe("rel");
+
+    await m.landExtract(staged.extractDir, installDir, "rolling", target, staged.version);
+    expect(readFileSync(join(installDir, "src", "app.ts"), "utf-8")).toBe("NEW");
+    expect(existsSync(staged.extractDir)).toBe(false);
+    expect(await m.getHistory()).toMatchObject([{ status: "applied", targetVersion: target, version: "rel" }]);
+
+    const again = await m.stageExtract(join(root, "rel.tar.gz"), target);
+    await m.discardExtract(again.extractDir);
+    expect(existsSync(again.extractDir)).toBe(false);
+    rmSync(root, { recursive: true, force: true });
+  });
+});

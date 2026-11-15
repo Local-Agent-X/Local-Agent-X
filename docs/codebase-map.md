@@ -54,9 +54,9 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/server/` *(entrypoint)* | 19 | 76 | XL | 4 |
 | `src/agents/` | 17 | 14 | L |  |
 | `src/net/` | 17 | 11 | L |  |
+| `src/self-edit/` | 16 | 19 | L | 2 |
 | `src/voice/` | 16 | 80 | XL | 1 |
 | `src/anthropic-client/` | 15 | 23 | L | 2 |
-| `src/self-edit/` | 15 | 19 | L | 2 |
 | `src/cron/` | 14 | 14 | L |  |
 | `src/agent-loop/` | 12 | 1 | S |  |
 | `src/app-scaffold/` | 12 | 7 | M |  |
@@ -221,6 +221,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/trash-journal.ts` | S |
 | `src/trash-restore.ts` | S |
 | `src/types.ts` | S |
+| `src/update-background.ts` | S |
 | `src/update-extracted-validation.ts` | S |
 | `src/update-git-land.ts` | S |
 | `src/update-git-prepare.ts` | S |
@@ -350,6 +351,7 @@ job. Comments are free: never cut them to fit.
 - `src/protocols/index.ts` — 310+ code lines (cap 350)
 - `src/security/layer/security-audit.ts` — 310+ code lines (cap 350)
 - `src/security/layer/shell-detectors.ts` — 310+ code lines (cap 350)
+- `src/server/background-jobs/index.ts` — 310+ code lines (cap 350)
 - `src/tool-execution/side-effect-journal.ts` — 310+ code lines (cap 350)
 - `src/tools/spreadsheet-tools.ts` — 310+ code lines (cap 350)
 - `src/whatsapp-bridge/index.ts` — 310+ code lines (cap 350)
@@ -374,7 +376,6 @@ job. Comments are free: never cut them to fit.
 - `src/memory/tools/save.ts` — 290+ code lines (cap 350)
 - `src/ops/operation-requirements.ts` — 290+ code lines (cap 350)
 - `src/protocols/skills-install.ts` — 290+ code lines (cap 350)
-- `src/server/background-jobs/index.ts` — 290+ code lines (cap 350)
 - `src/telegram-bridge/bridge.ts` — 290+ code lines (cap 350)
 - `src/tool-execution/sensitive-read-taint.ts` — 290+ code lines (cap 350)
 - `src/browser/runtime.ts` — 280+ code lines (cap 350)
@@ -390,7 +391,6 @@ job. Comments are free: never cut them to fit.
 - `src/agency/handler-tools.ts#createHandlerTools` — 100+ own code lines (cap 100)
 - `src/auto-build/workflow-resolver.ts#candidateFromEvidence` — 100+ own code lines (cap 100)
 - `src/canonical-loop/adapters/anthropic/stream-consume.ts#streamConsume` — 100+ own code lines (cap 100)
-- `src/server/background-jobs/index.ts#startBackgroundJobs` — 100+ own code lines (cap 100)
 - `src/anthropic-client/stream-cli.ts#streamViaColdSpawn` — 90+ own code lines (cap 100)
 - `src/app-renderer/components.ts#renderComponent` — 90+ own code lines (cap 100)
 - `src/auto-build/orchestrator/manager.ts#startOrchestration` — 90+ own code lines (cap 100)
@@ -425,6 +425,7 @@ job. Comments are free: never cut them to fit.
 - `src/screen-stream/signaling-machine.ts#signalingReducer` — 90+ own code lines (cap 100)
 - `src/security/layer/network-policy.ts#evaluateWebFetch` — 90+ own code lines (cap 100)
 - `src/security/layer/shell-policy.ts#evaluateShellCommand` — 90+ own code lines (cap 100)
+- `src/server/background-jobs/index.ts#startBackgroundJobs` — 90+ own code lines (cap 100)
 - `src/server/inbound-channel-runner.ts#runInboundChannelTurn` — 90+ own code lines (cap 100)
 - `src/server/voice-ws.ts#runVoiceTurn` — 90+ own code lines (cap 100)
 - `src/sync/push-files.ts#copyToSync` — 90+ own code lines (cap 100)

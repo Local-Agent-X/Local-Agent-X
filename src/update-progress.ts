@@ -74,6 +74,11 @@ export function updateStep(step: UpdateStep, now = Date.now()): void {
   run.stepStartedAt = now;
 }
 
+/** Whether an update is running (preparing or installing). */
+export function updateProgressActive(): boolean {
+  return run !== null;
+}
+
 /** A click joined a background preparation: the bar now reports an install. */
 export function promoteToInstalling(): void {
   if (run) run.mode = "installing";

@@ -4,7 +4,7 @@ import { dropReady, readyUpdate, stageReady, takeReady, type StagedUpdate } from
 
 const gate = { ok: true, skipped: false, durationMs: 0, detail: "" };
 const candidate = (target: string): StagedUpdate => ({
-  route: "rolling", base: "a", target, preparedAt: 0, extractDir: `/x/${target}`, version: target,
+  route: "rolling", base: "a", target, upstream: target, preparedAt: 0, extractDir: `/x/${target}`, version: target,
   depsChanged: false, desktopDepsChanged: false, gates: { deps: gate, build: gate, bind: gate, smoke: gate },
 });
 

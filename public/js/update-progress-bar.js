@@ -29,5 +29,20 @@ function watchUpdateProgress(el) {
   return () => { stopped = true; };
 }
 
+/** The banner / Settings line for an available update; says when it is already prepared. */
+function updateSummary(u) {
+  const what = `v${esc(u.remoteVersion)}${u.remoteCommit ? ' (' + esc(u.remoteCommit) + ')' : ''}${u.releaseNotes ? ' — ' + esc(u.releaseNotes) : ''}`;
+  return u.ready ? `Update ready to install: ${what}` : `Update available: ${what}`;
+}
+
+/** The question before an update: a prepared one installs in seconds. */
+function updateConfirmText(u) {
+  return u && u.ready
+    ? 'Install the update? It is already prepared, so this takes a few seconds. You will be asked to relaunch the app to finish.'
+    : 'Download and install the latest version? It is built and tested before anything changes; you will be asked to relaunch the app to finish.';
+}
+
+window.updateSummary = updateSummary;
+window.updateConfirmText = updateConfirmText;
 window.updateProgressMarkup = updateProgressMarkup;
 window.watchUpdateProgress = watchUpdateProgress;

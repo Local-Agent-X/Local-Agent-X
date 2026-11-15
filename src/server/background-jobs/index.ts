@@ -52,7 +52,8 @@ export type RegisteredJobName =
   | "failure-review"
   | "mail-watch"
   | "plan-reminders"
-  | "travel-watch";
+  | "travel-watch"
+  | "update-prepare";
 
 /**
  * Overlap policy for every registered job, in one place. Not documentation —
@@ -126,6 +127,12 @@ export type RegisteredJobName =
  *     a second pass at once would only find them posted. A dropped tick costs
  *     five minutes; the lead time is wider than that.
  *
+ *   update-prepare (skip)
+ *     Builds and gates an update candidate in a worktree or extract folder;
+ *     two at once would build the same version twice. A dropped tick costs 15
+ *     minutes, and the pass refuses to start while one is running anyway
+ *     (update-background.ts), since a click can join it.
+ *
  *   mail-watch (skip)
  *     Two passes at once would both read past the same checkpoint and raise
  *     the same mail twice (the inbox key dedupes the item, not the model
@@ -144,6 +151,7 @@ export const JOB_OVERLAP: Record<RegisteredJobName, OverlapPolicy> = {
   "mail-watch": "skip",
   "plan-reminders": "skip",
   "travel-watch": "skip",
+  "update-prepare": "skip",
 };
 
 /** Name + declared policy in one spread, so a registration can never carry a
@@ -153,11 +161,32 @@ function withOverlapPolicy(name: RegisteredJobName): { name: RegisteredJobName; 
 }
 
 /**
- * Upkeep of what the agent has learned, both on the shared foreground-idle
- * gate: the protocol curator (catalog lifecycle and its advisory report) and
- * the failure review (what keeps going wrong across chats).
+ * Upkeep of what the agent has learned, all on the shared foreground-idle
+ * gate: skill review (procedures worth keeping from recent sessions), the
+ * protocol curator (catalog lifecycle and its advisory report) and the failure
+ * review (what keeps going wrong across chats).
  */
 function registerLearningUpkeep(scheduler: JobScheduler, foregroundIdle: () => boolean, deps: FailureReviewDeps): void {
+  scheduler.register({
+    ...withOverlapPolicy("skill-review"),
+    // Poll often enough that a procedure is captured while the session is
+    // still the user's current one; the queue is empty on most ticks, and
+    // foregroundIdle keeps it off the provider key during a live turn. After
+    // consecutive all-failure passes the job's own breaker stretches or parks
+    // this cadence at the pass entry (skill-review-breaker.ts) — the interval
+    // itself stays fixed, ticks inside a backoff window are refused there.
+    intervalMs: SKILL_REVIEW_POLL_INTERVAL_MS,
+    startupDelayMs: 3 * 60 * 1000,
+    shouldRun: foregroundIdle,
+    run: async () => {
+      const r = await runSkillReviewPass();
+      if (r.reviewed > 0 || r.failed > 0) {
+        const b = getSkillReviewBreakerState();
+        logger.info(`[skill-review] pass: reviewed=${r.reviewed} failed=${r.failed} breaker=${b.phase} streak=${b.streak}`);
+      }
+    },
+  });
+
   // What keeps going wrong across chats, reviewed about once a day.
   registerFailureReviewRunner(deps);
   scheduler.register({
@@ -190,6 +219,25 @@ function registerLearningUpkeep(scheduler: JobScheduler, foregroundIdle: () => b
       if (r.reviewed > 0 || r.failed > 0) {
         logger.info(`[failure-review] pass: reviewed=${r.reviewed} proposed=${r.proposed} failed=${r.failed}`);
       }
+    },
+  });
+}
+
+/**
+ * Prepares an available update while the user is idle, so clicking Update
+ * only lands it (update-background.ts decides whether there is anything to do:
+ * an update, out for its quiet period, not prepared yet, no mutation running).
+ */
+function registerUpdatePrepare(scheduler: JobScheduler, foregroundIdle: () => boolean, config: LAXConfig): void {
+  scheduler.register({
+    ...withOverlapPolicy("update-prepare"),
+    intervalMs: 15 * 60 * 1000,
+    startupDelayMs: 10 * 60 * 1000,
+    shouldRun: foregroundIdle,
+    run: async () => {
+      const { prepareUpdateInBackground } = await import("../../update-background.js");
+      const outcome = await prepareUpdateInBackground(config.authToken);
+      if (outcome === "prepared" || outcome === "failed") logger.info(`[update-prepare] pass: ${outcome}`);
     },
   });
 }
@@ -416,27 +464,8 @@ export function startBackgroundJobs(deps: {
     },
   });
 
-  scheduler.register({
-    ...withOverlapPolicy("skill-review"),
-    // Poll often enough that a procedure is captured while the session is
-    // still the user's current one; the queue is empty on most ticks, and
-    // foregroundIdle keeps it off the provider key during a live turn. After
-    // consecutive all-failure passes the job's own breaker stretches or parks
-    // this cadence at the pass entry (skill-review-breaker.ts) — the interval
-    // itself stays fixed, ticks inside a backoff window are refused there.
-    intervalMs: SKILL_REVIEW_POLL_INTERVAL_MS,
-    startupDelayMs: 3 * 60 * 1000,
-    shouldRun: foregroundIdle,
-    run: async () => {
-      const r = await runSkillReviewPass();
-      if (r.reviewed > 0 || r.failed > 0) {
-        const b = getSkillReviewBreakerState();
-        logger.info(`[skill-review] pass: reviewed=${r.reviewed} failed=${r.failed} breaker=${b.phase} streak=${b.streak}`);
-      }
-    },
-  });
-
   registerLearningUpkeep(scheduler, foregroundIdle, { config, dataDir, secretsStore, security, toolPolicy });
+  registerUpdatePrepare(scheduler, foregroundIdle, config);
   registerWatchers(scheduler, deps);
 
   // Backfill scans every file and re-embeds — see decideBackfill in

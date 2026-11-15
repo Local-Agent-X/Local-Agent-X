@@ -34,7 +34,7 @@ async function settingsApplyUpdate() {
   const status = document.getElementById('settings-update-status');
   if (!status) return;
   if (window._laxUpdateInFlight) return;
-  if (!confirm('Pull the latest version from GitHub? You will be asked to relaunch the app afterward to finish installing.')) return;
+  if (!confirm(updateConfirmText(window._laxServerUpdate))) return;
   window._laxUpdateInFlight = true;
   status.style.color = 'var(--muted)';
   const stopProgress = watchUpdateProgress(status);

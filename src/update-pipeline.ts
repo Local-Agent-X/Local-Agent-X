@@ -31,8 +31,9 @@ import { discardRollingStaged, landRollingUpdate, prepareRollingUpdate } from ".
 import { discardGitStaged, prepareGitUpdate } from "./update-git-prepare.js";
 import { landGitUpdate } from "./update-git-land.js";
 
-import type { StagedGitUpdate, StagedRollingUpdate } from "./update-staging.js";
-import { beginUpdateProgress, endUpdateProgress } from "./update-progress.js";
+import { readyUpdate, takeReady, type StagedGitUpdate, type StagedRollingUpdate } from "./update-staging.js";
+import { beginUpdateProgress, endUpdateProgress, updateProgressActive } from "./update-progress.js";
+import { discardStaged } from "./update-background.js";
 
 export { validateExtractedUpdate } from "./update-extracted-validation.js";
 export type { ExtractValidation } from "./update-extracted-validation.js";
@@ -135,6 +136,34 @@ export async function applyRollingUpdate(installDir: string, authToken: string):
       }
     }
     return { ok: false, fromCommit: "", toCommit: "", detail };
+  } finally {
+    endUpdateProgress();
+    await releaseGlobalSelfEditLock(lock.nonce);
+  }
+}
+
+/**
+ * Lands the update prepared in the background (update-background.ts), if one
+ * is ready: seconds, no build. Null when none is ready, or when the one that
+ * was no longer fits this install (it is discarded); the caller then runs the
+ * full path.
+ */
+export async function landPreparedUpdate(installDir: string): Promise<(GitUpdateResult & { rolling?: boolean }) | null> {
+  if (!readyUpdate()) return null;
+  const lock = await acquireGlobalSelfEditLock({ task: "platform update" });
+  if (!lock.acquired) return { ok: false, held: true, fromCommit: "", toCommit: "", detail: UPDATE_BUSY };
+  const staged = takeReady();
+  try {
+    if (!staged) return null;
+    if (!updateProgressActive()) beginUpdateProgress("installing");
+    const landed = staged.route === "git" ? await landGitUpdate(staged, installDir) : await landRollingUpdate(staged, installDir);
+    if (!landed.ok) await discardStaged(staged).catch(() => { /* swept at next boot */ });
+    if (landed.stale) return null;
+    if (landed.ok && staged.route === "rolling") recordUpdateSuccess(getLaxDir());
+    return { ok: landed.ok, held: landed.held, fromCommit: landed.fromCommit, toCommit: landed.toCommit, detail: landed.detail, gates: landed.gates, ...(staged.route === "rolling" ? { rolling: true } : {}) };
+  } catch (e) {
+    if (staged) await discardStaged(staged).catch(() => { /* swept at next boot */ });
+    return { ok: false, fromCommit: "", toCommit: "", detail: `Installing the prepared update failed: ${(e as Error).message}` };
   } finally {
     endUpdateProgress();
     await releaseGlobalSelfEditLock(lock.nonce);

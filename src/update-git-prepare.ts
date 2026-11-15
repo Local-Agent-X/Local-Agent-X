@@ -96,7 +96,7 @@ export async function prepareGitUpdate(repoRoot: string, authToken: string, owne
   return {
     ok: true, ...ids, gates: gated.gates, detail: "Update ready to install.",
     staged: {
-      route: "git", base, target, preparedAt: Date.now(), gates: gated.gates,
+      route: "git", base, target, upstream: remote, preparedAt: Date.now(), gates: gated.gates,
       worktree: name, worktreePath: wt.path, branch: wt.branch, depsChanged, desktopBuilt,
     },
   };

@@ -210,7 +210,7 @@ function renderUpdateBanner() {
       ? ` Chromium ${esc(data.installedChromiumVersion)} → ${esc(data.requiredChromiumVersion)}.` : '';
     content = `<strong>Browser engine app update required.</strong>${electron}${chromium} Your projects, settings, and conversations will be preserved. <button class="update-btn" onclick="bannerOpenNativeInstaller()">Download Update</button>`;
   } else if (data && data.updateAvailable) {
-    content = `Update available: v${esc(data.remoteVersion)}${data.remoteCommit ? ' (' + esc(data.remoteCommit) + ')' : ''}${data.releaseNotes ? ' — ' + esc(data.releaseNotes) : ''} <button class="update-btn" onclick="bannerApplyUpdate()">Update Now</button> <button class="update-btn" onclick="window.open('https://github.com/Local-Agent-X/Local-Agent-X','_blank')" style="opacity:.75">View on GitHub</button>`;
+    content = `${updateSummary(data)} <button class="update-btn" onclick="bannerApplyUpdate()">${data.ready ? 'Install Now' : 'Update Now'}</button> <button class="update-btn" onclick="window.open('https://github.com/Local-Agent-X/Local-Agent-X','_blank')" style="opacity:.75">View on GitHub</button>`;
   }
   if (!content) return;
   banner.style.display = '';
@@ -243,8 +243,7 @@ function renderSettingsUpdate(data) {
     status.textContent = 'Could not check for updates: ' + String(server.error);
   } else if (server && server.updateAvailable) {
     status.style.color = 'var(--accent)';
-    const summary = `Update available: v${esc(server.remoteVersion)}${server.remoteCommit ? ' (' + esc(server.remoteCommit) + ')' : ''}${server.releaseNotes ? ' — ' + esc(server.releaseNotes) : ''}`;
-    status.innerHTML = `${summary} <button class="action-btn primary" onclick="settingsApplyUpdate()">Update Now</button> <a href="https://github.com/Local-Agent-X/Local-Agent-X" target="_blank">View on GitHub</a>`;
+    status.innerHTML = `${updateSummary(server)} <button class="action-btn primary" onclick="settingsApplyUpdate()">${server.ready ? 'Install Now' : 'Update Now'}</button> <a href="https://github.com/Local-Agent-X/Local-Agent-X" target="_blank">View on GitHub</a>`;
   } else if (server) {
     status.style.color = 'var(--accent)';
     const runtimes = [server.installedElectronVersion ? `Electron ${server.installedElectronVersion}` : '', server.installedChromiumVersion ? `Chromium ${server.installedChromiumVersion}` : ''].filter(Boolean);
@@ -371,7 +370,7 @@ async function bannerApplyUpdate() {
   // machine-wide — this just avoids sending the doomed second request when
   // an impatient click lands during the multi-minute validation.
   if (window._laxUpdateInFlight) return;
-  if (!confirm('Pull the latest version from GitHub? You will be asked to relaunch the app afterward to finish installing.')) return;
+  if (!confirm(updateConfirmText(_laxServerUpdate))) return;
   window._laxUpdateInFlight = true;
   banner.innerHTML = `<span class="update-msg"></span>`;
   const stopProgress = watchUpdateProgress(banner.querySelector('.update-msg'));

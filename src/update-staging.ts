@@ -22,6 +22,9 @@ interface StagedBase {
   base: string;
   /** The commit this candidate installs. */
   target: string;
+  /** The published commit it was prepared from (origin/main, or the rolling
+   *  pointer): the same as `target` unless local commits were merged in. */
+  upstream: string;
   preparedAt: number;
   gates: UpdateGates;
 }

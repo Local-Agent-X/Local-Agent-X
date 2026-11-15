@@ -17,6 +17,7 @@ import { DESKTOP_ENV } from "./desktop-contract/env.js";
 import { isLocalOnlyMode, LOCAL_ONLY_BLOCK_MESSAGE } from "./local-only-policy.js";
 import { composeGitArgs, execGit } from "./git-safety.js";
 import { inboxUpdateAvailable, inboxUpdateCurrent } from "./inbox/producers.js";
+import { readyUpdate } from "./update-staging.js";
 
 export interface UpdateCheckResult {
   localVersion: string;
@@ -35,6 +36,8 @@ export interface UpdateCheckResult {
   nativeUpdateRequired?: boolean;
   nativeInstallerUrl?: string;
   nativeRuntimeCheckError?: string;
+  /** The update was prepared in the background: installing it takes seconds. */
+  ready?: boolean;
 }
 
 export interface ApplyUpdateResult {
@@ -44,6 +47,8 @@ export interface ApplyUpdateResult {
   toCommit: string;
   detail: string;
   rolling?: boolean;
+  /** Landed an update prepared in the background (no build at the click). */
+  staged?: boolean;
 }
 
 let _updateCache: { data: UpdateCheckResult; time: number } | null = null;
@@ -137,7 +142,7 @@ async function withNativeRuntimeCheck(result: UpdateCheckResult): Promise<Update
 export async function checkForUpdate(force = false): Promise<UpdateCheckResult> {
   const result = await checkForUpdateOnce(force);
   noteUpdateInInbox(result);
-  return result;
+  return result.updateAvailable && readyUpdate() !== null ? { ...result, ready: true } : result;
 }
 
 /** One inbox item per available version; once the install is current an
@@ -233,6 +238,18 @@ export async function applyUpdateNow(): Promise<ApplyUpdateResult> {
   const repoRoot = process.cwd();
   const authToken = getRuntimeConfig().authToken;
   bustUpdateCache();
+
+  // Prepared in the background: join a preparation still running rather than
+  // start a second one, then land what is ready (update-background.ts).
+  const { joinPreparation } = await import("./update-background.js");
+  const { landPreparedUpdate } = await import("./update-pipeline.js");
+  const joining = joinPreparation();
+  if (joining) await joining;
+  const landed = await landPreparedUpdate(repoRoot);
+  if (landed) {
+    if (landed.ok) await reassertUninstallRegistration(repoRoot);
+    return { ok: landed.ok, held: landed.held, fromCommit: landed.fromCommit, toCommit: landed.toCommit, detail: landed.detail, staged: true, ...(landed.rolling ? { rolling: true } : {}) };
+  }
 
   let isGitCheckout = true;
   try { await execGit(composeGitArgs("rev-parse --short HEAD"), { cwd: repoRoot }); } catch { isGitCheckout = false; }

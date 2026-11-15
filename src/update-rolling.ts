@@ -42,7 +42,7 @@ export async function prepareRollingUpdate(installDir: string, authToken: string
   return {
     ok: true, ...ids, gates, detail: "Update ready to install.",
     staged: {
-      route: "rolling", base: installed, target: commit, preparedAt: Date.now(), gates: gates!,
+      route: "rolling", base: installed, target: commit, upstream: commit, preparedAt: Date.now(), gates: gates!,
       extractDir: staged.extractDir, version: staged.version, depsChanged: staged.depsChanged, desktopDepsChanged,
     },
   };

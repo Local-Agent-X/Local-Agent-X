@@ -129,3 +129,34 @@ describe("git update: prepare, then land", () => {
     expect(r.staged).toBeUndefined();
   });
 });
+
+describe("the click lands what was prepared in the background", () => {
+  it("lands a ready candidate through landPreparedUpdate, and empties the slot", async () => {
+    const { landPreparedUpdate } = await import("../src/update-pipeline.js");
+    const { stageReady, readyUpdate } = await import("../src/update-staging.js");
+    g(live, ["reset", "--hard", "origin/main"]);
+    const target = pushChange("a.txt", "four\n");
+    const prepared = await prepareGitUpdate(live, "tok", "test");
+    await stageReady(prepared.staged!, async () => {});
+
+    const landed = await landPreparedUpdate(live);
+    expect(landed).toMatchObject({ ok: true });
+    expect(g(live, ["rev-parse", "HEAD"])).toBe(target);
+    expect(readyUpdate()).toBeNull();
+  });
+
+  it("returns null, so the click runs the full path, when the prepared one no longer fits", async () => {
+    const { landPreparedUpdate } = await import("../src/update-pipeline.js");
+    const { stageReady, readyUpdate } = await import("../src/update-staging.js");
+    pushChange("a.txt", "five\n");
+    const prepared = await prepareGitUpdate(live, "tok", "test");
+    await stageReady(prepared.staged!, async () => {});
+    writeFileSync(join(live, "local2.txt"), "x\n");
+    g(live, ["add", "local2.txt"]);
+    g(live, ["commit", "-m", "moved after prepare"]);
+
+    expect(await landPreparedUpdate(live)).toBeNull();
+    expect(readyUpdate()).toBeNull();
+    expect(existsSync(prepared.staged!.worktreePath)).toBe(false);
+  });
+});

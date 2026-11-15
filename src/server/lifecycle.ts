@@ -4,7 +4,7 @@ import { getLaxDir } from "../lax-data-dir.js";
 import { join } from "node:path";
 import { setupChatWebSocket } from "../chat-ws/index.js";
 import { setInboxAnswerer } from "../chat-ws/inbox-frames.js";
-import { actOnInbox, mutateInbox } from "../routes/inbox.js";
+import { actOnInbox, mutateInbox, rateFromInbox, replyFromInbox } from "../routes/inbox.js";
 import { startPhonePush } from "../phone-push/index.js";
 import { startLiveApprovalCopies } from "../inbox/live-approval.js";
 import { startInboxRecall } from "../memory/inbox-recall.js";
@@ -95,6 +95,8 @@ export function wireWsChat(deps: {
   setInboxAnswerer({
     mutate: (action, id) => mutateInbox(buildCtx(), action, id) !== null,
     act: (id, action) => actOnInbox(buildCtx(), id, action),
+    rate: (id, rating) => rateFromInbox(buildCtx(), id, rating),
+    reply: (id, text) => replyFromInbox(buildCtx(), id, text),
   });
   // A new inbox item also rings the phones that asked for its kind.
   startPhonePush();

@@ -52,14 +52,17 @@ function eventLine(e: CalendarEvent): string {
 /** The user turn: when it is, what the calendar holds, and the mail. */
 export function buildMailWatchMessage(input: {
   now: Date;
-  messages: Array<EmailSummary & { knownSender: boolean }>;
+  messages: Array<EmailSummary & { knownSender: boolean; rated?: string }>;
   events: CalendarEvent[];
   unreadableCalendars: string[];
+  /** How the person rated past alerts by kind (mail-watch-ratings.ts), or "". */
+  ratingsNote?: string;
 }): string {
   const mail = input.messages.map((m, i) => [
     `[${i + 1}] uid: ${m.uid}`,
     `from: ${m.from}`,
     `knows sender: ${m.knownSender ? "yes" : "no"}`,
+    ...(m.rated ? [`the person rated past alerts from this sender: ${m.rated}`] : []),
     `date: ${m.date}`,
     `subject: ${m.subject}`,
     `preview: ${m.snippet}`,
@@ -74,6 +77,7 @@ export function buildMailWatchMessage(input: {
     "Their calendar for the next 7 days:",
     wrapExternalContent(calendar, "calendar"),
     missing,
+    ...(input.ratingsNote ? ["", `${input.ratingsNote} Follow what they told you.`] : []),
     "",
     `New mail (${input.messages.length} messages):`,
     wrapExternalContent(mail, "email"),

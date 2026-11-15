@@ -31,6 +31,12 @@ export type InboxItemLink = { url?: string; sessionId?: string; opId?: string; a
 /** An action the desktop offers for the item (Approve / Decline on an approval). */
 export type InboxItemAction = { id: string; label: string };
 
+/** How the user rated an item the desktop lets them rate (an alert its mail watcher raised):
+ *  `unrated` until they say whether it was worth telling them. The desktop learns from it
+ *  what is important to this person. Absent on an item that cannot be rated. */
+export type InboxFeedback = "unrated" | "useful" | "not-useful";
+const FEEDBACK: readonly string[] = ["unrated", "useful", "not-useful"];
+
 export type InboxItem = {
   id: string;
   kind: InboxItemKind;
@@ -47,6 +53,7 @@ export type InboxItem = {
   needsYou: boolean;
   link?: InboxItemLink;
   actions?: InboxItemAction[];
+  feedback?: InboxFeedback;
 };
 
 export type InboxCounts = { unread: number; needsYou: number };
@@ -65,6 +72,9 @@ const CHANGE_ACTIONS: readonly string[] = ["read", "read_all", "dismiss", "resol
 /** A user answered an item somewhere. `item` is its new state when the action concerns one
  *  item that is still visible; a desktop that predates it sends the action and id alone. */
 export type InboxChangedFrame = { type: "inbox_changed"; action: InboxChangeAction; id?: string; item?: InboxItem } & InboxCounts;
+
+/** The answer to `inbox_reply`: the chat the reply opened or continued. Open it. */
+export type InboxRepliedFrame = { type: "inbox_replied"; id: string; sessionId: string };
 
 /** What an `inbox_item` or `inbox_changed` frame means for a client's list. `stale`: the
  *  desktop changed something it did not describe; ask for `inbox_list` again. */
@@ -86,17 +96,24 @@ export type InboxReadFrame = { type: "inbox_read"; id?: string };
 
 /** Answer an item. `approve` / `decline` answer a waiting approval (the desktop runs the
  *  parked call, or skips it, exactly as its own bell would); `resolve` marks a needs-you item
- *  done; `dismiss` hides it. An action the desktop cannot carry out (an approval already
- *  answered, an unknown id) gets a top-level `error` frame back (parseControlError). */
-export type InboxActAction = "approve" | "decline" | "dismiss" | "resolve";
+ *  done; `dismiss` hides it; `useful` / `not-useful` rate an item that has `feedback`. An
+ *  action the desktop cannot carry out (an approval already answered, an unknown id, a
+ *  rating on a desktop that predates them) gets a top-level `error` frame back
+ *  (parseControlError). */
+export type InboxActAction = "approve" | "decline" | "dismiss" | "resolve" | "useful" | "not-useful";
 export type InboxActFrame = { type: "inbox_act"; id: string; action: InboxActAction };
 
-export type InboxOutboundFrame = InboxListFrame | InboxReadFrame | InboxActFrame;
+/** Reply to an item: the desktop opens a chat about it (the user's words first, the item
+ *  quoted) or continues the one an earlier reply opened, and answers with `inbox_replied`.
+ *  Not offered on an open approval. A desktop that predates it answers with an `error`. */
+export type InboxReplyFrame = { type: "inbox_reply"; id: string; text: string };
+
+export type InboxOutboundFrame = InboxListFrame | InboxReadFrame | InboxActFrame | InboxReplyFrame;
 
 /** What a client may offer for an item, the same rules as the desktop's bell: an open
  *  approval is answered only by Approve or Decline (no Done, no Dismiss); `open` follows the
  *  item's link on the client; `resolve` is Done for anything else that needs the user. */
-export type InboxOffer = "approve" | "decline" | "open" | "read" | "resolve" | "dismiss";
+export type InboxOffer = "approve" | "decline" | "open" | "read" | "resolve" | "dismiss" | "reply" | "rate";
 
 export function isOpenApproval(item: InboxItem): boolean {
   return item.kind === "approval" && item.needsYou && item.resolvedAt === undefined;
@@ -110,6 +127,8 @@ export function inboxItemOffers(item: InboxItem): InboxOffer[] {
   if (item.readAt === undefined) offers.push("read");
   if (item.needsYou && item.resolvedAt === undefined && !awaiting) offers.push("resolve");
   if (!awaiting) offers.push("dismiss");
+  if (!awaiting && item.kind !== "approval") offers.push("reply");
+  if (item.feedback !== undefined) offers.push("rate");
   return offers;
 }
 
@@ -161,6 +180,7 @@ export function parseInboxItem(raw: unknown): InboxItem | null {
   if (link) item.link = link;
   const actions = parseActions(rec.actions);
   if (actions) item.actions = actions;
+  if (typeof rec.feedback === "string" && FEEDBACK.includes(rec.feedback)) item.feedback = rec.feedback as InboxFeedback;
   return item;
 }
 
@@ -199,4 +219,13 @@ export function parseInboxUpdate(raw: unknown): InboxUpdate | null {
   const item = parseInboxItem(msg.item);
   if (item !== null) return { kind: "changed", item, counts };
   return msg.action === "read" ? { kind: "read", id, counts } : { kind: "stale", counts };
+}
+
+/** An `inbox_replied` frame, or null for any other frame or a malformed one. */
+export function parseInboxReplied(raw: unknown): InboxRepliedFrame | null {
+  const msg = asRecord(raw);
+  if (msg === null || msg.type !== "inbox_replied") return null;
+  const id = asString(msg.id);
+  const sessionId = asString(msg.sessionId);
+  return id && sessionId ? { type: "inbox_replied", id, sessionId } : null;
 }

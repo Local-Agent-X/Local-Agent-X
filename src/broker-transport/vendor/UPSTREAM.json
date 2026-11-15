@@ -67,7 +67,7 @@
     },
     "inbox.ts": {
       "upstream": "packages/protocol/src/inbox.ts",
-      "sha256": "e0632aa074f9418bbcab2527602f321e43dfa88b570aa45507eb1a61e47526f3"
+      "sha256": "a5764e6c1d0692027f9404115c8c4045a640ad9bee9118a554367fb7c6710e60"
     },
     "account-api.ts": {
       "upstream": "packages/client/src/account-api.ts",

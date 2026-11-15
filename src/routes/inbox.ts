@@ -7,6 +7,7 @@
 // POST /api/inbox/resolve       { id } → the user dealt with it
 // POST /api/inbox/act           { id, action: "approve" | "decline" } → answer
 //                               an approval (src/inbox/approvals.ts)
+//                               or "useful" / "not-useful" → rate an alert that offers it
 // POST /api/inbox/reply         { id, text } → open (or continue) a chat about
 //                               the item, the user's words first (src/inbox/reply.ts)
 //
@@ -31,6 +32,7 @@ import { replyToInboxItem, type InboxReplyResult } from "../inbox/reply.js";
 import { getChatHandler } from "../chat-ws/chat-handler.js";
 import { recordExternalIngestion } from "../data-lineage/external.js";
 import { createLogger } from "../logger.js";
+import { EventBus } from "../event-bus.js";
 
 const logger = createLogger("routes.inbox");
 
@@ -97,6 +99,17 @@ export async function actOnInbox(ctx: ServerContext, id: string, action: "approv
   });
 }
 
+/** Rate an item that offers a rating, tell the producer that taught it what
+ *  matters (the mail watcher hears `inbox:rated`), and every tab. False when
+ *  no item has that id or it cannot be rated. */
+export function rateFromInbox(ctx: ServerContext, id: string, rating: "useful" | "not-useful"): boolean {
+  const rated = inboxStore().rate(id, rating);
+  if (!rated) return false;
+  if (rated.key) void EventBus.emit("inbox:rated", { key: rated.key, rating });
+  broadcastChanged(ctx, "read", id);
+  return true;
+}
+
 /** Reply to an item: open (or continue) the chat about it, and tell every tab
  *  the item now links there. One function for the bell and the phone. */
 export async function replyFromInbox(ctx: ServerContext, id: string, text: string): Promise<InboxReplyResult> {
@@ -143,6 +156,11 @@ export const handleInboxRoutes: RouteHandler = async (method, url, req, res, ctx
     const result = await replyFromInbox(ctx, id, typeof body.text === "string" ? body.text : "");
     if (!result.ok) { json(result.refused === "missing" ? 404 : 400, { error: result.refused === "missing" ? `No inbox item ${id}` : "Write something to reply." }); return true; }
     json(200, result);
+    return true;
+  }
+  if (isAct && (body.action === "useful" || body.action === "not-useful")) {
+    if (!rateFromInbox(ctx, id, body.action)) { json(404, { error: `No inbox item ${id} that can be rated` }); return true; }
+    json(200, { ok: true, ...inboxStore().counts() });
     return true;
   }
   if (isAct) {

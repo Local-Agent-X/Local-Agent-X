@@ -105,6 +105,18 @@ function inboxOpenLink(n) {
   return '<div class="notif-open">' + resultLinkHtml(url) + '</div>';
 }
 
+// An alert the user can rate (a mail-watch alert, `feedback`): whether it was
+// worth telling them teaches the watcher what matters (mail-watch-ratings.ts).
+function inboxRatingHtml(n) {
+  if (n.feedback === 'unrated') {
+    return '<button type="button" class="notif-btn" data-inbox-rate="useful" title="Worth telling me">👍 Useful</button>'
+      + '<button type="button" class="notif-btn" data-inbox-rate="not-useful" title="Do not alert me about mail like this">👎 Not important</button>';
+  }
+  if (n.feedback === 'useful') return '<span class="notif-resolution">Rated useful</span>';
+  if (n.feedback === 'not-useful') return '<span class="notif-resolution">Rated not important</span>';
+  return '';
+}
+
 // An open approval is answered only by Approve or Decline, so it offers no
 // Done or Dismiss: either would close it without an answer.
 function renderInboxItem(n) {
@@ -127,6 +139,7 @@ function renderInboxItem(n) {
     + '<div class="notif-actions">' + actions
     + (state ? '<span class="notif-resolution">' + esc(state) + '</span>' : '')
     + (pinned && !awaiting ? '<button type="button" class="notif-btn" data-inbox-act="resolve">Done</button>' : '')
+    + inboxRatingHtml(n)
     + (n.kind !== 'approval' ? '<button type="button" class="notif-btn" data-inbox-reply>' + (n.link && n.link.sessionId ? 'Reply in chat' : 'Reply') + '</button>' : '')
     + (unread ? '<button type="button" class="notif-btn" data-inbox-act="read">Mark read</button>' : '')
     + (awaiting ? '' : '<button type="button" class="notif-btn" data-inbox-act="dismiss">Dismiss</button>')
@@ -231,6 +244,8 @@ function bindInboxList(el) {
     if (answer) { ev.stopPropagation(); answerInboxApproval(id, answer.getAttribute('data-inbox-answer')); return; }
     var btn = ev.target.closest('[data-inbox-act]');
     if (btn) { ev.stopPropagation(); inboxAct(id, btn.getAttribute('data-inbox-act')); return; }
+    var rate = ev.target.closest('[data-inbox-rate]');
+    if (rate) { ev.stopPropagation(); answerInboxApproval(id, rate.getAttribute('data-inbox-rate')); return; }
     // Reply opens a chat about the item (inbox-reply.js).
     if (ev.target.closest('[data-inbox-reply]')) { ev.stopPropagation(); if (typeof openInboxReply === 'function') openInboxReply(row, id); return; }
     if (ev.target.closest('button')) return;

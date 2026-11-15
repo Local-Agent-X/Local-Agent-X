@@ -35,6 +35,10 @@ export interface InboxAction {
   label: string;
 }
 
+/** How the user rated an item they can rate (a mail-watch alert): "unrated"
+ *  until they say whether it was worth telling them (agentxos `inbox.ts`). */
+export type InboxFeedback = "unrated" | "useful" | "not-useful";
+
 /** How the user answered an "approval" item. "failed": they said yes, but the
  *  call could no longer be run (its tool is gone). */
 export type InboxResolution = "approved" | "declined" | "failed";
@@ -55,6 +59,8 @@ export interface InboxItem {
   needsYou: boolean;
   link?: InboxLink;
   actions?: InboxAction[];
+  /** Present when the user can rate the item; its current rating. */
+  feedback?: InboxFeedback;
 }
 
 /** What an Approve keeps beyond running the call once, so the item can say
@@ -109,6 +115,8 @@ export interface InboxInput {
   key?: string;
   deferredCall?: DeferredCallRecord;
   liveApprovalId?: string;
+  /** Offer the user a rating ("unrated" to start). */
+  feedback?: InboxFeedback;
   /** Ring the phone even inside the user's quiet hours (a travel change).
    *  Not stored: it rides the `inbox:posted` event to src/phone-push/. */
   ringThroughQuietHours?: boolean;

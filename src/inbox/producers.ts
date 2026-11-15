@@ -152,6 +152,11 @@ export function inboxUserNotice(n: { id: string; text: string }): boolean {
  * on "Your agent writes to you", and a travel change rings through quiet
  * hours. Informational: read is enough. One item per message.
  */
+/** The inbox key of a mail alert: the mail watcher counts its rating by it. */
+export function mailAlertKey(account: string, messageId: string): string {
+  return `mail:${account}:${messageId}`;
+}
+
 export function inboxImportantMail(m: {
   account: string; id: string; from: string; subject: string; why: string; travel: boolean;
 }): boolean {
@@ -161,7 +166,9 @@ export function inboxImportantMail(m: {
     title: clip(`${sender}: ${m.subject}`, 120),
     body: `${m.why}\n\nFrom ${m.from}, "${m.subject}". Ask in chat to read or answer it.`,
     needsYou: false,
-    key: `mail:${m.account}:${m.id}`,
+    key: mailAlertKey(m.account, m.id),
+    // The user says whether it was worth telling them (mail-watch-ratings.ts).
+    feedback: "unrated",
     ...(m.travel ? { ringThroughQuietHours: true } : {}),
   }) !== null;
 }

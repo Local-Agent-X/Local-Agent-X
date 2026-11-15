@@ -44,6 +44,9 @@ export interface InboxStore {
   /** The chat the user's reply to this item opened (reply.ts): its Open goes
    *  there, and a second reply continues it. Marks the item read. */
   linkReplyChat(id: string, sessionId: string): boolean;
+  /** Record the user's rating of an item that offers one; the rated item, or
+   *  null when no item has that id or it cannot be rated. Marks it read. */
+  rate(id: string, rating: "useful" | "not-useful"): StoredInboxItem | null;
   /** Resolve every open item `match` selects; returns how many changed. */
   resolveWhere(match: (item: StoredInboxItem) => boolean): number;
   /** Answer an open approval: resolves it with `resolution` in the same
@@ -110,6 +113,7 @@ function fromInput(input: InboxInput): Omit<StoredInboxItem, "id" | "createdAt">
     ...(input.key ? { key: input.key } : {}),
     ...(input.deferredCall ? { deferredCall: input.deferredCall } : {}),
     ...(input.liveApprovalId ? { liveApprovalId: input.liveApprovalId } : {}),
+    ...(input.feedback ? { feedback: input.feedback } : {}),
   };
 }
 
@@ -181,6 +185,13 @@ export function createInboxStore(filePath: string, clock: () => number = Date.no
       if (item.resolvedAt === undefined) item.resolvedAt = now;
       if (item.readAt === undefined) item.readAt = now;
       return true;
+    }),
+    rate: (id, rating) => mutate((items, now) => {
+      const item = items.find((candidate) => candidate.id === id);
+      if (!item || item.feedback === undefined) return null;
+      item.feedback = rating;
+      if (item.readAt === undefined) item.readAt = now;
+      return { ...item };
     }),
     linkReplyChat: (id, sessionId) => touch(id, (item, now) => {
       item.link = { ...(item.link ?? {}), sessionId };

@@ -131,6 +131,20 @@ describe("the bell renders the server inbox", () => {
     ]));
   });
 
+  it("an alert that offers a rating shows Useful / Not important, posts the rating, and every other item offers Reply", async () => {
+    const alert = { id: "inb_mail", kind: "agent-message", title: "Acme: Interview Tuesday", body: "Interview invite", createdAt: NOW, needsYou: false, feedback: "unrated" };
+    g.apiFetch = vi.fn(async (path: string, opts?: { method?: string; body?: string }) => {
+      if (opts?.method === "POST") { posted.push({ path, body: JSON.parse(opts.body || "{}") }); return { ok: true, json: async () => ({ ok: true }) }; }
+      return { ok: true, json: async () => ({ items: [alert], unread: 1, needsYou: 0 }) };
+    });
+    const bell = load();
+    await bell.loadInbox();
+    const row = document.querySelector('[data-inbox-id="inb_mail"]')!;
+    expect(row.querySelector("[data-inbox-reply]")).not.toBeNull();
+    (row.querySelector('[data-inbox-rate="not-useful"]') as HTMLButtonElement).click();
+    await vi.waitFor(() => expect(posted).toContainEqual({ path: "/api/inbox/act", body: { id: "inb_mail", action: "not-useful" } }));
+  });
+
   it("an open approval shows its whole body and only Approve / Decline; Approve posts the answer once and shows the outcome item when it arrives", async () => {
     const longBody = "Tool: bash\nCommand: npm publish\n\nWhy it needs you: " + "x".repeat(600);
     const approval = { id: "inb_ok", kind: "approval", title: "Scheduled job wants to run bash", body: longBody, createdAt: NOW, needsYou: true, actions: [{ id: "approve", label: "Approve" }, { id: "decline", label: "Decline" }] };

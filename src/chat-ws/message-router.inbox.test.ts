@@ -18,7 +18,7 @@ let shellRuns: string[];
 
 const { attachMessageRouter } = await import("./message-router.js");
 const { setInboxAnswerer } = await import("./inbox-frames.js");
-const { actOnInbox, mutateInbox } = await import("../routes/inbox.js");
+const { actOnInbox, mutateInbox, rateFromInbox } = await import("../routes/inbox.js");
 const { inboxStore } = await import("../inbox/index.js");
 const { inboxApprovalRequest } = await import("../inbox/approvals.js");
 const { setAriRequired } = await import("../ari-kernel/state.js");
@@ -47,6 +47,8 @@ beforeEach(() => {
   setInboxAnswerer({
     mutate: (action, id) => mutateInbox(ctx, action, id) !== null,
     act: (id, action) => actOnInbox(ctx, id, action),
+    rate: (id, rating) => rateFromInbox(ctx, id, rating),
+    reply: async (id, text) => (text.trim() ? { ok: true as const, sessionId: `reply-for-${id}` } : { ok: false as const, refused: "empty" as const }),
   });
 });
 afterEach(() => { if (prev === undefined) delete process.env.LAX_DATA_DIR; else process.env.LAX_DATA_DIR = prev; rmSync(dir, { recursive: true, force: true }); });
@@ -102,6 +104,23 @@ describe("inbox_read", () => {
   it("an unknown id is refused with the error frame the phone reads", async () => {
     const [reply] = await ask({ type: "inbox_read", id: "inb_nope" });
     expect(parseControlError(reply)).toBe("No such inbox item (inb_nope)");
+  });
+});
+
+describe("rating and replying from the phone", () => {
+  it("useful / not-useful rate an alert that offers it and broadcast its new state; anything else is refused", async () => {
+    const { item } = inboxStore().post({ kind: "agent-message", title: "Acme: Interview", body: "b", needsYou: false, key: "mail:me:<1@x>", feedback: "unrated" });
+    expect(await ask({ type: "inbox_act", id: item.id, action: "not-useful" })).toEqual([]);
+    expect(inboxStore().get(item.id)?.feedback).toBe("not-useful");
+    expect(broadcastAll).toHaveBeenCalledWith(expect.objectContaining({ type: "inbox_changed", action: "read", id: item.id, item: expect.objectContaining({ feedback: "not-useful" }) }));
+    const notice = inboxStore().post({ kind: "notice", title: "t", body: "", needsYou: false }).item;
+    expect(await ask({ type: "inbox_act", id: notice.id, action: "useful" })).toEqual([expect.objectContaining({ type: "error" })]);
+  });
+
+  it("inbox_reply answers with the chat it opened, to this phone only", async () => {
+    const { item } = inboxStore().post({ kind: "notice", title: "Mail digest", body: "", needsYou: false });
+    expect(await ask({ type: "inbox_reply", id: item.id, text: "anything urgent?" })).toEqual([{ type: "inbox_replied", id: item.id, sessionId: `reply-for-${item.id}` }]);
+    expect(await ask({ type: "inbox_reply", id: item.id, text: " " })).toEqual([{ type: "error", message: "Write something to reply." }]);
   });
 });
 

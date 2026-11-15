@@ -31,6 +31,8 @@ export interface EventTopics {
   /** A new item reached the user inbox (inbox/index.ts postToInbox).
    *  Consumer: the phone alerts (phone-push/index.ts). */
   "inbox:posted": { item: InboxItem; ringThroughQuietHours?: boolean };
+  /** The user rated an item; `key` is its producer key (server-only). */
+  "inbox:rated": { key: string; rating: "useful" | "not-useful" };
 }
 
 export type EventName = keyof EventTopics;
@@ -41,7 +43,7 @@ export type EventPattern = `${string}:*`;
  *  EventTopics in both directions. */
 export const EVENT_TOPICS = [
   "handler:agent-spawn", "handler:agent-result", "handler:agent-output", "handler:agent-redirect", "ui:browser",
-  "projects:changed", "inbox:posted",
+  "projects:changed", "inbox:posted", "inbox:rated",
 ] as const satisfies readonly EventName[];
 type MissingTopic = Exclude<EventName, (typeof EVENT_TOPICS)[number]>;
 const _everyTopicListed: MissingTopic extends never ? true : never = true;

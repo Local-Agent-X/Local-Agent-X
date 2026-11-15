@@ -24,7 +24,8 @@ import { createLogger } from "../../logger.js";
 import { OP_TYPE } from "../../ops/op-types.js";
 import { isLocalOnlyMode } from "../../local-only-policy.js";
 import { eventsBetween, type CalendarWindow } from "../../calendar/index.js";
-import { inboxImportantMail, inboxMailDigest, inboxMailWatchProblem } from "../../inbox/producers.js";
+import { inboxImportantMail, inboxMailDigest, inboxMailWatchProblem, mailAlertKey } from "../../inbox/producers.js";
+import { categoryRecord, demoted, listenForRatings, loadRatings, noteAlert, senderRecord } from "./mail-watch-ratings.js";
 import { minutesOf } from "../../phone-push/quiet-hours.js";
 import type { EmailSummary } from "../../tools/email-imap.js";
 import {
@@ -72,6 +73,7 @@ let deps: MailWatchDeps | null = null;
 
 export function registerMailWatchRunner(next: MailWatchDeps): void {
   deps = next;
+  listenForRatings();
 }
 
 export interface MailWatchPassResult {
@@ -178,11 +180,12 @@ async function judgeSent(account: MailAccount, sent: SentBatch, ctx: PassContext
 async function judgeAndPost(account: MailAccount, mail: NewMail, known: Set<string>, ctx: PassContext): Promise<number> {
   const { d, now } = ctx;
   const window = await (d.calendar ?? eventsBetween)(now, new Date(now.getTime() + CALENDAR_AHEAD_MS));
-  const messages = mail.messages.map((m) => ({ ...m, knownSender: known.has(addressOf(m.from)) }));
+  const ratings = loadRatings();
+  const messages = mail.messages.map((m) => ({ ...m, knownSender: known.has(addressOf(m.from)), rated: senderRecord(ratings, addressOf(m.from)) }));
   const forkSessionId = `${MAIL_WATCH_SESSION_PREFIX}${now.getTime()}-${account.id}`;
   const outcome = await (d.runFork ?? runReviewFork)({
     forkSessionId,
-    message: buildMailWatchMessage({ now, messages, events: window.events, unreadableCalendars: window.unreadable.map((u) => u.label) }),
+    message: buildMailWatchMessage({ now, messages, events: window.events, unreadableCalendars: window.unreadable.map((u) => u.label), ratingsNote: categoryRecord(ratings) }),
     systemPrompt: MAIL_WATCH_SYSTEM_PROMPT,
     section: { id: "mail-watch", label: "Mail Watch" },
     tools: [],
@@ -201,14 +204,14 @@ async function judgeAndPost(account: MailAccount, mail: NewMail, known: Set<stri
   const rest: EmailSummary[] = [];
   for (const m of mail.messages) {
     const v = byUid.get(m.uid);
-    if (!v?.important) { rest.push(m); continue; }
+    // Twice "not important" and never "useful": the user has said (a travel change still rings).
+    if (!v?.important || (demoted(ratings, addressOf(m.from)) && v.category !== "travel")) { rest.push(m); continue; }
     if (v.category === "person" || v.category === "job") noteOwed(ctx.state, account.id, m, now);
+    const id = m.messageId ?? `uid-${mail.checkpoint.uidValidity}-${m.uid}`;
     const posted = inboxImportantMail({
-      account: account.id,
-      id: m.messageId ?? `uid-${mail.checkpoint.uidValidity}-${m.uid}`,
-      from: m.from, subject: m.subject, why: v.why || "Looks important.", travel: v.category === "travel",
+      account: account.id, id, from: m.from, subject: m.subject, why: v.why || "Looks important.", travel: v.category === "travel",
     });
-    if (posted) important++;
+    if (posted) { important++; noteAlert(mailAlertKey(account.id, id), addressOf(m.from), v.category, now.getTime()); }
     if (v.when) await notePlanFromMail(account.id, m.messageId ?? `uid-${m.uid}`, v.when, d);
   }
   queueForDigest(ctx.state, rest);

@@ -4,6 +4,10 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { inboxStore, postToInbox } from "./index.js";
 import { replyToInboxItem, type InboxReplyDeps } from "./reply.js";
+import { isHarnessRow } from "../harness-rows.js";
+import { projectSessionForUI } from "../memory/session-ui-projection.js";
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
+import type { Session } from "../types.js";
 
 const prev = process.env.LAX_DATA_DIR;
 let dir: string;
@@ -15,28 +19,34 @@ afterEach(() => {
 
 function deps() {
   const chats = new Set<string>();
+  const contexts = new Map<string, ChatCompletionMessageParam>();
   const sent: Array<{ sessionId: string; message: string }> = [];
   const external: string[] = [];
   const d: InboxReplyDeps = {
     chatExists: (id) => chats.has(id),
-    createChat: async ({ id }) => { chats.add(id); },
+    createChat: async ({ id, context }) => { chats.add(id); contexts.set(id, context); },
     send: (sessionId, message) => { sent.push({ sessionId, message }); },
     markExternal: (id) => { external.push(id); },
   };
-  return { d, chats, sent, external };
+  return { d, chats, sent, external, contexts };
 }
 
 describe("reply from the inbox", () => {
-  it("opens a new chat about the item, the user's words first and the mail fenced as outside content", async () => {
+  it("opens a new chat: the user's words are their message, the item a hidden context row fenced as outside content", async () => {
     const item = postToInbox({ kind: "agent-message", title: "Acme Hiring: Interview on Tuesday", body: "Interview invite from Acme", needsYou: false, key: "mail:me@x.com:<1@x>" })!;
-    const { d, sent, external } = deps();
+    const { d, sent, external, contexts } = deps();
     const r = await replyToInboxItem(item.id, "  Accept for 10am and add it to my calendar ", d);
     expect(r).toMatchObject({ ok: true, created: true });
     const sessionId = (r as { sessionId: string }).sessionId;
     expect(sessionId).toMatch(/^reply-[0-9a-f]{16}$/);
-    expect(sent[0]!.message.startsWith("Accept for 10am and add it to my calendar")).toBe(true);
-    expect(sent[0]!.message).toContain("Interview invite from Acme");
-    expect(sent[0]!.message).toMatch(/EXTERNAL/);
+    expect(sent[0]!.message).toBe("Accept for 10am and add it to my calendar");
+    const context = contexts.get(sessionId)!;
+    expect(isHarnessRow(context)).toBe(true);
+    expect(String(context.content)).toContain("Interview invite from Acme");
+    expect(String(context.content)).toMatch(/EXTERNAL/);
+    // On screen, coming back to the chat: only what the user typed (2026-11-15).
+    const chat = { id: sessionId, title: "Re", createdAt: 0, updatedAt: 0, messages: [context, { role: "user", content: sent[0]!.message }] } as Session;
+    expect(projectSessionForUI(chat).messages.map((m) => m.content)).toEqual(["Accept for 10am and add it to my calendar"]);
     expect(external).toEqual([sessionId]);
     const stored = inboxStore().get(item.id)!;
     expect(stored.link?.sessionId).toBe(sessionId);

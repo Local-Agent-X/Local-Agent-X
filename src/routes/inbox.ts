@@ -115,9 +115,9 @@ export function rateFromInbox(ctx: ServerContext, id: string, rating: "useful" |
 export async function replyFromInbox(ctx: ServerContext, id: string, text: string): Promise<InboxReplyResult> {
   const result = await replyToInboxItem(id, text, {
     chatExists: (sessionId) => ctx.sessionStore.load(sessionId) !== null,
-    createChat: async ({ id: sessionId, title }) => {
+    createChat: async ({ id: sessionId, title, context }) => {
       const now = Date.now();
-      await ctx.saveSession({ id: sessionId, title, messages: [], createdAt: now, updatedAt: now });
+      await ctx.saveSession({ id: sessionId, title, messages: [context], createdAt: now, updatedAt: now });
     },
     send: (sessionId, message) => {
       const handler = getChatHandler();

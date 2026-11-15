@@ -17,9 +17,9 @@ export {
   startAriKernel,
   stopAriKernel,
   ariStatus,
-  getFirewallForTest,
   ensureAriKernelScope,
   releaseAriKernelScope,
   refreshAriKernelRun,
   refreshAriKernelScope,
 } from "./lifecycle.js";
+export { getFirewallForTest } from "./state.js";

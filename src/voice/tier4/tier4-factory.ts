@@ -22,7 +22,7 @@
 // The voice-session.ts wiring will read LAX_VOICE_TIER4_PROVIDER and pass it
 // through to createTier4 via opts.variant — no shape change to this file's
 // exports. tier4Readiness() still reports the kokoro install state so the
-// existing UI tier-card keeps rendering correctly; the new listTtsProviders()
+// existing UI tier-card keeps rendering correctly; registry.ts's listTtsProviders()
 // is what the UI will call once provider-pick UX lands.
 
 import { createRequire } from "node:module";
@@ -39,7 +39,6 @@ import { envDevice, envDtype } from "./env.js";
 import {
   registerTtsProvider,
   createTtsProvider,
-  listTtsProviders as listProvidersFromRegistry,
 } from "./registry.js";
 
 // Built-in provider auto-registration. Side-effectful imports above pull each
@@ -128,11 +127,6 @@ export function tier4Readiness(): Tier4Readiness {
   }
   result.ready = result.hasKokoro && result.hasOnnxRuntime;
   return result;
-}
-
-/** Lightweight provider listing for the UI provider-picker. */
-export function listTtsProviders(): { name: string; ready: boolean; reason?: string }[] {
-  return listProvidersFromRegistry();
 }
 
 /**

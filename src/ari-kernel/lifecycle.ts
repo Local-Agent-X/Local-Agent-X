@@ -213,13 +213,6 @@ export async function ariStatus(): Promise<Record<string, unknown> | null> {
   }
 }
 
-// Test-only accessor for the live Firewall. Production code MUST NOT
-// read this — use ariEvaluate / ariObserve so the call shape stays
-// uniform across paths.
-export function getFirewallForTest(scopeId?: string): Firewall | null {
-  return getFirewall(scopeId);
-}
-
 export function releaseAriKernelScope(scopeId?: string): boolean {
   const resolvedScope = scopeId || DEFAULT_ARI_SCOPE;
   if (resolvedScope === DEFAULT_ARI_SCOPE) return false;

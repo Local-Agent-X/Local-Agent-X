@@ -156,17 +156,21 @@ describe("rolling-source workflow — publish order is the safety property", () 
     expect(pack).toBeGreaterThan(build);
   });
 
-  it("runs the same build command the updater gates candidates with", () => {
-    // validateExtractedUpdate → gateBuildAtAsync → npm run build. If CI ran a
-    // narrower command, a commit could pass here and still be rejected on
-    // every client — the exact failure this workflow exists to prevent. Read
-    // the gate's real argv so the two sides cannot drift silently.
-    const gates = readFileSync(resolve("src/self-edit/sandbox-gates.ts"), "utf-8");
-    const argv = gates.match(/gateBuildAtAsync[\s\S]{0,240}?runGateCommandAt\(\s*dir,\s*\[([^\]]*)\]/);
-    expect(argv, "gateBuildAtAsync no longer calls runGateCommandAt with a literal argv").not.toBeNull();
-    const command = `npm ${argv![1].split(",").map((s) => s.trim().replace(/["']/g, "")).join(" ")}`;
-    expect(command).toBe("npm run build");
-    expect(workflow).toContain(`run: ${command}`);
+  it("runs a build that covers the one the updater gates candidates with", () => {
+    // validateExtractedUpdate → gateBuildAtAsync(…, script). If CI ran a
+    // narrower command than the client, a commit could pass here and still be
+    // rejected on every client — the exact failure this workflow exists to
+    // prevent. The client runs the compile only (build:runtime; the static
+    // checks already ran here), so CI's `npm run build` must run that same
+    // script as part of itself. Read the real call and scripts so the two sides
+    // cannot drift silently.
+    const validation = readFileSync(resolve("src/update-extracted-validation.ts"), "utf-8");
+    const script = validation.match(/gateBuildAtAsync\(\s*extractDir,\s*undefined,\s*"([^"]+)"\)/);
+    expect(script, "validateExtractedUpdate no longer passes a literal build script").not.toBeNull();
+    expect(script![1]).toBe("build:runtime");
+    const pkg = JSON.parse(readFileSync(resolve("package.json"), "utf-8")) as { scripts: Record<string, string> };
+    expect(pkg.scripts.build).toContain(`npm run ${script![1]}`);
+    expect(workflow).toContain("run: npm run build");
   });
 
   it("uploads the source asset BEFORE advancing the pointer", () => {

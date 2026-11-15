@@ -14,8 +14,9 @@ describe("shared mutation-lock async caller contract", () => {
     expect(sandbox).toMatch(/await releaseGlobalSelfEditLock/);
     expect(tool).toMatch(/await acquireGlobalSelfEditLock/);
     expect(tool).toMatch(/await releaseGlobalSelfEditLock/);
-    expect(update.match(/await acquireGlobalSelfEditLock/g)).toHaveLength(2);
-    expect(update.match(/await releaseGlobalSelfEditLock/g)).toHaveLength(2);
+    // The git route, the download route, and landing a prepared update.
+    expect(update.match(/await acquireGlobalSelfEditLock/g)).toHaveLength(3);
+    expect(update.match(/await releaseGlobalSelfEditLock/g)).toHaveLength(3);
     expect(installer).toMatch(/await acquireMutationLock/);
     expect(installer).toMatch(/await releaseMutationLock/);
   });

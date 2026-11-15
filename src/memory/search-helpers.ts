@@ -1,5 +1,5 @@
 /**
- * Search helpers — pure ranking, fusion, re-ranking, and chunking functions.
+ * Search helpers — pure ranking, fusion, re-ranking and result-shaping functions.
  *
  * These take data in and return data out. No DB access, no class state.
  * Used by MemoryIndex's search pipeline.
@@ -9,59 +9,8 @@ import type {
   CanonicalSource, Chunk, ChunkMetadata, ChunkSourceType, MemoryProvenance,
   MemorySearchResult, MemoryTaintStatus, MemoryTrustStatus,
 } from "./types.js";
-import { sha256 } from "./utils.js";
 import { jaccardSimilarity } from "./text-utils.js";
 import { describeWhen, excerptAround } from "./retrieval-format.js";
-
-// ── Chunking ──
-
-export function chunkText(
-  content: string,
-  path: string,
-  source: string,
-  maxChunkChars: number,
-  overlapChars: number
-): Chunk[] {
-  const lines = content.split("\n");
-  const chunks: Chunk[] = [];
-
-  let currentText = "";
-  let currentStart = 1;
-  let currentChars = 0;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-    currentText += (currentText ? "\n" : "") + line;
-    currentChars += line.length + 1;
-
-    if (currentChars >= maxChunkChars || i === lines.length - 1) {
-      if (currentText.trim()) {
-        chunks.push({
-          path,
-          source,
-          startLine: currentStart,
-          endLine: i + 1,
-          text: currentText,
-          hash: sha256(currentText),
-        });
-      }
-
-      if (i < lines.length - 1) {
-        const overlapText = currentText.slice(-overlapChars);
-        const overlapLines = overlapText.split("\n").length;
-        currentStart = i + 2 - overlapLines;
-        currentText = overlapText;
-        currentChars = overlapText.length;
-      } else {
-        currentText = "";
-        currentChars = 0;
-        currentStart = i + 2;
-      }
-    }
-  }
-
-  return chunks;
-}
 
 // ── Result converter ──
 

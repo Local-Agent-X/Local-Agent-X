@@ -135,11 +135,20 @@ function buildVerdict(r: GateRun): GateResult {
   };
 }
 
-export async function gateBuild(name: string, signal?: AbortSignal): Promise<GateResult> {
+/**
+ * Which build a gate runs. A self_edit runs the full `build`: its static checks
+ * (size caps, doc paths, tool registration...) judge code written on this
+ * machine. An update runs `build:runtime`, the compile only: the same checks
+ * already passed in CI before the commit reached origin, and running them again
+ * was half of every update's wait (2026-11-15: 23 s of a 48 s build).
+ */
+export type BuildScript = "build" | "build:runtime";
+
+export async function gateBuild(name: string, signal?: AbortSignal, script: BuildScript = "build"): Promise<GateResult> {
   // Scrubbed env: `npm run build` runs the worktree's build scripts (authored
   // by the untrusted self_edit child). It needs no credentials — strip them so
   // a malicious build script can't read+exfil the server's secrets.
-  return buildVerdict(await runGateCommand(name, ["run", "build"], signal, buildSelfEditChildEnv()));
+  return buildVerdict(await runGateCommand(name, ["run", script], signal, buildSelfEditChildEnv()));
 }
 
 /**
@@ -148,8 +157,8 @@ export async function gateBuild(name: string, signal?: AbortSignal): Promise<Gat
  * and now the same runner and the same verdict as {@link gateBuild}: one build
  * gate, not two implementations that can drift.
  */
-export async function gateBuildAtAsync(dir: string, signal?: AbortSignal): Promise<GateResult> {
-  return buildVerdict(await runGateCommandAt(dir, ["run", "build"], signal, buildSelfEditChildEnv()));
+export async function gateBuildAtAsync(dir: string, signal?: AbortSignal, script: BuildScript = "build"): Promise<GateResult> {
+  return buildVerdict(await runGateCommandAt(dir, ["run", script], signal, buildSelfEditChildEnv()));
 }
 
 // The provider loop reads this one canonical credential path when the probe

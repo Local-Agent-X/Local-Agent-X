@@ -24,14 +24,14 @@ const names: string[] = [];
 
 /** A throwaway tree with the given `build` script, registered as a worktree so
  *  it can be addressed BOTH ways. */
-function registerTree(buildScript: string): { name: string; dir: string } {
+function registerTree(buildScript: string, otherScripts: Record<string, string> = {}): { name: string; dir: string } {
   const dir = mkdtempSync(join(tmpdir(), "lax-gate-"));
   const name = `gate-${process.pid}-${names.length}`;
   dirs.push(dir);
   names.push(name);
   writeFileSync(
     join(dir, "package.json"),
-    JSON.stringify({ name: "gate-fixture", version: "0.0.0", private: true, scripts: { build: buildScript } }),
+    JSON.stringify({ name: "gate-fixture", version: "0.0.0", private: true, scripts: { build: buildScript, ...otherScripts } }),
   );
   activeWorktrees.set(name, {
     path: dir,
@@ -73,6 +73,15 @@ describe("build gate unification", () => {
 
     expect(byName).toMatchObject({ ok: true, skipped: false, detail: "build passed" });
     expect(byPath).toMatchObject({ ok: true, skipped: false, detail: "build passed" });
+  }, 120_000);
+
+  // An update runs the compile only; a self_edit keeps the full build with its
+  // static checks (2026-11-15: the checks were half of every update's wait).
+  it("runs the script it is given: build by default, build:runtime for an update", async () => {
+    const { name, dir } = registerTree(`node -e "process.exit(1)"`, { "build:runtime": `node -e "console.log(1)"` });
+    expect((await gateBuild(name)).ok).toBe(false);
+    expect((await gateBuild(name, undefined, "build:runtime")).ok).toBe(true);
+    expect((await gateBuildAtAsync(dir, undefined, "build:runtime")).ok).toBe(true);
   }, 120_000);
 
   it("reports a missing worktree instead of running anything", async () => {

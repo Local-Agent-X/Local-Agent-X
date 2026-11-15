@@ -173,7 +173,7 @@ export async function applyGitUpdate(repoRoot: string, authToken: string): Promi
       cleanupWorktree(name);
       return { ok: false, fromCommit: fromCommit.slice(0, 7), toCommit: remote.slice(0, 7), gates: { deps, build: SKIPPED_GATE, bind: SKIPPED_GATE, smoke: SKIPPED_GATE }, detail: `Update blocked at deps gate: ${deps.detail.slice(0, 600)}` };
     }
-    const build = await gateBuild(name);
+    const build = await gateBuild(name, undefined, "build:runtime");
     if (!build.ok) {
       cleanupWorktree(name);
       return { ok: false, fromCommit: fromCommit.slice(0, 7), toCommit: remote.slice(0, 7), gates: { deps, build, bind: SKIPPED_GATE, smoke: SKIPPED_GATE }, detail: `Update blocked at build gate: ${build.detail.slice(0, 600)}` };

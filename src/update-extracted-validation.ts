@@ -102,7 +102,7 @@ export async function validateExtractedUpdate(extractDir: string, installDir: st
       linkDirectoryInto(join(installDir, "desktop", "node_modules"), join(extractDir, "desktop", "node_modules"));
     }
 
-    const serverBuild = await gateBuildAtAsync(extractDir);
+    const serverBuild = await gateBuildAtAsync(extractDir, undefined, "build:runtime");
     if (!serverBuild.ok) {
       return { ok: false, depsChanged, desktopDepsChanged, detail: `build gate failed: ${serverBuild.detail.slice(0, 600)}`, gates: { deps, build: serverBuild, bind: SKIPPED_GATE, smoke: SKIPPED_GATE } };
     }

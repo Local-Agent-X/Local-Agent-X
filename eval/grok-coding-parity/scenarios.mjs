@@ -14,6 +14,8 @@ import { scenario as flagRemovalV2 } from "./scenarios/flag-removal-v2.mjs";
 import { scenario as wireFormat } from "./scenarios/wire-format.mjs";
 import { scenario as roundingPolicy } from "./scenarios/rounding-policy.mjs";
 import { scenario as columnShift } from "./scenarios/column-shift.mjs";
+import { scenario as iceSpill } from "./scenarios/ice-spill.mjs";
+import { scenario as parkWalk } from "./scenarios/park-walk.mjs";
 
 export const scenarios = [
   // 1) Cascading rename — the tailnet class. Rename an export used across the
@@ -450,4 +452,12 @@ console.log(formatMoney(a));
   wireFormat,
   roundingPolicy,
   columnShift,
+
+  // 14-15) The VISUAL tier — the owner's own failed requests, where the bug is
+  //     only visible by running the page: ice drawn past the cup's walls
+  //     (ice-spill, the session's real file) and camera-relative controls
+  //     that came out inverted (park-walk, a small rebuilt starter). Scored
+  //     in headless Chromium (browser-probe.mjs).
+  iceSpill,
+  parkWalk,
 ];

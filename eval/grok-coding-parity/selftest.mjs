@@ -18,8 +18,10 @@ import { makeProject, cleanup } from "./lib.mjs";
 import * as wireFormat from "./scenarios/wire-format.mjs";
 import * as roundingPolicy from "./scenarios/rounding-policy.mjs";
 import * as columnShift from "./scenarios/column-shift.mjs";
+import * as iceSpill from "./scenarios/ice-spill.mjs";
+import * as parkWalk from "./scenarios/park-walk.mjs";
 
-const mods = [wireFormat, roundingPolicy, columnShift];
+const mods = [wireFormat, roundingPolicy, columnShift, iceSpill, parkWalk];
 const DUMMY_DONE = { text: "Done — everything works and type-checks clean.", tools: [], err: "", secs: 0 };
 
 let failures = 0;

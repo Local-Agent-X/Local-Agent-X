@@ -1,0 +1,37 @@
+name: Edge voice live
+
+# Nightly run of scripts/check-edge-tts-live.mjs: one sentence through
+# Microsoft's Edge Read-Aloud endpoint with the msedge-tts version the lockfile
+# pins, the way the Edge Cloud voice speaks. The endpoint is unofficial and
+# Microsoft changes the token it accepts without notice; a red run IS the alert
+# that Edge Cloud stopped speaking, before a user's call finds out. Fix by
+# upgrading msedge-tts (npm install msedge-tts@latest), then re-run it with
+# "Run workflow". This job never commits or opens PRs.
+
+on:
+  schedule:
+    # Daily 12:00 UTC.
+    - cron: '0 12 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  edge-tts:
+    name: Edge Cloud speaks
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Speak one sentence through Edge
+        run: node scripts/check-edge-tts-live.mjs

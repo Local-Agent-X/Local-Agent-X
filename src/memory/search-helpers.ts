@@ -9,7 +9,8 @@ import type {
   CanonicalSource, Chunk, ChunkMetadata, ChunkSourceType, MemoryProvenance,
   MemorySearchResult, MemoryTaintStatus, MemoryTrustStatus,
 } from "./types.js";
-import { sha256, tokenize, jaccardSimilarity, normalizeScores } from "./utils.js";
+import { sha256, tokenize, normalizeScores } from "./utils.js";
+import { jaccardSimilarity } from "./text-utils.js";
 import { describeWhen, excerptAround } from "./retrieval-format.js";
 
 // ── Chunking ──

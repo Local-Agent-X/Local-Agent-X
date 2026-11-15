@@ -237,17 +237,6 @@ export function tokenize(text: string): Set<string> {
   );
 }
 
-export function jaccardSimilarity(a: Set<string>, b: Set<string>): number {
-  if (a.size === 0 && b.size === 0) return 1;
-  let intersection = 0;
-  const [smaller, larger] = a.size <= b.size ? [a, b] : [b, a];
-  for (const token of smaller) {
-    if (larger.has(token)) intersection++;
-  }
-  const union = a.size + b.size - intersection;
-  return union === 0 ? 0 : intersection / union;
-}
-
 // ── Score normalization ──
 
 export function bm25RankToScore(rank: number): number {

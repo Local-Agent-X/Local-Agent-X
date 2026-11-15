@@ -13,6 +13,7 @@
 import { getRuntimeConfig } from "../../config.js";
 import { eventsBetween, type CalendarWindow } from "../../calendar/index.js";
 import { inboxPlanReminder } from "../../inbox/producers.js";
+import { isAllDay } from "../../calendar/plans.js";
 
 export const PLAN_REMINDER_INTERVAL_MS = 5 * 60 * 1000;
 
@@ -23,8 +24,6 @@ export interface PlanReminderDeps {
   leadMinutes?: () => number;
 }
 
-/** A date with no time ("2026-11-14") is an all-day event. */
-const isAllDay = (start: string) => /^\d{4}-\d{2}-\d{2}$/.test(start.trim());
 
 function at(iso: string): string {
   return new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });

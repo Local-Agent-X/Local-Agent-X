@@ -30,8 +30,9 @@ function when(iso: string): string {
     : iso;
 }
 
-const overlap = (a: UpcomingEvent, b: UpcomingEvent) =>
-  Date.parse(a.start) < Date.parse(b.end || b.start) && Date.parse(b.start) < Date.parse(a.end || a.start);
+const allDay = (e: UpcomingEvent) => /^\d{4}-\d{2}-\d{2}$/.test(e.start);
+const overlap = (a: UpcomingEvent, b: UpcomingEvent) => !allDay(a) && !allDay(b)
+  && Date.parse(a.start) < Date.parse(b.end || b.start) && Date.parse(b.start) < Date.parse(a.end || a.start);
 
 /** The digest line, or null when nothing is coming up. */
 export function comingUpLine(events: readonly UpcomingEvent[]): string | null {

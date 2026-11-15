@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2050 non-test source files · 78 oversized · 268 nearing the size cap.
+**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2056 non-test source files · 78 oversized · 268 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -21,7 +21,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 183 | 29 | XL | 1 |
 | `src/security/` | 163 | 62 | XL | 2 |
-| `src/tools/` | 135 | 235 | XL | 9 |
+| `src/tools/` | 136 | 235 | XL | 9 |
 | `src/tool-execution/` | 100 | 90 | XL | 2 |
 | `src/workspace/` | 91 | 3 | M |  |
 | `src/canonical-loop/` | 89 | 292 | XL | 10 |
@@ -29,7 +29,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/session/` | 67 | 13 | L |  |
 | `src/data-lineage/` | 60 | 12 | L |  |
 | `src/memory/` | 59 | 162 | XL | 3 |
-| `src/util/` | 53 | 3 | S |  |
+| `src/util/` | 54 | 3 | S |  |
 | `src/browser/` | 51 | 93 | XL | 5 |
 | `src/tool-policy/` | 48 | 21 | L |  |
 | `src/agency/` | 47 | 40 | XL |  |
@@ -62,7 +62,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/app-scaffold/` | 12 | 7 | M |  |
 | `src/ari-kernel/` | 12 | 12 | M |  |
 | `src/integrations/` | 12 | 15 | M |  |
-| `src/routes/` | 12 | 110 | XL | 17 |
+| `src/routes/` | 12 | 111 | XL | 17 |
 | `src/whatsapp-bridge/` | 12 | 8 | M | 1 |
 | `src/persistence/` | 11 | 2 | S |  |
 | `src/sync/` | 11 | 26 | L |  |
@@ -73,11 +73,11 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/app-renderer/` | 8 | 7 | M | 1 |
 | `src/autopilot/` | 8 | 14 | L | 1 |
 | `src/bridge-voice/` | 8 | 5 | S |  |
+| `src/calendar/` | 8 | 10 | M |  |
 | `src/mcp-client/` | 8 | 11 | L | 1 |
 | `src/telegram-bridge/` | 8 | 6 | M |  |
 | `src/auto-build/` | 7 | 52 | XL | 3 |
 | `src/android/` | 6 | 7 | M |  |
-| `src/calendar/` | 6 | 5 | S |  |
 | `src/credentials/` | 6 | 1 | S |  |
 | `src/publish-review/` | 5 | 8 | M |  |
 | `src/embedding-providers/` | 4 | 8 | M |  |

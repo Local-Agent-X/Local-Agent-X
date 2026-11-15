@@ -83,6 +83,10 @@ export const LAX_DATA_CATALOG: readonly LaxDataEntry[] = [
   // Alerts quiet hours held: each is sent to the phone when they end, so a
   // write here would ring the phone with whatever text it holds.
   ...at("blocked", "holds the phone alerts waiting for quiet hours to end, which are then sent to your phone", "phone-push-held.json"),
+  // Which servers LAX sends a calendar credential to (a CalDAV password, a
+  // private iCal link) and under which vault names: a forged entry could send
+  // a stored password to a server of its choosing.
+  ...at("blocked", "decides which calendar servers LAX reads and which saved passwords it sends them", "calendars.json"),
 
   // Read back as instructions the app carries out on this computer.
   ...at("card", "runs commands on every tool call", "hooks.json"),

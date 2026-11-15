@@ -5,7 +5,13 @@
 Also owns plans LAX notices on its own (`plans.ts`: a plan is an event in LAX's calendar with an `origin`, chat or mail; `recordPlan` dedupes it and returns what it clashes with on every calendar) and noticing them after a chat turn on any channel (`notice.ts`, called from `src/memory/manager.ts` `persistTurn`; the extraction itself is `src/classifiers/plan-extract.ts`).
 **Entry:** `index.ts` — `eventsBetween`, `registerCalendarSource`, `calendarSources`; `local-store.ts` — `loadCalendar`, `saveCalendar`, `localCalendarSource`; `plans.ts` — `recordPlan`, `describeEvent`; `notice.ts` — `noticePlansInTurn`, `announceClash`.
 
-## Adding a calendar connector (Google Calendar, an iCal feed, CalDAV)
+## Connected calendars (`connectors/`)
+- `ics.ts` (+ `ics-time.ts`, `ics-recur.ts`): an iCalendar document read into events for a window: folding, escapes, UTC / TZID (IANA and Windows names) / floating / all-day times, DURATION, RRULE (DAILY/WEEKLY/MONTHLY/YEARLY, INTERVAL, COUNT, UNTIL, BYDAY with ordinals, BYMONTHDAY, BYMONTH) expanded on the wall clock, EXDATE, RECURRENCE-ID overrides, CANCELLED. Never throws.
+- `sources.ts`: an iCal feed (Google's "secret address in iCal format", iCloud, Outlook, any .ics link) and CalDAV (REPORT calendar-query, basic auth with an app password), both through `canonicalFetch`, refused in strict local-only mode, 5 MB cap, feeds cached 5 minutes.
+- `store.ts`: `<lax data dir>/calendars.json` (no credential in it: the link or password is in the vault under the name it records), connect = check it answers, then save and register; disconnect = unregister and delete the secret; `startCalendarConnectors` at boot (`src/server/lifecycle.ts`). HTTP: `src/routes/calendars.ts` (user and operator only, never the agent). UI: Settings → General → Calendars (`public/js/settings-calendars.js`).
+- Google through OAuth is not built: LAX has no OAuth flow (see `src/integrations/builtins/google.ts`), and Google's calendar scope needs a verified Google Cloud project. The iCal secret address covers reading a Google calendar today.
+
+## Adding a calendar connector
 1. Implement `CalendarSource` (`kind` `"google"`, `"ics"` or `"caldav"`), read-only: `listEvents(from, to)` returns the events overlapping the window, normalized to `CalendarEvent`, and throws when the calendar cannot be read.
 2. Register one source per connected calendar when it connects (`registerCalendarSource`, which returns the removal) and remove it on disconnect.
 3. Its network reads go through the guarded egress (`src/tools/web-egress.ts`), and any text from the event that reaches a model goes through `wrapExternalContent()` at the reader.

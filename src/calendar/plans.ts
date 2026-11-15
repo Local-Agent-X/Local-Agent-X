@@ -39,6 +39,9 @@ export interface PlanDeps {
   window?: (from: Date, to: Date) => Promise<CalendarWindow>;
 }
 
+/** A start with a date and no time: an all-day event. */
+export const isAllDay = (start: string) => /^\d{4}-\d{2}-\d{2}$/.test(start.trim());
+
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 
 function endOf(plan: Pick<NoticedPlan, "start" | "end">): string {
@@ -71,7 +74,8 @@ export async function recordPlan(plan: NoticedPlan, deps: PlanDeps = {}): Promis
   // The plan itself, already recorded, or the same plan in a connected calendar.
   const isThisPlan = (e: CalendarEvent) => (already !== undefined && e.sourceId === "lax" && e.id === already.id)
     || (Date.parse(e.start) === startMs && norm(e.title) === norm(plan.title));
-  const clashes = window.events.filter((e) => overlaps(e) && !isThisPlan(e));
+  // An all-day event (a holiday, a birthday) does not take the time it spans.
+  const clashes = window.events.filter((e) => !isAllDay(e.start) && overlaps(e) && !isThisPlan(e));
   if (already) return { recorded: null, clashes };
 
   const event: StoredCalendarEvent = {

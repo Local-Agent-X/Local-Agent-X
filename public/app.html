@@ -605,6 +605,21 @@
           <div class="field-row" style="margin-top:12px"><div class="field"><label class="field-label" for="watch-remind-minutes">Remind me before plans (minutes, 0 = off)</label><input class="field-input" id="watch-remind-minutes" type="number" min="0" max="1440" step="5" value="30"/></div></div>
           <div class="field-hint" style="margin-top:6px">Plans you make in any chat or that arrive by mail are added to your calendar, and LAX tells you when two plans clash. Your morning digest arrives when quiet hours end. Phone alerts ring for the kinds you turned on in the phone app ("Your agent writes to you").</div>
         </div>
+        <div class="section-card">
+          <div class="section-title">Calendars</div>
+          <div class="section-desc">Connect the calendars you use so LAX knows when you're busy, reminds you, and warns you when plans clash. Read-only: LAX never changes them. For Google Calendar, use the calendar's "Secret address in iCal format" (Google Calendar → Settings → your calendar → Integrate calendar). For iCloud, Fastmail or Nextcloud, use CalDAV with an app password.</div>
+          <div id="cal-list" class="field-hint" style="margin-top:8px">Loading…</div>
+          <div class="field-row" style="margin-top:10px">
+            <div class="field"><label class="field-label" for="cal-kind">Type</label><select class="field-input" id="cal-kind"><option value="ics">iCal link (Google, iCloud, Outlook)</option><option value="caldav">CalDAV (iCloud, Fastmail, Nextcloud)</option></select></div>
+            <div class="field"><label class="field-label" for="cal-label">Name</label><input class="field-input" id="cal-label" placeholder="Work"/></div>
+          </div>
+          <div class="field-row"><div class="field"><label class="field-label" for="cal-url">Address</label><input class="field-input" id="cal-url" placeholder="https://… or webcal://…" autocomplete="off"/></div></div>
+          <div class="field-row" id="cal-caldav-fields" style="display:none">
+            <div class="field"><label class="field-label" for="cal-user">Username</label><input class="field-input" id="cal-user" autocomplete="off"/></div>
+            <div class="field"><label class="field-label" for="cal-pass">App password</label><input class="field-input" id="cal-pass" type="password" autocomplete="new-password"/></div>
+          </div>
+          <div class="btn-row" style="margin-top:8px"><button type="button" class="action-btn primary" id="cal-connect">Connect</button><span id="cal-status" class="field-hint" aria-live="polite"></span></div>
+        </div>
       </div>
       <!-- HQ — app identity, updates, decommission -->
       <div id="stab-hq" class="tab-pane">
@@ -1976,6 +1991,7 @@
 <script src="/js/settings-usage.js?v=v1"></script>
 <script src="/js/settings-learning-mode.js?v=v1"></script>
 <script src="/js/settings-watching.js?v=v1"></script>
+<script src="/js/settings-calendars.js?v=v1"></script>
 <script src="/js/settings-learned-workflows.js?v=v1"></script>
 <script src="/js/settings-recurring-problems.js?v=v1"></script>
 <script src="/js/settings-memory-changes.js?v=v1"></script>

@@ -50,11 +50,35 @@ describe("replayableReasoning", () => {
 });
 
 describe("reasoningPayload", () => {
-  it("keeps nothing for an empty turn or one over the cap", () => {
+  it("keeps nothing for an empty turn, and marks one over the cap as dropped", () => {
     expect(reasoningPayload("codex", "m", [])).toBeUndefined();
     expect(reasoningPayload("codex", "m", undefined)).toBeUndefined();
-    expect(reasoningPayload("codex", "m", ["x".repeat(MAX_REASONING_PAYLOAD_BYTES + 1)])).toBeUndefined();
+    expect(reasoningPayload("codex", "m", ["x".repeat(MAX_REASONING_PAYLOAD_BYTES + 1)])).toEqual({ provider: "codex", model: "m", data: null, dropped: true });
     expect(reasoningPayload("codex", "m", [{ encrypted_content: "e" }])).toEqual({ provider: "codex", model: "m", data: [{ encrypted_content: "e" }] });
+  });
+
+  // 2026-11-15: a 64 KB cap dropped the steps where Opus drafted a whole file
+  // in its thinking and kept the smaller ones built on them; it re-drafted
+  // every step and never wrote the file. A 26k-token draft must fit.
+  it("keeps a step that drafted a whole file in its thinking", () => {
+    expect(reasoningPayload("anthropic", "m", [{ type: "thinking", thinking: "x".repeat(120_000), signature: "s".repeat(400) }])?.dropped).toBeUndefined();
+  });
+});
+
+describe("replayableReasoning — all or nothing", () => {
+  it("sends none of the loop's reasoning when one of its steps was dropped", () => {
+    const dropped: CanonicalMessage = {
+      messageId: "big", role: "assistant",
+      content: { text: "", toolCalls: [{ id: "c", name: "bash", arguments: "{}" }], reasoningPayload: { provider: "codex", model: "gpt-6.1-sol", data: null, dropped: true } },
+    };
+    expect(replayableReasoning([user("u1"), asst("a1"), tool("t1"), dropped, tool("t2"), asst("a2"), tool("t3")], "codex", "gpt-6.1-sol").size).toBe(0);
+  });
+
+  it("a drop in an earlier turn or from another model does not cost this loop its reasoning", () => {
+    const droppedEarlier: CanonicalMessage = { messageId: "old", role: "assistant", content: { text: "", reasoningPayload: { provider: "codex", model: "gpt-6.1-sol", data: null, dropped: true } } };
+    const droppedOther: CanonicalMessage = { messageId: "oth", role: "assistant", content: { text: "", reasoningPayload: { provider: "anthropic", model: "claude-opus-5-5", data: null, dropped: true } } };
+    const msgs = [user("u0"), droppedEarlier, user("u1"), droppedOther, tool("t0"), asst("a1"), tool("t1")];
+    expect([...replayableReasoning(msgs, "codex", "gpt-6.1-sol").keys()]).toEqual(["a1"]);
   });
 });
 

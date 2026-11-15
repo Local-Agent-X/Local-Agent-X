@@ -24,19 +24,29 @@ export type ReasoningProvider = "anthropic" | "codex" | "gemini";
 export interface ReasoningPayload {
   provider: ReasoningProvider;
   model: string;
-  /** The provider's own reasoning objects, exactly as it returned them. */
+  /** The provider's own reasoning objects, exactly as it returned them; null
+   *  when `dropped`. */
   data: unknown;
+  /** The step reasoned but its payload was over the cap and not kept. */
+  dropped?: true;
 }
 
-/** A payload larger than this is not kept: a step that reasoned that much is
- *  better re-derived than re-sent at full price on every later step. */
-export const MAX_REASONING_PAYLOAD_BYTES = 64 * 1024;
+/**
+ * A payload larger than this is not kept on the row. A sanity bound on what
+ * one step writes to disk, not a cost lever: it was 64 KB until 2026-11-15,
+ * and that dropped exactly the steps where Opus drafted a whole file in its
+ * thinking (26k output tokens, ~100 KB with signatures) while keeping the
+ * smaller steps that built on those drafts. Opus got back "now I'll apply the
+ * rewrite I worked out" without the rewrite, re-drafted it, and never wrote
+ * the file: 0/4 on the ice-game scenario, 2/2 with replay off.
+ */
+export const MAX_REASONING_PAYLOAD_BYTES = 1024 * 1024;
 
-/** The payload to store on an assistant row, or undefined when there is
- *  nothing to keep or it is over the cap. */
+/** The payload to store on an assistant row: undefined when there is nothing
+ *  to keep, a `dropped` marker when it is over the cap. */
 export function reasoningPayload(provider: ReasoningProvider, model: string, data: unknown): ReasoningPayload | undefined {
   if (data === undefined || data === null || (Array.isArray(data) && data.length === 0)) return undefined;
-  if (Buffer.byteLength(JSON.stringify(data), "utf8") > MAX_REASONING_PAYLOAD_BYTES) return undefined;
+  if (Buffer.byteLength(JSON.stringify(data), "utf8") > MAX_REASONING_PAYLOAD_BYTES) return { provider, model, data: null, dropped: true };
   return { provider, model, data };
 }
 
@@ -47,6 +57,11 @@ export function reasoningPayload(provider: ReasoningProvider, model: string, dat
  * step) whose payload came from this provider and this model. Earlier turns'
  * reasoning is not replayed: providers ignore or strip it, and it would be
  * paid for on every step.
+ *
+ * All or nothing: when any step of the loop has a `dropped` payload, none of
+ * the loop's reasoning goes back. A later step's reasoning builds on the
+ * earlier ones, and getting it back without what it builds on is worse than
+ * getting none (see MAX_REASONING_PAYLOAD_BYTES).
  *
  * `LAX_REASONING_REPLAY=0` turns replay off for every provider: an off switch
  * that needs no release, and the control for measuring what replay does to a
@@ -67,7 +82,9 @@ export function replayableReasoning(
     const m = messages[i];
     if (m.role !== "assistant") continue;
     const p = payloadOf(m);
-    if (p && p.provider === provider && p.model === model) out.set(m.messageId, p.data);
+    if (!p || p.provider !== provider || p.model !== model) continue;
+    if (p.dropped) return new Map();
+    out.set(m.messageId, p.data);
   }
   return out;
 }
@@ -76,6 +93,8 @@ function payloadOf(m: CanonicalMessage): ReasoningPayload | null {
   const c = m.content as { reasoningPayload?: unknown } | null | undefined;
   const p = c && typeof c === "object" ? c.reasoningPayload : undefined;
   if (!p || typeof p !== "object") return null;
-  const { provider, model, data } = p as Partial<ReasoningPayload>;
-  return typeof provider === "string" && typeof model === "string" && data !== undefined ? { provider: provider as ReasoningProvider, model, data } : null;
+  const { provider, model, data, dropped } = p as Partial<ReasoningPayload>;
+  if (typeof provider !== "string" || typeof model !== "string") return null;
+  if (dropped === true) return { provider: provider as ReasoningProvider, model, data: null, dropped: true };
+  return data !== undefined && data !== null ? { provider: provider as ReasoningProvider, model, data } : null;
 }

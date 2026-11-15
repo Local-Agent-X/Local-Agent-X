@@ -1,9 +1,7 @@
-import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
-import { join } from 'node:path';
-import { getLaxDir } from '../lax-data-dir.js';
 import type { ToolDefinition, ToolResult } from '../types.js';
 import { recentlyDone, markDone, fingerprintOf, describeAge } from './idempotency.js';
+import { loadCalendar, saveCalendar, type StoredCalendarEvent as CalendarEvent } from '../calendar/local-store.js';
 
 // Each call mints a fresh UUID, so two identical-args calls = two
 // distinct rows in calendar.json (unlike document_create/pdf_create which
@@ -11,28 +9,6 @@ import { recentlyDone, markDone, fingerprintOf, describeAge } from './idempotenc
 // MCP-loop case; this 5-min window is the cross-turn / cross-session
 // backstop matching the email_send pattern.
 const CALENDAR_EVENT_WINDOW_MS = 5 * 60 * 1000;
-
-interface CalendarEvent {
-  id: string; title: string; start: string; end: string;
-  description: string; attendees: string[]; location: string;
-}
-interface CalendarData { events: CalendarEvent[]; }
-
-const CALENDAR_PATH = join(getLaxDir(), 'calendar.json');
-
-async function loadCalendar(): Promise<CalendarData> {
-  try {
-    const raw = await readFile(CALENDAR_PATH, 'utf-8');
-    return JSON.parse(raw) as CalendarData;
-  } catch {
-    return { events: [] };
-  }
-}
-
-async function saveCalendar(data: CalendarData): Promise<void> {
-  await mkdir(getLaxDir(), { recursive: true });
-  await writeFile(CALENDAR_PATH, JSON.stringify(data, null, 2), 'utf-8');
-}
 
 const ok = (content: string, metadata?: Record<string, unknown>): ToolResult =>
   ({ content, ...(metadata && { metadata }) });

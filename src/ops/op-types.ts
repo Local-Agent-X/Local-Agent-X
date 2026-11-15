@@ -27,6 +27,8 @@ export const OP_TYPE = {
   skillReview: "skill_review",
   /** The background review of a tool call that keeps failing across chats (server/background-jobs/failure-review.ts). */
   failureReview: "failure_review",
+  /** The background triage of newly arrived mail (server/background-jobs/mail-watch.ts). */
+  mailWatch: "mail_watch",
   /** A self-repair run (server/background-jobs/self-edit-surgeon-runner.ts). */
   selfEdit: "self_edit",
   /** An auto-build orchestration (auto-build/orchestrator/manager.ts). */

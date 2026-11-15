@@ -30,7 +30,7 @@ export interface EventTopics {
   "projects:changed": Record<string, never>;
   /** A new item reached the user inbox (inbox/index.ts postToInbox).
    *  Consumer: the phone alerts (phone-push/index.ts). */
-  "inbox:posted": { item: InboxItem };
+  "inbox:posted": { item: InboxItem; ringThroughQuietHours?: boolean };
 }
 
 export type EventName = keyof EventTopics;

@@ -56,6 +56,15 @@ export interface LAXConfig {
   skillReviewEnabled: boolean;
   /** Whether a tool call that keeps failing the same way across chats is reviewed in the background for a lesson. */
   failureReviewEnabled: boolean;
+  /** Whether new mail is triaged in the background and important mail raised in the inbox. */
+  mailWatchEnabled: boolean;
+  /** Mail triage on a local model only (never the cloud chat model). */
+  mailWatchLocalOnly: boolean;
+  /** Whether phone alerts are held during quiet hours. */
+  quietHoursEnabled: boolean;
+  /** Quiet hours, local time "HH:MM". */
+  quietHoursStart: string;
+  quietHoursEnd: string;
   retentionDays: number;
   logLevel: "basic" | "detailed" | "full-audit";
   sandboxMode: SandboxMode;

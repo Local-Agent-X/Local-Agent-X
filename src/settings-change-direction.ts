@@ -40,6 +40,9 @@ export const PROTECTED_TIGHTENING: Readonly<Record<string, Tightening>> = {
   enableUiEventBus: { safe: false },
   skillReviewEnabled: { safe: false },
   failureReviewEnabled: { safe: false },
+  // Off reads no mail; local-only keeps the mail it reads on this machine.
+  mailWatchEnabled: { safe: false },
+  mailWatchLocalOnly: { safe: true },
   developer_mode: { safe: false },
   allowPaidMediaApis: { safe: false },
   localOnlyMode: { safe: true },

@@ -254,12 +254,17 @@ export function extractFinalAssistantText(opId: string, maxChars = 2000): string
  *                 the same reason: a headless fork whose task text is a
  *                 fenced block of other chats' failed calls.
  *
+ *   mail_watch    background-jobs/mail-watch.ts — the same shape, every
+ *                 ~15 minutes: a headless fork whose task text is the user's
+ *                 new mail, fenced as external content.
+ *
  * NOT here on purpose: memory_consolidation — its bg_op_queued/started (with
  * opType) are the only feed for the ambient "dreaming" group
  * (public/js/chat-agent-feeds-ambient.js). Suppressing it empties that group.
  */
 const SIDEBAR_SUPPRESSED_OP_TYPES: ReadonlySet<string> = new Set([
   OP_TYPE.chatTurn, OP_TYPE.agentSpawn, OP_TYPE.voiceTurn, OP_TYPE.skillReview, OP_TYPE.failureReview,
+  OP_TYPE.mailWatch,
 ]);
 
 export function isSidebarSuppressedOpType(opType: string): boolean {

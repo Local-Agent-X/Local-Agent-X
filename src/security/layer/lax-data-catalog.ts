@@ -80,6 +80,9 @@ export const LAX_DATA_CATALOG: readonly LaxDataEntry[] = [
   // here points every inbox alert at another device, and only the phone app
   // registers or unregisters one (phone-push/index.ts).
   ...at("blocked", "decides which phone the agent's alerts go to, and holds the key that seals them", "phone-push.json"),
+  // Alerts quiet hours held: each is sent to the phone when they end, so a
+  // write here would ring the phone with whatever text it holds.
+  ...at("blocked", "holds the phone alerts waiting for quiet hours to end, which are then sent to your phone", "phone-push-held.json"),
 
   // Read back as instructions the app carries out on this computer.
   ...at("card", "runs commands on every tool call", "hooks.json"),
@@ -97,6 +100,9 @@ export const LAX_DATA_CATALOG: readonly LaxDataEntry[] = [
   ...at("card", "lists the dev servers the app started, whose ports the shell may reach", "dev-servers"),
   ...at("card", "records where content came from, which the safety checks rely on", "provenance"),
   ...at("card", "decides which chat accounts count as you", "identity-links.json"),
+  // Where the mail watcher stops reading and whom it treats as known: a write
+  // could make it skip mail or rank a stranger as someone you know.
+  ...at("card", "decides which of your new mail the mail watcher reads and whose mail it treats as from people you know", "mail-watch.json"),
   ...at("card", "is the sync copy that the next sync merges into this computer", "sync-repo"),
   ...at("card", "holds the configuration the app hands to the helper programs it starts", "tmp"),
   ...at("card", "holds the sign-in link the app points you to", ".startup-url"),

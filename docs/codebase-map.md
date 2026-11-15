@@ -13,15 +13,15 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 70 top-level dirs · 70 live · 0 with no live importer · 2034 non-test source files · 78 oversized · 268 nearing the size cap.
+**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2042 non-test source files · 78 oversized · 268 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 182 | 29 | XL | 1 |
+| `src/ops/` | 183 | 29 | XL | 1 |
 | `src/security/` | 163 | 62 | XL | 2 |
-| `src/tools/` | 132 | 235 | XL | 9 |
+| `src/tools/` | 135 | 235 | XL | 9 |
 | `src/tool-execution/` | 100 | 90 | XL | 2 |
 | `src/workspace/` | 91 | 3 | M |  |
 | `src/canonical-loop/` | 89 | 290 | XL | 10 |
@@ -29,8 +29,8 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/session/` | 67 | 13 | L |  |
 | `src/data-lineage/` | 59 | 12 | L |  |
 | `src/memory/` | 57 | 161 | XL | 3 |
+| `src/util/` | 53 | 3 | S |  |
 | `src/browser/` | 51 | 93 | XL | 5 |
-| `src/util/` | 51 | 3 | S |  |
 | `src/tool-policy/` | 48 | 21 | L |  |
 | `src/agency/` | 47 | 40 | XL |  |
 | `src/chat-ws/` | 45 | 23 | L |  |
@@ -43,15 +43,15 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/context/` | 28 | 11 | M |  |
 | `src/agent-request/` | 26 | 16 | L | 3 |
 | `src/classifiers/` | 24 | 16 | L |  |
+| `src/inbox/` | 24 | 6 | M |  |
 | `src/app-runtime/` | 23 | 12 | M |  |
 | `src/sandbox/` | 23 | 16 | L | 1 |
 | `src/desktop-contract/` | 22 | 10 | M |  |
-| `src/inbox/` | 22 | 6 | M |  |
 | `src/protocols/` | 22 | 52 | XL |  |
 | `src/orchestrator/` | 20 | 24 | L |  |
 | `src/autonomy/` | 19 | 6 | M |  |
 | `src/cognition/` | 19 | 37 | XL | 1 |
-| `src/server/` *(entrypoint)* | 19 | 66 | XL | 4 |
+| `src/server/` *(entrypoint)* | 19 | 70 | XL | 4 |
 | `src/agents/` | 17 | 14 | L |  |
 | `src/net/` | 17 | 11 | L |  |
 | `src/voice/` | 16 | 80 | XL | 1 |
@@ -83,10 +83,11 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/hooks/` | 4 | 3 | M |  |
 | `src/language-intel/` | 4 | 5 | M |  |
 | `src/routing/` | 4 | 6 | M |  |
+| `src/calendar/` | 3 | 3 | S |  |
+| `src/phone-push/` | 3 | 5 | M |  |
 | `src/conversation/` | 2 | 3 | M |  |
 | `src/llm-dispatch/` | 2 | 2 | M |  |
 | `src/manifest-generator/` | 2 | 8 | M |  |
-| `src/phone-push/` | 2 | 4 | S |  |
 | `src/types/` | 2 | 3 | S |  |
 | `src/pricing/` | 1 | 1 | S |  |
 
@@ -205,6 +206,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/settings-schema.operator.ts` | S |
 | `src/settings-schema.preferences.ts` | S |
 | `src/settings-schema.ts` | S |
+| `src/settings-schema.watchers.ts` | S |
 | `src/settings.ts` | S |
 | `src/slash-commands.ts` | S |
 | `src/startup-integrity.ts` | S |

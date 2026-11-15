@@ -23,7 +23,8 @@ import {
   getSkillReviewBreakerState,
   SKILL_REVIEW_POLL_INTERVAL_MS,
 } from "./skill-review.js";
-import { registerFailureReviewRunner, runFailureReviewPass } from "./failure-review.js";
+import { registerFailureReviewRunner, runFailureReviewPass, type FailureReviewDeps } from "./failure-review.js";
+import { registerMailWatchRunner, runMailWatchPass, MAIL_WATCH_INTERVAL_MS, type MailWatchDeps } from "./mail-watch.js";
 import { attemptBackfill, BACKFILL_BOOT_SETTLE_MS } from "./backfill-gate.js";
 import { setLearningNoticesForSession } from "../../chat-ws/state.js";
 import { pendingLearningNotices } from "../../protocols/learned-review-drafting.js";
@@ -45,7 +46,8 @@ export type RegisteredJobName =
   | "dream-check"
   | "skill-review"
   | "protocol-curator"
-  | "failure-review";
+  | "failure-review"
+  | "mail-watch";
 
 /**
  * Overlap policy for every registered job, in one place. Not documentation —
@@ -109,6 +111,12 @@ export type RegisteredJobName =
  *     spend a model call on it. A dropped tick costs an hour: the next one
  *     finds the same work. Each review fork settles under review-fork.ts's
  *     timeout, so a pass cannot wedge the slot.
+ *
+ *   mail-watch (skip)
+ *     Two passes at once would both read past the same checkpoint and raise
+ *     the same mail twice (the inbox key dedupes the item, not the model
+ *     call). A dropped tick costs 15 minutes: the next pass reads from the
+ *     same checkpoint. The fork settles under its own timeout.
  */
 export const JOB_OVERLAP: Record<RegisteredJobName, OverlapPolicy> = {
   "memory-bg": "skip",
@@ -119,6 +127,7 @@ export const JOB_OVERLAP: Record<RegisteredJobName, OverlapPolicy> = {
   "skill-review": "skip",
   "protocol-curator": "skip",
   "failure-review": "skip",
+  "mail-watch": "skip",
 };
 
 /** Name + declared policy in one spread, so a registration can never carry a
@@ -132,7 +141,9 @@ function withOverlapPolicy(name: RegisteredJobName): { name: RegisteredJobName; 
  * gate: the protocol curator (catalog lifecycle and its advisory report) and
  * the failure review (what keeps going wrong across chats).
  */
-function registerLearningUpkeep(scheduler: JobScheduler, foregroundIdle: () => boolean): void {
+function registerLearningUpkeep(scheduler: JobScheduler, foregroundIdle: () => boolean, deps: FailureReviewDeps): void {
+  // What keeps going wrong across chats, reviewed about once a day.
+  registerFailureReviewRunner(deps);
   scheduler.register({
     ...withOverlapPolicy("protocol-curator"),
     intervalMs: 6 * 60 * 60 * 1000, // poll every 6h; shouldCurate() gates actual work to ~daily
@@ -163,6 +174,30 @@ function registerLearningUpkeep(scheduler: JobScheduler, foregroundIdle: () => b
       if (r.reviewed > 0 || r.failed > 0) {
         logger.info(`[failure-review] pass: reviewed=${r.reviewed} proposed=${r.proposed} failed=${r.failed}`);
       }
+    },
+  });
+}
+
+/**
+ * New mail, triaged every 15 minutes (mail-watch.ts; on by default, a
+ * per-user switch). Not on the idle gate: an important email should not wait
+ * for the user to stop chatting. A local-model pass checks idle itself (GPU).
+ */
+function registerMailWatch(
+  scheduler: JobScheduler,
+  deps: Omit<MailWatchDeps, "foregroundBusy"> & { sessionStore: Pick<SessionStore, "list"> },
+): void {
+  const { config, dataDir, secretsStore, security, toolPolicy, sessionStore } = deps;
+  registerMailWatchRunner({
+    config, dataDir, secretsStore, security, toolPolicy, foregroundBusy: () => isForegroundBusy(sessionStore),
+  });
+  scheduler.register({
+    ...withOverlapPolicy("mail-watch"),
+    intervalMs: MAIL_WATCH_INTERVAL_MS,
+    startupDelayMs: 2 * 60 * 1000,
+    run: async () => {
+      const r = await runMailWatchPass();
+      if (r.read > 0 || r.failed) logger.info(`[mail-watch] pass: read=${r.read} important=${r.important} failed=${r.failed}`);
     },
   });
 }
@@ -268,8 +303,6 @@ export function startBackgroundJobs(deps: {
   registerSkillReviewRunner({
     config, dataDir, secretsStore, security, toolPolicy, allAgentTools,
   });
-  // What keeps going wrong across chats, reviewed about once a day.
-  registerFailureReviewRunner({ config, dataDir, secretsStore, security, toolPolicy });
   // A review's "Learned a workflow" notice can fire while nobody is
   // connected; the chat session snapshot re-delivers the ones still pending.
   setLearningNoticesForSession(pendingLearningNotices);
@@ -355,7 +388,8 @@ export function startBackgroundJobs(deps: {
     },
   });
 
-  registerLearningUpkeep(scheduler, foregroundIdle);
+  registerLearningUpkeep(scheduler, foregroundIdle, { config, dataDir, secretsStore, security, toolPolicy });
+  registerMailWatch(scheduler, deps);
 
   // Backfill scans every file and re-embeds — see decideBackfill in
   // ./backfill-gate.ts for the two contention preconditions, and why embedder

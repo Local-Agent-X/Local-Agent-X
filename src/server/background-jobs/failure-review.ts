@@ -25,7 +25,6 @@
  * refusal already carries what to do instead, and a model-written "lesson"
  * about a gate is one sentence away from advice on getting around it.
  */
-import type { AgentTurn } from "../../types.js";
 import { getRuntimeConfig } from "../../config.js";
 import { createLogger } from "../../logger.js";
 import { OP_TYPE } from "../../ops/op-types.js";
@@ -40,7 +39,7 @@ import {
 } from "../../cognition/cross-session-learning/known-failures.js";
 import { appendCapabilityGap, MAX_GAP_SUMMARY_CHARS } from "../../cognition/cross-session-learning/capability-gaps.js";
 import { inboxLessonProposed } from "../../inbox/producers.js";
-import { DEFAULT_REVIEW_TIMEOUT_MS, reviewFailure, runReviewFork, type ReviewForkDeps } from "./review-fork.js";
+import { DEFAULT_REVIEW_TIMEOUT_MS, forkReply, reviewFailure, runReviewFork, type ReviewForkDeps } from "./review-fork.js";
 import {
   FAILURE_REVIEW_SESSION_PREFIX, FAILURE_REVIEW_SYSTEM_PROMPT, buildFailureReviewMessage, parseFailureVerdict,
 } from "./failure-review-prompt.js";
@@ -142,20 +141,6 @@ export async function runFailureReviewPass(options: { force?: boolean } = {}): P
 
 let reviewSeq = 0;
 
-/** The fork's final words. Shape-tolerant: content is a string or text parts. */
-function finalReply(outcome: AgentTurn): string {
-  for (let i = outcome.messages.length - 1; i >= 0; i--) {
-    const message = outcome.messages[i];
-    if (message.role !== "assistant") continue;
-    const content = message.content;
-    const text = typeof content === "string"
-      ? content
-      : Array.isArray(content) ? content.map((part) => (part as { text?: unknown }).text).filter((t) => typeof t === "string").join("") : "";
-    if (text.trim()) return text;
-  }
-  return "";
-}
-
 /**
  * A lesson says what worked instead. With no sample in which the same work
  * then succeeded, nothing shows that anything did: the verdict is held as
@@ -189,7 +174,7 @@ async function reviewPattern(pattern: FailurePattern, d: FailureReviewDeps, now:
   }, d);
   const failure = reviewFailure(outcome);
   if (failure) throw new Error(`fork ${forkSessionId} ${failure}`);
-  const verdict = parseFailureVerdict(finalReply(outcome));
+  const verdict = parseFailureVerdict(forkReply(outcome));
   if (!verdict) throw new Error(`fork ${forkSessionId} did not reply with a verdict`);
 
   const stored = recordFailureReview(pattern, requireRecovery(verdict, evidence), now);

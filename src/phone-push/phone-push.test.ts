@@ -10,7 +10,8 @@ import type { InboxItem } from "../inbox/types.js";
 import { createPhonePushStore, MAX_PHONES } from "./store.js";
 import { sealPushAlert } from "./seal.js";
 import { sendExpoPush, type ExpoPushMessage, type PushTicket } from "./send.js";
-import { alertPhones, handlePushFrame, type AlertDeps } from "./index.js";
+import { alertPhones, handlePushFrame, releaseHeldAlerts, type AlertDeps } from "./index.js";
+import { heldAlerts, quietUntil, MAX_HELD } from "./quiet-hours.js";
 
 const token = (n: number) => `ExponentPushToken[phone${n}]`;
 const newKey = () => randomBytes(32).toString("base64");
@@ -108,7 +109,9 @@ describe("alertPhones", () => {
     const store = createPhonePushStore(file, () => masterKey);
     const sent: ExpoPushMessage[][] = [];
     const send = vi.fn(async (messages: ExpoPushMessage[]): Promise<PushTicket[]> => { sent.push(messages); return messages.map(() => ({ status: "ok" })); });
-    return { store, sent, send, d: { store, send, localOnly: () => false, ...over } as AlertDeps };
+    const held = heldAlerts(join(dir, "held.json"));
+    const scheduleRelease = vi.fn();
+    return { store, sent, send, held, scheduleRelease, d: { store, send, localOnly: () => false, quietUntil: () => null, held, scheduleRelease, ...over } as AlertDeps };
   }
 
   it("rings only the phones that want the item's kind, with sealed data and no readable text", async () => {
@@ -140,6 +143,69 @@ describe("alertPhones", () => {
     store.register({ token: token(2), key: newKey(), kinds: ["agent-message"] });
     await expect(alertPhones(item(), { ...d, send: async () => { throw new Error("offline"); } })).resolves.toBeUndefined();
     expect(store.list()).toHaveLength(1);
+  });
+});
+
+describe("quiet hours", () => {
+  const cfg = { quietHoursEnabled: true, quietHoursStart: "22:00", quietHoursEnd: "07:00" };
+  const at = (h: number, m = 0) => new Date(2026, 10, 14, h, m);
+
+  it("covers a window over midnight and says when it ends", () => {
+    expect(quietUntil(at(23), cfg)).toEqual(new Date(2026, 10, 15, 7, 0));
+    expect(quietUntil(at(3), cfg)).toEqual(new Date(2026, 10, 14, 7, 0));
+    expect(quietUntil(at(7), cfg)).toBeNull();
+    expect(quietUntil(at(21, 59), cfg)).toBeNull();
+  });
+
+  it("covers a same-day window, and none when off, empty or malformed", () => {
+    const day = { quietHoursEnabled: true, quietHoursStart: "13:00", quietHoursEnd: "14:00" };
+    expect(quietUntil(at(13, 30), day)).toEqual(new Date(2026, 10, 14, 14, 0));
+    expect(quietUntil(at(14), day)).toBeNull();
+    expect(quietUntil(at(23), { ...cfg, quietHoursEnabled: false })).toBeNull();
+    expect(quietUntil(at(23), { ...cfg, quietHoursEnd: "22:00" })).toBeNull();
+    expect(quietUntil(at(23), { ...cfg, quietHoursStart: "late" })).toBeNull();
+  });
+
+  function setup(quiet: Date | null) {
+    const store = createPhonePushStore(file, () => masterKey);
+    store.register({ token: token(1), key: newKey(), kinds: ["agent-message"] });
+    const send = vi.fn(async (messages: ExpoPushMessage[]): Promise<PushTicket[]> => messages.map(() => ({ status: "ok" })));
+    const held = heldAlerts(join(dir, "held.json"));
+    const scheduleRelease = vi.fn();
+    let until = quiet;
+    const d: AlertDeps = { store, send, localOnly: () => false, quietUntil: () => until, held, scheduleRelease };
+    return { d, send, held, scheduleRelease, end: () => { until = null; } };
+  }
+
+  it("holds an alert raised inside quiet hours and sends it when they end", async () => {
+    const end = new Date(2026, 10, 15, 7, 0);
+    const { d, send, held, scheduleRelease, end: finish } = setup(end);
+    await alertPhones(item(), d);
+    expect(send).not.toHaveBeenCalled();
+    expect(held.list().map((i) => i.id)).toEqual(["inb_1"]);
+    expect(scheduleRelease).toHaveBeenCalledWith(end);
+    expect(await releaseHeldAlerts(d)).toBe(0); // still quiet: re-armed, nothing sent
+    expect(send).not.toHaveBeenCalled();
+    finish();
+    expect(await releaseHeldAlerts(d)).toBe(1);
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(held.list()).toEqual([]);
+  });
+
+  it("rings a travel change through quiet hours", async () => {
+    const { d, send, held } = setup(new Date(2026, 10, 15, 7, 0));
+    await alertPhones(item(), d, { ringThroughQuietHours: true });
+    expect(send).toHaveBeenCalledTimes(1);
+    expect(held.list()).toEqual([]);
+  });
+
+  it("holds nothing nobody wants, and keeps only the newest held alerts", async () => {
+    const { d, held } = setup(new Date(2026, 10, 15, 7, 0));
+    await alertPhones(item({ kind: "update" }), d);
+    expect(held.list()).toEqual([]);
+    for (let i = 0; i < MAX_HELD + 3; i++) await alertPhones(item({ id: `inb_${i}` }), d);
+    expect(held.list()).toHaveLength(MAX_HELD);
+    expect(held.list().at(-1)?.id).toBe(`inb_${MAX_HELD + 2}`);
   });
 });
 

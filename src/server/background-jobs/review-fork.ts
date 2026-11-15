@@ -15,6 +15,7 @@ import { SecurityLayer } from "../../security/index.js";
 import type { AgentTurn, LAXConfig, ToolDefinition } from "../../types.js";
 import type { SecretsStore } from "../../secrets.js";
 import type { ToolPolicy } from "../../tool-policy/index.js";
+import { localProviderDecision } from "../../local-only-policy.js";
 
 /**
  * Wall-clock ceiling per review, enforced HERE because canonical's is not
@@ -60,6 +61,19 @@ export interface ReviewForkRequest {
   opType: string;
   maxIterations: number;
   timeoutMs: number;
+  /** Run on a model on this machine only (a user's privacy choice, e.g. mail
+   *  triage). The fork then runs on the local provider, `localModel` when
+   *  given, and throws LocalModelUnavailableError rather than reach a cloud
+   *  model when none is usable. */
+  localOnly?: { localModel?: string };
+}
+
+/** A local-only fork found no usable local model. Never falls back to cloud. */
+export class LocalModelUnavailableError extends Error {
+  constructor(reason: string) {
+    super(`no local model is available: ${reason}`);
+    this.name = "LocalModelUnavailableError";
+  }
 }
 
 /**
@@ -74,7 +88,18 @@ export interface ReviewForkRequest {
  */
 export async function runReviewFork(request: ReviewForkRequest, deps: ReviewForkDeps): Promise<AgentTurn> {
   const { resolveProvider } = await import("../../agent-request/index.js");
-  const { provider, apiKey, model } = await resolveProvider(deps.config, deps.secretsStore, deps.dataDir);
+  const pinned = request.localOnly;
+  const { provider, apiKey, model, customBaseURL } = await resolveProvider(
+    deps.config, deps.secretsStore, deps.dataDir,
+    pinned ? "local" : undefined, pinned?.localModel || undefined,
+  );
+  if (pinned) {
+    // Judged as strict local-only mode judges a provider, whatever the user's
+    // own mode: resolveProvider falls back to a credentialed cloud provider
+    // when the local one is not set up, and that is exactly what was refused.
+    const local = localProviderDecision(provider, { localOnlyMode: true, ollamaUrl: deps.config.ollamaUrl }, customBaseURL);
+    if (!local.allowed) throw new LocalModelUnavailableError(`resolved to "${provider}"`);
+  }
 
   // The only real ceiling this job has — see DEFAULT_REVIEW_TIMEOUT_MS. Abort
   // fires opCancel through canonical so the op genuinely stops; the race
@@ -165,4 +190,18 @@ export function reviewFailure(outcome: AgentTurn): string | null {
     return `ended failed (stopReason=${outcome.stopReason}${detail})`;
   }
   return null;
+}
+
+/** The fork's final words. Shape-tolerant: content is a string or text parts. */
+export function forkReply(outcome: AgentTurn): string {
+  for (let i = outcome.messages.length - 1; i >= 0; i--) {
+    const message = outcome.messages[i];
+    if (message.role !== "assistant") continue;
+    const content = message.content;
+    const text = typeof content === "string"
+      ? content
+      : Array.isArray(content) ? content.map((part) => (part as { text?: unknown }).text).filter((t) => typeof t === "string").join("") : "";
+    if (text.trim()) return text;
+  }
+  return "";
 }

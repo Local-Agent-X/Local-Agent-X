@@ -52,6 +52,17 @@ export const configSchema = z.object({
    *  reviewed in the background for a lesson. Off stops new lessons only: the
    *  count of recurring problems and lessons already kept are untouched. */
   failureReviewEnabled: z.boolean().default(true),
+  /** Whether new mail is read in the background every ~15 minutes and the
+   *  important messages raised in the inbox (and on the phone). On by default;
+   *  it does nothing until an email account is set up. */
+  mailWatchEnabled: z.boolean().default(true),
+  /** Mail triage runs on a model on this machine only; off = the chat model. */
+  mailWatchLocalOnly: z.boolean().default(false),
+  /** Phone alerts wait between quietHoursStart and quietHoursEnd (local time,
+   *  "HH:MM"), then arrive together; travel changes still come through. */
+  quietHoursEnabled: z.boolean().default(true),
+  quietHoursStart: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).default("22:00"),
+  quietHoursEnd: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).default("07:00"),
   retentionDays: z.number().int().min(7).max(365).default(90),
   logLevel: z.enum(["basic", "detailed", "full-audit"]).default("basic"),
   /** Bash sandbox mode. "guarded" (default, macOS/Linux) runs bash under a

@@ -586,6 +586,24 @@
           <div class="section-desc">Local server configuration. Changes require restart.</div>
           <div class="field-row"><div class="field"><label class="field-label">Port</label><input class="field-input" id="cfg-port" type="number" value="7007" onchange="onPortFieldChange()"/></div><div class="field"><label class="field-label">Workspace</label><div style="display:flex;gap:6px;align-items:center"><input class="field-input" id="cfg-workspace" value="./workspace" style="flex:1;min-width:0"/><button type="button" class="action-btn" id="cfg-workspace-browse" onclick="pickWorkspaceFolder()" title="Choose a workspace folder">Browse…</button></div></div></div>
         </div>
+        <div class="section-card">
+          <div class="section-title">Watching for you</div>
+          <div class="section-desc">LAX reads new mail about every 15 minutes and tells you about what matters (jobs, people you've written to, money and deadlines, travel changes, appointments, using your calendar to see when you're busy). Everything else waits for one digest in the morning. It only reads: it never sends, moves or deletes mail.</div>
+          <label class="field-hint" style="display:flex;align-items:center;gap:8px;margin-top:10px">
+            <input type="checkbox" id="watch-mail-enabled" checked />
+            Watch my email for what matters
+          </label>
+          <label class="field-hint" style="display:flex;align-items:center;gap:8px;margin-top:6px">
+            <input type="checkbox" id="watch-mail-local-only" />
+            Check my email with a model on this computer only (more private; needs a local model running)
+          </label>
+          <label class="field-hint" style="display:flex;align-items:center;gap:8px;margin-top:14px">
+            <input type="checkbox" id="watch-quiet-enabled" checked />
+            Quiet hours: hold phone alerts overnight (travel changes still come through)
+          </label>
+          <div class="field-row" style="margin-top:8px"><div class="field"><label class="field-label" for="watch-quiet-start">From</label><input class="field-input" id="watch-quiet-start" type="time" value="22:00"/></div><div class="field"><label class="field-label" for="watch-quiet-end">Until</label><input class="field-input" id="watch-quiet-end" type="time" value="07:00"/></div></div>
+          <div class="field-hint" style="margin-top:6px">Your morning digest arrives when quiet hours end. Phone alerts ring for the kinds you turned on in the phone app ("Your agent writes to you").</div>
+        </div>
       </div>
       <!-- HQ — app identity, updates, decommission -->
       <div id="stab-hq" class="tab-pane">
@@ -1956,6 +1974,7 @@
 <script src="/js/settings-browser-mode.js?v=v2"></script>
 <script src="/js/settings-usage.js?v=v1"></script>
 <script src="/js/settings-learning-mode.js?v=v1"></script>
+<script src="/js/settings-watching.js?v=v1"></script>
 <script src="/js/settings-learned-workflows.js?v=v1"></script>
 <script src="/js/settings-recurring-problems.js?v=v1"></script>
 <script src="/js/settings-memory-changes.js?v=v1"></script>

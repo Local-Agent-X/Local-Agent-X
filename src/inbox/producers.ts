@@ -145,3 +145,48 @@ export function inboxLessonAnswered(signature: string): void {
 export function inboxUserNotice(n: { id: string; text: string }): boolean {
   return postToInbox({ kind: "notice", title: n.text, body: "", needsYou: false, key: `notice:${n.id}` }) !== null;
 }
+
+/**
+ * Mail the mail watcher judged important (src/server/background-jobs/mail-watch.ts):
+ * posted as the agent writing to the user, so it rings the phones that turned
+ * on "Your agent writes to you", and a travel change rings through quiet
+ * hours. Informational: read is enough. One item per message.
+ */
+export function inboxImportantMail(m: {
+  account: string; id: string; from: string; subject: string; why: string; travel: boolean;
+}): boolean {
+  const sender = m.from.replace(/\s*<[^<>]*>\s*$/, "").trim() || m.from;
+  return postToInbox({
+    kind: "agent-message",
+    title: clip(`${sender}: ${m.subject}`, 120),
+    body: `${m.why}\n\nFrom ${m.from}, "${m.subject}". Ask in chat to read or answer it.`,
+    needsYou: false,
+    key: `mail:${m.account}:${m.id}`,
+    ...(m.travel ? { ringThroughQuietHours: true } : {}),
+  }) !== null;
+}
+
+/** The morning list of mail that did not need the user right away. */
+export function inboxMailDigest(d: { day: string; entries: Array<{ from: string; subject: string }>; skipped: number }): boolean {
+  const lines = d.entries.slice(0, 40).map((e) => `• ${clip(e.from.replace(/\s*<[^<>]*>\s*$/, "") || e.from, 40)}: ${clip(e.subject, 80)}`);
+  const more = d.entries.length - lines.length + d.skipped;
+  const count = d.entries.length + d.skipped;
+  return postToInbox({
+    kind: "notice",
+    title: `Mail digest: ${count} message${count === 1 ? "" : "s"} that didn't need you right away`,
+    body: `${lines.join("\n")}${more > 0 ? `\n…and ${more} more` : ""}`,
+    needsYou: false,
+    key: `mail-digest:${d.day}`,
+  }) !== null;
+}
+
+/** The mail watcher could not do its job (said at most once a day). */
+export function inboxMailWatchProblem(p: { day: string; text: string }): boolean {
+  return postToInbox({
+    kind: "notice",
+    title: "Your mail isn't being checked right now",
+    body: `${p.text}\n\nSettings → General → Watching for you.`,
+    needsYou: false,
+    key: `mail-watch-problem:${p.day}`,
+  }) !== null;
+}

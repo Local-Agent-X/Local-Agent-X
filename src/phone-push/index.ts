@@ -24,6 +24,8 @@ import type { InboxItem } from "../inbox/types.js";
 import { createPhonePushStore, type PhonePushStore } from "./store.js";
 import { sealPushAlert } from "./seal.js";
 import { expoPushMessage, isDeadToken, sendExpoPush } from "./send.js";
+import { getRuntimeConfig } from "../config.js";
+import { heldAlerts, quietUntil, type HeldAlerts } from "./quiet-hours.js";
 
 const logger = createLogger("phone-push");
 
@@ -70,35 +72,95 @@ export interface AlertDeps {
   store: PhonePushStore;
   send: typeof sendExpoPush;
   localOnly: () => boolean;
+  /** When the current quiet hours end, or null outside them. */
+  quietUntil: () => Date | null;
+  held: HeldAlerts;
+  /** Arms the release of held alerts at `at`. */
+  scheduleRelease: (at: Date) => void;
 }
 
-const defaultDeps = (): AlertDeps => ({ store: phonePushStore(), send: sendExpoPush, localOnly: () => isLocalOnlyMode() });
+const defaultDeps = (): AlertDeps => ({
+  store: phonePushStore(),
+  send: sendExpoPush,
+  localOnly: () => isLocalOnlyMode(),
+  quietUntil: () => quietUntil(new Date(), getRuntimeConfig()),
+  held: heldAlerts(),
+  scheduleRelease,
+});
 
-/** Alert every phone that wants this item's kind. Never throws: it runs off an
- *  inbox post, and a failed alert must not touch the inbox. */
-export async function alertPhones(item: InboxItem, deps: AlertDeps = defaultDeps()): Promise<void> {
+/** Alert every phone that wants this item's kind, now or, inside quiet hours,
+ *  when they end (`ringThroughQuietHours`: a travel change rings anyway).
+ *  Never throws: it runs off an inbox post, and a failed alert must not touch
+ *  the inbox. */
+export async function alertPhones(
+  item: InboxItem,
+  deps: AlertDeps = defaultDeps(),
+  opts: { ringThroughQuietHours?: boolean } = {},
+): Promise<void> {
   try {
     if (deps.localOnly()) return;
-    const phones = deps.store.list().filter((p) => p.kinds.includes(item.kind));
-    if (phones.length === 0) return;
-    const alert = pushAlertOf(item);
-    const tickets = await deps.send(phones.map((p) => expoPushMessage(p.token, sealPushAlert(alert, p.key))));
-    tickets.forEach((ticket, i) => {
-      const phone = phones[i];
-      if (!phone || ticket.status === "ok") return;
-      logger.warn(`[phone-push] ${shortToken(phone.token)}: ${ticket.message}`);
-      if (isDeadToken(ticket)) deps.store.unregister(phone.token);
-    });
+    if (!deps.store.list().some((p) => p.kinds.includes(item.kind))) return;
+    const until = opts.ringThroughQuietHours ? null : deps.quietUntil();
+    if (until) {
+      deps.held.add(item);
+      deps.scheduleRelease(until);
+      return;
+    }
+    await sendAlert(item, deps);
   } catch (e) {
     logger.warn(`[phone-push] alert for inbox item ${item.id} not sent: ${(e as Error).message}`);
   }
 }
 
+async function sendAlert(item: InboxItem, deps: AlertDeps): Promise<void> {
+  const phones = deps.store.list().filter((p) => p.kinds.includes(item.kind));
+  if (phones.length === 0) return;
+  const alert = pushAlertOf(item);
+  const tickets = await deps.send(phones.map((p) => expoPushMessage(p.token, sealPushAlert(alert, p.key))));
+  tickets.forEach((ticket, i) => {
+    const phone = phones[i];
+    if (!phone || ticket.status === "ok") return;
+    logger.warn(`[phone-push] ${shortToken(phone.token)}: ${ticket.message}`);
+    if (isDeadToken(ticket)) deps.store.unregister(phone.token);
+  });
+}
+
+/** Send what quiet hours held, unless quiet hours (changed since) still hold
+ *  them, in which case wait for their new end. Never throws. */
+export async function releaseHeldAlerts(deps: AlertDeps = defaultDeps()): Promise<number> {
+  try {
+    const until = deps.quietUntil();
+    if (until) {
+      if (deps.held.list().length > 0) deps.scheduleRelease(until);
+      return 0;
+    }
+    const items = deps.localOnly() ? [] : deps.held.take();
+    for (const item of items) await sendAlert(item, deps);
+    if (items.length > 0) logger.info(`[phone-push] quiet hours over: sent ${items.length} held alert(s)`);
+    return items.length;
+  } catch (e) {
+    logger.warn(`[phone-push] held alerts not sent: ${(e as Error).message}`);
+    return 0;
+  }
+}
+
+let releaseTimer: ReturnType<typeof setTimeout> | null = null;
+
+/** One timer for the end of quiet hours; a later call replaces it. */
+function scheduleRelease(at: Date): void {
+  if (releaseTimer) clearTimeout(releaseTimer);
+  const delay = Math.max(1_000, at.getTime() - Date.now() + 1_000);
+  releaseTimer = setTimeout(() => { releaseTimer = null; void releaseHeldAlerts(); }, delay);
+  releaseTimer.unref?.();
+}
+
 let started = false;
 
-/** Listen for new inbox items. Called once at boot. */
+/** Listen for new inbox items, and deliver anything a restart left held.
+ *  Called once at boot. */
 export function startPhonePush(): void {
   if (started) return;
   started = true;
-  EventBus.on("inbox:posted", ({ item }) => alertPhones(item));
+  EventBus.on("inbox:posted", ({ item, ringThroughQuietHours }) => alertPhones(item, defaultDeps(), { ringThroughQuietHours }));
+  if (heldAlerts().list().length > 0) void releaseHeldAlerts();
 }

@@ -109,6 +109,9 @@ export interface InboxInput {
   key?: string;
   deferredCall?: DeferredCallRecord;
   liveApprovalId?: string;
+  /** Ring the phone even inside the user's quiet hours (a travel change).
+   *  Not stored: it rides the `inbox:posted` event to src/phone-push/. */
+  ringThroughQuietHours?: boolean;
 }
 
 export interface InboxCounts {

@@ -23,7 +23,7 @@
  * GET /api/settings/schema for field-name introspection).
  *
  * The entries live in one table per domain (settings-schema.controls.ts,
- * .preferences.ts, .operator.ts); this module merges them and derives the
+ * .preferences.ts, .operator.ts, .watchers.ts); this module merges them and derives the
  * sets every consumer reads.
  */
 import type { z } from "zod";
@@ -31,6 +31,7 @@ import type { LAXConfig } from "./types.js";
 import { CONTROL_SETTINGS } from "./settings-schema.controls.js";
 import { PREFERENCE_SETTINGS } from "./settings-schema.preferences.js";
 import { OPERATOR_SETTINGS } from "./settings-schema.operator.js";
+import { WATCHER_SETTINGS } from "./settings-schema.watchers.js";
 
 /**
  * Who may change a setting. There is no default: an entry that does not say
@@ -77,6 +78,7 @@ export const FLIPPABLE_SETTINGS: ReadonlyArray<FlippableSetting> = [
   ...CONTROL_SETTINGS,
   ...PREFERENCE_SETTINGS,
   ...OPERATOR_SETTINGS,
+  ...WATCHER_SETTINGS,
 ];
 
 const BY_FIELD: ReadonlyMap<string, FlippableSetting> = new Map(FLIPPABLE_SETTINGS.map((s) => [s.field, s]));

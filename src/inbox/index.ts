@@ -58,7 +58,7 @@ export function postToInbox(input: InboxInput): InboxItem | null {
         .catch((e) => logger.warn(`[inbox] live frame not sent: ${(e as Error).message}`));
     }
     // A new item is news beyond the open tabs: the phone alerts hear it here.
-    if (created) void EventBus.emit("inbox:posted", { item: view });
+    if (created) void EventBus.emit("inbox:posted", { item: view, ...(input.ringThroughQuietHours ? { ringThroughQuietHours: true } : {}) });
     return view;
   } catch (e) {
     logger.warn(`[inbox] could not record "${input.title}": ${(e as Error).message}`);

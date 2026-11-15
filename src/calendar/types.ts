@@ -16,6 +16,17 @@ export interface CalendarEvent {
   attendees?: string[];
   /** The `CalendarSource.id` it came from. */
   sourceId: string;
+  /** Set when LAX noticed the plan itself (plans.ts), not the user or a calendar app. */
+  origin?: PlanOrigin;
+}
+
+/** Where a plan LAX noticed came from: a chat (its session id) or a mail
+ *  (its account and message id). Shown to the user with the event. */
+export interface PlanOrigin {
+  kind: "chat" | "mail";
+  ref: string;
+  /** Epoch ms it was noticed. */
+  at: number;
 }
 
 /** The kinds of calendar a source can be. "lax" is LAX's own calendar.json;

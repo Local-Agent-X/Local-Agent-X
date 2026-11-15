@@ -139,8 +139,11 @@ export const TOOL_POLICIES_NETWORK: Record<string, ToolPolicyRow> = {
   // "safe" and a create is a local write. All three are kernel internal: an
   // http label put local reads and writes under the kernel's http taint rules
   // and read them as network tools in strict local-only mode.
+  // Both read every calendar the user has (src/calendar/). The list returns
+  // titles and notes a connected calendar wrote off this computer; the
+  // availability check returns only free time slots.
   calendar_check_availability: { kernel: "internal", risk: "safe", capabilities: [], tags: [] },
-  calendar_list_events:        { kernel: "internal", risk: "safe", capabilities: [], tags: [] },
+  calendar_list_events:        { kernel: "internal", risk: "safe", capabilities: [], tags: [], externalContent: true },
   calendar_create_event:       { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [] },
   marketplace_search:          { kernel: "http", ariAction: "get", risk: "network-read", capabilities: [], tags: [] },
   marketplace_list:            { kernel: "http", ariAction: "get", risk: "network-read", capabilities: [], tags: [] },

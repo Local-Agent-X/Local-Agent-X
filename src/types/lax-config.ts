@@ -65,6 +65,8 @@ export interface LAXConfig {
   /** Quiet hours, local time "HH:MM". */
   quietHoursStart: string;
   quietHoursEnd: string;
+  /** Minutes before a commitment that a reminder is posted; 0 = off. */
+  remindBeforeMinutes: number;
   retentionDays: number;
   logLevel: "basic" | "detailed" | "full-audit";
   sandboxMode: SandboxMode;

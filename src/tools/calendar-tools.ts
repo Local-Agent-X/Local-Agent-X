@@ -2,6 +2,17 @@ import { randomUUID } from 'node:crypto';
 import type { ToolDefinition, ToolResult } from '../types.js';
 import { recentlyDone, markDone, fingerprintOf, describeAge } from './idempotency.js';
 import { loadCalendar, saveCalendar, type StoredCalendarEvent as CalendarEvent } from '../calendar/local-store.js';
+import { eventsBetween } from '../calendar/index.js';
+import { describeEvent } from '../calendar/plans.js';
+import { wrapExternalContent } from '../sanitize.js';
+
+/** Far enough ahead to stand for "no end date" in a listing. */
+const LIST_HORIZON_MS = 366 * 24 * 60 * 60 * 1000;
+
+/** A note naming calendars that could not be read, so a gap is never silent. */
+function unreadableNote(unreadable: Array<{ label: string; error: string }>): string {
+  return unreadable.length ? `\n(Not readable right now: ${unreadable.map((u) => `${u.label}: ${u.error}`).join('; ')})` : '';
+}
 
 // Each call mints a fresh UUID, so two identical-args calls = two
 // distinct rows in calendar.json (unlike document_create/pdf_create which
@@ -19,7 +30,7 @@ const fail = (content: string): ToolResult => ({ content, isError: true });
 const calendarListEvents: ToolDefinition = {
   name: 'calendar_list_events',
   description:
-    'List events from LAX\'s local calendar (calendar.json) — NOT the user\'s Google Calendar or any other external calendar account. ' +
+    'List events from every calendar the user has: LAX\'s own and each connected one (Google Calendar, iCal feeds, CalDAV), plus plans LAX noticed in chats and mail. ' +
     'Example: start_date="2026-04-01", end_date="2026-04-30" returns all April events.',
   parameters: {
     type: 'object',
@@ -31,28 +42,21 @@ const calendarListEvents: ToolDefinition = {
   },
   async execute(args) {
     try {
-      const cal = await loadCalendar();
       const now = new Date();
       const start = args.start_date ? new Date(args.start_date as string) : now;
-      const end = args.end_date ? new Date(args.end_date as string + 'T23:59:59') : null;
+      const end = args.end_date ? new Date(args.end_date as string + 'T23:59:59') : new Date(start.getTime() + LIST_HORIZON_MS);
       const limit = (args.limit as number) || 20;
+      const { events, unreadable } = await eventsBetween(start, end);
+      const filtered = events.filter((e) => Date.parse(e.start) >= start.getTime()).slice(0, limit);
 
-      const filtered = cal.events
-        .filter((e) => {
-          const eStart = new Date(e.start);
-          if (eStart < start) return false;
-          if (end && eStart > end) return false;
-          return true;
-        })
-        .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime())
-        .slice(0, limit);
-
-      if (filtered.length === 0) return ok('No events found in the specified range.');
+      if (filtered.length === 0) return ok(`No events found in the specified range.${unreadableNote(unreadable)}`);
       const lines = filtered.map(
         (e) =>
-          `- ${e.title} | ${e.start} → ${e.end}${e.location ? ` @ ${e.location}` : ''}${e.description ? ` — ${e.description}` : ''}`,
+          `- ${e.title} | ${e.start} → ${e.end}${e.location ? ` @ ${e.location}` : ''}${e.description ? ` — ${e.description}` : ''}`
+          + `${e.origin ? ` [noticed by LAX in a ${e.origin.kind}]` : ''}${e.sourceId !== 'lax' ? ` [${e.sourceId}]` : ''}`,
       );
-      return ok(lines.join('\n'), { count: filtered.length });
+      // Titles and notes can come from a connected calendar: outside text.
+      return ok(wrapExternalContent(lines.join('\n'), 'calendar') + unreadableNote(unreadable), { count: filtered.length });
     } catch (err) {
       return fail(`Failed to list events: ${(err as Error).message}`);
     }
@@ -64,7 +68,7 @@ const calendarListEvents: ToolDefinition = {
 const calendarCreateEvent: ToolDefinition = {
   name: 'calendar_create_event',
   description:
-    'Create a calendar event in LAX\'s local calendar (calendar.json) — NOT the user\'s Google Calendar or any other external calendar account. ' +
+    'Create an event in LAX\'s own calendar (not in a connected Google, iCal or CalDAV calendar). The result says if it overlaps anything on any of the user\'s calendars. ' +
     'Example: title="Team Standup", start="2026-04-02T09:00:00", end="2026-04-02T09:30:00", description="Daily sync"',
   parameters: {
     type: 'object',
@@ -101,6 +105,10 @@ const calendarCreateEvent: ToolDefinition = {
         );
       }
 
+      // What it overlaps on any of the user's calendars: said in the result, so
+      // a clash is never created silently, whichever model made the call.
+      const { events: around } = await eventsBetween(new Date(start), new Date(end));
+      const clashes = around.filter((e) => Date.parse(e.start) < Date.parse(end) && Date.parse(e.end || e.start) > Date.parse(start));
       const cal = await loadCalendar();
       const event: CalendarEvent = {
         id: randomUUID(),
@@ -114,7 +122,10 @@ const calendarCreateEvent: ToolDefinition = {
       cal.events.push(event);
       await saveCalendar(cal);
       markDone('calendar_create_event', fp, `id=${event.id}`);
-      return ok(`Event created: "${event.title}" (${event.start} → ${event.end}) [id: ${event.id}]`);
+      const clashNote = clashes.length > 0
+        ? `\nIt overlaps: ${wrapExternalContent(clashes.slice(0, 3).map((c) => describeEvent(c)).join('; '), 'calendar')}\nTell the user about the clash.`
+        : '';
+      return ok(`Event created: "${event.title}" (${event.start} → ${event.end}) [id: ${event.id}]${clashNote}`, clashes.length ? { clashes: clashes.length } : undefined);
     } catch (err) {
       return fail(`Failed to create event: ${(err as Error).message}`);
     }
@@ -141,18 +152,11 @@ const calendarCheckAvailability: ToolDefinition = {
       }
       const dateStr = args.date as string;
       const duration = args.duration_minutes as number;
-      const cal = await loadCalendar();
-
       const dayStart = new Date(`${dateStr}T09:00:00`);
       const dayEnd = new Date(`${dateStr}T17:00:00`);
 
-      const dayEvents = cal.events
-        .filter((e) => {
-          const eStart = new Date(e.start);
-          const eEnd = new Date(e.end);
-          return eStart < dayEnd && eEnd > dayStart;
-        })
-        .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
+      // Busy on any of the user's calendars is busy (eventsBetween is sorted).
+      const { events: dayEvents } = await eventsBetween(dayStart, dayEnd);
 
       const slots: string[] = [];
       let cursor = dayStart.getTime();

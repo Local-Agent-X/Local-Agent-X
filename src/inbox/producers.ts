@@ -190,3 +190,14 @@ export function inboxMailWatchProblem(p: { day: string; text: string }): boolean
     key: `mail-watch-problem:${p.day}`,
   }) !== null;
 }
+
+/** Two plans at the same time (src/calendar/notice.ts, the mail watcher):
+ *  the agent writing to the user, so it rings the phone. Read is enough. */
+export function inboxPlanClash(c: { key: string; title: string; body: string }): boolean {
+  return postToInbox({ kind: "agent-message", title: clip(c.title, 140), body: c.body, needsYou: false, key: c.key }) !== null;
+}
+
+/** A commitment is coming up (src/server/background-jobs/plan-reminders.ts). */
+export function inboxPlanReminder(r: { key: string; title: string; body: string }): boolean {
+  return postToInbox({ kind: "agent-message", title: clip(r.title, 140), body: r.body, needsYou: false, key: r.key }) !== null;
+}

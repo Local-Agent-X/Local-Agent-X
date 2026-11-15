@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2045 non-test source files · 78 oversized · 268 nearing the size cap.
+**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2050 non-test source files · 78 oversized · 268 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -24,11 +24,11 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/tools/` | 135 | 235 | XL | 9 |
 | `src/tool-execution/` | 100 | 90 | XL | 2 |
 | `src/workspace/` | 91 | 3 | M |  |
-| `src/canonical-loop/` | 89 | 291 | XL | 10 |
+| `src/canonical-loop/` | 89 | 292 | XL | 10 |
 | `src/providers/` | 80 | 27 | L | 1 |
 | `src/session/` | 67 | 13 | L |  |
 | `src/data-lineage/` | 60 | 12 | L |  |
-| `src/memory/` | 58 | 162 | XL | 3 |
+| `src/memory/` | 59 | 162 | XL | 3 |
 | `src/util/` | 53 | 3 | S |  |
 | `src/browser/` | 51 | 93 | XL | 5 |
 | `src/tool-policy/` | 48 | 21 | L |  |
@@ -41,9 +41,9 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/context-manager/` | 29 | 16 | M |  |
 | `src/agent-store/` | 28 | 7 | M | 1 |
 | `src/context/` | 28 | 11 | M |  |
+| `src/inbox/` | 27 | 7 | M |  |
 | `src/agent-request/` | 26 | 16 | L | 3 |
-| `src/inbox/` | 25 | 7 | M |  |
-| `src/classifiers/` | 24 | 16 | L |  |
+| `src/classifiers/` | 25 | 17 | L |  |
 | `src/app-runtime/` | 23 | 12 | M |  |
 | `src/sandbox/` | 23 | 16 | L | 1 |
 | `src/desktop-contract/` | 22 | 10 | M |  |
@@ -51,7 +51,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/orchestrator/` | 20 | 24 | L |  |
 | `src/autonomy/` | 19 | 6 | M |  |
 | `src/cognition/` | 19 | 37 | XL | 1 |
-| `src/server/` *(entrypoint)* | 19 | 70 | XL | 4 |
+| `src/server/` *(entrypoint)* | 19 | 71 | XL | 4 |
 | `src/agents/` | 17 | 14 | L |  |
 | `src/net/` | 17 | 11 | L |  |
 | `src/voice/` | 16 | 80 | XL | 1 |
@@ -77,13 +77,13 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/telegram-bridge/` | 8 | 6 | M |  |
 | `src/auto-build/` | 7 | 52 | XL | 3 |
 | `src/android/` | 6 | 7 | M |  |
+| `src/calendar/` | 6 | 5 | S |  |
 | `src/credentials/` | 6 | 1 | S |  |
 | `src/publish-review/` | 5 | 8 | M |  |
 | `src/embedding-providers/` | 4 | 8 | M |  |
 | `src/hooks/` | 4 | 3 | M |  |
 | `src/language-intel/` | 4 | 5 | M |  |
 | `src/routing/` | 4 | 6 | M |  |
-| `src/calendar/` | 3 | 3 | S |  |
 | `src/phone-push/` | 3 | 5 | M |  |
 | `src/conversation/` | 2 | 3 | M |  |
 | `src/llm-dispatch/` | 2 | 2 | M |  |

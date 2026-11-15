@@ -290,6 +290,15 @@ export class MemoryManager {
     } catch (e) {
       logger.warn("autoExtractAndSave failed:", (e as Error).message);
     }
+    // Plans with a time the exchange settled go to the calendar, and a clash
+    // with another commitment is raised (calendar/notice.ts). Not awaited:
+    // nothing after the turn waits on it.
+    void import("../calendar/notice.js")
+      .then(({ noticePlansInTurn }) => noticePlansInTurn({
+        userMessage: input.userMessage, assistantResponse: input.agentResponse,
+        sessionId: input.sessionId ?? "", hasExternalTaint: input.hasExternalTaint,
+      }))
+      .catch((e) => logger.warn("plan notice failed:", (e as Error).message));
     try {
       const userSnippet = input.userMessage.slice(0, 300).replace(/\n/g, " ");
       if (userSnippet.length > 10) {

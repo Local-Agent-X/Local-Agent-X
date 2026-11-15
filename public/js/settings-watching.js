@@ -8,7 +8,8 @@
     quietHoursEnabled: 'watch-quiet-enabled',
   };
   const TIMES = { quietHoursStart: 'watch-quiet-start', quietHoursEnd: 'watch-quiet-end' };
-  const DEFAULTS = { mailWatchEnabled: true, mailWatchLocalOnly: false, quietHoursEnabled: true, quietHoursStart: '22:00', quietHoursEnd: '07:00' };
+  const NUMBERS = { remindBeforeMinutes: 'watch-remind-minutes' };
+  const DEFAULTS = { mailWatchEnabled: true, mailWatchLocalOnly: false, quietHoursEnabled: true, quietHoursStart: '22:00', quietHoursEnd: '07:00', remindBeforeMinutes: 30 };
 
   function renderWatchingSettings(settings) {
     for (const [field, id] of Object.entries(TOGGLES)) {
@@ -18,6 +19,10 @@
     for (const [field, id] of Object.entries(TIMES)) {
       const input = document.getElementById(id);
       if (input && field in settings) input.value = typeof settings[field] === 'string' ? settings[field] : DEFAULTS[field];
+    }
+    for (const [field, id] of Object.entries(NUMBERS)) {
+      const input = document.getElementById(id);
+      if (input && field in settings) input.value = typeof settings[field] === 'number' ? settings[field] : DEFAULTS[field];
     }
     const quiet = document.getElementById('watch-quiet-enabled');
     const off = quiet ? !quiet.checked : false;
@@ -40,7 +45,7 @@
     try {
       const settings = await apiJson('/api/settings');
       const shown = {};
-      for (const field of [...Object.keys(TOGGLES), ...Object.keys(TIMES)]) shown[field] = settings[field] ?? DEFAULTS[field];
+      for (const field of [...Object.keys(TOGGLES), ...Object.keys(TIMES), ...Object.keys(NUMBERS)]) shown[field] = settings[field] ?? DEFAULTS[field];
       renderWatchingSettings(shown);
     } catch {}
   }
@@ -63,6 +68,11 @@
     onToggle('watch-quiet-enabled', (v) => saveWatchingSetting({ quietHoursEnabled: v }));
     onTime('watch-quiet-start', (v) => saveWatchingSetting({ quietHoursStart: v }));
     onTime('watch-quiet-end', (v) => saveWatchingSetting({ quietHoursEnd: v }));
+    const remind = document.getElementById('watch-remind-minutes');
+    remind.addEventListener('change', () => {
+      const n = Math.round(Number(remind.value));
+      if (Number.isFinite(n) && n >= 0 && n <= 1440) saveWatchingSetting({ remindBeforeMinutes: n });
+    });
     loadWatchingSettings();
   }
 

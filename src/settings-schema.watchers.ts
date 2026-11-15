@@ -30,6 +30,14 @@ export const WATCHER_SETTINGS: ReadonlyArray<FlippableSetting> = [
     description: "Triage mail with a model on this machine only, so no email text goes to a cloud model. Off (default) uses the chat model. When no local model is available the mail check is skipped and the inbox says so; it never falls back to the cloud",
   },
   {
+    field: "remindBeforeMinutes",
+    owner: "agent",
+    validate: z.number().int().min(0).max(24 * 60),
+    runtime: true,
+    broadcast: true,
+    description: "Minutes before each commitment on any of the user's calendars (plans LAX noticed in chats and mail included) that a reminder is posted to the inbox and rings the phone. Default 30; 0 turns reminders off",
+  },
+  {
     field: "quietHoursEnabled",
     owner: "agent",
     validate: z.boolean(),

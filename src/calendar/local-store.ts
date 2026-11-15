@@ -6,12 +6,14 @@
 import { readFile, writeFile, mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
-import type { CalendarEvent, CalendarSource } from "./types.js";
+import type { CalendarEvent, CalendarSource, PlanOrigin } from "./types.js";
 
 /** An event as calendar.json stores it. */
 export interface StoredCalendarEvent {
   id: string; title: string; start: string; end: string;
   description: string; attendees: string[]; location: string;
+  /** Set when LAX noticed the plan itself (plans.ts). */
+  origin?: PlanOrigin;
 }
 export interface CalendarData { events: StoredCalendarEvent[] }
 
@@ -61,6 +63,7 @@ export const localCalendarSource: CalendarSource = {
         ...(e.location ? { location: e.location } : {}),
         ...(e.description ? { description: e.description } : {}),
         ...(e.attendees?.length ? { attendees: e.attendees } : {}),
+        ...(e.origin ? { origin: e.origin } : {}),
         sourceId: LAX_CALENDAR_SOURCE_ID,
       }));
   },

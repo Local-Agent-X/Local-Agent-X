@@ -51,6 +51,8 @@ import { workRootGitLine } from "./work-root-git.js";
 import { missingNamedFiles } from "./request-named-paths.js";
 import { toldUserLine, TOLD_USER_WINDOW_MS, TOLD_USER_CAP } from "./told-user.js";
 import { recentInbox } from "../../inbox/index.js";
+import { comingUpLine, COMING_UP_WINDOW_MS, type UpcomingEvent } from "./coming-up.js";
+import { eventsBetween } from "../../calendar/index.js";
 
 const logger = createLogger("canonical-loop.situational-awareness");
 
@@ -124,17 +126,31 @@ export async function buildSituationalAwareness(op: Op, turnIdx: number): Promis
   // digest, a job's result): on a request's first turn, so a new message about
   // one is answered by the assistant that sent it (told-user.ts).
   const toldUser = turnIdx === 0 ? recentInbox(now.getTime() - TOLD_USER_WINDOW_MS, TOLD_USER_CAP) : [];
+  // The user's next commitments on every calendar, so a time is checked
+  // before it is proposed or accepted (coming-up.ts).
+  const comingUp = turnIdx === 0 ? await upcoming(now) : [];
   const digest = composeDigest({
     turnIdx, recent, firstUserText, successCriteria, constraints, restateAfter, openTasks, missingFiles,
     gitStatus: gitStatus ?? undefined,
     now,
     toldUser,
+    comingUp,
   });
   // Debug seam: the digest is ephemeral (injected into the prompt, never
   // persisted), so this log is the only way to observe what the model actually
   // received. Enable debug logging to watch it live.
   if (digest) logger.debug(`op=${op.id} turn=${turnIdx} digest:\n${digest}`);
   return digest;
+}
+
+/** The next commitments; a calendar that cannot be read never fails the turn. */
+async function upcoming(now: Date): Promise<UpcomingEvent[]> {
+  try {
+    return (await eventsBetween(now, new Date(now.getTime() + COMING_UP_WINDOW_MS))).events;
+  } catch (e) {
+    logger.warn(`calendar not read for the digest: ${(e as Error).message}`);
+    return [];
+  }
 }
 
 /** Pure digest formatter — no IO, so it's unit-testable. */
@@ -158,6 +174,8 @@ export function composeDigest(input: {
   now?: Date;
   /** IANA zone for `now`; the server's own by default. */
   timeZone?: string;
+  /** The user's next commitments, soonest first (coming-up.ts). */
+  comingUp?: UpcomingEvent[];
   /** What LAX told the user outside this chat lately (their inbox), newest first. */
   toldUser?: Array<{ title: string; createdAt: number; updatedAt?: number }>;
 }): string | null {
@@ -180,6 +198,8 @@ export function composeDigest(input: {
 
   const told = toldUserLine(input.toldUser ?? [], input.now ?? new Date());
   if (told) lines.push(told);
+  const soon = comingUpLine(input.comingUp ?? []);
+  if (soon) lines.push(soon);
 
   const recentLine = recentActionsLine(recent);
   if (recentLine) lines.push(recentLine);

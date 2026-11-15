@@ -93,7 +93,7 @@ function handleSettingsChanged(msg) {
   }
   // Watching for you (Settings → General): the mail watcher's switches and quiet hours.
   if (('mailWatchEnabled' in msg.settings || 'mailWatchLocalOnly' in msg.settings || 'quietHoursEnabled' in msg.settings
-    || 'quietHoursStart' in msg.settings || 'quietHoursEnd' in msg.settings) && typeof renderWatchingSettings === 'function') {
+    || 'quietHoursStart' in msg.settings || 'quietHoursEnd' in msg.settings || 'remindBeforeMinutes' in msg.settings) && typeof renderWatchingSettings === 'function') {
     renderWatchingSettings(msg.settings);
   }
   // The classifier model pin (Settings → AI & Models → Local Runtimes): the

@@ -35,8 +35,10 @@ import {
   type MailAccount, type MailSessionRunner, type NewMail,
 } from "./mail-watch-mail.js";
 import {
-  MAIL_WATCH_SESSION_PREFIX, MAIL_WATCH_SYSTEM_PROMPT, buildMailWatchMessage, parseMailVerdicts,
+  MAIL_WATCH_SESSION_PREFIX, MAIL_WATCH_SYSTEM_PROMPT, buildMailWatchMessage, parseMailVerdicts, type MailVerdict,
 } from "./mail-watch-prompt.js";
+import { recordPlan } from "../../calendar/plans.js";
+import { announceClash } from "../../calendar/notice.js";
 import {
   loadMailWatchState, localDay, saveMailWatchState, type MailWatchState,
 } from "./mail-watch-state.js";
@@ -172,9 +174,23 @@ async function judgeAndPost(account: MailAccount, mail: NewMail, known: Set<stri
       from: m.from, subject: m.subject, why: v.why || "Looks important.", travel: v.category === "travel",
     });
     if (posted) important++;
+    if (v.when) await notePlanFromMail(account.id, m.messageId ?? `uid-${m.uid}`, v.when, d);
   }
   queueForDigest(ctx.state, rest);
   return important;
+}
+
+/** A booking, flight or due time the mail sets becomes a plan, checked for
+ *  clashes with the rest of the user's time (src/calendar/plans.ts). */
+async function notePlanFromMail(accountId: string, messageId: string, when: NonNullable<MailVerdict["when"]>, d: MailWatchDeps): Promise<void> {
+  const origin = { kind: "mail" as const, ref: `${accountId}:${messageId}` };
+  try {
+    const plan = { title: when.what, start: when.start, ...(when.end ? { end: when.end } : {}), ...(when.where ? { where: when.where } : {}), origin };
+    const r = await recordPlan(plan, d.now ? { now: d.now } : {});
+    if (r.recorded && r.clashes.length > 0) announceClash(plan, r.clashes, origin);
+  } catch (e) {
+    logger.warn(`[mail-watch] plan "${when.what}" not recorded: ${(e as Error).message}`);
+  }
 }
 
 function queueForDigest(state: MailWatchState, messages: EmailSummary[]): void {

@@ -25,6 +25,7 @@ import {
 } from "./skill-review.js";
 import { registerFailureReviewRunner, runFailureReviewPass, type FailureReviewDeps } from "./failure-review.js";
 import { registerMailWatchRunner, runMailWatchPass, MAIL_WATCH_INTERVAL_MS, type MailWatchDeps } from "./mail-watch.js";
+import { runPlanReminderPass, PLAN_REMINDER_INTERVAL_MS } from "./plan-reminders.js";
 import { attemptBackfill, BACKFILL_BOOT_SETTLE_MS } from "./backfill-gate.js";
 import { setLearningNoticesForSession } from "../../chat-ws/state.js";
 import { pendingLearningNotices } from "../../protocols/learned-review-drafting.js";
@@ -47,7 +48,8 @@ export type RegisteredJobName =
   | "skill-review"
   | "protocol-curator"
   | "failure-review"
-  | "mail-watch";
+  | "mail-watch"
+  | "plan-reminders";
 
 /**
  * Overlap policy for every registered job, in one place. Not documentation —
@@ -112,6 +114,11 @@ export type RegisteredJobName =
  *     finds the same work. Each review fork settles under review-fork.ts's
  *     timeout, so a pass cannot wedge the slot.
  *
+ *   plan-reminders (skip)
+ *     Reads every calendar and posts reminders keyed per event occurrence, so
+ *     a second pass at once would only find them posted. A dropped tick costs
+ *     five minutes; the lead time is wider than that.
+ *
  *   mail-watch (skip)
  *     Two passes at once would both read past the same checkpoint and raise
  *     the same mail twice (the inbox key dedupes the item, not the model
@@ -128,6 +135,7 @@ export const JOB_OVERLAP: Record<RegisteredJobName, OverlapPolicy> = {
   "protocol-curator": "skip",
   "failure-review": "skip",
   "mail-watch": "skip",
+  "plan-reminders": "skip",
 };
 
 /** Name + declared policy in one spread, so a registration can never carry a
@@ -179,11 +187,13 @@ function registerLearningUpkeep(scheduler: JobScheduler, foregroundIdle: () => b
 }
 
 /**
- * New mail, triaged every 15 minutes (mail-watch.ts; on by default, a
- * per-user switch). Not on the idle gate: an important email should not wait
- * for the user to stop chatting. A local-model pass checks idle itself (GPU).
+ * What LAX watches for the user without being asked. New mail, triaged every
+ * 15 minutes (mail-watch.ts; on by default, a per-user switch), and reminders
+ * before commitments (plan-reminders.ts). Neither is on the idle gate: an
+ * important email or a meeting in 30 minutes should not wait for the user to
+ * stop chatting. A local-model mail pass checks idle itself (GPU).
  */
-function registerMailWatch(
+function registerWatchers(
   scheduler: JobScheduler,
   deps: Omit<MailWatchDeps, "foregroundBusy"> & { sessionStore: Pick<SessionStore, "list"> },
 ): void {
@@ -198,6 +208,18 @@ function registerMailWatch(
     run: async () => {
       const r = await runMailWatchPass();
       if (r.read > 0 || r.failed) logger.info(`[mail-watch] pass: read=${r.read} important=${r.important} failed=${r.failed}`);
+    },
+  });
+  // Reminders before commitments on every calendar (plan-reminders.ts).
+  scheduler.register({
+    ...withOverlapPolicy("plan-reminders"),
+    intervalMs: PLAN_REMINDER_INTERVAL_MS,
+    startupDelayMs: 60 * 1000,
+    run: async () => {
+      try {
+        const n = await runPlanReminderPass();
+        if (n > 0) logger.info(`[plan-reminders] posted ${n}`);
+      } catch (e) { logger.warn("[plan-reminders]", (e as Error).message); }
     },
   });
 }
@@ -389,7 +411,7 @@ export function startBackgroundJobs(deps: {
   });
 
   registerLearningUpkeep(scheduler, foregroundIdle, { config, dataDir, secretsStore, security, toolPolicy });
-  registerMailWatch(scheduler, deps);
+  registerWatchers(scheduler, deps);
 
   // Backfill scans every file and re-embeds — see decideBackfill in
   // ./backfill-gate.ts for the two contention preconditions, and why embedder

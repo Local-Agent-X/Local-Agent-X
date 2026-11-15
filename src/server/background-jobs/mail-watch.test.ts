@@ -246,3 +246,10 @@ describe("verdicts", () => {
     expect(addressOf("unknown")).toBe("");
   });
 });
+
+describe("categories", () => {
+  it("account changes and failures in what the user runs can be important", () => {
+    const v = parseMailVerdicts('{"messages":[{"uid":1,"important":true,"category":"work","why":"Installer run failed on main"},{"uid":2,"important":true,"category":"account","why":"Kraken is changing an API key"}]}', [1, 2]);
+    expect(v?.map((x) => [x.category, x.important])).toEqual([["work", true], ["account", true]]);
+  });
+});

@@ -49,6 +49,8 @@ import { createLogger } from "../../logger.js";
 import { resolveAgentPath, sessionWorkRootOf } from "../../workspace/paths.js";
 import { workRootGitLine } from "./work-root-git.js";
 import { missingNamedFiles } from "./request-named-paths.js";
+import { toldUserLine, TOLD_USER_WINDOW_MS, TOLD_USER_CAP } from "./told-user.js";
+import { recentInbox } from "../../inbox/index.js";
 
 const logger = createLogger("canonical-loop.situational-awareness");
 
@@ -117,10 +119,16 @@ export async function buildSituationalAwareness(op: Op, turnIdx: number): Promis
   // goal is restated: by then the agent is deep enough in that a named output
   // never written is the thing most worth knowing (request-named-paths.ts).
   const missingFiles = firstUserText ? missingNamedFiles(firstUserText, (p) => resolveAgentPath(p, sessionId || undefined)) : [];
+  const now = new Date();
+  // What LAX told the user outside this chat (the mail watcher's alerts and
+  // digest, a job's result): on a request's first turn, so a new message about
+  // one is answered by the assistant that sent it (told-user.ts).
+  const toldUser = turnIdx === 0 ? recentInbox(now.getTime() - TOLD_USER_WINDOW_MS, TOLD_USER_CAP) : [];
   const digest = composeDigest({
     turnIdx, recent, firstUserText, successCriteria, constraints, restateAfter, openTasks, missingFiles,
     gitStatus: gitStatus ?? undefined,
-    now: new Date(),
+    now,
+    toldUser,
   });
   // Debug seam: the digest is ephemeral (injected into the prompt, never
   // persisted), so this log is the only way to observe what the model actually
@@ -150,6 +158,8 @@ export function composeDigest(input: {
   now?: Date;
   /** IANA zone for `now`; the server's own by default. */
   timeZone?: string;
+  /** What LAX told the user outside this chat lately (their inbox), newest first. */
+  toldUser?: Array<{ title: string; body: string; createdAt: number; updatedAt?: number }>;
 }): string | null {
   const { turnIdx, recent, firstUserText } = input;
   const successCriteria = input.successCriteria ?? [];
@@ -167,6 +177,9 @@ export function composeDigest(input: {
   // Pace only earns its line once we're past the first model turn of the
   // request — "Turn 1" is noise.
   if (turnIdx >= 1) lines.push(`Turn ${turnIdx + 1} of this request.`);
+
+  const told = toldUserLine(input.toldUser ?? [], input.now ?? new Date());
+  if (told) lines.push(told);
 
   const recentLine = recentActionsLine(recent);
   if (recentLine) lines.push(recentLine);

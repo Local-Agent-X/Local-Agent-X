@@ -19,7 +19,7 @@ export const WATCHER_SETTINGS: ReadonlyArray<FlippableSetting> = [
     validate: z.boolean(),
     runtime: true,
     broadcast: true,
-    description: "Read new mail in the background about every 15 minutes and raise the important messages (jobs and business, people the user has written to, deadlines and money, travel changes, appointments) in the inbox and on the phone; the rest roll into one digest each morning. On by default; does nothing until an email account is set up. Read-only: it never sends, moves or deletes mail",
+    description: "Read new mail in the background about every 15 minutes and raise the important messages (jobs and business, people the user has written to, deadlines and money, travel changes, appointments, changes to their accounts, failures in what they run) in the inbox and on the phone; the rest roll into one digest each morning. On by default; does nothing until an email account is set up. Read-only: it never sends, moves or deletes mail",
   },
   {
     field: "mailWatchLocalOnly",

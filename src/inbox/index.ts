@@ -32,6 +32,25 @@ export function toInboxView(item: StoredInboxItem): InboxItem {
   return view;
 }
 
+/**
+ * What the app told the user since `since` (epoch ms), newest first, as a
+ * client sees it, dismissed items left out: what a chat should know was
+ * already said (the situational digest, canonical-loop/turn-loop/
+ * situational-awareness.ts). Read-only; never throws.
+ */
+export function recentInbox(since: number, cap: number): InboxItem[] {
+  try {
+    const at = (item: InboxItem) => Math.max(item.createdAt, item.updatedAt ?? 0);
+    return inboxStore().list().map(toInboxView)
+      .filter((item) => at(item) >= since)
+      .sort((a, b) => at(b) - at(a))
+      .slice(0, cap);
+  } catch (e) {
+    logger.warn(`[inbox] recent items not read: ${(e as Error).message}`);
+    return [];
+  }
+}
+
 export function listInbox(): { items: InboxItem[] } & InboxCounts {
   const store = inboxStore();
   return { items: store.list().map(toInboxView), ...store.counts() };

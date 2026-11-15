@@ -47,6 +47,10 @@ export function reasoningPayload(provider: ReasoningProvider, model: string, dat
  * step) whose payload came from this provider and this model. Earlier turns'
  * reasoning is not replayed: providers ignore or strip it, and it would be
  * paid for on every step.
+ *
+ * `LAX_REASONING_REPLAY=0` turns replay off for every provider: an off switch
+ * that needs no release, and the control for measuring what replay does to a
+ * run (2026-11-15: Opus re-drafting a whole file in its thinking every step).
  */
 export function replayableReasoning(
   messages: readonly CanonicalMessage[],
@@ -55,6 +59,7 @@ export function replayableReasoning(
   ephemeralTailMessages = 0,
 ): Map<string, unknown> {
   const out = new Map<string, unknown>();
+  if (process.env.LAX_REASONING_REPLAY === "0") return out;
   const settled = messages.length - Math.max(0, ephemeralTailMessages);
   let loopStart = 0;
   for (let i = 0; i < settled; i++) if (messages[i].role === "user") loopStart = i + 1;

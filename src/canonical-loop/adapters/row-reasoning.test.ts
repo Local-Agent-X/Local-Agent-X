@@ -35,6 +35,18 @@ describe("replayableReasoning", () => {
     const bad: CanonicalMessage = { messageId: "x", role: "assistant", content: { text: "hi", reasoningPayload: { provider: "codex" } } };
     expect(replayableReasoning([user("u"), bad], "codex", "gpt-6.1-sol").size).toBe(0);
   });
+
+  it("replays nothing when LAX_REASONING_REPLAY=0", () => {
+    const msgs = [user("u1"), asst("a1"), tool("t1")];
+    const was = process.env.LAX_REASONING_REPLAY;
+    process.env.LAX_REASONING_REPLAY = "0";
+    try {
+      expect(replayableReasoning(msgs, "codex", "gpt-6.1-sol").size).toBe(0);
+    } finally {
+      if (was === undefined) delete process.env.LAX_REASONING_REPLAY; else process.env.LAX_REASONING_REPLAY = was;
+    }
+    expect(replayableReasoning(msgs, "codex", "gpt-6.1-sol").size).toBe(1);
+  });
 });
 
 describe("reasoningPayload", () => {

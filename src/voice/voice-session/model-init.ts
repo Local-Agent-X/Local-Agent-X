@@ -28,6 +28,7 @@ import {
 import { createTier4, tier4ModelDownloaded, tier4VariantFromEnv } from "../tier4/index.js";
 import { createSttProvider, resolveSttProviderName } from "../stt-providers/index.js";
 import type { Tier4StreamingTTS } from "../tier4/types.js";
+import { isValidKokoroVoice } from "../tier4/kokoro-voices.js";
 import type { ResolvedVoiceSettings } from "./settings.js";
 import type { SecretLookup } from "./types.js";
 import { isLocalOnlyMode } from "../../local-only-policy.js";
@@ -97,6 +98,16 @@ export function ensureSessionSpeechModel(
     });
   }
   return ensureWhisperModelDownloaded(onProgress, { variant: voiceSettings.whisperModel });
+}
+
+/** The options Kokoro starts with when another tier4 engine failed. The saved
+ *  voice belongs to the engine that failed (e.g. Edge's "en-US-GuyNeural"),
+ *  and Kokoro rejects it on every sentence, so it only carries over when it
+ *  names a Kokoro voice. */
+export function kokoroFallbackOpts<T extends { voice?: string }>(opts: T): Omit<T, "voice"> | T {
+  if (isValidKokoroVoice(opts.voice)) return opts;
+  const { voice: _otherEngineVoice, ...rest } = opts;
+  return rest;
 }
 
 export async function initializeVoiceStack(deps: ModelInitDeps): Promise<InitializedStack | null> {
@@ -172,7 +183,7 @@ export async function initializeVoiceStack(deps: ModelInitDeps): Promise<Initial
           const reason = (e as Error).message;
           logger.warn(`[voice-session] ${ctx.sessionId}: tier4 '${variant}' failed to start (${reason}) — falling back to kokoro`);
           ctx.sendEvent({ type: "tts_fallback", from: variant, to: "kokoro", reason });
-          t4 = await createTier4({ variant: "kokoro", ...tier4Opts }, ttsCallbacks);
+          t4 = await createTier4({ variant: "kokoro", ...kokoroFallbackOpts(tier4Opts) }, ttsCallbacks);
         }
         tts = t4 as unknown as StreamingTTS;
       } else {

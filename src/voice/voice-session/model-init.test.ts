@@ -21,7 +21,7 @@ vi.mock("../../local-only-policy.js", async (orig) => ({
   isLocalOnlyMode: () => state.localOnly,
 }));
 
-const { ensureSessionSpeechModel } = await import("./model-init.js");
+const { ensureSessionSpeechModel, kokoroFallbackOpts } = await import("./model-init.js");
 
 const session = (s: Partial<ResolvedVoiceSettings>) =>
   ensureSessionSpeechModel({ engine: "tier4", ...s }, () => {});
@@ -61,5 +61,15 @@ describe("the speech model a voice session listens with", () => {
     state.localOnly = true;
     await session({});
     expect(state.calls).toEqual([undefined]);
+  });
+});
+
+describe("the voice Kokoro starts with when another engine failed", () => {
+  it("drops a voice that belongs to the failed engine", () => {
+    expect(kokoroFallbackOpts({ voice: "en-US-GuyNeural", speed: 1.1 })).toEqual({ speed: 1.1 });
+  });
+
+  it("keeps a Kokoro voice", () => {
+    expect(kokoroFallbackOpts({ voice: "am_michael", speed: 1.1 })).toEqual({ voice: "am_michael", speed: 1.1 });
   });
 });

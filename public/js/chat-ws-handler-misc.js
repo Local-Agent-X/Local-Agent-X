@@ -57,6 +57,15 @@ function handleSettingsChanged(msg) {
     if (typeof updateStatusBar === 'function') updateStatusBar(true);
   }
   if ('ttsVoice' in msg.settings && typeof adoptSavedVoice === 'function') adoptSavedVoice(msg.settings.ttsVoice);
+  // A sidecar's Auto-start switch flipped in another window: this window's
+  // cached copy is what its switches read, so it follows and redraws.
+  if ('voiceSidecarAutoStart' in msg.settings) {
+    try { const s = JSON.parse(localStorage.getItem('lax_settings') || '{}');
+      s.voiceSidecarAutoStart = msg.settings.voiceSidecarAutoStart;
+      localStorage.setItem('lax_settings', JSON.stringify(s)); } catch { /* corrupt cache: the next page load re-primes it from the server */ }
+    const tierId = document.getElementById('cfg-voice-tier')?.value;
+    if (tierId && typeof _renderTierStatus === 'function' && typeof getTierById === 'function' && getTierById(tierId)) _renderTierStatus(getTierById(tierId));
+  }
   // Developer mode flipped (Settings in another window, or an approved
   // `setting` call): the status-bar badge and the Settings card follow.
   if ('developer_mode' in msg.settings) {

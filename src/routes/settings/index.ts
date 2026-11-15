@@ -13,6 +13,7 @@ import { handleAndroidRoutes } from "./android.js";
 
 const handlers: RouteHandler[] = [
   handleSystemRoutes,
+  handleUpdateRoutes,
   handleRollbackRoutes,
   handleDecommissionRoutes,
   handleDiagnosticsRoutes,

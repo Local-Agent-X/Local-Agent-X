@@ -111,3 +111,22 @@ describe("decodeHtmlEntities / htmlToText", () => {
     expect(decodeHtmlEntities("&#128512;")).toBe("\u{1F600}");
   });
 });
+
+// One htmlToText for every reader of HTML: mail, web search snippets, YouTube
+// captions, project docs. It renders like the mail reader did and stays as
+// strict as this one was.
+describe("htmlToText renders what a reader would see", () => {
+  it("drops what never renders as text", () => {
+    const html = "<head><title>t</title></head><!-- note --><script>var tracking = 1;</script><style>.x{color:red}</style><svg><text>logo</text></svg><p>Body</p>";
+    expect(htmlToText(html)).toBe("Body");
+  });
+
+  it("keeps block breaks, list items and link targets", () => {
+    expect(htmlToText("<p>One</p><p>Two<br>three</p><ul><li>a</li><li>b</li></ul>")).toBe("One\n\nTwo\nthree\n\n- a\n- b");
+    expect(htmlToText('Read <a href="https://x.test/p">the post</a> or <a href="#top">top</a>')).toBe("Read the post (https://x.test/p) or top");
+  });
+
+  it("decodes once, after the tags are gone, so an escaped tag stays text", () => {
+    expect(htmlToText("<p>5 &lt; 6 &amp;amp; &lt;b&gt;</p>")).toBe("5 < 6 &amp; <b>");
+  });
+});

@@ -20,6 +20,10 @@ describe("extractFromHtml", () => {
     expect(r.content).not.toContain("color:red"); // style dropped
   });
 
+  it("decodes an entity once: an escaped entity in a title stays literal", () => {
+    expect(extractFromHtml("<title>Use &amp;lt;br&amp;gt; for breaks</title><p>x</p>").content).toContain("# Use &lt;br&gt; for breaks");
+  });
+
   it("flags a substantial JS shell (big markup, no readable text) as looksEmpty", () => {
     // A real shell is large — inline/referenced bundles — but renders its content
     // client-side, so the static HTML has ~nothing to read.

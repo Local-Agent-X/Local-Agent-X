@@ -6,7 +6,7 @@ import { canonicalizeAttachmentPath } from "./http-egress-guard.js";
 import { recentlyDone, markDone, fingerprintOf, describeAge } from "./idempotency.js";
 import { EMAIL_SEND_WINDOW_MS, getSmtpConfig } from "./email-config.js";
 import { resolveAgentPath, sessionIdOf } from "../workspace/paths.js";
-import { htmlToText } from "./email-body-render.js";
+import { htmlToText } from "../app-renderer/sanitize.js";
 import { EgressPayloadBlocked, assertMailSendAllowed } from "../net/egress-send.js";
 import { blocked } from "./result-helpers.js";
 

@@ -28,12 +28,12 @@ import {
   decodeBuffer,
   extractSnippet,
   formatAddress,
-  htmlToText,
   normalizePlainText,
   readCapped,
   selectBodyPart,
   type MimeNode,
 } from "./email-body-render.js";
+import { htmlToText } from "../app-renderer/sanitize.js";
 // TYPE-ONLY, and it has to stay that way: email-imap.ts imports this module for
 // real, so a value import back would close a runtime cycle. `import type` is
 // erased, so there is no cycle to reason about at all.

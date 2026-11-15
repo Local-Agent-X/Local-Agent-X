@@ -16,6 +16,7 @@
  */
 
 import { canonicalFetch } from "./web-egress.js";
+import { decodeHtmlEntities } from "../app-renderer/sanitize.js";
 
 export interface PageLead {
   url: string;
@@ -54,12 +55,6 @@ export function ancestorUrls(url: string): string[] {
   return out;
 }
 
-function decodeEntities(s: string): string {
-  return s
-    .replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, " ");
-}
-
 /** Same-origin `<a href>` links in `html`, resolved against `pageUrl`. */
 export function extractSameOriginLinks(html: string, pageUrl: string): Array<{ url: string; text: string }> {
   const origin = new URL(pageUrl).origin;
@@ -67,13 +62,13 @@ export function extractSameOriginLinks(html: string, pageUrl: string): Array<{ u
   const links: Array<{ url: string; text: string }> = [];
   for (const m of html.slice(0, MAX_BODY_CHARS).matchAll(/<a\b[^>]*?\bhref\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi)) {
     let resolved: URL;
-    try { resolved = new URL(decodeEntities(m[1]), pageUrl); } catch { continue; }
+    try { resolved = new URL(decodeHtmlEntities(m[1]), pageUrl); } catch { continue; }
     if (resolved.origin !== origin) continue;
     resolved.hash = "";
     const href = resolved.toString();
     if (seen.has(href)) continue;
     seen.add(href);
-    const text = decodeEntities(m[2].replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim().slice(0, MAX_LINK_TEXT);
+    const text = decodeHtmlEntities(m[2].replace(/<[^>]*>/g, " ")).replace(/\s+/g, " ").trim().slice(0, MAX_LINK_TEXT);
     links.push({ url: href, text });
   }
   return links;

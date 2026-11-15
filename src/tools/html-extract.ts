@@ -10,25 +10,11 @@
  * (sitemap / feed / browser) instead of returning a near-blank.
  */
 
+import { decodeHtmlEntities } from "../app-renderer/sanitize.js";
+
 export interface ExtractedHtml {
   content: string;
   looksEmpty: boolean;
-}
-
-function decodeEntities(s: string): string {
-  return s
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&quot;/g, '"')
-    .replace(/&#0*39;|&apos;/g, "'")
-    .replace(/&#(\d+);/g, (_, n) => safeCodePoint(Number(n)))
-    .replace(/&#x([0-9a-f]+);/gi, (_, n) => safeCodePoint(parseInt(n, 16)));
-}
-
-function safeCodePoint(n: number): string {
-  try { return n > 0 && n <= 0x10ffff ? String.fromCodePoint(n) : ""; } catch { return ""; }
 }
 
 /** Pull the `content="..."` of the first <meta> tag carrying attr="value",
@@ -37,12 +23,12 @@ function metaContent(html: string, attr: string, value: string): string {
   const tag = new RegExp(`<meta\\b[^>]*\\b${attr}=["']${value}["'][^>]*>`, "i").exec(html)?.[0];
   if (!tag) return "";
   const c = /\bcontent=["']([^"']*)["']/i.exec(tag);
-  return c ? decodeEntities(c[1]).trim() : "";
+  return c ? decodeHtmlEntities(c[1]).trim() : "";
 }
 
 export function extractFromHtml(html: string): ExtractedHtml {
   const titleTag = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html);
-  const title = (titleTag ? decodeEntities(titleTag[1]).trim() : "") || metaContent(html, "property", "og:title");
+  const title = (titleTag ? decodeHtmlEntities(titleTag[1]).trim() : "") || metaContent(html, "property", "og:title");
   const description = metaContent(html, "name", "description") || metaContent(html, "property", "og:description");
 
   // schema.org JSON-LD — the structured gold (Article headline, Product+Offer
@@ -53,7 +39,7 @@ export function extractFromHtml(html: string): ExtractedHtml {
     if (raw) jsonLd.push(raw.length > 4000 ? `${raw.slice(0, 4000)} …[truncated]` : raw);
   }
 
-  const text = decodeEntities(
+  const text = decodeHtmlEntities(
     html
       .replace(/<!--[\s\S]*?-->/g, " ")
       .replace(/<(script|style|svg|noscript|template)\b[\s\S]*?<\/\1>/gi, " ")

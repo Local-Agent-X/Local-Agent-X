@@ -6,9 +6,11 @@
  * rendering are testable without a mailbox, and so email-imap.ts stays the
  * connection owner and nothing else. The one node import here is a stream
  * TYPE: the wire byte cap belongs with the character cap it feeds, not with
- * the socket.
+ * the socket. HTML becomes text through htmlToText, shared with every other
+ * reader of HTML in app-renderer/sanitize.ts.
  */
 import type { Readable } from "node:stream";
+import { htmlToText } from "../app-renderer/sanitize.js";
 
 /** A MIME node as imapflow reports it in `bodyStructure`. Structural, not
  *  imported from imapflow, so this module has no dependency on the client. */
@@ -156,54 +158,6 @@ export function collectAttachments(root: MimeNode | undefined): AttachmentInfo[]
   };
   if (root) walk(root);
   return out;
-}
-
-const ENTITIES: Record<string, string> = {
-  amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ",
-  mdash: "—", ndash: "–", hellip: "…", rsquo: "’", lsquo: "‘",
-  rdquo: "”", ldquo: "“", middot: "·", copy: "©", reg: "®", trade: "™",
-};
-
-export function decodeEntities(input: string): string {
-  return input.replace(/&(#x?[0-9a-fA-F]+|[a-zA-Z]+);/g, (match, body: string) => {
-    if (body.startsWith("#")) {
-      const code = body[1] === "x" || body[1] === "X"
-        ? Number.parseInt(body.slice(2), 16)
-        : Number.parseInt(body.slice(1), 10);
-      return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : match;
-    }
-    const named = ENTITIES[body.toLowerCase()];
-    return named === undefined ? match : named;
-  });
-}
-
-/**
- * Render HTML mail as readable plain text. Not a browser: it drops
- * non-rendering elements, turns block boundaries into line breaks, keeps link
- * targets (a marketing mail whose links vanish is unusable for "what did this
- * ask me to do"), and collapses the whitespace HTML authors leave behind.
- */
-export function htmlToText(html: string): string {
-  let text = html
-    .replace(/<!--[\s\S]*?-->/g, "")
-    .replace(/<(script|style|head|title)\b[^>]*>[\s\S]*?<\/\1>/gi, "");
-  text = text
-    .replace(/<br\s*\/?>/gi, "\n")
-    .replace(/<\/(p|div|tr|h[1-6]|blockquote|section|article)>/gi, "\n\n")
-    .replace(/<\/(td|th)>/gi, "\t")
-    .replace(/<li\b[^>]*>/gi, "\n- ");
-  text = text.replace(/<a\b[^>]*href\s*=\s*["']([^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi, (_m, href: string, label: string) => {
-    const clean = label.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
-    if (!href || href.startsWith("#") || href.toLowerCase().startsWith("javascript:")) return clean;
-    return clean && clean !== href ? `${clean} (${href})` : href;
-  });
-  text = decodeEntities(text.replace(/<[^>]+>/g, ""));
-  return text
-    .replace(/\r\n?/g, "\n")
-    .replace(/[ \t ]+/g, " ")
-    .replace(/ *\n */g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
 }
 
 /** Normalise a text/plain part: line endings and trailing whitespace only —

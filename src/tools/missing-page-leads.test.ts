@@ -67,6 +67,13 @@ describe("missing-page-leads — pieces", () => {
     ]);
   });
 
+  it("decodes link text and targets with the shared decoder: named typography, and once only", () => {
+    const html = `<a href="/docs/faq?x=1&amp;y=2">Q&amp;A &mdash; &amp;lt;FAQ&amp;gt;</a>`;
+    expect(extractSameOriginLinks(html, "https://docs.example/docs/")).toEqual([
+      { url: "https://docs.example/docs/faq?x=1&y=2", text: "Q&A — &lt;FAQ&gt;" },
+    ]);
+  });
+
   it("ranks by the missing page's own name above its section", () => {
     const missing = "https://docs.example/docs/v2/limits";
     const rate = scoreLead(missing, { url: "https://docs.example/docs/v3/rate-limits", text: "Rate limits" });

@@ -76,16 +76,38 @@ export function decodeHtmlEntities(s: string): string {
   });
 }
 
-/** Reduce arbitrary HTML to plain text: strip tags (to fixpoint, so nested or
- * split tags can't survive) then decode entities. */
+/**
+ * Render arbitrary HTML (a page, a mail, a search snippet) as readable plain
+ * text. Not a browser: it drops what never renders as text (comments, script,
+ * style, head, svg, noscript, template), turns block boundaries into line breaks, keeps link targets (a mail
+ * whose links vanish is unusable for "what did this ask me to do"), strips the
+ * remaining tags to a fixpoint so nested or split tags can't survive, decodes
+ * entities once, and collapses the whitespace HTML authors leave behind.
+ */
 export function htmlToText(html: string): string {
-  let out = html;
+  let out = html
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<(script|style|head|title|svg|noscript|template)\b[^>]*>[\s\S]*?<\/\1>/gi, "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|tr|h[1-6]|blockquote|section|article)>/gi, "\n\n")
+    .replace(/<\/(td|th)>/gi, "\t")
+    .replace(/<li\b[^>]*>/gi, "\n- ")
+    .replace(/<a\b[^>]*href\s*=\s*["']([^"']*)["'][^>]*>([\s\S]*?)<\/a>/gi, (_m, href: string, label: string) => {
+      const clean = label.replace(/<[^>]+>/g, "").replace(/\s+/g, " ").trim();
+      if (!href || href.startsWith("#") || href.toLowerCase().startsWith("javascript:")) return clean;
+      return clean && clean !== href ? `${clean} (${href})` : href;
+    });
   let prev: string;
   do {
     prev = out;
     out = out.replace(/<[^>]*>/g, "");
   } while (out !== prev);
-  return decodeHtmlEntities(out).trim();
+  return decodeHtmlEntities(out)
+    .replace(/\r\n?/g, "\n")
+    .replace(/[ \t\u00a0]+/g, " ")
+    .replace(/ *\n */g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 /** Escape a value for use in a JS string literal */

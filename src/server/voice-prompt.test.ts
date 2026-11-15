@@ -12,6 +12,10 @@ describe("voice mode prompt section", () => {
     expect(tail).toContain("DECLINED");
     // The app names a silent lookup out loud; the reply carries on from it.
     expect(tail).toContain("the app tells the user what you're looking at");
+    // Short is not less answer: GPT on voice ended on "let's find one" or a
+    // check-in question instead of the names asked for (2026-11-15).
+    expect(tail).toContain("Short means no padding, not less answer");
+    expect(tail).toContain("make your best attempt first, then ask");
   });
 
   it("restates no routing rule of the main prompt", () => {

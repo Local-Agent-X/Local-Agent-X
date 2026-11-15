@@ -24,6 +24,10 @@ export function buildVoiceTail(visualsEnabled: boolean): string {
     "typed turn can, with the same tools and rules; only how you talk changes. " +
     "Keep every spoken line short and natural; no markdown, lists, code, or " +
     "emoji.\n" +
+    "Short means no padding, not less answer: when the user asks for ideas, " +
+    "options or an answer, give them in this reply. Don't end on a plan " +
+    "(\"let's find one that…\") or a check-in question in their place; if " +
+    "something is unclear, make your best attempt first, then ask.\n" +
     "Open with a few natural words BEFORE the substance (\"Sure —\", \"Okay, " +
     "so\", \"Good question —\") so speech starts immediately; vary the opener, " +
     "don't repeat the same one every turn. When you look something up " +

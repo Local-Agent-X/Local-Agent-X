@@ -44,6 +44,20 @@ describe("update progress", () => {
     expect(updateProgress(false, t + 60_000).percent).toBe(Math.round(23 + 55 * 0.9));
   });
 
+  // A prepared install started the bar at 85 %: the preparation's share was
+  // already done. Peter, 2026-11-15: start it at 0.
+  it("runs a prepared install's bar from 0 over the install step alone", () => {
+    const t = 3_000_000;
+    beginUpdateProgress("installing", t, ["land"]);
+    updateStep("land", t);
+    expect(updateProgress(false, t).percent).toBe(0);
+    expect(updateProgress(false, t + 1_500).percent).toBe(Math.round(95 * 0.5));
+    expect(updateProgress(false, t + 60_000).percent).toBe(Math.round(95 * 0.9));
+    // Steps outside the run don't move it.
+    updateStep("build", t + 61_000);
+    expect(updateProgress(false, t + 61_000).step).toBe("land");
+  });
+
   it("reports an install once a click joins a background preparation", () => {
     beginUpdateProgress("preparing");
     expect(updateProgress(false).mode).toBe("preparing");

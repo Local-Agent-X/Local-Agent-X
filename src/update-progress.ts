@@ -24,12 +24,14 @@ const STEPS: ReadonlyArray<{ step: UpdateStep; share: number; label: string; usu
   { step: "deps", share: 15, label: "Installing new dependencies…", usualMs: 90_000 },
   { step: "build", share: 55, label: "Building the new version…", usualMs: 50_000 },
   { step: "test", share: 7, label: "Starting the new version to test it…", usualMs: 8_000 },
-  { step: "land", share: 10, label: "Installing…", usualMs: 6_000 },
+  // A prepared install measured 2.6 s (2026-11-15).
+  { step: "land", share: 10, label: "Installing…", usualMs: 3_000 },
 ];
 const DONE_SHARE = 5;
 const IN_STEP_CAP = 0.9;
 
-interface Run { mode: "preparing" | "installing"; index: number; stepStartedAt: number; percent: number }
+type Step = (typeof STEPS)[number];
+interface Run { mode: "preparing" | "installing"; steps: ReadonlyArray<Step>; index: number; stepStartedAt: number; percent: number }
 let run: Run | null = null;
 
 export interface UpdateProgress { mode: UpdateMode; step: UpdateStep | null; label: string; percent: number }
@@ -51,25 +53,34 @@ export function recordBuildDuration(ms: number): void {
   try { writeFileSync(timingFile(), JSON.stringify({ buildMs: Math.round(ms) })); } catch { /* the bar falls back to the default */ }
 }
 
-/** Share of the bar finished before step `index`. */
-const before = (index: number): number => STEPS.slice(0, index).reduce((n, s) => n + s.share, 0);
+/** Share of the bar finished before step `index` of this run. */
+const before = (r: Run, index: number): number => r.steps.slice(0, index).reduce((n, s) => n + s.share, 0);
 
 function percentNow(r: Run, now: number): number {
-  const s = STEPS[r.index];
+  const s = r.steps[r.index];
   const within = Math.min(IN_STEP_CAP, (now - r.stepStartedAt) / usualMs(s.step));
-  return before(r.index) + s.share * within;
+  return before(r, r.index) + s.share * within;
 }
 
-export function beginUpdateProgress(mode: "preparing" | "installing", now = Date.now()): void {
-  run = { mode, index: 0, stepStartedAt: now, percent: 0 };
+/**
+ * A run starts. `only` limits it to the steps it will actually take, which
+ * then share the whole bar: landing an update prepared in the background is
+ * only the install step, so its bar runs 0 → 100 % instead of starting at
+ * the 85 % the preparation already covered.
+ */
+export function beginUpdateProgress(mode: "preparing" | "installing", now = Date.now(), only?: UpdateStep[]): void {
+  const picked = only ? STEPS.filter((s) => only.includes(s.step)) : STEPS;
+  const total = picked.reduce((n, s) => n + s.share, 0);
+  const steps = picked.map((s) => ({ ...s, share: (s.share * (100 - DONE_SHARE)) / total }));
+  run = { mode, steps, index: 0, stepStartedAt: now, percent: 0 };
 }
 
 /** The run moved on to `step`; steps it passed over (skipped) count as done. */
 export function updateStep(step: UpdateStep, now = Date.now()): void {
   if (!run) return;
-  const index = STEPS.findIndex((s) => s.step === step);
+  const index = run.steps.findIndex((s) => s.step === step);
   if (index < run.index) return;
-  run.percent = Math.max(run.percent, percentNow(run, now), before(index));
+  run.percent = Math.max(run.percent, percentNow(run, now), before(run, index));
   run.index = index;
   run.stepStartedAt = now;
 }
@@ -92,6 +103,6 @@ export function endUpdateProgress(): void {
 export function updateProgress(isReady: boolean, now = Date.now()): UpdateProgress {
   if (!run) return { mode: isReady ? "ready" : "idle", step: null, label: isReady ? "Update ready to install" : "", percent: isReady ? 100 : 0 };
   run.percent = Math.min(100 - DONE_SHARE, Math.max(run.percent, percentNow(run, now)));
-  const s = STEPS[run.index];
+  const s = run.steps[run.index];
   return { mode: run.mode, step: s.step, label: s.label, percent: Math.round(run.percent) };
 }

@@ -155,7 +155,9 @@ export async function landPreparedUpdate(installDir: string): Promise<(GitUpdate
   const staged = takeReady();
   try {
     if (!staged) return null;
-    if (!updateProgressActive()) beginUpdateProgress("installing");
+    // Prepared already: the bar covers the install alone, 0 → 100 %. A click that
+    // joined a preparation still running keeps that run's full bar.
+    if (!updateProgressActive()) beginUpdateProgress("installing", Date.now(), ["land"]);
     const landed = staged.route === "git" ? await landGitUpdate(staged, installDir) : await landRollingUpdate(staged, installDir);
     if (!landed.ok) await discardStaged(staged).catch(() => { /* swept at next boot */ });
     if (landed.stale) return null;

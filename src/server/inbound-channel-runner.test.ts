@@ -59,7 +59,9 @@ describe("canonical inbound channel runner", () => {
     });
     expect(claimInboundDelivery).toHaveBeenCalledWith(expect.objectContaining({ text: "stable-wire-message" }));
     expect(runChatTurn).toHaveBeenCalledTimes(1);
-    expect(runChatTurn.mock.calls[0][0]).toMatchObject({ channel, message: "do it", requestRole: "operator", skipMemory: true, maxHistory: 30 });
+    expect(runChatTurn.mock.calls[0][0]).toMatchObject({ channel, message: "do it", requestRole: "operator", maxHistory: 30 });
+    // Every channel gets the same memory as the desktop chat (recall from other chats included).
+    expect(runChatTurn.mock.calls[0][0].skipMemory).toBeUndefined();
     expect(bindInboundOperation).toHaveBeenCalledWith(claim, "op-1");
     expect(markInboundResponseReady).toHaveBeenCalledWith(claim, { text: "hello there", speakable: "hello there" });
     expect(markInboundResponseReady.mock.invocationCallOrder[0]).toBeLessThan(forwardBridgeMedia.mock.invocationCallOrder[0]);

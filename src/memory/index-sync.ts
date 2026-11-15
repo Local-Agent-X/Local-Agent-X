@@ -11,6 +11,7 @@ import { encodeEmbedding } from "./embedding-codec.js";
 import { embedChunksWithRetry, pruneEmbeddingCache } from "./index-embedding.js";
 import { listMemoryFiles, listSessionFiles, extractDateFromPath } from "./index-files.js";
 import { PROJECT_DOC_PATH_ROOT } from "./project-docs/paths.js";
+import { INBOX_PATH_ROOT } from "./inbox-recall.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory.index-sync");
@@ -328,6 +329,8 @@ export async function syncIndex(deps: SyncDeps): Promise<void> {
         !allPaths.has(path) &&
         !path.startsWith("import/") &&
         !path.startsWith(PROJECT_DOC_PATH_ROOT) &&
+        // Inbox items have no file behind them either (inbox-recall.ts).
+        !path.startsWith(INBOX_PATH_ROOT) &&
         !path.startsWith(archivePrefix)
       ) {
         removeFile(deps.db, deps.hasFts, deps.hasVec, path);

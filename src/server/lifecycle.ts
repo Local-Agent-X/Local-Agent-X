@@ -7,6 +7,7 @@ import { setInboxAnswerer } from "../chat-ws/inbox-frames.js";
 import { actOnInbox, mutateInbox } from "../routes/inbox.js";
 import { startPhonePush } from "../phone-push/index.js";
 import { startLiveApprovalCopies } from "../inbox/live-approval.js";
+import { startInboxRecall } from "../memory/inbox-recall.js";
 import { runSecurityAudit, printAuditReport } from "../security/layer/index.js";
 import { startAriKernel } from "../ari-kernel/index.js";
 import { getSharedAuditTrail } from "../threat/audit-trail.js";
@@ -97,6 +98,8 @@ export function wireWsChat(deps: {
   // A new inbox item also rings the phones that asked for its kind.
   startPhonePush();
   startLiveApprovalCopies();
+  // ...and becomes recallable from any chat, on any channel.
+  startInboxRecall(() => buildCtx().memoryIndex);
   chatWs.onChat(async (sessionId, message, attachments, meta) => {
     const _imgCount = (attachments || []).filter((a: any) => a?.isImage).length;
     console.log(`[chat-diag] lifecycle onChat sess=${sessionId.slice(-8)} len=${message.length}`);

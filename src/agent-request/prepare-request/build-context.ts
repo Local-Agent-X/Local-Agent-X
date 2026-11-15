@@ -27,6 +27,10 @@ export interface BuildContextInput {
   memoryManager: MemoryManager;
   attachments?: Array<{ isImage: boolean; url: string; name: string }>;
   skipMemory?: boolean;
+  /** How long the chat sat quiet before this message (ms since its last turn
+   *  ended); absent on a new chat. A long gap makes this message a new request
+   *  that may recall other chats (memory/manager.ts NEW_REQUEST_GAP_MS). */
+  quietForMs?: number;
   isCodexProvider: boolean;
   isTrivialToolRequest: boolean;
   tier: "weak" | "medium" | "strong";
@@ -94,6 +98,7 @@ export async function buildContext(input: BuildContextInput): Promise<BuildConte
     skipDailyLog: input.isCodexProvider,
     liteMode: !input.skipMemory && input.isTrivialToolRequest,
     minimalMode: input.skipMemory,
+    quietForMs: input.quietForMs,
     keywordGates: input.keywordGates,
     omitCoreMemory: input.mode === "code",
   }, { continues: input.continues });

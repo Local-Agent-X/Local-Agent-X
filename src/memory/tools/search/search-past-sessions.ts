@@ -31,7 +31,8 @@ export function searchPastSessions(
 ): Promise<MemorySearchResult[]> {
   return memory.search(query, {
     maxResults: opts.maxResults ?? 5,
-    sources: ["session-summary", "session"],
+    // A chat on any channel, and what LAX told the user outside one (inbox-recall.ts).
+    sources: ["session-summary", "session", "inbox"],
     since: opts.since,
     sessionId: opts.sessionId,
     crossSession: true,

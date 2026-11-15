@@ -45,6 +45,36 @@ export interface TurnContextInput {
    *  entities the message names still render their facts, and the prompt's
    *  recall section names the tools that fetch the rest. */
   omitCoreMemory?: boolean;
+  /** How long the chat sat quiet before this message (ms since its last turn
+   *  ended); absent on a new chat. A long gap makes this message a new request
+   *  that may recall other chats (memory/manager.ts NEW_REQUEST_GAP_MS). */
+  quietForMs?: number;
+}
+
+/**
+ * A message after this long a quiet spell starts a new request: like a new
+ * chat's first message, it may recall other chats (task-start recall,
+ * auto-search-context.ts). A messaging channel (WhatsApp, Telegram, any added
+ * later) is one chat per person that never ends, and a desktop chat can run
+ * for days, so "first message of the chat" alone meant they almost never
+ * recalled what happened elsewhere. A message inside an active exchange still
+ * does not: that is the cross-conversation bleed the narrowing fixed.
+ */
+export const NEW_REQUEST_GAP_MS = 30 * 60 * 1000;
+
+/** How long a chat sat quiet before the message now arriving, read before the
+ *  message touches it: a session's updatedAt is stamped when a turn ends
+ *  (routes/chat/run-chat-turn/canonical-run.ts). Undefined for a new chat.
+ *  Every channel's turn passes this (chat runner, voice). */
+export function quietForMs(session: { messages: readonly unknown[]; updatedAt: number }, now: number = Date.now()): number | undefined {
+  return session.messages.length > 0 ? Math.max(0, now - session.updatedAt) : undefined;
+}
+
+/** True when this message starts a new request: the chat's first, or the
+ *  first after NEW_REQUEST_GAP_MS of quiet. Channel-blind by construction. */
+export function startsNewRequest(sessionMessages: ReadonlyArray<{ role: string }>, quietForMs?: number): boolean {
+  if (!sessionMessages.some((m) => m.role === "assistant")) return true;
+  return (quietForMs ?? 0) >= NEW_REQUEST_GAP_MS;
 }
 
 export interface TurnContext {
@@ -175,14 +205,14 @@ export class MemoryManager {
     // the prior keyword-grep auto-inject was the root cause of recurring
     // cross-conversation bleed.
     out.smartContext = "";
+    // Task-start: the session's opening user turn (no assistant reply yet),
+    // or the first message after NEW_REQUEST_GAP_MS of quiet, whatever channel
+    // the chat is on. A pivot inside an active exchange still won't trigger
+    // (the model has `search_past_sessions` for that). Opts autoSearchContext
+    // into the bounded, caveated cross-session recall addition
+    // (see auto-search-context.ts).
     const lastAssistant = input.sessionMessages.filter((m) => m.role === "assistant").pop()?.content;
-    // Task-start proxy: no assistant reply in the transcript yet — this is
-    // the session's opening user turn. Conservative by design (a mid-session
-    // pivot won't trigger; the model still has `search_past_sessions` for
-    // that), and it's the only signal available at this call site without
-    // widening TurnContextInput. Opts autoSearchContext into the bounded,
-    // caveated cross-session recall addition (see auto-search-context.ts).
-    const taskStart = lastAssistant === undefined;
+    const taskStart = startsNewRequest(input.sessionMessages, input.quietForMs);
     const [contextBlock, recall, knownProjectsNudge, orch] = await Promise.all([
       buildContextBlockParts(this.index, {
         userMessage: input.userMessage,

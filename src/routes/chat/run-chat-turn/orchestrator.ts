@@ -19,6 +19,7 @@ import { sessionProjectFolder, stampSessionProjectFolder, takeBoundFolder } from
 import { anchorOwnCopy } from "../../../agency/chat-own-copy.js";
 import { applyFolderRule } from "../../../agency/orchestrator-role.js";
 import type { Session } from "../../../types.js";
+import { quietForMs } from "../../../memory/manager.js";
 
 const logger = createLogger("routes.chat.run-turn");
 
@@ -211,7 +212,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
     const prepared = await preparePerTurnRequest({
       sessionId, message, sessionMessages: session.messages, attachments, ctx,
       channel, bridgeContext: args.bridgeContext,
-      skipMemory: args.skipMemory, maxHistory: args.maxHistory,
+      skipMemory: args.skipMemory, quietForMs: quietForMs(session), maxHistory: args.maxHistory,
       compactionCheckpoint: session.compactionCheckpoint,
       mode: sessionModeOf({ id: sessionId, mode: session.mode }),
     });

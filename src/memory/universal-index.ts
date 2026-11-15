@@ -246,6 +246,10 @@ export class UniversalIndex {
         // Not a store of this indexer: project documents are walked per
         // project by project-docs/, which owns their add and removal.
         return 0;
+      case "inbox":
+        // Not a store of this indexer: each inbox item is indexed as it is
+        // posted (inbox-recall.ts), and the inbox owns its list.
+        return 0;
       case "mind":
         // Retired — kept in the switch only to satisfy the exhaustive type
         // check on CanonicalSource. No new chunks are written.

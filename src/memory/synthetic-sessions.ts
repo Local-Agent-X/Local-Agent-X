@@ -26,7 +26,10 @@
 // `failure-review-` mirrors background-jobs/failure-review.ts
 // FAILURE_REVIEW_SESSION_PREFIX: its transcript is a harness prompt holding
 // other chats' failed calls, internal scratch like a skill review's.
-export const SYNTHETIC_SESSION_PREFIXES = ["dream-", "cron-", "ide-", "eval_", "skill-review-", "failure-review-"] as const;
+// `mail-watch-` mirrors background-jobs/mail-watch-prompt.ts
+// MAIL_WATCH_SESSION_PREFIX: its transcript is the user's new mail, fenced as
+// external content. Never memory, never recalled into a chat as one of theirs.
+export const SYNTHETIC_SESSION_PREFIXES = ["dream-", "cron-", "ide-", "eval_", "skill-review-", "failure-review-", "mail-watch-"] as const;
 
 export function isSyntheticSessionId(id: string): boolean {
   return SYNTHETIC_SESSION_PREFIXES.some((p) => id.startsWith(p));

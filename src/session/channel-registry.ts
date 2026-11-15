@@ -38,6 +38,11 @@ const definitions: Record<MessagingChannelId, MessagingChannelDefinition> = {
   }),
 };
 
+/** Every messaging channel, a new one included the moment it is defined here. */
+export function messagingChannelIds(): MessagingChannelId[] {
+  return Object.keys(definitions) as MessagingChannelId[];
+}
+
 export function isMessagingChannelId(value: unknown): value is MessagingChannelId {
   return value === "telegram" || value === "whatsapp";
 }

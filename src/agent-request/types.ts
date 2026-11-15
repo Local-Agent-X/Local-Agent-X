@@ -56,6 +56,10 @@ export interface AgentRequestInput {
   bridgeTools: ToolDefinition[];
   /** Skip heavy memory orchestrator (bridges, cron) */
   skipMemory?: boolean;
+  /** How long the chat sat quiet before this message (ms since its last turn
+   *  ended); absent on a new chat. A long gap makes this message a new request
+   *  that may recall other chats (memory/manager.ts NEW_REQUEST_GAP_MS). */
+  quietForMs?: number;
   /** Lean prep (voice): no model call before the turn's own. The memory
    *  step's follow-up and topical-relevance are judged by keyword, and the
    *  memory-curate check runs in the background. Tools, prompt and the

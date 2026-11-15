@@ -134,6 +134,7 @@ async function buildTurnMemory(
     memoryManager: input.memoryManager,
     attachments: input.attachments,
     skipMemory: input.skipMemory,
+    quietForMs: input.quietForMs,
     isCodexProvider: resolved.provider === "codex",
     isTrivialToolRequest: isTrivialToolRequest(input.message),
     tier,

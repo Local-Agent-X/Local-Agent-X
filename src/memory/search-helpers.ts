@@ -73,6 +73,7 @@ const SOURCE_TYPE_DEFAULTS: Record<CanonicalSource, ChunkSourceType> = {
   personality: "memory-file",
   import: "import",
   "project-doc": "project-file",
+  inbox: "inbox-item",
 };
 
 const IMPORT_SOURCE_TYPES = new Set<ChunkSourceType>([
@@ -106,6 +107,7 @@ function sourceLabel(source: string, sourceType: string): string {
     session: "Local session transcript",
     personality: "Local profile memory",
     "project-doc": "Project document",
+    inbox: "What LAX told the user (their inbox)",
   };
   return labels[source as CanonicalSource]
     ?? `Legacy memory (${source.trim() || "unknown source"})`;
@@ -113,7 +115,8 @@ function sourceLabel(source: string, sourceType: string): string {
 
 function defaultTrust(source: string): MemoryTrustStatus {
   if (source === "session") return "mixed";
-  if (source === "import" || source === "project-doc") return "untrusted";
+  // An inbox item repeats outside text (a mail's sender and subject).
+  if (source === "import" || source === "project-doc" || source === "inbox") return "untrusted";
   return "unknown";
 }
 

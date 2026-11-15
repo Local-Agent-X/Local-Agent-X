@@ -19,6 +19,10 @@ export interface PrepareInput {
   channel?: ChannelKind;
   bridgeContext?: string;
   skipMemory?: boolean;
+  /** How long the chat sat quiet before this message (ms since its last turn
+   *  ended); absent on a new chat. A long gap makes this message a new request
+   *  that may recall other chats (memory/manager.ts NEW_REQUEST_GAP_MS). */
+  quietForMs?: number;
   maxHistory?: number;
   /** The session's stored checkpoint, so the old part of the conversation is
    *  sent as the SAME summary bytes every message. */
@@ -44,6 +48,7 @@ export async function preparePerTurnRequest(input: PrepareInput): Promise<Prepar
     attachments, uploadsDir: join(ctx.dataDir, "uploads"),
     bridgeContext: input.bridgeContext,
     skipMemory: input.skipMemory,
+    quietForMs: input.quietForMs,
     maxHistory: input.maxHistory,
     compactionCheckpoint: input.compactionCheckpoint,
     mode: input.mode,

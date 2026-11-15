@@ -58,7 +58,7 @@ describe("isSyntheticSessionId", () => {
 // test/chat-ws-headless-filter.test.ts pin the two sides.
 describe("isHiddenFromChatLists — hidden from active_chats and /api/sessions/search", () => {
   it("hides every synthetic prefix except ide-", () => {
-    expect([...CHAT_LIST_HIDDEN_PREFIXES].sort()).toEqual(["cron-", "dream-", "eval_", "failure-review-", "skill-review-"]);
+    expect([...CHAT_LIST_HIDDEN_PREFIXES].sort()).toEqual(["cron-", "dream-", "eval_", "failure-review-", "mail-watch-", "skill-review-"]);
     for (const prefix of CHAT_LIST_HIDDEN_PREFIXES) {
       expect(isHiddenFromChatLists(`${prefix}1780687489740`)).toBe(true);
     }
@@ -83,6 +83,17 @@ describe("isHiddenFromChatLists — hidden from active_chats and /api/sessions/s
     // The user's own work is counted: a scheduled job's run and an app-builder chat.
     expect(isExcludedFromFailureCounts(`cron-daily-report-${Date.now()}`)).toBe(false);
     expect(isExcludedFromFailureCounts("ide-todo-app")).toBe(false);
+  });
+
+  it("mail-watch- (MAIL_WATCH_SESSION_PREFIX, background-jobs/mail-watch.ts) is internal: never memory, never a chat, never interrupts", async () => {
+    const { MAIL_WATCH_SESSION_PREFIX } = await import("../src/server/background-jobs/mail-watch-prompt.js");
+    const { isHeadlessSession } = await import("../src/chat-ws/broadcast.js");
+    const id = `${MAIL_WATCH_SESSION_PREFIX}1762000000000-me@example.com`;
+    expect(isSyntheticSessionId(id)).toBe(true);
+    expect(isHiddenFromChatLists(id)).toBe(true);
+    expect(isExcludedFromTranscriptSearch(id)).toBe(true);
+    expect(isExcludedFromFailureCounts(id)).toBe(true);
+    expect(isHeadlessSession(id)).toBe(true);
   });
 
   it("ide- is synthetic (memory + persisted sidebar list) but NOT hidden from live chat lists", () => {

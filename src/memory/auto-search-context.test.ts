@@ -156,7 +156,7 @@ describe("autoSearchContext — task-start cross-session recall", () => {
     // The cross query went through the shared core (crossSession opt-in).
     expect(search).toHaveBeenCalledWith(QUERY, expect.objectContaining({
       crossSession: true,
-      sources: ["session-summary", "session"],
+      sources: ["session-summary", "session", "inbox"],
       sessionId: "sess-now",
     }));
   });
@@ -297,7 +297,7 @@ describe("searchPastSessions shared core", () => {
     expect(results).toHaveLength(1);
     expect(search).toHaveBeenCalledWith("merchhelm", {
       maxResults: 7,
-      sources: ["session-summary", "session"],
+      sources: ["session-summary", "session", "inbox"],
       since,
       sessionId: "sess-now",
       crossSession: true,

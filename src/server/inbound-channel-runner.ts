@@ -126,7 +126,10 @@ export function createInboundChannelRunner(deps: InboundChannelRunnerDeps) {
       sseSink: sink,
       channel: platform,
       bridgeContext,
-      skipMemory: true,
+      // Every channel gets the same memory as the desktop chat: what the user
+      // said on any other channel reaches this one through recall. (Skipped
+      // here from 2026-04, when the memory build took up to 90 s; it now runs
+      // in parallel under a 10 s ceiling, agent-request/turn-context-cache.ts.)
       maxHistory: 30,
       sessionTitle: `${definition.displayName}: ${payload.name}`,
       ingressKey: delivery?.acquired ? delivery.claim.receiptId : undefined,

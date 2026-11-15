@@ -18,6 +18,7 @@ import { warmModel } from "../local-runtimes/residency.js";
 import { createPromptTelemetry } from "../prompt-telemetry.js";
 import { buildVoicePromptSplit } from "./voice-prompt-plan.js";
 import { retractLastTurn } from "../memory/retract-last-turn.js";
+import { quietForMs } from "../memory/manager.js";
 import { resolveVoiceModel, voiceMaxTokens } from "./voice-model.js";
 import { buildVoiceTail } from "./voice-prompt.js";
 import { spokenTurnAbility } from "./spoken-turn-options.js";
@@ -178,6 +179,7 @@ export async function setupVoiceWs(deps: {
       const session = getOrCreateSession(sessionId);
       clock.mark("load");
 
+      const quietFor = quietForMs(session);
       if (continuationOf) retractContinuedTurn(session, continuationOf);
 
       const prepared = await prepareAgentRequest({
@@ -198,6 +200,7 @@ export async function setupVoiceWs(deps: {
         // No model call before the turn's own (memory relevance by keyword):
         // each was seconds of silence. Tools and prompt are a typed turn's.
         leanPrep: true,
+        quietForMs: quietFor,
       });
 
       if (!prepared.apiKey) {

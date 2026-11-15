@@ -12,6 +12,7 @@
 - Every end of a fact goes through `invalidateFact`, which checks who may end what: a resolver needs `resolverMayEnd`, a session no person started (`actsWithoutUser`) may end only what a model wrote.
 - The facts layer is snapshotted daily to `memory-backups/` and restored from there when the database cannot be opened (`db-backup.ts`).
 - Recalled text enters the prompt as untrusted data (`asRecalledData` in `src/context/system-prompt-builder.ts`), never as instructions.
+- One memory across every channel. A chat on any channel (desktop, phone, voice, WhatsApp, Telegram, any added later) is indexed when it is saved, and recalls other chats and what LAX told the user (`inbox-recall.ts`, source `inbox`) on a new request: its first message, or the first after `NEW_REQUEST_GAP_MS` of quiet (`manager.ts` `startsNewRequest`, which takes no channel). Never inside an active exchange. Pinned per channel by `src/session/channel-memory.contract.test.ts`.
 
 ## Coupled to
 | If you change | Also check | Guard |

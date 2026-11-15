@@ -109,6 +109,9 @@ export const DEFAULT_MEMORY_CONFIG: MemoryConfig = {
  *   import          — ChatGPT / Claude / Slack imports
  *   project-doc     — a document in a project's folder, at the virtual
  *                     path project/<projectId>/<relative path>
+ *   inbox           — what LAX told the user outside a chat (an inbox item:
+ *                     the mail watcher's alerts and digest, a job's result),
+ *                     at the virtual path inbox/<item id> (inbox-recall.ts)
  */
 export type CanonicalSource =
   | "entity"
@@ -118,11 +121,12 @@ export type CanonicalSource =
   | "session"
   | "personality"
   | "import"
-  | "project-doc";
+  | "project-doc"
+  | "inbox";
 
 export const CANONICAL_SOURCES: readonly CanonicalSource[] = [
   "entity", "daily-log", "mind", "session-summary",
-  "session", "personality", "import", "project-doc",
+  "session", "personality", "import", "project-doc", "inbox",
 ] as const;
 
 /**
@@ -149,6 +153,8 @@ const SOURCE_SCOPE: Record<CanonicalSource, MemoryScope> = {
   "session-summary": "session",
   "session": "session",
   "project-doc": "project",
+  // Like a chat: it reaches another chat only through cross-session recall.
+  "inbox": "session",
 };
 
 export function scopeOf(source: CanonicalSource): MemoryScope {
@@ -199,6 +205,7 @@ export type ChunkSourceType =
   | "memory-file"
   | "entity-page"
   | "project-file"
+  | "inbox-item"
   | "import";
 
 export type MemoryTrustStatus = "trusted" | "untrusted" | "mixed" | "unknown";

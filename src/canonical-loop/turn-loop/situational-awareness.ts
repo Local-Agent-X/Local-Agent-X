@@ -159,7 +159,7 @@ export function composeDigest(input: {
   /** IANA zone for `now`; the server's own by default. */
   timeZone?: string;
   /** What LAX told the user outside this chat lately (their inbox), newest first. */
-  toldUser?: Array<{ title: string; body: string; createdAt: number; updatedAt?: number }>;
+  toldUser?: Array<{ title: string; createdAt: number; updatedAt?: number }>;
 }): string | null {
   const { turnIdx, recent, firstUserText } = input;
   const successCriteria = input.successCriteria ?? [];

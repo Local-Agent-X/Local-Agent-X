@@ -6,6 +6,7 @@ import {
   openSync,
   readFileSync,
   readdirSync,
+  renameSync,
   rmSync,
   rmdirSync,
   statSync,
@@ -22,7 +23,7 @@ const LOCK_WAIT_MS = 500;
 const RETRY_MS = 10;
 const sleeper = new Int32Array(new SharedArrayBuffer(4));
 const held = new Set<string>();
-export type DurableJsonlLockPoint = "after_acquire" | "after_reclaim_observe";
+export type DurableJsonlLockPoint = "before_publish" | "after_acquire" | "after_reclaim_observe";
 let lockHook: ((point: DurableJsonlLockPoint, path: string) => void) | null = null;
 
 export function _setDurableJsonlLockHookForTests(
@@ -118,17 +119,10 @@ function withJsonlLock<T>(path: string, fn: () => T): T {
   const token = randomUUID();
   const deadline = Date.now() + LOCK_WAIT_MS;
   for (;;) {
-    try {
-      mkdirSync(lock, { mode: 0o700 });
-      writeFileSync(join(lock, token), JSON.stringify({ pid: process.pid }), { flag: "wx", mode: 0o600 });
-      lockHook?.("after_acquire", path);
-      break;
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      if (reclaimDeadLock(lock)) continue;
-      if (Date.now() >= deadline) throw new Error(`durable JSONL lock timeout: ${path}`);
-      Atomics.wait(sleeper, 0, 0, RETRY_MS);
-    }
+    if (tryAcquire(lock, token)) { lockHook?.("after_acquire", path); break; }
+    if (reclaimDeadLock(lock)) continue;
+    if (Date.now() >= deadline) throw new Error(`durable JSONL lock timeout: ${path}`);
+    Atomics.wait(sleeper, 0, 0, RETRY_MS);
   }
   held.add(path);
   try { return fn(); }
@@ -136,6 +130,30 @@ function withJsonlLock<T>(path: string, fn: () => T): T {
     held.delete(path);
     try { rmSync(join(lock, token), { force: true }); } catch { /* no longer ours */ }
     try { rmdirSync(lock); } catch { /* another token remains */ }
+  }
+}
+
+// A lock folder appears already holding its owner's token: it is built under a
+// private name and renamed into place. Made in place (mkdir, then write the
+// token), it stood empty for a moment, and a reclaimer's rmdir of the stale
+// lock could delete it; the owner then wrote its token into the next taker's
+// folder and both held the lock (Windows CI, 2026-11-15).
+const LOCK_HELD_CODES = new Set(["EEXIST", "ENOTEMPTY", "EPERM", "EACCES", "EBUSY"]);
+
+function tryAcquire(lock: string, token: string): boolean {
+  const staged = `${lock}.${token}`;
+  mkdirSync(staged, { mode: 0o700 });
+  try {
+    writeFileSync(join(staged, token), JSON.stringify({ pid: process.pid }), { flag: "wx", mode: 0o600 });
+    lockHook?.("before_publish", lock);
+    renameSync(staged, lock);
+    return true;
+  } catch (error) {
+    if (!existsSync(lock) && !LOCK_HELD_CODES.has((error as NodeJS.ErrnoException).code ?? "")) throw error;
+    return false;
+  } finally {
+    // Gone once renamed; otherwise ours to clear.
+    rmSync(staged, { recursive: true, force: true });
   }
 }
 

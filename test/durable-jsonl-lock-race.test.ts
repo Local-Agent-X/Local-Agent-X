@@ -1,8 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { spawn, type ChildProcess } from "node:child_process";
 import {
-  existsSync, mkdirSync, readFileSync, readdirSync, rmSync, utimesSync, writeFileSync,
+  existsSync, mkdirSync, readFileSync, readdirSync, rmSync, rmdirSync, utimesSync, writeFileSync,
 } from "node:fs";
+import { _setDurableJsonlLockHookForTests, updateDurableJsonl } from "../src/persistence/durable-jsonl.js";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
@@ -59,4 +60,30 @@ describe("durable JSONL lock reclamation", () => {
     expect(await winner.done).toBe(0);
     expect(JSON.parse(readFileSync(path, "utf-8")).id).toMatch(/a|b/);
   }, 20_000);
+
+  // The CI failure (Windows, 2026-11-15): a lock made in place (mkdir, then
+  // the token) stood empty for a moment, a reclaimer's rmdir removed it, and
+  // two processes held the lock. The folder must appear already holding its
+  // token, so no rmdir can ever remove a live lock.
+  it("the lock folder appears only once its owner's token is inside", () => {
+    const lock = `${path}.lock`;
+    rmSync(lock, { recursive: true, force: true });
+    const points: string[] = [];
+    let visibleBeforeToken = false;
+    let removedWhileHeld = false;
+    _setDurableJsonlLockHookForTests((point) => {
+      points.push(point);
+      if (point === "before_publish") visibleBeforeToken = existsSync(lock);
+      if (point === "after_acquire") {
+        try { rmdirSync(lock); removedWhileHeld = true; } catch { /* holds its token */ }
+      }
+    });
+    try {
+      updateDurableJsonl(path, (v): v is { id: string } => !!v && typeof (v as { id?: unknown }).id === "string", () => ({ id: "solo" }));
+    } finally { _setDurableJsonlLockHookForTests(null); }
+    expect(points).toEqual(["before_publish", "after_acquire"]);
+    expect(visibleBeforeToken).toBe(false);
+    expect(removedWhileHeld).toBe(false);
+    expect(readdirSync(root).filter((n) => n.startsWith("events.jsonl.lock"))).toEqual([]);
+  });
 });

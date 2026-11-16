@@ -91,20 +91,34 @@ function family(id: string): string {
 
 type SplitInput = Pick<PreparedAgentRequest, "provider" | "model" | "renderedPromptSections">;
 
+/**
+ * xAI caches by prompt prefix too, on the server the conversation header
+ * routes to (providers/adapters/xai-cache-routing.ts). With the per-op
+ * sections in the system message, a Grok voice call re-read 45k-50k of a
+ * 75k-token prompt at every message (24-39% cached, 2026-11-16) while the
+ * steps inside one reply read 79-99%: today's message log and recalled
+ * memory changed ~110k characters into the system text, so the tools and the
+ * whole conversation after it missed.
+ */
+function splitsStablePrefix(p: SplitInput): boolean {
+  if (p.provider === "xai") return true;
+  return p.provider === "local" && modelStablePrefix(p.model, { provider: p.provider });
+}
+
 /** One split per request: the memory pin below is told each line once, so the
  *  adapter and the op seed must read the same result, not compute two. */
 const splits = new WeakMap<SplitInput, SplitPrompt | null>();
 
 /** This request's split, or null when its model keeps one system message:
- *  on for every local model unless its profile opts out; every cloud
- *  provider keeps one. Both the adapter (the head) and the op seed (the
+ *  on for every local model unless its profile opts out, and for xAI; every
+ *  other cloud provider keeps one. Both the adapter (the head) and the op seed (the
  *  tail's row) read it, from the same final sections. The memory context in
  *  the head is the one the chat (`sessionId`) started with
  *  (local-memory-pin.ts); what memory gained since leads the tail. */
 export function localPromptSplit(prepared: SplitInput, sessionId: string): SplitPrompt | null {
   if (splits.has(prepared)) return splits.get(prepared) ?? null;
   let split: SplitPrompt | null = null;
-  if (prepared.provider === "local" && modelStablePrefix(prepared.model, { provider: prepared.provider })) {
+  if (splitsStablePrefix(prepared)) {
     const sections = [...prepared.renderedPromptSections];
     const at = sections.findIndex((s) => s.id === "context-block");
     let changes = "";

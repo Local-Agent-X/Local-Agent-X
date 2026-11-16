@@ -90,9 +90,12 @@ describe("splitPromptForStablePrefix", () => {
 describe("localPromptSplit / recalledContextText", () => {
   const sections = [section("core-identity/identity", "IDENTITY ", "static"), section("relevant-memories", "RECALL ")];
 
-  it("splits a local model's prompt and leaves a cloud model's whole", () => {
+  it("splits a local or xAI model's prompt and leaves another cloud model's whole", () => {
     expect(localPromptSplit({ provider: "local", model: "qwen3.8:27b", renderedPromptSections: sections }, "s-split")?.tail).toBe("RECALL ");
     expect(localPromptSplit({ provider: "openai", model: "gpt-5", renderedPromptSections: sections }, "s-split")).toBeNull();
+    // xAI caches by prefix: a Grok call re-read most of its prompt at every
+    // message while the per-op sections sat in the system text (2026-11-16).
+    expect(localPromptSplit({ provider: "xai", model: "grok-4.7", renderedPromptSections: sections }, "s-split-xai")?.tail).toBe("RECALL ");
   });
 
   it("keeps the chat's first memory context in the head and leads the tail with what memory gained", () => {

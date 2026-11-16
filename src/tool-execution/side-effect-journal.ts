@@ -1,5 +1,6 @@
 /** Durable exactly-once guard for mutation effects inside canonical ops. */
 import { createHash, randomUUID } from "node:crypto";
+import { currentProcessIncarnation, processIncarnationMatches } from "../agency/worktree-process.js";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
@@ -15,6 +16,10 @@ interface ExecutionClaim {
   pid: number;
   runtimeId: string;
   claimedAt: string;
+  /** The claiming process's pid and start time (agency/worktree-process.ts):
+   *  a later process that reuses the pid is not the owner. Absent on claims
+   *  written before it was recorded; those are judged by the pid alone. */
+  incarnation?: string;
 }
 
 interface JournalEntry {
@@ -121,7 +126,8 @@ function validClaim(value: unknown): value is ExecutionClaim {
   return typeof claim.id === "string" && claim.id.length > 0 &&
     Number.isInteger(claim.pid) && (claim.pid as number) > 0 &&
     typeof claim.runtimeId === "string" && claim.runtimeId.length > 0 &&
-    validDate(claim.claimedAt);
+    validDate(claim.claimedAt) &&
+    (claim.incarnation === undefined || typeof claim.incarnation === "string");
 }
 
 function validateEntry(value: unknown): JournalEntry {
@@ -187,12 +193,23 @@ function writeEntry(path: string, entry: JournalEntry): void {
 }
 
 function newClaim(): ExecutionClaim {
-  return { id: randomUUID(), pid: process.pid, runtimeId: RUNTIME_ID, claimedAt: new Date().toISOString() };
+  return { id: randomUUID(), pid: process.pid, runtimeId: RUNTIME_ID, claimedAt: new Date().toISOString(), incarnation: currentProcessIncarnation() };
 }
 
+/**
+ * Is the process that claimed this call still running it? A live pid is not
+ * enough: Windows reuses pids quickly, and a crashed run's pid held by some
+ * unrelated process left its call blocked as "claimed by a live execution"
+ * (seen under full-suite load, 2026-11-15). The claim's incarnation tells a
+ * reused pid apart. When the start time can't be read, the owner counts as
+ * alive: a duplicate of a non-idempotent effect is the outcome this journal
+ * exists to prevent.
+ */
 function claimOwnerAlive(claim: ExecutionClaim): boolean {
-  try { process.kill(claim.pid, 0); return true; }
-  catch (error) { return (error as NodeJS.ErrnoException).code !== "ESRCH"; }
+  try { process.kill(claim.pid, 0); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ESRCH") return false; }
+  if (!claim.incarnation) return true;
+  return processIncarnationMatches(claim.pid, claim.incarnation) !== false;
 }
 
 function blockedResult(message: string, metadata: { recovery: string } & Record<string, unknown>): ToolResult {

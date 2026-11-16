@@ -57,6 +57,58 @@ afterEach(() => {
   while (opIds.length > 0) rmSync(opDir(opIds.pop()!), { recursive: true, force: true });
 });
 
+// Windows reuses pids quickly: a crashed run's pid held by an unrelated process
+// left its call "claimed by a live execution" forever (the
+// side-effect-crash-resume flake under full-suite load, 2026-11-15). A claim
+// names its owner's start time too, so a reused pid is not the owner.
+describe("a claim belongs to the process that made it, not to its pid", () => {
+  async function claimLeftByACrash(label: string): Promise<{ operationId: string; tool: ToolDefinition; runs: () => number }> {
+    const { _setSideEffectJournalHookForTests } = await import("./side-effect-journal.js");
+    const operationId = opId(label);
+    let executions = 0;
+    const tool = mutationTool(async () => { executions++; return { content: "effect" }; });
+    _setSideEffectJournalHookForTests((phase) => { if (phase === "prepared") throw new Error("runtime died after prepare"); });
+    // The run "dies" right after its claim is written: the hook's throw stands
+    // in for the process ending there, leaving the claim behind.
+    try { await dispatch(operationId, tool, { transfer: label }, `${label}-first`); }
+    catch { /* the simulated death */ }
+    finally { _setSideEffectJournalHookForTests(undefined); }
+    expect(executions).toBe(0);
+    return { operationId, tool, runs: () => executions };
+  }
+
+  it("runs the call when the claim's pid now belongs to a different process", async () => {
+    const { operationId, tool, runs } = await claimLeftByACrash("reused-pid");
+    const path = journalFile(operationId);
+    const entry = JSON.parse(readFileSync(path, "utf-8")) as { claim: { pid: number; incarnation: string } };
+    // This test process stands in for the unrelated one that got the pid.
+    entry.claim.incarnation = `${entry.claim.pid}:a-process-started-earlier`;
+    writeFileSync(path, JSON.stringify(entry, null, 2));
+
+    const resumed = await dispatch(operationId, tool, { transfer: "reused-pid" }, "reused-pid-second");
+    expect(resumed.isError).toBeFalsy();
+    expect(runs()).toBe(1);
+  });
+
+  it("still blocks while the process that made the claim is running", async () => {
+    const { operationId, tool, runs } = await claimLeftByACrash("live-owner");
+    const blocked = await dispatch(operationId, tool, { transfer: "live-owner" }, "live-owner-second");
+    expect(blocked.content).toContain("claimed by a live execution");
+    expect(runs()).toBe(0);
+  });
+
+  it("judges a claim written before start times were recorded by its pid, as before", async () => {
+    const { operationId, tool, runs } = await claimLeftByACrash("old-claim");
+    const path = journalFile(operationId);
+    const entry = JSON.parse(readFileSync(path, "utf-8")) as { claim: Record<string, unknown> };
+    delete entry.claim.incarnation;
+    writeFileSync(path, JSON.stringify(entry, null, 2));
+    const blocked = await dispatch(operationId, tool, { transfer: "old-claim" }, "old-claim-second");
+    expect(blocked.content).toContain("claimed by a live execution");
+    expect(runs()).toBe(0);
+  });
+});
+
 describe("an ambiguous outcome says why it is unknown", () => {
   it("names the tool's own error, not a stopped runtime, when the tool threw", async () => {
     const operationId = opId("threw");

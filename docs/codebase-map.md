@@ -31,7 +31,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/memory/` | 59 | 162 | XL | 3 |
 | `src/util/` | 56 | 3 | S |  |
 | `src/browser/` | 51 | 93 | XL | 5 |
-| `src/agency/` | 48 | 40 | XL |  |
+| `src/agency/` | 49 | 40 | XL |  |
 | `src/tool-policy/` | 48 | 21 | L |  |
 | `src/chat-ws/` | 46 | 23 | L |  |
 | `src/local-runtimes/` | 45 | 27 | XL |  |

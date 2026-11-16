@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { createModelPinStore, isPinnableSessionId, parseModelPin } from "./model-pin.js";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { createModelPinStore, isPinnableSessionId, parseModelPin, pinnedRequestOverrides } from "./model-pin.js";
 
 const tempStore = () => {
   const file = join(mkdtempSync(join(tmpdir(), "lax-pin-")), "pins.json");
@@ -44,5 +45,25 @@ describe("a chat's model pin", () => {
     expect(parseModelPin({ provider: "skynet" })).toHaveProperty("error");
     expect(parseModelPin({ provider: "codex", effort: "turbo" })).toHaveProperty("error");
     expect(parseModelPin({ provider: "codex", model: "m".repeat(201) })).toHaveProperty("error");
+  });
+});
+
+describe("every turn a user runs in a chat uses its pin", () => {
+  it("turns a pin into the request overrides, and no pin into none", () => {
+    const { store } = tempStore();
+    store.set("chat-a", { provider: "xai", model: "grok-4.6", effort: "low" });
+    store.set("chat-b", { provider: "anthropic", model: "" });
+    expect(pinnedRequestOverrides("chat-a", store)).toEqual({ providerOverride: "xai", modelOverride: "grok-4.6", reasoningEffortOverride: "low" });
+    expect(pinnedRequestOverrides("chat-b", store)).toEqual({ providerOverride: "anthropic" });
+    expect(pinnedRequestOverrides("chat-none", store)).toEqual({});
+  });
+
+  // 2026-11-15: a voice call prepared its turn without the pin, so a chat
+  // switched to grok-4.6 at low effort kept speaking through grok-4.7 at medium.
+  it("is applied by the typed turn and the spoken turn alike", () => {
+    const src = (rel: string) => readFileSync(join(dirname(fileURLToPath(import.meta.url)), "..", rel), "utf8");
+    for (const file of ["routes/chat/run-chat-turn/prepare-and-route.ts", "server/voice-ws.ts"]) {
+      expect(src(file), file).toMatch(/prepareAgentRequest\(\{[^}]*\.\.\.pinnedRequestOverrides\(sessionId\)/s);
+    }
   });
 });

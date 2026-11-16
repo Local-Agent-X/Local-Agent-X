@@ -6,7 +6,7 @@ import type { ChannelKind } from "../../../agent-request/types.js";
 import type { ChatMode } from "../../../session/mode.js";
 import { createLogger } from "../../../logger.js";
 import { hiddenForSession } from "../../../tool-registry.js";
-import { sessionModelPins } from "../../../session/model-pin.js";
+import { pinnedRequestOverrides } from "../../../session/model-pin.js";
 
 const logger = createLogger("routes.chat.prepare");
 
@@ -36,9 +36,8 @@ export async function preparePerTurnRequest(input: PrepareInput): Promise<Prepar
   const { prepareAgentRequest } = await import("../../../agent-request/index.js");
   const prepStart = Date.now();
   // The chat's own model, when it has one; else the settings default.
-  const pin = sessionModelPins().get(sessionId);
   const prepared = await prepareAgentRequest({
-    ...(pin ? { providerOverride: pin.provider, modelOverride: pin.model || undefined, reasoningEffortOverride: pin.effort } : {}),
+    ...pinnedRequestOverrides(sessionId),
     channel: input.channel ?? "web",
     message, sessionMessages: sessionMessages as Parameters<typeof prepareAgentRequest>[0]["sessionMessages"], sessionId,
     config: ctx.config, dataDir: ctx.dataDir,

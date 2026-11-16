@@ -31,6 +31,7 @@ import { ThreatEngine } from "../threat/threat-engine.js";
 import type { VoiceTurnInput, VoiceTurnRunner } from "../voice/voice-session/index.js";
 import { VOICE_BUSY_REPLY, canaryWatch, carriedToolRows, carriedHarnessRows, claimVoiceTurn, isCardMetadata, commitVoiceTurn, spokenUserRow, voiceTurnRows, type VoiceTurnSlot } from "./voice-turn-guard.js";
 import { createVoiceTurnClock, type VoiceTurnClock } from "./voice-turn-timing.js";
+import { pinnedRequestOverrides } from "../session/model-pin.js";
 const logger = createLogger("server.lifecycle");
 
 /**
@@ -183,6 +184,8 @@ export async function setupVoiceWs(deps: {
       if (continuationOf) retractContinuedTurn(session, continuationOf);
 
       const prepared = await prepareAgentRequest({
+        // The chat's own model and think level, as a typed turn uses them.
+        ...pinnedRequestOverrides(sessionId),
         channel: "voice",
         voiceDevice: device,
         message: text,

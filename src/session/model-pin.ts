@@ -88,3 +88,24 @@ export function sessionModelPins(): ModelPinStore {
   instance ??= createModelPinStore(join(getLaxDir(), "session-model-pins.json"));
   return instance;
 }
+
+/**
+ * The chat's own model and think level as a turn's request overrides; empty
+ * when the chat has no pin (the settings default applies). Every turn a user
+ * runs in a chat reads it here, typed or spoken: a voice call that skipped it
+ * ran every reply on the default model, so picking another model or think
+ * level in the chat did nothing on a call (2026-11-15).
+ */
+export function pinnedRequestOverrides(sessionId: string, pins: ModelPinStore = sessionModelPins()): {
+  providerOverride?: ProviderId;
+  modelOverride?: string;
+  reasoningEffortOverride?: ReasoningEffort;
+} {
+  const pin = pins.get(sessionId);
+  if (!pin) return {};
+  return {
+    providerOverride: pin.provider,
+    ...(pin.model ? { modelOverride: pin.model } : {}),
+    ...(pin.effort ? { reasoningEffortOverride: pin.effort } : {}),
+  };
+}

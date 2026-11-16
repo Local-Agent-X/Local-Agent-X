@@ -24,8 +24,7 @@ afterEach(() => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-function addFact(kind: string, content: string, sourceFile: string, sourceLine: number, evidenceFor: string[] = []): number {
-  const now = Date.now();
+function addFact(kind: string, content: string, sourceFile: string, sourceLine: number, evidenceFor: string[] = [], now = Date.now()): number {
   const r = db.prepare(
     `INSERT INTO facts (kind, content, entities, confidence, evidence_for, source_file, source_line, timestamp, last_updated, valid_from)
      VALUES (?, ?, ?, 0.7, ?, ?, ?, ?, ?, ?)`,
@@ -42,8 +41,11 @@ const reflectNow = () => reflect(db, dir, () => {}, () => {}, 7);
 describe("reflection's evidence for an opinion", () => {
   it("adds each related source once, however many times it runs", async () => {
     const opinion = addFact("opinion", "Peter prefers direct answers", "agent-tool:user-statement", 1);
-    addFact("world", "Peter asked for no fluff", "sessions/a.jsonl", 4);
-    addFact("world", "Peter cut a long reply short", "sessions/b.jsonl", 9);
+    // Reflection reads recent facts newest first; fixed times keep the order
+    // from depending on whether both rows land in the same millisecond.
+    const t = Date.now();
+    addFact("world", "Peter asked for no fluff", "sessions/a.jsonl", 4, [], t - 1000);
+    addFact("world", "Peter cut a long reply short", "sessions/b.jsonl", 9, [], t - 2000);
 
     await reflectNow();
     const first = opinionRow(opinion);

@@ -88,8 +88,30 @@ export function createBargeInConfirm(gate: NearFieldGate): BargeInConfirm {
   };
 }
 
+/** The default absolute floor: below this a frame is near-silence. */
+export const NEAR_SILENCE_RMS = 0.012;
+
+/**
+ * The span from the first to the last 20 ms frame at or above `threshold`; empty when
+ * none is. For an utterance whose bounds this side cannot see: the audio said before a
+ * call's speech model was ready is judged whole (gpu-session.ts), seconds of quiet
+ * before and after the words included, and at the 75th percentile that quiet was the
+ * loudness: "Yo, can you hear me?" measured 0.0025 and was dropped (2026-11-16).
+ */
+export function trimQuietEdges(pcm: Int16Array, threshold = NEAR_SILENCE_RMS): Int16Array {
+  let first = -1;
+  let last = -1;
+  for (let i = 0; i + FRAME_SAMPLES <= pcm.length; i += FRAME_SAMPLES) {
+    if (frameRms(pcm.subarray(i, i + FRAME_SAMPLES)) >= threshold) {
+      if (first < 0) first = i;
+      last = i + FRAME_SAMPLES;
+    }
+  }
+  return first < 0 ? pcm.subarray(0, 0) : pcm.subarray(first, last);
+}
+
 export function createNearFieldGate(opts: NearFieldOptions = {}): NearFieldGate {
-  const absoluteFloor = opts.absoluteFloor ?? 0.012;
+  const absoluteFloor = opts.absoluteFloor ?? NEAR_SILENCE_RMS;
   const relativeRatio = opts.relativeRatio ?? 0.4;
   const emaAlpha = opts.emaAlpha ?? 0.2;
   let userLevel = 0;

@@ -15,7 +15,7 @@ import { createVoiceTurnMachine, type TurnSpeaker } from "./voice-session/turn-r
 import { createSentenceChunker } from "./voice-session/sentence-chunker.js";
 import { registerVoiceSpeaker, unregisterVoiceSpeaker } from "./proactive-registry.js";
 import { resolveVoiceSettings } from "./voice-session/settings.js";
-import { createBargeInConfirm, createNearFieldGate } from "./voice-session/near-field-gate.js";
+import { createBargeInConfirm, createNearFieldGate, trimQuietEdges } from "./voice-session/near-field-gate.js";
 import type { VoiceTurnRunner } from "./voice-session/index.js";
 
 import { createLogger } from "../logger.js";
@@ -52,6 +52,8 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
   // its speech_start resets the utterance after those frames went by. The next utterance
   // starts from them instead of from silence that follows them.
   let backlog: Int16Array[] | null = null;
+  // The utterance began in that audio: where in it the words start is not known here.
+  let fromBacklog = false;
 
   // Background-voice filter, the same one the in-process engine runs: the
   // sidecar's VAD answers "is this speech?", not "is this the person at the
@@ -146,6 +148,7 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
       bargeIn.reset();
       utterance.length = 0;
       utteranceSamples = 0;
+      fromBacklog = backlog !== null;
       if (backlog) {
         for (const f of backlog) { utterance.push(f); utteranceSamples += f.length; }
         backlog = null;
@@ -160,7 +163,8 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
         for (const f of utterance) { pcm.set(f, at); at += f.length; }
         utterance.length = 0;
         utteranceSamples = 0;
-        const nf = nearField.accept(pcm);
+        const nf = nearField.accept(fromBacklog ? trimQuietEdges(pcm) : pcm);
+        fromBacklog = false;
         logger.info(`[gpu-session] ${ctx.sessionId}: utterance loudness=${nf.loudness.toFixed(4)} floor=${nf.floor.toFixed(4)} ${nf.pass ? "kept" : "dropped"}`);
         if (!nf.pass) {
           logger.info(`[gpu-session] ${ctx.sessionId}: dropped far-field utterance "${text.slice(0, 40)}" (loudness=${nf.loudness.toFixed(4)} < floor=${nf.floor.toFixed(4)})`);

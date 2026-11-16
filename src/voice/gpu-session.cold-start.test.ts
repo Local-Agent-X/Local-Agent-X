@@ -72,11 +72,14 @@ describe("gpu session, audio before the sidecar is ready", () => {
   it("runs the turn for words said entirely before ready", async () => {
     const runTurn = vi.fn(reply);
     const { s, bridge } = coldSession(runTurn);
-    for (let i = 0; i < 100; i++) s.onMicFrame(frame(8000)); // loud, near-field speech
+    // As on 2026-11-16: ~2 s of quiet, then a short loud phrase, all before ready.
+    for (let i = 0; i < 100; i++) s.onMicFrame(frame(40));
+    for (let i = 0; i < 40; i++) s.onMicFrame(frame(4000));
     bridge.cb.onReady?.("test-gpu");
-    // The sidecar hears the drained audio after the drain; only silence arrives live.
+    // The sidecar hears the drained audio after the drain; only quiet arrives live
+    // while it transcribes.
     bridge.cb.onSpeechStart?.();
-    for (let i = 0; i < 25; i++) s.onMicFrame(frame(0));
+    for (let i = 0; i < 130; i++) s.onMicFrame(frame(40));
     bridge.cb.onSpeechEnd?.();
     bridge.cb.onFinal?.("what time is it", 80);
     await vi.waitFor(() => expect(runTurn).toHaveBeenCalledTimes(1));

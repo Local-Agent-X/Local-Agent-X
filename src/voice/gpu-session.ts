@@ -41,7 +41,17 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
   // synthesized and sent those pieces: the user heard the cancelled reply, then the one
   // that replaced it (2026-11-10). So what a cancelled piece sends is dropped here.
   let cancelledThroughId = 0;
+  // What the user says before the sidecar is ready. On a cold start it loads its speech
+  // model for the call (~3 s), and the phone already shows "Listening": only the first 17
+  // frames were kept, so the first words of a call were lost (2026-11-16). Now up to
+  // PENDING_MAX_SAMPLES are kept, newest kept when it overflows, and fed in at ready.
   const pendingFrames: Int16Array[] = [];
+  let pendingSamples = 0;
+  const PENDING_MAX_SAMPLES = 16000 * 15;
+  // The drained audio, for the near-field gate: the sidecar hears it after the drain, so
+  // its speech_start resets the utterance after those frames went by. The next utterance
+  // starts from them instead of from silence that follows them.
+  let backlog: Int16Array[] | null = null;
 
   // Background-voice filter, the same one the in-process engine runs: the
   // sidecar's VAD answers "is this speech?", not "is this the person at the
@@ -123,9 +133,11 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
       ctx.sendEvent({ type: "tts_model_ready" });
       ctx.sendEvent({ type: "vad_model_ready" });
       logger.info(`[gpu-session] ${ctx.sessionId}: bridge ready (gpu=${gpu}). draining ${pendingFrames.length} pending frames`);
+      if (pendingFrames.length > 0) backlog = [...pendingFrames];
       while (pendingFrames.length > 0 && !closed && bridge) {
         bridge.feedAudio(pendingFrames.shift()!);
       }
+      pendingSamples = 0;
     },
     onSpeechStart: () => {
       inUtterance = true;
@@ -134,6 +146,10 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
       bargeIn.reset();
       utterance.length = 0;
       utteranceSamples = 0;
+      if (backlog) {
+        for (const f of backlog) { utterance.push(f); utteranceSamples += f.length; }
+        backlog = null;
+      }
     },
     onSpeechEnd: () => { inUtterance = false; ctx.sendEvent({ type: "vad_speech_end" }); },
     onPartial: (text) => { if (inUtterance) ctx.sendEvent({ type: "partial", text }); },
@@ -201,7 +217,9 @@ export function createGpuSession(ctx: VoiceSessionContext, runTurn: VoiceTurnRun
     onMicFrame(frame: Int16Array) {
       if (closed || clientStt) return;
       if (!bridgeReady) {
-        if (pendingFrames.length < 17) pendingFrames.push(new Int16Array(frame));
+        pendingFrames.push(new Int16Array(frame));
+        pendingSamples += frame.length;
+        while (pendingSamples > PENDING_MAX_SAMPLES) pendingSamples -= pendingFrames.shift()!.length;
         return;
       }
       bridge?.feedAudio(frame);

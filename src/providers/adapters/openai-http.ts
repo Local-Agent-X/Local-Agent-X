@@ -17,6 +17,7 @@ import { hasNoToolSupport, markNoToolSupport, hasParamUnsupported, markParamUnsu
 import { createLogger } from "../../logger.js";
 import { resolveReasoningParam } from "./openai-param-support.js";
 import { isLocalOnlyMode, isLoopbackUrl } from "../../local-only-policy.js";
+import { cacheRoutingHeaders } from "./xai-cache-routing.js";
 import {
   isReasoningEffortRejection,
   isTemperatureRejection,
@@ -54,7 +55,7 @@ export class OpenAIHttpAdapter extends BaseAdapter {
 
   async *stream(req: ProviderRequest): AsyncIterable<StreamChunk> {
     const strictFetch = strictFetchFor(req.baseURL);
-    const client = new OpenAI({ apiKey: req.apiKey, baseURL: req.baseURL, ...CLIENT_RETRY, ...(strictFetch ? { fetch: strictFetch } : {}) });
+    const client = new OpenAI({ apiKey: req.apiKey, baseURL: req.baseURL, defaultHeaders: cacheRoutingHeaders(req.baseURL, req.sessionId), ...CLIENT_RETRY, ...(strictFetch ? { fetch: strictFetch } : {}) });
     const useTools = !hasNoToolSupport(req.baseURL, req.model);
     // Whether to send reasoning_effort, and with what value — one decision,
     // in openai-param-support.ts. Includes "none" (thinking off) for the

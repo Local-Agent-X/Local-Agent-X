@@ -98,7 +98,7 @@ describe("plugin registry persistence", () => {
       stats += 1;
       if (transition === "missing-to-valid" && stats === 1) return missing();
       if (transition === "valid-to-missing" && stats === 3) return missing();
-      return statSync(target);
+      return statSync(target, { bigint: true });
     });
 
     expect(() => store.read()).toThrow("Plugin registry read is temporarily unavailable");

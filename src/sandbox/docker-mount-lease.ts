@@ -59,11 +59,12 @@ function holdDirectory(path: string, descriptors: number[]): HeldMountRoot {
   let canonical: string;
   try { canonical = realpathSync(path); }
   catch { throw new Error("approved container mount root is unavailable"); }
-  const before = lstatSync(canonical);
+  // Exact ids: a number `ino` rounds a 64-bit NTFS id past 2^53.
+  const before = lstatSync(canonical, { bigint: true });
   if (!before.isDirectory()) throw new Error("approved container mount root is unavailable");
   const fd = openSync(canonical, constants.O_RDONLY | constants.O_DIRECTORY | (constants.O_NOFOLLOW ?? 0));
   descriptors.push(fd);
-  const held = fstatSync(fd);
+  const held = fstatSync(fd, { bigint: true });
   if (!held.isDirectory() || before.dev !== held.dev || before.ino !== held.ino) {
     throw new Error("approved container mount root identity changed");
   }

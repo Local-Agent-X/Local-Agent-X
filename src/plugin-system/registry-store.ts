@@ -127,7 +127,8 @@ function parseRegistry(raw: string): PluginRegistry {
 
 type RegistryWriter = (path: string, data: string) => void;
 type RegistryReader = (path: string, encoding: "utf-8") => string;
-type RegistryIdentity = { dev: number; ino: number; size: number; mtimeMs: number; ctimeMs: number };
+/** Exact ids (bigint): a number `ino` rounds a 64-bit NTFS id past 2^53. */
+type RegistryIdentity = { dev: bigint; ino: bigint; size: bigint; mtimeMs: bigint; ctimeMs: bigint };
 type RegistryStat = (path: string) => RegistryIdentity;
 type RegistryObservation = { kind: "missing" } | { kind: "snapshot"; raw: string; identity: RegistryIdentity };
 
@@ -145,7 +146,7 @@ function observeCommittedRegistry(path: string, read: RegistryReader, stat: Regi
   }
   const raw = read(path, "utf-8");
   const after = stat(path);
-  if (!sameIdentity(before, after) || Buffer.byteLength(raw, "utf-8") !== after.size) {
+  if (!sameIdentity(before, after) || BigInt(Buffer.byteLength(raw, "utf-8")) !== after.size) {
     throw new Error("Plugin registry snapshot changed during read");
   }
   return { kind: "snapshot", raw, identity: after };
@@ -155,7 +156,7 @@ export function createPluginRegistryStore(
   path: string,
   writeAtomic: RegistryWriter = atomicWriteFileSync,
   readCommitted: RegistryReader = readFileSync,
-  statCommitted: RegistryStat = statSync,
+  statCommitted: RegistryStat = (p) => statSync(p, { bigint: true }),
 ): PluginRegistryStore {
   return {
     read(): PluginRegistry {

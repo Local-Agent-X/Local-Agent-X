@@ -13,7 +13,10 @@ export const UPDATE_ROLLBACK_VERSION = 1;
 /** Written into the install root beside the files an update touched. */
 export const UPDATE_ROLLBACK_ANCHOR = ".lax-update-rollback.json";
 
-export interface DirectoryIdentity { path: string; real: string; dev: number; ino: number; birthtimeMs: number }
+/** `dev` and `ino` are JS numbers, which round a 64-bit NTFS id past 2^53;
+ *  `devExact` / `inoExact` are the exact ids as decimal text. Optional: a
+ *  journal written before they existed has only the numbers. */
+export interface DirectoryIdentity { path: string; real: string; dev: number; ino: number; birthtimeMs: number; devExact?: string; inoExact?: string }
 export interface UpdateRollbackEntry { path: string; existed: boolean; sha256: string | null }
 export interface UpdateRollbackJournal {
   version: 1; id: string;

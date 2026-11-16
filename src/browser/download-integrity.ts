@@ -2,7 +2,7 @@ import { constants, createWriteStream } from "node:fs";
 import { link, lstat, open, rm, unlink } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import { extname, join } from "node:path";
-import type { Stats } from "node:fs";
+import type { BigIntStats } from "node:fs";
 import type { FileHandle } from "node:fs/promises";
 
 export interface ReleaseIdentity {
@@ -10,16 +10,17 @@ export interface ReleaseIdentity {
   size: number;
 }
 
-function sameFile(a: Stats, b: Stats): boolean {
+/** Same file, by its exact ids: a number `ino` rounds a 64-bit NTFS id past 2^53. */
+function sameFile(a: BigIntStats, b: BigIntStats): boolean {
   return a.dev === b.dev && a.ino === b.ino && a.size === b.size;
 }
 
-async function openRegularNoFollow(path: string): Promise<{ handle: FileHandle; initial: Stats }> {
-  const initial = await lstat(path);
+async function openRegularNoFollow(path: string): Promise<{ handle: FileHandle; initial: BigIntStats }> {
+  const initial = await lstat(path, { bigint: true });
   if (initial.isSymbolicLink() || !initial.isFile()) throw new Error("Quarantined download is not a regular file.");
   const noFollow = typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0;
   const handle = await open(path, constants.O_RDONLY | noFollow);
-  const opened = await handle.stat();
+  const opened = await handle.stat({ bigint: true });
   if (!opened.isFile() || !sameFile(initial, opened)) {
     await handle.close();
     throw new Error("Quarantined download changed while it was being opened.");
@@ -75,13 +76,13 @@ export async function publishVerifiedDownload(
   const partial = join(releaseDir, `.${filename}.${Math.random().toString(16).slice(2)}.partial`);
   try {
     const digest = await digestHandle(handle);
-    const beforeCopy = await handle.stat();
-    if (beforeCopy.size !== expected.size || digest !== expected.digest || !sameFile(initial, beforeCopy)) {
+    const beforeCopy = await handle.stat({ bigint: true });
+    if (Number(beforeCopy.size) !== expected.size || digest !== expected.digest || !sameFile(initial, beforeCopy)) {
       throw new Error("Quarantined download digest or size changed before release.");
     }
     const copiedDigest = await copyPinned(handle, partial);
-    const afterCopy = await handle.stat();
-    if (copiedDigest !== expected.digest || afterCopy.size !== expected.size || !sameFile(initial, afterCopy)) {
+    const afterCopy = await handle.stat({ bigint: true });
+    if (copiedDigest !== expected.digest || Number(afterCopy.size) !== expected.size || !sameFile(initial, afterCopy)) {
       throw new Error("Quarantined download changed during release.");
     }
     let destination = "";
@@ -98,7 +99,7 @@ export async function publishVerifiedDownload(
     }
     if (!published) throw new Error("Could not allocate a unique release filename.");
     await unlink(partial).catch(() => { /* published hard link owns the complete bytes */ });
-    const current = await lstat(quarantinePath).catch(() => null);
+    const current = await lstat(quarantinePath, { bigint: true }).catch(() => null);
     if (current && !current.isSymbolicLink() && sameFile(initial, current)) await unlink(quarantinePath).catch(() => { /* stale quarantine cleanup can retry later */ });
     return destination;
   } catch (error) {

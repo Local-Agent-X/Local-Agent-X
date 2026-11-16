@@ -46,12 +46,20 @@ export function directoryIdentity(path: string): DirectoryIdentity {
   if (!info.isDirectory() || info.isSymbolicLink()) throw new Error(`Trusted rollback base is linked or not a directory: ${path}`);
   const real = realpathSync(path);
   if (!samePath(real, path)) throw new Error(`Trusted rollback base has a linked ancestor: ${path}`);
-  return { path: resolve(path), real: resolve(real), dev: info.dev, ino: info.ino, birthtimeMs: info.birthtimeMs };
+  // The number fields stay as they always were, so a journal written before the
+  // exact ids existed still matches; the exact ids are compared when both have them.
+  const exact = lstatSync(path, { bigint: true });
+  return {
+    path: resolve(path), real: resolve(real), dev: info.dev, ino: info.ino, birthtimeMs: info.birthtimeMs,
+    devExact: exact.dev.toString(), inoExact: exact.ino.toString(),
+  };
 }
 
 export function sameIdentity(expected: DirectoryIdentity, actual: DirectoryIdentity): boolean {
   return samePath(expected.path, actual.path) && samePath(expected.real, actual.real)
-    && expected.dev === actual.dev && expected.ino === actual.ino && expected.birthtimeMs === actual.birthtimeMs;
+    && expected.dev === actual.dev && expected.ino === actual.ino && expected.birthtimeMs === actual.birthtimeMs
+    && (expected.inoExact === undefined || actual.inoExact === undefined
+      || (expected.devExact === actual.devExact && expected.inoExact === actual.inoExact));
 }
 
 export function safePathChain(base: string, relativePath: string): boolean {

@@ -65,3 +65,23 @@ describe.skipIf(!CAN_CREATE_DIRECTORY_LINK)("pathChainChecker", () => {
     expect(check(join("a", "b", "file.txt"))).toBe(true);
   });
 });
+
+// A directory's identity carries its exact ids beside the rounded numbers (a
+// number `ino` rounds a 64-bit NTFS id past 2^53). A journal written before
+// the exact ids existed still matches on the numbers alone.
+describe("rollback base identity", () => {
+  it("records exact ids, compares them when both sides have them, and still matches an older journal", async () => {
+    const { directoryIdentity, sameIdentity } = await import("./update-rollback-state.js");
+    const dir = mkdtempSync(join(tmpdir(), "lax-rollback-identity-"));
+    try {
+      const now = directoryIdentity(dir);
+      expect(now.inoExact).toBe(lstatSync(dir, { bigint: true }).ino.toString());
+      expect(sameIdentity(now, directoryIdentity(dir))).toBe(true);
+      const { devExact: _d, inoExact: _i, ...older } = now;
+      expect(sameIdentity(older, now)).toBe(true);
+      expect(sameIdentity({ ...now, inoExact: `${now.inoExact}1` }, now)).toBe(false);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

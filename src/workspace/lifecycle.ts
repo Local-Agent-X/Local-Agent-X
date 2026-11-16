@@ -77,9 +77,11 @@ export function isCloudSyncedDir(dir: string): boolean {
   if (process.platform !== "darwin") return false;
   if (isCloudStoragePath(dir)) return true;
   try {
-    const target = statSync(dir);
+    // Exact ids: a number `ino` can round two different folders to one.
+    const target = statSync(dir, { bigint: true });
     const cloudDocs = statSync(
       join(homedir(), "Library", "Mobile Documents", "com~apple~CloudDocs", "Documents"),
+      { bigint: true },
     );
     return target.dev === cloudDocs.dev && target.ino === cloudDocs.ino;
   } catch {

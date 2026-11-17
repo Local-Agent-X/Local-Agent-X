@@ -12,12 +12,18 @@ import { readFileSync, existsSync, writeFileSync, mkdirSync, mkdtempSync, readdi
 import { join, dirname, resolve } from "node:path";
 import { homedir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { createRequire } from "node:module";
 import { execFileSync } from "node:child_process";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 export const REPO_ROOT = resolve(__dirname, "..", "..");
-const TSC_JS = join(REPO_ROOT, "node_modules", "typescript", "bin", "tsc");
-const VITEST_JS = join(REPO_ROOT, "node_modules", "vitest", "vitest.mjs");
+// The node_modules the repo's code resolves from, as Node finds it: a git
+// worktree nested in the main checkout has none of its own and resolves from
+// the parent's, so a path built on REPO_ROOT pointed at nothing and every tsc
+// check failed with MODULE_NOT_FOUND (2026-11-17).
+const NODE_MODULES = resolve(dirname(createRequire(join(REPO_ROOT, "package.json")).resolve("typescript/package.json")), "..");
+const TSC_JS = join(NODE_MODULES, "typescript", "bin", "tsc");
+const VITEST_JS = join(NODE_MODULES, "vitest", "vitest.mjs");
 
 // Resolved LAZILY: this module is imported by a vitest regression test and by
 // runners that drive an ISOLATED server, neither of which has (or wants) the
@@ -61,8 +67,9 @@ export async function activeModel() {
  *  error event, and recording it as `err` made a completed attempt read as one
  *  the harness killed (two-bucket, 2026-09-17). */
 // `mode` ("code") opens the session as a code session (src/session/mode.ts);
-// a session's mode is fixed by its first turn.
-export async function driveChat(message, sessionId, timeoutMs, target = LIVE(), { mode } = {}) {
+// a session's mode is fixed by its first turn. `projectId` files it under a
+// project, whose folder a code session works in (src/session/project-folder.ts).
+export async function driveChat(message, sessionId, timeoutMs, target = LIVE(), { mode, projectId } = {}) {
   let text = "", err = "";
   const tools = [];
   const recovered = [];
@@ -74,7 +81,7 @@ export async function driveChat(message, sessionId, timeoutMs, target = LIVE(), 
     // attended:false — this driver reads the stream but answers no approval
     // card, so a call that needs one is parked in the inbox at once instead of
     // holding the turn for the card's window.
-    const res = await fetch(`${target.baseUrl}/api/chat`, { method: "POST", headers: target.headers, body: JSON.stringify({ message, sessionId, attended: false, ...(mode ? { mode } : {}) }), signal: ac.signal });
+    const res = await fetch(`${target.baseUrl}/api/chat`, { method: "POST", headers: target.headers, body: JSON.stringify({ message, sessionId, attended: false, ...(mode ? { mode } : {}), ...(projectId ? { projectId } : {}) }), signal: ac.signal });
     if (!res.ok) { err = `HTTP ${res.status}`; }
     else {
       let buf = "";
@@ -107,6 +114,17 @@ export async function driveChat(message, sessionId, timeoutMs, target = LIVE(), 
   const leftover = await settleTurn(sessionId, target);
   if (leftover) err = `${err ? err + "; " : ""}${leftover}`;
   return { text: text.trim(), tools, err, recovered, secs };
+}
+
+/** The code-folder project for `dir`, as the sidebar's add-folder makes it
+ *  (POST /api/projects with codeFolder): what a user's code session on that
+ *  folder is filed under. Without it a rig code session has no project folder,
+ *  so relative paths start at the workspace, unlike real use and unlike Claude
+ *  Code, which runs inside the project (2026-11-17). */
+export async function codeFolderProjectId(dir, target = LIVE()) {
+  const r = await fetch(`${target.baseUrl}/api/projects`, { method: "POST", headers: target.headers, body: JSON.stringify({ codeFolder: true, workspace: dir }) });
+  if (!r.ok) throw new Error(`code folder for ${dir}: HTTP ${r.status} ${await r.text()}`);
+  return (await r.json()).id;
 }
 
 /** Stop any turn still running for `sessionId` and wait until the server says
@@ -149,7 +167,7 @@ export function makeProject(id, files, parent = homedir()) {
   // scored as if it had shipped a red test on purpose. rmSync unlinks a
   // junction without following it (verified), so cleanup can never reach into
   // the repo's modules.
-  try { symlinkSync(join(REPO_ROOT, "node_modules"), join(dir, "node_modules"), "junction"); } catch { /* exists */ }
+  try { symlinkSync(NODE_MODULES, join(dir, "node_modules"), "junction"); } catch { /* exists */ }
   // A real `test` script (vitest, the runner LAX itself uses) so the project
   // presents tests the way a real repo does — the model runs `npm test`, and
   // the harness's build-verify test gate detects the vitest binary and runs the

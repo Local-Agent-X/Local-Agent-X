@@ -34,7 +34,7 @@ import { writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { scenarios } from "./scenarios.mjs";
-import { health, activeModel, driveChat, makeProject, cleanup, sleep, baseUrl, useRigTarget } from "./lib.mjs";
+import { health, activeModel, driveChat, codeFolderProjectId, makeProject, cleanup, sleep, baseUrl, useRigTarget } from "./lib.mjs";
 import { formatMetrics, runMetrics } from "./run-metrics.mjs";
 import { driveClaudeCode } from "./claude-code-agent.mjs";
 import { resolveRigTarget } from "../op-outcomes/isolated.mjs";
@@ -65,13 +65,24 @@ const MODE = opt("--mode") ?? undefined;
 const chosen = scenarios.filter((s) => (ONLY ? s.id.includes(ONLY) : true));
 if (chosen.length === 0) { console.error(`No scenario matches --only ${ONLY}. Have: ${scenarios.map((s) => s.id).join(", ")}`); process.exit(2); }
 
+/** How long the isolated server may live: every chosen run at its full
+ *  timeout, plus the pause between runs and boot. The server's own 45-minute
+ *  default ended a core ×3 run part-way on 2026-11-16. */
+function runLifetimeMs() {
+  const runs = chosen.reduce((ms, s) => ms + (s.timeoutSec * 1000 + 70_000) * REPEAT, 0);
+  return runs + 10 * 60_000;
+}
+
 /** How one scenario run is driven, and what is known about how it went. */
 const laxDriver = (target) => ({
   // An isolated server's file access is confined to its own workspace; the
   // project goes there, or the model may not even read it (2026-11-13: every
   // call blocked, "both files are outside the workspace").
   projectParent: target.workspace,
-  drive: (prompt, _dir, sessionId, timeoutMs) => driveChat(prompt, sessionId, timeoutMs, undefined, { mode: MODE }),
+  // A code session is filed under its project's folder, as a user's is.
+  drive: async (prompt, dir, sessionId, timeoutMs) => driveChat(prompt, sessionId, timeoutMs, undefined, {
+    mode: MODE, ...(MODE === "code" ? { projectId: await codeFolderProjectId(dir) } : {}),
+  }),
   metrics: (sessionId) => runMetrics(target.dataDir, sessionId),
   describe: (run, metrics) => (target.dataDir ? formatMetrics(metrics) : `${run.tools.length} tools`),
 });
@@ -142,7 +153,7 @@ for (const label of AGENT === "claude-code" ? [] : PROVIDERS) {
   // Isolated by default: this battery drives REAL turns with real tool
   // execution, so on the user's own server it writes their sessions and memory.
   const target = await resolveRigTarget({
-    repoRoot: join(__dirname, "..", ".."), provider: "qwen",
+    repoRoot: join(__dirname, "..", ".."), provider: "qwen", maxLifetimeMs: runLifetimeMs(),
     ...(label ? { argv: ["--provider", label] } : {}),
   });
   useRigTarget(target);

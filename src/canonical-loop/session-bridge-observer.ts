@@ -35,7 +35,7 @@ import { broadcastToSession, getSessionForOp, getTaskForOp, releaseOpFromSession
 import { isHeadlessSession } from "../chat-ws/broadcast.js";
 import { suspendedWorkerStatus, suspensionLine, turnProgressLine } from "./live-workers.js";
 import { pushPendingNotification } from "../ops/pending-notifications.js";
-import { scheduleIdleNudge } from "../ops/idle-nudge.js";
+import { announceEndedOp } from "../ops/op-report-wake.js";
 import { inboxJobResult, runLabel } from "../inbox/producers.js";
 
 import { toSpokenCompletion, redirectAppliedRow, isSidebarSuppressedOpType } from "./session-bridge-extractors.js";
@@ -239,11 +239,13 @@ function recordCanonicalEventWithSink(
           // turn boundary (no-op otherwise — the chat nudge below still fires).
           // The turn machine queues it so it never cuts off an in-flight reply.
           if (core) {
-            proactiveSpeakToSession(
+            const spoken = proactiveSpeakToSession(
               sessionId,
               status === "partial" ? toSpokenPartial(task) : toSpokenCompletion(task, summary, status, op?.type),
             );
-            scheduleIdleNudge(sessionId, task);
+            // A voice call already heard it; a scheduled mission reports
+            // through the cron executor. Otherwise the chat's agent reports it.
+            announceEndedOp(sessionId, { opId: event.opId, task: task || "(unknown)", status }, spoken || op?.type === OP_TYPE.scheduledMission);
           }
           // The user's inbox. A scheduled mission is posted by the cron
           // executor, which alone knows its quality-gate verdict; headless

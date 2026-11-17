@@ -108,6 +108,11 @@ export function pushPendingNotification(sessionId: string, n: PendingNotificatio
   prune();
 }
 
+/** Whether `opId`'s notification is still waiting for the session's next turn. */
+export function hasPendingNotification(sessionId: string, opId: string): boolean {
+  return !!queues.get(sessionId)?.some((n) => n.opId === opId);
+}
+
 /**
  * Drain all pending notifications for a session. Returns them and clears
  * the queue (so the same op doesn't get narrated twice across turns).

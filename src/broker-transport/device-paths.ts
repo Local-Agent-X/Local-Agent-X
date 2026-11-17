@@ -32,12 +32,17 @@
 // user can sync this computer with its repo while away from it. Only the repo
 // this desktop was already set up for: the rest of /api/sync (configure, which
 // names the repo and token, and status, which shows the repo) stays out.
+// /api/connectors/<name>/... is the connector proxy an app calls for a service
+// (routes/connector-proxy.ts), in by the owner's call (2026-11-16): an app opened
+// on the phone loaded but every button failed, since its calls go through it.
+// Each call is still held to that connector's own allow list. The trailing slash
+// keeps the bare /api/connectors listing (every connector and its folder) out.
 // The broker phone is NOT an operator: nothing else on the operator API is in.
 
 import { isSensitivePath } from "../data-lineage/index.js";
 
 /** Endpoints the broker http-tunnel may proxy to loopback. */
-export const DEVICE_HTTP_PREFIXES = ["/api/apps", "/apps/", "/api/sessions", "/api/providers", "/uploads/", "/videos/", "/images/", "/files/", "/api/workspace/browse", "/api/code-folders", "/api/voices/setup/call-system", "/api/collab", "/api/sync/device"];
+export const DEVICE_HTTP_PREFIXES = ["/api/apps", "/apps/", "/api/sessions", "/api/providers", "/uploads/", "/videos/", "/images/", "/files/", "/api/workspace/browse", "/api/code-folders", "/api/voices/setup/call-system", "/api/collab", "/api/sync/device", "/api/connectors/"];
 
 export function isDeviceAllowedPath(pathname: string): boolean {
   if (!DEVICE_HTTP_PREFIXES.some((p) => pathname === p || pathname.startsWith(p))) return false;

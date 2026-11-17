@@ -9,7 +9,7 @@ import { DEVICE_HTTP_PREFIXES, isDeviceAllowedPath } from "./device-paths.js";
 describe("device allowlist", () => {
   it("is exactly the reviewed set — widening it requires updating this pin", () => {
     expect([...DEVICE_HTTP_PREFIXES].sort()).toEqual(
-      ["/api/apps", "/api/code-folders", "/api/providers", "/api/sessions", "/api/workspace/browse", "/apps/", "/files/", "/images/", "/uploads/", "/videos/", "/api/voices/setup/call-system", "/api/collab", "/api/sync/device"].sort(),
+      ["/api/apps", "/api/code-folders", "/api/providers", "/api/sessions", "/api/workspace/browse", "/apps/", "/files/", "/images/", "/uploads/", "/videos/", "/api/voices/setup/call-system", "/api/collab", "/api/sync/device", "/api/connectors/"].sort(),
     );
   });
 
@@ -27,6 +27,7 @@ describe("device allowlist", () => {
       "/api/collab",
       "/api/collab/start",
       "/api/collab/stop",
+      "/api/connectors/home-remote/power", // an app's call through its connector
     ]) {
       expect(isDeviceAllowedPath(p), p).toBe(true);
     }
@@ -41,6 +42,8 @@ describe("device allowlist", () => {
       "/api/artifacts",
       "/api/projects", // the phone reaches code folders only, never a project's rosters, secrets or tools
       "/api/projects/proj-1",
+      "/api/connectors", // the listing names every connector and its folder
+      "/api/connectorsX/evil",
       "/uploads", // no trailing slash → not the served prefix
       "/uploadsX/evil",
       "/",

@@ -63,7 +63,7 @@ export interface ToolDefinition {
    * central name→predicate table.
    */
   available?: () => boolean;
-  confirmWithUser?: (args: Record<string, unknown>, ctx: { userText: string }) => string | null; // why THIS call needs the user's OK (ask-user-gates.ts)
+  confirmWithUser?: (args: Record<string, unknown>, ctx: { userText: string }) => string | null | Promise<string | null>; // why THIS call needs the user's OK (ask-user-gates.ts)
   /** How this call reads on the approval card and the tool_start event
    *  (tool-execution/approval-context.ts), when `name: {args}` would not say
    *  what it does. Absent: that generic line. A shell command is summarized

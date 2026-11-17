@@ -2,7 +2,7 @@
  * email_send: reply threading, BCC and the HTML/plain-text alternative.
  *
  * The transport is the only thing stubbed — `createTransport` records the mail
- * options nodemailer would compose. Everything else (the idempotency guard,
+ * options nodemailer would compose. Everything else (the sent log,
  * the config loader, the subject rules) is the real code, because those are
  * what these tests are about.
  */
@@ -26,11 +26,12 @@ vi.mock("nodemailer", () => ({
   }),
 }));
 
-import { emailSend, normalizeMessageId, buildReferences } from "./email-send-tool.js";
-import { _clearIdempotencyStoreForTests } from "./idempotency.js";
+import { emailSend, normalizeMessageId, buildReferences, composeEmail, emailFingerprint } from "./email-send-tool.js";
+import { loadSent } from "./email-sent-log.js";
 
 const ENV_KEYS = ["SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "SMTP_FROM"] as const;
 const saved: Record<string, string | undefined> = {};
+let dataDir = "";
 
 beforeEach(() => {
   for (const k of ENV_KEYS) saved[k] = process.env[k];
@@ -41,7 +42,9 @@ beforeEach(() => {
   process.env.SMTP_FROM = "bob@example.com";
   smtp.sent.length = 0;
   smtp.sendError = undefined;
-  _clearIdempotencyStoreForTests();
+  saved.LAX_DATA_DIR = process.env.LAX_DATA_DIR;
+  dataDir = mkdtempSync(join(tmpdir(), "lax-email-send-"));
+  process.env.LAX_DATA_DIR = dataDir;
 });
 
 afterEach(() => {
@@ -49,7 +52,8 @@ afterEach(() => {
     if (saved[k] === undefined) delete process.env[k];
     else process.env[k] = saved[k]!;
   }
-  _clearIdempotencyStoreForTests();
+  if (saved.LAX_DATA_DIR === undefined) delete process.env.LAX_DATA_DIR; else process.env.LAX_DATA_DIR = saved.LAX_DATA_DIR;
+  rmSync(dataDir, { recursive: true, force: true });
 });
 
 const PARENT = "<parent-abc@mail.example.com>";
@@ -198,114 +202,49 @@ describe("HTML body", () => {
   });
 });
 
-describe("the idempotency guard covers every new field", () => {
-  it("still refuses an identical re-send", async () => {
-    await send({});
-    const r = await send({});
-    expect(r.metadata?.skipped).toBe("duplicate");
-    expect(smtp.sent, "the duplicate reached the transport").toHaveLength(1);
+describe("the composed fingerprint: identical only when the recipient gets the identical email", () => {
+  const fp = (args: Record<string, unknown>) => {
+    const c = composeEmail({ to: "alice@example.com", subject: "Notes", body: "Hi", ...args });
+    if ("error" in c) throw new Error(c.error);
+    return emailFingerprint(c);
+  };
+
+  it.each([
+    ["only bcc", { bcc: "dan@example.com" }, { bcc: "erin@example.com" }],
+    ["an added bcc", {}, { bcc: "dan@example.com" }],
+    ["only the html body", { html: "<p>v1</p>" }, { html: "<p>v2</p>" }],
+    ["only in_reply_to", { in_reply_to: PARENT }, { in_reply_to: "<other-xyz@mail.example.com>" }],
+    ["only the references chain", { in_reply_to: PARENT, references: "<root-1@mail.example.com>" }, { in_reply_to: PARENT, references: "<root-2@mail.example.com>" }],
+    ["a reply vs the same text as a new thread", {}, { in_reply_to: PARENT }],
+    ["only cc", { cc: "carol@example.com" }, { cc: "dave@example.com" }],
+    ["only the attachment list", { attachments: "[\"a.txt\"]" }, { attachments: "[\"b.txt\"]" }],
+    // Every field is one fingerprintOf part, so to="a",cc="b" never collides with to="ab",cc="".
+    ["characters moved from cc into to", { to: "a@x.com", cc: "b@x.com" }, { to: "a@x.comb@x.com", cc: "" }],
+  ])("changing %s is a different email", (_label, a, b) => {
+    expect(fp(a)).not.toBe(fp(b));
   });
 
-  it("changing ONLY bcc is a different message and is sent", async () => {
-    await send({ bcc: "dan@example.com" });
-    const r = await send({ bcc: "erin@example.com" });
-    expect(r.metadata?.skipped, "a different BCC list was swallowed as a duplicate").toBeUndefined();
-    expect(smtp.sent).toHaveLength(2);
+  it("a subject differing only by the Re: prefix this tool adds is the same email", () => {
+    expect(fp({ subject: "Notes", in_reply_to: PARENT })).toBe(fp({ subject: "Re: Notes", in_reply_to: PARENT }));
   });
 
-  it("adding a bcc to an otherwise identical message is sent", async () => {
-    await send({});
-    const r = await send({ bcc: "dan@example.com" });
-    expect(r.metadata?.skipped).toBeUndefined();
-    expect(smtp.sent).toHaveLength(2);
+  it("references differing only in tokens buildReferences discards are the same email", () => {
+    expect(fp({ in_reply_to: PARENT, references: "<r@x.com>" })).toBe(fp({ in_reply_to: PARENT, references: "<r@x.com> junk" }));
+  });
+});
+
+describe("what a send leaves behind", () => {
+  it("is logged with who and what, and the result names both", async () => {
+    const r = await send({ cc: "carol@example.com", bcc: "Dan <DAN@example.com>", body: "Hi Alice, the notes." });
+    expect(r.content).toContain("Email sent to alice@example.com, carol@example.com: \"Notes\"");
+    const [entry] = loadSent();
+    expect(entry).toMatchObject({ recipients: ["alice@example.com", "carol@example.com", "dan@example.com"], subject: "Notes", excerpt: "Hi Alice, the notes." });
   });
 
-  it("changing ONLY the html body is a different message and is sent", async () => {
-    await send({ html: "<p>v1</p>" });
-    const r = await send({ html: "<p>v2</p>" });
-    expect(r.metadata?.skipped, "a rewritten HTML body was swallowed as a duplicate").toBeUndefined();
-    expect(smtp.sent).toHaveLength(2);
-  });
-
-  it("changing ONLY in_reply_to is a different message and is sent", async () => {
-    await send({ in_reply_to: PARENT });
-    const r = await send({ in_reply_to: "<other-xyz@mail.example.com>" });
-    expect(r.metadata?.skipped, "a reply to a different thread was swallowed as a duplicate").toBeUndefined();
-    expect(smtp.sent).toHaveLength(2);
-  });
-
-  it("changing ONLY the references chain is a different message and is sent", async () => {
-    await send({ in_reply_to: PARENT, references: "<root-1@mail.example.com>" });
-    const r = await send({ in_reply_to: PARENT, references: "<root-2@mail.example.com>" });
-    expect(r.metadata?.skipped).toBeUndefined();
-    expect(smtp.sent).toHaveLength(2);
-  });
-
-  it("a reply is distinct from the same text sent as a new thread", async () => {
-    await send({});
-    const r = await send({ in_reply_to: PARENT });
-    expect(r.metadata?.skipped).toBeUndefined();
-    expect(smtp.sent).toHaveLength(2);
-  });
-
-  it("changing ONLY cc is a different message and is sent", async () => {
-    await send({ cc: "carol@example.com" });
-    const r = await send({ cc: "dave@example.com" });
-    expect(r.metadata?.skipped, "a different CC list was swallowed as a duplicate").toBeUndefined();
-    expect(smtp.sent).toHaveLength(2);
-  });
-
-  it("changing ONLY the attachment list is a different message and is sent", async () => {
-    const dir = mkdtempSync(join(tmpdir(), "lax-email-fp-"));
-    try {
-      const a = join(dir, "a.txt");
-      const b = join(dir, "b.txt");
-      writeFileSync(a, "A");
-      writeFileSync(b, "B");
-      await send({ attachments: JSON.stringify([a]) });
-      const r = await send({ attachments: JSON.stringify([b]) });
-      expect(r.metadata?.skipped, "a different attachment was swallowed as a duplicate").toBeUndefined();
-      expect(smtp.sent).toHaveLength(2);
-    } finally {
-      rmSync(dir, { recursive: true, force: true });
-    }
-  });
-
-  it("keeps field boundaries: moving characters from cc into to is NOT the same message", async () => {
-    // Every field is collapsed into one fingerprintOf part, so its "\u0001"
-    // join separator never falls between them: an unencoded field list would
-    // collide, to="a",cc="b" hashing identically to to="ab",cc="".
-    await send({ to: "a@x.com", cc: "b@x.com" });
-    const r = await send({ to: "a@x.comb@x.com", cc: "" });
-    expect(r.metadata?.skipped, "a field-boundary collision swallowed a different message").toBeUndefined();
-    expect(smtp.sent).toHaveLength(2);
-  });
-
-  it("refuses a re-send whose subject differs only by the Re: prefix this tool adds", async () => {
-    // Both calls COMPOSE the subject "Re: Notes" and land in the same thread —
-    // the recipient gets the identical email twice unless the composed value is
-    // what gets hashed.
-    await send({ subject: "Notes", in_reply_to: PARENT });
-    const r = await send({ subject: "Re: Notes", in_reply_to: PARENT });
-    expect(r.metadata?.skipped, "the same composed email was sent twice").toBe("duplicate");
-    expect(smtp.sent).toHaveLength(1);
-  });
-
-  it("refuses a re-send whose references differ only in tokens buildReferences discards", async () => {
-    await send({ in_reply_to: PARENT, references: "<r@x.com>" });
-    const r = await send({ in_reply_to: PARENT, references: "<r@x.com> junk" });
-    expect(r.metadata?.skipped, "the same composed References was sent twice").toBe("duplicate");
-    expect(smtp.sent).toHaveLength(1);
-  });
-
-  it("a failed send does not block the retry", async () => {
+  it("a failed send is not logged", async () => {
     smtp.sendError = new Error("connection reset");
-    const first = await send({});
-    expect(first.isError).toBe(true);
-    smtp.sendError = undefined;
-    const second = await send({});
-    expect(second.metadata?.skipped).toBeUndefined();
-    expect(smtp.sent).toHaveLength(1);
+    expect((await send({})).isError).toBe(true);
+    expect(loadSent()).toEqual([]);
   });
 });
 

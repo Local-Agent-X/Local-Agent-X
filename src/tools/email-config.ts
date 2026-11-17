@@ -3,15 +3,6 @@ import { writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import { getLaxDir } from "../lax-data-dir.js";
 import { getSecretsStoreSingleton } from "../secrets.js";
 
-// Send-once window for identical (to, cc, subject, body) payloads. The
-// in-process dedup phase already catches MCP-loop within-turn dupes at
-// 60s; this is the cross-turn / cross-session backstop because the user
-// has confirmed duplicate sends via Fastmail in the wild. Five minutes
-// is long enough to catch a model that re-tries after a thought delay
-// or a separate-turn nudge, short enough that a deliberate human
-// "actually send a second identical follow-up" works after the window.
-export const EMAIL_SEND_WINDOW_MS = 5 * 60 * 1000;
-
 // Load email config from ~/.lax/email.json (set via Connected APIs UI) or env vars
 function loadEmailJson(): Record<string, string> {
   try {

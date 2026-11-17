@@ -21,8 +21,8 @@ import { addApprovalReason } from "./approval-card-text.js";
 
 /** Only the tool can see what a call would touch — which fact a substring
  *  selects and whose it is — so the tool says why this one needs the user. */
-export function toolConfirmationGate(ctx: Pick<ToolCallContext, "tool" | "args" | "priorMessages" | "policyApprovalReason">): void {
-  const reason = ctx.tool?.confirmWithUser?.(ctx.args, { userText: currentHumanText(ctx.priorMessages) });
+export async function toolConfirmationGate(ctx: Pick<ToolCallContext, "tool" | "args" | "priorMessages" | "policyApprovalReason">): Promise<void> {
+  const reason = await ctx.tool?.confirmWithUser?.(ctx.args, { userText: currentHumanText(ctx.priorMessages) });
   if (!reason) return;
   addApprovalReason(ctx, reason);
 }
@@ -32,6 +32,6 @@ export async function askUserGates(ctx: ToolCallContext): Promise<void> {
   controlFileGate(ctx);
   claimClashGate(ctx);
   mcpSecretUseGate(ctx);
-  toolConfirmationGate(ctx);
+  await toolConfirmationGate(ctx);
   injectionExposureGate(ctx);
 }

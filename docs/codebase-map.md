@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2063 non-test source files · 76 oversized · 269 nearing the size cap.
+**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2066 non-test source files · 76 oversized · 268 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -21,7 +21,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 184 | 29 | XL | 1 |
 | `src/security/` | 164 | 62 | XL | 2 |
-| `src/tools/` | 137 | 235 | XL | 9 |
+| `src/tools/` | 137 | 237 | XL | 9 |
 | `src/tool-execution/` | 100 | 90 | XL | 2 |
 | `src/workspace/` | 91 | 3 | M |  |
 | `src/canonical-loop/` | 89 | 292 | XL | 10 |
@@ -29,7 +29,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/session/` | 68 | 13 | L |  |
 | `src/data-lineage/` | 60 | 12 | L |  |
 | `src/memory/` | 59 | 162 | XL | 3 |
-| `src/util/` | 56 | 3 | S |  |
+| `src/util/` | 57 | 3 | S |  |
 | `src/browser/` | 51 | 93 | XL | 5 |
 | `src/agency/` | 49 | 40 | XL |  |
 | `src/tool-policy/` | 48 | 21 | L |  |
@@ -43,7 +43,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/agent-store/` | 28 | 7 | M | 1 |
 | `src/context/` | 28 | 11 | M |  |
 | `src/agent-request/` | 26 | 16 | L | 3 |
-| `src/classifiers/` | 25 | 17 | L |  |
+| `src/classifiers/` | 26 | 18 | L |  |
 | `src/app-runtime/` | 23 | 12 | M |  |
 | `src/sandbox/` | 23 | 16 | L | 1 |
 | `src/desktop-contract/` | 22 | 10 | M |  |
@@ -430,7 +430,6 @@ job. Comments are free: never cut them to fit.
 - `src/server/voice-ws.ts#runVoiceTurn` — 90+ own code lines (cap 100)
 - `src/sync/push-files.ts#copyToSync` — 90+ own code lines (cap 100)
 - `src/tool-execution/run-sandboxed.ts#runSandboxedPhase` — 90+ own code lines (cap 100)
-- `src/tools/email-send-tool.ts#emailSend.execute` — 90+ own code lines (cap 100)
 - `src/tools/read-write-tools.ts#readTool.execute` — 90+ own code lines (cap 100)
 - `src/agent-guards/loop-detection.ts#noteToolResults` — 80+ own code lines (cap 100)
 - `src/agent-request/prepare-request/build-system-prompt.ts#buildSystemPromptWithTelemetry` — 80+ own code lines (cap 100)

@@ -109,6 +109,9 @@ export const LAX_DATA_CATALOG: readonly LaxDataEntry[] = [
   ...at("card", "decides which of your new mail the mail watcher reads and whose mail it treats as from people you know", "mail-watch.json"),
   // How the user rated mail alerts: a write could silence a sender's alerts.
   ...at("card", "decides which senders' mail the mail watcher stops alerting you about", "mail-ratings.json"),
+  // What LAX emailed lately: a write could hide a send, so the same email
+  // goes out again without the repeat question (tools/email-repeat-check.ts).
+  ...at("card", "decides which emails LAX asks you about before sending the same thing again", "email-sent.json"),
   // Each flight's last known status: a write could hide a delay or cancellation.
   ...at("card", "decides which flight changes the travel watcher has already told you about", "travel-watch.json"),
   ...at("card", "is the sync copy that the next sync merges into this computer", "sync-repo"),

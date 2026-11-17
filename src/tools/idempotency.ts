@@ -13,8 +13,9 @@
 // Both layers are intentional: Axis 2 fires before tool execution and
 // returns the prior result; Axis 3 fires from INSIDE the tool's execute()
 // and surfaces a "skipped — already done at <time>" message so the model
-// understands it's a deliberate no-op, not a failure. Email_send and the
-// social posts call this; the inert-side-effect tools rely on Axis 2.
+// understands it's a deliberate no-op, not a failure. The message sends
+// (telegram, whatsapp) and calendar writes call this; the inert-side-effect
+// tools rely on Axis 2. email_send asks instead (email-repeat-check.ts).
 
 import { createHash } from "node:crypto";
 

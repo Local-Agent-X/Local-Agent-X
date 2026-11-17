@@ -74,7 +74,7 @@ describe("forget asks before ending something the user said", () => {
 });
 
 describe("through the approval phase, under the most permissive profile", () => {
-  function ctx(callContext: CallContext, events: ServerEvent[], answer?: boolean): ToolCallContext {
+  async function ctx(callContext: CallContext, events: ServerEvent[], answer?: boolean): Promise<ToolCallContext> {
     const sessionId = `forget-confirm-${Math.random().toString(36).slice(2)}`;
     setSessionProfile(sessionId, "Autonomous");
     sessions.push(sessionId);
@@ -88,14 +88,14 @@ describe("through the approval phase, under the most permissive profile", () => 
       },
       approvalContext: "", riskLevel: "low", allowed: true, msgs: [],
     } as unknown as ToolCallContext;
-    toolConfirmationGate(c);
+    await toolConfirmationGate(c);
     return c;
   }
 
   it("shows the user a card, and a no leaves the fact in force", async () => {
     const id = seed('@Odalys texted "did you sell Merriweather yet"', "user_statement");
     const events: ServerEvent[] = [];
-    const c = ctx("local", events, false);
+    const c = await ctx("local", events, false);
     const outcome = await requireApprovalPhase(c);
     expect(events.filter((e) => e.type === "approval_requested")).toHaveLength(1);
     expect(outcome.kind).toBe("halt");
@@ -105,7 +105,7 @@ describe("through the approval phase, under the most permissive profile", () => 
 
   it("refuses when nobody can be asked", async () => {
     seed('@Odalys texted "did you sell Merriweather yet"', "user_statement");
-    const c = ctx("cron" as CallContext, []);
+    const c = await ctx("cron" as CallContext, []);
     const outcome = await requireApprovalPhase(c);
     expect(outcome.kind).toBe("halt");
     expect(c.result?.status).toBe("blocked");

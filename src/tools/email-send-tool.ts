@@ -3,8 +3,10 @@ import { readFile } from "node:fs/promises";
 import { basename } from "node:path";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { canonicalizeAttachmentPath } from "./http-egress-guard.js";
-import { recentlyDone, markDone, fingerprintOf, describeAge } from "./idempotency.js";
-import { EMAIL_SEND_WINDOW_MS, getSmtpConfig } from "./email-config.js";
+import { fingerprintOf } from "./idempotency.js";
+import { getSmtpConfig } from "./email-config.js";
+import { addressesIn, recordSent } from "./email-sent-log.js";
+import { repeatSendReason } from "./email-repeat-check.js";
 import { resolveAgentPath, sessionIdOf } from "../workspace/paths.js";
 import { htmlToText } from "../app-renderer/sanitize.js";
 import { EgressPayloadBlocked, assertMailSendAllowed } from "../net/egress-send.js";
@@ -67,6 +69,80 @@ export function buildReferences(chainRaw: string, parentId: string | null): stri
   return [ids[0], ...ids.slice(ids.length - (MAX - 1))];
 }
 
+/** An email as it would be sent: the tool normalises its arguments (adds
+ *  "Re: ", drops unparseable reference tokens), so this is what is sent,
+ *  logged and compared, never the raw arguments. */
+export interface ComposedEmail {
+  to: string; cc: string; bcc: string; subject: string; text: string; html: string;
+  inReplyTo: string | null; references: string[]; attachmentsRaw: string;
+}
+
+export function composeEmail(args: Record<string, unknown>): ComposedEmail | { error: string } {
+  const str = (v: unknown) => (v ? String(v) : "");
+  const to = String(args.to);
+  const subjectRaw = String(args.subject);
+  const body = str(args.body);
+  const html = str(args.html);
+  const inReplyToRaw = str(args.in_reply_to);
+  const referencesRaw = str(args.references);
+  if (!body.trim() && !html.trim()) return { error: "Nothing to send: provide `body` (plain text) or `html`." };
+
+  // A caller that asked to thread and handed over an unusable id gets told,
+  // rather than getting a silently un-threaded send it cannot detect.
+  const inReplyTo = inReplyToRaw ? normalizeMessageId(inReplyToRaw) : null;
+  if (inReplyToRaw && !inReplyTo) {
+    return {
+      error:
+        `in_reply_to is not a valid Message-ID: ${JSON.stringify(inReplyToRaw)}. ` +
+        "Pass the `messageId` field exactly as email_read/email_search returned it, or omit it to send a new thread. " +
+        "Nothing was sent.",
+    };
+  }
+  // `references` is only meaningful as an extension of the parent's chain, so
+  // without in_reply_to there is nothing to attach it to. Dropping it silently
+  // would leave the caller believing it deepened the threading.
+  if (referencesRaw && !inReplyTo) {
+    return {
+      error:
+        "references was supplied without in_reply_to. The References chain is built from the parent " +
+        "message, so pass in_reply_to as well (the `messageId` of the message being replied to), or omit " +
+        "references. Nothing was sent.",
+    };
+  }
+  return {
+    to, cc: str(args.cc), bcc: str(args.bcc), html, inReplyTo, attachmentsRaw: str(args.attachments),
+    // A reply keeps the parent's subject under a single "Re: ". Clients that
+    // group by References would cope without it, but the subject is what the
+    // HUMAN reads in the thread list, and a reply titled differently from the
+    // thread it belongs to reads as a new conversation.
+    subject: inReplyTo && !REPLY_PREFIX_RE.test(subjectRaw) ? `Re: ${subjectRaw}` : subjectRaw,
+    // Never HTML-only: a text/plain alternative is table stakes, and some
+    // recipients (plain-text clients, screen readers, digest gateways) see
+    // nothing at all without it. `.trim()` and not truthiness: a body of "   "
+    // is a blank text/plain part, which is the very thing this guards against.
+    text: body.trim() ? body : htmlToText(html),
+    references: inReplyTo ? buildReferences(referencesRaw, inReplyTo) : [],
+  };
+}
+
+/**
+ * The composed email's identity: identical only when the recipient would get
+ * the identical email. EVERY field that changes what lands in a mailbox is in
+ * it (bcc adds a recipient, html changes what is rendered, in_reply_to and
+ * references change which thread it lands in), and it is taken over the
+ * COMPOSED values, so two inputs that compose the same email collide.
+ *
+ * Encoded as JSON so the field boundaries survive concatenation: every field
+ * is collapsed into ONE fingerprintOf part, so its "\u0001" join separator
+ * never falls between them (to="a",cc="b" must not collide with
+ * to="ab",cc=""). Per-field trim keeps "edge whitespace doesn't count".
+ */
+export function emailFingerprint(c: ComposedEmail): string {
+  return fingerprintOf(JSON.stringify(
+    [c.to, c.cc, c.bcc, c.subject, c.text, c.html, c.inReplyTo ?? "", c.references.join(" "), c.attachmentsRaw].map((s) => s.trim()),
+  ));
+}
+
 export const emailSend: ToolDefinition = {
   name: "email_send",
   effect: { class: "non-idempotent" },
@@ -95,95 +171,19 @@ export const emailSend: ToolDefinition = {
     },
     required: ["to", "subject"],
   },
+  // The same message again to someone who has not answered asks the user
+  // first (email-repeat-check.ts): code finds the candidate, a model judges it.
+  confirmWithUser: (args) => {
+    const composed = composeEmail(args);
+    return "error" in composed ? null : repeatSendReason(composed, emailFingerprint(composed));
+  },
+  describeCall: (args) => `Email ${String(args.to ?? "")}: "${String(args.subject ?? "")}"`,
   async execute(args: Record<string, unknown>): Promise<ToolResult> {
     const cfg = getSmtpConfig();
     if (typeof cfg === "string") return { content: cfg, isError: true };
-    const to = String(args.to);
-    const subjectRaw = String(args.subject);
-    const body = args.body ? String(args.body) : "";
-    const html = args.html ? String(args.html) : "";
-    const cc = args.cc ? String(args.cc) : "";
-    const bcc = args.bcc ? String(args.bcc) : "";
-    const inReplyToRaw = args.in_reply_to ? String(args.in_reply_to) : "";
-    const referencesRaw = args.references ? String(args.references) : "";
-    const attachmentsRaw = args.attachments ? String(args.attachments) : "";
-
-    if (!body.trim() && !html.trim()) {
-      return { content: "Nothing to send: provide `body` (plain text) or `html`.", isError: true };
-    }
-
-    // A caller that asked to thread and handed over an unusable id gets told,
-    // rather than getting a silently un-threaded send it cannot detect.
-    const inReplyTo = inReplyToRaw ? normalizeMessageId(inReplyToRaw) : null;
-    if (inReplyToRaw && !inReplyTo) {
-      return {
-        content:
-          `in_reply_to is not a valid Message-ID: ${JSON.stringify(inReplyToRaw)}. ` +
-          "Pass the `messageId` field exactly as email_read/email_search returned it, or omit it to send a new thread. " +
-          "Nothing was sent.",
-        isError: true,
-      };
-    }
-
-    // `references` is only meaningful as an extension of the parent's chain, so
-    // without in_reply_to there is nothing to attach it to. Dropping it silently
-    // would leave the caller believing it deepened the threading.
-    if (referencesRaw && !inReplyTo) {
-      return {
-        content:
-          "references was supplied without in_reply_to. The References chain is built from the parent " +
-          "message, so pass in_reply_to as well (the `messageId` of the message being replied to), or omit " +
-          "references. Nothing was sent.",
-        isError: true,
-      };
-    }
-
-    // A reply keeps the parent's subject under a single "Re: ". Clients that
-    // group by References would cope without it, but the subject is what the
-    // HUMAN reads in the thread list, and a reply titled differently from the
-    // thread it belongs to reads as a new conversation.
-    const subject = inReplyTo && !REPLY_PREFIX_RE.test(subjectRaw) ? `Re: ${subjectRaw}` : subjectRaw;
-    // Never HTML-only: a text/plain alternative is table stakes, and some
-    // recipients (plain-text clients, screen readers, digest gateways) see
-    // nothing at all without it. `.trim()` and not truthiness: a body of "   "
-    // is a blank text/plain part, which is the very thing this guards against.
-    const text = body.trim() ? body : htmlToText(html);
-    const references = inReplyTo ? buildReferences(referencesRaw, inReplyTo) : [];
-
-    // Catastrophic-tier idempotency: a real recipient receiving the same
-    // email twice is real damage. Hash payload + recipients; refuse re-send
-    // within the window with an explicit "already sent" message so the
-    // model knows to surface it rather than retry. EVERY field that changes
-    // what lands in a mailbox is in here â€” bcc adds a recipient, html
-    // changes what is rendered, in_reply_to/references change which thread
-    // it lands in â€” because a field outside the fingerprint makes a
-    // genuinely different email look like a duplicate and get dropped.
-    //
-    // The COMPOSED values are hashed, never the raw arguments: this tool
-    // normalises inputs (adds "Re: ", drops unparseable reference tokens), so
-    // two different inputs that compose the identical email must collide. Hash
-    // the raw input and the recipient gets the same message twice.
-    //
-    // Encoded as JSON so the field boundaries survive concatenation. Every
-    // field is collapsed into ONE fingerprintOf part here, so its "\u0001"
-    // join separator never falls between them — without the encoding
-    // to="a",cc="b" would collide with to="ab",cc="". Per-field trim
-    // preserves fingerprintOf's "edge whitespace doesn't count" behaviour.
-    const fp = fingerprintOf(
-      JSON.stringify(
-        [to, cc, bcc, subject, text, html, inReplyTo ?? "", references.join(" "), attachmentsRaw].map(s => s.trim()),
-      ),
-    );
-    const prior = recentlyDone("email_send", fp, EMAIL_SEND_WINDOW_MS);
-    if (prior) {
-      return {
-        content:
-          `Email to ${to} with subject "${subject}" was already sent ${describeAge(prior.ageMs)} ` +
-          `(prior result: ${prior.result}). Skipped this attempt to prevent a duplicate. ` +
-          `If you genuinely need to re-send, wait a few minutes or change the subject/body.`,
-        metadata: { skipped: "duplicate", priorResult: prior.result, ageMs: prior.ageMs },
-      };
-    }
+    const composed = composeEmail(args);
+    if ("error" in composed) return { content: composed.error, isError: true };
+    const { to, cc, bcc, subject, text, html, inReplyTo, references, attachmentsRaw } = composed;
 
     try {
       const transport = createTransport({ host: cfg.host, port: cfg.port, secure: cfg.port === 465, auth: { user: cfg.user, pass: cfg.pass } });
@@ -222,9 +222,15 @@ export const emailSend: ToolDefinition = {
       const files = (mailOpts.attachments as Array<{ content: Buffer }> | undefined) ?? [];
       assertMailSendAllowed([to, cc, bcc].filter(Boolean).join(", "), [to, cc, bcc, subject, text, html, ...files.map((f) => f.content)]);
       const info = await transport.sendMail(mailOpts);
-      markDone("email_send", fp, `messageId=${info.messageId}`);
+      try {
+        recordSent({
+          at: Date.now(), recipients: addressesIn([to, cc, bcc].join(", ")), subject, text,
+          messageId: info.messageId, inReplyTo, fingerprint: emailFingerprint(composed),
+        });
+      } catch { /* the mail went out; a lost record only costs the next repeat check */ }
+      // Who and what, so the reply (spoken, in a voice chat) can say it.
       return {
-        content: `Email sent successfully. Message ID: ${info.messageId}`,
+        content: `Email sent to ${[to, cc].filter(Boolean).join(", ")}: "${subject}". Message ID: ${info.messageId}`,
         metadata: { messageId: info.messageId, ...(inReplyTo ? { inReplyTo } : {}) },
       };
     } catch (err) {

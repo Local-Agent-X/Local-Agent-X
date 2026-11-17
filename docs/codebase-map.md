@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2073 non-test source files · 76 oversized · 269 nearing the size cap.
+**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2074 non-test source files · 76 oversized · 269 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -21,10 +21,10 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 184 | 30 | XL | 1 |
 | `src/security/` | 164 | 62 | XL | 2 |
-| `src/tools/` | 139 | 239 | XL | 9 |
+| `src/tools/` | 140 | 239 | XL | 9 |
 | `src/tool-execution/` | 101 | 90 | XL | 2 |
 | `src/workspace/` | 91 | 3 | M |  |
-| `src/canonical-loop/` | 89 | 292 | XL | 10 |
+| `src/canonical-loop/` | 89 | 293 | XL | 10 |
 | `src/providers/` | 80 | 28 | L | 1 |
 | `src/session/` | 69 | 13 | L |  |
 | `src/data-lineage/` | 60 | 12 | L |  |
@@ -68,10 +68,10 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/persistence/` | 11 | 2 | S |  |
 | `src/sync/` | 11 | 26 | L |  |
 | `src/calendar/` | 10 | 10 | M |  |
+| `src/agent-guards/` | 9 | 13 | L |  |
 | `src/codex-client/` | 9 | 7 | M |  |
 | `src/plugin-system/` | 9 | 10 | L | 1 |
 | `src/screen-stream/` | 9 | 11 | L |  |
-| `src/agent-guards/` | 8 | 13 | L |  |
 | `src/autopilot/` | 8 | 14 | L | 1 |
 | `src/bridge-voice/` | 8 | 5 | S |  |
 | `src/mcp-client/` | 8 | 11 | L | 1 |

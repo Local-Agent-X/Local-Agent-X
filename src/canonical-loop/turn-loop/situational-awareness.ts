@@ -49,6 +49,9 @@ import { createLogger } from "../../logger.js";
 import { resolveAgentPath, sessionWorkRootOf } from "../../workspace/paths.js";
 import { workRootGitLine } from "./work-root-git.js";
 import { missingNamedFiles } from "./request-named-paths.js";
+import { projectCheckLine } from "./project-check-line.js";
+import { opEditedSourcePaths } from "../middlewares/verify-gate.js";
+import { workspaceRoot } from "../../config.js";
 import { toldUserLine, TOLD_USER_WINDOW_MS, TOLD_USER_CAP } from "./told-user.js";
 import { recentInbox } from "../../inbox/index.js";
 import { comingUpLine, COMING_UP_WINDOW_MS, type UpcomingEvent } from "./coming-up.js";
@@ -121,6 +124,10 @@ export async function buildSituationalAwareness(op: Op, turnIdx: number): Promis
   // goal is restated: by then the agent is deep enough in that a named output
   // never written is the thing most worth knowing (request-named-paths.ts).
   const missingFiles = firstUserText ? missingNamedFiles(firstUserText, (p) => resolveAgentPath(p, sessionId || undefined)) : [];
+  // Once the request has edited source, the project's own check, so the agent
+  // runs that command instead of guessing at one (project-check-line.ts).
+  const edited = opEditedSourcePaths(op.id).map((p) => resolveAgentPath(p, sessionId || undefined));
+  const projectCheck = projectCheckLine(edited, workspaceRoot()) ?? undefined;
   const now = new Date();
   // What LAX told the user outside this chat (the mail watcher's alerts and
   // digest, a job's result): on a request's first turn, so a new message about
@@ -132,6 +139,7 @@ export async function buildSituationalAwareness(op: Op, turnIdx: number): Promis
   const digest = composeDigest({
     turnIdx, recent, firstUserText, successCriteria, constraints, restateAfter, openTasks, missingFiles,
     gitStatus: gitStatus ?? undefined,
+    projectCheck,
     now,
     toldUser,
     comingUp,
@@ -168,6 +176,8 @@ export function composeDigest(input: {
   openTasks?: { id: string; description: string }[];
   /** The session's repository state, one line (work-root-git.ts). */
   gitStatus?: string;
+  /** The project's own check, once the request has edited source (project-check-line.ts). */
+  projectCheck?: string;
   /** Files the request names that are not on disk now (request-named-paths.ts). */
   missingFiles?: string[];
   /** The clock, rendered as the user's local time. */
@@ -204,6 +214,7 @@ export function composeDigest(input: {
   const recentLine = recentActionsLine(recent);
   if (recentLine) lines.push(recentLine);
   if (input.gitStatus) lines.push(input.gitStatus);
+  if (input.projectCheck) lines.push(input.projectCheck);
 
   const planLine = openStepsLine(openTasks);
   if (planLine) lines.push(planLine);

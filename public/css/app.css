@@ -1683,8 +1683,10 @@ body.agent-feeds-resizing .agent-feeds{transition:none!important}
 .chat-plan-step.in_progress{font-weight:600}
 .chat-plan-step.in_progress .chat-plan-mark{color:var(--accent)}
 .chat-plan-step.failed .chat-plan-mark{color:var(--danger,#e5484d)}
-.chat-wrapup{margin-top:10px;border:1px solid var(--border);border-radius:10px;padding:10px 12px;background:var(--surface,transparent);font-size:.85rem;display:flex;flex-direction:column;gap:8px}
-.chat-wrapup-recap{line-height:1.45}
+.chat-wrapup{margin-top:10px;display:flex;flex-direction:column;gap:10px}
+.chat-wrapup-recap{line-height:1.55}
+.chat-wrapup-recap>:first-child{margin-top:0}.chat-wrapup-recap>:last-child{margin-bottom:0}
+.chat-wrapup-question{border:1px solid var(--border);border-radius:10px;padding:10px 12px;background:var(--surface,transparent);font-size:.85rem;display:flex;flex-direction:column;gap:8px}
 .chat-wrapup-ask{font-weight:600}
 .chat-wrapup-actions{display:flex;flex-wrap:wrap;gap:8px}
 .chat-wrapup-action{border:1px solid var(--border);border-radius:999px;padding:4px 14px;background:transparent;color:var(--text);font:inherit;font-size:.8rem;cursor:pointer}

@@ -1,10 +1,15 @@
 /**
- * wrap_up — the agent's close of a turn that did work: a two-or-three-sentence recap
- * of what is now true and what is not done or not verified, and, when the next move is
- * the user's, one short question with one or two answer buttons. The chat draws it as a
- * box at the end of the reply, on the desktop and the phone, from the tool result's
- * `metadata.wrapUp` (live and from history, like show_card's card). A button only
- * sends its words as the user's next message.
+ * wrap_up — the agent's close of a turn that did work: its closing answer (what changed,
+ * how it was checked, what is not done or not verified) and, when the next move is the
+ * user's, one short question with one or two answer buttons. The chat draws the recap as
+ * the reply's last paragraph and the question below it, on the desktop and the phone,
+ * from the tool result's `metadata.wrapUp` (live and from history, like show_card's
+ * card). A button only sends its words as the user's next message.
+ *
+ * The recap IS the closing answer, not a box beside one. Asked for both, the model wrote
+ * only the box: across the 2026-11-17 parity battery a code reply's last prose was a
+ * mid-task line ("Edits are in. Now the type-check."), and the result lived in a recap
+ * capped at 400 characters. Claude Code's closing answer averaged about 1,340.
  *
  * A succeeded call ends the turn (its row's `closesTurn`, turn-loop/silent-tool-check.ts):
  * it goes out in the same response as the final answer, not as a step of its own.
@@ -26,11 +31,14 @@ export interface WrapUp {
   actions?: string[];
 }
 
+/** Room for a closing answer, not an essay. */
+export const RECAP_MAX_CHARS = 1500;
+
 const text = (v: unknown, max: number): string => (typeof v === "string" ? v.trim().slice(0, max) : "");
 
 /** The recap the arguments describe; null without one. Buttons need a question. */
 export function wrapUpOf(args: Record<string, unknown>): WrapUp | null {
-  const recap = text(args.recap, 400);
+  const recap = text(args.recap, RECAP_MAX_CHARS);
   if (!recap) return null;
   const wrap: WrapUp = { recap };
   const ask = text(args.ask, 120);
@@ -43,18 +51,18 @@ export function wrapUpOf(args: Record<string, unknown>): WrapUp | null {
 
 export const wrapUpTool: ToolDefinition = {
   name: "wrap_up",
-  compactDescription: "End a turn that did work, with your final answer: a 2-3 sentence recap box, optionally one question with 1-2 answer buttons.",
+  compactDescription: "End a turn that did work: `recap` is your closing answer; optionally one question with 1-2 answer buttons.",
   description:
-    "End a turn in which you changed files, ran commands or did multi-step work: the chat shows a box at the end of your reply " +
-    "with `recap` (two or three short sentences: what is now true, then what is not done or not verified) and, only when the next " +
-    "move is the user's (a choice, a go-ahead, an approval), one short question in `ask` with one or two short answer buttons in " +
-    "`actions` (1-3 words each, your recommendation first). A button sends its words as the user's reply. Call it once, in the " +
-    "same response as your final answer: the turn ends when it succeeds, so what the user should read goes in that response's " +
-    "text. Don't repeat the recap there. Skip it for a short answer or plain conversation.",
+    "End a turn in which you changed files, ran commands or did multi-step work. `recap` is your closing answer, shown as the " +
+    "last paragraph of your reply: what you changed, how you checked it, and what is not done or not verified, in a few plain " +
+    "sentences (markdown is fine). Write no other closing text: the recap is the answer. Only when the next move is the user's " +
+    "(a choice, a go-ahead, an approval), add one short question in `ask` with one or two short answer buttons in `actions` " +
+    "(1-3 words each, your recommendation first); a button sends its words as the user's reply. Call it once: the turn ends " +
+    "when it succeeds. Skip it for a short answer or plain conversation.",
   parameters: {
     type: "object",
     properties: {
-      recap: { type: "string", description: "Two or three short sentences: what is now true, and what is not done or not verified." },
+      recap: { type: "string", description: "Your closing answer: what you changed, how you checked it, what is not done or not verified." },
       ask: { type: "string", description: "One short question, only when the user must decide or approve something." },
       actions: { type: "array", items: { type: "string" }, description: "One or two short answers to `ask`, recommendation first." },
     },

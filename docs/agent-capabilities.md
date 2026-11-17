@@ -98,7 +98,7 @@ demand via tool search and aren't all listed here.)
 - `task_list` — List tasks.
 - `task_get` — Get a task's details.
 - `update_plan` — Keep the step list the user sees under the reply.
-- `wrap_up` — End a turn that did work with a short recap and, when needed, one question.
+- `wrap_up` — End a turn that did work with its closing answer and, when needed, one question.
 - `session_start` — Offer a separate task its own chat, which runs on its own and reports back.
 
 ### Agents

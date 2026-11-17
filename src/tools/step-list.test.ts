@@ -15,7 +15,7 @@ process.env.LAX_DATA_DIR = DATA_DIR;
 const TASKS_FILE = join(DATA_DIR, "tasks.json");
 
 const { taskTools, getOpenTasksForSession } = await import("./task-tools.js");
-const { wrapUpTool, wrapUpOf } = await import("./wrap-up.js");
+const { wrapUpTool, wrapUpOf, RECAP_MAX_CHARS } = await import("./wrap-up.js");
 const { isLedgerTool } = await import("../committing-tool-check.js");
 const tool = (n: string) => taskTools.find((t) => t.name === n)!;
 const plan = tool("update_plan");
@@ -76,6 +76,9 @@ describe("wrap_up", () => {
     expect(wrapUpOf({ recap: "Done.", ask: "Push it?", actions: ["Yes, push", "Not now", "Later"] }))
       .toEqual({ recap: "Done.", ask: "Push it?", actions: ["Yes, push", "Not now"] });
     expect(wrapUpOf({ recap: "  " })).toBeNull();
+    // The recap is the closing answer: room for one, cut beyond it.
+    expect(wrapUpOf({ recap: "x".repeat(1400) })!.recap).toHaveLength(1400);
+    expect(wrapUpOf({ recap: "x".repeat(RECAP_MAX_CHARS + 50) })!.recap).toHaveLength(RECAP_MAX_CHARS);
   });
 
   it("closes the step in progress and leaves a pending one open for the open-steps gate", async () => {

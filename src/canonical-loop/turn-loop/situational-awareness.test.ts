@@ -17,6 +17,11 @@ describe("composeDigest", () => {
     expect(d).toContain("Local time now: Wednesday, November 11 at 2:40 PM (America/Chicago).");
   });
 
+  it("names the project's own check when one is given, so the agent runs it as written", () => {
+    const line = "This project's own typecheck: `npx tsc --noEmit` in /p. Run it as written; its exit code is the verdict.";
+    expect(composeDigest({ turnIdx: 3, recent: [], firstUserText: "", projectCheck: line })).toContain(line);
+  });
+
   it("returns null when there's nothing useful (turn 0, no recent actions)", () => {
     expect(composeDigest({ turnIdx: 0, recent: [], firstUserText: "x" })).toBeNull();
   });

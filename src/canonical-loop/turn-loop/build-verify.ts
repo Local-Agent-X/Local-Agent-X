@@ -128,7 +128,8 @@ function reframePreamble(opId: string, channel: "build" | "test", output: string
   return lines.join("\n") + "\n\n";
 }
 
-const realProbe: FsProbe = {
+/** The project manifests as they are on disk (also project-check-line.ts). */
+export const realProbe: FsProbe = {
   exists: (p) => existsSync(p),
   readJson: (p) => {
     try {

@@ -65,14 +65,22 @@ function renderPlanList(steps) {
   return el;
 }
 
+// The recap is the reply's closing answer, so it reads as the reply's last
+// paragraph (markdown, like the reply above it); only the question and its
+// buttons sit in a box.
 function renderWrapUp(wrap) {
   const el = document.createElement('div');
   el.className = 'chat-wrapup';
   const actions = wrap.ask && Array.isArray(wrap.actions) ? wrap.actions.filter((a) => typeof a === 'string' && a) : [];
+  const recap = typeof md === 'function' ? md(wrap.recap) : esc(wrap.recap);
   el.innerHTML =
-    `<div class="chat-wrapup-recap">${esc(wrap.recap)}</div>` +
-    (wrap.ask ? `<div class="chat-wrapup-ask">${esc(wrap.ask)}</div>` : '') +
-    (actions.length ? '<div class="chat-wrapup-actions"></div>' : '');
+    `<div class="chat-wrapup-recap">${recap}</div>` +
+    (wrap.ask
+      ? '<div class="chat-wrapup-question">' +
+        `<div class="chat-wrapup-ask">${esc(wrap.ask)}</div>` +
+        (actions.length ? '<div class="chat-wrapup-actions"></div>' : '') +
+        '</div>'
+      : '');
   const row = el.querySelector('.chat-wrapup-actions');
   actions.forEach((label, i) => {
     const btn = document.createElement('button');

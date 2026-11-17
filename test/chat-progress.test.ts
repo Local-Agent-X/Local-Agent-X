@@ -68,6 +68,16 @@ describe("the recap", () => {
     expect(send).toHaveBeenCalledOnce();
   });
 
+  it("draws the recap as the reply's closing text, through the reply's markdown, and boxes only the question", () => {
+    g.md = (s: string) => `<p>${String(s).replace(/`([^`]+)`/g, "<code>$1</code>")}</p>`;
+    const el = p.renderWrapUp({ recap: "Renamed `area` in 3 files; `tsc` passes.", ask: "Push it?", actions: ["Yes"] });
+    expect(el.querySelector(".chat-wrapup-recap code")!.textContent).toBe("area");
+    expect(el.querySelector(".chat-wrapup-question .chat-wrapup-ask")!.textContent).toBe("Push it?");
+    expect(el.querySelector(".chat-wrapup-question button")).not.toBeNull();
+    expect(p.renderWrapUp({ recap: "Done." }).querySelector(".chat-wrapup-question")).toBeNull();
+    delete g.md;
+  });
+
   it("draws no buttons without a question", () => {
     expect(p.renderWrapUp({ recap: "Done.", actions: ["Yes"] }).querySelector("button")).toBeNull();
   });

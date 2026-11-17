@@ -103,9 +103,9 @@ describe("detectBuildCommand", () => {
 
   it("detects Rust and Go projects", () => {
     expect(detectBuildCommand(["/r/src/main.rs"], probeFrom({ "/r/Cargo.toml": true })))
-      .toEqual({ command: "cargo check", cwd: "/r", kind: "check" });
+      .toEqual({ command: "cargo check", cwd: "/r", kind: "check", requires: ["cargo"] });
     expect(detectBuildCommand(["/g/main.go"], probeFrom({ "/g/go.mod": true })))
-      .toEqual({ command: "go build ./...", cwd: "/g", kind: "check" });
+      .toEqual({ command: "go build ./...", cwd: "/g", kind: "check", requires: ["go"] });
   });
 
   it("returns null when no buildable project is found (never fabricates a verify)", () => {

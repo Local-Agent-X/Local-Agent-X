@@ -14,7 +14,8 @@
 // Per-op retry counter caps the fix loop so an unfixable build can't spin; it
 // clears on op terminal via clearBuildVerifyStateForOp (state-machine.ts).
 
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { programOnPath } from "../../tools/shell-path.js";
 import { detectBuildCommand, detectTestCommand, type FsProbe } from "../../agent-guards/index.js";
 import { opEditedSourcePaths, recordOrchestratorVerify } from "../middlewares/verify-gate.js";
 import { opOutstandingIntroducedErrors } from "../middlewares/post-edit-diagnostics.js";
@@ -134,6 +135,13 @@ const realProbe: FsProbe = {
       return JSON.parse(readFileSync(p, "utf-8"));
     } catch {
       return null;
+    }
+  },
+  list: (dir) => {
+    try {
+      return readdirSync(dir);
+    } catch {
+      return []; // not a directory, or unreadable: it names no project file
     }
   },
 };
@@ -256,6 +264,8 @@ export interface BuildVerifyOptions {
   exec?: (command: string, cwd: string, signal?: AbortSignal) => Promise<CheckRun>;
   /** Aborts the build when the op is cancelled; a Stop never waits on a build. */
   signal?: AbortSignal;
+  /** Override the installed-program check (default: programOnPath). */
+  hasProgram?: (program: string) => boolean;
 }
 
 const NO_RETRY: BuildVerifyGateResult = { nudge: "", shouldRetry: false, capReached: false, verifiedClean: false, confirmation: "" };
@@ -321,6 +331,14 @@ export async function runBuildVerifyGate(op: Op, opts: BuildVerifyOptions = {}):
   const detected = detectBuildCommand(editedPaths, probe, wsRoot);
   if (!detected) {
     logger.debug(`op=${op.id} edited source but no buildable project found in ${editedPaths.length} path(s) — can't self-verify`);
+    return NO_RETRY;
+  }
+  // A toolchain this computer doesn't have would fail with "command not
+  // found", which the verdict would read as the agent's edit breaking the build.
+  const hasProgram = opts.hasProgram ?? ((program: string) => programOnPath(program));
+  const missing = (detected.requires ?? []).filter((program) => !hasProgram(program));
+  if (missing.length > 0) {
+    logger.info(`op=${op.id} would run \`${detected.command}\` but ${missing.join(", ")} is not installed here — left unverified, not red`);
     return NO_RETRY;
   }
 

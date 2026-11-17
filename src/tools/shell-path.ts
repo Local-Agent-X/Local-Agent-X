@@ -64,3 +64,17 @@ export function repairedPath(currentPath: string | undefined): string {
     [...toolchainBinDirs(), ...bundledToolBinDirs()].filter((d) => existsSync(d)),
   );
 }
+
+/** Whether a shell command could run `program`: it is in a directory of the
+ *  PATH subprocesses get (repairedPath), as named or, on Windows, with one of
+ *  the PATHEXT extensions (`dotnet.exe`, `gradle.bat`). */
+export function programOnPath(
+  program: string,
+  pathValue: string = repairedPath(process.env.PATH),
+  exists: (p: string) => boolean = existsSync,
+): boolean {
+  const exts = platform() === "win32"
+    ? ["", ...(process.env.PATHEXT || ".COM;.EXE;.BAT;.CMD").split(";").filter(Boolean)]
+    : [""];
+  return pathValue.split(delimiter).some((dir) => dir !== "" && exts.some((ext) => exists(join(dir, program + ext))));
+}

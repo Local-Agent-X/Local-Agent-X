@@ -12,6 +12,7 @@
 
 import { dirname, relative } from "node:path";
 import { isSolutionTsconfig } from "../language-intel/tsconfig-layout.js";
+import { isToolchainProjectDir, toolchainCommand, toolchainRoot } from "./build-command-toolchains.js";
 
 /** Minimal filesystem surface the detector needs. */
 export interface FsProbe {
@@ -19,6 +20,9 @@ export interface FsProbe {
   exists(path: string): boolean;
   /** Parsed JSON at the path, or null if missing / unreadable / invalid. */
   readJson(path: string): unknown;
+  /** The names in a directory, for project files a project names after
+   *  itself (`App.csproj`); without it those projects go undetected. */
+  list?(dir: string): string[];
 }
 
 export interface BuildCommand {
@@ -29,6 +33,10 @@ export interface BuildCommand {
   /** What kind of check this is — typecheck is preferred (fast, side-effect
    *  free, catches the broken-reference class); build/check are fallbacks. */
   kind: "typecheck" | "build" | "check";
+  /** Programs that must be on PATH for the command to run at all. When one is
+   *  missing the gate skips the check rather than read "not installed" as a
+   *  broken build. Absent: nothing beyond the shell. */
+  requires?: string[];
 }
 
 // Manifests that mark a directory as a buildable project root. Order matters
@@ -153,12 +161,16 @@ function sameDir(a: string, b: string): boolean {
 function nearestProjectDir(filePath: string, fs: FsProbe, workspaceRoot?: string): string | null {
   const appDir = workspaceRoot === undefined ? null : workspaceAppDir(filePath, workspaceRoot);
   let dir = dirname(filePath);
+  const isCeiling = (d: string) => appDir !== null && sameDir(d, appDir);
   // dirname("/") === "/" — stop when we stop ascending.
   for (let prev = ""; dir !== prev; prev = dir, dir = dirname(dir)) {
     for (const m of MANIFESTS) {
       if (fs.exists(joinPath(dir, m))) return dir;
     }
-    if (appDir && sameDir(dir, appDir)) return null; // never escape the edited app
+    // Gradle, Maven, SwiftPM, Xcode, .NET, CMake, Meson, pub: a subproject
+    // builds from its root (build-command-toolchains.ts).
+    if (isToolchainProjectDir(dir, fs)) return toolchainRoot(dir, fs, isCeiling);
+    if (isCeiling(dir)) return null; // never escape the edited app
   }
   return null;
 }
@@ -214,10 +226,10 @@ function commandForDir(dir: string, fs: FsProbe): BuildCommand | null {
   // A bare tsconfig with no package.json — still type-checkable.
   if (hasTsconfig) return tscCheckCommand(dir, fs);
 
-  if (fs.exists(joinPath(dir, "Cargo.toml"))) return { command: "cargo check", cwd: dir, kind: "check" };
-  if (fs.exists(joinPath(dir, "go.mod"))) return { command: "go build ./...", cwd: dir, kind: "check" };
+  if (fs.exists(joinPath(dir, "Cargo.toml"))) return { command: "cargo check", cwd: dir, kind: "check", requires: ["cargo"] };
+  if (fs.exists(joinPath(dir, "go.mod"))) return { command: "go build ./...", cwd: dir, kind: "check", requires: ["go"] };
 
-  return null;
+  return toolchainCommand(dir, fs);
 }
 
 /**

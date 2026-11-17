@@ -119,6 +119,19 @@ describe("runBuildVerifyGate", () => {
     }
   });
 
+  it("a project whose toolchain isn't installed here is left unverified, never run and never red", async () => {
+    const swiftProbe: FsProbe = { exists: (p) => nrm(p) === at("Package.swift"), readJson: () => null };
+    const exec = vi.fn(RED);
+    const missing = await runBuildVerifyGate(op, { editedPaths: ["/proj/Sources/App/main.swift"], probe: swiftProbe, exec, hasProgram: () => false });
+    expect(exec).not.toHaveBeenCalled();
+    expect(missing).toMatchObject({ nudge: "", shouldRetry: false, verifiedClean: false });
+    expect(recordOrchestratorVerify).not.toHaveBeenCalled();
+
+    const installed = await runBuildVerifyGate(op, { editedPaths: ["/proj/Sources/App/main.swift"], probe: swiftProbe, exec, hasProgram: (p) => p === "swift" });
+    expect(exec).toHaveBeenCalledWith("swift build", PROJ, undefined);
+    expect(installed.shouldRetry).toBe(true);
+  });
+
   it("the command's exit code from the carry decides the verdict over the status it rendered", async () => {
     const r = await runBuildVerifyGate(op, {
       editedPaths: ["/proj/src/a.ts"],

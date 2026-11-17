@@ -28,7 +28,7 @@ import { getSessionForOp } from "../../ops/session-bridge.js";
 import { resolveAgentPath } from "../../workspace/paths.js";
 import { auditDoneClaim, AUDIT_EVIDENCE_LIMIT } from "../../classifiers/done-claim-audit.js";
 import { collectDiffEvidence } from "./diff-evidence.js";
-import { pathsNamedIn } from "./request-named-paths.js";
+import { locateNamedPath, pathsNamedIn, rootsNamedIn } from "./request-named-paths.js";
 import { createLogger } from "../../logger.js";
 import type { Op } from "../../ops/types.js";
 
@@ -91,11 +91,12 @@ export function namedPathEvidence(
   resolve: (p: string) => string,
   describe: (abs: string) => string = describeNamedPath,
 ): string {
+  const roots = rootsNamedIn(request);
   const lines: string[] = [];
   for (const p of pathsNamedIn(request)) {
-    let abs: string;
-    try { abs = resolve(p); } catch { continue; } // outside anything the agent may reach: not evidence
-    lines.push(`${p}: ${describe(abs)}`);
+    const found = locateNamedPath(p, roots, resolve);
+    if (!found) continue; // outside anything the agent may reach: not evidence
+    lines.push(`${p}: ${describe(found.abs)}`);
   }
   if (lines.length === 0) return "";
   return `FILES THE REQUEST NAMES, AS THEY ARE ON DISK NOW (however they were made):\n${lines.join("\n")}`;

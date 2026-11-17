@@ -12,7 +12,7 @@ import { runSpecAuditGate, clearSpecAuditStateForOp, _resetSpecAuditState, named
 import type { Op } from "../../ops/types.js";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 
 const op = (id: string) => ({ id } as Op);
 const PATHS = ["/proj/app/errors.ts"];
@@ -46,6 +46,15 @@ describe("namedPathEvidence", () => {
     expect(text).toContain("./notes/plan.md: does not exist");
     expect(text.match(/server\.crt/g)).toHaveLength(1);
     expect(text).not.toContain("check_cert.py"); // a bare name is not a path
+  });
+
+  it("describes a relative path as it is in the folder the request names, not the session's root", () => {
+    const project = mkdtempSync(join(tmpdir(), "spec-audit-project-"));
+    mkdirSync(join(project, "src"));
+    writeFileSync(join(project, "src", "index.ts"), "export {};\n");
+    const sessionRoot = mkdtempSync(join(tmpdir(), "spec-audit-session-"));
+    const text = namedPathEvidence(`In the project at ${project}, edit src/index.ts.`, (p) => (isAbsolute(p) ? p : join(sessionRoot, p)));
+    expect(text).toContain("src/index.ts: file, 11 bytes; begins: export {};");
   });
 
   it("is empty when the request names no path, and skips a path the resolver refuses", () => {

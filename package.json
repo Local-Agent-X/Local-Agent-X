@@ -111,6 +111,7 @@
     "qrcode": "^1.5.4",
     "qrcode-terminal": "^0.12.0",
     "sherpa-onnx": "^1.12.37",
+    "sherpa-onnx-node": "2.0.1",
     "sqlite-vec": "^0.1.9",
     "tesseract.js": "^7.0.0",
     "tldts": "^7.4.9",

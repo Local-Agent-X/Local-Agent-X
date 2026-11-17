@@ -6,10 +6,13 @@
  * only ever sees a path the security layer already validated, mirroring the
  * ocr-tool.ts split.
  *
- * Long recordings are walked one window at a time rather than decoded whole:
- * an hour of 16 kHz mono PCM16 is ~115 MB, and the point of taking a path
- * instead of a buffer is to never hold that. Windows are transcribed
- * sequentially because the local provider is a single ONNX session.
+ * On this computer (the default) the work is a hidden background job
+ * (transcription-job.ts): a recognizer on the server's own thread froze LAX
+ * for 15-20 s per minute of audio, and a 30-minute file outran the tool's
+ * time limit every time (2026-11-17). A cloud provider is network-bound, so
+ * its windows are walked here, one at a time rather than decoded whole: an
+ * hour of 16 kHz mono PCM16 is ~115 MB, and the point of taking a path
+ * instead of a buffer is to never hold that.
  */
 
 import { decodeFileSegmentToPcm16 } from "../bridge-voice/audio-codec.js";
@@ -18,6 +21,10 @@ import { isWhisperHallucination, resolveSttProviderName } from "../voice/stt-pro
 import { isLocalOnlyMode } from "../local-only-policy.js";
 import { stripTranscriptNoise } from "../voice/transcript-noise.js";
 import { probeMedia, isFfmpegAvailable } from "../ffmpeg-run.js";
+import { ffmpegBin } from "../ffmpeg-bin.js";
+import { ensureWhisperModelDownloaded, resolveWhisperVariant } from "../voice/whisper-model-fetch.js";
+import { resolveVoiceSettings } from "../voice/voice-session/settings.js";
+import { transcribeInBackground } from "./transcription-job.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("tools.transcribe-media");
@@ -47,6 +54,8 @@ export interface TranscriptResult {
   endSec: number;
   /** True when the file continues past endSec. */
   hasMore: boolean;
+  /** A local job is still transcribing past endSec in the background. */
+  stillRunning?: boolean;
 }
 
 function formatClock(totalSec: number): string {
@@ -64,9 +73,35 @@ export function formatTranscript(result: TranscriptResult): string {
   return result.windows.map(w => `[${formatClock(w.startSec)}] ${w.text}`).join("\n");
 }
 
+/** How long one call waits on a local job before answering with what is done:
+ *  inside the tool's 120 s limit, with room for the probe and the reply. */
+const LOCAL_WAIT_MS = 90_000;
+
+/** On this computer: a hidden background job (transcription-job.ts), so the
+ *  server's thread stays free and a long file outlives any one call. */
+async function transcribeLocal(path: string, durationSec: number, startSec: number, maxSpan: number, waitMs: number): Promise<TranscriptResult> {
+  const variant = resolveWhisperVariant({ variant: resolveVoiceSettings().whisperModel });
+  const model = await ensureWhisperModelDownloaded(undefined, { variant });
+  const job = await transcribeInBackground({ path, model, ffmpeg: ffmpegBin(), durationSec, startSec, maxSpanSec: maxSpan, waitMs });
+  if (job.error && job.segments.length === 0) throw new Error(job.error);
+  const windows = job.segments
+    .map((s) => ({ startSec: s.start, text: stripTranscriptNoise(s.text) }))
+    .filter((w) => w.text && !isWhisperHallucination(w.text));
+  const endSec = job.coveredTo;
+  logger.info(`[transcribe_media] ${path} ${formatClock(startSec)}-${formatClock(endSec)} → ${windows.length} window(s), ${job.complete ? "done" : "still running"}${job.native === false ? " (wasm engine)" : ""}`);
+  return {
+    windows,
+    durationSec,
+    startSec,
+    endSec,
+    hasMore: durationSec > 0 ? endSec < durationSec - 1 : !job.complete,
+    stillRunning: !job.complete && job.running,
+  };
+}
+
 export async function transcribeMediaFile(
   path: string,
-  opts: { startSec?: number; maxSpanSec?: number } = {},
+  opts: { startSec?: number; maxSpanSec?: number; waitMs?: number } = {},
 ): Promise<TranscriptResult> {
   if (!(await isFfmpegAvailable())) {
     throw new Error("ffmpeg is not available — it ships with the app and via ffmpeg-static; set LAX_FFMPEG to override");
@@ -96,6 +131,10 @@ export async function transcribeMediaFile(
   const hardEnd = probe.durationSec > 0
     ? Math.min(probe.durationSec, startSec + maxSpan)
     : startSec + maxSpan;
+
+  if (!provider || provider === "local-whisper") {
+    return transcribeLocal(path, probe.durationSec, startSec, maxSpan, opts.waitMs ?? LOCAL_WAIT_MS);
+  }
 
   const transcriber = await getSharedTranscriber();
   if (!transcriber) throw new Error("no speech-to-text provider is available");

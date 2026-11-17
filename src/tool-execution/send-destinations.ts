@@ -9,6 +9,7 @@
 
 import { addressesIn } from "../data-lineage/private-content.js";
 import { destinationSpecsOf } from "../tool-registry.js";
+import { resolveSttProviderName } from "../voice/stt-providers/index.js";
 import type { DestinationSpec } from "../tool-policy/tool-policies.types.js";
 
 export type Destination =
@@ -67,6 +68,10 @@ export function resolveSpec(spec: ArgsNamedSpec, args: Record<string, unknown>):
     case "user": return [];
     case "model": return [];
     case "service": return [{ kind: "service", name: spec.name }];
+    case "speech-to-text": {
+      const provider = resolveSttProviderName();
+      return !provider || provider === "local-whisper" ? [] : [{ kind: "service", name: `${provider} speech-to-text` }];
+    }
     case "unknown": return [unknownDestination(spec.label)];
   }
 }

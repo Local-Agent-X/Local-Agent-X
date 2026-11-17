@@ -107,16 +107,16 @@ function modelFields(paths: WhisperModelPaths): Record<string, unknown> {
   };
 }
 
-export function buildConfig(paths: WhisperModelPaths, provider: WhisperProvider): unknown {
+/** The recognizer config both sherpa-onnx builds take. `numThreads` must be 1
+ *  on the WASM build (no SharedArrayBuffer/pthread support: more throws an
+ *  Emscripten exception pointer at init); the native addon file transcription
+ *  runs on (tools/transcription-job-child.ts) uses several. */
+export function buildConfig(paths: WhisperModelPaths, provider: WhisperProvider, numThreads = 1): unknown {
   return {
     modelConfig: {
       ...modelFields(paths),
       tokens: paths.tokens,
-      // Must be 1 on sherpa-onnx's WASM build (no SharedArrayBuffer/pthread
-      // support). Setting > 1 throws an Emscripten exception pointer at
-      // OfflineRecognizer init. For parallelism we'd need the native addon
-      // build of sherpa-onnx.
-      numThreads: 1,
+      numThreads,
       provider,
       debug: 0,
     },

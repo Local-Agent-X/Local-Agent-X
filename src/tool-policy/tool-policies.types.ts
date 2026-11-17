@@ -122,6 +122,9 @@ export type OutputKind = "command" | "http-body" | "file-content" | "mailbox";
  *                    navigation names (live state); `arg` names the URL a
  *                    navigation opens, when the call carries one
  *   foreground-app — the desktop app with the foreground (live state)
+ *   speech-to-text — the speech-to-text provider the install is set to
+ *                    (transcribe_media): no destination when it is the model
+ *                    on this computer, that cloud service when it is not
  *   unknown        — somewhere the check cannot name, described by `label`
  * A spec with `forActions` applies to those actions only, in place of the
  * unscoped ones.
@@ -135,6 +138,7 @@ export type DestinationSpec = (
   | { to: "model" }
   | { to: "browser-page"; arg?: string }
   | { to: "foreground-app" }
+  | { to: "speech-to-text" }
   | { to: "unknown"; label: string }
 ) & { forActions?: readonly string[] };
 

@@ -41,6 +41,8 @@ function openMediaPath(args: Record<string, unknown>, allowed: ReadonlySet<strin
   }
 }
 
+const clock = (sec: number) => `${Math.floor(sec / 60)}:${String(Math.floor(sec % 60)).padStart(2, "0")}`;
+
 export const transcribeMediaTool: ToolDefinition = {
   name: "transcribe_media",
   description:
@@ -48,7 +50,8 @@ export const transcribeMediaTool: ToolDefinition = {
     "Use this whenever the user asks what was said in a recording, meeting, voice note, podcast, or video — " +
     "including a video, where this reads the audio track (pair it with read_video_frames to also SEE the video). " +
     "Supports mp3, m4a, wav, ogg, opus, flac, aac, and every video container. " +
-    "Long recordings return the first 30 minutes; the result names its end_at — call again with start_at=end_at to continue.",
+    "Runs on this computer in the background: a long recording may come back partly done and still running — call again with start_at=end_at to continue the same job (never restarts). " +
+    "Long recordings return at most 30 minutes per call; the result names its end_at — call again with start_at=end_at to continue.",
   parameters: {
     type: "object",
     properties: {
@@ -67,18 +70,25 @@ export const transcribeMediaTool: ToolDefinition = {
         startSec: args.start_at != null ? Number(args.start_at) : 0,
       });
       const endAt = Math.floor(result.endSec);
-      const span = { start_at: result.startSec, end_at: endAt, has_more: result.hasMore };
+      const span = { start_at: result.startSec, end_at: endAt, has_more: result.hasMore, ...(result.stillRunning ? { still_running: true } : {}) };
+      // A local job keeps transcribing after this call returns: the next call
+      // continues it, so the agent waits on it rather than starting over.
+      const running = result.stillRunning
+        ? `\n\nStill transcribing in the background on this computer (${clock(endAt)} of ${clock(result.durationSec)} done). ` +
+          `Call transcribe_media again with start_at=${endAt} for the rest: it continues the same job, it does not restart. Tell the user it is still going rather than giving up.`
+        : "";
 
       if (result.windows.length === 0) {
+        if (result.stillRunning) return { content: `Transcribing ${opened.canonicalPath}: nothing from ${result.startSec}s is finished yet.${running}`, metadata: span };
         return { content: `No speech detected in ${opened.canonicalPath} between ${result.startSec}s and ${endAt}s (end_at=${endAt}).`, metadata: span };
       }
 
       const header = result.durationSec > 0
         ? `Transcript of ${opened.canonicalPath} (${result.durationSec.toFixed(0)}s total), covering ${result.startSec}s-${endAt}s (start_at=${result.startSec}, end_at=${endAt})`
         : `Transcript of ${opened.canonicalPath}, covering ${result.startSec}s-${endAt}s (start_at=${result.startSec}, end_at=${endAt})`;
-      const more = result.hasMore
+      const more = running || (result.hasMore
         ? `\n\nThis file continues past ${endAt}s — call transcribe_media again with start_at=${endAt} for the rest.`
-        : "";
+        : "");
 
       // A transcript is text the FILE supplied, not the user — wrap it so a
       // recording that reads out instructions is quoted, not obeyed.

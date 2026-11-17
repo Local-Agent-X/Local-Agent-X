@@ -197,7 +197,17 @@ describe("a file the model only looks at", () => {
     expect(await verdict(ctx("read_video_frames", { path: join(homedir(), "Videos", "demo.mp4") }, "what happens in the demo?"))).toBeUndefined();
   });
 
-  it("transcribe_media, which ships audio to its own speech-to-text provider, still asks", async () => {
-    expect(await verdict(ctx("transcribe_media", { path: CLIP }, "summarize the standup"))).toContain("an unknown destination");
+  it("transcribe_media on this computer's own model sends nothing, so it never asks", async () => {
+    delete process.env.LAX_VOICE_STT_PROVIDER;
+    expect(await verdict(ctx("transcribe_media", { path: CLIP }, "summarize the standup"))).toBeUndefined();
+  });
+
+  it("transcribe_media set to a cloud speech-to-text service asks, naming that service", async () => {
+    process.env.LAX_VOICE_STT_PROVIDER = "groq";
+    try {
+      expect(await verdict(ctx("transcribe_media", { path: CLIP }, "summarize the standup"))).toContain("groq speech-to-text");
+    } finally {
+      delete process.env.LAX_VOICE_STT_PROVIDER;
+    }
   });
 });

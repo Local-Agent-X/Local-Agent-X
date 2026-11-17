@@ -96,6 +96,44 @@ describe("human verification detection", () => {
 		)).toBe(false);
 	});
 
+	it("detects the other providers' challenge frames, but not DataDome's self-clearing interstitial", () => {
+		expect(onPage(frame("https://client-api.arkoselabs.com/fc/gc/?token=abc"))).toBe(true);
+		expect(onPage(frame("https://geo.captcha-delivery.com/captcha/?initialCid=abc"))).toBe(true);
+		expect(onPage(frame("https://static.geetest.com/static/js/gt.js"))).toBe(true);
+		expect(onPage(frame("https://abc.token.awswaf.com/abc/captcha"))).toBe(true);
+		expect(onPage(frame("https://smartcaptcha.yandexcloud.net/checkbox"))).toBe(true);
+		expect(onPage(frame("https://service.mtcaptcha.com/mtcv1/client/iframe.html"))).toBe(true);
+		expect(onPage(frame("https://geo.captcha-delivery.com/interstitial/?initialCid=abc"))).toBe(false);
+	});
+
+	it("detects a press-and-hold button on any page, and the pages that host one by their title", () => {
+		expect(requiresHumanVerification(observation({
+			title: "Walmart.com",
+			currentRefs: [{ role: "button", name: "Press & Hold" }],
+		}) as never)).toBe(true);
+		expect(requiresHumanVerification(observation({ title: "Robot or human?", currentRefs: [] }) as never)).toBe(true);
+		expect(requiresHumanVerification(observation({ title: "Access to this page has been denied", currentRefs: [] }) as never)).toBe(true);
+		expect(requiresHumanVerification(observation({
+			title: "Robot or human?",
+			currentRefs: [{ role: "link", name: "Shop toys" }],
+		}) as never)).toBe(false);
+		expect(snapshotShowsHumanVerification("Page: Walmart.com — https://www.walmart.com/blocked\n[3]<button>Press &amp; Hold</button>\n[4]<button>Press & Hold</button>")).toBe(true);
+	});
+
+	it("detects a field asking for the characters in a picture, not an ordinary search box", () => {
+		const field = (ref: Record<string, unknown>) => requiresHumanVerification(observation({
+			title: "Amazon.com",
+			currentRefs: [{ role: "textbox", name: "", ...ref }],
+		}) as never);
+		expect(field({ name: "Type characters" })).toBe(true);
+		expect(field({ ids: { placeholder: "Type characters", id: "captchacharacters" } })).toBe(true);
+		expect(field({ ids: { id: "captcha_input" } })).toBe(true);
+		expect(field({ name: "Enter the characters you see below" })).toBe(true);
+		expect(field({ name: "Search Amazon", ids: { id: "twotabsearchtextbox" } })).toBe(false);
+		expect(snapshotShowsHumanVerification("Page: Amazon.com — https://www.amazon.com/errors/validateCaptcha\n[7]<textbox type=text>Type characters</textbox>")).toBe(true);
+		expect(snapshotShowsHumanVerification("Page: Search — https://example.com/\n[7]<textbox type=text>Search</textbox>")).toBe(false);
+	});
+
 	it("does not read a provider out of page text", () => {
 		expect(snapshotShowsHumanVerification(
 			'Page: reCAPTCHA v3 setup — https://developers.google.com/recaptcha/docs/v3\n[2]<link>https://www.google.com/recaptcha/api.js</link>',

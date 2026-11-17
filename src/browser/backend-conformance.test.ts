@@ -46,7 +46,7 @@ const BACKEND_METHODS = [
 	"selectByRef",
 	"uploadByRef",
 	"scroll",
-	"tapAt",
+	"relayInput",
 	// Page reads / tabs
 	"extractText",
 	"screenshot",

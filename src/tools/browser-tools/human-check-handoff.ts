@@ -19,6 +19,7 @@
 import { unlink } from "node:fs/promises";
 import type { ToolResult } from "../../types.js";
 import { getBrowserManager, withBrowserLock } from "../../browser/index.js";
+import type { RelayedInput } from "../../browser/relayed-input.js";
 import { HUMAN_VERIFICATION_MESSAGE, requiresHumanVerification, snapshotShowsHumanVerification } from "../../browser/human-verification.js";
 import { isUserChat, sendAppMessageWhenIdle } from "../../chat-ws/app-message.js";
 import { postToInbox, resolveInboxWhere } from "../../inbox/index.js";
@@ -42,7 +43,7 @@ const inboxAlert: HumanCheckAlert = (sessionId, site) => {
   postToInbox({
     kind: "agent-message",
     title: `${site} wants you to confirm you're human`,
-    body: "Open this and tick the box on the page. Your agent finishes what you asked as soon as you do.",
+    body: "Open this and do the check on the page: tick, hold, slide or type, whatever it asks. Your agent finishes what you asked as soon as you do.",
     needsYou: true,
     key: humanCheckKey(sessionId),
     link: { sessionId, url: humanCheckLink(sessionId) },
@@ -70,7 +71,7 @@ export function resultShowsHumanCheck(result: ToolResult): boolean {
 
 export function resumeMessage(site: string): string {
   return [
-    `(Sent by the app, not typed by the user: the "I am human" check on ${site} is no longer on screen, so the user has dealt with it.)`,
+    `(Sent by the app, not typed by the user: the human check on ${site} is no longer on screen, so the user has dealt with it.)`,
     "Look at the browser page and carry on with what the user asked. Their earlier yes still stands for what they approved; " +
       "anything that needs a fresh yes still asks for one. If the check is back, say so in one line and stop.",
   ].join("\n");
@@ -151,14 +152,37 @@ export async function humanCheckPicture(sessionId: string): Promise<{ open: fals
   return { open: true, site: h.site, mime: shot.image.mime, b64: shot.image.b64 };
 }
 
-/** The user's tap on that picture, at a fraction (0..1) of it. Refused unless
- *  a handoff is open for the chat. The page is checked again right after, so
- *  the chat resumes as soon as the box is ticked. */
-export async function tapHumanCheck(sessionId: string, fx: number, fy: number): Promise<boolean> {
+/** A press the phone never released (the app closed, the network dropped)
+ *  is let go after this long, so the page is not left with its button held. */
+export const HELD_TOO_LONG_MS = 20_000;
+const heldSince = new Map<string, { timer: ReturnType<typeof setTimeout>; x: number; y: number }>();
+
+function trackHold(sessionId: string, input: RelayedInput): void {
+  const held = heldSince.get(sessionId);
+  if (input.kind === "press") {
+    if (held) clearTimeout(held.timer);
+    const timer = setTimeout(() => {
+      heldSince.delete(sessionId);
+      void withBrowserLock(sessionId, () => getBrowserManager(sessionId).relayInput({ kind: "release", x: input.x, y: input.y }))
+        .catch((e) => logger.debug(`letting go of a stale press failed: ${(e as Error).message}`));
+    }, HELD_TOO_LONG_MS);
+    timer.unref?.();
+    heldSince.set(sessionId, { timer, x: input.x, y: input.y });
+  } else if (held && (input.kind === "release" || input.kind === "tap")) {
+    clearTimeout(held.timer);
+    heldSince.delete(sessionId);
+  }
+}
+
+/** The user's input on that picture: a tap, the steps of a drag or a hold
+ *  (press, move, release), or typing (relayed-input.ts). Refused unless a
+ *  handoff is open for the chat. The page is checked again a second after a
+ *  tap, a release or a key, so the chat resumes as soon as the check is done. */
+export async function relayHumanCheck(sessionId: string, input: RelayedInput): Promise<boolean> {
   if (!live.has(sessionId)) return false;
-  if (![fx, fy].every((v) => Number.isFinite(v) && v >= 0 && v <= 1)) throw new Error("x and y must be between 0 and 1");
-  await withBrowserLock(sessionId, () => getBrowserManager(sessionId).tapAt(fx, fy));
-  setTimeout(() => { void poll(sessionId); }, 1_000).unref?.();
+  await withBrowserLock(sessionId, () => getBrowserManager(sessionId).relayInput(input));
+  trackHold(sessionId, input);
+  if (input.kind !== "press" && input.kind !== "move") setTimeout(() => { void poll(sessionId); }, 1_000).unref?.();
   return true;
 }
 
@@ -167,5 +191,7 @@ export async function _pollHumanCheckForTest(sessionId: string): Promise<void> {
 export function _setHumanCheckClockForTest(clock: (() => number) | null): void { now = clock ?? Date.now; }
 export function _resetHumanCheckHandoffForTest(): void {
   for (const id of [...live.keys()]) stop(id);
+  for (const held of heldSince.values()) clearTimeout(held.timer);
+  heldSince.clear();
   alertUser = inboxAlert; now = Date.now;
 }

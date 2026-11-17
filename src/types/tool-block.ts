@@ -19,7 +19,7 @@ export const BLOCK_LAYERS = [
   // Outbound gates (tool-execution/egress-gates.ts, browser/page-egress-taint.ts).
   "egress-guard", "egress-aggregate", "data-lineage", "canary",
   // Gates inside a tool.
-  "browser-sensitive-page", "browser-human-verification", "browser-download", "browser-secret-on-screen",
+  "browser-sensitive-page", "browser-human-verification", "browser-download", "browser-secret-on-screen", "browser-purchase",
   "android-sdk", "ask-user", "input-driver", "antivirus", "operator-only", "job-authority", "app-build",
   "dedup-cache", "plugin",
   /** Not a refusal: show_unblock_control re-surfacing a block's control on an

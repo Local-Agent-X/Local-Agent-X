@@ -23,7 +23,7 @@
 
 import type { ToolDefinition, ToolResult } from "../../types.js";
 import { getBrowserManager, getSecretBrowserOps, closeBrowser, withBrowserLock, resetWedgedBrowser, BrowserWedgeError } from "../../browser/index.js";
-import type { BrowserEngine, WedgeRecoveryOutcome } from "../../browser/index.js";
+import type { BrowserBackend, BrowserEngine, WedgeRecoveryOutcome } from "../../browser/index.js";
 import { getToolTimeout } from "../../tool-execution/tool-timeout.js";
 import { withBridgeDeadline } from "../../browser/bridge-deadline.js";
 import { raceWedgeDeadline, WEDGED } from "./wedge-deadline.js";
@@ -74,6 +74,7 @@ import { runWithSensitiveReadGrant, secrecyOpenWarning, sensitivePageStub } from
 import { recordSiteTokens } from "../../browser/site-provenance.js";
 import { onEventOf, sessionIdOf, unattendedCall } from "../../tool-execution/internal-args.js";
 import { handOffHumanCheck } from "./human-check-handoff.js";
+import { noteOrderClick, purchaseGate } from "./purchase-guard.js";
 
 // Names the action that wedged. Without it the circuit-breaker FAIL only says
 // "an action hung" — which action is left to inference. The destructive part is
@@ -159,8 +160,13 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
           // and the open-warning runs as ONE unit so an approved read grant
           // can scope to exactly this call's async context.
           const runGated = async (): Promise<ToolResult> => {
-          const verificationBlock = await humanVerificationBlock(action, manager, args);
+          // One page read shared by the gates that need it.
+          let observed: ReturnType<BrowserBackend["observe"]> | null = null;
+          const look = () => (observed ??= manager.observe());
+          const verificationBlock = await humanVerificationBlock(action, manager, args, look);
           if (verificationBlock) return verificationBlock;
+          const orderGate = await purchaseGate(action, args, manager.getCurrentUrl(), sessionId, onEvent, look);
+          if (orderGate.kind === "halt") return orderGate.result;
           const toolMs = getToolTimeout(BROWSER_TOOL_NAME);
           // ONE budget for every bridge op this action issues. A screenshot
           // makes three round trips to the desktop, each with its own fixed
@@ -236,7 +242,7 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
               ? blocked(sensitive, { ...result.metadata, browserStatus })
               : { content: sensitive, isError: result.isError, status: result.status, metadata: { ...result.metadata, browserStatus } };
           }
-          const finalResult = await applyProgressGuard(action, manager, sessionId, result);
+          const finalResult = noteOrderClick(await applyProgressGuard(action, manager, sessionId, result), orderGate);
           if (!finalResult.isError && typeof finalResult.content === "string") recordSiteTokens(sessionId, manager.getCurrentUrl(), finalResult.content);
           // Open-level transparency: the first browser call of a session that
           // ENDS on a secret-bearing page (any action — landing snapshots and

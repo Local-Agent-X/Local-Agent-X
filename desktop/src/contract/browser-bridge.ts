@@ -33,7 +33,9 @@ export interface BrowserViewInfo {
  *  cannot change which target it is. */
 export type BrowserLifecycleOp = "create" | "show" | "hide" | "close" | "setBounds" | "ping" | "list" | "adopt" | "release" | "target";
 
-export type BridgeInputModifier = "shift" | "control" | "alt" | "meta";
+/** `leftButtonIsDown` marks a mouseMove made while the button is held (a
+ *  person's drag relayed from the phone), so the page sees `buttons === 1`. */
+export type BridgeInputModifier = "shift" | "control" | "alt" | "meta" | "leftButtonIsDown";
 export interface BridgeMouseEvent {
   type: "mouseDown" | "mouseUp" | "mouseMove";
   x: number;

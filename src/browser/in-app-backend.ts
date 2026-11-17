@@ -72,7 +72,8 @@ import {
 	fillRefInApp,
 	type InAppActionContext,
 } from "./in-app-actions.js";
-import { scrollInApp, tapAtFractionInApp } from "./in-app-scroll.js";
+import { scrollInApp } from "./in-app-scroll.js";
+import { relayInputInApp, type RelayedInput } from "./relayed-input.js";
 import { uploadRefInApp } from "./in-app-upload.js";
 import { clickSelectorOrTextFallback, fillSelectorInApp, selectOptionInApp } from "./in-app-selector-actions.js";
 import type { BrowserBackend, InteractionResult, ScrollOptions } from "./backend.js";
@@ -277,9 +278,9 @@ export class ElectronInAppBackend implements BrowserBackend {
 		return scrollInApp(this.actionContext(), opts);
 	}
 
-	async tapAt(fx: number, fy: number): Promise<void> {
+	async relayInput(input: RelayedInput): Promise<void> {
 		await this.ensureView();
-		await tapAtFractionInApp(this.actionContext(), fx, fy);
+		await relayInputInApp(this.actionContext(), input);
 	}
 
 	// ── Page reads / tabs ──

@@ -9,12 +9,41 @@ export const HUMAN_VERIFICATION_MESSAGE =
 export const HUMAN_VERIFICATION_RECOVERY =
 	"Tell the user a verification check is on screen and ask them to complete it in the browser. Continue with any other part of the request meanwhile, then retry here.";
 
-const PROVIDER_FRAME =
-	/(?:challenges\.cloudflare\.com\/.*turnstile|hcaptcha\.com\/.*captcha|(?:google\.com|recaptcha\.net)\/recaptcha)/i;
+/** Frames that only ever carry a challenge: Cloudflare Turnstile, hCaptcha,
+ *  reCAPTCHA, Arkose (FunCaptcha), DataDome's captcha page, GeeTest, AWS WAF,
+ *  Yandex SmartCaptcha and MTCaptcha. DataDome's /interstitial/ frame is a
+ *  device check that clears by itself, so only its /captcha/ page counts. */
+const PROVIDER_FRAME = new RegExp([
+	String.raw`challenges\.cloudflare\.com\/.*turnstile`,
+	String.raw`hcaptcha\.com\/.*captcha`,
+	String.raw`(?:google\.com|recaptcha\.net)\/recaptcha`,
+	String.raw`(?:arkoselabs|funcaptcha)\.com\/`,
+	String.raw`captcha-delivery\.com\/captcha`,
+	String.raw`geetest\.com\/`,
+	String.raw`(?:captcha|token)\.awswaf\.com\/`,
+	String.raw`smartcaptcha\.yandexcloud\.net\/`,
+	String.raw`mtcaptcha\.com\/`,
+].join("|"), "i");
 const CHALLENGE_TITLE =
-	/^(?:just a moment(?:\.\.\.)?|attention required!?\s*\|\s*cloudflare|performing security verification)$/i;
+	/^(?:just a moment(?:\.\.\.)?|attention required!?\s*\|\s*cloudflare|performing security verification|access to this page has been denied\.?|robot or human\??|are you a robot\??|human verification|pardon our interruption\.*)$/i;
 const CHALLENGE_CONTROL =
-	/^(?:verify you are human|i(?:'|’)m not a robot|hcaptcha|recaptcha)$/i;
+	/^(?:verify you are human|i(?:'|’)m not a robot|hcaptcha|recaptcha|press (?:&|and) hold)$/i;
+
+/** A control that is only ever a challenge, whatever the page's title: the
+ *  press-and-hold button (HUMAN/PerimeterX, on Walmart and others). */
+const HOLD_CONTROL = /^press (?:&|and) hold(?: (?:the button|to confirm you are (?:a )?human))?$/i;
+
+/** A field asking for the characters in a picture (Amazon's "Type characters",
+ *  the classic text CAPTCHA). Told apart from a search box by its own name or
+ *  identity, never by the page merely mentioning "captcha". */
+const TYPED_CHALLENGE_NAME =
+	/^(?:type (?:the )?characters(?: you see(?: in (?:this|the) (?:image|picture))?)?|enter (?:the )?characters(?: you see(?: (?:below|above|in (?:this|the) (?:image|picture)))?)?|type the text(?: in the image)?|enter the code (?:from|in) the (?:image|picture))$/i;
+
+function isTypedChallengeField(ref: BrowserObservation["currentRefs"][number]): boolean {
+	if (ref.role !== "textbox") return false;
+	if (TYPED_CHALLENGE_NAME.test(ref.name.trim()) || TYPED_CHALLENGE_NAME.test(ref.ids?.placeholder?.trim() ?? "")) return true;
+	return /captcha/i.test(ref.ids?.id ?? "") || /captcha/i.test(ref.ids?.name ?? "");
+}
 
 /**
  * A provider frame that is asking the user to act. Loading a provider is not
@@ -44,6 +73,7 @@ export function requiresHumanVerification(obs: Pick<
 >): boolean {
 	if (obs.crossOriginIframes.some(isOpenChallenge)) return true;
 	if (hasOpenHumanCheckbox(obs.currentRefs)) return true;
+	if (obs.currentRefs.some((ref) => HOLD_CONTROL.test(ref.name.trim()) || isTypedChallengeField(ref))) return true;
 	const title = obs.title.trim();
 	if (!CHALLENGE_TITLE.test(title)) return false;
 	return obs.currentRefs.length === 0 ||
@@ -56,6 +86,10 @@ export function requiresHumanVerification(obs: Pick<
 export function snapshotShowsHumanVerification(snapshot: string): boolean {
 	for (const m of snapshot.matchAll(/<checkbox\b[^>]*>([^<]*)<\/checkbox>([^\n]*)/gi)) {
 		if (HUMAN_CHECKBOX.test(m[1].trim()) && !/\{[^}]*\bchecked\b/.test(m[2].replace(/unchecked/g, ""))) return true;
+	}
+	for (const m of snapshot.matchAll(/^\[\d+\]<(\w+)\b[^>]*>([^<]*)<\/\1>/gm)) {
+		const name = m[2].trim();
+		if (HOLD_CONTROL.test(name) || (m[1] === "textbox" && TYPED_CHALLENGE_NAME.test(name))) return true;
 	}
 	const normalized = snapshot.replace(/\s+/g, " ").trim();
 	return CHALLENGE_TITLE.test((/^Page:\s*(.*?)\s+[—-]\s+https?:/i.exec(snapshot)?.[1] ?? "").trim()) &&

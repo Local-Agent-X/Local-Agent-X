@@ -12,7 +12,6 @@ import { resolutionScript } from "./in-app-resolve-scripts.js";
 import type { ScrollOptions } from "./backend.js";
 import {
 	asResolveOutcome,
-	clickAtPoint,
 	cssToViewDip,
 	USER_TOOK_WHEEL,
 	type InAppActionContext,
@@ -32,7 +31,7 @@ const SCROLL_METRICS_SCRIPT = `(() => {
 	};
 })()`;
 
-interface ScrollMetrics { vw: number; vh: number; top: number; height: number; dpr: number; zoom: number }
+export interface ScrollMetrics { vw: number; vh: number; top: number; height: number; dpr: number; zoom: number }
 
 function asScrollMetrics(raw: unknown): ScrollMetrics {
 	const m = (raw ?? {}) as Partial<Record<keyof ScrollMetrics, unknown>>;
@@ -82,9 +81,8 @@ export async function scrollInApp(ctx: InAppActionContext, opts: ScrollOptions):
 	return `Scrolled ${dir} (${amount}px)`;
 }
 
-/** A person's tap relayed from the phone (BrowserBackend.tapAt), at a fraction
- *  of the viewport: the same real click a ref click makes, at that point. */
-export async function tapAtFractionInApp(ctx: InAppActionContext, fx: number, fy: number): Promise<void> {
-	const m = asScrollMetrics(await execChecked(ctx.viewId, SCROLL_METRICS_SCRIPT));
-	await clickAtPoint(ctx, { x: fx * m.vw, y: fy * m.vh, zoom: m.zoom, dpr: m.dpr });
+/** The visible page's size, zoom and pixel ratio: what a point relayed from
+ *  the phone as a fraction of the page is placed by (relayed-input.ts). */
+export async function viewportMetricsInApp(ctx: InAppActionContext): Promise<ScrollMetrics> {
+	return asScrollMetrics(await execChecked(ctx.viewId, SCROLL_METRICS_SCRIPT));
 }

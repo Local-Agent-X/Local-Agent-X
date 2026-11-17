@@ -5,6 +5,7 @@
  * Order is load-bearing and is the caller's contract (index.ts):
  *   1. runPreDispatchGates  — download-release approval OR sensitive-page decision
  *   2. humanVerificationBlock — challenge on screen blocks advancing actions
+ *   2b. purchaseGate (purchase-guard.ts) — an order click waits on the user's yes
  *   3. dispatch
  *   4. applyProgressGuard   — no-page-change stall stop
  * Nothing here reorders those steps; index.ts calls them in sequence.
@@ -12,6 +13,7 @@
 
 import type { ServerEvent, ToolResult } from "../../types.js";
 import type { BrowserBackend } from "../../browser/index.js";
+import type { BrowserObservation } from "../../browser/observation-types.js";
 import { err, blocked, declined, needsUser } from "../result-helpers.js";
 import { recordProgress, resetProgress } from "../../browser/progress-tracker.js";
 import { sensitivePageActionDecision } from "../../browser/guards.js";
@@ -167,9 +169,10 @@ export async function humanVerificationBlock(
   action: string,
   manager: BrowserBackend,
   args: Record<string, unknown> = {},
+  look: () => Promise<BrowserObservation> = () => manager.observe(),
 ): Promise<ToolResult | null> {
   if (HUMAN_VERIFICATION_BLOCKED_ACTIONS.has(action)) {
-    const observation = await manager.observe();
+    const observation = await look();
     if (requiresHumanVerification(observation)) {
       const result = blocked(HUMAN_VERIFICATION_MESSAGE, {
         layer: "browser-human-verification",

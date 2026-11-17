@@ -5,7 +5,7 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 
 const { page, handled, alerts, taps, inbox } = vi.hoisted(() => ({
   page: { open: true },
-  taps: [] as Array<[number, number]>,
+  taps: [] as Array<Record<string, unknown>>,
   inbox: { posted: [] as Array<Record<string, unknown>>, resolved: 0 },
   handled: [] as Array<{ sessionId: string; message: string }>,
   alerts: [] as Array<{ sessionId: string; site: string }>,
@@ -18,7 +18,7 @@ vi.mock("../../browser/index.js", () => ({
       currentRefs: [{ role: "checkbox", name: "I am human", state: { checked: !page.open } }],
     }),
     screenshot: async () => ({ text: "shot", image: { mime: "image/jpeg", b64: "QUJD", path: "Z:/nowhere/shot.png", question: "" } }),
-    tapAt: async (x: number, y: number) => { taps.push([x, y]); },
+    relayInput: async (input: Record<string, unknown>) => { taps.push(input); },
   }),
   withBrowserLock: async (_s: string, fn: () => Promise<unknown>) => fn(),
 }));
@@ -31,7 +31,7 @@ vi.mock("../../inbox/index.js", () => ({
 }));
 vi.mock("../../session/turn-lock.js", () => ({ hasActiveTurn: () => false, onTurnRelease: () => {} }));
 
-import { handOffHumanCheck, humanCheckPicture, tapHumanCheck, setHumanCheckAlert, _pollHumanCheckForTest, _resetHumanCheckHandoffForTest, _setHumanCheckClockForTest, GIVE_UP_MS } from "./human-check-handoff.js";
+import { handOffHumanCheck, humanCheckPicture, relayHumanCheck, setHumanCheckAlert, _pollHumanCheckForTest, _resetHumanCheckHandoffForTest, _setHumanCheckClockForTest, GIVE_UP_MS, HELD_TOO_LONG_MS } from "./human-check-handoff.js";
 import { blocked, ok } from "../result-helpers.js";
 import { HUMAN_VERIFICATION_MESSAGE, HUMAN_VERIFICATION_RECOVERY } from "../../browser/human-verification.js";
 
@@ -113,13 +113,32 @@ describe("human check handoff", () => {
     expect(inbox.resolved).toBe(1);
   });
 
-  it("shows the page and relays a tap only while a check is handed off", async () => {
+  it("shows the page and relays input only while a check is handed off", async () => {
     expect(await humanCheckPicture(CHAT)).toEqual({ open: false });
-    expect(await tapHumanCheck(CHAT, 0.5, 0.5)).toBe(false);
+    expect(await relayHumanCheck(CHAT, { kind: "tap", x: 0.5, y: 0.5 })).toBe(false);
     handOffHumanCheck(refusal(), CHAT, URL_, false);
     expect(await humanCheckPicture(CHAT)).toEqual({ open: true, site: "amazon.com", mime: "image/jpeg", b64: "QUJD" });
-    expect(await tapHumanCheck(CHAT, 0.25, 0.75)).toBe(true);
-    expect(taps).toEqual([[0.25, 0.75]]);
-    await expect(tapHumanCheck(CHAT, 2, 0.5)).rejects.toThrow("between 0 and 1");
+    expect(await relayHumanCheck(CHAT, { kind: "tap", x: 0.25, y: 0.75 })).toBe(true);
+    expect(await relayHumanCheck(CHAT, { kind: "text", text: "XK4P" })).toBe(true);
+    expect(taps).toEqual([{ kind: "tap", x: 0.25, y: 0.75 }, { kind: "text", text: "XK4P" }]);
+  });
+
+  // A press-and-hold whose release never arrives (the phone app closed
+  // mid-hold) must not leave the page's button held down.
+  it("lets go of a press the phone never released", async () => {
+    vi.useFakeTimers();
+    try {
+      handOffHumanCheck(refusal(), CHAT, URL_, false);
+      await relayHumanCheck(CHAT, { kind: "press", x: 0.5, y: 0.6 });
+      await vi.advanceTimersByTimeAsync(HELD_TOO_LONG_MS + 10);
+      expect(taps.at(-1)).toEqual({ kind: "release", x: 0.5, y: 0.6 });
+      taps.length = 0;
+      await relayHumanCheck(CHAT, { kind: "press", x: 0.5, y: 0.6 });
+      await relayHumanCheck(CHAT, { kind: "release", x: 0.7, y: 0.6 });
+      await vi.advanceTimersByTimeAsync(HELD_TOO_LONG_MS + 10);
+      expect(taps.map((t) => t.kind)).toEqual(["press", "release"]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

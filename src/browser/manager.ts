@@ -1,6 +1,7 @@
 import type { Page, BrowserContext, Response } from "playwright";
 import { ObservationRegistry, type BrowserObservation } from "./observation.js";
 import { fingerprintPage, scrollPage, clickRefOn, fillRefOn, selectRefOn, clickTextOn, uploadRefOn } from "./interactions.js";
+import { relayInputCdp, type RelayedInput } from "./relayed-input.js";
 import { installDialogHandler, handleNextDialog } from "./dialog-handler.js";
 import { installRequestGuard } from "./guards.js";
 import { wirePopupAdoption } from "./manager-popups.js";
@@ -292,10 +293,8 @@ export class BrowserManager implements BrowserBackend {
     return scrollPage(await this.getPage(), this.registry, opts);
   }
 
-  async tapAt(fx: number, fy: number): Promise<void> {
-    const page = await this.getPage();
-    const size = await page.evaluate("({ w: innerWidth, h: innerHeight })") as { w: number; h: number };
-    await page.mouse.click(fx * size.w, fy * size.h);
+  async relayInput(input: RelayedInput): Promise<void> {
+    await relayInputCdp(await this.getPage(), input);
   }
 
   async clickByRef(ref: number): Promise<InteractionResult> {

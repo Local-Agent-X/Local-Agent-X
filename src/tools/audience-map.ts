@@ -209,6 +209,11 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   // wire an app's data source. The in-canonical builder gets it directly via
   // BUILDER_AGENT_TOOLS (build-app.ts), not through this map.
   connector_create: ["main-chat"],
+  // An app written in chat that needs a program on this PC registers it here,
+  // so it restarts with the app. Without it the chat agent could only
+  // process_start the program, which nothing restarted after a LAX restart
+  // (the Home Remote, 2026-11-16). Eager beside connector_create for that reason.
+  app_serve_backend: ["main-chat"],
 
   // Sidebar — eager main-chat visibility. The keyword router
   // (tool-filter.ts) used to be the only path that surfaced these, but

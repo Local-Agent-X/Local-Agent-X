@@ -9,7 +9,8 @@
 export const LOCAL_SERVICE_RECOVERY =
   "A loopback port is reachable while a process you started with process_start (or a dev server you served with " +
   "app_serve_*) is listening on it: if this server is yours, start it through process_start and retry once it " +
-  "reports listening. If the USER started it in their own terminal, ask them to either restart it through you or add " +
+  "reports listening. A program an app calls (the app's backend) is started with app_serve_backend instead, so LAX " +
+  "restarts it when the app is opened or after a restart. If the USER started it in their own terminal, ask them to either restart it through you or add " +
   'the port to "localServicePorts" in their security settings (~/.lax/security.json) — you cannot edit that file. ' +
   "Otherwise verify the service via process_status/process_list or the filesystem instead of HTTP.";
 
@@ -18,7 +19,7 @@ export const LOCAL_SERVICE_RECOVERY =
 // read "neither this agent's own server nor a registered local service" kept
 // retrying on Terminal-Bench (nginx-request-logging, 2026-10-19).
 export const LOOPBACK_WAY_OUT =
-  "If the server is yours, start it with process_start and retry once it is listening; a server the user runs can be added to localServicePorts in their security settings.";
+  "If the server is yours, start it with process_start and retry once it is listening (an app's own backend: app_serve_backend, so LAX restarts it with the app); a server the user runs can be added to localServicePorts in their security settings.";
 export const PRIVATE_ADDRESS_WAY_OUT =
   "Private and LAN addresses are refused to protect the local network: reach your own server on 127.0.0.1 after starting it with process_start; for another device on the network, ask the user.";
 

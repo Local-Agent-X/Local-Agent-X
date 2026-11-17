@@ -15,7 +15,7 @@ vi.mock("../approval-manager.js", () => ({
 }));
 vi.mock("../ops/pre-bless.js", () => ({ getActivePreBlessedSecrets: () => new Set<string>() }));
 
-import { connectorCreateTool } from "./connector-tools.js";
+import { connectorCreateTool, unregisteredLocalProgramNote } from "./connector-tools.js";
 import { parseManifest } from "../routes/connector-proxy.js";
 import { SecretsStore, setSecretsStoreSingleton } from "../secrets.js";
 import { parkNeedsUser } from "../tool-execution/deferred-call.js";
@@ -163,5 +163,22 @@ describe("connector_create — in an unattended run", () => {
     expect(approvals.asked).toHaveLength(0);
     expect(existsSync(file())).toBe(false);
     expect(store.isDestinationApproved("COINBASE_KEY", "https://api.coinbase.com")).toBe(false);
+  });
+});
+
+// A connector to an app's own program on this PC, started by hand, died with the
+// next LAX restart (the Home Remote, 2026-11-16): the result says how to register it.
+describe("unregisteredLocalProgramNote", () => {
+  it("points a connector at an unregistered local port to app_serve_backend", () => {
+    const note = unregisteredLocalProgramNote("http://localhost:7450", []);
+    expect(note).toContain("app_serve_backend");
+    expect(note).toContain("port: 7450");
+    expect(unregisteredLocalProgramNote("http://127.0.0.1:7450", [])).toContain("app_serve_backend");
+  });
+
+  it("says nothing for a registered backend's port or an external API", () => {
+    expect(unregisteredLocalProgramNote("http://localhost:7450", [7450])).toBe("");
+    expect(unregisteredLocalProgramNote("https://api.coingecko.com", [])).toBe("");
+    expect(unregisteredLocalProgramNote("not a url", [])).toBe("");
   });
 });

@@ -128,6 +128,7 @@ demand via tool search and aren't all listed here.)
 - `build_app` — Build a working app from a description. _e.g._ "build me a todo app"
 - `app_design_brief` — Load the house design system before writing an app's UI by hand. _e.g._ "add a habit tracker to my sidebar"
 - `connector_create`
+- `app_serve_backend`
 
 ### Sidebar
 
@@ -153,4 +154,4 @@ demand via tool search and aren't all listed here.)
 - `presentation`
 
 ---
-_73 capabilities · 54 with a description · 19 awaiting a blurb (add one to the tool's policy row)._
+_74 capabilities · 54 with a description · 20 awaiting a blurb (add one to the tool's policy row)._

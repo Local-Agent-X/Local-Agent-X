@@ -25,6 +25,7 @@ import { grepTool } from "./grep-tool.js";
 import { structuralSearchTool } from "./structural-search-tool.js";
 import { reviewChangesTool } from "./review-changes.js";
 import { connectorCreateTool } from "./connector-tools.js";
+import { appServeBackendTool } from "./dev-server-tools.js";
 import { webSearchTool } from "./web-search-tool.js";
 import { imageSearchTool } from "./image-search-tool.js";
 import { spreadsheetTools } from "./spreadsheet-tools.js";
@@ -69,7 +70,7 @@ export const allTools: ToolDefinition[] = applyPrompts([
   viewImageTool, sendVideoTool, sendImageTool, showCardTool, sendFileTool, screenCaptureTool, listMonitorsTool, cameraCaptureTool, ocrTool, computerTool,
   transcribeMediaTool, readVideoFramesTool,
   buildAppTool, appRebuildTool,
-  youtubeAnalyzeTool, createPageTool, extractSiteAssetsTool, connectorCreateTool,
+  youtubeAnalyzeTool, createPageTool, extractSiteAssetsTool, connectorCreateTool, appServeBackendTool,
   ...processTools,
   ...spreadsheetTools, ...documentTools, ...presentationTools, ...pdfTools, ...chartTools, ...previewTools,
   ...emailTools, ...calendarTools, ...telegramTools, ...whatsappTools, ...clipboardTools, ...sqlTools,

@@ -3,6 +3,7 @@ import { saveConnectorManifest, parseManifest, referencedSecrets } from "../rout
 import { getSecretsStoreSingleton } from "../secrets.js";
 import { gateSecretDestinations } from "../secret-destination-gate.js";
 import { sessionIdOf } from "../tool-execution/internal-args.js";
+import { listDevServerRecords } from "./dev-server-records.js";
 
 const NAME_RE = /^[a-z0-9][a-z0-9_-]*$/;
 
@@ -26,7 +27,8 @@ export const connectorCreateTool: ToolDefinition = {
     "auth: {type:'none'} for a keyless public API; {type:'bearer',secret:'NAME'} or {type:'header',header:'X-Api-Key',secret:'NAME'} for a single key (store it first with request_secret and pass its NAME, never the value); {type:'signed',...} for HMAC-signed APIs. " +
     "A stored secret is bound to the upstreams it may reach: binding it to a new upstream asks the user once in the chat (a yes is kept), unless this session captured the secret, an op_submit_async run pre-blessed it, or the upstream is the secret's own recorded site; a declined create writes nothing. The proxy re-checks that binding on every request, so editing the manifest file cannot widen it. " +
     "allow is a non-empty list of exact \"METHOD /path\" entries (trailing /* matches a subtree) — only these forward. " +
-    "From the app, call /api/connectors/<name>/<path> with header Authorization: 'Bearer ' + window.__LAX_CONNECTOR_TOKEN__.",
+    "From the app, call /api/connectors/<name>/<path> with header Authorization: 'Bearer ' + window.__LAX_CONNECTOR_TOKEN__. " +
+    "Not for a program of the app's own on this PC (its backend): start that with app_serve_backend, which wires its connector and has LAX restart it with the app.",
   parameters: {
     type: "object",
     properties: {
@@ -77,7 +79,25 @@ export const connectorCreateTool: ToolDefinition = {
     return ok(
       `Connector "${name}" saved.\n` +
       `Apps can now call /api/connectors/${name}/<path> with header Authorization: 'Bearer ' + window.__LAX_CONNECTOR_TOKEN__.\n` +
-      `Allowed: ${parsed.manifest.allow.join(", ")}${warn}`
+      `Allowed: ${parsed.manifest.allow.join(", ")}${warn}` +
+      unregisteredLocalProgramNote(parsed.manifest.upstream, listDevServerRecords().map((r) => r.port)),
     );
   },
 };
+
+/**
+ * A connector to a port on this PC that no app's registered backend listens on
+ * is most often an app's own program started by hand, which nothing restarts:
+ * after a LAX restart the app's every call fails. Say how to register it.
+ * A service the user runs themself is left as it is.
+ */
+export function unregisteredLocalProgramNote(upstream: string, registeredPorts: number[]): string {
+  let url: URL;
+  try { url = new URL(upstream); } catch { return ""; }
+  if (!["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) return "";
+  const port = Number(url.port || (url.protocol === "https:" ? 443 : 80));
+  if (registeredPorts.includes(port)) return "";
+  return `\nPort ${port} on this PC is no app's registered backend. If it is a program this app needs (one you start, not a service the user runs), ` +
+    `start it with app_serve_backend({ app_id, command, port: ${port} }) and have the app call /api/connectors/dev-<app_id>/... instead: ` +
+    `LAX then starts it when the app is opened and after a restart. A program started with process_start is not restarted.`;
+}

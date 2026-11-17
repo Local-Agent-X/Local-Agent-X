@@ -58,8 +58,8 @@ export function relayedInputEvents(input: RelayedInput, at: { x: number; y: numb
   const { x, y } = at!;
   switch (input.kind) {
     case "press": return [{ type: "mouseMove", x, y }, { type: "mouseDown", x, y, button: "left", clickCount: 1 }];
-    case "move": return [{ type: "mouseMove", x, y, button: "left", modifiers: ["leftButtonIsDown"] }];
-    case "release": return [{ type: "mouseMove", x, y, button: "left", modifiers: ["leftButtonIsDown"] }, { type: "mouseUp", x, y, button: "left", clickCount: 1 }];
+    case "move": return [{ type: "mouseMove", x, y, button: "left", modifiers: ["leftbuttondown"] }];
+    case "release": return [{ type: "mouseMove", x, y, button: "left", modifiers: ["leftbuttondown"] }, { type: "mouseUp", x, y, button: "left", clickCount: 1 }];
     default: return [];
   }
 }

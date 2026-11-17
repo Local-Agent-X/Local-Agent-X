@@ -32,9 +32,11 @@ export interface BrowserViewInfo {
  *  cannot change which target it is. */
 export type BrowserLifecycleOp = "create" | "show" | "hide" | "close" | "setBounds" | "ping" | "list" | "adopt" | "release" | "target";
 
-/** `leftButtonIsDown` marks a mouseMove made while the button is held (a
- *  person's drag relayed from the phone), so the page sees `buttons === 1`. */
-export type BridgeInputModifier = "shift" | "control" | "alt" | "meta" | "leftButtonIsDown";
+/** `leftbuttondown` marks a mouseMove made while the button is held (a
+ *  person's drag relayed from the phone), so the page sees `buttons === 1`.
+ *  Spelled as Electron's sendInputEvent reads it: an unknown name is dropped
+ *  without an error, and the drag then moves with no button held. */
+export type BridgeInputModifier = "shift" | "control" | "alt" | "meta" | "leftbuttondown";
 export interface BridgeMouseEvent {
   type: "mouseDown" | "mouseUp" | "mouseMove";
   x: number;

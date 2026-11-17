@@ -37,7 +37,7 @@ describe("relayedInputEvents", () => {
       { type: "mouseDown", x: 100, y: 200, button: "left", clickCount: 1 },
     ]);
     expect(relayedInputEvents({ kind: "move", x: 0, y: 0 }, at)).toEqual([
-      { type: "mouseMove", x: 100, y: 200, button: "left", modifiers: ["leftButtonIsDown"] },
+      { type: "mouseMove", x: 100, y: 200, button: "left", modifiers: ["leftbuttondown"] },
     ]);
     expect(relayedInputEvents({ kind: "release", x: 0, y: 0 }, at).map((e) => e.type)).toEqual(["mouseMove", "mouseUp"]);
   });

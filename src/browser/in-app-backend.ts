@@ -72,7 +72,7 @@ import {
 	fillRefInApp,
 	type InAppActionContext,
 } from "./in-app-actions.js";
-import { scrollInApp } from "./in-app-scroll.js";
+import { scrollInApp, tapAtFractionInApp } from "./in-app-scroll.js";
 import { uploadRefInApp } from "./in-app-upload.js";
 import { clickSelectorOrTextFallback, fillSelectorInApp, selectOptionInApp } from "./in-app-selector-actions.js";
 import type { BrowserBackend, InteractionResult, ScrollOptions } from "./backend.js";
@@ -275,6 +275,11 @@ export class ElectronInAppBackend implements BrowserBackend {
 	async scroll(opts: ScrollOptions): Promise<string> {
 		await this.ensureView();
 		return scrollInApp(this.actionContext(), opts);
+	}
+
+	async tapAt(fx: number, fy: number): Promise<void> {
+		await this.ensureView();
+		await tapAtFractionInApp(this.actionContext(), fx, fy);
 	}
 
 	// ── Page reads / tabs ──

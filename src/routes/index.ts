@@ -24,3 +24,4 @@ export { handleArtifactRoutes } from "./artifacts.js";
 export { handleBrowserHistoryRoutes } from "./browser/history.js";
 export { handleBrowserBookmarkRoutes } from "./browser/bookmarks.js";
 export { handleBrowserDenyReasonRoutes } from "./browser/deny-reason.js";
+export { handleHumanCheckRoutes } from "./browser/human-check.js";

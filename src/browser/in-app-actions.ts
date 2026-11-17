@@ -279,7 +279,7 @@ export async function failedWithSnapshot(ctx: InAppActionContext, ref: DurableRe
 }
 
 /** mouseMove → mouseDown → mouseUp (left, clickCount 1) at the target. */
-async function clickAtPoint(ctx: InAppActionContext, hit: { x: number; y: number; zoom: number; dpr: number }): Promise<"done" | "userActive"> {
+export async function clickAtPoint(ctx: InAppActionContext, hit: { x: number; y: number; zoom: number; dpr: number }): Promise<"done" | "userActive"> {
 	const { x, y } = cssToViewDip(hit.x, hit.y, hit.zoom, hit.dpr);
 	const events: BridgeInputEvent[] = [
 		{ type: "mouseMove", x, y },

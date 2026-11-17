@@ -12,6 +12,7 @@ import { resolutionScript } from "./in-app-resolve-scripts.js";
 import type { ScrollOptions } from "./backend.js";
 import {
 	asResolveOutcome,
+	clickAtPoint,
 	cssToViewDip,
 	USER_TOOK_WHEEL,
 	type InAppActionContext,
@@ -79,4 +80,11 @@ export async function scrollInApp(ctx: InAppActionContext, opts: ScrollOptions):
 	if (isUserActiveResult(result)) return USER_TOOK_WHEEL;
 	await waitForStability(ctx.page, { maxWait: 1500 });
 	return `Scrolled ${dir} (${amount}px)`;
+}
+
+/** A person's tap relayed from the phone (BrowserBackend.tapAt), at a fraction
+ *  of the viewport: the same real click a ref click makes, at that point. */
+export async function tapAtFractionInApp(ctx: InAppActionContext, fx: number, fy: number): Promise<void> {
+	const m = asScrollMetrics(await execChecked(ctx.viewId, SCROLL_METRICS_SCRIPT));
+	await clickAtPoint(ctx, { x: fx * m.vw, y: fy * m.vh, zoom: m.zoom, dpr: m.dpr });
 }

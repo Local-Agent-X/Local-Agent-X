@@ -72,7 +72,8 @@ import { handleReadConsole, handleReadNetwork, handleReadResponse } from "./perc
 import { createLogger } from "../../logger.js";
 import { runWithSensitiveReadGrant, secrecyOpenWarning, sensitivePageStub } from "../../browser/guards.js";
 import { recordSiteTokens } from "../../browser/site-provenance.js";
-import { onEventOf, sessionIdOf } from "../../tool-execution/internal-args.js";
+import { onEventOf, sessionIdOf, unattendedCall } from "../../tool-execution/internal-args.js";
+import { handOffHumanCheck } from "./human-check-handoff.js";
 
 // Names the action that wedged. Without it the circuit-breaker FAIL only says
 // "an action hung" — which action is left to inference. The destructive part is
@@ -280,7 +281,8 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
           return err(`Browser error: ${message}`);
         }
         })();
-        return withEmulationNotice(sessionId, action, dispatched);
+        const handed = handOffHumanCheck(dispatched, sessionId, manager.getCurrentUrl(), unattendedCall(args));
+        return withEmulationNotice(sessionId, action, handed);
       }, () => {
         if (onEvent) onEvent({ type: "browser_queued", sessionId });
       });

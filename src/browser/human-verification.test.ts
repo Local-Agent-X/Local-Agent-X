@@ -34,6 +34,21 @@ describe("human verification detection", () => {
 		}) as never)).toBe(true);
 	});
 
+	// Amazon's checkpoint page (2026-11-17): an ordinary title, no provider
+	// frame, one checkbox and a disabled Continue.
+	it("detects a site's own unticked 'I am human' checkbox, and lets it go once ticked", () => {
+		const page = (checked: boolean) => observation({
+			title: "Amazon.com",
+			currentRefs: [{ role: "checkbox", name: "I am human", state: { checked } }, { role: "button", name: "Continue" }],
+		}) as never;
+		expect(requiresHumanVerification(page(false))).toBe(true);
+		expect(requiresHumanVerification(page(true))).toBe(false);
+		expect(requiresHumanVerification(observation({
+			title: "Settings",
+			currentRefs: [{ role: "link", name: "I am human" }, { role: "checkbox", name: "I am human and agree to the terms" }],
+		}) as never)).toBe(false);
+	});
+
 	it("does not flag ordinary pages that merely discuss CAPTCHA", () => {
 		expect(requiresHumanVerification(observation({
 			title: "How CAPTCHA works",
@@ -69,6 +84,15 @@ describe("human verification detection", () => {
 		)).toBe(true);
 		expect(snapshotShowsHumanVerification(
 			'Page: CAPTCHA accessibility guide — https://example.com/\n[1]<link>CAPTCHA help</link>',
+		)).toBe(false);
+	});
+
+	it("reads a site's own unticked 'I am human' checkbox out of a snapshot", () => {
+		expect(snapshotShowsHumanVerification(
+			"Page: Amazon.com — https://www.amazon.com/checkpoint/continue\n[444]<checkbox type=checkbox>I am human</checkbox> {unchecked}\n[445]<button type=submit>Continue</button> {disabled}",
+		)).toBe(true);
+		expect(snapshotShowsHumanVerification(
+			"Page: Amazon.com — https://www.amazon.com/checkpoint/continue\n[444]<checkbox type=checkbox>I am human</checkbox> {checked}",
 		)).toBe(false);
 	});
 

@@ -68,6 +68,11 @@ export interface BrowserBackend {
    *  scanned (tools/browser-tools/upload.ts): a backend only delivers them. */
   uploadByRef(ref: number, files: string[]): Promise<InteractionResult>;
   scroll(opts: ScrollOptions): Promise<string>;
+  /** A person's tap relayed from another screen (the phone, for a human check
+   *  handed to the user: tools/browser-tools/human-check-handoff.ts), at a
+   *  fraction (0..1) of the visible page. Never a model action: the browser
+   *  tool has no way to call it. */
+  tapAt(fx: number, fy: number): Promise<void>;
 
   // ── Page reads / tabs ──
   extractText(selector?: string, find?: string): Promise<string>;

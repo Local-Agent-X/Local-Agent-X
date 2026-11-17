@@ -9,7 +9,7 @@ import { DEVICE_HTTP_PREFIXES, isDeviceAllowedPath } from "./device-paths.js";
 describe("device allowlist", () => {
   it("is exactly the reviewed set — widening it requires updating this pin", () => {
     expect([...DEVICE_HTTP_PREFIXES].sort()).toEqual(
-      ["/api/apps", "/api/code-folders", "/api/providers", "/api/sessions", "/api/workspace/browse", "/apps/", "/files/", "/images/", "/uploads/", "/videos/", "/api/voices/setup/call-system", "/api/collab", "/api/sync/device", "/api/connectors/"].sort(),
+      ["/api/apps", "/api/code-folders", "/api/providers", "/api/sessions", "/api/workspace/browse", "/apps/", "/files/", "/images/", "/uploads/", "/videos/", "/api/voices/setup/call-system", "/api/collab", "/api/sync/device", "/api/connectors/", "/api/human-check/"].sort(),
     );
   });
 
@@ -28,6 +28,7 @@ describe("device allowlist", () => {
       "/api/collab/start",
       "/api/collab/stop",
       "/api/connectors/home-remote/power", // an app's call through its connector
+      "/api/human-check/mobile-abc/tap", // the user ticking a check handed to them
     ]) {
       expect(isDeviceAllowedPath(p), p).toBe(true);
     }

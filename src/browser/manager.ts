@@ -292,6 +292,12 @@ export class BrowserManager implements BrowserBackend {
     return scrollPage(await this.getPage(), this.registry, opts);
   }
 
+  async tapAt(fx: number, fy: number): Promise<void> {
+    const page = await this.getPage();
+    const size = await page.evaluate("({ w: innerWidth, h: innerHeight })") as { w: number; h: number };
+    await page.mouse.click(fx * size.w, fy * size.h);
+  }
+
   async clickByRef(ref: number): Promise<InteractionResult> {
     return clickRefOn(await this.getPage(), this.registry, ref);
   }

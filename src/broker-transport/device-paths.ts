@@ -37,12 +37,17 @@
 // on the phone loaded but every button failed, since its calls go through it.
 // Each call is still held to that connector's own allow list. The trailing slash
 // keeps the bare /api/connectors listing (every connector and its folder) out.
+// /api/human-check/<chat> shows the page of a chat whose browser hit an "I am
+// human" check and relays the user's tap on it (routes/browser/human-check.ts),
+// by the owner's call (2026-11-17): the agent never ticks the box, so the user
+// does, from the phone the alert reached. It answers only while that chat's
+// check is handed to the user; every other browser stays out.
 // The broker phone is NOT an operator: nothing else on the operator API is in.
 
 import { isSensitivePath } from "../data-lineage/index.js";
 
 /** Endpoints the broker http-tunnel may proxy to loopback. */
-export const DEVICE_HTTP_PREFIXES = ["/api/apps", "/apps/", "/api/sessions", "/api/providers", "/uploads/", "/videos/", "/images/", "/files/", "/api/workspace/browse", "/api/code-folders", "/api/voices/setup/call-system", "/api/collab", "/api/sync/device", "/api/connectors/"];
+export const DEVICE_HTTP_PREFIXES = ["/api/apps", "/apps/", "/api/sessions", "/api/providers", "/uploads/", "/videos/", "/images/", "/files/", "/api/workspace/browse", "/api/code-folders", "/api/voices/setup/call-system", "/api/collab", "/api/sync/device", "/api/connectors/", "/api/human-check/"];
 
 export function isDeviceAllowedPath(pathname: string): boolean {
   if (!DEVICE_HTTP_PREFIXES.some((p) => pathname === p || pathname.startsWith(p))) return false;

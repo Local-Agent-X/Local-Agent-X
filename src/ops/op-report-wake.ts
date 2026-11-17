@@ -8,16 +8,13 @@
  * until the user asked (the Home Remote build, 2026-11-16).
  *
  * A chat only runs when it gets a message, so the app sends it one, marked as
- * the app's and not the user's, the way the orchestrator is woken
- * (agency/orchestrator-wake.ts). The turn runs through the chat handler a typed
- * message uses; its prompt drains the queue, which hands the agent the op's
- * result and cancels the idle nudge. A turn already running is waited out, and
- * a queue a user turn already drained wakes nothing. Without a chat handler
- * (no server) the idle nudge stays the way the user hears of it.
+ * the app's and not the user's (chat-ws/app-message.ts). Its prompt drains the
+ * queue, which hands the agent the op's result and cancels the idle nudge. A
+ * turn already running is waited out, and a queue a user turn already drained
+ * wakes nothing. Without a chat handler (no server) the idle nudge stays the
+ * way the user hears of it.
  */
-import { getChatHandler } from "../chat-ws/chat-handler.js";
-import { isSyntheticSessionId } from "../memory/synthetic-sessions.js";
-import { hasActiveTurn, onTurnRelease } from "../session/turn-lock.js";
+import { isUserChat, sendAppMessageWhenIdle } from "../chat-ws/app-message.js";
 import { hasPendingNotification } from "./pending-notifications.js";
 import { scheduleIdleNudge } from "./idle-nudge.js";
 import { createLogger } from "../logger.js";
@@ -59,19 +56,16 @@ function flush(sessionId: string): void {
   const entry = pending.get(sessionId);
   if (!entry) return;
   entry.timer = null;
-  if (hasActiveTurn(sessionId)) {
-    onTurnRelease(sessionId, () => schedule(sessionId));
-    return;
-  }
-  pending.delete(sessionId);
-  // A user turn since then drained the queue: the agent has it already.
-  const ops = entry.ops.filter((o) => hasPendingNotification(sessionId, o.opId));
-  if (ops.length === 0) return;
-  const handler = getChatHandler();
-  if (!handler) return;
-  logger.info(`reporting ${ops.length} ended op(s) to ${sessionId}`);
-  void Promise.resolve(handler(sessionId, opReportMessage(ops), [], { channel: "web" }))
-    .catch((e) => logger.warn(`op report wake failed for ${sessionId}: ${(e as Error).message}`));
+  sendAppMessageWhenIdle(sessionId, () => {
+    const current = pending.get(sessionId);
+    if (!current) return null;
+    pending.delete(sessionId);
+    // A user turn since then drained the queue: the agent has it already.
+    const ops = current.ops.filter((o) => hasPendingNotification(sessionId, o.opId));
+    if (ops.length === 0) return null;
+    logger.info(`reporting ${ops.length} ended op(s) to ${sessionId}`);
+    return opReportMessage(ops);
+  });
 }
 
 function schedule(sessionId: string): void {
@@ -81,16 +75,9 @@ function schedule(sessionId: string): void {
   entry.timer.unref?.();
 }
 
-/** Only a chat with a user behind it is woken: never a background job's
- *  session (dream-, cron-, mail-watch-, ...), a sub-agent's, or a worker op's
- *  own, which hears of its child op through op_wait / op_status. */
-function isUserChat(sessionId: string): boolean {
-  return !isSyntheticSessionId(sessionId) && !sessionId.startsWith("agent-") && !sessionId.startsWith("op_");
-}
-
 /** An op `sessionId` started has ended: have its agent report it. */
 export function wakeChatForEndedOp(sessionId: string, op: Ended): void {
-  if (!sessionId || !isUserChat(sessionId)) return;
+  if (!isUserChat(sessionId)) return;
   const entry = pending.get(sessionId) ?? { ops: [], timer: null };
   if (!entry.ops.some((o) => o.opId === op.opId)) entry.ops.push(op);
   pending.set(sessionId, entry);

@@ -465,6 +465,35 @@ describe("AppBuildVerifyAdapter — framework tiers smoke the LIVE dev server", 
     }]);
   });
 
+  // The throwaway origin serves only the app's files, so a static page calling
+  // its registered backend 404'd every call and a working app failed (the Home
+  // Remote, 2026-11-16). It is smoked at its live URL, still strict.
+  it("a static page with a registered backend is smoked strict at its live URL", async () => {
+    const appDir = makeStaticAppDir();
+    const gateCalls: Array<{ appDir: string; url?: string; mode: string }> = [];
+    const adapter = new AppBuildVerifyAdapter(
+      doneInner, appDir, undefined,
+      async (spec) => { gateCalls.push(spec); return { verdict: "pass" as const }; },
+      { backendUrlResolver: async (appName) => `http://127.0.0.1:7007/apps/${appName}/` },
+    );
+    const result = await adapter.runTurn(turnInput(), collect().report);
+    expect(result.terminalReason).toBe("done");
+    expect(gateCalls).toEqual([{ appDir, url: `http://127.0.0.1:7007/apps/${basename(appDir)}/`, mode: "strict" }]);
+  });
+
+  it("a static page with no backend keeps the throwaway origin", async () => {
+    const appDir = makeStaticAppDir();
+    const gateCalls: Array<{ url?: string; mode: string }> = [];
+    const adapter = new AppBuildVerifyAdapter(
+      doneInner, appDir, undefined,
+      async (spec) => { gateCalls.push(spec); return { verdict: "pass" as const }; },
+      { backendUrlResolver: async () => null },
+    );
+    await adapter.runTurn(turnInput(), collect().report);
+    expect(gateCalls[0]).toMatchObject({ mode: "strict" });
+    expect(gateCalls[0].url).toBeUndefined();
+  });
+
   it("frontend-spa tier with a REAL scaffold smokes the dev server (the faked-check still fires first on fakes)", async () => {
     const appDir = makeViteAppDir();
     const gateCalls: Array<{ mode: string; url?: string }> = [];

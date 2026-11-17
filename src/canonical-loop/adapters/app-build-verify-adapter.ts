@@ -69,6 +69,7 @@ import {
   runAppSmokeGate,
   runAppVisionJudge,
   resolveDevServerProxyUrl,
+  resolveBackendAppUrl,
   type AppSmokeGateRunner,
   type AppSmokeGateSpec,
   type AppVisionJudge,
@@ -80,6 +81,7 @@ export {
   runAppSmokeGate,
   runAppVisionJudge,
   resolveDevServerProxyUrl,
+  resolveBackendAppUrl,
   type AppSmokeGateRunner,
   type AppSmokeGateSpec,
   type AppSmokeGateOutcome,
@@ -102,6 +104,8 @@ export interface AppBuildVerifyOptions {
   /** Test seam: override the dev-server URL lookup so unit tests never read
    *  real dev-server records. */
   urlResolver?: DevServerUrlResolver;
+  /** Test seam: a static page's registered-backend URL (resolveBackendAppUrl). */
+  backendUrlResolver?: DevServerUrlResolver;
   /** Test seam: framework-finalize deps (registerDevServer etc.) forwarded to
    *  finalizeFrameworkBuild when the smoke gate must register a dev server the
    *  in-canonical path never did. Production passes nothing (defaults resolve
@@ -120,6 +124,7 @@ export class AppBuildVerifyAdapter implements Adapter {
   private readonly judge: AppVisionJudge;
   private readonly brief: string;
   private readonly urlResolver: DevServerUrlResolver;
+  private readonly backendUrlResolver: DevServerUrlResolver;
   private readonly finalizeDeps: FinalizeFrameworkDeps;
   private readonly structureGate: StructureGateRunner;
   private readonly newBuild: boolean;
@@ -133,6 +138,7 @@ export class AppBuildVerifyAdapter implements Adapter {
     this.judge = opts.judge ?? runAppVisionJudge;
     this.brief = opts.brief ?? "";
     this.urlResolver = opts.urlResolver ?? resolveDevServerProxyUrl;
+    this.backendUrlResolver = opts.backendUrlResolver ?? resolveBackendAppUrl;
     this.finalizeDeps = opts.finalizeDeps ?? {};
     this.structureGate = opts.structureGate ?? runAppStructureGate;
     this.newBuild = opts.newBuild ?? false;
@@ -277,6 +283,10 @@ export class AppBuildVerifyAdapter implements Adapter {
         return { ...result, terminalReason: "error" };
       }
       url = resolved;
+    } else {
+      // A static page calling its own registered backend is smoked where it
+      // runs, still strict: the throwaway origin would 404 every call to it.
+      url = (await this.backendUrlResolver(basename(this.appDir))) ?? undefined;
     }
     const smoke = await this.smokeGate({ appDir: this.appDir, url, mode, sessionId: getSessionForOp(input.opId) });
     const shots = [smoke.screenshotPath, smoke.interactionScreenshotPath];

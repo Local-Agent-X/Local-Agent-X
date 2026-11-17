@@ -126,6 +126,18 @@ export const resolveDevServerProxyUrl: DevServerUrlResolver = async (appName) =>
   return `http://127.0.0.1:${laxPort}/apps/${appName}/`;
 };
 
+/** A static page with a registered backend → its live LAX URL, else null. The
+ *  throwaway origin serves only the app's files, so every call the page makes
+ *  to its backend's dev connector 404s there and a working app fails strict
+ *  (the Home Remote, 2026-11-16). The live route serves those calls, hands the
+ *  page its connector token and starts the backend if it stopped. */
+export const resolveBackendAppUrl: DevServerUrlResolver = async (appName) => {
+  const { readDevServerRecord } = await import("../../tools/dev-server.js");
+  const record = readDevServerRecord(appName);
+  if (!record || (record.kind ?? "backend") !== "backend") return null;
+  return `http://127.0.0.1:${selfPort()}/apps/${appName}/`;
+};
+
 /**
  * Default judge: read the evidence PNGs and ask the shared screenshot judge
  * (the same one the render-verify probe uses) whether the render matches the

@@ -92,6 +92,17 @@ describe("VoiceTurnHygiene.lookupStarted — no silent lookups", () => {
     expect(new VoiceTurnHygiene().lookupStarted("web_search")).toBe("Searching the web. ");
   });
 
+  // The browser opening the user's Amazon orders was announced as "searching
+  // the web" (2026-11-17): only a search is a web search; a page is named.
+  it("names the site a page or the browser opens, never calling it a web search", () => {
+    expect(new VoiceTurnHygiene().lookupStarted("browser", { action: "navigate", url: "https://www.amazon.com/your-orders" })).toBe("Checking amazon.com. ");
+    expect(new VoiceTurnHygiene().lookupStarted("web_fetch", { url: "https://example.org/a" })).toBe("Checking example.org. ");
+    expect(new VoiceTurnHygiene().lookupStarted("browser", { action: "snapshot" })).toBe("Looking in the browser. ");
+    const h = new VoiceTurnHygiene();
+    h.lookupStarted("email_search");
+    expect(h.lookupStarted("browser", { action: "navigate", url: "https://www.amazon.com/" })).toBe("Now checking amazon.com. ");
+  });
+
   it("names a second silent lookup only when it looks somewhere new, then stops at two", () => {
     const h = new VoiceTurnHygiene();
     expect(h.lookupStarted("memory_search")).toBe("Checking my notes. ");

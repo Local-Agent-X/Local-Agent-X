@@ -17,6 +17,7 @@ const LOOKUP_LINES = {
   notes: "checking my notes",
   email: "checking your email",
   web: "searching the web",
+  site: "looking in the browser",
   screen: "taking a look at your screen",
   files: "looking through your files",
   other: "pulling that up",
@@ -26,7 +27,8 @@ const MAX_LOOKUP_LINES = 2;
 
 /** What a call looks at, or null when it is not a lookup: an action (saving
  *  a fact, queueing work, scheduling) needs no line, and the sphere is
- *  decoration, not work. */
+ *  decoration, not work. Only a search is "searching the web": the browser
+ *  opening the user's Amazon orders was announced that way (2026-11-17). */
 function lookupKind(toolName: string, args: Record<string, unknown>): LookupKind | null {
   if (toolName === "voice_visual") return null;
   const category = categoryOf(toolName);
@@ -34,11 +36,23 @@ function lookupKind(toolName: string, args: Record<string, unknown>): LookupKind
   if (!isReadOnlyCall(toolName, args)) return null;
   if (toolName === "search_past_sessions") return "chats";
   if (toolName.startsWith("email_")) return "email";
-  if (category === "research" || category === "browser") return "web";
+  if (toolsTagged("web-search").includes(toolName)) return "web";
+  if (category === "research" || category === "browser") return "site";
   if (toolsTagged("memory-search").includes(toolName)) return "notes";
-  if (toolsTagged("web-search", "web-read", "web-browse").includes(toolName)) return "web";
+  if (toolsTagged("web-read", "web-browse").includes(toolName)) return "site";
   if (toolsTagged("file-read", "file-search").includes(toolName)) return "files";
   return "other";
+}
+
+/** The site a call opens, named by its host ("amazon.com"), or null. */
+function siteOf(args: Record<string, unknown>): string | null {
+  if (typeof args.url !== "string") return null;
+  try { return new URL(args.url).hostname.replace(/^www\./, "") || null; } catch { return null; }
+}
+
+function lookupPhrase(kind: LookupKind, args: Record<string, unknown>): string {
+  const site = kind === "site" ? siteOf(args) : null;
+  return site ? `checking ${site}` : LOOKUP_LINES[kind];
 }
 
 const sentence = (phrase: string): string => `${phrase[0].toUpperCase()}${phrase.slice(1)}. `;
@@ -82,7 +96,8 @@ export class VoiceTurnHygiene {
     const previous = this.lastLookup;
     this.lastLookup = kind;
     if (!silent || this.lookupLines >= MAX_LOOKUP_LINES || kind === previous) return null;
-    const line = this.lookupLines === 0 ? sentence(LOOKUP_LINES[kind]) : sentence(`now ${LOOKUP_LINES[kind]}`);
+    const phrase = lookupPhrase(kind, args);
+    const line = this.lookupLines === 0 ? sentence(phrase) : sentence(`now ${phrase}`);
     this.lookupLines++;
     this.raw += line;
     return line;

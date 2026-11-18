@@ -60,7 +60,8 @@ interface NativeStream { acceptWaveform(w: { sampleRate: number; samples: Float3
 interface NativeRecognizer {
   createStream(): NativeStream;
   decode(s: NativeStream): void;
-  getResult(s: NativeStream): { text?: string };
+  getResult(s: NativeStream): { text?: string; lang?: string };
+  setConfig(c: unknown): void;
 }
 export interface NativeVad {
   acceptWaveform(samples: Float32Array): void;
@@ -76,14 +77,75 @@ export interface NativeModule {
 
 export type Recognize = (samples: Float32Array) => Promise<string>;
 
-function nativeRecognizer(job: ChildJob, sherpa: NativeModule): Recognize {
-  const config = { featConfig: { sampleRate: RATE, featureDim: 80 }, ...(buildConfig(job.model, "cpu", job.threads) as object) };
-  const rec = new sherpa.OfflineRecognizer(config);
-  return async (samples) => {
+/** A recording can be in any language: the multilingual model detects it
+ *  ("" to Whisper). A Spanish meeting came back word-perfect (2026-11-18). */
+const RECORDING_LANGUAGE = "";
+
+/** Detecting the language piece by piece, a short burst of crosstalk in an
+ *  English call came back as French ("Et à Olax 1208", 2026-11-18). So the
+ *  recording's language is told once, from its first stretch of speech, and
+ *  every piece is transcribed in it (languageGate). */
+export interface LanguageLock {
+  /** The language this speech is in, by the model's own detection. */
+  detect(samples: Float32Array): string | undefined;
+  /** Transcribe everything from here on in `language`. */
+  hold(language: string): void;
+}
+
+function nativeRecognizer(job: ChildJob, sherpa: NativeModule): { recognize: Recognize; language?: LanguageLock } {
+  const config = (language: string) => ({
+    featConfig: { sampleRate: RATE, featureDim: 80 }, ...(buildConfig(job.model, "cpu", job.threads, language) as object),
+  });
+  const rec = new sherpa.OfflineRecognizer(config(RECORDING_LANGUAGE));
+  const decode = (samples: Float32Array) => {
     const stream = rec.createStream();
     stream.acceptWaveform({ sampleRate: RATE, samples });
     rec.decode(stream);
-    return (rec.getResult(stream).text ?? "").trim();
+    return rec.getResult(stream);
+  };
+  const recognize: Recognize = async (samples) => (decode(samples).text ?? "").trim();
+  if (job.model.kind === "nemo_transducer") return { recognize };
+  return {
+    recognize,
+    // setConfig changes the language without loading the model again.
+    language: { detect: (samples) => decode(samples).lang || undefined, hold: (lang) => rec.setConfig(config(lang)) },
+  };
+}
+
+/** How much speech tells the language: what Whisper itself reads to detect it,
+ *  less the padding pieceWriter adds. */
+export const LANGUAGE_SAMPLE_SEC = 25;
+
+/** Holds the first pieces until there is LANGUAGE_SAMPLE_SEC of speech (or the
+ *  recording ends), tells their language, holds the recognizer to it, then
+ *  writes them in order; later pieces pass straight through. */
+export function languageGate(lock: LanguageLock | undefined, write: (p: Piece) => Promise<void>) {
+  let held: Piece[] | null = lock ? [] : null;
+  let heldSamples = 0;
+  const release = async () => {
+    const pieces = held ?? [];
+    held = null;
+    if (pieces.length) {
+      const speech = new Float32Array(Math.min(heldSamples, LANGUAGE_SAMPLE_SEC * RATE));
+      let at = 0;
+      for (const p of pieces) {
+        const n = Math.min(p.samples.length, speech.length - at);
+        speech.set(p.samples.subarray(0, n), at);
+        at += n;
+      }
+      const language = lock!.detect(speech);
+      if (language) lock!.hold(language);
+    }
+    for (const p of pieces) await write(p);
+  };
+  return {
+    async write(piece: Piece): Promise<void> {
+      if (!held) return write(piece);
+      held.push(piece);
+      heldSamples += piece.samples.length;
+      if (heldSamples >= LANGUAGE_SAMPLE_SEC * RATE) await release();
+    },
+    async end(): Promise<void> { if (held) await release(); },
   };
 }
 
@@ -91,12 +153,12 @@ function nativeRecognizer(job: ChildJob, sherpa: NativeModule): Recognize {
 export function openRecognizer(
   job: ChildJob,
   loadNative: () => NativeModule = () => requireCJS("sherpa-onnx-node") as NativeModule,
-): { recognize: Recognize; native: boolean; sherpa?: NativeModule } {
+): { recognize: Recognize; native: boolean; sherpa?: NativeModule; language?: LanguageLock } {
   try {
     const sherpa = loadNative();
-    return { recognize: nativeRecognizer(job, sherpa), native: true, sherpa };
+    return { ...nativeRecognizer(job, sherpa), native: true, sherpa };
   } catch {
-    const wasm = createWhisperTranscriber(job.model);
+    const wasm = createWhisperTranscriber(job.model, { language: RECORDING_LANGUAGE });
     return {
       recognize: (samples) => {
         const pcm = new Int16Array(samples.length);
@@ -212,11 +274,13 @@ export function pieceWriter(job: ChildJob, recognize: Recognize, emit: (line: Jo
 }
 
 async function run(job: ChildJob): Promise<void> {
-  const { recognize, native, sherpa } = openRecognizer(job);
+  const { recognize, native, sherpa, language } = openRecognizer(job);
   const pauses = Boolean(sherpa && job.vadModel);
   write(job.out, { t: "engine", native, threads: native ? job.threads : 1, pauses });
   const cutter = sherpa && job.vadModel ? pauseCutter(nativeVad(sherpa, job.vadModel)) : windowCutter();
-  const out = pieceWriter(job, recognize, (line) => write(job.out, line));
+  const writer = pieceWriter(job, recognize, (line) => write(job.out, line));
+  const gate = languageGate(language, (p) => writer.write(p));
+  const out = { write: gate.write, finish: async (total: number) => { await gate.end(); writer.finish(total); } };
   const args = ["-v", "error", "-ss", String(job.startSec), ...(job.spanSec > 0 ? ["-t", String(job.spanSec)] : []),
     "-i", job.input, "-vn", "-ac", "1", "-ar", String(RATE), "-f", "s16le", "pipe:1"];
   const ff = spawn(job.ffmpeg, args, { stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
@@ -239,7 +303,7 @@ async function run(job: ChildJob): Promise<void> {
   const code: number | null = ff.exitCode ?? await new Promise((r) => ff.once("close", r));
   if (code !== 0) throw new Error(`ffmpeg exited with code ${code}: ${stderr.slice(0, 300)}`);
   for (const piece of cutter.end()) await out.write(piece);
-  out.finish(total);
+  await out.finish(total);
 }
 
 const isEntry = process.argv[1] && import.meta.url.endsWith(process.argv[1].replace(/\\/g, "/").split("/").pop() ?? "\0");

@@ -11,14 +11,15 @@ import { join } from "node:path";
 
 const dataDir = mkdtempSync(join(tmpdir(), "lax-transcripts-"));
 vi.mock("../lax-data-dir.js", () => ({ getLaxDir: () => dataDir }));
+const languages = vi.hoisted(() => [] as Array<string | undefined>);
 vi.mock("../voice/whisper-stream.js", () => ({
-  buildConfig: () => ({}),
-  createWhisperTranscriber: () => ({ transcribe: async () => "from wasm" }),
+  buildConfig: (_p: unknown, _provider: unknown, _threads: unknown, language?: string) => { languages.push(language); return {}; },
+  createWhisperTranscriber: (_p: unknown, o?: { language?: string }) => { languages.push(o?.language); return { transcribe: async () => "from wasm" }; },
 }));
 
 const { chainFrom, jobThreads, progressOf, transcribeInBackground, whenJobEnds, _runningJobsForTest } = await import("./transcription-job.js");
-const { openRecognizer, pauseCutter, pieceWriter, windowCutter } = await import("./transcription-job-child.js");
-import type { ChildJob, JobLine, NativeModule, NativeVad } from "./transcription-job-child.js";
+const { LANGUAGE_SAMPLE_SEC, languageGate, openRecognizer, pauseCutter, pieceWriter, windowCutter } = await import("./transcription-job-child.js");
+import type { ChildJob, JobLine, NativeModule, NativeVad, Piece } from "./transcription-job-child.js";
 
 const recording = join(dataDir, "talk.mp4");
 writeFileSync(recording, "not really a video");
@@ -143,6 +144,7 @@ const fakeNative = (): NativeModule => ({
     createStream() { return { acceptWaveform() { /* fake */ } }; }
     decode() { /* fake */ }
     getResult() { return { text: "native" }; }
+    setConfig() { /* fake */ }
   },
   Vad: class {} as never,
 });
@@ -156,6 +158,67 @@ describe("openRecognizer", () => {
     const fallback = openRecognizer(job, () => { throw new Error("no prebuilt binary for this platform"); });
     expect(fallback.native).toBe(false);
     expect(await fallback.recognize(new Float32Array(RATE))).toBe("from wasm");
+    // A recording can be in any language, so both builds detect it rather than assume English.
+    expect(languages).toEqual(["", ""]);
+  });
+
+  it("lets a Whisper model be held to one language, without loading it again", () => {
+    languages.length = 0;
+    let built = 0;
+    const native = (): NativeModule => ({
+      OfflineRecognizer: class {
+        constructor() { built++; }
+        createStream() { return { acceptWaveform() { /* fake */ } }; }
+        decode() { /* fake */ }
+        getResult() { return { text: "words", lang: "es" }; }
+        setConfig() { /* fake */ }
+      },
+      Vad: class {} as never,
+    });
+    const whisper = { ...model, kind: "whisper" as const };
+    const { language } = openRecognizer({ model: whisper } as ChildJob, native);
+    expect(language!.detect(new Float32Array(RATE))).toBe("es");
+    language!.hold("es");
+    expect(languages).toEqual(["", "es"]);
+    expect(built).toBe(1);
+    // Parakeet has no language to hold.
+    expect(openRecognizer({ model } as ChildJob, native).language).toBeUndefined();
+  });
+});
+
+// A short burst of crosstalk detected on its own came back as French in an
+// English call (2026-11-18); the language is told once, before anything is written.
+describe("languageGate", () => {
+  const piece = (first: number, sec: number): Piece => ({ first, samples: new Float32Array(RATE * sec).fill(first) });
+
+  it("holds the first pieces until there is enough speech, then writes them in order in that language", async () => {
+    const events: string[] = [];
+    const detected: number[] = [];
+    const lock = {
+      detect: (s: Float32Array) => { detected.push(s.length / RATE); return "en"; },
+      hold: (l: string) => { events.push(`hold ${l}`); },
+    };
+    const gate = languageGate(lock, async (p) => { events.push(`write ${p.first}`); });
+    await gate.write(piece(1, 2)); // a short burst first
+    await gate.write(piece(2, 10));
+    expect(events).toEqual([]);
+    await gate.write(piece(3, 20));
+    await gate.write(piece(4, 5));
+    await gate.end();
+    expect(detected).toEqual([LANGUAGE_SAMPLE_SEC]);
+    expect(events).toEqual(["hold en", "write 1", "write 2", "write 3", "write 4"]);
+  });
+
+  it("decides from what there is when the recording is shorter, and passes through with no lock", async () => {
+    const events: string[] = [];
+    const gate = languageGate({ detect: () => "es", hold: (l) => { events.push(`hold ${l}`); } }, async (p) => { events.push(`write ${p.first}`); });
+    await gate.write(piece(1, 4));
+    await gate.end();
+    expect(events).toEqual(["hold es", "write 1"]);
+    const open: number[] = [];
+    const pass = languageGate(undefined, async (p) => { open.push(p.first); });
+    await pass.write(piece(7, 1));
+    expect(open).toEqual([7]);
   });
 });
 

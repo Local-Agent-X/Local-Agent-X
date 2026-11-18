@@ -42,6 +42,8 @@ function normalizeProvider(v: unknown): WhisperProvider | undefined {
 export interface WhisperTranscriberOptions {
   /** Override the ONNX execution provider. Falls back to env, then "cpu". */
   provider?: WhisperProvider;
+  /** Whisper's language; "" detects it (multilingual models). Default "en". */
+  language?: string;
 }
 
 /**
@@ -86,7 +88,7 @@ interface SherpaModule {
 
 /** The model half of the sherpa-onnx config: Whisper's encoder/decoder, or
  *  a NeMo transducer's (Parakeet) encoder/decoder/joiner. */
-function modelFields(paths: WhisperModelPaths): Record<string, unknown> {
+function modelFields(paths: WhisperModelPaths, language: string): Record<string, unknown> {
   if (paths.kind === "nemo_transducer") {
     return {
       transducer: { encoder: paths.encoder, decoder: paths.decoder, joiner: paths.joiner },
@@ -97,7 +99,7 @@ function modelFields(paths: WhisperModelPaths): Record<string, unknown> {
     whisper: {
       encoder: paths.encoder,
       decoder: paths.decoder,
-      language: "en",
+      language,
       task: "transcribe",
       tailPaddings: 2000,
       enableTokenTimestamps: 0,
@@ -110,11 +112,12 @@ function modelFields(paths: WhisperModelPaths): Record<string, unknown> {
 /** The recognizer config both sherpa-onnx builds take. `numThreads` must be 1
  *  on the WASM build (no SharedArrayBuffer/pthread support: more throws an
  *  Emscripten exception pointer at init); the native addon file transcription
- *  runs on (tools/transcription-job-child.ts) uses several. */
-export function buildConfig(paths: WhisperModelPaths, provider: WhisperProvider, numThreads = 1): unknown {
+ *  runs on (tools/transcription-job-child.ts) uses several. `language` ""
+ *  has a multilingual Whisper detect it for each piece of audio. */
+export function buildConfig(paths: WhisperModelPaths, provider: WhisperProvider, numThreads = 1, language = "en"): unknown {
   return {
     modelConfig: {
-      ...modelFields(paths),
+      ...modelFields(paths, language),
       tokens: paths.tokens,
       numThreads,
       provider,
@@ -135,7 +138,7 @@ export function createWhisperTranscriber(
   let fellBack = false;
   let recognizer: SherpaOfflineRecognizer;
   try {
-    recognizer = sherpa.createOfflineRecognizer(buildConfig(paths, activeProvider));
+    recognizer = sherpa.createOfflineRecognizer(buildConfig(paths, activeProvider, 1, opts.language));
   } catch (e) {
     // GPU EP can fail at init (CUDA libs missing, DML kernel coverage gaps,
     // unsupported provider in this sherpa-onnx build). Fall back to CPU
@@ -152,7 +155,7 @@ export function createWhisperTranscriber(
     activeProvider = "cpu";
     fellBack = true;
     try {
-      recognizer = sherpa.createOfflineRecognizer(buildConfig(paths, activeProvider));
+      recognizer = sherpa.createOfflineRecognizer(buildConfig(paths, activeProvider, 1, opts.language));
     } catch (e2) {
       throw new Error(`sherpa-onnx ${paths.variant} init failed: ${(e2 as Error).message}`);
     }

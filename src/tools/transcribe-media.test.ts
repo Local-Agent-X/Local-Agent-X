@@ -10,6 +10,9 @@ const probe = vi.fn();
 const decode = vi.fn();
 const transcribe = vi.fn();
 const job = vi.fn();
+const fetchModel = vi.fn();
+const jobEnds = vi.fn();
+const announce = vi.fn();
 
 vi.mock("../ffmpeg-run.js", () => ({
   isFfmpegAvailable: async () => true,
@@ -22,9 +25,14 @@ vi.mock("../bridge-voice/stt-helper.js", () => ({
   getSharedTranscriber: async () => ({ transcribe: (...a: unknown[]) => transcribe(...a) }),
 }));
 vi.mock("../local-only-policy.js", () => ({ isLocalOnlyMode: () => false }));
-vi.mock("./transcription-job.js", () => ({ transcribeInBackground: (...a: unknown[]) => job(...a) }));
+vi.mock("./transcription-job.js", () => ({
+  transcribeInBackground: (...a: unknown[]) => job(...a),
+  whenJobEnds: (...a: unknown[]) => jobEnds(...a),
+}));
+vi.mock("./transcription-notify.js", () => ({ announceTranscription: (...a: unknown[]) => announce(...a) }));
 vi.mock("../voice/whisper-model-fetch.js", () => ({
-  ensureWhisperModelDownloaded: async (_: unknown, o: { variant: string }) => ({ variant: o.variant }),
+  ensureWhisperModelDownloaded: (_: unknown, o: { variant: string }) => fetchModel(o.variant),
+  whisperDownloadState: () => ({ cached: false, downloading: true, overallPct: 37 }),
 }));
 vi.mock("../voice/vad-model-fetch.js", () => ({ ensureVadModelDownloaded: async () => ({ model: "silero_vad.onnx", modelDir: "." }) }));
 vi.mock("../ffmpeg-bin.js", () => ({ ffmpegBin: () => "ffmpeg" }));
@@ -36,6 +44,8 @@ afterAll(() => { delete process.env.LAX_VOICE_STT_PROVIDER; });
 
 beforeEach(() => {
   probe.mockReset(); decode.mockReset(); transcribe.mockReset(); job.mockReset();
+  fetchModel.mockReset(); jobEnds.mockReset(); announce.mockReset();
+  fetchModel.mockImplementation(async (variant: string) => ({ variant }));
   process.env.LAX_VOICE_STT_PROVIDER = "groq";
   decode.mockResolvedValue(SPEECH);
   transcribe.mockResolvedValue("some words");
@@ -147,6 +157,54 @@ describe("transcribeMediaFile on this computer", () => {
     probe.mockResolvedValue({ durationSec: 60, hasVideo: false, hasAudio: true });
     job.mockResolvedValue({ segments: [], coveredTo: 0, complete: false, running: false, error: "ffmpeg exited with code 1" });
     await expect(transcribeMediaFile("/x.mp3")).rejects.toThrow("ffmpeg exited with code 1");
+  });
+});
+
+// The model downloads the first time anyone transcribes (~1 GB), not with the
+// installer. On a slow connection that outlasts a call, so the call answers
+// with how far the download is instead of running into the tool's time limit.
+describe("transcribeMediaFile before the model has downloaded", () => {
+  beforeEach(() => {
+    delete process.env.LAX_VOICE_STT_PROVIDER;
+    probe.mockResolvedValue({ durationSec: 600, hasVideo: false, hasAudio: true });
+  });
+
+  function slowDownload() {
+    let finish!: (v: unknown) => void, fail!: (e: Error) => void;
+    fetchModel.mockImplementation(() => new Promise((res, rej) => { finish = res; fail = rej; }));
+    return { finish: (v: unknown) => finish(v), fail: (e: Error) => fail(e) };
+  }
+  const settle = () => new Promise((r) => setTimeout(r, 0));
+
+  it("answers with the download's progress, and a later call joins the same download", async () => {
+    slowDownload();
+    const r = await transcribeMediaFile("/x.mp3", { waitMs: 5 });
+    expect(r).toMatchObject({ windows: [], endSec: 0, stillRunning: true, willNotify: false, downloadingModelPct: 37 });
+    expect(job).not.toHaveBeenCalled();
+  });
+
+  it("in a chat, starts the job when the download ends and wakes the chat when it is done", async () => {
+    const dl = slowDownload();
+    const r = await transcribeMediaFile("/x.mp3", { waitMs: 5, notifySession: "s1" });
+    expect(r).toMatchObject({ willNotify: true, downloadingModelPct: 37 });
+    job.mockResolvedValue({ segments: [], coveredTo: 0, complete: false, running: true });
+    jobEnds.mockReturnValue("transcribe:abc");
+    dl.finish({ variant: "large-v3-turbo" });
+    await settle(); await settle();
+    expect(job.mock.calls[0][0]).toMatchObject({ path: "/x.mp3", waitMs: 0, model: { variant: "large-v3-turbo" } });
+    expect(jobEnds).toHaveBeenCalledTimes(1);
+    expect(announce).not.toHaveBeenCalled();
+    jobEnds.mock.calls[0][1]({ segments: [], coveredTo: 600, complete: true, running: false });
+    expect(announce.mock.calls[0]).toEqual(["s1", "transcribe:/x.mp3", "/x.mp3", 0, expect.objectContaining({ complete: true })]);
+  });
+
+  it("in a chat, says so when the download fails", async () => {
+    const dl = slowDownload();
+    await transcribeMediaFile("/x.mp3", { waitMs: 5, notifySession: "s1" });
+    dl.fail(new Error("network unreachable"));
+    await settle(); await settle();
+    expect(job).not.toHaveBeenCalled();
+    expect(announce.mock.calls[0][4]).toMatchObject({ complete: false, error: "the speech model did not download: network unreachable" });
   });
 });
 

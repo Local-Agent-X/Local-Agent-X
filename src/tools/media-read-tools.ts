@@ -76,10 +76,18 @@ export const transcribeMediaTool: ToolDefinition = {
         notifySession: sessionId && !unattendedCall(args) && isUserChat(sessionId) ? sessionId : undefined,
       });
       const endAt = Math.floor(result.endSec);
-      const span = { start_at: result.startSec, end_at: endAt, has_more: result.hasMore, ...(result.stillRunning ? { still_running: true } : {}) };
+      const span = {
+        start_at: result.startSec, end_at: endAt, has_more: result.hasMore,
+        ...(result.stillRunning ? { still_running: true } : {}),
+        ...(result.downloadingModelPct !== undefined ? { downloading_model_pct: result.downloadingModelPct } : {}),
+      };
+      // The first recording anyone transcribes waits on the one-time model download.
+      const fetching = result.downloadingModelPct !== undefined
+        ? `first downloading the speech model (about 1 GB, once; ${result.downloadingModelPct}% so far)`
+        : "";
       if (result.willNotify) {
         return {
-          content: `Transcribing ${opened.canonicalPath} in the background on this computer (${clock(endAt)} of ${clock(result.durationSec)} done so far). ` +
+          content: `Transcribing ${opened.canonicalPath} in the background on this computer (${fetching || `${clock(endAt)} of ${clock(result.durationSec)} done so far`}). ` +
             `The app wakes this chat with the transcript when it is finished. Tell the user it is under way and end your turn: ` +
             `do not call transcribe_media again, wait, or start another job for it.`,
           metadata: { ...span, will_notify: true },
@@ -88,7 +96,7 @@ export const transcribeMediaTool: ToolDefinition = {
       // A local job keeps transcribing after this call returns: the next call
       // continues it, so the agent waits on it rather than starting over.
       const running = result.stillRunning
-        ? `\n\nStill transcribing in the background on this computer (${clock(endAt)} of ${clock(result.durationSec)} done). ` +
+        ? `\n\nStill transcribing in the background on this computer (${fetching || `${clock(endAt)} of ${clock(result.durationSec)} done`}). ` +
           `Call transcribe_media again with start_at=${endAt} for the rest: it continues the same job, it does not restart. Tell the user it is still going rather than giving up.`
         : "";
 

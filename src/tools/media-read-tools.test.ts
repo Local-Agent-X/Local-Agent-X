@@ -144,6 +144,16 @@ describe("transcribe_media", () => {
     expect(res.metadata).toMatchObject({ will_notify: true, still_running: true });
   });
 
+  it("says the first recording is waiting on the one-time model download", async () => {
+    transcribed.mockResolvedValueOnce({
+      windows: [], durationSec: 1809, startSec: 0, endSec: 0, hasMore: true, stillRunning: true, willNotify: true, downloadingModelPct: 42,
+    });
+    const res = await transcribeMediaTool.execute({ path: fixture("talk.mp4") }, {} as never);
+    expect(res.content).toContain("first downloading the speech model (about 1 GB, once; 42% so far)");
+    expect(res.content).toContain("The app wakes this chat with the transcript when it is finished");
+    expect(res.metadata).toMatchObject({ will_notify: true, downloading_model_pct: 42 });
+  });
+
   it("resolves the path with the session the gate used", async () => {
     transcribed.mockResolvedValueOnce({ windows: [{ startSec: 0, text: "hi" }], durationSec: 1, startSec: 0, endSec: 1, hasMore: false });
     const { setSessionWorkRoot, clearSessionWorkRoot } = await import("../workspace/paths.js");

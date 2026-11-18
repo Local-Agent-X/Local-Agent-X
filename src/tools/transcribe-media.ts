@@ -22,9 +22,9 @@ import { isLocalOnlyMode } from "../local-only-policy.js";
 import { markLongRepeats, stripTranscriptNoise } from "../voice/transcript-noise.js";
 import { probeMedia, isFfmpegAvailable } from "../ffmpeg-run.js";
 import { ffmpegBin } from "../ffmpeg-bin.js";
-import { ensureWhisperModelDownloaded } from "../voice/whisper-model-fetch.js";
+import { ensureWhisperModelDownloaded, whisperDownloadState, type WhisperModelPaths } from "../voice/whisper-model-fetch.js";
 import { ensureVadModelDownloaded } from "../voice/vad-model-fetch.js";
-import { transcribeInBackground, whenJobEnds } from "./transcription-job.js";
+import { transcribeInBackground, whenJobEnds, type JobProgress } from "./transcription-job.js";
 import { announceTranscription } from "./transcription-notify.js";
 import { createLogger } from "../logger.js";
 
@@ -59,6 +59,8 @@ export interface TranscriptResult {
   stillRunning?: boolean;
   /** The chat is woken when that job ends (transcription-notify.ts). */
   willNotify?: boolean;
+  /** Set while the one-time model download is still running: how far it is. */
+  downloadingModelPct?: number;
 }
 
 function formatClock(totalSec: number): string {
@@ -97,20 +99,47 @@ const LOCAL_WAIT_MS = 90_000;
  *  ends, so the agent is not tied up in its turn for minutes. */
 const ATTENDED_WAIT_MS = 20_000;
 
+/** The recording model and the pause detector, downloaded once, the first time
+ *  anyone transcribes: nothing is added to the installer for people who never
+ *  do. ~1 GB can take longer than a call may wait, so the download is raced
+ *  against `waitMs` and keeps going in the background when it loses. */
+function fetchModels(): Promise<{ model: WhisperModelPaths; vadModel: string }> {
+  return Promise.all([
+    ensureWhisperModelDownloaded(undefined, { variant: FILE_TRANSCRIPTION_MODEL }),
+    ensureVadModelDownloaded(),
+  ]).then(([model, vad]) => ({ model, vadModel: vad.model }));
+}
+
+function within<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), ms); });
+  return Promise.race([p, late]).finally(() => clearTimeout(timer));
+}
+
 /** On this computer: a hidden background job (transcription-job.ts), so the
  *  server's thread stays free and a long file outlives any one call. */
 async function transcribeLocal(
   path: string, durationSec: number, startSec: number, maxSpan: number, opts: TranscribeOptions,
 ): Promise<TranscriptResult> {
-  const model = await ensureWhisperModelDownloaded(undefined, { variant: FILE_TRANSCRIPTION_MODEL });
-  const vad = await ensureVadModelDownloaded();
   const waitMs = opts.waitMs ?? (opts.notifySession ? ATTENDED_WAIT_MS : LOCAL_WAIT_MS);
-  const req = { path, model, vadModel: vad.model, ffmpeg: ffmpegBin(), durationSec, startSec, maxSpanSec: maxSpan, waitMs };
+  const deadline = Date.now() + waitMs;
+  const session = opts.notifySession;
+  const models = fetchModels();
+  const notify = (p: JobProgress) => announceTranscription(session!, `transcribe:${path}`, path, startSec, p);
+  const request = (m: { model: WhisperModelPaths; vadModel: string }, wait: number) =>
+    ({ path, ...m, ffmpeg: ffmpegBin(), durationSec, startSec, maxSpanSec: maxSpan, waitMs: wait });
+  const ready = await within(models, waitMs);
+  if (!ready) return stillDownloading(models, durationSec, startSec, session ? (m) => {
+    // The chat is told when the transcript is done, or that the download failed.
+    const req = request(m, 0);
+    transcribeInBackground(req).then((p) => { if (!whenJobEnds(req, notify)) notify(p); }, (e: Error) => {
+      notify({ segments: [], coveredTo: startSec, complete: false, running: false, error: e.message });
+    });
+  } : undefined, session ? notify : undefined);
+  const req = request(ready, Math.max(0, deadline - Date.now()));
   const job = await transcribeInBackground(req);
   if (job.error && job.segments.length === 0) throw new Error(job.error);
-  const session = opts.notifySession;
-  const willNotify = Boolean(session && !job.complete && job.running
-    && whenJobEnds(req, (p) => announceTranscription(session!, `transcribe:${path}`, path, startSec, p)));
+  const willNotify = Boolean(session && !job.complete && job.running && whenJobEnds(req, notify));
   const windows = job.segments
     .map((s) => ({ startSec: s.at ?? s.start, text: markLongRepeats(stripTranscriptNoise(s.text)) }))
     .filter((w) => w.text && !isWhisperHallucination(w.text));
@@ -124,6 +153,27 @@ async function transcribeLocal(
     hasMore: durationSec > 0 ? endSec < durationSec - 1 : !job.complete,
     stillRunning: !job.complete && job.running,
     willNotify,
+  };
+}
+
+/** The answer while the model is still downloading: nothing transcribed yet.
+ *  With `onReady` (a chat a person is in) the job starts when the download
+ *  ends and the chat is woken when it finishes; a failed download is reported
+ *  through `onFail`. Without them the caller calls again and joins the same
+ *  download. */
+function stillDownloading(
+  models: Promise<{ model: WhisperModelPaths; vadModel: string }>, durationSec: number, startSec: number,
+  onReady?: (m: { model: WhisperModelPaths; vadModel: string }) => void, onFail?: (p: JobProgress) => void,
+): TranscriptResult {
+  models.then(onReady, (e: Error) => {
+    logger.warn(`[transcribe_media] speech model download failed: ${e.message}`);
+    onFail?.({ segments: [], coveredTo: startSec, complete: false, running: false, error: `the speech model did not download: ${e.message}` });
+  });
+  const pct = whisperDownloadState(FILE_TRANSCRIPTION_MODEL).overallPct;
+  logger.info(`[transcribe_media] waiting on the ${FILE_TRANSCRIPTION_MODEL} download (${pct}%)`);
+  return {
+    windows: [], durationSec, startSec, endSec: startSec, hasMore: true,
+    stillRunning: true, willNotify: Boolean(onReady), downloadingModelPct: pct,
   };
 }
 

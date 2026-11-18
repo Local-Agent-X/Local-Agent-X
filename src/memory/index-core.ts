@@ -29,6 +29,11 @@ import { restoreFacts, snapshotFacts, type RestoreResult, type SnapshotResult } 
 import { createLogger } from "../logger.js";
 const logger = createLogger("memory.index-core");
 
+/** Longest a search waits on an index pass before answering from the index as
+ *  it stands (syncForSearch). Long enough for a just-remembered fact's entity
+ *  page; short beside the memory_search tool's 30 s limit. */
+export const SEARCH_SYNC_WAIT_MS = 1_500;
+
 export class MemoryIndex extends MemoryFactsBase {
   protected db: InstanceType<typeof Database>;
   private dataDir: string;
@@ -51,7 +56,8 @@ export class MemoryIndex extends MemoryFactsBase {
   protected hasFts = false;
   private hasVec = false;
   private watcherHandle: WatcherHandle = { watcher: null, debounceTimer: null };
-  private syncInProgress = false;
+  /** The index pass in flight, which every caller shares (sync()). */
+  private syncRun: Promise<void> | null = null;
   private sessionDeltas = new Map<
     string,
     { lastSize: number; lastMessageCount: number }
@@ -197,10 +203,16 @@ export class MemoryIndex extends MemoryFactsBase {
 
   // ── Sync ──
 
-  async sync(): Promise<void> {
-    const dirtyRef = { value: this.dirty };
-    const syncInProgressRef = { value: this.syncInProgress };
-    await Sync.syncIndex({
+  /** Bring the index up to date with the memory files and transcripts. One
+   *  pass at a time: a caller arriving mid-pass joins it rather than starting
+   *  a second one over the same files. A change made during a pass leaves the
+   *  index dirty for the next one; the pass never marks it clean. */
+  sync(): Promise<void> {
+    if (this.syncRun) return this.syncRun;
+    if (!this.dirty) return Promise.resolve();
+    this.dirty = false;
+    const dirtyRef = { value: true };
+    this.syncRun = Sync.syncIndex({
       db: this.db,
       embeddingProvider: this.embeddingProvider,
       config: this.config,
@@ -210,10 +222,25 @@ export class MemoryIndex extends MemoryFactsBase {
       dataDir: this.dataDir,
       sessionDeltas: this.sessionDeltas,
       dirtyRef,
-      syncInProgressRef,
-    });
-    this.dirty = dirtyRef.value;
-    this.syncInProgress = syncInProgressRef.value;
+      syncInProgressRef: { value: false },
+    }).then(() => {
+      // syncIndex sets it back only when the pass failed.
+      if (dirtyRef.value) this.dirty = true;
+    }).finally(() => { this.syncRun = null; });
+    return this.syncRun;
+  }
+
+  /** What a search waits for: the pass, but no longer than SEARCH_SYNC_WAIT_MS.
+   *  Re-embedding a grown transcript can take minutes, and it used to run
+   *  inside whichever search came first: the nightly dream's searches timed
+   *  out at 30 s (17 times, 2026-09..11) and one chat turn in ten waited over
+   *  2 s for its memory lookup. The pass keeps going after the search answers
+   *  from the index as it stands. */
+  private syncForSearch(): Promise<void> {
+    const run = this.sync();
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const waited = new Promise<void>((resolve) => { timer = setTimeout(resolve, SEARCH_SYNC_WAIT_MS); });
+    return Promise.race([run, waited]).finally(() => clearTimeout(timer));
   }
 
   // ── Public ingest ──
@@ -339,7 +366,7 @@ export class MemoryIndex extends MemoryFactsBase {
         embeddingProvider: this.embeddingProvider,
         config: this.config,
         hasFts: this.hasFts,
-        sync: () => this.sync(),
+        sync: () => this.syncForSearch(),
       },
       query,
       options,

@@ -70,22 +70,19 @@ export function parseNumCtx(parameters: unknown): number | null {
 
 /**
  * The window a cloud model (a `-cloud` tag the local Ollama relays to
- * ollama.com) is served at, from /api/show, or null for a local model. It
- * never loads here, so /api/ps never lists it and it has no num_ctx: without
- * this its window stayed at the 8,192 not-loaded floor for good (a 47K
- * conversation on gemma4:31b-cloud metered at 652%, 2026-11-18). For a remote
- * model Ollama fills model_info from the manifest's context_length, the length
- * the remote serves (server/routes.go, the show handler's RemoteHost branch);
- * for a local one it is the architecture max, which is why only a model with
- * a remote_host reads it.
+ * ollama.com) is served at, from its /api/tags row, or null for a local model.
+ * It never loads here, so /api/ps never lists it and it has no num_ctx:
+ * without this its window stayed at the 8,192 not-loaded floor for good (a
+ * 47K conversation on gemma4:31b-cloud metered at 652%, 2026-11-18). The row
+ * carries `remote_host` and the manifest's `details.context_length`, the
+ * length the remote serves (Ollama 0.40.16, read live). /api/show is no use
+ * here: it relays the upstream model's own answer, which has no remote_host.
+ * For a local model that length is the architecture max, never its window.
  */
-export function parseRemoteContextLength(show: Record<string, unknown>): number | null {
-  if (typeof show.remote_host !== "string" || !show.remote_host) return null;
-  const info = show.model_info;
-  if (!info || typeof info !== "object") return null;
-  const fields = info as Record<string, unknown>;
-  const arch = fields["general.architecture"];
-  const n = Number(typeof arch === "string" ? fields[`${arch}.context_length`] : undefined);
+export function parseRemoteContextLength(row: { remote_host?: unknown; details?: unknown }): number | null {
+  if (typeof row.remote_host !== "string" || !row.remote_host) return null;
+  const details = row.details && typeof row.details === "object" ? (row.details as { context_length?: unknown }) : null;
+  const n = Number(details?.context_length);
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
@@ -163,12 +160,12 @@ export const ollamaProbe: LocalRuntimeProbe = {
     for (const m of models) {
       if (!m || typeof m !== "object") continue;
       const row = m as {
-        name?: unknown; size?: unknown; modified_at?: unknown; capabilities?: unknown;
+        name?: unknown; size?: unknown; modified_at?: unknown; capabilities?: unknown; remote_host?: unknown; details?: unknown;
       };
       if (typeof row.name !== "string" || row.name.length === 0) continue;
       out.push({
         id: row.name,
-        contextWindow: null,
+        contextWindow: parseRemoteContextLength(row),
         tools: null,
         ...(isEmbeddingOnly(row.capabilities) ? { embeddingOnly: true } : {}),
         sizeBytes: typeof row.size === "number" ? row.size : undefined,
@@ -188,12 +185,11 @@ export const ollamaProbe: LocalRuntimeProbe = {
       }),
     ]);
     const result: Partial<LocalModel> = {};
-    // Precedence: what's actually loaded beats Modelfile config; a local
-    // model's architecture max in model_info is deliberately never consulted,
-    // a cloud model's served length is (parseRemoteContextLength).
+    // Precedence: what's actually loaded beats Modelfile config; the
+    // architecture max in model_info is deliberately never consulted.
     const loaded = parseLoadedContext(ps, modelId);
     const numCtx = show ? parseNumCtx(show.parameters) : null;
-    const window = loaded ?? numCtx ?? (show ? parseRemoteContextLength(show) : null);
+    const window = loaded ?? numCtx;
     if (window !== null) result.contextWindow = window;
     const tools = show ? parseToolCapability(show.capabilities) : null;
     if (tools !== null) result.tools = tools;

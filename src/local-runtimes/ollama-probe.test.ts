@@ -132,6 +132,20 @@ describe("ollamaProbe.listModels", () => {
     expect(models.find(m => m.id === "qwen3.6:27b")?.embeddingOnly).toBeUndefined();
     expect(models.find(m => m.id === "mxbai-embed-large:latest")?.embeddingOnly).toBe(true);
   });
+  it("a cloud model's window is the length the remote serves; a local model's architecture length never is", async () => {
+    // Rows as Ollama 0.40.16 lists them (read live 2026-11-18).
+    stubFetch({ "/api/tags": { models: [
+      { name: "gemma4:31b-cloud", remote_model: "gemma4:31b", remote_host: "https://ollama.com", size: 312,
+        details: { family: "", parameter_size: "32.7B", context_length: 262144, embedding_length: 5376 },
+        capabilities: ["completion", "thinking", "tools", "vision"] },
+      { name: "qwen3.8:27b-172k", size: 17741872135,
+        details: { family: "qwen35", parameter_size: "27.3B", context_length: 262144 },
+        capabilities: ["completion", "tools"] },
+    ] } });
+    const models = await ollamaProbe.listModels(EP);
+    expect(models.find(m => m.id === "gemma4:31b-cloud")?.contextWindow).toBe(262144);
+    expect(models.find(m => m.id === "qwen3.8:27b-172k")?.contextWindow).toBeNull();
+  });
   it("keeps models on older Ollama builds that omit capabilities — never drop what we can't disprove", async () => {
     stubFetch({ "/api/tags": { models: [{ name: "llama3:8b" }] } });
     expect((await ollamaProbe.listModels(EP)).map(m => m.id)).toEqual(["llama3:8b"]);
@@ -176,26 +190,6 @@ describe("ollamaProbe.probeModel", () => {
   it("records the model's tool-call parser when the runtime names one", async () => {
     stubFetch({ "/api/ps": { models: [] }, "/api/show": { parser: "qwen3.5" } });
     expect(await ollamaProbe.probeModel(EP, "qwen3.8:27b")).toEqual({ toolParser: "qwen3.5" });
-  });
-
-  it("a cloud model's window is the length the remote serves, as /api/show reports it", async () => {
-    // The shape Ollama returns for a remote model (server/routes.go RemoteHost branch).
-    stubFetch({
-      "/api/ps": { models: [] },
-      "/api/show": {
-        remote_host: "https://ollama.com:443", remote_model: "gemma4:31b",
-        model_info: { "general.architecture": "gemma4", "gemma4.context_length": 262144 },
-      },
-    });
-    expect((await ollamaProbe.probeModel(EP, "gemma4:31b-cloud")).contextWindow).toBe(262144);
-  });
-
-  it("a local model's architecture length still never becomes its window", async () => {
-    stubFetch({
-      "/api/ps": { models: [] },
-      "/api/show": { model_info: { "general.architecture": "gemma4", "gemma4.context_length": 262144 } },
-    });
-    expect((await ollamaProbe.probeModel(EP, "gemma4:31b")).contextWindow).toBeUndefined();
   });
 
   it("{} when nothing is known — null never becomes an optimistic default", async () => {

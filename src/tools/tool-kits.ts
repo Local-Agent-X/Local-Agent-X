@@ -48,8 +48,8 @@ export const BUILDER_KIT: readonly string[] = toolsTagged(...CODING_KIT_TAGS, "w
 
 /** What a code session (session/mode.ts) loads up front: read, find (structural
  *  search included: who uses a name is a coding question), change and run code,
- *  a step list, a review of the request's changes, and tool_search. Everything
- *  else (processes, the web, HTTP, deleting files, images) is one tool_search away, is
+ *  a step list, a review of the request's changes, deleting a file, and
+ *  tool_search. Everything else (processes, the web, HTTP, images) is one tool_search away, is
  *  named in the prompt's deferred-tool list, and stays loaded for the rest of the
  *  session once loaded. Every loaded schema is re-sent on every model call: the
  *  23-tool kit cost ~6.2k tokens a call, most of it tools a coding turn rarely
@@ -59,6 +59,11 @@ export const CODE_SESSION_KIT: ToolSelection = {
   tags: CODING_KIT_TAGS,
   plus: {
     tool_search: "loads any other tool by name or purpose; without it the rest of the catalog is out of reach",
+    // The prompt's own loop for a throwaway check script is write, run, then
+    // delete_file. Deferred, every run that followed it spent a model step on
+    // tool_search first: all three park-walk runs of the 2026-11-17 parity
+    // battery, ~5 s each, and 24 deletes across its 39 core runs.
+    delete_file: "removes the throwaway script a change was checked with (the prompt's write, run, delete loop); restore_file joins as its undo",
     update_plan: "a multi-step change keeps its steps on record, live under the reply; the open-steps gate reads them",
     wrap_up: "closes a turn that changed code with what is done and what is not verified",
     session_start: "offers a separate task (a bug found in passing, a follow-up) its own code session in this folder instead of doing it inline",

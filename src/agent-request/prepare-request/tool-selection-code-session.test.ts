@@ -52,7 +52,7 @@ describe("selectTools — a code session", () => {
   });
 
   it("keeps the rest of the toolbox one tool_search away, not in every call's schema", () => {
-    for (const name of ["process_start", "http_request", "web_fetch", "web_search", "view_image", "delete_file"]) {
+    for (const name of ["process_start", "http_request", "web_fetch", "web_search", "view_image", "browser"]) {
       expect(KIT, name).not.toContain(name);
     }
     // Lean, but with the code-working tools a coding turn checks its work with:
@@ -60,8 +60,11 @@ describe("selectTools — a code session", () => {
     // and session_start: a coding session is where a separate task turns up
     // (a bug in code you are not changing) and is worth its own session. Plus
     // exit_plan_mode (the Plan picker's approval card) and the task_* tools
-    // (the step list one task at a time, as the Claude Code CLI keeps it).
-    expect(KIT.length).toBeLessThanOrEqual(17);
+    // (the step list one task at a time, as the Claude Code CLI keeps it), and
+    // delete_file: the prompt's throwaway-script loop ends with it, and loading
+    // it by tool_search cost every such run a step (parity battery 2026-11-17).
+    expect(KIT).toContain("delete_file");
+    expect(KIT.length).toBeLessThanOrEqual(18);
   });
 
   it("ships the same set whatever the message says", async () => {

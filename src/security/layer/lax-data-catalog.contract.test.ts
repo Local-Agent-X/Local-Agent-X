@@ -149,7 +149,7 @@ describe("the classes", () => {
   // write with no card, so the app must never act on what is written there.
   it("the agent's working data is exactly the reviewed allowlist", () => {
     expect(LAX_DATA_CATALOG.filter((e) => e.kind === "data").map((e) => e.rel.join("/")).sort()).toEqual(
-      ["audio-cues", "image-cache", "logs", "recordings", "sidecars", "uploads", "voice-tmp", "workspace"],
+      ["audio-cues", "image-cache", "logs", "recordings", "sidecars", "transcripts", "uploads", "voice-tmp", "workspace"],
     );
     for (const e of LAX_DATA_CATALOG) expect(e.note.length, e.rel.join("/")).toBeGreaterThan(15);
   });

@@ -52,6 +52,11 @@ export const ALWAYS_ASK_SITES: readonly AlwaysAskSite[] = [
     why: "The quarantine is the user's own boundary between 'the agent fetched a file' and 'that file is loose in my workspace'. One explicit yes per file, per release.",
   },
   {
+    file: "tools/browser-tools/purchase-guard.ts",
+    what: "pressing a site's order button (Place your order, Buy now, Pay now): one card per press, naming the site and the button, and naming a second order on the same site within two hours",
+    why: "The owner's standing instruction (2026-11-17, after an agent re-ran a purchase he had asked for): every order the agent places needs its own yes, whatever the profile. A permissive profile or a remembered grant waiving it would let one approval spend money twice, which is the instruction's whole point; an unattended run parks the press in the inbox, where the Approve presses it once.",
+  },
+  {
     file: "tool-execution/publish-review-gate.ts",
     what: "publishing (git push, deploy, package publish, release) over a RED pre-publish review finding, or with no review at all (FAILED / UNKNOWN)",
     why: "The owner's standing instruction: nothing ships over a red finding from the fresh-context review, and nothing ships unreviewed, unless they explicitly override it for THAT publish — 'even autonomous users don't want unreviewed pushes' (2026-09-28, after a live UNKNOWN under Power let one out). A permissive profile or a remembered grant waiving it would be exactly the unreviewed ship the instruction exists to stop; the card is per change set, so the next push is asked about on its own findings.",

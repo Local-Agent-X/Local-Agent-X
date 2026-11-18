@@ -165,6 +165,7 @@ export const LAX_DATA_CATALOG: readonly LaxDataEntry[] = [
   ...at("data", "screen recordings kept for you to watch", "recordings"),
   ...at("data", "the short sounds voice chat plays", "audio-cues"),
   ...at("data", "scratch audio for voice chat, deleted after use", "voice-tmp"),
+  ...at("data", "transcripts of recordings, written by the background transcription job and read back as quoted text", "transcripts"),
   ...at("data", "diagnostic logs, read to explain a failure and never acted on", "logs", "sidecars"),
 ];
 

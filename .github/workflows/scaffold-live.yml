@@ -20,6 +20,12 @@ on:
 permissions:
   contents: read
 
+env:
+  # onnxruntime-node (kokoro-js -> @huggingface/transformers) fetches a Linux CUDA
+  # add-on at install from a release asset that is gone (404 since 2026-11-17);
+  # the CPU runtime ships in the package. Installs on Windows/macOS never fetch it.
+  ONNXRUNTIME_NODE_INSTALL_CUDA: skip
+
 jobs:
   scaffold-live:
     name: Framework creators, kit, dev servers

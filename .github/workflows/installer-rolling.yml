@@ -61,6 +61,12 @@ on:
 permissions:
   contents: write   # softprops/action-gh-release needs write to publish the asset
 
+env:
+  # onnxruntime-node (kokoro-js -> @huggingface/transformers) fetches a Linux CUDA
+  # add-on at install from a release asset that is gone (404 since 2026-11-17);
+  # the CPU runtime ships in the package. Installs on Windows/macOS never fetch it.
+  ONNXRUNTIME_NODE_INSTALL_CUDA: skip
+
 jobs:
   build-windows-rolling:
     name: Windows rolling installer (.exe)

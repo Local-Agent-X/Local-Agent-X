@@ -328,7 +328,7 @@ export async function startServer(config: LAXConfig) {
   });
 
   phaseSync("startConfigWatcher", () => startConfigWatcher(dataDir));
-  phaseSync("bootstrapCanonicalLoop", () => bootstrapCanonicalLoop(getRuntimeConfig));
+  phaseSync("bootstrapCanonicalLoop", () => bootstrapCanonicalLoop(getRuntimeConfig, buildWsCtx));
 
   // Security guardian is a boot precondition — must be up before we accept
   // a single request. When ariRequired, a failure here exits the process.

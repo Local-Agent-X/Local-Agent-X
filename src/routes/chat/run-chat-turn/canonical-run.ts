@@ -9,6 +9,7 @@ import type { TurnError } from "../../../providers/sanitize.js";
 import { createLogger } from "../../../logger.js";
 import { markTurnPersisted } from "../../../chat-ws/state.js";
 import { appendTurnToSession } from "../append-turn.js";
+import { claimChatTurn, releaseChatTurn } from "./orphaned-turn.js";
 
 const logger = createLogger("routes.chat.canonical-run");
 
@@ -78,6 +79,8 @@ export async function runCanonicalChat(input: CanonicalRunInput): Promise<Canoni
       markTurnPersisted(sessionId);
     } catch (e) {
       logger.warn(`[chat] salvage/persist failed (${interrupted ? "interrupted" : terminalError ? "error" : "clean"}): ${(e as Error).message}`);
+    } finally {
+      if (canonicalOpId) releaseChatTurn(canonicalOpId);
     }
   };
 
@@ -106,6 +109,7 @@ export async function runCanonicalChat(input: CanonicalRunInput): Promise<Canoni
       }
       if (ev.type === "chat_op_started" && typeof ev.opId === "string") {
         canonicalOpId = ev.opId;
+        claimChatTurn(canonicalOpId); // saved by salvage below, not by orphaned-turn.ts
       }
       if (ev.type === "stopped" && ev.firedBy === "iteration-budget") {
         iterationCheckpoint = true;

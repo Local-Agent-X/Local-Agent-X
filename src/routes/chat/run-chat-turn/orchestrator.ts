@@ -64,13 +64,18 @@ const reconnectHint = (channel: ChannelKind, label: string): string =>
  * finally-block cleanup. The only thing not owned here is HTTP-specific
  * setup (writeHead, heartbeat, res.end) — that stays at the route boundary.
  */
+/** A chat's title from its first message, when nothing else named it. */
+export function titleFromFirstMessage(message: string): string {
+  return message.slice(0, 60) + (message.length > 60 ? "..." : "");
+}
+
 /** The request's durable facts onto the session it addresses. */
 function applyRequestToSession(session: Session, args: RunChatTurnArgs, message: string): void {
   if (session.messages.length === 0) {
     // A chat the app started from another (a session offer, a collab member) was
     // named when it was made: its first message is the app's brief, not a title.
     const named = session.startedFrom && session.title ? session.title : null;
-    session.title = args.sessionTitle ?? named ?? (message.slice(0, 60) + (message.length > 60 ? "..." : ""));
+    session.title = args.sessionTitle ?? named ?? titleFromFirstMessage(message);
     // The mode is fixed here, on the session's first message (session/mode.ts).
     if (args.mode === "code") session.mode = "code";
   }

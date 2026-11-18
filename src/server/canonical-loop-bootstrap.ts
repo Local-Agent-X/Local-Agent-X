@@ -21,6 +21,8 @@ import { reconcileCanonicalLearnedOutcomes } from "../canonical-loop/public/lear
 import { workTreeFingerprint } from "../agency/work-tree-fingerprint.js";
 import type { LAXConfig } from "../types.js";
 import { createLogger } from "../logger.js";
+import type { ServerContext } from "../server-context.js";
+import { watchOrphanedChatTurns } from "../routes/chat/run-chat-turn/orphaned-turn.js";
 import { restorePersistedAppBuildRuntimes } from "../tools/build-app-runtime.js";
 import { reconcileAllPendingProcessRelays } from "../canonical-loop/public/process-relay.js";
 import { reconcileTerminalContainerExecutions } from "../canonical-loop/public/container-recovery.js";
@@ -41,7 +43,10 @@ const ALL_LANES: CanonicalLane[] = ["interactive", "build", "ide", "background"]
  * canonical-loop's `recoverStaleOp` primitive so it transitions to a
  * clean terminal/queued state instead of sitting orphaned forever.
  */
-export function bootstrapCanonicalLoop(configReader?: () => LAXConfig): void {
+export function bootstrapCanonicalLoop(configReader?: () => LAXConfig, chatCtx?: () => ServerContext): void {
+  // A chat turn the last process left running is saved into its chat when the
+  // sweep below ends it (orphaned-turn.ts), so it must watch before the sweep.
+  if (chatCtx) watchOrphanedChatTurns(chatCtx);
   for (const lane of ALL_LANES) {
     setDefaultAdapterForLane(lane, () => createAnthropicAdapter());
   }

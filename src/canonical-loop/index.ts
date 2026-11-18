@@ -288,6 +288,7 @@ export {
   transitionOp,
   isTerminalCanonicalState,
   IllegalTransitionError,
+  registerTerminalObserver,
 } from "./state-machine.js";
 
 /**

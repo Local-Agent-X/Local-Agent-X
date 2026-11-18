@@ -16,9 +16,9 @@ vi.mock("../voice/whisper-stream.js", () => ({
   createWhisperTranscriber: () => ({ transcribe: async () => "from wasm" }),
 }));
 
-const { chainFrom, jobThreads, progressOf, transcribeInBackground, _runningJobsForTest } = await import("./transcription-job.js");
-const { openRecognizer } = await import("./transcription-job-child.js");
-import type { ChildJob, JobLine } from "./transcription-job-child.js";
+const { chainFrom, jobThreads, progressOf, transcribeInBackground, whenJobEnds, _runningJobsForTest } = await import("./transcription-job.js");
+const { openRecognizer, pauseCutter, pieceWriter, windowCutter } = await import("./transcription-job-child.js");
+import type { ChildJob, JobLine, NativeModule, NativeVad } from "./transcription-job-child.js";
 
 const recording = join(dataDir, "talk.mp4");
 writeFileSync(recording, "not really a video");
@@ -116,18 +116,90 @@ describe("transcribeInBackground", () => {
   });
 });
 
+describe("whenJobEnds", () => {
+  it("reports the whole file's progress once when the job exits, however often it is asked", async () => {
+    const { spawner } = fakeSpawner([[0, 30], [30, 60], [60, 90]], { tickMs: 200 });
+    const first = await transcribeInBackground(request({ waitMs: 50 }), spawner);
+    expect(first.running).toBe(true);
+    const ends: boolean[] = [];
+    const id = whenJobEnds(request(), (p) => ends.push(p.complete));
+    expect(id).toMatch(/^transcribe:/);
+    expect(whenJobEnds(request(), (p) => ends.push(p.complete))).toBe(id);
+    await new Promise((r) => setTimeout(r, 1_200));
+    expect(ends).toEqual([true]);
+    expect(whenJobEnds(request(), () => {})).toBeNull(); // nothing running any more
+  });
+});
+
 describe("jobThreads", () => {
   it("uses half the cores, at least one and at most eight", () => {
     expect([jobThreads(1), jobThreads(4), jobThreads(24)]).toEqual([1, 2, 8]);
   });
 });
 
+const RATE = 16_000;
+const fakeNative = (): NativeModule => ({
+  OfflineRecognizer: class {
+    createStream() { return { acceptWaveform() { /* fake */ } }; }
+    decode() { /* fake */ }
+    getResult() { return { text: "native" }; }
+  },
+  Vad: class {} as never,
+});
+
 describe("openRecognizer", () => {
-  it("falls back to the WASM build when the native addon will not load", async () => {
+  it("uses the native addon, and the WASM build when the addon will not load", async () => {
     const job = { model } as ChildJob;
-    expect(openRecognizer(job, () => async () => "native").native).toBe(true);
+    const native = openRecognizer(job, fakeNative);
+    expect(native.native).toBe(true);
+    expect(await native.recognize(new Float32Array(RATE))).toBe("native");
     const fallback = openRecognizer(job, () => { throw new Error("no prebuilt binary for this platform"); });
     expect(fallback.native).toBe(false);
-    expect(await fallback.recognize(new Int16Array(16_000))).toBe("from wasm");
+    expect(await fallback.recognize(new Float32Array(RATE))).toBe("from wasm");
+  });
+});
+
+describe("cutting the stream", () => {
+  it("slices fixed windows, keeping each slice's place in the stream", () => {
+    const cut = windowCutter(1);
+    expect(cut.push(new Float32Array(RATE * 2.5)).map((p) => [p.first, p.samples.length])).toEqual([[0, RATE], [RATE, RATE]]);
+    expect(cut.end().map((p) => [p.first, p.samples.length])).toEqual([[RATE * 2, RATE / 2]]);
+  });
+
+  it("hands the detector whole frames and passes on each utterance it finds", () => {
+    const fed: number[] = [];
+    const found: Array<{ start: number; samples: Float32Array }> = [];
+    const vad: NativeVad = {
+      acceptWaveform: (s) => { fed.push(s.length); if (fed.length === 3) found.push({ start: 512, samples: new Float32Array(1024) }); },
+      isEmpty: () => found.length === 0,
+      front: () => found[0],
+      pop: () => { found.shift(); },
+      flush: () => { found.push({ start: 4096, samples: new Float32Array(300) }); },
+    };
+    const cut = pauseCutter(vad);
+    expect(cut.push(new Float32Array(1000))).toEqual([]);
+    expect(cut.push(new Float32Array(600)).map((p) => p.first)).toEqual([512]);
+    expect(fed).toEqual([512, 512, 512]); // 1600 samples: three whole frames, 64 carried
+    expect(cut.end().map((p) => p.first)).toEqual([4096]);
+    expect(fed.at(-1)).toBe(64);
+  });
+});
+
+describe("pieceWriter", () => {
+  it("writes each utterance covering the stretch since the last, stamped where its speech starts", async () => {
+    const lines: JobLine[] = [];
+    const heard: number[] = [];
+    const job = { startSec: 60 } as ChildJob;
+    const out = pieceWriter(job, async (s) => { heard.push(s.length); return "hello"; }, (l) => lines.push(l));
+    await out.write({ first: RATE * 2, samples: new Float32Array(RATE * 3) });
+    await out.write({ first: RATE * 10, samples: new Float32Array(RATE) });
+    out.finish(RATE * 20);
+    expect(lines).toEqual([
+      { t: "seg", start: 60, end: 65, at: 62, text: "hello" },
+      { t: "seg", start: 65, end: 71, at: 70, text: "hello" },
+      { t: "seg", start: 71, end: 80, text: "" },
+      { t: "done", end: 80 },
+    ]);
+    expect(heard[0]).toBe(RATE * 3 + RATE / 2); // a quarter second of silence either side
   });
 });

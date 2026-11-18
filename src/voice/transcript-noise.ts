@@ -99,3 +99,34 @@ function collapseRepeatedPhrases(text: string): string {
 export function collapseLoopedRepeats(text: string): string {
   return collapseRepeatedPhrases(collapseRepeatedSentences(text));
 }
+
+/** Runs this long are the decoder looping on crosstalk or noise, not speech. */
+const MEDIA_LOOP_MIN = 8;
+
+/** A recording's transcript keeps what was said, chorus and all, but Whisper
+ *  looping one word or a short phrase on crosstalk ("Yeah, yeah, ..." twenty
+ *  times over a call's overlap, 2026-11-17) buries the line. A run of the same
+ *  one-to-three words MEDIA_LOOP_MIN times or more is written once with its
+ *  count, so nothing is hidden and the reader can still tell it repeated. */
+export function markLongRepeats(text: string): string {
+  const tokens = text.split(/\s+/).filter(Boolean);
+  const norm = tokens.map((t) => wordsOf(t).join(" "));
+  const out: string[] = [];
+  let i = 0;
+  while (i < tokens.length) {
+    let marked = false;
+    for (let k = 1; k <= 3 && !marked; k++) {
+      const phrase = norm.slice(i, i + k);
+      if (phrase.length < k || phrase.some((w) => !w)) continue;
+      let reps = 1;
+      while (i + (reps + 1) * k <= tokens.length && sameWords(norm.slice(i + reps * k, i + (reps + 1) * k), phrase)) reps++;
+      if (reps >= MEDIA_LOOP_MIN) {
+        out.push(`${tokens.slice(i, i + k).join(" ").replace(/[,.;]+$/, "")} (repeated ${reps}x)`);
+        i += reps * k;
+        marked = true;
+      }
+    }
+    if (!marked) out.push(tokens[i++]!);
+  }
+  return out.join(" ");
+}

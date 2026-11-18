@@ -73,6 +73,10 @@ export interface PendingNotification {
   // finished its turn: `task` is that chat's title, `summary` the end of its
   // reply. The user can open it; there is no worker op to query.
   linkedChat?: { sessionId: string; title: string };
+  // Set when a tool's own background job ended (a recording's transcription,
+  // tools/transcription-notify.ts): `task` names the job, `next` is the call
+  // that reads its result. There is no op behind it to query.
+  toolJob?: { next: string };
 }
 
 const queues = new Map<string, PendingNotification[]>();
@@ -266,6 +270,12 @@ function formatFinishedOps(notifications: PendingNotification[]): string {
         `The user can open it from the chat list; it keeps its own history.
 ` +
         `   Its reply ended: ${n.summary.slice(0, SUMMARY_PREVIEW_CHARS)}`
+      );
+    }
+    if (n.toolJob) {
+      return (
+        `${statusEmoji} ${n.task.slice(0, 120)}: ${statusPhrase}. ${n.summary.slice(0, SUMMARY_PREVIEW_CHARS)}\n` +
+        `   Next: ${n.toolJob.next}`
       );
     }
     const filesLine = n.filesChanged.length > 0

@@ -2,7 +2,7 @@
 // A stage direction Whisper hallucinated on cut-off audio reached the agent
 // as user speech and got a "didn't catch that" reply as its own turn.
 import { describe, expect, it } from "vitest";
-import { collapseLoopedRepeats, stripTranscriptNoise } from "./transcript-noise.js";
+import { collapseLoopedRepeats, markLongRepeats, stripTranscriptNoise } from "./transcript-noise.js";
 
 describe("stripTranscriptNoise", () => {
 	it("drops whole-final parenthesized stage directions, closed or unclosed", () => {
@@ -64,5 +64,21 @@ describe("collapseLoopedRepeats — Whisper's decoder looping on a live utteranc
 
 	it("treats sentences in other scripts the same way", () => {
 		expect(collapseLoopedRepeats("你好，我们今天去哪里吃饭。你好，我们今天去哪里吃饭。")).toBe("你好，我们今天去哪里吃饭。");
+	});
+});
+
+describe("markLongRepeats — a recording's transcript where Whisper looped on crosstalk", () => {
+	it("writes a word looped eight times or more once, with its count", () => {
+		const looped = `Yeah, ${"yeah, ".repeat(18)}yeah And the right.`;
+		expect(markLongRepeats(looped)).toBe("Yeah (repeated 20x) And the right.");
+	});
+
+	it("does the same for a short phrase", () => {
+		expect(markLongRepeats(`so ${"thank you ".repeat(9)}bye`)).toBe("so thank you (repeated 9x) bye");
+	});
+
+	it("keeps repeats a person or a song makes", () => {
+		const said = "No no no no, I said Tuesday. La la la la la la la.";
+		expect(markLongRepeats(said)).toBe(said);
 	});
 });

@@ -13,6 +13,8 @@ import type { ToolDefinition } from "../types.js";
 import { openValidatedRead } from "../security/layer/index.js";
 import { wrapExternalContent } from "../sanitize.js";
 import { sessionIdOf } from "../workspace/paths.js";
+import { unattendedCall } from "../tool-execution/internal-args.js";
+import { isUserChat } from "../chat-ws/app-message.js";
 import { resolveMediaPath } from "./shared/media-path.js";
 import { TRANSCRIBABLE_EXTS, VIDEO_EXTS } from "./shared/media-formats.js";
 
@@ -50,7 +52,7 @@ export const transcribeMediaTool: ToolDefinition = {
     "Use this whenever the user asks what was said in a recording, meeting, voice note, podcast, or video — " +
     "including a video, where this reads the audio track (pair it with read_video_frames to also SEE the video). " +
     "Supports mp3, m4a, wav, ogg, opus, flac, aac, and every video container. " +
-    "Runs on this computer in the background: a long recording may come back partly done and still running — call again with start_at=end_at to continue the same job (never restarts). " +
+    "Runs on this computer in the background. In a chat, a long recording comes back as started: the app wakes the chat with the transcript when it is done, so end your turn rather than waiting. Elsewhere it may come back partly done and still running: call again with start_at=end_at to continue the same job (it never restarts). " +
     "Long recordings return at most 30 minutes per call; the result names its end_at — call again with start_at=end_at to continue.",
   parameters: {
     type: "object",
@@ -66,11 +68,23 @@ export const transcribeMediaTool: ToolDefinition = {
 
     try {
       const { transcribeMediaFile, formatTranscript } = await import("./transcribe-media.js");
+      const sessionId = sessionIdOf(args);
       const result = await transcribeMediaFile(opened.canonicalPath, {
         startSec: args.start_at != null ? Number(args.start_at) : 0,
+        // A person's chat is woken when a long job ends; a run nobody watches
+        // keeps calling until it has the whole file.
+        notifySession: sessionId && !unattendedCall(args) && isUserChat(sessionId) ? sessionId : undefined,
       });
       const endAt = Math.floor(result.endSec);
       const span = { start_at: result.startSec, end_at: endAt, has_more: result.hasMore, ...(result.stillRunning ? { still_running: true } : {}) };
+      if (result.willNotify) {
+        return {
+          content: `Transcribing ${opened.canonicalPath} in the background on this computer (${clock(endAt)} of ${clock(result.durationSec)} done so far). ` +
+            `The app wakes this chat with the transcript when it is finished. Tell the user it is under way and end your turn: ` +
+            `do not call transcribe_media again, wait, or start another job for it.`,
+          metadata: { ...span, will_notify: true },
+        };
+      }
       // A local job keeps transcribing after this call returns: the next call
       // continues it, so the agent waits on it rather than starting over.
       const running = result.stillRunning

@@ -131,6 +131,19 @@ describe("transcribe_media", () => {
     expect(res.metadata).toEqual({ start_at: 0, end_at: 600, has_more: true, still_running: true });
   });
 
+  it("leaves a long recording to its job and tells the agent to end its turn, not to keep calling", async () => {
+    transcribed.mockResolvedValueOnce({
+      windows: [{ startSec: 0, text: "part one" }],
+      durationSec: 1809, startSec: 0, endSec: 120.4, hasMore: true, stillRunning: true, willNotify: true,
+    });
+    const res = await transcribeMediaTool.execute({ path: fixture("talk.mp4") }, {} as never);
+    expect(res.content).toContain("(2:00 of 30:09 done so far)");
+    expect(res.content).toContain("The app wakes this chat with the transcript when it is finished");
+    expect(res.content).toContain("do not call transcribe_media again");
+    expect(res.content).not.toContain("part one");
+    expect(res.metadata).toMatchObject({ will_notify: true, still_running: true });
+  });
+
   it("resolves the path with the session the gate used", async () => {
     transcribed.mockResolvedValueOnce({ windows: [{ startSec: 0, text: "hi" }], durationSec: 1, startSec: 0, endSec: 1, hasMore: false });
     const { setSessionWorkRoot, clearSessionWorkRoot } = await import("../workspace/paths.js");

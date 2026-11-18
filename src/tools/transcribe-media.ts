@@ -19,12 +19,13 @@ import { decodeFileSegmentToPcm16 } from "../bridge-voice/audio-codec.js";
 import { getSharedTranscriber } from "../bridge-voice/stt-helper.js";
 import { isWhisperHallucination, resolveSttProviderName } from "../voice/stt-providers/index.js";
 import { isLocalOnlyMode } from "../local-only-policy.js";
-import { stripTranscriptNoise } from "../voice/transcript-noise.js";
+import { markLongRepeats, stripTranscriptNoise } from "../voice/transcript-noise.js";
 import { probeMedia, isFfmpegAvailable } from "../ffmpeg-run.js";
 import { ffmpegBin } from "../ffmpeg-bin.js";
-import { ensureWhisperModelDownloaded, resolveWhisperVariant } from "../voice/whisper-model-fetch.js";
-import { resolveVoiceSettings } from "../voice/voice-session/settings.js";
-import { transcribeInBackground } from "./transcription-job.js";
+import { ensureWhisperModelDownloaded } from "../voice/whisper-model-fetch.js";
+import { ensureVadModelDownloaded } from "../voice/vad-model-fetch.js";
+import { transcribeInBackground, whenJobEnds } from "./transcription-job.js";
+import { announceTranscription } from "./transcription-notify.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("tools.transcribe-media");
@@ -56,6 +57,8 @@ export interface TranscriptResult {
   hasMore: boolean;
   /** A local job is still transcribing past endSec in the background. */
   stillRunning?: boolean;
+  /** The chat is woken when that job ends (transcription-notify.ts). */
+  willNotify?: boolean;
 }
 
 function formatClock(totalSec: number): string {
@@ -73,19 +76,40 @@ export function formatTranscript(result: TranscriptResult): string {
   return result.windows.map(w => `[${formatClock(w.startSec)}] ${w.text}`).join("\n");
 }
 
+/** The model a recording is transcribed with, whatever voice chat uses. Voice
+ *  chat wants Parakeet's speed on short, clear utterances from the user's own
+ *  mic; a recording is often a compressed call, where Parakeet dropped whole
+ *  passages and Whisper small.en heard them (406 words of a 3-minute stretch
+ *  against 253, 2026-11-17). A transcript missing what was said is worth less
+ *  than one that takes longer, so accuracy decides: a ~375 MB one-time
+ *  download, about 7x real time on 8 cores. */
+export const FILE_TRANSCRIPTION_MODEL = "small.en" as const;
+
 /** How long one call waits on a local job before answering with what is done:
- *  inside the tool's 120 s limit, with room for the probe and the reply. */
+ *  inside the tool's 120 s limit, with room for the probe and the reply. A run
+ *  nobody is watching waits this long and calls again until the file is done. */
 const LOCAL_WAIT_MS = 90_000;
+/** In a chat a person is in, a short recording still comes back in one call;
+ *  a longer one is left to the background job, which wakes the chat when it
+ *  ends, so the agent is not tied up in its turn for minutes. */
+const ATTENDED_WAIT_MS = 20_000;
 
 /** On this computer: a hidden background job (transcription-job.ts), so the
  *  server's thread stays free and a long file outlives any one call. */
-async function transcribeLocal(path: string, durationSec: number, startSec: number, maxSpan: number, waitMs: number): Promise<TranscriptResult> {
-  const variant = resolveWhisperVariant({ variant: resolveVoiceSettings().whisperModel });
-  const model = await ensureWhisperModelDownloaded(undefined, { variant });
-  const job = await transcribeInBackground({ path, model, ffmpeg: ffmpegBin(), durationSec, startSec, maxSpanSec: maxSpan, waitMs });
+async function transcribeLocal(
+  path: string, durationSec: number, startSec: number, maxSpan: number, opts: TranscribeOptions,
+): Promise<TranscriptResult> {
+  const model = await ensureWhisperModelDownloaded(undefined, { variant: FILE_TRANSCRIPTION_MODEL });
+  const vad = await ensureVadModelDownloaded();
+  const waitMs = opts.waitMs ?? (opts.notifySession ? ATTENDED_WAIT_MS : LOCAL_WAIT_MS);
+  const req = { path, model, vadModel: vad.model, ffmpeg: ffmpegBin(), durationSec, startSec, maxSpanSec: maxSpan, waitMs };
+  const job = await transcribeInBackground(req);
   if (job.error && job.segments.length === 0) throw new Error(job.error);
+  const session = opts.notifySession;
+  const willNotify = Boolean(session && !job.complete && job.running
+    && whenJobEnds(req, (p) => announceTranscription(session!, `transcribe:${path}`, path, startSec, p)));
   const windows = job.segments
-    .map((s) => ({ startSec: s.start, text: stripTranscriptNoise(s.text) }))
+    .map((s) => ({ startSec: s.at ?? s.start, text: markLongRepeats(stripTranscriptNoise(s.text)) }))
     .filter((w) => w.text && !isWhisperHallucination(w.text));
   const endSec = job.coveredTo;
   logger.info(`[transcribe_media] ${path} ${formatClock(startSec)}-${formatClock(endSec)} → ${windows.length} window(s), ${job.complete ? "done" : "still running"}${job.native === false ? " (wasm engine)" : ""}`);
@@ -96,13 +120,19 @@ async function transcribeLocal(path: string, durationSec: number, startSec: numb
     endSec,
     hasMore: durationSec > 0 ? endSec < durationSec - 1 : !job.complete,
     stillRunning: !job.complete && job.running,
+    willNotify,
   };
 }
 
-export async function transcribeMediaFile(
-  path: string,
-  opts: { startSec?: number; maxSpanSec?: number; waitMs?: number } = {},
-): Promise<TranscriptResult> {
+export interface TranscribeOptions {
+  startSec?: number;
+  maxSpanSec?: number;
+  waitMs?: number;
+  /** The chat a person is waiting in: woken when a long job ends. */
+  notifySession?: string;
+}
+
+export async function transcribeMediaFile(path: string, opts: TranscribeOptions = {}): Promise<TranscriptResult> {
   if (!(await isFfmpegAvailable())) {
     throw new Error("ffmpeg is not available — it ships with the app and via ffmpeg-static; set LAX_FFMPEG to override");
   }
@@ -133,7 +163,7 @@ export async function transcribeMediaFile(
     : startSec + maxSpan;
 
   if (!provider || provider === "local-whisper") {
-    return transcribeLocal(path, probe.durationSec, startSec, maxSpan, opts.waitMs ?? LOCAL_WAIT_MS);
+    return transcribeLocal(path, probe.durationSec, startSec, maxSpan, opts);
   }
 
   const transcriber = await getSharedTranscriber();

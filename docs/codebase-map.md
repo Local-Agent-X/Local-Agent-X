@@ -13,16 +13,16 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2076 non-test source files · 76 oversized · 269 nearing the size cap.
+**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2077 non-test source files · 76 oversized · 270 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 184 | 30 | XL | 1 |
+| `src/ops/` | 185 | 30 | XL | 1 |
 | `src/security/` | 164 | 62 | XL | 2 |
-| `src/tools/` | 140 | 241 | XL | 9 |
-| `src/tool-execution/` | 101 | 90 | XL | 2 |
+| `src/tools/` | 140 | 242 | XL | 9 |
+| `src/tool-execution/` | 102 | 90 | XL | 2 |
 | `src/workspace/` | 91 | 3 | M |  |
 | `src/canonical-loop/` | 89 | 293 | XL | 10 |
 | `src/providers/` | 80 | 28 | L | 1 |
@@ -32,7 +32,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/util/` | 57 | 3 | S |  |
 | `src/browser/` | 54 | 94 | XL | 5 |
 | `src/agency/` | 49 | 40 | XL |  |
-| `src/chat-ws/` | 48 | 24 | L |  |
+| `src/chat-ws/` | 49 | 24 | L |  |
 | `src/tool-policy/` | 48 | 21 | L |  |
 | `src/local-runtimes/` | 45 | 27 | XL |  |
 | `src/threat/` | 44 | 13 | L |  |
@@ -469,6 +469,7 @@ job. Comments are free: never cut them to fit.
 - `src/update-extracted-validation.ts#validateExtractedUpdate` — 80+ own code lines (cap 100)
 - `src/voice/gpu-session.ts#createGpuSession` — 80+ own code lines (cap 100)
 - `src/agent-guards/loop-detection.ts#checkToolLoops` — 70+ own code lines (cap 100)
+- `src/agent-request/attachments.ts#processAttachments` — 70+ own code lines (cap 100)
 - `src/agents/escalation-core.ts#performEscalation` — 70+ own code lines (cap 100)
 - `src/anthropic-client/stream-cli/prompt-builder.ts#buildCliPrompt` — 70+ own code lines (cap 100)
 - `src/anthropic-client/warm-pool/stream-prompt.ts#processFrame` — 70+ own code lines (cap 100)

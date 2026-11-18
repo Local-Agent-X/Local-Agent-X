@@ -17,7 +17,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
 import { availableParallelism } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { getLaxDir } from "../lax-data-dir.js";
 import type { WhisperModelPaths } from "../voice/whisper-model-fetch.js";
@@ -27,7 +27,8 @@ import type { ChildJob, JobLine } from "./transcription-job-child.js";
 const SEAM = 0.05;
 const POLL_MS = 500;
 
-export interface Segment { start: number; end: number; text: string }
+/** A recognized stretch: it covers start..end, and its speech begins at `at`. */
+export interface Segment { start: number; end: number; at?: number; text: string }
 
 export interface JobProgress {
   /** Every window from the asked-for second onward, in order, with no gap. */
@@ -47,6 +48,8 @@ export interface JobProgress {
 export interface LocalJobRequest {
   path: string;
   model: WhisperModelPaths;
+  /** Silero VAD model the job cuts at pauses with. */
+  vadModel?: string;
   ffmpeg: string;
   /** Duration the probe reported; 0 when the container declares none. */
   durationSec: number;
@@ -141,7 +144,7 @@ function ensureRunning(key: string, req: LocalJobRequest, lines: JobLine[], spaw
   mkdirSync(dirname(key), { recursive: true });
   const child = spawner({
     input: req.path, ffmpeg: req.ffmpeg, startSec: from, spanSec: 0,
-    out: key, model: req.model, threads: jobThreads(),
+    out: key, model: req.model, vadModel: req.vadModel, threads: jobThreads(),
   });
   running.set(key, child);
   child.once("exit", () => { if (running.get(key) === child) running.delete(key); });
@@ -166,5 +169,25 @@ export async function transcribeInBackground(req: LocalJobRequest, spawner: Spaw
   }
 }
 
+/** Jobs someone is already waiting on, so a repeated call does not register twice. */
+const watched = new Set<string>();
+
+/** Call `onEnd` once, with the job's final progress, when the job for this
+ *  request exits. Returns the job's id, or null when no job is running for it
+ *  (finished already, or never started). */
+export function whenJobEnds(req: LocalJobRequest, onEnd: (p: JobProgress) => void): string | null {
+  const key = jobFile(req);
+  const child = running.get(key);
+  if (!child) return null;
+  const id = `transcribe:${basename(key, ".jsonl")}`;
+  if (watched.has(key)) return id;
+  watched.add(key);
+  child.once("exit", () => {
+    watched.delete(key);
+    onEnd(progressOf(readLines(key), { ...req, maxSpanSec: Number.POSITIVE_INFINITY }, false));
+  });
+  return id;
+}
+
 /** Test seam. */
-export function _runningJobsForTest(): Map<string, ChildProcess> { return running; }
+export function _runningJobsForTest(): Map<string, ChildProcess> { watched.clear(); return running; }

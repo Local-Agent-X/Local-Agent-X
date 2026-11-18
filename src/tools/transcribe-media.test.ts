@@ -24,10 +24,9 @@ vi.mock("../bridge-voice/stt-helper.js", () => ({
 vi.mock("../local-only-policy.js", () => ({ isLocalOnlyMode: () => false }));
 vi.mock("./transcription-job.js", () => ({ transcribeInBackground: (...a: unknown[]) => job(...a) }));
 vi.mock("../voice/whisper-model-fetch.js", () => ({
-  resolveWhisperVariant: () => "parakeet-v3",
-  ensureWhisperModelDownloaded: async () => ({ variant: "parakeet-v3" }),
+  ensureWhisperModelDownloaded: async (_: unknown, o: { variant: string }) => ({ variant: o.variant }),
 }));
-vi.mock("../voice/voice-session/settings.js", () => ({ resolveVoiceSettings: () => ({}) }));
+vi.mock("../voice/vad-model-fetch.js", () => ({ ensureVadModelDownloaded: async () => ({ model: "silero_vad.onnx", modelDir: "." }) }));
 vi.mock("../ffmpeg-bin.js", () => ({ ffmpegBin: () => "ffmpeg" }));
 
 const { transcribeMediaFile, formatTranscript, MAX_SPAN_SEC } = await import("./transcribe-media.js");
@@ -130,7 +129,9 @@ describe("transcribeMediaFile on this computer", () => {
     const r = await transcribeMediaFile("/talk.mp4", { startSec: 0 });
     expect(decode).not.toHaveBeenCalled();
     expect(transcribe).not.toHaveBeenCalled();
-    expect(job.mock.calls[0][0]).toMatchObject({ path: "/talk.mp4", durationSec: 1809, startSec: 0, maxSpanSec: MAX_SPAN_SEC });
+    expect(job.mock.calls[0][0]).toMatchObject({ path: "/talk.mp4", durationSec: 1809, startSec: 0, maxSpanSec: MAX_SPAN_SEC, vadModel: "silero_vad.onnx" });
+    // A recording is transcribed with Whisper small.en whatever voice chat uses.
+    expect(job.mock.calls[0][0].model.variant).toBe("small.en");
     expect(r.windows).toEqual([{ startSec: 0, text: "hello there" }]);
     expect(r).toMatchObject({ endSec: 60, hasMore: true, stillRunning: true });
   });

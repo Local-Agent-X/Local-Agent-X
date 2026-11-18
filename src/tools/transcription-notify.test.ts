@@ -3,6 +3,8 @@
 // agent's next turn and a turn is started to read it, so the agent is not tied
 // up in its own turn calling transcribe_media for minutes.
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const queued = vi.hoisted(() => [] as Array<Record<string, unknown>>);
 const woken = vi.hoisted(() => [] as Array<{ sessionId: string; op: Record<string, unknown>; heardElsewhere: boolean }>);
@@ -14,7 +16,8 @@ vi.mock("../ops/op-report-wake.js", () => ({
 const { announceTranscription, transcriptionNotice } = await import("./transcription-notify.js");
 const { formatNotificationsForSystemPrompt } = await vi.importActual<typeof import("../ops/pending-notifications.js")>("../ops/pending-notifications.js");
 
-const PATH = "C:\\Users\\me\\Downloads\\talk.mp4";
+// In this platform's own form: CI runs on Linux, where "\" is not a separator.
+const PATH = join(tmpdir(), "Downloads", "talk.mp4");
 const done = { segments: [], coveredTo: 1809, complete: true, running: false };
 
 beforeEach(() => { queued.length = 0; woken.length = 0; });

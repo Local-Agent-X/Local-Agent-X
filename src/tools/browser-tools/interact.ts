@@ -1,5 +1,5 @@
 /**
- * click / click_text / fill / select / scroll — element-targeted interactions.
+ * click / click_text / fill / select / scroll / press — interactions.
  * fill and the post-action variants share the listInputRefs / appendPostActionSnapshot
  * helpers from shared.ts.
  */
@@ -8,6 +8,7 @@ import type { ToolResult } from "../../types.js";
 import type { BrowserBackend } from "../../browser/index.js";
 import { appendPostActionSnapshot, listInputRefs } from "./shared.js";
 import { ok, err } from "../result-helpers.js";
+import { parseKeyPress, type KeyPress } from "../../browser/key-press.js";
 
 export async function handleClick(
   manager: BrowserBackend,
@@ -107,4 +108,16 @@ export async function handleScroll(
   const direction = args.value ? String(args.value) as "up" | "down" | "top" | "bottom" : "down";
   const base = await manager.scroll({ direction, refId: refVal });
   return ok(await appendPostActionSnapshot(manager, base));
+}
+
+/** A key on the page, held `hold_ms` (key-press.ts): what a keyboard game, a
+ *  shortcut, Escape on a dialog or Enter in a field needs. It goes to what has
+ *  focus; click a field first to type into it. */
+export async function handlePress(
+  manager: BrowserBackend,
+  args: Record<string, unknown>,
+): Promise<ToolResult> {
+  let press: KeyPress;
+  try { press = parseKeyPress(args.key, args.hold_ms); } catch (e) { return err((e as Error).message); }
+  return ok(await appendPostActionSnapshot(manager, await manager.pressKey(press)));
 }

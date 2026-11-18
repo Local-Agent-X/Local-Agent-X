@@ -15,7 +15,9 @@
  *      the order went through only if the page shows a confirmation.
  *
  * The agent clicks the button by ref, by its text, by a selector, by `act`, or
- * from page script; each is read here. A miss errs toward asking: a false
+ * from page script, or presses Enter or Space on it (`press`); each is read
+ * here. Which element has focus is not read: on a page with an order button,
+ * either key is taken as pressing it. A miss errs toward asking: a false
  * positive costs one extra tap on a card, a false negative a second order.
  */
 import type { ServerEvent, ToolResult } from "../../types.js";
@@ -33,6 +35,9 @@ const ORDER_PHRASE =
 /** The same as code spells it: an element id or name ("placeYourOrder1"), a
  *  CSS selector, page script. */
 const ORDER_IDENT = /place[ _-]?(?:your[ _-]?)?order|buy[ _-]?now|submit[ _-]?order|complete[ _-]?purchase|pay[ _-]?now/i;
+
+/** The keys that press a focused button. */
+const ACTIVATION_KEY = /^(?:enter|return|space| )$/i;
 
 export const REPEAT_WINDOW_MS = 2 * 60 * 60_000;
 
@@ -64,6 +69,11 @@ export async function orderButtonOf(
     case "click_text": return ORDER_CONTROL.test(text(args.text)) || ORDER_PHRASE.test(text(args.text)) ? text(args.text) : null;
     case "act": return ORDER_PHRASE.test(text(args.text) || text(args.value)) ? text(args.text) || text(args.value) : null;
     case "evaluate": return ORDER_IDENT.test(text(args.script)) || ORDER_PHRASE.test(text(args.script)) ? "an order button, from page script" : null;
+    case "press": {
+      if (!ACTIVATION_KEY.test(text(args.key))) return null;
+      const order = (await look()).currentRefs.find((r) => ORDER_CONTROL.test(r.name.trim()) || ORDER_IDENT.test(r.ids?.id ?? "") || ORDER_IDENT.test(r.ids?.name ?? ""));
+      return order ? order.name.trim() || "the order button" : null;
+    }
     default: return null;
   }
 }

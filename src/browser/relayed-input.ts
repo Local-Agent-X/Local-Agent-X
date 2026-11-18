@@ -2,7 +2,8 @@
  * A person's input relayed from another screen into the agent's browser: the
  * phone, while a human check is handed to the user
  * (tools/browser-tools/human-check-handoff.ts). Never a model action: the
- * browser tool has no way to send one.
+ * agent's own keys go through the browser tool's `press` (key-press.ts, which
+ * also turns these relayed keys into input events).
  *
  * A check is not always one tap. A slider is a drag, HUMAN's button is a
  * press held for seconds, a text CAPTCHA wants characters typed. So the phone
@@ -14,6 +15,7 @@ import type { Page } from "playwright";
 import { browserInput, type BridgeInputEvent } from "./bridge-client.js";
 import { clickAtPoint, cssToViewDip, type InAppActionContext } from "./in-app-actions.js";
 import { viewportMetricsInApp } from "./in-app-scroll.js";
+import { bridgeKeyEvents, parseKeyPress } from "./key-press.js";
 
 export const RELAYED_KEYS = ["Backspace", "Enter", "Tab"] as const;
 export type RelayedKey = typeof RELAYED_KEYS[number];
@@ -52,7 +54,11 @@ export function parseRelayedInput(raw: unknown): RelayedInput {
 export function relayedInputEvents(input: RelayedInput, at: { x: number; y: number } | null): BridgeInputEvent[] {
   switch (input.kind) {
     case "text": return [...input.text].map((ch) => ({ type: "char" as const, keyCode: ch }));
-    case "key": return [{ type: "keyDown", keyCode: input.key }, { type: "keyUp", keyCode: input.key }];
+    case "key": {
+      // As key-press.ts sends it: with its char, so Enter submits the form.
+      const { down, up } = bridgeKeyEvents(parseKeyPress(input.key, 0));
+      return [...down, ...up];
+    }
     default: break;
   }
   const { x, y } = at!;

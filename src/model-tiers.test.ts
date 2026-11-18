@@ -155,9 +155,16 @@ describe("shrinkToolsForTier — medium manifest size", () => {
     // file a medium model hands to a page's file chooser through the new
     // upload action; without them on the wire a form that wants a document
     // from disk ends the run. ~50 tokens. The ceiling moved 10,600 → 10,700.
+    //
+    // Re-measured 2026-11-17: 10,774. browser gained `press` with `key` and
+    // `hold_ms`: the only way to press a key in a page (a keyboard game,
+    // Escape on a dialog, Enter in a field). Without it a model checking a
+    // keyboard page looked for another tool, then wrote its own headless test
+    // (park-walk, the 2026-11-17 parity battery). ~75 tokens. The ceiling
+    // moved 10,700 → 10,800.
     expect(before).toBeGreaterThan(12_000);
     expect(after).toBeLessThanOrEqual(before / 2);
-    expect(after).toBeLessThanOrEqual(10_700);
+    expect(after).toBeLessThanOrEqual(10_800);
   });
 
   it("shortens parameter descriptions past the cap and leaves shorter ones verbatim", () => {

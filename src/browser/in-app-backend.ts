@@ -74,6 +74,7 @@ import {
 } from "./in-app-actions.js";
 import { scrollInApp } from "./in-app-scroll.js";
 import { relayInputInApp, type RelayedInput } from "./relayed-input.js";
+import { pressKeyInApp, type KeyPress } from "./key-press.js";
 import { uploadRefInApp } from "./in-app-upload.js";
 import { clickSelectorOrTextFallback, fillSelectorInApp, selectOptionInApp } from "./in-app-selector-actions.js";
 import type { BrowserBackend, InteractionResult, ScrollOptions } from "./backend.js";
@@ -276,6 +277,11 @@ export class ElectronInAppBackend implements BrowserBackend {
 	async scroll(opts: ScrollOptions): Promise<string> {
 		await this.ensureView();
 		return scrollInApp(this.actionContext(), opts);
+	}
+
+	async pressKey(press: KeyPress): Promise<string> {
+		await this.ensureView();
+		return pressKeyInApp(this.viewId, press);
 	}
 
 	async relayInput(input: RelayedInput): Promise<void> {

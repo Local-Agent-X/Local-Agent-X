@@ -63,7 +63,7 @@ export const RESET_ACTIONS = sealedTable(["navigate", "new_tab", "switch_tab", "
 // re-perceive recovery move with the stall error is the opposite of helpful.
 // upload counts too: a file landing in an input moves its value, so a dead
 // one that changed nothing is caught like a dead fill.
-export const TRACKED_ACTIONS = sealedTable(["click", "click_text", "fill", "select", "upload", "scroll", "act"]);
+export const TRACKED_ACTIONS = sealedTable(["click", "click_text", "fill", "select", "upload", "scroll", "press", "act"]);
 // layout_report belongs here: it evaluates a fixed script that reads geometry,
 // computed style, stylesheets and matching media queries. The tool's declared
 // effect class for it is "read-only"; the no-mutation proof and its limits are
@@ -104,7 +104,7 @@ export const HUMAN_VERIFICATION_BLOCKED_ACTIONS = sealedTable([
 // a bookmark (the model's title and url into a persistent store), and
 // releasing a download from quarantine onto disk.
 export const PAGE_WRITE_ACTIONS = sealedTable([
-  "click", "click_text", "fill", "select", "upload", "evaluate", "act", "dialog_accept", "bookmark_add", "release_download",
+  "click", "click_text", "fill", "select", "upload", "press", "evaluate", "act", "dialog_accept", "bookmark_add", "release_download",
 ]);
 // A get moves to or reads a page: navigation (the URL still goes through the
 // outbound scans as a GET), every read-only action, a scroll, the download

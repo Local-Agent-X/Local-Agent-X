@@ -35,6 +35,14 @@ describe("orderButtonOf", () => {
     expect(await orderButtonOf("evaluate", { script: "document.querySelector('#submitOrderButtonId').click()" }, none)).toBe("an order button, from page script");
   });
 
+  it("takes Enter or Space on a page with an order button as pressing it, and no other key", async () => {
+    const checkout = page({ id: 4, name: "Add a gift receipt" }, { id: 9, name: "Place your order" });
+    expect(await orderButtonOf("press", { key: "Enter" }, checkout)).toBe("Place your order");
+    expect(await orderButtonOf("press", { key: "Space" }, checkout)).toBe("Place your order");
+    expect(await orderButtonOf("press", { key: "Tab" }, checkout)).toBeNull();
+    expect(await orderButtonOf("press", { key: "Enter" }, page({ id: 1, name: "Search" }))).toBeNull();
+  });
+
   it("leaves every other click alone", async () => {
     expect(await orderButtonOf("click", { ref: 3 }, page({ id: 3, name: "Add to Cart" }))).toBeNull();
     expect(await orderButtonOf("click", { ref: 3 }, page({ id: 3, name: "Your orders" }))).toBeNull();

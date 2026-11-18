@@ -49,5 +49,10 @@ describe("relayedInputEvents", () => {
     expect(relayedInputEvents({ kind: "key", key: "Backspace" }, null)).toEqual([
       { type: "keyDown", keyCode: "Backspace" }, { type: "keyUp", keyCode: "Backspace" },
     ]);
+    // Enter carries its "\r" char: without it Electron fires no keypress and
+    // the form is never submitted (seen 2026-11-17).
+    expect(relayedInputEvents({ kind: "key", key: "Enter" }, null)).toEqual([
+      { type: "keyDown", keyCode: "Enter" }, { type: "char", keyCode: "\r" }, { type: "keyUp", keyCode: "Enter" },
+    ]);
   });
 });

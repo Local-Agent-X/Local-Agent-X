@@ -45,6 +45,7 @@ import {
   handleFill,
   handleSelect,
   handleScroll,
+  handlePress,
 } from "./interact.js";
 import {
   handleExtract,
@@ -190,6 +191,7 @@ export function createBrowserTools(getSessionId?: () => string): ToolDefinition[
             case "screenshot": return await handleScreenshot(manager, getSecretBrowserOps(sessionId));
             case "evaluate": return await handleEvaluate(manager, args, getSecretBrowserOps(sessionId));
             case "scroll": return await handleScroll(manager, args);
+            case "press": return await handlePress(manager, args);
             case "tabs": return await handleTabs(manager);
             case "switch_tab": return await handleSwitchTab(manager, args);
             case "close_tab": return await handleCloseTab(manager, args);

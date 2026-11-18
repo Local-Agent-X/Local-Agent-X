@@ -2,6 +2,7 @@ import type { Page, BrowserContext, Response } from "playwright";
 import { ObservationRegistry, type BrowserObservation } from "./observation.js";
 import { fingerprintPage, scrollPage, clickRefOn, fillRefOn, selectRefOn, clickTextOn, uploadRefOn } from "./interactions.js";
 import { relayInputCdp, type RelayedInput } from "./relayed-input.js";
+import { pressKeyCdp, type KeyPress } from "./key-press.js";
 import { installDialogHandler, handleNextDialog } from "./dialog-handler.js";
 import { installRequestGuard } from "./guards.js";
 import { wirePopupAdoption } from "./manager-popups.js";
@@ -291,6 +292,10 @@ export class BrowserManager implements BrowserBackend {
 
   async scroll(opts: ScrollOptions): Promise<string> {
     return scrollPage(await this.getPage(), this.registry, opts);
+  }
+
+  async pressKey(press: KeyPress): Promise<string> {
+    return pressKeyCdp(await this.getPage(), press);
   }
 
   async relayInput(input: RelayedInput): Promise<void> {

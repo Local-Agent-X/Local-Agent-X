@@ -31,6 +31,7 @@ import type { DownloadApprovalBinding } from "./downloads.js";
 import type { BrowserEngine } from "./launcher.js";
 import type { ScreenshotResult } from "./page-ops.js";
 import type { RelayedInput } from "./relayed-input.js";
+import type { KeyPress } from "./key-press.js";
 
 /** Keeps ref-resolution failures distinct from successful action text. */
 export interface InteractionResult { ok: boolean; text: string; }
@@ -69,6 +70,10 @@ export interface BrowserBackend {
    *  scanned (tools/browser-tools/upload.ts): a backend only delivers them. */
   uploadByRef(ref: number, files: string[]): Promise<InteractionResult>;
   scroll(opts: ScrollOptions): Promise<string>;
+  /** Press a key (with modifiers), hold it `holdMs`, let it go: the browser
+   *  tool's `press` (key-press.ts). A key that writes text is refused while a
+   *  credential field has focus. */
+  pressKey(press: KeyPress): Promise<string>;
   /** A person's tap, drag, hold or typing relayed from another screen (the
    *  phone, for a human check handed to the user:
    *  tools/browser-tools/human-check-handoff.ts); see relayed-input.ts. Never

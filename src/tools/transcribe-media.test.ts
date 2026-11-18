@@ -130,8 +130,8 @@ describe("transcribeMediaFile on this computer", () => {
     expect(decode).not.toHaveBeenCalled();
     expect(transcribe).not.toHaveBeenCalled();
     expect(job.mock.calls[0][0]).toMatchObject({ path: "/talk.mp4", durationSec: 1809, startSec: 0, maxSpanSec: MAX_SPAN_SEC, vadModel: "silero_vad.onnx" });
-    // A recording is transcribed with Whisper small.en whatever voice chat uses.
-    expect(job.mock.calls[0][0].model.variant).toBe("small.en");
+    // A recording is transcribed with Whisper large-v3-turbo whatever voice chat uses.
+    expect(job.mock.calls[0][0].model.variant).toBe("large-v3-turbo");
     expect(r.windows).toEqual([{ startSec: 0, text: "hello there" }]);
     expect(r).toMatchObject({ endSec: 60, hasMore: true, stillRunning: true });
   });

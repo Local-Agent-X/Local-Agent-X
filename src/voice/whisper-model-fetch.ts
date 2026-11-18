@@ -31,14 +31,14 @@ import { getLaxDir } from "../lax-data-dir.js";
 import { DESKTOP_ENV } from "../desktop-contract/env.js";
 import { isLocalOnlyMode, LOCAL_ONLY_BLOCK_MESSAGE } from "../local-only-policy.js";
 
-export type WhisperVariant = "tiny.en" | "base.en" | "small.en" | "parakeet-v3";
+export type WhisperVariant = "tiny.en" | "base.en" | "small.en" | "large-v3-turbo" | "parakeet-v3";
 
 /** How sherpa-onnx loads the variant: Whisper is encoder + decoder, NeMo's
  *  Parakeet is a transducer (encoder + decoder + joiner). */
 export type LocalSttKind = "whisper" | "nemo_transducer";
 
 export const VALID_WHISPER_VARIANTS: ReadonlySet<WhisperVariant> =
-  new Set<WhisperVariant>(["tiny.en", "base.en", "small.en", "parakeet-v3"]);
+  new Set<WhisperVariant>(["tiny.en", "base.en", "small.en", "large-v3-turbo", "parakeet-v3"]);
 
 export const DEFAULT_WHISPER_VARIANT: WhisperVariant = "tiny.en";
 
@@ -65,15 +65,17 @@ interface VariantSpec {
 
 // Truncation guards are ~60% of the real int8 size. sherpa-onnx re-verifies
 // ONNX integrity on load, so these only catch obviously truncated downloads.
-function whisperSpec(v: "tiny.en" | "base.en" | "small.en", encoder: number, decoder: number): VariantSpec {
+/** `name` is the model's name in its repo and file names, where it differs
+ *  from the variant (large-v3-turbo is published as "turbo"). */
+function whisperSpec(v: "tiny.en" | "base.en" | "small.en" | "large-v3-turbo", encoder: number, decoder: number, name: string = v): VariantSpec {
   return {
     kind: "whisper",
-    repo: `csukuangfj/sherpa-onnx-whisper-${v}`,
+    repo: `csukuangfj/sherpa-onnx-whisper-${name}`,
     dir: `whisper-${v.replace(".", "-")}`,
     files: {
-      encoder: [`${v}-encoder.int8.onnx`, encoder],
-      decoder: [`${v}-decoder.int8.onnx`, decoder],
-      tokens: [`${v}-tokens.txt`, 100_000],
+      encoder: [`${name}-encoder.int8.onnx`, encoder],
+      decoder: [`${name}-decoder.int8.onnx`, decoder],
+      tokens: [`${name}-tokens.txt`, 100_000],
     },
   };
 }
@@ -82,6 +84,9 @@ const VARIANT_SPECS: Record<WhisperVariant, VariantSpec> = {
   "tiny.en": whisperSpec("tiny.en", 8_000_000, 50_000_000),
   "base.en": whisperSpec("base.en", 14_000_000, 55_000_000),
   "small.en": whisperSpec("small.en", 50_000_000, 180_000_000),
+  // ~1 GB (encoder 675 MB, decoder 361 MB): what a recording is transcribed
+  // with (tools/transcribe-media.ts FILE_TRANSCRIPTION_MODEL).
+  "large-v3-turbo": whisperSpec("large-v3-turbo", 400_000_000, 200_000_000, "turbo"),
   "parakeet-v3": {
     kind: "nemo_transducer",
     repo: "csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8",

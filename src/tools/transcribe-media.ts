@@ -79,11 +79,14 @@ export function formatTranscript(result: TranscriptResult): string {
 /** The model a recording is transcribed with, whatever voice chat uses. Voice
  *  chat wants Parakeet's speed on short, clear utterances from the user's own
  *  mic; a recording is often a compressed call, where Parakeet dropped whole
- *  passages and Whisper small.en heard them (406 words of a 3-minute stretch
- *  against 253, 2026-11-17). A transcript missing what was said is worth less
- *  than one that takes longer, so accuracy decides: a ~375 MB one-time
- *  download, about 7x real time on 8 cores. */
-export const FILE_TRANSCRIPTION_MODEL = "small.en" as const;
+ *  passages. On a 30-minute Teams interview (2026-11-17): Parakeet 3,388
+ *  words; Whisper small.en 4,111 ("Hey, be a beaver", a loop of "yeah" over
+ *  a whole exchange); large-v3-turbo 4,441 ("Hey, Peter", the exchange
+ *  recovered, names right), in 6 min 17 s on 8 cores. medium.en was no
+ *  better and a third the speed. A transcript missing or garbling what was
+ *  said is worth less than one that takes longer, so accuracy decides: a
+ *  ~1 GB one-time download that runs on any 64-bit CPU, no GPU needed. */
+export const FILE_TRANSCRIPTION_MODEL = "large-v3-turbo" as const;
 
 /** How long one call waits on a local job before answering with what is done:
  *  inside the tool's 120 s limit, with room for the probe and the reply. A run

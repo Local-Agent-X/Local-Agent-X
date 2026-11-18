@@ -116,9 +116,9 @@ jobs:
                --dir pointer-current --clobber 2>/dev/null; then
             current=$(node -e "try{process.stdout.write(String(require('./pointer-current/rolling-source-latest.json').commit||''))}catch(e){}")
           fi
-          if [ -n "$current" ] && [ "$current" != "$sha" ] \
-             && ! git merge-base --is-ancestor "$current" "$sha"; then
-            echo "::warning title=Pointer not advanced::${sha} does not descend from published ${current}; leaving the pointer where it is."
+          # Moves only to a descendant, or past a commit history no longer has.
+          verdict=$(node scripts/rolling-pointer-advance.mjs "$current" "$sha")
+          if [ "$verdict" != "advance" ]; then
             exit 0
           fi
           gh release upload rolling "rolling-dist/rolling-source-latest.json" --clobber

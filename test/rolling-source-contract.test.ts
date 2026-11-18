@@ -180,8 +180,8 @@ describe("rolling-source workflow — publish order is the safety property", () 
     expect(advance).toBeGreaterThan(upload);
   });
 
-  it("refuses to move the pointer to a non-descendant commit", () => {
-    expect(workflow).toContain("git merge-base --is-ancestor");
+  it("decides each pointer move with the tested verdict script", () => {
+    expect(workflow).toContain('node scripts/rolling-pointer-advance.mjs "$current" "$sha"');
   });
 
   it("checks out full history, without which the ancestor proof cannot run", () => {

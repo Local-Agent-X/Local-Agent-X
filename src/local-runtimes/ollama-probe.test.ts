@@ -178,6 +178,26 @@ describe("ollamaProbe.probeModel", () => {
     expect(await ollamaProbe.probeModel(EP, "qwen3.8:27b")).toEqual({ toolParser: "qwen3.5" });
   });
 
+  it("a cloud model's window is the length the remote serves, as /api/show reports it", async () => {
+    // The shape Ollama returns for a remote model (server/routes.go RemoteHost branch).
+    stubFetch({
+      "/api/ps": { models: [] },
+      "/api/show": {
+        remote_host: "https://ollama.com:443", remote_model: "gemma4:31b",
+        model_info: { "general.architecture": "gemma4", "gemma4.context_length": 262144 },
+      },
+    });
+    expect((await ollamaProbe.probeModel(EP, "gemma4:31b-cloud")).contextWindow).toBe(262144);
+  });
+
+  it("a local model's architecture length still never becomes its window", async () => {
+    stubFetch({
+      "/api/ps": { models: [] },
+      "/api/show": { model_info: { "general.architecture": "gemma4", "gemma4.context_length": 262144 } },
+    });
+    expect((await ollamaProbe.probeModel(EP, "gemma4:31b")).contextWindow).toBeUndefined();
+  });
+
   it("{} when nothing is known — null never becomes an optimistic default", async () => {
     stubFetch({ "/api/ps": { models: [] }, "/api/show": { model_info: { "q.context_length": 262144 } } });
     expect(await ollamaProbe.probeModel(EP, "m")).toEqual({});

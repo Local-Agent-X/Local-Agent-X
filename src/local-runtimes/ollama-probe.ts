@@ -68,6 +68,27 @@ export function parseNumCtx(parameters: unknown): number | null {
   return Number.isInteger(n) && n > 0 ? n : null;
 }
 
+/**
+ * The window a cloud model (a `-cloud` tag the local Ollama relays to
+ * ollama.com) is served at, from /api/show, or null for a local model. It
+ * never loads here, so /api/ps never lists it and it has no num_ctx: without
+ * this its window stayed at the 8,192 not-loaded floor for good (a 47K
+ * conversation on gemma4:31b-cloud metered at 652%, 2026-11-18). For a remote
+ * model Ollama fills model_info from the manifest's context_length, the length
+ * the remote serves (server/routes.go, the show handler's RemoteHost branch);
+ * for a local one it is the architecture max, which is why only a model with
+ * a remote_host reads it.
+ */
+export function parseRemoteContextLength(show: Record<string, unknown>): number | null {
+  if (typeof show.remote_host !== "string" || !show.remote_host) return null;
+  const info = show.model_info;
+  if (!info || typeof info !== "object") return null;
+  const fields = info as Record<string, unknown>;
+  const arch = fields["general.architecture"];
+  const n = Number(typeof arch === "string" ? fields[`${arch}.context_length`] : undefined);
+  return Number.isInteger(n) && n > 0 ? n : null;
+}
+
 /** Tool support from /api/show's capabilities array. Absent array = unknown. */
 export function parseToolCapability(capabilities: unknown): boolean | null {
   if (!Array.isArray(capabilities)) return null;
@@ -167,11 +188,12 @@ export const ollamaProbe: LocalRuntimeProbe = {
       }),
     ]);
     const result: Partial<LocalModel> = {};
-    // Precedence: what's actually loaded beats Modelfile config; the
-    // architecture max in model_info is deliberately never consulted.
+    // Precedence: what's actually loaded beats Modelfile config; a local
+    // model's architecture max in model_info is deliberately never consulted,
+    // a cloud model's served length is (parseRemoteContextLength).
     const loaded = parseLoadedContext(ps, modelId);
     const numCtx = show ? parseNumCtx(show.parameters) : null;
-    const window = loaded ?? numCtx;
+    const window = loaded ?? numCtx ?? (show ? parseRemoteContextLength(show) : null);
     if (window !== null) result.contextWindow = window;
     const tools = show ? parseToolCapability(show.capabilities) : null;
     if (tools !== null) result.tools = tools;

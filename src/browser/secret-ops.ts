@@ -150,7 +150,13 @@ export interface HeldSecret {
 
 /** Everything the page holds that a script could read and return: each
  *  cookie (raw and percent-decoded, so either rendering is recognised), each
- *  local/session storage entry, each password field's value. Capped. */
+ *  local/session storage entry, each password field's value. Capped.
+ *
+ *  Opening a store is inside the guard: on a sandboxed document (no
+ *  allow-same-origin, as LAX serves a workspace page) `window.localStorage`
+ *  itself throws, and read outside the try it failed every evaluate on the
+ *  page (2026-11-17). A store the page cannot open holds nothing a script
+ *  there could read. */
 export function heldSecretsScript(): string {
 	return `(function(){
 	var out = [];
@@ -163,8 +169,8 @@ export function heldSecretsScript(): string {
 			try { var dec = decodeURIComponent(raw); if (dec !== raw) push('cookie', name, dec); } catch (e) {}
 		});
 	} catch (e) {}
-	[window.localStorage, window.sessionStorage].forEach(function(store){
-		try { for (var i = 0; i < store.length; i++) { var k = store.key(i); push('storage', k, store.getItem(k)); } } catch (e) {}
+	['localStorage', 'sessionStorage'].forEach(function(name){
+		try { var store = window[name]; for (var i = 0; i < store.length; i++) { var k = store.key(i); push('storage', k, store.getItem(k)); } } catch (e) {}
 	});
 	var pw = document.querySelectorAll('input[type=password]');
 	for (var j = 0; j < pw.length; j++) push('password-field', pw[j].name || pw[j].id || 'password', pw[j].value);

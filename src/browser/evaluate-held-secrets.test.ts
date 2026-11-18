@@ -109,8 +109,26 @@ describe("heldSecretsScript", () => {
   it("reads cookies both raw and decoded, both storages, and password fields, and is valid JS", () => {
     const script = heldSecretsScript();
     expect(() => new Function(`return ${script}`)).not.toThrow();
-    for (const needle of ["document.cookie", "decodeURIComponent", "window.localStorage", "window.sessionStorage", "input[type=password]"]) {
+    for (const needle of ["document.cookie", "decodeURIComponent", "'localStorage'", "'sessionStorage'", "input[type=password]"]) {
       expect(script).toContain(needle);
     }
+  });
+
+  // A workspace page LAX serves is sandboxed without allow-same-origin, where
+  // opening window.localStorage throws; read outside the guard, it failed
+  // every evaluate on the page (park-walk, 2026-11-17).
+  it("still reads the rest when the page may not open its storage", () => {
+    const store = (entries: Record<string, string>) => ({
+      length: Object.keys(entries).length, key: (i: number) => Object.keys(entries)[i], getItem: (k: string) => entries[k],
+    });
+    const window = {} as Record<string, unknown>;
+    Object.defineProperty(window, "localStorage", { get() { throw new Error("SecurityError: The document is sandboxed"); } });
+    window.sessionStorage = store({ "auth-token": "abc123" });
+    const document = { cookie: "sid=s3cr3t", querySelectorAll: () => [] };
+    const held = new Function("window", "document", `return ${heldSecretsScript()}`)(window, document) as HeldSecret[];
+    expect(held).toEqual([
+      { kind: "cookie", name: "sid", value: "s3cr3t" },
+      { kind: "storage", name: "auth-token", value: "abc123" },
+    ]);
   });
 });

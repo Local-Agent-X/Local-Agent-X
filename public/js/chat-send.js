@@ -88,7 +88,7 @@ async function sendMessage() {
   // Capture attachments before clearing
   const msgAttachments = pendingUploads.length ? pendingUploads.map(f => ({
     name: f.name, size: f.size, type: f.type, isImage: f.isImage,
-    url: f.url || null, dataUrl: f.dataUrl || null
+    url: f.url || null, dataUrl: f.dataUrl || null, localPath: f.localPath || null
   })) : null;
   const hasImages = msgAttachments && msgAttachments.some(a => a.isImage);
   const nonImageFiles = msgAttachments ? msgAttachments.filter(a => !a.isImage) : [];

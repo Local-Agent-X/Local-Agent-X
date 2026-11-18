@@ -75,7 +75,7 @@ export interface AgentRequestInput {
   /** Bridge-specific context string (platform, channel, formatting rules) */
   bridgeContext?: string;
   /** Image attachments */
-  attachments?: Array<{ isImage: boolean; url: string; name: string }>;
+  attachments?: Array<{ isImage: boolean; url: string; name: string; localPath?: string | null }>;
   /** Uploads directory for resolving attachment paths */
   uploadsDir?: string;
   /** Force a specific provider for this turn. Used by per-job cron model

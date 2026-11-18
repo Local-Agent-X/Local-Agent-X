@@ -191,7 +191,15 @@ async function addFilesToUpload(files, ctxKey) {
   const list = __uploadState(key);
   for (const f of files) {
     const isImage = f.type.startsWith('image/');
-    const entry = { name: f.name, size: f.size, type: f.type, isImage, url: null, dataUrl: null, _uploadPromise: null };
+    // In the desktop app a picked or dropped file has a path on this computer:
+    // the agent is handed that path and nothing is copied. A 2 GB recording
+    // used to fail the upload cap silently and reach the model as a bare name.
+    // Images still upload: the model is shown their pixels, not a path.
+    let localPath = null;
+    if (!isImage && window.desktop?.pathForFile) {
+      try { localPath = window.desktop.pathForFile(f) || null; } catch { localPath = null; } // pasted data has no path: upload it
+    }
+    const entry = { name: f.name, size: f.size, type: f.type, isImage, url: null, dataUrl: null, localPath, _uploadPromise: null };
 
     // Local preview for images
     if (isImage) {
@@ -202,6 +210,7 @@ async function addFilesToUpload(files, ctxKey) {
 
     list.push(entry);
     renderUploadPreviews(key);
+    if (localPath) continue;
 
     // Upload to server in background — track the promise so sendMessage can await it
     const form = new FormData();

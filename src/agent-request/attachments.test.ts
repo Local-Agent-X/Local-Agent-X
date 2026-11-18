@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { join } from "node:path";
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { processAttachments, unreadableAttachmentNote } from "./attachments.js";
 
@@ -20,6 +20,33 @@ describe("processAttachments", () => {
     expect(r.fileAttachmentNote).toContain("/uploads/abc123.pdf");
     expect(r.fileAttachmentNote).toContain("Invoice.pdf");
     expect(r.fileAttachmentNote).toContain("Pass the PATH");
+  });
+
+  // A file the desktop app picked or dropped is handed over where it is, never
+  // copied: a 2 GB recording used to fail the upload cap and reach the model as
+  // a bare name it could not open (2026-11-17).
+  it("hands the model a desktop file's own path, with nothing copied into uploads", () => {
+    const original = join(up, "elsewhere", "eric chow.mp4");
+    rmSync(join(up, "elsewhere"), { recursive: true, force: true });
+    mkdirSync(join(up, "elsewhere"), { recursive: true });
+    writeFileSync(original, "video-bytes");
+    const r = processAttachments([{ isImage: false, name: "eric chow.mp4", url: null, dataUrl: null, localPath: original }], up);
+    expect(r.fileAttachments).toEqual([{ name: "eric chow.mp4", ref: original }]);
+    expect(r.fileAttachmentNote).toContain(`"eric chow.mp4" → ${original}`);
+    expect(r.fileAttachmentNote).toContain("transcribe_media");
+  });
+
+  it("says a file that never arrived is missing, rather than dropping it without a word", () => {
+    const r = processAttachments([
+      { isImage: false, name: "huge.mp4", url: null, dataUrl: null },
+      { isImage: false, name: "gone.mp4", url: null, dataUrl: null, localPath: join(up, "no-such-file.mp4") },
+      { isImage: false, name: "rel.mp4", url: null, dataUrl: null, localPath: "relative/rel.mp4" },
+    ], up);
+    expect(r.fileAttachments).toEqual([]);
+    expect(r.fileAttachmentNote).toContain("did not reach this computer");
+    expect(r.fileAttachmentNote).toContain(`- "huge.mp4"`);
+    expect(r.fileAttachmentNote).toContain(`- "rel.mp4"`); // only an absolute path is taken
+    expect(r.fileAttachmentNote).toContain("[Attachment gone.mp4 could not be read");
   });
 
   it("routes an image to images[] with NO file note", () => {

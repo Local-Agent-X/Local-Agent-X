@@ -3,7 +3,7 @@
  * Electron main process. The web UI can call these via window.desktop.
  */
 
-import { contextBridge, ipcRenderer } from "electron";
+import { contextBridge, ipcRenderer, webUtils } from "electron";
 
 // Platform body-class — set as early as possible so renderer CSS can
 // condition window-chrome layout without waiting for IPC. macOS gets
@@ -38,6 +38,11 @@ import { contextBridge, ipcRenderer } from "electron";
 }
 
 contextBridge.exposeInMainWorld("desktop", {
+  // Where a file the user picked or dropped is on this computer, so a chat
+  // attachment is handed to the agent by path instead of copied ("" for data
+  // that has no file behind it, such as a paste).
+  pathForFile: (file: File) => webUtils.getPathForFile(file),
+
   // Server
   getServerStatus: () => ipcRenderer.invoke("get-server-status"),
   restartServer: () => ipcRenderer.invoke("restart-server"),

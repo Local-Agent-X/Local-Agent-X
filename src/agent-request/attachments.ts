@@ -1,4 +1,4 @@
-import { basename, join } from "node:path";
+import { basename, isAbsolute, join } from "node:path";
 import { accessSync, constants as fsConstants, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 
@@ -52,6 +52,11 @@ export interface RawAttachment {
   name: string;
   url?: string | null;
   dataUrl?: string | null;
+  /** Where the file already is on this computer: a file the desktop app picked
+   *  or dropped is handed over by path, never copied (chat-uploads.js). The
+   *  path is only named to the model; every tool that opens it still goes
+   *  through the file-access gate. */
+  localPath?: string | null;
   /** Seen on this turn only, never kept on the user's row (a call's camera frame). */
   glance?: true;
 }
@@ -72,12 +77,26 @@ export function processAttachments(
   const images: ProcessedAttachments["images"] = [];
   const fileAttachments: ProcessedAttachments["fileAttachments"] = [];
   const unreadable: string[] = [];
+  const missing: string[] = [];
 
   if (attachments && uploadsDir) {
     for (const a of attachments) {
       const inline = a.dataUrl ?? null;
       const src = (a.url as string | null) || inline;
-      if (!src) continue;
+      const local = !a.isImage && typeof a.localPath === "string" && isAbsolute(a.localPath) ? a.localPath : null;
+      if (!src && local) {
+        try {
+          accessSync(local, fsConstants.R_OK);
+          fileAttachments.push({ name: a.name, ref: local });
+        } catch (err) {
+          unreadable.push(unreadableAttachmentNote({ name: a.name, filePath: local }, err));
+        }
+        continue;
+      }
+      // Neither stored nor on a known path (an upload over the size cap, or one
+      // that failed): the model used to see only the name the message text
+      // carries and guess at where the file was.
+      if (!src) { if (!a.isImage) missing.push(a.name); continue; }
       const dataMatch = /^data:([^;]+);base64,(.+)$/.exec(src);
       let ref: string;
       let filePath: string;
@@ -126,15 +145,22 @@ export function processAttachments(
   const noteParts: string[] = [];
   if (fileAttachments.length) {
     noteParts.push(
-      `\n\nThe user attached non-image file(s), saved and readable by your file tools. ` +
-        `Pass the PATH (not the display name) to a tool such as \`pdf\` (read) or \`read\`:\n` +
+      `\n\nThe user attached non-image file(s), readable by your file tools. ` +
+        `Pass the PATH (not the display name) to a tool such as \`pdf\` (read), \`read\` or \`transcribe_media\`:\n` +
         fileAttachments.map((f) => `- "${f.name}" → ${f.ref}`).join("\n"),
     );
   }
   if (unreadable.length) {
     noteParts.push(
-      `\n\nSome attached file(s) could not be read from the uploads store — tell the user rather than guessing at their contents:\n` +
+      `\n\nSome attached file(s) could not be read — tell the user rather than guessing at their contents:\n` +
         unreadable.map((n) => `- ${n}`).join("\n"),
+    );
+  }
+  if (missing.length) {
+    noteParts.push(
+      `\n\nThese attached file(s) did not reach this computer (too large to upload, or the upload failed), so you have only their names. ` +
+        `Ask the user where the file is saved, or to attach it from the desktop app; do not search the disk or guess at its contents:\n` +
+        missing.map((n) => `- "${n}"`).join("\n"),
     );
   }
   const fileAttachmentNote = noteParts.join("");

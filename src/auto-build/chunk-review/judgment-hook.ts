@@ -196,7 +196,7 @@ interface JudgmentEnvelope {
 }
 
 export const judgmentEnvelopeSchema = z
-  .record(z.unknown())
+  .record(z.string(), z.unknown())
   .transform((rec): JudgmentEnvelope => {
     if (rec.violation !== true) return { judgment: null };
     const specGap = String(rec.specGap || "").trim();

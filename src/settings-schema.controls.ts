@@ -118,7 +118,7 @@ export const CONTROL_SETTINGS: ReadonlyArray<FlippableSetting> = [
   {
     field: "modelDailyBudgetsUsd",
     owner: "spending-cap", where: SPENDING_LIMITS,
-    validate: z.record(z.number().min(0)),
+    validate: z.record(z.string(), z.number().min(0)),
     runtime: true,
     description: "Per-model daily USD caps on real per-call API spend, keyed by model id. A model over its cap is blocked for the rest of the day. Flat-rate subscription models are never capped",
   },

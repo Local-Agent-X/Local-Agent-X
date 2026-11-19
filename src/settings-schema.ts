@@ -26,7 +26,7 @@
  * .preferences.ts, .operator.ts, .watchers.ts); this module merges them and derives the
  * sets every consumer reads.
  */
-import type { z } from "zod";
+import { z } from "zod";
 import type { LAXConfig } from "./types.js";
 import { CONTROL_SETTINGS } from "./settings-schema.controls.js";
 import { PREFERENCE_SETTINGS } from "./settings-schema.preferences.js";
@@ -161,12 +161,16 @@ export function publicSchema(): PublicField[] {
       description: s.description,
       runtime: s.runtime,
     };
-    // Lightweight type/enum introspection — good enough to guide the agent.
-    const def = (s.validate as unknown as { _def?: { typeName?: string; values?: unknown[]; checks?: unknown[] } })._def;
-    if (def?.typeName === "ZodEnum" && Array.isArray(def.values)) { out.type = "enum"; out.values = def.values; }
-    else if (def?.typeName === "ZodBoolean") { out.type = "boolean"; }
-    else if (def?.typeName === "ZodNumber") { out.type = "number"; }
-    else if (def?.typeName === "ZodString") { out.type = "string"; }
-    return out;
+    return { ...out, ...settingValueShape(s.validate) };
   });
+}
+
+/** What kind of value a setting takes, read through zod's public classes —
+ *  good enough to guide the agent. An enum also lists its values. */
+export function settingValueShape(validate: z.ZodType): { type: string; values?: string[] } {
+  if (validate instanceof z.ZodEnum) return { type: "enum", values: validate.options.map(String) };
+  if (validate instanceof z.ZodBoolean) return { type: "boolean" };
+  if (validate instanceof z.ZodNumber) return { type: "number" };
+  if (validate instanceof z.ZodString) return { type: "string" };
+  return { type: "unknown" };
 }

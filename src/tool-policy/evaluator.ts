@@ -38,7 +38,7 @@ export const RulePackRuleSchema = z.object({
     "threat",        // session threat state (pre-tool-call)
     "default-deny",  // backstop — fail-closed deny
   ]),
-  match: z.record(z.unknown()).optional(),
+  match: z.record(z.string(), z.unknown()).optional(),
   decision: z.enum(["allow", "approval-required", "deny"]),
   reason: z.string(),
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { FLIPPABLE_SETTINGS, PROTECTED_SETTINGS, SPENDING_CAP_SETTINGS } from "./settings-schema.js";
+import { FLIPPABLE_SETTINGS, PROTECTED_SETTINGS, SPENDING_CAP_SETTINGS, settingValueShape } from "./settings-schema.js";
 import {
   PROTECTED_TIGHTENING,
   PROTECTED_WITHOUT_SAFE_DIRECTION,
@@ -24,7 +24,7 @@ describe("every protected setting has a decided direction", () => {
         continue;
       }
       for (const v of rule.stricterLast) expect(validate.safeParse(v).success, `${field} ${v}`).toBe(true);
-      const values = (validate as unknown as { _def: { values: string[] } })._def.values;
+      const values = settingValueShape(validate).values ?? [];
       expect([...rule.stricterLast].sort(), field).toEqual([...values].sort());
     }
   });

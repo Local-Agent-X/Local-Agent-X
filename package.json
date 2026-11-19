@@ -1,6 +1,6 @@
 {
   "name": "local-agent-x",
-  "version": "0.5.9",
+  "version": "0.5.10",
   "description": "Self-hosted personal AI agent with voice conversation, scheduled missions, and a runtime security kernel",
   "license": "SEE LICENSE IN LICENSE",
   "author": "Peter Manrique",
@@ -101,8 +101,8 @@
     "mammoth": "^1.12.0",
     "mpg123-decoder": "^1.0.3",
     "msedge-tts": "^2.1.1",
-    "nodemailer": "^8.0.4",
-    "openai": "^4.86.0",
+    "nodemailer": "^10.6.0",
+    "openai": "^7.60.0",
     "pdf-lib": "^1.17.1",
     "pdf-parse": "^2.4.5",
     "pdfkit": "^0.18.0",
@@ -120,7 +120,7 @@
     "undici": "^8.3.0",
     "werift": "^0.28.0",
     "ws": "^8.18.0",
-    "zod": "^3.24.0"
+    "zod": "^4.6.6"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
@@ -136,6 +136,9 @@
   "overrides": {
     "exceljs": {
       "uuid": "^11.1.1"
-    }
+    },
+    "image-size": "^2.1.0",
+    "sharp": "^0.35.5",
+    "zod": "$zod"
   }
 }

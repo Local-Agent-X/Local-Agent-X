@@ -9,7 +9,7 @@
  * request goes out twice (a voice chat restarted and asked again,
  * 2026-11-15); a follow-up, a correction or added information is "new".
  */
-import { z, type ZodType, type ZodTypeDef } from "zod";
+import { z, type ZodType } from "zod";
 import { classifySchema } from "./schema-output.js";
 
 const SYSTEM_PROMPT = `You compare two emails from the same sender to the same recipient: one ALREADY SENT, and a NEW draft about to be sent. The recipient has not replied in between.
@@ -27,7 +27,7 @@ export interface SameEmailVerdict {
 
 const SHAPE_HINT = `{"verdict":"same","why":"Both reply to the job offer accepting the Thursday interview."}`;
 
-function verdictSchema(): ZodType<SameEmailVerdict, ZodTypeDef, unknown> {
+function verdictSchema(): ZodType<SameEmailVerdict, unknown> {
   return z
     .custom<{ verdict?: unknown; why?: unknown }>((v) => typeof v === "object" && v !== null, { message: "reply must be a JSON object" })
     .refine((v) => v.verdict === "same" || v.verdict === "new", { message: "verdict must be same or new" })

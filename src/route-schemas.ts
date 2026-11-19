@@ -142,7 +142,7 @@ export function validateBody<T>(
 ): { success: true; data: T } | { success: false; error: string } {
   const result = schema.safeParse(body);
   if (!result.success) {
-    const firstError = result.error.errors[0];
+    const firstError = result.error.issues[0];
     return { success: false, error: `${firstError.path.join(".")}: ${firstError.message}`.replace(/^: /, "") };
   }
   return { success: true, data: result.data };

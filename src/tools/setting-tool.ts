@@ -21,7 +21,7 @@
  * DOM without a refresh.
  */
 import { z } from "zod";
-import { FLIPPABLE_SETTINGS, BROADCAST_KEYS, operatorOnlyRefusal, settingSpec } from "../settings-schema.js";
+import { FLIPPABLE_SETTINGS, BROADCAST_KEYS, operatorOnlyRefusal, settingSpec, settingValueShape } from "../settings-schema.js";
 import { getRuntimeConfig, saveConfig, getConfigPath } from "../config.js";
 import { loadSettings, saveSettings } from "../settings.js";
 import type { ToolDefinition } from "../types.js";
@@ -30,12 +30,9 @@ import { verifyWriteLanded } from "./verify.js";
 
 function listKnownFields(): string {
   return FLIPPABLE_SETTINGS.filter((s) => s.owner !== "operator").map((s) => {
-    const def = (s.validate as unknown as { _def?: { typeName?: string; values?: unknown[] } })._def;
-    if (def?.typeName === "ZodEnum" && Array.isArray(def.values)) {
-      return `  - ${s.field} (${def.values.join("|")}): ${s.description}`;
-    }
-    if (def?.typeName === "ZodBoolean") return `  - ${s.field} (boolean): ${s.description}`;
-    if (def?.typeName === "ZodNumber") return `  - ${s.field} (number): ${s.description}`;
+    const shape = settingValueShape(s.validate);
+    if (shape.values) return `  - ${s.field} (${shape.values.join("|")}): ${s.description}`;
+    if (shape.type === "boolean" || shape.type === "number") return `  - ${s.field} (${shape.type}): ${s.description}`;
     return `  - ${s.field}: ${s.description}`;
   }).join("\n");
 }

@@ -220,5 +220,5 @@ export const configSchema = z.object({
   /** Per-model daily USD caps on real per-call API spend, keyed by model id.
    *  A model over its cap is blocked for the rest of the day. Subscription
    *  (flat-rate) models are never billable, so they're never capped here. */
-  modelDailyBudgetsUsd: z.record(z.number().min(0)).default({}),
+  modelDailyBudgetsUsd: z.record(z.string(), z.number().min(0)).default({}),
 });

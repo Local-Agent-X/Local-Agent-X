@@ -10,7 +10,7 @@
  * from the exchange that says so. What it returns is recorded and checked for
  * clashes by src/calendar/plans.ts.
  */
-import { z, type ZodType, type ZodTypeDef } from "zod";
+import { z, type ZodType } from "zod";
 import { classifySchema } from "./schema-output.js";
 
 const SYSTEM_PROMPT = `You find PLANS WITH A TIME in one exchange between a person and their assistant: things the person will do or attend at a specific time (a meeting, a call, dinner, an appointment, a flight, a deadline they must meet).
@@ -43,7 +43,7 @@ export function mentionsTime(text: string): boolean {
   return TIME_HINT.test(text);
 }
 
-function plansSchema(exchange: string): ZodType<ExtractedPlan[], ZodTypeDef, unknown> {
+function plansSchema(exchange: string): ZodType<ExtractedPlan[], unknown> {
   return z
     .custom<{ plans?: unknown }>((v) => typeof v === "object" && v !== null, { message: "reply must be a JSON object" })
     .transform((root): ExtractedPlan[] => {

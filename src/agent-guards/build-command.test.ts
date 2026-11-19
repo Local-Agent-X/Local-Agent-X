@@ -184,6 +184,21 @@ describe("detectBuildCommand", () => {
         .toBe("/data/workspace/apps/plane/server");
     });
 
+    // A helper script the agent wrote beside the user's documents (it cleaned a
+    // PDF) reached the workspace root's leftover tsconfig, whose check could
+    // only fail, and the agent was told its edit broke the project.
+    it("a file straight in the workspace root, or in a folder with no project, is not verifiable", () => {
+      const probe = probeFrom({ ...workspace });
+      expect(detectBuildCommand(["/data/workspace/clean-arm-atlas.cjs"], probe, WS)).toBeNull();
+      expect(detectBuildCommand(["/data/workspace/notes/convert.ts"], probe, WS)).toBeNull();
+      expect(detectTestCommand(["/data/workspace/scratch.test.ts"], probe, WS)).toBeNull();
+    });
+
+    it("a project folder inside the workspace still verifies at its own manifest", () => {
+      const probe = probeFrom({ ...workspace, "/data/workspace/acme-api/package.json": { scripts: { typecheck: "tsc --noEmit" } } });
+      expect(detectBuildCommand(["/data/workspace/acme-api/src/a.ts"], probe, WS)?.cwd).toBe("/data/workspace/acme-api");
+    });
+
     it("leaves projects OUTSIDE workspace/apps walking up as before", () => {
       const probe = probeFrom({ "/repo/package.json": { scripts: { typecheck: "tsc" } } });
       expect(detectBuildCommand(["/repo/apps/thing/src/a.ts"], probe, WS)?.cwd).toBe("/repo");

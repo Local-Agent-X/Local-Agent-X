@@ -164,6 +164,12 @@ function nearestProjectDir(filePath: string, fs: FsProbe, workspaceRoot?: string
   const isCeiling = (d: string) => appDir !== null && sameDir(d, appDir);
   // dirname("/") === "/" — stop when we stop ascending.
   for (let prev = ""; dir !== prev; prev = dir, dir = dirname(dir)) {
+    // The workspace root is the user's file area, never a project: what sits
+    // there (LAX's own manifest, files left from an old checkout) does not
+    // describe a helper script the agent wrote beside the user's documents.
+    // A script written straight into it reached that tsconfig, whose check
+    // could only fail, and the agent was told its edit broke it (2026-11-18).
+    if (workspaceRoot !== undefined && sameDir(dir, workspaceRoot)) return null;
     for (const m of MANIFESTS) {
       if (fs.exists(joinPath(dir, m))) return dir;
     }

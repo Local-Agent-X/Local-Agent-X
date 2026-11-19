@@ -354,6 +354,13 @@ export async function runBuildVerifyGate(op: Op, opts: BuildVerifyOptions = {}):
     logger.warn(`op=${op.id} build check gave no verdict (${build.status ?? "unknown"}): ${build.output.slice(0, 200)} — left unverified, not red`);
     return NO_RETRY;
   }
+  // TS18003: the tsconfig matches no files at all, so the check judged nothing
+  // the agent wrote. That says nothing about the edit; telling the agent its
+  // edit broke it sent it rewriting a config to make a check pass (2026-11-18).
+  if (buildVerdict === "failed" && detected.kind === "typecheck" && /\bTS18003\b/.test(build.output)) {
+    logger.info(`op=${op.id} \`${detected.command}\` in ${detected.cwd} found no input files — left unverified, not red`);
+    return NO_RETRY;
+  }
   if (buildVerdict === "failed") {
     const reframe = reframePreamble(op.id, "build", build.output);
     return redResult(reframe + formatBuildErrorsForAgent(detected.command, detected.cwd, build.output, detected.kind));

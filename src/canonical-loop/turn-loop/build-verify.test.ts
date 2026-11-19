@@ -119,6 +119,16 @@ describe("runBuildVerifyGate", () => {
     }
   });
 
+  it("a type-check whose config matches no files (TS18003) judged nothing the agent wrote: unverified, not red", async () => {
+    const r = await runBuildVerifyGate(op, {
+      editedPaths: ["/proj/src/a.ts"],
+      probe,
+      exec: vi.fn(async () => ({ ok: false, status: "error" as const, exitCode: 2, output: "error TS18003: No inputs were found in config file 'tsconfig.json'." })),
+    });
+    expect(r).toMatchObject({ nudge: "", shouldRetry: false, verifiedClean: false });
+    expect(recordOrchestratorVerify).not.toHaveBeenCalled();
+  });
+
   it("a project whose toolchain isn't installed here is left unverified, never run and never red", async () => {
     const swiftProbe: FsProbe = { exists: (p) => nrm(p) === at("Package.swift"), readJson: () => null };
     const exec = vi.fn(RED);

@@ -24,7 +24,7 @@ async function installDependencies({ reporter, processes, platform = process.pla
   if (result.status !== 0) {
     reporter.warn("npm ci failed (lockfile drift or peer conflict). Falling back to npm install --legacy-peer-deps…");
     result = await processes.runStreaming("npm", [
-      "install", "--no-audit", "--no-fund", `--loglevel=${logLevel}`, "--legacy-peer-deps",
+      "install", "--no-save", "--no-audit", "--no-fund", `--loglevel=${logLevel}`, "--legacy-peer-deps",
     ], environmentOption);
     if (result.status !== 0) {
       reporter.fail(platform === "win32"

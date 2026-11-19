@@ -41,7 +41,10 @@ export function isDeferrableFileLock(msg: string): boolean {
 export async function syncLiveDeps(installDir: string): Promise<{ deferred: boolean }> {
   // Async: a synchronous install held the server for its whole run (19-28 s
   // freezes logged during one update).
-  const r = await runNpmAt(installDir, ["install"]);
+  // --no-save: the lockfile stays as committed. A plain install under another
+  // npm major rewrites it, and a git install then refuses the next update over
+  // a "local change" it made itself (desktop/src/reconcile.ts NPM_INSTALL_ARGS).
+  const r = await runNpmAt(installDir, ["install", "--no-save"]);
   if (r.ok) return { deferred: false };
   const msg = r.stderr || r.stdout || "npm install failed";
   if (!isDeferrableFileLock(msg)) throw new Error(msg.slice(-1500));

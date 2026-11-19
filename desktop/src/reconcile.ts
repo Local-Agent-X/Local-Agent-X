@@ -25,6 +25,14 @@ import { surfaceForeignPmRewrite } from "./reconcile-surface";
 
 export { killReconcileStepsSync } from "./reconcile-build";
 
+/**
+ * Installs what the committed lockfile names and never writes the lockfile.
+ * A different npm major rewrites it on a plain install (npm 10 drops the
+ * "libc" fields npm 11 records), and a git install whose tracked lockfile
+ * changed refuses every update as "local changes" (2026-11-19).
+ */
+export const NPM_INSTALL_ARGS = ["install", "--no-save", "--no-audit", "--no-fund"];
+
 export interface ReconcileResult {
   /** Whether desktop/src was rebuilt. When true, caller MUST app.relaunch()
    *  so Electron loads the freshly-compiled dist/main.js. */
@@ -123,11 +131,11 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
   if (!stored) {
     if (rootDepsMissing) {
       onStatus?.("Restoring components…");
-      await runStep("npm", ["install", "--no-audit", "--no-fund"], projectRoot, 300_000);
+      await runStep("npm", NPM_INSTALL_ARGS, projectRoot, 300_000);
     }
     if (desktopDepsMissing) {
       onStatus?.("Restoring desktop components…");
-      await runStep("npm", ["install", "--no-audit", "--no-fund"], join(projectRoot, "desktop"), 300_000);
+      await runStep("npm", NPM_INSTALL_ARGS, join(projectRoot, "desktop"), 300_000);
     }
     const needsDesktopBuild = desktopRebuildRequired({
       srcChanged: false,
@@ -164,7 +172,7 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
 
   if (rootChanged || rootDepsMissing) {
     onStatus?.(rootDepsMissing ? "Restoring components…" : "Updating components…");
-    await runStep("npm", ["install", "--no-audit", "--no-fund"], projectRoot, 300_000);
+    await runStep("npm", NPM_INSTALL_ARGS, projectRoot, 300_000);
     ranSteps.push(rootDepsMissing ? "root npm install (deps were missing)" : "root npm install");
   }
   // Server build. An OTA/git update that only touches src/ used to leave
@@ -224,7 +232,7 @@ export async function runReconcile(opts: ReconcileOpts): Promise<ReconcileResult
   }
   if (desktopChanged || desktopDepsMissing) {
     onStatus?.(desktopDepsMissing ? "Restoring desktop components…" : "Updating desktop components…");
-    await runStep("npm", ["install", "--no-audit", "--no-fund"], join(projectRoot, "desktop"), 300_000);
+    await runStep("npm", NPM_INSTALL_ARGS, join(projectRoot, "desktop"), 300_000);
     ranSteps.push(desktopDepsMissing ? "desktop npm install (deps were missing)" : "desktop npm install");
   }
   // Same freshness short-circuit the server build uses above: a gated update

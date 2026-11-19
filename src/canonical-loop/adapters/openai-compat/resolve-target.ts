@@ -81,6 +81,10 @@ export async function resolveOpenAICompatTarget(
         // wait — a slow runtime is sized for the next turn, not this one.
         const { ensureContextDecision } = await import("../../../local-runtimes/context-sizing.js");
         await ensureContextDecision(rt.endpoint.baseUrl, model, { waitMs: CONTEXT_DECISION_WAIT_MS });
+        // ...and smaller while other programs (a voice engine) hold more VRAM
+        // than that decision left room for, so it does not page this turn.
+        const { fitAroundOtherPrograms } = await import("../../../local-runtimes/context-sizing-tenants.js");
+        await fitAroundOtherPrograms(rt.endpoint.baseUrl, model);
         // Keeps the chat model loaded past Ollama's keep_alive between turns
         // (a post-idle cold load is 30-60s, observed 2026-08-25). Hold is
         // Ollama-native only: it re-ups via /api/generate, which OpenAI-compat

@@ -24,6 +24,7 @@ async function observe(rows: Array<{ size_vram: number }>): Promise<void> {
   await observeChatResidency(ROOT, MODEL, {
     ps: async () => ({ models: rows }),
     gpuUsed: async () => (externalVram === null ? null : ollama + externalVram),
+    runnerShared: async () => null,
     now: () => now,
     store: new ContextSizingStore(join(dir, "local-context-sizing.json")),
   });
@@ -253,9 +254,27 @@ describe("paging that /api/ps does not report", () => {
     expect(persisted()?.healthyDecodeTokPerSec).toBe(200);
   });
 
-  it("has no yardstick before a fully resident reply, so a first slow reply changes nothing", async () => {
+  it("without a system-memory reading, a first slow reply has no yardstick and changes nothing", async () => {
     await reply(resident, 0.8e9, 21);
     expect(appliedContext(ROOT, MODEL)).toBe(SIZED);
     expect(persisted()?.healthyDecodeTokPerSec).toBe(21);
+  });
+
+  it("catches paging on the first reply by the runner's system memory, and keeps neither verification nor yardstick from it (live 2026-11-18)", async () => {
+    // 147,456 tokens beside a voice engine: 5.8 GB of the runner in system
+    // memory, 17 tok/s, read as verified with 16.9 kept as the healthy rate.
+    await reply(resident, 1.0e9, 17, 300, 69_000, 5.8e9);
+    const reduced = appliedContext(ROOT, MODEL)!;
+    // One step sheds the measured overflow, not two gigabytes at a time.
+    expect(reduced).toBeLessThanOrEqual(SIZED - Math.ceil((5.8e9 - 1.1 * 1024 ** 3) / (69_632 * 1.05)));
+    expect(persisted()).toMatchObject({ verification: "pending" });
+    expect(persisted()?.healthyDecodeTokPerSec).toBeUndefined();
+  });
+
+  it("re-checks a faster reply before keeping it as the yardstick", async () => {
+    await reply(resident, 4e9, 104, 300, 0, 1.09e9);
+    await reply(resident, 1.0e9, 150, 300, 0, 4e9);
+    expect(appliedContext(ROOT, MODEL)).toBeLessThan(SIZED);
+    expect(persisted()?.healthyDecodeTokPerSec).toBe(104);
   });
 });

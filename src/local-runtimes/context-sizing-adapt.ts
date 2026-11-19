@@ -85,6 +85,18 @@ const PAGED_RUNNER_SHARED_BYTES = 1.5 * 1024 ** 3;
 /** What a step-down for paging sheds: the overflow measured on the 27B was
  *  under 1 GB; twice that leaves room for it to grow. */
 const PAGING_SHED_BYTES = 2 * 1024 ** 3;
+/** The runner's host-side buffers, which sit in system memory by design
+ *  (1.1 GB at 147k on qwen3.8 27B fully resident, 2026-11-18). What it holds
+ *  there beyond this is the overflow a step-down has to shed. */
+const RUNNER_HOST_BYTES = 1.1 * 1024 ** 3;
+
+/** What a step-down for paging sheds: the measured overflow plus a gigabyte
+ *  of room when the runner's system memory was read, else PAGING_SHED_BYTES.
+ *  5.8 GB of qwen3.8 27B paged beside a voice engine (2026-11-18): two
+ *  gigabytes a step would have taken three slow replies to get there. */
+function pagingShed(shared: number | null): number {
+  return shared === null ? PAGING_SHED_BYTES : Math.max(PAGING_SHED_BYTES, shared - RUNNER_HOST_BYTES + 1024 ** 3);
+}
 
 export interface AdaptDeps {
   ps: (root: string) => Promise<unknown>;
@@ -104,7 +116,8 @@ export interface ReplyDecode {
   contextTokens?: number;
 }
 
-async function readPs(root: string): Promise<unknown> {
+/** /api/ps on the runtime at `root`, or null; never throws. */
+export async function readPs(root: string): Promise<unknown> {
   try {
     const r = await fetch(`${root}/api/ps`, { redirect: "manual", signal: AbortSignal.timeout(PS_TIMEOUT_MS) });
     return r.ok ? await r.json() : null;
@@ -135,11 +148,22 @@ async function freeVram(record: SizingRecord, deps: Partial<AdaptDeps>): Promise
 
 /** What shows a slow reply was paging, as the clause the warning ends with, or
  *  null when nothing does: a full card, or the runner measured in system memory. */
-async function pagingEvidence(free: number | null, deps: Partial<AdaptDeps>): Promise<string | null> {
-  if (free !== null && free < FULL_CARD_FREE_BYTES) return `with ${(free / 1e9).toFixed(1)} GB of VRAM free`;
+async function pagingEvidence(free: number | null, deps: Partial<AdaptDeps>): Promise<{ clause: string; shed: number } | null> {
+  if (free !== null && free < FULL_CARD_FREE_BYTES) return { clause: `with ${(free / 1e9).toFixed(1)} GB of VRAM free`, shed: PAGING_SHED_BYTES };
   const shared = await (deps.runnerShared ?? readRunnerSharedBytes)();
-  if (shared !== null && shared > PAGED_RUNNER_SHARED_BYTES) return `with ${(shared / 1e9).toFixed(1)} GB of the runner in system memory`;
+  if (shared !== null && shared > PAGED_RUNNER_SHARED_BYTES) {
+    return { clause: `with ${(shared / 1e9).toFixed(1)} GB of the runner in system memory`, shed: pagingShed(shared) };
+  }
   return null;
+}
+
+/** Whether recordResident would write: a first verification, or a faster
+ *  yardstick. Either one taken from a paging reply hides paging for good: the
+ *  first reply after a decision has no yardstick to be slow against, and on
+ *  2026-11-18 one that paged 5.8 GB was verified "fully GPU-resident" and its
+ *  16.9 tok/s kept as the healthy rate (fully resident: ~100). */
+function wouldRecord(record: SizingRecord, rate: { shallow: number } | null): boolean {
+  return record.verification !== "verified" || (rate !== null && rate.shallow > (record.healthyDecodeTokPerSec ?? 0));
 }
 
 /** Step down until the contention clears; the size stepped to, or null when
@@ -208,11 +232,19 @@ export async function observeChatResidency(
   }
   const paging = slow ? await pagingEvidence(free, deps) : null;
   if (paging) {
-    const next = stepDownWhileContended(key, record, applied, PAGING_SHED_BYTES, now);
+    const next = stepDownWhileContended(key, record, applied, paging.shed, now);
     const depth = reply?.contextTokens ?? 0;
     const expected = record.healthyDecodeTokPerSec! / depthSlowdown(depth);
-    if (next !== null) logger.warn(`${model}: decoding at ${rate!.raw.toFixed(0)} tok/s ${depth} tokens deep, against ${expected.toFixed(0)} there when fully resident, ${paging}: the card is paging to system memory; reloading at ${next} tokens until it has room`);
+    if (next !== null) logger.warn(`${model}: decoding at ${rate!.raw.toFixed(0)} tok/s ${depth} tokens deep, against ${expected.toFixed(0)} there when fully resident, ${paging.clause}: the card is paging to system memory; reloading at ${next} tokens until it has room`);
     return;
+  }
+  if (!override && wouldRecord(record, rate)) {
+    const shared = await (deps.runnerShared ?? readRunnerSharedBytes)();
+    if (shared !== null && shared > PAGED_RUNNER_SHARED_BYTES) {
+      const next = stepDownWhileContended(key, record, applied, pagingShed(shared), now);
+      if (next !== null) logger.warn(`${model}: ${(shared / 1e9).toFixed(1)} GB of the runner in system memory at ${applied} tokens: the card is paging; reloading at ${next} tokens until it has room`);
+      return;
+    }
   }
   if (override) {
     const quiet = !othersOver && (free === null || free >= override.liftWhenFreeBytes);

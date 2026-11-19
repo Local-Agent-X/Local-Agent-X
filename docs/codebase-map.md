@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2079 non-test source files · 76 oversized · 271 nearing the size cap.
+**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2080 non-test source files · 76 oversized · 271 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -34,7 +34,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/agency/` | 49 | 40 | XL |  |
 | `src/chat-ws/` | 49 | 24 | L |  |
 | `src/tool-policy/` | 48 | 21 | L |  |
-| `src/local-runtimes/` | 45 | 27 | XL |  |
+| `src/local-runtimes/` | 45 | 28 | XL |  |
 | `src/threat/` | 44 | 13 | L |  |
 | `src/auth/` | 36 | 11 | L |  |
 | `src/inbox/` | 30 | 7 | M |  |
@@ -503,6 +503,7 @@ job. Comments are free: never cut them to fit.
 - `src/cognition/milestone-celebrations.ts#buildMilestoneDefs` — 70+ own code lines (cap 100)
 - `src/cron/tools.ts#createCronTools` — 70+ own code lines (cap 100)
 - `src/keychain.ts#getOrCreateMasterKey` — 70+ own code lines (cap 100)
+- `src/local-runtimes/context-sizing-adapt.ts#observeChatResidency` — 70+ own code lines (cap 100)
 - `src/memory/auto-search-context.ts#autoSearchContext` — 70+ own code lines (cap 100)
 - `src/memory/dream.ts#buildDreamPromptForBatch` — 70+ own code lines (cap 100)
 - `src/memory/manager.ts#MemoryManager.buildTurnContext` — 70+ own code lines (cap 100)
@@ -559,7 +560,6 @@ job. Comments are free: never cut them to fit.
 - `src/cognition/unspoken-detector.ts#UnspokenDetector.detectBehaviorChange` — 60+ own code lines (cap 100)
 - `src/demo-recorder.ts#DemoRecorder.toMarkdown` — 60+ own code lines (cap 100)
 - `src/llm-dispatch/hosted.ts#callOpenAICompatible` — 60+ own code lines (cap 100)
-- `src/local-runtimes/context-sizing-adapt.ts#observeChatResidency` — 60+ own code lines (cap 100)
 - `src/manifest-generator/summary.ts#getManifestSummary` — 60+ own code lines (cap 100)
 - `src/mcp-bridge.ts#handleRequest` — 60+ own code lines (cap 100)
 - `src/mcp-client/integrity.ts#verifyOrTrust` — 60+ own code lines (cap 100)

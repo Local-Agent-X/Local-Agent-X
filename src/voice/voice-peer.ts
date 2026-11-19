@@ -131,6 +131,8 @@ export class VoicePeer {
       // werift's RTCIceServer takes a SINGLE url per entry; the standard/broker shape
       // allows an array, so flatten array `urls` into one entry each.
       iceServers: servers.flatMap(toWeriftIceServers),
+      // Only the servers given above; see ScreenPeer.
+      iceUseDefaultStunServer: false,
       // Advertise standard Opus (48kHz, stereo channel count, dynamic PT 111) so
       // react-native-webrtc on the phone negotiates it as the audio codec.
       codecs: { audio: [useOPUS({ payloadType: OPUS_PAYLOAD_TYPE })] },

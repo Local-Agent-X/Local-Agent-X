@@ -139,6 +139,9 @@ export class ScreenPeer {
       // werift's RTCIceServer takes a SINGLE url per entry; the standard/broker shape
       // allows an array, so flatten array `urls` into one entry each.
       iceServers: weriftServers,
+      // Only the servers given above: werift otherwise adds a public Google STUN
+      // server whenever none is given (the tailnet path gives none).
+      iceUseDefaultStunServer: false,
       // The desktop only SENDS video; advertise VP8 to match the ffmpeg encoder.
       codecs: { video: [useVP8({ payloadType: VP8_PAYLOAD_TYPE, clockRate: VP8_CLOCK_RATE })] },
       // One ICE transport for video and the data channels. With werift's default
@@ -266,7 +269,7 @@ export class ScreenPeer {
       const mine = packet.reports.find((r) => r.ssrc === this.sender.ssrc);
       if (!mine) return;
       void this.sender.getStats().then((stats) => {
-        const rtt = stats.find((s) => s.type === "remote-inbound-rtp") as { roundTripTime?: number } | undefined;
+        const rtt = [...stats.values()].find((s) => s.type === "remote-inbound-rtp") as { roundTripTime?: number } | undefined;
         handler({
           fractionLost: mine.fractionLost / 256,
           ...(rtt?.roundTripTime !== undefined ? { rttMs: rtt.roundTripTime * 1000 } : {}),

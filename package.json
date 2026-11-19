@@ -34,6 +34,7 @@
     "check:integrations": "node scripts/check-integration-conformance.mjs",
     "check:release-attribution": "node scripts/check-release-attribution.mjs",
     "check:release-environment": "node scripts/check-release-environment.mjs",
+    "check:qualification-pins": "node scripts/check-qualification-pins.mjs",
     "docs:map": "node scripts/gen-codebase-map.mjs",
     "deps": "node scripts/deps.mjs",
     "refs": "tsx scripts/refs.ts",

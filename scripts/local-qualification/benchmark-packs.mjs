@@ -152,13 +152,13 @@ const definition = {
       ],
     },
     {
-      schema: QUALIFICATION_BENCHMARK_PACK_SCHEMA, schemaVersion: 1, id: "local-model", version: 3,
+      schema: QUALIFICATION_BENCHMARK_PACK_SCHEMA, schemaVersion: 1, id: "local-model", version: 4,
       gate: { id: "local-model", script: "test:local-product-qualification", timeoutMs: 45 * 60_000, preflightScripts: ["check:release-environment", "test:prepare"] },
       scenarios: [
-        { id: "product", version: 1, testPath: "test/local-model-qualification.test.ts", assertionCount: 27, assertionManifestSha256: "sha256:39dc76d61f4a6e2265c9f02cb946364d20d5e8f0010964e735eaff552ea614e6", platformIndependent: false, allowedSkips: [] },
+        { id: "product", version: 2, testPath: "test/local-model-qualification.test.ts", assertionCount: 30, assertionManifestSha256: "sha256:1ca8d088bfc6e7edfcd68a4376d4953e449e332b37068ef0ec857608be5a8a1c", platformIndependent: false, allowedSkips: [] },
         // Refreshed for c7eedccb/9af6b4ae (qualification event grammar/schema work added 3 tests).
-        { id: "evidence", version: 2, testPath: "test/local-model-qualification-evidence.test.ts", assertionCount: 56, assertionManifestSha256: "sha256:064ff38c2ba499f0836143b7149d8d697a13256f621411fcc1a1cfcc3a5a5ddc", platformIndependent: false, allowedSkips: [] },
-        { id: "isolation", version: 1, testPath: "test/local-model-qualification-isolation.test.ts", assertionCount: 52, assertionManifestSha256: "sha256:3b7d18b1a83f5a5eb1810a9cf5b563e723637dcaa495c81378b579f8ac1244fd", platformIndependent: false, allowedSkips: [] },
+        { id: "evidence", version: 3, testPath: "test/local-model-qualification-evidence.test.ts", assertionCount: 58, assertionManifestSha256: "sha256:cc507d8838a98f6bbc45d1a4d1d53f091817908fcee754815f074cbf11ee5818", platformIndependent: false, allowedSkips: [] },
+        { id: "isolation", version: 2, testPath: "test/local-model-qualification-isolation.test.ts", assertionCount: 56, assertionManifestSha256: "sha256:d966ad614a634e749fa8d227b744b15c9bf527ef1e1aa47637ad1a03573ad947", platformIndependent: false, allowedSkips: [] },
         { id: "proxy", version: 1, testPath: "test/local-model-qualification-proxy.test.ts", assertionCount: 2, assertionManifestSha256: "sha256:65c91236b3c5495a9f278da063764fe17f05d508906249adaac67abcbee39bb7", platformIndependent: false, allowedSkips: [] },
       ],
     },
@@ -173,12 +173,12 @@ const definition = {
       ],
     },
     {
-      schema: QUALIFICATION_BENCHMARK_PACK_SCHEMA, schemaVersion: 1, id: "channels", version: 3,
+      schema: QUALIFICATION_BENCHMARK_PACK_SCHEMA, schemaVersion: 1, id: "channels", version: 4,
       gate: { id: "channels", script: "test:channel-qualification", timeoutMs: 10 * 60_000, preflightScripts: [] },
       scenarios: [
         { id: "channel-registry", version: 1, testPath: "src/session/channel-registry.test.ts", assertionCount: 3, assertionManifestSha256: "sha256:7b1eea2f682059379f902e3fcdbb2a1afaa2c96b42b7161d7006104658df1ac8", platformIndependent: false, allowedSkips: [] },
-        { id: "inbound-channel-runner", version: 1, testPath: "src/server/inbound-channel-runner.test.ts", assertionCount: 12, assertionManifestSha256: "sha256:e916acdbe3fce9db934bfee380ff4517a9f04eba3add63ed67427ff07a374a7f", platformIndependent: false, allowedSkips: [] },
-        { id: "phone-projection", version: 1, testPath: "src/broker-transport/phone-projection.test.ts", assertionCount: 26, assertionManifestSha256: "sha256:e3bfb1843a1c85f09781be024eeebbc5870ddb7494ab96a15c9505fa28d05f25", platformIndependent: false, allowedSkips: [] },
+        { id: "inbound-channel-runner", version: 2, testPath: "src/server/inbound-channel-runner.test.ts", assertionCount: 13, assertionManifestSha256: "sha256:72fd807168ddd0bf5157d35f4380d18e83e42cf0a504611ca7ceda09e45f735b", platformIndependent: false, allowedSkips: [] },
+        { id: "phone-projection", version: 2, testPath: "src/broker-transport/phone-projection.test.ts", assertionCount: 28, assertionManifestSha256: "sha256:d77bfb538604281a11337a27083d9af92d93940a56d9feb1d54f98129c2199c4", platformIndependent: false, allowedSkips: [] },
         // Refreshed for b1cb0ba2/d727dc75/173b0369 (inbound-execution convergence grew both bridge suites).
         { id: "telegram-bridge", version: 2, testPath: "src/telegram-bridge/bridge.test.ts", assertionCount: 20, assertionManifestSha256: "sha256:d783fee10389648130407bf93f26e415a2609bf66b4d0cbf71b1f6bbfe7d0959", platformIndependent: false, allowedSkips: [] },
         { id: "whatsapp-message-handler", version: 2, testPath: "src/whatsapp-bridge/message-handler.test.ts", assertionCount: 19, assertionManifestSha256: "sha256:05bcfa98817e9af90a058989caf5a8b14a2057a4e3a5f6144f8c3a91d818f1a0", platformIndependent: false, allowedSkips: [] },

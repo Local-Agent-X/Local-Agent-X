@@ -61,3 +61,10 @@ jobs:
 
       - name: Full build
         run: npm run build
+
+      # A test added to a release-gate scenario file without a refreshed pin
+      # passes everything else and fails the next tagged release. Catch it on
+      # the push that adds the test. The local-model files read the generated
+      # app manifest, so prepare it first.
+      - name: Release-gate benchmark pins match their test files
+        run: npm run test:prepare && npm run check:qualification-pins

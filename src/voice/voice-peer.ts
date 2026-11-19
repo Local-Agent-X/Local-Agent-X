@@ -134,6 +134,9 @@ export class VoicePeer {
       // Advertise standard Opus (48kHz, stereo channel count, dynamic PT 111) so
       // react-native-webrtc on the phone negotiates it as the audio codec.
       codecs: { audio: [useOPUS({ payloadType: OPUS_PAYLOAD_TYPE })] },
+      // One ICE transport for audio and the control channel; see ScreenPeer: the
+      // transport a bundled answer drops is never closed.
+      bundlePolicy: "max-bundle",
     });
 
     // ONE sendrecv audio transceiver: outbound = our TTS track, inbound = phone mic.

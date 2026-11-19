@@ -141,6 +141,11 @@ export class ScreenPeer {
       iceServers: weriftServers,
       // The desktop only SENDS video; advertise VP8 to match the ffmpeg encoder.
       codecs: { video: [useVP8({ payloadType: VP8_PAYLOAD_TYPE, clockRate: VP8_CLOCK_RATE })] },
+      // One ICE transport for video and the data channels. With werift's default
+      // each m-line gathers its own; the phone's answer bundles them, and close()
+      // never reaches the transport bundling dropped: its sockets and TURN
+      // allocation lived until the process ended, one per phone connection.
+      bundlePolicy: "max-bundle",
     });
 
     this.diagnostics = watchPeerDiagnostics(this.pc, "phone", weriftServers.map((s) => s.urls));

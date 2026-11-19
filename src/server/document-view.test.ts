@@ -47,6 +47,12 @@ describe("documentViewHtml", () => {
     expect(await documentViewHtml("notes.md", Buffer.from("# Notes & <b>things</b>"))).toContain("<pre># Notes &amp; &lt;b&gt;things&lt;/b&gt;</pre>");
   });
 
+  it("carries its CSP inside the page, for the phone that renders it from a string", async () => {
+    const html = (await documentViewHtml("notes.md", Buffer.from("hi")))!;
+    expect(html).toContain(`<meta http-equiv="Content-Security-Policy" content="${DOCUMENT_VIEW_CSP}">`);
+    expect(html.indexOf("Content-Security-Policy")).toBeLessThan(html.indexOf("<body>"));
+  });
+
   it("a legacy binary format has no view", async () => {
     expect(await documentViewHtml("old.doc", Buffer.from("x"))).toBeNull();
   });

@@ -41,9 +41,13 @@ const STYLE =
   "th{background:#f6f8fa;text-align:left}.note{color:#656d76;font-size:13px}" +
   "@media (prefers-color-scheme:dark){body{color:#e6edf3;background:#0d1117}td,th{border-color:#30363d}th{background:#161b22}.note{color:#8d96a0}}";
 
+// The CSP rides in the page too: the phone renders this HTML from a string, so
+// the response header never reaches it, and a converted document (a .docx with
+// a linked image) must still not load anything remote.
 function page(title: string, body: string): string {
   return (
     `<!doctype html><html><head><meta charset="utf-8">` +
+    `<meta http-equiv="Content-Security-Policy" content="${DOCUMENT_VIEW_CSP}">` +
     `<meta name="viewport" content="width=device-width,initial-scale=1">` +
     `<title>${escapeHtml(title)}</title><style>${STYLE}</style></head><body>${body}</body></html>`
   );

@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { PUSH_AAD, parsePushAlert, type SealedPushData } from "../broker-transport/vendor/protocol.js";
 import type { InboxItem } from "../inbox/types.js";
 import { createPhonePushStore, MAX_PHONES } from "./store.js";
-import { sealPushAlert } from "./seal.js";
+import { sealPushAlert, PUSH_PAD_BYTES } from "./seal.js";
 import { sendExpoPush, type ExpoPushMessage, type PushTicket } from "./send.js";
 import { alertPhones, handlePushFrame, releaseHeldAlerts, type AlertDeps } from "./index.js";
 import { heldAlerts, quietUntil, MAX_HELD } from "./quiet-hours.js";
@@ -46,6 +46,16 @@ describe("seal", () => {
     const key = newKey();
     const alert = { id: "i", kind: "job" as const, title: "t", body: "b" };
     expect(sealPushAlert(alert, key).n).not.toBe(sealPushAlert(alert, key).n);
+  });
+
+  it("pads every alert to the same ciphertext size, so its length says nothing", () => {
+    const key = newKey();
+    const short = sealPushAlert({ id: "i", kind: "job", title: "t", body: "b" }, key);
+    const long = sealPushAlert({ id: "i", kind: "job", title: "x".repeat(80), body: "y".repeat(240) }, key);
+    expect(Buffer.from(short.c, "base64").length).toBe(Buffer.from(long.c, "base64").length);
+    expect(Buffer.from(short.c, "base64").length).toBe(PUSH_PAD_BYTES + 16);
+    // A phone without the padding change still opens it: JSON.parse ignores the trailing spaces.
+    expect(open(long, key)).toMatchObject({ title: "x".repeat(80), body: "y".repeat(240) });
   });
 });
 

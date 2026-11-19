@@ -21,6 +21,21 @@ import { createLogger } from "../logger.js";
 
 const logger = createLogger("broker-transport.http-tunnel");
 
+/** Response headers that limit what a page may do (where it may connect, which
+ *  device features it may use, what it leaks in Referer). The desktop serves an
+ *  agent-built app and the document view with them; the phone's WebView only
+ *  obeys them if the tunnel carries them, so they ride along with content-type. */
+const SAFETY_HEADERS = ["content-security-policy", "permissions-policy", "referrer-policy", "x-content-type-options"] as const;
+
+function safetyHeadersOf(headers: Headers): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const name of SAFETY_HEADERS) {
+    const value = headers.get(name);
+    if (value !== null) out[name] = value;
+  }
+  return out;
+}
+
 /** Content-types served as utf8 text; everything else is base64-framed as binary. Covers
  *  the document + the asset kinds an agent-built app references (CSS/JS/SVG/JSON). */
 function isTextContentType(contentType: string): boolean {
@@ -120,7 +135,7 @@ export class HttpTunnelBridge implements HttpChannel {
         ...(req.body !== undefined ? { body: req.body } : {}),
       });
       const contentType = r.headers.get("content-type") ?? "application/json";
-      const headers = { "content-type": contentType };
+      const headers = { "content-type": contentType, ...safetyHeadersOf(r.headers) };
       if (isTextContentType(contentType)) {
         const text = await r.text();
         // Oversize is an ERROR, not a truncation: a sliced body parses as a

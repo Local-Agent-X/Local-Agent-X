@@ -238,3 +238,38 @@ describe("HttpTunnelBridge — workspace files", () => {
     expect(fetchImpl).not.toHaveBeenCalled();
   });
 });
+
+describe("HttpTunnelBridge carries a page's safety headers to the phone", () => {
+  // The phone's WebView only enforces an agent-built app's CSP if the tunnel
+  // delivers it; with content-type alone the app could connect anywhere.
+  it("forwards CSP, Permissions-Policy, Referrer-Policy and nosniff, and nothing else", async () => {
+    const upstream = new Headers({
+      "content-type": "text/html; charset=utf-8",
+      "content-security-policy": "default-src 'self'; connect-src 'self'",
+      "permissions-policy": "camera=()",
+      "referrer-policy": "no-referrer",
+      "x-content-type-options": "nosniff",
+      "set-cookie": "sid=desktop-session",
+      "x-powered-by": "lax",
+    });
+    const fetchImpl = vi.fn(async () => ({ status: 200, text: async () => "<html></html>", headers: upstream }) as unknown as Response);
+    const bridge = new HttpTunnelBridge({
+      loopback: () => ({ origin: "http://127.0.0.1:7007", token: "op-tok" }),
+      fetchImpl: fetchImpl as unknown as typeof fetch,
+    });
+    const t = new FakeTransport();
+    bridge.attach(t);
+
+    t.emit({ t: "req", id: "h1", method: "GET", path: "/apps/demo/" });
+    await flush();
+
+    const res = JSON.parse(t.sent[t.sent.length - 1]!) as { headers: Record<string, string> };
+    expect(res.headers).toEqual({
+      "content-type": "text/html; charset=utf-8",
+      "content-security-policy": "default-src 'self'; connect-src 'self'",
+      "permissions-policy": "camera=()",
+      "referrer-policy": "no-referrer",
+      "x-content-type-options": "nosniff",
+    });
+  });
+});

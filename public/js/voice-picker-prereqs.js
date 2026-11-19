@@ -22,7 +22,9 @@ function _checkPrereq(p) {
     // repairable: an installed tier can always be re-run through its
     // idempotent installer — the escape hatch for "installed but broken at
     // runtime" (stale CUDA wheels, AV-corrupted packages).
-    if (t.healthy) return { ok: true, hint: 'Running', action: 'none', tierId: id, repairable: true };
+    // stoppable: a running sidecar holds GPU memory a local chat model may
+    // need (VoxCPM alone 5.6 GB), so it can be stopped from here until wanted.
+    if (t.healthy) return { ok: true, hint: 'Running', action: 'none', tierId: id, repairable: true, stoppable: true };
     if (t.installed) return { ok: false, hint: 'Installed, not running', action: 'start-sidecar', tierId: id, repairable: true };
     return { ok: false, hint: 'Not installed', action: 'install-sidecar', tierId: id };
   }
@@ -97,6 +99,9 @@ function _renderPrereqRow(p, idx, tierId) {
     action = `<button class="action-btn" id="${btnId}" onclick="onTierPrereqAction('${tierId}','set-secret','${_esc(r.secretName)}',this)" style="font-size:.7rem;padding:4px 10px">Add ${_esc(r.secretName)}</button>`;
   } else if (r.action === 'download-model') {
     action = `<button class="action-btn primary" id="${btnId}" onclick="onTierPrereqAction('${tierId}','download-model','${_esc(r.model)}',this)"${r.error ? ` title="${_esc(r.error)}"` : ''} style="font-size:.7rem;padding:4px 10px">${_esc(r.actionLabel)}</button>`;
+  }
+  if (r.stoppable) {
+    action += `<button class="action-btn" onclick="onTierPrereqAction('${tierId}','stop-sidecar','${_esc(r.tierId)}',this)" title="Stop this sidecar and free the memory it holds; Start brings it back" style="font-size:.7rem;padding:4px 10px">Stop</button>`;
   }
   if (r.repairable) {
     action += `<button class="action-btn" onclick="onTierPrereqAction('${tierId}','repair-sidecar','${_esc(r.tierId)}',this)" title="Stop, re-run the installer (fixes broken/outdated packages), and restart" style="font-size:.7rem;padding:4px 10px">Repair</button>`;
@@ -315,6 +320,13 @@ async function onTierPrereqAction(tierId, action, target, btn) {
       btn.textContent = 'Starting…';
       const d = await apiPost('/api/voices/setup/start', { tier: target });
       if (!d?.ok && !d?.already) throw new Error(d?.error || 'sidecar did not start');
+    } else if (action === 'stop-sidecar') {
+      btn.textContent = 'Stopping…';
+      const d = await apiPost('/api/voices/setup/stop', { tier: target });
+      if (!d?.ok) throw new Error(d?.error || 'sidecar did not stop');
+      // The kill is not awaited server-side; give the port a moment to close
+      // so the refreshed card reads "not running" rather than "Running".
+      await new Promise(r => setTimeout(r, 1500));
     } else if (action === 'repair-sidecar') {
       btn.textContent = 'Repairing… (5–15 min)';
       const d = await apiPost('/api/voices/setup/repair', { tier: target });

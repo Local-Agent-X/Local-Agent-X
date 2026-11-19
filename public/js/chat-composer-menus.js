@@ -206,16 +206,26 @@ function _mmShowEffort(row, modelFly, pid, model) {
   _mmPositionFly(fly, row, flyRect.right - menuLeft - 4);
 }
 
-// Place `fly` at horizontal offset `left` (px from the menu's left edge),
-// its top aligned with `anchorRow`, clamped inside the menu's height.
+// Place `fly` at horizontal offset `left` (px from the menu's left edge), its
+// top aligned with `anchorRow`. Its bottom never passes the menu's bottom (the
+// menu sits just above the composer), so a flyout taller than the providers
+// column grows UP into the open space above; it stops 8px below the window's
+// top and scrolls if even that is too short. Clamping the top inside the
+// menu instead pinned a tall model list to the menu's top, hanging it over the
+// composer and past the bottom of the window.
+const MM_VIEWPORT_MARGIN = 8;
 function _mmPositionFly(fly, anchorRow, left) {
   const menu = _mmEl();
   if (!menu) return;
   const menuRect = menu.getBoundingClientRect();
   const rowRect = anchorRow.getBoundingClientRect();
   fly.style.left = `${left}px`;
-  const top = rowRect.top - menuRect.top;
-  fly.style.top = `${Math.max(0, Math.min(top, menuRect.height - fly.offsetHeight))}px`;
+  const minTop = MM_VIEWPORT_MARGIN - menuRect.top;   // the window's top, menu-relative
+  const room = menuRect.height - minTop;
+  fly.style.maxHeight = '';
+  if (fly.offsetHeight > room) fly.style.maxHeight = `${room}px`;
+  const top = Math.min(rowRect.top - menuRect.top, menuRect.height - fly.offsetHeight);
+  fly.style.top = `${Math.max(minTop, top)}px`;
 }
 
 // Outside click / Escape closes whichever composer popover is open — ALL of

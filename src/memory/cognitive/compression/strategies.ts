@@ -4,6 +4,7 @@ import {
   isContentWord,
   splitSentences,
 } from "./text-utils.js";
+import { entityMentions } from "../../utils.js";
 
 export function toSummary(content: string): string {
   const sentences = splitSentences(content);
@@ -13,7 +14,7 @@ export function toSummary(content: string): string {
     const words = s.split(/\s+/);
     const contentWords = words.filter(isContentWord);
     const density = words.length > 0 ? contentWords.length / words.length : 0;
-    const hasEntity = /@[\w-]+/.test(s) || /[A-Z][a-z]{2,}/.test(s);
+    const hasEntity = entityMentions(s).length > 0 || /[A-Z][a-z]{2,}/.test(s);
     const hasNumber = /\d+/.test(s);
     const score = density + (hasEntity ? 0.2 : 0) + (hasNumber ? 0.1 : 0);
     return { sentence: s, score };

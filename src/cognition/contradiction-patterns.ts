@@ -7,6 +7,8 @@
  * contradiction-detector.ts.
  */
 
+import { entityMentions } from "../memory/utils.js";
+
 // ══════════════════════════════════════════════════════════
 //  Types
 // ══════════════════════════════════════════════════════════
@@ -147,8 +149,8 @@ export const FIELD_PATTERNS: FieldPattern[] = [
 // ══════════════════════════════════════════════════════════
 
 function extractEntity(text: string): string | null {
-  const m = text.match(/@([\w-]+)/);
-  return m ? m[1].toLowerCase() : null;
+  const name = entityMentions(text)[0];
+  return name ? name.toLowerCase() : null;
 }
 
 function entityFromContext(text: string): string | null {

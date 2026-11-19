@@ -15,7 +15,7 @@ import { mkdtempSync, readFileSync, renameSync, rmSync, writeFileSync } from "no
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { atomicWriteFileSync as canonicalAtomicWriteFileSync } from "../util/json-store.js";
-import { atomicWriteFileSync, parseFactLine, displayContent, redactCredentials } from "./utils.js";
+import { atomicWriteFileSync, parseFactLine, displayContent, redactCredentials, entityMentions } from "./utils.js";
 
 describe("parseFactLine — schema-aligned prefix letters", () => {
   it("E maps to experience and parses confidence + entity", () => {
@@ -194,5 +194,26 @@ describe("atomicWriteFileSync — canonical seam (memory ⇄ util/json-store)", 
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+// "@Kaleb Arnold's email address is biaoto.ka@gmail.com" was stored as
+// "...biaoto.kagmail.com" with "gmail" as an entity: every reader took any
+// "@word" as a mention, the one inside an address included (2026-11-18).
+describe("an @ inside an email address is not a mention", () => {
+  it("keeps the address whole and names only the real entity", () => {
+    const r = parseFactLine("W(c=1) @Kaleb Arnold's email address for correspondence is biaoto.ka@gmail.com, as corrected by Peter.")!;
+    expect(r.content).toBe("Kaleb Arnold's email address for correspondence is biaoto.ka@gmail.com, as corrected by Peter.");
+    expect(r.entities).toEqual(["Kaleb"]);
+  });
+
+  it.each(["first.last@company.co", "a+tag@x.io", "o'neil@mail.com", "x_y@sub-domain.org"])("%s stays an address", (addr) => {
+    const r = parseFactLine(`O @Dana writes from ${addr} now`)!;
+    expect(r.content).toBe(`Dana writes from ${addr} now`);
+    expect(r.entities).toEqual(["Dana"]);
+  });
+
+  it("a mention after punctuation or at the start still counts", () => {
+    expect(entityMentions("(@Rex) and @Mia, with @Lee-Ann.")).toEqual(["Rex", "Mia", "Lee-Ann"]);
   });
 });

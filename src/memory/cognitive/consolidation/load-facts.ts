@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { createRequire } from "node:module";
 import { LAX_DIR, MEMORY_DIR, type FactEntry } from "./types.js";
 import { todayDateStr } from "./utils.js";
+import { entityMentionRe } from "../../utils.js";
 
 const require = createRequire(import.meta.url);
 
@@ -91,7 +92,7 @@ export function parseFactsFromLog(content: string, baseTime?: number): FactEntry
     if (/^(User|Agent):\s/i.test(afterChatTag)) continue;
 
     // Extract entity from @mentions
-    const entityMatch = trimmed.match(/@([\w-]+)/);
+    const entityMatch = trimmed.match(entityMentionRe(""));
     const entity = entityMatch ? entityMatch[1] : undefined;
 
     // Extract confidence if present
@@ -103,7 +104,7 @@ export function parseFactsFromLog(content: string, baseTime?: number): FactEntry
       .replace(/^\[[\d:]+\s*(?:AM|PM)?\]\s*/, "")
       .replace(/^\[(?:chat|ide|session|tg|cron|wa)-[A-Za-z0-9_-]+\]\s*/, "")
       .replace(/^[WBOS](?:\(c=[\d.]+\))?\s*/, "")
-      .replace(/@[\w-]+:?\s*/g, "")
+      .replace(entityMentionRe("g", String.raw`:?\s*`), "")
       .trim();
 
     if (content.length < 5) continue;

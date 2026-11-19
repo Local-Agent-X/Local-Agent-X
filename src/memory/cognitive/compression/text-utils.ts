@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { STOP_WORDS } from "./constants.js";
 import { extractRelationTriples } from "../../relation-patterns.js";
+import { entityMentions } from "../../utils.js";
 
 // One token estimator across the codebase — the canonical (slightly
 // conservative) one in context-manager. Compression used to keep its own
@@ -27,8 +28,7 @@ export function isContentWord(word: string): boolean {
 export function extractEntities(text: string): string[] {
   const entities: string[] = [];
 
-  const mentions = text.match(/@([\w-]+)/g);
-  if (mentions) entities.push(...mentions.map((m) => m.slice(1)));
+  entities.push(...entityMentions(text));
 
   const proper = text.match(/(?:^|\.\s+)?\b([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]+)*)\b/g);
   if (proper) {

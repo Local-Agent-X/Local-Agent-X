@@ -10,6 +10,7 @@ import type {
   MemorySearchResult, MemoryTaintStatus, MemoryTrustStatus,
 } from "./types.js";
 import { jaccardSimilarity } from "./text-utils.js";
+import { entityMentions } from "./utils.js";
 import { describeWhen, excerptAround } from "./retrieval-format.js";
 
 // ── Result converter ──
@@ -122,8 +123,7 @@ export function toSearchResult(
   snippetMaxChars: number,
   query?: string,
 ): IdentifiedSearchResult {
-  const entityMatches = chunk.text.match(/@([\w-]+)/g) || [];
-  const entities = entityMatches.map((m) => m.slice(1));
+  const entities = entityMentions(chunk.text);
 
   let metadata = chunk.metadata;
   if (!metadata && (chunk as unknown as { metadataRaw?: string }).metadataRaw) {

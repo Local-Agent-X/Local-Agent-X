@@ -120,6 +120,25 @@ const KIND_PREFIX: Record<string, FactKind> = {
   S: "observation",
 };
 
+/**
+ * An entity mention ("@Kaleb"), the one rule every memory reader and writer
+ * shares. The "@" must not follow a letter, digit or address character: inside
+ * "biaoto.ka@gmail.com" it is part of an email address, and reading "@gmail"
+ * as a mention dropped the "@" from a saved address and named "gmail" an
+ * entity (2026-11-18). Group 1 is the name.
+ */
+export const ENTITY_MENTION_SOURCE = String.raw`(?<![\w.+%'-])@([\w-]+)`;
+
+/** A fresh mention regex (a shared global one would carry lastIndex between callers). */
+export function entityMentionRe(flags = "g", suffix = ""): RegExp {
+  return new RegExp(ENTITY_MENTION_SOURCE + suffix, flags);
+}
+
+/** The names mentioned with "@" in a text, in order. */
+export function entityMentions(text: string): string[] {
+  return [...text.matchAll(entityMentionRe())].map((m) => m[1]!);
+}
+
 export function parseFactLine(
   line: string
 ): { kind: FactKind; content: string; entities: string[]; confidence: number } | null {
@@ -141,8 +160,7 @@ export function parseFactLine(
     return null;
   }
 
-  const entityMatches = rest.match(/@([\w-]+)/g) || [];
-  const entities = entityMatches.map((m) => m.slice(1));
+  const entities = entityMentions(rest);
 
   // The name stays in the sentence; only the "@" marks it as an entity.
   // Deleting it stored "is the user's cousin" and "owns a sailboat named the ,
@@ -154,8 +172,8 @@ export function parseFactLine(
   // passed away") is only a tag.
   const label = /^((?:@[\w-]+[,\s]*)+):\s*/.exec(rest);
   const content0 = (label ? rest.slice(label[0].length) : rest)
-    .replace(/@([\w-]+)\s+(?=\1\b)/gi, "")
-    .replace(/@([\w-]+)/g, "$1")
+    .replace(entityMentionRe("gi", String.raw`\s+(?=\1\b)`), "")
+    .replace(entityMentionRe(), "$1")
     .trim();
   const unsaid = label
     ? (label[1].match(/@([\w-]+)/g) ?? []).map((m) => m.slice(1)).filter((name) => !content0.toLowerCase().includes(name.toLowerCase()))

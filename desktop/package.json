@@ -1,6 +1,6 @@
 {
   "name": "local-agent-x-desktop",
-  "version": "0.5.12",
+  "version": "0.5.13",
   "description": "Local Agent X — Desktop Companion",
   "main": "dist/loader.js",
   "scripts": {

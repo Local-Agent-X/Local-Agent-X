@@ -1,6 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ServerEvent } from "./types.js";
-import { redactCredentials } from "./security/index.js";
+import { redactEventCredentials } from "./security/index.js";
 import { getRuntimeConfig } from "./config.js";
 import { toolMessageStatus } from "./tool-execution/tool-message-carry.js";
 
@@ -183,13 +183,7 @@ export function jsonResponse(res: ServerResponse, status: number, data: unknown,
 }
 
 export function sseWrite(res: ServerResponse, event: ServerEvent) {
-  if (event.type === "tool_end" && event.result) {
-    event = { ...event, result: redactCredentials(event.result) };
-  }
-  if (event.type === "stream" && "delta" in event && event.delta) {
-    event = { ...event, delta: redactCredentials(event.delta) };
-  }
-  res.write(`data: ${JSON.stringify(event)}\n\n`);
+  res.write(`data: ${JSON.stringify(redactEventCredentials(event))}\n\n`);
 }
 
 export async function readBody(req: IncomingMessage): Promise<string> {

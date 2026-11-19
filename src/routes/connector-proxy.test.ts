@@ -27,6 +27,7 @@ vi.mock("node:dns", async (importOriginal) => {
 
 import { promises as dns } from "node:dns";
 import { parseManifest, matchAllow, forwardWithTimeout } from "./connector-proxy.js";
+import { EgressRedirectBlocked } from "../tools/web-egress.js";
 
 const lookup = dns.lookup as unknown as ReturnType<typeof vi.fn>;
 
@@ -250,5 +251,39 @@ describe("forwardWithTimeout: a local upstream answers to the loopback grant", (
     process.env.LAX_ELECTRON_CDP_PORT = String(port);
     await expect(forwardWithTimeout(`http://127.0.0.1:${port}/json/version`, { method: "GET", headers: {} }, 2000, true)).rejects.toThrow();
     expect(hits).toBe(0);
+  });
+});
+
+// A connector's upstream comes from the model (connector_create), so a hostname
+// upstream answers to the same web-access policy as every tool fetch: in strict
+// mode a host off the allowlist is refused before any dial.
+describe("forwardWithTimeout honours the web-access policy for a hostname upstream", () => {
+  let dir: string;
+  const prev = process.env.LAX_DATA_DIR;
+  beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "lax-connector-egress-")); process.env.LAX_DATA_DIR = dir; });
+  afterEach(() => {
+    if (prev === undefined) delete process.env.LAX_DATA_DIR; else process.env.LAX_DATA_DIR = prev;
+    rmSync(dir, { recursive: true, force: true });
+  });
+  const strict = (allow: string[]) => {
+    writeFileSync(join(dir, "security.json"), JSON.stringify({ egressMode: "strict" }));
+    writeFileSync(join(dir, "egress-allowlist.json"), JSON.stringify(allow));
+  };
+
+  it("strict mode refuses a host off the allowlist without resolving it", async () => {
+    strict(["api.fastmail.com"]);
+    lookup.mockClear();
+    let thrown: unknown;
+    try { await forwardWithTimeout("https://exfil.example/x", { method: "GET", headers: {} }, 2000, false); } catch (e) { thrown = e; }
+    expect(thrown).toBeInstanceOf(EgressRedirectBlocked);
+    expect((thrown as EgressRedirectBlocked).action).toEqual({ kind: "allow-host", host: "exfil.example" });
+    expect(lookup).not.toHaveBeenCalled();
+  });
+
+  it("strict mode lets an allowlisted host through to the dial", async () => {
+    strict(["api.fastmail.com"]);
+    lookup.mockResolvedValue([{ address: "10.0.0.5", family: 4 }]);
+    // Past the policy, the private-IP pin is what refuses it: proof the policy let it by.
+    await expectSsrfBlocked("https://api.fastmail.com/jmap/session");
   });
 });

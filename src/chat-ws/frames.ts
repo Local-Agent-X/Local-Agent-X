@@ -12,6 +12,7 @@ import type { ServerEvent } from "../types.js";
 import type { InboxFrame } from "../inbox/types.js";
 import type { WorkersSnapshotFrame } from "../broker-transport/vendor/protocol.js";
 import type { AgentSpawnEvent, AgentResultEvent } from "../server/handler-events-agent-result.js";
+import { redactEventCredentials } from "../security/index.js";
 
 export interface SidebarPin { name: string; icon: string; url: string }
 
@@ -71,7 +72,14 @@ type MissingFromList = Exclude<GlobalFrameType, (typeof GLOBAL_FRAME_TYPES)[numb
 const _everyFrameTypeListed: MissingFromList extends never ? true : never = true;
 void _everyFrameTypeListed;
 
+/** A frame as it goes on the wire. A session event's text has its
+ *  credentials masked here, the step every chat-socket send passes through
+ *  (the SSE half calls the same redactEventCredentials). */
+export function serializeFrame(frame: GlobalFrame): string {
+  return JSON.stringify(frame.type === "event" ? { ...frame, event: redactEventCredentials(frame.event) } : frame);
+}
+
 /** Send one frame on one socket. */
 export function sendFrame(ws: Pick<WebSocket, "send">, frame: GlobalFrame): void {
-  ws.send(JSON.stringify(frame));
+  ws.send(serializeFrame(frame));
 }

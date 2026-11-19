@@ -1,5 +1,6 @@
 import type { ProcessRelayBrowserDelivery } from "../canonical-loop/public/process-relay.js";
 import { clients } from "./state.js";
+import { redactEventCredentials } from "../security/index.js";
 
 // The ONE set that decides relay audience: ServerEvent discriminators every
 // connected client sees, not just the op's session. Both halves of the relay
@@ -15,7 +16,10 @@ export const GLOBAL_EVENT_TYPES = new Set([
   "bg_op_queued", "bg_op_started", "bg_op_progress", "bg_op_completed", "bg_op_nudge",
 ]);
 
-export function sendProcessRelayDelivery(delivery: ProcessRelayBrowserDelivery): number {
+export function sendProcessRelayDelivery(relayed: ProcessRelayBrowserDelivery): number {
+  // A worker's events reach the socket here, not through serializeFrame, so
+  // they take the same credential mask the other chat sends do.
+  const delivery = { ...relayed, events: relayed.events.map(redactEventCredentials) };
   const payload = JSON.stringify(delivery);
   const globalIndexes = delivery.events
     .map((event, index) => GLOBAL_EVENT_TYPES.has(event.type) ? index : -1)

@@ -21,5 +21,5 @@ export {
 } from "./known-secrets.js";
 export { CREDENTIAL_ENV_PREFIXES, CREDENTIAL_KEY_PATTERNS, redact, maskForDisplay, isMaskedDisplay, namesCredential } from "./credential-patterns.js";
 export type { SecretMatch } from "./secret-scanner.js";
-export { redactCredentials } from "./credentials.js";
+export { redactCredentials, redactEventCredentials } from "./credentials.js";
 export { outboundPayloadParts } from "./outbound-payload.js";

@@ -39,7 +39,7 @@ import { getLaxDir } from "../lax-data-dir.js";
 import { createLogger } from "../logger.js";
 import { type SignedAuthConfig, validateSignedAuth, signRequest } from "./connector-signing.js";
 import { wakeDevServer } from "../tools/dev-server-access.js";
-import { createPinningDispatcher, assertLiteralIpEgressAllowed } from "../tools/web-egress.js";
+import { createPinningDispatcher, assertLiteralIpEgressAllowed, assertInitialEgressAllowed, EgressRedirectBlocked } from "../tools/web-egress.js";
 import { isLocalOnlyMode, isLoopbackUrl, LOCAL_ONLY_BLOCK_MESSAGE } from "../local-only-policy.js";
 import { EgressPayloadBlocked, assertSendAllowed } from "../net/egress-send.js";
 import { REQUEST_BODY_HEAD_CAP } from "../net/request-body-head.js";
@@ -228,7 +228,12 @@ function pinnedDispatcher(): Agent {
  *  a dev server the harness started, a listener the agent's process owns, a
  *  port the user registered. connector_create takes its upstream from the
  *  model, so without the grant any local port was reachable through here,
- *  the in-app browser's debugging port included. */
+ *  the in-app browser's debugging port included.
+ *
+ *  A hostname upstream answers to the web-access policy every tool fetch does
+ *  (assertInitialEgressAllowed: the strict-mode allowlist and the blocked
+ *  hostnames), so a connector the model created reaches no host http_request
+ *  would be refused. The caller turns its EgressRedirectBlocked into a 403. */
 export async function forwardWithTimeout(
   u: string,
   init: ForwardInit,
@@ -236,6 +241,7 @@ export async function forwardWithTimeout(
   isLocalUpstream: boolean,
 ): Promise<Response | UndiciResponse> {
   if (isLocalOnlyMode() && !isLoopbackUrl(u)) throw new Error(LOCAL_ONLY_BLOCK_MESSAGE);
+  assertInitialEgressAllowed(u);
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), timeoutMs);
   try {
@@ -413,6 +419,10 @@ export const handleConnectorProxyRoutes: RouteHandler = async (method, url, req,
     res.writeHead(up.status, { "Content-Type": up.headers.get("content-type") || "application/json" });
     res.end(responseBody);
   } catch (e) {
+    if (e instanceof EgressRedirectBlocked) {
+      json(403, { error: e.message, code: "EGRESS_BLOCKED", ...(e.action ? { action: e.action } : {}) });
+      return true;
+    }
     logger.warn(`[connector.${name}] ${method} ${upstreamPath} failed: ${safeErrorMessage(e)}`);
     json(502, { error: { upstream: safeErrorMessage(e) } });
   }

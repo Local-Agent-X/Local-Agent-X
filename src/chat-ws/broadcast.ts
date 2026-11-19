@@ -7,7 +7,7 @@
 // that broadcastActiveChats performs.
 
 import type { ServerEvent } from "../types.js";
-import type { GlobalFrame } from "./frames.js";
+import { serializeFrame, type GlobalFrame } from "./frames.js";
 import { hasChatHandlerPending } from "../ops/session-bridge.js";
 import { isHiddenFromChatLists } from "../memory/synthetic-sessions.js";
 import { notifySessionEventObservers, sessionObserved } from "./session-event-observers.js";
@@ -143,7 +143,7 @@ export function broadcastToSession(sessionId: string, event: ServerEvent): void 
   // replay replace fully repairs. Everything else must always be sent.
   const droppable =
     (event.type === "stream" || event.type === "reasoning") && !("replace" in event);
-  const payload = JSON.stringify({ type: "event", sessionId, event });
+  const payload = serializeFrame({ type: "event", sessionId, event });
   for (const [ws, subs] of clients) {
     if (subs.has(sessionId) && ws.readyState === 1 /* OPEN */) {
       if (droppable && ws.bufferedAmount > BACKPRESSURE_MAX_BUFFERED) continue;
@@ -236,7 +236,7 @@ export function broadcastActiveChats(): void {
  *  to notify)" hints and a one-shot notice is marked delivered only once a
  *  tab that shows it had it. */
 export function broadcastAll(frame: GlobalFrame): number {
-  const payload = JSON.stringify(frame);
+  const payload = serializeFrame(frame);
   let tabs = 0;
   for (const [ws] of clients) {
     if (ws.readyState === 1 /* OPEN */) {

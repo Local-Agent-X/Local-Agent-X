@@ -13,14 +13,14 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2082 non-test source files · 76 oversized · 271 nearing the size cap.
+**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2083 non-test source files · 76 oversized · 271 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 186 | 30 | XL | 1 |
-| `src/security/` | 164 | 62 | XL | 2 |
+| `src/security/` | 168 | 63 | XL | 2 |
 | `src/tools/` | 140 | 243 | XL | 9 |
 | `src/tool-execution/` | 102 | 90 | XL | 2 |
 | `src/workspace/` | 91 | 3 | M |  |
@@ -349,6 +349,7 @@ job. Comments are free: never cut them to fit.
 - `src/browser/manager.ts` — 310+ code lines (cap 350)
 - `src/cognition/cross-session-learning/service.ts` — 310+ code lines (cap 350)
 - `src/protocols/index.ts` — 310+ code lines (cap 350)
+- `src/routes/connector-proxy.ts` — 310+ code lines (cap 350)
 - `src/security/layer/security-audit.ts` — 310+ code lines (cap 350)
 - `src/security/layer/shell-detectors.ts` — 310+ code lines (cap 350)
 - `src/server/background-jobs/index.ts` — 310+ code lines (cap 350)
@@ -362,9 +363,7 @@ job. Comments are free: never cut them to fit.
 - `src/local-runtimes/certification-runner.ts` — 300+ code lines (cap 350)
 - `src/memory/index-core.ts` — 300+ code lines (cap 350)
 - `src/memory/index-facts.ts` — 300+ code lines (cap 350)
-- `src/routes/connector-proxy.ts` — 300+ code lines (cap 350)
 - `src/tools/document-tools.ts` — 300+ code lines (cap 350)
-- `src/tools/http-egress-guard.ts` — 300+ code lines (cap 350)
 - `src/tools/presentation-tools.ts` — 300+ code lines (cap 350)
 - `src/voice/voice-session/turn-runner.ts` — 300+ code lines (cap 350)
 - `src/api-docs.ts` — 290+ code lines (cap 350)
@@ -388,6 +387,7 @@ job. Comments are free: never cut them to fit.
 - `src/server/bootstrap-services.ts` — 280+ code lines (cap 350)
 - `src/test-suite.ts` — 280+ code lines (cap 350)
 - `src/tools/build-app-spawn.ts` — 280+ code lines (cap 350)
+- `src/tools/http-egress-guard.ts` — 280+ code lines (cap 350)
 - `src/agency/handler-tools.ts#createHandlerTools` — 100+ own code lines (cap 100)
 - `src/auto-build/workflow-resolver.ts#candidateFromEvidence` — 100+ own code lines (cap 100)
 - `src/canonical-loop/adapters/anthropic/stream-consume.ts#streamConsume` — 100+ own code lines (cap 100)

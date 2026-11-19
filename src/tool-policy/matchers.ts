@@ -1,5 +1,6 @@
 import { checkRegexSafety } from "../safe-regex.js";
 import { createLogger } from "../logger.js";
+import { matchEgressList } from "../security/layer/host-list.js";
 
 const logger = createLogger("tool-policy/matchers");
 
@@ -39,13 +40,9 @@ export function matchGlob(pattern: string, name: string): boolean {
   return false;
 }
 
-/** Match a host against an allowlist (supports *.example.com) */
-export function matchHost(patterns: string[], host: string): boolean {
-  const h = host.toLowerCase();
-  return patterns.some((p) => {
-    const pl = p.toLowerCase();
-    if (pl === h) return true;
-    if (pl.startsWith("*.") && h.endsWith(pl.slice(1))) return true;
-    return false;
-  });
+/** Match a host against a rule's allowedHosts / blockedHosts, through the one
+ *  host-list matcher (security/layer/host-list.ts). A block list honours a
+ *  broad wildcard (`*.ru`); an allow list ignores one, as the egress allowlist does. */
+export function matchHost(patterns: string[], host: string, list: "allow" | "block"): boolean {
+  return matchEgressList(host, new Set(patterns.map((p) => p.toLowerCase())), { broadWildcards: list === "block" });
 }

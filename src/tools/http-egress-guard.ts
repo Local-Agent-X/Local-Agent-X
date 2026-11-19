@@ -25,6 +25,7 @@ import { matchEgressList } from "../security/layer/index.js";
 import { classifyData } from "../threat/classification.js";
 import { loadDataEgressGuard } from "../security/layer/index.js";
 import { getLaxDir } from "../lax-data-dir.js";
+import { EgressPolicyState } from "../security/layer/egress-policy-state.js";
 import { getOwnEmailAddresses } from "./email-config.js";
 import { isSensitiveAttachmentPath } from "../data-lineage/index.js";
 import { realpathDeep } from "../security/layer/index.js";
@@ -32,28 +33,14 @@ import { destinationSpecsOf } from "../tool-registry.js";
 import { resolveAgentPath } from "../workspace/paths.js";
 import { unvouchedSecretMatches } from "../browser/site-provenance.js";
 
-let trustedDestinationsCache: { fingerprint: number; set: Set<string> } | null = null;
+// The allowlist through the canonical loader (security-config.ts, read by
+// EgressPolicyState), which reloads when the file's mtime or size changes. A
+// private cache keyed on the text's length kept a swapped host of the same
+// length (a.com → b.com) trusted until restart.
+const egressPolicy = new EgressPolicyState();
 
-function loadTrustedDestinations(): Set<string> {
-  const path = join(getLaxDir(), "egress-allowlist.json");
-  if (!existsSync(path)) {
-    trustedDestinationsCache = null;
-    return new Set();
-  }
-  try {
-    const raw = readFileSync(path, "utf-8");
-    const fingerprint = raw.length;
-    if (trustedDestinationsCache && trustedDestinationsCache.fingerprint === fingerprint) {
-      return trustedDestinationsCache.set;
-    }
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return new Set();
-    const set = new Set<string>(parsed.map((d: unknown) => String(d).toLowerCase()));
-    trustedDestinationsCache = { fingerprint, set };
-    return set;
-  } catch {
-    return new Set();
-  }
+function loadTrustedDestinations(): ReadonlySet<string> {
+  return egressPolicy.allowlist;
 }
 
 export interface GuardArgs {

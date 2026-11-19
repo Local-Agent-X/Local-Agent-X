@@ -1,10 +1,7 @@
-import { readFileSync, existsSync } from "node:fs";
-import { join } from "node:path";
+import { EgressPolicyState } from "./egress-policy-state.js";
 import type { SecurityDecision } from "../../types.js";
 import { USER_HINTS } from "../../types.js";
-import { getLaxDir } from "../../lax-data-dir.js";
 
-import { createLogger } from "../../logger.js";
 import {
   LOCAL_SERVICE_RECOVERY,
   LOOPBACK_WAY_OUT,
@@ -26,24 +23,13 @@ import { isThisMachineHost, loopbackServiceReachable } from "./loopback-grant.js
 import { endpointHostPort } from "../../local-runtimes/admission.js";
 import { isLocalOnlyMode, isLoopbackUrl, LOCAL_ONLY_BLOCK_MESSAGE } from "../../local-only-policy.js";
 
-const logger = createLogger("security.network-policy");
 
 export type EgressMode = "permissive" | "strict";
 
-/**
- * Match a hostname against the egress list (exact host or *.domain.com wildcard).
- * Rejects overly broad wildcards (*.com, *.org) — wildcard must have ≥2 labels.
- */
-export function matchEgressList(host: string, list: ReadonlySet<string>): boolean {
-  if (list.has(host)) return true;
-  for (const d of list) {
-    if (!d.startsWith("*.")) continue;
-    const baseDomain = d.slice(2);
-    if (baseDomain.split(".").length < 2) continue;
-    if (host === baseDomain || host.endsWith("." + baseDomain)) return true;
-  }
-  return false;
-}
+// The host-list matcher lives in a leaf (host-list.ts) that tool-policy can
+// import too; re-exported here for this module's existing importers.
+import { matchEgressList } from "./host-list.js";
+export { matchEgressList } from "./host-list.js";
 
 /**
  * Map a BROWSER PAGE's request URL onto the protocol this policy speaks, so the
@@ -222,60 +208,31 @@ export function evaluateWebFetch(
   return { allowed: true, reason: "Web fetch allowed" };
 }
 
-/** Egress policy config as loaded from disk, in the shape evaluateWebFetch wants. */
+/** Egress policy config, in the shape evaluateWebFetch wants. */
 export interface EgressConfig {
-  allowlist: Set<string>;
+  allowlist: ReadonlySet<string>;
   configured: boolean;
   mode: EgressMode;
   localServicePorts: Set<string>;
   manualHostPorts: Set<string>;
 }
 
+// The allowlist and mode come from the one loader (security-config.ts, read
+// through EgressPolicyState, which reloads when either file changes), the same
+// one the SecurityLayer gate holds. This module used to parse both files itself
+// on every call, a second reader that could drift from the gate's. Made on
+// first use: egress-policy-state's imports reach back here while loading.
+let egressState: EgressPolicyState | null = null;
+
 /**
- * Load the current egress policy from `getLaxDir()`:
- *   - egress-allowlist.json → allowlist (lowercased) + configured flag
- *   - security.json         → egressMode + localServicePorts
- *
- * Mirrors the SecurityLayer constructor's load semantics exactly (same
- * filenames, same lowercase normalization, same permissive default, same
- * fail-soft on any read/parse error). Self-contained — it does NOT depend on
- * a SecurityLayer instance — so it can be reused to re-check a URL outside the
- * pre-dispatch gate (e.g. a cross-host redirect target in web-tools.ts).
- *
- * NOTE: intentionally a standalone loader rather than an extraction of the
- * constructor body. The constructor sets instance fields and emits info logs
- * as a side effect; rewiring it to consume this would be a larger, riskier
- * change than the H5 follow-up warrants. Both paths share the same disk
- * format, so they stay consistent by construction.
+ * The current egress policy, for a check outside the pre-dispatch gate (a
+ * cross-host redirect target, the connector proxy, the shell egress proxy, the
+ * browser's egress worker): the allowlist and mode the gate decides on, plus
+ * the live local-service ports.
  */
 export function loadEgressConfig(): EgressConfig {
-  const dir = getLaxDir();
-
-  let allowlist = new Set<string>();
-  let configured = false;
-  try {
-    const allowlistPath = join(dir, "egress-allowlist.json");
-    if (existsSync(allowlistPath)) {
-      const parsed = JSON.parse(readFileSync(allowlistPath, "utf-8"));
-      if (Array.isArray(parsed)) {
-        allowlist = new Set(parsed.map((d: unknown) => String(d).toLowerCase()));
-        configured = true;
-      }
-    }
-  } catch (e) {
-    logger.warn(`[security] Failed to load egress allowlist: ${(e as Error).message}`);
-  }
-
-  let mode: EgressMode = "permissive";
-  try {
-    const cfgPath = join(dir, "security.json");
-    if (existsSync(cfgPath)) {
-      const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
-      if (cfg.egressMode === "strict" || cfg.egressMode === "permissive") {
-        mode = cfg.egressMode;
-      }
-    }
-  } catch {}
+  egressState ??= new EgressPolicyState();
+  const { allowlist, configured, mode } = egressState;
 
   // The same live derivation the pre-dispatch gate reads (security-config.ts
   // liveLocalServicePorts): configured ports, the ollama + discovered

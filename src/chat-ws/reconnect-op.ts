@@ -8,6 +8,7 @@
 
 import type { WebSocket } from "ws";
 import { createLogger } from "../logger.js";
+import { redactEventCredentials } from "../security/index.js";
 
 const logger = createLogger("chat-ws");
 
@@ -105,7 +106,7 @@ export async function handleReconnectOp(ws: WebSocket, sessionId: string, opId: 
           ws.send(JSON.stringify({
             type: "event",
             sessionId,
-            event: { type: "stream", text, replace: true },
+            event: redactEventCredentials({ type: "stream", text, replace: true }),
             _opId: opId,
             _replay: true,
           }));

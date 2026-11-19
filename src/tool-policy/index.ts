@@ -175,10 +175,10 @@ export class ToolPolicy {
     if (url && (c.allowedHosts || c.blockedHosts)) {
       try {
         const host = new URL(url).hostname;
-        if (c.allowedHosts && !matchHost(c.allowedHosts, host)) {
+        if (c.allowedHosts && !matchHost(c.allowedHosts, host, "allow")) {
           return { allowed: false, reason: `Host "${host}" not in allowlist for ${toolName}`, ruleId: rule.id, userHint: USER_HINTS.policy };
         }
-        if (c.blockedHosts && matchHost(c.blockedHosts, host)) {
+        if (c.blockedHosts && matchHost(c.blockedHosts, host, "block")) {
           return { allowed: false, reason: `Host "${host}" is blocked by policy`, ruleId: rule.id, userHint: USER_HINTS.policy };
         }
       } catch {

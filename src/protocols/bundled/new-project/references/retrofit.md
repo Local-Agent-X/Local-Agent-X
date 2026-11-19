@@ -29,15 +29,17 @@ node <skill>/scripts/check-doc-paths.mjs                 # all live docs
 node <skill>/scripts/check-doc-paths.mjs AGENTS.md ARCHITECTURE.md <nested guides>   # guidance only
 node <skill>/scripts/check-module-owners.mjs --root <src>   # modules nobody wrote down
 node <skill>/scripts/code-refs.mjs --duplicates            # TS/JS: exported names declared twice
-node <skill>/scripts/check-canonical.mjs --root <src> ... --canonical <shared root>   # several roots: one job written twice
+node <skill>/scripts/check-canonical.mjs --root <src> ... [--canonical <shared root>]   # one job written twice: two files, or two roots
 ```
 
 The map's "Module cycles" section, `--duplicates` and check-canonical are where
 parallel implementations show up: two modules that each claim the same job
 usually share a name, or reach each other. `--duplicates` reads one TypeScript
-project; check-canonical compares source roots, which is where a monorepo
-drifts (web and mobile each writing the same service, an app re-declaring the
-shared package's types).
+project; check-canonical reads every language the kit knows, finds a name
+exported from two files of one root, and compares source roots, which is where
+a monorepo drifts (web and mobile each writing the same service, an app
+re-declaring the shared package's types). Its `--write-ratchet` is the
+name-level inventory a retrofit starts from.
 
 If the repo already has its own map generator, compare totals with it. A
 mismatch is a finding about one of the two generators.

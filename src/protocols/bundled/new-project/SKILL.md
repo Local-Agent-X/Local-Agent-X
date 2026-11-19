@@ -1,6 +1,6 @@
 ---
 name: new-project
-description: Set up a repo (JS/TS, Python, Rust or Go) so AI agents (and people) can navigate it fast and change it without whack-a-mole — rules file (AGENTS.md), architecture map, a generated codebase map the build keeps fresh (with module cycles), code-line size caps per file and per function (comments are free) with a shrink-only ratchet, a module-owner check so no module exists without a stated owner, a canonical-drift check that fails when a function or type is written again in another app or package of a monorepo, symbol-level references from the TypeScript compiler with multi-hop "what does this change reach" (and the tests to run), module seal and forbidden-dependency tests, a coupling classification that installs the right check for each kind of runtime coupling (registries, events, shared keys, persisted formats, parsed text, protocols), a doc-path checker, ADRs, and a history folder. Use when the user invokes /new-project, starts a new project/repo/app/service, asks to "set up the repo structure", "make the codebase easier for AI to navigate", "stop breaking things when we change stuff", or wants to bring an EXISTING repo up to this standard (retrofit mode — audit and report first). Also use before /app-build scaffolding so the structure exists from commit one.
+description: Set up a repo (JS/TS, Python, Rust, Go, Kotlin, Java, Swift, C#, C/C++ or Dart) so AI agents (and people) can navigate it fast and change it without whack-a-mole — rules file (AGENTS.md), architecture map, a generated codebase map the build keeps fresh (with module cycles), code-line size caps per file and per function (comments are free) with a shrink-only ratchet, a module-owner check so no module exists without a stated owner, a canonical-drift check that fails when a function or type is written again in another file, or in another app or package of a monorepo, symbol-level references from the TypeScript compiler with multi-hop "what does this change reach" (and the tests to run), module seal and forbidden-dependency tests, a coupling classification that installs the right check for each kind of runtime coupling (registries, events, shared keys, persisted formats, parsed text, protocols), a doc-path checker, ADRs, and a history folder. Use when the user invokes /new-project, starts a new project/repo/app/service, asks to "set up the repo structure", "make the codebase easier for AI to navigate", "stop breaking things when we change stuff", or wants to bring an EXISTING repo up to this standard (retrofit mode — audit and report first). Also use before /app-build scaffolding so the structure exists from commit one.
 user-invocable: true
 allowed-tools:
   - read
@@ -61,20 +61,27 @@ root (default `src/`), the test runner, and the build/check command. Language
 and framework are product choices, so ask rather than pick. Everything below is
 an engineering default; decide it and move on.
 
-The bundled scripts are Node (≥18) and understand JS/TS, Python, Rust and Go.
-`scripts/project-languages.mjs` is the table they share, one row per language:
-source extensions, the test-file rule, the import syntax, how an import
-resolves to a file, the default source roots, and what a module is (a
-top-level folder under the root for JS/TS and Python; a top-level folder or
-`.rs` file under `src/` for Rust; a package directory for Go). Supporting
-another language is adding a row. For a project that isn't Node, Node is a
-dev-only dependency. If the user won't have Node at all, port the scripts;
-each script's header states its contract.
+The bundled scripts are Node (≥18) and understand JS/TS, Python, Rust, Go,
+Kotlin, Java, Swift, C#, C/C++ and Dart. `scripts/project-languages.mjs` is the
+table they share, one row per language: source extensions, the test-file rule,
+the import syntax, how an import resolves to a file, the default source roots,
+and what a module is (a top-level folder under the root for JS/TS, Python,
+Swift, C#, C/C++ and Dart; a top-level folder or `.rs` file under `src/` for
+Rust; a package directory for Go; for Kotlin and Java, a top-level folder under
+the package root, so `com/acme/app/auth/` is the module `auth`). The rows for
+the build-tool languages (Kotlin through Dart) are in
+`scripts/project-languages-toolchains.mjs`, whose header gives each one's roots
+and import rule. Supporting another language is adding a row. For a project
+that isn't Node, Node is a dev-only dependency. If the user won't have Node at
+all, port the scripts; each script's header states its contract.
 
 Symbol-level references (`refs`) are TS/JS only, from the TypeScript
-compiler. Rust and Go have their own: `cargo doc`/`rust-analyzer` and
-`gopls` (`gopls references`) answer "who uses this function" there; point the
-project's AGENTS.md at them instead of at `refs`.
+compiler. The other languages answer "who uses this function" with their own
+language server; point the project's AGENTS.md at it instead of at `refs`:
+`rust-analyzer` (Rust), `gopls references` (Go), Kotlin's or Java's IDE "Find
+usages" (`kotlin-lsp`, `jdtls`), `sourcekit-lsp` (Swift), Roslyn (`csharp-ls` or the
+C# Dev Kit) for C#, `clangd` (C/C++), and the Dart
+analysis server (`dart language-server`).
 
 ### 2. Copy the tooling into the project
 
@@ -86,13 +93,13 @@ a file that exists, along with the AGENTS.md, ARCHITECTURE.md, ADR 0001 and
 
 | What `project_kit` writes | Purpose |
 |---|---|
-| `scripts/project-languages.mjs` | the language table (JS/TS, Python, Rust, Go) the map, the owner check, the doc-path check, the drift check and `check-structure` import; always copied with them |
+| `scripts/project-languages.mjs`, `scripts/project-languages-toolchains.mjs`, `scripts/language-paths.mjs` | the language table (JS/TS, Python, Rust, Go here; Kotlin, Java, Swift, C#, C/C++, Dart in the toolchains file; shared path helpers) the map, the owner check, the doc-path check, the drift check and `check-structure` import; always copied with them |
 | `scripts/codebase-map.mjs` | writes `docs/codebase-map.md` (modules, importers, dependencies, cycles); `--check` for build; `--deps <path>` for "who imports this module"; `--deps <path> --depth N` for who a change reaches hop by hop, plus the tests to run |
-| `scripts/code-size.mjs`, `scripts/code-size-cfamily.mjs`, `scripts/code-size-python.mjs` | the code-line counter the size check and the map share: TS/JS through the TypeScript compiler API, found by `scripts/typescript-api.mjs` (approximate, without function sizes, when no TypeScript with that API is found), Python, Go and Rust through string- and comment-aware lexers; always copied with them |
+| `scripts/code-size.mjs`, `scripts/code-size-cfamily.mjs`, `scripts/code-size-clike.mjs`, `scripts/code-size-python.mjs` | the code-line counter the size check and the map share: TS/JS through the TypeScript compiler API, found by `scripts/typescript-api.mjs` (approximate, without function sizes, when no TypeScript with that API is found), Python, Go, Rust, Kotlin, Java, Swift, C#, C/C++ and Dart through string- and comment-aware lexers; always copied with them |
 | `scripts/check-code-size.mjs` | the size caps, in code lines: 400 per file and 100 per function by default (`--max-code`, `--warn-code`, `--max-fn`, `--warn-fn`), a warning band from 320 / 60 that never fails, and a shrink-only ratchet (`.code-size-ratchet`, `--write-ratchet`, `--tighten`). Its failure text steers to the design fix (move the job that grew into a module named after it) |
 | `scripts/check-doc-paths.mjs` | fails when a live doc names a path that doesn't exist; build output (`dist/`, `build/`, `.next/` …) never counts as missing, and a framework creator's docs listed in `scripts/doc-paths-stock.json` (path → sha256) are skipped until edited |
 | `scripts/check-module-owners.mjs` | fails when a module under a source root has neither its own AGENTS.md nor an ARCHITECTURE.md row |
-| `scripts/check-canonical.mjs`, `scripts/canonical-drift.mjs` | canonical drift across source roots (a monorepo's apps, packages, functions): fails when a name the canonical root (`--canonical`, the shared package) exports is declared again elsewhere, or a name is exported from two other roots, i.e. one job implemented twice. Shrink-only ratchet (`.canonical-drift`, `--write-ratchet`, `--tighten`; a `# note` marks a pair that must exist). Also lists comments that admit a copy ("mirrors X", "keep in sync"). One root: nothing to compare, passes |
+| `scripts/check-canonical.mjs`, `scripts/canonical-drift.mjs` | canonical drift, i.e. one job implemented twice, found by name in every language the kit reads: fails when a name is exported from two files of one source root (*repeat*), when a name the canonical root (`--canonical`, the shared package) exports is declared again in another root (*shadow*), or when a name is exported from two other roots (*duplicate*). Shrink-only ratchet (`.canonical-drift`, `--write-ratchet`, `--tighten`) recording each name's roots and file count, so a third copy of a listed name fails too; a `# note` marks a copy that must exist. `--exclude <regex>` keeps vendored or synced copies out. Also lists comments that admit a copy ("mirrors X", "keep in sync") |
 | `scripts/check-structure.mjs` | all of the above as one command (`--canonical` passes through to the map and the drift check); picks the source roots from the project kind when `--root` is not given, hands the map and the size check the same caps, and prints failing checks last so a reader of the tail sees them |
 | `scripts/code-refs.mjs` | TS/JS only: `<Name>`, `<Class.member>`, `<file>#<Name>` → every use, by the compiler's resolution; `--depth N` → the declarations that use it, those that use them, N hops out, and the tests to run; `--duplicates` → exported names declared twice. Needs a TypeScript with the compiler API (TypeScript 5 or 6; `--typescript <dir>` points at one) |
 | `scripts/refs-hint-hook.mjs` | not shipped here: a hook for another harness, and the kit installs no hooks |
@@ -102,9 +109,16 @@ a file that exists, along with the AGENTS.md, ARCHITECTURE.md, ADR 0001 and
 `SOURCE_ROOT` constant at the top, a path from the test file to the source
 root: the TS one assumes it sits in the root (`.`; a Next app-dir project's
 `app/`, Astro's `src/`), a SvelteKit test in `src/` points at `lib`, and the
-Python one assumes `tests/` next to `src/` (`../src`). Rust and Go get no seal
-test: the compiler enforces the boundary (`pub` visibility; Go's `internal/`
-rule), so say that in AGENTS.md instead of shipping a test nothing needs.
+Python one assumes `tests/` next to `src/` (`../src`). The other languages get
+no seal test; say in AGENTS.md what holds the boundary instead of shipping a
+test nothing needs. In Rust, Go, Kotlin, Swift and C# the compiler does (`pub`
+visibility; Go's `internal/` rule; `internal` per Gradle module, per Swift
+target, per .NET project, so a module that must be sealed becomes its own
+Gradle module, target or project). Java has package-private (and JPMS
+`exports` for a modular build); Dart has `lib/src/` plus `_private` names.
+C/C++ has no compiler boundary: public headers go in `include/`, private ones
+stay beside their `.c`/`.cpp` in `src/<module>/`, and the forbidden-dependency
+rule is written in AGENTS.md and checked in review.
 
 ### 3. Wire the checks into the build
 
@@ -128,10 +142,14 @@ The checks only work if they run without anyone remembering. For a Node project:
 `check:owners` is the discovery gate made mechanical: a new module can't land
 until someone has written down what it owns and what it doesn't, which is the
 moment a duplicate of an existing module gets noticed. `check:canonical` is
-the same gate one level down: with several source roots, a function or type
-can't be written a second time in another app without the build saying so.
-Give it (and `docs:map`) the roots and `--canonical <shared package root>`;
-a single-root project can leave it out. `refs` is on demand, never in the build.
+the same gate one level down: a function or type can't be exported a second
+time, from another file or another app, without the build saying so. Every
+project runs it, single-root ones included; a monorepo gives it (and
+`docs:map`) the roots and `--canonical <shared package root>`. Adopt it with
+`--write-ratchet` so what exists today is recorded debt and only new copies
+fail. `refs` is on demand, never in the build: `refs --duplicates` is the
+compiler's view of the same question for one TypeScript project, useful in a
+review, while `check:canonical` is the gate.
 
 What no script catches is one job built twice under different names and
 shapes (two permission checks, two retry loops). That stays a judgment call:
@@ -150,14 +168,26 @@ Without `--root` the scripts take the source roots from the project file at
 the repo root: `Cargo.toml` → `src`; `go.mod` → `internal/`, `cmd/`, `pkg/`
 (those present); `package.json` → `src`, or the framework's own layout when
 there is no `src/` (SvelteKit's `src/lib`, the `app/` dir of a Next
-app-router or React Router (formerly Remix) project); `pyproject.toml` or nothing → `src`.
+app-router or React Router (formerly Remix) project); `pyproject.toml` or nothing → `src`;
+`settings.gradle(.kts)`, `build.gradle(.kts)` or `pom.xml` → each main source
+set (`src/main/kotlin`, `src/main/java`, a Multiplatform `src/<target>Main/kotlin`,
+in the repo or a Gradle subproject such as `app/`) followed down to its
+package root; `Package.swift` → `Sources`, an `<App>.xcodeproj` → `<App>/`;
+a `.sln`/`.slnx`/`.csproj` → `src` (lay a .NET solution out as
+`src/<Project>/`; without `src/`, each folder holding a `.csproj`);
+`CMakeLists.txt` or `meson.build` → `src` and `include`; `pubspec.yaml` → `lib`.
 Pass `--root` (repeatable), the size caps or `--entry <module>` when that
 doesn't fit: a Python `src/<package>/` layout keeps its modules one level
-down (`--root src/<package>`, or the scripts see one module), and a flat Go
-layout names its package folders explicitly.
+down (`--root src/<package>`, or the scripts see one module), a flat Go
+layout names its package folders explicitly, and so does a Dart package that
+keeps everything in `lib/src/` (`--root lib/src`).
 `--entry` marks a module that is loaded at runtime rather than imported, so the
 map doesn't call it dead. For Python, put the same commands in a Makefile, a
-`pyproject` task runner, or pre-commit, whichever the project already uses. If
+`pyproject` task runner, or pre-commit, whichever the project already uses.
+For Gradle, .NET, SwiftPM/Xcode, CMake and Dart, run `node
+scripts/check-structure.mjs` from the build's own check step (a Gradle `Exec`
+task that `check` depends on, an MSBuild `BeforeBuild` target, a CMake custom
+target, a `dart`/`flutter` script or Makefile) and from CI. If
 the repo has CI, add `check` to it. If it has none, offer to add a minimal
 workflow rather than creating one unasked.
 
@@ -203,6 +233,8 @@ green, then prove each gate catches a real violation:
 - Put a backticked `src/does-not-exist.ts` in ARCHITECTURE.md → `check:doc-paths` fails.
 - Add a module without regenerating the map → `check:map` fails.
 - Add a module with no ARCHITECTURE.md row or AGENTS.md → `check:owners` fails.
+- Export the same name from two files of one root → `check:canonical` fails; after
+  `--write-ratchet`, export it from a third file → it fails again.
 - Several roots: export the same name from two non-canonical roots → `check:canonical`
   fails; declare a private copy of a canonical export → it fails as a shadow; a
   re-export (`export { x } from`) and a test file declaring the name pass.
@@ -224,6 +256,14 @@ green, then prove each gate catches a real violation:
   lists `cmd/app/`, `internal/auth/`, `internal/store/` and both edges, with
   `cmd/app/` as the entrypoint; with no row for `internal/store/`,
   `check:owners` fails; an `internal/auth/big.go` with 401 code lines fails `check:size`.
+- Kotlin, Java, Swift, C#, C/C++, Dart (a scratch project in the default
+  layout above with two modules, one importing the other: a Kotlin
+  `com.acme.app.auth` importing `com.acme.app.store`, a Swift target
+  `import`ing another, a C# `using` of the other project's namespace, a C++
+  `#include "net/socket.h"`, a Dart `package:` import): the map lists both
+  modules and the edge, with tests (`src/test/`, `Tests/`, `*.Tests/`, `test/`)
+  left out; with no row for one, `check:owners` fails; a file with 401 code
+  lines and a function with 101 fail `check:size`.
 
 Revert every probe, re-run `check` green, and report each probe's outcome
 honestly. If one didn't fail, the wiring is wrong. Fix it before finishing.
@@ -256,8 +296,10 @@ one function absorbing every new job:
 | function (its own lines; nested functions count for themselves) | code lines | `--warn-fn` | 100 / 60 |
 
 Function sizes are measured for TS/JS (the TypeScript compiler API), Python
-(`def`) and Go and Rust (`func` / `fn` bodies, by bracket matching over a lexer
-that masks strings, chars and comments). TS/JS needs a `typescript` package that
+(`def`), Go and Rust (`func` / `fn` bodies), Kotlin (`fun`), Swift (`func`,
+`init`) and Java, C#, C/C++ and Dart (a name whose parameters open a body), by
+bracket matching over a lexer that masks strings, chars and comments; lambdas
+and closures count toward the function they are written in. TS/JS needs a `typescript` package that
 exposes the compiler API: TypeScript 5 or 6. TypeScript 7's package (the native
 compiler, which current Vite templates pin) exports only its version, so in such
 a project pass `--typescript <dir of a TypeScript 5/6 package>` to

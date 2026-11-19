@@ -198,7 +198,8 @@ const loose = units.get(LOOSE)?.files ?? 0;
 const rootsRel = ROOTS.map((r) => `\`${posix(r)}/\``).join(", ");
 const presentRoots = ROOTS.filter(existsSync);
 const drift = scanDeclarations(REPO, presentRoots, { exclude: [/\.generated\./] });
-const findings = presentRoots.length > 1 ? driftFindings(drift, CANONICAL) : [];
+const findings = driftFindings(drift, CANONICAL);
+const acrossRoots = findings.filter((f) => f.kind !== "repeat").length;
 
 const lines = [
 	"# Codebase map (generated — do not edit)",
@@ -212,7 +213,8 @@ const lines = [
 	"",
 	`**Totals:** ${rows.length} modules · ${dead.length} with no importer · ${prod.length} non-test source files · ` +
 		`${loose} loose files at the source root · ${oversized.length} oversized · ${nearing.length} nearing the size cap` +
-		(presentRoots.length > 1 ? ` · ${findings.length} names declared in more than one root.` : "."),
+		(presentRoots.length > 1 ? ` · ${acrossRoots} names declared in more than one root` : "") +
+		` · ${findings.length - acrossRoots} names exported from more than one file.`,
 	"",
 	"## Modules",
 	"",
@@ -251,7 +253,7 @@ const lines = [
 	"",
 	nearing.length ? nearing.join("\n") : "None.",
 	"",
-	...(presentRoots.length > 1 ? driftSection(findings, drift.mirrors) : []),
+	...driftSection(findings, drift.mirrors),
 ];
 const output = lines.join("\n");
 

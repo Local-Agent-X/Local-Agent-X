@@ -19,7 +19,8 @@ oversized files). When a number in prose disagrees with the map, the map wins.
 | Who imports a file or module, file by file | `npm run deps -- <path>` |
 | Who uses a function, class, type or member (the compiler's answer, via `src/language-intel/`) | `npm run refs -- <Name>` (or `<file>#<Name>`, `<file>:<line>`) |
 | How far a change reaches, hop by hop, and the tests to run | `npm run refs -- <Name> --depth N` (declarations), `npm run deps -- <path> --depth N` (files) |
-| Exported names declared in more than one file | `npm run refs -- --duplicates` |
+| Exported names declared in more than one file (the build's gate; `refs -- --duplicates` is the compiler's view) | `npm run check:canonical` |
+| Lock in a duplicate you folded into one owner | `npm run check:canonical -- --tighten` |
 | Regenerate `docs/agent-capabilities.md` after an audience change | `npm run docs:generated` |
 
 Optional for Claude Code: `scripts/refs-hint-hook.mjs` is a PostToolUse hook
@@ -53,6 +54,7 @@ pinned at `/apps/calendar/`, not `public/calendar.html`. <!-- doc-paths:ignore -
 - **The codebase map must be current** (`check:codebase-map`).
 - **Every path named in a current doc exists** (`check:doc-paths` over `scripts/current-docs.mjs`). Add a doc to that list when agents are pointed at it; move finished plans to `docs/history/`.
 - **Every module under `src/` has an owner on record** (`check:module-owners`): its own `AGENTS.md`, or a row in ARCHITECTURE.md's subsystem map saying what it owns and what it doesn't. A new module needs one before the build passes; that row is where a duplicate of an existing module gets noticed.
+- **No name exported from two files** (`check:canonical`, the structure kit's `src/app-scaffold/kit/check-canonical.mjs`). Before writing a function or type, import the one that exists; if yours is a different job, name it after what makes it different. `.canonical-drift` lists the copies that existed when the check was adopted (each name with its file count); an entry may only shrink, and folding one into its owner is locked in with `--tighten`. Never add a line to get a new copy past the build; a copy that must exist gets a line with a `# reason`. The kit and `src/broker-transport/vendor/` are synced copies and are not scanned.
 
 ## Code rules (checked by review)
 

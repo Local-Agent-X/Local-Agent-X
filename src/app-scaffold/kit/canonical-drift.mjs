@@ -9,13 +9,17 @@
  * see this (it reads one TypeScript project), and the import graph shows
  * nothing, because the copy imports nothing.
  *
- * Two findings, both keyed by name and by the set of roots it appears in:
+ * Three findings, each keyed by name, the set of roots it appears in, and the
+ * number of files that declare it:
  *   shadow     a name a CANONICAL root exports (--canonical: the shared
  *              package) declared again in another root, exported or not. The
  *              copy should be an import.
  *   duplicate  a name exported from two or more non-canonical roots. One of
  *              them should own it, usually by moving it to the canonical root.
- * Same-root repeats are not drift (two files in one project: refs --duplicates).
+ *   repeat     a name exported from two or more files of ONE root. A single-root
+ *              project drifts the same way, a file at a time: one file should
+ *              own it and the others import it, or it is two jobs and one of
+ *              them deserves a name that says how it differs.
  *
  * Also collected, report only: comments that admit a copy ("mirrors X",
  * "same as", "copy of", "keep in sync"). Each one is a coupling someone wrote
@@ -145,8 +149,9 @@ export function scanDeclarations(repo, roots, { exclude = [] } = {}) {
 
 /**
  * The drift findings, sorted by name: { name, kind, roots, files }.
- * `roots` is the sorted list of roots the name appears in (its identity in a
- * ratchet); `files` the files that declare it. canonicalRoots are repo-relative.
+ * `roots` is the sorted list of roots the name appears in and `files` the files
+ * that declare it; a ratchet records both (the roots, and how many files).
+ * canonicalRoots are repo-relative.
  */
 export function driftFindings(scan, canonicalRoots = []) {
 	const canonical = new Set(canonicalRoots);
@@ -155,16 +160,21 @@ export function driftFindings(scan, canonicalRoots = []) {
 	for (const name of [...names].sort()) {
 		const exp = scan.exported.get(name);
 		const owner = [...exp.keys()].find((r) => canonical.has(r));
+		const copies = new Map();
 		if (owner) {
 			// Shadow: any declaration of the name outside the canonical root.
-			const copies = new Map([...(scan.local.get(name) ?? new Map())].filter(([r]) => !canonical.has(r)));
+			for (const [r, fs] of scan.local.get(name) ?? new Map()) if (!canonical.has(r)) copies.set(r, new Set(fs));
 			for (const [r, fs] of exp) if (!canonical.has(r)) copies.set(r, new Set([...(copies.get(r) ?? []), ...fs]));
-			if (!copies.size) continue;
+		}
+		if (copies.size) {
 			const roots = [owner, ...copies.keys()].sort();
 			const files = [...exp.get(owner), ...[...copies.values()].flatMap((s) => [...s])].sort();
 			findings.push({ name, kind: "shadow", canonical: owner, roots, files });
 		} else if (exp.size > 1) {
 			findings.push({ name, kind: "duplicate", roots: [...exp.keys()].sort(), files: [...exp.values()].flatMap((s) => [...s]).sort() });
+		} else {
+			const [[root, files]] = exp;
+			if (files.size > 1) findings.push({ name, kind: "repeat", roots: [root], files: [...files].sort() });
 		}
 	}
 	return findings;
@@ -176,7 +186,9 @@ export function driftFindings(scan, canonicalRoots = []) {
 export function driftSection(findings, mirrors) {
 	const shadows = findings.filter((f) => f.kind === "shadow");
 	const dups = findings.filter((f) => f.kind === "duplicate");
+	const repeats = findings.filter((f) => f.kind === "repeat");
 	const row = (f) => `- \`${f.name}\` — ${f.roots.map((r) => `\`${r}/\``).join(", ")}`;
+	const repeatRow = (f) => `- \`${f.name}\` — ${f.files.length} files in \`${f.roots[0]}/\``;
 	const perFile = new Map();
 	for (const m of mirrors) perFile.set(m.file, (perFile.get(m.file) ?? 0) + 1);
 	return [
@@ -188,7 +200,14 @@ export function driftSection(findings, mirrors) {
 		"",
 		...(shadows.length ? ["**Shadows of the canonical root:**", "", ...shadows.map(row), ""] : []),
 		...(dups.length ? ["**Exported from more than one root:**", "", ...dups.map(row), ""] : []),
-		...(findings.length ? [] : ["None.", ""]),
+		...(shadows.length || dups.length ? [] : ["None.", ""]),
+		"## Exported from more than one file",
+		"",
+		"The same name exported from two files of one root: one owner and imports, or two jobs that need names saying how they differ. " +
+			"check-canonical fails on a new one and on a new copy of a listed one.",
+		"",
+		...(repeats.length ? repeats.map(repeatRow) : ["None."]),
+		"",
 		"## Comments that say one place copies another",
 		"",
 		"\"Mirrors X\", \"same as\", \"keep in sync\": a coupling written down instead of tested. Each is a candidate for a shared module or a test.",

@@ -13,7 +13,7 @@
   },
   "codebase-map.mjs": {
     "upstream": "scripts/codebase-map.mjs",
-    "sha256": "5a4c267fb12a464de14495a1d531985ca474e65f6328c986d088e1894fc0f611"
+    "sha256": "19110672e4922b3806f605b2146dd84966f425587c87ef6e36efb0d9c1e91cc5"
   },
   "code-size.mjs": {
     "upstream": "scripts/code-size.mjs",
@@ -49,11 +49,11 @@
   },
   "check-canonical.mjs": {
     "upstream": "scripts/check-canonical.mjs",
-    "sha256": "1aeb373c9cb0b4dbb2d141d80b8cc1607ed4fe2f3995c602fbf80e5c61d4fb5d"
+    "sha256": "6f6fec888ea23c4c3bbd4d7c7f46972c4d6b633d356b3d16cf08e3a7567edc12"
   },
   "canonical-drift.mjs": {
     "upstream": "scripts/canonical-drift.mjs",
-    "sha256": "a815346bde27c72ffd9e24e2f8baf72668807aa566f35258d0ee3409b2bb71b0"
+    "sha256": "12944976ca499d4c12e15788b2444e25d08d977e7482a30b2be9677c293eec5e"
   },
   "code-refs.mjs": {
     "upstream": "scripts/code-refs.mjs",

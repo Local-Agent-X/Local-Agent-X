@@ -17,6 +17,7 @@ async function pagesOf(name: string, content: string, extra: Record<string, unkn
   const fp = join(dir, name);
   const r = await pdf.execute({ action: "create", file_path: fp, content, ...extra });
   expect(r.isError, String(r.content)).toBeFalsy();
+  expect(r.metadata?.layoutProblems, String(r.content)).toBeUndefined();
   return (await PDFDocument.load(readFileSync(fp))).getPageCount();
 }
 

@@ -17,7 +17,8 @@ import { collapseFamily } from "./shared/collapse-family.js";
 import { SOURCES_DOC_SENTENCE, SOURCES_PARAM_SCHEMA } from "./shared/provenance-sources.js";
 // pdfkit markdown/block renderers — pure layout with no I/O, kept apart from
 // the tool's file handling.
-import { hx, renderMarkdown } from "./pdf-render.js";
+import { hx, renderImagePage, renderMarkdown } from "./pdf-render.js";
+import { checkPdfLayout } from "./shared/pdf-layout-check.js";
 
 // ── Helpers ──
 
@@ -155,11 +156,11 @@ const pdfCreate: ToolDefinition = {
       for (const img of acquired) {
         doc.addPage();
         if (img.mimeType === "image/png" || img.mimeType === "image/jpeg") {
-          doc.image(img.buffer, { fit: [500, 600], align: "center", valign: "center" });
-        } else {
-          // Best-effort marker — gif/webp/svg aren't accepted by pdfkit.image().
-          doc.fontSize(theme.doc.bodySize).font("Helvetica-Oblique").fillColor(hx(theme.colors.muted)).text(`[Image: ${img.source}]`);
+          renderImagePage(doc, img.buffer, img.caption, theme);
+          continue;
         }
+        // Best-effort marker — gif/webp/svg aren't accepted by pdfkit.image().
+        doc.fontSize(theme.doc.bodySize).font("Helvetica-Oblique").fillColor(hx(theme.colors.muted)).text(`[Image: ${img.source}]`);
         if (img.caption) {
           doc.moveDown();
           doc.fontSize(theme.doc.bodySize).font("Helvetica-Oblique").fillColor(hx(theme.colors.muted)).text(img.caption, { align: "center" });
@@ -192,7 +193,14 @@ const pdfCreate: ToolDefinition = {
       if (!verified.ok) return fail(`Failed to create PDF: ${verified.reason}`);
       const imgSuffix = acquired.length ? `, ${acquired.length} image(s)` : "";
       const notes = imageNotes.length ? `\nImage notes:\n${imageNotes.join("\n")}` : "";
-      return ok(`PDF created at ${filePath} (${buf.length} bytes${imgSuffix})${notes}`);
+      // The file read back as a person would see it (shared/pdf-layout-check.ts).
+      let problems: string[] = [];
+      try { problems = await checkPdfLayout(buf); } catch { /* an unreadable check never fails a written PDF */ }
+      const layout = problems.length
+        ? `\nLAYOUT CHECK FAILED — the PDF was written, but: ${problems.join("; ")}. ` +
+          "Do not tell the user it is ready. Change the content or images and create it again, or tell the user exactly what is wrong with it."
+        : "";
+      return ok(`PDF created at ${filePath} (${buf.length} bytes${imgSuffix})${notes}${layout}`, problems.length ? { layoutProblems: problems } : undefined);
     } catch (e: unknown) {
       return fail(`Failed to create PDF: ${(e as Error).message}`);
     }

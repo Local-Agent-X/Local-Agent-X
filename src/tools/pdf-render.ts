@@ -91,3 +91,31 @@ export function renderMarkdown(doc: any, content: string, t: OfficeTheme): void 
     }
   }
 }
+
+/** Room kept under an image for its caption, in points. */
+const CAPTION_ROOM = 72;
+
+/**
+ * One image on its own page, at the top within the margins, its caption under
+ * it. The image is placed and the caption positioned by hand: pdfkit's
+ * `valign: "center"` draws a fitted image lower on the page but advances
+ * `doc.y` only by its height from the top, so a caption written next landed on
+ * top of any image shorter than its box (a wide slide, 2026-11-18).
+ */
+export function renderImagePage(doc: any, image: Buffer, caption: string | undefined, t: OfficeTheme): { top: number; bottom: number; captionTop: number | null } {
+  const left = doc.page.margins.left;
+  const usableW = doc.page.width - left - doc.page.margins.right;
+  const usableH = doc.page.height - doc.page.margins.top - doc.page.margins.bottom - (caption ? CAPTION_ROOM : 0);
+  const top = doc.page.margins.top;
+  const { width, height } = doc.openImage(image) as { width: number; height: number };
+  const scale = Math.min(usableW / width, usableH / height);
+  const w = width * scale;
+  const h = height * scale;
+  doc.image(image, left + (usableW - w) / 2, top, { width: w, height: h });
+  const bottom = top + h;
+  if (!caption) return { top, bottom, captionTop: null };
+  const captionTop = bottom + 12;
+  doc.fontSize(t.doc.bodySize).font("Helvetica-Oblique").fillColor(hx(t.colors.muted))
+    .text(caption, left, captionTop, { width: usableW, align: "center" });
+  return { top, bottom, captionTop };
+}

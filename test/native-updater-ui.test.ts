@@ -5,17 +5,14 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
-const source = readFileSync(join(here, "../public/js/app.js"), "utf8");
-const updateSource = source.slice(
-  source.indexOf("// ── Update checker"),
-  source.indexOf("// ── Subsystem health banner"),
-);
+const updateSource = readFileSync(join(here, "../public/js/update-banner.js"), "utf8");
 
 function loadUI(options: {
   state?: Record<string, unknown>;
   server?: Record<string, unknown>;
   bridge?: boolean;
   getStateError?: Error;
+  apply?: { ok: boolean; body: Record<string, unknown> } | Error;
 } = {}) {
   document.body.innerHTML =
     '<div id="update-banner" style="display:none"></div><div id="settings-update-status"></div>';
@@ -27,8 +24,13 @@ function loadUI(options: {
   if (options.getStateError) getState.mockRejectedValue(options.getStateError);
   const bridge = { install, check, getState, onState: vi.fn((cb) => listeners.push(cb)) };
   (window as any).desktop = options.bridge === false ? undefined : { nativeUpdater: bridge };
-  const apiFetch = vi.fn().mockResolvedValue({
-    json: async () => options.server || { updateAvailable: false, localVersion: "1.0.0" },
+  const apiFetch = vi.fn(async (url: string) => {
+    if (url === "/api/updates/apply") {
+      const apply = options.apply ?? { ok: true, body: { ok: true } };
+      if (apply instanceof Error) throw apply;
+      return { ok: apply.ok, json: async () => apply.body };
+    }
+    return { ok: true, json: async () => options.server || { updateAvailable: false, localVersion: "1.0.0" } };
   });
   const factory = new Function(
     "apiFetch",
@@ -90,9 +92,47 @@ describe("packaged native updater UI", () => {
     await settle();
     const first = ui.nativeUpdaterInstall();
     const second = ui.nativeUpdaterInstall();
+    await settle();
     expect(ui.bridge.install).toHaveBeenCalledTimes(1);
     finish(true);
     await Promise.all([first, second]);
+  });
+
+  describe("one restart for a shell update and a code update", () => {
+    const ready = { phase: "ready", currentVersion: "1.0.0", availableVersion: "1.1.0" };
+    const codeWaiting = { updateAvailable: true, remoteVersion: "1.1.0", remoteCommit: "abc1234" };
+    const applyCalls = (ui: ReturnType<typeof loadUI>) =>
+      ui.apiFetch.mock.calls.filter(([url]) => url === "/api/updates/apply");
+
+    it("says so on the banner, then lands the code update before the installer restarts", async () => {
+      const ui = loadUI({ state: ready, server: codeWaiting });
+      await settle();
+      expect(document.getElementById("update-banner")!.textContent).toContain("one restart finishes both");
+      await ui.nativeUpdaterInstall();
+      expect(applyCalls(ui)).toHaveLength(1);
+      const applyOrder = ui.apiFetch.mock.invocationCallOrder[ui.apiFetch.mock.calls.findIndex(([url]) => url === "/api/updates/apply")];
+      expect(applyOrder).toBeLessThan(ui.bridge.install.mock.invocationCallOrder[0]);
+    });
+
+    it.each([
+      ["fails", { ok: false, body: { ok: false, error: "gate failed" } }],
+      ["throws", new Error("offline")],
+    ])("still installs the shell when the code update %s", async (_how, apply) => {
+      const ui = loadUI({ state: ready, server: codeWaiting, apply });
+      await settle();
+      await ui.nativeUpdaterInstall();
+      expect(applyCalls(ui)).toHaveLength(1);
+      expect(ui.bridge.install).toHaveBeenCalledTimes(1);
+    });
+
+    it("goes straight to the installer when no code update is waiting", async () => {
+      const ui = loadUI({ state: ready });
+      await settle();
+      expect(document.getElementById("update-banner")!.textContent).not.toContain("one restart");
+      await ui.nativeUpdaterInstall();
+      expect(applyCalls(ui)).toHaveLength(0);
+      expect(ui.bridge.install).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("shows Retry and the installer fallback after a native error", async () => {

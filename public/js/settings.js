@@ -52,7 +52,7 @@ async function settingsApplyUpdate() {
     status.style.color = 'var(--accent)';
     const pulled = `Pulled <code>${esc(data.fromCommit)}</code> → <code>${esc(data.toCommit)}</code>.`;
     if (window.desktop && window.desktop.relaunchApp) {
-      status.innerHTML = `${pulled} Relaunch to finish installing (runs <code>npm install</code> + build if needed). <button onclick="window.desktop.relaunchApp()" style="margin-left:10px;padding:4px 12px;background:var(--accent);color:var(--bg);border:none;border-radius:4px;cursor:pointer;font-weight:600">Quit &amp; Relaunch</button>`;
+      status.innerHTML = `${pulled} Relaunch to finish installing (runs <code>npm install</code> + build if needed). <button onclick="laxRelaunchToFinish()" style="margin-left:10px;padding:4px 12px;background:var(--accent);color:var(--bg);border:none;border-radius:4px;cursor:pointer;font-weight:600">Quit &amp; Relaunch</button>`;
     } else {
       status.innerHTML = `${pulled} <strong>Quit and relaunch the app to finish installing</strong> (it will run <code>npm install</code> and rebuild on next boot).`;
     }

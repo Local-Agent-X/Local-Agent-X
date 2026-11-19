@@ -7,7 +7,13 @@
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, it, expect, afterEach, beforeEach } from "vitest";
+import { describe, it, expect, afterEach, beforeEach, vi } from "vitest";
+
+// The release gate runs these without the electron package installed.
+vi.mock("electron", () => ({
+  app: { commandLine: { appendSwitch: () => {} }, getPath: () => "/tmp/fake-electron-userdata" },
+}));
+
 import {
   parseDevToolsActivePort,
   resolveLoopbackCdpPort,

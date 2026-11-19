@@ -4,6 +4,11 @@
  */
 import { describe, expect, it, vi } from "vitest";
 import type { Session } from "electron";
+
+// The release gate runs these without the electron package installed; the
+// prompt is injected, so the dialog is never shown.
+vi.mock("electron", () => ({ dialog: { showMessageBox: vi.fn() } }));
+
 import {
 	installPermissionHandlers,
 	permissionOrigin,

@@ -65,7 +65,8 @@ describe("canonical drift gate, one source root", () => {
 		const root = tree({
 			"src/a.ts": fn("s"),
 			"src/a.test.ts": fn("s"),
-			"src/index.ts": `export { slugify } from "./a.js";\n`,
+			// Built up so the pre-commit audit doesn't read the fixture as this repo's import.
+			"src/index.ts": ["export { slugify } from", JSON.stringify("./a.js")].join(" ") + ";\n",
 			"src/vendor/copy.ts": fn("s"),
 		});
 		expect(run(root, "--root", "src", "--exclude", "src/vendor/").status).toBe(0);

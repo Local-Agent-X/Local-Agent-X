@@ -20,6 +20,7 @@ import { DATA_CHANNEL } from "../broker-transport/vendor/protocol.js";
 import { VP8_PAYLOAD_TYPE, VP8_CLOCK_RATE } from "./ffmpeg-capture.js";
 import { createLogger } from "../logger.js";
 import { watchPeerDiagnostics, logChannelState, type PeerDiagnostics } from "./peer-diagnostics.js";
+import { weriftIceServers } from "./ice-servers.js";
 
 const logger = createLogger("screen-stream.peer");
 
@@ -134,7 +135,7 @@ export class ScreenPeer {
     // undefined and falls back to the optional operator STUN url (env), as before.
     const stun = process.env.LAX_RTC_STUN?.trim();
     const servers: IceServerConfig[] = iceServers ?? (stun ? [{ urls: stun }] : []);
-    const weriftServers = servers.flatMap(toWeriftIceServers);
+    const weriftServers = weriftIceServers(servers);
     this.pc = new RTCPeerConnection({
       // werift's RTCIceServer takes a SINGLE url per entry; the standard/broker shape
       // allows an array, so flatten array `urls` into one entry each.
@@ -308,19 +309,6 @@ export class ScreenPeer {
       logger.warn(`[screen-stream] peer close threw: ${(e as Error).message}`);
     }
   }
-}
-
-/** Expand one IceServerConfig (urls may be an array, standard/broker shape) into the
- *  single-url-per-entry shape werift's RTCIceServer requires. Drops absent
- *  username/credential so STUN entries don't carry empty TURN creds. */
-function toWeriftIceServers(s: IceServerConfig): { urls: string; username?: string; credential?: string }[] {
-  const urls = Array.isArray(s.urls) ? s.urls : [s.urls];
-  return urls.map((u) => {
-    const entry: { urls: string; username?: string; credential?: string } = { urls: u };
-    if (s.username !== undefined) entry.username = s.username;
-    if (s.credential !== undefined) entry.credential = s.credential;
-    return entry;
-  });
 }
 
 /** Normalize a werift RTCIceCandidate to the wire shape we send the phone. */

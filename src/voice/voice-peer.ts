@@ -31,6 +31,9 @@ import { OutboundAudio, OPUS_PAYLOAD_TYPE } from "./voice-rtp-audio.js";
 // cross-subsystem. Voice uses them only on the BROKER path (a control data channel +
 // broker-minted ICE); the tailnet path passes neither and is byte-for-byte unchanged.
 import type { ControlTransport, IceServerConfig } from "../screen-stream/peer.js";
+// One rule for which ICE servers a desktop werift peer gets (UDP TURN left out
+// when TCP/TLS is offered); shared with the screen peer, not copied.
+import { weriftIceServers } from "../screen-stream/ice-servers.js";
 import { DATA_CHANNEL } from "../broker-transport/vendor/protocol.js";
 import { createLogger } from "../logger.js";
 
@@ -130,7 +133,7 @@ export class VoicePeer {
     this.pc = new RTCPeerConnection({
       // werift's RTCIceServer takes a SINGLE url per entry; the standard/broker shape
       // allows an array, so flatten array `urls` into one entry each.
-      iceServers: servers.flatMap(toWeriftIceServers),
+      iceServers: weriftIceServers(servers),
       // Only the servers given above; see ScreenPeer.
       iceUseDefaultStunServer: false,
       // Advertise standard Opus (48kHz, stereo channel count, dynamic PT 111) so
@@ -333,15 +336,3 @@ function toIceInit(c: RTCIceCandidate): RtcIceCandidate {
   };
 }
 
-/** Expand one IceServerConfig (urls may be an array, standard/broker shape) into the
- *  single-url-per-entry shape werift's RTCIceServer requires. Mirrors the screen peer's
- *  helper; kept local so voice never imports screen internals for an 8-line util. */
-function toWeriftIceServers(s: IceServerConfig): { urls: string; username?: string; credential?: string }[] {
-  const urls = Array.isArray(s.urls) ? s.urls : [s.urls];
-  return urls.map((u) => {
-    const entry: { urls: string; username?: string; credential?: string } = { urls: u };
-    if (s.username !== undefined) entry.username = s.username;
-    if (s.credential !== undefined) entry.credential = s.credential;
-    return entry;
-  });
-}

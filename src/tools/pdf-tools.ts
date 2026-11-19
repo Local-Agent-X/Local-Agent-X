@@ -173,8 +173,14 @@ const pdfCreate: ToolDefinition = {
         doc.switchToPage(i);
         const label = `${company ? company + "    " : ""}Page ${i - range.start + 1} of ${range.count}`;
         const fy = doc.page.height - 34;
+        // The footer sits inside the bottom margin, where pdfkit's text flow
+        // would start a new page: lift the margin while it is drawn, or every
+        // page gains a blank one after the content.
+        const bottom = doc.page.margins.bottom;
+        doc.page.margins.bottom = 0;
         doc.font("Helvetica").fontSize(8).fillColor(hx(theme.colors.muted))
           .text(label, doc.page.margins.left, fy, { width: doc.page.width - doc.page.margins.left - doc.page.margins.right, align: "center", lineBreak: false });
+        doc.page.margins.bottom = bottom;
       }
       doc.end();
 

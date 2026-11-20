@@ -26,7 +26,7 @@
 //     counter. INCLUDES `shell` (running commands is work) but NOT network/comms
 //     — a turn still fetching/sending is gathering, not acting on findings.
 
-import { TOOLS, type ToolRisk } from "./tool-registry.js";
+import { TOOLS, isMcpServerWrite, type ToolRisk } from "./tool-registry.js";
 import { getActivePluginToolMetadata } from "./plugin-system/tool-metadata.js";
 
 // Observable external side effects (no-progress reset). `network-read` is absent
@@ -52,20 +52,17 @@ const PROGRESS_RISKS: ReadonlySet<ToolRisk> = new Set<ToolRisk>([
 ]);
 
 // Mutations the risk taxonomy doesn't capture. `browser` is network-read by tier
-// but its actions are real side effects. The filesystem MCP server's writes are
-// runtime tools with no policy row. (Plugin tools count through their active
-// metadata below.)
-const MUTATION_OVERRIDES: ReadonlySet<string> = new Set<string>([
-  "browser",
-  "mcp_filesystem_write_file", "mcp_filesystem_edit_file",
-]);
+// but its actions are real side effects. (Plugin tools count through their
+// active metadata, and a connected MCP server's writes through its listing,
+// below.)
+const MUTATION_OVERRIDES: ReadonlySet<string> = new Set<string>(["browser"]);
 
 /** True if the tool effected something observable this turn — resets the
  *  no-progress counter. Excludes ordinary shell; active plugin contracts are
  *  explicitly non-idempotent and count conservatively as mutations. */
 export function isMutationTool(name: string): boolean {
   if (getActivePluginToolMetadata(name)) return true;
-  if (MUTATION_OVERRIDES.has(name)) return true;
+  if (MUTATION_OVERRIDES.has(name) || isMcpServerWrite(name)) return true;
   const r = TOOLS[name]?.risk;
   return r !== undefined && MUTATION_RISKS.has(r);
 }

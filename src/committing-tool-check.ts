@@ -29,7 +29,7 @@
 // step needed for every downstream consumer.
 
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
-import { TOOLS, ariActionOf, committingSpecOf, destinationSpecsOf, pathSpecsForCall, policyRowOf, type ToolRisk } from "./tool-registry.js";
+import { TOOLS, ariActionOf, committingSpecOf, destinationSpecsOf, isMcpServerTool, isMcpServerWrite, pathSpecsForCall, policyRowOf, type ToolRisk } from "./tool-registry.js";
 import { getActivePluginToolMetadata } from "./plugin-system/tool-metadata.js";
 
 /** Risk classes that count as committing for failover + progress checks. */
@@ -189,10 +189,13 @@ export function turnPerformedCommittingCall(
  *    2. A tool with a `committing` spec (http_request, browser, pdf) returns
  *       false here — it needs args for an accurate verdict; use
  *       isCommittingCall when args are in scope.
- *    3. Registry-derived: any tool whose `risk` is in COMMITTING_RISKS. */
+ *    3. A connected MCP server's tool has no row: it commits unless the
+ *       server marked it read-only (isMcpServerWrite), as the kernel judges it.
+ *    4. Registry-derived: any tool whose `risk` is in COMMITTING_RISKS. */
 export function isCommittingTool(name: string): boolean {
   if (getActivePluginToolMetadata(name)) return true;
   if (committingSpecOf(name)) return false;
+  if (isMcpServerTool(name)) return isMcpServerWrite(name);
   const entry = TOOLS[name];
   if (!entry) return false;
   return COMMITTING_RISKS.has(entry.risk);

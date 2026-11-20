@@ -239,6 +239,13 @@ export function isMcpServerTool(name: string): boolean {
   return isMcpToolName(name) && TOOL_POLICIES[name] === undefined;
 }
 
+/** A connected MCP server's tool that writes: every one the server did not
+ *  mark read-only, the same reading ariActionOf gives the kernel. The
+ *  committing and mutation checks read it, since the tool has no row. */
+export function isMcpServerWrite(name: string): boolean {
+  return isMcpServerTool(name) && mcpToolFacts(name)?.readOnly !== true;
+}
+
 /** The action the Ari kernel judges this call as; "exec" for a tool with no
  *  row (the kernel never sees an internal tool). A spec read off an argument
  *  resolves against the call: a POST or a browser click is a write verb. A

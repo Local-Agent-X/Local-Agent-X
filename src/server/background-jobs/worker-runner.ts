@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { type AgentOptions } from "../../providers/types.js";
-import { runAgentViaCanonical } from "../../canonical-loop/index.js";
+import { agentRunShortfall, runAgentViaCanonical } from "../../canonical-loop/index.js";
 import { stripEphemeralMessages } from "../../providers/sanitize.js";
 import { extractAgentOutput } from "../../server-utils.js";
 import { SecurityLayer } from "../../security/index.js";
@@ -60,6 +60,8 @@ export function registerWorkerRunnerForServer(deps: WorkerRunnerDeps): void {
       });
       session.messages = stripEphemeralMessages(result.messages).filter(m => m.role !== "system");
       session.updatedAt = Date.now(); saveSession(session);
+      const shortfall = agentRunShortfall(result);
+      if (shortfall) throw new Error(`the builder did not finish: ${shortfall}`);
       return extractAgentOutput(result.messages);
     });
     logger.info("[workers] Runner registered");

@@ -1,7 +1,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { type AgentOptions } from "../providers/types.js";
-import { runAgentViaCanonical } from "../canonical-loop/index.js";
+import { agentRunShortfall, runAgentViaCanonical } from "../canonical-loop/index.js";
 import { extractAgentOutput, safeErrorMessage } from "../server-utils.js";
 import { targetPinForModelOverride } from "../agent-request/target-pin.js";
 import { EventBus } from "../event-bus.js";
@@ -274,6 +274,11 @@ export function registerHandlerEvents(deps: {
       const agentOutput = extractAgentOutput(agentSession.messages);
       const opId = agentResult.opId;
       if (mergeSuccess) {
+        const shortfall = agentRunShortfall(agentResult);
+        if (shortfall) {
+          logger.warn(`[handler] Agent ${agentId} (${role}) did not finish: ${shortfall}`);
+          return { result: `[Agent did not finish: ${shortfall}]${agentOutput ? `\n\n${agentOutput}` : ""}`, success: false, opId };
+        }
         // Empty-output guard: a run that committed no work AND produced no
         // usable text (or only a runner status marker) finished with nothing
         // to show. Gated on committedWork so a silent-but-effective run (wrote

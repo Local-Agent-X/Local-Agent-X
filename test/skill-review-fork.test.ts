@@ -142,7 +142,7 @@ const HEAVY_TURN = ["browser", "browser", "read", "write"];
  *  hand-written shape. The fold's fourth value, `max_iterations`, needs error
  *  code `max_turns_exceeded`, which nothing in src/ emits — no case drives it. */
 function runnerResult(terminal: TerminalState, error?: { code: string; message: string }): AgentTurn {
-  const stopReason = mapStopReason(terminal, error?.code);
+  const stopReason = mapStopReason("op-skill-review", terminal, error?.code);
   const turn: AgentTurn = {
     messages: [],
     usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },

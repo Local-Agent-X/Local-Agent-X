@@ -301,7 +301,7 @@ export async function runAgentViaCanonical(
     }
 
     const messages = collectMessages(op.id, history, userMessage, options.systemPrompt);
-    const stopReason = mapStopReason(terminal, errorCode);
+    const stopReason = mapStopReason(op.id, terminal, errorCode);
     // Authoritative committing-work signal from the host.ts ledger: a turn's
     // toolCallSummary only proves work when resultStatus === "ok". This status
     // is stripped from AgentTurn.messages, so it must be computed here where

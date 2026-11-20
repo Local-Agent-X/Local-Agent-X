@@ -246,6 +246,7 @@ export {
 
 export {
   runAgentViaCanonical,
+  agentRunShortfall,
   type CanonicalAgentOptions,
 } from "./agent-runner.js";
 

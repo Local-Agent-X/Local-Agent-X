@@ -12,7 +12,7 @@
  * never imports the canonical loop directly.
  */
 import { type AgentOptions } from "../../providers/types.js";
-import { runAgentViaCanonical } from "../../canonical-loop/index.js";
+import { agentRunShortfall, runAgentViaCanonical } from "../../canonical-loop/index.js";
 import { extractAgentOutput } from "../../server-utils.js";
 import { SecurityLayer } from "../../security/index.js";
 import { loadFileAccessModeAtLeast } from "../../security/layer/index.js";
@@ -85,6 +85,8 @@ export function registerSelfEditSurgeonForServer(deps: SelfEditSurgeonRunnerDeps
         // Op.taskProvenance).
         harnessAuthoredTask: true,
       });
+      const shortfall = agentRunShortfall(result);
+      if (shortfall) throw new Error(`the surgeon did not finish: ${shortfall}`);
       return extractAgentOutput(result.messages);
     });
     logger.info("[self-edit] generic surgeon runner registered");

@@ -54,7 +54,10 @@ const mocks = vi.hoisted(() => ({
   surgeon: undefined as SurgeonRunner | undefined,
 }));
 
-vi.mock("../../canonical-loop/index.js", () => ({ runAgentViaCanonical: mocks.runAgent }));
+vi.mock("../../canonical-loop/index.js", async (importOriginal) => ({
+  agentRunShortfall: (await importOriginal<typeof import("../../canonical-loop/index.js")>()).agentRunShortfall,
+  runAgentViaCanonical: mocks.runAgent,
+}));
 vi.mock("../../security/index.js", () => ({
   SecurityLayer: class { addAllowedPath(): void {} removeAllowedPath(): void {} },
 }));

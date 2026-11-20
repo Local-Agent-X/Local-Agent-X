@@ -188,7 +188,13 @@ export const CREDENTIAL_PATTERNS: readonly CredentialPattern[] = [
   // marker as its value, which was then withheld and registered, and every
   // later command printing that marker was refused (TB2 qemu-alpine-ssh,
   // 2026-10-27).
-  { type: "generic", name: "Key-Value Secret", regex: new RegExp(`(?:${CREDENTIAL_KEY_NAMES})[ \\t]*[:=][ \\t]*["']?(?=(?:[*•]*[^\\s"',*•]){8})([^\\s"',]{12,})`, "gi") },
+  // A value that opens with a template interpolation (`${…}`), a call
+  // (`String(key)`, `encodeURIComponent(saved.token)`) or a property read of
+  // letters-only names (`pairing.token`) is code computing the value, never
+  // the value: these refused the write of a TV remote's pairing modules, three
+  // times (2026-11-20). A token has digits or a long random run, so a
+  // dotted key (`pk.eyJ1…`) is still a value.
+  { type: "generic", name: "Key-Value Secret", regex: new RegExp(`(?:${CREDENTIAL_KEY_NAMES})[ \\t]*[:=][ \\t]*["']?(?!\\$\\{)(?![A-Za-z_$][\\w$.]*\\()(?![A-Za-z_$]{1,30}(?:\\.[A-Za-z_$]{1,30})+(?:[\\s,;)}\\]"']|$))(?=(?:[*•]*[^\\s"',*•]){8})([^\\s"',]{12,})`, "gi") },
   { type: "generic", name: "Base64 Secret Assignment", regex: /(?:private[_-]?key|client[_-]?secret|signing[_-]?key)[ \t]*[:=][ \t]*["']?([A-Za-z0-9+/=]{40,})/gi },
 ];
 

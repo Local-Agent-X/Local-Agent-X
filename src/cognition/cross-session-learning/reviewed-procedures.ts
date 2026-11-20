@@ -10,7 +10,7 @@ import {
   type ReviewedProposalOutcome,
   type SessionData,
 } from "./types.js";
-import { transitionCandidate } from "./suggestions.js";
+import { transitionCandidate } from "./candidate-revision.js";
 import { reviewedProcedureConfidence } from "../../protocols/learned-refinement.js";
 
 export interface ReviewedProposalInput {

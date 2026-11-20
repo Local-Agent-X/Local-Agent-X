@@ -14,11 +14,15 @@ import {
   activateLearnedProtocol,
   archiveLearnedProtocol,
   createLearnedProtocolDraft,
+  LearnedDraftRefusedError,
   loadLearnedProtocol,
   restoreLearnedProtocol,
   rollbackLearnedProtocol,
 } from "./learned-lifecycle.js";
 
+/** These cases exercise storage, not admission: a protocol that was already
+ *  the user's is the admission with nothing to judge. */
+const CATALOG = { kind: "user-catalog" } as const;
 const ORIGINAL_CONFIG = getRuntimeConfig();
 const ORIGINAL_DATA_DIR = process.env.LAX_DATA_DIR;
 let workspace = "";
@@ -52,7 +56,7 @@ const [mode, data, gate] = process.argv.slice(2);
 while (gate && !existsSync(gate)) await new Promise((done) => setTimeout(done, 5));
 const input = JSON.parse(data);
 if (mode === "draft") {
-  const result = createLearnedProtocolDraft(input);
+  const result = createLearnedProtocolDraft({ ...input, admission: { kind: "user-catalog" } });
   process.stdout.write(result.version.id);
   process.exit(0);
 }
@@ -128,7 +132,7 @@ describe("learned protocol lifecycle", () => {
     expect(loadImportedProtocols().find((protocol) => protocol.name === "precedence-check")?.body)
       .toContain("Workspace instruction");
 
-    const managed = createLearnedProtocolDraft({
+    const managed = createLearnedProtocolDraft({ admission: CATALOG,
       slug: "precedence-check",
       skillMd: skill("precedence-check", "Managed instruction"),
     });
@@ -144,7 +148,7 @@ describe("learned protocol lifecycle", () => {
   });
 
   it("keeps drafts undiscoverable and materializes only the activated version", () => {
-    const draft = createLearnedProtocolDraft({ slug: "quiet-draft", skillMd: skill("quiet-draft", "First instruction") });
+    const draft = createLearnedProtocolDraft({ admission: CATALOG, slug: "quiet-draft", skillMd: skill("quiet-draft", "First instruction") });
     expect(loadImportedProtocols().map((protocol) => protocol.name)).not.toContain("quiet-draft");
 
     activateLearnedProtocol({
@@ -158,7 +162,7 @@ describe("learned protocol lifecycle", () => {
   });
 
   it("archives and restores the same verified active version", () => {
-    const draft = createLearnedProtocolDraft({ slug: "restorable", skillMd: skill("restorable", "Keep this exact body") });
+    const draft = createLearnedProtocolDraft({ admission: CATALOG, slug: "restorable", skillMd: skill("restorable", "Keep this exact body") });
     activateLearnedProtocol({ slug: "restorable", versionId: draft.version.id, expectedActiveVersionId: null });
 
     archiveLearnedProtocol({ slug: "restorable", expectedActiveVersionId: draft.version.id });
@@ -171,9 +175,9 @@ describe("learned protocol lifecycle", () => {
   it("rolls back to the exact immutable prior version", () => {
     const firstBody = skill("versioned", "Original behavior");
     const secondBody = skill("versioned", "Replacement behavior");
-    const first = createLearnedProtocolDraft({ slug: "versioned", skillMd: firstBody });
+    const first = createLearnedProtocolDraft({ admission: CATALOG, slug: "versioned", skillMd: firstBody });
     activateLearnedProtocol({ slug: "versioned", versionId: first.version.id, expectedActiveVersionId: null });
-    const second = createLearnedProtocolDraft({ slug: "versioned", skillMd: secondBody });
+    const second = createLearnedProtocolDraft({ admission: CATALOG, slug: "versioned", skillMd: secondBody });
     activateLearnedProtocol({ slug: "versioned", versionId: second.version.id, expectedActiveVersionId: first.version.id });
 
     rollbackLearnedProtocol({ slug: "versioned", versionId: first.version.id, expectedActiveVersionId: second.version.id });
@@ -183,7 +187,7 @@ describe("learned protocol lifecycle", () => {
   });
 
   it("fails closed when immutable version content no longer matches its hash", () => {
-    const draft = createLearnedProtocolDraft({ slug: "tamper-check", skillMd: skill("tamper-check", "Trusted") });
+    const draft = createLearnedProtocolDraft({ admission: CATALOG, slug: "tamper-check", skillMd: skill("tamper-check", "Trusted") });
     const versionPath = join(learnedProtocolsDir(), "tamper-check", "versions", draft.version.id, "SKILL.md");
     writeFileSync(versionPath, skill("tamper-check", "Tampered"));
 
@@ -196,20 +200,20 @@ describe("learned protocol lifecycle", () => {
   });
 
   it("rejects traversal, symbolic links, and unmanaged directory collisions", () => {
-    expect(() => createLearnedProtocolDraft({ slug: "../escape", skillMd: skill("escape", "No") })).toThrow(/Invalid/);
+    expect(() => createLearnedProtocolDraft({ admission: CATALOG, slug: "../escape", skillMd: skill("escape", "No") })).toThrow(/Invalid/);
 
     mkdirSync(learnedProtocolsDir(), { recursive: true });
     mkdirSync(join(learnedProtocolsDir(), "occupied"));
-    expect(() => createLearnedProtocolDraft({ slug: "occupied", skillMd: skill("occupied", "No") })).toThrow(/collision/);
+    expect(() => createLearnedProtocolDraft({ admission: CATALOG, slug: "occupied", skillMd: skill("occupied", "No") })).toThrow(/collision/);
 
     const outside = join(getRuntimeConfig().workspace, "outside");
     mkdirSync(outside);
     symlinkSync(outside, join(learnedProtocolsDir(), "linked"), process.platform === "win32" ? "junction" : "dir");
-    expect(() => createLearnedProtocolDraft({ slug: "linked", skillMd: skill("linked", "No") })).toThrow(/symbolic link/);
+    expect(() => createLearnedProtocolDraft({ admission: CATALOG, slug: "linked", skillMd: skill("linked", "No") })).toThrow(/symbolic link/);
   });
 
   it("persists lifecycle state across fresh disk reads and rejects stale mutations", () => {
-    const draft = createLearnedProtocolDraft({
+    const draft = createLearnedProtocolDraft({ admission: CATALOG,
       slug: "durable",
       skillMd: skill("durable", "Persist me"),
       metadata: { evidenceId: "evidence-1" },
@@ -223,7 +227,7 @@ describe("learned protocol lifecycle", () => {
   });
 
   it("migrates old records in memory and persists bounded activation reasons without changing versions", () => {
-    const draft = createLearnedProtocolDraft({ slug: "history", skillMd: skill("history", "Immutable body"), metadata: { proof: "fixed" } });
+    const draft = createLearnedProtocolDraft({ admission: CATALOG, slug: "history", skillMd: skill("history", "Immutable body"), metadata: { proof: "fixed" } });
     const versionDir = join(learnedProtocolsDir(), "history", "versions", draft.version.id);
     const bodyBefore = readFileSync(join(versionDir, "SKILL.md"), "utf8");
     const metaBefore = readFileSync(join(versionDir, "meta.json"), "utf8");
@@ -248,7 +252,7 @@ describe("learned protocol lifecycle", () => {
   });
 
   it("fails closed on activation history with broken version linkage or ordering", () => {
-    const draft = createLearnedProtocolDraft({ slug: "history-integrity", skillMd: skill("history-integrity", "Trusted") });
+    const draft = createLearnedProtocolDraft({ admission: CATALOG, slug: "history-integrity", skillMd: skill("history-integrity", "Trusted") });
     activateLearnedProtocol({
       slug: "history-integrity", versionId: draft.version.id, expectedActiveVersionId: null,
       timestamp: 200,
@@ -297,8 +301,8 @@ describe("learned protocol lifecycle", () => {
   }, 20_000);
 
   it("allows one same-expected activation winner without corrupting history", async () => {
-    const first = createLearnedProtocolDraft({ slug: "activation-race", skillMd: skill("activation-race", "First") });
-    const second = createLearnedProtocolDraft({ slug: "activation-race", skillMd: skill("activation-race", "Second") });
+    const first = createLearnedProtocolDraft({ admission: CATALOG, slug: "activation-race", skillMd: skill("activation-race", "First") });
+    const second = createLearnedProtocolDraft({ admission: CATALOG, slug: "activation-race", skillMd: skill("activation-race", "Second") });
     const worker = writeLifecycleWorker(workspace);
     const gate = join(getRuntimeConfig().workspace, "activation-start");
     const runs = [first.version.id, second.version.id].map((versionId) =>
@@ -327,7 +331,7 @@ describe("learned protocol lifecycle", () => {
     expect(crashed).toEqual({ code: 23, stdout: "locked", stderr: "" });
 
     const started = Date.now();
-    createLearnedProtocolDraft({ slug: "after-crash", skillMd: skill("after-crash", "Recovered") });
+    createLearnedProtocolDraft({ admission: CATALOG, slug: "after-crash", skillMd: skill("after-crash", "Recovered") });
     expect(Date.now() - started).toBeLessThan(3_000);
     expect(loadLearnedProtocol("after-crash").versions).toHaveLength(1);
   }, 10_000);
@@ -338,7 +342,7 @@ describe("learned protocol lifecycle", () => {
     const blocker = new Database(lockPath);
     blocker.exec("BEGIN IMMEDIATE");
     try {
-      expect(() => createLearnedProtocolDraft({
+      expect(() => createLearnedProtocolDraft({ admission: CATALOG,
         slug: "blocked-draft", skillMd: skill("blocked-draft", "Must not be written"),
       })).toThrow();
     } finally {
@@ -347,4 +351,46 @@ describe("learned protocol lifecycle", () => {
     }
     expect(existsSync(join(learnedProtocolsDir(), "blocked-draft"))).toBe(false);
   }, 10_000);
+});
+
+describe("admission at the one draft write path", () => {
+  const PITFALL = "the project-level page only lists domains; adding happens at team level";
+  const reviewed = (detail: string, newName?: string) => ({
+    kind: "reviewed" as const,
+    learned: { kind: "pitfall" as const, detail },
+    toolSequence: ["browser", "read"],
+    newName,
+    projectNames: ["thriveventory"],
+  });
+
+  it("writes nothing for a draft with no admission, whoever calls it", () => {
+    const write = createLearnedProtocolDraft as (input: unknown) => unknown;
+    expect(() => write({ slug: "mined-sequence", skillMd: skill("mined-sequence", "memory_search then remember") }))
+      .toThrow(LearnedDraftRefusedError);
+    expect(existsSync(join(learnedProtocolsDir(), "mined-sequence"))).toBe(false);
+  });
+
+  it("writes nothing for a reviewed draft whose SKILL.md does not carry what it claims to have learned", () => {
+    expect(() => createLearnedProtocolDraft({
+      admission: reviewed(PITFALL), slug: "claims-more", skillMd: skill("claims-more", "Add the domain."),
+    })).toThrow(/appear verbatim/);
+    expect(existsSync(join(learnedProtocolsDir(), "claims-more"))).toBe(false);
+  });
+
+  it("writes nothing for a new reviewed name that carries a workspace project", () => {
+    expect(() => createLearnedProtocolDraft({
+      admission: reviewed(PITFALL, "thriveventory_domain_link"),
+      slug: "project-named", skillMd: skill("project-named", `Pitfall: ${PITFALL}.`),
+    })).toThrow(/workspace project/);
+    expect(existsSync(join(learnedProtocolsDir(), "project-named"))).toBe(false);
+  });
+
+  it("drafts a reviewed procedure that carries its learned detail", () => {
+    const draft = createLearnedProtocolDraft({
+      admission: reviewed(PITFALL, "vercel_custom_domain_link"),
+      slug: "carries-detail", skillMd: skill("carries-detail", `Pitfall: ${PITFALL}.`),
+    });
+    expect(draft.record.state).toBe("draft");
+    expect(loadLearnedProtocol("carries-detail").versions).toHaveLength(1);
+  });
 });

@@ -73,7 +73,6 @@ describe("reviewed procedures in the learned lifecycle", () => {
       expect(candidate).toMatchObject({ evidenceClass: "reviewed-procedure", authority: "skill-review", state: "candidate" });
       expect(sys.types.hasCandidateEvidenceIdentity(candidate)).toBe(true);
       expect(sys.types.isReviewedProcedureCandidate(candidate)).toBe(true);
-      expect(sys.types.sanitizeLearnedCandidate(candidate)).toEqual(candidate);
       expect(candidate.evidence.proposals).toEqual([expect.objectContaining({ sessionId: "session-a", outcome: "verified" })]);
     });
 
@@ -142,18 +141,26 @@ describe("reviewed procedures in the learned lifecycle", () => {
       expect(pitfall).toMatchObject({ ok: true, created: false, drafted: true });
     });
 
-    it("refuses to refine an observed tool-sequence workflow through its slug", async () => {
+    it("refuses to refine a legacy observed tool-sequence workflow through its slug", async () => {
       const sys = await system();
-      for (let index = 0; index < 3; index++) {
-        sys.learner.recordOutcome({
-          opId: `op-${index}`, sessionId: `s-${index}`, outcome: "clean", category: "coding",
-          tools: ["read_file", "write_file"], timestamp: Date.now() + index,
-        });
-      }
-      sys.service.reconcile("assisted");
-      const observed = sys.learner.getCandidates().find((c) => c.evidenceClass === "workflow-tactic");
-      expect(observed).toBeDefined();
-      expect(propose(sys, "session-a", { name: observed!.id })).toMatchObject({ ok: false });
+      const now = Date.now();
+      const examples = ["read_file -> write_file"];
+      const description = `Workflow "coding:${examples[0]}" completed cleanly 3/3 times`;
+      const id = sys.types.deriveCandidateId("workflow", description, examples);
+      const legacy = {
+        ...sys.types.WORKFLOW_TACTIC_IDENTITY, id, state: "candidate", confidence: 0.8,
+        suggestion: { type: "mission", name: "coding workflow", description: "This sequence repeats often", config: { sequence: examples, patternType: "workflow", occurrences: 3 } },
+        evidence: {
+          ...sys.types.TERMINAL_TELEMETRY_IDENTITY, patternType: "workflow", description, occurrences: 3, lastSeen: now, examples,
+          outcomeStats: { clean: 3, partial: 0, aborted: 0, successRate: 1, weightedSuccessRate: 1, distinctSessions: 3 },
+        },
+        createdAt: now, updatedAt: now, transitions: [],
+      };
+      expect(sys.types.hasCandidateEvidenceIdentity(legacy)).toBe(true);
+      (await import("./persistence.js")).mutateData((data) => { data.candidates.push(legacy as never); });
+      sys.learner.refresh();
+      expect(sys.learner.getCandidates().map((c) => c.id)).toContain(id);
+      expect(propose(sys, "session-a", { name: id })).toMatchObject({ ok: false });
     });
 
     it("re-delivers a pending notice to the sessions that proposed it, and to no other", async () => {
@@ -231,13 +238,13 @@ describe("reviewed procedures in the learned lifecycle", () => {
     });
   });
 
-  describe("promotion: the user's OK, or independent evidence — never autonomous mode", () => {
-    it("autonomous mode does not activate a reviewed draft", async () => {
+  describe("promotion: the user's OK, or independent evidence", () => {
+    it("repeated reconciliation does not activate a one-session reviewed draft", async () => {
       const sys = await system();
       const result = propose(sys, "session-a");
       if (!result.ok) throw new Error(result.message);
-      sys.service.reconcile("autonomous");
-      sys.service.reconcile("autonomous");
+      sys.service.reconcile();
+      sys.service.reconcile();
       expect(sys.service.detail(result.candidateId)).toMatchObject({ state: "candidate", activeVersionId: null, source: "reviewed" });
       expect(servedNames(sys)).not.toContain(result.candidateId);
     });
@@ -248,11 +255,11 @@ describe("reviewed procedures in the learned lifecycle", () => {
       if (!first.ok) throw new Error(first.message);
       propose(sys, "session-a");
       propose(sys, "session-b");
-      sys.service.reconcile("assisted");
+      sys.service.reconcile();
       expect(sys.service.detail(first.candidateId)?.state).toBe("candidate");
 
       propose(sys, "session-c");
-      const { signals } = sys.service.reconcile("assisted");
+      const { signals } = sys.service.reconcile();
       expect(sys.service.detail(first.candidateId)).toMatchObject({ state: "active" });
       expect(signals).toEqual([expect.objectContaining({ category: "learning-activity" })]);
       expect(servedNames(sys)).toContain(first.candidateId);
@@ -265,11 +272,11 @@ describe("reviewed procedures in the learned lifecycle", () => {
       propose(sys, "session-b");
       propose(sys, "session-b", { outcome: "corrected" });
       propose(sys, "session-c");
-      sys.service.reconcile("assisted");
+      sys.service.reconcile();
       expect(sys.service.detail(first.candidateId)?.state).toBe("candidate");
 
       propose(sys, "session-d");
-      sys.service.reconcile("assisted");
+      sys.service.reconcile();
       expect(sys.service.detail(first.candidateId)?.state).toBe("active");
     });
 
@@ -344,7 +351,7 @@ describe("reviewed procedures in the learned lifecycle", () => {
       const discarded = await post(result.candidateId, { action: "reject" });
       expect(discarded.status).toBe(200);
       expect(discarded.body.item).toMatchObject({ state: "rejected", activeVersionId: null });
-      sys.service.reconcile("autonomous");
+      sys.service.reconcile();
       expect(servedNames(sys)).not.toContain(result.candidateId);
     });
   });

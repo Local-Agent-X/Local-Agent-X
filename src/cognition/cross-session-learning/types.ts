@@ -127,13 +127,6 @@ export interface LearnedCandidate extends PersistedLearnedEvidenceIdentity {
   transitions: CandidateTransition[];
 }
 
-export interface SessionInsight {
-  type: string;
-  description: string;
-  data: unknown;
-  period: "daily" | "weekly" | "monthly";
-}
-
 // Type alias (not interface) so it satisfies json-store's Record constraint.
 export type SessionData = { actions: ActionEntry[]; candidates: LearnedCandidate[]; lastPrune: number; };
 
@@ -166,21 +159,6 @@ function evidenceShape(value: unknown): boolean {
     && stringArray(ownDataValue(value, "examples"), 100)
     && (stats === MISSING_PROPERTY || (stats !== INVALID_PROPERTY && stats !== undefined
       && pattern === "workflow" && statsShape(stats, occurrences)));
-}
-
-function patternShape(value: unknown): boolean {
-  const allowed = new Set(["evidenceClass", "authority", "sourceEvidence", "type", "description", "occurrences", "lastSeen", "examples", "suggestedAction", "automationEligible", "outcomeStats"]);
-  if (!plainRecord(value) || !exactKeys(value, allowed, ["sourceEvidence", "type", "description", "occurrences", "lastSeen", "examples"])) return false;
-  const type = ownDataValue(value, "type"), occurrences = ownDataValue(value, "occurrences"), lastSeen = ownDataValue(value, "lastSeen");
-  const stats = ownDataValue(value, "outcomeStats");
-  return typeof type === "string" && PATTERNS.has(type as DetectedPattern["type"])
-    && typeof ownDataValue(value, "description") === "string"
-    && typeof occurrences === "number" && Number.isInteger(occurrences) && occurrences >= 1
-    && typeof lastSeen === "number" && Number.isFinite(lastSeen) && stringArray(ownDataValue(value, "examples"), 100)
-    && optional(value, "suggestedAction", (entry) => typeof entry === "string")
-    && optional(value, "automationEligible", (entry) => typeof entry === "boolean")
-    && (stats === MISSING_PROPERTY || (stats !== INVALID_PROPERTY && stats !== undefined
-      && type === "workflow" && statsShape(stats, occurrences)));
 }
 
 function transitionShape(value: unknown): boolean {
@@ -293,34 +271,11 @@ function actionShape(value: unknown, terminal: boolean): value is ActionEntry {
     && stringArray(ownDataValue(value, "tools"), 1000) && optional(value, "model", (entry) => typeof entry === "string");
 }
 
-export function isExactTerminalTelemetryAction(value: unknown): value is ActionEntry & { opId: string; outcome: NonNullable<ActionEntry["outcome"]>; category: NonNullable<ActionEntry["category"]>; tools: string[] } {
-  return hasEvidenceIdentity(value, TERMINAL_TELEMETRY_IDENTITY) && actionShape(value, true);
-}
-
-export function isExactWorkflowTacticAction(value: unknown): value is ActionEntry {
-  return hasEvidenceIdentity(value, WORKFLOW_TACTIC_IDENTITY) && actionShape(value, false);
-}
-
-export function hasPatternEvidenceIdentity(value: unknown): value is DetectedPattern {
-  if (!hasEvidenceIdentity(value, WORKFLOW_TACTIC_IDENTITY) || !patternShape(value)) return false;
-  const source = ownDataValue(value, "sourceEvidence"), stats = ownDataValue(value, "outcomeStats");
-  const expected = stats === MISSING_PROPERTY ? WORKFLOW_TACTIC_IDENTITY : TERMINAL_TELEMETRY_IDENTITY;
-  return !!source && typeof source === "object" && !isProxy(source)
-    && Object.getPrototypeOf(source) === Object.prototype
-    && exactKeys(source, new Set(["evidenceClass", "authority"]), ["evidenceClass", "authority"])
-    && hasEvidenceIdentity(source, expected);
-}
-
 export function hasCandidateEvidenceIdentity(value: unknown): value is LearnedCandidate {
   if (hasEvidenceIdentity(value, REVIEWED_PROCEDURE_IDENTITY)) return isReviewedProcedureCandidate(value);
   if (!hasEvidenceIdentity(value, WORKFLOW_TACTIC_IDENTITY) || !candidateShape(value)) return false;
   const evidence = ownDataValue(value, "evidence"), stats = ownDataValue(evidence, "outcomeStats");
   return hasEvidenceIdentity(evidence, stats === MISSING_PROPERTY ? WORKFLOW_TACTIC_IDENTITY : TERMINAL_TELEMETRY_IDENTITY);
-}
-
-export function sanitizeLearnedCandidate(value: unknown): LearnedCandidate | null {
-  if (!hasCandidateEvidenceIdentity(value)) return null;
-  try { return structuredClone(value); } catch { return null; }
 }
 
 function identityless(value: unknown): value is Record<string, unknown> {
@@ -362,9 +317,6 @@ export function normalizeLegacyEvidenceIdentities(data: SessionData): boolean {
 
 export const LAX_DIR = getLaxDir();
 export const DATA_FILE = join(LAX_DIR, "cross-session-data.json");
-export const MAX_ACTIONS = 5000, DEFAULT_MIN_OCCURRENCES = 3;
+export const MAX_ACTIONS = 5000;
 export const PRUNE_AGE_DAYS = 30, REJECTION_COOLDOWN_DAYS = 30;
-export const CANDIDATE_SURFACE_COOLDOWN_DAYS = 7;
 export const MS_PER_DAY = 86400000;
-
-export const STOP_WORDS = new Set(["the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had", "do", "does", "did", "will", "would", "could", "should", "may", "might", "shall", "can", "to", "of", "in", "for", "on", "with", "at", "by", "from", "as", "into", "about", "that", "this", "it", "its", "and", "or", "but", "not", "if", "then", "so", "what", "how", "when", "where", "who", "which", "there", "here", "i", "me", "my", "you", "your", "we", "our", "they", "them", "their"]);

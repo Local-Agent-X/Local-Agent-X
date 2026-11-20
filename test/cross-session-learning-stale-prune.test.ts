@@ -26,14 +26,18 @@ import {
 // Regression for AM-3: recordAction lost its last caller in May, freezing the
 // cross-session data file, yet signalsFor kept mining it every 5th message and
 // injecting "Workflow 'tool -> tool' repeated ~4900 times" — a tokenized
-// logging artifact — as live user behavior. Two root causes, both fixed:
-//   1. autoPrune's keep-rule ("any type with >=3 entries survives forever")
-//      could never shrink homogeneous data. Now stale entries of a recurring
-//      type are capped at MAX_STALE_PER_TYPE (most recent first).
-//   2. signalsFor had no recency gate. Now a pattern whose lastSeen is older
-//      than the prune window is never emitted as a signal.
+// logging artifact — as live user behavior. autoPrune's keep-rule ("any type
+// with >=3 entries survives forever") could never shrink homogeneous data; now
+// stale entries of a recurring type are capped at MAX_STALE_PER_TYPE (most
+// recent first). The miner and signalsFor are retired, so the prune is what
+// keeps legacy files from growing without bound.
+//
+// The rest of the file pins the store itself: legacy identity normalization,
+// and that mutations from separate processes serialize through the store's
+// mutex without lost updates or stale resurrection.
 
 const NOW = Date.now();
+const PROCEDURE = "vendor_portal_release";
 const STALE_TS = NOW - (PRUNE_AGE_DAYS + 5) * MS_PER_DAY;
 const FRESH_TS = NOW - 1 * MS_PER_DAY;
 
@@ -67,26 +71,23 @@ function writeLearningWorker(dir: string): string {
 import { existsSync, writeFileSync } from "node:fs";
 import { CrossSessionLearner } from ${JSON.stringify(learnerUrl)};
 const [mode, id, gate, requestedAt, delay, ready] = process.argv.slice(2);
+const propose = (learner, sessionId, timestamp) => learner.recordReviewedProposal({
+  name: ${JSON.stringify(PROCEDURE)}, description: "Release files through the vendor portal",
+  sessionId, outcome: "verified", timestamp,
+});
 if (mode === "state" || mode === "revive") {
   const learner = CrossSessionLearner.getInstance();
   const candidate = learner.getCandidates()[0];
-  const pattern = mode === "revive" ? learner.detectPatterns(3)[0] : undefined;
   writeFileSync(ready, "ready", "utf8");
   while (!existsSync(gate)) await new Promise((done) => setTimeout(done, 5));
   await new Promise((done) => setTimeout(done, Number(delay)));
   if (mode === "state") learner.setCandidateState(candidate.id, id, "concurrent", Number(requestedAt));
-  else learner.captureCandidate(pattern, Number(requestedAt));
+  else process.stdout.write(propose(learner, "stale-session", Number(requestedAt)).ok ? "revived" : "refused");
   process.exit(0);
 }
 while (gate && !existsSync(gate)) await new Promise((done) => setTimeout(done, 5));
 const learner = CrossSessionLearner.getInstance();
-if (mode === "record") {
-  learner.recordAction("session-" + id, { type: "task", details: "action-" + id, timestamp: Number(id) + 1 });
-  learner.recordOutcome({ opId: "unique-" + id, sessionId: "session-" + id, outcome: "clean", category: "coding", tools: ["read", "edit"], timestamp: Number(id) + 10 });
-  learner.recordOutcome({ opId: "shared", sessionId: "shared-session", outcome: "clean", category: "coding", tools: ["read"], timestamp: Number(id) + 20 });
-} else if (mode === "surface") {
-  process.stdout.write(learner.nextLearningOpportunity(Date.now()) ? "surfaced" : "quiet");
-}
+if (mode === "propose") propose(learner, "session-" + id, Number(id) + 1);
 process.exit(0);
 `, "utf8");
   return worker;
@@ -179,7 +180,7 @@ describe("autoPrune — bounded keep for stale recurring types", () => {
   });
 });
 
-describe("signalsFor — stale patterns are never injected as signals", () => {
+describe("cross-session learning store", () => {
   const ORIGINAL_LAX_DATA_DIR = process.env.LAX_DATA_DIR;
   let tmpDir: string;
 
@@ -206,47 +207,6 @@ describe("signalsFor — stale patterns are never injected as signals", () => {
       "utf-8"
     );
   }
-
-  it("returns no signal when every pattern comes from stale legacy data", async () => {
-    // lastPrune = now so the constructor's autoPrune is a no-op, isolating
-    // the recency gate: the raw stale data is exactly what signalsFor sees.
-    const stale = Array.from({ length: 20 }, (_, i) =>
-      action("tool", STALE_TS + i, i)
-    );
-    writeDataFile(stale, NOW);
-
-    const { CrossSessionLearner } = await import(
-      "../src/cognition/cross-session-learning/learner.js"
-    );
-    const learner = CrossSessionLearner.getInstance();
-
-    // The workflow pattern IS detectable — it just must not become a signal.
-    expect(learner.detectPatterns(3).length).toBeGreaterThan(0);
-    expect(learner.signalsFor()).toEqual([]);
-  });
-
-  it("still emits a signal for a genuinely recent recurring pattern", async () => {
-    const fresh: ActionEntry[] = Array.from({ length: 3 }, (_, i) => ({
-      ...TERMINAL_TELEMETRY_IDENTITY,
-      opId: `fresh-${i}`,
-      sessionId: `session-${i}`,
-      type: "op_outcome",
-      details: "coding:read -> edit",
-      timestamp: FRESH_TS + i,
-      outcome: "clean",
-      category: "coding",
-      tools: ["read", "edit"],
-    }));
-    writeDataFile(fresh, NOW);
-
-    const { CrossSessionLearner } = await import(
-      "../src/cognition/cross-session-learning/learner.js"
-    );
-    const signals = CrossSessionLearner.getInstance().signalsFor();
-
-    expect(signals.length).toBe(1);
-    expect(signals[0].signal).toContain("ready for review");
-  });
 
   it("persists only structural outcome evidence", async () => {
     const { CrossSessionLearner } = await import(
@@ -533,34 +493,37 @@ describe("signalsFor — stale patterns are never injected as signals", () => {
     expect(normalizeLegacyEvidenceIdentities(data)).toBe(false);
   });
 
-  it("stamps new workflow actions with exact learning authority", async () => {
-    const { CrossSessionLearner } = await import(
+  async function learnerWithProcedure(timestamp = NOW) {
+    const { CrossSessionLearner, LearningPersistenceUnavailableError } = await import(
       "../src/cognition/cross-session-learning/learner.js"
     );
-    CrossSessionLearner.getInstance().recordAction("session", {
-      type: "task",
-      details: "read then edit",
-      timestamp: 99,
+    const learner = CrossSessionLearner.getInstance();
+    const propose = (name: string, sessionId: string, at: number) => learner.recordReviewedProposal({
+      name, description: "Release files through the vendor portal", sessionId, outcome: "verified", timestamp: at,
     });
-    const persisted = JSON.parse(
-      readFileSync(join(tmpDir, "cross-session-data.json"), "utf-8"),
-    ) as SessionData;
-    expect(persisted.actions[0]).toMatchObject(WORKFLOW_TACTIC_IDENTITY);
-  });
+    const seeded = propose(PROCEDURE, "seed-session", timestamp);
+    if (!seeded.ok) throw new Error(seeded.reason);
+    return { learner, candidate: seeded.candidate, propose, LearningPersistenceUnavailableError };
+  }
 
-  it("serializes real-process actions and outcomes without lost updates", async () => {
+  function persistedData(): SessionData {
+    return JSON.parse(readFileSync(join(tmpDir, "cross-session-data.json"), "utf8")) as SessionData;
+  }
+
+  it("serializes real-process proposals without lost updates", async () => {
     const worker = writeLearningWorker(tmpDir);
     const gate = join(tmpDir, "start");
     const runs = Array.from({ length: 4 }, (_, index) =>
-      runWorker(worker, ["record", String(index), gate], tmpDir));
+      runWorker(worker, ["propose", String(index), gate], tmpDir));
     writeFileSync(gate, "go", "utf8");
     const results = await Promise.all(runs);
 
     expect(results).toEqual(results.map(() => ({ code: 0, stdout: "", stderr: "" })));
-    const persisted = JSON.parse(readFileSync(join(tmpDir, "cross-session-data.json"), "utf8")) as SessionData;
-    expect(persisted.actions.filter((entry) => entry.evidenceClass === "workflow-tactic")).toHaveLength(4);
-    expect(persisted.actions.filter((entry) => entry.opId?.startsWith("unique-"))).toHaveLength(4);
-    expect(persisted.actions.filter((entry) => entry.opId === "shared")).toHaveLength(1);
+    const persisted = persistedData();
+    expect(persisted.candidates).toHaveLength(1);
+    expect(persisted.candidates[0].evidence.proposals?.map((entry) => entry.sessionId).sort())
+      .toEqual(["session-0", "session-1", "session-2", "session-3"]);
+    expect(persisted.candidates[0].evidence.occurrences).toBe(4);
   }, 20_000);
 
   it("releases a crashed process mutex without stale-lock recovery", async () => {
@@ -579,29 +542,14 @@ setTimeout(() => process.exit(23), 100);
 
     const worker = writeLearningWorker(tmpDir);
     const started = Date.now();
-    const recovered = await runWorker(worker, ["record", "9", ""], tmpDir);
+    const recovered = await runWorker(worker, ["propose", "9", ""], tmpDir);
     expect(recovered).toEqual({ code: 0, stdout: "", stderr: "" });
     expect(Date.now() - started).toBeLessThan(3_000);
-    const persisted = JSON.parse(readFileSync(join(tmpDir, "cross-session-data.json"), "utf8")) as SessionData;
-    expect(persisted.actions.some((entry) => entry.opId === "unique-9")).toBe(true);
+    expect(persistedData().candidates[0].evidence.proposals?.some((entry) => entry.sessionId === "session-9")).toBe(true);
   }, 10_000);
 
   it("preserves concurrent candidate transitions without stale resurrection", async () => {
-    const { CrossSessionLearner } = await import(
-      "../src/cognition/cross-session-learning/learner.js"
-    );
-    const learner = CrossSessionLearner.getInstance();
-    for (let index = 0; index < 3; index++) {
-      learner.recordOutcome({
-        opId: `seed-${index}`,
-        sessionId: `seed-session-${index}`,
-        outcome: "clean",
-        category: "coding",
-        tools: ["read", "edit"],
-        timestamp: NOW + index,
-      });
-    }
-    expect(learner.nextLearningOpportunity(NOW + 10)).not.toBeNull();
+    const { learner } = await learnerWithProcedure(NOW);
 
     const worker = writeLearningWorker(tmpDir);
     const rounds = [
@@ -621,8 +569,7 @@ setTimeout(() => process.exit(23), 100);
       const results = await Promise.all(runs);
       expect(results.filter((result) => result.code === 0).length).toBeGreaterThanOrEqual(1);
 
-      const persisted = JSON.parse(readFileSync(join(tmpDir, "cross-session-data.json"), "utf8")) as SessionData;
-      const candidate = persisted.candidates[0];
+      const candidate = persistedData().candidates[0];
       expect(candidate.state).toBe("archived");
       expect(candidate.transitions.at(-1)?.to).toBe("archived");
       expect(candidate.transitions[0]?.from).toBe("candidate");
@@ -637,22 +584,7 @@ setTimeout(() => process.exit(23), 100);
   }, 30_000);
 
   it("does not revive an equal-time rejection from a stale process snapshot", async () => {
-    const { CrossSessionLearner } = await import(
-      "../src/cognition/cross-session-learning/learner.js"
-    );
-    const learner = CrossSessionLearner.getInstance();
-    for (let index = 0; index < 3; index++) {
-      learner.recordOutcome({
-        opId: `revive-${index}`,
-        sessionId: `revive-session-${index}`,
-        outcome: "clean",
-        category: "coding",
-        tools: ["read", "edit"],
-        timestamp: NOW + index,
-      });
-    }
-    const opportunity = learner.nextLearningOpportunity(NOW + 10);
-    expect(opportunity).not.toBeNull();
+    const { learner, candidate: seeded } = await learnerWithProcedure(NOW);
 
     const worker = writeLearningWorker(tmpDir);
     const gate = join(tmpDir, "revive-start");
@@ -660,15 +592,15 @@ setTimeout(() => process.exit(23), 100);
     const run = runWorker(worker, ["revive", "", gate, String(NOW + 10), "0", ready], tmpDir);
     await waitForFiles([ready]);
     learner.refresh();
-    learner.setCandidateState(opportunity!.candidate.id, "rejected", "Concurrent rejection", NOW + 10);
+    learner.setCandidateState(seeded.id, "rejected", "Concurrent rejection", NOW + 10);
     writeFileSync(gate, "go", "utf8");
-    expect(await run).toEqual({ code: 0, stdout: "", stderr: "" });
+    expect(await run).toEqual({ code: 0, stdout: "refused", stderr: "" });
 
-    const persisted = JSON.parse(readFileSync(join(tmpDir, "cross-session-data.json"), "utf8")) as SessionData;
-    const candidate = persisted.candidates[0];
+    const candidate = persistedData().candidates[0];
     expect(candidate.state).toBe("rejected");
     expect(candidate.rejectionCooldownUntil).toBeGreaterThan(NOW + 10);
     expect(candidate.transitions.map((entry) => entry.to)).toEqual(["rejected"]);
+    expect(candidate.evidence.proposals?.map((entry) => entry.sessionId)).toEqual(["seed-session"]);
 
     learner.refresh();
     learner.setCandidateState(candidate.id, "candidate", "Prepare explicit stale request", NOW + 20);
@@ -681,43 +613,14 @@ setTimeout(() => process.exit(23), 100);
     writeFileSync(stateGate, "go", "utf8");
     expect((await stateRun).code).not.toBe(0);
 
-    const afterStateRequest = JSON.parse(readFileSync(join(tmpDir, "cross-session-data.json"), "utf8")) as SessionData;
+    const afterStateRequest = persistedData();
     expect(afterStateRequest.candidates[0].state).toBe("rejected");
     expect(afterStateRequest.candidates[0].transitions.map((entry) => entry.to))
       .toEqual(["rejected", "candidate", "rejected"]);
   }, 20_000);
 
-  it("allows only one concurrent process to claim a surfacing cooldown", async () => {
-    const { CrossSessionLearner } = await import(
-      "../src/cognition/cross-session-learning/learner.js"
-    );
-    const learner = CrossSessionLearner.getInstance();
-    for (let index = 0; index < 3; index++) {
-      learner.recordOutcome({
-        opId: `surface-${index}`,
-        sessionId: `surface-session-${index}`,
-        outcome: "clean",
-        category: "coding",
-        tools: ["read", "edit"],
-        timestamp: NOW + index,
-      });
-    }
-
-    const worker = writeLearningWorker(tmpDir);
-    const gate = join(tmpDir, "surface-start");
-    const runs = ["a", "b"].map((id) => runWorker(worker, ["surface", id, gate], tmpDir));
-    writeFileSync(gate, "go", "utf8");
-    const results = await Promise.all(runs);
-    expect(results.map((result) => result.code)).toEqual([0, 0]);
-    expect(results.map((result) => result.stdout).sort()).toEqual(["quiet", "surfaced"]);
-
-    const persisted = JSON.parse(readFileSync(join(tmpDir, "cross-session-data.json"), "utf8")) as SessionData;
-    expect(persisted.candidates).toHaveLength(1);
-    expect(persisted.candidates[0].lastSurfacedOccurrences).toBe(3);
-  }, 20_000);
-
   it("does not execute or publish a mutation when the mutex cannot be acquired", async () => {
-    const { CrossSessionLearner } = await import(
+    const { CrossSessionLearner, LearningPersistenceUnavailableError } = await import(
       "../src/cognition/cross-session-learning/learner.js"
     );
     const learner = CrossSessionLearner.getInstance();
@@ -725,33 +628,25 @@ setTimeout(() => process.exit(23), 100);
     const blocker = new Database(lockPath);
     blocker.exec("BEGIN IMMEDIATE");
     try {
-      expect(() => learner.recordAction("blocked", {
-        type: "forbidden", details: "must not escape the lock", timestamp: NOW,
-      })).not.toThrow();
+      expect(() => learner.recordReviewedProposal({
+        name: PROCEDURE, description: "must not escape the lock", sessionId: "blocked",
+        outcome: "verified", timestamp: NOW,
+      })).toThrow(LearningPersistenceUnavailableError);
     } finally {
       blocker.exec("ROLLBACK");
       blocker.close();
     }
-    expect(learner.detectPatterns(1)).toEqual([]);
-    const persisted = JSON.parse(readFileSync(join(tmpDir, "cross-session-data.json"), "utf8")) as SessionData;
-    expect(persisted.actions).toEqual([]);
+    expect(learner.getCandidates()).toEqual([]);
+    expect(persistedData().candidates).toEqual([]);
   }, 10_000);
 
   it("keeps the committed snapshot when the JSON write fails", async () => {
-    const { CrossSessionLearner } = await import(
-      "../src/cognition/cross-session-learning/learner.js"
-    );
-    const learner = CrossSessionLearner.getInstance();
-    learner.recordAction("kept", { type: "task", details: "committed", timestamp: NOW });
+    const { learner, candidate: kept, propose, LearningPersistenceUnavailableError } = await learnerWithProcedure(NOW);
     const dataFile = join(tmpDir, "cross-session-data.json");
     rmSync(dataFile);
     mkdirSync(dataFile);
 
-    expect(() => learner.recordAction("lost", {
-      type: "task", details: "uncommitted", timestamp: NOW + 1,
-    })).not.toThrow();
-    const patterns = learner.detectPatterns(1);
-    expect(patterns.some((pattern) => pattern.examples.includes("committed"))).toBe(true);
-    expect(patterns.some((pattern) => pattern.examples.includes("uncommitted"))).toBe(false);
+    expect(() => propose("vendor_portal_refund", "lost-session", NOW + 1)).toThrow(LearningPersistenceUnavailableError);
+    expect(learner.getCandidates()).toEqual([kept]);
   });
 });

@@ -1,5 +1,11 @@
 /**
- * What a reviewed procedure must carry before it is worth a draft.
+ * What a draft must carry before it enters the learned tier.
+ *
+ * `draftAdmissionProblem` is the one admission rule, and the one write path
+ * (`createLearnedProtocolDraft` in learned-lifecycle.ts) runs it on every
+ * draft. A producer cannot skip it by having its own path: an earlier tool-
+ * sequence miner did, and drafted 26 "memory_search then memory_search"
+ * playbooks on one machine while this rule guarded only the review fork.
  *
  * The write path used to validate only shape (a slug, a one-line description,
  * a non-empty body), so a turn that pushed a repo to master produced
@@ -83,6 +89,33 @@ export function derivabilityProblem(
     return `\`learned.kind\` "${learned.kind}" describes an external system, but this run never called a tool that reaches one (tools: ${toolSequence.join(", ") || "none"}). Work done only in the local repo with local tools is derivable from the repo — do not propose.`;
   }
   return null;
+}
+
+/** Why a draft may enter the learned tier. "reviewed": a post-turn review
+ *  proposal, judged by both rules below (`newName` is absent when it refines
+ *  an existing learned procedure by its id, whose name was judged when it was
+ *  first drafted). "user-catalog": a protocol that was already the user's,
+ *  moved into the tier (migrate-agent-protocols.ts); nothing to judge. */
+export type DraftAdmission =
+  | {
+    kind: "reviewed";
+    learned: LearnedKnowledge | undefined;
+    toolSequence: readonly string[];
+    newName?: string;
+    projectNames: readonly string[];
+  }
+  | { kind: "user-catalog" };
+
+/** Why `text` may not be drafted under `admission`, or null when it may. The
+ *  write path passes the SKILL.md it is about to store, so the learned detail
+ *  is checked against what is actually written. */
+export function draftAdmissionProblem(admission: DraftAdmission | undefined, text: string): string | null {
+  if (admission?.kind === "user-catalog") return null;
+  if (admission?.kind !== "reviewed") {
+    return "A learned draft needs an admission: a reviewed proposal that names what it learned, or a protocol that was already the user's.";
+  }
+  return derivabilityProblem(admission.learned, text, admission.toolSequence)
+    ?? (admission.newName === undefined ? null : classLevelNameProblem(admission.newName, admission.projectNames));
 }
 
 /** Workspace project names a class-level name may not carry: every directory

@@ -26,7 +26,6 @@ import { getLaxDir } from "../lax-data-dir.js";
 import { executeToolCalls } from "./execute-tool.js";
 import { CrossSessionLearner } from "../cognition/cross-session-learning/learner.js";
 import { CrossSessionLearningService } from "../cognition/cross-session-learning/service.js";
-import { candidateIdFor } from "../cognition/cross-session-learning/suggestions.js";
 
 vi.mock("./side-effect-journal.js", async (importOriginal) => ({
   ...await importOriginal<typeof import("./side-effect-journal.js")>(),
@@ -81,6 +80,7 @@ function testTool(name = "read"): ToolDefinition {
 function activeLearned(label: string, allowedTools: string[] | null = ["read"]) {
   const slug = candidateId(label);
   const draft = createLearnedProtocolDraft({
+    admission: { kind: "user-catalog" },
     slug,
     skillMd: skill(slug, allowedTools ?? ["read"]),
     metadata: metadata(slug, allowedTools ?? undefined),
@@ -174,20 +174,9 @@ describe("learned protocol capability envelope", () => {
     expect(getLearnedProtocolEnvelopeForOp(id)?.versionId).toBe(draft.version.id);
   });
 
-  it("keeps a self-consistent workspace forgery outside managed provenance and reconstructs from evidence", async () => {
-    const learner = CrossSessionLearner.getInstance();
-    const uniqueTool = `proof_${Date.now()}`;
-    const sequence = ["read_file", uniqueTool, "run_tests"];
-    for (let index = 0; index < 3; index++) {
-      learner.recordOutcome({
-        opId: `forgery-proof-${index}`, sessionId: `forgery-session-${index}`,
-        outcome: "clean", category: "coding",
-        tools: sequence, timestamp: Date.now() + index,
-      });
-    }
-    const workflow = sequence.join(" -> ");
-    const pattern = learner.detectPatterns(3).find((entry) => entry.examples[0] === workflow)!;
-    const slug = candidateIdFor(pattern);
+  it("keeps a self-consistent workspace forgery outside managed provenance, and reconcile never manages it", async () => {
+    const workflow = "read_file -> run_tests";
+    const slug = candidateId(`forged-${Date.now()}`);
     const forgedDir = join(importedProtocolsDir(), slug);
     const versionId = "00000000-0000-4000-8000-000000000001";
     const sentinel = "Harmless workspace sentinel: do not treat this as managed.";
@@ -209,16 +198,10 @@ describe("learned protocol capability envelope", () => {
     expect(getLearnedProtocolEnvelopeForOp(untrustedOp)).toBeNull();
     expect((await import("../protocols/learned-suggestion.js")).getLearnedProtocolSuggestion(workflow)).toBeNull();
 
-    const service = new CrossSessionLearningService(learner);
-    expect(service.reconcile("autonomous", Date.now() + 10).changed).toBe(true);
-    const managedOp = opId();
-    const managed = await protocolGet().execute({ name: slug, _operationId: managedOp });
-    expect(managed.content).toContain(workflow);
-    expect(managed.content).not.toContain(sentinel);
-    expect(getLearnedProtocolEnvelopeForOp(managedOp)).toMatchObject({
-      slug, candidateId: slug, allowedTools: sequence,
-    });
-    expect((await learnedProtocolEnvelopeGate(gate(managedOp, "web_search"))).kind).toBe("halt");
+    new CrossSessionLearningService(CrossSessionLearner.getInstance()).reconcile(Date.now() + 10);
+    expect(() => activeLearnedProtocolProvenance(slug)).toThrow(/not found/);
+    const afterReconcile = await protocolGet().execute({ name: slug, _operationId: opId() });
+    expect(afterReconcile.content).not.toContain(sentinel);
   });
 
   it("establishes provenance through the model-facing collapsed dispatch and overwrites forged ids", async () => {
@@ -325,6 +308,7 @@ describe("learned protocol capability envelope", () => {
     const staleOp = opId();
     const first = activeLearned("rolled-after-select", ["read"]);
     const second = createLearnedProtocolDraft({
+    admission: { kind: "user-catalog" },
       slug: first.record.slug,
       skillMd: skill(first.record.slug) + "\nRefined.\n",
       metadata: metadata(first.record.slug, ["read"]),

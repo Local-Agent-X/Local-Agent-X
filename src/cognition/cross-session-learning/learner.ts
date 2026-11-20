@@ -1,46 +1,20 @@
 import type {
   ActionEntry,
-  AutomationSuggestion,
-  DetectedPattern,
   LearnedCandidate,
   LearnedCandidateState,
   OutcomeEvidence,
   SessionData,
-  SessionInsight,
 } from "./types.js";
 import {
-  DEFAULT_MIN_OCCURRENCES,
   CANDIDATE_TRANSITIONS,
-  CANDIDATE_SURFACE_COOLDOWN_DAYS,
   MAX_ACTIONS,
-  MS_PER_DAY,
-  PRUNE_AGE_DAYS,
   hasCandidateEvidenceIdentity,
   normalizeLegacyEvidenceIdentities,
-  sanitizeLearnedCandidate,
   TERMINAL_TELEMETRY_IDENTITY,
-  WORKFLOW_TACTIC_IDENTITY,
 } from "./types.js";
 import { autoPrune, ensureDir, loadData, mutateData } from "./persistence.js";
 import {
-  detectRepeatedQuestions,
-  detectRepeatedTasks,
-  detectRepeatedTopics,
-  detectTimePatterns,
-  detectWorkflowPatterns,
-} from "./detectors.js";
-import {
-  createLearnedCandidate,
-  getInsights,
-  suggestAutomation,
-  transitionCandidate,
-} from "./suggestions.js";
-import { fuzzyMatch } from "./text-utils.js";
-import type { ModuleSignal } from "../../orchestrator/types.js";
-import { formatLearningCandidateNudge } from "../../memory/curate-nudge.js";
-import { draftLearnedCandidate, type LearnedCandidateDraftResult } from "../../protocols/learned-drafting.js";
-import {
-  candidateProjectionPath, sameCandidateRevision, transitionTimestampAtCommit, type CandidateRevision,
+  candidateProjectionPath, transitionCandidate, transitionTimestampAtCommit, type CandidateRevision,
 } from "./candidate-revision.js";
 import { applyReviewedProposal, type ReviewedProposalInput, type ReviewedProposalResult } from "./reviewed-procedures.js";
 
@@ -67,24 +41,6 @@ export class CrossSessionLearner {
 
   refresh(): void {
     this.data = loadData();
-  }
-
-  recordAction(
-    sessionId: string,
-    action: { type: string; details: string; timestamp: number }
-  ): void {
-    this.commit((data) => {
-      data.actions.push({
-        ...WORKFLOW_TACTIC_IDENTITY,
-        sessionId,
-        type: action.type,
-        details: action.details,
-        timestamp: action.timestamp,
-      });
-      if (data.actions.length > MAX_ACTIONS) {
-        data.actions = data.actions.slice(-MAX_ACTIONS);
-      }
-    });
   }
 
   /** Record only the structural receipt of a completed operation. Tool names
@@ -118,65 +74,8 @@ export class CrossSessionLearner {
     });
   }
 
-  detectPatterns(minOccurrences?: number): DetectedPattern[] {
-    const min = minOccurrences ?? DEFAULT_MIN_OCCURRENCES;
-    const actions: ActionEntry[] = this.data.actions;
-    const patterns: DetectedPattern[] = [];
-
-    patterns.push(...detectRepeatedQuestions(actions, min));
-    patterns.push(...detectRepeatedTasks(actions, min));
-    patterns.push(...detectRepeatedTopics(actions, Math.max(min, 5)));
-    patterns.push(...detectTimePatterns(actions, min));
-    patterns.push(...detectWorkflowPatterns(actions, min));
-
-    return patterns.sort((a, b) => b.occurrences - a.occurrences);
-  }
-
-  suggestAutomation(pattern: DetectedPattern): AutomationSuggestion | null {
-    if (pattern.automationEligible === false) return null;
-    return suggestAutomation(pattern);
-  }
-
   getCandidates(): LearnedCandidate[] {
     return structuredClone(this.data.candidates.filter(hasCandidateEvidenceIdentity));
-  }
-
-  captureCandidate(pattern: DetectedPattern, now = Date.now()): LearnedCandidate | null {
-    const suggestion = this.suggestAutomation(pattern);
-    if (!suggestion) return null;
-    const next = createLearnedCandidate(pattern, suggestion, now);
-    const observed = this.observedCandidateRevision(next.id);
-    const committed = this.commit((data) => {
-      const index = data.candidates.findIndex((candidate) =>
-        candidate.id === next.id && hasCandidateEvidenceIdentity(candidate)
-      );
-      if (index < 0) {
-        data.candidates.push(next);
-        return next.id;
-      }
-      const current = data.candidates[index];
-      if (
-        current.state !== "rejected"
-        || (current.rejectionCooldownUntil !== undefined && now < current.rejectionCooldownUntil)
-      ) return current.id;
-      if (!sameCandidateRevision(current, observed)) return current.id;
-
-      const revived = transitionCandidate(
-        current,
-        "candidate",
-        transitionTimestampAtCommit(current, now, observed),
-        "New evidence after suppression period",
-      );
-      data.candidates[index] = {
-        ...revived,
-        confidence: next.confidence,
-        suggestion: next.suggestion,
-        evidence: next.evidence,
-      };
-      return current.id;
-    });
-    if (!committed) return null;
-    return structuredClone(this.requireCommittedCandidate(committed.value));
   }
 
   setCandidateState(
@@ -245,94 +144,11 @@ export class CrossSessionLearner {
     return committed.value;
   }
 
-  draftCandidate(id: string, opportunity?: LearnedCandidate): LearnedCandidateDraftResult {
-    const candidate = this.data.candidates.find((entry) =>
-      hasCandidateEvidenceIdentity(entry) && entry.id === id
-    );
-    if (!candidate) throw new Error(`Unknown learned candidate: ${id}`);
-    if (!opportunity) return draftLearnedCandidate(structuredClone(candidate));
-    const safeOpportunity = sanitizeLearnedCandidate(opportunity);
-    if (
-      !safeOpportunity
-      || safeOpportunity.id !== candidate.id
-      || safeOpportunity.state !== candidate.state
-      || safeOpportunity.evidence.occurrences < candidate.evidence.occurrences
-      || safeOpportunity.confidence < candidate.confidence
-    ) {
-      throw new Error(`Invalid learned refinement opportunity: ${id}`);
-    }
-    return draftLearnedCandidate(safeOpportunity);
-  }
-
   /** Record a post-turn review proposal (see reviewed-procedures.ts). */
   recordReviewedProposal(input: ReviewedProposalInput): ReviewedProposalResult {
     const committed = this.commit((data) => applyReviewedProposal(data, input));
     if (!committed) throw new LearningPersistenceUnavailableError();
     return committed.value;
-  }
-
-  getInsights(): SessionInsight[] {
-    return getInsights(this.data.actions);
-  }
-
-  fuzzyMatch(a: string, b: string): number {
-    return fuzzyMatch(a, b);
-  }
-
-  nextLearningOpportunity(now = Date.now()): { candidate: LearnedCandidate; draftCandidate: LearnedCandidate } | null {
-    const patterns = this.detectPatterns(3);
-    const staleCutoff = now - PRUNE_AGE_DAYS * MS_PER_DAY;
-    for (const pattern of patterns) {
-      if (
-        pattern.lastSeen <= staleCutoff
-        || pattern.type !== "workflow"
-        || pattern.automationEligible !== true
-      ) continue;
-      const candidate = this.captureCandidate(pattern, now);
-      const suggestion = this.suggestAutomation(pattern);
-      if (!candidate || !suggestion || !["candidate", "active"].includes(candidate.state)) continue;
-      const live = createLearnedCandidate(pattern, suggestion, now);
-      if (live.confidence < 0.75) continue;
-      const committed = this.commit((data) => {
-        const index = data.candidates.findIndex((entry) =>
-          entry.id === candidate.id && hasCandidateEvidenceIdentity(entry)
-        );
-        if (index < 0) return null;
-        const current = data.candidates[index];
-        if (current.surfaceCooldownUntil && now < current.surfaceCooldownUntil) return null;
-        if (
-          current.lastSurfacedOccurrences !== undefined
-          && pattern.occurrences <= current.lastSurfacedOccurrences
-        ) return null;
-        data.candidates[index] = {
-          ...current,
-          lastSurfacedAt: now,
-          lastSurfacedOccurrences: pattern.occurrences,
-          surfaceCooldownUntil: now + CANDIDATE_SURFACE_COOLDOWN_DAYS * MS_PER_DAY,
-        };
-        return current.id;
-      });
-      if (!committed?.value) continue;
-      const surfaced = this.requireCommittedCandidate(committed.value);
-      const draftCandidate: LearnedCandidate = {
-        ...live,
-        state: surfaced.state,
-        createdAt: surfaced.createdAt,
-        transitions: structuredClone(surfaced.transitions),
-      };
-      return { candidate: structuredClone(surfaced), draftCandidate };
-    }
-    return null;
-  }
-
-  nextLearningCandidate(now = Date.now()): LearnedCandidate | null {
-    return this.nextLearningOpportunity(now)?.candidate ?? null;
-  }
-
-  /** Quiet, deduplicated learning signal for the orchestrator prompt path. */
-  signalsFor(mode: "assisted" | "autonomous" = "assisted", now = Date.now()): ModuleSignal[] {
-    const opportunity = this.nextLearningOpportunity(now);
-    return opportunity ? [formatLearningCandidateNudge(opportunity.draftCandidate, mode)] : [];
   }
 
   private commit<T>(mutation: (data: SessionData) => T) {

@@ -7,6 +7,7 @@ import { withLearnedLifecycleTransaction } from "./learned-lifecycle-transaction
 import { learnedProtocolsDir } from "./loader.js";
 import { parseSkillMd } from "./skill-md-parser.js";
 import { recordActivation, validateActivationHistory } from "./learned-activation-history.js";
+import { draftAdmissionProblem, type DraftAdmission } from "./learned-proposal-gate.js";
 
 export type LearnedProtocolState = "draft" | "active" | "archived";
 
@@ -148,10 +149,18 @@ function materializeAndSave(dir: string, record: LearnedProtocolRecord, body: st
   }
 }
 
+/** A draft the admission rule turned away (learned-proposal-gate.ts). */
+export class LearnedDraftRefusedError extends Error {}
+
+/** The one way a draft enters the learned tier. Every draft carries an
+ *  admission and is judged here, so no producer has a path around the rule. */
 export function createLearnedProtocolDraft(input: {
   slug: string; skillMd: string;
   metadata?: Record<string, unknown>;
+  admission: DraftAdmission;
 }): { record: LearnedProtocolRecord; version: LearnedProtocolVersion } {
+  const problem = draftAdmissionProblem(input.admission, input.skillMd);
+  if (problem) throw new LearnedDraftRefusedError(problem);
   return withLearnedLifecycleTransaction(() => createDraft(input));
 }
 

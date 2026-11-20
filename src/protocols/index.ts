@@ -69,10 +69,6 @@ export {
   type ActiveLearnedProtocolProvenance, type LearnedProtocolRecord,
   type LearnedProtocolState, type LearnedProtocolVersion,
 } from "./learned-lifecycle.js";
-export {
-  draftLearnedCandidate, learnedProtocolSlug, renderLearnedCandidateSkill,
-  type LearnedCandidateDraftMetadata, type LearnedCandidateDraftResult,
-} from "./learned-drafting.js";
 
 // Protocol packs
 export { socialProtocols } from "./packs/social.js";

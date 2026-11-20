@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2089 non-test source files · 76 oversized · 271 nearing the size cap.
+**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2085 non-test source files · 75 oversized · 265 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -27,7 +27,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/canonical-loop/` | 90 | 294 | XL | 10 |
 | `src/providers/` | 80 | 28 | L | 1 |
 | `src/session/` | 72 | 14 | L |  |
-| `src/memory/` | 63 | 162 | XL | 3 |
+| `src/memory/` | 62 | 162 | XL | 3 |
 | `src/data-lineage/` | 60 | 12 | L |  |
 | `src/util/` | 59 | 3 | S |  |
 | `src/browser/` | 54 | 95 | XL | 5 |
@@ -47,13 +47,13 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/app-runtime/` | 23 | 12 | M |  |
 | `src/sandbox/` | 23 | 16 | L | 1 |
 | `src/desktop-contract/` | 22 | 10 | M |  |
-| `src/protocols/` | 22 | 52 | XL |  |
-| `src/orchestrator/` | 20 | 24 | L |  |
+| `src/protocols/` | 21 | 51 | XL |  |
 | `src/autonomy/` | 19 | 6 | M |  |
-| `src/cognition/` | 19 | 37 | XL | 1 |
 | `src/net/` | 19 | 12 | L |  |
+| `src/orchestrator/` | 19 | 24 | L |  |
 | `src/server/` *(entrypoint)* | 19 | 76 | XL | 4 |
 | `src/voice/` | 19 | 80 | XL | 1 |
+| `src/cognition/` | 18 | 34 | XL |  |
 | `src/agents/` | 17 | 14 | L |  |
 | `src/persistence/` | 16 | 3 | M |  |
 | `src/self-edit/` | 16 | 19 | L | 2 |
@@ -271,7 +271,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/canonical-loop/session-bridge-observer.ts#recordCanonicalEventWithSink`
 - `src/canonical-loop/turn-loop/decide-outcome.ts#decideTurnOutcome`
 - `src/canonical-loop/worker.ts#drive`
-- `src/cognition/cross-session-learning/service.ts#CrossSessionLearningService.reconcile`
 - `src/config.ts#loadConfig`
 - `src/mcp-client/manifest.ts#assessMcpManifest`
 - `src/memory/date-parser.ts#parseDateRange`
@@ -332,14 +331,12 @@ job. Comments are free: never cut them to fit.
 - `src/canonical-loop/provider-adapter-factory.ts` — 340+ code lines (cap 350)
 - `src/canonical-loop/checkpoint.ts` — 330+ code lines (cap 350)
 - `src/canonical-loop/container-runtime-projection.ts` — 330+ code lines (cap 350)
-- `src/cognition/cross-session-learning/learner.ts` — 330+ code lines (cap 350)
 - `src/net/egress-proxy-core.ts` — 330+ code lines (cap 350)
 - `src/update-rollback.ts` — 330+ code lines (cap 350)
 - `src/auto-build/app-build-tool.ts` — 320+ code lines (cap 350)
 - `src/broker-transport/phone-projection.ts` — 320+ code lines (cap 350)
 - `src/browser/layout-report.ts` — 320+ code lines (cap 350)
 - `src/canonical-loop/adapters/tool-call-text-corpus.ts` — 320+ code lines (cap 350)
-- `src/cognition/cross-session-learning/types.ts` — 320+ code lines (cap 350)
 - `src/memory/tools/facts.ts` — 320+ code lines (cap 350)
 - `src/ops/op-store.ts` — 320+ code lines (cap 350)
 - `src/protocols/learned-effectiveness.ts` — 320+ code lines (cap 350)
@@ -347,7 +344,6 @@ job. Comments are free: never cut them to fit.
 - `src/tools/edit-tools.ts` — 320+ code lines (cap 350)
 - `src/auto-build/workflow-resolver.ts` — 310+ code lines (cap 350)
 - `src/browser/manager.ts` — 310+ code lines (cap 350)
-- `src/cognition/cross-session-learning/service.ts` — 310+ code lines (cap 350)
 - `src/protocols/index.ts` — 310+ code lines (cap 350)
 - `src/routes/connector-proxy.ts` — 310+ code lines (cap 350)
 - `src/security/layer/security-audit.ts` — 310+ code lines (cap 350)
@@ -379,6 +375,7 @@ job. Comments are free: never cut them to fit.
 - `src/tool-execution/sensitive-read-taint.ts` — 290+ code lines (cap 350)
 - `src/browser/runtime.ts` — 280+ code lines (cap 350)
 - `src/canonical-loop/scheduler.ts` — 280+ code lines (cap 350)
+- `src/cognition/cross-session-learning/types.ts` — 280+ code lines (cap 350)
 - `src/mcp-client/index.ts` — 280+ code lines (cap 350)
 - `src/memory/index-facts-mutate.ts` — 280+ code lines (cap 350)
 - `src/memory/promotion-gate.ts` — 280+ code lines (cap 350)
@@ -415,7 +412,6 @@ job. Comments are free: never cut them to fit.
 - `src/memory/tools/save.ts#createSaveTools` — 90+ own code lines (cap 100)
 - `src/memory/tools/save.ts#withProfileWrite:callback@213` — 90+ own code lines (cap 100)
 - `src/protocols/builder.ts#createBuilderTools` — 90+ own code lines (cap 100)
-- `src/protocols/learned-drafting.ts#validateProof` — 90+ own code lines (cap 100)
 - `src/routes/agents/history.ts#handleAgentHistoryRoutes` — 90+ own code lines (cap 100)
 - `src/routes/bridges/integrations.ts#handleIntegrationsRoutes` — 90+ own code lines (cap 100)
 - `src/routes/chat/run-chat-turn/canonical-run.ts#persistTurnState` — 90+ own code lines (cap 100)
@@ -499,7 +495,6 @@ job. Comments are free: never cut them to fit.
 - `src/chat-ws/manager.ts#onEvent` — 70+ own code lines (cap 100)
 - `src/codex-client/stream-parse.ts#finalizeCompleted` — 70+ own code lines (cap 100)
 - `src/codex-message-convert.ts#convertMessagesToInput` — 70+ own code lines (cap 100)
-- `src/cognition/cross-session-learning/suggestions.ts#suggestAutomation` — 70+ own code lines (cap 100)
 - `src/cognition/milestone-celebrations.ts#buildMilestoneDefs` — 70+ own code lines (cap 100)
 - `src/cron/tools.ts#createCronTools` — 70+ own code lines (cap 100)
 - `src/keychain.ts#getOrCreateMasterKey` — 70+ own code lines (cap 100)
@@ -511,7 +506,7 @@ job. Comments are free: never cut them to fit.
 - `src/ops/tools/shared.ts#configureDelegatedRuntime` — 70+ own code lines (cap 100)
 - `src/orchestrator/process-message-impl.ts#processMessageImpl` — 70+ own code lines (cap 100)
 - `src/protocols/index.ts#createCoreProtocolTools` — 70+ own code lines (cap 100)
-- `src/protocols/learned-refinement.ts#passesPromotion` — 70+ own code lines (cap 100)
+- `src/protocols/learned-review-drafting.ts#proposeReviewedProcedure` — 70+ own code lines (cap 100)
 - `src/protocols/stats-tools.ts#protocol_stats.execute` — 70+ own code lines (cap 100)
 - `src/providers/sanitize.ts#sanitizeHistory` — 70+ own code lines (cap 100)
 - `src/routes/chat/delegation-handoff.ts#runDelegationHandoff` — 70+ own code lines (cap 100)
@@ -555,7 +550,7 @@ job. Comments are free: never cut them to fit.
 - `src/canonical-loop/recovery.ts#finishRecoveredOp` — 60+ own code lines (cap 100)
 - `src/canonical-loop/turn-loop/build-verify.ts#runBuildVerifyGate` — 60+ own code lines (cap 100)
 - `src/canonical-loop/turn-loop/dispatch-tools.ts#dispatchTools` — 60+ own code lines (cap 100)
-- `src/cognition/cross-session-learning/suggestions.ts#getInsights` — 60+ own code lines (cap 100)
+- `src/cognition/cross-session-learning/service.ts#CrossSessionLearningService.reconcile` — 60+ own code lines (cap 100)
 - `src/cognition/emotional-memory.ts#EmotionalMemoryImpl.detectEmotion` — 60+ own code lines (cap 100)
 - `src/cognition/emotional-memory.ts#EmotionalMemoryImpl.getEmotionalProfile` — 60+ own code lines (cap 100)
 - `src/cognition/unspoken-detector.ts#UnspokenDetector.detectBehaviorChange` — 60+ own code lines (cap 100)
@@ -569,8 +564,6 @@ job. Comments are free: never cut them to fit.
 - `src/memory/index-sync.ts#syncIndex` — 60+ own code lines (cap 100)
 - `src/memory/tools/facts.ts#update_fact.execute` — 60+ own code lines (cap 100)
 - `src/ops/tools/op-submit-batch.ts#runDependencyBatch` — 60+ own code lines (cap 100)
-- `src/protocols/learned-drafting.ts#draftLearnedCandidate` — 60+ own code lines (cap 100)
-- `src/protocols/learned-review-drafting.ts#proposeReviewedProcedure` — 60+ own code lines (cap 100)
 - `src/protocols/variables.ts#createVariableTools` — 60+ own code lines (cap 100)
 - `src/providers/adapters/codex-cli.ts#CodexCliAdapter.stream` — 60+ own code lines (cap 100)
 - `src/response-classifier.ts#classifyCodexResponse` — 60+ own code lines (cap 100)

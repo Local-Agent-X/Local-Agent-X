@@ -158,7 +158,7 @@ function restartSnapshot(dataDir: string, now: number) {
     learner.refresh();
     const service = new CrossSessionLearningService(learner);
     const before = service.list();
-    const replay = service.reconcile("autonomous", ${now});
+    const replay = service.reconcile(${now});
     const after = service.list();
     const record = loadLearnedProtocol(after[0].id);
     process.stdout.write(JSON.stringify({ before, after, replay, versions: record.versions.length, active: record.activeVersionId }));
@@ -207,10 +207,11 @@ describe("G4 deterministic learning benchmark", () => {
       .toEqual({ provider: selectedBefore.provider, model: selectedBefore.model });
   });
 
-  it("learns only canonical clean terminals, activates by mode, and replays idempotently after restart", async () => {
+  it("never learns from mined workflows, activates a reviewed procedure on independent evidence without a prompt, and replays idempotently after restart", async () => {
     const s = await system();
     const learner = s.learning.CrossSessionLearner.getInstance();
     const service = new (await import("../src/cognition/cross-session-learning/service.js")).CrossSessionLearningService(learner);
+    const drafting = await import("../src/protocols/learned-review-drafting.js");
     const nonce = process.hrtime.bigint().toString(36);
     const secrets = {
       prompt: `RAW_PROMPT_${nonce}`, arg: `RAW_ARG_${nonce}`, result: `RAW_RESULT_${nonce}`,
@@ -224,16 +225,40 @@ describe("G4 deterministic learning benchmark", () => {
     await commitWorkflow(s, `tainted-${nonce}`, `tainted-session-${nonce}`, secrets);
     lineage.clearExternalIngestion(`tainted-session-${nonce}`);
 
-    const patterns = learner.detectPatterns(3);
-    const workflow = patterns.find((entry) => entry.examples[0] === "read -> write -> bash")!;
-    expect(workflow).toMatchObject({ occurrences: 3, outcomeStats: { clean: 3, distinctSessions: 3 } });
+    // The retired observed-workflow tier stays retired: clean repeated
+    // terminals alone never draft, list, or activate anything.
     const base = Date.now();
+    const learnedDir = join(process.env.LAX_DATA_DIR!, "protocols", "learned");
+    expect(service.reconcile(base)).toEqual({ changed: false, signals: [] });
+    expect(service.list()).toEqual([]);
+    expect(learner.getCandidates()).toEqual([]);
+    expect(existsSync(learnedDir) ? readdirSync(learnedDir).filter((name) => name.startsWith("learned-")) : []).toEqual([]);
+
     const approvalManager = (await import("../src/approval-manager.js")).getApprovalManager();
     const approvalSpy = vi.spyOn(approvalManager, "requestApprovalDetailed");
-    expect(service.reconcile("assisted", base)).toMatchObject({ changed: true, signals: [{ category: "learning-candidate" }] });
+    const propose = (sessionId: string, timestamp: number) => {
+      const result = drafting.proposeReviewedProcedure({
+        name: "vendor_portal_release",
+        description: "Release build files through the vendor portal",
+        triggers: ["vendor portal release"],
+        body: "## Steps\n1. Open Releases > Upload build.\n2. Verify the checksum.",
+        outcome: "verified",
+        origin: "review",
+        learned: { kind: "external_string", detail: "Open Releases > Upload build." },
+        sessionId,
+        toolSequence: ["browser", "read", "write", "bash"],
+        timestamp,
+      });
+      if (!result.ok) throw new Error(result.message);
+      return result;
+    };
+    propose(`review-session-a-${nonce}`, base + 1);
+    propose(`review-session-b-${nonce}`, base + 2);
+    expect(service.reconcile(base + 2)).toEqual({ changed: false, signals: [] });
     expect(service.list()).toHaveLength(1);
     expect(service.list()[0]).toMatchObject({ state: "candidate", activeVersionId: null, versionCount: 1 });
-    expect(service.reconcile("autonomous", base + 1).changed).toBe(true);
+    propose(`review-session-c-${nonce}`, base + 3);
+    expect(service.reconcile(base + 10)).toMatchObject({ changed: true, signals: [{ category: "learning-activity" }] });
     expect(approvalSpy).not.toHaveBeenCalled();
     const activated = service.list()[0];
     expect(activated).toMatchObject({ state: "active", versionCount: 1 });
@@ -275,8 +300,8 @@ describe("G4 deterministic learning benchmark", () => {
     ]);
     expect(receipt).toMatchObject({ status: "committed", outcome: "clean", slug: activated.id });
 
-    expect(service.reconcile("autonomous", base + 2)).toEqual({ changed: false, signals: [] });
-    const child = restartSnapshot(process.env.LAX_DATA_DIR!, base + 3);
+    expect(service.reconcile(base + 11)).toEqual({ changed: false, signals: [] });
+    const child = restartSnapshot(process.env.LAX_DATA_DIR!, base + 12);
     expect(child.before).toEqual(child.after);
     expect(child.after).toHaveLength(1);
     expect(child.after[0]).toMatchObject({ id: activated.id, activeVersionId: activated.activeVersionId, versionCount: 1 });
@@ -292,14 +317,5 @@ describe("G4 deterministic learning benchmark", () => {
     if (existsSync(capabilitiesFile)) privacyFiles.push(readFileSync(capabilitiesFile, "utf8"));
     const durable = privacyFiles.join("\n");
     for (const sentinel of Object.values(secrets)) expect(durable).not.toContain(sentinel);
-    const learningData = JSON.parse(readFileSync(join(process.env.LAX_DATA_DIR!, "cross-session-data.json"), "utf8"));
-    expect(learningData.actions).toHaveLength(4);
-    for (const action of learningData.actions) {
-      expect(Object.keys(action).sort()).toEqual([
-        "authority", "category", "details", "evidenceClass", "model", "opId", "outcome", "sessionId",
-        "timestamp", "tools", "type",
-      ]);
-      expect(action.tools).toEqual(action.opId === selectedOp.id ? [] : ["read", "write", "bash"]);
-    }
   }, 30_000);
 });

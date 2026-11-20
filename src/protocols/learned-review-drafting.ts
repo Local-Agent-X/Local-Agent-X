@@ -8,9 +8,9 @@
  * user's OK (the chat notice / Settings panel) or on independent evidence
  * (learned-refinement.ts), never on its own.
  *
- * A review-origin proposal is judged before it is drafted
- * (learned-proposal-gate.ts): it must name the non-derivable thing it
- * captured and carry a class-level name. The chat notice waits for a second
+ * A review-origin proposal is judged by the one admission rule
+ * (learned-proposal-gate.ts), which the write itself enforces: it must name
+ * the non-derivable thing it captured and carry a class-level name. The chat notice waits for a second
  * distinct session, so one coincidence never becomes a card.
  */
 import { createHash } from "node:crypto";
@@ -34,9 +34,9 @@ import {
 } from "./learned-lifecycle.js";
 import { reviewedProcedureNoticeReady } from "./learned-refinement.js";
 import {
-  classLevelNameProblem,
-  derivabilityProblem,
+  draftAdmissionProblem,
   workspaceProjectNames,
+  type DraftAdmission,
   type LearnedKnowledge,
 } from "./learned-proposal-gate.js";
 
@@ -166,12 +166,19 @@ export function proposeReviewedProcedure(input: ReviewedProcedureProposal): Prop
   const body = typeof input.body === "string" ? input.body.trim() : "";
   if (!body) return { ok: false, message: "propose needs a markdown `body` — the playbook itself." };
   if (body.length > MAX_BODY_CHARS) return { ok: false, message: `The body is too long (max ${MAX_BODY_CHARS} characters).` };
-  if (input.origin === "review") {
-    const projectNames = [...workspaceProjectNames(), ...(input.projectNames ?? [])];
-    const problem = derivabilityProblem(input.learned, body, input.toolSequence)
-      ?? (LEARNED_SLUG.test(input.name.trim()) ? null : classLevelNameProblem(name, projectNames));
-    if (problem) return { ok: false, message: problem };
-  }
+  const admission: DraftAdmission = input.origin === "review"
+    ? {
+      kind: "reviewed",
+      learned: input.learned,
+      toolSequence: input.toolSequence,
+      newName: LEARNED_SLUG.test(input.name.trim()) ? undefined : name,
+      projectNames: [...workspaceProjectNames(), ...(input.projectNames ?? [])],
+    }
+    : { kind: "user-catalog" };
+  // Judged here as well as at the write so a refused proposal is never
+  // recorded as evidence. The body is part of the SKILL.md the write judges.
+  const problem = draftAdmissionProblem(admission, body);
+  if (problem) return { ok: false, message: problem };
   const triggers = [...new Set(input.triggers.map((t) => oneLine(String(t)).slice(0, MAX_TRIGGER_CHARS)).filter(Boolean))]
     .slice(0, MAX_TRIGGERS);
 
@@ -214,6 +221,7 @@ export function proposeReviewedProcedure(input: ReviewedProcedureProposal): Prop
         allowedTools,
         toolSequence: allowedTools,
       },
+      admission,
     });
     record = draft.record;
     version = draft.version;

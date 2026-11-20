@@ -18,7 +18,7 @@ export type {
   CandidateTransition,
   LearnedCandidate,
   LearnedCandidateState,
-  SessionInsight,
+
 } from "./types.js";
 
 export {

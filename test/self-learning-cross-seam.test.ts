@@ -79,35 +79,6 @@ function op(id: string, state: "pending" | "running" = "pending"): Op {
   };
 }
 
-async function awaitTerminal(readOp: (id: string) => Op | null, id: string): Promise<Op> {
-  const deadline = Date.now() + 4_000;
-  for (;;) {
-    const current = readOp(id);
-    if (current && ["succeeded", "failed", "cancelled"].includes(current.canonical?.state ?? "")) return current;
-    if (Date.now() > deadline) throw new Error(`Timed out waiting for ${id}`);
-    await new Promise((resolve) => setTimeout(resolve, 10));
-  }
-}
-
-async function commitOrdinaryWorkflow(s: Awaited<ReturnType<typeof system>>, id: string, sessionId: string): Promise<void> {
-  const current = op(id);
-  s.sessions.trackOpForSession(id, sessionId, current.task);
-  s.canonical.setToolDispatcher({
-    dispatch: async (call) => ({ toolCallId: call.toolCallId, status: "ok", result: { ok: true }, durationMs: 1 }),
-  });
-  s.canonical.registerAdapterForOp(id, () => new s.fake.FakeAdapter({
-    script: s.fake.scriptMultiTurn([
-      { toolCalls: [{ toolCallId: `${id}-read`, tool: "read", args: { path: "release.txt" } }] },
-      { toolCalls: [{ toolCallId: `${id}-write`, tool: "write", args: { path: "release.txt" } }] },
-      { toolCalls: [{ toolCallId: `${id}-bash`, tool: "bash", args: { command: "verify" } }] },
-      { text: "verified", terminal: "done" },
-    ]),
-  }));
-  s.canonical.canonicalLoopEntry(current);
-  const terminal = await awaitTerminal(s.opStore.readOp, id);
-  expect(terminal.canonical?.state, JSON.stringify(s.canonical.readCanonicalEvents(id))).toBe("succeeded");
-}
-
 function allowSecurity() {
   return { evaluate: () => ({ allowed: true }) } as never;
 }
@@ -165,32 +136,48 @@ function memoryManager(): MemoryManager {
   } as unknown as MemoryManager;
 }
 
-describe.each(["assisted", "autonomous"] as const)("self-learning cross-seam (%s safety policy)", (rollbackMode) => {
+const PLAYBOOK = "## Steps\n1. Open Releases > Upload build.\n2. Verify the checksum.";
+
+async function proposeRelease(sessionId: string, timestamp: number, body = PLAYBOOK) {
+  const drafting = await import("../src/protocols/learned-review-drafting.js");
+  const result = drafting.proposeReviewedProcedure({
+    name: "vendor_portal_release",
+    description: "Release build files through the vendor portal",
+    triggers: ["vendor portal release"],
+    body,
+    outcome: "verified",
+    origin: "review",
+    learned: { kind: "external_string", detail: "Open Releases > Upload build." },
+    sessionId,
+    toolSequence: ["browser", "read", "write", "bash"],
+    timestamp,
+  });
+  if (!result.ok) throw new Error(result.message);
+  return result;
+}
+
+describe("self-learning cross-seam", () => {
   it("proves evidence through selection, enforcement, effectiveness, refinement, and rollback", async () => {
     const s = await system();
     const learner = s.learning.CrossSessionLearner.getInstance();
     const serviceModule = await import("../src/cognition/cross-session-learning/service.js");
     const service = new serviceModule.CrossSessionLearningService(learner);
     const base = Date.now();
+    const message = "release build files through the vendor portal";
 
-    for (let index = 0; index < 3; index++) {
-      await commitOrdinaryWorkflow(s, `ordinary-${rollbackMode}-${index}`, `ordinary-session-${index}`);
-    }
-    const pattern = learner.detectPatterns(3).find((entry) => entry.examples[0] === "read -> write -> bash")!;
-    expect(pattern, JSON.stringify(learner.detectPatterns(3))).toBeDefined();
-    expect(pattern.examples[0]).toBe("read -> write -> bash");
-    expect(pattern.outcomeStats).toMatchObject({ clean: 3, distinctSessions: 3, successRate: 1 });
-
-    const assisted = service.reconcile("assisted", base + 100);
+    await proposeRelease("review-session-a", base + 1);
+    const proposed = await proposeRelease("review-session-b", base + 2);
     const candidate = learner.getCandidates()[0];
-    expect(assisted).toMatchObject({ changed: true, signals: [{ category: "learning-candidate" }] });
-    expect(candidate.evidence.examples[0]).toBe("read -> write -> bash");
+    expect(candidate.id).toBe(proposed.candidateId);
+    expect(candidate.evidence.examples[0]).toBe("vendor_portal_release");
+    expect(service.reconcile(base + 3)).toEqual({ changed: false, signals: [] });
     expect(service.list()[0]).toMatchObject({ state: "candidate", activeVersionId: null, versionCount: 1 });
     const suggestionModule = await import("../src/protocols/learned-suggestion.js");
-    expect(suggestionModule.getLearnedProtocolSuggestion("read write bash release files")).toBeNull();
+    expect(suggestionModule.getLearnedProtocolSuggestion(message)).toBeNull();
     expect(s.protocols.getAllProtocols().some((entry) => entry.name === candidate.id)).toBe(false);
 
-    service.reconcile("autonomous", base + 101);
+    await proposeRelease("review-session-c", base + 4);
+    expect(service.reconcile(base + 5)).toMatchObject({ changed: true, signals: [{ category: "learning-activity" }] });
     const firstVersion = service.list()[0].activeVersionId!;
     expect(service.list()[0]).toMatchObject({ state: "active", versionCount: 1 });
     const firstRecord = s.lifecycle.loadLearnedProtocol(candidate.id);
@@ -198,12 +185,12 @@ describe.each(["assisted", "autonomous"] as const)("self-learning cross-seam (%s
 
     const build = await import("../src/agent-request/prepare-request/build-context.js");
     const strong = await build.buildContext({
-      message: "read write bash release files", sessionId: "context-one", sessionMessages: [],
+      message, sessionId: "context-one", sessionMessages: [],
       memoryManager: memoryManager(), isCodexProvider: false, isTrivialToolRequest: false,
       tier: "strong", resolvedModel: "test",
     });
     const weak = await build.buildContext({
-      message: "read write bash release files again", sessionId: "context-two", sessionMessages: [],
+      message: `${message} again`, sessionId: "context-two", sessionMessages: [],
       memoryManager: memoryManager(), isCodexProvider: false, isTrivialToolRequest: false,
       tier: "weak", resolvedModel: "test",
     });
@@ -222,14 +209,14 @@ describe.each(["assisted", "autonomous"] as const)("self-learning cross-seam (%s
     }
     expect(weak.contextBlock).toBe("");
 
-    const executionOp = op(`selected-main-${rollbackMode}`, "running");
+    const executionOp = op("selected-main", "running");
     s.opStore.writeOp(executionOp);
     const body = await selectProtocol(s, executionOp.id, candidate.id);
     const envelope = s.runtime.getLearnedProtocolEnvelopeForOp(executionOp.id)!;
     expect(body).toContain(`# Protocol: ${candidate.id}`);
     expect(envelope).toEqual({
       slug: candidate.id, versionId: firstVersion, candidateId: candidate.id,
-      allowedTools: ["read", "write", "bash"],
+      allowedTools: ["browser", "read", "write", "bash"],
     });
     expect(s.runtime.getLearnedProtocolEnvelopeForOp("forged-flat")).toBeNull();
     expect(s.runtime.getLearnedProtocolEnvelopeForOp("forged-nested")).toBeNull();
@@ -279,39 +266,41 @@ describe.each(["assisted", "autonomous"] as const)("self-learning cross-seam (%s
     ]);
 
     for (let index = 1; index < 5; index++) {
-      await selectedOutcome(s, candidate.id, `healthy-${rollbackMode}-${index}`, "clean", `healthy-session-${index}`);
+      await selectedOutcome(s, candidate.id, `healthy-${index}`, "clean", `healthy-session-${index}`);
     }
     expect(s.effectiveness.getVersionEffectiveness(candidate.id, firstVersion)).toMatchObject({
       total: 5, clean: 5, distinctSessions: 5, qualityScore: 1,
     });
 
-    for (let index = 3; index < 6; index++) {
-      await commitOrdinaryWorkflow(s, `stronger-${rollbackMode}-${index}`, `stronger-session-${index}`);
-    }
+    // Refinement: a later proposal with a new body adds a draft version beside
+    // the live one. Reconcile never promotes it; only the user does.
     vi.useFakeTimers();
     vi.setSystemTime(base + 8 * DAY);
-    service.reconcile("assisted", base + 8 * DAY);
+    const refined = await proposeRelease("review-session-d", base + 8 * DAY, `${PLAYBOOK}\n3. Save before closing the modal.`);
+    expect(refined).toMatchObject({ created: false, drafted: true });
+    expect(refined.notice).toMatchObject({ refinement: true, canReject: false, expectedActiveVersionId: firstVersion });
+    expect(service.reconcile(base + 8 * DAY)).toEqual({ changed: false, signals: [] });
     const drafted = service.list()[0];
     expect(drafted).toMatchObject({ activeVersionId: firstVersion, versionCount: 2, state: "active" });
-    const refinedRecord = s.lifecycle.loadLearnedProtocol(candidate.id);
-    const secondVersion = refinedRecord.versions.at(-1)!.id;
+    const secondVersion = refined.notice!.versionId;
+    expect(s.lifecycle.loadLearnedProtocol(candidate.id).versions.at(-1)!.id).toBe(secondVersion);
     expect(secondVersion).not.toBe(firstVersion);
     const firstDir = join(process.env.LAX_DATA_DIR!, "protocols", "learned", candidate.id, "versions", firstVersion);
     const immutableBefore = [readFileSync(join(firstDir, "SKILL.md"), "utf8"), readFileSync(join(firstDir, "meta.json"), "utf8")];
 
-    service.reconcile("autonomous", base + 8 * DAY + 1);
+    service.action(candidate.id, { action: "activate", versionId: secondVersion, expectedActiveVersionId: firstVersion }, base + 8 * DAY + 1);
     expect(service.list()[0].activeVersionId).toBe(secondVersion);
-    expect(service.reconcile(rollbackMode, base + 8 * DAY + 2)).toEqual({ signals: [], changed: false });
+    expect(service.reconcile(base + 8 * DAY + 2)).toEqual({ signals: [], changed: false });
     expect(service.list()[0].activeVersionId).toBe(secondVersion);
     vi.setSystemTime(base + 8 * DAY + 10);
-    const staleOp = op(`stale-${rollbackMode}`, "running");
+    const staleOp = op("stale", "running");
     s.opStore.writeOp(staleOp);
     await selectProtocol(s, staleOp.id, candidate.id);
     for (const [index, outcome] of (["aborted", "clean", "aborted"] as const).entries()) {
-      await selectedOutcome(s, candidate.id, `regression-${rollbackMode}-${index}`, outcome, `regression-session-${index}`);
+      await selectedOutcome(s, candidate.id, `regression-${index}`, outcome, `regression-session-${index}`);
     }
 
-    service.reconcile(rollbackMode, base + 8 * DAY + 20);
+    service.reconcile(base + 8 * DAY + 20);
     expect(service.list()[0]).toMatchObject({ state: "active", activeVersionId: firstVersion, versionCount: 2 });
     expect(s.lifecycle.loadLearnedProtocol(candidate.id).activationHistory?.at(-1)).toMatchObject({
       kind: "rollback", versionId: firstVersion, previousVersionId: secondVersion,
@@ -324,7 +313,7 @@ describe.each(["assisted", "autonomous"] as const)("self-learning cross-seam (%s
       }),
     )).toMatchObject({ kind: "halt" });
     expect([readFileSync(join(firstDir, "SKILL.md"), "utf8"), readFileSync(join(firstDir, "meta.json"), "utf8")]).toEqual(immutableBefore);
-    expect(service.reconcile(rollbackMode, base + 8 * DAY + 21)).toEqual({ signals: [], changed: false });
+    expect(service.reconcile(base + 8 * DAY + 21)).toEqual({ signals: [], changed: false });
   }, 60_000);
 });
 
@@ -335,6 +324,7 @@ describe("self-learning terminal integrity", () => {
       slug: `learned-${createHash("sha256").update("terminal-integrity").digest("hex").slice(0, 20)}`,
       skillMd: `---\nname: learned-${createHash("sha256").update("terminal-integrity").digest("hex").slice(0, 20)}\ndescription: terminal integrity release verification\nallowed-tools: [read]\n---\nVerify the release.\n`,
       metadata: { candidateId: `learned-${createHash("sha256").update("terminal-integrity").digest("hex").slice(0, 20)}`, allowedTools: ["read"], toolSequence: ["read"] },
+      admission: { kind: "user-catalog" },
     });
     s.lifecycle.activateLearnedProtocol({ slug: lifecycle.record.slug, versionId: lifecycle.version.id, expectedActiveVersionId: null });
 

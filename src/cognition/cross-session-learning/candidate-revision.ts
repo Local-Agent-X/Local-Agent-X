@@ -1,4 +1,5 @@
 import type { LearnedCandidate, LearnedCandidateState } from "./types.js";
+import { CANDIDATE_TRANSITIONS, hasCandidateEvidenceIdentity, MS_PER_DAY, REJECTION_COOLDOWN_DAYS } from "./types.js";
 
 export interface CandidateRevision {
   state: LearnedCandidateState;
@@ -13,12 +14,6 @@ export function transitionTimestampAtCommit(
 ): number {
   if (!observed || requestedAt < observed.updatedAt) return requestedAt;
   return Math.max(requestedAt, current.updatedAt);
-}
-
-export function sameCandidateRevision(candidate: LearnedCandidate, observed: CandidateRevision | undefined): boolean {
-  return !!observed && candidate.state === observed.state
-    && candidate.updatedAt === observed.updatedAt
-    && candidate.transitions.length === observed.transitionCount;
 }
 
 export function candidateProjectionPath(
@@ -37,4 +32,35 @@ export function candidateProjectionPath(
   if (from === "active") return ["rolled-back", "candidate"];
   if (from === "approved") throw new Error("Approved learned workflow requires activation recovery");
   return from === "candidate" ? [] : ["candidate"];
+}
+
+/** One legal state change, recorded in the candidate's transition history. */
+export function transitionCandidate(
+  candidate: LearnedCandidate,
+  to: LearnedCandidateState,
+  now = Date.now(),
+  reason?: string,
+): LearnedCandidate {
+  if (!hasCandidateEvidenceIdentity(candidate)) {
+    throw new Error("Learned candidate has mismatched evidence authority");
+  }
+  if (now < candidate.updatedAt) {
+    throw new Error(`Learned candidate transition predates current state: ${candidate.id}`);
+  }
+  if (!CANDIDATE_TRANSITIONS[candidate.state].includes(to)) {
+    throw new Error(`Invalid learned candidate transition: ${candidate.state} -> ${to}`);
+  }
+  const { rejectionCooldownUntil: _cooldown, ...base } = candidate;
+  return {
+    ...base,
+    state: to,
+    updatedAt: now,
+    ...(to === "rejected"
+      ? { rejectionCooldownUntil: now + REJECTION_COOLDOWN_DAYS * MS_PER_DAY }
+      : {}),
+    transitions: [
+      ...candidate.transitions,
+      { from: candidate.state, to, timestamp: now, ...(reason ? { reason } : {}) },
+    ],
+  };
 }

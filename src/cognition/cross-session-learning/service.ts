@@ -16,8 +16,6 @@ import {
 } from "../../protocols/learned-effectiveness.js";
 import {
   hasIndependentReviewedEvidence,
-  isSafeRefinementVersion,
-  isStrongerRefinement,
   selectSafetyRecovery,
 } from "../../protocols/learned-refinement.js";
 import { CrossSessionLearner, LearningPersistenceUnavailableError } from "./learner.js";
@@ -96,38 +94,20 @@ export class CrossSessionLearningService {
     return this.detail(id)!;
   }
 
-  reconcile(mode: "assisted" | "autonomous", now = Date.now()): LearningReconcileResult {
+  /** Keeps the lifecycle record and the candidate projection agreeing, runs
+   *  the probation monitor on active versions, resumes an approval a crash
+   *  interrupted, and activates a reviewed procedure on independent evidence.
+   *  It never drafts: a draft enters only through createLearnedProtocolDraft's
+   *  admission rule, and a candidate whose record is missing stays without one. */
+  reconcile(now = Date.now()): LearningReconcileResult {
     this.learner.refresh();
     let changed = false;
     const signals: ModuleSignal[] = [];
-    const signaledIds = new Set<string>();
-    const safetyRecoveredIds = new Set<string>();
 
     for (let candidate of this.learner.getCandidates()) {
       let record = this.recordFor(candidate.id);
-      const reviewed = isReviewedProcedureCandidate(candidate);
-      if (["rejected", "rolled-back"].includes(candidate.state) && record?.state !== "active") continue;
-      if (!record && reviewed) continue;
-      if (!record) {
-        const rebuilt = this.learner.draftCandidate(candidate.id);
-        record = loadLearnedProtocol(rebuilt.slug);
-        changed = rebuilt.created || changed;
-        if (candidate.state === "archived") {
-          record = activateLearnedProtocol({
-            slug: candidate.id,
-            versionId: rebuilt.version.id,
-            expectedActiveVersionId: null,
-            reason: "Reconstructed archived learned workflow",
-            timestamp: now,
-          });
-          record = archiveLearnedProtocol({
-            slug: candidate.id,
-            expectedActiveVersionId: record.activeVersionId,
-            reason: "Preserved archived learned workflow",
-            timestamp: now,
-          });
-        }
-      }
+      if (!record) continue;
+      if (["rejected", "rolled-back"].includes(candidate.state) && record.state !== "active") continue;
       if (record.state === "active") {
         const recovery = this.safetyRecovery(record);
         if (recovery?.kind === "rollback") {
@@ -141,7 +121,6 @@ export class CrossSessionLearningService {
           });
           changed = this.projectState(candidate.id, record, now, recovery.reason) || changed;
           changed = true;
-          safetyRecoveredIds.add(candidate.id);
           candidate = this.requireCandidate(candidate.id);
         } else if (recovery?.kind === "archive") {
           record = archiveLearnedProtocol({
@@ -153,7 +132,6 @@ export class CrossSessionLearningService {
           });
           changed = this.projectState(candidate.id, record, now, recovery.reason) || changed;
           changed = true;
-          safetyRecoveredIds.add(candidate.id);
           continue;
         }
       }
@@ -168,85 +146,22 @@ export class CrossSessionLearningService {
         changed = true;
       }
       changed = this.projectState(candidate.id, record, now, "Recovered cross-store state") || changed;
-      if (reviewed) {
-        if (record.state === "draft" && candidate.state === "candidate" && hasIndependentReviewedEvidence(candidate)
-          && this.hasToolEvidence(record, this.newestVersion(record).id)) {
-          record = activateLearnedProtocol({
-            slug: candidate.id,
-            versionId: this.newestVersion(record).id,
-            expectedActiveVersionId: record.activeVersionId,
-            reason: "Activated on independent evidence",
-            timestamp: now,
-          });
-          changed = this.projectState(candidate.id, record, now, "Activated on independent evidence") || changed;
-          signals.push(formatLearningCandidateNudge(this.requireCandidate(candidate.id), "autonomous"));
-          changed = true;
-        }
-        continue;
-      }
-      if (mode === "autonomous" && record.state === "active" && !safetyRecoveredIds.has(candidate.id)) {
-        const target = this.newestVersion(record);
-        const activeVersionId = record.activeVersionId;
-        const current = record.versions.find((version) => version.id === activeVersionId);
-        if (
-          current
-          && target.id !== current.id
-          && isSafeRefinementVersion(current, target, candidate.id)
-          && !this.wasSafetyRejected(record, target.id)
-        ) {
-          record = activateLearnedProtocol({
-            slug: candidate.id,
-            versionId: target.id,
-            expectedActiveVersionId: record.activeVersionId,
-            reason: "Activated stronger refinement automatically",
-            timestamp: now,
-          });
-          changed = this.projectState(candidate.id, record, now, "Activated automatically") || changed;
-          signals.push(formatLearningCandidateNudge(this.requireCandidate(candidate.id), "autonomous"));
-          signaledIds.add(candidate.id);
-          changed = true;
-        }
-      }
-      if (mode === "autonomous" && record.state === "draft") {
-        const active = activateLearnedProtocol({
+      if (
+        isReviewedProcedureCandidate(candidate)
+        && record.state === "draft" && candidate.state === "candidate" && hasIndependentReviewedEvidence(candidate)
+        && this.hasToolEvidence(record, this.newestVersion(record).id)
+      ) {
+        record = activateLearnedProtocol({
           slug: candidate.id,
           versionId: this.newestVersion(record).id,
           expectedActiveVersionId: record.activeVersionId,
-          reason: "Activated automatically",
+          reason: "Activated on independent evidence",
           timestamp: now,
         });
-        changed = this.projectState(candidate.id, active, now, "Activated automatically") || changed;
+        changed = this.projectState(candidate.id, record, now, "Activated on independent evidence") || changed;
         signals.push(formatLearningCandidateNudge(this.requireCandidate(candidate.id), "autonomous"));
-        signaledIds.add(candidate.id);
         changed = true;
       }
-    }
-
-    const opportunity = this.learner.nextLearningOpportunity(now);
-    if (!opportunity) return { signals, changed };
-    const candidate = opportunity.candidate;
-    if (safetyRecoveredIds.has(candidate.id)) return { signals, changed };
-    const existing = this.recordFor(candidate.id);
-    if (existing && existing.versions.length > 0 && !isStrongerRefinement(opportunity.draftCandidate, this.newestVersion(existing))) {
-      return { signals, changed };
-    }
-    const drafted = this.learner.draftCandidate(candidate.id, opportunity.draftCandidate);
-    changed = drafted.created || changed;
-    if (mode === "autonomous") {
-      const before = loadLearnedProtocol(drafted.slug);
-      if (before.activeVersionId !== drafted.version.id && !this.wasSafetyRejected(before, drafted.version.id)) {
-        const active = activateLearnedProtocol({
-          slug: drafted.slug,
-          versionId: drafted.version.id,
-          expectedActiveVersionId: before.activeVersionId,
-          reason: before.activeVersionId ? "Activated stronger refinement automatically" : "Activated automatically",
-          timestamp: now,
-        });
-        changed = this.projectState(candidate.id, active, now, "Activated automatically") || changed;
-      }
-    }
-    if (!signaledIds.has(candidate.id)) {
-      signals.push(formatLearningCandidateNudge(this.requireCandidate(candidate.id), mode));
     }
     return { signals, changed };
   }
@@ -322,16 +237,6 @@ export class CrossSessionLearningService {
   private hasToolEvidence(record: LearnedProtocolRecord, versionId: string): boolean {
     const tools = record.versions.find((version) => version.id === versionId)?.metadata.allowedTools;
     return Array.isArray(tools) && tools.length > 0;
-  }
-
-  /** A version the probation monitor rolled back is never auto-activated again.
-   *  Read off the entry's `cause`; entries written before the field existed
-   *  (2026-10-17) carry only the monitor's wording, read here and nowhere else. */
-  private wasSafetyRejected(record: LearnedProtocolRecord, versionId: string): boolean {
-    return (record.activationHistory ?? []).some((entry) =>
-      entry.kind === "rollback"
-      && entry.previousVersionId === versionId
-      && (entry.cause === "safety" || (entry.cause === undefined && entry.reason.startsWith("Safety rollback:"))));
   }
 
 }

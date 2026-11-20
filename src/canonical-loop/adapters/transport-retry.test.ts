@@ -6,7 +6,7 @@ type Ev =
   | { type: "text"; delta: string }
   | { type: "tool_call"; id: string; name: string; arguments: string }
   | { type: "done" }
-  | { type: "error"; code: string; message: string; retryable?: boolean };
+  | { type: "error"; code: string; message: string; retryable?: boolean; statusCode?: number };
 
 /**
  * Build a stream factory that returns the i-th scripted episode on the i-th
@@ -46,6 +46,16 @@ describe("withTransportRetry", () => {
     expect(out).toEqual([{ type: "text", delta: "hello" }, { type: "done" }]);
     // The first attempt's error event is swallowed — never forwarded.
     expect(out.some(e => e.type === "error")).toBe(false);
+  });
+
+  it("reads the status a transport attached, not only the wording", async () => {
+    const { factory, calls } = scripted([
+      [{ type: "error", code: "transport_error", message: "the runner stopped", statusCode: 503 }],
+      [{ type: "text", delta: "ok" }, { type: "done" }],
+    ]);
+    const out = await collect(withTransportRetry(factory, { label: "t", delay: noDelay }));
+    expect(calls()).toBe(2);
+    expect(out).toEqual([{ type: "text", delta: "ok" }, { type: "done" }]);
   });
 
   it("retries a 429 rate-limit error", async () => {

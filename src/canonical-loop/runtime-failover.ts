@@ -17,6 +17,7 @@ import type { ExactDelegatedRuntimeDescriptor, Op } from "../ops/types.js";
 import { PROVIDER_IDS, type ProviderId } from "../providers/provider-ids.js";
 import { PROVIDERS } from "../providers/registry.js";
 import { getSetting } from "../settings.js";
+import { classify, type ErrorCategory } from "../resilience-policy.js";
 import { hasAmbiguousSideEffects } from "../tool-execution/side-effect-journal.js";
 import { resolveProviderRuntime } from "./provider-adapter-factory.js";
 import { targetMeetsRequirements } from "./target-requirements.js";
@@ -75,17 +76,35 @@ export function failoverPolicyAllows(input: {
     && !input.ambiguousSideEffect;
 }
 
+/** A failure the op's own controls raised: never a reason to try another target. */
+const NOT_A_RUNTIME_FAILURE = /\b(approval|policy|security|verification|cancel\w*|abort\w*)\b/;
+/** What classify() has no category for. */
+const FAILOVER_ONLY_SIGNALS: ReadonlyArray<[string, RegExp]> = [
+  ["billing", /\b(402|billing|payment|credit.*exhausted)\b/],
+  ["model_not_found", /\b(404|model not found|invalid model|unknown model)\b/],
+  ["timeout", /\bruntime reconstruction unavailable\b/],
+];
+const SERVER_ERROR = /\b(500|502|server error|internal server error|bad gateway|upstream error)\b/;
+const FAILOVER_BY_CATEGORY: Partial<Record<ErrorCategory, string>> = {
+  rateLimit: "rate_limit", auth: "auth", timeout: "timeout", network: "timeout",
+};
+
+/**
+ * The failover category of a runtime failure, read through classify() in
+ * resilience-policy.ts, the one owner of what kind of failure this is. Only
+ * what that has no category for is matched here. Its own regex used to
+ * disagree: `content_filter` could never match once underscores became
+ * spaces, a plain quota error did not fail over, and any "capacity" did.
+ */
 export function normalizeRuntimeFailure(code: string, message = ""): string | null {
-  const haystack = `${code} ${message}`.toLowerCase().replace(/[_-]+/g, " ");
-  if (/\b(approval|policy|security|verification|content_filter|cancel|abort)\b/.test(haystack)) return null;
-  if (/\b(401|403|unauthorized|forbidden|authentication|invalid api key|expired token)\b/.test(haystack)) return "auth";
-  if (/\b(402|billing|payment|credit.*exhausted)\b/.test(haystack)) return "billing";
-  if (/\b(404|model[_ -]?not[_ -]?found|invalid model|unknown model)\b/.test(haystack)) return "model_not_found";
-  if (/\b(429|rate[_ -]?limit|too many requests|quota.*throttl)\b/.test(haystack)) return "rate_limit";
-  if (/\b(503|529|overloaded|service unavailable|capacity)\b/.test(haystack)) return "overloaded";
-  if (/\b(500|502|server[_ -]?error|internal server error|bad gateway|upstream error)\b/.test(haystack)) return "server_error";
-  if (/\b(timeout|timed out|econnreset|econnrefused|etimedout|socket hang up|runtime reconstruction unavailable)\b/.test(haystack)) return "timeout";
-  return null;
+  const text = `${code} ${message}`;
+  const words = text.toLowerCase().replace(/[_-]+/g, " ");
+  if (NOT_A_RUNTIME_FAILURE.test(words)) return null;
+  for (const [failure, signal] of FAILOVER_ONLY_SIGNALS) if (signal.test(words)) return failure;
+  const status = Number(/^(?:http[_ ]?)?([1-5]\d\d)\b/i.exec(code)?.[1]) || undefined;
+  const category = classify({ message: text, ...(status ? { statusCode: status } : {}) });
+  if (category === "overload") return SERVER_ERROR.test(words) ? "server_error" : "overloaded";
+  return FAILOVER_BY_CATEGORY[category] ?? null;
 }
 
 export function candidateWithinBudget(

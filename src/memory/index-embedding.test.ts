@@ -158,6 +158,26 @@ describe("nullDimensionMismatchedEmbeddings (self-heal)", () => {
     expect(embeddingOf(orphan)).toHaveLength(8);
     expect(countChunksMissingEmbedding(db, fakeProvider("fake", "m1", 4))).toBe(0);
   });
+  it("tries a rejected key once, and still retries a failure it does not recognise", async () => {
+    const db = memory["db"];
+    insertChunk("needs a vector", null);
+    const cfg = { ...DEFAULT_MEMORY_CONFIG, retryMaxAttempts: 4, retryBaseDelayMs: 1, retryMaxDelayMs: 1 };
+    const failing = (message: string) => {
+      let calls = 0;
+      const provider: EmbeddingProvider = {
+        name: "fake", model: "m1", dimensions: 4,
+        embed: async () => { throw new Error(message); },
+        embedBatch: async () => { calls++; throw new Error(message); },
+      };
+      return { provider, calls: () => calls };
+    };
+    const rejected = failing("OpenAI embeddings HTTP 401: invalid api key");
+    await reembedMissingChunks(db, rejected.provider, cfg, false);
+    expect(rejected.calls()).toBe(1);
+    const odd = failing("embedder went away");
+    await reembedMissingChunks(db, odd.provider, cfg, false);
+    expect(odd.calls()).toBe(4);
+  });
 });
 
 // Degraded-mode poison (live: Peter's Windows box, 2026-07): while Ollama was

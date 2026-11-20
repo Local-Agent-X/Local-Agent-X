@@ -48,6 +48,13 @@ interface ErrorLike {
   message?: string;
   code?: string;
   retryable?: boolean;
+  /** The HTTP status, when the transport attached it (ollama-native.ts). */
+  statusCode?: number;
+}
+
+/** The event as classify() reads it: its status first, then its wording. */
+function asClassifiable(ev: ErrorLike): { message: string; statusCode?: number } {
+  return { message: ev.message ?? ev.code ?? "", ...(typeof ev.statusCode === "number" ? { statusCode: ev.statusCode } : {}) };
 }
 
 export interface TransportRetryOpts {
@@ -68,7 +75,7 @@ export interface TransportRetryOpts {
  */
 function errorEventIsRetryable(ev: ErrorLike): boolean {
   if (ev.retryable === true) return true;
-  return isRetryable(ev.message ?? ev.code ?? "");
+  return isRetryable(asClassifiable(ev));
 }
 
 function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
@@ -115,7 +122,7 @@ export async function* withTransportRetry<T extends { type: string }>(
             !emittedContent && attempt < MAX_TRANSPORT_ATTEMPTS && !aborted() && errorEventIsRetryable(e);
           if (canRetry) {
             retry = {
-              category: classify(e.message ?? e.code ?? ""),
+              category: classify(asClassifiable(e)),
               reason: e.message ?? e.code ?? "error",
             };
             break; // abandon this stream (incl. its trailing `done`) and retry

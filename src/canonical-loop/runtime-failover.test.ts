@@ -44,6 +44,10 @@ describe("runtime failover failure taxonomy", () => {
     ["http_404", "unknown model", "model_not_found"],
     ["http_401", "expired token", "auth"],
     ["http_402", "billing exhausted", "billing"],
+    ["http_500", "", "server_error"],
+    ["transport_exception", "getaddrinfo ENOTFOUND api.example.com", "timeout"],
+    ["provider_error", "insufficient_quota: you exceeded your current quota", "rate_limit"],
+    ["provider_error", "the service is at capacity", "overloaded"],
   ])("normalizes %s", (code, message, expected) => {
     expect(normalizeRuntimeFailure(code, message)).toBe(expected);
   });
@@ -54,6 +58,8 @@ describe("runtime failover failure taxonomy", () => {
     ["security_block", "policy denied"],
     ["verification_failed", "tests failed"],
     ["aborted", "cancelled"],
+    ["provider_error", "content_filter: the response was blocked"],
+    ["provider_error", "capacity planning doc not found in the index"],
   ])("fails closed for %s", (code, message) => {
     expect(normalizeRuntimeFailure(code, message)).toBeNull();
   });

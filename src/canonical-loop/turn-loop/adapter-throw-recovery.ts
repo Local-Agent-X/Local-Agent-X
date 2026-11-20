@@ -82,9 +82,19 @@ export function recoverAdapterThrow(op: Op, e: unknown, turnIdx: number): DriveT
   // Over-window errors get the compaction recovery, not the resume-nudge: the
   // nudge ADDS tokens to a context the provider just rejected as too big, so
   // the generic path can never succeed for this class.
-  if (classify(e) === "contextOverflow") {
+  const category = classify(e);
+  if (category === "contextOverflow") {
     const recovered = recoverContextOverflow(op, message, turnIdx);
     if (recovered) return recovered;
+  }
+  // A rejected credential or a content filter answers the same way every
+  // time: retrying spends two more calls and tells the model the error was
+  // transient. The op fails now, with the reason.
+  if (category === "auth" || category === "contentFilter") {
+    adapterThrowStreaks.delete(op.id);
+    emit(op.id, "error", { code: "adapter_error_permanent", message: `The model provider refused the request (${category === "auth" ? "credentials" : "content filter"}): ${message}`, retryable: false });
+    transitionOp(op, "failed", "adapter_error_permanent", { learnedOutcome: "aborted" });
+    return { terminalReason: "error", toolCount: 0, messageCount: 0, cancelled: false };
   }
   const streak = (adapterThrowStreaks.get(op.id) ?? 0) + 1;
   if (streak <= ADAPTER_ERROR_CAP) {

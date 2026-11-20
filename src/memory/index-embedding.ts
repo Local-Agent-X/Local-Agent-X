@@ -6,6 +6,7 @@ import { yieldEventLoop } from "./index-embedding-reconcile.js";
 import { embeddableChunksWhere } from "./embedding-reach.js";
 
 import { createLogger } from "../logger.js";
+import { classify, isRetryable } from "../resilience-policy.js";
 const logger = createLogger("memory.index-embedding");
 
 // Provider signature reconciliation + vector-table lifecycle live in their
@@ -103,6 +104,10 @@ async function embedWithRetry(
       logger.warn(
         `[memory] Embedding attempt ${attempt}/${retryMaxAttempts} failed: ${msg}`
       );
+      // A failure resilience-policy.ts knows is not transient (a rejected
+      // key, a missing model, an oversized batch) answers the same each time.
+      // An unrecognised one may be a local embedder restarting, so it retries.
+      if (!isRetryable(e) && classify(e) !== "unknown") break;
 
       if (attempt < retryMaxAttempts) {
         const delay = Math.min(

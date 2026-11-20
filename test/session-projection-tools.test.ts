@@ -145,3 +145,42 @@ describe("projectSessionForUI — when each message was said", () => {
     expect(out[0]._at).toBeUndefined();
   });
 });
+
+// The "Continue in Code mode" button was drawn only by the live code_handoff
+// event, so a reloaded chat lost it and the only way into Code mode left was
+// a fork of the whole chat with no brief and no project (2026-11-20).
+describe("projectSessionForUI — a code_handoff offer survives a reload", () => {
+  const handoffResult = (id: string, status: string, metadata?: Record<string, unknown>) =>
+    ({ role: "tool", tool_call_id: id, content: "Offered", _status: status, ...(metadata ? { _metadata: metadata } : {}) }) as never;
+  type WithNotices = UIAssistant & { _notices?: unknown[] };
+
+  it("rebuilds the notice from the result's handoff metadata", () => {
+    const out = projectSessionForUI(sess([
+      user("move it to code mode"),
+      asstCall("h1", "code_handoff", { folder: "C:/repo", brief: "C:/repo/docs/handoff/x.md" }),
+      handoffResult("h1", "ok", { handoff: { folder: "C:/repo", brief: "docs/handoff/x.md" } }),
+      asstText("There's a button under this reply."),
+    ])).messages as WithNotices[];
+    expect(out[1]._notices).toEqual([{ id: "ch-h1", kind: "handoff", folder: "C:/repo", brief: "docs/handoff/x.md", status: "offered" }]);
+  });
+
+  it("falls back to the call's own paths for a row recorded before the metadata", () => {
+    const out = projectSessionForUI(sess([
+      user("move it"),
+      asstCall("h2", "code_handoff", { folder: "C:/repo", brief: "C:/repo/docs/handoff/y.md" }),
+      handoffResult("h2", "ok"),
+    ])).messages as WithNotices[];
+    expect(out[1]._notices).toEqual([{ id: "ch-h2", kind: "handoff", folder: "C:/repo", brief: "C:/repo/docs/handoff/y.md", status: "offered" }]);
+  });
+
+  it("offers nothing for a refused handoff or another tool", () => {
+    const out = projectSessionForUI(sess([
+      user("move it"),
+      asstCall("h3", "code_handoff", { folder: "C:/repo", brief: "../outside.md" }),
+      handoffResult("h3", "error"),
+      asstCall("r1", "read", { folder: "C:/repo", brief: "x" }),
+      toolResult("r1", "ok"),
+    ])).messages as WithNotices[];
+    expect(out[1]._notices).toBeUndefined();
+  });
+});

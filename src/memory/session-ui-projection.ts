@@ -54,6 +54,22 @@ function saidAt(message: object): number | undefined {
   return Number.isFinite(at) ? at : undefined;
 }
 
+type HandoffNotice = { id: string; kind: "handoff"; folder: string; brief: string; status: "offered" };
+
+/**
+ * The "Continue in Code mode" notice a code_handoff call put on its turn. Live,
+ * the code_handoff event draws it; that event lives only in the open tab, so
+ * a reloaded chat lost the button and the only way left into Code mode forked
+ * the whole chat with no brief and no project (2026-11-20). The offer is in
+ * the result's metadata; a row recorded before that carries it in its args.
+ */
+function handoffNoticeOf(callId: string, name: string, args: Record<string, unknown>, status: ToolResultStatus, metadata: Record<string, unknown> | undefined): HandoffNotice | null {
+  if (name !== "code_handoff" || status !== "ok") return null;
+  const h = (metadata?.handoff ?? args) as { folder?: unknown; brief?: unknown };
+  if (typeof h.folder !== "string" || typeof h.brief !== "string" || !h.folder || !h.brief) return null;
+  return { id: `ch-${callId}`, kind: "handoff", folder: h.folder, brief: h.brief, status: "offered" };
+}
+
 /**
  * UI projection of a Session. Same model state, different shape: drops
  * `tool` rows, replaces `tool_calls` on assistants with a synthetic
@@ -90,7 +106,7 @@ export function projectSessionForUI(session: Session): Session {
   }
 
   type ToolEvent = { type: "start" | "end"; name: string; args?: Record<string, unknown>; result?: string; allowed?: boolean; status?: ToolResultStatus; metadata?: Record<string, unknown>; media?: ToolEndMedia };
-  type UIAssistant = ChatCompletionMessageParam & { _tools?: ToolEvent[]; _at?: number };
+  type UIAssistant = ChatCompletionMessageParam & { _tools?: ToolEvent[]; _notices?: HandoffNotice[]; _at?: number };
 
   const messages: ChatCompletionMessageParam[] = [];
   // One assistant bubble per turn — the SAME shape the live UI persists
@@ -104,16 +120,19 @@ export function projectSessionForUI(session: Session): Session {
   // whole turn and emit exactly one consolidated bubble at the turn boundary.
   let pendingTools: ToolEvent[] = [];
   let pendingText: string[] = [];
+  let pendingNotices: HandoffNotice[] = [];
   // The bubble is dated by the turn's first assistant row: when the reply began.
   let pendingAt: number | undefined;
   const flushTurn = () => {
     if (pendingTools.length === 0 && pendingText.length === 0) return;
     const out: UIAssistant = { role: "assistant", content: pendingText.join("\n\n") };
     if (pendingTools.length > 0) out._tools = pendingTools;
+    if (pendingNotices.length > 0) out._notices = pendingNotices;
     if (pendingAt !== undefined) out._at = pendingAt;
     messages.push(out);
     pendingTools = [];
     pendingText = [];
+    pendingNotices = [];
     pendingAt = undefined;
   };
 
@@ -143,6 +162,8 @@ export function projectSessionForUI(session: Session): Session {
           pendingTools.push({ type: "start", name, args });
           const { content: result, status, metadata, media } = toolResults.get(tc.id) ?? { content: "", status: "ok" as const };
           pendingTools.push({ type: "end", name, allowed: true, result: uiToolResultText(result), status, ...(metadata ? { metadata } : {}), ...(media ? { media } : {}) });
+          const handoff = handoffNoticeOf(tc.id, name, args, status, metadata);
+          if (handoff) pendingNotices.push(handoff);
         }
       }
       const text = typeof m.content === "string" ? m.content : "";

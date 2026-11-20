@@ -25,6 +25,8 @@ describe("code_handoff", () => {
     const r = await codeHandoffTool.execute({ folder: repo, brief: join(repo, "docs", "handoff", "planner.md"), _onEvent: (e: ServerEvent) => events.push(e), _toolCallId: "tc-9" });
     expect(r.isError).toBeFalsy();
     expect(events).toEqual([{ type: "code_handoff", toolCallId: "tc-9", folder: repo, brief: "docs/handoff/planner.md" }]);
+    // Kept on the result, so a reloaded chat can still show the offer.
+    expect(r.metadata).toEqual({ handoff: { folder: repo, brief: "docs/handoff/planner.md" } });
   }));
 
   it("refuses a brief outside the repo, a missing brief and a folder that is not one, and offers nothing", withRepo(async (repo) => {

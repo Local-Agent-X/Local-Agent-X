@@ -48,10 +48,14 @@ export const codeHandoffTool: ToolDefinition = {
     if (rel.startsWith("..") || isAbsolute(rel) || !isFile(brief)) {
       return err(`${brief} is not a file inside ${folder}. Write the brief inside the repo first (e.g. docs/handoff/), then offer it.`);
     }
-    onEventOf(args)?.({ type: "code_handoff", toolCallId: toolCallIdOf(args) ?? "", folder, brief: rel.replace(/\\/g, "/") });
+    const handoff = { folder, brief: rel.replace(/\\/g, "/") };
+    onEventOf(args)?.({ type: "code_handoff", toolCallId: toolCallIdOf(args) ?? "", ...handoff });
+    // The result keeps the offer too: the event lives only in the open tab, and
+    // a reloaded chat rebuilds the button from this (session-ui-projection.ts).
     return ok(
       `Offered: a "Continue in Code mode" button is under your reply; it opens a code session on ${folder} starting from ${rel}. ` +
       "Say in a line why Code mode suits this work. The user decides; if they keep going here, keep going here.",
+      { handoff },
     );
   },
 };

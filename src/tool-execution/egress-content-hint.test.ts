@@ -114,7 +114,9 @@ describe("egress-guard refusals send a trusted destination to the user, never to
     try {
       const blocker = probeEgressGuard(makeCtx("http_request", { url: EXFIL_URL, method: "POST", body: "ssn 123-45-6789" }, "sess-route-ssn"));
       expect(blocker?.meta?.blocked_by).toBe("data-egress-guard");
-      expect(blocker?.reason).toContain(`ask the user to allow the host in ${WEB_ACCESS}`);
+      // A pattern match: the reason is the card's question, naming the setting.
+      expect(blocker?.confirmable).toBe(true);
+      expect(blocker?.reason).toContain(`allow it in ${WEB_ACCESS}`);
       noFileRoute(blocker?.reason);
     } finally {
       if (saved === undefined) delete process.env.LAX_DATA_EGRESS_GUARD;

@@ -97,7 +97,10 @@ describe("the outbound scans cover every argument of every egress tool", () => {
 
 describe("egressPayload", () => {
   it("scans a process_restart command (the argument the per-tool list never read)", () => {
-    expect(egressGuardGate(makeCtx("process_restart", { command: `deploy --key=${SECRET}` }, "egress-payload-restart")).kind).toBe("halt");
+    // Scanned: the key shape puts the call to the user rather than passing silently.
+    const flagged = makeCtx("process_restart", { command: `deploy --key=${SECRET}` }, "egress-payload-restart");
+    expect(egressGuardGate(flagged).kind).toBe("continue");
+    expect(flagged.policyApprovalReason).toMatch(/^This process_restart call has/);
     expect(egressGuardGate(makeCtx("process_restart", { command: "npm run dev", port: 3000 }, "egress-payload-restart")).kind).toBe("continue");
   });
 

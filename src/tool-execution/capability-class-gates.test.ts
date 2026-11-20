@@ -228,9 +228,12 @@ describe("computer (key_type) is egress — typed text gated, mouse actions exem
     expect(hasCapability("computer", "egress")).toBe(true);
   });
 
-  it("egressGuardGate blocks a secret typed via action:type, but is a no-op for a mouse move", () => {
+  it("egressGuardGate scans text typed via action:type, but is a no-op for a mouse move", () => {
     const sid = "cap-class-computer-secret";
-    expect(egressGuardGate(makeCtx("computer", { action: "type", text: `pw=${SECRET}` }, sid)).kind).toBe("halt");
+    // A key shape typed anywhere is put to the user (a guess, ADR 0004).
+    const typed = makeCtx("computer", { action: "type", text: `pw=${SECRET}` }, sid);
+    expect(egressGuardGate(typed).kind).toBe("continue");
+    expect(typed.policyApprovalReason).toMatch(/^This computer call has/);
     expect(egressGuardGate(makeCtx("computer", { action: "move", x: 100, y: 200 }, sid)).kind).toBe("continue");
     expect(egressGuardGate(makeCtx("computer", { action: "type", text: "hello world" }, sid)).kind).toBe("continue");
   });

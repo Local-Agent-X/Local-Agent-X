@@ -5,7 +5,7 @@ import { resolveAgentPath, sessionIdOf } from "../workspace/paths.js";
 import { moveToTrash, moveToTaskTrash } from "../safe-delete.js";
 import { isTaskArtifact, unrecordTaskArtifact } from "../data-lineage/task-artifacts.js";
 import { readValidatedFile, writeValidatedFile, FileAccessDeniedError } from "../security/layer/index.js";
-import { scanForSecrets } from "../security/secrets/index.js";
+import { knownSecretValues, registeredOnlyAsSeen, scanForSecrets, secretMatchPhrase } from "../security/secrets/index.js";
 import type { ToolDefinition } from "../types.js";
 import { detectInjection, injectionFinding } from "../sanitize.js";
 import { ok, err, blocked } from "./result-helpers.js";
@@ -38,21 +38,47 @@ export function isScreenExemptAgentCode(filePath: string): boolean {
 }
 
 /**
- * A file the model writes must not carry a credential: the secrets vault holds
- * those. The judgement is the canonical scanner's (security/secrets), the same
- * catalog that gates egress and taints reads. The write tool used to keep its
- * own six regexes, one of which matched any 22-letter run around "sk", "pk",
- * "key" or "auth": it refused a Python file of protein sequences twice
- * (Terminal-Bench protein-assembly, 2026-10-29) and missed an OpenAI key and
- * a password assignment the catalog catches.
+ * A file the model writes should not carry a credential: the secrets vault
+ * holds those. The judgement is the canonical scanner's (security/secrets), the
+ * same catalog that gates egress and taints reads. The write tool used to keep
+ * its own six regexes, one of which matched any 22-letter run around "sk",
+ * "pk", "key" or "auth": it refused a Python file of protein sequences twice
+ * (Terminal-Bench protein-assembly, 2026-10-29).
  *
+ * Saving a file sends nothing off the machine, and a shape is a guess: the
+ * scanner read a TV remote's `PAIRING_REQ_TOKEN: pairing.token` as a key and
+ * refused it with no way for the user to say yes (2026-11-20). So a guess is
+ * put to the user (secretInContentQuestion); only a value from the user's
+ * vault, found byte for byte, is refused. A value the output masker hid only
+ * because it looked secret is registered too, but is a guess like any other.
  * CSS and SVG are not scanned: a data URI there is image bytes, not a token.
  */
-export function secretInContentRejection(filePath: string, content: string): string | null {
+function isScannedFile(filePath: string): boolean {
   const ext = filePath.split(".").pop()?.toLowerCase() || "";
-  if (ext === "css" || ext === "svg") return null;
-  if (scanForSecrets(content).clean) return null;
-  return "BLOCKED: Content appears to contain a secret/credential. Secrets must never be written to workspace files. Use the secrets vault instead.";
+  return ext !== "css" && ext !== "svg";
+}
+
+function holdsVaultSecret(content: string): boolean {
+  return knownSecretValues().some((v) => !registeredOnlyAsSeen(v) && content.includes(v));
+}
+
+export function secretInContentRejection(filePath: string, content: string): string | null {
+  if (!isScannedFile(filePath) || !holdsVaultSecret(content)) return null;
+  return "BLOCKED: The content contains one of the user's stored secrets. Stored secrets stay in the vault: " +
+    "reference one by name ({{SECRET_NAME}} in http_request, secret_env in the shell), never by value in a file.";
+}
+
+/** The card for a guess: what looked like a key, on which line, and what
+ *  approving does. Null when there is nothing to ask, or when the write is
+ *  refused anyway (secretInContentRejection). */
+export function secretInContentQuestion(filePath: string, content: string): string | null {
+  if (!isScannedFile(filePath) || holdsVaultSecret(content)) return null;
+  const matches = scanForSecrets(content).matches;
+  if (matches.length === 0) return null;
+  const line = content.slice(0, matches[0].startIndex).split("\n").length;
+  return `Saving ${cardFileName(filePath)} would put ${secretMatchPhrase(content, matches[0], `on line ${line}`)} into the file, ` +
+    "which could be a password or access key. Nothing leaves this computer by saving it. " +
+    "Approve if it isn't a secret; a real one belongs in Settings → Secrets.";
 }
 
 export const readTool: ToolDefinition = {
@@ -218,6 +244,7 @@ export const writeTool: ToolDefinition = {
   effect: { class: "idempotent-mutation" },
   description: "Write file contents. PREFER THIS over `bash` heredoc (cat <<EOF > file) for any file creation or full rewrite — write has no length limit, bash commands are capped at 2000 chars and will be rejected. Creates the file and parent directories if they don't exist.",
   describeCall: (args) => `Create file: ${cardFileName(args.path)} (${String(args.content || "").length} chars)`,
+  confirmWithUser: (args) => secretInContentQuestion(String(args.path ?? ""), String(args.content ?? "")),
   parameters: {
     type: "object",
     properties: {

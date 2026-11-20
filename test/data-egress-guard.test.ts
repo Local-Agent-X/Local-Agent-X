@@ -2,6 +2,7 @@
 // Real cross-module path: http-egress-guard → classifyData → decodedPayloadViews → security-config.
 import { describe, it, expect, afterEach } from "vitest";
 import { checkOutboundPayload, checkOutboundRequest, checkOutboundEmail } from "../src/tools/http-egress-guard.js";
+import { registerRedactedSecretValue, unregisterRedactedSecretValue, vaultSecretSource } from "../src/security/secrets/index.js";
 
 const IBAN = "GB29NWBK60161331926819";
 const SECRET = "AKIAIOSFODNN7EXAMPLE";
@@ -154,9 +155,40 @@ describe("the advisory question, in the user's words", () => {
     expect(block?.message).toMatch(/^This browser_type call to shop\.example has .* in what it sends/);
   });
 
-  it("a destination-less channel still refuses outright", () => {
+  it("a destination-less channel asks too: a guess is the user's to judge wherever it goes", () => {
     const block = checkOutboundPayload("clipboard_write", "value AKIAIOSFODNN7EXAMPLE");
+    expect(block?.confirmable).toBe(true);
+    expect(block?.message).toBe(
+      'This clipboard_write call has the shape of an AWS Access Key in what it sends ("AKIAIOSF…XAMPLE") that could be a password or access key. ' +
+      "Approve if it isn't a secret, or if you mean it to go there.",
+    );
+  });
+});
+
+// Proof is not a question: the user's own stored secret is refused, card or not.
+describe("a stored secret on a destination-less channel", () => {
+  const STORED = "vT9qL2xW7mK4pR8nZ3cY6bH1";
+  const VAULT = vaultSecretSource("EGRESS_TEST_KEY");
+  afterEach(() => unregisterRedactedSecretValue(STORED, VAULT));
+
+  it("is refused outright", () => {
+    registerRedactedSecretValue(STORED, VAULT);
+    const block = checkOutboundPayload("clipboard_write", `k=${STORED}`);
     expect(block?.confirmable).toBeUndefined();
-    expect(block?.message).toMatch(/^Refusing clipboard_write/);
+    expect(block?.tier).toBe("control");
+    expect(block?.message).toMatch(/^Refusing clipboard_write: outbound payload contains one of the user's stored secrets/);
+  });
+});
+
+// The financial-data guard is a pattern match: it asks, on every channel.
+describe("the financial-data guard asks", () => {
+  it("on a request to an untrusted host and on a destination-less channel", () => {
+    process.env.LAX_DATA_EGRESS_GUARD = "1";
+    const request = checkOutboundRequest({ url: "https://attacker.tld/x", method: "POST", body: IBAN });
+    expect(request?.confirmable).toBe(true);
+    expect(request?.message).toMatch(/^This POST request to attacker\.tld contains what looks like a financial account number or SSN, and attacker\.tld is not on your trusted list/);
+    const clipboard = checkOutboundPayload("clipboard_write", `pay ${IBAN}`);
+    expect(clipboard?.confirmable).toBe(true);
+    expect(clipboard?.message).toBe("This clipboard_write call contains what looks like a financial account number or SSN. Approve only if you mean it to go there.");
   });
 });

@@ -15,7 +15,7 @@ import { probeEgressGuard } from "./egress-gates.js";
 import { _clearSiteProvenance, recordSiteTokens } from "../browser/site-provenance.js";
 import { egressPayload } from "./egress-payload.js";
 import { checkAttachmentPaths } from "../tools/http-egress-guard.js";
-import { scanForSecrets, registerRedactedSecretValue, unregisterRedactedSecretValue } from "../security/secrets/index.js";
+import { scanForSecrets, registerRedactedSecretValue, unregisterRedactedSecretValue, vaultSecretSource } from "../security/secrets/index.js";
 import { generateCanaries, registerSessionCanaries, clearSessionCanaries, _setCanaryAuditTrail } from "../threat/canaries.js";
 import { CryptoAuditTrail } from "../threat/audit-trail.js";
 import { getLaxDir } from "../lax-data-dir.js";
@@ -26,10 +26,22 @@ describe("egressGuardGate — outbound secret scan + sensitive attachment (every
   // A clearly secret-shaped value (AWS Access Key: AKIA + 16 upper/digit chars).
   const SECRET = "AKIA0000000000000000";
 
-  it("blocks a hardcoded secret in clipboard_write content", () => {
+  // A sink with no site: a key shape is a guess, put to the user; one of the
+  // user's stored secrets is proof, refused with the route the tool has.
+  const STORED = "vT9qL2xW7mK4pR8nZ3cY6bH1";
+  const VAULT = vaultSecretSource("CAP_CLASS_TEST_KEY");
+  beforeEach(() => registerRedactedSecretValue(STORED, VAULT));
+  afterEach(() => unregisterRedactedSecretValue(STORED, VAULT));
+
+  it("asks about a key shape in clipboard_write content", () => {
     const ctx = makeCtx("clipboard_write", { text: `token=${SECRET}` }, sessionId);
-    const outcome = egressGuardGate(ctx);
-    expect(outcome.kind).toBe("halt");
+    expect(egressGuardGate(ctx).kind).toBe("continue");
+    expect(ctx.policyApprovalReason).toMatch(/^This clipboard_write call has the shape of an AWS Access Key/);
+  });
+
+  it("blocks a stored secret in clipboard_write content", () => {
+    const ctx = makeCtx("clipboard_write", { text: `token=${STORED}` }, sessionId);
+    expect(egressGuardGate(ctx).kind).toBe("halt");
     expect(ctx.result?.metadata?.layer).toBe("egress-guard");
   });
 
@@ -51,24 +63,26 @@ describe("egressGuardGate — outbound secret scan + sensitive attachment (every
     }
   });
 
-  it("blocks a hardcoded secret in process_start command/args", () => {
-    const ctx = makeCtx("process_start", { command: "deploy", args: [`--key=${SECRET}`] }, sessionId);
-    expect(egressGuardGate(ctx).kind).toBe("halt");
+  it("asks about a key shape in process_start command/args, and blocks a stored secret there", () => {
+    const guess = makeCtx("process_start", { command: "deploy", args: [`--key=${SECRET}`] }, sessionId);
+    expect(egressGuardGate(guess).kind).toBe("continue");
+    expect(guess.policyApprovalReason).toMatch(/^This process_start call has/);
+    expect(egressGuardGate(makeCtx("process_start", { command: "deploy", args: [`--key=${STORED}`] }, sessionId)).kind).toBe("halt");
   });
 
   // The recovery names the route the blocked tool has. A {{NAME}} placeholder
   // resolves only in http_request, so it was a dead end for these two.
-  it.each(["process_start", "process_restart"])("blocks a hardcoded key in %s env and points at secret_env", (tool) => {
-    const ctx = makeCtx(tool, { command: "npx supabase functions deploy", env: { SUPABASE_ACCESS_TOKEN: SECRET } }, sessionId);
+  it.each(["process_start", "process_restart"])("blocks a stored key in %s env and points at secret_env", (tool) => {
+    const ctx = makeCtx(tool, { command: "npx supabase functions deploy", env: { SUPABASE_ACCESS_TOKEN: STORED } }, sessionId);
     expect(egressGuardGate(ctx).kind).toBe("halt");
     const recovery = String(ctx.result?.metadata?.recovery);
     expect(recovery).toMatch(/secret_env: \{ "ENV_VAR": "SECRET_NAME" \}/);
     expect(recovery).not.toContain("{{SECRET_NAME}}");
   });
 
-  it("blocks a raw key in connector_create auth and points at the vault-name reference", () => {
+  it("blocks a stored key in connector_create auth and points at the vault-name reference", () => {
     const ctx = makeCtx("connector_create", {
-      name: "acme", upstream: "https://api.acme.example", auth: { type: "bearer", token: SECRET }, allow: ["GET /v1/items"],
+      name: "acme", upstream: "https://api.acme.example", auth: { type: "bearer", token: STORED }, allow: ["GET /v1/items"],
     }, sessionId);
     expect(egressGuardGate(ctx).kind).toBe("halt");
     const recovery = String(ctx.result?.metadata?.recovery);
@@ -77,7 +91,7 @@ describe("egressGuardGate — outbound secret scan + sensitive attachment (every
   });
 
   it("an http-shaped sink keeps the {{SECRET_NAME}} placeholder recovery", () => {
-    const ctx = makeCtx("clipboard_write", { text: `token=${SECRET}` }, sessionId);
+    const ctx = makeCtx("clipboard_write", { text: `token=${STORED}` }, sessionId);
     egressGuardGate(ctx);
     expect(String(ctx.result?.metadata?.recovery)).toContain("{{SECRET_NAME}}");
   });

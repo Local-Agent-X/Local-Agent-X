@@ -19,7 +19,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { containsNulByte } from "../binary-sniff.js";
 import { basename, isAbsolute, join, relative, resolve } from "node:path";
-import { scanForSecrets, decodedPayloadViews, matchTier, type SecretMatch } from "../security/secrets/index.js";
+import { scanForSecrets, decodedPayloadViews, matchTier, secretMatchPhrase, type SecretMatch } from "../security/secrets/index.js";
 import { outboundPayloadParts } from "../security/secrets/index.js";
 import { matchEgressList } from "../security/layer/index.js";
 import { classifyData } from "../threat/classification.js";
@@ -115,14 +115,14 @@ export function checkOutboundRequest(args: GuardArgs, vouchedToken?: (token: str
   }
 
   // Opt-in financial-data egress guard: clean of credentials, but the payload
-  // carries financial-account data (IBAN / card) — block to non-allowlisted hosts.
+  // carries financial-account data (IBAN / card / SSN) to a non-allowlisted
+  // host. A pattern match, so the user is asked.
   if (loadDataEgressGuard() && hasSensitiveEgressData(preScanText) && !isTrustedDestination(url)) {
+    const host = hostOf(url) || url;
     return {
-      message:
-        `Refusing ${method} to ${hostOf(url) || url}: payload contains sensitive personal data ` +
-        `(financial account or SSN) and the destination is not in the trusted-destinations list. ` +
-        `If it should receive this data, ask the user to allow the host in Settings → Security → Web access.`,
+      message: personalDataQuestion(`This ${method} request to ${host}`, host),
       meta: { url, method, blocked_by: "data-egress-guard", data_labels: ["financial", "ssn"] },
+      confirmable: true,
     };
   }
   return null;
@@ -136,13 +136,21 @@ export function checkOutboundRequest(args: GuardArgs, vouchedToken?: (token: str
  * (High-Entropy Token) … not a trusted destination … prefer {{SECRET_NAME}}
  * placeholders") asked a user to approve a Three.js download without saying
  * the "token" was the file name `LuminosityHighPassShader` (2026-11-03).
+ * `host` is absent for a channel with no site (the clipboard, a process).
  */
-function advisoryQuestion(scanned: string, match: SecretMatch, where: string, request: string, host: string): string {
-  const what = match.type === "high-entropy-token" ? "random-looking text" : `the shape of ${aOrAn(match.pattern)}`;
-  const seen = scanned.slice(match.startIndex, match.endIndex);
-  return `${request} has ${what} ${where} ("${maskForCard(seen)}") that could be a password or access key, ` +
-    `and ${host} is not on your trusted list. Approve if it isn't a secret or you trust ${host} with it. ` +
+function advisoryQuestion(scanned: string, match: SecretMatch, where: string, request: string, host?: string): string {
+  const asked = `${request} has ${secretMatchPhrase(scanned, match, where)} that could be a password or access key`;
+  if (!host) return `${asked}. Approve if it isn't a secret, or if you mean it to go there.`;
+  return `${asked}, and ${host} is not on your trusted list. Approve if it isn't a secret or you trust ${host} with it. ` +
     `To stop being asked about ${host}, allow it in Settings → Security → Web access.`;
+}
+
+/** The opt-in financial-data guard's question (Settings → Security). */
+function personalDataQuestion(request: string, host?: string): string {
+  return `${request} contains what looks like a financial account number or SSN` +
+    (host
+      ? `, and ${host} is not on your trusted list. Approve only if ${host} is meant to receive it. To stop being asked about ${host}, allow it in Settings → Security → Web access.`
+      : `. Approve only if you mean it to go there.`);
 }
 
 /** Where in an http request the match sits: the scanned text is url, body,
@@ -151,16 +159,6 @@ function whereInRequest(args: GuardArgs, match: SecretMatch): string {
   const urlEnd = args.url ? String(args.url).length : 0;
   const bodyEnd = args.body ? urlEnd + (urlEnd ? 1 : 0) + String(args.body).length : urlEnd;
   return match.startIndex < urlEnd ? "in the web address" : match.startIndex < bodyEnd ? "in the data being sent" : "in a request header";
-}
-
-function aOrAn(noun: string): string {
-  return `${/^[aeiou]/i.test(noun) ? "an" : "a"} ${noun}`;
-}
-
-/** Enough of the text to judge it by — a file name reads as one — without
- *  putting a whole real key on the card. */
-function maskForCard(value: string): string {
-  return value.length <= 12 ? value.slice(0, 2) + "…" : `${value.slice(0, 8)}…${value.slice(-6)}`;
 }
 
 export function hostOf(url: string): string {
@@ -176,9 +174,11 @@ export function isTrustedDestination(url: string): boolean {
  * Generic outbound-secret scan for NON-http egress sinks (email_send body,
  * clipboard_write content, process_start command/args, browser navigation data,
  * ari_http body). Mirrors the secret-shape half of {@link checkOutboundRequest}
- * but without an HTTP destination: there is no per-host allowlist to fall back
- * on, so any secret-shaped span is refused — these channels can't carry an
- * exfiltration allowlist exemption. `sink` names the egress tool for the message.
+ * but without an HTTP destination, so there is no per-host allowlist to fall
+ * back on. A guess (a key shape, a random-looking token) is put to the user,
+ * who can tell a file name from a key; the user's own stored secret, or
+ * encoded content too large to inspect, is refused (matchTier). `sink` names
+ * the egress tool for the message.
  *
  * Returns null if the payload may proceed. `{{SECRET_NAME}}` placeholders are not
  * secret-shaped, so they pass cleanly (the secrets store resolves them later).
@@ -199,9 +199,9 @@ export function checkOutboundPayload(
   if (matches.length > 0) {
     const kinds = [...new Set(matches.map(m => m.pattern))].join(", ");
     const tier = tierOf(matches);
-    if (siteHost && tier === "advisory") {
+    if (tier === "advisory") {
       return {
-        message: advisoryQuestion(text, matches[0], "in what it sends", `This ${sink} call to ${siteHost}`, siteHost),
+        message: advisoryQuestion(text, matches[0], "in what it sends", siteHost ? `This ${sink} call to ${siteHost}` : `This ${sink} call`, siteHost),
         meta: { sink, blocked_by: "outbound-secret-scan", secret_kinds: kinds },
         confirmable: true,
         tier,
@@ -209,22 +209,19 @@ export function checkOutboundPayload(
     }
     return {
       message:
-        `Refusing ${sink}: outbound payload contains secret-shaped content (${kinds}). ` +
-        `This channel can carry data off-box and has no destination allowlist, so credentials may not leave through it. ` +
-        `Prefer {{SECRET_NAME}} placeholders over hardcoded values, or remove the credential from the payload.`,
+        `Refusing ${sink}: outbound payload contains one of the user's stored secrets, or encoded content too large to check (${kinds}). ` +
+        `Send a stored secret by its {{SECRET_NAME}} placeholder to a destination the user approves, or remove it from the payload.`,
       meta: { sink, blocked_by: "outbound-secret-scan", secret_kinds: kinds },
       tier,
     };
   }
 
-  // Opt-in financial-data egress guard. No destination allowlist on these
-  // channels, so financial-account data may not leave through them at all.
+  // Opt-in financial-data egress guard: a pattern match, so the user is asked.
   if (loadDataEgressGuard() && hasSensitiveEgressData(text)) {
     return {
-      message:
-        `Refusing ${sink}: outbound payload contains sensitive personal data (financial account or SSN). ` +
-        `This off-box channel has no destination allowlist, so this data may not leave through it.`,
+      message: personalDataQuestion(siteHost ? `This ${sink} call to ${siteHost}` : `This ${sink} call`, siteHost),
       meta: { sink, blocked_by: "data-egress-guard", data_labels: ["financial", "ssn"] },
+      confirmable: true,
     };
   }
   return null;

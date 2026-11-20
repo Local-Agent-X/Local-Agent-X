@@ -174,6 +174,21 @@ export function matchTier(m: SecretMatch): "control" | "advisory" {
   return m.type === "known-secret-value" || m.type === "uninspected-encoded" ? "control" : "advisory";
 }
 
+/**
+ * A guess, put to a person: what the scan took for a key, `where` it sits, and
+ * enough of the text to judge it by (a file name reads as one) without putting
+ * a whole real key on a card. "the shape of a Key-Value Secret in the data
+ * being sent ("PAIRING_…token,")".
+ */
+export function secretMatchPhrase(scanned: string, match: SecretMatch, where: string): string {
+  const what = match.type === "high-entropy-token"
+    ? "random-looking text"
+    : `the shape of ${/^[aeiou]/i.test(match.pattern) ? "an" : "a"} ${match.pattern}`;
+  const seen = scanned.slice(match.startIndex, match.endIndex);
+  const masked = seen.length <= 12 ? seen.slice(0, 2) + "…" : `${seen.slice(0, 8)}…${seen.slice(-6)}`;
+  return `${what} ${where} ("${masked}")`;
+}
+
 /** Redact all detected secrets from text */
 export function redactSecrets(text: string): string {
   const result = scanForSecrets(text);

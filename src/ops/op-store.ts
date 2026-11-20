@@ -188,10 +188,14 @@ export function tryWithOpLock<T>(opId: string, fn: () => T, waitMs = LOCK_WAIT_M
   const lockPath = join(opDir(opId), "operation.lock");
   const deadline = Date.now() + waitMs;
   const token = randomId("lock");
+  // Built before the lock is taken: a process's first incarnation read can
+  // take a second, and a lock folder that long without its token reads as an
+  // abandoned release (EMPTY_LOCK_GRACE_MS) another caller may take.
+  const ownerRecord = JSON.stringify({ token, pid: process.pid, incarnation: currentProcessIncarnation() });
   for (;;) {
     try {
       mkdirSync(lockPath, { mode: 0o700 });
-      writeFileSync(join(lockPath, token), JSON.stringify({ token, pid: process.pid, incarnation: currentProcessIncarnation() }), {
+      writeFileSync(join(lockPath, token), ownerRecord, {
         encoding: "utf-8",
         mode: 0o600,
         flag: "wx",

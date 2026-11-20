@@ -118,9 +118,11 @@ function withJsonlLock<T>(path: string, fn: () => T): T {
   ensureDurableDirectory(dirname(path));
   const lock = `${path}.lock`;
   const token = randomUUID();
+  // Read before the wait starts: a process's first incarnation read can take a second.
+  const owner = JSON.stringify({ pid: process.pid, incarnation: currentProcessIncarnation() });
   const deadline = Date.now() + LOCK_WAIT_MS;
   for (;;) {
-    if (tryAcquire(lock, token)) { lockHook?.("after_acquire", path); break; }
+    if (tryAcquire(lock, token, owner)) { lockHook?.("after_acquire", path); break; }
     if (reclaimDeadLock(lock)) continue;
     if (Date.now() >= deadline) throw new Error(`durable JSONL lock timeout: ${path}`);
     Atomics.wait(sleeper, 0, 0, RETRY_MS);
@@ -141,11 +143,11 @@ function withJsonlLock<T>(path: string, fn: () => T): T {
 // folder and both held the lock (Windows CI, 2026-11-15).
 const LOCK_HELD_CODES = new Set(["EEXIST", "ENOTEMPTY", "EPERM", "EACCES", "EBUSY"]);
 
-function tryAcquire(lock: string, token: string): boolean {
+function tryAcquire(lock: string, token: string, owner: string): boolean {
   const staged = `${lock}.${token}`;
   mkdirSync(staged, { mode: 0o700 });
   try {
-    writeFileSync(join(staged, token), JSON.stringify({ pid: process.pid, incarnation: currentProcessIncarnation() }), { flag: "wx", mode: 0o600 });
+    writeFileSync(join(staged, token), owner, { flag: "wx", mode: 0o600 });
     lockHook?.("before_publish", lock);
     renameSync(staged, lock);
     return true;

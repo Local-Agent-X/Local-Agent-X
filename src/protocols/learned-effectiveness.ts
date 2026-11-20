@@ -95,10 +95,12 @@ function withLedgerLock<T>(fn: () => T): T {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   const lock = join(dir, ".ledger-lock");
   let acquired = false;
+  // Read before the lock is taken: a process's first read can take a second.
+  const incarnation = currentProcessIncarnation();
   for (let attempt = 0; attempt < 2 && !acquired; attempt++) {
     try {
       mkdirSync(lock, { mode: 0o700 });
-      atomicWriteFileSync(join(lock, "owner.json"), JSON.stringify({ pid: process.pid, incarnation: currentProcessIncarnation(), claimedAt: Date.now() }), { mode: 0o600 });
+      atomicWriteFileSync(join(lock, "owner.json"), JSON.stringify({ pid: process.pid, incarnation, claimedAt: Date.now() }), { mode: 0o600 });
       acquired = true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") {

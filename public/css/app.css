@@ -255,6 +255,9 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
 .chat-group-label{padding:6px 12px 2px;font-size:.6rem;font-family:var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:.5px;margin-top:4px}
 #chats-section{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden}
 #chats-header{padding:8px 12px 4px;font-size:.68rem;font-family:var(--mono);color:var(--muted);text-transform:uppercase;letter-spacing:1px;flex-shrink:0}
+.chats-delete-all{background:none;border:none;padding:0 2px;font:inherit;font-size:.6rem;letter-spacing:.5px;color:var(--muted);cursor:pointer;opacity:0;transition:opacity .15s}
+#chats-header:hover .chats-delete-all,.chats-delete-all:focus-visible{opacity:1}
+.chats-delete-all:hover{color:var(--text)}
 #chat-list{flex:1;overflow-y:auto;padding:4px 8px;scrollbar-width:thin;scrollbar-color:var(--scroll-thumb) transparent}
 .chat-item{padding:8px 10px;border-radius:8px;cursor:pointer;font-size:.78rem;color:var(--muted);transition:all .15s;margin-bottom:1px;display:flex;align-items:center;gap:8px;position:relative}
 .chat-item:hover{background:var(--hover);color:var(--text)}

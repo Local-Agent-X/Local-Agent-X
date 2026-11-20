@@ -272,6 +272,13 @@ export interface Session {
    */
   folder?: string;
   /**
+   * When the user deleted this chat from their chat lists (session/remove.ts).
+   * The transcript stays on disk, in memory and in search; only the lists on
+   * every device leave it out, until something newer is saved in it
+   * (`isListedChat`). Absent = listed.
+   */
+  removedAt?: number;
+  /**
    * Compaction lives as a leading `{role:"system", content:"[COMPACTED CONTEXT — …]"}`
    * entry in `messages` (round-tripped through a `summary` row in the
    * jsonl log). `compactedSummary` / `compactedAt` no longer exist as

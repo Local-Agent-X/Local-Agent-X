@@ -7,6 +7,7 @@ import { bootstrapServices } from "./bootstrap-services.js";
 import { bootstrapTools } from "./bootstrap-tools.js";
 import { createBridgeHandler, bootstrapBridges } from "./bootstrap-bridges.js";
 import { createSessionHelpers } from "./session-helpers.js";
+import { bindChatRemoval, eraseChatsErasedElsewhere } from "../session/remove.js";
 import { createRequestHandler } from "./request-handler.js";
 import { createHttpServer, setupVoiceWs, wireWsChat, startConfigWatcher, logStartup, registerShutdown, bootstrapCanonicalLoop, startSecurityKernel } from "./lifecycle.js";
 import { runMigrations } from "../db-migrations.js";
@@ -217,14 +218,14 @@ export async function startServer(config: LAXConfig) {
   });
 
   const sessionHelpers = createSessionHelpers({ sessionStore, memoryIndex, dataDir, maxCached: config.maxCachedSessions });
-  const { sessions, getOrCreateSession, saveSession, flushSession } = sessionHelpers;
+  const { sessions, getOrCreateSession, saveSession, flushSession, dropSession } = sessionHelpers;
+  const chatRemoval = { dataDir, sessionStore, memoryIndex, getOrCreateSession, saveSession, flushSession, dropSession };
+  bindChatRemoval(chatRemoval);
+  agentSync.onSessionsErased = (ids) => { void eraseChatsErasedElsewhere(chatRemoval, ids); };
 
   let resolveBridgeContext!: (ctx: ServerContext) => void;
   const bridgeContextReady = new Promise<ServerContext>((resolve) => { resolveBridgeContext = resolve; });
-  const bridgeHandler = createBridgeHandler({
-    sessions, sessionStore, config,
-    getContext: () => bridgeContextReady,
-  });
+  const bridgeHandler = createBridgeHandler({ config, getContext: () => bridgeContextReady });
   const { whatsappBridge, telegramBridge } = bootstrapBridges({ dataDir, secretsStore, bridgeHandler });
 
   const agentRunStore = AgentRunStore.getInstance();
@@ -236,7 +237,7 @@ export async function startServer(config: LAXConfig) {
   const requestHandler = createRequestHandler({
     config, security, toolPolicy, rbac, dataDir, publicDir, sessionStore, memoryIndex, memoryManager, secretsStore, cronService, integrations,
     whatsappBridge, telegramBridge, agentSync, appRegistry: AppRegistry.getInstance(), agentRunStore, agentTemplateStore, issueStore, projectStore,
-    allAgentTools, toolRegistry, bridgeTools, getOrCreateSession, saveSession, flushSession,
+    allAgentTools, toolRegistry, bridgeTools, getOrCreateSession, saveSession, flushSession, dropSession,
     getChatWs: () => chatWsHolder.value!, broadcastAll,
     activeOnEventBySession,
     activeBrowserSessionIdRef,
@@ -304,7 +305,7 @@ export async function startServer(config: LAXConfig) {
     appRegistry: AppRegistry.getInstance(),
     agentRunStore, agentTemplateStore, issueStore, projectStore,
     allAgentTools, toolRegistry, bridgeTools,
-    getOrCreateSession, saveSession, flushSession,
+    getOrCreateSession, saveSession, flushSession, dropSession,
     chatWs, broadcastAll,
     getActiveOnEvent: (sid) => activeOnEventBySession.get(sid),
     setActiveOnEvent: (sid, fn) => {

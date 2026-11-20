@@ -6,8 +6,7 @@ import { detectInjection } from "../sanitize.js";
 import { getVoicePref, setVoicePref, type BridgePlatform } from "../bridge-voice/index.js";
 import { VOICE_COMMAND_TIER_MAP } from "../routes/bridges/voice-setup/tiers.js";
 import { sendRestartPingIfPending } from "../restart-notify.js";
-import type { LAXConfig, Session } from "../types.js";
-import type { SessionStore } from "../memory/index.js";
+import type { LAXConfig } from "../types.js";
 import type { SecretsStore } from "../secrets.js";
 import type { ServerContext } from "../server-context.js";
 import { createLogger } from "../logger.js";
@@ -30,8 +29,6 @@ export type BridgeHandler = (
 ) => Promise<string | BridgeReply | null>;
 
 interface BridgeHandlerDeps {
-  sessions: Map<string, Session>;
-  sessionStore: SessionStore;
   config: LAXConfig;
   getContext: () => Promise<ServerContext>;
 }
@@ -51,10 +48,11 @@ export function createBridgeHandler(deps: BridgeHandlerDeps): BridgeHandler {
         return applied ? "→ Got it — passing that to the running task." : "Still working on your last message...";
       }
       if (plan.kind === "reset") {
+        // The old conversation is archived, not deleted: the agent still remembers it.
         try {
-          deps.sessions.delete(String(plan.sessionKey));
-          deps.sessionStore.delete(String(plan.sessionKey));
-          return "Fresh start. Conversation history cleared.";
+          const { startChatFresh } = await import("../session/remove.js");
+          await startChatFresh(await deps.getContext(), String(plan.sessionKey));
+          return "Fresh start. This chat starts over; I still remember what we talked about.";
         } catch (e) { return `Reset failed: ${(e as Error).message}`; }
       }
       if (plan.kind === "voice_pref") return handleVoiceToggle(channelType, String(plan.from), String(plan.command))!;

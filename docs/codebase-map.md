@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2083 non-test source files · 76 oversized · 271 nearing the size cap.
+**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2086 non-test source files · 76 oversized · 271 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -22,17 +22,17 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/ops/` | 186 | 30 | XL | 1 |
 | `src/security/` | 168 | 63 | XL | 2 |
 | `src/tools/` | 140 | 243 | XL | 9 |
-| `src/tool-execution/` | 102 | 90 | XL | 2 |
+| `src/tool-execution/` | 103 | 90 | XL | 2 |
 | `src/workspace/` | 91 | 3 | M |  |
 | `src/canonical-loop/` | 90 | 293 | XL | 10 |
 | `src/providers/` | 80 | 28 | L | 1 |
-| `src/session/` | 69 | 13 | L |  |
-| `src/memory/` | 62 | 162 | XL | 3 |
+| `src/session/` | 72 | 14 | L |  |
+| `src/memory/` | 63 | 162 | XL | 3 |
 | `src/data-lineage/` | 60 | 12 | L |  |
 | `src/util/` | 57 | 3 | S |  |
 | `src/browser/` | 54 | 95 | XL | 5 |
 | `src/agency/` | 49 | 40 | XL |  |
-| `src/chat-ws/` | 49 | 24 | L |  |
+| `src/chat-ws/` | 48 | 24 | L |  |
 | `src/tool-policy/` | 48 | 21 | L |  |
 | `src/local-runtimes/` | 45 | 28 | XL |  |
 | `src/threat/` | 44 | 13 | L |  |
@@ -59,14 +59,14 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/anthropic-client/` | 15 | 23 | L | 2 |
 | `src/cron/` | 14 | 14 | L |  |
 | `src/app-renderer/` | 13 | 7 | M | 1 |
-| `src/routes/` | 13 | 114 | XL | 16 |
+| `src/routes/` | 13 | 115 | XL | 16 |
 | `src/agent-loop/` | 12 | 1 | S |  |
 | `src/app-scaffold/` | 12 | 7 | M |  |
 | `src/ari-kernel/` | 12 | 12 | M |  |
 | `src/integrations/` | 12 | 15 | M |  |
+| `src/sync/` | 12 | 27 | L |  |
 | `src/whatsapp-bridge/` | 12 | 8 | M | 1 |
 | `src/persistence/` | 11 | 2 | S |  |
-| `src/sync/` | 11 | 26 | L |  |
 | `src/calendar/` | 10 | 10 | M |  |
 | `src/agent-guards/` | 9 | 13 | L |  |
 | `src/codex-client/` | 9 | 7 | M |  |

@@ -13,6 +13,8 @@ import { workspacePath } from "../../config.js";
 import { getLaxDir } from "../../lax-data-dir.js";
 import { reloadSettings, saveSettings } from "../../settings.js";
 import { clearPinTombstone, pinTombstonePaths, tombstonePin } from "../../sync/pin-tombstones.js";
+import { boundChatRemoval, removeAllChatsFromLists } from "../../session/remove.js";
+import { sessionIdOf } from "../../tool-execution/internal-args.js";
 
 // Same tombstone stores the /api/sidebar/pins route writes: an unpin must
 // survive the next sync pull from a machine that still has the pin, and a
@@ -174,30 +176,27 @@ export const sidebarUnpin: ToolDefinition = {
   },
 };
 
-// Hides every chat from the sidebar (frontend-only) without touching the
-// backend session store. The model can't reach localStorage directly; this
-// tool broadcasts a WS event and the browser tombstones every chat ID it
-// holds, then clears `chats[]`. Backend `.jsonl` session files are
-// untouched — recoverable by clearing tombstones later. Use ONLY when the
-// user explicitly asks to clear, hide, or empty the sidebar conversations
-// list. Do NOT call `http_request DELETE /api/sessions` for this — that
-// wipes backend data and still doesn't clear the sidebar (the sidebar
-// reads from localStorage + tombstones, not the backend list directly).
+// Deletes every chat from the chat lists (the sidebar's Conversations, the
+// phone's drawer) the way the user's "Delete all chats" does
+// (session/remove.ts): every transcript stays on disk, in memory and in
+// search; the chat that asked stays listed. It used to hide them in one
+// browser only, for 30 days.
 export const sidebarClear: ToolDefinition = {
   name: "sidebar_clear",
   description:
-    "Hide ALL chats from the sidebar's CONVERSATIONS section without deleting the underlying session data on disk. ONLY use when the user explicitly references conversations / chats / chat history (e.g. 'clear my chat history from the sidebar', 'hide all my conversations', 'clear the conversations list', 'wipe sidebar chat history'). The sidebar has FOUR distinct sections — Pinned apps, Projects, Messaging (WhatsApp/Telegram), and Conversations — and this tool ONLY affects Conversations. If the user says something ambiguous like 'clear the sidebar', 'empty the sidebar', or 'reset the sidebar' without naming a section, ASK them which section they mean before calling any tool. For app pins use sidebar_unpin. Never call this when the user is talking about pins, projects, or messaging.",
+    "Remove ALL chats from the CONVERSATIONS list on every device (the sidebar and the phone) without deleting them: every conversation stays on disk and in your memory and search. This chat stays listed. ONLY use when the user explicitly references conversations / chats / chat history (e.g. 'clear my chat history from the sidebar', 'hide all my conversations', 'clear the conversations list', 'wipe sidebar chat history'). The sidebar has FOUR distinct sections — Pinned apps, Projects, Messaging (WhatsApp/Telegram), and Conversations — and this tool ONLY affects Conversations. If the user says something ambiguous like 'clear the sidebar', 'empty the sidebar', or 'reset the sidebar' without naming a section, ASK them which section they mean before calling any tool. For app pins use sidebar_unpin. Never call this when the user is talking about pins, projects, or messaging.",
   parameters: {
     type: "object",
     properties: {},
   },
-  async execute() {
+  async execute(args) {
+    const deps = boundChatRemoval();
+    if (!deps) return err("The chat lists aren't available yet. Try again in a moment.");
+    const removed = await removeAllChatsFromLists(deps, sessionIdOf(args));
     try {
       const { broadcastAll } = await import("../../chat-ws/index.js");
-      broadcastAll({ type: "sidebar_clear_chats", at: Date.now() });
-    } catch (e) {
-      return err(`Failed to broadcast sidebar clear: ${String((e as Error)?.message || e)}`);
-    }
-    return ok("Sent sidebar-clear signal to the browser. The Conversations list will empty on next render; backend session files are untouched.");
+      broadcastAll({ type: "chat_list_changed", at: Date.now() });
+    } catch { /* open tabs pick the change up on their next list sync */ }
+    return ok(`Removed ${removed} chat(s) from the Conversations list. They are still on disk and in memory; this chat stays listed.`);
   },
 };

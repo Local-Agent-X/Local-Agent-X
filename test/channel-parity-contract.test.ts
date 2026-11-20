@@ -108,7 +108,7 @@ describe("Telegram and WhatsApp inbound control parity", () => {
   it("reaches the canonical stop control from both active transport adapters", async () => {
     const { createBridgeHandler } = await import("../src/server/bootstrap-bridges.js");
     const handler = createBridgeHandler({
-      sessions: new Map(), sessionStore: { delete: vi.fn() } as never, config: {} as never,
+      config: {} as never,
       getContext: vi.fn() as never,
     });
     const telegramMessage = vi.fn((payload) => handler("telegram", { ...payload, deliveryId: undefined }));

@@ -139,6 +139,7 @@ export function readSessionLog(dir: string, id: string): Session | null {
     ...(meta.projectId ? { projectId: meta.projectId } : {}),
     ...(meta.mode === "code" ? { mode: meta.mode } : {}),
     ...(meta.folder ? { folder: meta.folder } : {}),
+    ...(meta.removedAt ? { removedAt: meta.removedAt } : {}),
     messages: projectedMessages,
     ...(liveCheckpoint ? { compactionCheckpoint: liveCheckpoint } : {}),
   };
@@ -177,6 +178,7 @@ export function writeSessionLog(dir: string, session: Session): void {
     ...(session.projectId ? { projectId: session.projectId } : {}),
     ...(session.mode === "code" ? { mode: session.mode } : {}),
     ...(session.folder ? { folder: session.folder } : {}),
+    ...(session.removedAt ? { removedAt: session.removedAt } : {}),
   };
 
   const lines: string[] = [JSON.stringify(meta)];

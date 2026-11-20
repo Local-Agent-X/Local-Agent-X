@@ -9,6 +9,7 @@ import { createLogger } from "../../logger.js";
 import { pullDir } from "../mirror.js";
 import { applyTombstones, tombstonePaths } from "../tombstones.js";
 import { sessionLogIsAhead } from "../session-log-ahead.js";
+import { erasedSessions, isErasedCopy } from "../session-tombstones.js";
 
 const logger = createLogger("sync.pull-files.misc");
 
@@ -22,7 +23,8 @@ const logger = createLogger("sync.pull-files.misc");
  * that moment, every later turn on the other machine never arrived, and this
  * machine's push then wrote the stale copy back over the mirror's fresh one.
  * The `.metadata.*` dotfiles are this machine's own cache and never travel.
- * A session this machine has archived is not resurrected.
+ * A session this machine has archived is not resurrected, and a chat erased
+ * on any machine is not copied back (session-tombstones.ts).
  */
 export function pullSessions(dataDir: string, syncDir: string, config: SyncConfig): string[] {
   if (!config.syncSessions) return [];
@@ -32,6 +34,7 @@ export function pullSessions(dataDir: string, syncDir: string, config: SyncConfi
   if (!existsSync(sessDir)) mkdirSync(sessDir, { recursive: true });
   if (!existsSync(syncSessDir)) return [];
   const pulled: string[] = [];
+  const erased = erasedSessions(syncDir);
   for (const f of readdirSync(syncSessDir)) {
     // Pull both .jsonl (current) and .json (legacy) so round-tripping
     // from an older machine still works; the SessionStore migration
@@ -40,9 +43,11 @@ export function pullSessions(dataDir: string, syncDir: string, config: SyncConfi
     if (existsSync(join(archiveDir, f))) continue;
     const local = join(sessDir, f);
     const remote = join(syncSessDir, f);
+    const id = f.replace(/\.jsonl?$/, "");
+    if (isErasedCopy(remote, id, erased)) continue;
     if (existsSync(local) && !sessionLogIsAhead(remote, local)) continue;
     writeFileSync(local, readFileSync(remote, "utf-8"));
-    pulled.push(f.replace(/\.jsonl?$/, ""));
+    pulled.push(id);
   }
   return pulled;
 }

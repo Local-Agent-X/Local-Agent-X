@@ -180,16 +180,17 @@ function stopIdeChat() {
 }
 window.stopIdeChat = stopIdeChat;
 
-// Wipe this app's stable session and reset the UI. Used by the Fresh
+// Start this app's stable session over and reset the UI. Used by the Fresh
 // Chat button in the topbar — the session is per-app and accumulates
 // over many builds, so the user needs an explicit "start over" affordance
-// when the conversation has drifted or they just want a clean slate.
+// when the conversation has drifted or they just want a clean slate. The old
+// conversation is archived, not deleted: the agent still remembers it.
 async function ideFreshChat() {
   if (!_ideSessionId) return;
-  if (!confirm('Wipe this app\'s chat history and start fresh? The app files stay put — only the conversation is reset.')) return;
+  if (!confirm('Start this app\'s chat fresh? The app files stay put, and the agent still remembers the old conversation.')) return;
   try {
-    await apiFetch('/api/sessions/' + encodeURIComponent(_ideSessionId), { method: 'DELETE' });
-  } catch { /* if delete fails, still reset the UI — server can have a stale row, user sees a clean chat */ }
+    await apiFetch('/api/sessions/' + encodeURIComponent(_ideSessionId) + '/fresh', { method: 'POST' });
+  } catch { /* if the reset fails, still reset the UI — server can have a stale row, user sees a clean chat */ }
   const msgs = document.getElementById('ide-chat-messages');
   if (msgs) msgs.innerHTML = '';
   _ideContent = '';

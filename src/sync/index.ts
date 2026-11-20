@@ -53,6 +53,9 @@ export class AgentSync {
   /** Runs after a pull that created or extended session logs, with their ids.
    *  Set by the server, which owns the session store and the memory index. */
   onSessionsPulled: ((sessionIds: string[]) => void) | null = null;
+  /** Runs after a pull that found chats erased on another machine still held
+   *  here (session-tombstones.ts). Set by the server, which erases them. */
+  onSessionsErased: ((sessionIds: string[]) => void) | null = null;
 
   constructor(dataDir: string, getToken: () => string | undefined) {
     this.dataDir = dataDir;
@@ -301,6 +304,7 @@ export class AgentSync {
       if (hasChanges) { try { await this.git("pull", "--no-rebase", "origin", "main"); } catch { await resolveConflicts(this.syncDir, this.git); } }
       const report = await copyFromSync(this.dataDir, this.syncDir, this.config);
       if (report.pulledSessionIds.length > 0) this.onSessionsPulled?.(report.pulledSessionIds);
+      if (report.erasedSessionIds.length > 0) this.onSessionsErased?.(report.erasedSessionIds);
       // Deliberately NOT stamping lastSyncTime here. "Last synced" must mean
       // "local state reached the remote" — only push() (success or genuinely
       // up-to-date) sets it. Stamping on every pull made the heartbeat's

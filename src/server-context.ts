@@ -42,6 +42,8 @@ export interface ServerContext {
   getOrCreateSession: (id: string) => Session;
   saveSession: (session: Session) => Promise<void>;
   flushSession: (id: string) => Promise<void>;
+  /** Forget the cached copy of an erased session (server/session-helpers.ts). */
+  dropSession: (id: string) => void;
   chatWs: { startChat: (sessionId: string) => { onEvent: (event: ServerEvent) => void; abort: AbortController }; getActiveChats: () => string[]; stopChat: (sessionId: string) => boolean; getAbortSignal: (sessionId: string) => AbortSignal | undefined; failChat: (sessionId: string, errorMessage: string) => void; failChatIfCurrent: (sessionId: string, token: AbortController, errorMessage: string) => boolean; emit: (sessionId: string, event: ServerEvent) => void };
   broadcastAll: (frame: GlobalFrame) => number;
   /**

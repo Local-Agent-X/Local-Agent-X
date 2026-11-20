@@ -404,7 +404,8 @@ describe("how the page is wired for tiles", () => {
 
   it("tells the grid whenever the chat on screen changes or the socket reconnects", () => {
     const actions = read("public/js/app-sidebar-actions.js");
-    for (const fn of ["selectChat", "newChat", "deleteChat"]) {
+    // dropChatLocally: where a deleted or erased chat leaves the sidebar.
+    for (const fn of ["selectChat", "newChat", "dropChatLocally"]) {
       const body = actions.slice(actions.indexOf(`function ${fn}(`));
       expect(body.slice(0, body.indexOf("\n}\n"))).toContain("laxChatTiles.onChatChanged()");
     }

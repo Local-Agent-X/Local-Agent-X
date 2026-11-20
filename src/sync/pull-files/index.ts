@@ -5,6 +5,7 @@ import { CONTROL_FILES_NOT_SYNCED, type SyncConfig } from "../constants.js";
 import { pullMemoryDir } from "./pull-memory.js";
 import { pullSidebarPins } from "./pull-pins.js";
 import { pullSessions, pullWorkspaceOrProtocols, pullCronJobs } from "./pull-misc.js";
+import { erasedLocalSessionIds } from "../session-tombstones.js";
 import {
   pullAgentProjects,
   pullIssuesAndTemplates,
@@ -25,6 +26,8 @@ const logger = createLogger("sync.pull-files");
 export interface PullReport {
   /** Session ids whose local log was created or extended by this pull. */
   pulledSessionIds: string[];
+  /** Session ids erased on another machine whose copy this machine still holds (session-tombstones.ts). */
+  erasedSessionIds: string[];
   /** Control files the sync repo holds that the pull left alone (CONTROL_FILES_NOT_SYNCED). */
   notSynced: string[];
   /** Missions that arrived without the autonomy profile the repo gave them (pullCronJobs). */
@@ -35,6 +38,7 @@ export async function copyFromSync(dataDir: string, syncDir: string, config: Syn
   pullMemoryDir(dataDir, syncDir);
   await pullSidebarPins(dataDir, syncDir);
   const pulledSessionIds = pullSessions(dataDir, syncDir, config);
+  const erasedSessionIds = config.syncSessions ? erasedLocalSessionIds(dataDir, syncDir) : [];
   pullWorkspaceOrProtocols(dataDir, syncDir, config);
   const missionProfilesDropped = pullCronJobs(dataDir, syncDir, config);
   pullBrainJsonFiles(dataDir, syncDir, config);
@@ -59,7 +63,7 @@ export async function copyFromSync(dataDir: string, syncDir: string, config: Syn
     logger.warn(`[sync] facts import skipped: ${(e as Error).message}`);
   }
   const notSynced = CONTROL_FILES_NOT_SYNCED.filter((f) => existsSync(join(syncDir, f)));
-  return { pulledSessionIds, notSynced, missionProfilesDropped };
+  return { pulledSessionIds, erasedSessionIds, notSynced, missionProfilesDropped };
 }
 
 /** What a pull left out on purpose, for the message the Sync settings show. */

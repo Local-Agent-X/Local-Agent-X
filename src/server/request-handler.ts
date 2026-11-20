@@ -51,6 +51,7 @@ export interface RequestHandlerDeps {
   getOrCreateSession: (id: string) => Session;
   saveSession: (session: Session) => Promise<void>;
   flushSession: (id: string) => Promise<void>;
+  dropSession: (id: string) => void;
   getChatWs: () => ServerContext["chatWs"];
   broadcastAll: (frame: GlobalFrame) => number;
   activeOnEventBySession: Map<string, (event: ServerEvent) => void>;
@@ -69,7 +70,7 @@ function createServerContext(deps: RequestHandlerDeps): ServerContext {
     issueStore: deps.issueStore, projectStore: deps.projectStore, allAgentTools: deps.allAgentTools,
     toolRegistry: deps.toolRegistry, bridgeTools: deps.bridgeTools,
     getOrCreateSession: deps.getOrCreateSession, saveSession: deps.saveSession,
-    flushSession: deps.flushSession, chatWs: deps.getChatWs(), broadcastAll: deps.broadcastAll,
+    flushSession: deps.flushSession, dropSession: deps.dropSession, chatWs: deps.getChatWs(), broadcastAll: deps.broadcastAll,
     getActiveOnEvent: sid => deps.activeOnEventBySession.get(sid),
     setActiveOnEvent: (sid, fn) => {
       if (fn) deps.activeOnEventBySession.set(sid, fn);

@@ -94,7 +94,7 @@ export function getManifestSummary(): string {
     "- **Schedule recurring tasks**: the `mission_schedule_create` tool (list/update/toggle/delete siblings)",
     "- **Build a standalone app**: use `build_app` tool — creates in `workspace/apps/{name}/`",
     "- **Pin/unpin sidebar**: use `sidebar_pin` / `sidebar_unpin` tools",
-    "- **Clear sidebar Conversations list**: use `sidebar_clear` (frontend-only; `http_request DELETE /api/sessions` deletes nothing and does not clear the sidebar)",
+    "- **Clear sidebar Conversations list**: use `sidebar_clear` (removes them from the lists on every device; every chat stays on disk and in memory)",
     "- **Turn a tool family on or off**: the `setting` tool (`enableShell`, `enableHttp`, `enableBrowser`, `enableComputerControl`)",
     "",
     "**IMPORTANT**: Before creating anything new, check this map. If it already exists, USE the existing feature via its API route.",

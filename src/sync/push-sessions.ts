@@ -3,6 +3,7 @@ import { dirname, join } from "node:path";
 
 import { createLogger } from "../logger.js";
 import { sessionLogIsAhead } from "./session-log-ahead.js";
+import { erasedSessions, isErasedCopy } from "./session-tombstones.js";
 
 const logger = createLogger("sync.push-sessions");
 
@@ -56,6 +57,7 @@ export async function pushSessions(dataDir: string, syncDir: string): Promise<vo
   if (!existsSync(sessDir)) return;
   const before = readRecord(dataDir);
   const after: Record<string, number> = {};
+  const erased = erasedSessions(syncDir);
   let unrecorded = 0;
   for (const f of readdirSync(sessDir)) {
     // Sync both .jsonl (current) and .json (legacy/pre-migration) so
@@ -72,6 +74,8 @@ export async function pushSessions(dataDir: string, syncDir: string): Promise<vo
       logger.warn(`[sync] skipping oversized session ${f} (${(st.size / 1048576).toFixed(0)} MB > ${MAX_SESSION_SYNC_BYTES / 1048576} MB cap)`);
       continue;
     }
+    // A copy of a chat erased on any machine stays out of the mirror (session-tombstones.ts).
+    if (isErasedCopy(src, f.replace(/\.jsonl?$/, ""), erased)) continue;
     const dest = join(syncSessDir, f);
     if (before[f] === undefined) {
       // Comparing contents reads both copies: hand the thread back between

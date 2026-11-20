@@ -13,7 +13,7 @@
  * `{id}.json.pre-migration`. Idempotent — re-running on an already-migrated
  * dir is a no-op.
  */
-import { existsSync, mkdirSync, renameSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import type { Session } from "../types.js";
 import {
@@ -30,6 +30,12 @@ import { createLogger } from "../logger.js";
 const logger = createLogger("memory.session-store");
 
 export type { SessionMetadata };
+
+/** An archive file holding session `id`: `<id>.jsonl`, a dated `<id>.<time>.jsonl`, or its migration sidecar. */
+function isArchivedCopyOf(file: string, id: string): boolean {
+  if (file === `${id}.jsonl` || file === `${id}.json.pre-migration`) return true;
+  return file.startsWith(`${id}.`) && /^\d+\.jsonl$/.test(file.slice(id.length + 1));
+}
 
 export class SessionStore {
   private dir: string;
@@ -83,9 +89,72 @@ export class SessionStore {
     }
   }
 
+  /** Unlink a throwaway session's log (an eval dry-run). A user's chat is
+   *  removed from the lists or erased through session/remove.ts instead. */
   delete(id: string): void {
     deleteSessionLog(this.dir, id);
     this.metadata.delete(id);
+  }
+
+  /**
+   * Erase every copy of a session this machine holds: the live log, its
+   * migration sidecar, and each archived copy (`<id>.jsonl` and the dated
+   * `<id>.<time>.jsonl` a reset leaves). Returns the transcript paths removed,
+   * which the caller drops from the memory index.
+   */
+  erase(id: string): string[] {
+    const removed: string[] = [];
+    const live = join(this.dir, `${id}.jsonl`);
+    if (existsSync(live)) removed.push(live);
+    deleteSessionLog(this.dir, id);
+    this.metadata.delete(id);
+    if (!existsSync(this.archiveDir)) return removed;
+    for (const f of readdirSync(this.archiveDir)) {
+      if (!isArchivedCopyOf(f, id)) continue;
+      const p = join(this.archiveDir, f);
+      unlinkSync(p);
+      if (f.endsWith(".jsonl")) removed.push(p);
+    }
+    return removed;
+  }
+
+  /**
+   * Move one session into sessions-archive/ now: the messaging "fresh start",
+   * which frees the chat's id for the next message without losing what was
+   * said. An id archived before (a chat reset twice) gets a dated name, so no
+   * copy is overwritten. `onArchived` as in {@link archiveOldSessions}.
+   * Returns false when the session has no log.
+   */
+  archive(id: string, onArchived?: (oldPath: string, newPath: string) => void): boolean {
+    const src = join(this.dir, `${id}.jsonl`);
+    if (!existsSync(src)) return false;
+    let dest = join(this.archiveDir, `${id}.jsonl`);
+    if (existsSync(dest)) dest = join(this.archiveDir, `${id}.${Date.now()}.jsonl`);
+    this.moveToArchive(id, src, dest, onArchived);
+    this.metadata.delete(id);
+    return true;
+  }
+
+  /** Rename `src` to `dest`, re-point what depends on it, roll back if that fails. */
+  private moveToArchive(id: string, src: string, dest: string, onArchived?: (oldPath: string, newPath: string) => void): void {
+    mkdirSync(this.archiveDir, { recursive: true });
+    renameSync(src, dest);
+    if (onArchived) {
+      try {
+        onArchived(src, dest);
+      } catch (e) {
+        renameSync(dest, src); // roll the move back — see archiveOldSessions
+        throw new Error(`archive rolled back: ${(e as Error).message}`);
+      }
+    }
+    // Per-session sidecar from the legacy migration rides along.
+    const sidecar = join(this.dir, `${id}.json.pre-migration`);
+    if (existsSync(sidecar)) {
+      const sidecarDest = join(this.archiveDir, `${id}.json.pre-migration`);
+      if (!existsSync(sidecarDest)) {
+        try { renameSync(sidecar, sidecarDest); } catch { /* jsonl moved — sidecar is best-effort */ }
+      }
+    }
   }
 
   /**
@@ -121,7 +190,6 @@ export class SessionStore {
         const st = statSync(src);
         if (!st.isFile()) { skipped++; continue; } // dir masquerading as a session — not ours to move
         if (st.mtimeMs > cutoff || st.mtimeMs > activityGuard) continue; // recent — untouched
-        mkdirSync(this.archiveDir, { recursive: true });
         const dest = join(this.archiveDir, `${id}.jsonl`);
         if (existsSync(dest)) {
           // Same id already archived — never overwrite (that would destroy
@@ -130,25 +198,7 @@ export class SessionStore {
           failed++;
           continue;
         }
-        renameSync(src, dest);
-        if (onArchived) {
-          try {
-            onArchived(src, dest);
-          } catch (e) {
-            renameSync(dest, src); // roll the move back — see doc comment
-            logger.warn(`archive rolled back for session ${id}: ${(e as Error).message}`);
-            failed++;
-            continue;
-          }
-        }
-        // Per-session sidecar from the legacy migration rides along.
-        const sidecar = join(this.dir, `${id}.json.pre-migration`);
-        if (existsSync(sidecar)) {
-          const sidecarDest = join(this.archiveDir, `${id}.json.pre-migration`);
-          if (!existsSync(sidecarDest)) {
-            try { renameSync(sidecar, sidecarDest); } catch { /* jsonl moved — sidecar is best-effort */ }
-          }
-        }
+        this.moveToArchive(id, src, dest, onArchived);
         this.metadata.forget(id);
         archived++;
       } catch (e) {

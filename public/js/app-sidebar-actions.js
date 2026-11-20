@@ -272,9 +272,39 @@ function selectChat(id) {
   }
 }
 
+// A chat's delete button offers the two kinds of delete (src/session/remove.ts):
+// Delete takes it out of the chat lists on every device and the agent keeps
+// it in memory; Erase removes it for good, here and on synced machines.
 function deleteChat(id, e) {
   e.stopPropagation();
-  if (!confirm('Delete this chat?')) return;
+  document.querySelectorAll('.projects-flyout').forEach(m => m.remove());
+  const menu = document.createElement('div');
+  menu.className = 'projects-flyout';
+  menu.innerHTML =
+    `<div class="projects-flyout-item" onclick="removeChat('${esc(id)}',event)" title="It leaves your chat lists everywhere. The agent still remembers it.">`
+    + `<span class="projects-flyout-name">Delete</span><span class="projects-flyout-count">kept in memory</span></div>`
+    + `<div class="projects-flyout-item" onclick="eraseChat('${esc(id)}',event)" title="Deleted for good, here and on your synced devices.">`
+    + `<span class="projects-flyout-name">Erase permanently…</span></div>`;
+  document.body.appendChild(menu);
+  const rect = (e.target.closest('button') || e.target).getBoundingClientRect();
+  menu.style.top = Math.min(rect.bottom + 4, window.innerHeight - 100) + 'px';
+  menu.style.left = Math.max(8, rect.right - 220) + 'px';
+  setTimeout(() => {
+    document.addEventListener('click', function h(ev) {
+      if (menu.contains(ev.target)) return;
+      menu.remove();
+      document.removeEventListener('click', h);
+    });
+  }, 10);
+}
+
+function closeDeleteMenu(e) {
+  if (e) e.stopPropagation();
+  document.querySelectorAll('.projects-flyout').forEach(m => m.remove());
+}
+
+// Take a chat off this tab's sidebar at once; the server's list says the same.
+function dropChatLocally(id) {
   chats = chats.filter(c => c.id !== id);
   if (activeChat && activeChat.id === id) activeChat = null;
   markDeleted(id);
@@ -283,7 +313,37 @@ function deleteChat(id, e) {
   try { if (window.laxBrowserSessionBind) window.laxBrowserSessionBind.bindSession(activeChat ? activeChat.id : null); } catch {}
   // A deleted chat leaves the tile grid (chat-tiles.js).
   try { if (window.laxChatTiles) window.laxChatTiles.onChatChanged(); } catch {}
+}
+
+function removeChat(id, e) {
+  closeDeleteMenu(e);
+  dropChatLocally(id);
   apiFetch(`/api/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {});
+}
+
+async function eraseChat(id, e) {
+  closeDeleteMenu(e);
+  if (!confirm('Erase this chat permanently?\n\nIt is deleted from this computer and your synced devices, and the agent can no longer look it up. Facts it already learned from it are kept. This cannot be undone.')) return;
+  try {
+    const r = await apiFetch(`/api/sessions/${encodeURIComponent(id)}/erase`, { method: 'POST' });
+    if (!r.ok) {
+      const body = await r.json().catch(() => ({}));
+      alert(body.error || `Couldn't erase the chat (HTTP ${r.status}).`);
+      return;
+    }
+  } catch (err) { alert('Couldn\'t erase the chat: ' + (err?.message || err)); return; }
+  dropChatLocally(id);
+}
+
+// Every chat on the chat side leaves the lists; each one stays in memory.
+async function deleteAllChats(e) {
+  if (e) e.stopPropagation();
+  if (!confirm('Delete all chats from your lists?\n\nThey leave the sidebar and your phone, and the agent still remembers them. Projects\' chats, code sessions and WhatsApp/Telegram threads stay.')) return;
+  try {
+    const r = await apiFetch('/api/sessions', { method: 'DELETE' });
+    if (!r.ok) { alert(`Couldn't delete the chats (HTTP ${r.status}).`); return; }
+  } catch (err) { alert('Couldn\'t delete the chats: ' + (err?.message || err)); return; }
+  await handleChatListChanged();
 }
 
 function renameChat(id, e) {

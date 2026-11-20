@@ -6,10 +6,12 @@ import type { RouteHandler } from "../server-context.js";
 import { isValidSessionId, safeErrorMessage, safeParseBody, jsonResponse } from "../server-utils.js";
 import { importSession } from "../session/export.js";
 import { handleSessionReadRoutes } from "./session-read.js";
-import { isExcludedFromSessionSummaries, isHiddenFromChatLists } from "../memory/synthetic-sessions.js";
+import { isExcludedFromSessionSummaries } from "../memory/synthetic-sessions.js";
 import { handleSessionBranchRoutes } from "./session-branches.js";
+import { isListedChat } from "../session/remove.js";
+import { handleSessionRemovalRoutes } from "./session-remove.js";
 
-export const handleSessionRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
+export const handleSessionRoutes: RouteHandler = async (method, url, req, res, ctx, role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
 
   // List sessions
@@ -21,9 +23,10 @@ export const handleSessionRoutes: RouteHandler = async (method, url, req, res, c
     // App IDE chats (ide-<appId>) are listed: they are code sessions, and the
     // sidebar's Code side shows them under their app (session/mode.ts). Their
     // `mode` says which side; the chat side never shows them.
+    // Chats the user deleted are left out too: kept on disk, gone from every list (session/remove.ts).
     const all = ctx.sessionStore.list();
     // Typed as the phone's row so a renamed field fails here, not in the phone's drawer.
-    const visible: SessionSummary[] = all.filter(s => !isHiddenFromChatLists(s.id));
+    const visible: SessionSummary[] = all.filter(isListedChat);
     json(200, visible);
     return true;
   }
@@ -37,7 +40,7 @@ export const handleSessionRoutes: RouteHandler = async (method, url, req, res, c
     // a fake chat the sidebar refuses to list. Filter BEFORE the slice(0,100)
     // scan budget so hidden transcripts can't crowd out real ones. ide- stays
     // searchable — live user chats with their own surface.
-    const allSessions = ctx.sessionStore.list().filter(s => !isHiddenFromChatLists(s.id));
+    const allSessions = ctx.sessionStore.list().filter(isListedChat);
     const results: Array<{ sessionId: string; title: string; matches: Array<{ role: string; snippet: string; index: number }> }> = [];
     for (const meta of allSessions.slice(0, 100)) {
       const session = ctx.sessionStore.load(meta.id);
@@ -158,39 +161,6 @@ export const handleSessionRoutes: RouteHandler = async (method, url, req, res, c
     return true;
   }
 
-  // Bulk delete — aliased to sidebar_clear semantics. The endpoint used
-  // to wipe every session JSONL on disk; agents that didn't follow the
-  // system prompt reached for it as a shortcut for "clear the sidebar"
-  // and destroyed real data including WhatsApp/Telegram threads. Failing
-  // loudly (405) didn't solve the inconsistency — Codex picked the right
-  // tool, Grok did not, so the destructive call became model-dependent.
-  // Make both paths converge: bulk DELETE here does what sidebar_clear
-  // does (emit the WS event, the browser tombstones non-integration
-  // chats, no disk write). Either tool the model picks now produces the
-  // same safe outcome. Surgical DELETE /api/sessions/<id> below is
-  // unchanged for callers that want to remove ONE session.
-  if (method === "DELETE" && url.pathname === "/api/sessions") {
-    try {
-      const { broadcastAll } = await import("../chat-ws/index.js");
-      broadcastAll({ type: "sidebar_clear_chats", at: Date.now() });
-    } catch { /* WS broadcast best-effort; the response below is the source of truth */ }
-    json(200, {
-      ok: true,
-      hidden: true,
-      deleted: 0,
-      note: "Bulk DELETE aliased to sidebar_clear — sidebar Conversations hidden via frontend tombstones, backend session files untouched. Use DELETE /api/sessions/<id> for surgical removal.",
-    });
-    return true;
-  }
-
-  // Delete session
-  if (method === "DELETE" && url.pathname.startsWith("/api/sessions/")) {
-    const id = url.pathname.split("/").pop()!;
-    if (!isValidSessionId(id)) { json(400, { error: "Invalid session ID" }); return true; }
-    ctx.sessionStore.delete(id);
-    json(200, { ok: true });
-    return true;
-  }
-
-  return false;
+  // Delete, erase, start fresh (session-remove.ts).
+  return handleSessionRemovalRoutes(method, url, req, res, ctx, role);
 };

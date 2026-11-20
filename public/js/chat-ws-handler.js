@@ -151,7 +151,7 @@ function dispatchChatWsNonEvent(msg) {
     window.refreshLearnedWorkflows();
   }
   if (msg.type === 'sidebar_pins_changed' && msg.pins) handleSidebarPinsChanged(msg);
-  if (msg.type === 'sidebar_clear_chats') handleSidebarClearChats(msg);
+  if (msg.type === 'chat_list_changed') handleChatListChanged(msg);
 
   // Another socket retracted a turn (POST /api/retract): the server shrank the
   // session history and broadcast a bare {type:"history_changed", sessionId}.

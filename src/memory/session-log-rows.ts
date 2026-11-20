@@ -22,6 +22,8 @@ export interface SessionMetaRow {
   mode?: ChatMode;
   /** The chat's bound folder, workspace-relative (session/project-folder.ts). */
   folder?: string;
+  /** When the user deleted it from the chat lists (session/remove.ts). */
+  removedAt?: number;
 }
 
 export interface SessionMessageRow {

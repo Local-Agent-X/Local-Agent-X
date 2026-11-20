@@ -153,49 +153,21 @@ function handleSidebarPinsChanged(msg) {
   } catch(e) { /* app.js not loaded yet — will pick up on next page load */ }
 }
 
-// Agent (or another tab) asked to wipe the Conversations list from the
-// sidebar. Tombstone non-integration chat IDs so sync doesn't resurrect
-// them, but PRESERVE wa-/tg-/sms- sessions — those drive the Messaging
-// section, not Conversations, and were getting nuked by the original
-// implementation. Also un-tombstones any integration IDs an earlier
-// version of this handler wrongly tombstoned, so the Messaging section
-// self-heals on next sidebar_clear call (or page load + refresh).
-// Backend session files are NOT touched — recovery for the conversation
-// IDs is "clear tombstones."
-function _isIntegrationSessionId(id) {
-  return typeof id === 'string' && (id.startsWith('wa-') || id.startsWith('tg-') || id.startsWith('sms-'));
-}
-function handleSidebarClearChats() {
+// The server's chat list changed: a chat was deleted or erased here, in
+// another tab or on the phone, or the agent cleared the Conversations list
+// (src/session/remove.ts). The list is kept on the server now, so re-read it
+// instead of waiting for the next 30 s sync; a chat that left it drops out of
+// the sidebar, and if it was the open one, the chat pane closes.
+async function handleChatListChanged() {
   try {
-    // Heal prior mistake: drop any integration-prefix tombstones so the
-    // Messaging section comes back on next sync.
-    try {
-      const t = JSON.parse(localStorage.getItem('lax_deleted_sessions') || '{}');
-      let mutated = false;
-      for (const k of Object.keys(t)) {
-        if (_isIntegrationSessionId(k)) { delete t[k]; mutated = true; }
-      }
-      if (mutated) localStorage.setItem('lax_deleted_sessions', JSON.stringify(t));
-    } catch {}
-
-    if (typeof chats !== 'undefined' && Array.isArray(chats)) {
-      const keepers = [];
-      for (const c of chats) {
-        if (!c || !c.id) continue;
-        if (_isIntegrationSessionId(c.id)) { keepers.push(c); continue; }
-        if (typeof markDeleted === 'function') markDeleted(c.id);
-      }
-      chats = keepers;
-      try { window.chats = chats; } catch {}
-    }
-    if (typeof activeChat !== 'undefined' && activeChat && !_isIntegrationSessionId(activeChat.id)) {
+    if (typeof syncChatsFromServer !== 'function') return;
+    await syncChatsFromServer();
+    if (typeof activeChat !== 'undefined' && activeChat && !chats.some(c => c.id === activeChat.id)) {
       activeChat = null;
       try { window.activeChat = null; } catch {}
+      if (typeof renderMessages === 'function') renderMessages();
     }
-    if (typeof saveChats === 'function') saveChats();
-    if (typeof renderSidebar === 'function') renderSidebar();
-    if (typeof renderMessages === 'function') renderMessages();
-  } catch (e) { console.warn('[sidebar-clear-chats] failed', e); }
+  } catch (e) { console.warn('[chat-list-changed] failed', e); }
 }
 
 // Manifest-generator detects edits under workspace/apps/<name>/ and broadcasts.

@@ -37,7 +37,7 @@ export type GlobalFrame =
    *  `mcpServers`), checked against the tab's handler by frames.test.ts. */
   | { type: "settings_changed"; settings: Record<string, unknown> }
   | { type: "sidebar_pins_changed"; pins: SidebarPin[] }
-  | { type: "sidebar_clear_chats"; at: number }
+  | { type: "chat_list_changed"; at: number }
   | { type: "app-files-changed"; appName: string }
   | { type: "app:state"; appId: string }
   | { type: "app:event"; appId: string; event: unknown }
@@ -62,7 +62,7 @@ export type GlobalFrameType = GlobalFrame["type"];
  *  the union in both directions. */
 export const GLOBAL_FRAME_TYPES = [
   "event", "active_chats", "session_snapshot", "pong", "error", "approval_resolved", "settings_changed", "sidebar_pins_changed",
-  "sidebar_clear_chats", "app-files-changed", "app:state", "app:event", "projects_changed", "learning_changed",
+  "chat_list_changed", "app-files-changed", "app:state", "app:event", "projects_changed", "learning_changed",
   "history_changed", "system_health", "inbox_item", "inbox_changed",
   "agent-spawn", "agent-update", "agent-output", "agent-complete", "workers_snapshot",
   "work_claims_changed", "collab_changed",

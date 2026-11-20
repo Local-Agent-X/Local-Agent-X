@@ -148,7 +148,7 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   // ── UI / state / config ──
   sidebar_pin:    { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [], blurb: { say: "pin this to the sidebar", does: "Pin an item to the sidebar." }, wholeToolGrant: true },
   sidebar_unpin:  { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [], blurb: { does: "Unpin a sidebar item." }, wholeToolGrant: true },
-  sidebar_clear:  { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [], blurb: { say: "clear the sidebar", does: "Clear the sidebar." }, wholeToolGrant: true },
+  sidebar_clear:  { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [], blurb: { say: "clear the sidebar", does: "Clear the sidebar." }, wholeToolGrant: true, reads: ["session"] },
   // Sends the call's camera frames to the chat model the user is on, as a call's glances already do.
   camera_watch:   { kernel: "internal", risk: "safe", capabilities: [], tags: ["voice-fast"], reads: ["session"], rules: [{ id: "allow-camera-watch", decision: "allow", reason: "Watches the call's camera for what the user asked; speaks on the call", priority: 50 }] },
   // Morphing the sphere is the whole effect: a voice turn that drove a wrap-up

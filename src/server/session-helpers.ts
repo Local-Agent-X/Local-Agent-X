@@ -32,6 +32,11 @@ export interface SessionHelpers {
    * reordering or dropping the latest turn.
    */
   flushSession: (id: string) => Promise<void>;
+  /**
+   * Forget the cached copy of an erased session, so a tab still showing it
+   * can't save it back to disk (session/remove.ts). Await flushSession first.
+   */
+  dropSession: (id: string) => void;
 }
 
 export function createSessionHelpers(deps: {
@@ -94,5 +99,9 @@ export function createSessionHelpers(deps: {
     if (r.added > 0) logger.info(`[memory-live] Indexed ${r.added} new chunks (session ${session.id})`);
   }
 
-  return { sessions, getOrCreateSession, saveSession, flushSession };
+  function dropSession(id: string): void {
+    sessions.delete(id);
+  }
+
+  return { sessions, getOrCreateSession, saveSession, flushSession, dropSession };
 }

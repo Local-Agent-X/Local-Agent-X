@@ -24,7 +24,6 @@ describe("bridge command recovery", () => {
 
   it("rejects an injected steer before publishing a durable command", async () => {
     const handler = createBridgeHandler({
-      sessions: new Map(), sessionStore: { delete: vi.fn() } as never,
       config: {} as never, getContext: vi.fn(() => { throw new Error("ordinary chat path must not run"); }),
     });
 
@@ -49,7 +48,6 @@ describe("bridge command recovery", () => {
     }, async () => "seeded");
     await seeded?.acknowledgeDelivery?.(false);
     const handler = createBridgeHandler({
-      sessions: new Map(), sessionStore: { delete: vi.fn() } as never,
       config: {} as never, getContext: vi.fn(() => { throw new Error("ordinary chat path must not run"); }),
     });
 
@@ -63,7 +61,6 @@ describe("bridge command recovery", () => {
 
   it("replays persisted steering after the transport no longer reports a busy turn", async () => {
     const handler = createBridgeHandler({
-      sessions: new Map(), sessionStore: { delete: vi.fn() } as never,
       config: {} as never, getContext: vi.fn(() => { throw new Error("ordinary chat path must not run"); }),
     });
     const payload = {

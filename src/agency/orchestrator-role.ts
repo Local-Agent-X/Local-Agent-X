@@ -26,6 +26,7 @@ import { locateInRepo } from "./repo-locate.js";
 import { holdersOfSession, liveHolders } from "./work-claims.js";
 import { ownCopyOf, startOwnCopy } from "./chat-own-copy.js";
 import { postNote } from "./handover-notes.js";
+import { boundChatRemoval, isListedChat } from "../session/remove.js";
 
 export const ROUTING_MAX = 1_000;
 
@@ -50,13 +51,51 @@ export function repoKeyOfFolder(folder: string): string | null {
   return place && !place.repoKey.startsWith("dir:") ? place.repoKey : null;
 }
 
+/**
+ * A role lapses when its chat is deleted, or has not had a turn for a day. It
+ * used to be held until someone pressed Release: a "hi" chat kept the role of
+ * a repo for ten days (2026-11-20), named on every chat in it and moving their
+ * work into copies on its behalf. A worker finishing wakes the orchestrator
+ * (orchestrator-wake.ts), which is a turn, so a role in use does not lapse.
+ */
+export const ORCHESTRATOR_IDLE_LAPSE_MS = 24 * 60 * 60_000;
+
+type ChatActivity = { listed: boolean; updatedAt: number };
+let activityOverride: ((sessionId: string) => ChatActivity | null) | null = null;
+let clock: () => number = Date.now;
+
+/** The chat's activity; null when there is no such chat, undefined when this
+ *  process has no session store to ask (a lapse is never decided on a guess). */
+function chatActivity(sessionId: string): ChatActivity | null | undefined {
+  if (activityOverride) return activityOverride(sessionId);
+  const sessions = boundChatRemoval()?.sessionStore;
+  if (!sessions) return undefined;
+  const meta = sessions.list().find((m) => m.id === sessionId);
+  return meta ? { listed: isListedChat(meta), updatedAt: meta.updatedAt } : null;
+}
+
+function lapsed(role: OrchestratorRole): boolean {
+  const activity = chatActivity(role.sessionId);
+  if (activity === undefined) return false;
+  return !activity || !activity.listed || clock() - activity.updatedAt > ORCHESTRATOR_IDLE_LAPSE_MS;
+}
+
+/** The roles still held, dropping the ones that lapsed from the record. */
+function liveRoles(): Record<string, OrchestratorRole> {
+  const byRepo = store().load().byRepo;
+  const gone = Object.keys(byRepo).filter((k) => lapsed(byRepo[k]));
+  if (gone.length === 0) return byRepo;
+  store().mutate((d) => { for (const k of gone) if (d.byRepo[k]?.sessionId === byRepo[k].sessionId) delete d.byRepo[k]; });
+  return Object.fromEntries(Object.entries(byRepo).filter(([k]) => !gone.includes(k)));
+}
+
 export function orchestratorOf(repoKey: string): OrchestratorRole | null {
-  return store().load().byRepo[repoKey] ?? null;
+  return liveRoles()[repoKey] ?? null;
 }
 
 /** The repos `sessionId` is the orchestrator of. */
 export function rolesOf(sessionId: string): OrchestratorRole[] {
-  return Object.values(store().load().byRepo).filter((r) => r.sessionId === sessionId);
+  return Object.values(liveRoles()).filter((r) => r.sessionId === sessionId);
 }
 
 /** Make `sessionId` the orchestrator of the repo; replaces whoever was. */
@@ -112,4 +151,10 @@ export function applyFolderRule(sessionId: string, projectFolder: string, displa
 /** Test seam. */
 export function _setOrchestratorFileForTest(file: string | null): void {
   fileOverride = file;
+}
+
+/** Test seam: the chat-activity lookup and clock the lapse rule reads. */
+export function _setOrchestratorLapseForTest(opts: { activity?: ((sessionId: string) => ChatActivity | null) | null; clock?: () => number }): void {
+  if (opts.activity !== undefined) activityOverride = opts.activity;
+  clock = opts.clock ?? Date.now;
 }

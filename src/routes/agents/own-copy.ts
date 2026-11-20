@@ -18,7 +18,7 @@ import { join } from "node:path";
 import type { RouteHandler, ServerContext } from "../../server-context.js";
 import { jsonResponse, safeParseBody } from "../../server-utils.js";
 import { leaveOwnCopy, mergeOwnCopy, ownCopyOf, startOwnCopy } from "../../agency/chat-own-copy.js";
-import { liveHolders } from "../../agency/work-claims.js";
+import { liveHolders, namedHolders, type HolderNames } from "../../agency/work-claims.js";
 import { locateInRepo } from "../../agency/repo-locate.js";
 import { sessionProjectFolder } from "../../session/project-folder.js";
 import { isPinnableSessionId } from "../../session/model-pin.js";
@@ -35,15 +35,21 @@ function projectFolderOf(ctx: Pick<ServerContext, "sessionStore">, sessionId: st
   return session ? sessionProjectFolder({ id: session.id, mode: session.mode, projectId: session.projectId, folder: session.folder }) : undefined;
 }
 
-export function ownCopyView(ctx: Pick<ServerContext, "sessionStore">, sessionId: string): OwnCopyView {
+const sameCheckout = (a: string, b: string) => a.replace(/\\/g, "/").toLowerCase() === b.replace(/\\/g, "/").toLowerCase();
+
+export function ownCopyView(ctx: Pick<ServerContext, "sessionStore">, sessionId: string, names?: HolderNames): OwnCopyView {
   const copy = ownCopyOf(sessionId);
   if (copy) return { copy: { branch: copy.branch, baseBranch: copy.baseBranch }, sharesFolderWith: [] };
   const folder = projectFolderOf(ctx, sessionId);
   const place = folder ? locateInRepo(join(folder, ".own-copy")) : null;
   if (!place || place.repoKey.startsWith("dir:")) return { copy: null, sharesFolderWith: [] };
-  const mine = place.checkout.replace(/\\/g, "/").toLowerCase();
-  const sharers = liveHolders(place.repoKey)
-    .filter((h) => h.sessionId !== sessionId && h.state !== "recent" && h.checkout.replace(/\\/g, "/").toLowerCase() === mine)
+  const inRepo = namedHolders(names).filter((h) => h.repoKey === place.repoKey);
+  // Where this chat writes is where it has written, when it has: a chat
+  // already in a checkout of its own (a worktree) shares no folder, though its
+  // project folder is the one the others write (2026-11-20).
+  const mine = inRepo.find((h) => h.sessionId === sessionId)?.checkout ?? place.checkout;
+  const sharers = inRepo
+    .filter((h) => h.sessionId !== sessionId && h.state !== "recent" && sameCheckout(h.checkout, mine))
     .map((h) => h.displayName);
   return { copy: null, sharesFolderWith: sharers };
 }

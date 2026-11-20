@@ -15,7 +15,6 @@ import type { RouteHandler, ServerContext } from "../../server-context.js";
 import { jsonResponse, safeParseBody } from "../../server-utils.js";
 import { orchestratorOf, releaseOrchestratorRole, repoKeyOfFolder, takeOrchestratorRole, ROUTING_MAX } from "../../agency/orchestrator-role.js";
 import { ownCopyOf } from "../../agency/chat-own-copy.js";
-import { liveHolders } from "../../agency/work-claims.js";
 import { sessionProjectFolder } from "../../session/project-folder.js";
 import { isPinnableSessionId } from "../../session/model-pin.js";
 
@@ -38,14 +37,14 @@ function repoKeyOfSession(ctx: Pick<ServerContext, "sessionStore">, sessionId: s
   return folder ? repoKeyOfFolder(folder) : null;
 }
 
-export function orchestratorView(ctx: Pick<ServerContext, "sessionStore">, sessionId: string): OrchestratorView {
+export function orchestratorView(ctx: Pick<ServerContext, "sessionStore">, sessionId: string, sessions = ctx.sessionStore.list()): OrchestratorView {
   const repoKey = repoKeyOfSession(ctx, sessionId);
   if (!repoKey) return { available: false, mine: false, heldBy: null, heldBySession: null, routing: "" };
   const role = orchestratorOf(repoKey);
   if (!role) return { available: true, mine: false, heldBy: null, heldBySession: null, routing: "" };
   if (role.sessionId === sessionId) return { available: true, mine: true, heldBy: null, heldBySession: null, routing: role.routing };
-  const holder = liveHolders(repoKey).find((h) => h.sessionId === role.sessionId);
-  const title = holder?.displayName ?? ctx.sessionStore.load(role.sessionId)?.title ?? "another chat";
+  // Named as the chat list names it (the role lapses with a deleted chat, orchestrator-role.ts).
+  const title = sessions.find((m) => m.id === role.sessionId)?.title || "another chat";
   return { available: true, mine: false, heldBy: title, heldBySession: role.sessionId, routing: "" };
 }
 

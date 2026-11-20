@@ -1,10 +1,17 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+// A chat's project folder is its own `folder` here; the real resolver only
+// accepts folders inside the workspace, which a temp repo is not.
+vi.mock("../../session/project-folder.js", () => ({ sessionProjectFolder: (s: { folder?: string }) => s.folder }));
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Op } from "../../ops/types.js";
 import { othersInProjectOf, workClaimRows } from "./work-claims.js";
-import { recordClaims, _resetWorkClaimsForTest, _setWorkClaimsForTest } from "../../agency/work-claims.js";
+import { holderNamesFrom, recordClaims, _resetWorkClaimsForTest, _setWorkClaimsForTest } from "../../agency/work-claims.js";
+import { ownCopyView } from "./own-copy.js";
+import type { SessionMetadata } from "../../memory/session-metadata-cache.js";
+import type { Session } from "../../types.js";
 import { _resetRepoLocateCacheForTest } from "../../agency/repo-locate.js";
 
 let repo: string;
@@ -35,5 +42,39 @@ describe("GET /api/work-claims rows", () => {
     const others = othersInProjectOf("chat-a");
     expect(others.map((o) => [o.displayName, o.clashesWithMe]).sort()).toEqual([["Docs", false], ["Fix STT", true]]);
     expect(othersInProjectOf("chat-elsewhere")).toEqual([]);
+  });
+});
+
+// Live 2026-11-20: the strip named chats by the first words of the turn that
+// started their work ("yes part of the repo"), never by their titles.
+describe("the strip names chats as the chat list does", () => {
+  const meta = (id: string, title: string, removedAt?: number): SessionMetadata =>
+    ({ id, title, updatedAt: 1_000, messageCount: 2, ...(removedAt ? { removedAt } : {}) });
+
+  it("by title, a worker by its task, and a deleted chat not at all", () => {
+    recordClaims({ sessionId: "chat-a", opId: "op-a", paths: [join(repo, "src")], source: "written", displayName: "yes part of the repo" });
+    recordClaims({ sessionId: "chat-gone", opId: "op-g", paths: [join(repo, "docs")], source: "written", displayName: "old words" });
+    recordClaims({ sessionId: "agent-1", opId: "op-w", paths: [join(repo, "lib")], source: "written", displayName: "Fix STT" });
+    const names = holderNamesFrom([meta("chat-a", "Delete member request"), meta("chat-gone", "Old chat", 2_000)]);
+    const rows = workClaimRows(names);
+    expect(rows.map((r) => r.displayName).sort()).toEqual(["Delete member request", "Fix STT"]);
+    expect(othersInProjectOf("agent-1", names).map((o) => o.displayName)).toEqual(["Delete member request"]);
+  });
+
+  it("a chat writing a checkout of its own shares no folder with the chats in the project folder", () => {
+    // A worktree of the same repo, laid out as git does: a `.git` file whose gitdir names the common dir.
+    const own = join(repo, "..", "own-checkout");
+    const gitdir = join(repo, ".git", "worktrees", "own");
+    mkdirSync(gitdir, { recursive: true });
+    mkdirSync(own, { recursive: true });
+    writeFileSync(join(gitdir, "commondir"), "../..");
+    writeFileSync(join(own, ".git"), `gitdir: ${gitdir}`);
+    _resetRepoLocateCacheForTest();
+    recordClaims({ sessionId: "chat-shared", opId: "op-s", paths: [join(repo, "a.ts")], source: "written", displayName: "Shared" });
+    const ctx = { sessionStore: { load: (id: string) => ({ id, title: id, messages: [], createdAt: 0, updatedAt: 0, folder: repo }) as unknown as Session } };
+    // Not written anywhere yet: its project folder is the one the others write.
+    expect(ownCopyView(ctx as never, "chat-mine").sharesFolderWith).toEqual(["Shared"]);
+    recordClaims({ sessionId: "chat-mine", opId: "op-m", paths: [join(own, "a.ts")], source: "written", displayName: "Mine" });
+    expect(ownCopyView(ctx as never, "chat-mine").sharesFolderWith).toEqual([]);
   });
 });

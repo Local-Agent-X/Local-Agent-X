@@ -6,7 +6,7 @@ import { join } from "node:path";
 import type { Op } from "../ops/types.js";
 import {
   applyFolderRule, orchestratorOf, releaseOrchestratorRole, repoKeyOfFolder, rolesOf, takeOrchestratorRole,
-  _setOrchestratorFileForTest,
+  ORCHESTRATOR_IDLE_LAPSE_MS, _setOrchestratorFileForTest, _setOrchestratorLapseForTest,
 } from "./orchestrator-role.js";
 import { leaveOwnCopy, ownCopyOf, _setOwnCopyFileForTest } from "./chat-own-copy.js";
 import { recordClaims, _resetWorkClaimsForTest, _setWorkClaimsForTest } from "./work-claims.js";
@@ -38,7 +38,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   for (const s of moved) { try { leaveOwnCopy(s); } catch { /* already gone */ } }
-  _setOrchestratorFileForTest(null); _setOwnCopyFileForTest(null); _resetWorkClaimsForTest(); _resetHandoverNotesForTest();
+  _setOrchestratorFileForTest(null); _setOrchestratorLapseForTest({ activity: null }); _setOwnCopyFileForTest(null); _resetWorkClaimsForTest(); _resetHandoverNotesForTest();
 });
 
 describe("the orchestrator role", () => {
@@ -114,5 +114,45 @@ describe("the model a task is given", () => {
     expect(modelPinFromArg("skynet/t-800")).toHaveProperty("error");
     expect(modelPinFromArg("anthropic")).toHaveProperty("error");
     expect(modelPinFromArg(42)).toHaveProperty("error");
+  });
+});
+
+// Live 2026-11-20: a "hi" chat held a repo's role for ten days, named on every
+// chat in it. The role was held until someone pressed Release.
+describe("an orchestrator role lapses", () => {
+  const NOW = Date.parse("2026-11-20T12:00:00Z");
+  const chats = new Map<string, { listed: boolean; updatedAt: number }>();
+  beforeEach(() => {
+    chats.clear();
+    _setOrchestratorLapseForTest({ activity: (id) => chats.get(id) ?? null, clock: () => NOW });
+  });
+
+  it("is held while its chat has had a turn within a day", () => {
+    chats.set("chat-boss", { listed: true, updatedAt: NOW - ORCHESTRATOR_IDLE_LAPSE_MS + 60_000 });
+    takeOrchestratorRole("chat-boss", repoKey);
+    expect(orchestratorOf(repoKey)?.sessionId).toBe("chat-boss");
+    expect(rolesOf("chat-boss")).toHaveLength(1);
+  });
+
+  it("when its chat has been quiet for a day, and the record drops it", () => {
+    chats.set("chat-boss", { listed: true, updatedAt: NOW - ORCHESTRATOR_IDLE_LAPSE_MS - 60_000 });
+    takeOrchestratorRole("chat-boss", repoKey);
+    expect(orchestratorOf(repoKey)).toBeNull();
+    _setOrchestratorLapseForTest({ activity: null });
+    expect(orchestratorOf(repoKey)).toBeNull();
+  });
+
+  it("when its chat was deleted or no longer exists", () => {
+    chats.set("chat-gone", { listed: false, updatedAt: NOW });
+    takeOrchestratorRole("chat-gone", repoKey);
+    expect(orchestratorOf(repoKey)).toBeNull();
+    takeOrchestratorRole("chat-erased", repoKey);
+    expect(rolesOf("chat-erased")).toEqual([]);
+  });
+
+  it("never on a guess: a process with no chat list keeps the role", () => {
+    _setOrchestratorLapseForTest({ activity: null });
+    takeOrchestratorRole("chat-boss", repoKey);
+    expect(orchestratorOf(repoKey)?.sessionId).toBe("chat-boss");
   });
 });

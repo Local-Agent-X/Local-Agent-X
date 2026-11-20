@@ -23,6 +23,8 @@ import { createHash } from "node:crypto";
 import { readdirSync, readFileSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
+import { isListedChat } from "../session/remove.js";
+import type { SessionMetadata } from "../memory/session-metadata-cache.js";
 import { atomicWriteFileSync, ensureDirFor } from "../util/json-store.js";
 import { readOp } from "../ops/op-store.js";
 import type { Op } from "../ops/types.js";
@@ -135,6 +137,31 @@ export function liveHolders(repoKey?: string): HolderView[] {
     out.push({ ...h, state });
   }
   return out;
+}
+
+/** A holder's name for the user: a chat by its title in the chat list, a
+ *  worker by its task. Null for a chat that is no longer in the lists. A chat
+ *  used to be named by the first words of the turn that started its work, so
+ *  the strip showed names the sidebar never did (2026-11-20). */
+export type HolderNames = (h: Pick<WorkHolder, "kind" | "sessionId" | "displayName">) => string | null;
+
+export function holderNamesFrom(sessions: SessionMetadata[]): HolderNames {
+  const titles = new Map(sessions.filter(isListedChat).map((m) => [m.id, m.title]));
+  return (h) => {
+    if (h.kind !== "chat") return h.displayName;
+    const title = titles.get(h.sessionId);
+    return title === undefined ? null : title || h.displayName;
+  };
+}
+
+const AS_RECORDED: HolderNames = (h) => h.displayName;
+
+/** The live holders under their names, without the chats that were deleted. */
+export function namedHolders(names: HolderNames = AS_RECORDED): HolderView[] {
+  return liveHolders().flatMap((h) => {
+    const displayName = names(h);
+    return displayName === null ? [] : [{ ...h, displayName }];
+  });
 }
 
 function describeFromOp(opId: string | undefined): Pick<WorkHolder, "kind" | "task" | "parentOpId"> {

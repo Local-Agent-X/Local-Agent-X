@@ -14,7 +14,7 @@
 import { basename } from "node:path";
 import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse } from "../../server-utils.js";
-import { liveHolders, setClaimsChangedListener, type HolderView } from "../../agency/work-claims.js";
+import { holderNamesFrom, namedHolders, setClaimsChangedListener, type HolderNames, type HolderView } from "../../agency/work-claims.js";
 import { areasOf, reposOfSession } from "../../agency/other-agents-block.js";
 import { normRepoPath, repoPathsOverlap } from "../../agency/path-overlap.js";
 import { handleOwnCopyRoutes, ownCopyView } from "./own-copy.js";
@@ -54,16 +54,16 @@ function rowOf(h: HolderView, all: HolderView[]): WorkClaimRow {
   };
 }
 
-export function workClaimRows(): WorkClaimRow[] {
-  const all = liveHolders();
+export function workClaimRows(names?: HolderNames): WorkClaimRow[] {
+  const all = namedHolders(names);
   return all.map((h) => rowOf(h, all));
 }
 
 /** The other agents working in the repos `sessionId` works in, each flagged
  *  when its claims overlap that session's: the strip a chat window shows. */
-export function othersInProjectOf(sessionId: string): Array<WorkClaimRow & { clashesWithMe: boolean }> {
+export function othersInProjectOf(sessionId: string, names?: HolderNames): Array<WorkClaimRow & { clashesWithMe: boolean }> {
   const repos = new Set(reposOfSession(sessionId));
-  const all = liveHolders();
+  const all = namedHolders(names);
   const here = all.filter((h) => repos.has(h.repoKey) && h.state !== "recent");
   const mine = here.filter((h) => h.sessionId === sessionId);
   return here
@@ -76,10 +76,12 @@ export const handleWorkClaimRoutes: RouteHandler = async (method, url, req, res,
   if (await handleOrchestratorRoutes(method, url, req, res, ctx, role)) return true;
   if (method !== "GET" || url.pathname !== "/api/work-claims") return false;
   const session = url.searchParams.get("session");
+  const sessions = ctx.sessionStore.list();
+  const names = holderNamesFrom(sessions);
   const forChat = session
-    ? { others: othersInProjectOf(session), ownCopy: ownCopyView(ctx, session), orchestrator: orchestratorView(ctx, session) }
+    ? { others: othersInProjectOf(session, names), ownCopy: ownCopyView(ctx, session, names), orchestrator: orchestratorView(ctx, session, sessions) }
     : {};
-  jsonResponse(res, 200, { holders: workClaimRows(), ...forChat }, req);
+  jsonResponse(res, 200, { holders: workClaimRows(names), ...forChat }, req);
   return true;
 };
 

@@ -66,6 +66,14 @@ async function forkAtMessage(msgIndex) {
   }
 }
 
+// The first turn of a session opened from a handoff, sent as the user's.
+function startFromHandoff(brief) {
+  const input = document.getElementById('msg-input');
+  if (!input || typeof sendMessage !== 'function') return;
+  input.value = `Continue the work from the handoff brief ${brief}: pick up the next step it lists, and ask me before anything it says needs my OK.`;
+  sendMessage();
+}
+
 /**
  * Continue a chat as a code session: a fork of the whole conversation that is
  * a code session (fewer prompt parts, the coding kit up front) in the chat's
@@ -75,7 +83,8 @@ async function forkAtMessage(msgIndex) {
  *
  * With a `handoff` ({ folder, brief }, the agent's code_handoff offer) the code
  * session opens on that repo and starts from the brief instead of the chat, so
- * there is nothing to compact. Resolves true when the session opened.
+ * there is nothing to compact, and its first turn starts on the brief at once.
+ * Resolves true when the session opened.
  */
 async function continueInCodeSession(chatId, e, handoff) {
   if (e) e.stopPropagation();
@@ -115,6 +124,9 @@ async function continueInCodeSession(chatId, e, handoff) {
     saveChats();
     if (typeof setSidebarMode === 'function') setSidebarMode('code');
     selectChat(data.forkId);
+    // The click is the go-ahead: the session starts on the brief rather than
+    // opening blank and waiting for the user to say "go" (2026-11-20).
+    if (handoff) startFromHandoff(handoff.brief);
     return true;
   } catch (err) {
     console.warn('[continue-in-code] Error:', err.message);

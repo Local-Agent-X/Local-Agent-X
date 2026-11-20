@@ -66,4 +66,47 @@ describe("the Code mode handoff notice", () => {
 		await vi.waitFor(() => expect(n.error).toBeTruthy());
 		expect(el.querySelector(".handoff-notice-open")).not.toBeNull();
 	});
+
+	// Live 2026-11-20: the code session opened blank and waited for the user to
+	// say "go". The click is the go-ahead, so the session's first turn starts.
+	it("the opened code session starts its first turn on the brief", async () => {
+		document.body.innerHTML = '<textarea id="msg-input"></textarea>';
+		const sent: string[] = [];
+		const selected: string[] = [];
+		const stubs = {
+			chats: [{ id: "chat-1", messages: [{ role: "user", content: "move it" }] }],
+			apiFetch: vi.fn(async (url: string) => ({
+				json: async () => url === "/api/sessions/fork"
+					? { ok: true, forkId: "fork-1", title: "Code: x", projectId: "p-1" }
+					: { messages: [{ role: "system", content: "[HANDOFF]" }] },
+			})),
+			saveChats: vi.fn(),
+			setSidebarMode: vi.fn(),
+			selectChat: (id: string) => selected.push(id),
+			sendMessage: () => sent.push((document.getElementById("msg-input") as HTMLTextAreaElement).value),
+		};
+		const run = new Function(...Object.keys(stubs), src("chat.js") + "\nreturn continueInCodeSession;")(...Object.values(stubs)) as
+			(id: string, e: null, h?: { folder: string; brief: string }) => Promise<boolean>;
+		expect(await run("chat-1", null, { folder: EVENT.folder, brief: EVENT.brief })).toBe(true);
+		expect(selected).toEqual(["fork-1"]);
+		expect(sent).toHaveLength(1);
+		expect(sent[0]).toContain(EVENT.brief);
+	});
+
+	it("the plain Continue in a code session move opens without sending anything", async () => {
+		document.body.innerHTML = '<textarea id="msg-input"></textarea>';
+		const sent: string[] = [];
+		const stubs = {
+			chats: [{ id: "chat-1", messages: [{ role: "user", content: "hi" }] }],
+			apiFetch: vi.fn(async () => ({ json: async () => ({ ok: true, forkId: "fork-2", title: "Code: hi" }) })),
+			saveChats: vi.fn(),
+			setSidebarMode: vi.fn(),
+			selectChat: vi.fn(),
+			sendMessage: () => sent.push("sent"),
+		};
+		const run = new Function(...Object.keys(stubs), src("chat.js") + "\nreturn continueInCodeSession;")(...Object.values(stubs)) as
+			(id: string, e: null) => Promise<boolean>;
+		expect(await run("chat-1", null)).toBe(true);
+		expect(sent).toEqual([]);
+	});
 });

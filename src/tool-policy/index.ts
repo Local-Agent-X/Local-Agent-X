@@ -305,15 +305,9 @@ export function loadToolPolicy(dataDir: string): LiveToolPolicy {
   const policyPath = join(dataDir, "tool-policy.json");
   if (existsSync(policyPath)) {
     try {
+      // A rule's `tool` is matched by prefix or equality (matchGlob), never
+      // compiled; the regex an argMatch builds is checked in ToolPolicy's constructor.
       const raw = JSON.parse(readFileSync(policyPath, "utf-8")) as ToolPolicyConfig;
-      // Validate user-provided patterns for ReDoS safety
-      for (const rule of raw.rules) {
-        const patternCheck = checkRegexSafety(rule.tool);
-        if (patternCheck) {
-          logger.warn(`[policy] Unsafe tool pattern in rule "${rule.id}": ${patternCheck}. Skipping.`);
-          continue;
-        }
-      }
       const merged = mergeWithDefaults(raw, policyPath);
       logger.info(`[policy] Loaded ${merged.rules.length} rules from ${policyPath}`);
       return new LiveToolPolicy(new ToolPolicy(merged), policyPath);

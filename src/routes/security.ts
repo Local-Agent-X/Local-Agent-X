@@ -1,7 +1,7 @@
 import { join } from "node:path";
-import { existsSync, readFileSync } from "node:fs";
 import type { RouteHandler } from "../server-context.js";
-import { jsonResponse, readBody, safeParseBody, atomicWriteFileSync } from "../server-utils.js";
+import { jsonResponse, readBody, safeParseBody } from "../server-utils.js";
+import { isPolicyToggle, policyToggleStates, setPolicyToggle } from "../tool-policy/toggles.js";
 import { getThreatDashboard } from "../threat/threat-dashboard.js";
 import { scanForSecrets } from "../security/secrets/index.js";
 import { runInjectionTests } from "../security-tests.js";
@@ -131,17 +131,8 @@ export const handleSecurityRoutes: RouteHandler = async (method, url, req, res, 
 
   // Tool policy toggles
   if (method === "GET" && url.pathname === "/api/tool-policy/status") {
-    const policyPath = join(ctx.dataDir, "tool-policy.json");
     try {
-      const policy = existsSync(policyPath) ? JSON.parse(readFileSync(policyPath, "utf-8")) as { defaultDecision: string; rules: Array<{ id: string; decision: string }> } : { defaultDecision: "deny", rules: [] as Array<{ id: string; decision: string }> };
-      const bashRule = policy.rules.find((r) => r.id === "allow-bash-limited");
-      const httpRule = policy.rules.find((r) => r.id === "allow-http-limited");
-      const browserRule = policy.rules.find((r) => r.id === "allow-browser");
-      json(200, {
-        bash: bashRule ? bashRule.decision !== "deny" : true,
-        http: httpRule ? httpRule.decision !== "deny" : true,
-        browser: browserRule ? browserRule.decision !== "deny" : true,
-      });
+      json(200, policyToggleStates(ctx.dataDir));
     } catch { json(200, { bash: true, http: true, browser: true }); }
     return true;
   }
@@ -150,23 +141,13 @@ export const handleSecurityRoutes: RouteHandler = async (method, url, req, res, 
     let parsed: { tool?: string; enabled?: boolean };
     try { parsed = JSON.parse(body); } catch { json(400, { error: "Invalid JSON body. Expected {\"tool\": \"bash|http|browser\", \"enabled\": true|false}" }); return true; }
     const { tool, enabled } = parsed;
-    const ruleMap: Record<string, string> = { bash: "allow-bash-limited", http: "allow-http-limited", browser: "allow-browser" };
-    const ruleId = ruleMap[tool ?? ""];
     // The redirect matters: this endpoint flips tool-policy RULES only. The
     // category kill-switches are config settings on a different layer — an
     // agent that landed here chasing a kill-switch block (computer control,
     // 2026-07-20) must be pointed at the `setting` tool, not dead-ended.
-    if (!ruleId) { json(400, { error: "Unknown tool. Use: bash, http, browser. This endpoint flips tool-policy rules only — category kill-switches (enableShell/enableHttp/enableBrowser/enableComputerControl) are settings: use the `setting` tool with that field instead." }); return true; }
-    const policyPath = join(ctx.dataDir, "tool-policy.json");
+    if (!isPolicyToggle(tool)) { json(400, { error: "Unknown tool. Use: bash, http, browser. This endpoint flips tool-policy rules only — category kill-switches (enableShell/enableHttp/enableBrowser/enableComputerControl) are settings: use the `setting` tool with that field instead." }); return true; }
     try {
-      let policy = existsSync(policyPath) ? JSON.parse(readFileSync(policyPath, "utf-8")) as { defaultDecision: string; rules: Array<{ id: string; tool?: string; decision: string; reason?: string; priority?: number }> } : { defaultDecision: "deny" as string, rules: [] as Array<{ id: string; tool?: string; decision: string; reason?: string; priority?: number }> };
-      const rule = policy.rules.find((r) => r.id === ruleId);
-      if (rule) {
-        rule.decision = enabled ? "allow" : "deny";
-      } else {
-        policy.rules.push({ id: ruleId, tool: tool === "http" ? "http_request" : tool, decision: enabled ? "allow" : "deny", reason: enabled ? "Enabled via settings" : "Disabled via settings", priority: 40 });
-      }
-      atomicWriteFileSync(policyPath, JSON.stringify(policy, null, 2), { encoding: "utf-8", mode: 0o600 });
+      setPolicyToggle(ctx.dataDir, tool, !!enabled);
       json(200, { ok: true, tool, enabled });
     } catch (e) {
       json(500, { error: "Failed to update policy: " + (e instanceof Error ? e.message : String(e)) });

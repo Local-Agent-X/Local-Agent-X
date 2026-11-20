@@ -148,11 +148,11 @@ describe("POST /api/settings persists the live runtime config, not the stale boo
     });
   });
 
-  it("protects learning mode and broadcasts an authenticated change", async () => {
+  it("protects skill review and broadcasts an authenticated change", async () => {
     routeMocks.broadcastAll.mockClear();
     const config = loadConfig();
     config.authToken = "operator-token";
-    config.learningMode = "assisted";
+    config.skillReviewEnabled = false;
     setRuntimeConfig(config);
     const ctx = { config, dataDir: suiteLaxDir } as unknown as Parameters<typeof handlePreferencesRoutes>[4];
 
@@ -160,45 +160,28 @@ describe("POST /api/settings persists the live runtime config, not the stale boo
     await handlePreferencesRoutes(
       "POST",
       new URL("http://127.0.0.1/api/settings"),
-      makeReq({ learningMode: "autonomous" }) as unknown as Parameters<typeof handlePreferencesRoutes>[2],
+      makeReq({ skillReviewEnabled: true }) as unknown as Parameters<typeof handlePreferencesRoutes>[2],
       deniedRes as unknown as Parameters<typeof handlePreferencesRoutes>[3],
       ctx,
       "operator",
     );
     expect(deniedRes.statusCode).toBe(403);
-    expect(getRuntimeConfig().learningMode).toBe("assisted");
+    expect(getRuntimeConfig().skillReviewEnabled).toBe(false);
 
     const allowedRes = makeRes();
     await handlePreferencesRoutes(
       "POST",
       new URL("http://127.0.0.1/api/settings"),
-      makeReq({ learningMode: "autonomous" }, config.authToken) as unknown as Parameters<typeof handlePreferencesRoutes>[2],
+      makeReq({ skillReviewEnabled: true }, config.authToken) as unknown as Parameters<typeof handlePreferencesRoutes>[2],
       allowedRes as unknown as Parameters<typeof handlePreferencesRoutes>[3],
       ctx,
       "operator",
     );
     expect(allowedRes.statusCode).toBe(200);
-    expect(getRuntimeConfig().learningMode).toBe("autonomous");
+    expect(getRuntimeConfig().skillReviewEnabled).toBe(true);
     expect(routeMocks.broadcastAll).toHaveBeenCalledWith({
       type: "settings_changed",
-      settings: { learningMode: "autonomous" },
+      settings: { skillReviewEnabled: true },
     });
-  });
-
-  it("returns the assisted runtime default from settings GET", async () => {
-    const config = loadConfig();
-    config.learningMode = "assisted";
-    setRuntimeConfig(config);
-    const res = makeRes();
-    await handlePreferencesRoutes(
-      "GET",
-      new URL("http://127.0.0.1/api/settings"),
-      makeReq({}) as unknown as Parameters<typeof handlePreferencesRoutes>[2],
-      res as unknown as Parameters<typeof handlePreferencesRoutes>[3],
-      { config, dataDir: suiteLaxDir } as unknown as Parameters<typeof handlePreferencesRoutes>[4],
-      "operator",
-    );
-    expect(res.statusCode).toBe(200);
-    expect(JSON.parse(res.body).learningMode).toBe("assisted");
   });
 });

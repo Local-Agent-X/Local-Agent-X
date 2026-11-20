@@ -55,7 +55,7 @@ const FIELDS = [...PROTECTED_SETTINGS];
 const WIDENING: Record<string, unknown> = {
   enableShell: true, enableHttp: true, enableBrowser: true, enableComputerControl: true,
   enableRemoteControl: true, enableUiEventBus: true, skillReviewEnabled: true, failureReviewEnabled: true, developer_mode: true,
-  localOnlyMode: false, supervisedBrowser: false, learningMode: "autonomous", browserSecrecy: "open",
+  localOnlyMode: false, supervisedBrowser: false, browserSecrecy: "open",
   browserMode: "advanced-shared", toolApproval: "auto",
   embeddingProvider: "openai", embeddingModel: "text-embedding-3-small", voiceMode: "browser",
   voiceSttProvider: "groq", voiceTier4Provider: "edge-tts",

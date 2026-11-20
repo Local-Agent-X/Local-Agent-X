@@ -1,5 +1,4 @@
 (function () {
-  let mode = 'assisted';
   let items = [];
   let selectedId = null;
 
@@ -15,7 +14,7 @@
     if (!items.length) {
       const empty = document.createElement('div');
       empty.className = 'learned-workflows-empty';
-      empty.textContent = 'No learned workflows yet. They will appear after successful patterns repeat.';
+      empty.textContent = 'No learned workflows yet. One appears when the background review proposes the same procedure in a second chat.';
       list.append(empty);
       return;
     }
@@ -55,8 +54,7 @@
   }
 
   function rowActions(item) {
-    // Reviewed procedures never activate on their own, in either mode.
-    if (item.state === 'candidate' && (mode === 'assisted' || item.source === 'reviewed')) return ['activate', 'reject'];
+    if (item.state === 'candidate') return ['activate', 'reject'];
     if (item.state === 'archived') return ['restore'];
     if (item.state === 'active' || item.state === 'versioned') return ['archive'];
     return [];
@@ -77,9 +75,8 @@
     const confidence = Number.isFinite(item.confidence) ? Math.round(item.confidence * 100) + '% confidence' : '';
     const versions = item.versionCount > 1 ? item.versionCount + ' versions' : '';
     const updated = typeof item.updatedAt === 'string' ? 'updated ' + item.updatedAt.slice(0, 10) : '';
-    const quiet = mode === 'autonomous' && item.state === 'candidate' && item.source !== 'reviewed' ? 'qualifying quietly' : '';
     const origin = item.source === 'reviewed' ? 'proposed from a reviewed chat' : '';
-    return [origin, confidence, versions, updated, quiet].filter(Boolean).join(' · ');
+    return [origin, confidence, versions, updated].filter(Boolean).join(' · ');
   }
 
   async function refresh() {
@@ -87,9 +84,8 @@
     try {
       const data = await window.apiJson('/api/memory/learning');
       if (!Array.isArray(data.items)) throw new Error('Invalid learning response');
-      mode = data.mode === 'autonomous' ? 'autonomous' : 'assisted';
-      items = Array.isArray(data.items) ? data.items : [];
-      setStatus(mode === 'autonomous' ? 'Learning automatically' : 'Review before activation');
+      items = data.items;
+      setStatus('');
       render();
       if (selectedId && items.some((item) => item.id === selectedId)) openDetail(selectedId);
     } catch {
@@ -126,7 +122,7 @@
       });
       if (!data.item) throw new Error(data.error || 'Action failed');
       items = items.map((item) => item.id === id ? { ...item, ...data.item } : item);
-      setStatus(mode === 'autonomous' ? 'Learning automatically' : 'Saved');
+      setStatus('Saved');
       render();
       openDetail(id);
     } catch {

@@ -43,10 +43,8 @@ export const configSchema = z.object({
   systemPrompt: z.string().default(defaultSystemPrompt),
   profile: z.enum(["home", "dev", "enterprise"]).default("home"),
   toolApproval: z.enum(["auto", "confirm-risky", "confirm-all"]).default("auto"),
-  learningMode: z.enum(["assisted", "autonomous"]).default("assisted"),
   /** Whether a finished chat turn is reviewed in the background for a
-   *  reusable procedure. Independent of learningMode, which governs how an
-   *  already-learned procedure activates. */
+   *  reusable procedure. */
   skillReviewEnabled: z.boolean().default(true),
   /** Whether a tool call that keeps failing the same way across chats is
    *  reviewed in the background for a lesson. Off stops new lessons only: the

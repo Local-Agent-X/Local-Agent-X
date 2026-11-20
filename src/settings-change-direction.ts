@@ -51,7 +51,6 @@ export const PROTECTED_TIGHTENING: Readonly<Record<string, Tightening>> = {
   allowPaidMediaApis: { safe: false },
   localOnlyMode: { safe: true },
   supervisedBrowser: { safe: true },
-  learningMode: { safe: "assisted" },
   browserSecrecy: { safe: "lockdown" },
   toolApproval: { stricterLast: ["auto", "confirm-risky", "confirm-all"] },
   // The choices that keep memory text, microphone audio and replies on this

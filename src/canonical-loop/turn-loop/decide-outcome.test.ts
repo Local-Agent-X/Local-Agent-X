@@ -35,9 +35,6 @@ vi.mock("../../tool-tracker.js", async (importOriginal) => ({
   classifyOpCategory: vi.fn(() => "coding"),
   recordOpOutcome: vi.fn(),
 }));
-vi.mock("../../cognition/cross-session-learning/index.js", () => ({
-  default: { recordOutcome: vi.fn() },
-}));
 vi.mock("../../data-lineage/taint.js", () => ({
   getTaintSummary: vi.fn(() => ({ count: 0, sources: [] })),
 }));
@@ -69,10 +66,9 @@ vi.mock("../../logger.js", () => {
 vi.mock("./p1-metrics.js", () => ({ recordP1Outcome: vi.fn() }));
 
 import { decideTurnOutcome, type DecideOutcomeInput } from "./decide-outcome.js";
-import { recordCommittedLearningOutcome, recordTerminalOutcome } from "./record-outcome.js";
+import { isLearningOutcomeEligible, recordTerminalOutcome } from "./record-outcome.js";
 import { emit, publishStreamChunk } from "../event-emitter.js";
 import { recordOpOutcome } from "../../tool-tracker.js";
-import crossSessionLearner from "../../cognition/cross-session-learning/index.js";
 import { clearExternalIngestion, recordExternalIngestion } from "../../data-lineage/external.js";
 import { getTaintSummary } from "../../data-lineage/taint.js";
 import { readOpTurns } from "../store.js";
@@ -755,34 +751,25 @@ describe("decideTurnOutcome — op-outcome telemetry", () => {
     const result = await decideTurnOutcome(input({ toolCalls: [], toolMessages: [], toolSummary: [] }));
     expect(recordOpOutcome).toHaveBeenCalledWith("coding", "clean", "grok-4.3");
     expect(result.terminalOutcome).toBe("clean");
-    expect(crossSessionLearner.recordOutcome).not.toHaveBeenCalled();
+  });
+});
+
+// Which ops may score a learned procedure's effectiveness: a known session
+// whose run read nothing external and nothing sensitive.
+describe("isLearningOutcomeEligible", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clearExternalIngestion("external-session");
+    vi.mocked(getTaintSummary).mockReturnValue({ count: 0, sources: [] });
   });
 
-  it("does not persist learning evidence before the terminal commit", () => {
-    (readOpTurns as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce([{
-      toolCallSummary: [{ tool: "read" }, { tool: "edit" }, { tool: "edit" }],
-      observedTools: ["WebSearch"],
-    }]);
-
-    recordTerminalOutcome(op, "clean", ["bash", "bash"]);
-
-    expect(crossSessionLearner.recordOutcome).not.toHaveBeenCalled();
-  });
-
-  it("preserves repeated tool order when committed evidence is recorded", () => {
+  it("accepts a session whose tools all stayed on the machine", () => {
     (readOpTurns as unknown as ReturnType<typeof vi.fn>).mockReturnValueOnce([{
       toolCallSummary: [{ tool: "read" }, { tool: "edit" }, { tool: "edit" }],
       observedTools: ["bash", "bash"],
     }]);
 
-    recordCommittedLearningOutcome(op, "clean", "session-stable");
-
-    expect(crossSessionLearner.recordOutcome).toHaveBeenCalledWith(expect.objectContaining({
-      // A missing live session binding must fall back to the distinct op id,
-      // never the shared local-user owner principal.
-      sessionId: "session-stable",
-      tools: ["read", "edit", "edit", "bash", "bash"],
-    }));
+    expect(isLearningOutcomeEligible(op, "session-stable")).toBe(true);
   });
 
   it("excludes native external tools observed inside the provider subprocess", () => {
@@ -791,9 +778,7 @@ describe("decideTurnOutcome — op-outcome telemetry", () => {
       observedTools: ["WebSearch"],
     }]);
 
-    recordCommittedLearningOutcome(op, "clean", "native-search-session");
-
-    expect(crossSessionLearner.recordOutcome).not.toHaveBeenCalled();
+    expect(isLearningOutcomeEligible(op, "native-search-session")).toBe(false);
   });
 
   it("keeps local LAX MCP aliases eligible after canonical normalization", () => {
@@ -802,11 +787,7 @@ describe("decideTurnOutcome — op-outcome telemetry", () => {
       observedTools: ["mcp__lax__read", "mcp__lax__write", "mcp__lax__bash"],
     }]);
 
-    recordCommittedLearningOutcome(op, "clean", "local-mcp-session");
-
-    expect(crossSessionLearner.recordOutcome).toHaveBeenCalledWith(expect.objectContaining({
-      tools: ["mcp__lax__read", "mcp__lax__write", "mcp__lax__bash"],
-    }));
+    expect(isLearningOutcomeEligible(op, "local-mcp-session")).toBe(true);
   });
 
   it.each(["mcp__lax__web_search", "mcp__lax__browser"])(
@@ -816,9 +797,7 @@ describe("decideTurnOutcome — op-outcome telemetry", () => {
         toolCallSummary: [], observedTools: [tool],
       }]);
 
-      recordCommittedLearningOutcome(op, "clean", `external-${tool}`);
-
-      expect(crossSessionLearner.recordOutcome).not.toHaveBeenCalled();
+      expect(isLearningOutcomeEligible(op, `external-${tool}`)).toBe(false);
     },
   );
 
@@ -827,31 +806,31 @@ describe("decideTurnOutcome — op-outcome telemetry", () => {
       toolCallSummary: [], observedTools: ["mcp__github__search_issues"],
     }]);
 
-    recordCommittedLearningOutcome(op, "clean", "dynamic-mcp-session");
-
-    expect(crossSessionLearner.recordOutcome).not.toHaveBeenCalled();
+    expect(isLearningOutcomeEligible(op, "dynamic-mcp-session")).toBe(false);
   });
 
   it("excludes outcomes without conversation provenance", () => {
-    recordCommittedLearningOutcome(op, "clean", "");
-
-    expect(crossSessionLearner.recordOutcome).not.toHaveBeenCalled();
+    expect(isLearningOutcomeEligible(op, "")).toBe(false);
   });
 
-  it("excludes externally influenced sessions from committed learning evidence", () => {
+  it("excludes externally influenced sessions", () => {
     recordExternalIngestion("external-session");
 
-    recordCommittedLearningOutcome(op, "clean", "external-session");
-
-    expect(crossSessionLearner.recordOutcome).not.toHaveBeenCalled();
+    expect(isLearningOutcomeEligible(op, "external-session")).toBe(false);
   });
 
-  it("excludes sensitive-tainted sessions from committed learning evidence", () => {
+  it("excludes sensitive-tainted sessions", () => {
     vi.mocked(getTaintSummary).mockReturnValueOnce({ count: 1, sources: ["sensitive_file"] });
 
-    recordCommittedLearningOutcome(op, "clean", "sensitive-session");
+    expect(isLearningOutcomeEligible(op, "sensitive-session")).toBe(false);
+  });
+});
 
-    expect(crossSessionLearner.recordOutcome).not.toHaveBeenCalled();
+describe("decideTurnOutcome — op-outcome telemetry, continued", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    clearExternalIngestion("external-terminal-session");
+    vi.mocked(getTaintSummary).mockReturnValue({ count: 0, sources: [] });
   });
 
   it("keeps terminal outcome classification autonomous for an externally influenced session", async () => {
@@ -861,7 +840,6 @@ describe("decideTurnOutcome — op-outcome telemetry", () => {
 
     expect(result).toMatchObject({ terminalReason: "done", terminalOutcome: "clean" });
     expect(recordOpOutcome).toHaveBeenCalledWith("coding", "clean", "grok-4.3");
-    expect(crossSessionLearner.recordOutcome).not.toHaveBeenCalled();
   });
 
   it("records partial when terminal done but open steps remain", async () => {

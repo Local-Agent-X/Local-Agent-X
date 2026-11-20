@@ -1,5 +1,4 @@
 import type { RouteHandler } from "../server-context.js";
-import { getRuntimeConfig } from "../config.js";
 import { jsonResponse, safeParseBody } from "../server-utils.js";
 import learningService from "../cognition/cross-session-learning/service.js";
 import type { LearningAction, LearningDetail } from "../cognition/cross-session-learning/service-views.js";
@@ -52,8 +51,7 @@ export const handleMemoryLearningRoutes: RouteHandler = async (method, url, req,
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
   if (method === "GET" && url.pathname === "/api/memory/learning") {
     try {
-      const mode = getRuntimeConfig().learningMode;
-      json(200, { mode, items: learningService.list() });
+      json(200, { items: learningService.list() });
     } catch {
       json(500, { error: "Learning request failed" });
     }

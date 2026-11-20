@@ -250,7 +250,6 @@ export function readLearnedOutcome(opId: string): LearnedOutcomeReceipt | null {
 export function reconcilePendingLearnedOutcomes(
   readOp: (opId: string) => OpSnapshot | null,
   now = Date.now(),
-  onCommitted?: (receipt: Readonly<LearnedOutcomeReceipt>) => void,
 ): EffectivenessReconcileReport {
   return withLedgerLock(() => {
     const report: EffectivenessReconcileReport = { committed: [], retained: [], quarantined: [] };
@@ -268,7 +267,6 @@ export function reconcilePendingLearnedOutcomes(
           report.quarantined.push(quarantine(path, "terminal-mismatch"));
           continue;
         }
-        onCommitted?.(receipt);
         continue;
       }
       const op = readOp(receipt.opId);
@@ -281,7 +279,6 @@ export function reconcilePendingLearnedOutcomes(
         const committed: LearnedOutcomeReceipt = { ...receipt, status: "committed" };
         writeReceipt(path, committed);
         report.committed.push(receipt.opId);
-        onCommitted?.(committed);
       } else if (!op && now - receipt.timestamp > MISSING_OP_TTL_MS) {
         report.quarantined.push(quarantine(path, "missing-op"));
       } else {

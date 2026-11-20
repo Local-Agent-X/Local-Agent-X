@@ -1,18 +1,14 @@
 import type {
-  ActionEntry,
   LearnedCandidate,
   LearnedCandidateState,
-  OutcomeEvidence,
   SessionData,
 } from "./types.js";
 import {
   CANDIDATE_TRANSITIONS,
-  MAX_ACTIONS,
   hasCandidateEvidenceIdentity,
   normalizeLegacyEvidenceIdentities,
-  TERMINAL_TELEMETRY_IDENTITY,
 } from "./types.js";
-import { autoPrune, ensureDir, loadData, mutateData } from "./persistence.js";
+import { ensureDir, loadData, mutateData } from "./persistence.js";
 import {
   candidateProjectionPath, transitionCandidate, transitionTimestampAtCommit, type CandidateRevision,
 } from "./candidate-revision.js";
@@ -25,10 +21,7 @@ export class CrossSessionLearner {
   private constructor() {
     ensureDir();
     this.data = loadData();
-    const committed = mutateData((data) => {
-      normalizeLegacyEvidenceIdentities(data);
-      autoPrune(data);
-    });
+    const committed = mutateData((data) => { normalizeLegacyEvidenceIdentities(data); });
     if (committed) this.data = committed.data;
   }
 
@@ -41,37 +34,6 @@ export class CrossSessionLearner {
 
   refresh(): void {
     this.data = loadData();
-  }
-
-  /** Record only the structural receipt of a completed operation. Tool names
-   *  are safe capability identifiers; arguments and result text are excluded
-   *  so learning cannot become a second transcript or sensitive-data store. */
-  recordOutcome(evidence: OutcomeEvidence): void {
-    const tools = evidence.tools.map((tool) => tool.trim()).filter(Boolean);
-    const entry: ActionEntry = {
-      ...TERMINAL_TELEMETRY_IDENTITY,
-      opId: evidence.opId,
-      sessionId: evidence.sessionId,
-      type: "op_outcome",
-      details: `${evidence.category}:${tools.join(" -> ") || "no-tools"}`,
-      timestamp: evidence.timestamp,
-      outcome: evidence.outcome,
-      category: evidence.category,
-      tools,
-      ...(evidence.model ? { model: evidence.model } : {}),
-    };
-    this.commit((data) => {
-      const existing = data.actions.findIndex((action) =>
-        action.opId === evidence.opId
-        && action.evidenceClass === TERMINAL_TELEMETRY_IDENTITY.evidenceClass
-        && action.authority === TERMINAL_TELEMETRY_IDENTITY.authority
-      );
-      if (existing >= 0) data.actions[existing] = entry;
-      else data.actions.push(entry);
-      if (data.actions.length > MAX_ACTIONS) {
-        data.actions = data.actions.slice(-MAX_ACTIONS);
-      }
-    });
   }
 
   getCandidates(): LearnedCandidate[] {

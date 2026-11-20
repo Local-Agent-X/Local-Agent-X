@@ -21,7 +21,6 @@ import {
 } from "../../tool-tracker.js";
 import { getSessionForOp } from "../../ops/session-bridge.js";
 import { isInteractiveHostOpType } from "../../ops/op-store.js";
-import crossSessionLearner from "../../cognition/cross-session-learning/index.js";
 import { hasExternalIngestion, isExternalIngestingTool } from "../../data-lineage/external.js";
 import { getTaintSummary } from "../../data-lineage/taint.js";
 import { isReviewWorthy, noteSessionTurn, requestSkillReview } from "../../server/background-jobs/skill-review-queue.js";
@@ -72,30 +71,6 @@ export function isLearningOutcomeEligible(
     const normalized = normalizeObservedToolName(tool);
     const externalMcpServer = tool.startsWith("mcp__") && !tool.startsWith("mcp__lax__");
     return externalMcpServer || isExternalIngestingTool(normalized);
-  });
-}
-
-/** Persist learning evidence only after commitTurn succeeds. Unlike aggregate
- *  telemetry, learned evidence must never observe a provisional terminal state:
- *  cancellation and commit failure can still invalidate it. */
-export function recordCommittedLearningOutcome(
-  op: Op,
-  outcome: OpOutcome,
-  sessionId: string,
-  timestamp = Date.now(),
-): void {
-  const toolSequence = collectToolSequence(op.id);
-  if (!isLearningOutcomeEligible(op, sessionId, toolSequence)) return;
-  const category = classifyOpCategory(new Set(toolSequence));
-  const model = resolveOpModel(op);
-  crossSessionLearner.recordOutcome({
-    opId: op.id,
-    sessionId,
-    outcome,
-    category,
-    tools: toolSequence,
-    model,
-    timestamp,
   });
 }
 
@@ -173,11 +148,11 @@ function runSkillReviewTrigger(opId: string, sessionId: string, turnIdx: number)
       return;
     }
     // Post-commit the store holds the whole op, so the canonical helper needs no
-    // extras. Same function recordCommittedLearningOutcome uses (D13) — but
+    // extras. Same function recordTerminalOutcome uses (D13) — but
     // deliberately WITHOUT isLearningOutcomeEligible (D14): that gate refuses any
     // session with external ingestion, i.e. every browser session, and the
     // workflow this feature exists to capture IS a browser workflow. It guards
-    // durable MEMORY promotion, a different axis. Authoring is autonomous
+    // which runs score a learned procedure's effectiveness, a different axis. Authoring is autonomous
     // including from browser sessions (D1); the residual injected-content risk
     // is recorded and accepted in the campaign ledger.
     const toolSequence = collectToolSequence(opId);

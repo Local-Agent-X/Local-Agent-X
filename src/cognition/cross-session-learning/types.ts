@@ -2,7 +2,6 @@ import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { isProxy } from "node:util/types";
 import { getLaxDir } from "../../lax-data-dir.js";
-import { isOpCategory, type OpCategory } from "../../tool-policy/tool-policies.types.js";
 import {
   INVALID_PROPERTY, MISSING_PROPERTY, denseArray, exactKeys, hasEvidenceIdentity,
   optional, ownDataValue, plainRecord, safeJson, stringArray,
@@ -29,28 +28,6 @@ export type ReviewedProposalOutcome = "verified" | "corrected" | "unverified";
 export interface ReviewedProposal { sessionId: string; timestamp: number; outcome: ReviewedProposalOutcome; }
 export const MAX_REVIEWED_PROPOSALS = 50;
 export const REVIEWED_PROCEDURE_NAME = /^[a-z0-9][a-z0-9_]{1,47}$/;
-
-export interface ActionEntry extends PersistedLearnedEvidenceIdentity {
-  opId?: string;
-  sessionId: string;
-  type: string;
-  details: string;
-  timestamp: number;
-  outcome?: "clean" | "partial" | "aborted";
-  category?: OpCategory;
-  tools?: string[];
-  model?: string;
-}
-
-export interface OutcomeEvidence {
-  opId: string;
-  sessionId: string;
-  outcome: NonNullable<ActionEntry["outcome"]>;
-  category: NonNullable<ActionEntry["category"]>;
-  tools: string[];
-  model?: string;
-  timestamp: number;
-}
 
 export interface DetectedPattern extends PersistedLearnedEvidenceIdentity {
   sourceEvidence?: LearnedEvidenceIdentity;
@@ -128,11 +105,13 @@ export interface LearnedCandidate extends PersistedLearnedEvidenceIdentity {
 }
 
 // Type alias (not interface) so it satisfies json-store's Record constraint.
-export type SessionData = { actions: ActionEntry[]; candidates: LearnedCandidate[]; lastPrune: number; };
+// `actions` held a per-turn run log that nothing read; it was retired and is
+// always empty. The key stays because this file syncs between a user's
+// machines, and an older build iterates `actions` when it loads the file.
+export type SessionData = { actions: []; candidates: LearnedCandidate[] };
 
 const STATES = new Set<LearnedCandidateState>(["candidate", "approved", "active", "rejected", "archived", "rolled-back"]);
 const PATTERNS = new Set<DetectedPattern["type"]>(["question", "task", "topic", "time", "workflow"]);
-const ACTION_KEYS = new Set(["evidenceClass", "authority", "opId", "sessionId", "type", "details", "timestamp", "outcome", "category", "tools", "model"]);
 const CANDIDATE_KEYS = new Set(["evidenceClass", "authority", "id", "state", "confidence", "suggestion", "evidence", "createdAt", "updatedAt", "rejectionCooldownUntil", "lastSurfacedAt", "lastSurfacedOccurrences", "surfaceCooldownUntil", "transitions"]);
 
 function statsShape(value: unknown, occurrences: number): boolean {
@@ -256,21 +235,6 @@ function candidateEnvelopeShape(value: unknown, evidenceValid: (evidence: unknow
     && transitions !== null && transitionHistoryShape(transitions, state as LearnedCandidateState, createdAt, updatedAt);
 }
 
-function actionShape(value: unknown, terminal: boolean): value is ActionEntry {
-  if (!plainRecord(value) || !exactKeys(value, ACTION_KEYS, ["sessionId", "type", "details", "timestamp"])) return false;
-  const type = ownDataValue(value, "type"), timestamp = ownDataValue(value, "timestamp");
-  if (typeof ownDataValue(value, "sessionId") !== "string" || typeof type !== "string" || !type
-    || typeof ownDataValue(value, "details") !== "string" || typeof timestamp !== "number" || !Number.isFinite(timestamp)) return false;
-  const terminalKeys = ["opId", "outcome", "category", "tools"];
-  if (!terminal) return type !== "op_outcome" && terminalKeys.every((key) => ownDataValue(value, key) === MISSING_PROPERTY)
-    && ownDataValue(value, "model") === MISSING_PROPERTY;
-  const outcome = ownDataValue(value, "outcome"), category = ownDataValue(value, "category"), opId = ownDataValue(value, "opId");
-  return type === "op_outcome" && typeof opId === "string" && !!opId
-    && typeof outcome === "string" && ["clean", "partial", "aborted"].includes(outcome)
-    && isOpCategory(category)
-    && stringArray(ownDataValue(value, "tools"), 1000) && optional(value, "model", (entry) => typeof entry === "string");
-}
-
 export function hasCandidateEvidenceIdentity(value: unknown): value is LearnedCandidate {
   if (hasEvidenceIdentity(value, REVIEWED_PROCEDURE_IDENTITY)) return isReviewedProcedureCandidate(value);
   if (!hasEvidenceIdentity(value, WORKFLOW_TACTIC_IDENTITY) || !candidateShape(value)) return false;
@@ -295,15 +259,10 @@ function stamp(value: object, identity: LearnedEvidenceIdentity): boolean {
 }
 
 export function normalizeLegacyEvidenceIdentities(data: SessionData): boolean {
-  if (!plainRecord(data) || !exactKeys(data, new Set(["actions", "candidates", "lastPrune"]), ["actions", "candidates", "lastPrune"])) return false;
-  const actions = denseArray(ownDataValue(data, "actions"), MAX_ACTIONS), candidates = denseArray(ownDataValue(data, "candidates"), 5000), lastPrune = ownDataValue(data, "lastPrune");
-  if (!actions || !candidates || typeof lastPrune !== "number" || !Number.isFinite(lastPrune)) return false;
+  if (!plainRecord(data) || !exactKeys(data, new Set(["actions", "candidates"]), ["actions", "candidates"])) return false;
+  const candidates = denseArray(ownDataValue(data, "candidates"), 5000);
+  if (!candidates) return false;
   let changed = false;
-  for (const action of actions) {
-    if (!identityless(action)) continue;
-    if (actionShape(action, true)) changed = stamp(action, TERMINAL_TELEMETRY_IDENTITY) || changed;
-    else if (actionShape(action, false)) changed = stamp(action, WORKFLOW_TACTIC_IDENTITY) || changed;
-  }
   for (const candidate of candidates) {
     if (!identityless(candidate) || !candidateShape(candidate)) continue;
     const evidence = ownDataValue(candidate, "evidence"), stats = ownDataValue(evidence, "outcomeStats");
@@ -317,6 +276,5 @@ export function normalizeLegacyEvidenceIdentities(data: SessionData): boolean {
 
 export const LAX_DIR = getLaxDir();
 export const DATA_FILE = join(LAX_DIR, "cross-session-data.json");
-export const MAX_ACTIONS = 5000;
-export const PRUNE_AGE_DAYS = 30, REJECTION_COOLDOWN_DAYS = 30;
+export const REJECTION_COOLDOWN_DAYS = 30;
 export const MS_PER_DAY = 86400000;

@@ -8,8 +8,8 @@
  *   2. A trivial op queues nothing, so the fork costs nothing on turns it has
  *      nothing to learn from.
  *   3. A BROWSER / external-ingestion session DOES queue. This is D14, the
- *      deliberate divergence from recordCommittedLearningOutcome — that
- *      function's isLearningOutcomeEligible gate refuses every externally
+ *      deliberate divergence from isLearningOutcomeEligible — the gate on
+ *      which runs score a learned procedure refuses every externally
  *      ingesting session, which is every browser session, and a browser
  *      workflow is the exact thing this feature exists to capture. Pinned so
  *      nobody "fixes" it back later.
@@ -92,9 +92,6 @@ vi.mock("../src/canonical-loop/op-model.js", () => ({ resolveOpModel: () => "tes
 vi.mock("../src/tool-tracker.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../src/tool-tracker.js")>()),
   recordOpOutcome: vi.fn(),
-}));
-vi.mock("../src/cognition/cross-session-learning/index.js", () => ({
-  default: { recordOutcome: vi.fn() },
 }));
 
 const { requestSkillReviewForOp } =

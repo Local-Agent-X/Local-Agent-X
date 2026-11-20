@@ -41,7 +41,7 @@ import {
 import { clearSessionWorkRoot } from "../workspace/paths.js";
 import { releaseDelegatedSessionLineage } from "./delegated-session-lineage.js";
 import {
-  prepareCanonicalLearnedOutcome, commitCanonicalLearnedOutcome, recordCanonicalLearningOutcome,
+  prepareCanonicalLearnedOutcome, commitCanonicalLearnedOutcome,
 } from "./learned-effectiveness.js";
 import type { LearnedOutcome } from "../protocols/learned-effectiveness.js";
 import { isLearningOutcomeEligible } from "./turn-loop/record-outcome.js";
@@ -166,18 +166,6 @@ export function transitionOp(
     try { commitCanonicalLearnedOutcome(op, learnedReceipt); }
     catch (error) {
       logger.warn(`[learned-effectiveness] commit failed for ${op.id}: ${(error as Error).message}`);
-    }
-  }
-  if (opts.learnedOutcome && learningEligible) {
-    try {
-      recordCanonicalLearningOutcome(
-        op,
-        opts.learnedOutcome,
-        learningSessionId,
-        learnedReceipt?.timestamp,
-      );
-    } catch (error) {
-      logger.warn(`[cross-session-learning] outcome failed for ${op.id}: ${(error as Error).message}`);
     }
   }
 

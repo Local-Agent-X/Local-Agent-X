@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2085 non-test source files · 75 oversized · 265 nearing the size cap.
+**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2085 non-test source files · 75 oversized · 263 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -31,9 +31,9 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/data-lineage/` | 60 | 12 | L |  |
 | `src/util/` | 59 | 3 | S |  |
 | `src/browser/` | 54 | 95 | XL | 5 |
-| `src/tool-policy/` | 49 | 22 | L |  |
 | `src/agency/` | 48 | 39 | XL |  |
 | `src/chat-ws/` | 48 | 24 | L |  |
+| `src/tool-policy/` | 48 | 22 | L |  |
 | `src/local-runtimes/` | 45 | 28 | XL |  |
 | `src/threat/` | 43 | 13 | L |  |
 | `src/auth/` | 36 | 11 | L |  |
@@ -53,8 +53,8 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/orchestrator/` | 19 | 24 | L |  |
 | `src/server/` *(entrypoint)* | 19 | 76 | XL | 4 |
 | `src/voice/` | 19 | 80 | XL | 1 |
-| `src/cognition/` | 18 | 34 | XL |  |
 | `src/agents/` | 17 | 14 | L |  |
+| `src/cognition/` | 17 | 34 | XL |  |
 | `src/persistence/` | 16 | 3 | M |  |
 | `src/self-edit/` | 16 | 19 | L | 2 |
 | `src/anthropic-client/` | 15 | 23 | L | 2 |
@@ -375,7 +375,6 @@ job. Comments are free: never cut them to fit.
 - `src/tool-execution/sensitive-read-taint.ts` — 290+ code lines (cap 350)
 - `src/browser/runtime.ts` — 280+ code lines (cap 350)
 - `src/canonical-loop/scheduler.ts` — 280+ code lines (cap 350)
-- `src/cognition/cross-session-learning/types.ts` — 280+ code lines (cap 350)
 - `src/mcp-client/index.ts` — 280+ code lines (cap 350)
 - `src/memory/index-facts-mutate.ts` — 280+ code lines (cap 350)
 - `src/memory/promotion-gate.ts` — 280+ code lines (cap 350)
@@ -489,7 +488,6 @@ job. Comments are free: never cut them to fit.
 - `src/canonical-loop/initial-prompt.ts#buildInitialUserContent` — 70+ own code lines (cap 100)
 - `src/canonical-loop/provider-adapter-factory.ts#createProviderAdapterFactory` — 70+ own code lines (cap 100)
 - `src/canonical-loop/soak-metrics.ts#recordCanonicalEvent` — 70+ own code lines (cap 100)
-- `src/canonical-loop/state-machine.ts#transitionOp` — 70+ own code lines (cap 100)
 - `src/canonical-loop/turn-loop/build-input.ts#buildTurnInput` — 70+ own code lines (cap 100)
 - `src/canonical-loop/turn-loop/compact-history.ts#summarizeOverThreshold` — 70+ own code lines (cap 100)
 - `src/chat-ws/manager.ts#onEvent` — 70+ own code lines (cap 100)

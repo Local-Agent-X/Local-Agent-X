@@ -907,12 +907,6 @@ body.platform-win .settings-overlay{top:32px}
 .tab-pill{font-family:var(--mono);font-size:.75rem;padding:7px 14px;border-radius:8px;border:1px solid var(--border);background:transparent;color:var(--muted);cursor:pointer;transition:all .15s;letter-spacing:.5px}
 .tab-pill:hover{border-color:var(--accent);color:var(--text)}
 .tab-pill.active{background:var(--active);border-color:var(--accent);color:var(--accent)}
-.learning-mode-card{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
-.learning-mode-card>div:first-child{flex:1;min-width:240px}
-.learning-mode-control{display:flex;padding:3px;border:1px solid var(--border);border-radius:9px;background:var(--bg)}
-.learning-mode-control button{font-family:var(--mono);font-size:.7rem;padding:7px 12px;border:0;border-radius:6px;background:transparent;color:var(--muted);cursor:pointer}
-.learning-mode-control button[aria-checked="true"]{background:var(--active);color:var(--accent)}
-.learning-mode-card>.field-hint{flex-basis:100%;margin-top:-10px}
 .learned-workflows-card{padding-bottom:14px}
 .learned-workflows-head{display:flex;align-items:flex-start;justify-content:space-between;gap:16px}
 .learned-workflows-status{font-family:var(--mono);font-size:.62rem;color:var(--muted);white-space:nowrap;padding-top:3px}

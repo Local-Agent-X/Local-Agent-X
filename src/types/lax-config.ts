@@ -50,8 +50,6 @@ export interface LAXConfig {
   systemPrompt: string;
   profile: DeploymentProfile;
   toolApproval: "auto" | "confirm-risky" | "confirm-all";
-  /** Whether newly learned skills wait for review or may activate automatically. */
-  learningMode: "assisted" | "autonomous";
   /** Whether finished chat turns are reviewed in the background for reusable procedures. */
   skillReviewEnabled: boolean;
   /** Whether a tool call that keeps failing the same way across chats is reviewed in the background for a lesson. */

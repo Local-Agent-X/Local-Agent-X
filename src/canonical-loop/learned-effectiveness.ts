@@ -9,11 +9,6 @@ import {
   type LearnedOutcomeReceipt,
 } from "../protocols/learned-effectiveness.js";
 import { getLearnedProtocolEnvelopeForOp } from "./runtime.js";
-import { recordCommittedLearningOutcome } from "./turn-loop/record-outcome.js";
-import { createLogger } from "../logger.js";
-
-const logger = createLogger("canonical-loop.learned-effectiveness");
-let learningRecorder = recordCommittedLearningOutcome;
 
 export function prepareCanonicalLearnedOutcome(
   op: Op,
@@ -46,30 +41,6 @@ export function commitCanonicalLearnedOutcome(op: Op, receipt: LearnedOutcomeRec
   commitLearnedOutcome(receipt.opId);
 }
 
-export function recordCanonicalLearningOutcome(
-  op: Op,
-  outcome: LearnedOutcome,
-  sessionId: string,
-  timestamp?: number,
-): void {
-  learningRecorder(op, outcome, sessionId, timestamp);
-}
-
-export function reconcileCanonicalLearnedOutcomes(
-  recordOutcome: typeof recordCommittedLearningOutcome = learningRecorder,
-): ReturnType<typeof reconcilePendingLearnedOutcomes> {
-  return reconcilePendingLearnedOutcomes(readOp, Date.now(), (receipt) => {
-    const op = readOp(receipt.opId);
-    if (!op) return;
-    try { recordOutcome(op, receipt.outcome, receipt.sessionId, receipt.timestamp); }
-    catch (error) {
-      logger.warn(`[learned-effectiveness] learner replay failed for ${receipt.opId}: ${(error as Error).message}`);
-    }
-  });
-}
-
-export function _setCanonicalLearningOutcomeRecorderForTests(
-  recorder: typeof recordCommittedLearningOutcome = recordCommittedLearningOutcome,
-): void {
-  learningRecorder = recorder;
+export function reconcileCanonicalLearnedOutcomes(): ReturnType<typeof reconcilePendingLearnedOutcomes> {
+  return reconcilePendingLearnedOutcomes(readOp, Date.now());
 }

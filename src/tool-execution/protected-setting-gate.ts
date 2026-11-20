@@ -117,8 +117,6 @@ export function describeChange(field: string, value: unknown, current: unknown):
       return `Change the agent's sensitive-page read policy (browserSecrecy → "${String(value)}")?`;
     case "browserMode":
       return `Change the browser identity mode (browserMode → "${String(value)}")?`;
-    case "learningMode":
-      return `Change how newly learned skills activate (learningMode → "${String(value)}")?`;
     case "skillReviewEnabled":
       return "Resume reviewing finished turns for reusable procedures (skillReviewEnabled)?";
     case "failureReviewEnabled":

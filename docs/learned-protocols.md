@@ -14,8 +14,9 @@ already the user's (migration) has nothing to judge; anything else is refused.
 Until 2026-11-20 a second producer, a tool-sequence miner, drafted "workflows"
 straight from repeated tool sequences on its own path around this rule
 ("memory_search then memory_search …": 26 drafts and no keeps on one machine).
-It was retired. Drafts it left on disk stay drafts until the user keeps or
-rejects them.
+It was retired, and with it the `learningMode` setting (assisted /
+autonomous) that only it read and the per-turn run log it mined. Drafts it left
+on disk stay drafts until the user keeps or rejects them.
 
 This is the reference for the feature as it ships. The two root-level
 `docs/history/campaign-self-learning.md` / `docs/history/campaign-procedural-learning.md` files are build
@@ -25,8 +26,8 @@ description of current behavior. This doc is the source of truth for what runs.
 
 ## At a glance
 
-- **Config:** `learningMode` (`assisted` / `autonomous`) is still stored and shown in
-  Settings, but nothing reads it since the miner was retired; see `learningMode` below.
+- **Config:** `skillReviewEnabled` turns the post-turn review on or off. There is no
+  mode: a reviewed procedure asks the user at 2 sessions and activates itself at 3.
 - **A learned protocol can only restrict capability, never expand it.** While an op
   runs under one, its tool calls are confined to the protocol's verified
   `allowedTools`; every underlying action still hits its normal Ari, policy,
@@ -34,20 +35,20 @@ description of current behavior. This doc is the source of truth for what runs.
 - **Trust root:** system-managed learned protocols live in the machine-local
   `~/.lax/protocols/learned/` store, loaded *after* workspace imports so a
   workspace forgery can't masquerade as managed.
-- **Only clean, un-tainted, non-external evidence trains behavior.** Sessions with
-  external ingestion, taint, or external MCP tools are excluded from evidence; only
-  tool *names* are recorded — never arguments or results.
+- **Only clean, un-tainted, non-external runs score a learned protocol.** Sessions
+  with external ingestion, taint, or external MCP tools write no effectiveness
+  receipt (`isLearningOutcomeEligible`).
 
 ## Modules
 
 **Cross-session cognition** — `src/cognition/cross-session-learning/`
 | File | Responsibility |
 |---|---|
-| `learner.ts` | Singleton `CrossSessionLearner`: records run outcomes, records reviewed proposals, and transitions/projects candidates. |
+| `learner.ts` | Singleton `CrossSessionLearner`: records reviewed proposals, and transitions/projects candidates. |
 | `candidate-revision.ts` | Candidate state transitions and the projection path from a lifecycle state to the candidate's. |
 | `reviewed-procedures.ts` | Records a review proposal as evidence on its candidate; the discard cooldown. |
 | `service.ts` | `CrossSessionLearningService`: `list`/`detail`/`action` for the HTTP API, and `reconcile()`: probation rollback/archive, resuming an interrupted approval, projection healing, and activating a reviewed procedure on independent evidence. It never drafts. |
-| `persistence.ts` | SQLite-mutex-guarded JSON evidence store at `~/.lax/cross-session-data.json`, plus `autoPrune`. |
+| `persistence.ts` | SQLite-mutex-guarded JSON candidate store at `~/.lax/cross-session-data.json`. Loading drops the retired run log's entries; `actions` stays as an empty key because the file syncs to machines that may run an older build. |
 | `types.ts` | Types, the evidence-authority identities, and hardened structural validators that gate what counts as trusted evidence. |
 | `index.ts` | Barrel exporting the singleton. |
 
@@ -67,8 +68,8 @@ description of current behavior. This doc is the source of truth for what runs.
 |---|---|
 | `src/tool-execution/learned-protocol-envelope.ts` | Per-tool-call gate enforcing the active protocol's `allowedTools` envelope. |
 | `src/routes/memory-learning.ts` | HTTP surface: reads for any role, operator-gated lifecycle mutations. |
-| `public/js/settings-learned-workflows.js` | Settings: workflow list + inspector, activate/reject controls (assisted mode). |
-| `public/js/settings-learning-mode.js` | Settings: the assisted/autonomous toggle (no longer read; see below). |
+| `public/js/settings-learned-workflows.js` | Settings: workflow list + inspector, activate/reject controls. |
+| `public/js/settings-skill-learning.js` | Settings: the skill-review and failure-review switches. |
 
 ## End-to-end flow
 
@@ -79,12 +80,10 @@ description of current behavior. This doc is the source of truth for what runs.
    the one admission rule. Its `allowed-tools` are the reviewed run's tools.
 2. **Activation** — the user keeps it (chat card or Settings), or reconcile
    activates it once three distinct sessions proposed it from runs that held up.
-3. **Run log** — when an op terminates, `recordCommittedLearningOutcome`
-   (`src/canonical-loop/turn-loop/record-outcome.ts`) still records
-   `{opId, sessionId, outcome, category, tools[], model, timestamp}`. Since the
-   miner was retired nothing reads it. `isLearningOutcomeEligible` still decides
-   which runs may write an effectiveness receipt (step 4): none with external
-   ingestion, taint, or an external (non-`mcp__lax__`) tool.
+3. **Eligibility** — `isLearningOutcomeEligible`
+   (`src/canonical-loop/turn-loop/record-outcome.ts`) decides which runs may
+   write an effectiveness receipt (step 4): none with external ingestion,
+   taint, or an external (non-`mcp__lax__`) tool.
 4. **Effectiveness** — while an op runs under a selected learned protocol,
    `prepareCanonicalLearnedOutcome` (`src/canonical-loop/learned-effectiveness.ts`)
    writes a `pending` receipt keyed to the envelope, flipped to `committed` only on
@@ -152,15 +151,6 @@ and are reviewable at once — they were already the user's.
 `skillReviewEnabled` (default `true`; runtime, broadcast, protected) turns the
 review off entirely, and with it the only way a new learned procedure is born.
 
-## `learningMode`
-
-Both modes now behave the same. The mode used to decide whether the miner's
-drafts and their stronger refinements activated without asking; with the miner
-retired, `reconcile()` takes no mode and `src/orchestrator/signals-meta.ts` no
-longer reads it. It is still declared `runtime`, `broadcast` and owner
-`protected` in `src/settings-schema.controls.ts`, returned by
-`src/routes/memory-learning.ts`, and shown as a toggle in Settings.
-
 ## Safety invariants (enforced in code)
 
 - **Capability containment** — `learned-protocol-envelope.ts` blocks any tool not in
@@ -172,7 +162,7 @@ longer reads it. It is still declared `runtime`, `broadcast` and owner
   version bodies are sha256-verified against `meta.json` / `learned.json` on every
   load. Managed protocols load after workspace imports.
 - **Evidence hygiene** — `isLearningOutcomeEligible` excludes external-ingestion,
-  taint, and external-MCP sessions; only tool names are stored; evidence-authority
+  taint, and external-MCP sessions from effectiveness scoring; evidence-authority
   identities plus prototype-poisoning-hardened validators reject records lacking the
   exact expected authority.
 - **Operator-gated mutation API** — any `POST …/action` returns
@@ -187,7 +177,7 @@ longer reads it. It is still declared `runtime`, `broadcast` and owner
 
 | Data | Location | Restart repair |
 |---|---|---|
-| Action/candidate evidence | `~/.lax/cross-session-data.json` | `normalizeLegacyEvidenceIdentities` + `autoPrune` on load. |
+| Candidate evidence | `~/.lax/cross-session-data.json` | `normalizeLegacyEvidenceIdentities` on load; the retired run log's entries are dropped. |
 | Learned protocols | `~/.lax/protocols/learned/<slug>/` (`learned.json`, `versions/<uuid>/…`, root `SKILL.md` while active) | Full integrity re-verification on every read; a candidate whose record is missing stays without one (`reconcile` never drafts). |
 | Effectiveness receipts | `<workspace>/protocols/effectiveness/outcomes/<sha256(opId)>.json` | `reconcileCanonicalLearnedOutcomes()` at boot (`src/server/canonical-loop-bootstrap.ts`) commits terminal pendings, quarantines mismatches, drops stale missing-op receipts. |
 
@@ -195,7 +185,7 @@ longer reads it. It is still declared `runtime`, `broadcast` and owner
 
 | Method | Path | Auth | Behavior |
 |---|---|---|---|
-| GET | `/api/memory/learning` | any authenticated role | `{ mode, items[] }` summaries. |
+| GET | `/api/memory/learning` | any authenticated role | `{ items[] }` summaries. |
 | GET | `/api/memory/learning/:id` | any authenticated role | `{ item }`; `400` bad id, `404` unknown. |
 | POST | `/api/memory/learning/:id/action` | **operator only** (`403` otherwise) | `{action, versionId?, expectedActiveVersionId}`; actions `activate\|reject\|archive\|restore\|rollback`; CAS → `409` on stale; broadcasts `learning_changed`. |
 
@@ -222,7 +212,7 @@ nothing else; a lesson is not a protocol and never enters the catalog.
    user's main model. Its reply is one JSON object: `lesson`, `app_gap` or
    `noise`. A refused (`blocked`) call is listed but never reviewed.
 4. **Keep.** A lesson is `proposed` until the user keeps it (inbox item plus
-   Settings → Memory → Recurring problems). In either `learningMode`.
+   Settings → Memory → Recurring problems).
 5. **Deliver.** A kept lesson follows the error in the result of a call that
    just failed the same way, fenced as recalled data, once per run for the same
    work. After the error, never before: the result's first line is what the

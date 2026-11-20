@@ -24,7 +24,7 @@ describe("learned workflows Memory UI", () => {
   it("shows assisted review controls and opens detail in the existing inspector", async () => {
     window.apiJson = vi.fn(async (path: string) => {
       if (path.endsWith("/candidate-1")) return { item: { id: "candidate-1", name: "Ship safely", state: "candidate", versions: [] } };
-      return { mode: "assisted", items: [{ id: "candidate-1", name: "Ship safely", state: "candidate", confidence: 0.91, versionCount: 1 }] };
+      return { items: [{ id: "candidate-1", name: "Ship safely", state: "candidate", confidence: 0.91, versionCount: 1 }] };
     }) as never;
     new Function(source)();
     document.dispatchEvent(new Event("DOMContentLoaded"));
@@ -38,40 +38,31 @@ describe("learned workflows Memory UI", () => {
     expect(window.MemoryBrain.openLearningInspector).toHaveBeenCalledOnce();
   });
 
-  it("keeps autonomous candidates quiet without approval controls", async () => {
+  it("offers keep or reject on every candidate, whatever produced it", async () => {
     window.apiJson = vi.fn(async () => ({
-      mode: "autonomous",
-      items: [{ id: "candidate-2", name: "Prepare release", state: "candidate", confidence: 0.88, versionCount: 1 }],
+      items: [
+        { id: "candidate-2", name: "Prepare release", state: "candidate", confidence: 0.88, versionCount: 1 },
+        { id: "candidate-3", name: "po_flow", state: "candidate", source: "reviewed", confidence: 0.33, versionCount: 1 },
+      ],
     })) as never;
     new Function(source)();
     document.dispatchEvent(new Event("DOMContentLoaded"));
     await flush();
 
-    expect(document.getElementById("learned-workflows-status")?.textContent).toBe("Learning automatically");
-    expect(document.body.textContent).toContain("qualifying quietly");
-    expect(document.body.textContent).not.toContain("Activate");
-    expect(document.body.textContent).not.toContain("Reject");
-  });
-
-  it("still asks about a reviewed procedure in autonomous mode — it never activates on its own", async () => {
-    window.apiJson = vi.fn(async () => ({
-      mode: "autonomous",
-      items: [{ id: "candidate-3", name: "po_flow", state: "candidate", source: "reviewed", confidence: 0.33, versionCount: 1 }],
-    })) as never;
-    new Function(source)();
-    document.dispatchEvent(new Event("DOMContentLoaded"));
-    await flush();
-
+    const rows = Array.from(document.querySelectorAll(".learned-workflow-row"));
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(row.textContent).toContain("Activate");
+      expect(row.textContent).toContain("Reject");
+    }
     expect(document.body.textContent).toContain("proposed from a reviewed chat");
-    expect(document.body.textContent).not.toContain("qualifying quietly");
-    expect(document.body.textContent).toContain("Activate");
-    expect(document.body.textContent).toContain("Reject");
+    expect(document.getElementById("learned-workflows-status")?.textContent).toBe("");
   });
 
   it("restores the previous row when an optimistic action fails", async () => {
     window.apiJson = vi.fn(async (_path: string, options?: { method?: string }) => {
       if (options?.method === "POST") throw new Error("save failed");
-      return { mode: "assisted", items: [{ id: "active-1", name: "Review patch", state: "active", confidence: 0.93, activeVersionId: "v2", versionCount: 2 }] };
+      return { items: [{ id: "active-1", name: "Review patch", state: "active", confidence: 0.93, activeVersionId: "v2", versionCount: 2 }] };
     }) as never;
     new Function(source)();
     document.dispatchEvent(new Event("DOMContentLoaded"));
@@ -85,7 +76,6 @@ describe("learned workflows Memory UI", () => {
 
   it("exposes lifecycle controls and refreshes from the learning event", async () => {
     window.apiJson = vi.fn(async () => ({
-      mode: "assisted",
       items: [
         { id: "active-2", name: "Active flow", state: "versioned", confidence: 0.9, versionCount: 2 },
         { id: "archived-1", name: "Old flow", state: "archived", confidence: 0.8, versionCount: 1 },

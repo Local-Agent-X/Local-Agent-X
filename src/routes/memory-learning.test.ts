@@ -2,7 +2,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Readable } from "node:stream";
 
 const mocks = vi.hoisted(() => ({
-  mode: "assisted" as "assisted" | "autonomous",
   service: {
     list: vi.fn(),
     detail: vi.fn(),
@@ -11,7 +10,7 @@ const mocks = vi.hoisted(() => ({
 }));
 
 vi.mock("../config.js", () => ({
-  getRuntimeConfig: () => ({ learningMode: mocks.mode, maxRequestBodyBytes: 1_000_000 }),
+  getRuntimeConfig: () => ({ maxRequestBodyBytes: 1_000_000 }),
 }));
 vi.mock("../cognition/cross-session-learning/service.js", () => ({ default: mocks.service }));
 
@@ -80,19 +79,17 @@ async function call(method: string, path: string, body?: unknown, role: Role = "
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mocks.mode = "assisted";
   mocks.service.list.mockReturnValue([item()]);
   mocks.service.detail.mockReturnValue(item());
   mocks.service.action.mockReturnValue(item({ state: "active", activeVersionId: VERSION_2 }));
 });
 
 describe("memory learning API", () => {
-  it("returns the live mode, list, and detail contracts without broadcasting", async () => {
-    mocks.mode = "autonomous";
+  it("returns the list and detail contracts without broadcasting", async () => {
     const list = await call("GET", "/api/memory/learning");
     const detail = await call("GET", `/api/memory/learning/${ID}`);
 
-    expect(list).toMatchObject({ handled: true, status: 200, body: { mode: "autonomous", items: [expect.objectContaining({ id: ID })] } });
+    expect(list).toMatchObject({ handled: true, status: 200, body: { items: [expect.objectContaining({ id: ID })] } });
     expect(detail).toMatchObject({ handled: true, status: 200, body: { item: expect.objectContaining({ id: ID }) } });
     expect(list.broadcastAll).not.toHaveBeenCalled();
     expect(detail.broadcastAll).not.toHaveBeenCalled();

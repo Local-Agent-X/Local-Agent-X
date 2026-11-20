@@ -36,14 +36,6 @@ export const CONTROL_SETTINGS: ReadonlyArray<FlippableSetting> = [
     description: "When the AI must ask for permission before running tools. auto=never, confirm-risky=bash/write/edit, confirm-all=every tool",
   },
   {
-    field: "learningMode",
-    owner: "protected", where: SKILL_LEARNING,
-    validate: z.enum(["assisted", "autonomous"]),
-    runtime: true,
-    broadcast: true,
-    description: "How newly learned skills become active. assisted waits for user review; autonomous activates qualified skills within existing permissions",
-  },
-  {
     field: "skillReviewEnabled",
     owner: "protected", where: SKILL_LEARNING,
     validate: z.boolean(),

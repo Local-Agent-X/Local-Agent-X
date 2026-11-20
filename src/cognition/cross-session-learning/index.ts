@@ -1,17 +1,14 @@
 /**
  * Local Agent X — Cross-Session Learning
  *
- * Detects patterns across sessions and suggests automations.
- * Tracks actions, topics, questions, and workflows to surface
- * recurring behaviors the user might want to automate.
+ * The candidate store behind learned procedures: each procedure the post-turn
+ * review proposed, the sessions that proposed it, and its activation state.
  */
 
 export type {
-  ActionEntry,
   LearnedEvidenceAuthority,
   LearnedEvidenceClass,
   LearnedEvidenceIdentity,
-  OutcomeEvidence,
   DetectedPattern,
   AutomationSuggestion,
   CandidateEvidenceSnapshot,

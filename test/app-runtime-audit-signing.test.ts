@@ -59,10 +59,17 @@ const baseEntry = (over: Partial<Omit<AuditEntry, "signature">> = {}): Omit<Audi
   ...over,
 });
 
+/** The MAC signAuditEntry must produce under `key`: every field, details
+ *  included, under the app-runtime-audit-entry domain (computeDurableRecordMac). */
+function expectedSignature(key: Buffer | string, e: ReturnType<typeof baseEntry>): string {
+  const payload = JSON.stringify([e.id, e.timestamp, e.actor, e.action, e.appId, e.details, e.prevHash]);
+  return createHmac("sha256", key).update(`app-runtime-audit-entry\0${payload}`).digest("hex");
+}
+
 describe("signAuditEntry", () => {
-  it("returns a 16-char hex string", () => {
+  it("returns a full-length (64-hex) MAC", () => {
     const sig = signAuditEntry(baseEntry());
-    expect(sig).toMatch(/^[0-9a-f]{16}$/);
+    expect(sig).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it("is deterministic for the same input within a process", () => {
@@ -163,8 +170,7 @@ describe("persistent HMAC key (keychain-sealed seed)", () => {
 
     // Cross-check: signing produces the HMAC computed with that exact key.
     const entry = baseEntry();
-    const payload = `${entry.id}|${entry.timestamp}|${entry.actor}|${entry.action}|${entry.appId}|${entry.prevHash}`;
-    const expected = createHmac("sha256", knownKey).update(payload).digest("hex").slice(0, 16);
+    const expected = expectedSignature(knownKey, entry);
     expect(signAuditEntry(entry)).toBe(expected);
   });
 
@@ -187,8 +193,7 @@ describe("persistent HMAC key (keychain-sealed seed)", () => {
     expect(resolved).toBe("envkeyvalue");
 
     const entry = baseEntry();
-    const payload = `${entry.id}|${entry.timestamp}|${entry.actor}|${entry.action}|${entry.appId}|${entry.prevHash}`;
-    const expected = createHmac("sha256", "envkeyvalue").update(payload).digest("hex").slice(0, 16);
+    const expected = expectedSignature("envkeyvalue", entry);
     expect(signAuditEntry(entry)).toBe(expected);
   });
 });
@@ -228,7 +233,7 @@ describe("hash chain", () => {
     const a = buildChainedEntry(null, { id: "a" });
     const b = buildChainedEntry(a, { id: "b" });
     const c = buildChainedEntry(b, { id: "c" });
-    expect(verifyAuditChain([a, b, c])).toEqual({ valid: true });
+    expect(verifyAuditChain([a, b, c])).toEqual({ valid: true, startsAtGenesis: true });
   });
 
   it("verifyAuditChain catches a post-hoc mutation of an interior entry", () => {
@@ -282,7 +287,7 @@ describe("writeAuditEntry end-to-end", () => {
       expect(entries[0].prevHash).toBe(GENESIS_PREV_HASH);
       expect(entries[1].prevHash).toBe(deriveChainHash(entries[0].signature));
       expect(entries[2].prevHash).toBe(deriveChainHash(entries[1].signature));
-      expect(verifyAuditChain(entries)).toEqual({ valid: true });
+      expect(verifyAuditChain(entries)).toEqual({ valid: true, startsAtGenesis: true });
     } finally {
       try { rmSync(appDir, { recursive: true, force: true }); } catch { /* ignore */ }
     }

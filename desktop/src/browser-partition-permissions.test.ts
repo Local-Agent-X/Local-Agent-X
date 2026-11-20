@@ -10,8 +10,12 @@ import type { Session } from "electron";
 vi.mock("electron", () => ({ dialog: { showMessageBox: vi.fn() } }));
 
 import {
+	allowPermission,
+	describePermissionRequest,
 	installPermissionHandlers,
 	permissionOrigin,
+	QUIET_BLOCKED_PERMISSIONS,
+	setQuietBlockSink,
 	SILENT_DENIED_PERMISSIONS,
 	SILENT_SAFE_PERMISSIONS,
 } from "./browser-partition-permissions";
@@ -137,6 +141,120 @@ describe("prompted decisions", () => {
 		installPermissionHandlers(sess, prompt);
 		const wc = { isDestroyed: () => false, getURL: () => "https://from-wc.example/page" };
 		captured.request!(wc, "media", () => {}, {});
-		await vi.waitFor(() => expect(prompt).toHaveBeenCalledWith("https://from-wc.example", "media"));
+		await vi.waitFor(() => expect(prompt).toHaveBeenCalledWith(
+			"https://from-wc.example", "media", expect.objectContaining({ requestingUrl: "https://from-wc.example/page" }),
+		));
+	});
+});
+
+// Live 2026-11-19: "https://lpcdn-vip.lpsnmedia.net wants permission to use
+// storage-access." A raw permission name and an embedded widget's CDN domain,
+// in a modal, over microsoft.com. The words must say who asks, on which page,
+// and what it could do.
+describe("describePermissionRequest — the request in plain words", () => {
+	it("names the page when an embedded piece of it is the one asking", () => {
+		const { who, what } = describePermissionRequest({
+			permission: "storage-access",
+			requestingUrl: "https://lpcdn-vip.lpsnmedia.net/le_unified_window/index.html",
+			pageUrl: "https://www.microsoft.com/en-us/microsoft-365/onedrive",
+		});
+		expect(who).toBe("Something embedded in microsoft.com (from lpcdn-vip.lpsnmedia.net)");
+		expect(what).toContain("remember you");
+		expect(what).not.toContain("storage-access");
+	});
+
+	it("names just the site when the page itself asks", () => {
+		const { who } = describePermissionRequest({
+			permission: "geolocation", requestingUrl: "https://maps.example/x", pageUrl: "https://maps.example/",
+		});
+		expect(who).toBe("maps.example");
+	});
+
+	it("says camera or microphone from what the request names", () => {
+		const ask = { permission: "media", requestingUrl: "https://meet.example/", pageUrl: "https://meet.example/" };
+		expect(describePermissionRequest({ ...ask, mediaTypes: ["video"] }).what).toBe("use your camera");
+		expect(describePermissionRequest({ ...ask, mediaTypes: ["audio"] }).what).toBe("use your microphone");
+		expect(describePermissionRequest(ask).what).toBe("use your camera and microphone");
+	});
+
+	it("falls back to the raw name, labelled, only for a permission it does not know", () => {
+		const { what } = describePermissionRequest({ permission: "brand-new-thing", requestingUrl: "https://a.example/", pageUrl: "" });
+		expect(what).toBe('use a browser feature called "brand-new-thing"');
+	});
+});
+
+describe("quiet blocks — storage access from a pane tab gets a bar, not a modal", () => {
+	const TAB = { isDestroyed: () => false, getURL: () => "https://www.microsoft.com/onedrive" };
+	const WIDGET = { requestingUrl: "https://lpcdn.lpsnmedia.net/chat" };
+
+	it("blocks without a modal and hands the pane the plain sentence", () => {
+		const { sess, captured } = fakeSession();
+		const prompt = vi.fn(async () => true);
+		const shown: unknown[] = [];
+		setQuietBlockSink((_wc, block) => { shown.push(block); return true; });
+		try {
+			installPermissionHandlers(sess, prompt);
+			for (const permission of QUIET_BLOCKED_PERMISSIONS) {
+				const answers: boolean[] = [];
+				captured.request!(TAB, permission, (g) => answers.push(g), WIDGET);
+				expect(answers).toEqual([false]);
+			}
+			expect(prompt).not.toHaveBeenCalled();
+			expect(shown[0]).toEqual({
+				origin: "https://lpcdn.lpsnmedia.net",
+				permission: "storage-access",
+				text: expect.stringMatching(/^Something embedded in microsoft\.com \(from lpcdn\.lpsnmedia\.net\) wanted to remember you/),
+			});
+		} finally {
+			setQuietBlockSink(null);
+		}
+	});
+
+	it("does NOT remember the block, so the bar's Allow can still grant it", () => {
+		const { sess, captured } = fakeSession();
+		setQuietBlockSink(() => true);
+		try {
+			installPermissionHandlers(sess, vi.fn(async () => true));
+			captured.request!(TAB, "storage-access", () => {}, WIDGET);
+			allowPermission(sess, "https://lpcdn.lpsnmedia.net", "storage-access");
+			const answers: boolean[] = [];
+			captured.request!(TAB, "storage-access", (g) => answers.push(g), WIDGET);
+			expect(answers).toEqual([true]);
+			expect(captured.check!(TAB, "storage-access", "https://lpcdn.lpsnmedia.net", WIDGET)).toBe(true);
+		} finally {
+			setQuietBlockSink(null);
+		}
+	});
+
+	it("falls back to the modal when no pane tab can show it (a popup, or a sink that throws)", async () => {
+		for (const sink of [() => false, () => { throw new Error("pane gone"); }]) {
+			const { sess, captured } = fakeSession();
+			const prompt = vi.fn(async () => false);
+			setQuietBlockSink(sink);
+			try {
+				installPermissionHandlers(sess, prompt);
+				const answers: boolean[] = [];
+				captured.request!(TAB, "storage-access", (g) => answers.push(g), WIDGET);
+				await vi.waitFor(() => expect(answers).toEqual([false]));
+				expect(prompt).toHaveBeenCalledTimes(1);
+			} finally {
+				setQuietBlockSink(null);
+			}
+		}
+	});
+
+	it("never quietly blocks a meaningful permission: the camera still asks", async () => {
+		const { sess, captured } = fakeSession();
+		const prompt = vi.fn(async () => true);
+		const sink = vi.fn(() => true);
+		setQuietBlockSink(sink);
+		try {
+			installPermissionHandlers(sess, prompt);
+			captured.request!(TAB, "media", () => {}, PAGE);
+			await vi.waitFor(() => expect(prompt).toHaveBeenCalledTimes(1));
+			expect(sink).not.toHaveBeenCalled();
+		} finally {
+			setQuietBlockSink(null);
+		}
 	});
 });

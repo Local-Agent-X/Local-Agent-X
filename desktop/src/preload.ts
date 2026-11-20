@@ -219,6 +219,16 @@ contextBridge.exposeInMainWorld("desktop", {
     } | null> => ipcRenderer.invoke("browser-downloads-list"),
     openDownload: (id: string): Promise<boolean> => ipcRenderer.invoke("browser-download-open", id),
     revealDownload: (id: string): Promise<boolean> => ipcRenderer.invoke("browser-download-reveal", id),
+    // Permission bar (browser-permission-bar.js): a request the pane blocked
+    // quietly instead of opening a modal, tagged with its tab; allow grants
+    // that one origin+permission for the tab's partition and reloads the tab.
+    onPermissionBlocked: (cb: (notice: {
+      viewId: string; origin: string; permission: string; text: string;
+    }) => void) => {
+      ipcRenderer.on("browser-permission-blocked", (_e, notice) => cb(notice));
+    },
+    allowPermission: (viewId: string, origin: string, permission: string): Promise<boolean> =>
+      ipcRenderer.invoke("browser-permission-allow", viewId, origin, permission),
     // Pool-change poke: main sends "browser-views-changed" (no payload) when
     // views are created/closed or the attached view flips — re-list on it.
     onViewsChanged: (cb: () => void) => {

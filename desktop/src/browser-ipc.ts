@@ -24,6 +24,7 @@ import { prepareEmbeddedChromeIdentityForNavigation } from "./embedded-chrome-id
 import { getMainWindow } from "./window";
 import { isTrustedBrowserSender, setupBrowserPageControls, wirePageControlsForPool } from "./browser-page-controls";
 import { setupBrowserDownloadsIPC } from "./browser-downloads-ipc";
+import { setupBrowserPermissionBarIPC } from "./browser-permission-bar-ipc";
 // The trusted-sender guard moved to browser-page-controls.ts in the find/zoom
 // split; re-exported so existing consumers keep importing it from here.
 export { isTrustedBrowserSender } from "./browser-page-controls";
@@ -223,6 +224,7 @@ export function setupBrowserIPC(): void {
 	// Find-in-page + per-view zoom command surface, acting on currentViewId.
 	setupBrowserPageControls(() => currentViewId);
 	setupBrowserDownloadsIPC();
+	setupBrowserPermissionBarIPC();
 
 	ipcMain.handle("browser-set-bounds", (event: IpcMainInvokeEvent, rect: Rectangle) => {
 		if (!isTrustedBrowserSender(event.sender)) return;

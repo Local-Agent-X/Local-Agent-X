@@ -47,9 +47,12 @@
 	}
 
 	// Selection changed → tell the find/zoom module (browser-find.js) so it
-	// drops a stale find session and reapplies the view's stored zoom factor.
+	// drops a stale find session and reapplies the view's stored zoom factor,
+	// and the permission bar (browser-permission-bar.js) so it shows the
+	// selected tab's notices.
 	function noteViewSelected(viewId) {
 		if (window.laxBrowserFind && viewId) window.laxBrowserFind.onViewSelected(viewId);
+		if (window.laxBrowserPermissionBar && viewId) window.laxBrowserPermissionBar.onViewSelected(viewId);
 	}
 
 	// IPC invokes can reject during shutdown races (bridge torn down while a

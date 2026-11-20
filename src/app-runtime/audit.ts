@@ -1,19 +1,28 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 
 import { deriveChainHash, GENESIS_PREV_HASH, signAuditEntry } from "./audit-signing.js";
 import { AUDIT_DIR, auditPath } from "./paths.js";
 import type { AuditEntry } from "./types.js";
+import { atomicWriteFileSync } from "../util/json-store.js";
+import { createLogger } from "../logger.js";
+
+const logger = createLogger("app-runtime.audit");
 
 const MAX_PER_APP_ENTRIES = 1000;
 const MAX_GLOBAL_ENTRIES = 5000;
 
+/** The log's entries. One that cannot be read is moved aside, never written
+ *  over: rewriting it from an empty list erased every entry it held. */
 function loadEntries(path: string): AuditEntry[] {
   if (!existsSync(path)) return [];
   try {
     return JSON.parse(readFileSync(path, "utf-8"));
-  } catch {
+  } catch (e) {
+    const aside = `${path}.unreadable-${Date.now()}`;
+    try { renameSync(path, aside); } catch { /* the next write replaces it; the warning still names it */ }
+    logger.warn(`audit log ${path} could not be read (${(e as Error).message}); kept as ${aside}, a new chain starts`);
     return [];
   }
 }
@@ -58,7 +67,7 @@ export function writeAuditEntry(
   const trimmedApp = appEntries.length > MAX_PER_APP_ENTRIES
     ? appEntries.slice(-MAX_PER_APP_ENTRIES)
     : appEntries;
-  try { writeFileSync(appAuditPath, JSON.stringify(trimmedApp, null, 2), "utf-8"); } catch { /* best effort */ }
+  try { atomicWriteFileSync(appAuditPath, JSON.stringify(trimmedApp, null, 2), { encoding: "utf-8" }); } catch { /* best effort */ }
 
   const globalPath = join(AUDIT_DIR, "global.json");
   const globalEntries = loadEntries(globalPath);
@@ -67,7 +76,7 @@ export function writeAuditEntry(
   const trimmedGlobal = globalEntries.length > MAX_GLOBAL_ENTRIES
     ? globalEntries.slice(-MAX_GLOBAL_ENTRIES)
     : globalEntries;
-  try { writeFileSync(globalPath, JSON.stringify(trimmedGlobal, null, 2), "utf-8"); } catch { /* best effort */ }
+  try { atomicWriteFileSync(globalPath, JSON.stringify(trimmedGlobal, null, 2), { encoding: "utf-8" }); } catch { /* best effort */ }
 
   // Return the per-app entry as the canonical result. Callers that care
   // about the global chain entry would need a different API; today nothing

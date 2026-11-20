@@ -230,9 +230,17 @@ export function verifyDurableRecordMac(domain: string, payload: string, mac: str
   return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
 
+/** An app audit entry's MAC: every field, `details` included, under its own
+ *  domain of the install's audit key, at full length. Entries signed before
+ *  carry a 16-hex MAC over every field but `details`; they no longer verify. */
+const ENTRY_MAC_DOMAIN = "app-runtime-audit-entry";
+
+function entryPayload(e: Omit<AuditEntry, "signature">): string {
+  return JSON.stringify([e.id, e.timestamp, e.actor, e.action, e.appId, e.details, e.prevHash]);
+}
+
 export function signAuditEntry(entry: Omit<AuditEntry, "signature">): string {
-  const payload = `${entry.id}|${entry.timestamp}|${entry.actor}|${entry.action}|${entry.appId}|${entry.prevHash}`;
-  return createHmac("sha256", getAuditHmacKey()).update(payload).digest("hex").slice(0, 16);
+  return computeDurableRecordMac(ENTRY_MAC_DOMAIN, entryPayload(entry));
 }
 
 // SHA-256 of the previous entry's signature, used to chain entries. Choosing
@@ -253,16 +261,24 @@ export interface VerifyResult {
 }
 
 export function verifyAuditEntry(entry: AuditEntry, prevEntry: AuditEntry | null): VerifyResult {
+  const expectedPrev = prevEntry === null ? GENESIS_PREV_HASH : deriveChainHash(prevEntry.signature);
+  return verifyEntryAfter(entry, expectedPrev);
+}
+
+/** `expectedPrev` null: the first entry a trimmed log kept, whose link to the
+ *  dropped entry is covered by its own MAC and cannot be checked further. */
+function verifyEntryAfter(entry: AuditEntry, expectedPrev: string | null): VerifyResult {
   if (entry.prevHash === LEGACY_PREV_HASH) {
     return { valid: false, reason: "pre-chain legacy entry" };
   }
-  const expectedPrev = prevEntry === null ? GENESIS_PREV_HASH : deriveChainHash(prevEntry.signature);
-  if (entry.prevHash !== expectedPrev) {
+  if (expectedPrev !== null && entry.prevHash !== expectedPrev) {
     return { valid: false, reason: "prevHash mismatch" };
   }
   const { signature, ...unsigned } = entry;
-  const expectedSig = signAuditEntry(unsigned);
-  if (signature !== expectedSig) {
+  if (/^[a-f0-9]{16}$/.test(signature)) {
+    return { valid: false, reason: "signed before the MAC covered its details" };
+  }
+  if (!verifyDurableRecordMac(ENTRY_MAC_DOMAIN, entryPayload(unsigned), signature)) {
     return { valid: false, reason: "signature mismatch" };
   }
   return { valid: true };
@@ -272,15 +288,19 @@ export interface ChainVerifyResult {
   valid: boolean;
   brokenAt?: number;
   reason?: string;
+  /** False when the log was trimmed (audit.ts keeps the latest entries): the
+   *  chain is checked from the first entry kept, not from genesis. */
+  startsAtGenesis: boolean;
 }
 
 export function verifyAuditChain(entries: AuditEntry[]): ChainVerifyResult {
+  const startsAtGenesis = entries.length === 0 || entries[0].prevHash === GENESIS_PREV_HASH;
   for (let i = 0; i < entries.length; i++) {
-    const prev = i === 0 ? null : entries[i - 1];
-    const result = verifyAuditEntry(entries[i], prev);
+    const expectedPrev = i > 0 ? deriveChainHash(entries[i - 1].signature) : startsAtGenesis ? GENESIS_PREV_HASH : null;
+    const result = verifyEntryAfter(entries[i], expectedPrev);
     if (!result.valid) {
-      return { valid: false, brokenAt: i, reason: result.reason };
+      return { valid: false, brokenAt: i, reason: result.reason, startsAtGenesis };
     }
   }
-  return { valid: true };
+  return { valid: true, startsAtGenesis };
 }

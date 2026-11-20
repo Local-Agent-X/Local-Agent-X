@@ -23,9 +23,28 @@ function state(over: Partial<DispatchEgressState> = {}): DispatchEgressState & {
   };
 }
 
+// The user's own channels (phone, a Telegram or WhatsApp chat) read no taint:
+// they show the user what the desktop shows. Canary and secret shape refuse.
+describe("judgeEgress on a user channel", () => {
+  const user = (shape: boolean | null) => ({
+    checkCanariesInPayload: (_s: string, p: string) => (p.includes("CANARY-1") ? "CANARY-1" : null),
+    containsSecretShape: () => shape,
+  });
+  it("never reads taint, even for bytes another channel would refuse", () => {
+    expect(judgeEgress(user(false), "user-channel", "s", "secret-bytes unprovable")).toEqual({ canary: false, taint: null, secretShape: false });
+  });
+  it("refuses on the canary and on a secret-shaped value", () => {
+    expect(judgeEgress(user(false), "user-channel", "s", "x CANARY-1").canary).toBe(true);
+    expect(judgeEgress(user(true), "user-channel", "s", "AKIA...").secretShape).toBe(true);
+  });
+  it("a payload the shape scan skipped is not a secret", () => {
+    expect(judgeEgress(user(null), "user-channel", "s", "binary").secretShape).toBe(false);
+  });
+});
+
 describe("judgeEgress", () => {
   it("each channel's taint reading is declared in one table", () => {
-    expect(EGRESS_CHANNEL_TAINT).toEqual({ "tool-dispatch": "floor", "browser-page": "overlap", "tool-send": "overlap" });
+    expect(EGRESS_CHANNEL_TAINT).toEqual({ "tool-dispatch": "floor", "browser-page": "overlap", "tool-send": "overlap", "user-channel": "none" });
   });
 
   it("a clean payload carries no evidence on either channel", () => {

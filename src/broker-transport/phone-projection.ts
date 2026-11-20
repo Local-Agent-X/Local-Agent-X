@@ -14,9 +14,8 @@ import { readCheckpoint } from "../ops/checkpoint.js";
 import type { Op, OpCheckpoint } from "../ops/types.js";
 import { extractFinalAssistantText, readOpTurns, resolveTerminalOpStatus, type OpTurnRow } from "../canonical-loop/index.js";
 import { redactString } from "../ops/redactor.js";
-import { scanForSecrets } from "../security/secrets/secret-scanner.js";
 import { parseMessagingSessionTarget } from "../session/channel-registry.js";
-import { checkCanariesInPayload } from "../threat/canaries.js";
+import { judgeUserChannelEgress } from "../net/egress-user-channel.js";
 import type { ChatChannel } from "./chat-bridge.js";
 
 const MAX_REPLAY_FRAMES = 128;
@@ -350,7 +349,8 @@ function redactItem<T extends PhoneProjectionItem>(item: T): T {
 function clearItemForProjection(sessionId: string, item: PhoneProjectionItem): PhoneProjectionItem | null {
   const redacted = redactItem(item);
   const payload = JSON.stringify(item);
-  if (!scanForSecrets(payload).clean || checkCanariesInPayload(sessionId, payload)) return null;
+  const judged = judgeUserChannelEgress(sessionId, payload);
+  if (judged.canary || judged.secretShape) return null;
   return redacted;
 }
 

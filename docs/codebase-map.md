@@ -13,14 +13,14 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2088 non-test source files · 76 oversized · 271 nearing the size cap.
+**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2089 non-test source files · 76 oversized · 271 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 186 | 30 | XL | 1 |
-| `src/security/` | 168 | 63 | XL | 2 |
+| `src/security/` | 167 | 63 | XL | 2 |
 | `src/tools/` | 140 | 243 | XL | 9 |
 | `src/tool-execution/` | 103 | 90 | XL | 2 |
 | `src/workspace/` | 91 | 3 | M |  |
@@ -35,7 +35,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/agency/` | 48 | 39 | XL |  |
 | `src/chat-ws/` | 48 | 24 | L |  |
 | `src/local-runtimes/` | 45 | 28 | XL |  |
-| `src/threat/` | 44 | 13 | L |  |
+| `src/threat/` | 43 | 13 | L |  |
 | `src/auth/` | 36 | 11 | L |  |
 | `src/inbox/` | 30 | 7 | M |  |
 | `src/broker-transport/` | 29 | 50 | XL |  |
@@ -51,10 +51,10 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/orchestrator/` | 20 | 24 | L |  |
 | `src/autonomy/` | 19 | 6 | M |  |
 | `src/cognition/` | 19 | 37 | XL | 1 |
+| `src/net/` | 19 | 12 | L |  |
 | `src/server/` *(entrypoint)* | 19 | 76 | XL | 4 |
 | `src/voice/` | 19 | 80 | XL | 1 |
 | `src/agents/` | 17 | 14 | L |  |
-| `src/net/` | 17 | 11 | L |  |
 | `src/persistence/` | 16 | 3 | M |  |
 | `src/self-edit/` | 16 | 19 | L | 2 |
 | `src/anthropic-client/` | 15 | 23 | L | 2 |

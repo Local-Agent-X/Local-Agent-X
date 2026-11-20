@@ -2,8 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { checkpointBridgeMedia, readBridgeMedia } from "../bridge-media-queue.js";
 import { imageIsTextBearing } from "../tools/shared/image-binary-meta.js";
-import { scanForSecrets } from "../security/secrets/secret-scanner.js";
-import { checkCanariesInPayload } from "../threat/canaries.js";
+import { judgeUserChannelEgress } from "../net/egress-user-channel.js";
 import { checkAttachmentPaths } from "../tools/http-egress-guard.js";
 import type { WhatsAppBridge } from "../whatsapp-bridge/index.js";
 import type { TelegramBridge } from "../telegram-bridge/index.js";
@@ -36,12 +35,12 @@ async function notifyMediaBlocked(opts: ForwardOptions, reason: string): Promise
 }
 
 async function sendImage(image: Buffer, opts: ForwardOptions): Promise<boolean> {
-  const view = image.toString("utf8");
-  if (imageIsTextBearing(image) && !scanForSecrets(view).clean) {
+  const judged = judgeUserChannelEgress(opts.sessionKey, image.toString("utf8"), { scanSecrets: imageIsTextBearing(image) });
+  if (judged.secretShape) {
     await notifyMediaBlocked(opts, "the outbound bytes contained a secret-shaped value");
     return true;
   }
-  if (checkCanariesInPayload(opts.sessionKey, view)) {
+  if (judged.canary) {
     await notifyMediaBlocked(opts, "a security tripwire flagged possible context exfiltration");
     return true;
   }

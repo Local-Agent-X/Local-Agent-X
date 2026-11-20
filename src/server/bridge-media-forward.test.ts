@@ -15,7 +15,7 @@ vi.mock("../security/secrets/secret-scanner.js", () => ({
 }));
 // Keep the canary tripwire quiet so it never masks/duplicates the assertion.
 vi.mock("../threat/canaries.js", () => ({
-  checkCanariesInPayload: () => false,
+  checkCanariesInPayload: () => null,
 }));
 
 import { forwardBridgeMedia } from "./bridge-media-forward.js";

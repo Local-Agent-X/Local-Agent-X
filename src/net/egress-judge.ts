@@ -18,7 +18,7 @@
  */
 import type { TaintSource } from "../data-lineage/index.js";
 
-export type EgressChannel = "tool-dispatch" | "browser-page" | "tool-send";
+export type EgressChannel = "tool-dispatch" | "browser-page" | "tool-send" | "user-channel";
 
 /**
  * How each channel reads the session's taint.
@@ -34,11 +34,17 @@ export type EgressChannel = "tool-dispatch" | "browser-page" | "tool-send";
  *   The bytes a tool puts on the wire (tool-send) are judged the same way: the
  *   floor was already applied, at dispatch, to what the model wrote, so at
  *   send only evidence refuses — bytes the tool added that carry what was read.
+ * - "none": taint does not refuse. The user's own channels (the phone, and a
+ *   Telegram or WhatsApp chat the user talks to the agent in) show the user
+ *   the chat the desktop shows, which has no taint check: an answer built from
+ *   a file the user asked about is theirs to read anywhere. The canary and a
+ *   secret-shaped value still refuse there (owner ruling 2026-11-20).
  */
-export const EGRESS_CHANNEL_TAINT: Readonly<Record<EgressChannel, "floor" | "overlap">> = {
+export const EGRESS_CHANNEL_TAINT: Readonly<Record<EgressChannel, "floor" | "overlap" | "none">> = {
   "tool-dispatch": "floor",
   "browser-page": "overlap",
   "tool-send": "overlap",
+  "user-channel": "none",
 };
 
 type TaintHit = { source: TaintSource; target: string };
@@ -61,6 +67,15 @@ export interface SendEgressState extends PageEgressState {
   containsKnownSecretValue(payload: string): boolean;
 }
 
+/** A user channel reads no taint; it is judged on the canary and on any
+ *  secret-shaped value, since what reaches a phone or a chat app's servers
+ *  leaves this machine. `null` from the shape scan: not judged (a binary
+ *  payload that carries no text). */
+export interface UserChannelEgressState {
+  checkCanariesInPayload(sessionId: string, payload: string): string | null;
+  containsSecretShape(payload: string): boolean | null;
+}
+
 export interface EgressJudgement {
   /** The session's canary is in the payload: proof of exfiltration. */
   canary: boolean;
@@ -69,20 +84,26 @@ export interface EgressJudgement {
   taint: { reason?: string; sources: TaintHit[] } | null;
   /** tool-send only: a stored secret's value the call was not approved to send. */
   knownSecret?: boolean;
+  /** user-channel only: a secret-shaped value is in the payload. */
+  secretShape?: boolean;
 }
 
 export function judgeEgress(state: DispatchEgressState, channel: "tool-dispatch", sessionId: string, payload: string): EgressJudgement;
 export function judgeEgress(state: PageEgressState, channel: "browser-page", sessionId: string, payload: string): EgressJudgement;
 export function judgeEgress(state: SendEgressState, channel: "tool-send", sessionId: string, payload: string): EgressJudgement;
-export function judgeEgress(state: PageEgressState | DispatchEgressState | SendEgressState, channel: EgressChannel, sessionId: string, payload: string): EgressJudgement {
+export function judgeEgress(state: UserChannelEgressState, channel: "user-channel", sessionId: string, payload: string): EgressJudgement;
+export function judgeEgress(state: PageEgressState | DispatchEgressState | SendEgressState | UserChannelEgressState, channel: EgressChannel, sessionId: string, payload: string): EgressJudgement {
   const canary = state.checkCanariesInPayload(sessionId, payload) !== null;
+  if (channel === "user-channel") {
+    return { canary, taint: null, secretShape: (state as UserChannelEgressState).containsSecretShape(payload) === true };
+  }
   const knownSecret = channel === "tool-send" ? (state as SendEgressState).containsKnownSecretValue(payload) : undefined;
   let taint: EgressJudgement["taint"] = null;
   if (EGRESS_CHANNEL_TAINT[channel] === "floor") {
     const floor = (state as DispatchEgressState).checkEgressTaintWithPayload(sessionId, payload);
     if (floor.blocked) taint = { reason: floor.reason, sources: floor.evidence };
   } else {
-    const sources = state.findTaintInPayload(sessionId, payload);
+    const sources = (state as PageEgressState).findTaintInPayload(sessionId, payload);
     if (sources.length > 0) taint = { sources };
   }
   return knownSecret === undefined ? { canary, taint } : { canary, taint, knownSecret };

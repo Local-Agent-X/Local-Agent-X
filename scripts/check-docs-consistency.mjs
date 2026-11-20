@@ -204,7 +204,7 @@ const sourceContracts = [
   ["retryable tool effects are enumerated", "src/resilience-policy.ts", /effect\.class === "read-only"[\s\S]{0,180}effect\.class === "keyed-mutation"/],
   ["memory enters Agent Sync", "src/sync/push-files.ts", /const memDir = join\(dataDir, "memory"\)/],
   ["Agent Sync pushes to a remote", "src/sync/index.ts", /await this\.git\("push", "-u", "origin", "HEAD:main"\)/],
-  ["audit entries use keyed HMAC", "src/app-runtime/audit-signing.ts", /signAuditEntry[\s\S]{0,240}createHmac\("sha256", getAuditHmacKey\(\)\)/],
+  ["audit entries use keyed HMAC", "src/app-runtime/audit-signing.ts", /function computeDurableRecordMac[\s\S]{0,160}createHmac\("sha256", getAuditHmacKey\(\)\)[\s\S]*function signAuditEntry[\s\S]{0,160}computeDurableRecordMac\(ENTRY_MAC_DOMAIN/],
   ["in-app browser identity default", "src/config-schema.ts", /browserMode:[\s\S]{0,120}\.default\("in-app"\)/],
   ["all browser identity modes remain explicit", "src/config-schema.ts", /z\.enum\(\["isolated", "continuity", "advanced-shared", "in-app"\]\)/],
   ["browser fill selector guard", "src/browser/secret-fill.ts", /reason: "selector_not_whitelisted"/],

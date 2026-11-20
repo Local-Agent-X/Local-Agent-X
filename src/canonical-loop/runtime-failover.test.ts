@@ -11,11 +11,11 @@ import {
   attemptRuntimeFailover,
   attemptedTargetsForEpoch,
   failoverPolicyAllows,
-  normalizeRuntimeFailure,
   runtimeFailoverEnabled,
   runtimeFailureFeedsRouting,
   resourceLocksAfterRuntimeFailover,
 } from "./runtime-failover.js";
+import { normalizeRuntimeFailure } from "./runtime-failure-category.js";
 import { targetMeetsRequirements } from "./target-requirements.js";
 import type { TargetCapabilitySnapshot } from "../ops/operation-requirements.js";
 import { BROADCAST_KEYS, FLIPPABLE_SETTINGS } from "../settings-schema.js";

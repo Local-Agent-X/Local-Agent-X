@@ -11,7 +11,7 @@ import { registerAgentRunDriver, type AgentRunDriver } from "../agents/runtime.j
 import { Handler } from "../agency/handler.js";
 import { registerAgentLifecycleEvents, type PendingAgentMeta } from "./handler-events-agent-result.js";
 import type { GlobalFrame } from "../chat-ws/frames.js";
-import type { LAXConfig, Session, ToolDefinition } from "../types.js";
+import type { AgentTurn, LAXConfig, Session, ToolDefinition } from "../types.js";
 import type { SessionStore, MemoryIndex } from "../memory/index.js";
 import type { SecretsStore } from "../secrets.js";
 import type { SecurityLayer } from "../security/index.js";
@@ -40,6 +40,38 @@ const logger = createLogger("server.handler-events");
 /** The run's result when its changes could not be merged. Says what actually
  *  stopped the merge — a dirty parent tree is the common case, and "conflicts"
  *  sent the user looking for the wrong thing — and how to land the branch. */
+/** Whether a spawned agent's run, its work merged, succeeded: it finished,
+ *  and its output is neither empty nor a claim of work it did not do. */
+function judgeFinishedRun(who: string, run: AgentTurn, agentOutput: string) {
+  const opId = run.opId;
+  const shortfall = agentRunShortfall(run);
+  if (shortfall) {
+    logger.warn(`[handler] Agent ${who} did not finish: ${shortfall}`);
+    return { result: `[Agent did not finish: ${shortfall}]${agentOutput ? `\n\n${agentOutput}` : ""}`, success: false, opId };
+  }
+  // Empty-output guard: a run that committed no work AND produced no
+  // usable text (or only a runner status marker) finished with nothing
+  // to show. Gated on committedWork so a silent-but-effective run (wrote
+  // a file, returned no prose) is never misflagged — the mutation is its
+  // own receipt. Deterministic, no LLM reviewer.
+  if (!(run.committedWork ?? true)) {
+    const empty = looksLikeEmptyOrErrorOnly(agentOutput);
+    if (empty.isEmptyOrErrorOnly) {
+      logger.warn(`[handler] Agent ${who} finished with ${empty.reason} and no committed work — re-classified as error`);
+      return { result: `[Agent finished with no usable output (${empty.reason}) and committed no work]${agentOutput ? `\n\n${agentOutput}` : ""}`, success: false, opId };
+    }
+  }
+  // False-completion guard: the driver has both the output text AND the
+  // AgentTurn's committedWork ledger signal. Default TRUE so any path
+  // that didn't populate the signal can never false-positive.
+  const completion = looksLikeUnsubstantiatedCompletion(agentOutput, run.committedWork ?? true);
+  if (completion.isUnsubstantiated) {
+    logger.warn(`[handler] Agent ${who} claimed committing action ("${completion.matchedPhrase}") with no successful committing tool call — re-classified as error`);
+    return { result: `[Agent claimed a committing action ("${completion.matchedPhrase}") but made no successful committing tool call — likely a false completion]\n\n${agentOutput}`, success: false, opId };
+  }
+  return { result: agentOutput, success: true, opId };
+}
+
 function unmergedResult(agentId: string, hasWorktree: boolean, mergeFailure: string, agentOutput: string, opId: string | undefined) {
   const branchHint = hasWorktree ? `Run: git merge agent/${agentId}` : "File changes may be lost";
   return { result: `[Agent completed but its changes were not merged — ${mergeFailure || "merge failed"}. ${branchHint}]
@@ -273,34 +305,7 @@ export function registerHandlerEvents(deps: {
 
       const agentOutput = extractAgentOutput(agentSession.messages);
       const opId = agentResult.opId;
-      if (mergeSuccess) {
-        const shortfall = agentRunShortfall(agentResult);
-        if (shortfall) {
-          logger.warn(`[handler] Agent ${agentId} (${role}) did not finish: ${shortfall}`);
-          return { result: `[Agent did not finish: ${shortfall}]${agentOutput ? `\n\n${agentOutput}` : ""}`, success: false, opId };
-        }
-        // Empty-output guard: a run that committed no work AND produced no
-        // usable text (or only a runner status marker) finished with nothing
-        // to show. Gated on committedWork so a silent-but-effective run (wrote
-        // a file, returned no prose) is never misflagged — the mutation is its
-        // own receipt. Deterministic, no LLM reviewer.
-        if (!(agentResult.committedWork ?? true)) {
-          const empty = looksLikeEmptyOrErrorOnly(agentOutput);
-          if (empty.isEmptyOrErrorOnly) {
-            logger.warn(`[handler] Agent ${agentId} (${role}) finished with ${empty.reason} and no committed work — re-classified as error`);
-            return { result: `[Agent finished with no usable output (${empty.reason}) and committed no work]${agentOutput ? `\n\n${agentOutput}` : ""}`, success: false, opId };
-          }
-        }
-        // False-completion guard: the driver has both the output text AND the
-        // AgentTurn's committedWork ledger signal. Default TRUE so any path
-        // that didn't populate the signal can never false-positive.
-        const completion = looksLikeUnsubstantiatedCompletion(agentOutput, agentResult.committedWork ?? true);
-        if (completion.isUnsubstantiated) {
-          logger.warn(`[handler] Agent ${agentId} (${role}) claimed committing action ("${completion.matchedPhrase}") with no successful committing tool call — re-classified as error`);
-          return { result: `[Agent claimed a committing action ("${completion.matchedPhrase}") but made no successful committing tool call — likely a false completion]\n\n${agentOutput}`, success: false, opId };
-        }
-        return { result: agentOutput, success: true, opId };
-      }
+      if (mergeSuccess) return judgeFinishedRun(`${agentId} (${role})`, agentResult, agentOutput);
       return unmergedResult(agentId, !!worktreeInfo, mergeFailure, agentOutput, opId);
     } catch (e) {
       // The folder the task named couldn't be isolated: say exactly why — the

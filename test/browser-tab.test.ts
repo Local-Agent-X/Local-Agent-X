@@ -26,6 +26,7 @@ const h = vi.hoisted(() => ({
   // returned by listBrowserViews.
   viewsById: new Map<string, unknown>(),
   createCalls: [] as unknown[][],
+  paneTabOpener: null as null | ((openerViewId: string, options: unknown) => unknown),
   closeCalls: [] as string[],
   attachedId: null as string | null,
   poolListener: null as null | (() => void),
@@ -112,6 +113,7 @@ vi.mock("../desktop/src/browser-views", () => ({
   getAttachedViewId: () => h.attachedId,
   setPoolChangedListener: (fn: (() => void) | null) => { h.poolListener = fn; },
   setAgentViewEvictedNotifier: () => {},
+  setPaneTabOpener: (fn: typeof h.paneTabOpener) => { h.paneTabOpener = fn; },
   listBrowserViews: () => h.poolList,
   pingBrowserView: () => ({ ok: true }),
   hideBrowserView: () => { h.hideCalls++; },
@@ -855,6 +857,21 @@ describe("auto-surface + new-tab (browser-ipc.ts)", () => {
     expect(opts.partition).toBe("persist:lax-profile-v2");
     expect(state.url).toBe("https://example.com/");
     expect(h.showCalls).toBe(0);
+  });
+
+  // Live 2026-11-19: OneDrive's "Sign in" link (a new-tab open) became a small
+  // separate window, and the signed-in session lived there instead of the pane.
+  it("a page's new-tab open becomes a user tab hosting the opener's webContents", () => {
+    h.attachedId = "foreground";
+    const before = h.showCalls;
+    const options = { webContents: { id: 42 } };
+    const hosted = h.paneTabOpener!("foreground", options);
+    const [mintedId, opts] = h.createCalls.at(-1)! as [string, { partition: string; agentDriven: boolean; openedBy: unknown }];
+    expect(mintedId).toMatch(/^user-\d+$/);
+    expect(opts).toEqual({ partition: "persist:lax-profile-v2", agentDriven: false, openedBy: options });
+    expect(hosted).toBe(h.viewsById.get(mintedId)!.webContents);
+    expect(currentNavViewId()).toBe(mintedId);
+    expect(h.showCalls).toBe(before + 1); // the pane is open → the tab is shown
   });
 
   it("browser-new-tab is trusted-sender gated", async () => {

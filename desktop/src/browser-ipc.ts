@@ -18,7 +18,7 @@
  * only updates the address bar for the view it is currently showing.
  */
 
-import { ipcMain, type IpcMainInvokeEvent, type Rectangle, type WebContentsView } from "electron";
+import { ipcMain, type BrowserWindowConstructorOptions, type IpcMainInvokeEvent, type Rectangle, type WebContentsView } from "electron";
 
 import { prepareEmbeddedChromeIdentityForNavigation } from "./embedded-chrome-identity";
 import { getMainWindow } from "./window";
@@ -37,6 +37,7 @@ import {
 	setBrowserChatOverlay,
 	setAgentViewEvictedNotifier,
 	setBrowserViewBounds,
+	setPaneTabOpener,
 	setPoolChangedListener,
 	showBrowserView,
 } from "./browser-views";
@@ -186,7 +187,34 @@ function pushAgentSurfaced(viewId: string): void {
 	win.webContents.send("browser-agent-surfaced", { viewId });
 }
 
+/** Mint a user tab (agentDriven:false) on the shared browser identity and make
+ *  it the anchor's view. Attach only if something is already attached — on a
+ *  non-browser tab the retarget alone is enough (the next set-visible shows it),
+ *  and the renderer adopts an attached view on its next re-list. `openedBy`
+ *  hosts a page's own new-tab open (browser-view-popups.ts). */
+function openUserTab(openedBy?: BrowserWindowConstructorOptions): { viewId: string; view: WebContentsView } {
+	const viewId = `user-${++userTabSeq}`;
+	createBrowserView(viewId, { partition: SHARED_BROWSER_PARTITION, agentDriven: false, openedBy });
+	const view = getBrowserView(viewId)!;
+	wireNavPushes(viewId, view.webContents);
+	currentViewId = viewId;
+	if (lastBoundsDip) setBrowserViewBounds(viewId, lastBoundsDip); // negotiate BEFORE any attach
+	if (getAttachedViewId() !== null) {
+		showBrowserView(viewId);
+	}
+	markHumanNavigation(viewId);
+	return { viewId, view };
+}
+
 export function setupBrowserIPC(): void {
+	// A link on a user's page that asks for a new tab opens as a tab here, not
+	// as a separate window. The opener is already loading it, so this only
+	// hosts it; the identity override covers the tab's later navigations.
+	setPaneTabOpener((_openerViewId, options) => {
+		const { view } = openUserTab(options);
+		void prepareEmbeddedChromeIdentityForNavigation(view.webContents);
+		return view.webContents;
+	});
 	// Pool membership/attachment changes → poke the renderer to re-list, and
 	// give every pool view (incl. agent views minted over the server bridge)
 	// its find/zoom page controls (browser-page-controls.ts).
@@ -348,24 +376,12 @@ export function setupBrowserIPC(): void {
 		return true;
 	});
 
-	// New user tab: mint a fresh renderer-owned view (agentDriven:false) on the
-	// shared browser identity. Attach only if something is already
-	// attached — on a non-browser tab the retarget alone is enough (the next
-	// set-visible shows it).
+	// New user tab ("+" or a chat link): mint it, then load the url.
 	ipcMain.handle("browser-new-tab", async (event: IpcMainInvokeEvent, url?: string): Promise<BrowserNavState | null> => {
 		if (!isTrustedBrowserSender(event.sender)) return null;
-		const viewId = `user-${++userTabSeq}`;
-		createBrowserView(viewId, { partition: SHARED_BROWSER_PARTITION, agentDriven: false });
-		const view = getBrowserView(viewId)!;
-		wireNavPushes(viewId, view.webContents);
-		currentViewId = viewId;
-		if (lastBoundsDip) setBrowserViewBounds(viewId, lastBoundsDip); // negotiate BEFORE any attach
-		if (getAttachedViewId() !== null) {
-			showBrowserView(viewId);
-		}
+		const { viewId, view } = openUserTab();
 		const target = (typeof url === "string" && url.trim()) || "about:blank";
 		await prepareEmbeddedChromeIdentityForNavigation(view.webContents);
-		markHumanNavigation(viewId);
 		await view.webContents.loadURL(target).catch(() => { /* ERR_ABORTED etc. — nav-state carries the real outcome */ });
 		const state = readNavState(viewId, view.webContents);
 		pushNavState(viewId, view.webContents);

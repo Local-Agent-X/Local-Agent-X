@@ -15,16 +15,16 @@
 //      / `id_token` / `access_token` / `state`; logging one whole would put a
 //      live credential in a log file.
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { managePopups, popupOrigin, MAX_POPUPS_PER_VIEW } from "./browser-view-popups";
+import { managePopups, opensAsTab, popupOrigin, MAX_POPUPS_PER_VIEW } from "./browser-view-popups";
 
 type Handler = (...args: unknown[]) => void;
 
 /** Minimal WebContents double: records listeners so tests can fire events. */
 function fakeContents() {
 	const listeners = new Map<string, Handler[]>();
-	let openHandler: ((d: { url: string }) => unknown) | null = null;
+	let openHandler: ((d: { url: string; disposition?: string }) => unknown) | null = null;
 	return {
-		setWindowOpenHandler(fn: (d: { url: string }) => unknown) { openHandler = fn; },
+		setWindowOpenHandler(fn: (d: { url: string; disposition?: string }) => unknown) { openHandler = fn; },
 		on(event: string, fn: Handler) {
 			const list = listeners.get(event) ?? [];
 			list.push(fn);
@@ -32,7 +32,7 @@ function fakeContents() {
 			return this;
 		},
 		/** Drive the handler the real Electron would call. */
-		requestOpen(url: string) { return openHandler?.({ url }); },
+		requestOpen(url: string, disposition = "new-window") { return openHandler?.({ url, disposition }); },
 		emit(event: string, ...args: unknown[]) {
 			for (const fn of listeners.get(event) ?? []) fn(...args);
 		},
@@ -177,5 +177,65 @@ describe("the popup cap", () => {
 		managePopups(parent as never, { webPreferences: () => ({}) });
 		const verdict = parent.requestOpen(OAUTH_URL) as { action: string };
 		expect(verdict.action).toBe("allow");
+	});
+});
+
+// Live 2026-11-19: OneDrive's "Sign in" link opened a small separate window,
+// and after sign-in the user's whole OneDrive session lived in it instead of
+// the pane. A link that asks for a TAB must become a pane tab; a sized
+// popup-mode sign-in must stay a window, or it loses the opener it reports to.
+describe("a new-tab open becomes a pane tab", () => {
+	type Verdict = { action: string; createWindow?: (o: unknown) => unknown };
+
+	function viewWithTabs(opener: ((o: unknown) => unknown) | null) {
+		const parent = fakeContents();
+		const tracker = managePopups(parent as never, {
+			webPreferences: () => ({ partition: "persist:test" }),
+			tabOpener: () => opener as never,
+		});
+		return { parent, tracker };
+	}
+
+	it("routes a foreground or background tab open to the pane, keeping the opener's webContents", () => {
+		const hosted: unknown[] = [];
+		const tab = { id: 7 };
+		const { parent, tracker } = viewWithTabs((o) => { hosted.push(o); return tab; });
+		for (const disposition of ["foreground-tab", "background-tab"]) {
+			const verdict = parent.requestOpen("https://onedrive.live.com/", disposition) as Verdict;
+			expect(verdict.action).toBe("allow");
+			const options = { webContents: { id: 7 } };
+			expect(verdict.createWindow?.(options)).toBe(tab);
+			expect(hosted.at(-1)).toBe(options);
+		}
+		// A tab is the pool's, not a popup: it does not count against the cap.
+		expect(tracker.count()).toBe(0);
+	});
+
+	it("keeps a sized popup (new-window) a managed window, so sign-in popups still report back", () => {
+		const { parent } = viewWithTabs(() => ({}));
+		const verdict = parent.requestOpen("https://login.live.com/oauth20_authorize.srf", "new-window") as Verdict;
+		expect(verdict.action).toBe("allow");
+		expect(verdict.createWindow).toBeUndefined();
+	});
+
+	it("keeps popups when there is no pane to host a tab (agent views, nothing wired)", () => {
+		const { parent } = viewWithTabs(null);
+		const verdict = parent.requestOpen("https://onedrive.live.com/", "foreground-tab") as Verdict;
+		expect(verdict.createWindow).toBeUndefined();
+	});
+
+	it("leaves a popup's own tab opens as windows — the sign-in flow owns them", () => {
+		const { parent } = viewWithTabs(() => ({}));
+		parent.requestOpen("https://login.live.com/", "new-window");
+		const child = fakeContents();
+		parent.emit("did-create-window", fakeChild(child));
+		const verdict = child.requestOpen("https://login.live.com/help", "foreground-tab") as Verdict;
+		expect(verdict.createWindow).toBeUndefined();
+	});
+
+	it("names only the two tab dispositions as tabs", () => {
+		expect(opensAsTab("foreground-tab")).toBe(true);
+		expect(opensAsTab("background-tab")).toBe(true);
+		for (const d of ["new-window", "default", "other", ""]) expect(opensAsTab(d)).toBe(false);
 	});
 });

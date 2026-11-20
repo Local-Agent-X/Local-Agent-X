@@ -13,7 +13,7 @@
  * apply to children automatically.
  */
 
-import type { BrowserWindow, WebContents, WebPreferences } from "electron";
+import type { BrowserWindow, BrowserWindowConstructorOptions, WebContents, WebPreferences } from "electron";
 
 /** Backstop against popup storms, not a UX budget — OAuth flows use 1. */
 export const MAX_POPUPS_PER_VIEW = 5;
@@ -73,9 +73,30 @@ function traceLifecycle(contents: WebContents, openedFor: string): void {
 	contents.on("unresponsive", () => console.error(`[browser-popup] ${openedFor} — unresponsive`));
 }
 
+/** Hosts a new-tab open as a pane tab: builds the view from the options Electron
+ *  hands `createWindow` (they carry the opener's new webContents) and returns
+ *  that webContents. */
+export type TabOpener = (options: BrowserWindowConstructorOptions) => WebContents;
+
 export interface PopupDeps {
 	/** webPreferences for a child window — the view's own, same partition. */
 	webPreferences: () => WebPreferences;
+	/** Asked at open time; null keeps every open a popup window (agent views,
+	 *  and any view while no pane is wired). */
+	tabOpener?: () => TabOpener | null;
+}
+
+/**
+ * Does this open belong in a tab rather than a window? Chromium reports a
+ * `target=_blank` link, and a `window.open` with no size or position, as a TAB
+ * ("foreground-tab" / "background-tab"); a popup-mode sign-in asks for a
+ * sized window and arrives as "new-window". Opening the tab kind as a window
+ * put the whole site in a small separate window: OneDrive's "Sign in" link
+ * opened one, and after sign-in the user's session lived there instead of in
+ * the pane (2026-11-19).
+ */
+export function opensAsTab(disposition: string): boolean {
+	return disposition === "foreground-tab" || disposition === "background-tab";
 }
 
 export interface PopupTracker {
@@ -92,13 +113,28 @@ export interface PopupTracker {
 export function managePopups(wc: WebContents, deps: PopupDeps): PopupTracker {
 	const popups = new Set<BrowserWindow>();
 
-	const adopt = (contents: WebContents): void => {
+	const adopt = (contents: WebContents, isView: boolean): void => {
 		// The requested origin is captured HERE because it is the only place it
 		// is known: by the time did-create-window fires, the child may already
 		// have redirected, and a denial has no child at all to ask.
 		let lastRequestedOrigin = "(unknown origin)";
-		contents.setWindowOpenHandler(({ url }) => {
+		contents.setWindowOpenHandler(({ url, disposition }) => {
 			lastRequestedOrigin = popupOrigin(url);
+			// Only the view's own tab opens become tabs; inside a popup the opener
+			// is a sign-in flow, which expects its children to stay windows.
+			const openTab = isView && opensAsTab(disposition) ? deps.tabOpener?.() ?? null : null;
+			if (openTab) {
+				// createWindow, not deny-and-load: the tab keeps its opener, so a
+				// page that opens a tab and talks to it still works. No popup is
+				// counted and did-create-window does not fire; the tab belongs to
+				// the pool from here.
+				console.log(`[browser-popup] ${lastRequestedOrigin} — opened as a tab`);
+				return {
+					action: "allow",
+					overrideBrowserWindowOptions: { webPreferences: deps.webPreferences() },
+					createWindow: openTab,
+				};
+			}
 			if (popups.size >= MAX_POPUPS_PER_VIEW) {
 				console.warn(`[browser-popup] ${lastRequestedOrigin} — DENIED, ${MAX_POPUPS_PER_VIEW}-popup cap reached`);
 				return { action: "deny" };
@@ -115,7 +151,7 @@ export function managePopups(wc: WebContents, deps: PopupDeps): PopupTracker {
 			const openedFor = lastRequestedOrigin;
 			popups.add(child);
 			console.log(`[browser-popup] ${openedFor} — opened`);
-			adopt(child.webContents);
+			adopt(child.webContents, false);
 			traceLifecycle(child.webContents, openedFor);
 			child.once("closed", () => {
 				popups.delete(child);
@@ -124,7 +160,7 @@ export function managePopups(wc: WebContents, deps: PopupDeps): PopupTracker {
 		});
 	};
 
-	adopt(wc);
+	adopt(wc, true);
 	return {
 		count: () => popups.size,
 		closeAll: () => {

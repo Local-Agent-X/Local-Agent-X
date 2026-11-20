@@ -8,7 +8,7 @@
  * only close() destroys them.
  */
 
-import { WebContentsView, type Rectangle, type WebContents } from "electron";
+import { WebContentsView, type BrowserWindowConstructorOptions, type Rectangle, type WebContents } from "electron";
 
 import { getMainWindow } from "./window";
 // The chat overlay lives in browser-chat-overlay.ts; its lifetime is driven
@@ -16,7 +16,7 @@ import { getMainWindow } from "./window";
 import { applyChatOverlay, attachChatOverlay, detachChatOverlay, type BrowserChatOverlayState } from "./browser-chat-overlay";
 import { getHardenedPartitionSession, setViewTrustResolver, viewWebPreferences } from "./browser-partition";
 import { viewTrust } from "./browser-download-routing";
-import { managePopups, type PopupTracker } from "./browser-view-popups";
+import { managePopups, type PopupTracker, type TabOpener } from "./browser-view-popups";
 import { armCoDrive } from "./in-app-browser";
 import { OFFSTAGE_SIZE, parkView, resizeParkedView, unparkView } from "./browser-offstage-host";
 
@@ -77,6 +77,13 @@ let activityClock = 0;
 let agentViewEvictedNotifier: ((viewId: string) => void) | null = null;
 export function setAgentViewEvictedNotifier(fn: ((viewId: string) => void) | null): void {
 	agentViewEvictedNotifier = fn;
+}
+// Pane seam (wired by browser-ipc): a user view's link that asks for a new tab
+// becomes a pane tab, which only the pane can mint, select and show. Unset, or
+// for an agent view, such a link opens as a managed popup window as before.
+let paneTabOpener: ((openerViewId: string, options: BrowserWindowConstructorOptions) => WebContents) | null = null;
+export function setPaneTabOpener(fn: typeof paneTabOpener): void {
+	paneTabOpener = fn;
 }
 
 const pool = new Map<string, PoolEntry>();
@@ -172,28 +179,22 @@ function requireEntry(viewId: string): PoolEntry {
  */
 export function createBrowserView(
 	viewId: string,
-	opts: { partition: string; bounds?: Rectangle; agentDriven?: boolean },
+	opts: {
+		partition: string; bounds?: Rectangle; agentDriven?: boolean;
+		/** A page's new-tab open: the options Electron passed `createWindow`,
+		 *  carrying the webContents the opener already holds a reference to. */
+		openedBy?: BrowserWindowConstructorOptions;
+	},
 ): BrowserViewInfo {
 	if (pool.has(viewId)) throw new Error(`browser view "${viewId}" already exists`);
 	// Harden the partition BEFORE any webContents exists on it, so the
 	// first request already runs under the egress/permission stack.
 	getHardenedPartitionSession(opts.partition);
-	const view = new WebContentsView({ webPreferences: viewWebPreferences(opts.partition) });
-	// Give the view a document at once. Electron runs executeJavaScript (and the
-	// isolated-world variant every page script here uses) only once the page has
-	// a URL and has stopped loading; a view that has never loaded anything has
-	// neither, so the call waits for a load that never comes. Every action that
-	// scanned the page before navigating — the CAPTCHA check `emulate` runs
-	// first, a first `snapshot` — hung until the server's 10 s wedge timer
-	// (live 2026-10-26, 2026-11-11, 2026-11-13). A later navigate aborts this
-	// load, and an abort (-3) is not a navigation failure (navigate-settle.ts).
-	view.webContents.loadURL("about:blank").catch(() => { /* superseded by a navigate */ });
+	const view = opts.openedBy
+		? new WebContentsView(opts.openedBy)
+		: new WebContentsView({ webPreferences: viewWebPreferences(opts.partition) });
+	if (!opts.openedBy) giveBlankDocument(view.webContents, viewId);
 	armCoDrive(viewId, view.webContents);
-	// Stamp a per-view marker on the top frame: the CDP driver (electron-cdp.ts)
-	// maps a viewId to its Playwright Page by CDP target id (browserViewTargetId)
-	// and reads window.name only when the desktop cannot name the target (DevTools
-	// holds the debugger). Fire-and-forget.
-	view.webContents.executeJavaScript(`window.name=${JSON.stringify(viewId)}`).catch(() => {});
 	// window.open children (popup-mode OAuth lives or dies on these) get the
 	// managed discipline: same-partition webPreferences, per-webContents
 	// hardening, recursive window-open handling, and a tracked lifetime that
@@ -201,6 +202,7 @@ export function createBrowserView(
 	// ride the partition and cover them already.
 	const popups = managePopups(view.webContents, {
 		webPreferences: () => viewWebPreferences(opts.partition),
+		tabOpener: () => tabOpenerFor(viewId),
 	});
 	const entry: PoolEntry = {
 		view,
@@ -223,6 +225,34 @@ export function createBrowserView(
 	evictDetachedAgentViewsOverCap(viewId);
 	notifyPoolChanged();
 	return describe(viewId, entry);
+}
+
+/** A view that opens nothing yet still gets a document and its CDP marker.
+ *  A tab a page opened is skipped: its opener is already loading it, and the
+ *  window.name it was opened with is the page's, not ours to overwrite. */
+function giveBlankDocument(wc: WebContents, viewId: string): void {
+	// Give the view a document at once. Electron runs executeJavaScript (and the
+	// isolated-world variant every page script here uses) only once the page has
+	// a URL and has stopped loading; a view that has never loaded anything has
+	// neither, so the call waits for a load that never comes. Every action that
+	// scanned the page before navigating — the CAPTCHA check `emulate` runs
+	// first, a first `snapshot` — hung until the server's 10 s wedge timer
+	// (live 2026-10-26, 2026-11-11, 2026-11-13). A later navigate aborts this
+	// load, and an abort (-3) is not a navigation failure (navigate-settle.ts).
+	wc.loadURL("about:blank").catch(() => { /* superseded by a navigate */ });
+	// Stamp a per-view marker on the top frame: the CDP driver (electron-cdp.ts)
+	// maps a viewId to its Playwright Page by CDP target id (browserViewTargetId)
+	// and reads window.name only when the desktop cannot name the target (DevTools
+	// holds the debugger). Fire-and-forget.
+	wc.executeJavaScript(`window.name=${JSON.stringify(viewId)}`).catch(() => {});
+}
+
+/** The tab opener for a view's new-tab opens, decided at open time: an
+ *  agent view keeps popups, so nothing appears in the user's strip unasked. */
+function tabOpenerFor(viewId: string): TabOpener | null {
+	const opener = paneTabOpener;
+	if (!opener || pool.get(viewId)?.agentDriven !== false) return null;
+	return (options) => opener(viewId, options);
 }
 
 /** Enforce MAX_DETACHED_AGENT_VIEWS: close the least-recently-active detached

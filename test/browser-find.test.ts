@@ -43,6 +43,7 @@ vi.mock("../desktop/src/browser-views", () => ({
   getAttachedViewId: () => null,
   setPoolChangedListener: (fn: (() => void) | null) => { h.poolListener = fn; },
   setAgentViewEvictedNotifier: () => {},
+  setPaneTabOpener: () => {},
   listBrowserViews: () => h.poolList,
   hideBrowserView: () => {},
   setBrowserChatOverlay: () => {},

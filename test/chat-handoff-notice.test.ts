@@ -93,20 +93,45 @@ describe("the Code mode handoff notice", () => {
 		expect(sent[0]).toContain(EVENT.brief);
 	});
 
-	it("the plain Continue in a code session move opens without sending anything", async () => {
+	// Live 2026-11-20: the sidebar's ⌨ forked the whole chat into a code
+	// session with no folder and no brief, which opened under "No folder".
+	function sidebarMove(messages: unknown[]) {
 		document.body.innerHTML = '<textarea id="msg-input"></textarea>';
 		const sent: string[] = [];
+		const selected: string[] = [];
+		const forks: unknown[] = [];
 		const stubs = {
-			chats: [{ id: "chat-1", messages: [{ role: "user", content: "hi" }] }],
-			apiFetch: vi.fn(async () => ({ json: async () => ({ ok: true, forkId: "fork-2", title: "Code: hi" }) })),
+			chats: [{ id: "chat-1", messages }],
+			apiFetch: vi.fn(async (url: string, init?: { body?: string }) => {
+				if (url === "/api/sessions/fork") forks.push(JSON.parse(init?.body ?? "{}"));
+				return { json: async () => url === "/api/sessions/fork" ? { ok: true, forkId: "fork-3", title: "Code: x" } : { messages: [] } };
+			}),
 			saveChats: vi.fn(),
 			setSidebarMode: vi.fn(),
-			selectChat: vi.fn(),
-			sendMessage: () => sent.push("sent"),
+			selectChat: (id: string) => selected.push(id),
+			sendMessage: () => sent.push((document.getElementById("msg-input") as HTMLTextAreaElement).value),
 		};
-		const run = new Function(...Object.keys(stubs), src("chat.js") + "\nreturn continueInCodeSession;")(...Object.values(stubs)) as
-			(id: string, e: null) => Promise<boolean>;
-		expect(await run("chat-1", null)).toBe(true);
-		expect(sent).toEqual([]);
+		const move = new Function(...Object.keys(stubs), src("chat.js") + "\nreturn moveChatToCode;")(...Object.values(stubs)) as
+			(id: string, e: null) => Promise<void>;
+		return { move, sent, selected, forks };
+	}
+
+	it("the sidebar move opens the chat's handoff offer when it has one", async () => {
+		const offer = { id: "ch-tc-1", kind: "handoff", folder: EVENT.folder, brief: EVENT.brief, status: "offered" };
+		const s = sidebarMove([{ role: "user", content: "move it" }, { role: "assistant", content: "ok", _notices: [offer] }]);
+		await s.move("chat-1", null);
+		expect(s.forks).toEqual([expect.objectContaining({ mode: "code", handoff: { folder: EVENT.folder, brief: EVENT.brief } })]);
+		expect(s.selected).toEqual(["fork-3"]);
+		expect(s.sent[0]).toContain(EVENT.brief);
+		expect(offer.status).toBe("opened");
+	});
+
+	it("with no offer, the sidebar move asks the chat's agent for one and forks nothing", async () => {
+		const s = sidebarMove([{ role: "user", content: "hi" }, { role: "assistant", content: "hello" }]);
+		await s.move("chat-1", null);
+		expect(s.forks).toEqual([]);
+		expect(s.selected).toEqual(["chat-1"]);
+		expect(s.sent).toHaveLength(1);
+		expect(s.sent[0]).toMatch(/handoff brief/);
 	});
 });

@@ -74,45 +74,65 @@ function startFromHandoff(brief) {
   sendMessage();
 }
 
+// The chat's latest Code mode handoff offer (the agent's code_handoff notice), or null.
+function latestHandoffOf(chat) {
+  for (let i = chat.messages.length - 1; i >= 0; i--) {
+    const n = (chat.messages[i]._notices || []).find(x => x && x.kind === 'handoff' && x.folder && x.brief);
+    if (n) return n;
+  }
+  return null;
+}
+
 /**
- * Continue a chat as a code session: a fork of the whole conversation that is
- * a code session (fewer prompt parts, the coding kit up front) in the chat's
- * project folder, compacted first when it is long, so the work goes on with
- * the context the coding needs instead of everything the chat accumulated.
- * A session's mode is fixed at creation, so this is how a chat "switches".
- *
- * With a `handoff` ({ folder, brief }, the agent's code_handoff offer) the code
- * session opens on that repo and starts from the brief instead of the chat, so
- * there is nothing to compact, and its first turn starts on the brief at once.
- * Resolves true when the session opened.
+ * The sidebar's "Continue in a code session". A code session works in one repo
+ * folder, so it goes through the handoff: the chat's latest offer opens at
+ * once; with none, the chat's agent is asked to write the brief and offer it.
+ * It used to fork the whole chat into a code session with no folder and no
+ * brief, which opened under "No folder" with nothing to work on (2026-11-20).
+ */
+async function moveChatToCode(chatId, e) {
+  if (e) e.stopPropagation();
+  const chat = chats.find(c => c.id === chatId);
+  if (!chat) return;
+  if (chat._needsHydrate && typeof hydrateChat === 'function') { try { await hydrateChat(chat); } catch {} }
+  const offer = latestHandoffOf(chat);
+  if (offer && await continueInCodeSession(chat.id, null, { folder: offer.folder, brief: offer.brief })) {
+    offer.status = 'opened';
+    saveChats();
+    return;
+  }
+  selectChat(chat.id);
+  const input = document.getElementById('msg-input');
+  if (!input || typeof sendMessage !== 'function') return;
+  input.value = 'Let’s continue this in Code mode: write the handoff brief in the repo and offer it.';
+  sendMessage();
+}
+
+/**
+ * Continue a chat's work as a code session, from the agent's code_handoff
+ * offer ({ folder, brief }): a code session (fewer prompt parts, the coding
+ * kit up front) on that repo, as its project, starting from the brief rather
+ * than the whole chat. A session's mode is fixed at creation, so this is how
+ * a chat "switches". Its first turn starts on the brief at once. Resolves
+ * true when the session opened.
  */
 async function continueInCodeSession(chatId, e, handoff) {
   if (e) e.stopPropagation();
   const chat = chats.find(c => c.id === chatId);
-  if (!chat || !chat.messages.length) return false;
+  if (!chat || !chat.messages.length || !handoff) return false;
   try {
     const res = await apiFetch('/api/sessions/fork', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sessionId: chat.id, atIndex: chat.messages.length - 1, mode: 'code', ...(handoff ? { handoff } : {}) }),
+      body: JSON.stringify({ sessionId: chat.id, atIndex: chat.messages.length - 1, mode: 'code', handoff }),
     });
     const data = await res.json();
     if (!data.ok) return false;
-    let messages = chat.messages.map(m => ({ role: m.role, content: m.content }));
-    if (handoff) {
-      try {
-        const fresh = await (await apiFetch(`/api/sessions/${encodeURIComponent(data.forkId)}/messages`)).json();
-        messages = Array.isArray(fresh.messages) ? fresh.messages.map(m => ({ role: m.role, content: m.content })) : [];
-      } catch { messages = []; }
-    } else if (messages.length >= 10) {
-      // The same compaction the Compact button runs; the server's transcript is
-      // the truth, so the sidebar copy is reloaded from it.
-      await apiFetch('/api/compact', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ sessionId: data.forkId }) });
-      try {
-        const fresh = await (await apiFetch(`/api/sessions/${encodeURIComponent(data.forkId)}/messages`)).json();
-        if (Array.isArray(fresh.messages)) messages = fresh.messages.map(m => ({ role: m.role, content: m.content }));
-      } catch {}
-    }
+    let messages = [];
+    try {
+      const fresh = await (await apiFetch(`/api/sessions/${encodeURIComponent(data.forkId)}/messages`)).json();
+      if (Array.isArray(fresh.messages)) messages = fresh.messages.map(m => ({ role: m.role, content: m.content }));
+    } catch {}
     const codeChat = {
       id: data.forkId, title: data.title, mode: 'code', messages,
       createdAt: Date.now(), updatedAt: Date.now(),
@@ -126,7 +146,7 @@ async function continueInCodeSession(chatId, e, handoff) {
     selectChat(data.forkId);
     // The click is the go-ahead: the session starts on the brief rather than
     // opening blank and waiting for the user to say "go" (2026-11-20).
-    if (handoff) startFromHandoff(handoff.brief);
+    startFromHandoff(handoff.brief);
     return true;
   } catch (err) {
     console.warn('[continue-in-code] Error:', err.message);

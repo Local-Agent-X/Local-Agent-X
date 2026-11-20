@@ -31,8 +31,8 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/data-lineage/` | 60 | 12 | L |  |
 | `src/util/` | 59 | 3 | S |  |
 | `src/browser/` | 54 | 95 | XL | 5 |
-| `src/agency/` | 49 | 40 | XL |  |
 | `src/tool-policy/` | 49 | 22 | L |  |
+| `src/agency/` | 48 | 39 | XL |  |
 | `src/chat-ws/` | 48 | 24 | L |  |
 | `src/local-runtimes/` | 45 | 28 | XL |  |
 | `src/threat/` | 44 | 13 | L |  |
@@ -55,6 +55,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/voice/` | 19 | 80 | XL | 1 |
 | `src/agents/` | 17 | 14 | L |  |
 | `src/net/` | 17 | 11 | L |  |
+| `src/persistence/` | 16 | 3 | M |  |
 | `src/self-edit/` | 16 | 19 | L | 2 |
 | `src/anthropic-client/` | 15 | 23 | L | 2 |
 | `src/cron/` | 14 | 14 | L |  |
@@ -66,7 +67,6 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/integrations/` | 12 | 15 | M |  |
 | `src/sync/` | 12 | 27 | L |  |
 | `src/whatsapp-bridge/` | 12 | 8 | M | 1 |
-| `src/persistence/` | 11 | 2 | S |  |
 | `src/calendar/` | 10 | 10 | M |  |
 | `src/agent-guards/` | 9 | 13 | L |  |
 | `src/codex-client/` | 9 | 7 | M |  |

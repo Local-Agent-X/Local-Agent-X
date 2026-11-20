@@ -136,6 +136,9 @@ export interface StartAutopilotRequest {
 /** Lock file contents at ~/.lax/autopilot/<repo-hash>.lock */
 export interface AutopilotLockFile {
   pid: number;
+  /** pid + start time (persistence/process-incarnation.ts); absent on a lock
+   *  written before it was kept, which is then judged by pid alone. */
+  incarnation?: string;
   opId: string;
   topic: string;
   startedAt: string;

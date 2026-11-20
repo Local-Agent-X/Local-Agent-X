@@ -16,7 +16,7 @@ import {
   registerWorktreeOwnership,
   worktreeOwnershipRecordPath,
 } from "./worktree-recovery.js";
-import { currentProcessIncarnation } from "./worktree-process.js";
+import { currentProcessIncarnation } from "../persistence/process-incarnation.js";
 
 interface Fixture {
   repo: string;

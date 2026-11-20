@@ -30,6 +30,7 @@ import { atomicWriteFileSync, type AtomicWriteOperations } from "../util/json-st
 
 import { createLogger } from "../logger.js";
 import { OP_TYPE } from "./op-types.js";
+import { currentProcessIncarnation, processAlive } from "../persistence/process-incarnation.js";
 const logger = createLogger("workers.op-store");
 
 export const OPS_BASE = join(getLaxDir(), "operations");
@@ -190,7 +191,7 @@ export function tryWithOpLock<T>(opId: string, fn: () => T, waitMs = LOCK_WAIT_M
   for (;;) {
     try {
       mkdirSync(lockPath, { mode: 0o700 });
-      writeFileSync(join(lockPath, token), JSON.stringify({ token, pid: process.pid }), {
+      writeFileSync(join(lockPath, token), JSON.stringify({ token, pid: process.pid, incarnation: currentProcessIncarnation() }), {
         encoding: "utf-8",
         mode: 0o600,
         flag: "wx",
@@ -308,8 +309,9 @@ function reclaimStaleLock(lockPath: string): boolean {
   for (const entry of observed) {
     if (age > LOCK_ABANDONED_MS) break;
     try {
-      const owner = JSON.parse(readFileSync(join(lockPath, entry), "utf-8")) as { pid?: unknown };
-      if (typeof owner.pid === "number" && isProcessAlive(owner.pid)) return false;
+      const owner = JSON.parse(readFileSync(join(lockPath, entry), "utf-8")) as { pid?: unknown; incarnation?: unknown };
+      const incarnation = typeof owner.incarnation === "string" ? owner.incarnation : undefined;
+      if (typeof owner.pid === "number" && processAlive(owner.pid, incarnation)) return false;
     } catch { /* malformed stale token is reclaimable */ }
   }
   for (const entry of observed) {
@@ -318,11 +320,6 @@ function reclaimStaleLock(lockPath: string): boolean {
   try { rmdirSync(lockPath); return true; } catch { return false; }
 }
 
-function isProcessAlive(pid: number): boolean {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
-  try { process.kill(pid, 0); return true; }
-  catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; }
-}
 
 export function readOp(opId: string): Op | null {
   const path = join(opDir(opId), "operation.json");

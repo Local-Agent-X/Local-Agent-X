@@ -5,6 +5,7 @@ import {
 import { basename, dirname, join, resolve, sep } from "node:path";
 import { getRuntimeConfig } from "../config.js";
 import { atomicWriteFileSync } from "../util/json-store.js";
+import { currentProcessIncarnation, processAlive } from "../persistence/process-incarnation.js";
 
 export type LearnedOutcome = "clean" | "partial" | "aborted";
 export type LearnedOutcomeStatus = "pending" | "committed";
@@ -97,7 +98,7 @@ function withLedgerLock<T>(fn: () => T): T {
   for (let attempt = 0; attempt < 2 && !acquired; attempt++) {
     try {
       mkdirSync(lock, { mode: 0o700 });
-      atomicWriteFileSync(join(lock, "owner.json"), JSON.stringify({ pid: process.pid, claimedAt: Date.now() }), { mode: 0o600 });
+      atomicWriteFileSync(join(lock, "owner.json"), JSON.stringify({ pid: process.pid, incarnation: currentProcessIncarnation(), claimedAt: Date.now() }), { mode: 0o600 });
       acquired = true;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
@@ -106,11 +107,10 @@ function withLedgerLock<T>(fn: () => T): T {
       }
       let ownerAlive = true;
       try {
-        const owner = JSON.parse(readFileSync(join(lock, "owner.json"), "utf8")) as { pid?: unknown; claimedAt?: unknown };
+        const owner = JSON.parse(readFileSync(join(lock, "owner.json"), "utf8")) as { pid?: unknown; incarnation?: unknown; claimedAt?: unknown };
         if (!Number.isInteger(owner.pid) || typeof owner.claimedAt !== "number") throw new Error("invalid lock owner");
-        try { process.kill(owner.pid as number, 0); }
-        catch (killError) { ownerAlive = (killError as NodeJS.ErrnoException).code !== "ESRCH"; }
-        ownerAlive = ownerAlive && Date.now() - owner.claimedAt < 5 * 60_000;
+        const incarnation = typeof owner.incarnation === "string" ? owner.incarnation : undefined;
+        ownerAlive = processAlive(owner.pid as number, incarnation) && Date.now() - owner.claimedAt < 5 * 60_000;
       } catch {
         ownerAlive = Date.now() - statSync(lock).mtimeMs < 30_000;
       }

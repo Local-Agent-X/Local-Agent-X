@@ -14,7 +14,7 @@ import {
 } from "./worktree-core.js";
 import { unlinkAllShallowReparsePoints } from "./worktree-junctions.js";
 import { reapAppOwnWorktrees } from "./worktree-boot-sweep.js";
-import { currentProcessIncarnation, processIncarnationIsLive } from "./worktree-process.js";
+import { currentProcessIncarnation, processIncarnationIsLive } from "../persistence/process-incarnation.js";
 import { isSelfEditLockHeldByLiveProcess } from "../self-edit/global-lock.js";
 
 interface OwnershipRecord {

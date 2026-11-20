@@ -73,3 +73,18 @@ export function processIncarnationMatches(pid: number, incarnation: string): boo
 export function processIncarnationIsLive(pid: number, incarnation: string): boolean {
   return processIncarnationMatches(pid, incarnation) === true;
 }
+
+/**
+ * Whether the process that wrote an owner record still runs: the one check
+ * every lock and claim makes before taking over from a holder. With the
+ * incarnation the record kept, a pid Windows has since given to another
+ * process reads as gone, and one whose start time cannot be read reads as
+ * alive, so two owners never act at once. Without one (a record written
+ * before incarnations were kept), the pid alone answers.
+ */
+export function processAlive(pid: number, incarnation?: string): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  if (incarnation) return processIncarnationMatches(pid, incarnation) !== false;
+  try { process.kill(pid, 0); return true; }
+  catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM"; }
+}

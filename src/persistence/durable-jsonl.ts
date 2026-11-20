@@ -17,6 +17,7 @@ import {
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { ensureDurableDirectory, fsyncDirectory } from "./durable-directory.js";
+import { currentProcessIncarnation, processAlive } from "./process-incarnation.js";
 
 const LOCK_STALE_MS = 2_000;
 const LOCK_WAIT_MS = 500;
@@ -144,7 +145,7 @@ function tryAcquire(lock: string, token: string): boolean {
   const staged = `${lock}.${token}`;
   mkdirSync(staged, { mode: 0o700 });
   try {
-    writeFileSync(join(staged, token), JSON.stringify({ pid: process.pid }), { flag: "wx", mode: 0o600 });
+    writeFileSync(join(staged, token), JSON.stringify({ pid: process.pid, incarnation: currentProcessIncarnation() }), { flag: "wx", mode: 0o600 });
     lockHook?.("before_publish", lock);
     renameSync(staged, lock);
     return true;
@@ -165,8 +166,9 @@ function reclaimDeadLock(lock: string): boolean {
   try { names = readdirSync(lock); } catch { return false; }
   for (const name of names) {
     try {
-      const owner = JSON.parse(readFileSync(join(lock, name), "utf-8")) as { pid?: unknown };
-      if (typeof owner.pid === "number" && processAlive(owner.pid)) return false;
+      const owner = JSON.parse(readFileSync(join(lock, name), "utf-8")) as { pid?: unknown; incarnation?: unknown };
+      const incarnation = typeof owner.incarnation === "string" ? owner.incarnation : undefined;
+      if (typeof owner.pid === "number" && processAlive(owner.pid, incarnation)) return false;
     } catch { /* malformed stale owner is reclaimable */ }
   }
   lockHook?.("after_reclaim_observe", lock);
@@ -177,10 +179,4 @@ function reclaimDeadLock(lock: string): boolean {
   // observation. rmdir then fails and we never recursively erase its claim.
   try { rmdirSync(lock); return true; }
   catch { return false; }
-}
-
-function processAlive(pid: number): boolean {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
-  try { process.kill(pid, 0); return true; }
-  catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; }
 }

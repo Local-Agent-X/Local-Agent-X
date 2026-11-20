@@ -32,6 +32,7 @@ import { readOp } from "../ops/op-store.js";
 import type { Op } from "../ops/types.js";
 import { getLaxDir } from "../lax-data-dir.js";
 import { ensureDurableDirectory, fsyncDirectory } from "../persistence/durable-directory.js";
+import { processAlive } from "../persistence/process-incarnation.js";
 
 export interface TurnCommitProjection {
   opType: string;
@@ -359,8 +360,3 @@ function assertTurnCommitPublicationValid(envelope: TurnCommitEnvelope): void {
   }
 }
 
-function processAlive(pid: number): boolean {
-  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
-  try { process.kill(pid, 0); return true; }
-  catch (error) { return (error as NodeJS.ErrnoException).code === "EPERM"; }
-}

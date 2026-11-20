@@ -12,6 +12,7 @@ import { createHash } from "node:crypto";
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import type { AutopilotLockFile } from "./types.js";
+import { currentProcessIncarnation, processAlive } from "../persistence/process-incarnation.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("autopilot.lock");
@@ -32,43 +33,49 @@ function getLockPath(): string {
   return join(LOCK_DIR, `${getRepoHash()}.lock`);
 }
 
-function isPidAlive(pid: number): boolean {
+/** The live holder of the lock at `lockPath`, or null when there is none
+ *  (gone, a dead pid, a reused pid, or a file that cannot be read). */
+function liveHolder(lockPath: string): AutopilotLockFile | null {
   try {
-    // Signal 0 just checks for existence without sending a signal.
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
+    const existing: AutopilotLockFile = JSON.parse(readFileSync(lockPath, "utf-8"));
+    if (processAlive(existing.pid, existing.incarnation)) return existing;
+    logger.info(`[autopilot.lock] Reclaiming stale lock from PID ${existing.pid}`);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code !== "ENOENT") logger.warn(`[autopilot.lock] Corrupt lock file, reclaiming: ${(e as Error).message}`);
   }
+  return null;
 }
 
-/** Try to acquire the lock. Returns null on success, or the holder info if blocked. */
+/** Try to acquire the lock. Returns null on success, or the holder info if
+ *  blocked. The file is created exclusively, so two starts that both found it
+ *  stale cannot both take it. */
 export function acquireLock(opId: string, topic: string): AutopilotLockFile | null {
   if (!existsSync(LOCK_DIR)) mkdirSync(LOCK_DIR, { recursive: true, mode: 0o700 });
   const lockPath = getLockPath();
-
-  if (existsSync(lockPath)) {
-    try {
-      const existing: AutopilotLockFile = JSON.parse(readFileSync(lockPath, "utf-8"));
-      if (isPidAlive(existing.pid)) {
-        logger.info(`[autopilot.lock] Blocked by live PID ${existing.pid} (op ${existing.opId})`);
-        return existing;
-      }
-      logger.info(`[autopilot.lock] Reclaiming stale lock from PID ${existing.pid}`);
-    } catch (e) {
-      logger.warn(`[autopilot.lock] Corrupt lock file, reclaiming: ${(e as Error).message}`);
-    }
-  }
-
   const lock: AutopilotLockFile = {
     pid: process.pid,
+    incarnation: currentProcessIncarnation(),
     opId,
     topic,
     startedAt: new Date().toISOString(),
   };
-  writeFileSync(lockPath, JSON.stringify(lock, null, 2), { encoding: "utf-8", mode: 0o600 });
-  logger.info(`[autopilot.lock] Acquired (pid=${process.pid}, op=${opId})`);
-  return null;
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      writeFileSync(lockPath, JSON.stringify(lock, null, 2), { encoding: "utf-8", mode: 0o600, flag: "wx" });
+      logger.info(`[autopilot.lock] Acquired (pid=${process.pid}, op=${opId})`);
+      return null;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
+    }
+    const holder = liveHolder(lockPath);
+    if (holder) {
+      logger.info(`[autopilot.lock] Blocked by live PID ${holder.pid} (op ${holder.opId})`);
+      return holder;
+    }
+    try { unlinkSync(lockPath); } catch { /* another start reclaimed it first; the next create decides */ }
+  }
+  // Lost to another start twice over: blocked by whoever holds it now.
+  return readLock() ?? lock;
 }
 
 /** Release the lock. Safe to call multiple times. */

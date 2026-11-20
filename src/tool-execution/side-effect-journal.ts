@@ -1,6 +1,6 @@
 /** Durable exactly-once guard for mutation effects inside canonical ops. */
 import { createHash, randomUUID } from "node:crypto";
-import { currentProcessIncarnation, processIncarnationMatches } from "../agency/worktree-process.js";
+import { currentProcessIncarnation, processIncarnationMatches } from "../persistence/process-incarnation.js";
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import Database from "better-sqlite3";
@@ -16,7 +16,7 @@ interface ExecutionClaim {
   pid: number;
   runtimeId: string;
   claimedAt: string;
-  /** The claiming process's pid and start time (agency/worktree-process.ts):
+  /** The claiming process's pid and start time (persistence/process-incarnation.ts):
    *  a later process that reuses the pid is not the owner. Absent on claims
    *  written before it was recorded; those are judged by the pid alone. */
   incarnation?: string;

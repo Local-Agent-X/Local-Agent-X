@@ -15,6 +15,15 @@ export async function updateGit(cmd: string, cwd: string, timeoutMs = GIT_TIMEOU
   return (await execGit(composeGitArgs(cmd.replace(/^git\s+/, "")), { cwd, timeout: timeoutMs })).trim();
 }
 
+/** How many commits on the fetched origin/main bring a change this checkout lacks —
+ *  whether there is an update at all. Counted by change, not by commit id: a
+ *  developer_mode install whose own commit reached origin as a copy (cherry-picked
+ *  or rebased, so a new id) already has that change, and an id count offered it
+ *  as an update that would only merge in what was already there. */
+export async function upstreamChangesMissing(cwd: string): Promise<number> {
+  return parseInt(await updateGit("git rev-list --count --right-only --cherry-pick HEAD...origin/main", cwd), 10) || 0;
+}
+
 /** A Windows file lock (a loaded native module, AV, or the file indexer), as
  *  opposed to a real dependency error. The update can DEFER these to next-launch
  *  reconcile; it must NOT revert over them. */

@@ -101,6 +101,19 @@ export type ServerFrame =
   | { type: "ice-servers"; iceServers: IceServer[]; ttlSeconds: number }
   | { type: "error"; code: BrokerErrorCode; message: string };
 
+// BROKER LIVENESS. A device sends BROKER_PING as a text frame on its broker socket; the
+// rendezvous Durable Object answers BROKER_PONG through its WebSocket auto-response,
+// which Cloudflare gives only to the sockets attached to that Object. So a pong proves
+// the broker still holds this socket — a WebSocket protocol ping, answered by the
+// runtime, does not, and a phone cannot send one at all. Exact strings: the
+// auto-response matches the frame as sent. Neither is a ClientFrame or ServerFrame: the
+// socket adapter sends the ping and takes the pong before frames are parsed
+// (BrokerLiveness in the client package). The broker is one deployment and answered
+// these before any client sent them; an earlier broker would refuse the ping as a
+// `bad_frame` error.
+export const BROKER_PING = '{"type":"ping"}';
+export const BROKER_PONG = '{"type":"pong"}';
+
 export function isDeviceRole(v: unknown): v is DeviceRole {
   return v === "desktop" || v === "phone";
 }

@@ -9,6 +9,7 @@
 
 import WebSocket from "ws";
 import type { CloseReason, SocketAdapter } from "./vendor/socket-adapter.js";
+import { BrokerLiveness } from "./vendor/broker-liveness.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("broker-transport.ws");
@@ -35,6 +36,8 @@ export class WsSocketAdapter implements SocketAdapter {
   private closed = false;
   private heartbeat: ReturnType<typeof setInterval> | null = null;
   private awaitingPong = false;
+  /** Whether the broker still holds this socket, from its answers to our app-level ping. */
+  private readonly liveness = new BrokerLiveness();
   /** When the socket reached OPEN, so a close can report how long it survived.
    *  0 means it never opened (dial refused) — a different failure than a drop. */
   private openedAt = 0;
@@ -50,30 +53,42 @@ export class WsSocketAdapter implements SocketAdapter {
     ws.on("close", () => this.stopHeartbeat());
   }
 
-  /** Liveness: ping every HEARTBEAT_MS once open; a tick with the previous ping still
-   *  unanswered means the path is dead even though the socket looks open — terminate
-   *  so 'close' fires and the supervisor re-dials. Cloudflare answers protocol pings
-   *  at the edge, so this proves the network path (the sleep/NAT death class), not DO
-   *  health — which is fine: a dead DO surfaces as broker frames, not silence. */
+  /** Liveness, two checks on each HEARTBEAT_MS tick once open; either one unanswered from
+   *  the previous tick terminates the socket so 'close' fires and the supervisor re-dials.
+   *   - A protocol ping, answered by Cloudflare's runtime: proves the network path (the
+   *     sleep/NAT death class).
+   *   - The broker's app-level ping (BrokerLiveness), answered only for a socket the
+   *     rendezvous Durable Object still holds: proves we are still in the room, which a
+   *     protocol pong does not. It counts once the broker has answered one. */
   private startHeartbeat(): void {
     if (this.heartbeat !== null || this.closed) return;
     this.awaitingPong = false;
     this.heartbeat = setInterval(() => {
       if (this.ws.readyState !== WebSocket.OPEN) return;
       if (this.awaitingPong) {
-        logger.warn("[broker-transport] heartbeat: no pong — terminating dead socket (slept/NAT-dropped path)");
-        this.stopHeartbeat();
-        this.ws.terminate(); // hard-close → 'close' fires → dialer teardown → re-dial
+        this.terminate("no pong — terminating dead socket (slept/NAT-dropped path)");
+        return;
+      }
+      const beat = this.liveness.beat();
+      if (beat.kind === "lost") {
+        this.terminate("the broker stopped answering — it no longer holds this socket; terminating to re-dial");
         return;
       }
       this.awaitingPong = true;
       try {
         this.ws.ping();
+        this.ws.send(beat.frame);
       } catch {
         /* socket died mid-tick — the close event will drive teardown */
       }
     }, HEARTBEAT_MS);
     this.heartbeat.unref?.();
+  }
+
+  private terminate(why: string): void {
+    logger.warn(`[broker-transport] heartbeat: ${why}`);
+    this.stopHeartbeat();
+    this.ws.terminate(); // hard-close → 'close' fires → dialer teardown → re-dial
   }
 
   private stopHeartbeat(): void {
@@ -110,7 +125,10 @@ export class WsSocketAdapter implements SocketAdapter {
     this.ws.on("message", (data: WebSocket.RawData) => {
       // The broker only ever sends text frames; coerce defensively so a Buffer/array
       // payload still parses (ws delivers Buffer unless told otherwise).
-      handler(typeof data === "string" ? data : data.toString());
+      const text = typeof data === "string" ? data : data.toString();
+      // The broker's liveness pong is ours, not a ServerFrame for BrokerClient.
+      if (this.liveness.take(text)) return;
+      handler(text);
     });
   }
 

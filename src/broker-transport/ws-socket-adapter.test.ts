@@ -9,6 +9,7 @@ import { EventEmitter } from "node:events";
 import { createServer } from "node:http";
 import type { AddressInfo, Socket } from "node:net";
 import { WsSocketAdapter, openBrokerSocket } from "./ws-socket-adapter.js";
+import { BROKER_PING, BROKER_PONG } from "./vendor/protocol.js";
 import type WebSocket from "ws";
 
 const OPEN = 1;
@@ -29,8 +30,9 @@ class FakeWs extends EventEmitter {
     this.closed += 1;
     this.emit("close", 1000, Buffer.from(""));
   }
-  send(): void {
-    /* unused */
+  sent: string[] = [];
+  send(text: string): void {
+    this.sent.push(text);
   }
 }
 
@@ -109,5 +111,56 @@ describe("WsSocketAdapter — a dial the broker never answers", () => {
       for (const socket of held) socket.destroy();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
+  });
+});
+
+describe("WsSocketAdapter — the broker still holds this socket", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  /** One heartbeat tick, the network path answering as it does. */
+  function tick(ws: FakeWs): void {
+    vi.advanceTimersByTime(HEARTBEAT_MS);
+    ws.emit("pong");
+  }
+
+  it("sends the broker's ping on every heartbeat, beside the protocol ping", () => {
+    const { ws } = makeAdapter();
+    tick(ws);
+    tick(ws);
+    expect(ws.sent).toEqual([BROKER_PING, BROKER_PING]);
+    expect(ws.pings).toBe(2);
+  });
+
+  it("takes the broker's pong itself and passes every other frame on", () => {
+    const { ws, adapter } = makeAdapter();
+    const frames: string[] = [];
+    adapter.onMessage((text) => frames.push(text));
+    ws.emit("message", Buffer.from(BROKER_PONG));
+    ws.emit("message", Buffer.from('{"type":"peer-joined"}'));
+    expect(frames).toEqual(['{"type":"peer-joined"}']);
+  });
+
+  it("drops a socket the broker answered before and has stopped answering, though the path is alive", () => {
+    // The gap the join deadline cannot see: seated, then lost by the broker, while
+    // the connection itself still answers protocol pings.
+    const { ws, adapter } = makeAdapter();
+    adapter.onMessage(() => {});
+    const closes: number[] = [];
+    adapter.onClose((code) => closes.push(code));
+    tick(ws);
+    ws.emit("message", Buffer.from(BROKER_PONG));
+    tick(ws); // this ping goes unanswered by the broker
+    expect(ws.terminated).toBe(0);
+    tick(ws);
+    expect(ws.terminated).toBe(1);
+    expect(closes).toEqual([1006]);
+  });
+
+  it("never drops a socket over a broker that has not answered once", () => {
+    const { ws, adapter } = makeAdapter();
+    adapter.onMessage(() => {});
+    for (let i = 0; i < 5; i++) tick(ws);
+    expect(ws.terminated).toBe(0);
   });
 });

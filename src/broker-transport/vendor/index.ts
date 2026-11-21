@@ -18,6 +18,9 @@ export type { SocketAdapter, CloseReason } from "./socket-adapter.js";
 
 export { parseServerFrame } from "./parse-server-frame.js";
 
+export { BrokerLiveness } from "./broker-liveness.js";
+export type { LivenessBeat } from "./broker-liveness.js";
+
 // The account API and device-code login, one copy for the desktop and the phone (each
 // keeps only its own storage, identity and screens).
 export { AgentxosApiClient, ApiError, DEFAULT_ACCOUNT_API_URL } from "./account-api.js";

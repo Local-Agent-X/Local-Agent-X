@@ -6,6 +6,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { BrokerScreenDialer, type ScreenSessionLike } from "./broker-screen-dialer.js";
 import { ICE_GRACE_MS } from "./vendor/protocol.js";
+import { JOIN_DEADLINE_MS } from "./broker-dialer.js";
 import type { SocketAdapter, CloseReason } from "./vendor/socket-adapter.js";
 import { DataChannelControl, type ControlChannel, type ControlOutbound, type ScreenCommand } from "./control-channel.js";
 import type { ScreenSessionOptions } from "../screen-stream/session.js";
@@ -435,5 +436,51 @@ describe("BrokerScreenDialer — terminal auth refusal routing", () => {
     socket.deliver({ type: "error", code: "unauthorized", message: "x" });
     expect(closed).toHaveLength(1);
     void dialer;
+  });
+});
+
+describe("BrokerScreenDialer — a dial the broker never seats is dropped", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => vi.useRealTimers());
+
+  function dial() {
+    const socket = new FakeSocket();
+    const outcomes: Array<{ joined: boolean }> = [];
+    const dialer = new BrokerScreenDialer({
+      socket,
+      control: new SpyControl(),
+      createSession: () => new FakeSession(),
+      onClosed: (outcome) => outcomes.push(outcome),
+    });
+    return { dialer, socket, outcomes };
+  }
+
+  it("tears down a dial with no `joined` by the deadline, so the presence re-dials", () => {
+    // Live incident 2026-11-20: after a broker drop both re-dials hung before the broker
+    // seated them — no open, no close, nothing logged — and for 2.5 hours every phone
+    // attempt found no desktop, until LAX was restarted.
+    const { socket, outcomes } = dial();
+    vi.advanceTimersByTime(JOIN_DEADLINE_MS - 1);
+    expect(outcomes).toHaveLength(0);
+    vi.advanceTimersByTime(1);
+    expect(socket.closes).toHaveLength(1);
+    expect(outcomes).toEqual([{ joined: false }]);
+  });
+
+  it("leaves a seated dial alone past the deadline, and reports it joined when it closes", () => {
+    const { socket, outcomes } = dial();
+    socket.deliver({ type: "joined", role: "desktop", peerPresent: false });
+    vi.advanceTimersByTime(JOIN_DEADLINE_MS * 10);
+    expect(socket.closes).toHaveLength(0);
+    socket.remoteClose(1006);
+    expect(outcomes).toEqual([{ joined: true }]);
+  });
+
+  it("counts a dial that met the phone straight away as joined", () => {
+    const { socket, outcomes } = dial();
+    socket.deliver({ type: "joined", role: "desktop", peerPresent: true });
+    vi.advanceTimersByTime(JOIN_DEADLINE_MS);
+    socket.remoteClose(1006);
+    expect(outcomes).toEqual([{ joined: true }]);
   });
 });

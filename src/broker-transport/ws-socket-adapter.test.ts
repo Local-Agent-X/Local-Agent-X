@@ -6,7 +6,9 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { EventEmitter } from "node:events";
-import { WsSocketAdapter } from "./ws-socket-adapter.js";
+import { createServer } from "node:http";
+import type { AddressInfo, Socket } from "node:net";
+import { WsSocketAdapter, openBrokerSocket } from "./ws-socket-adapter.js";
 import type WebSocket from "ws";
 
 const OPEN = 1;
@@ -82,5 +84,30 @@ describe("WsSocketAdapter — heartbeat", () => {
     ws.readyState = 3; // CLOSED (but no close event delivered — mid-teardown)
     vi.advanceTimersByTime(HEARTBEAT_MS * 2);
     expect(ws.pings).toBe(0);
+  });
+});
+
+describe("WsSocketAdapter — a dial the broker never answers", () => {
+  it("closing it mid-handshake fires close, so a stuck dial can be dropped and re-dialed", async () => {
+    // The 2026-11-20 shape: the connection is accepted but the upgrade is never answered.
+    // `ws` sets no handshake timeout, so only the dialer's join deadline ends this dial,
+    // and it does that by closing the socket — which must reach the close handler.
+    const held: Socket[] = [];
+    let upgraded!: () => void;
+    const reached = new Promise<void>((resolve) => { upgraded = resolve; });
+    const server = createServer();
+    server.on("upgrade", (_req, socket: Socket) => { held.push(socket); upgraded(); });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const { port } = server.address() as AddressInfo;
+    try {
+      const adapter = openBrokerSocket(`ws://127.0.0.1:${port}/connect`, "tok");
+      const closed = new Promise<number>((resolve) => adapter.onClose((code) => resolve(code)));
+      await reached;
+      adapter.close("client-stop");
+      expect(await closed).toBe(1006);
+    } finally {
+      for (const socket of held) socket.destroy();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });

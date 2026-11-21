@@ -7,7 +7,8 @@ const SUSPEND_TEST_GAP_MS = 900_000;
 interface FakeDialer extends DialerHandle {
   connectUrl: string;
   stopped: boolean;
-  fireClosed: () => void;
+  /** Close the dialer; `joined` says whether the broker ever seated it (default: it did). */
+  fireClosed: (joined?: boolean) => void;
   fireAuthError: (code: "unauthorized") => void;
 }
 
@@ -24,7 +25,7 @@ function harness(token = "tok", random: () => number = () => 0.5) {
         connectUrl,
         stopped: false,
         stop: () => { d.stopped = true; },
-        fireClosed: onClosed,
+        fireClosed: (joined = true) => onClosed({ joined }),
         fireAuthError: onAuthError,
       };
       dialers.push(d);
@@ -134,6 +135,22 @@ describe("BrokerPresence", () => {
     h.advance(15_000); // the new dialer ran a real session before dropping
     h.dialers.at(-1)!.fireClosed();
     expect(h.lastDelay()).toBe(3000); // reset → base, not 12000
+  });
+
+  it("keeps backing off when a dial hung until the join deadline without being seated", () => {
+    // A stuck dial is dropped at the dialer's join deadline (20 s). That is longer than
+    // the stable-session window, but it never reached the room, so it is a failure: a
+    // broker that keeps stalling must settle at one dial a minute, not one every ~23 s.
+    const h = harness();
+    h.presence.start();
+    const delays: number[] = [];
+    for (let i = 0; i < 6; i++) {
+      h.advance(20_000);
+      h.dialers.at(-1)!.fireClosed(false);
+      delays.push(h.lastDelay());
+      h.runTimer();
+    }
+    expect(delays).toEqual([3000, 6000, 12000, 24000, 48000, MAX_RECONNECT_MS]);
   });
 
   it("re-dials immediately after a system-sleep gap (the zombie-socket incident)", () => {

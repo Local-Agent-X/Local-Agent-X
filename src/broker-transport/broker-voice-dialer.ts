@@ -16,7 +16,7 @@
 // a fake session (no werift, no broker socket).
 
 import type { SocketAdapter } from "./vendor/socket-adapter.js";
-import { BrokerDialer, type RemoteIceCandidate } from "./broker-dialer.js";
+import { BrokerDialer, type DialOutcome, type RemoteIceCandidate } from "./broker-dialer.js";
 import { VoiceBridge } from "./voice-bridge.js";
 import { VoicePeer } from "../voice/voice-peer.js";
 import type { RtcIceCandidate, VoicePeerHandlers } from "../voice/voice-peer.js";
@@ -49,7 +49,7 @@ export interface BrokerVoiceDialerDeps {
     onControlReady: (transport: ControlTransport) => void,
   ) => Promise<VoicePeerLike>;
   /** Fires ONCE when this dialer goes terminal — the voice presence schedules a reconnect. */
-  onClosed?: () => void;
+  onClosed?: (outcome: DialOutcome) => void;
   /** Fires INSTEAD of onClosed on a terminal broker auth/gate refusal (dead token,
    *  revoked pairing) — the supervisor stops + surfaces it rather than re-dialing. */
   onAuthError?: (code: import("./vendor/protocol.js").BrokerErrorCode) => void;

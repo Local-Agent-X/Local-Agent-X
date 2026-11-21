@@ -21,6 +21,7 @@ import { openBrokerChatLoopback } from "./chat-loopback.js";
 import { PhoneProjectionBridge } from "./phone-projection.js";
 import { HttpTunnelBridge } from "./http-tunnel-bridge.js";
 import { BrokerScreenDialer } from "./broker-screen-dialer.js";
+import type { DialOutcome } from "./broker-dialer.js";
 import type { SignalAuthenticator } from "./signal-auth.js";
 import { getRuntimeConfig } from "../config.js";
 import { createLogger } from "../logger.js";
@@ -36,8 +37,9 @@ export const DEFAULT_RECONNECT_MS = 3000;
  *  a self-inflicted request flood (and, without hibernation, a burned free-tier cap). */
 export const MAX_RECONNECT_MS = 60_000;
 const BACKOFF_FACTOR = 2;
-/** A dialer that stayed up at least this long met its peer / ran a real session, so the
- *  next drop is a normal reconnect, not an outage — reset the backoff to the base. */
+/** A dialer the broker seated that stayed up at least this long met its peer / ran a real
+ *  session, so the next drop is a normal reconnect, not an outage — reset the backoff to the
+ *  base. One that was never seated failed, however long it hung. */
 const STABLE_SESSION_MS = 10_000;
 /** Suspension watchdog cadence, and the wall-clock gap between ticks that means the
  *  process was SUSPENDED (system sleep). Sleep kills the broker socket silently — no
@@ -81,7 +83,7 @@ export interface BrokerPresenceDeps {
   createDialer: (
     connectUrl: string,
     token: string,
-    onClosed: () => void,
+    onClosed: (outcome: DialOutcome) => void,
     onAuthError: (code: BrokerErrorCode) => void,
   ) => DialerHandle;
   /** Base reconnect delay; the actual wait grows exponentially from here per consecutive
@@ -199,7 +201,7 @@ export class BrokerPresence {
     const handle = this.deps.createDialer(
       connectUrl,
       token,
-      () => this.onDialerClosed(handle),
+      (outcome) => this.onDialerClosed(handle, outcome),
       (code) => this.onDialerAuthError(handle, code),
     );
     this.current = handle;
@@ -216,14 +218,15 @@ export class BrokerPresence {
     this.config.onAuthError?.(code);
   }
 
-  private onDialerClosed(which: DialerHandle): void {
+  private onDialerClosed(which: DialerHandle, outcome: DialOutcome): void {
     if (this.current !== null && this.current !== which) return; // stale dialer's ghost close
     this.current = null;
     if (this.stopped) return;
     // A dialer that ran a real session (peer met, stream/voice flowed) resets the backoff so
-    // the next reconnect is immediate; a fast failure (broker 500, instant refusal) grows it.
+    // the next reconnect is immediate; a fast failure (broker 500, instant refusal) grows it,
+    // and so does a dial dropped at the join deadline, which hung but never reached the room.
     const upMs = this.deps.now() - this.dialStartedAt;
-    if (upMs >= STABLE_SESSION_MS) this.attempt = 0;
+    if (outcome.joined && upMs >= STABLE_SESSION_MS) this.attempt = 0;
     this.attempt += 1;
     const delay = this.backoffMs();
     logger.info(`[broker-transport] presence: reconnect attempt ${this.attempt} in ${delay}ms`);

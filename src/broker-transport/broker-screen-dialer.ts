@@ -56,7 +56,7 @@ export interface BrokerScreenDialerDeps {
   createSession?: (opts: ScreenSessionOptions) => ScreenSessionLike;
   /** Fires ONCE when this dialer goes terminal — the presence supervisor schedules a
    *  reconnect. A dialer is single-use: after this, build a new one. */
-  onClosed?: () => void;
+  onClosed?: (outcome: import("./broker-dialer.js").DialOutcome) => void;
   /** Fires INSTEAD of onClosed on a terminal broker auth/gate refusal (dead token,
    *  revoked pairing) — the supervisor stops + surfaces it rather than re-dialing. */
   onAuthError?: (code: import("./vendor/protocol.js").BrokerErrorCode) => void;

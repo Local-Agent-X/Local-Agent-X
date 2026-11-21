@@ -20,6 +20,22 @@ import { createLogger } from "../logger.js";
 
 const logger = createLogger("broker-transport.dialer");
 
+/** How long a dial may go without the broker's `joined` frame before it is dropped as stuck.
+ *  The broker sends `joined` the moment it seats us in the room — after its sign-in and
+ *  pairing checks, plus a TURN mint when the phone is already there — normally well under a
+ *  second. A dial without it is in no room the phone can reach, and nothing else on this path
+ *  notices: `ws` sets no handshake timeout, and the socket heartbeat only starts once the
+ *  socket opens. Live incident 2026-11-20: after a broker drop both re-dials hung unseated
+ *  for 2.5 hours, silently, while every phone attempt found no desktop. */
+export const JOIN_DEADLINE_MS = 20_000;
+
+/** How a dialer ended, for the presence supervisor's backoff. */
+export interface DialOutcome {
+  /** The broker seated this dial in the room. A dial that never was failed, however long
+   *  it hung, and must not reset the backoff. */
+  joined: boolean;
+}
+
 /** Broker refusals no reconnect can fix — the CREDENTIAL is the problem (dead/rotated
  *  session token, revoked pairing, lapsed entitlement). Retrying with the same one just
  *  loops quietly forever while the account UI still says Connected. Mirrors the phone's
@@ -53,9 +69,10 @@ export interface RemoteIceCandidate {
 }
 
 export interface BrokerDialerOptions {
-  /** Fires ONCE when this dialer goes terminal (socket close, error, or stop) — the
-   *  presence supervisor uses it to schedule a reconnect. A dialer is single-use. */
-  onClosed?: () => void;
+  /** Fires ONCE when this dialer goes terminal (socket close, error, stop, or no `joined`
+   *  by the deadline) — the presence supervisor uses it to schedule a reconnect. A dialer
+   *  is single-use. */
+  onClosed?: (outcome: DialOutcome) => void;
   /** Fires INSTEAD of onClosed when the broker refuses with a terminal auth/gate code:
    *  the supervisor must STOP reconnecting and surface it, not loop on a dead credential.
    *  Omitted → those errors fall through to onClosed (legacy reconnect behavior). */
@@ -69,7 +86,7 @@ export interface BrokerDialerOptions {
 
 export abstract class BrokerDialer {
   private client!: BrokerClient;
-  private readonly onClosedCb: (() => void) | undefined;
+  private readonly onClosedCb: ((outcome: DialOutcome) => void) | undefined;
   private readonly onAuthErrorCb: ((code: BrokerErrorCode) => void) | undefined;
   /** Set when the terminal path was a broker auth refusal — routes teardown's final
    *  callback to onAuthError instead of onClosed. */
@@ -87,6 +104,9 @@ export abstract class BrokerDialer {
   private peerPresent = false;
   private started = false;
   private graceTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Set once the broker seats this dial (`joined`); until then the join deadline runs. */
+  private joined = false;
+  private joinTimer: ReturnType<typeof setTimeout> | null = null;
   /** Local candidates the peer found before its offer went out. The phone rejects a
    *  candidate that arrives ahead of the offer (no remote description yet), so it never
    *  learns our addresses: invisible on Wi-Fi, where our checks reach it directly, fatal
@@ -122,7 +142,26 @@ export abstract class BrokerDialer {
         if (TERMINAL_AUTH_CODES.has(code) && this.onAuthErrorCb) this.authCode = code;
         this.teardown();
       },
+      onStateChange: (state) => {
+        if (state === "joined" || state === "peer-present") this.onJoined();
+      },
     });
+    this.joinTimer = setTimeout(() => {
+      this.joinTimer = null;
+      if (this.joined || this.stopped) return;
+      logger.warn(
+        `[broker-transport] ${this.logLabel}no "joined" from the broker ${JOIN_DEADLINE_MS / 1000}s after dialing — dropping the stuck dial and re-dialing`,
+      );
+      this.teardown();
+    }, JOIN_DEADLINE_MS);
+    this.joinTimer.unref?.();
+  }
+
+  private onJoined(): void {
+    if (this.joined || this.stopped) return;
+    this.joined = true;
+    this.clearJoinTimer();
+    logger.info(`[broker-transport] ${this.logLabel}joined the broker room`);
   }
 
   /** Stop locally (presence shutdown / app exit). Idempotent. */
@@ -282,19 +321,27 @@ export abstract class BrokerDialer {
     if (this.stopped) return;
     this.stopped = true;
     this.clearGrace();
+    this.clearJoinTimer();
     // Close the broker rendezvous socket on EVERY terminal path. Otherwise the broker keeps
     // holding this desktop's slot and the presence supervisor's reconnect loops forever on
     // `role_taken`. client.stop() is idempotent, so a path where it already closed is safe.
     this.client.stop();
     this.onTeardown();
     if (this.authCode !== null && this.onAuthErrorCb) this.onAuthErrorCb(this.authCode);
-    else this.onClosedCb?.();
+    else this.onClosedCb?.({ joined: this.joined });
   }
 
   private clearGrace(): void {
     if (this.graceTimer !== null) {
       clearTimeout(this.graceTimer);
       this.graceTimer = null;
+    }
+  }
+
+  private clearJoinTimer(): void {
+    if (this.joinTimer !== null) {
+      clearTimeout(this.joinTimer);
+      this.joinTimer = null;
     }
   }
 

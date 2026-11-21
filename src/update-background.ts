@@ -15,6 +15,7 @@ import { createLogger } from "./logger.js";
 import { OTAManager } from "./ota-update.js";
 import { isSelfEditLockHeldByLiveProcess } from "./self-edit/global-lock.js";
 import { discardGitStaged, prepareGitUpdate } from "./update-git-prepare.js";
+import { upstreamChangesMissing } from "./update-live-deps.js";
 import { beginUpdateProgress, endUpdateProgress, promoteToInstalling } from "./update-progress.js";
 import { discardRollingStaged, prepareRollingUpdate } from "./update-rolling.js";
 import { markPreparing, readyUpdate, stageReady, type StagedUpdate } from "./update-staging.js";
@@ -53,8 +54,7 @@ async function isGitCheckout(cwd: string): Promise<boolean> {
 async function newestTarget(git: boolean, cwd: string): Promise<{ target: string; publishedAt: number } | null> {
   if (git) {
     await execGit(composeGitArgs("fetch origin main --quiet"), { cwd, timeout: 30_000 });
-    const behind = parseInt((await execGit(composeGitArgs("rev-list --count HEAD..origin/main"), { cwd })).trim(), 10) || 0;
-    if (behind === 0) return null;
+    if (await upstreamChangesMissing(cwd) === 0) return null;
     const [target, ct] = (await execGit(composeGitArgs(["log", "-1", "--format=%H %ct", "origin/main"]), { cwd })).trim().split(" ");
     return { target, publishedAt: Number(ct) * 1000 };
   }

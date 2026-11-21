@@ -17,7 +17,7 @@ import { gateBind, gateBuild, gateDeps, gateSmoke, killProbe, SKIPPED_GATE, BUIL
 import { nowSlug, pickProbePort } from "./self-edit/sandbox-naming.js";
 import { getSetting } from "./settings.js";
 import { rmUpdatePathRetry } from "./update-extracted-validation.js";
-import { updateGit } from "./update-live-deps.js";
+import { updateGit, upstreamChangesMissing } from "./update-live-deps.js";
 import type { GitUpdateResult, UpdateGates } from "./update-pipeline.js";
 import type { StagedGitUpdate, StagedUpdate } from "./update-staging.js";
 import { recordBuildDuration, updateStep } from "./update-progress.js";
@@ -58,7 +58,7 @@ export async function prepareGitUpdate(repoRoot: string, authToken: string, owne
   const base = await updateGit("git rev-parse HEAD", repoRoot);
   const remote = await updateGit("git rev-parse origin/main", repoRoot);
   const ids = { fromCommit: base.slice(0, 7), toCommit: remote.slice(0, 7) };
-  if (base === remote) return { ok: true, ...ids, detail: "Already up to date." };
+  if (base === remote || await upstreamChangesMissing(repoRoot) === 0) return { ok: true, ...ids, detail: "Already up to date." };
   const held = await heldReason(repoRoot);
   if (held) return { ok: false, held: true, ...ids, detail: held };
 

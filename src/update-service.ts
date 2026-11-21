@@ -205,10 +205,10 @@ async function checkForUpdateOnce(force: boolean): Promise<UpdateCheckResult> {
         remoteVersion = (JSON.parse(remotePkgRaw) as { version?: string }).version || localVersion;
       } catch { /* remote package.json may be missing — keep localVersion */ }
       try { releaseNotes = await git("log -1 --format=%s origin/main"); } catch { /* non-fatal */ }
-      // "Behind", not "different": a developer_mode install carries local commits,
-      // so an update exists only when origin/main has commits this install lacks.
-      const behind = parseInt(await git("rev-list --count HEAD..origin/main"), 10) || 0;
-      updateAvailable = behind > 0;
+      // "Missing", not "different": a developer_mode install carries local commits,
+      // so an update exists only when origin/main has changes this install lacks.
+      const { upstreamChangesMissing } = await import("./update-live-deps.js");
+      updateAvailable = await upstreamChangesMissing(repoRoot) > 0;
     } catch (e) {
       const err = e as { stderr?: Buffer | string; message: string };
       const stderr = typeof err.stderr === "string" ? err.stderr : err.stderr?.toString() || "";

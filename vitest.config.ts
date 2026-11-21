@@ -40,6 +40,9 @@ export default defineConfig({
     ],
     testTimeout: 15_000,
     setupFiles: ["test/setup/test-env.ts"],
+    // Deletes, once every file is done, the temp roots Windows would not release
+    // when their file finished (test/setup/leftover-temp-roots.ts).
+    globalSetup: ["test/setup/leftover-temp-roots.ts"],
     // Force the deterministic file-fallback master key. The OS keychain path
     // (DPAPI on Windows) shells out to PowerShell per SecretsStore boot, which
     // races and intermittently mismatches the encrypt/decrypt key when many

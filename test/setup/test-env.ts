@@ -1,7 +1,8 @@
-import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll } from "vitest";
+import { removeTestRoot } from "./leftover-temp-roots.js";
 
 // Canonicalize the temp root BEFORE anything mints a temp dir. macOS hands
 // every process a symlinked TMPDIR (/var/folders/… → /private/var/folders/…),
@@ -95,10 +96,8 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
 }) as typeof fetch;
 
 // Windows releases a folder some time after the last process in it exits (and
-// an indexer or scanner may hold it briefly), so removal retries longer there:
-// rmSync backs off linearly, 100 ms more per try, ~3.6 s over 8 tries.
-const RM_RETRY = { maxRetries: process.platform === "win32" ? 8 : 5, retryDelay: 100 };
-afterAll(() => {
-  rmSync(home, { recursive: true, force: true, ...RM_RETRY });
-  rmSync(workspaceHost, { recursive: true, force: true, ...RM_RETRY });
+// an indexer or scanner may hold it longer), so a root Windows still holds is
+// deleted at the end of the run instead (leftover-temp-roots.ts).
+afterAll(async () => {
+  await Promise.all([removeTestRoot(home), removeTestRoot(workspaceHost)]);
 });

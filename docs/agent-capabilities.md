@@ -143,6 +143,8 @@ demand via tool search and aren't all listed here.)
 - `build_plan_resume` — Resume a paused app build.
 - `start_app_build`
 - `finalize_app_build`
+- `holdout_write`
+- `holdout_seal`
 
 ### Secrets
 
@@ -154,4 +156,4 @@ demand via tool search and aren't all listed here.)
 - `presentation`
 
 ---
-_74 capabilities · 54 with a description · 20 awaiting a blurb (add one to the tool's policy row)._
+_76 capabilities · 54 with a description · 22 awaiting a blurb (add one to the tool's policy row)._

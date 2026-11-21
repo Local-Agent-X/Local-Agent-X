@@ -230,6 +230,8 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   build_plan_resume:   ["main-chat"],
   start_app_build:       ["main-chat"],
   finalize_app_build:    ["main-chat"],
+  holdout_write:         ["main-chat"],
+  holdout_seal:          ["main-chat"],
 
   // Secrets — request_secret(s) deferred 2026-07-13 (0 fires/4wks); the
   // secret/api-key keyword rule resurfaces the family. list_secrets stays

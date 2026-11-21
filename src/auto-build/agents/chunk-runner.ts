@@ -76,8 +76,9 @@ const DISCIPLINE_BLOCK =
   `- **You are a non-interactive worker.** No human is watching. Don't pause to ask, ` +
   `don't request a planning conversation, don't wait for confirmation. If you'd normally ` +
   `ask the user, surface it in the final report's NOTE field and ship the safest available choice.\n` +
-  `- **Read \`spec/\` only.** Do not read \`scenarios/\` or \`twins/\`. Those are the held-out ` +
-  `test set; reading them is teaching-to-the-test and invalidates the build.\n` +
+  `- **Build from \`spec/\`.** The acceptance scenarios this build is scored against are sealed ` +
+  `outside the project, and no tool can read them: the spec is the whole of what you build to. ` +
+  `\`twins/\`, when present, are stand-ins for external services; use them.\n` +
   `- **Code matches spec, never the reverse.** If the spec is unclear, STOP and surface the ` +
   `ambiguity in your final report. Do not weaken done-when to fit your implementation.\n` +
   `- **Minimum change.** Implement what the assigned task requires. No refactoring of neighbors, ` +

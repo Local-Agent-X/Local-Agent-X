@@ -107,7 +107,7 @@ export function buildChunkTask(opts: BuildChunkTaskOptions): string {
     : `Depends on: nothing — this is a foundation chunk.`;
 
   const scenariosLine = chunk.scenarios && chunk.scenarios !== "—"
-    ? `Scenarios this chunk touches: ${chunk.scenarios}. (Do NOT read scenarios/ files — held-out test set.)`
+    ? `Scenarios this chunk touches: ${chunk.scenarios}. (They are sealed: the judge scores them; build to the spec.)`
     : `Scenarios this chunk touches: none.`;
 
   const sharpenedBlock = sharpenedContext && sharpenedContext.trim()

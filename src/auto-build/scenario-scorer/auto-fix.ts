@@ -96,11 +96,14 @@ export async function runAutoFixWorker(opts: AutoFixOptions): Promise<AutoFixRes
   }
 }
 
+/** What the fix worker learns: what the judge did in the app and saw, never
+ *  the scenario's own words (a step's `text`), so a builder still never reads
+ *  the sealed suite it is scored against (src/holdout/). */
 function buildFixTask(chunk: ParsedChunk, failed: ScoreReport[], all: ScoreReport[]): string {
   const failureBlocks = failed.map(r => {
     const stepLines = r.steps.filter(s => s.status === "fail" || s.consoleErrors.length > 0 || s.networkFailures.length > 0)
       .slice(0, 6)
-      .map(s => `    [${s.index}] ${s.status}: ${s.text}\n      action: ${s.action}\n      outcome: ${s.outcome}${s.consoleErrors.length ? `\n      console: ${s.consoleErrors.slice(0, 2).join(" | ")}` : ""}${s.networkFailures.length ? `\n      network: ${s.networkFailures.slice(0, 2).join(" | ")}` : ""}`)
+      .map(s => `    [${s.index}] ${s.status}\n      action: ${s.action}\n      outcome: ${s.outcome}${s.consoleErrors.length ? `\n      console: ${s.consoleErrors.slice(0, 2).join(" | ")}` : ""}${s.networkFailures.length ? `\n      network: ${s.networkFailures.slice(0, 2).join(" | ")}` : ""}`)
       .join("\n");
     return (
       `### Failed scenario: ${r.scenarioTitle}\n` +

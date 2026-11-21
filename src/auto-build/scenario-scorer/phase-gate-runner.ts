@@ -11,12 +11,15 @@
  *
  * Scenario-set discovery: the runner reads plan.md's "Phase verification
  * gates" section to determine WHICH scenarios this phase touches. Falls
- * back to "score every scenario in scenarios/" if the plan doesn't carry
- * an explicit scenario list per phase.
+ * back to scoring the whole suite if the plan doesn't carry an explicit
+ * scenario list per phase. The suite is the project's sealed held-out set
+ * (src/holdout/), named by the project folder's name: this runner is harness
+ * code, the one reader no tool call can be.
  */
 
-import { existsSync, readdirSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
+import { listScenarios } from "../../holdout/store.js";
+import { projectHoldoutDir } from "../../holdout/paths.js";
 import type { ParsedChunk, ParsedPlan } from "../plan-parser.js";
 import { readLaunchSpec } from "./launch-spec.js";
 import { launchApp } from "./app-launcher.js";
@@ -53,7 +56,7 @@ export async function runPhaseGateScoring(opts: PhaseGateRunnerOptions): Promise
 
   const scenarioPaths = pickScenarioFiles(opts.projectDir, opts.plan, opts.chunk);
   if (scenarioPaths.length === 0) {
-    return { kind: "no-spec", reason: "no scenarios/ files found to score" };
+    return { kind: "no-spec", reason: `no sealed scenarios for ${basename(opts.projectDir)} to score` };
   }
   opts.onProgress?.(`scoring ${scenarioPaths.length} scenarios for ${opts.chunk.phase}`);
 
@@ -107,15 +110,16 @@ export async function runPhaseGateScoring(opts: PhaseGateRunnerOptions): Promise
  *   - Find chunks belonging to this phase
  *   - Collect each chunk's `scenarios` field (e.g. "1, 4 (partial)") →
  *     extract integers
- *   - Match scenario files in `scenarios/` whose filename starts with
+ *   - Match the project's sealed scenario files whose filename starts with
  *     `NN-` for each integer
  *
- * Falls back to ALL files in scenarios/ if matching produces nothing.
+ * Falls back to the whole suite if matching produces nothing.
  */
 function pickScenarioFiles(projectDir: string, plan: ParsedPlan, chunk: ParsedChunk): string[] {
-  const scenarioDir = join(projectDir, "scenarios");
-  if (!existsSync(scenarioDir)) return [];
-  const all = readdirSync(scenarioDir).filter(f => f.endsWith(".md")).sort();
+  const project = basename(projectDir);
+  const scenarioDir = projectHoldoutDir(project);
+  if (!scenarioDir) return [];
+  const all = listScenarios(project);
 
   const phaseChunks = plan.chunks.filter(c => c.phase === chunk.phase);
   const phaseScenarioNumbers = new Set<number>();

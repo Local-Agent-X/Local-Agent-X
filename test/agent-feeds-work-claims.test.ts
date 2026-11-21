@@ -23,13 +23,15 @@ const apiFetch = vi.fn(async (_url: string, _init?: unknown) => ({ ok: true, jso
 type Claims = {
   refreshWorkClaims: () => Promise<void>; workClaimsHtml: (r: unknown[]) => string;
   ownCopyAction: (a: string) => Promise<void>; orchestratorAction: (a: string) => Promise<void>;
+  toggleAgentsPanel: (e?: unknown) => void; dismissAgentsClash: (what?: string) => void;
 };
 function load(): Claims {
-  return new Function("esc", "apiFetch", "setInterval", `${claimsJs}\nreturn { refreshWorkClaims, workClaimsHtml, ownCopyAction, orchestratorAction };`)(esc, apiFetch, () => 0);
+  return new Function("esc", "apiFetch", "setInterval", `${claimsJs}
+return { refreshWorkClaims, workClaimsHtml, ownCopyAction, orchestratorAction, toggleAgentsPanel, dismissAgentsClash };`)(esc, apiFetch, () => 0);
 }
 
 beforeEach(() => {
-  document.body.innerHTML = `<div id="work-claims" style="display:none"></div><span id="other-agents-strip" style="display:none"></span>`;
+  document.body.innerHTML = `<div id="work-claims" style="display:none"></div><span id="other-agents-strip" style="display:none"></span><div id="agents-clash" style="display:none"></div>`;
   apiFetch.mockClear();
   others = [];
   ownCopy = null;
@@ -37,42 +39,81 @@ beforeEach(() => {
   (window as { activeChat?: unknown }).activeChat = null;
 });
 
-describe("the chat window's strip of the other agents in its project", () => {
-  it("asks for this chat's project and flags an agent in the same files", async () => {
+const strip = () => document.getElementById("other-agents-strip")!;
+const banner = () => document.getElementById("agents-clash")!;
+const buttons = (host: Element) => [...host.querySelectorAll("button")].map((b) => b.textContent);
+
+// The chat window's strip: one pill in the toolbar's corner that opens a panel,
+// and a banner only when another agent is in this chat's files or folder.
+describe("the chat window's pill of the other agents in its project", () => {
+  it("asks for this chat's project, counts the others in one pill and lists them in its panel", async () => {
     (window as { activeChat?: unknown }).activeChat = { id: "chat-me" };
     others = [
-      { sessionId: "agent-1", displayName: "Fix STT", task: "swap whisper", state: "active", areas: ["src/voice/stt.ts"], clashesWithMe: true },
-      { sessionId: "chat-d", displayName: "Docs", task: "", state: "idle", areas: [], clashesWithMe: false },
+      { sessionId: "agent-1", kind: "worker", displayName: "Fix STT", task: "swap whisper", state: "active", areas: ["src/voice/stt.ts"], clashesWithMe: false },
+      { sessionId: "chat-d", kind: "chat", displayName: "Docs", task: "", state: "idle", areas: [], clashesWithMe: false },
     ];
-    await load().refreshWorkClaims();
+    const claims = load();
+    await claims.refreshWorkClaims();
     expect(apiFetch.mock.calls[0][0]).toBe("/api/work-claims?session=chat-me");
-    const strip = document.getElementById("other-agents-strip")!;
-    expect(strip.style.display).toBe("");
-    expect(strip.textContent).toContain("Also working here:");
-    const agents = [...strip.querySelectorAll(".other-agent")];
+    expect(strip().style.display).toBe("");
+    const pill = strip().querySelector(".agents-pill")!;
+    expect(pill.textContent).toContain("2 other agents here");
+    expect(pill.getAttribute("aria-expanded")).toBe("false");
+    expect(strip().querySelector(".agents-panel")).toBeNull();
+    expect(banner().style.display).toBe("none");
+
+    claims.toggleAgentsPanel();
+    const agents = [...strip().querySelectorAll(".agents-panel .other-agent")];
     expect(agents).toHaveLength(2);
-    expect(agents[0].className).toContain("clash");
     expect(agents[0].textContent).toContain("Fix STT");
+    expect(agents[0].textContent).toContain("worker · working now");
     expect(agents[0].querySelector("code")?.textContent).toBe("src/voice/stt.ts");
-    expect(agents[1].querySelector(".other-agent-warn")).toBeNull();
+
+    // A click anywhere else closes it.
+    document.dispatchEvent(new Event("click"));
+    expect(strip().querySelector(".agents-panel")).toBeNull();
+    expect(strip().querySelector(".agents-pill")!.getAttribute("aria-expanded")).toBe("false");
   });
 
-  it("offers the chat its own copy when another chat writes the same folder, and merges it back from there", async () => {
+  it("raises a banner only for an agent in this chat's files, until it is dismissed", async () => {
+    (window as { activeChat?: unknown }).activeChat = { id: "chat-me" };
+    others = [{ sessionId: "agent-1", displayName: "Fix STT", task: "", state: "active", areas: ["src/voice/stt.ts"], clashesWithMe: true }];
+    const claims = load();
+    await claims.refreshWorkClaims();
+    expect(strip().querySelector(".agents-pill")!.className).toContain("clash");
+    expect(banner().style.display).toBe("");
+    expect(banner().textContent).toContain("Fix STT is changing the same files as this chat (src/voice/stt.ts).");
+    expect(buttons(banner())).toEqual(["Details", "Dismiss"]);
+
+    claims.dismissAgentsClash();
+    expect(banner().style.display).toBe("none");
+    await claims.refreshWorkClaims();
+    expect(banner().style.display).toBe("none");
+
+    // A different clash comes up again.
+    others = [...others, { sessionId: "chat-x", displayName: "Other", task: "", state: "active", areas: ["a.ts"], clashesWithMe: true }];
+    await claims.refreshWorkClaims();
+    expect(banner().textContent).toContain("Fix STT, Other are changing");
+  });
+
+  it("offers the chat its own copy from the banner when another chat writes the same folder, and merges it back from the panel", async () => {
     (window as { activeChat?: unknown }).activeChat = { id: "chat-me" };
     ownCopy = { copy: null, sharesFolderWith: ["Voice chat"] };
     const claims = load();
     await claims.refreshWorkClaims();
-    const strip = document.getElementById("other-agents-strip")!;
-    expect(strip.textContent).toContain("Same folder as Voice chat");
-    expect(strip.querySelector(".own-copy-btn")?.textContent).toBe("Work in own copy");
+    expect(banner().textContent).toContain("Same folder as Voice chat");
+    expect(buttons(banner())).toEqual(["Work in own copy", "Dismiss"]);
 
     ownCopy = { copy: { branch: "chat/ab12", baseBranch: "main" }, sharesFolderWith: [] };
     await claims.ownCopyAction("start");
     expect(apiFetch.mock.calls.some((c) => c[0] === "/api/work-claims/own-copy" && JSON.parse((c[1] as { body: string }).body).action === "start")).toBe(true);
-    expect(strip.textContent).toContain("Own copy");
-    expect(strip.textContent).toContain("chat/ab12");
-    expect([...strip.querySelectorAll(".own-copy-btn")].map((b) => b.textContent)).toEqual(["Merge back", "Leave"]);
-    expect(strip.textContent).toContain("This chat now works in its own copy.");
+    expect(banner().textContent).toContain("This chat now works in its own copy.");
+    expect(strip().querySelector(".agents-pill")!.textContent).toContain("Own copy");
+    claims.toggleAgentsPanel();
+    expect(strip().querySelector(".agents-panel")!.textContent).toContain("chat/ab12");
+    expect(buttons(strip().querySelector(".agents-panel-controls")!)).toEqual(["Merge back", "Leave"]);
+    claims.dismissAgentsClash("note");
+    expect(banner().style.display).toBe("none");
   });
 
   it("lets a chat take the orchestrator role, set model preferences and release it", async () => {
@@ -80,27 +121,32 @@ describe("the chat window's strip of the other agents in its project", () => {
     orchestrator = { available: true, mine: false, heldBy: null, routing: "" };
     const claims = load();
     await claims.refreshWorkClaims();
-    const strip = document.getElementById("other-agents-strip")!;
-    expect(strip.querySelector(".own-copy-btn")?.textContent).toContain("Orchestrate");
+    // Alone in a repo: a quiet pill that holds the Orchestrate button.
+    expect(strip().querySelector(".agents-pill")).not.toBeNull();
+    claims.toggleAgentsPanel();
+    expect(strip().querySelector(".agents-panel")!.textContent).toContain("No other agents here right now.");
+    expect(buttons(strip().querySelector(".agents-panel-controls")!)[0]).toContain("Orchestrate");
 
     orchestrator = { available: true, mine: true, heldBy: null, routing: "Codex for UI" };
     await claims.orchestratorAction("take");
     const sent = apiFetch.mock.calls.find((c) => c[0] === "/api/work-claims/orchestrator");
     expect(JSON.parse((sent![1] as { body: string }).body)).toEqual({ action: "take", sessionId: "chat-me" });
-    expect(strip.querySelector(".orchestrator-badge")?.textContent).toContain("Orchestrator");
-    expect([...strip.querySelectorAll(".own-copy-btn")].map((b) => b.textContent)).toEqual(["Models", "Release"]);
+    expect(strip().querySelector(".agents-pill")!.textContent).toContain("Orchestrator");
+    expect(strip().querySelector(".orchestrator-badge")?.textContent).toContain("Orchestrator");
+    expect(buttons(strip().querySelector(".agents-panel-controls")!)).toEqual(["Models", "Release"]);
 
     // Another chat sees who holds it, and no button to take it by accident.
     orchestrator = { available: true, mine: false, heldBy: "Lead chat", routing: "" };
     await claims.refreshWorkClaims();
-    expect(strip.textContent).toContain("Orchestrator: Lead chat");
-    expect(strip.querySelector(".own-copy-btn")).toBeNull();
+    expect(strip().textContent).toContain("Orchestrator: Lead chat");
+    expect(strip().querySelector(".agents-panel-controls button")).toBeNull();
   });
 
-  it("is hidden when the chat works alone", async () => {
+  it("is hidden when the chat works alone outside a repo", async () => {
     (window as { activeChat?: unknown }).activeChat = { id: "chat-me" };
     await load().refreshWorkClaims();
-    expect(document.getElementById("other-agents-strip")!.style.display).toBe("none");
+    expect(strip().style.display).toBe("none");
+    expect(banner().style.display).toBe("none");
   });
 });
 

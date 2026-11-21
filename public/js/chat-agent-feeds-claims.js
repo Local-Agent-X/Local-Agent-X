@@ -8,11 +8,13 @@
 // and on a timer, since a state changes with time alone (working → between
 // messages → lately).
 //
-// The chat window carries a one-line strip of the same thing for its own
-// project (#other-agents-strip): the other agents working there, with a
-// warning on any that is changing the same files as this chat (ADR 0007 §6).
+// The chat window carries the same thing for its own project (ADR 0007 §6): a
+// pill in the toolbar's corner (#other-agents-strip) that opens a panel of the
+// other agents working there, and a banner (#agents-clash) only when one of
+// them is in this chat's files or folder.
 //
-// Pure HTML: workClaimsHtml(rows), otherAgentsStripHtml(rows).
+// Pure HTML: workClaimsHtml(rows), otherAgentsStripHtml(rows, own, orch, open),
+// agentsClashHtml(clash, message).
 // External deps: apiFetch, esc (shared.js).
 
 var WORK_CLAIMS_REFRESH_MS = 15000;
@@ -56,18 +58,90 @@ function workClaimsChatId() {
   try { return (window.activeChat && window.activeChat.id) || ''; } catch (e) { return ''; }
 }
 
-function otherAgentsStripHtml(rows) {
-  if (!rows || !rows.length) return '';
-  var items = rows.map(function (row) {
-    var area = (row.areas || [])[0];
-    var title = (row.task || '') + ((row.areas || []).length ? ' — changing ' + row.areas.join(', ') : '');
-    return '<span class="other-agent ' + esc(row.state) + (row.clashesWithMe ? ' clash' : '') + '" title="' + esc(title) + '">'
-      + '<span class="work-claim-dot"></span>' + esc(row.displayName || row.sessionId)
-      + (area ? ' <code>' + esc(area) + '</code>' : '')
-      + (row.clashesWithMe ? ' <span class="other-agent-warn" title="Changing the same files as this chat">&#9888;</span>' : '')
-      + '</span>';
-  });
-  return '<span class="other-agents-label">Also working here:</span>' + items.join('');
+// The strip is one pill in the toolbar's corner ("● 2 other agents here"),
+// opening a panel with each agent, the own-copy and the orchestrator controls.
+// Only a real clash (another agent in this chat's files or folder) earns a
+// banner under the toolbar, until the user dismisses that clash.
+var agentsPanelOpen = false;
+var agentsClashDismissed = '';
+
+function otherAgentRowHtml(row) {
+  var areas = (row.areas || []).map(function (a) { return '<code>' + esc(a) + '</code>'; }).join(' ');
+  return '<div class="other-agent ' + esc(row.state) + (row.clashesWithMe ? ' clash' : '') + '">'
+    + '<div class="work-claim-head"><span class="work-claim-dot"></span>'
+    + '<span class="work-claim-name">' + esc(row.displayName || row.sessionId) + '</span>'
+    + '<span class="work-claim-meta">' + esc(row.kind || 'chat') + ' · ' + esc(WORK_CLAIM_STATE[row.state] || row.state) + '</span></div>'
+    + (row.task ? '<div class="work-claim-task" title="' + esc(row.task) + '">' + esc(row.task) + '</div>' : '')
+    + (areas ? '<div class="work-claim-areas">' + areas + '</div>' : '')
+    + (row.clashesWithMe ? '<div class="work-claim-clash">&#9888; changing the same files as this chat</div>' : '')
+    + '</div>';
+}
+
+function agentsPillLabel(rows, own, orch) {
+  if (rows.length) return rows.length + (rows.length === 1 ? ' other agent here' : ' other agents here');
+  if (own && own.copy) return 'Own copy';
+  if (orch && orch.mine) return 'Orchestrator';
+  return '';
+}
+
+function otherAgentsStripHtml(rows, own, orch, open) {
+  rows = rows || [];
+  var controls = ownCopyHtml(own, '') + orchestratorHtml(orch, orchestratorEditing);
+  if (!rows.length && !controls) return '';
+  var clash = rows.some(function (r) { return r.clashesWithMe; }) || !!(own && !own.copy && (own.sharesFolderWith || []).length);
+  var active = rows.some(function (r) { return r.state === 'active'; });
+  var label = agentsPillLabel(rows, own, orch);
+  var pill = '<button type="button" class="agents-pill' + (clash ? ' clash' : '') + (active ? ' active' : '') + (open ? ' open' : '') + '"'
+    + ' aria-expanded="' + (open ? 'true' : 'false') + '" onclick="toggleAgentsPanel(event)" title="Agents working in this chat’s project">'
+    + '<span class="work-claim-dot"></span>' + (label ? esc(label) : '&#9672;')
+    + (label && orch && (orch.mine || orch.heldBy) ? ' <span class="agents-pill-orch">&#9672;</span>' : '')
+    + ' <span class="agents-pill-caret">&#9662;</span></button>';
+  if (!open) return pill;
+  return pill + '<div class="agents-panel" role="dialog" aria-label="Agents in this project" onclick="event.stopPropagation()">'
+    + '<div class="work-claims-title">IN THIS PROJECT</div>'
+    + (rows.length ? rows.map(otherAgentRowHtml).join('') : '<div class="agents-panel-empty">No other agents here right now.</div>')
+    + (controls ? '<div class="agents-panel-controls">' + controls + '</div>' : '')
+    + '</div>';
+}
+
+// The banner: what clashes, keyed so a dismissed clash stays dismissed until
+// a different one comes up. A note from an own-copy action shows here too.
+function agentsClashOf(rows, own) {
+  if (own && !own.copy && (own.sharesFolderWith || []).length) {
+    return { key: 'folder:' + own.sharesFolderWith.slice().sort().join(','), folder: true,
+      text: 'Same folder as ' + own.sharesFolderWith.join(', ') + ': both chats edit the very same files on disk.' };
+  }
+  var hits = (rows || []).filter(function (r) { return r.clashesWithMe; });
+  if (!hits.length) return null;
+  var names = hits.map(function (r) { return r.displayName || r.sessionId; });
+  var areas = hits.reduce(function (a, r) { return a.concat(r.areas || []); }, []);
+  return { key: 'files:' + names.slice().sort().join(','), folder: false,
+    text: names.join(', ') + (hits.length === 1 ? ' is' : ' are') + ' changing the same files as this chat' + (areas.length ? ' (' + areas.join(', ') + ')' : '') + '.' };
+}
+
+function agentsClashHtml(clash, message) {
+  if (message) {
+    return '<span class="agents-clash-text">' + esc(message) + '</span>'
+      + '<button type="button" class="own-copy-btn quiet" onclick="dismissAgentsClash(\'note\')">Dismiss</button>';
+  }
+  if (!clash || clash.key === agentsClashDismissed) return '';
+  return '<span class="agents-clash-text">&#9888; ' + esc(clash.text) + '</span>'
+    + (clash.folder
+      ? '<button type="button" class="own-copy-btn" onclick="ownCopyAction(\'start\')" title="Give this chat its own copy of the project (a git worktree from the last commit). Merge it back when its work is done.">Work in own copy</button>'
+      : '<button type="button" class="own-copy-btn quiet" onclick="toggleAgentsPanel(event)">Details</button>')
+    + '<button type="button" class="own-copy-btn quiet" onclick="dismissAgentsClash()">Dismiss</button>';
+}
+
+function toggleAgentsPanel(e) {
+  if (e && e.stopPropagation) e.stopPropagation();
+  agentsPanelOpen = !agentsPanelOpen;
+  renderOtherAgentsStrip();
+}
+
+function dismissAgentsClash(what) {
+  if (what === 'note') ownCopyMessage = '';
+  else { var c = agentsClashOf(otherAgentsRows, ownCopyState); agentsClashDismissed = c ? c.key : ''; }
+  renderOtherAgentsStrip();
 }
 
 // A chat's own copy of its project (src/agency/chat-own-copy.ts): offered when
@@ -173,9 +247,16 @@ function renderOtherAgentsStrip() {
   // Typing the model preferences: a refresh must not wipe the field.
   var typing = document.getElementById('orchestrator-routing');
   if (typing && document.activeElement === typing && orchestratorEditing) return;
-  var html = otherAgentsStripHtml(otherAgentsRows) + ownCopyHtml(ownCopyState, ownCopyMessage) + orchestratorHtml(orchestratorState, orchestratorEditing);
+  var html = otherAgentsStripHtml(otherAgentsRows, ownCopyState, orchestratorState, agentsPanelOpen);
+  if (!html) agentsPanelOpen = false;
   host.innerHTML = html;
   host.style.display = html ? '' : 'none';
+  var banner = document.getElementById('agents-clash');
+  if (banner) {
+    var bannerHtml = agentsClashHtml(agentsClashOf(otherAgentsRows, ownCopyState), ownCopyMessage);
+    banner.innerHTML = bannerHtml;
+    banner.style.display = bannerHtml ? '' : 'none';
+  }
   // The tile grid marks the orchestrator's pane and a pane in the same files (chat-tiles.js).
   try { if (window.laxChatTiles) window.laxChatTiles.onClaimsChanged(); } catch (e) { /* the grid repaints on its next event */ }
 }
@@ -190,7 +271,7 @@ async function refreshWorkClaims() {
     otherAgentsRows = Array.isArray(data.others) ? data.others : [];
     ownCopyState = data.ownCopy || null;
     orchestratorState = data.orchestrator || null;
-    if (chatId !== otherAgentsForChat) { ownCopyMessage = ''; orchestratorEditing = false; }
+    if (chatId !== otherAgentsForChat) { ownCopyMessage = ''; orchestratorEditing = false; agentsPanelOpen = false; agentsClashDismissed = ''; }
     otherAgentsForChat = chatId;
     renderWorkClaims();
     renderOtherAgentsStrip();
@@ -202,6 +283,9 @@ function initWorkClaims() {
   setInterval(refreshWorkClaims, WORK_CLAIMS_REFRESH_MS);
   // Another chat was opened: its strip is a different project's.
   setInterval(function () { if (workClaimsChatId() !== otherAgentsForChat) refreshWorkClaims(); }, 1000);
+  // The panel closes on a click outside it or Escape.
+  document.addEventListener('click', function () { if (agentsPanelOpen) { agentsPanelOpen = false; renderOtherAgentsStrip(); } });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && agentsPanelOpen) { agentsPanelOpen = false; renderOtherAgentsStrip(); } });
 }
 
 if (typeof document !== 'undefined') {

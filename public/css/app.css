@@ -1499,7 +1499,9 @@ body.app-ready #desktop-titlebar,body.app-ready #sidebar,body.app-ready #main,bo
   .model-chip{max-width:120px;padding:3px 6px}
 }
 /* Keep real chat content above the decorative hero background. */
-#chat-main > #chat-toolbar,#chat-main > #messages,#chat-main > #input-area{position:relative;z-index:1}
+#chat-main > #chat-toolbar,#chat-main > #agents-clash,#chat-main > #messages,#chat-main > #input-area{position:relative;z-index:1}
+/* The agents panel drops from the toolbar over the messages. */
+#chat-main > #chat-toolbar{z-index:3}
 
 /* === Animated hero background =========================================
    One neutral white master (hero-master.png) is luminance-masked so only
@@ -1756,12 +1758,26 @@ body.agent-feeds-resizing .agent-feeds{transition:none!important}
 .work-claim-clash{margin-top:4px;color:#b45309;font-size:11px}
 /* The chat window's strip of the other agents in its project. */
 .other-agents-strip{display:inline-flex;flex-wrap:wrap;align-items:center;gap:6px;font-size:.68rem;font-family:var(--mono);color:var(--muted)}
-.other-agent{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:6px;border:1px solid var(--border);color:var(--text, inherit)}
+#other-agents-strip{position:relative}
+.agents-pill{display:inline-flex;align-items:center;gap:6px;font:inherit;padding:2px 10px;border-radius:999px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer}
+.agents-pill:hover,.agents-pill.open{background:var(--surface-2)}
+.agents-pill .work-claim-dot{background:var(--muted);opacity:.6}
+.agents-pill.active .work-claim-dot{background:var(--accent);opacity:1}
+.agents-pill.clash{border-color:var(--warn)}
+.agents-pill.clash .work-claim-dot{background:var(--warn);opacity:1}
+.agents-pill-orch{color:var(--accent)}
+.agents-pill-caret{color:var(--muted);font-size:.6rem}
+.agents-panel{position:absolute;top:calc(100% + 6px);right:0;z-index:20;width:min(360px,calc(100vw - 32px));max-height:60vh;overflow:auto;display:flex;flex-direction:column;gap:8px;padding:12px;border-radius:10px;border:1px solid var(--border);background:var(--surface);box-shadow:0 8px 24px rgba(0,0,0,.12);font-family:var(--font);font-size:.78rem;color:var(--text)}
+.agents-panel .work-claims-title{font-family:var(--mono);font-size:.64rem;color:var(--muted);letter-spacing:.06em}
+.other-agent{padding:6px 8px;border-radius:8px;border:1px solid var(--border)}
 .other-agent.active .work-claim-dot{background:var(--accent)}
 .other-agent.idle .work-claim-dot{background:var(--accent);opacity:.45}
-.other-agent.clash{border-color:#f59e0b}
-.other-agent code{font-size:.64rem;opacity:.8}
-.other-agent-warn{color:#b45309}
+.other-agent.clash{border-color:var(--warn)}
+.agents-panel-empty{color:var(--muted)}
+.agents-panel-controls{display:flex;flex-wrap:wrap;align-items:center;gap:6px;padding-top:8px;border-top:1px solid var(--border);font-family:var(--mono);font-size:.68rem}
+.agents-panel-controls .orchestrator-routing{min-width:0;flex:1 1 100%}
+.agents-clash{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin:6px 20px 0;padding:6px 12px;border-radius:8px;border:1px solid var(--warn);background:color-mix(in srgb, var(--warn) 8%, var(--surface));color:var(--text);font-size:.78rem}
+.agents-clash-text{flex:1;min-width:0}
 .own-copy{padding:2px 8px;border-radius:6px;border:1px solid var(--accent-dim, var(--border));color:var(--accent)}
 .own-copy.warn{border-color:#f59e0b;color:#b45309}
 .own-copy-btn{font:inherit;padding:2px 9px;border-radius:6px;border:1px solid var(--accent);background:transparent;color:var(--accent);cursor:pointer}
@@ -2010,6 +2026,7 @@ body.chat-tiles-on:not(.browser-workspace) #chat-tile-head,.chat-tile .chat-tile
 
   /* Chat toolbar */
   #chat-toolbar{padding:4px 10px 0}
+  .agents-clash{margin:6px 10px 0}
 
   /* Agent feeds overlay on mobile */
   .agent-feeds{position:fixed;right:0;top:0;bottom:0;z-index:1000;box-shadow:none}

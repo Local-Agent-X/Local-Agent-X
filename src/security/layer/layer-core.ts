@@ -22,6 +22,7 @@ import { loadLocalServicePorts, liveLocalServicePorts, loadFileAccessMode, loadI
 import { EgressPolicyState, updateSecurityJson } from "./egress-policy-state.js";
 import { fingerprintSecurityPolicy, restoreSecurityAllowedPaths, restoreSecurityFences, snapshotSecurityRuntime, type SecurityRuntimeIdentity } from "./runtime-state.js";
 import { fenceCallRefusal, type WorktreeFence } from "./worktree-fence.js";
+import { holdoutCallRefusal } from "./holdout-seal.js";
 import { evaluateDelegatedWorktreeGate } from "./delegated-worktree-gate.js";
 import { selfPort, setSelfPort } from "./loopback-grant.js";
 
@@ -228,6 +229,11 @@ export class SecurityLayer {
     const fence = this.fenceOf(ctx.sessionId);
     const fenced = fence && fenceCallRefusal(fence, toolName, args, this.workspace, ctx.sessionId!);
     if (fenced) return fenced;
+
+    // A build's sealed test suite is out of every tool call's reach, in every
+    // file-access mode (holdout-seal.ts): only the harness's judge reads it.
+    const sealed = holdoutCallRefusal(toolName, args, this.workspace, ctx.sessionId);
+    if (sealed) return sealed;
 
     // File sinks are gated DECLARATIVELY: any tool opening a caller path
     // declares it in TOOL_PATH_ARGS, and every declared arg runs the same

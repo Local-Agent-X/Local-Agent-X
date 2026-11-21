@@ -67,6 +67,9 @@ export const LAX_DATA_CATALOG: readonly LaxDataEntry[] = [
   ...at("blocked", "decides which local ports the shell's network proxy listens on, which the Windows cage permits", "shell-proxy-ports.json"),
   ...at("blocked", "decides which access tokens the app accepts and what each may do", "tokens.json"),
   ...at("blocked", "lists the data flows you approved, which then run without asking", "threat-trust-ledger.json"),
+  // A build's sealed acceptance scenarios: a builder that could change (or
+  // read) them would be grading its own work (holdout-seal.ts).
+  ...at("blocked", "holds a build's sealed test scenarios, which only the build's judge reads", "holdout"),
   // Approve on an inbox item runs the call stored with it, as the role stored
   // with it: a forged item would run whatever it hides behind a harmless title.
   ...at("blocked", "holds the calls waiting for your yes, which run when you approve them", "inbox.json"),

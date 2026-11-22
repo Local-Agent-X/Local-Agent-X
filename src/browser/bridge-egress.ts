@@ -16,7 +16,8 @@ import { evaluateEgressForUrl, pageEgressPolicyUrl } from "../security/layer/ind
 import { getRuntimeConfig } from "../config.js";
 import { recordCanaryExfilAudit } from "../threat/canaries.js";
 import { scanPageEgress, type PageEgressRequest, type PageEgressVerdict } from "./page-egress-taint.js";
-import { adoptedViewSession, sessionIdFromViewId } from "./bridge-perception.js";
+import { adoptedViewSession } from "./bridge-perception.js";
+import { sessionIdFromViewId } from "../desktop-contract/browser-view-ids.js";
 import type { SecurityDecision } from "../types.js";
 import type { BrowserEgressAsk } from "../desktop-contract/browser-bridge.js";
 

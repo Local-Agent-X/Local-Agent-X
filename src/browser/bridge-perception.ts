@@ -21,19 +21,11 @@ import { EventBus } from "../event-bus.js";
 import { createLogger } from "../logger.js";
 import { ingestInAppDownload } from "./downloads.js";
 import type { BridgeConsoleEntry, BridgeNetworkEntry } from "../desktop-contract/browser-bridge.js";
+import { sessionIdFromViewId } from "../desktop-contract/browser-view-ids.js";
 
 export type { BridgeConsoleEntry, BridgeNetworkEntry };
 
 const logger = createLogger("browser.bridge-perception");
-
-/** Parse the owning sessionId from an AGENT viewId; undefined for user views. */
-export function sessionIdFromViewId(viewId: unknown): string | undefined {
-	if (typeof viewId !== "string" || !viewId.startsWith("view-")) return undefined;
-	const rest = viewId.slice("view-".length).replace(/-t\d+$/, "");
-	if (!rest.endsWith("-shared")) return undefined;
-	const sessionId = rest.slice(0, -"-shared".length);
-	return sessionId || undefined;
-}
 
 /**
  * Authorization-grade ownership: does `viewId` name a view OWNED by `sessionId`?

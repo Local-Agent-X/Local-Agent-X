@@ -14,6 +14,7 @@ import { browserLifecycle, type BrowserViewInfo } from "./bridge-client.js";
 import { closeMergedTab, formatTabsListing, mergeTabs, surfaceActiveTab, switchMergedTab } from "./in-app-tab-merge.js";
 import { _resetOffScreenSessions, noteBrowserSurface } from "./off-screen-sessions.js";
 import { TabList } from "./in-app-tabs.js";
+import { registerAdoptedView, unregisterAdoptedViews } from "./bridge-perception.js";
 
 const FIRST_ID = "view-sess-9-work";
 
@@ -28,6 +29,12 @@ function agentView(viewId: string): BrowserViewInfo {
 function mockList(views: BrowserViewInfo[]): void {
 	vi.mocked(browserLifecycle).mockResolvedValue({ views });
 }
+
+// A takeover stays on record until its session's browser closes; a tab one
+// test's session is left driving is not offered to the next test's.
+afterEach(() => {
+	for (const session of ["sess-7", "sess-9", "sess-other"]) unregisterAdoptedViews(session);
+});
 
 describe("mergeTabs / formatTabsListing / switchMergedTab", () => {
 	let list: TabList;
@@ -65,6 +72,32 @@ describe("mergeTabs / formatTabsListing / switchMergedTab", () => {
 		const merged = await mergeTabs(list);
 		expect(merged).toHaveLength(1);
 		expect(merged[0]).toMatchObject({ kind: "own", tab: { viewId: "view-sess-9-work", created: true, closed: false } });
+	});
+
+	// Every chat's agent used to be offered every user tab, so two chats could
+	// take over the same page and drive it at once (2026-11-22).
+	it("offers a chat's agent its own chat's user tabs, never another chat's", async () => {
+		const mine = { ...userView("user-1", "https://mine.example/", "Mine"), ownerSessionId: "sess-9" };
+		const theirs = { ...userView("user-2", "https://theirs.example/", "Theirs"), ownerSessionId: "sess-other" };
+		const nobodys = userView("user-3", "https://open.example/", "Opened with no chat");
+		mockList([mine, theirs, nobodys]);
+		const merged = await mergeTabs(list, "sess-9");
+		expect(merged.filter((e) => e.kind === "user").map((e) => e.url)).toEqual(["https://mine.example/", "https://open.example/"]);
+		const listing = await formatTabsListing(list, async () => {}, "sess-9");
+		expect(listing).not.toContain("theirs.example");
+		// Its index is not in the listing, so no switch_tab can reach it.
+		expect(await switchMergedTab(list, 3, "sess-9")).toMatchObject({ ok: false });
+	});
+
+	it("does not offer a tab another session is already driving", async () => {
+		registerAdoptedView("user-3", "sess-other");
+		try {
+			mockList([userView("user-3", "https://open.example/", "Opened with no chat")]);
+			expect((await mergeTabs(list, "sess-9")).filter((e) => e.kind === "user")).toEqual([]);
+			expect((await mergeTabs(list, "sess-other")).filter((e) => e.kind === "user")).toHaveLength(1);
+		} finally {
+			unregisterAdoptedViews("sess-other");
+		}
 	});
 
 	it("excludes user views this backend already adopted (no duplicate rows)", async () => {

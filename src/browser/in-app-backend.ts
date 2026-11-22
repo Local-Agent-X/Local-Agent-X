@@ -321,7 +321,7 @@ export class ElectronInAppBackend implements BrowserBackend {
 	 *  are marked as takeover candidates. Indexes are as-of this listing —
 	 *  switchTab recomputes the same merge. */
 	async listTabs(): Promise<string> {
-		return formatTabsListing(this.tabs, (tab) => this.refreshState(tab));
+		return formatTabsListing(this.tabs, (tab) => this.refreshState(tab), this.sessionId);
 	}
 
 	/** Switch over the same combined ordering listTabs prints. A user view is

@@ -11,10 +11,10 @@ import {
 	handleAgentViewClosed,
 	handleBrowserDownloadEvent,
 	handleBrowserUiEvent,
-	sessionIdFromViewId,
 	setAgentViewClosedHandler,
 	viewBelongsToSession,
 } from "./bridge-perception.js";
+import { sessionIdFromViewId } from "../desktop-contract/browser-view-ids.js";
 import { ingestInAppDownload } from "./downloads.js";
 import { sanitizeUiEvent } from "../orchestrator/ui-event-store.js";
 

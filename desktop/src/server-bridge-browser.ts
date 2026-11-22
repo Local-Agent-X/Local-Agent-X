@@ -35,6 +35,7 @@ import {
 	type BrowserViewInfo,
 } from "./browser-views";
 import { autoSurfaceAgentView } from "./browser-ipc";
+import { userViewOwner } from "./browser-chat-views";
 import { navigateOffersSurface } from "./browser-surface-policy";
 import { attachDialogInterception, detachDialogState, handleDialog, listDialogs } from "./browser-dialogs";
 import { wireDownloadBridge } from "./browser-downloads-bridge";
@@ -384,7 +385,14 @@ function lifecycle(msg: BrowserLifecycleRequest): Record<string, unknown> | Prom
 			// mutations bypass the input gate) see the co-drive lock.
 			return { ping: { ...pingBrowserView(msg.viewId), userActive: isUserActive(msg.viewId) } };
 		case "list":
-			return { views: listBrowserViews() satisfies BrowserViewInfo[] };
+			// A user view names the chat it belongs to, so an agent is offered
+			// only its own chat's tabs to take over (browser-chat-views.ts).
+			return {
+				views: listBrowserViews().map((v) => {
+					const owner = v.agentDriven ? undefined : userViewOwner(v.viewId);
+					return owner ? { ...v, ownerSessionId: owner } : v;
+				}) satisfies BrowserViewInfo[],
+			};
 	}
 }
 

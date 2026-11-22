@@ -19,6 +19,10 @@ export interface BrowserViewInfo {
   title: string;
   attached: boolean;
   agentDriven: boolean;
+  /** For a user view: the chat it belongs to, the one on screen when it was
+   *  opened. Absent for an agent view (its id names its session,
+   *  browser-view-ids.ts) and for a user view opened with no chat on screen. */
+  ownerSessionId?: string;
 }
 
 /** "adopt"/"release": the server's mirror of user-view adoption (the agent

@@ -128,7 +128,7 @@ async function runEgressWorker(port: MessagePort, data: EgressWorkerData): Promi
 	const { scanPageEgressWith } = await import("./page-egress-taint.js");
 	const { findTaintInEntries } = await import("../data-lineage/index.js");
 	const { checkCanariesInPayloadList } = await import("../threat/canaries.js");
-	const { sessionIdFromViewId } = await import("./bridge-perception.js");
+	const { sessionIdFromViewId } = await import("../desktop-contract/browser-view-ids.js");
 	const { decideEgressAsk, denyKey } = await import("./bridge-egress.js");
 	const { setAgentOriginPort } = await import("../security/layer/agent-origin-port.js");
 

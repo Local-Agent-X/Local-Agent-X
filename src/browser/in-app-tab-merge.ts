@@ -11,7 +11,7 @@
 
 import { browserLifecycle, type BrowserViewInfo } from "./bridge-client.js";
 import { sensitivePageStub } from "./guards.js";
-import { registerAdoptedView } from "./bridge-perception.js";
+import { adoptedViewSession, registerAdoptedView } from "./bridge-perception.js";
 import { TabList, type InAppTab } from "./in-app-tabs.js";
 import { isBrowserOffScreen } from "./off-screen-sessions.js";
 import { createLogger } from "../logger.js";
@@ -27,11 +27,15 @@ export type MergedTab =
  * Recompute the combined ordering: this backend's tabs first (list order),
  * then the user's own views (agentDriven === false) not already adopted.
  * Other sessions' agent-driven views are deliberately EXCLUDED — switching
- * onto them would be cross-session interference. Both listTabs and switchTab
- * recompute this merge the same way, so indexes are stable as-of the last
- * `tabs` listing (until views change).
+ * onto them would be cross-session interference. So are the user tabs of
+ * another chat, and a user tab another session is already driving: every
+ * chat's agent used to be offered every user tab, so two chats could take
+ * over the same page and drive it at once (2026-11-22). A user tab opened
+ * with no chat on screen belongs to none and is offered to all, until one
+ * takes it. Both listTabs and switchTab recompute this merge the same way, so
+ * indexes are stable as-of the last `tabs` listing (until views change).
  */
-export async function mergeTabs(list: TabList): Promise<MergedTab[]> {
+export async function mergeTabs(list: TabList, sessionId?: string): Promise<MergedTab[]> {
 	let views: BrowserViewInfo[] = [];
 	try {
 		views = (await browserLifecycle("list", "*")).views ?? [];
@@ -56,6 +60,9 @@ export async function mergeTabs(list: TabList): Promise<MergedTab[]> {
 	for (const view of views) {
 		if (view.agentDriven !== false) continue; // other sessions' agent views: excluded
 		if (list.has(view.viewId)) continue; // already adopted by this backend
+		if (sessionId && view.ownerSessionId && view.ownerSessionId !== sessionId) continue; // another chat's tab
+		const driver = adoptedViewSession(view.viewId);
+		if (driver && driver !== sessionId) continue; // another session is driving it
 		merged.push({ kind: "user", view, url: view.url, title: view.title });
 	}
 	return merged;
@@ -72,11 +79,12 @@ function tabLabel(url: string, title: string): string {
 export async function formatTabsListing(
 	list: TabList,
 	refresh: (tab: InAppTab) => Promise<void>,
+	sessionId?: string,
 ): Promise<string> {
 	for (const tab of list.all()) {
 		if (tab.created && !tab.closed) await refresh(tab);
 	}
-	const merged = await mergeTabs(list);
+	const merged = await mergeTabs(list, sessionId);
 	if (merged.length === 0) {
 		list.lastListing = null;
 		return "No browser session active.";
@@ -118,7 +126,7 @@ export function surfaceActiveTab(viewId: string, sessionId?: string): void {
  *  merged ordering. The listed viewId must still match, and a successful
  *  switch consumes the listing so a second stale index cannot be reused. */
 export async function switchMergedTab(list: TabList, index: number, sessionId?: string): Promise<MergedSwitchResult> {
-	const merged = await mergeTabs(list);
+	const merged = await mergeTabs(list, sessionId);
 	if (index < 0 || index >= merged.length) {
 		return {
 			ok: false,
@@ -162,7 +170,7 @@ export async function switchMergedTab(list: TabList, index: number, sessionId?: 
  *  Closing the active tab activates its list neighbor (TabList.remove's
  *  pointer adjustment) and surfaces it so the visible pane follows. */
 export async function closeMergedTab(list: TabList, index: number, sessionId?: string): Promise<string> {
-	const merged = await mergeTabs(list);
+	const merged = await mergeTabs(list, sessionId);
 	if (index < 0 || index >= merged.length) {
 		return `Invalid tab index ${index}. Use 'tabs' action to see available tabs (0-${merged.length - 1}).`;
 	}

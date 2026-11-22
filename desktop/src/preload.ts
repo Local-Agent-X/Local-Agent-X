@@ -191,9 +191,16 @@ contextBridge.exposeInMainWorld("desktop", {
     }) => void) => {
       ipcRenderer.on("browser-nav-state", (_e, state) => cb(state));
     },
-    // Multi-view switcher: enumerate every pool view (renderer foreground +
-    // agent-driven per-(session,profile) views) and flip which one the anchor
-    // drives/shows. switchView returns the switched-to view's nav-state.
+    // The chat on screen changed: the pane, its current view and its tab list
+    // are that chat's from here on (browser-chat-views.ts). Resolves the
+    // nav-state of the view now showing, or null when the pane is not showing.
+    bindChat: (sessionId: string | null): Promise<{
+      viewId: string; url: string; title: string; canGoBack: boolean; canGoForward: boolean; loading: boolean;
+      loadError: { code: number; description: string; url: string } | null;
+    } | null> => ipcRenderer.invoke("browser-bind-chat", sessionId),
+    // Multi-view switcher: enumerate the pool views of the chat on screen (its
+    // home view and user tabs + its agent-driven views) and flip which one the
+    // anchor drives/shows. switchView returns the switched-to view's nav-state.
     listViews: (): Promise<Array<{
       viewId: string; url: string; title: string; attached: boolean; agentDriven: boolean;
     }>> => ipcRenderer.invoke("browser-list-views"),

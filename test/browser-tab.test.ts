@@ -1343,6 +1343,25 @@ describe("browser panel ↔ chat session binding", () => {
   }
   const bind = (id: string | null) => window.laxBrowserSessionBind.bindSession(id);
 
+  // The pane is the chat on screen's (desktop/src/browser-chat-views.ts): the
+  // desktop hears which chat that is before the list is asked for, so the
+  // list that comes back is the new chat's. No chat on screen is said too.
+  it("tells the desktop which chat is on screen, then lists that chat's views", async () => {
+    const order: string[] = [];
+    const bindChat = vi.fn(async (id: string | null) => { await flush(); order.push(`bind:${id}`); return null; });
+    const listViews = vi.fn(async () => { order.push("list"); return []; });
+    reload({ bindChat, listViews, switchView: vi.fn() });
+    await flush();
+    order.length = 0; listViews.mockClear(); // the tab's own first listing
+    bind("chat-B");
+    await flush(); await flush();
+    expect(order).toEqual(["bind:chat-B", "list"]);
+    bind(null);
+    await flush(); await flush();
+    expect(bindChat).toHaveBeenLastCalledWith(null);
+    expect(listViews).toHaveBeenCalledTimes(1);
+  });
+
   it("surfaces the view scoped to the bound session (view-<sessionId>-*)", async () => {
     const switchView = vi.fn().mockResolvedValue({ viewId: "view-chat-B-work" });
     reload({

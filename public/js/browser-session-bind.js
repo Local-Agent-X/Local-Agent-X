@@ -1,6 +1,8 @@
-// Binds the browser panel to the active chat session: on chat switch it
-// surfaces that chat's own agent view, and it surfaces one that appears later
-// (agent opens a page mid-chat). Between those, a tab the user picks stays
+// Binds the browser panel to the active chat session: on chat switch it tells
+// the desktop which chat is on screen (the pane, its current view and its tab
+// list are that chat's, desktop/src/browser-chat-views.ts), surfaces that
+// chat's own agent view, and surfaces one that appears later (agent opens a
+// page mid-chat). Between those, a tab the user picks stays
 // picked: every switch pokes views-changed, so re-surfacing on every poke
 // snapped a click on another tab (a PDF the panel already had open) straight
 // back to the chat's view. Kept out of browser-tab.js (size
@@ -45,8 +47,11 @@
 	function bindSession(sessionId) {
 		boundSessionId = sessionId || null;
 		knownViewIds = null;
-		if (!boundSessionId || !bridge || !bridge.listViews) return;
-		Promise.resolve(bridge.listViews()).then(apply).catch(function () {});
+		if (!bridge) return;
+		// The desktop first: the list asked for next is the new chat's.
+		var bound = bridge.bindChat ? Promise.resolve(bridge.bindChat(boundSessionId)).catch(function () {}) : Promise.resolve();
+		if (!boundSessionId || !bridge.listViews) return;
+		bound.then(function () { return bridge.listViews(); }).then(apply).catch(function () {});
 	}
 
 	window.laxBrowserSessionBind = { bindSession: bindSession, apply: apply };

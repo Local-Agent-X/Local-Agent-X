@@ -7,12 +7,13 @@
  * translate the renderer's rect/visibility reports and nav commands onto the
  * pool, and push nav-state back so the address bar mirrors the real webContents.
  *
- * Multi-view: the renderer's anchor drives ONE "current" view at a time
- * (currentViewId), but the pool may hold many — the renderer's own lazily
- * created foreground view PLUS the agent-driving per-chat views
- * created over the server bridge (server-bridge-browser.ts). browser-list-views
- * enumerates all of them and browser-switch-view flips which one is attached +
- * driven from the anchor; showBrowserView keeps the others live-but-detached
+ * Multi-view: the renderer's anchor drives ONE "current" view at a time, but
+ * the pool may hold many — each chat's own lazily created home view and user
+ * tabs PLUS the agent-driving per-chat views created over the server bridge
+ * (server-bridge-browser.ts). The pane belongs to the chat on screen
+ * (browser-chat-views.ts): browser-bind-chat says which chat that is, the
+ * current view is that chat's, browser-list-views lists that chat's views,
+ * and browser-switch-view flips which one is attached + driven from the anchor; showBrowserView keeps the others live-but-detached
  * (the D1 invariant — background views keep running their in-flight ops).
  * Nav-state pushes are tagged with the viewId they describe so the renderer
  * only updates the address bar for the view it is currently showing.
@@ -51,10 +52,23 @@ import {
 } from "./browser-ipc-navstate";
 import { emitAgentViewClosed } from "./browser-perception";
 import { decideAgentSurface, isSessionAgentView } from "./browser-surface-policy";
+import {
+	boundChat,
+	claimUnownedViews,
+	claimUserView,
+	currentViewId,
+	forgetView,
+	homeViewId,
+	isHomeViewId,
+	noteBackgroundAgentView,
+	setBoundChat,
+	setCurrentViewId,
+	shownInBoundChat,
+	userViewOwner,
+} from "./browser-chat-views";
+import { sessionIdFromViewId } from "./contract/browser-view-ids";
 import { SHARED_BROWSER_PARTITION } from "./browser-partition";
 import { markHumanNavigation } from "./in-app-browser";
-
-const FOREGROUND_ID = "foreground";
 
 interface BrowserViewListEntry {
 	viewId: string;
@@ -72,10 +86,10 @@ interface BrowserChatOverlayPayload {
 	latestOpen: boolean;
 }
 
-// The view the renderer's anchor currently drives (bounds/visibility/nav). The
-// renderer flips this with browser-switch-view; it defaults to the foreground
-// view the tab lazily creates for the user.
-let currentViewId = FOREGROUND_ID;
+// The view the renderer's anchor currently drives (bounds/visibility/nav) is
+// currentViewId(): the chat on screen's (browser-chat-views.ts). The renderer
+// flips it with browser-switch-view; it defaults to the chat's home view, which
+// the tab lazily creates for the user.
 // Last anchor rect the renderer reported, already scaled to window DIPs. Re-applied
 // to a view when the user switches to it so an agent-created view (default pool
 // bounds) snaps to the panel geometry instead of its 800×600 origin box.
@@ -101,30 +115,35 @@ export function scaleRectToDip(rect: Rectangle, zoomFactor: number): Rectangle {
 	};
 }
 
-/** Lazily create the renderer's foreground view on first use and wire it. */
-function ensureForegroundView(): WebContentsView {
-	let view = getBrowserView(FOREGROUND_ID);
+/** Lazily create the home view of the chat on screen on first use and wire it. */
+function ensureHomeView(): { viewId: string; view: WebContentsView } {
+	const viewId = homeViewId();
+	let view = getBrowserView(viewId);
 	if (!view) {
-		createBrowserView(FOREGROUND_ID, { partition: SHARED_BROWSER_PARTITION, agentDriven: false });
-		view = getBrowserView(FOREGROUND_ID)!;
+		createBrowserView(viewId, { partition: SHARED_BROWSER_PARTITION, agentDriven: false });
+		claimUserView(viewId);
+		view = getBrowserView(viewId)!;
 	}
-	wireNavPushes(FOREGROUND_ID, view.webContents);
-	return view;
+	wireNavPushes(viewId, view.webContents);
+	return { viewId, view };
 }
 
-/** The view the renderer's anchor drives. The foreground view is created on
+/** The view the renderer's anchor drives. The chat's home view is created on
  *  demand; any other current view (set only by a successful switch to an
- *  existing pool view) is looked up — a vanished one falls back to foreground. */
+ *  existing pool view) is looked up — a vanished one falls back to home. */
 function ensureCurrentView(): { viewId: string; view: WebContentsView } {
-	if (currentViewId !== FOREGROUND_ID) {
-		const view = getBrowserView(currentViewId);
+	const viewId = currentViewId();
+	if (!isHomeViewId(viewId)) {
+		const view = getBrowserView(viewId);
 		if (view) {
-			wireNavPushes(currentViewId, view.webContents);
-			return { viewId: currentViewId, view };
+			wireNavPushes(viewId, view.webContents);
+			return { viewId, view };
 		}
-		currentViewId = FOREGROUND_ID; // switched-to view was closed underneath us
+		forgetView(viewId); // switched-to view was closed underneath us
 	}
-	return { viewId: FOREGROUND_ID, view: ensureForegroundView() };
+	const home = ensureHomeView();
+	setCurrentViewId(home.viewId);
+	return home;
 }
 
 /** Poke the renderer to re-list the pool ("browser-views-changed", no payload —
@@ -141,8 +160,8 @@ function sendViewsChanged(): void {
 
 /** Blank = nothing the user could be looking at: the view doesn't exist (or its
  *  webContents died), or it never left ""/about:blank. */
-function currentViewIsBlank(): boolean {
-	const view = getBrowserView(currentViewId);
+function viewIsBlank(viewId: string): boolean {
+	const view = getBrowserView(viewId);
 	if (!view || view.webContents.isDestroyed()) return true;
 	const url = view.webContents.getURL();
 	return url === "" || url === "about:blank";
@@ -155,7 +174,7 @@ function currentViewIsBlank(): boolean {
 function applyAgentSurface(viewId: string): void {
 	const view = getBrowserView(viewId);
 	if (!view || view.webContents.isDestroyed()) return; // vanished before we surfaced it
-	currentViewId = viewId;
+	setCurrentViewId(viewId);
 	wireNavPushes(viewId, view.webContents);
 	if (lastBoundsDip) setBrowserViewBounds(viewId, lastBoundsDip); // negotiate BEFORE any attach
 	if (getAttachedViewId() !== null) {
@@ -170,12 +189,23 @@ function applyAgentSurface(viewId: string): void {
  * an active-tab "show" op). Follows a blank foreground OR an agent view the
  * SURFACING session owns (`view-<sid>-…`); a hand-navigated page, an adopted
  * view, and other sessions' views are never yanked. See browser-surface-policy.ts.
+ *
+ * Only the chat on screen moves the pane. A view of another chat is noted as
+ * what that chat's pane shows when the user comes back to it, and nothing on
+ * screen changes: an agent browsing in a chat nobody was looking at used to
+ * take a blank pane and turn the panel to BROWSER (2026-11-22).
  */
 export function autoSurfaceAgentView(viewId: string, sessionId?: string): void {
+	const chat = sessionIdFromViewId(viewId);
+	if (chat && chat !== boundChat()) {
+		noteBackgroundAgentView(viewId, chat, (current) => !viewIsBlank(current));
+		return;
+	}
+	const current = currentViewId();
 	const surface = decideAgentSurface({
-		isForegroundFamily: currentViewId === FOREGROUND_ID || currentViewId.startsWith("user-"),
-		isBlank: currentViewIsBlank(),
-		currentIsSessionAgentView: isSessionAgentView(currentViewId, sessionId),
+		isForegroundFamily: isHomeViewId(current) || current.startsWith("user-"),
+		isBlank: viewIsBlank(current),
+		currentIsSessionAgentView: isSessionAgentView(current, sessionId),
 	});
 	if (surface) applyAgentSurface(viewId);
 	sendViewsChanged();
@@ -188,8 +218,8 @@ function pushAgentSurfaced(viewId: string): void {
 	win.webContents.send("browser-agent-surfaced", { viewId });
 }
 
-/** Mint a user tab (agentDriven:false) on the shared browser identity and make
- *  it the anchor's view. Attach only if something is already attached — on a
+/** Mint a user tab (agentDriven:false) on the shared browser identity, owned by
+ *  the chat on screen, and make it the anchor's view. Attach only if something is already attached — on a
  *  non-browser tab the retarget alone is enough (the next set-visible shows it),
  *  and the renderer adopts an attached view on its next re-list. `openedBy`
  *  hosts a page's own new-tab open (browser-view-popups.ts). */
@@ -197,14 +227,42 @@ function openUserTab(openedBy?: BrowserWindowConstructorOptions): { viewId: stri
 	const viewId = `user-${++userTabSeq}`;
 	createBrowserView(viewId, { partition: SHARED_BROWSER_PARTITION, agentDriven: false, openedBy });
 	const view = getBrowserView(viewId)!;
+	claimUserView(viewId);
 	wireNavPushes(viewId, view.webContents);
-	currentViewId = viewId;
+	setCurrentViewId(viewId);
 	if (lastBoundsDip) setBrowserViewBounds(viewId, lastBoundsDip); // negotiate BEFORE any attach
 	if (getAttachedViewId() !== null) {
 		showBrowserView(viewId);
 	}
 	markHumanNavigation(viewId);
 	return { viewId, view };
+}
+
+/** Another chat came on screen (or none): the pane is that chat's now. The
+ *  chat left behind keeps its views, live and detached; a home view it never
+ *  used is closed instead of kept. If a view was on screen, the new chat's
+ *  current view takes its place. Returns that view's nav-state, or null when
+ *  the pane is not showing. */
+function bindChat(chat: string | null): BrowserNavState | null {
+	if ((chat || null) === boundChat()) return null;
+	const wasAttached = getAttachedViewId() !== null;
+	const leftHome = homeViewId();
+	if (getBrowserView(leftHome) && viewIsBlank(leftHome)) {
+		closeBrowserView(leftHome);
+		forgetView(leftHome);
+	}
+	setBoundChat(chat);
+	const here = boundChat();
+	if (here) {
+		claimUnownedViews(listBrowserViews().filter((v) => !v.agentDriven && !userViewOwner(v.viewId)).map((v) => v.viewId), here);
+	}
+	sendViewsChanged();
+	if (!wasAttached) return null;
+	const { viewId, view } = ensureCurrentView();
+	if (lastBoundsDip) setBrowserViewBounds(viewId, lastBoundsDip); // negotiate BEFORE the attach
+	showBrowserView(viewId);
+	pushNavState(viewId, view.webContents);
+	return readNavState(viewId, view.webContents);
 }
 
 export function setupBrowserIPC(): void {
@@ -221,8 +279,8 @@ export function setupBrowserIPC(): void {
 	// its find/zoom page controls (browser-page-controls.ts).
 	setPoolChangedListener(() => { sendViewsChanged(); wirePageControlsForPool(); });
 	setAgentViewEvictedNotifier(emitAgentViewClosed); // LRU eviction → server, like a user ✕-close
-	// Find-in-page + per-view zoom command surface, acting on currentViewId.
-	setupBrowserPageControls(() => currentViewId);
+	// Find-in-page + per-view zoom command surface, acting on the current view.
+	setupBrowserPageControls(currentViewId);
 	setupBrowserDownloadsIPC();
 	setupBrowserPermissionBarIPC();
 
@@ -259,10 +317,10 @@ export function setupBrowserIPC(): void {
 		if (visible) {
 			const { viewId } = ensureCurrentView();
 			showBrowserView(viewId);
-		} else if (getBrowserView(currentViewId)) {
+		} else if (getBrowserView(currentViewId())) {
 			// Don't create a view just to hide it — hiding a non-existent view is a
 			// no-op, not an error.
-			hideBrowserView(currentViewId);
+			hideBrowserView(currentViewId());
 			setBrowserChatOverlay(null, null, null);
 		}
 	});
@@ -289,39 +347,47 @@ export function setupBrowserIPC(): void {
 
 	ipcMain.handle("browser-go-back", (event: IpcMainInvokeEvent) => {
 		if (!isTrustedBrowserSender(event.sender)) return;
-		const wc = getBrowserView(currentViewId)?.webContents;
+		const wc = getBrowserView(currentViewId())?.webContents;
 		if (wc && wc.navigationHistory.canGoBack()) wc.navigationHistory.goBack();
 	});
 
 	ipcMain.handle("browser-go-forward", (event: IpcMainInvokeEvent) => {
 		if (!isTrustedBrowserSender(event.sender)) return;
-		const wc = getBrowserView(currentViewId)?.webContents;
+		const wc = getBrowserView(currentViewId())?.webContents;
 		if (wc && wc.navigationHistory.canGoForward()) wc.navigationHistory.goForward();
 	});
 
 	ipcMain.handle("browser-reload", (event: IpcMainInvokeEvent) => {
 		if (!isTrustedBrowserSender(event.sender)) return;
-		getBrowserView(currentViewId)?.webContents.reload();
+		getBrowserView(currentViewId())?.webContents.reload();
 	});
 
 	// Stop the current view's in-flight load — the renderer's ↻ becomes ✕ while
 	// the selected view is loading. Same idiom as browser-reload above.
 	ipcMain.handle("browser-stop", (event: IpcMainInvokeEvent) => {
 		if (!isTrustedBrowserSender(event.sender)) return;
-		getBrowserView(currentViewId)?.webContents.stop();
+		getBrowserView(currentViewId())?.webContents.stop();
 	});
 
 	ipcMain.handle("browser-get-nav-state", (event: IpcMainInvokeEvent): BrowserNavState | null => {
 		if (!isTrustedBrowserSender(event.sender)) return null;
-		const view = getBrowserView(currentViewId);
-		return view ? readNavState(currentViewId, view.webContents) : emptyNavState(currentViewId);
+		const viewId = currentViewId();
+		const view = getBrowserView(viewId);
+		return view ? readNavState(viewId, view.webContents) : emptyNavState(viewId);
 	});
 
-	// Enumerate ALL pool views (renderer foreground + agent-driven) so the tab's
-	// switcher can list every view the user might watch.
+	// The chat on screen changed (public/js/browser-session-bind.js).
+	ipcMain.handle("browser-bind-chat", (event: IpcMainInvokeEvent, chat: unknown): BrowserNavState | null => {
+		if (!isTrustedBrowserSender(event.sender)) return null;
+		return bindChat(typeof chat === "string" && chat ? chat : null);
+	});
+
+	// Enumerate the pool views of the chat on screen (its home view and user
+	// tabs + its agent-driven views) so the tab's switcher lists every view the
+	// user might watch in this chat, and none of another chat's.
 	ipcMain.handle("browser-list-views", (event: IpcMainInvokeEvent): BrowserViewListEntry[] | null => {
 		if (!isTrustedBrowserSender(event.sender)) return null;
-		return listBrowserViews().map((v) => ({
+		return listBrowserViews().filter((v) => shownInBoundChat(v.viewId, v.agentDriven)).map((v) => ({
 			viewId: v.viewId,
 			url: v.url,
 			title: v.title,
@@ -336,9 +402,9 @@ export function setupBrowserIPC(): void {
 	// in-flight agent ops keep running while the user watches another view.
 	ipcMain.handle("browser-switch-view", (event: IpcMainInvokeEvent, viewId: string): BrowserNavState | null => {
 		if (!isTrustedBrowserSender(event.sender)) return null;
-		const view = viewId === FOREGROUND_ID ? ensureForegroundView() : getBrowserView(viewId);
+		const view = viewId === homeViewId() ? ensureHomeView().view : getBrowserView(viewId);
 		if (!view) return null; // vanished/never-existed — renderer re-lists and recovers
-		currentViewId = viewId;
+		setCurrentViewId(viewId);
 		wireNavPushes(viewId, view.webContents);
 		showBrowserView(viewId);
 		// Snap the newly shown view to the anchor geometry (an agent view carries
@@ -359,21 +425,19 @@ export function setupBrowserIPC(): void {
 		if (!isTrustedBrowserSender(event.sender)) return false;
 		const info = listBrowserViews().find((v) => v.viewId === viewId);
 		if (!info) return false;
-		const wasCurrent = currentViewId === viewId;
+		const wasCurrent = currentViewId() === viewId;
 		const wasAttached = getAttachedViewId() === viewId;
 		closeBrowserView(viewId); // fires the pool-change poke → renderer re-lists
+		forgetView(viewId);
 		if (info.agentDriven) emitAgentViewClosed(viewId);
-		if (wasCurrent) {
-			// The anchor's driven view just went away — fall back to the foreground
-			// view (recreated lazily). If the closed tab was on screen, show the
-			// fallback so the pane isn't left painting a destroyed view.
-			currentViewId = FOREGROUND_ID;
-			if (wasAttached) {
-				const view = ensureForegroundView();
-				showBrowserView(FOREGROUND_ID);
-				if (lastBoundsDip) setBrowserViewBounds(FOREGROUND_ID, lastBoundsDip);
-				pushNavState(FOREGROUND_ID, view.webContents);
-			}
+		if (wasCurrent && wasAttached) {
+			// The anchor's driven view just went away — forgetView put the chat back
+			// on its home view (recreated lazily). The closed tab was on screen, so
+			// show the fallback: the pane isn't left painting a destroyed view.
+			const home = ensureHomeView();
+			showBrowserView(home.viewId);
+			if (lastBoundsDip) setBrowserViewBounds(home.viewId, lastBoundsDip);
+			pushNavState(home.viewId, home.view.webContents);
 		}
 		return true;
 	});

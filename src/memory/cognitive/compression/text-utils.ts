@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-import { STOP_WORDS } from "./constants.js";
+import { STOP_WORDS } from "../../text-utils.js";
 import { extractRelationTriples } from "../../relation-patterns.js";
 import { entityMentions } from "../../utils.js";
 

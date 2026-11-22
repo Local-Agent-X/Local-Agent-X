@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { containsNulByte } from "../binary-sniff.js";
 import { redact } from "../security/secrets/index.js";
+import { contentWords } from "./text-utils.js";
 import type { FactKind, RetainedFact } from "./types.js";
 import type { MemoryContentOrigin } from "./promotion-gate.js";
 
@@ -33,27 +34,7 @@ export function safeReadTextFile(filePath: string): string | null {
   } catch { return null; }
 }
 
-// ── Stop words + credential redaction ──
-
-export const STOP_WORDS = new Set([
-  "a", "an", "and", "are", "as", "at", "be", "been", "being", "but", "by",
-  "can", "could", "did", "do", "does", "doing", "done", "for", "from",
-  "get", "got", "had", "has", "have", "having", "he", "her", "here", "hers",
-  "herself", "him", "himself", "his", "how", "i", "if", "in", "into", "is",
-  "it", "its", "itself", "just", "let", "like", "ll", "may", "me", "might",
-  "my", "myself", "no", "nor", "not", "of", "on", "or", "our", "ours",
-  "ourselves", "out", "own", "re", "same", "shall", "she", "should", "so",
-  "some", "such", "than", "that", "the", "their", "theirs", "them",
-  "themselves", "then", "there", "these", "they", "this", "those", "through",
-  "to", "too", "up", "us", "ve", "very", "was", "we", "were", "what",
-  "when", "where", "which", "while", "who", "whom", "why", "will", "with",
-  "would", "you", "your", "yours", "yourself", "yourselves",
-  "about", "after", "again", "all", "also", "am", "any", "because",
-  "before", "between", "both", "each", "few", "further", "had", "more",
-  "most", "must", "need", "now", "off", "once", "only", "other", "over",
-  "please", "really", "right", "say", "since", "still", "tell", "thing",
-  "think", "um", "uh", "use", "used", "using", "want", "well", "went",
-]);
+// ── Credential redaction ──
 
 // Memory-only PII shapes (NOT credentials — they stay out of the shared
 // catalog so the egress guard doesn't false-positive on every 16-digit
@@ -75,12 +56,10 @@ export function redactCredentials(text: string): string {
 
 // ── Query processing ──
 
+/** A message's search keywords: its content words (text-utils.ts), down to two
+ *  letters, because "ai", "pr" and "ui" are things people ask about. */
 export function extractKeywords(raw: string): string[] {
-  return raw
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s_]/gu, " ")
-    .split(/\s+/)
-    .filter((t) => t.length > 1 && !STOP_WORDS.has(t));
+  return contentWords(raw, 2);
 }
 
 const ftsTerm = (k: string) => `"${k.replace(/"/g, '""')}"`;

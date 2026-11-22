@@ -9,9 +9,9 @@
  */
 
 import { join } from "node:path";
-import { randomBytes } from "node:crypto";
 import { getLaxDir } from "../lax-data-dir.js";
 import { createJsonStore } from "../util/json-store.js";
+import { splitWords } from "../memory/text-utils.js";
 
 // ── Types ────────────────────────────────────────────────────
 
@@ -64,10 +64,6 @@ export function saveStore(store: NarrativeStore): void {
   narrativeStore.save(store);
 }
 
-export function generateId(): string {
-  return randomBytes(8).toString("hex");
-}
-
 export function now(): number {
   return Date.now();
 }
@@ -101,16 +97,12 @@ export const STORY_PATTERNS = [
   /\bthe other day\b/i,
 ];
 
-function tokenize(text: string): string[] {
-  return text.toLowerCase().replace(/[^a-z0-9\s]/g, "").split(/\s+/).filter(Boolean);
-}
-
 export function textContains(text: string, phrase: string): boolean {
   return text.toLowerCase().includes(phrase.toLowerCase());
 }
 
 export function scoreMatch(text: string, query: string): number {
-  const tokens = tokenize(query);
+  const tokens = splitWords(query);
   if (tokens.length === 0) return 0;
   const lowerText = text.toLowerCase();
   let hits = 0;

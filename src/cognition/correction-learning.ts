@@ -12,7 +12,7 @@ import { classifyYesNo } from "../classifiers/classify-with-llm.js";
 import {
   CORRECTION_PREGATE,
   DETECTION_RULES,
-  extractTopics,
+  correctionTopics,
   formatDate,
 } from "./correction-learning-detect.js";
 
@@ -229,7 +229,7 @@ export class CorrectionLearner {
     const groups: Map<string, CorrectionRecord[]> = new Map();
 
     for (const record of this.store.records) {
-      const topics = extractTopics(record.event.wrongInfo + " " + record.event.correctInfo);
+      const topics = correctionTopics(record.event.wrongInfo + " " + record.event.correctInfo);
       const key = topics.sort().join("|") || "general";
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key)!.push(record);

@@ -1,5 +1,6 @@
 import type { UpcomingEvent, FollowUp } from "./types.js";
-import { loadStore, saveStore, generateId, parseDate, DAY_MS } from "./persistence.js";
+import { loadStore, saveStore, parseDate, DAY_MS } from "./persistence.js";
+import { randomId } from "../../util/ids.js";
 import { resolveRelativeDate } from "./date-parser.js";
 import { EVENT_PATTERNS, guessImportance } from "./detection.js";
 import type { ModuleSignal } from "../../orchestrator/types.js";
@@ -25,7 +26,7 @@ export class AnticipatoryCare {
     if (isDupe) return;
 
     store.events.push({
-      id: generateId(),
+      id: randomId(),
       event,
       date,
       importance,
@@ -117,7 +118,7 @@ export class AnticipatoryCare {
         if (date && eventName.length > 1 && eventName.length < 100) {
           const importance = guessImportance(message);
           const ev: UpcomingEvent = {
-            id: generateId(),
+            id: randomId(),
             event: eventName,
             date,
             importance,
@@ -148,7 +149,7 @@ export class AnticipatoryCare {
         if (lower.includes(word)) {
           const importance = guessImportance(message);
           const ev: UpcomingEvent = {
-            id: generateId(),
+            id: randomId(),
             event: word,
             date,
             importance,

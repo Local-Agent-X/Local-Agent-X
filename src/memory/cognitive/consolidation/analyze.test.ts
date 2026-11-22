@@ -38,6 +38,19 @@ describe("mergeRelatedFacts", () => {
     expect(merged[0]!.merged).toBe("Peter runs NutriShop in McKinney Texas store");
   });
 
+  // The words were split on ASCII alone: a fact in another script had none,
+  // and two facts with no words compare as identical.
+  it("does not group unrelated facts written in another script", () => {
+    const merged = mergeRelatedFacts([
+      fact("Одалис живёт в Лиссабоне с мужем"),
+      fact("Кот Барсик любит спать на подоконнике"),
+      fact("Одалис живёт в Лиссабоне с мужем и сыном"),
+    ]);
+    expect(merged.map((m) => m.original.map((f) => f.content))).toEqual([
+      ["Одалис живёт в Лиссабоне с мужем", "Одалис живёт в Лиссабоне с мужем и сыном"],
+    ]);
+  });
+
   it("matches comparing every pair in full, on facts of mixed sizes", () => {
     const vocab = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel", "india", "juliet"];
     let seed = 7;

@@ -131,12 +131,14 @@ export const DETECTION_RULES: DetectionRule[] = [
 
 // ── Helpers ─────────────────────────────────────────────────
 
-export function extractTopics(text: string): string[] {
-  // Pull out notable words (capitalized, technical terms, etc.)
+/** What a correction was about: its capitalized words and quoted strings. Not
+ *  a message's topics (memory/cognitive/proactive): a correction is grouped by
+ *  the names in it, and its other words are the mistake itself. */
+export function correctionTopics(text: string): string[] {
   const words = text.split(/\s+/);
   const topics: string[] = [];
   for (const w of words) {
-    const clean = w.replace(/[^a-zA-Z0-9_-]/g, "");
+    const clean = w.replace(/[^\p{L}\p{M}\p{N}_-]/gu, "");
     if (clean.length > 3 && clean[0] === clean[0].toUpperCase() && clean[0] !== clean[0].toLowerCase()) {
       topics.push(clean.toLowerCase());
     }

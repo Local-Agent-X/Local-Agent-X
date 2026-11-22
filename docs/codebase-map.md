@@ -27,8 +27,8 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/workspace/` | 92 | 3 | M |  |
 | `src/providers/` | 79 | 28 | L | 1 |
 | `src/session/` | 78 | 15 | L |  |
-| `src/util/` | 69 | 3 | S |  |
-| `src/memory/` | 63 | 163 | XL | 3 |
+| `src/util/` | 71 | 3 | S |  |
+| `src/memory/` | 65 | 163 | XL | 3 |
 | `src/data-lineage/` | 61 | 12 | L |  |
 | `src/browser/` | 55 | 95 | XL | 5 |
 | `src/agency/` | 49 | 40 | XL |  |

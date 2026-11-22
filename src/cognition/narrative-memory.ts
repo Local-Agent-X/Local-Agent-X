@@ -9,10 +9,10 @@
  */
 
 import type { ModuleSignal } from "../orchestrator/types.js";
+import { randomId } from "../util/ids.js";
 import {
   loadStore,
   saveStore,
-  generateId,
   now,
   dateStamp,
   textContains,
@@ -54,7 +54,7 @@ export class NarrativeMemory {
     const store = loadStore();
 
     const narrative: Narrative = {
-      id: generateId(),
+      id: randomId(),
       title: this.generateTitle(event),
       summary: event,
       chapters: [

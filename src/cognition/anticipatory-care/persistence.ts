@@ -1,5 +1,4 @@
 import { join } from "node:path";
-import { randomBytes } from "node:crypto";
 import type { EventStore } from "./types.js";
 import { getLaxDir } from "../../lax-data-dir.js";
 import { createJsonStore } from "../../util/json-store.js";
@@ -24,10 +23,6 @@ export function saveStore(value: EventStore): void {
     value.events = value.events.slice(0, MAX_EVENTS);
   }
   store.save(value);
-}
-
-export function generateId(): string {
-  return randomBytes(8).toString("hex");
 }
 
 export function parseDate(dateStr: string): number {

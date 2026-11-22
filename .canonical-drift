@@ -32,10 +32,8 @@ ExecFileLike src x2
 ExtractionResult src x2
 extractStructure src x2
 extractText src x2
-extractTopics src x2
 fingerprintOf src x2
 FollowUp src x2
-generateId src x3
 GENESIS_PREV_HASH src x2
 getToolsVerified src x2
 handleScreenshot src x2
@@ -84,7 +82,6 @@ slugify src x2
 startConfigWatcher src x2
 startHeartbeat src x2
 statePath src x3
-STOP_WORDS src x2
 TERMINAL_STATUSES src x2
 ToolCall src x2
 ToolCallContext src x2

@@ -2,12 +2,13 @@
  * Local Agent X — Contradiction Patterns
  *
  * Pure pattern-matching layer for the contradiction detector: shared types,
- * the fact/field keyword patterns, and the entity/tokenize/overlap helpers.
+ * the fact/field keyword patterns, and the entity/overlap helpers.
  * No persistence or state — the stateful detector lives in
  * contradiction-detector.ts.
  */
 
 import { entityMentions } from "../memory/utils.js";
+import { tokenizeBasic } from "../memory/text-utils.js";
 
 // ══════════════════════════════════════════════════════════
 //  Types
@@ -163,19 +164,9 @@ export function getEntity(text: string): string | null {
   return extractEntity(text) || entityFromContext(text);
 }
 
-function tokenize(text: string): Set<string> {
-  return new Set(
-    text
-      .toLowerCase()
-      .replace(/[^\w\s]/g, " ")
-      .split(/\s+/)
-      .filter((w) => w.length > 2)
-  );
-}
-
 export function keywordOverlap(a: string, b: string): number {
-  const setA = tokenize(a);
-  const setB = tokenize(b);
+  const setA = new Set(tokenizeBasic(a));
+  const setB = new Set(tokenizeBasic(b));
   if (setA.size === 0 || setB.size === 0) return 0;
   let shared = 0;
   for (const w of setA) {

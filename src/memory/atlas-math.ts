@@ -98,25 +98,11 @@ function hslToRgb(h: number, s: number, l: number): [number, number, number] {
   return [Math.round(f(0) * 255), Math.round(f(8) * 255), Math.round(f(4) * 255)];
 }
 
-const STOPWORDS = new Set(
-  ("the a an and or but if then of to in on at for with from by is are was were be been being this that these those i you he she it we they me my your our their as so do does did not no yes can will just like get got about there here what which who when where how all any some more most other into over also new use used using one two it's i'm don't").split(
-    " ",
-  ),
-);
-
-export function tokenize(s: string): string[] {
-  const out: string[] = [];
-  for (const w of s.toLowerCase().split(/[^a-z0-9]+/)) {
-    if (w.length < 3 || STOPWORDS.has(w)) continue;
-    out.push(w);
-  }
-  return out;
-}
-
 // Structural tokens from the memory format itself (every chunk is a user/
-// assistant exchange) — so common they swamp TF-IDF; excluded outright.
+// assistant exchange) — so common they swamp TF-IDF; excluded outright. With
+// them, three words that are content in a search and never a label.
 const CORPUS_STOP = new Set(
-  "user assistant chat concise conversation message messages session reply response model system human".split(" "),
+  "user assistant chat concise conversation message messages session reply response model system human new one two".split(" "),
 );
 
 // Class-based TF-IDF (the BERTopic trick): a term labels a cluster only if it's

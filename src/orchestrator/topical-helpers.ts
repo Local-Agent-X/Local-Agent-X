@@ -1,3 +1,5 @@
+import { contentWords } from "../memory/text-utils.js";
+
 /**
  * Detect short conversational follow-ups — acks, vague pronouns, "what
  * happened" / "why" / "really" style replies that reference the prior
@@ -26,29 +28,15 @@ export function isConversationalFollowup(message: string): boolean {
  * categories on substantive (non-followup) messages: a signal about
  * "logo work for baddies-and-daddies" should NOT inject when the user
  * is writing about their AI journey story doc — zero keyword overlap,
- * filter drops it.
+ * filter drops it. The keywords are memory's content words (text-utils.ts) of
+ * four letters or more; in a script with no spaces between syllables, any length.
  */
-const STOPWORDS = new Set([
-  "the", "and", "for", "with", "from", "this", "that", "have", "will", "your", "you",
-  "but", "are", "was", "were", "been", "what", "when", "where", "who", "why", "how",
-  "can", "would", "could", "should", "about", "into", "onto", "than", "then", "them",
-  "they", "their", "there", "here", "just", "like", "make", "made", "want", "wanted",
-  "really", "much", "many", "more", "most", "some", "all", "also", "still", "only",
-  "tell", "told", "saying", "said", "thing", "things", "going", "got", "get", "getting",
-  "ill", "im", "ive", "dont", "wont", "didnt", "isnt", "arent", "wasnt", "werent", "cant",
-]);
-
 // Exported for the bleed-gate regression test in
 // test/orchestrator-resume-bleed.test.ts. Internal callers still hit the
 // same function — exporting just unlocks unit-level coverage of the
 // deterministic fallback path.
 export function topicalKeywords(text: string): Set<string> {
-  return new Set(
-    (text || "")
-      .toLowerCase()
-      .split(/\W+/)
-      .filter(w => w.length > 3 && !STOPWORDS.has(w)),
-  );
+  return new Set(contentWords(text || "", 4));
 }
 
 export function signalTopicallyRelevant(messageWords: Set<string>, signalText: string): boolean {

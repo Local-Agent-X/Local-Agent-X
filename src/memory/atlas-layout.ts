@@ -10,7 +10,8 @@ import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import Database from "better-sqlite3";
 import { createLogger } from "../logger.js";
 import { decodeEmbedding } from "./embedding-codec.js";
-import { makeJL, project, topEigenvectors, palette, tokenize, labelClusters } from "./atlas-math.js";
+import { makeJL, project, topEigenvectors, palette, labelClusters } from "./atlas-math.js";
+import { contentWords } from "./text-utils.js";
 import { kmeans } from "./atlas-cluster.js";
 
 const logger = createLogger("memory.atlas-layout");
@@ -203,7 +204,7 @@ function buildClusters(
   for (let i = 0; i < n; i++) {
     const c = assign[i];
     const counts = buckets[c];
-    for (const term of tokenize(snips[i])) counts.set(term, (counts.get(term) || 0) + 1);
+    for (const term of contentWords(snips[i])) counts.set(term, (counts.get(term) || 0) + 1);
     cnt[c]++;
     sum[c * 3] += xyz[i * 3];
     sum[c * 3 + 1] += xyz[i * 3 + 1];

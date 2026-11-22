@@ -196,6 +196,37 @@ describe("withOpLock — per-opId cross-process lockfile", () => {
     expect(existsSync(join(lockOf(live), "live-token"))).toBe(true);
     rmSync(lockOf(live), { recursive: true, force: true });
   });
+
+  // A killed server left its lock on every op it was writing; each one then
+  // refused writes for two seconds, though nothing was coming back for it.
+  it("takes a fresh lock at once when the process that owns it is gone", () => {
+    const id = "op_lock_owner_gone";
+    writeOp(mkOp(id));
+    mkdirSync(lockOf(id));
+    writeFileSync(join(lockOf(id), "dead-token"), JSON.stringify({ token: "dead-token", pid: 999_999_999, incarnation: "999999999:gone" }));
+    const t0 = Date.now();
+    expect(tryWithOpLock(id, () => "recovered")).toEqual({ acquired: true, value: "recovered" });
+    expect(Date.now() - t0).toBeLessThan(400);
+    expect(existsSync(lockOf(id))).toBe(false);
+  });
+
+  it("still waits out a fresh lock it cannot judge: an unreadable owner record, or one beside a live owner", () => {
+    const unreadable = "op_lock_owner_unreadable";
+    writeOp(mkOp(unreadable));
+    mkdirSync(lockOf(unreadable));
+    writeFileSync(join(lockOf(unreadable), "half-written"), "");
+    expect(tryWithOpLock(unreadable, () => "stolen", 300)).toEqual({ acquired: false });
+    rmSync(lockOf(unreadable), { recursive: true, force: true });
+
+    const mixed = "op_lock_owner_mixed";
+    writeOp(mkOp(mixed));
+    mkdirSync(lockOf(mixed));
+    writeFileSync(join(lockOf(mixed), "dead-token"), JSON.stringify({ token: "dead-token", pid: 999_999_999 }));
+    writeFileSync(join(lockOf(mixed), "live-token"), JSON.stringify({ token: "live-token", pid: process.pid }));
+    expect(tryWithOpLock(mixed, () => "stolen", 300)).toEqual({ acquired: false });
+    expect(existsSync(join(lockOf(mixed), "live-token"))).toBe(true);
+    rmSync(lockOf(mixed), { recursive: true, force: true });
+  });
 });
 
 // GHSA-982r: withOpLock ran the mutation UNLOCKED once its 500 ms wait ran out,

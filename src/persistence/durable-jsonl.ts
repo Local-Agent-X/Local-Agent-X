@@ -17,7 +17,7 @@ import {
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { ensureDurableDirectory, fsyncDirectory } from "./durable-directory.js";
-import { currentProcessIncarnation, processAlive } from "./process-incarnation.js";
+import { currentProcessIncarnation, lockOwnersGone, processAlive } from "./process-incarnation.js";
 
 const LOCK_STALE_MS = 2_000;
 const LOCK_WAIT_MS = 500;
@@ -163,9 +163,10 @@ function tryAcquire(lock: string, token: string, owner: string): boolean {
 function reclaimDeadLock(lock: string): boolean {
   let age: number;
   try { age = Date.now() - statSync(lock).mtimeMs; } catch { return true; }
-  if (age <= LOCK_STALE_MS) return false;
   let names: string[];
   try { names = readdirSync(lock); } catch { return false; }
+  // A fresh lock is a writer at work, unless every owner it names is gone.
+  if (age <= LOCK_STALE_MS && !lockOwnersGone(lock, names)) return false;
   for (const name of names) {
     try {
       const owner = JSON.parse(readFileSync(join(lock, name), "utf-8")) as { pid?: unknown; incarnation?: unknown };

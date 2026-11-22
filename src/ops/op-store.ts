@@ -30,7 +30,7 @@ import { atomicWriteFileSync, type AtomicWriteOperations } from "../util/json-st
 
 import { createLogger } from "../logger.js";
 import { OP_TYPE } from "./op-types.js";
-import { currentProcessIncarnation, processAlive } from "../persistence/process-incarnation.js";
+import { currentProcessIncarnation, lockOwnersGone, processAlive } from "../persistence/process-incarnation.js";
 const logger = createLogger("workers.op-store");
 
 export const OPS_BASE = join(getLaxDir(), "operations");
@@ -180,8 +180,9 @@ function sleepSync(ms: number): void {
 /**
  * Serialize a read→modify→write sequence on an op's operation.json across
  * processes (two servers sharing one ~/.lax). The lock is an exclusive
- * directory with a unique owner token; stale crashed claims are reclaimed
- * after LOCK_STALE_MS. Contention never executes the mutation unlocked.
+ * directory with a unique owner token; a claim whose owner process is gone is
+ * reclaimed at once, one that cannot be judged after LOCK_STALE_MS. Contention
+ * never executes the mutation unlocked.
  */
 export function tryWithOpLock<T>(opId: string, fn: () => T, waitMs = LOCK_WAIT_MS): OpLockResult<T> {
   if (heldLocks.has(opId)) return { acquired: true, value: fn() };
@@ -309,7 +310,9 @@ function reclaimStaleLock(lockPath: string): boolean {
     if (age <= EMPTY_LOCK_GRACE_MS) return false;
     try { rmdirSync(lockPath); return true; } catch { return false; }
   }
-  if (age <= LOCK_STALE_MS) return false;
+  // A fresh lock is a writer at work, unless every owner it names is gone: a
+  // killed process's lock then cost each restart LOCK_STALE_MS per op it held.
+  if (age <= LOCK_STALE_MS && !lockOwnersGone(lockPath, observed)) return false;
   for (const entry of observed) {
     if (age > LOCK_ABANDONED_MS) break;
     try {

@@ -55,7 +55,8 @@ async function publishThenKill(opId: string, mode = "published"): Promise<void> 
     child.once("error", reject);
     child.once("exit", () => published ? resolveExit() : reject(new Error(stderr || "child exited before publish")));
   });
-  await new Promise((resolveWait) => setTimeout(resolveWait, 2_100));
+  // No wait here: the killed child's op lock names a pid that is gone, and
+  // the first writer after it takes the lock at once.
 }
 
 function expireLease(opId: string): Op {

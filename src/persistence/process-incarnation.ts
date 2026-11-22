@@ -1,4 +1,6 @@
 import { execFile, execFileSync } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 
 /** The OS's record of when `pid` started, or null when it can't be read (gone,
  *  denied, or the lookup timed out). The same text for the same process every
@@ -87,4 +89,34 @@ export function processAlive(pid: number, incarnation?: string): boolean {
   if (incarnation) return processIncarnationMatches(pid, incarnation) !== false;
   try { process.kill(pid, 0); return true; }
   catch (e) { return (e as NodeJS.ErrnoException).code === "EPERM"; }
+}
+
+/**
+ * Whether no process has `pid` at all. The one proof of a dead owner that costs
+ * nothing and cannot be wrong: a pid that still exists may be the owner or a
+ * later process that reused it, and telling those apart reads the start time
+ * (a process spawn on Windows), which is processAlive's question, not this one.
+ */
+export function processGone(pid: number): boolean {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try { process.kill(pid, 0); return false; }
+  catch (e) { return (e as NodeJS.ErrnoException).code === "ESRCH"; }
+}
+
+/**
+ * Whether every owner record in a lock directory names a process that is gone:
+ * the lock was left by a crash or a kill, and nothing is coming back for it, so
+ * a taker need not wait out the age that covers a holder it cannot judge. False
+ * for an empty directory, a record that does not parse (its writer may be
+ * between creating the file and filling it) and any pid that still exists.
+ */
+export function lockOwnersGone(lockDir: string, tokens: readonly string[]): boolean {
+  if (tokens.length === 0) return false;
+  for (const token of tokens) {
+    try {
+      const owner = JSON.parse(readFileSync(join(lockDir, token), "utf-8")) as { pid?: unknown };
+      if (typeof owner.pid !== "number" || !processGone(owner.pid)) return false;
+    } catch { return false; }
+  }
+  return true;
 }

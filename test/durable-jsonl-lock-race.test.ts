@@ -86,4 +86,30 @@ describe("durable JSONL lock reclamation", () => {
     expect(removedWhileHeld).toBe(false);
     expect(readdirSync(root).filter((n) => n.startsWith("events.jsonl.lock"))).toEqual([]);
   });
+
+  const isRow = (v: unknown): v is { id: string } => !!v && typeof (v as { id?: unknown }).id === "string";
+  const freshLock = (owner: string): string => {
+    const lock = `${path}.lock`;
+    rmSync(lock, { recursive: true, force: true });
+    mkdirSync(lock);
+    writeFileSync(join(lock, "owner-token"), owner);
+    return lock;
+  };
+
+  // The wait for a lock is 500 ms and a lock was only reclaimed past 2 s, so a
+  // write right after a killed writer failed with a lock timeout.
+  it("a fresh lock whose owner process is gone is taken at once", () => {
+    freshLock(JSON.stringify({ pid: 99_999_999, incarnation: "99999999:gone" }));
+    updateDurableJsonl(path, isRow, () => ({ id: "after-a-kill" }));
+    expect(JSON.parse(readFileSync(path, "utf-8")).id).toBe("after-a-kill");
+  });
+
+  it("a fresh lock held by a live process, or one whose owner cannot be read, is still waited out", () => {
+    const lock = freshLock(JSON.stringify({ pid: process.pid }));
+    expect(() => updateDurableJsonl(path, isRow, () => ({ id: "stolen" }))).toThrow(/lock timeout/);
+    expect(readdirSync(lock)).toEqual(["owner-token"]);
+    freshLock("");
+    expect(() => updateDurableJsonl(path, isRow, () => ({ id: "stolen" }))).toThrow(/lock timeout/);
+    expect(existsSync(path)).toBe(false);
+  });
 });

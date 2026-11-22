@@ -1,6 +1,6 @@
 // Bounded revival of image attachments carried on seeded history rows.
-// SHARED by the two seeding seams — chat-runner/seed-messages.ts and
-// agent-runner/seed-messages.ts — so the revival policy (caps, most-recent
+// Used by the seeding seam, chat-runner/seed-messages.ts, which seeds chat
+// turns and agent runs alike, so the revival policy (caps, most-recent
 // dedupe, placeholder wording) lives in exactly ONE place. Do not fork a
 // second copy; import from here.
 //

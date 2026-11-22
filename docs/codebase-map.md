@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 72 top-level dirs · 72 live · 0 with no live importer · 2103 non-test source files · 74 oversized · 260 nearing the size cap.
+**Totals:** 72 top-level dirs · 72 live · 0 with no live importer · 2102 non-test source files · 74 oversized · 259 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -23,9 +23,9 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/security/` | 168 | 64 | XL | 2 |
 | `src/tools/` | 139 | 243 | XL | 9 |
 | `src/tool-execution/` | 105 | 91 | XL | 2 |
-| `src/canonical-loop/` | 92 | 295 | XL | 10 |
+| `src/canonical-loop/` | 92 | 294 | XL | 10 |
 | `src/workspace/` | 92 | 3 | M |  |
-| `src/providers/` | 80 | 28 | L | 1 |
+| `src/providers/` | 79 | 28 | L | 1 |
 | `src/session/` | 77 | 15 | L |  |
 | `src/memory/` | 63 | 162 | XL | 3 |
 | `src/data-lineage/` | 61 | 12 | L |  |
@@ -435,7 +435,6 @@ job. Comments are free: never cut them to fit.
 - `src/broker-transport/vendor/chat.ts#parseEvent` — 80+ own code lines (cap 100)
 - `src/canonical-loop/adapters/canonical-to-transport.ts#canonicalToTransport` — 80+ own code lines (cap 100)
 - `src/canonical-loop/agent-runner/runtime-surface.ts#rehydrateAgentRuntimeSurface` — 80+ own code lines (cap 100)
-- `src/canonical-loop/agent-runner/seed-messages.ts#seedOpMessages` — 80+ own code lines (cap 100)
 - `src/canonical-loop/chat-runner/seed-messages.ts#seedOpMessages` — 80+ own code lines (cap 100)
 - `src/canonical-loop/soak-metrics.ts#finalize` — 80+ own code lines (cap 100)
 - `src/classifiers/classify-with-llm.ts#classifyWithLLM` — 80+ own code lines (cap 100)

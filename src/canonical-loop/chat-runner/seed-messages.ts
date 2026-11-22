@@ -2,6 +2,11 @@
 // the current user message. Runs BEFORE `canonicalLoopEntry` so the loop's
 // worker, on first turn, sees the full history instead of just the default
 // `seedInitialUserMessage` rendering.
+//
+// Every op that starts from a conversation is seeded here: a chat turn
+// (create-op.ts) and an agent run handed a history (agent-runner/run.ts). The
+// agent runner kept a copy of this function that wrote harness rows untagged,
+// so inside its run a nudge, recall or digest row read as the user's own words.
 
 import { harnessRowKind, isHarnessRow } from "../../harness-rows.js";
 import { randomUUID } from "node:crypto";
@@ -13,18 +18,21 @@ import { messageRoleToCanonicalRole, extractTextContent } from "./message-conver
 import { buildRevivalPlan, historyImagesOf, reviveRowImages } from "../history-image-revival.js";
 
 // Bounded history-image revival: caps, most-recent dedupe, and placeholder
-// degradation all live in ../history-image-revival.ts — the ONE policy point
-// shared with the agent-runner seeder (no second policy point). The CURRENT
-// message's first-send images (prepared.images below) are deliberately not
-// gated — that unconditional read predates this seam.
+// degradation all live in ../history-image-revival.ts. The CURRENT message's
+// first-send images (prepared.images below) are deliberately not gated — that
+// unconditional read predates this seam.
 export { REVIVED_HISTORY_IMAGE_MAX_COUNT, REVIVED_HISTORY_IMAGE_MAX_BYTES } from "../history-image-revival.js";
+
+/** What seeding reads of a prepared request: the history to replay and the
+ *  current message's attachments. */
+export type SeededConversation = Pick<PreparedAgentRequest, "cleanHistory"> & { images?: PreparedAgentRequest["images"] };
 
 /**
  * `recalledContext`: the prompt's per-op sections as a row of their own, right
  * after the current message (local-prompt-split.ts recalledContextText) — a
  * harness row, so the turn's save keeps it and later messages replay it here.
  */
-export function seedOpMessages(opId: string, prepared: PreparedAgentRequest, currentMessage: string, recalledContext: string | null = null): void {
+export function seedOpMessages(opId: string, prepared: SeededConversation, currentMessage: string, recalledContext: string | null = null): void {
   let seqInTurn = 0;
   const turnIdx = 0;
   const revivalPlan = buildRevivalPlan(prepared.cleanHistory);

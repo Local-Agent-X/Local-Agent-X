@@ -27,7 +27,7 @@ import type { TransportMessage } from "../adapters/anthropic.js";
 import { convertMessages } from "../../anthropic-client/request.js";
 import { withRecallCarried } from "../../agent-request/recall-carry.js";
 import type { RecalledMemory } from "../../memory/auto-search-context.js";
-import { harnessRowKind, isHarnessRow } from "../../harness-rows.js";
+import { harnessRowKind, isHarnessRow, markHarnessRow, userAuthoredRows } from "../../harness-rows.js";
 
 const PNG_B64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==";
@@ -275,5 +275,38 @@ describe("the pushback turn still sees the evidence (the 2026-10-08/09 flip-flop
     seedOpMessages(opId, { cleanHistory: withRecallCarried([recallQuestion, recallAnswer], recalled(["m28", RECALL_SOURCE])), images: [] } as unknown as PreparedAgentRequest, "next");
     const back = readOpMessages(opId).map(opMessageRowToChatParam).filter((m): m is ChatCompletionMessageParam => !!m);
     expect(back.filter(isHarnessRow).map(harnessRowKind)).toEqual(["recall"]);
+  });
+});
+
+// An agent run handed a conversation (a delegation ack, an agent a chat
+// starts) is seeded by this same function, called with the run's history and
+// attachments (agent-runner/run.ts).
+describe("seedOpMessages — an agent run seeded with a chat's history", () => {
+  it("keeps each harness row's tag, so the run can tell it from what the user said", async () => {
+    const { opMessageRowToChatParam, readOpMessages } = await import("../index.js");
+    const opId = `op_agent_seed_tags_${Date.now()}`;
+    const history: ChatCompletionMessageParam[] = [
+      { role: "user", content: "build the page" },
+      { role: "assistant", content: "Done." },
+      markHarnessRow({ role: "user", content: "You said it was done. Show the file." }, "nudge"),
+      markHarnessRow({ role: "user", content: "<recalled>earlier notes</recalled>" }, "recall"),
+    ];
+    seedOpMessages(opId, { cleanHistory: history, images: undefined }, "thanks");
+    const back = readOpMessages(opId).map(opMessageRowToChatParam).filter((m): m is ChatCompletionMessageParam => !!m);
+    expect(back.filter(isHarnessRow).map(harnessRowKind)).toEqual(["nudge", "recall"]);
+    expect(userAuthoredRows(back).filter((m) => m.role === "user").map((m) => String(m.content))).toEqual(["build the page", "thanks"]);
+  });
+
+  it("seeds a chat-thread turn's recall row right after the message, and nothing without one", async () => {
+    const { readOpMessages } = await import("../index.js");
+    const opId = `op_agent_seed_recall_${Date.now()}`;
+    seedOpMessages(opId, { cleanHistory: [{ role: "user", content: "earlier" }] }, "hi", "<recalled>RECALL</recalled>");
+    const rows = readOpMessages(opId);
+    expect(rows.map((r) => (r.content as { text: string }).text)).toEqual(["earlier", "hi", "<recalled>RECALL</recalled>"]);
+    expect(rows.at(-1)).toMatchObject({ role: "user", turnIdx: 0, content: { kind: "recall" } });
+
+    const plain = `${opId}-plain`;
+    seedOpMessages(plain, { cleanHistory: [] }, "hi");
+    expect(readOpMessages(plain)).toHaveLength(1);
   });
 });

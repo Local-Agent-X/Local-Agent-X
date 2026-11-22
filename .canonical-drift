@@ -78,7 +78,6 @@ running src x2
 RuntimeInfo src x2
 saveStore src x2
 ScanOptions src x2
-seedOpMessages src x2
 selectTools src x2
 sleep src x3
 slugify src x2

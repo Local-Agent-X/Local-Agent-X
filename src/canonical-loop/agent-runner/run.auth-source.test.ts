@@ -44,7 +44,7 @@ vi.mock("./runtime-surface.js", () => ({
   buildAgentRuntimeSurface: vi.fn(() => ({ kind: "agent-runner" })),
   installOpToolRuntime: vi.fn(() => ({ dispose: vi.fn() })),
 }));
-vi.mock("./seed-messages.js", () => ({ seedOpMessages: vi.fn() }));
+vi.mock("../chat-runner/seed-messages.js", () => ({ seedOpMessages: vi.fn() }));
 vi.mock("./collect-result.js", () => ({
   collectMessages: vi.fn(() => []),
   mapStopReason: vi.fn(() => "end_turn"),

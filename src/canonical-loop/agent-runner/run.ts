@@ -48,7 +48,7 @@ import { type CanonicalAgentOptions, DEFAULT_WALL_CLOCK_MS } from "./types.js";
 import { registerProviderAdapter, resolveAgentProviderRuntime } from "./register-adapter.js";
 import { buildAgentRuntimeSurface, installOpToolRuntime } from "./runtime-surface.js";
 import { sealDelegatedRuntime } from "../runtime-integrity.js";
-import { seedOpMessages } from "./seed-messages.js";
+import { seedOpMessages } from "../chat-runner/seed-messages.js";
 import { collectMessages, mapStopReason } from "./collect-result.js";
 import { prepareCanonicalAgentPrompt, splitForChatThread } from "./prompt.js";
 
@@ -188,7 +188,7 @@ export async function runAgentViaCanonical(
 
   trackOpForSession(op.id, sessionId, userMessage);
   writeOp(op);
-  seedOpMessages(op.id, history, userMessage, options.images, recalledContext);
+  seedOpMessages(op.id, { cleanHistory: history, images: options.images }, userMessage, recalledContext);
 
   // Bridge canonical opCancel → tool-execution AbortSignal so subprocesses
   // (self_edit's claude -p, build_app's codex --full-auto) actually die on

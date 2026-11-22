@@ -6,6 +6,7 @@ import {
   evaluateEgressForUrl,
   resolveAndPinHost,
 } from "../security/layer/index.js";
+import { canonicalizeHost, loopbackPinFor } from "../security/layer/ip-classification.js";
 import { readBodyHead } from "./request-body-head.js";
 
 export interface ProxyDialTarget {
@@ -107,10 +108,6 @@ function writeSocketAuthRequired(socket: Duplex): void {
 
 class ProxyPolicyError extends Error {}
 
-function cleanHostname(hostname: string): string {
-  return hostname.replace(/^\[/, "").replace(/\]$/, "").toLowerCase();
-}
-
 function policyDeny(
   reason: string,
   target: string,
@@ -131,7 +128,9 @@ async function resolveDialTarget(
   const decision = evaluateEgressForUrl(url.href, selfPort());
   if (!decision.allowed) throw policyDeny(decision.reason, url.href, onPolicyDeny);
 
-  const hostname = cleanHostname(url.hostname);
+  // The policy canonicalized the host this way to judge it; the dial must name
+  // the same host, or "localhost." is approved as loopback and then resolved.
+  const hostname = canonicalizeHost(url.hostname);
   const port = Number(url.port || (url.protocol === "https:" ? 443 : 80));
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     throw policyDeny("Blocked: invalid target port", url.href, onPolicyDeny);
@@ -139,9 +138,8 @@ async function resolveDialTarget(
 
   // Canonical policy has already restricted these loopback names/addresses to
   // the self server or an explicitly sanctioned local-service port.
-  if (hostname === "localhost") {
-    return { address: "127.0.0.1", family: 4, hostname, port };
-  }
+  const loopback = loopbackPinFor(hostname);
+  if (loopback) return { ...loopback, hostname, port };
   const literalFamily = isIP(hostname);
   if (literalFamily === 4 || literalFamily === 6) {
     return { address: hostname, family: literalFamily, hostname, port };

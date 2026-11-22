@@ -25,7 +25,16 @@ describe("strict local-only policy matrix", () => {
     "http://localhost:5173",
     "ws://localhost:7007/ws",
     "http://[::1]:11434/api/tags",
+    "http://localhost.:5173",
   ])("allows loopback URL %s", (url) => expect(isLoopbackUrl(url)).toBe(true));
+
+  // An ordinary client resolves these names through the OS and the network;
+  // only the pinning dialers make them loopback, so local-only mode does not.
+  it.each([
+    "http://localhost.localdomain:11434",
+    "http://ip6-localhost:11434",
+    "http://ip6-loopback:11434",
+  ])("does not take the alias name in %s as proof of loopback", (url) => expect(isLoopbackUrl(url)).toBe(false));
 
   it.each([
     "https://example.com",

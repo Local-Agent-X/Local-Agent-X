@@ -2,7 +2,8 @@ import { describe, it, expect, beforeEach } from "vitest";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { EventEmitter } from "node:events";
 import { authorizeRequest } from "./request-auth.js";
-import { getAuthFloodGuard, isLoopbackAddress } from "../server-utils.js";
+import { getAuthFloodGuard } from "../server-utils.js";
+import { isLoopbackAddress } from "../security/layer/ip-classification.js";
 import type { LAXConfig } from "../types.js";
 import { checkEndpointAccess, type RBACManager } from "../rbac.js";
 

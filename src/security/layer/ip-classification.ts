@@ -239,6 +239,38 @@ export function isLoopbackHost(host: string): boolean {
   return host === "127.0.0.1" || host === "::1" || LOOPBACK_HOSTNAMES.has(host);
 }
 
+/**
+ * True for a literal loopback ADDRESS: any of 127.0.0.0/8, ::1, or the
+ * IPv4-mapped form (::ffff:127.x.x.x) a dual-stack socket reports for a local
+ * client. For "is this the machine itself", where the whole block qualifies:
+ * a URL's canonicalized host (local-only mode, the fetched-content banner) and
+ * a request's client address (server/request-auth.ts). The port carve-outs
+ * use isLoopbackHost, which is narrow on purpose. A name is never an address:
+ * which names count is each caller's own decision (isLoopbackUrl in
+ * local-only-policy.ts).
+ */
+export function isLoopbackAddress(address: string | undefined): boolean {
+  if (!address) return false;
+  if (address === "::1") return true;
+  const v4 = address.startsWith("::ffff:") ? address.slice(7) : address;
+  const octets = /^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(v4);
+  return !!octets && octets.slice(1).every((part) => Number(part) <= 255);
+}
+
+/**
+ * The literal address a loopback alias name is dialed at, or null for any
+ * other host. A name that is resolved can be answered by the network or a
+ * poisoned hosts file, so a request the policy approved as "this machine"
+ * could be dialed elsewhere; pinning to the literal cannot. Both dialers use
+ * it: the shared fetch transport's dispatcher (tools/web-egress.ts) and the
+ * shell egress proxy (net/egress-proxy-core.ts), which pinned only
+ * "localhost" and resolved the rest. Takes a canonicalized host.
+ */
+export function loopbackPinFor(host: string): { address: "127.0.0.1" | "::1"; family: 4 | 6 } | null {
+  if (!LOOPBACK_HOSTNAMES.has(host)) return null;
+  return host.startsWith("ip6-") ? { address: "::1", family: 6 } : { address: "127.0.0.1", family: 4 };
+}
+
 /** Blocked hostnames: cloud-metadata and in-cluster-API endpoints — the actual
  *  SSRF targets this list exists for. Loopback aliases are NOT here; see
  *  LOOPBACK_HOSTNAMES above for why. */

@@ -20,7 +20,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 189 | 32 | XL | 1 |
-| `src/security/` | 168 | 64 | XL | 2 |
+| `src/security/` | 169 | 64 | XL | 2 |
 | `src/tools/` | 139 | 243 | XL | 9 |
 | `src/tool-execution/` | 106 | 91 | XL | 2 |
 | `src/canonical-loop/` | 92 | 294 | XL | 10 |

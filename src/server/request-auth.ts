@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { authorizeAppConnectorHttp } from "./app-connector-auth.js";
-import { corsHeaders, isLoopbackOrigin, isLoopbackAddress, checkRateLimit, getRateLimitKey, recordAuthFailure, getAuthFloodGuard, jsonResponse } from "../server-utils.js";
+import { corsHeaders, isLoopbackOrigin, checkRateLimit, getRateLimitKey, recordAuthFailure, getAuthFloodGuard, jsonResponse } from "../server-utils.js";
+import { isLoopbackAddress } from "../security/layer/ip-classification.js";
 import type { LAXConfig } from "../types.js";
 import type { RBACManager, Role } from "../rbac.js";
 
@@ -37,11 +38,15 @@ export function authorizeRequest(
     }
   }
   const clientIp = req.socket.remoteAddress || "unknown";
-  // Loopback clients (127.0.0.0/8, ::1) bypass throttling entirely — see the
-  // rationale on isLoopbackAddress. Skipping BOTH the token bucket and the
-  // flood guard prevents cold-boot cascades where the UI fires ~20 bootstrap
-  // fetches in parallel and gets 429'd on all of them, breaking the whole app
-  // until the buckets refill (~15 min for the flood-guard lockout).
+  // Loopback clients (127.0.0.0/8, ::1, and the IPv4-mapped form Node's
+  // dual-stack socket reports) bypass throttling entirely. The same-origin /
+  // cross-site checks above already reject any non-loopback origin, and a
+  // hostile local process can read the auth token from the data dir's
+  // config.json rather than brute-force it, so throttling loopback traffic
+  // has no security value. Skipping BOTH the token bucket and the flood guard
+  // prevents cold-boot cascades where the UI fires ~20 bootstrap fetches in
+  // parallel and gets 429'd on all of them, breaking the whole app until the
+  // buckets refill (~15 min for the flood-guard lockout).
   const trustedLocal = isLoopbackAddress(clientIp);
 
   if (!trustedLocal && url.pathname.startsWith("/api/") && !checkRateLimit(getRateLimitKey(req))) {

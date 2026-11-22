@@ -140,6 +140,33 @@ describe("egress proxy core", () => {
     });
   });
 
+  it("dials this machine for every loopback name, whatever DNS says the name is", async () => {
+    // The policy allows these names as this machine (the self port). A name
+    // that is then looked up can be answered by the network: a resolver that
+    // maps "ip6-localhost" elsewhere sent an approved loopback request off the
+    // machine. Each is pinned to the loopback literal instead, as the shared
+    // fetch transport pins them, and a trailing dot names the same host.
+    resolve4.mockResolvedValue(["93.184.216.34"]);
+    const dial = vi.fn(async (_target: ProxyDialTarget) => new Duplex({
+      read() {},
+      write(_chunk, _encoding, callback) { callback(); },
+    }));
+    const proxy = await startCore({ dial, selfPort: () => "7311", viaTag: "1.1 test-egress" });
+
+    for (const [name, address, family] of [
+      ["localhost", "127.0.0.1", 4],
+      ["localhost.", "127.0.0.1", 4],
+      ["localhost.localdomain", "127.0.0.1", 4],
+      ["ip6-localhost", "::1", 6],
+      ["ip6-loopback", "::1", 6],
+    ] as const) {
+      dial.mockClear();
+      expect(await connectThroughProxy(proxy, `${name}:7311`), name).toContain("200 Connection Established");
+      expect(dial.mock.calls[0][0], name).toMatchObject({ address, family, port: 7311 });
+    }
+    expect(resolve4).not.toHaveBeenCalled();
+  });
+
   it("fires onPolicyDeny for policy denials but not for allowed dials", async () => {
     resolve4.mockResolvedValue(["93.184.216.34"]);
     const denials: { target: string; reason: string }[] = [];

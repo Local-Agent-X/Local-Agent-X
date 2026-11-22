@@ -18,7 +18,7 @@ import {
   MEMORY_BLOCK_SINGLE,
 } from "./injection-patterns.js";
 import { mintedBlockBodies, rememberMintedBoundary } from "./external-boundaries.js";
-import { isLoopbackHost } from "./security/layer/ip-classification.js";
+import { canonicalizeHost, isLoopbackAddress, isLoopbackHost } from "./security/layer/ip-classification.js";
 import { externalContentClose, externalContentOpen, externalContentOpens } from "./external-content-markers.js";
 
 // Re-export the known-secret registry surface from its canonical home
@@ -199,18 +199,20 @@ export function redactKnownSecrets(content: string): string {
   return out;
 }
 
-// 127.0.0.0/8 (not just 127.0.0.1 — 127.x.x.x is the whole loopback block)
-// plus the loopback names and literals ip-classification owns. Deliberately
-// NOT "is this trustworthy" — it answers a narrower question (is this request
-// confined to this machine) that wrapExternalContent uses only to gate the
-// ALARM banner, never the underlying detection or the boundary wrap. An
-// unparseable/relative/missing URL is conservatively NOT loopback (the
-// fully-alarming behavior), and so is 0.0.0.0, the unspecified address.
-function isLoopbackUrl(url: string | undefined): boolean {
+// Was this content fetched from this machine: a loopback address (all of
+// 127.0.0.0/8, ::1) or one of the loopback names, each as ip-classification
+// defines it. The alias names count here because the fetch that produced the
+// content pins them to the loopback literal. Deliberately NOT "is this
+// trustworthy" — it answers a narrower question that wrapExternalContent uses
+// only to gate the ALARM banner, never the underlying detection or the
+// boundary wrap. An unparseable/relative/missing URL is conservatively NOT
+// loopback (the fully-alarming behavior), and so is 0.0.0.0, the unspecified
+// address.
+function fetchedFromThisMachine(url: string | undefined): boolean {
   if (!url) return false;
   try {
-    const hostname = new URL(url).hostname.toLowerCase().replace(/^\[|\]$/g, "");
-    return isLoopbackHost(hostname) || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname);
+    const host = canonicalizeHost(new URL(url).hostname);
+    return isLoopbackHost(host) || isLoopbackAddress(host);
   } catch {
     return false;
   }
@@ -267,7 +269,7 @@ export function wrapExternalContent(
     // source, the finding stays in the metadata (auditable, not silently
     // dropped) but without the alarm; at/above it, the banner fires exactly
     // as for any other source.
-    if (isLoopbackUrl(metadata?.url) && maxScore < MEMORY_BLOCK_SINGLE) {
+    if (fetchedFromThisMachine(metadata?.url) && maxScore < MEMORY_BLOCK_SINGLE) {
       quietFindingNote = `weak-injection-signal (loopback, below alarm floor): score=${maxScore.toFixed(2)} [${labels}]`;
     } else {
       warningBlock =

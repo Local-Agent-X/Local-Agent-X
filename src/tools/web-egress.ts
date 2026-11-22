@@ -3,7 +3,7 @@ import type { RequestInit as UndiciRequestInit, Response as UndiciResponse } fro
 import { getInternalAgentToken } from "../rbac.js";
 import { USER_HINTS, type BlockAction, type ToolResult } from "../types.js";
 import { resolveAndPinHost, evaluateEgressForUrl } from "../security/layer/index.js";
-import { isLoopbackHost, LOOPBACK_HOSTNAMES } from "../security/layer/ip-classification.js";
+import { isLoopbackHost, loopbackPinFor } from "../security/layer/ip-classification.js";
 import { reservedLoopbackPorts } from "../security/layer/security-config.js";
 import { assertSendAllowed } from "../net/egress-send.js";
 
@@ -207,9 +207,9 @@ export function createPinningDispatcher(): Agent {
         // assertLiteralIpEgressAllowed runs the port-checked policy on these
         // names on the initial URL and every redirect hop.
         const bare = hostname.replace(/^\[/, "").replace(/\]$/, "").toLowerCase();
-        if (LOOPBACK_HOSTNAMES.has(bare)) {
-          const v6 = bare.startsWith("ip6-");
-          cb(null, [{ address: v6 ? "::1" : "127.0.0.1", family: v6 ? 6 : 4 }]);
+        const loopback = loopbackPinFor(bare);
+        if (loopback) {
+          cb(null, [loopback]);
           return;
         }
         resolveAndPinHost(hostname).then((r) => {

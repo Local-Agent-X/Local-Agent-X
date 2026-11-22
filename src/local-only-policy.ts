@@ -1,6 +1,6 @@
 import { getRuntimeConfig } from "./config.js";
 import type { LAXConfig } from "./types.js";
-import { isPrivateIPv4, isPrivateIPv6 } from "./security/layer/ip-classification.js";
+import { canonicalizeHost, isLoopbackAddress, isPrivateIPv4, isPrivateIPv6 } from "./security/layer/ip-classification.js";
 import { destinationSpecsOf, hasCapability, policyRowOf, reachOf, type ToolRisk } from "./tool-registry.js";
 
 export const LOCAL_ONLY_BLOCK_MESSAGE =
@@ -15,14 +15,20 @@ export function isLocalOnlyMode(config: Pick<LAXConfig, "localOnlyMode"> = getRu
   return config.localOnlyMode === true;
 }
 
+/**
+ * A web URL whose request stays on this machine through ANY client: a loopback
+ * address (ip-classification.ts), or the name `localhost`. The other loopback
+ * alias names (localhost.localdomain, ip6-localhost, ip6-loopback) are left
+ * out on purpose: most callers hand the URL to an ordinary HTTP client, which
+ * resolves a name through the OS and the network, and only the two pinning
+ * dialers (loopbackPinFor) make those names safe.
+ */
 export function isLoopbackUrl(value: string): boolean {
   try {
     const url = new URL(value);
     if (!["http:", "https:", "ws:", "wss:"].includes(url.protocol)) return false;
-    const host = url.hostname.replace(/^\[/, "").replace(/\]$/, "").toLowerCase().replace(/\.$/, "");
-    if (host === "localhost" || host === "::1") return true;
-    const match = host.match(/^127\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
-    return !!match && match.slice(1).every((part) => Number(part) <= 255);
+    const host = canonicalizeHost(url.hostname);
+    return host === "localhost" || isLoopbackAddress(host);
   } catch {
     return false;
   }
@@ -46,7 +52,7 @@ export function isLoopbackOrPrivateUrl(value: string): boolean {
   } catch {
     return false;
   }
-  const bare = host.replace(/^\[|\]$/g, "").toLowerCase().replace(/\.$/, "");
+  const bare = canonicalizeHost(host);
   if (/^\d{1,3}(\.\d{1,3}){3}$/.test(bare)) return isPrivateIPv4(bare);
   if (bare.includes(":")) return isPrivateIPv6(bare);
   return false;

@@ -19,7 +19,10 @@
 import { resolveCredential } from "../auth/resolve.js";
 import { anthropicThinkingOffMode, anthropicUsesAdaptiveThinking, normalizeAnthropicModel, planAnthropicReasoning, usesAnthropicSubscriptionAuth } from "../anthropic-models.js";
 import { isMaxTokensRejection } from "../providers/adapters/openai-param-rejections.js";
+import { API_BASE, ANTHROPIC_VERSION } from "../anthropic-client/request.js";
+import { resolveBaseURL } from "../providers/registry.js";
 import type { ProviderId } from "../providers/provider-ids.js";
+import { anthropicStreamText, codexStreamText } from "./stream-text.js";
 import type { ProviderRequest } from "../providers/adapter/types.js";
 import { createLogger } from "../logger.js";
 import { detectMime } from "../tools/shared/image-binary-meta.js";
@@ -77,7 +80,7 @@ export async function callAnthropic(provider: "anthropic" | "anthropic-api", pro
     // this path's auth mode. Runtime ids pass through byte-identical, and the
     // CLI-proxy leg above normalizes inside the client itself.
     const wireModel = normalizeAnthropicModel(model);
-    const headers: Record<string, string> = { "Content-Type": "application/json", "anthropic-version": "2023-06-01", "x-api-key": apiKey };
+    const headers: Record<string, string> = { "Content-Type": "application/json", "anthropic-version": ANTHROPIC_VERSION, "x-api-key": apiKey };
     // No images → content stays the bare prompt string, so existing call
     // sites produce the exact request body they always have.
     const content: AnthropicUserContent = images && images.length > 0
@@ -86,7 +89,7 @@ export async function callAnthropic(provider: "anthropic" | "anthropic-api", pro
           { type: "text" as const, text: prompt },
         ]
       : prompt;
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
+    const res = await fetch(`${API_BASE}/v1/messages`, {
       method: "POST",
       headers,
       // Fable 5 / Opus 5 / Opus 4.7+ / Sonnet 5 reject `temperature` with a 400
@@ -146,8 +149,7 @@ async function callAnthropicViaCliProxy(token: string, prompt: string, model: st
         ]
       : prompt;
     const run = (async () => {
-      let acc = "";
-      for await (const event of streamAnthropicResponse({
+      const text = await anthropicStreamText(streamAnthropicResponse({
         // Without an explicit maxTokens the client defaults to the model's
         // full output budget (64k on Haiku) — dispatch callers pass tight
         // caps (200 for classifiers/rerank) and the subscription leg must
@@ -158,13 +160,8 @@ async function callAnthropicViaCliProxy(token: string, prompt: string, model: st
         disableThinking: true, effort: "low",
         messages: [{ role: "user", content } as never],
         systemPrompt: "", tools: [], signal: ac.signal,
-      })) {
-        // A transport error (e.g. CLI "Please run /login") means there is no
-        // valid completion — never return the error text as a response.
-        if (event.type === "error") throw new Error(event.error || "anthropic transport error");
-        if (event.type === "text") acc += event.delta || "";
-      }
-      return acc || null;
+      }));
+      return text || null;
     })().catch((e: Error) => {
       logger.warn(`anthropic (cli proxy) call threw: ${e.message}`);
       return null;
@@ -275,8 +272,12 @@ export async function callOpenAICompatible(
   }
 }
 
+/** A hosted provider's API base, from the provider registry that owns it.
+ *  Neither of these reads the context a local or custom provider needs. */
+const fixedBaseURL = (id: "openai" | "xai"): string => resolveBaseURL(id, { ollamaUrl: "" }) ?? "";
+
 export function callOpenAI(prompt: string, model: string, temperature: number, maxTokens: number, timeoutMs: number, images?: string[], responseFormat?: ProviderRequest["responseFormat"], reasoningEffort?: "low"): Promise<string | null> {
-  return callOpenAICompatible("openai", "openai", "https://api.openai.com/v1", prompt, model, temperature, maxTokens, timeoutMs, responseFormat, undefined, images, reasoningEffort);
+  return callOpenAICompatible("openai", "openai", fixedBaseURL("openai"), prompt, model, temperature, maxTokens, timeoutMs, responseFormat, undefined, images, reasoningEffort);
 }
 
 export function callXai(prompt: string, model: string, temperature: number, maxTokens: number, timeoutMs: number, images?: string[], responseFormat?: ProviderRequest["responseFormat"], reasoningEffort?: "low"): Promise<string | null> {
@@ -286,7 +287,7 @@ export function callXai(prompt: string, model: string, temperature: number, maxT
   // (identity-extract, claim-verify, intent-classifier, …) silently no-ops for
   // xAI users — classify-with-llm hits the xAI fallback that returns null
   // before reaching this dispatcher.
-  return callOpenAICompatible("xai", "xai", "https://api.x.ai/v1", prompt, model, temperature, maxTokens, timeoutMs, responseFormat, undefined, images, reasoningEffort);
+  return callOpenAICompatible("xai", "xai", fixedBaseURL("xai"), prompt, model, temperature, maxTokens, timeoutMs, responseFormat, undefined, images, reasoningEffort);
 }
 
 export async function callCodex(prompt: string, model: string, temperature: number, timeoutMs: number, images?: string[]): Promise<string | null> {
@@ -310,18 +311,15 @@ export async function callCodex(prompt: string, model: string, temperature: numb
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), timeoutMs);
     try {
-      let acc = "";
-      for await (const event of streamCodexResponse({
+      const text = await codexStreamText(streamCodexResponse({
         token: resolved.credential, model, temperature,
         // A short answer: the client's chat default "medium" is a reasoning pass
         // for nothing (the classifier's Codex leg says the same).
         reasoningEffort: "low",
         messages: [{ role: "user", content } as never],
         systemPrompt: "", tools: [], signal: ac.signal,
-      })) {
-        if (event.type === "text") acc += (event as { delta?: string }).delta || "";
-      }
-      return acc || null;
+      }), { signal: ac.signal });
+      return text || null;
     } finally {
       clearTimeout(timer);
     }

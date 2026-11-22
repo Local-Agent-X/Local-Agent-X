@@ -210,6 +210,7 @@ describe("classify-with-llm local busy-skip", () => {
 describe("classify-with-llm codex branch", () => {
   const yieldText = (delta: string) => (async function* () {
     yield { type: "text", delta };
+    yield { type: "done", stopReason: "completed" };
   })();
   const parse = (raw: string) => raw.trim();
 
@@ -251,6 +252,21 @@ describe("classify-with-llm codex branch", () => {
     const params: CodexCallParams = codexMock.streamCodexResponse.mock.calls[0][0];
     expect(params.signal).toBeInstanceOf(AbortSignal);
     expect(params.signal?.aborted).toBe(true);
+  });
+
+  it("a codex stream that closed before the reply finished is no verdict", async () => {
+    // What the real client does when its stream is cut (the abort above, a
+    // dropped connection): it yields the text that had arrived and ends with
+    // no stop reason. That text used to be parsed as the verdict, and a
+    // compaction's half summary was saved over the history it summarized.
+    codexMock.streamCodexResponse.mockImplementationOnce(() => (async function* () {
+      yield { type: "text", delta: "YES, the user asked for" };
+      yield { type: "done" };
+    })());
+    const out = await classifyWithLLM({
+      category: "test", role: "routing", systemPrompt: "s", userPrompt: "u", timeoutMs: 2000, parse,
+    });
+    expect(out).toBeNull();
   });
 
   it("a routing call runs the chat model at low effort", async () => {
@@ -304,6 +320,7 @@ describe("classify-with-llm codex branch", () => {
 describe("classify-with-llm providerOverride — the one explicit cross-provider caller", () => {
   const yieldText = (delta: string) => (async function* () {
     yield { type: "text", delta };
+    yield { type: "done", stopReason: "completed" };
   })();
   const parse = (raw: string) => raw.trim();
   const resolveProviderContextSpy = vi.fn();

@@ -1,5 +1,5 @@
 import { buildAnthropicRateLimitHint, normalizeAnthropicModel, anthropicUsesAdaptiveThinking, anthropicThinkingOffMode, anthropicMaxOutputTokens, planAnthropicReasoning } from "../anthropic-models.js";
-import { API_BASE, convertMessages } from "./request.js";
+import { API_BASE, ANTHROPIC_VERSION, convertMessages } from "./request.js";
 import { connectTimeout } from "../providers/connect-timeout.js";
 import {
   isDirectOAuthToken, unwrapDirectOAuthToken, buildOAuthHeaders,
@@ -146,7 +146,7 @@ export async function* streamViaAPI(options: StreamOptions): AsyncGenerator<Stre
     : {
         "Content-Type": "application/json",
         "x-api-key": token,
-        "anthropic-version": "2023-06-01",
+        "anthropic-version": ANTHROPIC_VERSION,
         // interleaved-thinking is GA (auto-enabled) under adaptive thinking; the
         // beta header is only meaningful for the legacy enabled-thinking models.
         ...(adaptive ? {} : { "anthropic-beta": "interleaved-thinking-2025-05-14" }),

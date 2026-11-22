@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 72 top-level dirs · 72 live · 0 with no live importer · 2104 non-test source files · 74 oversized · 257 nearing the size cap.
+**Totals:** 72 top-level dirs · 72 live · 0 with no live importer · 2105 non-test source files · 74 oversized · 257 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -87,7 +87,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/routing/` | 4 | 6 | M |  |
 | `src/phone-push/` | 3 | 5 | M |  |
 | `src/conversation/` | 2 | 3 | M |  |
-| `src/llm-dispatch/` | 2 | 2 | M |  |
+| `src/llm-dispatch/` | 2 | 3 | M |  |
 | `src/manifest-generator/` | 2 | 8 | M |  |
 | `src/types/` | 2 | 3 | S |  |
 | `src/pricing/` | 1 | 1 | S |  |

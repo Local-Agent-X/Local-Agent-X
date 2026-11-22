@@ -28,7 +28,7 @@
  */
 import { getRuntimeConfig } from "../config.js";
 import { resolveCredential } from "../auth/resolve.js";
-import { API_BASE as ANTHROPIC_API_BASE } from "../anthropic-client/request.js";
+import { API_BASE as ANTHROPIC_API_BASE, ANTHROPIC_VERSION } from "../anthropic-client/request.js";
 import { buildOAuthHeaders } from "../anthropic-client/oauth-direct.js";
 import { getAnthropicDirectToken } from "../auth/anthropic.js";
 import { buildAuthHeaders as buildCodexAuthHeaders } from "../codex-client/request.js";
@@ -197,7 +197,7 @@ async function listGemini(key: string): Promise<Listing> {
 }
 
 async function listFor(provider: ProviderId, key: string): Promise<Listing> {
-  if (provider === "anthropic-api") return listAnthropic({ "x-api-key": key, "anthropic-version": "2023-06-01" });
+  if (provider === "anthropic-api") return listAnthropic({ "x-api-key": key, "anthropic-version": ANTHROPIC_VERSION });
   if (provider === "anthropic") return listAnthropicSubscription();
   if (provider === "codex") return listCodex(key);
   if (provider === "gemini") return listGemini(key);

@@ -3,6 +3,8 @@ import type { AnthropicContent, AnthropicMessage } from "./types.js";
 import type { ThinkingBlock } from "./stream-events.js";
 
 export const API_BASE = "https://api.anthropic.com";
+/** The Messages API version every request names in its `anthropic-version` header. */
+export const ANTHROPIC_VERSION = "2023-06-01";
 
 // Global counter — guarantees unique tool_use IDs across all CLI proxy calls
 let _toolCallSeq = 0;

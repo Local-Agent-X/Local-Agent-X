@@ -13,6 +13,8 @@
 // version floor, tool-name billing-classifier workaround) live in one auditable
 // place and stream-api.ts stays a plain transport.
 
+import { ANTHROPIC_VERSION } from "./request.js";
+
 const DIRECT_OAUTH_PREFIX = "direct-oauth:";
 
 /** Wrap a raw bearer token so stream.ts routes it to the direct-HTTP OAuth path. */
@@ -101,7 +103,7 @@ export function resetClaudeCodeVersionForTest(): void {
 export function buildOAuthHeaders(bearer: string): Record<string, string> {
   return {
     "Content-Type": "application/json",
-    "anthropic-version": "2023-06-01",
+    "anthropic-version": ANTHROPIC_VERSION,
     "anthropic-beta": OAUTH_BETAS.join(","),
     "authorization": `Bearer ${bearer}`,
     "user-agent": claudeCodeUserAgent(),

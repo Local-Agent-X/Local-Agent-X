@@ -74,7 +74,7 @@ vi.mock("./anthropic-client/index.js", () => ({
 vi.mock("./codex-client/index.js", () => ({
   streamCodexResponse: vi.fn(async function* () {
     yield { type: "text", delta: "codex-reply" };
-    yield { type: "done" };
+    yield { type: "done", stopReason: "completed" };
   }),
 }));
 
@@ -279,6 +279,16 @@ describe("dispatch request shape (fetch stubbed — no network)", () => {
       { type: "image_url", image_url: { url: "data:image/png;base64,QUJD" } },
       { type: "text", text: "judge this" },
     ]);
+  });
+
+  it("codex: a stream that closed before the reply finished is no completion", async () => {
+    // The client ends a dropped stream like a finished one, minus the stop
+    // reason; the text that had arrived used to come back as the answer.
+    vi.mocked(streamCodexResponse).mockImplementationOnce(async function* () {
+      yield { type: "text", delta: '{"facts": [{"content": "half a fa' };
+      yield { type: "done" };
+    } as never);
+    expect(await dispatch({ prompt: "extract", provider: "codex" })).toBeNull();
   });
 
   // A VALID strict schema — strict mode requires `required` covering every

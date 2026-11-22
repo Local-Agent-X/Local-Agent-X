@@ -22,6 +22,7 @@
 import { getRuntimeConfig } from "../config.js";
 import { dispatchNumCtx, isModelResident, isServingChat, warmModel } from "../local-runtimes/residency.js";
 import { localModelSizeBytes } from "../llm-dispatch/ollama.js";
+import { anthropicStreamText, codexStreamText } from "../llm-dispatch/stream-text.js";
 import type { Logger } from "../logger.js";
 
 // Budgets below this cold-skip a non-resident local model instead of
@@ -91,20 +92,12 @@ export async function resolveProviderCall(input: ProviderCallInput): Promise<Pro
         ...(role === "review" ? {} : { effort: "low" as const }),
         signal: linkedSignal,
       });
-      let acc = "";
-      for await (const event of stream) {
-        // A transport `error` event (e.g. the Claude CLI reporting
-        // "Please run /login" when logged out) means there is NO valid
-        // response. Abandon the call so the caller falls back to its
-        // regex/heuristic verdict — never treat the error text, or a
-        // truncated partial reply, as a real classification. Without this,
-        // an auth-error string was accepted as a compaction "summary" and
-        // persisted over real message history.
-        if (event.type === "error") throw new Error(event.error || "anthropic transport error");
-        if (event.type === "text") acc += event.delta || "";
-        if (acc.length >= maxChars) break;
-      }
-      return acc;
+      // No maxTokens: a review runs on the chat model, which may think whatever
+      // disableThinking says, and thinking is spent from the same cap, so the
+      // derived budget could go to reasoning and leave no answer. The reader's
+      // maxChars cut bounds the call instead. A failed or cut request throws
+      // (stream-text.ts), so the caller falls back to its regex verdict.
+      return anthropicStreamText(stream, { maxChars });
     })());
   } else if (provider === "codex") {
     return callResult((async () => {
@@ -140,12 +133,8 @@ export async function resolveProviderCall(input: ProviderCallInput): Promise<Pro
         reasoningEffort: role === "review" || timeoutMs > defaultTimeoutMs ? undefined : "low",
         signal: linkedSignal,
       });
-      let acc = "";
-      for await (const event of stream) {
-        if (event.type === "text") acc += event.delta || "";
-        if (acc.length >= maxChars) break;
-      }
-      return acc;
+      // A stream that closed before the reply finished throws (stream-text.ts).
+      return codexStreamText(stream, { maxChars, signal: linkedSignal });
     })());
   } else if (provider === "openai") {
     return callResult((async () => {

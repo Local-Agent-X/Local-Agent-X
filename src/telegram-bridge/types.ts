@@ -8,10 +8,6 @@ export const logger = createLogger("telegram-bridge");
 // — the bridge already owns inbound/outbound side-effects so keeping the
 // voice-vs-text decision local is the smaller surgery.
 export const _voiceMirrorForChat = new Set<string>();
-// Tracks chats we've already told "voice engine is down" so the hint only
-// fires once per server-uptime per chat — avoids spamming every reply when
-// the engine is offline. Resets on server restart so a fresh boot re-arms.
-export const _voiceFailHintSent = new Set<string>();
 
 export interface TelegramBridgeConfig {
   dataDir: string;

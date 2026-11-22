@@ -52,7 +52,6 @@ ok src x2
 opEditedSourceUnverified src x2
 OrchestratorState src x2
 PageResult src x2
-PeerState src x2
 PlanStep src x2
 prompt src x2
 READ_ONLY_ACTIONS src x2
@@ -70,7 +69,6 @@ resetCircuit src x2
 resolveConflicts src x2
 RestoreResult src x3
 ReviewVerdict src x2
-RtcIceCandidate src x2
 Rule src x2
 running src x2
 RuntimeInfo src x2

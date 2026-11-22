@@ -28,12 +28,12 @@
 // STT/LLM/TTS consumers attach to the frame stream via the factory registered
 // with setVoiceSessionFactory() below.
 
-import { WebSocketServer, WebSocket, type RawData } from "ws";
-import type { IncomingMessage, Server } from "node:http";
+import type { RawData } from "ws";
+import type { Server } from "node:http";
 
 import { createLogger } from "../logger.js";
-import { isLoopbackOrigin } from "../server-utils.js";
-import { authorizeUpgrade, WS_UNAUTHORIZED } from "../server/ws-operator-auth.js";
+import { serveOperatorSocket } from "../server/ws-operator-auth.js";
+import type { RtcIceCandidate } from "../webrtc/werift.js";
 import { createPeerAudioRouter } from "./voice-peer-session.js";
 import type { VoiceDevice } from "../channel-context.js";
 const logger = createLogger("voice.audio-ws");
@@ -127,16 +127,8 @@ export function getVoiceSessionFactory(): VoiceSessionFactory {
 // When a client's `hello` requests transport:"webrtc", audio flows over a
 // VoicePeer (mic in / TTS out) while this socket carries only SDP/ICE
 // signaling + the existing JSON control events. Absent/"pcm" → unchanged
-// binary-PCM-over-WS path. Mirrors the voice-peer.ts RtcIceCandidate shape
-// (capital L in sdpMLineIndex); defined locally so the boot graph never
-// pulls in werift via voice-peer.ts (the factory dynamic-imports it lazily).
-
-/** Trickle ICE candidate wire shape — must match voice-peer.ts. */
-interface RtcIceCandidate {
-  candidate: string;
-  sdpMid: string | null;
-  sdpMLineIndex: number | null;
-}
+// binary-PCM-over-WS path. The peer is loaded lazily by the factory below, so
+// werift never enters the boot graph through this file.
 
 /** The slice of VoicePeer the WS handler drives. */
 interface VoicePeerLike {
@@ -165,59 +157,10 @@ export function setVoicePeerFactory(f: VoicePeerFactory): void {
 }
 
 export function setupVoiceWebSocket(server: Server, authToken: string, maxPayloadBytes: number): void {
-  // Use noServer so we can route by path manually. When multiple
-  // WebSocketServers attach via {server, path}, each one's upgrade handler
-  // aborts requests whose path doesn't match ITS configured path with a
-  // 400 response — not "leave the socket for the other WSS." So two
-  // path-attached WSS on one server fight each other and the second one
-  // never sees its requests. Standard ws-library workaround: noServer +
-  // manual upgrade routing by path. maxPayload caps a single frame at the
-  // configured upload limit (ws defaults to an unbounded-feeling 100 MiB).
-  const wss = new WebSocketServer({ noServer: true, maxPayload: maxPayloadBytes });
-
-  server.on("upgrade", (req, socket, head) => {
-    try {
-      const u = new URL(req.url || "/", "http://localhost");
-      if (u.pathname !== "/ws/voice") return; // not our path — leave socket alone
-      // Reject cross-origin WS handshakes (cross-site WebSocket hijacking) —
-      // browsers always send Origin; a non-loopback Origin is a cross-site page.
-      // The broker voice bridge connects to loopback as the operator (no Origin)
-      // and faces the operator-token gate below.
-      const origin = req.headers.origin;
-      if (origin && !isLoopbackOrigin(origin)) { try { socket.destroy(); } catch {} return; }
-      const hasToken = u.searchParams.get("token") ? "yes" : "no";
-      // The path only: the query carries the operator token itself.
-      logger.info(`[voice-ws] upgrade hit: path=${u.pathname} hasToken=${hasToken}`);
-      wss.handleUpgrade(req, socket as import("node:net").Socket, head, (ws) => {
-        wss.emit("connection", ws, req);
-      });
-    } catch (e) {
-      logger.warn(`[voice-ws] upgrade error: ${(e as Error).message}`);
-      try { socket.destroy(); } catch {}
-    }
-  });
-
-  wss.on("connection", (ws: WebSocket, req: IncomingMessage) => {
-    // Auth: query param or subprotocol "lax-auth,<token>".
-    const url = new URL(req.url || "/", "http://localhost");
-    let token = url.searchParams.get("token") || "";
-    if (!token) {
-      const protocols = req.headers["sec-websocket-protocol"] || "";
-      const parts = protocols.split(",").map(s => s.trim());
-      const idx = parts.indexOf("lax-auth");
-      if (idx >= 0 && parts[idx + 1]) token = parts[idx + 1];
-    }
-    // Upgrade gate: the operator token only (loopback). Clean code + reason,
-    // never a silent hang (constitution §7).
-    const auth = authorizeUpgrade(token, authToken);
-    if (!auth.ok) {
-      const remote = req.socket.remoteAddress || "unknown";
-      logger.warn(`[voice-ws] auth rejected from ${remote} — ${auth.reason}`);
-      ws.close(WS_UNAUTHORIZED, auth.reason || "Unauthorized");
-      return;
-    }
-    logger.info(`[voice-ws] connection accepted from ${req.socket.remoteAddress} (${auth.principal})`);
-
+  // The upgrade, the cross-site Origin refusal and the operator token are the
+  // chat socket's (server/ws-operator-auth.ts); every call is worth a line here.
+  const voiceSocket = { path: "/ws/voice", operatorToken: authToken, maxPayloadBytes, logger, tag: "voice-ws", logConnections: true };
+  serveOperatorSocket(server, voiceSocket, (ws) => {
     let sessionId = "";
     let session: VoiceSession | null = null;
     let closed = false;

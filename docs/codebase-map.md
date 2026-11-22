@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 72 top-level dirs · 72 live · 0 with no live importer · 2112 non-test source files · 73 oversized · 258 nearing the size cap.
+**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2113 non-test source files · 73 oversized · 258 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -32,7 +32,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/data-lineage/` | 61 | 12 | L |  |
 | `src/browser/` | 55 | 95 | XL | 5 |
 | `src/agency/` | 49 | 40 | XL |  |
-| `src/chat-ws/` | 49 | 24 | L |  |
+| `src/chat-ws/` | 49 | 23 | L |  |
 | `src/tool-policy/` | 48 | 22 | L |  |
 | `src/local-runtimes/` | 45 | 28 | XL |  |
 | `src/threat/` | 43 | 13 | L |  |
@@ -48,11 +48,11 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/app-runtime/` | 23 | 13 | L |  |
 | `src/sandbox/` | 23 | 16 | L | 1 |
 | `src/protocols/` | 21 | 51 | XL |  |
+| `src/server/` *(entrypoint)* | 20 | 77 | XL | 4 |
 | `src/autonomy/` | 19 | 6 | M |  |
 | `src/net/` | 19 | 12 | L |  |
 | `src/orchestrator/` | 19 | 24 | L |  |
-| `src/server/` *(entrypoint)* | 19 | 77 | XL | 4 |
-| `src/voice/` | 19 | 80 | XL | 1 |
+| `src/voice/` | 18 | 80 | XL | 1 |
 | `src/agents/` | 17 | 14 | L |  |
 | `src/cognition/` | 17 | 34 | XL |  |
 | `src/persistence/` | 16 | 3 | M |  |
@@ -65,21 +65,22 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/ari-kernel/` | 12 | 12 | M |  |
 | `src/integrations/` | 12 | 15 | M |  |
 | `src/sync/` | 12 | 27 | L |  |
-| `src/whatsapp-bridge/` | 12 | 8 | M | 1 |
 | `src/app-scaffold/` | 11 | 7 | M |  |
+| `src/whatsapp-bridge/` | 11 | 8 | M | 1 |
 | `src/calendar/` | 10 | 10 | M |  |
 | `src/agent-guards/` | 9 | 13 | L |  |
 | `src/codex-client/` | 9 | 7 | M |  |
 | `src/plugin-system/` | 9 | 10 | L | 1 |
 | `src/screen-stream/` | 9 | 12 | L |  |
 | `src/autopilot/` | 8 | 14 | L | 1 |
-| `src/bridge-voice/` | 8 | 5 | S |  |
+| `src/bridge-voice/` | 8 | 6 | M |  |
 | `src/mcp-client/` | 8 | 11 | L | 1 |
 | `src/telegram-bridge/` | 8 | 6 | M |  |
 | `src/auto-build/` | 7 | 61 | XL | 1 |
 | `src/android/` | 6 | 8 | M |  |
 | `src/credentials/` | 6 | 1 | S |  |
 | `src/publish-review/` | 6 | 8 | M |  |
+| `src/webrtc/` | 6 | 1 | S |  |
 | `src/embedding-providers/` | 4 | 8 | M |  |
 | `src/holdout/` | 4 | 3 | S |  |
 | `src/hooks/` | 4 | 3 | M |  |
@@ -580,7 +581,7 @@ job. Comments are free: never cut them to fit.
 - `src/tools/process-session.ts#startSession` — 60+ own code lines (cap 100)
 - `src/tools/process-tools-defs.ts#processRestartTool.execute` — 60+ own code lines (cap 100)
 - `src/tools/telegram-tools.ts#telegramSend.execute` — 60+ own code lines (cap 100)
-- `src/voice/audio-ws.ts#ws.on:callback@265` — 60+ own code lines (cap 100)
+- `src/voice/audio-ws.ts#ws.on:callback@208` — 60+ own code lines (cap 100)
 - `src/voice/voice-session/index.ts#createVoiceSessionFactory:returned` — 60+ own code lines (cap 100)
 - `src/voice/voice-session/settings.ts#resolveVoiceSettings` — 60+ own code lines (cap 100)
 - `src/voice/voice-session/turn-runner.ts#runAgentTurn` — 60+ own code lines (cap 100)

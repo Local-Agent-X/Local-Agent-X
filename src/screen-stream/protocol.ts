@@ -18,6 +18,7 @@ import type {
   ScreenInputEvent,
 } from "../broker-transport/vendor/protocol.js";
 import { parseScreenInputEvent } from "../broker-transport/vendor/protocol.js";
+import type { RtcIceCandidate } from "../webrtc/werift.js";
 
 export { buildClosed, buildDisplays, buildError, buildFocus, parseScreenInputEvent } from "../broker-transport/vendor/protocol.js";
 export type { RtcClosedFrame, RtcDisplaysFrame, RtcErrorFrame, RtcFocusFrame, ScreenInputEvent };
@@ -28,12 +29,6 @@ export interface RtcSdp {
   sdp: string;
 }
 
-/** Minimal ICE candidate shape exchanged trickle-style (RTCIceCandidateInit subset). */
-export interface RtcIceCandidate {
-  candidate: string;
-  sdpMid?: string | null;
-  sdpMLineIndex?: number | null;
-}
 
 // ── phone → desktop ──
 

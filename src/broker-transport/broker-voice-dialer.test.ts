@@ -7,7 +7,8 @@ import { describe, it, expect, vi } from "vitest";
 import { BrokerVoiceDialer, type VoicePeerLike } from "./broker-voice-dialer.js";
 import { ICE_GRACE_MS } from "./vendor/protocol.js";
 import type { SocketAdapter, CloseReason } from "./vendor/socket-adapter.js";
-import type { VoicePeerHandlers, RtcIceCandidate } from "../voice/voice-peer.js";
+import type { VoicePeerHandlers } from "../voice/voice-peer.js";
+import type { RtcIceCandidate } from "../webrtc/werift.js";
 import type { ControlTransport, IceServerConfig } from "../screen-stream/peer.js";
 import type { VoiceSession, VoiceSessionContext } from "../voice/audio-ws.js";
 

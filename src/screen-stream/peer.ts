@@ -15,7 +15,7 @@ import type {
   RTCIceCandidate,
 } from "werift";
 import type { StreamReport } from "./bitrate-ladder.js";
-import type { RtcIceCandidate } from "./protocol.js";
+import { loadWerift, type PeerState, type RtcIceCandidate, type WeriftModule } from "../webrtc/werift.js";
 import { DATA_CHANNEL } from "../broker-transport/vendor/protocol.js";
 import { VP8_PAYLOAD_TYPE, VP8_CLOCK_RATE } from "./ffmpeg-capture.js";
 import { createLogger } from "../logger.js";
@@ -23,23 +23,6 @@ import { watchPeerDiagnostics, logChannelState, type PeerDiagnostics } from "./p
 import { weriftIceServers } from "./ice-servers.js";
 
 const logger = createLogger("screen-stream.peer");
-
-// werift is a heavy WebRTC stack and live-screen is an on-demand, unreleased
-// feature. Load it LAZILY (dynamic import in `create()`) so it never enters the
-// module graph at boot. peer.ts is reachable from the chat-ws import chain, so a
-// static `import … from "werift"` makes a missing/unbundled werift a fatal
-// ERR_MODULE_NOT_FOUND that takes the whole app down on startup. With the lazy
-// import, an absent dep degrades just the screen-stream feature (the call site
-// catches the rejected import and reports "couldn't start live screen").
-// Type-only imports above are erased at compile time and carry no runtime cost.
-type WeriftModule = typeof import("werift");
-let _weriftPromise: Promise<WeriftModule> | null = null;
-function loadWerift(): Promise<WeriftModule> {
-  return (_weriftPromise ??= import("werift"));
-}
-
-/** Peer connection states forwarded to the signaling machine. */
-export type PeerState = "new" | "connecting" | "connected" | "disconnected" | "failed" | "closed";
 
 export interface PeerHandlers {
   /** A local ICE candidate to trickle to the phone (null = gathering complete). */

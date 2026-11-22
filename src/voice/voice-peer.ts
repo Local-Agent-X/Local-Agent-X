@@ -36,39 +36,12 @@ import type { ControlTransport, IceServerConfig } from "../screen-stream/peer.js
 import { weriftIceServers } from "../screen-stream/ice-servers.js";
 import { DATA_CHANNEL } from "../broker-transport/vendor/protocol.js";
 import { createLogger } from "../logger.js";
+import { loadWerift, type PeerState, type RtcIceCandidate, type WeriftModule } from "../webrtc/werift.js";
 
 const logger = createLogger("voice.peer");
 
 /** STT engine sample rate — onMicPcm frames are resampled to this. */
 const MIC_SAMPLE_RATE = 16000;
-
-// werift is a heavy WebRTC stack and voice-over-WebRTC is an on-demand feature.
-// Load it LAZILY (dynamic import in create()) so it never enters the module
-// graph at boot — identical reasoning to screen-stream/peer.ts: a static import
-// would make a missing/unbundled werift a fatal ERR_MODULE_NOT_FOUND at startup,
-// whereas the lazy import degrades just this feature (the call site catches the
-// rejected import). Type-only imports above are erased at compile time.
-type WeriftModule = typeof import("werift");
-let _weriftPromise: Promise<WeriftModule> | null = null;
-function loadWerift(): Promise<WeriftModule> {
-  return (_weriftPromise ??= import("werift"));
-}
-
-/** Peer connection states forwarded to the signaling machine. */
-export type PeerState = "new" | "connecting" | "connected" | "disconnected" | "failed" | "closed";
-
-/**
- * Trickle ICE candidate wire shape. Mirrors screen-stream's RtcIceCandidate
- * field names (candidate / sdpMid / sdpMLineIndex) so the same mobile signaling
- * code path works for both; defined locally rather than imported from
- * screen-stream/protocol.ts to avoid coupling the voice feature to the screen
- * feature's protocol module (separate subsystems, no shared dependency).
- */
-export interface RtcIceCandidate {
-  candidate: string;
-  sdpMid: string | null;
-  sdpMLineIndex: number | null;
-}
 
 export interface VoicePeerHandlers {
   /** A local ICE candidate to trickle to the phone (null = gathering complete). */

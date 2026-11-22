@@ -27,9 +27,9 @@ import {
   buildDisplays,
   buildFocus,
   type RtcInboundFrame,
-  type RtcIceCandidate,
   type RtcOutboundFrame,
 } from "./protocol.js";
+import type { RtcIceCandidate } from "../webrtc/werift.js";
 import { ScreenInputController, describeDisplays } from "./screen-input.js";
 import { queryEditableFocus } from "./focus-watch.js";
 import { DATA_CHANNEL } from "../broker-transport/vendor/protocol.js";

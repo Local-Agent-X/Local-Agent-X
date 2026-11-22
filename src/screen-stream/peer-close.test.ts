@@ -10,7 +10,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import * as werift from "werift";
 import { ScreenPeer, type ControlTransport } from "./peer.js";
 import { VoicePeer } from "../voice/voice-peer.js";
-import type { RtcIceCandidate } from "./protocol.js";
+import type { RtcIceCandidate } from "../webrtc/werift.js";
 
 interface IceConnection { state: string; protocols: unknown[] }
 const proto = (werift as unknown as { Connection: { prototype: { gatherCandidates: (...a: unknown[]) => Promise<void> } } })

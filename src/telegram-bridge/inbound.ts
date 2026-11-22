@@ -1,10 +1,9 @@
 import { basename } from "node:path";
-import { encodeWavToOgg, isFfmpegAvailable, transcribeOggBuffer, getVoicePref, splitForVoiceChunks } from "../bridge-voice/index.js";
-import { synthesize } from "../voice/index.js";
+import { transcribeOggBuffer } from "../bridge-voice/index.js";
+import { sendVoiceOrTextReply, type ReplyDeliveryProgress } from "../bridge-voice/reply.js";
 import { getRuntimeConfig } from "../config.js";
 import { apiCall, downloadTelegramFile, sendMessage, sendVoice } from "./api.js";
-import { _voiceFailHintSent, _voiceMirrorForChat, logger } from "./types.js";
-import type { BridgeReply } from "../whatsapp-bridge/types.js";
+import { _voiceMirrorForChat, logger } from "./types.js";
 
 /**
  * Detect voice/audio/photo/video/document messages, download the file, and
@@ -68,100 +67,22 @@ export async function transcribeInboundVoice(msg: any, token: string, chatId: st
 }
 
 /**
- * Send the agent's reply, choosing voice vs text per-chat. Voice mode is
- * active when the user has /voice on, OR when this turn was triggered by
- * an inbound voice note (mirror-the-channel for that one reply).
- *
- * Long replies in voice mode: send the FIRST sentence as a voice note,
- * then the full text as a follow-up message. Voice notes much over a
- * minute feel obnoxious in messaging apps.
- *
- * Failure paths: any TTS / encode / send-voice failure falls back to
- * sendMessage(text) so the user always gets the reply.
+ * Send the agent's reply to a Telegram chat, by voice or by text
+ * (bridge-voice/reply.ts decides and falls back). Voice mode is on when the
+ * chat has /voice on, or when this turn answers a voice note.
  */
 export async function dispatchReply(
   token: string,
   chatId: string,
   textForWire: string,
   speakable: string,
-  progress?: Pick<BridgeReply, "isDeliveryPartComplete" | "acknowledgeDeliveryPart" | "readDeliveryPlan" | "writeDeliveryPlan">,
+  progress?: ReplyDeliveryProgress,
 ): Promise<boolean> {
-  const textProgress = (prefix: string) => ({
-    prefix,
-    isComplete: progress?.isDeliveryPartComplete,
-    acknowledge: progress?.acknowledgeDeliveryPart,
+  return sendVoiceOrTextReply({
+    platform: "telegram", chatId, mirrorVoice: _voiceMirrorForChat.has(chatId), textForWire, speakable, progress,
+    sendText: (text, prefix) => sendMessage(token, chatId, text, {
+      prefix, isComplete: progress?.isDeliveryPartComplete, acknowledge: progress?.acknowledgeDeliveryPart,
+    }),
+    sendVoice: (ogg) => sendVoice(token, chatId, ogg),
   });
-  let plan = progress?.readDeliveryPlan?.();
-  if (!plan) {
-    const wantVoice = getVoicePref("telegram", chatId) || _voiceMirrorForChat.has(chatId);
-    plan = { mode: wantVoice ? "voice" : "text" };
-    await progress?.writeDeliveryPlan?.(plan);
-  }
-  if (plan.mode === "text") {
-    return sendMessage(token, chatId, textForWire, textProgress("text"));
-  }
-
-  const sendWithHintOnce = async (text: string, hint: string): Promise<boolean> => {
-    if (_voiceFailHintSent.has(chatId)) {
-      return sendMessage(token, chatId, text, textProgress("fallback-text"));
-    }
-    const sent = await sendMessage(token, chatId, `${text}\n\n— ${hint}`, textProgress("fallback-text"));
-    if (sent) _voiceFailHintSent.add(chatId);
-    return sent;
-  };
-
-  const sendDurableFallback = async (hint: string): Promise<boolean> => {
-    if (plan?.mode !== "fallback") {
-      const includeHint = !_voiceFailHintSent.has(chatId);
-      plan = { mode: "fallback", fallbackText: includeHint ? `${textForWire}\n\n--- ${hint}` : textForWire };
-      await progress?.writeDeliveryPlan?.(plan);
-    }
-    const sent = await sendMessage(token, chatId, plan.fallbackText ?? textForWire, textProgress("fallback-text"));
-    if (sent && plan.fallbackText !== textForWire) _voiceFailHintSent.add(chatId);
-    return sent;
-  };
-
-  if (plan.mode === "fallback") {
-    return sendDurableFallback("Voice engine isn't reachable. Send /voice start lite to bring one up (cold start ~90-120s), then try again.");
-  }
-
-  if (!(await isFfmpegAvailable())) {
-    logger.warn("[telegram] voice reply requested but ffmpeg unavailable — sending text");
-    return sendDurableFallback("Voice replies need ffmpeg installed on the server. Falling back to text until that's fixed.");
-  }
-
-  // Voice-only mode: split long replies into multiple voice notes at
-  // paragraph/sentence boundaries. The previous "speak first sentence,
-  // send rest as text" was wrong for the "transcribe this report so I
-  // can listen" use case — user wanted the WHOLE thing audible.
-  // Telegram voice notes hold ~50MB / over an hour at Opus, so we have
-  // huge headroom. Cap each chunk at 3000 chars (~2-3 min audio) to
-  // keep individual notes loadable on slow connections.
-  const chunks = splitForVoiceChunks(speakable, 3000);
-  let allSent = true;
-  for (let index = 0; index < chunks.length; index++) {
-    const chunk = chunks[index];
-    const part = `voice:${index}`;
-    if (progress?.isDeliveryPartComplete?.(part)) continue;
-    try {
-      const wav = await synthesize(chunk);
-      const ogg = await encodeWavToOgg(wav);
-      const ok = await sendVoice(token, chatId, ogg);
-      if (ok) {
-        await progress?.acknowledgeDeliveryPart?.(part);
-        continue;
-      }
-      logger.warn("[telegram] sendVoice returned false on chunk — bailing to text fallback");
-      allSent = false;
-      break;
-    } catch (e) {
-      logger.warn(`[telegram] voice synthesis failed on chunk: ${(e as Error).message} — bailing to text fallback`);
-      allSent = false;
-      break;
-    }
-  }
-  if (!allSent) {
-    return sendDurableFallback("Voice engine isn't reachable. Send /voice start lite to bring one up (cold start ~90-120s), then try again.");
-  }
-  return true;
 }

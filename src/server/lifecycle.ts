@@ -3,6 +3,7 @@ import { writeFileSync } from "node:fs";
 import { getLaxDir } from "../lax-data-dir.js";
 import { join } from "node:path";
 import { setupChatWebSocket } from "../chat-ws/index.js";
+import { operatorSocketPaths } from "./ws-operator-auth.js";
 import { setInboxAnswerer } from "../chat-ws/inbox-frames.js";
 import { setLinkedChatStarter, startLinkedChat } from "../session/start-linked-chat.js";
 import { actOnInbox, mutateInbox, rateFromInbox, replyFromInbox } from "../routes/inbox.js";
@@ -69,18 +70,17 @@ export function createHttpServer(requestHandler: RequestHandler, deps: {
   return { server, chatWs };
 }
 
-// Known WS endpoints. Each owning handler claims its own path via handleUpgrade;
+// Each WS endpoint claims its own path (ws-operator-auth.ts serveOperatorSocket);
 // this terminal listener destroys upgrade sockets for any OTHER path so an
 // unmatched upgrade can't sit half-open. Every `server.on("upgrade")` listener
 // fires for every upgrade, so this only acts on paths no real handler owns —
 // without it, chat-ws and voice-ws each silently `return` on a foreign path and
 // the socket leaks (unauthenticated connection-exhaustion DoS).
-const KNOWN_WS_PATHS = new Set(["/ws/chat", "/ws/voice"]);
 function installUpgradeReaper(server: Server): void {
   server.on("upgrade", (req, socket) => {
     try {
       const u = new URL(req.url || "/", "http://localhost");
-      if (KNOWN_WS_PATHS.has(u.pathname)) return; // owned by a real handler
+      if (operatorSocketPaths(server).has(u.pathname)) return; // owned by a real handler
     } catch { /* fall through to destroy a malformed upgrade */ }
     try { socket.destroy(); } catch { /* already gone */ }
   });

@@ -78,5 +78,4 @@ export type {
   RtcInboundFrame,
   RtcOutboundFrame,
   RtcSdp,
-  RtcIceCandidate,
 } from "./protocol.js";

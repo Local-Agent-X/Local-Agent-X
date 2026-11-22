@@ -30,10 +30,13 @@
  * aside and what waits. The two stops below are different: they mean the base
  * itself can no longer be trusted.
  *
- * (2) HALT ON CONFLICT — never auto-resolve. If any mergeWorktree returns
- *     {merged:false} we STOP the whole build (no next wave), surface a clear
- *     error naming the chunk + its PRESERVED branch, and clean up the other
- *     worktrees. Silent corruption is the one unacceptable outcome.
+ * (2) A CONFLICT IN CODE IS NEVER RESOLVED HERE. A chunk whose merge conflicts
+ *     is set aside with its branch PRESERVED, named in the run's summary; the
+ *     chunks after it still merge, since a failed merge is aborted in its own
+ *     worktree and leaves the base as it was. The one exception is the files
+ *     every chunk edits (ARCHITECTURE.md, the generated map): those are settled
+ *     by rule (shared-file-merge.ts) and judged by the re-gate. Silent
+ *     corruption is the one unacceptable outcome.
  * (3) RE-GATE THE MERGED TREE (S4). Rule 2 catches TEXTUAL conflicts only; a
  *     textually-clean merge can still be SEMANTICALLY broken (same-wave siblings
  *     build in disjoint worktrees, so their COMBINED tree is never built by any
@@ -62,6 +65,7 @@ import { isPhaseGatePause } from "../chunk-review/index.js";
 import { handleAction } from "./handle-action.js";
 import { reGateMergedTree, warnFootprintEscapes } from "./merged-regate.js";
 import { anythingSetAside, createSetAsideLedger, holdBackWaiting, setAsideSummary, type SetAsideLedger } from "./set-aside.js";
+import { createSharedFileMerge, regenerateSharedFiles, type SharedFileMerge } from "./shared-file-merge.js";
 import { buildChunkInWorktree, commitDispatchedChunk, preserveWorktreeWork } from "./parallel-chunk-build.js";
 import type { EmitFn, LoopEvent, LoopOptions, LoopResult } from "./types.js";
 import { haltedResult, safeGet } from "./types.js";
@@ -115,6 +119,8 @@ type RunContext = ParallelWavesContext & {
   ledger: SetAsideLedger;
   /** Chunks merged into base this run, in landing order. */
   landedThisRun: number[];
+  /** Settles merge conflicts in the files every chunk edits. */
+  sharedMerge: SharedFileMerge;
 };
 
 /** Chunks set aside in one run before the build stops trying: past this it is
@@ -143,7 +149,7 @@ export async function runParallelWaves(input: ParallelWavesContext): Promise<Loo
     emit({ type: "complete", chunkNumber: last, totalChunks, message: "Loop complete (parallel): every chunk in scope had already landed." });
     return { status: "complete", lastChunk: last, chunksCommitted: 0, haltReason: "", outcomes, events };
   }
-  const ctx: RunContext = { ...input, chunks, phasePauses: createPhasePauseTracker(chunks), ledger: createSetAsideLedger(), landedThisRun: [] };
+  const ctx: RunContext = { ...input, chunks, phasePauses: createPhasePauseTracker(chunks), ledger: createSetAsideLedger(), landedThisRun: [], sharedMerge: createSharedFileMerge() };
   const waves = planWaves(chunks, landedBefore);
   let chunksCommitted = 0;
 
@@ -261,21 +267,17 @@ async function runBatch(ctx: RunContext, batch: ParsedChunk[], chunksCommittedIn
     //    ONE AT A TIME (rule 1 — strictly sequential).
     for (const r of passed) await commitDispatchedChunk(ctx, r);
 
-    const merged = new Set<string>();
     for (const r of passed) {                      // SERIAL merge loop — never Promise.all.
       const d = r.dispatched;
-      const res = mergeWorktree(d.name);           // re-reads base tip + fast-forward-advances it
-      merged.add(d.name);
+      // Re-reads base tip + fast-forward-advances it. A conflict confined to
+      // the files every chunk edits is settled by rule (shared-file-merge.ts).
+      const res = mergeWorktree(d.name, { resolveConflicts: ctx.sharedMerge.resolver });
       if (!res.merged) {
-        // Rule 2: HALT. The conflicting branch is already preserved by
-        // mergeWorktree; clean up only the worktrees we have NOT merged yet.
-        for (const other of dispatched) if (!merged.has(other.name)) cleanupWorktreeSafe(other.name);
-        const reason =
-          `Chunk ${d.chunk.number} could not merge back cleanly — build HALTED to avoid silent corruption. ` +
-          `Its work is preserved on branch '${d.branch}' for manual resolution. ${res.error || ""}`.trim();
-        emit({ type: "halt", chunkNumber: d.chunk.number, totalChunks, message: reason });
-        appendHalt(opts.projectDir, { chunk: d.chunk.number, gate: "worktree-merge", reason: reason.slice(0, 200) });
-        return { kind: "halt", result: { status: "halted", lastChunk: d.chunk.number, chunksCommitted, haltReason: reason, outcomes, events } };
+        // Rule 2: never resolved here. mergeWorktree aborted the merge in the
+        // chunk's worktree and kept its branch; base is as it was, so the
+        // chunks after this one still merge.
+        setAsideUnmerged(ctx, d, res.error);
+        continue;
       }
       chunksCommitted++;
       ctx.landedThisRun.push(d.chunk.number);
@@ -290,6 +292,18 @@ async function runBatch(ctx: RunContext, batch: ParsedChunk[], chunksCommittedIn
       // changed files escaped its DECLARED footprint (the latent cause of a real
       // parallel conflict). Empty/undeclared footprint never warns.
       warnFootprintEscapes({ chunk: d.chunk, changed: r.finalOutcome.report.changed, totalChunks, emit });
+    }
+    // A merge that took the base's copy of the generated map leaves it one
+    // batch behind: generate it from the merged project before the re-gate.
+    if (ctx.sharedMerge.mapIsStale()) {
+      const regenerated = await regenerateSharedFiles(opts.projectDir, opts.signal);
+      ctx.sharedMerge.mapRegenerated();
+      emit({
+        type: "review-result", chunkNumber: batch[batch.length - 1].number, totalChunks,
+        message: regenerated.ok
+          ? `Codebase map after the merged batch: ${regenerated.detail}.`
+          : `WARNING: the codebase map could not be regenerated after the merged batch (${regenerated.detail}); the re-gate will say whether it is stale.`,
+      });
     }
   } catch (err) {
     // A genuine throw escaped the batch — reclaim every worktree it created
@@ -364,6 +378,19 @@ function setChunkAside(ctx: RunContext, r: BuiltChunk): void {
   });
   const gate = r.finalOutcome.findings.find(f => f.action === "halt" || f.action === "push_back")?.gate || "";
   appendHalt(opts.projectDir, { chunk: d.chunk.number, gate, reason: reason.slice(0, 200) });
+}
+
+/** Set aside a chunk that passed its review but whose work could not be merged
+ *  with what landed before it. mergeWorktree has already kept its branch. */
+function setAsideUnmerged(ctx: RunContext, d: DispatchedChunk, error: string | undefined): void {
+  const { opts, totalChunks, emit } = ctx;
+  const reason = `It passed its review, but its work could not be merged with what landed before it. ${error || ""}`.trim();
+  ctx.ledger.setAside.push({ chunk: d.chunk.number, title: d.chunk.title, reason, branch: d.branch });
+  emit({
+    type: "chunk-set-aside", chunkNumber: d.chunk.number, totalChunks,
+    message: `Chunk ${d.chunk.number} set aside, the build goes on without it: ${reason.replace(/\s+/g, " ").slice(0, 300)} Work kept on branch '${d.branch}'.`,
+  });
+  appendHalt(opts.projectDir, { chunk: d.chunk.number, gate: "worktree-merge", reason: reason.slice(0, 200) });
 }
 
 /** cleanupWorktree, guarded — never let a cleanup error mask the real halt. */

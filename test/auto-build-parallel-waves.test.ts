@@ -30,6 +30,8 @@ const shared = vi.hoisted(() => ({
   chunkActions: new Map<number, string>(),
   /** worktree name → mergeWorktree result (defaults to a clean merge). */
   mergeResults: new Map<string, { merged: boolean; files: number; error?: string }>(),
+  /** The options each mergeWorktree call was given. */
+  mergeOptions: [] as Array<{ resolveConflicts?: unknown } | undefined>,
   /** worktree names for which createNamedWorktree returns null (cap reached). */
   nullNames: new Set<string>(),
   /** worktree name → branch createNamedWorktree ACTUALLY cuts (b04b3d0f side-steps
@@ -80,8 +82,9 @@ vi.mock("../src/agency/worktree.js", () => ({
     if (shared.nullNames.has(name)) return null;
     return { path: `/fake-worktree/${name}`, branch: shared.branchOverrides.get(name) ?? branch, baseBranch: "main" };
   }),
-  mergeWorktree: vi.fn((name: string) => {
+  mergeWorktree: vi.fn((name: string, options?: { resolveConflicts?: unknown }) => {
     shared.calls.push(`merge:${name}`);
+    shared.mergeOptions.push(options);
     return shared.mergeResults.get(name) ?? { merged: true, files: 1 };
   }),
   cleanupWorktree: vi.fn((name: string) => {
@@ -171,6 +174,7 @@ beforeEach(() => {
   shared.nullNames.clear();
   shared.branchOverrides.clear();
   shared.workerIndices.length = 0;
+  shared.mergeOptions.length = 0;
   shared.chunkChanged.clear();
   shared.regateResults.length = 0;
   shared.regateProjectDirs.length = 0;
@@ -234,8 +238,12 @@ describe("parallel path — rule 1: builds parallel, merge-back SERIAL", () => {
   });
 });
 
-describe("parallel path — rule 2: HALT on merge conflict, never auto-resolve", () => {
-  it("stops the whole build, never dispatches the next wave, names + preserves the branch", async () => {
+// A conflict in a chunk's merge used to halt the build with the chunks behind
+// it still unmerged, though they had passed (label-check 2026-11-22: chunk 5
+// conflicted with chunk 4 in two shared files, and chunk 6 never merged). The
+// conflict is still never resolved here; the chunk is set aside instead.
+describe("parallel path — rule 2: a merge conflict is never resolved here; the chunk is set aside", () => {
+  it("the chunks behind it still merge, the chunk that depends on it waits, and its kept branch is named", async () => {
     // Chunk 1's merge textually conflicts.
     shared.mergeResults.set("autobuild-c1", { merged: false, files: 2, error: "CONFLICT in src/alpha.ts" });
     writeFileSync(join(projectDir, "spec", "plan.md"), TWO_WAVES);
@@ -244,16 +252,19 @@ describe("parallel path — rule 2: HALT on merge conflict, never auto-resolve",
 
     expect(result.status).toBe("halted");
     expect(result.lastChunk).toBe(1);
-    // Branch is named + preserved in the halt reason.
-    expect(result.haltReason).toContain("autobuild/c1");
-    expect(result.haltReason.toLowerCase()).toContain("preserved");
-
-    // Wave 1 (chunk 3) was NEVER dispatched — no worktree, no build.
+    // Chunk 2, merged after the conflict, landed.
+    expect(shared.calls).toContain("merge:autobuild-c2");
+    expect(result.chunksCommitted).toBe(1);
+    expect(result.haltReason).toContain("Landed this run: chunk 2.");
+    // The conflicting chunk is named with why and where its work is.
+    expect(result.haltReason).toContain("Set aside — chunk 1 (Alpha): It passed its review, but its work could not be merged with what landed before it. CONFLICT in src/alpha.ts");
+    expect(result.haltReason).toContain("Its work is on branch 'autobuild/c1'.");
+    // Chunk 3 depends on chunk 1, which did not land: never dispatched.
     expect(shared.calls).not.toContain("create:autobuild-c3");
     expect(shared.calls).not.toContain("build-start:3");
-
-    // The unmerged sibling (chunk 2) was cleaned up.
-    expect(shared.calls).toContain("cleanup:autobuild-c2");
+    expect(result.haltReason).toContain("Not started, waiting on those: chunk 3 (on 1).");
+    // The engine hands every merge the shared-files resolver, and nothing else.
+    expect(shared.mergeOptions.every((o) => typeof o?.resolveConflicts === "function")).toBe(true);
   });
 
 });
@@ -365,14 +376,14 @@ describe("parallel path — recovery hints name the branch createNamedWorktree A
   // the OLD run's work. The requested name must not appear un-suffixed anywhere.
   const STALE_REQUESTED_C1 = /autobuild\/c1(?!-)/;
 
-  it("a merge-conflict halt names the side-stepped branch, never the stale requested one", async () => {
+  it("a chunk set aside for a merge conflict names the side-stepped branch, never the stale requested one", async () => {
     shared.branchOverrides.set("autobuild-c1", "autobuild/c1-2");
     shared.mergeResults.set("autobuild-c1", { merged: false, files: 2, error: "CONFLICT in src/alpha.ts" });
 
     const result = await run(TWO_DISJOINT, 2);
 
     expect(result.status).toBe("halted");
-    expect(result.haltReason).toContain("preserved on branch 'autobuild/c1-2'");
+    expect(result.haltReason).toContain("Its work is on branch 'autobuild/c1-2'.");
     expect(result.haltReason).not.toMatch(STALE_REQUESTED_C1);
   });
 

@@ -11,6 +11,7 @@ import { activeWorktrees, git, commitWithFallbackIdentity, logger, MAX_CONCURREN
 import { hasVanishedWorktreeAt, linkDirectoryInto, listCheckedOutBranches, unlinkSharedJunctions } from "./worktree-junctions.js";
 import { claimRecoveredWorktree, forgetWorktreeOwnership, ownsWorktree, registerWorktreeOwnership } from "./worktree-recovery.js";
 import { findMergeOverlaps, noteMerged, overlapSummary, type MergeOverlap } from "./merge-overlap.js";
+import { concludeResolvedMerge, type MergeConflictResolver } from "./worktree-merge-conflicts.js";
 
 /** Cut `branch` at HEAD and check it out at `wtPath`. When the checkout is
  *  refused (a crashed run left a directory at the path), the branch just cut
@@ -76,8 +77,13 @@ export function createWorktree(agentId: string, repoDir?: string): { path: strin
   }
 }
 
-/** Merge agent's changes back to the stored base branch */
-export function mergeWorktree(agentId: string): { merged: boolean; files: number; error?: string; overlaps?: MergeOverlap[]; overlapNote?: string } {
+/** Merge agent's changes back to the stored base branch. A conflict ends the
+ *  merge with the branch kept, unless `resolveConflicts` settles every
+ *  conflicted file by a rule of the caller's (worktree-merge-conflicts.ts). */
+export function mergeWorktree(
+  agentId: string,
+  opts: { resolveConflicts?: MergeConflictResolver } = {},
+): { merged: boolean; files: number; error?: string; overlaps?: MergeOverlap[]; overlapNote?: string } {
   const wt = activeWorktrees.get(agentId);
   if (!wt) return { merged: false, files: 0, error: "No worktree found" };
   if (!ownsWorktree(wt)) {
@@ -122,7 +128,11 @@ export function mergeWorktree(agentId: string): { merged: boolean; files: number
     const mergeFacts = { repoRoot: wt.repoRoot, worktreePath: wt.path, branch: wt.branch, baseBranch: wt.baseBranch, baseSha, headSha };
     const { changed, overlaps } = findMergeOverlaps(mergeFacts);
     try {
-      git(["merge", wt.baseBranch, "--no-edit"], wt.path);
+      try {
+        git(["merge", wt.baseBranch, "--no-edit"], wt.path);
+      } catch (conflict) {
+        if (!concludeResolvedMerge(wt.path, opts.resolveConflicts)) throw conflict;
+      }
       const mergedHead = git(["rev-parse", "HEAD"], wt.path);
 
       const parentBranch = git(["rev-parse", "--abbrev-ref", "HEAD"], wt.repoRoot);

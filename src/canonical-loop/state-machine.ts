@@ -13,6 +13,7 @@
  * write `canonical.state` directly.
  */
 import { emit, clearEmittedErrorsForOp } from "./event-emitter.js";
+import { isTerminalState } from "./terminal-states.js";
 import {
   persistOpKeepingSignals,
   persistOpKeepingSignalsStrict,
@@ -76,7 +77,6 @@ const LEGACY_STATUS: Record<CanonicalState, OpStatus> = {
   failed: "failed",
 };
 
-const TERMINAL: ReadonlySet<CanonicalState> = new Set(["succeeded", "failed", "cancelled"]);
 let beforePersistHook: () => void = () => undefined;
 type TerminalObserver = (op: Op, state: CanonicalState) => void;
 // Lazy `var` is deliberate: event-emitter telemetry reaches scheduler during
@@ -128,7 +128,7 @@ export function transitionOp(
   op.canonical.state = to;
   op.status = LEGACY_STATUS[to];
   if (to === "running" && !op.startedAt) op.startedAt = new Date().toISOString();
-  if (TERMINAL.has(to) && !op.completedAt) op.completedAt = new Date().toISOString();
+  if (isTerminalState(to) && !op.completedAt) op.completedAt = new Date().toISOString();
   let learnedReceipt: ReturnType<typeof prepareCanonicalLearnedOutcome> = null;
   const learningSessionId = opts.learnedOutcome
     ? opts.learningSessionId ?? getSessionForOp(op.id) ?? ""
@@ -136,7 +136,7 @@ export function transitionOp(
   const learningEligible = opts.learnedOutcome
     ? isLearningOutcomeEligible(op, learningSessionId)
     : false;
-  if (TERMINAL.has(to)) {
+  if (isTerminalState(to)) {
     // Only callers that explicitly classified the outcome may feed learning.
     // Generic terminal transitions and user cancellation carry no quality
     // signal and must not be guessed into clean/aborted evidence.
@@ -160,7 +160,7 @@ export function transitionOp(
   } else {
     persistOpKeepingSignals(op);
   }
-  if (TERMINAL.has(to)) finalizeTerminalState(op, to);
+  if (isTerminalState(to)) finalizeTerminalState(op, to);
 
   if (learnedReceipt) {
     try { commitCanonicalLearnedOutcome(op, learnedReceipt); }
@@ -170,7 +170,7 @@ export function transitionOp(
   }
 
   const event = emit(op.id, "state_changed", { from, to, reason });
-  if (TERMINAL.has(to)) {
+  if (isTerminalState(to)) {
     for (const observer of terminalObservers ?? []) {
       try { observer(op, to); }
       catch (error) {
@@ -182,7 +182,7 @@ export function transitionOp(
 }
 
 export function isTerminalCanonicalState(s: CanonicalState): boolean {
-  return TERMINAL.has(s);
+  return isTerminalState(s);
 }
 
 function finalizeTerminalState(op: Op, to: CanonicalState): void {

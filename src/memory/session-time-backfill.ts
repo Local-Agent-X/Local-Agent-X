@@ -20,6 +20,7 @@ import { isHarnessRow } from "../harness-rows.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { parseSessionLogText, type SessionMessageRow } from "./session-log-rows.js";
 import type { OpMessageRow } from "../canonical-loop/public/op-facts.js";
+import { isSeededHistoryRow } from "../canonical-loop/public/message-ids.js";
 
 interface TurnOp { opId: string; createdAt: string; completedAt?: string; task: string; used: boolean }
 /** An op's own message rows (canonical-loop readOpMessages), history replays excluded. */
@@ -79,7 +80,7 @@ export function planSessionTimes(sessionId: string, logText: string, ops: TurnOp
       const op = ops.find((o) => !o.used && o.task === said);
       if (op) {
         op.used = true; plan.matched++; turnTime = { start: op.createdAt, end: op.completedAt ?? op.createdAt };
-        try { turnRows = opRows(op.opId).filter((r) => !r.messageId.startsWith("hist-")); } catch { turnRows = []; }
+        try { turnRows = opRows(op.opId).filter((r) => !isSeededHistoryRow(r.messageId)); } catch { turnRows = []; }
       } else { plan.unknown++; turnTime = null; turnRows = []; }
     }
     const at = !inTurn || !turnTime ? null : opensTurn ? turnTime.start : turnTime.end;

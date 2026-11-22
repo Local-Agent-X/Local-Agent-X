@@ -3,6 +3,7 @@ import type { ServerContext } from "../../../server-context.js";
 import type { ServerEvent, Session } from "../../../types.js";
 import type { Role } from "../../../rbac.js";
 import type { PreparedAgentRequest } from "../../../agent-request/types.js";
+import { isSeededHistoryRow } from "../../../canonical-loop/public/message-ids.js";
 import { ThreatEngine } from "../../../threat/threat-engine.js";
 import { sanitizeModelOutput } from "../../../providers/output-sanitize.js";
 import type { TurnError } from "../../../providers/sanitize.js";
@@ -267,7 +268,7 @@ export async function persistTurnState(input: PersistInput): Promise<void> {
       const { recordMessageProvenance } = await import("../../../memory/session-message-provenance.js");
       const projected: ChatCompletionMessageParam[] = [];
       for (const row of readOpMessages(canonicalOpId)) {
-        if (row.messageId.startsWith("hist-")) continue;
+        if (isSeededHistoryRow(row.messageId)) continue;
         const param = opMessageRowToChatParam(row);
         if (!param) continue;
         // The session row keeps the op row's own identity and time (the

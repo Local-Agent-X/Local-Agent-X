@@ -15,6 +15,7 @@
  */
 
 import type { ToolDefinition } from "../../types.js";
+import type { CodexTool } from "../../codex-client/types.js";
 
 export type ProviderToolShapeInput = Pick<ToolDefinition, "name" | "description" | "parameters">;
 export type ToolSchemaFormat =
@@ -43,13 +44,6 @@ export interface AnthropicTool {
   /** Sent, but kept out of the prompt until a tool_reference loads it
    *  (anthropic-client/deferred-tools.ts). */
   defer_loading?: true;
-}
-
-export interface CodexTool {
-  type: "function";
-  name: string;
-  description: string;
-  parameters: Record<string, unknown>;
 }
 
 export interface GeminiToolEnvelope {

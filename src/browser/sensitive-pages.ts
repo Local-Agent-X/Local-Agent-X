@@ -30,7 +30,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { getRuntimeConfig } from "../config.js";
 import { loadSettings } from "../settings.js";
 import type { BrowserSecrecy } from "../types/lax-config.js";
-import { isLoopbackHost } from "../security/layer/ip-classification.js";
+import { BLOCKED_HOSTNAMES, isLoopbackHost } from "../security/layer/ip-classification.js";
 
 export type SensitivePageCategory =
   | "password manager"
@@ -172,7 +172,10 @@ export function classifySensitivePage(rawUrl: string): { category: SensitivePage
   const page = pageLabel(url);
   const secretPage = `${url.origin}/[sensitive-path-redacted]`;
 
-  if (host === "169.254.169.254" || host === "metadata.google.internal") return { category: "cloud metadata", page };
+  // The names the network guard refuses (ip-classification.ts): this check had
+  // one of them written out, so a page at metadata.internal or instance-data
+  // was not classified at all.
+  if (host === "169.254.169.254" || BLOCKED_HOSTNAMES.has(host)) return { category: "cloud metadata", page };
   if (/(^|\.)(1password|bitwarden|lastpass|dashlane)\.(com|eu)$/.test(host) || host.endsWith(".keepersecurity.com")) {
     return { category: "password manager", page: secretPage };
   }

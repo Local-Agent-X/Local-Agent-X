@@ -33,6 +33,10 @@ describe("classifySensitivePage — host authoritative at every level", () => {
 	it.each([
 		["cloud metadata IP", "http://169.254.169.254/latest/meta-data/", "cloud metadata"],
 		["GCE metadata host", "http://metadata.google.internal/", "cloud metadata"],
+		// The network guard's other names for the same endpoint (ip-classification.ts
+		// BLOCKED_HOSTNAMES): this check had only the one above written out.
+		["metadata alias", "http://metadata.internal/computeMetadata/v1/", "cloud metadata"],
+		["AWS metadata alias", "http://instance-data/latest/meta-data/", "cloud metadata"],
 		["1password host", "https://my.1password.com/vaults", "password manager"],
 		["bitwarden vault host", "https://vault.bitwarden.com/", "password manager"],
 		["keeper subdomain host", "https://vault.keepersecurity.com/", "password manager"],

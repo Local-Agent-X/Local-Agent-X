@@ -15,6 +15,7 @@ import { hasExternalIngestion } from "../data-lineage/external.js";
 import type { ThreatEngine } from "../threat/threat-engine.js";
 import type { MemoryManager } from "../memory/index.js";
 import type { Session } from "../types.js";
+import { isSeededHistoryRow } from "../canonical-loop/public/message-ids.js";
 import { createLogger } from "../logger.js";
 import { harnessRowKind, isHarnessRow } from "../harness-rows.js";
 
@@ -152,7 +153,7 @@ export async function voiceTurnRows(opId: string | undefined): Promise<unknown[]
   try {
     const { readOpMessages, opMessageRowToChatParam } = await import("../canonical-loop/index.js");
     const rows = readOpMessages(opId)
-      .filter((row) => !row.messageId.startsWith("hist-"))
+      .filter((row) => !isSeededHistoryRow(row.messageId))
       .map((row) => opMessageRowToChatParam(row))
       .filter((param) => param !== null);
     return rows.length > 0 ? rows : null;

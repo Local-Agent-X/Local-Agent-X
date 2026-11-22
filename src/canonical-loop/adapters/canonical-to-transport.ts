@@ -47,6 +47,7 @@ import type { TransportMessage } from "./anthropic.js";
 import { sanitizeAssistantTextForRebuild } from "../../anthropic-client/parse.js";
 import { createLogger } from "../../logger.js";
 import { toolResultPayload } from "../turn-loop/content-extract.js";
+import { extractText } from "./openai-compat/helpers.js";
 
 const sanitizerLogger = createLogger("canonical-loop.rebuild-sanitizer");
 
@@ -199,16 +200,6 @@ function assistantRow(c: unknown, validToolNames: ReadonlySet<string> | undefine
     ...(tc && tc.length > 0 ? { toolCalls: tc } : {}),
     ...(replayed !== undefined ? { reasoningPayload: replayed } : {}),
   };
-}
-
-function extractText(c: unknown): string {
-  if (c == null) return "";
-  if (typeof c === "string") return c;
-  if (typeof c === "object" && "text" in (c as Record<string, unknown>)) {
-    const v = (c as { text?: unknown }).text;
-    return typeof v === "string" ? v : "";
-  }
-  return "";
 }
 
 function extractUserImages(c: unknown): Array<{ url: string; name: string; filePath?: string }> {

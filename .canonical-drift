@@ -12,13 +12,11 @@ AUDIT_EVIDENCE_LIMIT src x2
 AuditEntry src x2
 BridgeReply src x2
 broadcastToSession src x2
-CallContext src x2
 capBody src x2
 CaptureOptions src x2
 Claim src x2
 ClassifierResult src x2
 CLIENT_ID src x2
-CodexTool src x2
 ConnectionState src x2
 CONTINUE src x2
 createCronTools src x2

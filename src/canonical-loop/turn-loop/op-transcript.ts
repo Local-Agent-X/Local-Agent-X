@@ -17,6 +17,7 @@
  *      and what finally worked; omissions come out of the middle.
  */
 import { readOpMessages } from "../store.js";
+import { isSeededHistoryRow } from "../public/message-ids.js";
 import { extractTextContent, opMessageRowToChatParam } from "../chat-runner/message-convert.js";
 import { redactKnownSecrets } from "../../sanitize.js";
 import { redactString } from "../../ops/redactor.js";
@@ -169,7 +170,7 @@ function collectTranscriptEntries(opId: string): TranscriptEntry[] {
 function collectFollowUpEntries(opId: string): TranscriptEntry[] {
   const entries: TranscriptEntry[] = [];
   for (const row of readOpMessages(opId)) {
-    if (row.messageId.startsWith("hist-")) continue;
+    if (isSeededHistoryRow(row.messageId)) continue;
     const msg = opMessageRowToChatParam(row);
     if (!msg || (msg.role !== "user" && msg.role !== "assistant")) continue;
     const text = extractTextContent(msg.content).trim();

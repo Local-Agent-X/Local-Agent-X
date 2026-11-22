@@ -8,6 +8,7 @@ import { buildChannelContext, resolveSession, type ChannelType } from "../sessio
 import { getMessagingChannelDefinition, type MessagingChannelId } from "../session/channel-registry.js";
 import type { ServerContext } from "../server-context.js";
 import type { ServerEvent } from "../types.js";
+import { isSeededHistoryRow } from "../canonical-loop/public/message-ids.js";
 import type { BridgeReply } from "../whatsapp-bridge/index.js";
 import {
   acknowledgeInboundDelivery,
@@ -164,7 +165,7 @@ async function recoverInboundReply(opId: string, channel: ChannelType): Promise<
     || (canonicalState && ["succeeded", "failed", "cancelled"].includes(canonicalState)));
   if (!terminal) return null;
   const raw = readOpMessages(opId)
-    .filter((row) => row.role === "assistant" && !row.messageId.startsWith("hist-"))
+    .filter((row) => row.role === "assistant" && !isSeededHistoryRow(row.messageId))
     .map((row) => (row.content as { text?: unknown })?.text)
     .filter((text): text is string => typeof text === "string" && text.length > 0)
     .join("\n\n")

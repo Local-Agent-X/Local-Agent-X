@@ -20,6 +20,7 @@ import { z } from "zod";
 
 import { createLogger } from "../logger.js";
 import type { BlockAction } from "../types.js";
+import type { CallContext } from "../tool-execution/context.js";
 
 const logger = createLogger("policy.evaluator");
 
@@ -55,7 +56,7 @@ export interface PolicyCall {
 
 export interface PolicyEvalCtx {
   sessionId: string;
-  callContext: "local" | "api" | "delegated" | "cron";
+  callContext: CallContext;
 }
 
 export interface PackDeny {

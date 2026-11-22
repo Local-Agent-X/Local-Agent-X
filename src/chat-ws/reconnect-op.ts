@@ -9,6 +9,7 @@
 import type { WebSocket } from "ws";
 import { createLogger } from "../logger.js";
 import { sendFrame } from "./frames.js";
+import { isSeededHistoryRow } from "../canonical-loop/public/message-ids.js";
 
 const logger = createLogger("chat-ws");
 
@@ -141,7 +142,7 @@ export function joinAssistantText(messages: Array<{ role?: unknown; content?: un
   const parts: string[] = [];
   for (const m of messages) {
     if (m.role !== "assistant") continue;
-    if (typeof m.messageId === "string" && m.messageId.startsWith("hist-")) continue;
+    if (typeof m.messageId === "string" && isSeededHistoryRow(m.messageId)) continue;
     const content = m.content as { text?: unknown } | null | undefined;
     const text = typeof content?.text === "string" ? content.text : "";
     if (text) parts.push(text);

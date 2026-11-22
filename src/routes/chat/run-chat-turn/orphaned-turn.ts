@@ -13,6 +13,7 @@
 import type { ServerContext } from "../../../server-context.js";
 import type { Op } from "../../../ops/types.js";
 import { registerTerminalObserver } from "../../../canonical-loop/index.js";
+import { isSeededHistoryRow } from "../../../canonical-loop/public/message-ids.js";
 import { OP_TYPE } from "../../../ops/op-types.js";
 import { createLogger } from "../../../logger.js";
 
@@ -28,7 +29,7 @@ export function releaseChatTurn(opId: string): void { owned.delete(opId); }
 async function alreadySaved(op: Op, ctx: ServerContext): Promise<boolean> {
   const { readOpMessages } = await import("../../../canonical-loop/index.js");
   const { messageProvenance } = await import("../../../memory/session-message-provenance.js");
-  const ids = new Set(readOpMessages(op.id).filter((r) => !r.messageId.startsWith("hist-")).map((r) => r.messageId));
+  const ids = new Set(readOpMessages(op.id).filter((r) => !isSeededHistoryRow(r.messageId)).map((r) => r.messageId));
   if (ids.size === 0) return true; // nothing was committed: nothing to save
   const session = ctx.getOrCreateSession(op.sessionId!);
   return session.messages.some((m) => {

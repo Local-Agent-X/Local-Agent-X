@@ -7,7 +7,9 @@ import type { RBACManager, Role } from "../rbac.js";
 import { ok, statusOf } from "../tools/result-helpers.js";
 import { toolMessage } from "./tool-message-carry.js";
 
-export type CallContext = "local" | "api" | "delegated" | "cron";
+import type { CallContext } from "../security/layer/types.js";
+
+export type { CallContext };
 
 export interface ToolCallContext {
   readonly tc: { id: string; name: string; arguments: string };

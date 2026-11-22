@@ -30,6 +30,7 @@
  */
 import type { ServerEvent } from "../types.js";
 import { USER_HINTS } from "../types.js";
+import type { CallContext } from "./context.js";
 import { currentSettingValue, isUserOwnedSetting, strictlyTightens } from "../settings-change-direction.js";
 
 /** Minimal shapes borrowed from pre-dispatch so this module stays leaf-level. */
@@ -40,7 +41,7 @@ interface GateCall {
 }
 interface GateCtx {
   sessionId: string;
-  callContext: "local" | "api" | "delegated" | "cron";
+  callContext: CallContext;
   opId?: string;
   approval?: { onEvent: (event: ServerEvent) => void; context?: string };
 }

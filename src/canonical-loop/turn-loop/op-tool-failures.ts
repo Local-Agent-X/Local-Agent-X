@@ -21,6 +21,7 @@
  * the canonical row→message adapter (see the SEAL in store.ts).
  */
 import { readOpMessages } from "../store.js";
+import { isSeededHistoryRow } from "../public/message-ids.js";
 import { extractTextContent, opMessageRowToChatParam } from "../chat-runner/message-convert.js";
 import { scrubMetadata, toolMessageBlock, toolMessageStatus } from "../../tool-execution/tool-message-carry.js";
 import { actionOf, countsAsFailure, failureReason, failureSignature } from "../../tools/failure-signature.js";
@@ -67,7 +68,7 @@ function opCalls(opId: string): OpCall[] {
       ask = extractTextContent(msg.content).trim() || ask;
       continue;
     }
-    if (row.messageId.startsWith("hist-")) continue;
+    if (isSeededHistoryRow(row.messageId)) continue;
     if (msg.role === "assistant") {
       // Shape-tolerant read, as in op-transcript.ts.
       const toolCalls = (msg as { tool_calls?: Array<{ id?: string; function?: { name?: string; arguments?: string } }> }).tool_calls ?? [];

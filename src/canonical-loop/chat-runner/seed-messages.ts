@@ -14,6 +14,7 @@ import type { ChatCompletionMessageParam } from "openai/resources/chat/completio
 import type { PreparedAgentRequest } from "../../agent-request/types.js";
 import type { OpMessageRow } from "../types.js";
 import { appendOpMessage } from "../store.js";
+import { SEEDED_HISTORY_PREFIX, USER_MESSAGE_PREFIX } from "../public/message-ids.js";
 import { messageRoleToCanonicalRole, extractTextContent } from "./message-convert.js";
 import { buildRevivalPlan, historyImagesOf, reviveRowImages } from "../history-image-revival.js";
 
@@ -124,7 +125,7 @@ export function seedOpMessages(opId: string, prepared: SeededConversation, curre
     }
 
     const row: OpMessageRow = {
-      messageId: `hist-${opId}-${turnIdx}-${seqInTurn}-${randomUUID().slice(0, 6)}`,
+      messageId: `${SEEDED_HISTORY_PREFIX}${opId}-${turnIdx}-${seqInTurn}-${randomUUID().slice(0, 6)}`,
       opId,
       turnIdx,
       seqInTurn,
@@ -145,7 +146,7 @@ export function seedOpMessages(opId: string, prepared: SeededConversation, curre
   const userContent: { text: string; images?: PreparedAgentRequest["images"] } = { text: currentMessage };
   if (prepared.images && prepared.images.length > 0) userContent.images = prepared.images;
   appendOpMessage({
-    messageId: `um-${opId}-${turnIdx}-${seqInTurn}-${randomUUID().slice(0, 6)}`,
+    messageId: `${USER_MESSAGE_PREFIX}${opId}-${turnIdx}-${seqInTurn}-${randomUUID().slice(0, 6)}`,
     opId,
     turnIdx,
     seqInTurn,

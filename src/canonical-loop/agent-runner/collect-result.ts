@@ -1,6 +1,7 @@
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { AgentTurn } from "../../types.js";
 import { readOpMessages } from "../store.js";
+import { isSeededHistoryRow, isUserMessageRow } from "../public/message-ids.js";
 import { opMessageRowToChatParam } from "../chat-runner.js";
 import type { TerminalState } from "../terminal-states.js";
 import { resolveTerminalOpStatus } from "../checkpoint-stop.js";
@@ -18,7 +19,7 @@ export function collectMessages(
   const rows = readOpMessages(opId);
   const newMessages: ChatCompletionMessageParam[] = [];
   for (const row of rows) {
-    if (row.messageId.startsWith("hist-") || row.messageId.startsWith("um-")) continue;
+    if (isSeededHistoryRow(row.messageId) || isUserMessageRow(row.messageId)) continue;
     const m = opMessageRowToChatParam(row);
     if (m) newMessages.push(m);
   }

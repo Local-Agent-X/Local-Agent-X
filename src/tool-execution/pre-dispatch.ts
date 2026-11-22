@@ -34,6 +34,7 @@ import { resolvePreDispatchDeps, type PreDispatchDeps } from "./pre-dispatch-dep
 import { shellTreeDeleteScope } from "./tree-delete-scope.js";
 import { approvalCardText } from "./approval-card-text.js";
 import { formatConstraintSource } from "../canonical-loop/public/plan-ledger.js";
+import type { CallContext } from "./context.js";
 
 export type { PreDispatchDeps, PreDispatchApprovalManager, PreDispatchRuntimeFlags } from "./pre-dispatch-deps.js";
 
@@ -76,7 +77,7 @@ export interface ToolCallShape {
 
 export interface PreDispatchCtx {
   sessionId: string;
-  callContext: "local" | "api" | "delegated" | "cron";
+  callContext: CallContext;
   /** Canonical op id — keys the per-op instruction ledger (user-stated run
    *  constraints, e.g. "don't edit any code"). Absent for non-op callers
    *  (ARI bridge, MCP, ad-hoc dispatches), which skips the op-prohibition

@@ -336,6 +336,10 @@ export function readOp(opId: string): Op | null {
   }
 }
 
+/** Every op ever run, parsed. Not for a server path: on a store of a few
+ *  thousand ops this is seconds on the one thread and hundreds of megabytes
+ *  held. Ask op-index.ts (opsWhere) or listRecentOps instead; this stays for
+ *  tests and one-off tooling. */
 export function listOps(): Op[] {
   if (!existsSync(OPS_BASE)) return [];
   const dirs = readdirSync(OPS_BASE);

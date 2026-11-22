@@ -16,7 +16,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { listOps } from "../ops/op-store.js";
+import { opsWhere } from "../ops/op-index.js";
 import { readOpMessages, opRequestText } from "../canonical-loop/index.js";
 import { STRUCTURE_NOTE_MARKER, VERIFY_EVIDENCE_MARKER } from "../canonical-loop/public/build-adapters.js";
 
@@ -54,9 +54,8 @@ export interface PriorBuildEntry {
  * importing it here would be a cycle).
  */
 export function gatherPriorBuildSessions(appUrl: string, opType: string): PriorBuildEntry[] {
-  const prior = listOps()
-    .filter((op) => op.type === opType && op.appUrl === appUrl
-      && (op.status === "completed" || op.status === "failed"))
+  const prior = opsWhere((facts) => facts.type === opType && facts.appUrl === appUrl
+      && (facts.status === "completed" || facts.status === "failed"))
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
     .slice(-MAX_PRIOR_OPS);
 

@@ -21,9 +21,8 @@
  * process boundary, where the fork's map did not.
  */
 
-import { readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
 import { OPS_BASE, TERMINAL_STATUSES, readOp } from "./op-store.js";
+import { createOpScanner } from "./op-index.js";
 import type { Op } from "./types.js";
 
 /**
@@ -58,36 +57,21 @@ export function collectPreBlessedSecrets(ops: Iterable<Op>): Set<string> {
  * machine has no transition out of one, so it can never bless. Without that a
  * stat of every op ever run was ~75 ms a call at 3,844 ops and grew with each
  * op, and a spoken turn made twelve calls. What is left is one directory
- * listing and a stat per op still in flight.
+ * listing and a stat per op still in flight. The scan itself is op-index.ts's
+ * (createOpScanner), shared with every other question about the store.
  */
 export function createPreBlessScanner(
   opsDir: string,
   read: (opId: string) => Op | null,
 ): () => Set<string> {
-  const seen = new Map<string, { mtimeMs: number; size: number; names: readonly string[]; settled: boolean }>();
+  const scanner = createOpScanner(
+    opsDir, read,
+    (op): readonly string[] => [...collectPreBlessedSecrets([op])],
+    (op) => TERMINAL_STATUSES.includes(op.status),
+  );
   return () => {
-    let ids: string[];
-    try { ids = readdirSync(opsDir); } catch { return new Set(); } // no ops dir yet: nothing is running
-    const present = new Set(ids);
-    for (const id of seen.keys()) if (!present.has(id)) seen.delete(id);
     const result = new Set<string>();
-    for (const id of ids) {
-      let entry = seen.get(id);
-      if (entry?.settled) continue;
-      let stat;
-      try { stat = statSync(join(opsDir, id, "operation.json")); } catch { seen.delete(id); continue; } // dir without a record yet
-      if (!entry || entry.mtimeMs !== stat.mtimeMs || entry.size !== stat.size) {
-        const op = read(id);
-        entry = {
-          mtimeMs: stat.mtimeMs,
-          size: stat.size,
-          names: op ? [...collectPreBlessedSecrets([op])] : [],
-          settled: !!op && TERMINAL_STATUSES.includes(op.status),
-        };
-        seen.set(id, entry);
-      }
-      for (const name of entry.names) result.add(name);
-    }
+    for (const names of scanner.refresh().values()) for (const name of names) result.add(name);
     return result;
   };
 }

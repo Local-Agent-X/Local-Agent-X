@@ -1,4 +1,5 @@
-import { listOps, readOp } from "../ops/op-store.js";
+import { readOp } from "../ops/op-store.js";
+import { opsWhere } from "../ops/op-index.js";
 import type { Op } from "../ops/types.js";
 import type { CanonicalState } from "./types.js";
 
@@ -115,7 +116,8 @@ export function unregisterDependencyWaiter(opId: string): void {
 export function rebuildDependencyWaiterIndex(): Op[] {
   waitersByPrerequisite.clear();
   const dependents: Op[] = [];
-  for (const op of listOps()) {
+  // Only ops still in flight can be waiting: a settled one is never read.
+  for (const op of opsWhere(facts => facts.open && facts.hasDependencies)) {
     const state = op.canonical?.state;
     if (!op.dependsOn?.length || state === "succeeded" || state === "failed" || state === "cancelled") {
       continue;

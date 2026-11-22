@@ -26,6 +26,7 @@ import { watchOrphanedChatTurns } from "../routes/chat/run-chat-turn/orphaned-tu
 import { restorePersistedAppBuildRuntimes } from "../tools/build-app-runtime.js";
 import { reconcileAllPendingProcessRelays } from "../canonical-loop/public/process-relay.js";
 import { reconcileTerminalContainerExecutions } from "../canonical-loop/public/container-recovery.js";
+import { warmOpIndex } from "../ops/op-index.js";
 
 const logger = createLogger("server.canonical-loop-bootstrap");
 
@@ -129,6 +130,9 @@ export function bootstrapCanonicalLoop(configReader?: () => LAXConfig, chatCtx?:
       await timed("containerExecutions", () => reconcileTerminalContainerExecutions());
       const recovered = await timed("staleOpSweep", () => sweepStaleCanonicalOpsCooperatively());
       const learned = await timed("learnedOutcomes", () => reconcileCanonicalLearnedOutcomes());
+      // So the first question about the store (the phone opening a chat) does not
+      // pay for the first pass over it.
+      await timed("opIndex", () => warmOpIndex());
       const dt = Date.now() - t;
       if (recovered.length > 0) {
         const summary = recovered

@@ -22,18 +22,21 @@ const MAX_OUTPUT_CHARS = 6000;
 export interface RecallDeps {
 	readOpMessages: (opId: string) => OpMessageRow[];
 	toChatParam: (row: OpMessageRow) => ChatCompletionMessageParam | null;
-	listOps: () => Array<{ id: string; canonical?: { sessionId?: string | null } | undefined }>;
+	/** The ops whose canonical run is bound to `sessionId`, newest first. */
+	sessionOps: (sessionId: string) => Array<{ id: string }>;
 }
 
 async function defaultDeps(): Promise<RecallDeps> {
 	const [canonical, ops] = await Promise.all([
 		import("../canonical-loop/index.js"),
-		import("../ops/op-store.js"),
+		import("../ops/op-index.js"),
 	]);
 	return {
 		readOpMessages: canonical.readOpMessages,
 		toChatParam: canonical.opMessageRowToChatParam,
-		listOps: ops.listOps,
+		// Newest first, as the whole-store listing was: the tool picks the first.
+		sessionOps: (sessionId) => ops.opsWhere((facts) => facts.canonicalSessionId === sessionId)
+			.sort((a, b) => String(b.startedAt || b.createdAt).localeCompare(String(a.startedAt || a.createdAt))),
 	};
 }
 
@@ -251,7 +254,7 @@ export function createRecallTool(deps?: RecallDeps): ToolDefinition {
 			// exist (same error either way; existence is not leaked).
 			const sessionId = sessionIdOf(args) ?? "";
 			if (!sessionId) return err("No session in scope — nothing to recall.");
-			const sessionOps = d.listOps().filter(o => o.canonical?.sessionId === sessionId);
+			const sessionOps = d.sessionOps(sessionId);
 			if (sessionOps.length === 0) return ok("No recorded operation for this conversation yet — there is no raw history to page.");
 			const requested = typeof args.opId === "string" && args.opId ? args.opId : "";
 			if (requested && !sessionOps.some(o => o.id === requested)) {

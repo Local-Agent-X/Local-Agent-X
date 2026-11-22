@@ -69,11 +69,12 @@ export function planAgentProtocolMigration(protocols: Protocol[] = loadCustomPro
 /** Default capability evidence: every tool the session's own chat turns
  *  called, from the durable op store. Empty when those ops were pruned. */
 async function sessionToolEvidence(sessionId: string): Promise<string[]> {
-  const { listOps, isInteractiveHostOpType } = await import("../ops/op-store.js");
+  const { isInteractiveHostOpType } = await import("../ops/op-store.js");
+  const { opsWhere } = await import("../ops/op-index.js");
   const { readOpTurns } = await import("../canonical-loop/index.js");
   const tools: string[] = [];
-  for (const op of listOps()) {
-    if (op.sessionId !== sessionId || !isInteractiveHostOpType(op.type) || op.parentOpId) continue;
+  for (const op of opsWhere((facts) => facts.sessionId === sessionId)) {
+    if (!isInteractiveHostOpType(op.type) || op.parentOpId) continue;
     for (const turn of readOpTurns(op.id)) {
       for (const call of turn.toolCallSummary ?? []) tools.push(call.tool);
     }

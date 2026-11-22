@@ -9,7 +9,7 @@ import {
 } from "../chat-ws/session-event-observers.js";
 import { activeChats } from "../chat-ws/state.js";
 import { readRecentSessionMessages } from "../ops/session-bridge.js";
-import { listOps } from "../ops/op-store.js";
+import { opsWhere } from "../ops/op-index.js";
 import { readCheckpoint } from "../ops/checkpoint.js";
 import type { Op, OpCheckpoint } from "../ops/types.js";
 import { extractFinalAssistantText, readOpTurns, resolveTerminalOpStatus, type OpTurnRow } from "../canonical-loop/index.js";
@@ -206,8 +206,8 @@ function canonicalPhoneProjectionSource(): PhoneProjectionSource {
     highWater: sessionEventHighWater,
     snapshot: (sessionId, sinceVersion = 0) => {
       const messages = readRecentSessionMessages(sessionId).slice(-MAX_MESSAGES).flatMap(projectMessage);
-      const operations = listOps()
-        .filter(op => op.sessionId === sessionId)
+      // The chat's own ops, by the index: never a parse of the whole store.
+      const operations = opsWhere(facts => facts.sessionId === sessionId)
         .sort((a, b) => a.createdAt.localeCompare(b.createdAt))
         .slice(-MAX_OPERATIONS)
         .map(op => projectDurableOperation(op, {

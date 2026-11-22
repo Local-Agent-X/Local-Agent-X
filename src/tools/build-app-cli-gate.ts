@@ -12,7 +12,7 @@
  * in-canonical instead: the template says CLI, so the user decides.
  */
 import { getSetting, onSettingsSaved } from "../settings.js";
-import { listOps } from "../ops/op-store.js";
+import { opsWhere } from "../ops/op-index.js";
 import { OP_TYPE } from "../ops/op-types.js";
 import { isTerminalState } from "../canonical-loop/index.js";
 
@@ -36,7 +36,7 @@ export async function cancelCliBuildsIfDeveloperModeOff(): Promise<string[]> {
   if (getSetting("developer_mode") === true) return [];
   const { opCancel } = await import("../canonical-loop/index.js");
   const cancelled: string[] = [];
-  for (const op of listOps()) {
+  for (const op of opsWhere((facts) => facts.type === OP_TYPE.appBuild && facts.open)) {
     const descriptor = op.runtimeDescriptor;
     if (op.type !== OP_TYPE.appBuild || descriptor?.kind !== "app-build" || descriptor.strategy !== "cli-subprocess") continue;
     if (isTerminalState(op.canonical?.state)) continue;

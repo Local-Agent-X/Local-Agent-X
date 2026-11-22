@@ -17,7 +17,10 @@ const h = vi.hoisted(() => ({
   ops: [] as Op[],
   opCancel: vi.fn((_opId: string, _actor: string) => ({ ok: true })),
 }));
-vi.mock("../ops/op-store.js", () => ({ listOps: () => h.ops }));
+vi.mock("../ops/op-index.js", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../ops/op-index.js")>();
+  return { ...real, opsWhere: (matches: (facts: import("../ops/op-index.js").OpFacts) => boolean) => h.ops.filter((op) => matches(real.opFactsOf(op as never))) };
+});
 vi.mock("../canonical-loop/index.js", async (importOriginal) => ({ ...(await importOriginal<typeof import("../canonical-loop/index.js")>()), opCancel: h.opCancel }));
 
 const { cancelCliBuildsIfDeveloperModeOff } = await import("./build-app-cli-gate.js");

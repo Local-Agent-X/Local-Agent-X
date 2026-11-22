@@ -21,7 +21,7 @@ function deps(
 	return {
 		readOpMessages: () => rows,
 		toChatParam: opMessageRowToChatParam,
-		listOps: () => ops,
+		sessionOps: (sessionId) => ops.filter((o) => o.canonical?.sessionId === sessionId),
 	};
 }
 
@@ -48,7 +48,7 @@ describe("parseCursor", () => {
 
 describe("session→op resolution", () => {
 	const rows = nMessages(3);
-	it("picks the newest op whose canonical sessionId matches (listOps is newest-first)", async () => {
+	it("picks the newest op whose canonical sessionId matches (sessionOps is newest-first)", async () => {
 		let readOpId = "";
 		const d: RecallDeps = {
 			...deps(rows, [

@@ -15,7 +15,10 @@ const store = vi.hoisted(() => ({
   ops: [] as Array<Record<string, unknown>>,
   rows: {} as Record<string, Array<{ role: string; content: unknown }>>,
 }));
-vi.mock("../ops/op-store.js", () => ({ listOps: vi.fn(() => store.ops) }));
+vi.mock("../ops/op-index.js", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../ops/op-index.js")>();
+  return { ...real, opsWhere: (matches: (facts: import("../ops/op-index.js").OpFacts) => boolean) => store.ops.filter((op) => matches(real.opFactsOf(op as never))) };
+});
 vi.mock("../canonical-loop/index.js", () => ({
   readOpMessages: vi.fn((opId: string) => store.rows[opId] ?? []),
   opRequestText: vi.fn(() => "Instructions: a 3D maze escape game\n\nRULES: write files"),

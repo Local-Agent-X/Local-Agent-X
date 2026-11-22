@@ -9,7 +9,7 @@ import { sessionIdOf } from "../../tool-execution/internal-args.js";
 import { schedulerSnapshot, readOpTurns, readCanonicalEvents, awaitCanonicalOp } from "../../canonical-loop/index.js";
 import { readCheckpoint } from "../checkpoint.js";
 import { readEvents } from "../event-log.js";
-import { listOps, readOp } from "../op-store.js";
+import { listRecentOps, readOp } from "../op-store.js";
 import { listOpsForSession } from "../session-bridge.js";
 import { extractFinalAssistantText } from "../../canonical-loop/index.js";
 import {
@@ -41,7 +41,7 @@ export const opStatusTool: ToolDefinition = {
         .filter((o): o is NonNullable<typeof o> => !!o);
       const recent = sessionOpEntries.length > 0
         ? sessionOpEntries.slice(-10).map(o => `  - ${o.id} [${o.status}] ${o.task.slice(0, 80)}`).join("\n")
-        : (listOps().slice(0, 10).map(o => `  - ${o.id} [${o.status}] ${o.task.slice(0, 80)}`).join("\n") || "  (none)");
+        : (listRecentOps(10).map(o => `  - ${o.id} [${o.status}] ${o.task.slice(0, 80)}`).join("\n") || "  (none)");
       const canonicalLine = canonicalActive.length === 0
         ? ""
         : `Canonical-loop active: ${canonicalActive.length}\n` +

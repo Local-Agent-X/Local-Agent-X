@@ -14,6 +14,24 @@ text, media forwarding) refuse both tiers. Masking, taint and the other
 readers of `.matches` were left as they were: they mask or record, they never
 blocked a send.
 
+Since then (current as of 2026-11-22):
+- A send with no single site now puts an advisory match to the user too
+  (`checkOutboundPayload`); only control-tier content is refused outright.
+- A random-looking string a site showed the agent may go back to that site
+  without a card (`src/browser/site-provenance.ts`): browser pages, API
+  responses and links the user typed vouch for their own site, and the gate,
+  `http_request`'s own check and the threat engine apply the one rule
+  (`unvouchedSecretMatches`). Only entropy guesses are ever vouched for; a key
+  shape, a stored secret or tainted content never is. A flagged span right
+  after an escaped character (`%2F`, `~2F`) also stands for the span without
+  the escape's two hex digits, the id the page showed. Command output does not
+  vouch: anything the agent can make a command print would then vouch for
+  sending it.
+- A browser call that acts on one page names that page's site on its card, and
+  the user's trusted list answers an advisory match there as it does for
+  `http_request`. Control-tier content is refused in the browser whatever the
+  list says: a real credential goes in through the secret fill.
+
 ## Context
 
 Two attempts to fix the secret scanner's encoded-content peel were shipped and

@@ -75,6 +75,43 @@ describe("everything else is judged as before", () => {
 // scan that names a destination, or the scans disagree: a link the user pasted
 // was refused on navigate, and an http_request the egress gate allowed was
 // re-judged as exfiltration by the threat engine after it ran.
+// The Firebase console escapes "/" in a document path as "~2F", and the
+// scanner read the id after it with the escape's "2F" glued on: a page had
+// shown the agent the id, and the card asked anyway (2026-11-22).
+describe("an id behind an escaped separator is the id the page showed", () => {
+  const ID = "oC9voKgEL1Yeg3grtg2MpscN7jp2";
+  const FIRESTORE = "https://console.firebase.google.com/project/quiet-tutor-pmaj/firestore/databases/-default-/data";
+
+  it("allows the Firebase console URL once a console page showed the id", () => {
+    expect(browserCall({ action: "navigate", url: `${FIRESTORE}/~2Fparents~2F${ID}` })?.reason).toMatch(/random-looking text/);
+    recordSiteTokens(SESSION, `${FIRESTORE}/~2Fparents`, `parents\n${ID}\nchevron_right`);
+    expect(browserCall({ action: "navigate", url: `${FIRESTORE}/~2Fparents~2F${ID}` })).toBeNull();
+  });
+
+  it("reads a percent-escaped separator the same way", () => {
+    recordSiteTokens(SESSION, `${FIRESTORE}/~2Fparents`, ID);
+    expect(browserCall({ action: "navigate", url: `${FIRESTORE}/%2Fparents%2F${ID}` })).toBeNull();
+  });
+
+  it("drops the two characters only after an escape mark, never from a bare token", () => {
+    // The page showed the token without its first two characters; the URL
+    // sends it whole, with no "%" or "~" before it: that is a different string.
+    recordSiteTokens(SESSION, `${FIRESTORE}/x`, ID);
+    expect(browserCall({ action: "navigate", url: `${FIRESTORE}/2F${ID}` })?.reason).toMatch(/random-looking text/);
+  });
+
+  it("still asks when no page of that site showed the id", () => {
+    recordSiteTokens(SESSION, "https://collector.example/x", ID);
+    expect(browserCall({ action: "navigate", url: `${FIRESTORE}/~2Fparents~2F${ID}` })?.reason).toMatch(/random-looking text/);
+  });
+
+  it("still refuses a known key format behind an escape, even one the site showed", () => {
+    const githubToken = "ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8";
+    recordSiteTokens(SESSION, "https://github.com/settings/tokens", githubToken);
+    expect(browserCall({ action: "navigate", url: `https://github.com/x/%2F${githubToken}` })?.reason).toMatch(/GitHub/i);
+  });
+});
+
 describe("one provenance rule across sources and scans", () => {
   const DOC_ID = "1BxiMVs0XRA5nFMdKvBdBZjgmUUqptlbs74OgvE2upms";
   const DOC = `https://docs.google.com/document/d/${DOC_ID}/edit`;

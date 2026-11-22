@@ -10,6 +10,8 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import type { Collab } from "../src/agency/collab.js";
 import { missingDisputesMessage, researchMessage, resultMessage, claimsRepairMessage } from "../src/agency/collab-messages.js";
+import { opReportMessage } from "../src/ops/op-report-wake.js";
+import { resumeMessage } from "../src/tools/browser-tools/human-check-handoff.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(join(here, "../public/js/chat-app-message.js"), "utf8");
@@ -31,6 +33,16 @@ describe("a message the app sent", () => {
     expect(api.summaryOf(claimsRepairMessage(collab))).toBe("Collab: the brief for research");
     expect(api.summaryOf(resultMessage(collab))).toBe("Collab finished: the models’ reports and the app’s record of their claims");
     expect(api.summaryOf(missingDisputesMessage(["A2"]))).toBe("A note from the app");
+  });
+
+  // A build that ended woke its chat with the app's instructions to the agent,
+  // and the chat drew them as if the user had typed them (2026-11-22).
+  it("is recognised from every other message the app sends, each with what it is", () => {
+    expect(api.summaryOf(opReportMessage([{ opId: "op_1", task: "The build of label-check (run_build_plan)", status: "failed" }])))
+      .toBe("Background work ended: the app asked the agent to report");
+    expect(api.summaryOf(resumeMessage("console.firebase.google.com"))).toBe("Human check done: the app told the agent");
+    // A kind of message added later is still the app's, never the user's.
+    expect(api.summaryOf("(Sent by the app, not typed by the user: something new happened.)\nDo this.")).toBe("A note from the app");
   });
 
   it("leaves what the user typed alone, even when it starts with a bracket or mentions a collab", () => {

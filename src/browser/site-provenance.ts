@@ -125,12 +125,32 @@ export function vouchedFor(toolName: string, args: Record<string, unknown>, sess
   return destination ? (token) => shownBySite(sessionId, destination, token) : undefined;
 }
 
+/** An escaped character just before a token: `%2F`, or Firebase's `~2F`. */
+const ESCAPE_MARKS = new Set(["%", "~"]);
+const HEX_PAIR = /^[0-9A-Fa-f]{2}/;
+
+/**
+ * The strings a flagged span may stand for. A URL that escapes "/" as `%2F`
+ * or `~2F` glues the escape's two hex digits onto the id after it, since
+ * both are URL-safe characters: the Firebase console path
+ * `…/data/~2Fparents~2FoC9voK…` was flagged as `2FoC9voK…`, which no page
+ * showed, though the page had shown `oC9voK…` (2026-11-22). So a span that
+ * starts with two hex digits right after `%` or `~` also stands for the
+ * span without them. At most those two characters are dropped, only there.
+ */
+function spanReadings(text: string, start: number, end: number): string[] {
+  const span = text.slice(start, end);
+  return start > 0 && ESCAPE_MARKS.has(text[start - 1]) && HEX_PAIR.test(span) && end - start > 2
+    ? [span, span.slice(2)]
+    : [span];
+}
+
 /** Secret-shaped spans in `text`, less entropy-heuristic hits the caller can
  *  vouch for: the one rule every outbound scan applies. */
 export function unvouchedSecretMatches(text: string, vouched?: (token: string) => boolean): SecretMatch[] {
   const { matches } = scanForSecrets(text);
   return vouched
-    ? matches.filter((m) => !(m.type === "high-entropy-token" && vouched(text.slice(m.startIndex, m.endIndex))))
+    ? matches.filter((m) => !(m.type === "high-entropy-token" && spanReadings(text, m.startIndex, m.endIndex).some(vouched)))
     : matches;
 }
 

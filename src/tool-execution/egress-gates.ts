@@ -132,7 +132,15 @@ export function probeEgressGuard(ctx: ToolCallContext): EgressBlocker | null {
   } else if (mail?.to === "recipients") {
     block = checkOutboundEmail(recipientFields(mail.args, args as Record<string, unknown>), text);
   } else {
-    block = checkOutboundPayload(tc.name, text, vouched);
+    // A browser call that acts on one page sends to that page's site: name it
+    // on the card, and let the user's trusted list answer a guess there, as it
+    // does for http_request. The browser asked about a site the user had
+    // trusted, on a card that did not say which site (2026-11-22). Their own
+    // stored secret is refused here whatever the list says: a real credential
+    // goes in through the browser's secret fill, not a typed value.
+    const page = browserPageOf(specs, args as Record<string, unknown>, ctx.sessionId);
+    block = checkOutboundPayload(tc.name, text, vouched, page ? hostOf(page) : undefined);
+    if (block?.tier === "advisory" && page && isTrustedDestination(page)) block = null;
   }
   if (!block) return null;
   return {
@@ -141,6 +149,15 @@ export function probeEgressGuard(ctx: ToolCallContext): EgressBlocker | null {
     userHint: USER_HINTS.outboundContent, meta: block.meta,
     confirmable: block.confirmable,
   };
+}
+
+// The page a browser call sends to, when it names exactly one: the call's own
+// url, else the page the session's browser is on. "" for a script, which can
+// send anywhere, and for a call whose row names no single browser page.
+function browserPageOf(specs: ReturnType<typeof destinationSpecsOf>, args: Record<string, unknown>, sessionId: string | undefined): string {
+  if (!specs || specs.length !== 1 || specs[0].to !== "browser-page" || args.script) return "";
+  const own = specs[0].arg ? args[specs[0].arg] : undefined;
+  return typeof own === "string" && own ? own : lastBrowserPageUrl(sessionId ?? "");
 }
 
 // The site a browser call acts on, for the approval card: the call's own url,

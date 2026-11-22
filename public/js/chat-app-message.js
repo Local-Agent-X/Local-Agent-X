@@ -1,10 +1,15 @@
 // ── Chat: a message the app sent, drawn small ──
 //
-// A collab (src/agency/collab-messages.ts) runs each step by sending a chat a
-// message: the brief for a step, or, to the chat the collab started from, every
-// model's report and the app's record of their claims. Those are saved as the
-// chat's "user" rows, because that is how a turn starts, but the user did not
-// type them and some are tens of thousands of characters long.
+// The app starts a turn by sending the chat a message: a collab's brief for a
+// step, or every model's report (src/agency/collab-messages.ts); "background
+// work you started has ended, tell the user" (src/ops/op-report-wake.ts); "the
+// human check is done, carry on" (src/tools/browser-tools/human-check-handoff.ts).
+// Those are saved as the chat's "user" rows, because that is how a turn starts,
+// but the user did not type them, and some are tens of thousands of characters
+// long. Only collab messages were recognised, so the others showed as if the
+// user had typed the app's instructions (2026-11-22). Any message whose first
+// line says the app sent it is drawn as a note now, a kind not named below as
+// "A note from the app".
 //
 // Such a row is drawn as one line saying what it is ("Collab finished: the
 // models' reports and the app's record of their claims"), labelled App, with
@@ -23,7 +28,9 @@ var laxAppMessage = (function () {
     if (first.indexOf('(Collab finished') === 0) return 'Collab finished: the models’ reports and the app’s record of their claims';
     var step = /^\(Collab, ([^.]+)\./.exec(first);
     if (step) return 'Collab: the brief for ' + step[1];
-    return first.indexOf('(From the app') === 0 ? 'A note from the app' : null;
+    if (first.indexOf('background work you started has ended') !== -1) return 'Background work ended: the app asked the agent to report';
+    if (first.indexOf('the human check on ') !== -1) return 'Human check done: the app told the agent';
+    return 'A note from the app';
   }
 
   /** Turn the user row `node` (from addMessageEl) into the small app row. */

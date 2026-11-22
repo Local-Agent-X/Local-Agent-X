@@ -12,6 +12,7 @@ import type { Collab } from "../src/agency/collab.js";
 import { missingDisputesMessage, researchMessage, resultMessage, claimsRepairMessage } from "../src/agency/collab-messages.js";
 import { opReportMessage } from "../src/ops/op-report-wake.js";
 import { resumeMessage } from "../src/tools/browser-tools/human-check-handoff.js";
+import { approvedRetryMessage } from "../src/routes/chat/run-chat-turn/slash-interceptors.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(join(here, "../public/js/chat-app-message.js"), "utf8");
@@ -41,6 +42,7 @@ describe("a message the app sent", () => {
     expect(api.summaryOf(opReportMessage([{ opId: "op_1", task: "The build of label-check (run_build_plan)", status: "failed" }])))
       .toBe("Background work ended: the app asked the agent to report");
     expect(api.summaryOf(resumeMessage("console.firebase.google.com"))).toBe("Human check done: the app told the agent");
+    expect(api.summaryOf(approvedRetryMessage("downloading the APK"))).toBe("Approved: the app told the agent to retry");
     // A kind of message added later is still the app's, never the user's.
     expect(api.summaryOf("(Sent by the app, not typed by the user: something new happened.)\nDo this.")).toBe("A note from the app");
   });

@@ -30,6 +30,7 @@ var laxAppMessage = (function () {
     if (step) return 'Collab: the brief for ' + step[1];
     if (first.indexOf('background work you started has ended') !== -1) return 'Background work ended: the app asked the agent to report';
     if (first.indexOf('the human check on ') !== -1) return 'Human check done: the app told the agent';
+    if (first.indexOf('the user typed /approve') !== -1) return 'Approved: the app told the agent to retry';
     return 'A note from the app';
   }
 

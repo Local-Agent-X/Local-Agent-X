@@ -24,7 +24,7 @@ import { describe, it, expect, vi, afterEach } from "vitest";
 import type { ServerEvent } from "../../../types.js";
 
 vi.mock("./slash-interceptors.js", () => ({
-  handleApproveCommand: vi.fn(async () => ({ handled: false })),
+  handleApproveInTurn: vi.fn(async () => ({ handled: false })),
   expandSlash: vi.fn(async (m: string) => m),
 }));
 vi.mock("./prepare-and-route.js", () => ({

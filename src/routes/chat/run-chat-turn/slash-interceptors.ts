@@ -1,5 +1,7 @@
 import { createLogger } from "../../../logger.js";
+import type { ServerEvent } from "../../../types.js";
 import type { SseSink } from "./types.js";
+import { isUserChat, sendAppMessageWhenIdle } from "../../../chat-ws/app-message.js";
 
 const logger = createLogger("routes.chat.slash-interceptors");
 
@@ -8,16 +10,31 @@ export interface ApproveResult {
   handled: boolean;
 }
 
+/** Text the agent is sent after the user typed /approve, as the app's. */
+export function approvedRetryMessage(reason: string): string {
+  return [
+    `(Sent by the app, not typed by the user: the user typed /approve "${reason}", so the step that was blocked may run now, for 30 minutes.)`,
+    "Retry the call that was blocked and carry on with what the user asked. If nothing is waiting on that approval any more, say so in one line.",
+  ].join("\n");
+}
+
 /**
  * `/approve <reason>` short-circuit. Grants threat-engine consent for
- * this session so the model's NEXT retry of a blocked tool succeeds.
- * Returns inline to the chat, doesn't call the model. Layer B of the
- * threat-engine consent flow. See src/threat/consent-store.ts.
+ * this session so the model's NEXT retry of a blocked tool succeeds. Layer B
+ * of the threat-engine consent flow (src/threat/consent-store.ts).
+ *
+ * The reply goes out on `emit`, the transport the turn is live on: the chat
+ * socket gave this function no sink, so on the desktop the confirmation and
+ * the turn's end went nowhere and the chat waited forever (2026-11-22). Then
+ * `wakeAgent` (when given) tells the agent to retry: the agent had already
+ * said it was waiting on this approval, and the user had to type the request
+ * a second time.
  */
 export async function handleApproveCommand(
   message: string,
   sessionId: string,
-  sseSink: SseSink,
+  emit: (event: ServerEvent) => void,
+  wakeAgent?: (message: string) => void,
 ): Promise<ApproveResult> {
   if (!/^\s*\/approve\b/i.test(message)) return { handled: false };
 
@@ -47,12 +64,30 @@ export async function handleApproveCommand(
     ledgerNote = `\n\nLearned pattern: \`${fp}\` — future sessions hitting this pattern will auto-allow without /approve.`;
   }
   logger.info(`[threat] /approve granted for sess=${sessionId.slice(0, 16)}: ${reason.slice(0, 80)}${breachRecovered ? " (canary breach recovered)" : ""}${fp ? ` (ledger fingerprint=${fp})` : ""}`);
-  if (sseSink) sseSink({
+  emit({
     type: "stream",
-    delta: `✓ Consent granted for 30 minutes. Reason: ${reason}\n\nThe agent's next retry of the blocked tool will succeed. Type the original request again or ask the agent to retry.${breachNote}${ledgerNote}`,
-  });
-  if (sseSink) sseSink({ type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } });
+    delta: `✓ Consent granted for 30 minutes. Reason: ${reason}\n\n${wakeAgent ? "The agent is retrying the blocked step now." : "The agent's next retry of the blocked tool will succeed. Type the original request again or ask the agent to retry."}${breachNote}${ledgerNote}`,
+  } as ServerEvent);
+  emit({ type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } } as ServerEvent);
+  wakeAgent?.(approvedRetryMessage(reason));
   return { handled: true };
+}
+
+/**
+ * A chat turn's `/approve`: the reply goes out on the transport the turn is
+ * live on (the HTTP route's sink, else the chat socket, which passes none),
+ * and in a chat a person is in on the web, its agent retries at once.
+ */
+export function handleApproveInTurn(
+  message: string,
+  sessionId: string,
+  live: { sseSink: SseSink; channel: string; emitToChat: (event: ServerEvent) => void },
+): Promise<ApproveResult> {
+  const emit = (event: ServerEvent) => (live.sseSink ? live.sseSink(event) : live.emitToChat(event));
+  const wake = live.channel === "web" && isUserChat(sessionId)
+    ? (text: string) => { sendAppMessageWhenIdle(sessionId, () => text); }
+    : undefined;
+  return handleApproveCommand(message, sessionId, emit, wake);
 }
 
 /**

@@ -54,6 +54,18 @@ const POLICY_MENTION_PATTERNS: RegExp[] = [
 const FIRST_PERSON_DECLINE =
   /\bi\s+(?:cannot|can'?t|will not|won'?t|am unable to|am not able to|won'?t be able to|must decline|have to decline|need to decline|refuse to|am not going to|do not feel comfortable|don'?t feel comfortable)\b/i;
 
+// A first-person "can't" about a wait, not a refusal: "I can't continue yet.
+// Build 2 is waiting on that one blocked download" (an agent telling the user
+// what it needs, 2026-11-22) was logged as the model refusing. Looked for in
+// the sentence the refusal opening starts.
+const WAITING_ON_SOMETHING =
+  /\b(?:yet|until|for now|right now|at the moment|without (?:your|the user'?s|an?|their) (?:approval|ok|okay|go-ahead|permission|confirmation|answer|input))\b/i;
+
+function firstSentence(text: string): string {
+  const end = text.search(/[.!?\n]/);
+  return end === -1 ? text : text.slice(0, end);
+}
+
 export interface RefusalDetection {
   isRefusal: boolean;
   pattern?: string;
@@ -71,6 +83,7 @@ export function detectRefusalText(text: string | undefined | null): RefusalDetec
   for (const re of REFUSAL_PATTERNS) {
     const m = head.match(re);
     if (m) {
+      if (WAITING_ON_SOMETHING.test(firstSentence(head))) return { isRefusal: false };
       return { isRefusal: true, pattern: re.source, snippet: m[0].slice(0, 120) };
     }
   }

@@ -98,6 +98,22 @@ describe("detectRefusalText", () => {
     expect(r.isRefusal).toBe(false);
   });
 
+  // An agent telling the user what it is waiting on was logged as the model
+  // refusing (2026-11-22). A "can't" about a wait is a status.
+  it("does NOT misclassify an agent saying what it is waiting on", () => {
+    for (const text of [
+      "I can't continue yet. Build 2 is still waiting on that one blocked download, and \"keep going\" doesn't count as approval.",
+      "I can't continue until you approve the download.",
+      "I cannot complete this without your approval: the deploy needs your go-ahead.",
+      "I can't continue for now, the build is still running.",
+    ]) expect(detectRefusalText(text).isRefusal, text).toBe(false);
+  });
+
+  it("still flags a refusal that mentions a wait only in a later sentence", () => {
+    expect(detectRefusalText("I can't help with that. Ask again until you get a different answer.").isRefusal).toBe(true);
+    expect(detectRefusalText("I can't assist with creating malware.").isRefusal).toBe(true);
+  });
+
   it("does NOT misclassify a code answer that contains 'cannot' in a string", () => {
     const r = detectRefusalText("function fn() { throw new Error('cannot proceed'); }");
     expect(r.isRefusal).toBe(false);

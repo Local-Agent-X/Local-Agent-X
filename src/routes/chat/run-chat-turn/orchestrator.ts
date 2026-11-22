@@ -4,7 +4,7 @@ import { createLogger } from "../../../logger.js";
 import { runDelegationHandoff } from "../delegation-handoff.js";
 import { createRetryContext, attachRetryContext, detachRetryContext } from "../../../retry-context.js";
 import type { RunChatTurnArgs } from "./types.js";
-import { handleApproveCommand, expandSlash } from "./slash-interceptors.js";
+import { handleApproveInTurn, expandSlash } from "./slash-interceptors.js";
 import {
   preparePerTurnRequest, emitContextStatus,
   filterToolsForSession, applyDiscussPrefix,
@@ -136,7 +136,7 @@ export async function runChatTurn(args: RunChatTurnArgs): Promise<void> {
     }
   }
 
-  const approve = await handleApproveCommand(message, sessionId, sseSink);
+  const approve = await handleApproveInTurn(message, sessionId, { sseSink, channel, emitToChat: (event) => ctx.chatWs.emit(sessionId, event) });
   if (approve.handled) return;
 
   message = await expandSlash(message, sessionId);

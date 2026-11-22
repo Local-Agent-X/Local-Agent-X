@@ -1,10 +1,10 @@
 // Whether there is an update, against real git: an install whose own commit
 // reached origin/main as a copy (new id, same change) has nothing to take.
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { upstreamChangesMissing } from "./update-live-deps.js";
 
@@ -32,6 +32,16 @@ function commit(cwd: string, file: string, text: string): string {
   git(cwd, "add", file);
   git(cwd, "commit", "-q", "-m", `edit ${file}`);
   return git(cwd, "rev-parse", "HEAD");
+}
+
+/** One commit writing several files (folders made as needed). */
+function commitFiles(cwd: string, files: Record<string, string>): void {
+  for (const [file, text] of Object.entries(files)) {
+    mkdirSync(dirname(join(cwd, file)), { recursive: true });
+    writeFileSync(join(cwd, file), text);
+    git(cwd, "add", file);
+  }
+  git(cwd, "commit", "-q", "-m", "edit " + Object.keys(files).join(", "));
 }
 
 /** Push from the upstream clone, then fetch it into the install. */
@@ -83,5 +93,28 @@ describe("upstreamChangesMissing", () => {
     commit(upstream, "new.txt", "new");
     publish();
     expect(await upstreamChangesMissing(install)).toBe(1);
+  });
+  it("is 0 when origin's copy differs from the install's only in regenerated files", async () => {
+    // The same fix made on two bases: the source is identical, the codebase
+    // map and the size ratchet that each build rewrote are not.
+    commitFiles(install, { "fix.txt": "fix", "docs/codebase-map.md": "map as built here", ".code-size-ratchet": "a 10" });
+    commitFiles(upstream, { "fix.txt": "fix", "docs/codebase-map.md": "map as built there", ".code-size-ratchet": "a 12" });
+    publish();
+    expect(git(install, "rev-list", "--count", "--right-only", "--cherry-pick", "HEAD...origin/main")).toBe("1"); // what git's match saw
+    expect(await upstreamChangesMissing(install)).toBe(0);
+  });
+
+  it("still counts a source change that arrived with its regenerated files", async () => {
+    commitFiles(install, { "fix.txt": "fix" });
+    commitFiles(upstream, { "other.txt": "other", "docs/codebase-map.md": "map" });
+    publish();
+    expect(await upstreamChangesMissing(install)).toBe(1);
+  });
+
+  it("a commit that only regenerates docs is not an update", async () => {
+    commitFiles(install, { "fix.txt": "fix" });
+    commitFiles(upstream, { "docs/codebase-map.md": "map refreshed" });
+    publish();
+    expect(await upstreamChangesMissing(install)).toBe(0);
   });
 });

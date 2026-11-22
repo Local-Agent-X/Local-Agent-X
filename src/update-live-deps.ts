@@ -21,7 +21,40 @@ export async function updateGit(cmd: string, cwd: string, timeoutMs = GIT_TIMEOU
  *  or rebased, so a new id) already has that change, and an id count offered it
  *  as an update that would only merge in what was already there. */
 export async function upstreamChangesMissing(cwd: string): Promise<number> {
-  return parseInt(await updateGit("git rev-list --count --right-only --cherry-pick HEAD...origin/main", cwd), 10) || 0;
+  const commits = async (side: string) =>
+    (await updateGit(`git rev-list --no-merges --cherry-pick ${side} HEAD...origin/main`, cwd)).split(/\s+/).filter(Boolean);
+  const upstream = await commits("--right-only");
+  if (upstream.length === 0) return 0;
+  // git's own match compares the whole diff, so a rebased copy whose
+  // regenerated files differ (another base, other map lines) still looks new
+  // (2026-11-21: the auth fix on origin, banner on an install that had it).
+  // Compare the rest of the change instead, against this checkout's commits
+  // that git could not match.
+  const local = await commits("--left-only");
+  if (local.length === 0) return upstream.length;
+  const here = new Set(await Promise.all(local.map((sha) => sourceChange(sha, cwd))));
+  let missing = 0;
+  for (const sha of upstream) {
+    const change = await sourceChange(sha, cwd);
+    if (change && !here.has(change)) missing++;
+  }
+  return missing;
+}
+
+/** Files a build or a check rewrites from the source, so two copies of one
+ *  change made on different bases differ there and nowhere else. The docs are
+ *  scripts/regen-generated-docs.mjs's; the two ratchets are rewritten by
+ *  `--tighten`. A commit that touches only these brings nothing a build here
+ *  would not make itself. */
+const REGENERATED_FILES = ["docs/codebase-map.md", "docs/agent-capabilities.md", ".code-size-ratchet", ".canonical-drift"];
+
+/** A commit's change outside the regenerated files, without the line numbers
+ *  and blob ids that differ between copies on different bases: its file
+ *  headers and its added and removed lines. Empty when nothing else changed. */
+async function sourceChange(sha: string, cwd: string): Promise<string> {
+  const excluded = REGENERATED_FILES.map((f) => `:(exclude)${f}`).join(" ");
+  const diff = await updateGit(`git show --format= --no-color --no-ext-diff -p ${sha} -- . ${excluded}`, cwd);
+  return diff.split("\n").filter((l) => /^(diff --git |[+-])/.test(l)).join("\n");
 }
 
 /** A Windows file lock (a loaded native module, AV, or the file indexer), as

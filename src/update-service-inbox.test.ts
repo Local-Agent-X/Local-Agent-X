@@ -13,7 +13,9 @@ function answer(cmd: string): string {
   if (/rev-parse --short origin\/main/.test(cmd)) return `${git.remoteCommit}\n`;
   if (/show origin\/main:package\.json/.test(cmd)) return JSON.stringify({ version: git.version });
   if (/log -1/.test(cmd)) return "subject line\n";
-  if (/rev-list --count/.test(cmd)) return `${git.behind}\n`;
+  // `behind` commits on origin/main, none of this checkout's own unmatched.
+  if (/rev-list .*--right-only/.test(cmd)) return Array.from({ length: Number(git.behind) }, (_, i) => `${i}`.repeat(40)).join("\n");
+  if (/rev-list/.test(cmd)) return "";
   return "";
 }
 

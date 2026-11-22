@@ -11,7 +11,9 @@ vi.mock("./git-safety.js", () => ({
   composeGitArgs: (a: string | string[]) => (Array.isArray(a) ? a : a.split(" ")),
   execGit: async (args: string[]) => {
     const cmd = args.join(" ");
-    if (cmd.startsWith("rev-list")) return `${state.behind}\n`;
+    // `behind` commits on origin/main, none of this checkout's own unmatched.
+    if (cmd.startsWith("rev-list") && cmd.includes("--right-only")) return Array.from({ length: state.behind }, (_, i) => `${i}`.repeat(40)).join("\n");
+    if (cmd.startsWith("rev-list")) return "";
     if (cmd.startsWith("log")) return `${state.target} ${Math.floor(state.commitTime / 1000)}\n`;
     return "";
   },

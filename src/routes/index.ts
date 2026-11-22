@@ -21,6 +21,7 @@ export { handleConnectorProxyRoutes } from "./connector-proxy.js";
 export { handleHealthRoutes } from "./health.js";
 export { handleAccountRoutes } from "./account.js";
 export { handleArtifactRoutes } from "./artifacts.js";
+export { handleSessionFolderRoute } from "./session-folder.js";
 export { handleBrowserHistoryRoutes } from "./browser/history.js";
 export { handleBrowserBookmarkRoutes } from "./browser/bookmarks.js";
 export { handleBrowserDenyReasonRoutes } from "./browser/deny-reason.js";

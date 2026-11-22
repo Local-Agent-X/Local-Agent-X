@@ -27,6 +27,7 @@ import { ProjectStore } from "../agent-store/project-store.js";
 import { sessionWorkRootOf, setSessionWorkRoot } from "../workspace/paths.js";
 import { sessionModeOf, type ChatMode } from "./mode.js";
 import { ownCopyFolder } from "../agency/chat-own-copy.js";
+import { ideAppDir } from "./ide-work-root.js";
 
 /** A real directory at `named` (absolute, or relative to the workspace), or nothing. */
 function realFolder(named: string | undefined): string | undefined {
@@ -73,6 +74,14 @@ export function sessionProjectFolder(session: ProjectFolderSession): string | un
   return sessionModeOf(session) === "code"
     ? codeSessionFolder(session.projectId ? ProjectStore.getInstance().get(session.projectId)?.workspace : undefined)
     : chatSessionFolder(session.folder);
+}
+
+/** The folder a session works in, for a surface outside a turn (the chat's
+ *  terminal): its own copy of the project when it has one, else its project
+ *  folder; an App IDE session's is its app's folder. Nothing when it has none. */
+export function sessionFolderFor(session: ProjectFolderSession): string | undefined {
+  if (session.id.startsWith("ide-")) return realFolder(ideAppDir(session.id.slice("ide-".length)) ?? undefined);
+  return ownCopyFolder(session.id) ?? sessionProjectFolder(session);
 }
 
 /** Anchor a session at its project folder: its own copy of the project when it

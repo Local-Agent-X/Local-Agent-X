@@ -1627,6 +1627,7 @@ body.agent-feeds-resizing .agent-feeds{transition:none!important}
 .terminal-new-session:hover{background:color-mix(in srgb,var(--text) 10%,transparent);color:var(--text)}
 .terminal-host{flex:1;min-height:0;padding:8px 4px 4px 8px;overflow:hidden}
 .terminal-host .xterm{height:100%}
+.terminal-chat-pane{height:100%}
 .terminal-unavailable{position:absolute;inset:34px 0 0;display:grid;place-items:center;padding:24px;color:var(--muted);font-family:var(--mono);font-size:.72rem;text-align:center}
 .browser-toolbar{display:flex;align-items:center;gap:6px;padding:8px;background:var(--bg);border-bottom:1px solid var(--border);flex-shrink:0}
 /* Preview tab (preview-tab.js): the Preview / Code switch, the live app frame,

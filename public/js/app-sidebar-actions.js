@@ -312,6 +312,8 @@ function dropChatLocally(id) {
   chats = chats.filter(c => c.id !== id);
   if (activeChat && activeChat.id === id) activeChat = null;
   markDeleted(id);
+  // A deleted chat's shell goes with it (terminal-panel.js).
+  try { if (window.laxTerminalPanel && window.laxTerminalPanel.onChatRemoved) window.laxTerminalPanel.onChatRemoved(id); } catch {}
   saveChats(); renderSidebar();
   if (window.renderMessages) renderMessages();
   try { if (window.laxBrowserSessionBind) window.laxBrowserSessionBind.bindSession(activeChat ? activeChat.id : null); } catch {}

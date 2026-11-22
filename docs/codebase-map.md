@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 72 top-level dirs · 72 live · 0 with no live importer · 2106 non-test source files · 74 oversized · 257 nearing the size cap.
+**Totals:** 72 top-level dirs · 72 live · 0 with no live importer · 2107 non-test source files · 74 oversized · 257 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -26,7 +26,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/canonical-loop/` | 92 | 294 | XL | 10 |
 | `src/workspace/` | 92 | 3 | M |  |
 | `src/providers/` | 79 | 28 | L | 1 |
-| `src/session/` | 77 | 15 | L |  |
+| `src/session/` | 78 | 15 | L |  |
 | `src/memory/` | 63 | 163 | XL | 3 |
 | `src/data-lineage/` | 61 | 12 | L |  |
 | `src/util/` | 59 | 3 | S |  |
@@ -60,7 +60,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/anthropic-client/` | 15 | 23 | L | 2 |
 | `src/cron/` | 14 | 14 | L |  |
 | `src/app-renderer/` | 13 | 7 | M | 1 |
-| `src/routes/` | 13 | 115 | XL | 16 |
+| `src/routes/` | 13 | 116 | XL | 16 |
 | `src/agent-loop/` | 12 | 1 | S |  |
 | `src/ari-kernel/` | 12 | 12 | M |  |
 | `src/integrations/` | 12 | 15 | M |  |

@@ -12,7 +12,7 @@ vi.mock("../config.js", () => ({
   workspacePath: (...segments: string[]) => join(workspace, ...segments),
 }));
 
-const { bindSessionFolder, chatSessionFolder, codeSessionFolder, stampSessionProjectFolder, takeBoundFolder, workspaceRelative } = await import("./project-folder.js");
+const { bindSessionFolder, chatSessionFolder, codeSessionFolder, sessionFolderFor, stampSessionProjectFolder, takeBoundFolder, workspaceRelative } = await import("./project-folder.js");
 const { sessionWorkRootOf, clearSessionWorkRoot } = await import("../workspace/paths.js");
 
 describe("codeSessionFolder", () => {
@@ -61,6 +61,26 @@ describe("stampSessionProjectFolder", () => {
 
 // A chat that starts building without a folder gets one: the app's folder in
 // the workspace, bound by the tool that created it and kept by the turn's end.
+// Where a chat's terminal opens (GET /api/session-folder): read from the
+// session's record, with no turn running and nothing stamped.
+describe("sessionFolderFor", () => {
+  it("is a code session's project folder, a chat's bound folder, an App IDE session's app folder", () => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-code-folder-"));
+    projects.set("p-term", { workspace: dir });
+    mkdirSync(join(workspace, "apps", "label-check"), { recursive: true });
+    expect(sessionFolderFor({ id: "chat-t1", mode: "code", projectId: "p-term" })).toBe(dir);
+    expect(sessionFolderFor({ id: "chat-t2", folder: "apps/label-check" })).toBe(join(workspace, "apps", "label-check"));
+    expect(sessionFolderFor({ id: "ide-label-check" })).toBe(join(workspace, "apps", "label-check"));
+    expect(sessionWorkRootOf("chat-t1")).toBeUndefined(); // reading it stamps nothing
+  });
+
+  it("is nothing for a chat with no folder, an app that is gone, or an id that is no app", () => {
+    expect(sessionFolderFor({ id: "chat-t3" })).toBeUndefined();
+    expect(sessionFolderFor({ id: "ide-no-such-app" })).toBeUndefined();
+    expect(sessionFolderFor({ id: "ide-../../etc" })).toBeUndefined();
+  });
+});
+
 describe("bindSessionFolder", () => {
   it("binds an unbound chat to an app folder inside the workspace, once, and hands the turn the folder to keep", () => {
     const dir = join(workspace, "apps", "todo");

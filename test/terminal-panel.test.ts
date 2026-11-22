@@ -13,7 +13,7 @@ function flush() { return Promise.resolve().then(() => Promise.resolve()); }
 describe("terminal side panel", () => {
   let bridge: Record<string, ReturnType<typeof vi.fn>>;
   let input: ((data: string) => void) | null;
-  let output: ((data: string) => void) | null;
+  let output: ((data: string, chat?: string) => void) | null;
   let exit: ((event: { exitCode: number }) => void) | null;
   let resizeCallback: (() => void) | null;
   let term: { cols: number; rows: number; write: ReturnType<typeof vi.fn>; focus: ReturnType<typeof vi.fn>; dispose: ReturnType<typeof vi.fn> };
@@ -44,13 +44,67 @@ describe("terminal side panel", () => {
     expect(bridge.create).not.toHaveBeenCalled();
     (window as unknown as { switchSidePanelTab(tab: string): void }).switchSidePanelTab("terminal");
     await flush();
-    expect(bridge.create).toHaveBeenCalledWith(90, 30);
+    expect(bridge.create).toHaveBeenCalledWith(90, 30, "", null);
     input!("\u001b[A");
-    expect(bridge.write).toHaveBeenCalledWith("\u001b[A");
+    expect(bridge.write).toHaveBeenCalledWith("\u001b[A", "");
     output!("hello\r\n");
     expect(term.write).toHaveBeenCalledWith("hello\r\n");
     resizeCallback!();
-    expect(bridge.resize).toHaveBeenCalledWith(90, 30);
+    expect(bridge.resize).toHaveBeenCalledWith(90, 30, "");
+  });
+
+  // One shell served every chat (2026-11-22). Each chat now has its own pane
+  // and shell, opened in that chat's folder; switching chats swaps the pane
+  // and leaves the other chat's shell running.
+  it("gives each chat its own shell in its folder, and swaps panes with the chat", async () => {
+    const w = window as unknown as {
+      switchSidePanelTab(tab: string): void; activeChat: { id: string } | null; apiJson: ReturnType<typeof vi.fn>;
+      laxSidePanelChat: { onChatChanged(): void }; laxTerminalPanel: { onChatRemoved(id: string): Promise<void> };
+    };
+    w.apiJson = vi.fn(async (url: string) => ({ folder: url.includes("chat-a") ? "C:/work/label-check" : null }));
+    const panes = () => Array.from(document.querySelectorAll<HTMLElement>("#terminal-host .terminal-chat-pane"));
+    const shown = () => panes().map((p) => p.style.display !== "none");
+
+    w.activeChat = { id: "chat-a" };
+    w.switchSidePanelTab("terminal");
+    await flush(); await flush();
+    expect(w.apiJson).toHaveBeenCalledWith("/api/session-folder?session=chat-a");
+    expect(bridge.create).toHaveBeenLastCalledWith(90, 30, "chat-a", "C:/work/label-check");
+
+    w.activeChat = { id: "chat-b" };
+    w.laxSidePanelChat.onChatChanged();
+    await flush(); await flush();
+    expect(bridge.create).toHaveBeenLastCalledWith(90, 30, "chat-b", null);
+    expect(shown()).toEqual([false, true]);
+    expect(bridge.dispose).not.toHaveBeenCalled(); // chat A's shell keeps running
+
+    // Output is written to its own chat's pane, typing goes to the chat on screen.
+    output!("from a\r\n", "chat-a");
+    expect(term.write).toHaveBeenCalledWith("from a\r\n");
+    input!("x");
+    expect(bridge.write).toHaveBeenLastCalledWith("x", "chat-b");
+
+    // Back to chat A: its pane again, and no second shell for it.
+    w.activeChat = { id: "chat-a" };
+    w.laxSidePanelChat.onChatChanged();
+    await flush();
+    expect(shown()).toEqual([true, false]);
+    expect(bridge.create).toHaveBeenCalledTimes(2);
+
+    // A deleted chat's shell goes with it.
+    await w.laxTerminalPanel.onChatRemoved("chat-b");
+    expect(bridge.dispose).toHaveBeenCalledWith("chat-b");
+    expect(panes()).toHaveLength(1);
+    w.activeChat = null;
+  });
+
+  it("does not start a shell for a chat whose Terminal tab was never shown", async () => {
+    const w = window as unknown as { activeChat: { id: string } | null; laxSidePanelChat: { onChatChanged(): void } };
+    w.activeChat = { id: "chat-a" };
+    w.laxSidePanelChat.onChatChanged();
+    await flush();
+    expect(bridge.create).not.toHaveBeenCalled();
+    w.activeChat = null;
   });
 
   it("shows terminal, hides browser, and restart disposes before recreating", async () => {

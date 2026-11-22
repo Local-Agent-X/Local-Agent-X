@@ -26,6 +26,7 @@ window.laxSidePanelChat = {
   onChatChanged: function() {
     if (window.laxAgentFeedsScope) window.laxAgentFeedsScope.onChatChanged();
     if (sidePanelTab === 'artifacts') loadArtifacts(false);
+    if (window.laxTerminalPanel && window.laxTerminalPanel.onChatChanged) window.laxTerminalPanel.onChatChanged();
   },
 };
 

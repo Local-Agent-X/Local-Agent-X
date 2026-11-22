@@ -20,7 +20,7 @@ vi.mock("electron", () => ({
 vi.mock("node-pty", () => ({ spawn: mocks.spawn }));
 vi.mock("./config", () => ({ getProjectRoot: () => "C:\\project" }));
 
-import { disposeAllTerminals, ensureSpawnHelperExecutable, setupTerminalIPC, validateTerminalSize, validateTerminalWrite } from "./terminal-pty";
+import { disposeAllTerminals, ensureSpawnHelperExecutable, MAX_SHELLS_PER_WINDOW, setupTerminalIPC, terminalStartFolder, validateTerminalChat, validateTerminalSize, validateTerminalWrite } from "./terminal-pty";
 
 class FakeOwner extends EventEmitter {
 	readonly send = vi.fn();
@@ -69,9 +69,83 @@ describe("terminal PTY IPC", () => {
 		second.emitData("B");
 
 		expect(mocks.spawn).toHaveBeenCalledTimes(2);
-		expect(ownerA.send).toHaveBeenCalledWith("terminal-data", "A");
-		expect(ownerA.send).not.toHaveBeenCalledWith("terminal-data", "B");
-		expect(ownerB.send).toHaveBeenCalledWith("terminal-data", "B");
+		expect(ownerA.send).toHaveBeenCalledWith("terminal-data", "A", "");
+		expect(ownerA.send).not.toHaveBeenCalledWith("terminal-data", "B", "");
+		expect(ownerB.send).toHaveBeenCalledWith("terminal-data", "B", "");
+	});
+
+	// One shell per window served every chat, opened in LAX's own folder
+	// (2026-11-22). Each chat now has its own, in its project folder.
+	it("gives each chat its own shell, opened in that chat's folder, and routes I/O by chat", () => {
+		const shellA = fakePty();
+		const shellB = fakePty();
+		mocks.spawn.mockReturnValueOnce(shellA).mockReturnValueOnce(shellB);
+		const owner = new FakeOwner(50);
+		const folder = mkdtempSync(join(tmpdir(), "pty-chat-"));
+		try {
+			invoke("terminal-create", owner, 80, 24, "chat-a", folder);
+			invoke("terminal-create", owner, 80, 24, "chat-b", join(folder, "no-such-folder"));
+			invoke("terminal-create", owner, 80, 24, "chat-a", folder); // already has one
+
+			expect(mocks.spawn).toHaveBeenCalledTimes(2);
+			expect(mocks.spawn.mock.calls[0][2]).toMatchObject({ cwd: folder });
+			// A folder that is not there falls back to the app's own.
+			expect(mocks.spawn.mock.calls[1][2]).toMatchObject({ cwd: "C:\\project" });
+
+			invoke("terminal-write", owner, "ls\r", "chat-b");
+			expect(shellB.write).toHaveBeenCalledWith("ls\r");
+			expect(shellA.write).not.toHaveBeenCalled();
+
+			shellA.emitData("from a");
+			expect(owner.send).toHaveBeenCalledWith("terminal-data", "from a", "chat-a");
+			shellB.emitExit({ exitCode: 3 });
+			expect(owner.send).toHaveBeenCalledWith("terminal-exit", { exitCode: 3, signal: undefined, chat: "chat-b" });
+
+			// Closing one chat's shell leaves the other running.
+			invoke("terminal-dispose", owner, "chat-a");
+			expect(shellA.kill).toHaveBeenCalledOnce();
+			expect(shellB.kill).not.toHaveBeenCalled();
+		} finally {
+			rmSync(folder, { recursive: true, force: true });
+		}
+	});
+
+	it("past the cap, closes the shell quiet the longest and tells the panel which chat's it was", () => {
+		const shells = Array.from({ length: MAX_SHELLS_PER_WINDOW + 1 }, () => fakePty());
+		for (const shell of shells) mocks.spawn.mockReturnValueOnce(shell);
+		const owner = new FakeOwner(60);
+		const clock = vi.spyOn(Date, "now");
+		try {
+			for (let i = 0; i < MAX_SHELLS_PER_WINDOW; i++) {
+				clock.mockReturnValue(1_000 + i);
+				invoke("terminal-create", owner, 80, 24, `chat-${i}`);
+			}
+			// chat-0 is the oldest, but it has just printed: chat-1 is the quiet one.
+			clock.mockReturnValue(5_000);
+			shells[0].emitData("still working");
+			clock.mockReturnValue(6_000);
+			invoke("terminal-create", owner, 80, 24, "chat-new");
+
+			expect(shells[1].kill).toHaveBeenCalledOnce();
+			expect(shells[0].kill).not.toHaveBeenCalled();
+			expect(owner.send).toHaveBeenCalledWith("terminal-exit", { exitCode: 0, chat: "chat-1", closed: true });
+			expect(mocks.spawn).toHaveBeenCalledTimes(MAX_SHELLS_PER_WINDOW + 1);
+		} finally {
+			clock.mockRestore();
+		}
+	});
+
+	it("closes every chat's shell when the window goes", () => {
+		const shellA = fakePty();
+		const shellB = fakePty();
+		mocks.spawn.mockReturnValueOnce(shellA).mockReturnValueOnce(shellB);
+		const owner = new FakeOwner(70);
+		invoke("terminal-create", owner, 80, 24, "chat-a");
+		invoke("terminal-create", owner, 80, 24, "chat-b");
+		owner.emit("destroyed");
+		expect(shellA.kill).toHaveBeenCalledOnce();
+		expect(shellB.kill).toHaveBeenCalledOnce();
+		expect(owner.listenerCount("destroyed")).toBe(0);
 	});
 
 	it("limits control to the sender and cleans up idempotently", () => {
@@ -135,5 +209,21 @@ describe("terminal IPC validation", () => {
 		expect(() => validateTerminalWrite("x".repeat(1024 * 1024 + 1))).toThrow(RangeError);
 		expect(validateTerminalSize(120.9, 9999)).toEqual({ cols: 120, rows: 200 });
 		expect(() => validateTerminalSize(Number.NaN, 40)).toThrow(TypeError);
+	});
+
+	it("reads the chat a call is for, and where its shell starts", () => {
+		expect([validateTerminalChat(undefined), validateTerminalChat(null), validateTerminalChat("chat-a")]).toEqual(["", "", "chat-a"]);
+		expect(() => validateTerminalChat(7)).toThrow(TypeError);
+		expect(() => validateTerminalChat("x".repeat(201))).toThrow(RangeError);
+		const here = mkdtempSync(join(tmpdir(), "pty-start-"));
+		try {
+			writeFileSync(join(here, "file.txt"), "x");
+			expect(terminalStartFolder(here, "fallback")).toBe(here);
+			expect(terminalStartFolder(join(here, "file.txt"), "fallback")).toBe("fallback"); // a file is no folder
+			expect(terminalStartFolder("relative/path", "fallback")).toBe("fallback");
+			expect(terminalStartFolder(null, "fallback")).toBe("fallback");
+		} finally {
+			rmSync(here, { recursive: true, force: true });
+		}
 	});
 });

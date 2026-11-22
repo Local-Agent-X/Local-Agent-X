@@ -290,20 +290,23 @@ contextBridge.exposeInMainWorld("desktop", {
     },
   },
 
+  // One shell per chat (terminal-pty.ts): every call names the chat it is for
+  // ("" with no chat on screen), and output and exit come back tagged with it.
+  // `folder` is where the chat's shell opens, when it is a real directory.
   terminal: {
-    create: (cols: number, rows: number): Promise<void> =>
-      ipcRenderer.invoke("terminal-create", cols, rows),
-    write: (data: string): Promise<void> => ipcRenderer.invoke("terminal-write", data),
-    resize: (cols: number, rows: number): Promise<void> =>
-      ipcRenderer.invoke("terminal-resize", cols, rows),
-    dispose: (): Promise<void> => ipcRenderer.invoke("terminal-dispose"),
-    onData: (cb: (data: string) => void): (() => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, data: string) => cb(data);
+    create: (cols: number, rows: number, chat?: string, folder?: string | null): Promise<void> =>
+      ipcRenderer.invoke("terminal-create", cols, rows, chat, folder),
+    write: (data: string, chat?: string): Promise<void> => ipcRenderer.invoke("terminal-write", data, chat),
+    resize: (cols: number, rows: number, chat?: string): Promise<void> =>
+      ipcRenderer.invoke("terminal-resize", cols, rows, chat),
+    dispose: (chat?: string): Promise<void> => ipcRenderer.invoke("terminal-dispose", chat),
+    onData: (cb: (data: string, chat: string) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, data: string, chat: string) => cb(data, chat);
       ipcRenderer.on("terminal-data", listener);
       return () => ipcRenderer.removeListener("terminal-data", listener);
     },
-    onExit: (cb: (event: { exitCode: number; signal?: number }) => void): (() => void) => {
-      const listener = (_event: Electron.IpcRendererEvent, exit: { exitCode: number; signal?: number }) => cb(exit);
+    onExit: (cb: (event: { exitCode: number; signal?: number; chat: string; closed?: boolean }) => void): (() => void) => {
+      const listener = (_event: Electron.IpcRendererEvent, exit: { exitCode: number; signal?: number; chat: string; closed?: boolean }) => cb(exit);
       ipcRenderer.on("terminal-exit", listener);
       return () => ipcRenderer.removeListener("terminal-exit", listener);
     },

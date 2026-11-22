@@ -6,7 +6,7 @@
 // files (ADR 0007 §4). Read from GET /api/work-claims
 // (src/routes/agents/work-claims.ts); re-read on a `work_claims_changed` frame
 // and on a timer, since a state changes with time alone (working → between
-// messages → lately).
+// messages → finished, when it leaves the strip).
 //
 // The chat window carries the same thing for its own project (ADR 0007 §6): a
 // pill in the toolbar's corner (#other-agents-strip) that opens a panel of the
@@ -22,7 +22,7 @@ var workClaimsRows = [];
 // The chat on screen and the agents it started (the route's `mine`).
 var workClaimsMine = [];
 
-var WORK_CLAIM_STATE = { active: 'working now', idle: 'between messages', recent: 'lately' };
+var WORK_CLAIM_STATE = { active: 'working now', idle: 'between messages' };
 
 function workClaimRowHtml(row) {
   var areas = (row.areas || []).map(function (a) { return '<code>' + esc(a) + '</code>'; }).join(' ');

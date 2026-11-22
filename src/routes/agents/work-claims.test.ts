@@ -7,8 +7,9 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Op } from "../../ops/types.js";
-import { othersInProjectOf, rowsOfChat, workClaimRows } from "./work-claims.js";
-import { holderNamesFrom, recordClaims, _resetWorkClaimsForTest, _setWorkClaimsForTest } from "../../agency/work-claims.js";
+import type { IncomingMessage, ServerResponse } from "node:http";
+import { handleWorkClaimRoutes, othersInProjectOf, rowsOfChat, workClaimRows } from "./work-claims.js";
+import { holderNamesFrom, recordClaims, taskTitle, _resetWorkClaimsForTest, _setWorkClaimsForTest } from "../../agency/work-claims.js";
 import { ownCopyView } from "./own-copy.js";
 import { clearSessionOwner, registerChildSessionOwner } from "../../browser/session-owner-registry.js";
 import type { SessionMetadata } from "../../memory/session-metadata-cache.js";
@@ -127,5 +128,38 @@ describe("a chat's own build workers", () => {
     const rows = Object.fromEntries(workClaimRows().map((r) => [r.sessionId, r]));
     expect(rows["agent-first"]).toMatchObject({ state: "recent", clashesWith: [] });
     expect(rows["agent-retry"].clashesWith).toEqual([]);
+  });
+
+  // Live 2026-11-22: five finished build workers sat in the strip for two
+  // hours, each named with the first 60 characters of its raw prompt.
+  it("the route lists who is working, not a worker that has finished", async () => {
+    _setWorkClaimsForTest({
+      dir: join(repo, "..", "holders"),
+      readOp: (id) => ({ id, lane: "agent", status: id === "op-done" ? "completed" : "running", task: id, canonical: { leaseExpiresAt: new Date(Date.now() + 60_000).toISOString() } }) as unknown as Op,
+    });
+    recordClaims({ sessionId: "agent-first", opId: "op-done", paths: [join(repo, "a.ts")], source: "written", displayName: "Chunk 1/13: App skeleton" });
+    recordClaims({ sessionId: "agent-retry", opId: "op-live", paths: [join(repo, "b.ts")], source: "written", displayName: "Chunk 1/13: App skeleton (retry)" });
+    let body = "";
+    const res = { writeHead() { return res; }, setHeader() {}, end(b: string) { body = b; } } as unknown as ServerResponse;
+    const ctx = { sessionStore: { list: () => [], load: () => null }, config: {} };
+    await handleWorkClaimRoutes("GET", new URL("http://127.0.0.1/api/work-claims"), { headers: {} } as IncomingMessage, res, ctx as never, "operator" as never);
+    expect((JSON.parse(body).holders as Array<{ sessionId: string }>).map((h) => h.sessionId)).toEqual(["agent-retry"]);
+  });
+
+  it("a worker nobody named is called by its task's first line, said once", () => {
+    const prompt = "# Chunk 3/13: Matching\n\n## Working directory\nYour project root is: `C:/tmp/autobuild-c3`";
+    _setWorkClaimsForTest({
+      dir: join(repo, "..", "holders"),
+      readOp: (id) => ({ id, lane: "agent", status: "running", task: prompt, canonical: { leaseExpiresAt: new Date(Date.now() + 60_000).toISOString() } }) as unknown as Op,
+    });
+    recordClaims({ sessionId: "agent-c3", opId: "op-c3", paths: [join(repo, "src", "match.ts")], source: "written" });
+    const row = workClaimRows().find((r) => r.sessionId === "agent-c3")!;
+    expect(row.displayName).toBe("Chunk 3/13: Matching");
+    expect(row.task).toBe("");
+    expect(taskTitle("\n\n  > quoted first\nsecond")).toBe("quoted first");
+    expect(taskTitle("")).toBe("");
+    // A chat keeps its message under its title; a row named after its own task does not repeat it.
+    recordClaims({ sessionId: "chat-a", opId: "op-c3", paths: [join(repo, "docs", "a.md")], source: "written", displayName: "Label checker" });
+    expect(workClaimRows().find((r) => r.sessionId === "chat-a")!.task).toContain("Chunk 3/13: Matching");
   });
 });

@@ -173,10 +173,19 @@ export function namedHolders(names: HolderNames = AS_RECORDED): HolderView[] {
   });
 }
 
-function describeFromOp(opId: string | undefined): Pick<WorkHolder, "kind" | "task" | "parentOpId"> {
+/** What a holder is called when nothing names it: its task's first line, as
+ *  a person would title it. The first 60 characters of the whole prompt ran
+ *  the title into the prompt's next section ("Chunk 3/13: Matching ## Working
+ *  directory Your project root", 2026-11-22). */
+export function taskTitle(task: string): string {
+  const first = task.split(/\r?\n/).map((line) => line.replace(/^[#>\s]+/, "").trim()).find((line) => line.length > 0) ?? "";
+  return first.slice(0, 60);
+}
+
+function describeFromOp(opId: string | undefined): Pick<WorkHolder, "kind" | "task" | "parentOpId"> & { title: string } {
   const op = opId ? readOpFor(opId) : null;
   const task = (op?.task ?? "").replace(/\s+/g, " ").trim().slice(0, 160);
-  return { kind: op && op.lane !== "interactive" ? "worker" : "chat", task, ...(op?.parentOpId ? { parentOpId: op.parentOpId } : {}) };
+  return { kind: op && op.lane !== "interactive" ? "worker" : "chat", task, title: taskTitle(op?.task ?? ""), ...(op?.parentOpId ? { parentOpId: op.parentOpId } : {}) };
 }
 
 export interface ClaimInput {
@@ -211,7 +220,7 @@ export function recordClaims(input: ClaimInput): void {
     write({
       v: 1, sessionId: input.sessionId, repoKey, checkout,
       kind: input.opId ? described.kind : input.kind ?? prior?.kind ?? described.kind,
-      displayName: input.displayName ?? prior?.displayName ?? (described.task.slice(0, 60) || input.sessionId),
+      displayName: input.displayName ?? prior?.displayName ?? (described.title || input.sessionId),
       task: described.task || prior?.task || "",
       ...(input.opId ? { opId: input.opId } : prior?.opId ? { opId: prior.opId } : {}),
       ...(described.parentOpId ? { parentOpId: described.parentOpId } : {}),

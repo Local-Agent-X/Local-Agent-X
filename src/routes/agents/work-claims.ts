@@ -1,8 +1,11 @@
 /**
  * Who is working on what, for the agents panel (ADR 0007 §4).
  *
- *   GET /api/work-claims — every live holder (chats and workers): its task,
- *   the areas it claims, its state, and the other holders its claims overlap.
+ *   GET /api/work-claims — every holder working now or between messages
+ *   (chats and workers): its task, the areas it claims, its state, and the
+ *   other holders its claims overlap. One that has finished is not listed:
+ *   the strip says who is working, and a finished worker sat in it for two
+ *   hours with nothing to open or clear.
  *   With `?session=<id>`, also `others`: the agents working in that chat's
  *   project, for the strip in its window; and `mine`: that chat and the agents
  *   it started, which with `others` is what the panel lists for one chat.
@@ -10,7 +13,7 @@
  * Open tabs are told to re-read it by a `work_claims_changed` frame whenever
  * a holder changes in this process; the panel also re-reads on a timer, which
  * covers a worker in a child process and a state that changes with time alone
- * (working → between messages → lately).
+ * (working → between messages → finished).
  */
 import { basename } from "node:path";
 import type { RouteHandler } from "../../server-context.js";
@@ -45,7 +48,8 @@ function rowOf(h: HolderView, all: HolderView[]): WorkClaimRow {
     opId: h.opId ?? null,
     kind: h.kind,
     displayName: h.displayName,
-    task: h.task,
+    // A holder named by its task's first line would say it twice.
+    task: h.task.replace(/^[#>\s]+/, "").startsWith(h.displayName) ? "" : h.task,
     state: h.state,
     folder: basename(h.checkout),
     areas: areasOf(h),
@@ -85,7 +89,7 @@ export const handleWorkClaimRoutes: RouteHandler = async (method, url, req, res,
   const session = url.searchParams.get("session");
   const sessions = ctx.sessionStore.list();
   const names = holderNamesFrom(sessions);
-  const holders = workClaimRows(names);
+  const holders = workClaimRows(names).filter((row) => row.state !== "recent");
   const forChat = session
     ? { mine: rowsOfChat(session, holders), others: othersInProjectOf(session, names), ownCopy: ownCopyView(ctx, session, names), orchestrator: orchestratorView(ctx, session, sessions) }
     : {};

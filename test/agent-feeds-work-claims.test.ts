@@ -156,7 +156,7 @@ describe("who is working on what", () => {
     rows = [
       { sessionId: "chat-a", kind: "chat", displayName: "Voice chat", task: "rework the pipeline", state: "active", folder: "local-agent-x", areas: ["src/voice/"], clashesWith: ["Fix STT"] },
       { sessionId: "agent-1", kind: "worker", displayName: "Fix STT", task: "swap whisper", state: "idle", folder: "wt-ab12", areas: ["src/voice/stt.ts"], clashesWith: ["Voice chat"] },
-      { sessionId: "chat-c", kind: "chat", displayName: "Docs <b>", task: "", state: "recent", folder: "local-agent-x", areas: [], clashesWith: [] },
+      { sessionId: "chat-c", kind: "chat", displayName: "Docs <b>", task: "", state: "idle", folder: "local-agent-x", areas: [], clashesWith: [] },
     ];
     await load().refreshWorkClaims();
     const host = document.getElementById("work-claims")!;

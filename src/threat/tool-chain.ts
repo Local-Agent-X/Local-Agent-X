@@ -72,12 +72,15 @@ export class ToolChainAnalyzer {
   /** The session whose site provenance vouches for IDs a destination showed it. */
   constructor(private readonly sessionId = "") {}
 
-  /** Record a tool call and check for dangerous patterns */
+  /** Record a tool call and check for dangerous patterns. `ran` is false for a
+   *  call another layer refused before it ran: it sent nothing, so it is never
+   *  judged as exfiltration or staging (loop detection still counts it). */
   recordAndAnalyze(
     toolName: string,
     args: Record<string, unknown>,
     resultClassification: DataClassification,
     clearance?: SendClearance,
+    ran = true,
   ): {
     blocked: boolean;
     reason?: string;
@@ -120,8 +123,12 @@ export class ToolChainAnalyzer {
 
     // Exfiltration detection: is secret material actually in the outbound
     // payload? A sink call that carries nothing (a mouse move, a click) can
-    // neither exfiltrate nor stage.
-    const payload = access && hasCapability(toolName, "egress") ? egressPayload(toolName, args) : null;
+    // neither exfiltrate nor stage, and neither can one another layer refused
+    // before it ran. Judging that one put "type /approve" over the real
+    // refusal: the user granted consent that changed nothing, and the retry
+    // met the refusal it had hidden, so one download took two approvals
+    // (2026-11-22).
+    const payload = ran && access && hasCapability(toolName, "egress") ? egressPayload(toolName, args) : null;
     if (access && payload && (payload.text || payload.attachmentPaths.length > 0)) {
       const exfil = this.checkExfiltration(toolName, access, args, payload.text);
       if (exfil) {

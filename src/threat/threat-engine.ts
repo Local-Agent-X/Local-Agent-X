@@ -194,7 +194,7 @@ export class ThreatEngine {
     const alreadyRestricted = this.scorer.isRestricted();
 
     // Chain analysis (exfiltration + loop detection)
-    const chainResult = this.chain.recordAndAnalyze(toolName, args, classification, clearance);
+    const chainResult = this.chain.recordAndAnalyze(toolName, args, classification, clearance, allowed);
 
     // Pre-score audit events (blocked-by-other-layer / staging observability /
     // consent-allowed exfil) — emitted but NEVER scored. See threat-audit-events.ts

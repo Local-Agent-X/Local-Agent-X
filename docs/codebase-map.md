@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2086 non-test source files · 75 oversized · 263 nearing the size cap.
+**Totals:** 71 top-level dirs · 71 live · 0 with no live importer · 2086 non-test source files · 75 oversized · 262 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -30,7 +30,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/memory/` | 63 | 162 | XL | 3 |
 | `src/data-lineage/` | 60 | 12 | L |  |
 | `src/util/` | 59 | 3 | S |  |
-| `src/browser/` | 54 | 95 | XL | 5 |
+| `src/browser/` | 53 | 95 | XL | 5 |
 | `src/agency/` | 48 | 39 | XL |  |
 | `src/chat-ws/` | 48 | 24 | L |  |
 | `src/tool-policy/` | 48 | 22 | L |  |
@@ -201,6 +201,7 @@ Loose files at the root of `src/` (entry + cross-cutting surfaces).
 | `src/security-types.ts` | S |
 | `src/server-context.ts` | S |
 | `src/server-utils.ts` | S |
+| `src/settings-apply.ts` | S |
 | `src/settings-change-direction.ts` | S |
 | `src/settings-schema.controls.ts` | M |
 | `src/settings-schema.operator.ts` | S |
@@ -525,7 +526,6 @@ job. Comments are free: never cut them to fit.
 - `src/tools/image-tools/generate-image.ts#generateImageTool.execute` — 70+ own code lines (cap 100)
 - `src/tools/issue-tools/agent-whoami.ts#agentWhoAmITool.execute` — 70+ own code lines (cap 100)
 - `src/tools/pdf-tools.ts#pdfCreate.execute` — 70+ own code lines (cap 100)
-- `src/tools/setting-tool.ts#settingTool.execute` — 70+ own code lines (cap 100)
 - `src/voice/tts-model-fetch.ts#doDownload` — 70+ own code lines (cap 100)
 - `src/agents/invoke.ts#invokeDefinition` — 60+ own code lines (cap 100)
 - `src/auth/anthropic-login.ts#completeAnthropicCliOAuth` — 60+ own code lines (cap 100)

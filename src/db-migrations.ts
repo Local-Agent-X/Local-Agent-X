@@ -24,12 +24,19 @@ const registeredMigrations: Migration[] = [];
 
 // ── Built-in Migrations ──
 
+/** config.json holds the access token: every write keeps it private (0o600),
+ *  as config.ts's own writer does. A write without a mode left a rewritten file
+ *  readable by other local users on POSIX. */
+function writeConfigJson(cfgPath: string, cfg: unknown): void {
+  atomicWriteFileSync(cfgPath, JSON.stringify(cfg, null, 2), { encoding: "utf-8", mode: 0o600 });
+}
+
 // v1: Ensure config has all required fields with defaults
 registerBuiltinMigration({
   version: 1,
   name: "config-defaults",
   up: (dataDir: string) => {
-    const cfgPath = join(getLaxDir(), "config.json");
+    const cfgPath = join(dataDir, "config.json");
     if (!existsSync(cfgPath)) return;
     try {
       const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
@@ -44,7 +51,7 @@ registerBuiltinMigration({
       for (const key of keys) {
         if (cfg[key] === undefined && defaults[key] !== undefined) { cfg[key] = defaults[key]; changed = true; }
       }
-      if (changed) atomicWriteFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+      if (changed) writeConfigJson(cfgPath, cfg);
     } catch {}
   },
 });
@@ -53,14 +60,14 @@ registerBuiltinMigration({
 registerBuiltinMigration({
   version: 2,
   name: "add-project-root",
-  up: () => {
-    const cfgPath = join(getLaxDir(), "config.json");
+  up: (dataDir: string) => {
+    const cfgPath = join(dataDir, "config.json");
     if (!existsSync(cfgPath)) return;
     try {
       const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
       if (!cfg.projectRoot) {
         cfg.projectRoot = process.cwd();
-        atomicWriteFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+        writeConfigJson(cfgPath, cfg);
       }
     } catch {}
   },
@@ -73,8 +80,8 @@ registerBuiltinMigration({
 registerBuiltinMigration({
   version: 3,
   name: "remove-dead-memory-tiers-store",
-  up: () => {
-    const stalePath = join(getLaxDir(), "memory-tiers.json");
+  up: (dataDir: string) => {
+    const stalePath = join(dataDir, "memory-tiers.json");
     if (!existsSync(stalePath)) return;
     unlinkSync(stalePath);
   },
@@ -92,8 +99,8 @@ registerBuiltinMigration({
 registerBuiltinMigration({
   version: 4,
   name: "spend-budget-defaults",
-  up: () => {
-    const cfgPath = join(getLaxDir(), "config.json");
+  up: (dataDir: string) => {
+    const cfgPath = join(dataDir, "config.json");
     if (!existsSync(cfgPath)) return;
     let cfg: Record<string, unknown>;
     try {
@@ -107,7 +114,7 @@ registerBuiltinMigration({
       if (cfg[key] === 0) { cfg[key] = value; changed = true; }
     }
     if (!changed) return;
-    atomicWriteFileSync(cfgPath, JSON.stringify(cfg, null, 2));
+    writeConfigJson(cfgPath, cfg);
     // Tell the user ONCE that we changed their caps. We can't emit here —
     // migrations are awaited before the socket binds — so record a pending
     // notice; server/index.ts drains it post-bind. Only on `changed`, so an

@@ -265,8 +265,9 @@ export async function startServer(config: LAXConfig) {
     registerDesktopPanicHandler(() => {
       const active = chatWs.getActiveChats();
       for (const sid of active) chatWs.stopChat(sid);
-      disarmComputerControl();
-      broadcastAll({ type: "settings_changed", settings: { enableComputerControl: false } });
+      // Both switches are off in the running config before this call returns;
+      // the saves and the broadcast to open tabs follow.
+      void disarmComputerControl().catch((e) => bootLogger.error(`[panic] disarm failed: ${(e as Error).message}`));
     });
     // Arm the in-app browser bridge's reverse listener (desktop egress-asks
     // fail closed until this answers), same bridge, same lifetime.

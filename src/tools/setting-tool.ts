@@ -22,8 +22,8 @@
  */
 import { z } from "zod";
 import { FLIPPABLE_SETTINGS, BROADCAST_KEYS, operatorOnlyRefusal, settingSpec, settingValueShape } from "../settings-schema.js";
-import { getRuntimeConfig, saveConfig, getConfigPath } from "../config.js";
-import { loadSettings, saveSettings } from "../settings.js";
+import { getConfigPath } from "../config.js";
+import { applySettings } from "../settings-apply.js";
 import type { ToolDefinition } from "../types.js";
 import { ok, err, blocked } from "./result-helpers.js";
 import { verifyWriteLanded } from "./verify.js";
@@ -86,18 +86,13 @@ export const settingTool: ToolDefinition = {
     }
     const newValue = parsed.data;
 
-    // 1) Persist to settings.json (UI cache + UI-only fields read here).
-    const merged = { ...loadSettings(), [fieldName]: newValue };
-    saveSettings(merged);
+    // settings.json; for a runtime field the running config + config.json, so
+    // the gate / dispatcher reads the new value on the next call, and what a
+    // changed value must do at once; then the broadcast that re-syncs open
+    // tabs (settings-apply.ts). broadcastTo is how many tabs received it.
+    const applied = await applySettings({ [fieldName]: newValue });
 
-    // 2) If runtime-bound, mirror to config.json + in-memory ctx.config
-    //    so the gate / dispatcher reads the new value on the next call.
     if (spec.runtime) {
-      const cfg = getRuntimeConfig();
-      const changed = (cfg as unknown as Record<string, unknown>)[fieldName] !== newValue;
-      (cfg as unknown as Record<string, unknown>)[fieldName] = newValue;
-      saveConfig(cfg);
-
       // Sanity check: confirm the mutation landed on disk. If saveConfig
       // silently truncated, wrote to the wrong path, or the rename failed,
       // we'd otherwise return ok and the user would think a security
@@ -112,29 +107,12 @@ export const settingTool: ToolDefinition = {
           { recovery: "Re-call setting with the same field/value; if it keeps failing, check ~/.lax/config.json permissions and disk space." },
         );
       }
-      if (fieldName === "browserMode" && changed) {
-        const { closeAllBrowsers } = await import("../browser/index.js");
-        await closeAllBrowsers();
-      }
-      if (fieldName === "localOnlyMode" && newValue === true && changed) {
-        const { activateLocalOnlyMode } = await import("../local-only-policy.js");
-        await activateLocalOnlyMode();
-      }
     }
 
-    // 3) Broadcast to all connected browsers so toggles/UI dropdowns re-sync.
-    // Capture the client count so we can tell the user when nothing
-    // received the update (UI-affecting setting + no open tabs → they
-    // need to refresh manually for the setting page to reflect it).
-    let broadcastClients = 0;
-    let broadcastAttempted = false;
-    if (BROADCAST_KEYS.has(fieldName)) {
-      broadcastAttempted = true;
-      try {
-        const { broadcastAll } = await import("../chat-ws/index.js");
-        broadcastClients = broadcastAll({ type: "settings_changed", settings: { [fieldName]: newValue } });
-      } catch {}
-    }
+    // Tell the user when no open tab received a UI-affecting change: they
+    // need to refresh for the settings page to reflect it.
+    const broadcastAttempted = BROADCAST_KEYS.has(fieldName);
+    const broadcastClients = applied.broadcastTo;
 
     const verifyHint = (fieldName === "enableShell" && newValue === false)
       ? " Verify with `bash echo ok` — it should return BLOCKED by tool-policy."

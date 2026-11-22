@@ -1,9 +1,10 @@
 import { spawn, execFileSync, execFile } from "node:child_process";
-import { existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
+import { mkdirSync, openSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { createLogger } from "../../../logger.js";
-import { HOME, IS_WIN, TIERS, startupBudgetMs, tierById, type VoiceTier } from "./tiers.js";
+import { getLaxDir } from "../../../lax-data-dir.js";
+import { IS_WIN, TIERS, startupBudgetMs, tierById, type VoiceTier } from "./tiers.js";
 import { probeHealth } from "./detection.js";
 import { running } from "./state.js";
 
@@ -11,10 +12,14 @@ const execFileAsync = promisify(execFile);
 
 const logger = createLogger("routes.bridges.voice-setup");
 
-const SIDECAR_LOG_DIR = join(HOME, ".lax", "sidecars");
+/** Sidecar logs are state, so they live in the data dir (LAX_DATA_DIR honoured);
+ *  the venvs they run from are install locations under ~/.lax (tiers.ts). */
+function sidecarLogDir(): string {
+  return join(getLaxDir(), "sidecars");
+}
 
 export function sidecarLogPath(tierId: string): string {
-  return join(SIDECAR_LOG_DIR, `${tierId}.log`);
+  return join(sidecarLogDir(), `${tierId}.log`);
 }
 
 /**
@@ -42,7 +47,7 @@ export function sidecarLogTail(tierId: string, maxLines = 12): string {
  *      to debug a sidecar without needing the LAX server log.
  */
 function openSidecarLogFd(tierId: string): number {
-  if (!existsSync(SIDECAR_LOG_DIR)) mkdirSync(SIDECAR_LOG_DIR, { recursive: true });
+  mkdirSync(sidecarLogDir(), { recursive: true });
   return openSync(sidecarLogPath(tierId), "a");
 }
 

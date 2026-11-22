@@ -6,11 +6,10 @@ import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 
-export const LAX_DIR = getLaxDir();
-export const RUNS_DIR = join(LAX_DIR, "agent-runs");
-export const TEMPLATES_FILE = join(LAX_DIR, "agent-templates.json");
-export const PROJECTS_FILE = join(LAX_DIR, "agent-projects.json");
-export const ISSUES_FILE = join(LAX_DIR, "agent-issues.json");
+export const RUNS_DIR = join(getLaxDir(), "agent-runs");
+export const TEMPLATES_FILE = join(getLaxDir(), "agent-templates.json");
+export const PROJECTS_FILE = join(getLaxDir(), "agent-projects.json");
+export const ISSUES_FILE = join(getLaxDir(), "agent-issues.json");
 
 export function ensureDirs(): void {
   if (!existsSync(RUNS_DIR)) mkdirSync(RUNS_DIR, { recursive: true });

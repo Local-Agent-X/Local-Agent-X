@@ -45,7 +45,6 @@ InstallReport src x2
 IS_WIN src x2
 KOKORO_VOICES src x2
 launchApp src x2
-LAX_DIR src x5
 listDevices src x2
 listProviders src x2
 loadStore src x2

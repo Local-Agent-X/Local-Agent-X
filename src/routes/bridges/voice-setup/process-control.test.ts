@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { reaperKeepSet } from "./process-control.js";
+import { join } from "node:path";
+import { reaperKeepSet, sidecarLogPath } from "./process-control.js";
 
 describe("reaperKeepSet — which of a tier's processes the orphan reaper spares", () => {
   // The Lite tier on Windows after a LAX restart, as captured 2026-11-02: the
@@ -31,5 +32,18 @@ describe("reaperKeepSet — which of a tier's processes the orphan reaper spares
     // process, so nothing else is kept on its account.
     const keep = reaperKeepSet([{ pid: 77, ppid: 1 }], null, { pid: 16776, ppid: 2936 });
     expect(keep.has(77)).toBe(false);
+  });
+});
+
+describe("sidecarLogPath — sidecar logs live in the data dir", () => {
+  it("follows a relocated data dir (LAX_DATA_DIR)", () => {
+    const prev = process.env.LAX_DATA_DIR;
+    process.env.LAX_DATA_DIR = join("Z:", "relocated-lax");
+    try {
+      expect(sidecarLogPath("lite")).toBe(join("Z:", "relocated-lax", "sidecars", "lite.log"));
+    } finally {
+      if (prev === undefined) delete process.env.LAX_DATA_DIR;
+      else process.env.LAX_DATA_DIR = prev;
+    }
   });
 });

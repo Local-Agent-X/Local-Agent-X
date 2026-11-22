@@ -5,10 +5,11 @@
 
 import { existsSync, mkdirSync } from "node:fs";
 import { tokenizeBasic, jaccardSimilarity } from "../../text-utils.js";
-import { LAX_DIR, MEMORY_DIR } from "./types.js";
+import { MEMORY_DIR } from "./types.js";
+import { getLaxDir } from "../../../lax-data-dir.js";
 
 export function ensureDirs(): void {
-  for (const dir of [LAX_DIR, MEMORY_DIR]) {
+  for (const dir of [getLaxDir(), MEMORY_DIR]) {
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   }
 }

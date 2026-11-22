@@ -2,7 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 import type { HealthReport } from "./types.js";
-import { LAX_DIR } from "./types.js";
+import { getLaxDir } from "../lax-data-dir.js";
 import { SIGNALS } from "./registry.js";
 import { orchestratorState } from "./state.js";
 
@@ -26,7 +26,7 @@ export function getSystemHealth(): HealthReport {
     ["orchestrator", "orchestrator-state.json"],
   ];
   for (const [name, file] of storageTargets) {
-    const path = join(LAX_DIR, file);
+    const path = join(getLaxDir(), file);
     try {
       if (existsSync(path)) {
         storageSizes[name] = readFileSync(path, "utf-8").length;

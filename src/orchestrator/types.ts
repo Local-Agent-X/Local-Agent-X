@@ -99,9 +99,8 @@ export interface TriageResult {
   triggered: string[];
 }
 
-export const LAX_DIR = getLaxDir();
-export const EXAMPLES_FILE = join(LAX_DIR, "orchestration-examples.json");
-export const STATE_FILE = join(LAX_DIR, "orchestrator-state.json");
+export const EXAMPLES_FILE = join(getLaxDir(), "orchestration-examples.json");
+export const STATE_FILE = join(getLaxDir(), "orchestrator-state.json");
 export const MAX_EXAMPLES = 200;
 
 export const MAX_CONTEXT_SIGNALS = 7;
@@ -163,6 +162,6 @@ export interface CognitiveSignal {
   veto?(sig: ModuleSignal): VetoOutcome | null;
   /** Liveness probe for the health report; throws or returns falsy when unloaded. */
   health?(): unknown;
-  /** Persisted-state filename under LAX_DIR, surfaced in the health report's storageSizes (keyed by id). */
+  /** Persisted-state filename under getLaxDir(), surfaced in the health report's storageSizes (keyed by id). */
   storageFile?: string;
 }

@@ -1,7 +1,8 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import type { OrchestratorState } from "./types.js";
-import { LAX_DIR, STATE_FILE } from "./types.js";
+import { STATE_FILE } from "./types.js";
+import { getLaxDir } from "../lax-data-dir.js";
 
 function loadState(): OrchestratorState {
   try {
@@ -20,7 +21,7 @@ function loadState(): OrchestratorState {
 }
 
 export function saveState(state: OrchestratorState): void {
-  if (!existsSync(LAX_DIR)) mkdirSync(LAX_DIR, { recursive: true });
+  if (!existsSync(getLaxDir())) mkdirSync(getLaxDir(), { recursive: true });
   const tmp = STATE_FILE + "." + randomBytes(4).toString("hex") + ".tmp";
   writeFileSync(tmp, JSON.stringify(state, null, 2), "utf-8");
   try { renameSync(tmp, STATE_FILE); } catch {

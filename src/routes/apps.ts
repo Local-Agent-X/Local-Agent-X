@@ -5,10 +5,10 @@ import type { RouteHandler } from "../server-context.js";
 import { jsonResponse, safeParseBody, corsHeaders } from "../server-utils.js";
 import { confineToDir } from "../security/layer/index.js";
 import { renderApp } from "../app-renderer/index.js";
-import { loadSettings, reloadSettings, saveSettings } from "../settings.js";
-import { readDevServerRecord, registerDevServer, listDevServerRecords } from "../tools/dev-server.js";
+import { reloadSettings, saveSettings } from "../settings.js";
+import { readDevServerRecord, registerDevServer } from "../tools/dev-server.js";
 import { awaitDevServerCage } from "../tools/dev-server-tools.js";
-import { buildAppList } from "./apps-list.js";
+import { listBuiltApps } from "../app-runtime/app-list.js";
 import { deriveAppDataCapability } from "../server/app-connector-auth.js";
 import { AGENT_APP_FRAMING_CSP, AGENT_APP_PERMISSIONS_POLICY } from "../server/app-serving-policy.js";
 
@@ -22,15 +22,7 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
 
   if (method === "GET" && appPath === "/api/apps") {
     const port = ctx.config.port || 7007;
-    const wsAppsDir = resolve(ctx.config.workspace, "apps");
-    const pins = (loadSettings().sidebarPins || []) as Array<{ name: string; icon: string; url: string }>;
-    const list = buildAppList({
-      listRegistry: () => appReg.list(),
-      hasDevServer: (id) => !!readDevServerRecord(id),
-      listDevServers: () => listDevServerRecords(),
-      pins, wsAppsDir, port, now: () => Date.now(),
-    });
-    json(200, list);
+    json(200, listBuiltApps({ registry: appReg, port, wsAppsDir: resolve(ctx.config.workspace, "apps") }));
     return true;
   }
 

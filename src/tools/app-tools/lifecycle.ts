@@ -21,6 +21,7 @@ import { getLaxDir } from "../../lax-data-dir.js";
 import { workspaceRoot } from "../../config.js";
 import { verifyWriteLanded } from "../verify.js";
 import { ok, err, APP_TOOL_ACTOR, getAppPort } from "./shared.js";
+import { listBuiltApps, type AppListEntry } from "../../app-runtime/app-list.js";
 
 const registry = AppRegistry.getInstance();
 
@@ -151,21 +152,27 @@ export const appUpdate: ToolDefinition = {
   },
 };
 
+/** One app's line in app_list: a registry app with its components and
+ *  version, a workspace app with the kind of app its folder holds. */
+export function appListLine(a: AppListEntry): string {
+  const status = a.status !== "active" ? ` [${a.status.toUpperCase()}]` : "";
+  const what = a.source === "registry"
+    ? `${a.components} components, ${a.layout} layout, v${a.version}`
+    : `${a.description} in workspace/apps/${a.id}`;
+  return `- ${a.name} (${a.id})${status} — ${what}\n  URL: ${a.url}`;
+}
+
 export const appList: ToolDefinition = {
   name: "app_list",
-  description: "List all apps you have access to, with IDs, names, status, component counts, and URLs.",
+  description:
+    "List every app on this install, as the user's Apps page shows them: apps defined with app_create " +
+    "and apps that are a folder in workspace/apps (an index.html, or a full-stack project with a dev " +
+    "server). Gives each one's ID, name, status and URL.",
   parameters: { type: "object", properties: {} },
   async execute() {
-    const actor = APP_TOOL_ACTOR;
-    const apps = registry.list(actor);
+    const apps = listBuiltApps({ registry, actor: APP_TOOL_ACTOR, port: getAppPort() });
     if (apps.length === 0) return ok("No apps created yet.");
-
-    const port = getAppPort();
-    const lines = apps.map(a => {
-      const status = a.status !== "active" ? ` [${a.status.toUpperCase()}]` : "";
-      return `- ${a.name} (${a.id})${status} — ${a.components.length} components, ${a.layout.type} layout, v${a.version}\n  URL: http://127.0.0.1:${port}/apps/${a.id}`;
-    });
-    return ok(`${apps.length} app(s):\n\n${lines.join("\n")}`);
+    return ok(`${apps.length} app(s):\n\n${apps.map(appListLine).join("\n")}`);
   },
 };
 

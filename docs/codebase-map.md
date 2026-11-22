@@ -21,7 +21,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 189 | 32 | XL | 1 |
 | `src/security/` | 167 | 64 | XL | 2 |
-| `src/tools/` | 139 | 243 | XL | 9 |
+| `src/tools/` | 140 | 243 | XL | 9 |
 | `src/tool-execution/` | 106 | 91 | XL | 2 |
 | `src/canonical-loop/` | 93 | 294 | XL | 10 |
 | `src/workspace/` | 92 | 3 | M |  |
@@ -45,7 +45,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/agent-request/` | 26 | 16 | L | 3 |
 | `src/classifiers/` | 26 | 18 | L |  |
 | `src/desktop-contract/` | 24 | 11 | M |  |
-| `src/app-runtime/` | 23 | 12 | M |  |
+| `src/app-runtime/` | 23 | 13 | L |  |
 | `src/sandbox/` | 23 | 16 | L | 1 |
 | `src/protocols/` | 21 | 51 | XL |  |
 | `src/autonomy/` | 19 | 6 | M |  |
@@ -60,7 +60,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/anthropic-client/` | 15 | 23 | L | 2 |
 | `src/cron/` | 14 | 14 | L |  |
 | `src/app-renderer/` | 13 | 7 | M | 1 |
-| `src/routes/` | 13 | 116 | XL | 16 |
+| `src/routes/` | 13 | 115 | XL | 16 |
 | `src/agent-loop/` | 12 | 1 | S |  |
 | `src/ari-kernel/` | 12 | 12 | M |  |
 | `src/integrations/` | 12 | 15 | M |  |

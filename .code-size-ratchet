@@ -45,7 +45,7 @@ src/plugin-system.ts#PluginManager.loadPluginAtPath 136
 src/plugin-system/tool-schema.ts#validateSchemaNode 111
 src/providers/adapters/openai-http.ts#OpenAIHttpAdapter.stream 147
 src/routes/agents/templates.ts#handleAgentTemplateRoutes 101
-src/routes/apps.ts#handleAppRoutes 216
+src/routes/apps.ts#handleAppRoutes 208
 src/routes/autopilot.ts#handleAutopilotRoutes 102
 src/routes/bridges/auth/anthropic.ts#handleAnthropicAuthRoutes 103
 src/routes/bridges/auth/core-openai.ts#handleCoreAuthRoutes 101

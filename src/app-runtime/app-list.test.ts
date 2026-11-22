@@ -1,5 +1,6 @@
 /**
- * Seam: the three-pass Apps-grid list (buildAppList).
+ * Seam: the three-pass app list (buildAppList), and the one answer the Apps
+ * page and the agent's app_list tool both give (listBuiltApps).
  *
  * Regression for the "full-stack app is invisible in the grid" bug — a Next.js /
  * Vite app has NO root index.html and NO registry def.json, so passes 1 and 2
@@ -10,7 +11,9 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildAppList, type AppListDeps } from "./apps-list.js";
+import { buildAppList, listBuiltApps, type AppListDeps } from "./app-list.js";
+import type { AppDefinition } from "./types.js";
+import { appListLine } from "../tools/app-tools/lifecycle.js";
 
 let wsRoot: string;
 let wsAppsDir: string;
@@ -102,5 +105,46 @@ describe("buildAppList — a workspace HTML app's name", () => {
     mkdirSync(join(wsAppsDir, "habit-tracker"), { recursive: true });
     writeFileSync(join(wsAppsDir, "habit-tracker", "index.html"), "<h1>hi</h1><title></title>");
     expect(buildAppList(baseDeps()).find(a => a.id === "habit-tracker")?.name).toBe("Habit Tracker");
+  });
+});
+
+// The Apps page and the agent must name the same apps. The tool read the
+// registry alone, so an app that is only a folder in the workspace, which is
+// what building one for the user makes, was on the page and unknown to the agent.
+describe("listBuiltApps — what the Apps page and app_list both show", () => {
+  const registered = {
+    id: "budget", name: "Budget", description: "Monthly budget", components: [{}, {}], layout: { type: "grid" },
+    status: "paused", version: 3, updatedAt: 1, permissions: { visibility: "private" },
+  } as unknown as AppDefinition;
+
+  function workspaceApp(id: string, title: string): void {
+    mkdirSync(join(wsAppsDir, id), { recursive: true });
+    writeFileSync(join(wsAppsDir, id, "index.html"), `<html><head><title>${title}</title></head></html>`);
+  }
+
+  it("lists a workspace folder app beside a registry app, each marked with where it was found", () => {
+    workspaceApp("calendar", "Family Calendar");
+    const seenActors: Array<string | undefined> = [];
+    const apps = listBuiltApps({
+      registry: { list: (actor) => { seenActors.push(actor); return [registered]; } },
+      actor: "agent", port: 7311, wsAppsDir,
+    });
+    expect(apps.map((a) => [a.id, a.source])).toEqual([["budget", "registry"], ["calendar", "workspace"]]);
+    expect(apps[1]).toMatchObject({ name: "Family Calendar", url: "http://127.0.0.1:7311/apps/calendar/index.html" });
+    // The registry is asked as the caller, so its access rules still apply.
+    expect(seenActors).toEqual(["agent"]);
+  });
+
+  it("gives the agent a line for each, with the id it pins and edits by", () => {
+    workspaceApp("calendar", "Family Calendar");
+    const lines = listBuiltApps({ registry: { list: () => [registered] }, port: 7311, wsAppsDir }).map(appListLine);
+    expect(lines).toEqual([
+      "- Budget (budget) [PAUSED] — 2 components, grid layout, v3\n  URL: http://127.0.0.1:7311/apps/budget",
+      "- Family Calendar (calendar) — HTML app in workspace/apps/calendar\n  URL: http://127.0.0.1:7311/apps/calendar/index.html",
+    ]);
+  });
+
+  it("is empty only when neither the registry nor the workspace has an app", () => {
+    expect(listBuiltApps({ registry: { list: () => [] }, port: 7311, wsAppsDir })).toEqual([]);
   });
 });

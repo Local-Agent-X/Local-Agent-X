@@ -1,5 +1,9 @@
 /**
- * Builds the Apps-grid list served by GET /api/apps.
+ * Which apps this install has. One answer for everyone who asks: the Apps page
+ * (GET /api/apps) and the agent's `app_list` tool both call listBuiltApps. The tool
+ * used to read the registry alone, so an app that is a folder in the workspace
+ * (what "build me a calendar" makes) was on the user's Apps page while the
+ * agent reported "No apps created yet".
  *
  * Three sources, in precedence order (first to claim an id wins):
  *   1. Registry apps      — ~/.lax/apps/<id>/def.json (LAX-native app definitions).
@@ -9,16 +13,19 @@
  *      backend). Without this pass those apps are invisible in the grid despite
  *      being fully built — their only on-disk marker is the dev-server record.
  *
- * Extracted from apps.ts so the three-pass logic is unit-testable at the seam
- * (a workspace dir + dev-server records → the surfaced list) without standing up
- * a full server context.
+ * buildAppList takes its sources as arguments so the three-pass logic is
+ * unit-testable at the seam (a workspace dir + dev-server records → the
+ * surfaced list); listBuiltApps wires the real ones.
  */
 import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
-import type { AppDefinition } from "../app-runtime/index.js";
+import type { AppDefinition } from "./types.js";
+import { workspacePath } from "../config.js";
 import { createLogger } from "../logger.js";
+import { loadSettings } from "../settings.js";
+import { listDevServerRecords, readDevServerRecord } from "../tools/dev-server-records.js";
 
-const logger = createLogger("routes.apps-list");
+const logger = createLogger("app-runtime.app-list");
 
 /** Default launcher glyph for an app with no explicit icon and no sidebar pin. */
 export const DEFAULT_APP_ICON = "📦";
@@ -36,6 +43,9 @@ export interface AppListEntry {
   version: number;
   visibility: string;
   hasBackend: boolean;
+  /** Where the app was found: a registry definition, a workspace folder with
+   *  an index.html, or a workspace folder known only by its dev server. */
+  source: "registry" | "workspace" | "dev-server";
 }
 
 export interface AppListDeps {
@@ -99,6 +109,7 @@ export function buildAppList(deps: AppListDeps): AppListEntry[] {
     updatedAt: d.updatedAt, status: d.status, version: d.version,
     visibility: d.permissions?.visibility || "team",
     hasBackend: deps.hasDevServer(d.id),
+    source: "registry" as const,
   }));
   const seen = new Set(list.map(a => a.id));
 
@@ -120,6 +131,7 @@ export function buildAppList(deps: AppListDeps): AppListEntry[] {
           url: `http://127.0.0.1:${port}/apps/${d.name}/index.html`,
           updatedAt: st.mtimeMs, status: "active", version: 1, visibility: "team",
           hasBackend: deps.hasDevServer(d.name),
+          source: "workspace",
         });
       }
     } catch (e) { logger.warn("[apps] workspace scan error:", (e as Error).message); }
@@ -147,8 +159,32 @@ export function buildAppList(deps: AppListDeps): AppListEntry[] {
       url: `http://127.0.0.1:${port}/apps/${rec.appId}`,
       updatedAt, status: "active", version: 1, visibility: "team",
       hasBackend: true,
+      source: "dev-server",
     });
   }
 
   return list;
+}
+
+export interface ListBuiltAppsOptions {
+  /** The app registry; `actor` limits its apps to the ones that actor may see. */
+  registry: { list(actor?: string): AppDefinition[] };
+  actor?: string;
+  /** Server port, for building app URLs. */
+  port: number;
+  /** Absolute path to the workspace's apps folder; the configured one when omitted. */
+  wsAppsDir?: string;
+}
+
+/** Every app this install has, from all three sources. */
+export function listBuiltApps(opts: ListBuiltAppsOptions): AppListEntry[] {
+  return buildAppList({
+    listRegistry: () => opts.registry.list(opts.actor),
+    hasDevServer: (id) => !!readDevServerRecord(id),
+    listDevServers: () => listDevServerRecords(),
+    pins: (loadSettings().sidebarPins || []) as Array<{ name: string; icon: string; url: string }>,
+    wsAppsDir: opts.wsAppsDir ?? workspacePath("apps"),
+    port: opts.port,
+    now: () => Date.now(),
+  });
 }

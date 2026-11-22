@@ -1,6 +1,7 @@
 import { join } from "node:path";
 import { readFileSync, existsSync } from "node:fs";
 import { getLaxDir } from "../../lax-data-dir.js";
+import { configuredOllamaUrl } from "../../config.js";
 import { getLocalRuntimes } from "../../local-runtimes/cache.js";
 import { manualAllowlist } from "../../local-runtimes/endpoints.js";
 // The dev-server record store, via its dependency-free leaf — importing
@@ -97,15 +98,7 @@ export function ollamaPortFromUrl(ollamaUrl: string): string | null {
 }
 
 export function ollamaLoopbackPort(): string | null {
-  let ollamaUrl = "http://127.0.0.1:11434";
-  try {
-    const cfgPath = join(getLaxDir(), "config.json");
-    if (existsSync(cfgPath)) {
-      const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
-      if (typeof cfg.ollamaUrl === "string") ollamaUrl = cfg.ollamaUrl.trim();
-    }
-  } catch {}
-  return ollamaPortFromUrl(ollamaUrl);
+  return ollamaPortFromUrl(configuredOllamaUrl());
 }
 
 /** Pure: the port of a LITERAL-loopback URL (127.0.0.1/::1 — hostnames

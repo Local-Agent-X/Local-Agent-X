@@ -4,12 +4,12 @@ import { timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
 import type { RouteHandler } from "../../server-context.js";
 import type { SidebarPin } from "../../chat-ws/frames.js";
-import { jsonResponse, safeParseBody, atomicWriteFileSync } from "../../server-utils.js";
+import { jsonResponse, safeParseBody } from "../../server-utils.js";
 import { RUNTIME_SETTINGS, operatorOnlyRefusal, publicSchema, settingSpec } from "../../settings-schema.js";
 import { applySettings } from "../../settings-apply.js";
 import { isUserOwnedSetting, strictlyTightens } from "../../settings-change-direction.js";
 import { loadSettings, saveSettings } from "../../settings.js";
-import { getRuntimeConfig } from "../../config.js";
+import { getRuntimeConfig, patchConfigFile, readConfigFile } from "../../config.js";
 import { unsafeWorkspaceReason } from "../../workspace/workspace-location.js";
 import { levenshtein } from "../../edit-distance.js";
 
@@ -63,13 +63,8 @@ function persistBootFields(dataDir: string, body: Record<string, unknown>): stri
   let workspaceRefused: string | null = null;
   // Port is special: lives in config.json (read at boot, env-overridable)
   // but never read via getRuntimeConfig() — separate persistence path.
-  if (body.port) {
-    const configPath = join(dataDir, "config.json");
-    let cfg: Record<string, unknown> = {};
-    try { if (existsSync(configPath)) cfg = JSON.parse(readFileSync(configPath, "utf-8")); } catch {}
-    cfg.port = parseInt(String(body.port), 10);
-    atomicWriteFileSync(configPath, JSON.stringify(cfg, null, 2), { mode: 0o600 });
-  }
+  const configPath = join(dataDir, "config.json");
+  if (body.port) patchConfigFile({ port: parseInt(String(body.port), 10) }, configPath);
 
   // Workspace save location: same persistence path as port — config.json,
   // honored at next boot. We deliberately do NOT touch ctx.config.workspace
@@ -90,13 +85,7 @@ function persistBootFields(dataDir: string, body: Record<string, unknown>): stri
       if (!valid || (existsSync(resolved) && !statSync(resolved).isDirectory())) valid = false;
       else mkdirSync(resolved, { recursive: true });
     } catch { valid = false; }
-    if (valid) {
-      const configPath = join(dataDir, "config.json");
-      let cfg: Record<string, unknown> = {};
-      try { if (existsSync(configPath)) cfg = JSON.parse(readFileSync(configPath, "utf-8")); } catch {}
-      cfg.workspace = wsPath;
-      atomicWriteFileSync(configPath, JSON.stringify(cfg, null, 2), { mode: 0o600 });
-    }
+    if (valid) patchConfigFile({ workspace: wsPath }, configPath);
   }
   return workspaceRefused;
 }
@@ -153,14 +142,9 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
     // port + workspace live in config.json (not settings.json / RUNTIME_SETTINGS),
     // so the overlay above doesn't surface them — read them directly so Settings
     // shows the real, persisted (pending-restart) values, not the HTML defaults.
-    try {
-      const configPath = join(ctx.dataDir, "config.json");
-      if (existsSync(configPath)) {
-        const cfg = JSON.parse(readFileSync(configPath, "utf-8"));
-        if (cfg.port !== undefined) merged.port = cfg.port;
-        if (cfg.workspace !== undefined) merged.workspace = cfg.workspace;
-      }
-    } catch {}
+    const onDisk = readConfigFile(join(ctx.dataDir, "config.json"));
+    if (onDisk.port !== undefined) merged.port = onDisk.port;
+    if (onDisk.workspace !== undefined) merged.workspace = onDisk.workspace;
     // Capability, not a setting: tells the UI whether self_edit can exist on
     // this install (git checkout) so the Developer Mode card only renders
     // where flipping it could ever do anything. Packaged installs hide it.

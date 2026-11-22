@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { getLaxDir } from "./lax-data-dir.js";
 import { atomicWriteFileSync } from "./server-utils.js";
 import { configSchema } from "./config-schema.js";
+import { patchConfigFile } from "./config.js";
 import { recordUserNotice, SPEND_BUDGET_NOTICE_ID, SPEND_BUDGET_NOTICE_TEXT } from "./user-notice.js";
 
 export interface Migration {
@@ -24,13 +25,6 @@ const registeredMigrations: Migration[] = [];
 
 // ── Built-in Migrations ──
 
-/** config.json holds the access token: every write keeps it private (0o600),
- *  as config.ts's own writer does. A write without a mode left a rewritten file
- *  readable by other local users on POSIX. */
-function writeConfigJson(cfgPath: string, cfg: unknown): void {
-  atomicWriteFileSync(cfgPath, JSON.stringify(cfg, null, 2), { encoding: "utf-8", mode: 0o600 });
-}
-
 // v1: Ensure config has all required fields with defaults
 registerBuiltinMigration({
   version: 1,
@@ -40,7 +34,7 @@ registerBuiltinMigration({
     if (!existsSync(cfgPath)) return;
     try {
       const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
-      let changed = false;
+      const missing: Record<string, unknown> = {};
       // The schema's own defaults, not a copy that drifts. toolApproval,
       // retentionDays and logLevel are not written: loadConfig derives them
       // from the deployment profile while they are absent (config.ts), and a
@@ -49,9 +43,9 @@ registerBuiltinMigration({
       const defaults = configSchema.parse({}) as Record<string, unknown>;
       const keys = ["maxIterations", "temperature", "profile", "browserMode", "browserIdleTimeoutMs", "agentTimeoutMs"];
       for (const key of keys) {
-        if (cfg[key] === undefined && defaults[key] !== undefined) { cfg[key] = defaults[key]; changed = true; }
+        if (cfg[key] === undefined && defaults[key] !== undefined) missing[key] = defaults[key];
       }
-      if (changed) writeConfigJson(cfgPath, cfg);
+      if (Object.keys(missing).length > 0) patchConfigFile(missing, cfgPath);
     } catch {}
   },
 });
@@ -65,10 +59,7 @@ registerBuiltinMigration({
     if (!existsSync(cfgPath)) return;
     try {
       const cfg = JSON.parse(readFileSync(cfgPath, "utf-8"));
-      if (!cfg.projectRoot) {
-        cfg.projectRoot = process.cwd();
-        writeConfigJson(cfgPath, cfg);
-      }
+      if (!cfg.projectRoot) patchConfigFile({ projectRoot: process.cwd() }, cfgPath);
     } catch {}
   },
 });
@@ -109,12 +100,12 @@ registerBuiltinMigration({
       return;
     }
     if (!cfg || typeof cfg !== "object" || Array.isArray(cfg)) return;
-    let changed = false;
+    const raised: Record<string, unknown> = {};
     for (const [key, value] of [["dailyBudgetUsd", 75], ["sessionBudgetUsd", 15]] as const) {
-      if (cfg[key] === 0) { cfg[key] = value; changed = true; }
+      if (cfg[key] === 0) raised[key] = value;
     }
-    if (!changed) return;
-    writeConfigJson(cfgPath, cfg);
+    if (Object.keys(raised).length === 0) return;
+    patchConfigFile(raised, cfgPath);
     // Tell the user ONCE that we changed their caps. We can't emit here —
     // migrations are awaited before the socket binds — so record a pending
     // notice; server/index.ts drains it post-bind. Only on `changed`, so an

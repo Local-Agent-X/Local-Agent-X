@@ -24,7 +24,7 @@ import { buildToolRegistry } from "../../src/tools.js";
 import { unifiedRegistry } from "../../src/tools/registry.js";
 import { readTool, writeTool } from "../../src/tools/file-tools.js";
 import type { ToolDefinition } from "../../src/types.js";
-import { setRuntimeConfig } from "../../src/config.js";
+import { saveConfig, setRuntimeConfig } from "../../src/config.js";
 import { configSchema } from "../../src/config-schema.js";
 import { startAriKernel } from "../../src/ari-kernel/index.js";
 import { getOrInitSecretsStore } from "../../src/secrets.js";
@@ -129,12 +129,17 @@ function installFixtureRuntimeConfig(): void {
   // pointed here — so the directory must exist before recovery spawns them.
   const workspace = join(process.env.LAX_DATA_DIR!, "workspace");
   mkdirSync(workspace, { recursive: true });
-  setRuntimeConfig(configSchema.parse({
+  const config = configSchema.parse({
     workspace,
     authToken: "restart-test-token",
     ollamaUrl: baseURL.replace(/\/v1$/, ""),
     ollamaCloudUrl: baseURL.replace(/\/v1$/, ""),
-  }));
+  });
+  setRuntimeConfig(config);
+  // On disk too, as a server's running config always is: the network policy
+  // reads the Ollama endpoint from config.json, and a policy computed from a
+  // config that exists only in memory differs from the one a worker computes.
+  saveConfig(config);
 }
 
 function persistInterruptedOperation(): never {

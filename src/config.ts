@@ -29,7 +29,7 @@ import { writeManifest, startManifestWatcher } from "./manifest-generator/index.
 
 // The zod schema (field shapes, bounds, defaults — incl. the system-prompt
 // default) moved to config-schema.ts, same LOC-ceiling split as config-profiles.
-import { configSchema } from "./config-schema.js";
+import { configSchema, DEFAULT_OLLAMA_URL } from "./config-schema.js";
 import { isLocalModelQualificationBoot } from "./qualification-boot.js";
 
 // ── Boot-time side effects (explicit) ──
@@ -67,6 +67,40 @@ function getConfigDir(): string {
 
 export function getConfigPath(): string {
   return join(getConfigDir(), "config.json");
+}
+
+/**
+ * config.json as it is on disk: every key, including the ones only the desktop
+ * shell writes. Empty when the file is missing or unreadable.
+ */
+export function readConfigFile(configPath = join(getLaxDir(), "config.json")): Record<string, unknown> {
+  try {
+    const parsed: unknown = JSON.parse(readFileSync(configPath, "utf-8"));
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) return parsed as Record<string, unknown>;
+  } catch {
+    // Missing or corrupt config.json.
+  }
+  return {};
+}
+
+// The env var that overrides `ollamaUrl` from config.json. A worker the process
+// backend starts receives the server's running value through it.
+const OLLAMA_URL_ENV = "LAX_OLLAMA_URL";
+
+/**
+ * The Ollama endpoint this install is configured for, read fresh: the
+ * LAX_OLLAMA_URL override when set, else config.json's `ollamaUrl`, else the
+ * default. loadConfig applies the same override, so this is the running
+ * config's value in the server, in a worker it starts, and on a thread that
+ * has no running config of its own (the egress worker). The network policy's
+ * loopback carve-out reads it here; a copy of the rule there ignored the
+ * override and admitted config.json's port while the server used another.
+ */
+export function configuredOllamaUrl(): string {
+  const override = process.env[OLLAMA_URL_ENV];
+  if (override) return override.trim();
+  const onDisk = readConfigFile().ollamaUrl;
+  return typeof onDisk === "string" ? onDisk.trim() : DEFAULT_OLLAMA_URL;
 }
 
 function generateAuthToken(): string {
@@ -127,7 +161,7 @@ export function loadConfig(): LAXConfig {
   if (modelEnv) raw.model = modelEnv;
 
   // Service URL overrides
-  const ollamaEnv = process.env.LAX_OLLAMA_URL;
+  const ollamaEnv = process.env[OLLAMA_URL_ENV];
   if (ollamaEnv) raw.ollamaUrl = ollamaEnv;
   const ollamaCloudEnv = process.env.LAX_OLLAMA_CLOUD_URL;
   if (ollamaCloudEnv) raw.ollamaCloudUrl = ollamaCloudEnv;
@@ -326,8 +360,7 @@ export function loadConfig(): LAXConfig {
   return config;
 }
 
-function writeConfigFile(config: object): void {
-  const configPath = getConfigPath();
+function writeConfigFile(config: object, configPath = getConfigPath()): void {
   // The canonical writer gives every process a private temp file and handles
   // transient destination contention without exposing partial JSON to readers.
   atomicWriteFileSync(configPath, JSON.stringify(config, null, 2), { encoding: "utf-8", mode: 0o600 });
@@ -341,13 +374,17 @@ export function saveConfig(config: LAXConfig): void {
   // on-disk JSON — unknown keys survive, server-known keys take the runtime
   // value. Migrations that must REMOVE a key go through deleteDiskKeys in
   // loadConfig, not here.
-  let diskExtras: Record<string, unknown> = {};
-  try {
-    diskExtras = JSON.parse(readFileSync(getConfigPath(), "utf-8"));
-  } catch {
-    // Missing or corrupt config.json — nothing to preserve.
-  }
-  writeConfigFile({ ...diskExtras, ...config });
+  writeConfigFile({ ...readConfigFile(getConfigPath()), ...config });
+}
+
+/**
+ * Set keys in config.json itself and leave every other key as it is on disk.
+ * For what the running config must not carry yet (the port and the workspace
+ * location, read once at boot) and for migrations; a live setting goes through
+ * applySettings (settings-apply.ts). Written private, like every config write.
+ */
+export function patchConfigFile(patch: Record<string, unknown>, configPath = getConfigPath()): void {
+  writeConfigFile({ ...readConfigFile(configPath), ...patch }, configPath);
 }
 
 export function getAuthPath(): string {

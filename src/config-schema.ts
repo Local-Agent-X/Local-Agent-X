@@ -10,6 +10,9 @@ import { loadSystemPrompt } from "./config-loader.js";
 const defaultSystemPrompt = () =>
   loadSystemPrompt() || "You are a personal AI companion running inside Local Agent X. Use your tools to help the user.";
 
+/** Where a local Ollama listens unless config.json or LAX_OLLAMA_URL says otherwise. */
+export const DEFAULT_OLLAMA_URL = "http://127.0.0.1:11434";
+
 export const configSchema = z.object({
   port: z.number().int().min(1).max(65535).default(7007),
   authToken: z.string().default(""),
@@ -109,7 +112,7 @@ export const configSchema = z.object({
   ariRequired: z.boolean().default(true),
 
   // Service URLs
-  ollamaUrl: z.string().default("http://127.0.0.1:11434"),
+  ollamaUrl: z.string().default(DEFAULT_OLLAMA_URL),
   /** Ollama Cloud (Turbo) endpoint. When set + OLLAMA_CLOUD_API_KEY secret
    *  is present, the Ollama provider lists cloud models alongside local
    *  ones in the picker and routes per-model. Empty disables cloud. */

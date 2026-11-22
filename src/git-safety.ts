@@ -32,6 +32,21 @@ import { killOrphansOfSync } from "./process-tree-kill.js";
 /** Config flags prepended to EVERY git invocation the app makes. */
 export const GIT_SAFETY_ARGS: readonly string[] = ["-c", "gc.auto=0"];
 
+/**
+ * The identity the harness commits under when git has none for the repo: its
+ * own commits (a build's chunk, a worktree's work saved before teardown) are
+ * tooling plumbing, not authorship. A project the agent made has no local
+ * identity, the Windows cage's account never sees a global one, and a user
+ * may have set none at all. Prepended to the commit's argv only on that
+ * failure ({@link isNoGitIdentity}), so a configured identity always wins.
+ */
+export const HARNESS_COMMIT_IDENTITY: readonly string[] = ["-c", "user.name=lax-auto-build", "-c", "user.email=auto-build@localagentx.local"];
+
+/** Whether a failed commit's output says git does not know who is committing. */
+export function isNoGitIdentity(output: string): boolean {
+  return /user\.(name|email)|tell me who you are/i.test(output);
+}
+
 /** Compose the full argv passed to git: safety flags first, then the command. */
 export function composeGitArgs(args: string[] | string): string[] {
   const argv = Array.isArray(args) ? args : args.split(/\s+/).filter(Boolean);

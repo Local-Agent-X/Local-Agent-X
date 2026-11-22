@@ -218,3 +218,31 @@ describe("conflict-graph planWaves — invariants", () => {
     );
   });
 });
+
+// Live 2026-11-21 (label-check): a build resumed at chunk 2 planned "12 chunks
+// in 12 waves", every one degraded, because each dependency on the finished
+// chunk 1 read as a missing one.
+describe("a resumed run: chunks landed before the window", () => {
+  const window = [
+    mk(2, { dependsOn: [1], footprint: ["src/data"] }),
+    mk(4, { dependsOn: [1], footprint: ["src/meds"] }),
+    mk(5, { dependsOn: [1], footprint: ["src/route"] }),
+    mk(7, { dependsOn: [4, 5], footprint: ["src/check"] }),
+  ];
+
+  it("satisfy the dependencies that name them, so the wave stays parallel", () => {
+    const waves = planWaves(window, [1]);
+    expect(numbers(waves)).toEqual([[2, 4, 5], [7]]);
+    expect(waves.some((w) => w.degraded)).toBe(false);
+  });
+
+  it("without them the same chunks serialize, degraded", () => {
+    const waves = planWaves(window);
+    expect(numbers(waves)).toEqual([[2], [4], [5], [7]]);
+    expect(waves.every((w) => w.degraded)).toBe(true);
+  });
+
+  it("a dependency on a chunk that is neither landed nor in the window is still missing", () => {
+    expect(planWaves([mk(9, { dependsOn: [8], footprint: ["src/x"] })], [1]).every((w) => w.degraded)).toBe(true);
+  });
+});

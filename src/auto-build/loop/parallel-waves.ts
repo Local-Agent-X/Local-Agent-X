@@ -106,7 +106,9 @@ type RunContext = ParallelWavesContext & { phasePauses: PhasePauseTracker };
 export async function runParallelWaves(input: ParallelWavesContext): Promise<LoopResult> {
   const ctx: RunContext = { ...input, phasePauses: createPhasePauseTracker(input.chunks) };
   const { opts, chunks, totalChunks, maxConcurrentChunks, emit, events, outcomes } = ctx;
-  const waves = planWaves(chunks);
+  // The run builds a window of the plan; the chunks before it have landed.
+  const landedBefore = opts.plan.chunks.slice(0, Math.max(0, opts.plan.chunks.indexOf(chunks[0]))).map((c) => c.number);
+  const waves = planWaves(chunks, landedBefore);
   let chunksCommitted = 0;
 
   emit({
@@ -164,7 +166,7 @@ async function runBatch(ctx: RunContext, batch: ParsedChunk[], chunksCommittedIn
   const { opts, totalChunks, emit, events, outcomes } = ctx;
   let chunksCommitted = chunksCommittedIn;
 
-  // 1. Create one worktree per chunk. A null return (worktree cap reached) does
+  // 1. Create one worktree per chunk. A null return (cap reached, or git refused) does
   //    NOT crash: that chunk falls back to a SERIAL build on base after this
   //    batch merges. workerIndex is assigned only to chunks that got a worktree.
   const dispatched: DispatchedChunk[] = [];
@@ -180,7 +182,7 @@ async function runBatch(ctx: RunContext, batch: ParsedChunk[], chunksCommittedIn
     if (!wt) {
       emit({
         type: "review-result", chunkNumber: chunk.number, totalChunks,
-        message: `Worktree unavailable for chunk ${chunk.number} (worktree cap reached) — will build it serially on base after the parallel batch.`,
+        message: `Worktree unavailable for chunk ${chunk.number} (the worktree cap was reached or creating it failed; the server log says which) — will build it serially on base after the parallel batch.`,
       });
       degradedToSerial.push(chunk);
       continue;

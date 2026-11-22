@@ -19,7 +19,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { devNull } from "node:os";
 import { join, isAbsolute } from "node:path";
-import { composeGitArgs } from "../git-safety.js";
+import { composeGitArgs, HARNESS_COMMIT_IDENTITY, isNoGitIdentity } from "../git-safety.js";
 import { awaitSandboxProof, getSandboxMode } from "../sandbox/index.js";
 import { runCaged, type CagedRunOutcome } from "../tools/caged-spawn.js";
 import { gitArgv } from "../tools/program-argv.js";
@@ -83,8 +83,6 @@ async function gitRun(args: string[], opts: GitRunOptions): Promise<GitRunResult
   return { exitCode: null, stdout: "", stderr: "", timedOut: true };
 }
 
-const LOOP_IDENTITY = ["-c", "user.name=lax-auto-build", "-c", "user.email=auto-build@localagentx.local"];
-
 /**
  * Commit with the repo's identity, or the loop's own when there is none: the
  * loop's commits are tooling plumbing, not authorship, and the Windows cage's
@@ -92,8 +90,8 @@ const LOOP_IDENTITY = ["-c", "user.name=lax-auto-build", "-c", "user.email=auto-
  */
 async function commitWithIdentity(commitArgs: string[], opts: GitRunOptions): Promise<GitRunResult> {
   const commit = await gitRun(commitArgs, opts);
-  if (commit.exitCode === 0 || !/user\.(name|email)|tell me who you are/i.test(commit.stderr + commit.stdout)) return commit;
-  return gitRun([...LOOP_IDENTITY, ...commitArgs], opts);
+  if (commit.exitCode === 0 || !isNoGitIdentity(commit.stderr + commit.stdout)) return commit;
+  return gitRun([...HARNESS_COMMIT_IDENTITY, ...commitArgs], opts);
 }
 
 /**

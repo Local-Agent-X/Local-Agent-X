@@ -7,7 +7,7 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-import { activeWorktrees, git, logger, MAX_CONCURRENT_WORKTREES, WORKTREE_BASE, worktreeSlotAvailable } from "./worktree-core.js";
+import { activeWorktrees, git, commitWithFallbackIdentity, logger, MAX_CONCURRENT_WORKTREES, WORKTREE_BASE, worktreeSlotAvailable } from "./worktree-core.js";
 import { linkDirectoryInto, listCheckedOutBranches, unlinkSharedJunctions } from "./worktree-junctions.js";
 import { claimRecoveredWorktree, forgetWorktreeOwnership, ownsWorktree, registerWorktreeOwnership } from "./worktree-recovery.js";
 import { findMergeOverlaps, noteMerged, overlapSummary, type MergeOverlap } from "./merge-overlap.js";
@@ -80,7 +80,7 @@ export function mergeWorktree(agentId: string): { merged: boolean; files: number
     const status = git("status --porcelain", wt.path);
     if (status) {
       git("add -A", wt.path);
-      git(["commit", "-m", `Agent ${agentId}: automated changes`], wt.path);
+      commitWithFallbackIdentity(["-m", `Agent ${agentId}: automated changes`], wt.path);
     }
 
     // Merge delta = base tip vs branch head, NOT the working-tree status. A
@@ -211,7 +211,7 @@ export function cleanupAllWorktrees(): void {
     if (dirty) {
       try {
         git(["add", "-A"], wt.path);
-        git(["commit", "-m", `Checkpoint ${id}: preserve work in progress`], wt.path);
+        commitWithFallbackIdentity(["-m", `Checkpoint ${id}: preserve work in progress`], wt.path);
         wt.recovered = true;
         logger.info(`[worktree] Checkpointed dirty worktree ${id} for recovery`);
       } catch (e) {
@@ -297,6 +297,26 @@ function resolveStaleBranchName(branchName: string, repoRoot: string): string {
 }
 
 /**
+ * The folder for a new worktree: `preferred`, or the first free `<preferred>-2`,
+ * `-3`, … when a folder is already there. A cleaned-up worktree's folder can
+ * outlive its git registration on Windows (a process still holding a file in
+ * it), and `git worktree add` refuses an existing path: the next run's chunk
+ * then built without isolation (label-check, 2026-11-21). The leftover is
+ * never deleted here: it is not this run's to judge.
+ */
+function freeWorktreePath(preferred: string): string {
+  if (!existsSync(preferred)) return preferred;
+  for (let n = 2; n <= MAX_STALE_BRANCH_SUFFIX; n++) {
+    const candidate = `${preferred}-${n}`;
+    if (!existsSync(candidate)) {
+      logger.warn(`[worktree] ${preferred} is still on disk from an earlier worktree; using ${candidate}`);
+      return candidate;
+    }
+  }
+  throw new Error(`no free worktree folder for ${preferred}: ${MAX_STALE_BRANCH_SUFFIX} leftovers already exist`);
+}
+
+/**
  * Create an isolated worktree with caller-supplied branch name.
  *
  * The returned `branch` is the one actually created. It differs from
@@ -353,7 +373,7 @@ export function createNamedWorktree(
     // Resolve the toplevel of the repo this worktree belongs to. `repoRoot`
     // undefined → cwd (today's behavior); provided → the caller's repo, even
     // when it's a subdir (git normalizes to the toplevel + strips symlinks).
-    const wtPath = join(WORKTREE_BASE, name);
+    const wtPath = freeWorktreePath(join(WORKTREE_BASE, name));
 
     // A leftover branch of this name from an earlier run must not fail the
     // whole creation — reuse the name if merged, side-step it if not.

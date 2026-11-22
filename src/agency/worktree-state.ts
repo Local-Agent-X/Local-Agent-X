@@ -7,7 +7,7 @@
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 
-import { activeWorktrees, git, gitAsync, logger } from "./worktree-core.js";
+import { activeWorktrees, git, gitAsync, commitWithFallbackIdentity, logger } from "./worktree-core.js";
 import { unlinkSharedJunctions } from "./worktree-junctions.js";
 import { loadProtectedFiles } from "../config-loader.js";
 import { killProcessTree } from "../process-tree-kill.js";
@@ -211,7 +211,7 @@ export function commitInWorktree(name: string, message: string): string | null {
   // No shell escaping needed — execFileSync passes the arg as a single argv
   // entry. Newlines kept compact for tidy commit subjects.
   const compactMessage = message.replace(/\r\n/g, "\n");
-  git(["commit", "-m", compactMessage], wt.path);
+  commitWithFallbackIdentity(["-m", compactMessage], wt.path);
   return git(["rev-parse", "HEAD"], wt.path);
 }
 

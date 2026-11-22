@@ -561,6 +561,28 @@ describe("createNamedWorktree stale-branch preflight (C17)", () => {
     }
   });
 
+  it("side-steps a leftover folder at the worktree's path and leaves it alone", () => {
+    // An earlier run's cleanup unregistered the worktree, but its folder was
+    // still on disk (Windows keeps a held file): git refuses an existing path.
+    const { repo } = initRepo();
+    const name = "c17-leftover-folder";
+    const leftover = join(WORKTREE_BASE, name);
+    mkdirSync(leftover, { recursive: true });
+    writeFileSync(join(leftover, "still-held.txt"), "x");
+    try {
+      const wt = createNamedWorktree(name, BRANCH, repo, "run-2");
+      expect(wt).not.toBeNull();
+      expect(wt!.path).toBe(`${leftover}-2`);
+      expect(existsSync(join(leftover, "still-held.txt"))).toBe(true);
+      expect(activeWorktrees.get(name)?.path).toBe(wt!.path);
+    } finally {
+      try { cleanupWorktree(name); } catch { /* best-effort */ }
+      activeWorktrees.delete(name);
+      rmSync(leftover, { recursive: true, force: true });
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
   it("side-steps (never deletes) a branch another worktree has checked out", () => {
     const { repo, g, baseHead } = initRepo();
     const name = "c17-stale-checked-out";
@@ -639,13 +661,72 @@ describe("a refused worktree add leaves no branch behind", () => {
   it("createNamedWorktree", () => {
     const { repo, g } = initRepo();
     const name = `refused-named-${Date.now().toString(36)}`;
-    const blocked = blockPath(name);
+    // A named worktree side-steps a folder already at its path (to -2 … -20),
+    // so occupy every one of them for the creation to be refused.
+    const blocked = [blockPath(name), ...Array.from({ length: 19 }, (_, i) => blockPath(`${name}-${i + 2}`))];
     try {
       expect(createNamedWorktree(name, `autobuild/${name}`, repo)).toBeNull();
       expect(activeWorktrees.has(name)).toBe(false);
       expect(g(["branch", "--list", `autobuild/${name}`])).toBe("");
     } finally {
-      rmSync(blocked, { recursive: true, force: true });
+      for (const b of blocked) rmSync(b, { recursive: true, force: true });
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+});
+
+// Live 2026-11-21 (label-check): a project the agent made has no git identity
+// and the user had no global one. The worktree's commit failed, so a parallel
+// build's chunk never reached its branch and a halted one's work was not saved.
+describe("a worktree commit in a repo with no git identity", () => {
+  const noIdentityEnv = { GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_SYSTEM: "/dev/null", GIT_AUTHOR_NAME: undefined, GIT_AUTHOR_EMAIL: undefined, GIT_COMMITTER_NAME: undefined, GIT_COMMITTER_EMAIL: undefined, EMAIL: undefined };
+  function withNoIdentity<T>(fn: () => T): T {
+    const prior: Record<string, string | undefined> = {};
+    for (const [k, v] of Object.entries(noIdentityEnv)) {
+      prior[k] = process.env[k];
+      if (v === undefined) delete process.env[k]; else process.env[k] = v;
+    }
+    try { return fn(); } finally {
+      for (const [k, v] of Object.entries(prior)) { if (v === undefined) delete process.env[k]; else process.env[k] = v; }
+    }
+  }
+
+  it("commits under the harness identity, and the chunk merges back", () => {
+    const { repo, g } = initRepo();
+    g(["config", "--unset", "user.email"]);
+    g(["config", "--unset", "user.name"]);
+    const name = `no-identity-${Date.now().toString(36)}`;
+    try {
+      withNoIdentity(() => {
+        const wt = createNamedWorktree(name, `autobuild/${name}`, repo, "run-1");
+        expect(wt).not.toBeNull();
+        writeFileSync(join(wt!.path, "chunk.txt"), "work");
+        const sha = commitInWorktree(name, "chunk 4: store");
+        expect(sha).toMatch(/^[0-9a-f]{40}$/);
+        expect(g(["log", "-1", "--format=%an <%ae>", sha!])).toBe("lax-auto-build <auto-build@localagentx.local>");
+        expect(mergeWorktree(name)).toMatchObject({ merged: true, files: 1 });
+      });
+      expect(g(["ls-tree", "--name-only", "main"]).split("\n")).toContain("chunk.txt");
+    } finally {
+      try { cleanupWorktree(name); } catch { /* best-effort */ }
+      activeWorktrees.delete(name);
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("a repo that has an identity keeps it", () => {
+    const { repo, g } = initRepo();
+    const name = `own-identity-${Date.now().toString(36)}`;
+    try {
+      withNoIdentity(() => {
+        const wt = createNamedWorktree(name, `autobuild/${name}`, repo, "run-1");
+        writeFileSync(join(wt!.path, "chunk.txt"), "work");
+        const sha = commitInWorktree(name, "chunk 4: store");
+        expect(g(["log", "-1", "--format=%an <%ae>", sha!])).toBe("t <t@t>");
+      });
+    } finally {
+      try { cleanupWorktree(name); } catch { /* best-effort */ }
+      activeWorktrees.delete(name);
       rmSync(repo, { recursive: true, force: true });
     }
   });

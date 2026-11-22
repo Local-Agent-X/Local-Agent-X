@@ -102,8 +102,13 @@ export function preserveWorktreeWork(ctx: ParallelWavesContext, d: DispatchedChu
   let sha: string | null = null;
   try {
     sha = commitInWorktree(d.name, `chunk ${d.chunk.number} (preserved on halt): ${d.chunk.title}`);
-  } catch {
-    return false; // worktree gone — nothing to preserve
+  } catch (e) {
+    // Not silent: the halt message must not promise a branch that holds nothing.
+    emit({
+      type: "review-result", chunkNumber: d.chunk.number, totalChunks,
+      message: `WARNING: chunk ${d.chunk.number}'s work could NOT be saved to branch '${d.branch}' before the halt (${(e as Error).message.slice(0, 200)}). It will be rebuilt on resume.`,
+    });
+    return false;
   }
   if (!sha) return false; // clean tree — the chunk wrote nothing
   emit({

@@ -70,12 +70,15 @@ export interface ChunkWave {
  * input always yields the same waves. Tie-breaking is stable input order.
  * See the file header for the full contract.
  */
-export function planWaves(chunks: ParsedChunk[]): ChunkWave[] {
+export function planWaves(chunks: ParsedChunk[], alreadyLanded: Iterable<number> = []): ChunkWave[] {
   const n = chunks.length;
   const waves: ChunkWave[] = [];
   const placed = new Array<boolean>(n).fill(false);
-  // Chunk numbers that have landed in a COMPLETED (strictly earlier) wave.
-  const satisfied = new Set<number>();
+  // Chunk numbers that have landed in a COMPLETED (strictly earlier) wave, or
+  // before this plan's chunks at all (`alreadyLanded`: a resumed run's earlier
+  // chunks). Without the latter every dependency on a finished chunk read as a
+  // missing one, and a resume built one chunk per wave (label-check, 2026-11-21).
+  const satisfied = new Set<number>(alreadyLanded);
   let remaining = n;
 
   while (remaining > 0) {

@@ -9,7 +9,7 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 import { createLogger } from "../logger.js";
-import { composeGitArgs, execGitSync, gitExecutable } from "../git-safety.js";
+import { composeGitArgs, execGitSync, gitExecutable, HARNESS_COMMIT_IDENTITY, isNoGitIdentity } from "../git-safety.js";
 import { killProcessTree } from "../process-tree-kill.js";
 
 export const logger = createLogger("agency.worktree");
@@ -123,6 +123,22 @@ export function git(args: string[] | string, cwd: string): string {
   } catch (e) {
     const err = e as { stderr?: string; message: string };
     throw new Error(`git ${argv.join(" ")} failed: ${err.stderr || err.message}`);
+  }
+}
+
+/**
+ * `git commit` in `cwd`, under the repo's identity or, where git has none,
+ * the harness's own (git-safety.ts). A worktree of a project the agent made
+ * has no identity: its commit failed, so a parallel build's chunk never
+ * reached its branch and a halted one's work was not saved (label-check,
+ * 2026-11-21).
+ */
+export function commitWithFallbackIdentity(commitArgs: string[], cwd: string): string {
+  try {
+    return git(["commit", ...commitArgs], cwd);
+  } catch (e) {
+    if (!isNoGitIdentity((e as Error).message)) throw e;
+    return git([...HARNESS_COMMIT_IDENTITY, "commit", ...commitArgs], cwd);
   }
 }
 

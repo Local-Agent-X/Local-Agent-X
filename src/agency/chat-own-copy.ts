@@ -28,7 +28,7 @@ import { join, relative, resolve } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { createJsonStore } from "../util/json-store.js";
 import type { SecurityLayer } from "../security/index.js";
-import { activeWorktrees, git } from "./worktree-core.js";
+import { activeWorktrees, git, commitWithFallbackIdentity } from "./worktree-core.js";
 import { cleanupWorktree, createNamedWorktree, mergeWorktree } from "./worktree-lifecycle.js";
 import { holdersOfSession } from "./work-claims.js";
 
@@ -142,7 +142,7 @@ export function mergeOwnCopy(sessionId: string): MergeBackResult {
   try {
     if (git("status --porcelain", copy.path)) {
       git("add -A", copy.path);
-      git(["commit", "-m", `Chat copy ${copy.branch}: changes`], copy.path);
+      commitWithFallbackIdentity(["-m", `Chat copy ${copy.branch}: changes`], copy.path);
     }
     const blocked = cannotMergeYet(copy);
     if (blocked) return { merged: false, files: 0, error: blocked };
@@ -165,7 +165,7 @@ export function leaveOwnCopy(sessionId: string): { left: boolean; branchKept: st
   try {
     if (existsSync(copy.path) && git("status --porcelain", copy.path)) {
       git("add -A", copy.path);
-      git(["commit", "-m", `Chat copy ${copy.branch}: changes (left unmerged)`], copy.path);
+      commitWithFallbackIdentity(["-m", `Chat copy ${copy.branch}: changes (left unmerged)`], copy.path);
     }
     git(["merge-base", "--is-ancestor", copy.branch, copy.baseBranch], copy.repoRoot);
     unmerged = false;

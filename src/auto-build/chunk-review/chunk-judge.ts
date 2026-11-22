@@ -17,8 +17,9 @@
  *     retry carries both findings.
  *
  * A failing scenario, an app that would not start for scoring, or a BROKEN
- * skeptic is a push_back: the loop's retry-once machinery hands the builder
- * the finding, and a second miss halts. What the builder is told is what the
+ * skeptic is a push_back: the loop's fix rounds (loop/handle-push-back.ts)
+ * hand the builder each finding until the chunk is green, a round changes
+ * nothing, or the rounds run out. What the builder is told is what the
  * judge saw (score, reasoning, failed criteria), never a scenario's own steps.
  */
 

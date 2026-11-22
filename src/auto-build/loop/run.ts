@@ -26,7 +26,7 @@ import { ensureGitBaseline, getHeadSha } from "../git-helpers.js";
 import { runPreflightProbe } from "./preflight.js";
 import { attemptPhaseGateScoring } from "../loop-phase-gate.js";
 import { emitLaunchReadiness } from "../loop-effects.js";
-import type { LoopEvent, LoopOptions, LoopResult } from "./types.js";
+import type { EmitFn, LoopEvent, LoopOptions, LoopResult } from "./types.js";
 import { haltedResult, safeGet } from "./types.js";
 import { buildChunkWithRetry } from "./chunk-attempt.js";
 import { isPhaseGatePause } from "../chunk-review/index.js";
@@ -124,7 +124,28 @@ export async function runBuildLoop(opts: LoopOptions): Promise<LoopResult> {
     });
   }
 
+  return runChunksInOrder({ opts, startIdx, endIdx, emit, events, outcomes });
+}
+
+/**
+ * The serial path: build the chunks of the window one after another in the
+ * project tree. A chunk that is still not green halts the build, since its
+ * work is in the tree, uncommitted, and nothing can be built past it.
+ */
+async function runChunksInOrder(run: {
+  opts: LoopOptions;
+  startIdx: number;
+  endIdx: number;
+  emit: EmitFn;
+  events: LoopEvent[];
+  outcomes: LoopResult["outcomes"];
+}): Promise<LoopResult> {
+  const { opts, startIdx, endIdx, emit, events, outcomes } = run;
+  const chunks = opts.plan.chunks;
+  const totalChunks = chunks.length;
   let chunksCommitted = 0;
+  // Chunks an earlier run landed past one it set aside are not built again.
+  const alreadyLanded = new Set(opts.landedChunks ?? []);
 
   for (let i = startIdx; i < endIdx; i++) {
     if (opts.signal?.aborted) {
@@ -132,6 +153,7 @@ export async function runBuildLoop(opts: LoopOptions): Promise<LoopResult> {
     }
 
     const chunk = chunks[i];
+    if (alreadyLanded.has(chunk.number)) continue;
     emit({ type: "chunk-start", chunkNumber: chunk.number, totalChunks, message: `Starting chunk ${chunk.number}/${totalChunks}: ${chunk.title} (${chunk.klass})` });
 
     const preSha = await safeGet(() => getHeadSha(opts.projectDir));
@@ -139,7 +161,10 @@ export async function runBuildLoop(opts: LoopOptions): Promise<LoopResult> {
       return haltedResult(`git rev-parse HEAD failed before chunk ${chunk.number}: ${preSha.error}`, chunk.number, outcomes, events);
     }
 
-    // Build, review and judge the chunk; a push_back gets one more attempt.
+    // Build, review and judge the chunk; a push_back is fixed round by round
+    // (handle-push-back.ts). On this serial path a chunk that still is not
+    // green halts the build: its work is in the project tree, uncommitted, so
+    // nothing can be built past it. The parallel path sets it aside instead.
     // Already-committed chunks' distilled learnings go into its task so the
     // worker inherits SPEC_GAPS / NOTE context instead of rediscovering the
     // project from zero.

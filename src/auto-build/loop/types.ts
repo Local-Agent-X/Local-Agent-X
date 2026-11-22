@@ -15,6 +15,9 @@ export type LoopEventType =
   | "spec-amended"
   | "launch-readiness-emitted"
   | "push-back"
+  /** A chunk was set aside, or left waiting on one that was (loop/set-aside.ts).
+   *  The build goes on: unlike "halt", it does not mark the run stopped. */
+  | "chunk-set-aside"
   | "halt"
   | "complete";
 
@@ -37,6 +40,11 @@ export interface LoopOptions {
   signal?: AbortSignal;
   /** Optional per-event sink. Chunk 8 wires this to the LAX UI. */
   onEvent?: (event: LoopEvent) => void;
+  /** Chunks inside this run's window that are already on the base branch: a
+   *  build that set a chunk aside lands the ones after it, so what has landed
+   *  is not always a prefix. They are skipped, and count as landed for the
+   *  chunks that depend on them (orchestrator/state.ts landedChunks). */
+  landedChunks?: number[];
   /** Optional override for subprocess timeout per chunk. */
   subprocessTimeoutMs?: number;
   /** Chat session that owns this orchestration — propagated to chunk-worker

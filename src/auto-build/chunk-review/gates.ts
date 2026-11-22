@@ -68,7 +68,7 @@ export interface GateFinding {
  *      about, and a mistyped "blocked!"/"partial." silently loses the
  *      blocked/partial recovery paths (missing-creds, spec-gap) that
  *      gateDoneWhen gates on status ∈ {blocked, partial}. Demand a canonical
- *      token; retry-once handles it, a second miss halts. */
+ *      token; a fix round handles it, and the same miss again stops the rounds. */
 export function gateReportShape(report: ChunkReport): GateFinding | null {
   if (!report.parsed) {
     return {

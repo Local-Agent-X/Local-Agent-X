@@ -1,7 +1,8 @@
 /**
  * One chunk's attempts: build it, have it reviewed (gates, the real build, the
- * chunk judge), and on a push_back build it once more through the advisor
- * (handle-push-back.ts), whose second miss is a halt. The one way every path
+ * chunk judge), and on a push_back fix it round by round through the advisor
+ * (handle-push-back.ts) until it is green, a round changes nothing, or the
+ * rounds run out, which is a halt for this chunk. The one way every path
  * builds a chunk: the serial loop (run.ts), a worktree build (parallel-chunk-
  * build.ts) and the worktree-cap fallback on base (parallel-waves.ts).
  */

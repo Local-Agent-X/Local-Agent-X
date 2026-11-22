@@ -161,6 +161,7 @@ export const buildPlanResumeTool: ToolDefinition = {
       plan,
       startingChunk: window.startingChunk,
       maxChunks: window.maxChunks,
+      landedChunks: s.landedChunks,
       ...DEFAULT_CHUNK_REVIEW,
     });
 

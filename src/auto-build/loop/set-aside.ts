@@ -1,0 +1,87 @@
+/**
+ * Chunks a parallel build sets aside, and the ones that wait on them.
+ *
+ * One chunk failing its review used to halt the whole build before anything
+ * in its batch merged: a chunk that had passed was thrown away with it, and
+ * every chunk after it never ran (label-check, 2026-11-22, where chunk 4
+ * passed three times and never landed). A chunk that is still not green after
+ * its fix rounds is now SET ASIDE: its work is kept on its branch, the chunks
+ * that passed land, and the build goes on with everything that does not
+ * depend on it. A chunk that does depend on it (directly or through another)
+ * is not started; it WAITS, named with what it waits on.
+ *
+ * A build that set anything aside does not end "complete": it ends halted,
+ * with what landed, what was set aside and why, and what waits. The landed
+ * chunks are on record (orchestrator/state.ts landedChunks), so the resume
+ * builds only what is left.
+ */
+import type { ParsedChunk } from "../plan-parser.js";
+
+export interface SetAsideChunk {
+  chunk: number;
+  title: string;
+  /** Why it is not green, in the review's words. */
+  reason: string;
+  /** The branch its work was kept on, when there was work to keep. */
+  branch?: string;
+}
+
+export interface WaitingChunk {
+  chunk: number;
+  title: string;
+  /** The set-aside or waiting chunk it depends on. */
+  on: number;
+}
+
+export interface SetAsideLedger {
+  setAside: SetAsideChunk[];
+  waiting: WaitingChunk[];
+}
+
+export function createSetAsideLedger(): SetAsideLedger {
+  return { setAside: [], waiting: [] };
+}
+
+export function anythingSetAside(ledger: SetAsideLedger): boolean {
+  return ledger.setAside.length > 0 || ledger.waiting.length > 0;
+}
+
+/** The chunk `chunk` depends on that is set aside or itself waiting, if any. */
+export function blockedOn(ledger: SetAsideLedger, chunk: ParsedChunk): number | undefined {
+  const out = new Set([...ledger.setAside.map((c) => c.chunk), ...ledger.waiting.map((c) => c.chunk)]);
+  return chunk.dependsOn.find((dep) => out.has(dep));
+}
+
+/** Split a batch into the chunks that can build and the ones that must wait,
+ *  recording the latter. A chunk waits when one it depends on did not land. */
+export function holdBackWaiting(ledger: SetAsideLedger, batch: ParsedChunk[]): { buildable: ParsedChunk[]; held: WaitingChunk[] } {
+  const buildable: ParsedChunk[] = [];
+  const held: WaitingChunk[] = [];
+  for (const chunk of batch) {
+    const on = blockedOn(ledger, chunk);
+    if (on === undefined) { buildable.push(chunk); continue; }
+    const waiting = { chunk: chunk.number, title: chunk.title, on };
+    ledger.waiting.push(waiting);
+    held.push(waiting);
+  }
+  return { buildable, held };
+}
+
+const oneLine = (text: string, max: number): string => {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length > max ? `${flat.slice(0, max - 1)}…` : flat;
+};
+
+/** What the build tells its chat when it ends with chunks set aside. */
+export function setAsideSummary(ledger: SetAsideLedger, landed: number[]): string {
+  const parts = [`The build went as far as it could: ${ledger.setAside.length} chunk(s) set aside, the rest built on without them.`];
+  parts.push(landed.length ? `Landed this run: ${landed.map((n) => `chunk ${n}`).join(", ")}.` : "Nothing landed this run.");
+  for (const c of ledger.setAside) {
+    parts.push(`Set aside — chunk ${c.chunk} (${c.title}): ${oneLine(c.reason, 500)}${c.branch ? ` Its work is on branch '${c.branch}'.` : ""}`);
+  }
+  if (ledger.waiting.length) {
+    parts.push(`Not started, waiting on those: ${ledger.waiting.map((w) => `chunk ${w.chunk} (on ${w.on})`).join(", ")}.`);
+  }
+  parts.push("Fix what was found (or change the plan), then resume: chunks that landed are not built again.");
+  return parts.join("\n");
+}

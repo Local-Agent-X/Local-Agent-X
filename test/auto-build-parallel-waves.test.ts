@@ -145,7 +145,8 @@ const TWO_DISJOINT = [
 ].join("\n");
 
 // Wave 0 = {1,2} (disjoint), Wave 1 = {3} (depends on 1). Lets us prove that a
-// halt in wave 0 never dispatches wave 1.
+// merge conflict in wave 0 never dispatches wave 1, and that a chunk set aside
+// in wave 0 holds back only the chunks that depend on it.
 const TWO_WAVES = [
   TWO_DISJOINT,
   "### Chunk 3 — Gamma",
@@ -195,13 +196,14 @@ afterEach(() => {
   try { rmSync(projectDir, { recursive: true, force: true }); } catch { /* best-effort */ }
 });
 
-function run(planText: string, maxConcurrentChunks: number) {
+function run(planText: string, maxConcurrentChunks: number, landedChunks?: number[]) {
   return runBuildLoop({
     projectDir,
     planPath: join(projectDir, "spec", "plan.md"),
     plan: parsePlanText(planText),
     startingChunk: 1,
     maxConcurrentChunks,
+    ...(landedChunks ? { landedChunks } : {}),
   });
 }
 
@@ -254,47 +256,104 @@ describe("parallel path — rule 2: HALT on merge conflict, never auto-resolve",
     expect(shared.calls).toContain("cleanup:autobuild-c2");
   });
 
-  it("a chunk whose gate HALTS stops the build and merges NOTHING", async () => {
+});
+
+// One chunk failing its review used to stop the build before anything in its
+// batch merged: a chunk that had passed was thrown away with it, and nothing
+// after it ran (label-check 2026-11-22: chunk 4 passed three times and never
+// landed). The failing chunk is now set aside and the build goes on.
+describe("parallel path — a chunk that is not green is set aside, and the build goes on", () => {
+  it("the chunk that passed merges, the chunks that do not depend on the failed one build, and the run ends saying what happened", async () => {
     shared.chunkActions.set(2, "halt");
     writeFileSync(join(projectDir, "spec", "plan.md"), TWO_WAVES);
 
     const result = await run(TWO_WAVES, 2);
 
+    // Chunk 1 landed, and chunk 3 (which depends only on chunk 1) was built and landed.
+    expect(shared.calls).toContain("merge:autobuild-c1");
+    expect(shared.calls).toContain("merge:autobuild-c3");
+    expect(shared.calls).not.toContain("merge:autobuild-c2");
+    expect(result.chunksCommitted).toBe(2);
+    expect(result.events.filter((e) => e.type === "chunk-landed").map((e) => e.chunkNumber)).toEqual([1, 3]);
+    // Not complete: one chunk is missing, and the reason names it and what landed.
     expect(result.status).toBe("halted");
-    // No merge happened at all — a non-proceed chunk halts before the merge loop.
-    expect(shared.calls.some((c) => c.startsWith("merge:"))).toBe(false);
-    // Both worktrees cleaned up (nothing merged), wave 1 never dispatched.
-    expect(shared.calls).toContain("cleanup:autobuild-c1");
-    expect(shared.calls).toContain("cleanup:autobuild-c2");
-    expect(shared.calls).not.toContain("create:autobuild-c3");
+    expect(result.lastChunk).toBe(2);
+    expect(result.haltReason).toContain("Set aside — chunk 2 (Beta): chunk gate halted the build");
+    expect(result.haltReason).toContain("Landed this run: chunk 1, chunk 3.");
+    // The run stops once, at the end: setting a chunk aside is not a halt.
+    expect(result.events.filter((e) => e.type === "halt")).toHaveLength(1);
+    expect(result.events.find((e) => e.type === "chunk-set-aside" && e.chunkNumber === 2)).toBeDefined();
   });
 
-  it("preserves each dispatched chunk's WRITTEN work onto its branch BEFORE teardown, so a gate halt is recoverable", async () => {
-    // Regression: on a pre-merge gate halt the loop cleaned up worktrees BEFORE
-    // committing, so `git worktree remove --force` destroyed the agents' files
-    // and the "preserved" branch cleanupWorktree keeps was empty. Chunk 2's gate
-    // halts; chunk 1 succeeded. Both are torn down without a merge — but the work
-    // must be committed onto each branch first, so nothing is silently lost.
+  it("keeps the set-aside chunk's WRITTEN work on its branch BEFORE its worktree is removed", async () => {
+    // `git worktree remove --force` deletes uncommitted files, and nothing has
+    // been committed on this path: commit first, or the kept branch is empty.
     shared.chunkActions.set(2, "halt");
+
+    const result = await run(TWO_DISJOINT, 2);
+
+    expect(shared.calls).toContain("commit:autobuild-c2");
+    expect(shared.calls.indexOf("commit:autobuild-c2")).toBeLessThan(shared.calls.indexOf("cleanup:autobuild-c2"));
+    expect(result.haltReason).toContain("Its work is on branch 'autobuild/c2'.");
+  });
+
+  it("a chunk that depends on one that did not land is not started, and is named as waiting", async () => {
+    shared.chunkActions.set(1, "halt");
     writeFileSync(join(projectDir, "spec", "plan.md"), TWO_WAVES);
 
     const result = await run(TWO_WAVES, 2);
 
+    expect(shared.calls).toContain("merge:autobuild-c2");
+    expect(shared.calls).not.toContain("create:autobuild-c3");
+    expect(shared.calls).not.toContain("build-start:3");
     expect(result.status).toBe("halted");
-    // Nothing merged — but each dispatched chunk's work is committed to its branch.
+    expect(result.haltReason).toContain("Set aside — chunk 1 (Alpha)");
+    expect(result.haltReason).toContain("Not started, waiting on those: chunk 3 (on 1).");
+    expect(result.haltReason).toContain("Landed this run: chunk 2.");
+  });
+
+  it("with every chunk set aside, nothing lands and the run says so", async () => {
+    shared.chunkActions.set(1, "halt");
+    shared.chunkActions.set(2, "halt");
+
+    const result = await run(TWO_DISJOINT, 2);
+
     expect(shared.calls.some((c) => c.startsWith("merge:"))).toBe(false);
-    expect(shared.calls).toContain("commit:autobuild-c1");
-    expect(shared.calls).toContain("commit:autobuild-c2");
-    // And that commit lands BEFORE the worktree is removed (order is the whole bug).
-    expect(shared.calls.indexOf("commit:autobuild-c1")).toBeLessThan(
-      shared.calls.indexOf("cleanup:autobuild-c1"),
-    );
-    expect(shared.calls.indexOf("commit:autobuild-c2")).toBeLessThan(
-      shared.calls.indexOf("cleanup:autobuild-c2"),
-    );
-    // The halt reason tells the user how to recover the preserved work.
-    expect(result.haltReason).toContain("autobuild/c1");
-    expect(result.haltReason.toLowerCase()).toContain("recover");
+    expect(result.chunksCommitted).toBe(0);
+    expect(result.haltReason).toContain("Nothing landed this run.");
+  });
+});
+
+// A build that set a chunk aside landed the chunks after it. The next run is
+// told which (orchestrator/state.ts landedChunks) and builds only what is left.
+describe("parallel path — chunks an earlier run landed are not built again", () => {
+  it("skips a landed chunk inside the window and treats it as landed for the chunks that depend on it", async () => {
+    writeFileSync(join(projectDir, "spec", "plan.md"), TWO_WAVES);
+
+    const result = await run(TWO_WAVES, 2, [1]);
+
+    expect(result.status).toBe("complete");
+    expect(shared.calls).not.toContain("build-start:1");
+    expect(shared.calls).toContain("build-start:2");
+    // Chunk 3 depends on chunk 1, which landed in an earlier run: it builds.
+    expect(shared.calls).toContain("merge:autobuild-c3");
+    expect(result.chunksCommitted).toBe(2);
+  });
+
+  it("with everything in scope already landed, completes without building", async () => {
+    const result = await run(TWO_DISJOINT, 2, [1, 2]);
+
+    expect(result.status).toBe("complete");
+    expect(shared.calls.some((c) => c.startsWith("build-start:"))).toBe(false);
+  });
+
+  it("the one-at-a-time path skips them too", async () => {
+    writeFileSync(join(projectDir, "spec", "plan.md"), TWO_WAVES);
+
+    const result = await run(TWO_WAVES, 1, [2]);
+
+    expect(result.status).toBe("complete");
+    expect(shared.calls.filter((c) => c.startsWith("build-start:"))).toEqual(["build-start:1", "build-start:3"]);
   });
 });
 
@@ -317,9 +376,9 @@ describe("parallel path — recovery hints name the branch createNamedWorktree A
     expect(result.haltReason).not.toMatch(STALE_REQUESTED_C1);
   });
 
-  it("a pre-merge gate halt's recovery hints (halt reason + preserve event) name the side-stepped branch", async () => {
+  it("a set-aside chunk's recovery hints (end-of-run reason + preserve event) name the side-stepped branch", async () => {
     shared.branchOverrides.set("autobuild-c1", "autobuild/c1-2");
-    shared.chunkActions.set(2, "halt");
+    shared.chunkActions.set(1, "halt");
 
     const result = await run(TWO_DISJOINT, 2);
 

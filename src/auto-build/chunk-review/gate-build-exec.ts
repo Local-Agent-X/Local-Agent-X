@@ -9,8 +9,8 @@
  *
  *   1. Run the project's real build/test command (npm scripts) and read the
  *      ACTUAL exit code — not report.testsPass. A non-zero build or test run
- *      sends the chunk back to its builder (push_back: one retry, then a
- *      halt), naming the failing command + output tail.
+ *      sends the chunk back to its builder (push_back: the loop's fix
+ *      rounds), naming the failing command + output tail.
  *   2. If the build produced a static entry (index.html), serve its folder at
  *      a loopback site root and headless-smoke it:
  *      load the page, assert zero console errors AND a real root/canvas node

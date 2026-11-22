@@ -17,7 +17,6 @@ src/anthropic-client/stream-api.ts#streamViaAPI 157
 src/anthropic-client/stream-cli/stream-parse.ts#processStreamLine 106
 src/app-renderer/client-script.ts#renderClientScript 137
 src/auto-build/kickoff.ts#createBuildPlanKickoff:returned 112
-src/auto-build/loop/run.ts#runBuildLoop 110
 src/autopilot/loop.ts#runAutopilotLoop 200
 src/benchmark-longmemeval.ts#main 102
 src/browser/extract-script.ts 355

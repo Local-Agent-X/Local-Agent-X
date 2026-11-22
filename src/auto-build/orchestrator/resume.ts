@@ -156,6 +156,7 @@ function tryResumeOne(projectDir: string, sessionId: string): { outcome: ResumeO
       plan,
       startingChunk: window.startingChunk,
       maxChunks: window.maxChunks,
+      landedChunks: s.landedChunks,
       ...DEFAULT_CHUNK_REVIEW,
     });
 

@@ -23,6 +23,13 @@
  *     and fast-forward-advances it; interleaving two merges corrupts the base
  *     pointer and silently drops commits. So the merge loop is a plain
  *     sequential `for` that awaits nothing concurrently — NEVER Promise.all.
+ * A chunk that is still not green after its fix rounds does NOT stop the build:
+ * it is set aside with its work kept on its branch, the chunks that passed
+ * merge, and later waves build everything that does not depend on it
+ * (set-aside.ts). The run then ends halted, saying what landed, what was set
+ * aside and what waits. The two stops below are different: they mean the base
+ * itself can no longer be trusted.
+ *
  * (2) HALT ON CONFLICT — never auto-resolve. If any mergeWorktree returns
  *     {merged:false} we STOP the whole build (no next wave), surface a clear
  *     error naming the chunk + its PRESERVED branch, and clean up the other
@@ -54,6 +61,7 @@ import { createPhasePauseTracker, type PhasePauseTracker } from "./phase-gate-pa
 import { isPhaseGatePause } from "../chunk-review/index.js";
 import { handleAction } from "./handle-action.js";
 import { reGateMergedTree, warnFootprintEscapes } from "./merged-regate.js";
+import { anythingSetAside, createSetAsideLedger, holdBackWaiting, setAsideSummary, type SetAsideLedger } from "./set-aside.js";
 import { buildChunkInWorktree, commitDispatchedChunk, preserveWorktreeWork } from "./parallel-chunk-build.js";
 import type { EmitFn, LoopEvent, LoopOptions, LoopResult } from "./types.js";
 import { haltedResult, safeGet } from "./types.js";
@@ -101,13 +109,41 @@ type StepResult =
  */
 /** The run's own state beside the shared context: which phases paused at
  *  their verification gate and wait for all their chunks to land. */
-type RunContext = ParallelWavesContext & { phasePauses: PhasePauseTracker };
+type RunContext = ParallelWavesContext & {
+  phasePauses: PhasePauseTracker;
+  /** Chunks set aside this run, and the ones left waiting on them. */
+  ledger: SetAsideLedger;
+  /** Chunks merged into base this run, in landing order. */
+  landedThisRun: number[];
+};
+
+/** Chunks set aside in one run before the build stops trying: past this it is
+ *  no longer about one chunk, and each one costs its fix rounds. */
+const MAX_SET_ASIDE = 3;
+
+/** End a run that set chunks aside: halted, saying what landed and what did not. */
+function endWithSetAside(ctx: RunContext, chunksCommitted: number): LoopResult {
+  const { ledger, totalChunks, emit, events, outcomes } = ctx;
+  const reason = setAsideSummary(ledger, ctx.landedThisRun);
+  const at = ledger.setAside[0]?.chunk ?? ledger.waiting[0].chunk;
+  emit({ type: "halt", chunkNumber: at, totalChunks, message: reason });
+  return { status: "halted", lastChunk: at, chunksCommitted, haltReason: reason, outcomes, events };
+}
 
 export async function runParallelWaves(input: ParallelWavesContext): Promise<LoopResult> {
-  const ctx: RunContext = { ...input, phasePauses: createPhasePauseTracker(input.chunks) };
-  const { opts, chunks, totalChunks, maxConcurrentChunks, emit, events, outcomes } = ctx;
-  // The run builds a window of the plan; the chunks before it have landed.
-  const landedBefore = opts.plan.chunks.slice(0, Math.max(0, opts.plan.chunks.indexOf(chunks[0]))).map((c) => c.number);
+  const { opts, totalChunks, maxConcurrentChunks, emit, events, outcomes } = input;
+  // The run builds a window of the plan. The chunks before it have landed, and
+  // so have the ones inside it an earlier run landed past a chunk it set aside.
+  const already = new Set(opts.landedChunks ?? []);
+  const chunks = input.chunks.filter((c) => !already.has(c.number));
+  const windowStart = Math.max(0, opts.plan.chunks.indexOf(input.chunks[0]));
+  const landedBefore = [...opts.plan.chunks.slice(0, windowStart), ...input.chunks.filter((c) => already.has(c.number))].map((c) => c.number);
+  if (chunks.length === 0) {
+    const last = input.chunks[input.chunks.length - 1].number;
+    emit({ type: "complete", chunkNumber: last, totalChunks, message: "Loop complete (parallel): every chunk in scope had already landed." });
+    return { status: "complete", lastChunk: last, chunksCommitted: 0, haltReason: "", outcomes, events };
+  }
+  const ctx: RunContext = { ...input, chunks, phasePauses: createPhasePauseTracker(chunks), ledger: createSetAsideLedger(), landedThisRun: [] };
   const waves = planWaves(chunks, landedBefore);
   let chunksCommitted = 0;
 
@@ -132,10 +168,16 @@ export async function runParallelWaves(input: ParallelWavesContext): Promise<Loo
     // Waves already carry only footprint-disjoint chunks (conflict-graph), so
     // splitting one into sequential batches is always safe.
     for (let b = 0; b < wave.chunks.length; b += maxConcurrentChunks) {
-      const batch = wave.chunks.slice(b, b + maxConcurrentChunks);
-      const step = await runBatch(ctx, batch, chunksCommitted);
+      // A chunk that depends on one that did not land is not started.
+      const { buildable, held } = holdBackWaiting(ctx.ledger, wave.chunks.slice(b, b + maxConcurrentChunks));
+      for (const w of held) {
+        emit({ type: "chunk-set-aside", chunkNumber: w.chunk, totalChunks, message: `Chunk ${w.chunk} not started: it depends on chunk ${w.on}, which did not land.` });
+      }
+      if (buildable.length === 0) continue;
+      const step = await runBatch(ctx, buildable, chunksCommitted);
       if (step.kind === "halt") return step.result;
       chunksCommitted = step.chunksCommitted;
+      if (ctx.ledger.setAside.length >= MAX_SET_ASIDE) return endWithSetAside(ctx, chunksCommitted);
     }
 
     // S4 rule 3 — re-gate the now-fully-merged wave on base BEFORE cutting the
@@ -155,6 +197,7 @@ export async function runParallelWaves(input: ParallelWavesContext): Promise<Loo
     if (phase.kind === "halt") return phase.result;
   }
 
+  if (anythingSetAside(ctx.ledger)) return endWithSetAside(ctx, chunksCommitted);
   const lastChunk = chunks[chunks.length - 1].number;
   emit({ type: "complete", chunkNumber: lastChunk, totalChunks, message: `Loop complete (parallel): ${chunksCommitted} chunks committed.` });
   return { status: "complete", lastChunk, chunksCommitted, haltReason: "", outcomes, events };
@@ -204,41 +247,22 @@ async function runBatch(ctx: RunContext, batch: ParsedChunk[], chunksCommittedIn
     // Record every dispatched chunk's outcome for the punch list (order preserved).
     for (const r of built) outcomes.push({ chunkNumber: r.chunk.number, outcome: r.finalOutcome, action: r.finalAction });
 
-    // 3. If ANY dispatched chunk did not reach proceed/amend_spec, HALT BEFORE
-    //    merging anything (rule 2). Nothing is merged — but every dispatched
-    //    chunk's WRITTEN work is committed onto its branch FIRST so the halt is
-    //    recoverable. cleanupWorktree keeps an unmerged branch, yet
-    //    `git worktree remove --force` deletes the working dir with any
-    //    UNCOMMITTED files; on this pre-merge path nothing has been committed
-    //    yet, so without this the "preserved" branch is empty and the agents'
-    //    work — including any succeeded siblings' — is silently destroyed. A
-    //    parallel halt must not lose more than a serial one (which leaves the
-    //    work in the tree). Commit, THEN tear down.
+    // 3. A dispatched chunk that did not reach proceed/amend_spec is SET ASIDE:
+    //    its written work is committed onto its branch FIRST (cleanupWorktree
+    //    keeps an unmerged branch, but `git worktree remove --force` deletes
+    //    the working dir with any UNCOMMITTED files, and nothing has been
+    //    committed yet on this path), then its worktree is torn down. The
+    //    chunks that passed merge below; the build goes on without this one.
     // A chunk paused at its phase's gate was accepted: it merges like the rest.
-    const failed = built.find(r => r.finalAction !== "proceed" && r.finalAction !== "amend_spec" && !isPhaseGatePause(r.finalOutcome));
-    if (failed) {
-      const preserved: string[] = [];
-      for (const d of dispatched) if (preserveWorktreeWork(ctx, d)) preserved.push(d.branch);
-      for (const d of dispatched) cleanupWorktreeSafe(d.name);
-      const gate = failed.finalOutcome.findings.find(f => f.action === "halt")?.gate || "";
-      const recover = preserved.length
-        ? ` Work preserved for recovery on branch(es): ${preserved.join(", ")} — git checkout <branch>.`
-        : "";
-      const reason = failed.finalOutcome.reasoning + recover;
-      emit({ type: "halt", chunkNumber: failed.chunk.number, totalChunks, message: reason });
-      appendHalt(opts.projectDir, { chunk: failed.chunk.number, gate, reason: reason.slice(0, 200) });
-      return {
-        kind: "halt",
-        result: { status: "halted", lastChunk: failed.chunk.number, chunksCommitted, haltReason: reason, outcomes, events },
-      };
-    }
+    const passed = built.filter(r => r.finalAction === "proceed" || r.finalAction === "amend_spec" || isPhaseGatePause(r.finalOutcome));
+    for (const r of built) if (!passed.includes(r)) setChunkAside(ctx, r);
 
-    // 4. All dispatched chunks reached proceed/amend_spec. Commit each inside its
-    //    worktree, then MERGE BACK ONE AT A TIME (rule 1 — strictly sequential).
-    for (const r of built) await commitDispatchedChunk(ctx, r);
+    // 4. Commit each chunk that passed inside its worktree, then MERGE BACK
+    //    ONE AT A TIME (rule 1 — strictly sequential).
+    for (const r of passed) await commitDispatchedChunk(ctx, r);
 
     const merged = new Set<string>();
-    for (const r of built) {                       // SERIAL merge loop — never Promise.all.
+    for (const r of passed) {                      // SERIAL merge loop — never Promise.all.
       const d = r.dispatched;
       const res = mergeWorktree(d.name);           // re-reads base tip + fast-forward-advances it
       merged.add(d.name);
@@ -254,6 +278,7 @@ async function runBatch(ctx: RunContext, batch: ParsedChunk[], chunksCommittedIn
         return { kind: "halt", result: { status: "halted", lastChunk: d.chunk.number, chunksCommitted, haltReason: reason, outcomes, events } };
       }
       chunksCommitted++;
+      ctx.landedThisRun.push(d.chunk.number);
       ctx.phasePauses.landed(r.chunk, r.finalOutcome);
       emit({ type: "commit", chunkNumber: d.chunk.number, totalChunks, message: `Merged chunk ${d.chunk.number} back to base (${res.files} file(s) from '${d.branch}').` });
       emit({
@@ -319,8 +344,26 @@ async function buildChunkOnBaseSerial(ctx: RunContext, chunk: ParsedChunk, chunk
     finalAction: paused ? "proceed" : finalAction, finalOutcome, chunksCommitted, outcomes, events, emit,
   });
   if (handled.kind === "halt") return { kind: "halt", result: handled.result };
+  ctx.landedThisRun.push(chunk.number);
   ctx.phasePauses.landed(chunk, finalOutcome);
   return { kind: "advance", chunksCommitted: handled.chunksCommitted };
+}
+
+/** Set one dispatched chunk aside: keep its work on its branch, free its
+ *  worktree, and put it on the run's ledger with the review's reason. */
+function setChunkAside(ctx: RunContext, r: BuiltChunk): void {
+  const { opts, totalChunks, emit } = ctx;
+  const d = r.dispatched;
+  const kept = preserveWorktreeWork(ctx, d);
+  cleanupWorktreeSafe(d.name);
+  const reason = r.finalOutcome.reasoning;
+  ctx.ledger.setAside.push({ chunk: d.chunk.number, title: d.chunk.title, reason, ...(kept ? { branch: d.branch } : {}) });
+  emit({
+    type: "chunk-set-aside", chunkNumber: d.chunk.number, totalChunks,
+    message: `Chunk ${d.chunk.number} set aside, the build goes on without it: ${reason.replace(/\s+/g, " ").slice(0, 300)}${kept ? ` Work kept on branch '${d.branch}'.` : ""}`,
+  });
+  const gate = r.finalOutcome.findings.find(f => f.action === "halt" || f.action === "push_back")?.gate || "";
+  appendHalt(opts.projectDir, { chunk: d.chunk.number, gate, reason: reason.slice(0, 200) });
 }
 
 /** cleanupWorktree, guarded — never let a cleanup error mask the real halt. */

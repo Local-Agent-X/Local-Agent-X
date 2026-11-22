@@ -67,6 +67,14 @@ export interface OrchestratorState {
   startingChunkOverride: number | null;
   /** Optional cap on chunks for this invocation. */
   maxChunks: number | null;
+  /**
+   * Every chunk in this run's scope that is on the base branch, in any order.
+   * `chunksCommitted` counts only the unbroken run of them from the scope's
+   * start, which is where a resume begins; a build that sets a chunk aside
+   * lands the ones after it, and without this list a resume would build those
+   * again. Absent in a state file written before the list existed.
+   */
+  landedChunks?: number[];
 }
 
 export function statePath(projectDir: string): string {
@@ -141,6 +149,8 @@ export function makeInitial(opts: {
   totalChunks: number;
   startingChunk: number;
   maxChunks?: number;
+  /** Chunks in scope an earlier run of this build already landed. */
+  landedChunks?: number[];
 }): OrchestratorState {
   const now = new Date().toISOString();
   return {
@@ -161,7 +171,16 @@ export function makeInitial(opts: {
     completedAt: null,
     startingChunkOverride: opts.startingChunk,
     maxChunks: opts.maxChunks ?? null,
+    landedChunks: [...new Set(opts.landedChunks ?? [])].sort((a, b) => a - b),
   };
+}
+
+/** Record that `chunkNumber` is on the base branch, whatever landed before it. */
+export function noteChunkLanded(state: OrchestratorState, chunkNumber: number): OrchestratorState {
+  const landed = new Set(state.landedChunks ?? []);
+  if (landed.has(chunkNumber)) return state;
+  landed.add(chunkNumber);
+  return { ...state, landedChunks: [...landed].sort((a, b) => a - b), updatedAt: new Date().toISOString() };
 }
 
 export function markChunkStarted(state: OrchestratorState, chunkNumber: number): OrchestratorState {

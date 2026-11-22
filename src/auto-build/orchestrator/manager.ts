@@ -61,6 +61,8 @@ interface ActiveOrchestration {
   liveState: OrchestratorState;
   /** Logical completions already applied; guards duplicate landed events. */
   landedChunks: Set<number>;
+  /** How many plan chunks come before the run's scope: they landed earlier. */
+  scopeStartIdx: number;
   /** Ordered run scope; durable counts may advance only across its landed prefix. */
   scopeChunks: number[];
 }
@@ -72,6 +74,10 @@ export interface StartOrchestrationOptions {
   plan: ParsedPlan;
   startingChunk: number;
   maxChunks?: number;
+  /** Chunks in scope that an earlier run of this build landed: a resume
+   *  passes them, so they are skipped and count as landed. A fresh start
+   *  passes none. */
+  landedChunks?: number[];
   judgmentHook?: JudgmentHook;
   chunkJudge?: ChunkJudge;
   subprocessTimeoutMs?: number;
@@ -112,6 +118,7 @@ export function startOrchestration(opts: StartOrchestrationOptions): StartOrches
     totalChunks: opts.plan.chunks.length,
     startingChunk: opts.startingChunk,
     maxChunks: opts.maxChunks,
+    landedChunks: opts.landedChunks,
   });
   if (!state.write(initialState)) {
     throw new Error(
@@ -153,8 +160,9 @@ export function startOrchestration(opts: StartOrchestrationOptions): StartOrches
     startedAt: Date.now(),
     abortController: ac,
     liveState: initialState,
-    landedChunks: new Set(),
+    landedChunks: new Set((opts.landedChunks ?? []).filter((n) => scopeChunks.includes(n))),
     scopeChunks,
+    scopeStartIdx: Math.max(0, scopeStartIdx),
   };
   try {
     syncWorkflowPhase(orch, "running");
@@ -208,6 +216,7 @@ async function runOrchestrationLoop(orch: ActiveOrchestration, opts: StartOrches
       plan: opts.plan,
       startingChunk: opts.startingChunk,
       maxChunks: opts.maxChunks,
+      landedChunks: [...orch.landedChunks],
       signal: orch.abortController.signal,
       judgmentHook: opts.judgmentHook,
       chunkJudge: opts.chunkJudge,
@@ -234,6 +243,7 @@ function onLoopEvent(orch: ActiveOrchestration, event: LoopEvent): void {
   if (event.type === "chunk-start") newState = state.markChunkStarted(newState, event.chunkNumber);
   else if (event.type === "chunk-landed") {
     orch.landedChunks.add(event.chunkNumber);
+    newState = state.noteChunkLanded(newState, event.chunkNumber);
     let nextScopeIdx = newState.chunksCommitted;
     while (nextScopeIdx < orch.scopeChunks.length && orch.landedChunks.has(orch.scopeChunks[nextScopeIdx])) {
       newState = state.markChunkLanded(newState, orch.scopeChunks[nextScopeIdx]);
@@ -293,7 +303,9 @@ function onLoopComplete(orch: ActiveOrchestration, result: LoopResult): void {
   });
   reportBuildToChat({
     sessionId: orch.sessionId, opId: orch.opId, projectDir: orch.projectDir,
-    chunksCommitted: orch.liveState.chunksCommitted, totalChunks: orch.liveState.totalChunks,
+    // Every chunk on the base branch: the ones before this run's scope and the
+    // ones landed in it, in whatever order (a chunk set aside leaves a gap).
+    chunksCommitted: orch.scopeStartIdx + orch.landedChunks.size, totalChunks: orch.liveState.totalChunks,
     ...(isHalted ? { halt: { chunk: orch.liveState.currentChunk, reason: orch.liveState.haltReason || result.haltReason } } : {}),
     filesChanged: collectChangedFiles(result),
   });
@@ -320,7 +332,9 @@ function onLoopCrash(orch: ActiveOrchestration, err: Error): void {
   });
   reportBuildToChat({
     sessionId: orch.sessionId, opId: orch.opId, projectDir: orch.projectDir,
-    chunksCommitted: orch.liveState.chunksCommitted, totalChunks: orch.liveState.totalChunks,
+    // Every chunk on the base branch: the ones before this run's scope and the
+    // ones landed in it, in whatever order (a chunk set aside leaves a gap).
+    chunksCommitted: orch.scopeStartIdx + orch.landedChunks.size, totalChunks: orch.liveState.totalChunks,
     halt: { chunk: orch.liveState.currentChunk, reason: `the build orchestrator crashed: ${err.message}` },
     filesChanged: [],
   });

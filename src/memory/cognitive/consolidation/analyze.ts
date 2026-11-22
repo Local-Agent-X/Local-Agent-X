@@ -3,9 +3,9 @@
 // contradictions within an entity's facts.
 
 import { type FactEntry, type MergedFact } from "./types.js";
-import { textSimilarity } from "./utils.js";
 import { tokenizeBasic, jaccardSimilarity } from "../../text-utils.js";
 import { loadSqliteFacts, loadAllRecentFacts } from "./load-facts.js";
+import { findContradictions } from "../../contradiction-sweep.js";
 
 /** Each fact's words, split once. The pair loops below split both texts for every
  *  pair: with ~2,300 facts from the last 30 days that was a 1.1-1.3 s freeze of the
@@ -115,26 +115,17 @@ export function getPromotionCandidates(): FactEntry[] {
   return candidates;
 }
 
+/**
+ * How many pairs among one entity's facts contradict, by the rule the memory
+ * write path itself uses to end a contradicted fact (contradiction-sweep.ts):
+ * the same statement with opposite polarity, or one single-value slot (where
+ * someone lives, works) holding two values. This counted with patterns of its
+ * own, so the nightly report and the write path disagreed about what a
+ * contradiction is.
+ */
 export function countContradictions(group: FactEntry[]): number {
-  let count = 0;
-  const locationPatterns = /\b(lives?\s+in|moved?\s+to|based\s+in|from)\b/i;
-  const employmentPatterns = /\b(works?\s+(at|for)|job\s+is|hired\s+at|left)\b/i;
-  const statusPatterns = /\b(married|single|dating)\b/i;
-
-  const patterns = [locationPatterns, employmentPatterns, statusPatterns];
-
-  for (const pattern of patterns) {
-    const matching = group.filter((f) => pattern.test(f.content));
-    if (matching.length > 1) {
-      // Multiple facts about same category for same entity — potential contradiction
-      for (let i = 0; i < matching.length; i++) {
-        for (let j = i + 1; j < matching.length; j++) {
-          const sim = textSimilarity(matching[i].content, matching[j].content);
-          if (sim < 0.5) count++; // Low similarity = likely contradiction
-        }
-      }
-    }
-  }
-
-  return count;
+  // findContradictions wants oldest first; the sort is stable, so facts read
+  // from one day's log keep the order they were written in.
+  const oldestFirst = [...group].sort((a, b) => a.createdAt - b.createdAt);
+  return findContradictions(oldestFirst.map((f) => ({ text: f.content, payload: f, subjectHint: f.entity }))).length;
 }

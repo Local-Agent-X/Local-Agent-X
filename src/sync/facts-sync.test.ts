@@ -74,6 +74,18 @@ describe("a fact synced from another machine", () => {
       .toEqual(["a.md#L1", "b.md#L2"]);
   });
 
+  it("is linked into the relation graph here, as a fact learned here is", () => {
+    const linked = { ...remoteFact, content: "Josiah runs hiring for [[LangChain]]" };
+    writeFileSync(join(root, "sync", "facts.jsonl"), `${JSON.stringify(linked)}
+`);
+    memory.close();
+    importFactsFromSync(join(root, "data"), join(root, "sync"));
+    memory = new MemoryIndex(join(root, "data"), { minScore: -1 });
+    expect(memory.getRelationsFor("Josiah"))
+      .toContainEqual(expect.objectContaining({ subject: "josiah", predicate: "links-to", object: "langchain" }));
+    expect(memory.traverseFrom("LangChain", 1).has("josiah")).toBe(true);
+  });
+
   it("does not come back here once the user erased it here", () => {
     authorizeTestFactMutations(memory);
     memory.rememberFact(remoteFact.content, { kind: "observation", sourceFile: "agent-tool:user-statement" });

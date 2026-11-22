@@ -11,7 +11,7 @@
  * - reopen: the fact is ended again.
  */
 import type Database from "better-sqlite3";
-import { slugify } from "./utils.js";
+import { relinkFact } from "./fact-links.js";
 import { getFactEvent, withFactActor, type FactEvent } from "./fact-events.js";
 
 type Db = InstanceType<typeof Database>;
@@ -30,13 +30,10 @@ function entitiesOf(row: Record<string, unknown> | null): string[] {
   try { return row ? JSON.parse(String(row.entities ?? "[]")) as string[] : []; } catch { return []; }
 }
 
+/** An undo that cannot make the fact searchable again fails as a whole. */
 function relink(db: Db, hasFts: boolean, id: number, content: string, entities: string[]): void {
-  db.prepare("DELETE FROM entity_mentions WHERE fact_id = ?").run(id);
-  const mention = db.prepare("INSERT OR IGNORE INTO entity_mentions (fact_id, entity_slug) VALUES (?, ?)");
-  for (const e of entities) { const s = slugify(e); if (s) mention.run(id, s); }
-  if (!hasFts) return;
-  try { db.prepare("DELETE FROM facts_fts WHERE rowid = ?").run(id); } catch { /* not indexed */ }
-  db.prepare("INSERT INTO facts_fts (rowid, content) VALUES (?, ?)").run(id, content);
+  const { indexError } = relinkFact(db, hasFts, id, content, entities);
+  if (indexError) throw new Error(indexError);
 }
 
 function end(db: Db, id: number, reason: string): boolean {

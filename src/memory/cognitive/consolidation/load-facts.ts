@@ -15,26 +15,40 @@ import { MEMORY_DIR, type FactEntry } from "./types.js";
 import { getLaxDir } from "../../../lax-data-dir.js";
 import { todayDateStr } from "./utils.js";
 import { entityMentionRe } from "../../utils.js";
+import { recallByTime } from "../../index-facts.js";
 
 const require = createRequire(import.meta.url);
 
+// SQLite reads a negative LIMIT as "no limit".
+const EVERY_ROW = -1;
+
+/**
+ * The facts saved in the last `days` days that are still current, read with
+ * the memory index's own query (recallByTime). This used to be its own SQL
+ * with no validity filter, so a fact the user had forgotten or corrected was
+ * still counted as recurring and its text copied into consolidation-log.json
+ * every night for a month.
+ */
 export function loadSqliteFacts(days: number): FactEntry[] {
   try {
     const Database = require("better-sqlite3");
     const dbPath = join(getLaxDir(), "memory.db");
     if (!existsSync(dbPath)) return [];
     const db = new Database(dbPath, { readonly: true });
-    const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
-    const rows = db.prepare("SELECT content, entities, confidence, timestamp FROM facts WHERE timestamp > ? ORDER BY timestamp DESC").all(cutoff) as Array<{ content: string; entities: string; confidence: number; timestamp: number }>;
-    db.close();
-    return rows.map(r => ({
-      content: r.content,
-      entity: (() => { try { const e = JSON.parse(r.entities); return Array.isArray(e) && e.length > 0 ? e[0] : undefined; } catch { return undefined; } })(),
-      confidence: r.confidence,
-      accessCount: 1,
-      createdAt: r.timestamp,
-    }));
+    try {
+      const since = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+      return recallByTime(db, since, undefined, EVERY_ROW).map((f) => ({
+        content: f.content,
+        entity: f.entities[0],
+        confidence: f.confidence,
+        accessCount: 1,
+        createdAt: f.timestamp,
+      }));
+    } finally {
+      db.close();
+    }
   } catch {
+    // No readable memory.db: the caller falls back to the daily logs.
     return [];
   }
 }

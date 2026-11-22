@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 72 top-level dirs · 72 live · 0 with no live importer · 2103 non-test source files · 74 oversized · 258 nearing the size cap.
+**Totals:** 72 top-level dirs · 72 live · 0 with no live importer · 2104 non-test source files · 74 oversized · 257 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -27,7 +27,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/workspace/` | 92 | 3 | M |  |
 | `src/providers/` | 79 | 28 | L | 1 |
 | `src/session/` | 77 | 15 | L |  |
-| `src/memory/` | 63 | 162 | XL | 3 |
+| `src/memory/` | 63 | 163 | XL | 3 |
 | `src/data-lineage/` | 61 | 12 | L |  |
 | `src/util/` | 59 | 3 | S |  |
 | `src/browser/` | 54 | 95 | XL | 5 |
@@ -357,7 +357,6 @@ job. Comments are free: never cut them to fit.
 - `src/cron/cron-service.ts` — 300+ code lines (cap 350)
 - `src/local-runtimes/certification-runner.ts` — 300+ code lines (cap 350)
 - `src/memory/index-core.ts` — 300+ code lines (cap 350)
-- `src/memory/index-facts.ts` — 300+ code lines (cap 350)
 - `src/tools/document-tools.ts` — 300+ code lines (cap 350)
 - `src/tools/presentation-tools.ts` — 300+ code lines (cap 350)
 - `src/voice/voice-session/turn-runner.ts` — 300+ code lines (cap 350)
@@ -406,7 +405,6 @@ job. Comments are free: never cut them to fit.
 - `src/local-runtimes/certification-runner.ts#runExclusive:callback` — 90+ own code lines (cap 100)
 - `src/memory/auto-extract.ts#autoExtractAndSave` — 90+ own code lines (cap 100)
 - `src/memory/extract.ts#runExtraction` — 90+ own code lines (cap 100)
-- `src/memory/index-facts.ts#retain` — 90+ own code lines (cap 100)
 - `src/memory/personality.ts#dedupeProfileLines` — 90+ own code lines (cap 100)
 - `src/memory/tools/facts.ts#remember.execute` — 90+ own code lines (cap 100)
 - `src/memory/tools/save.ts#createSaveTools` — 90+ own code lines (cap 100)
@@ -496,6 +494,7 @@ job. Comments are free: never cut them to fit.
 - `src/local-runtimes/context-sizing-adapt.ts#observeChatResidency` — 70+ own code lines (cap 100)
 - `src/memory/auto-search-context.ts#autoSearchContext` — 70+ own code lines (cap 100)
 - `src/memory/dream.ts#buildDreamPromptForBatch` — 70+ own code lines (cap 100)
+- `src/memory/index-facts.ts#retain` — 70+ own code lines (cap 100)
 - `src/memory/manager.ts#MemoryManager.buildTurnContext` — 70+ own code lines (cap 100)
 - `src/memory/tools/search/memory-recall.ts#memory_recall.execute` — 70+ own code lines (cap 100)
 - `src/ops/tools/shared.ts#configureDelegatedRuntime` — 70+ own code lines (cap 100)
@@ -512,7 +511,6 @@ job. Comments are free: never cut them to fit.
 - `src/server/background-jobs/memory-bg.ts#makeRunMemBg:returned` — 70+ own code lines (cap 100)
 - `src/server/bootstrap-tools.ts#bootstrapTools` — 70+ own code lines (cap 100)
 - `src/server/request-auth.ts#authorizeRequest` — 70+ own code lines (cap 100)
-- `src/sync/facts-sync.ts#db.transaction:callback` — 70+ own code lines (cap 100)
 - `src/telegram-bridge/bridge.ts#TelegramBridge.handleUpdate` — 70+ own code lines (cap 100)
 - `src/tool-execution/sensitive-read-taint.ts#applyResultTaintPolicy` — 70+ own code lines (cap 100)
 - `src/tools/app-rebuild-tool.ts#executeAppRebuild` — 70+ own code lines (cap 100)
@@ -568,6 +566,7 @@ job. Comments are free: never cut them to fit.
 - `src/security/layer/network-dns.ts#resolveAndPinHost` — 60+ own code lines (cap 100)
 - `src/server/bridge-media-forward.ts#forwardBridgeMedia` — 60+ own code lines (cap 100)
 - `src/server/workspace-app-serving.ts#serveWorkspaceApp` — 60+ own code lines (cap 100)
+- `src/sync/facts-sync.ts#db.transaction:callback` — 60+ own code lines (cap 100)
 - `src/tool-execution/arg-repair.ts#coerceArgs` — 60+ own code lines (cap 100)
 - `src/tool-execution/arg-repair.ts#repairJson` — 60+ own code lines (cap 100)
 - `src/tool-execution/unnamed-delete-preauth.ts#preauthorizeUnnamedDeletes` — 60+ own code lines (cap 100)

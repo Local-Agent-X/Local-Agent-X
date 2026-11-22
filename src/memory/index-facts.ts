@@ -1,7 +1,7 @@
 import type Database from "better-sqlite3";
 import type { FactKind, RetainedFact } from "./types.js";
 import { parseFactLine, rowToFact, slugify } from "./utils.js";
-import { extractRelations } from "./index-relations.js";
+import { linkFact } from "./fact-links.js";
 import { deriveEntitySlugs, loadKnownEntitySlugs } from "./entity-derive.js";
 
 // Ending a fact's validity, and who may: index-facts-invalidate.ts.
@@ -90,30 +90,7 @@ export function retain(
         provenance: promotion?.origin ?? null,
       };
 
-      for (const entity of validEntities) {
-        const slug = slugify(entity);
-        if (slug) {
-          db
-            .prepare(
-              "INSERT OR IGNORE INTO entity_mentions (fact_id, entity_slug) VALUES (?, ?)"
-            )
-            .run(factId, slug);
-        }
-      }
-
-      try { extractRelations(db, parsed.content, validEntities, factId); } catch {}
-
-      let indexError: string | null = null;
-      if (hasFts) {
-        try {
-          db
-            .prepare("INSERT INTO facts_fts (rowid, content) VALUES (?, ?)")
-            .run(factId, parsed.content);
-        } catch (e) {
-          indexError = (e as Error).message || "facts_fts insert failed";
-          logger.warn(`[memory] facts_fts insert failed for #${factId}: ${indexError}`);
-        }
-      }
+      const { indexError } = linkFact(db, hasFts, factId, parsed.content, validEntities);
       if (indexError) {
         (fact as RetainedFact & { indexFailed?: boolean; indexError?: string }).indexFailed = true;
         (fact as RetainedFact & { indexFailed?: boolean; indexError?: string }).indexError = indexError;
@@ -212,14 +189,7 @@ export async function retainSmart(
         logger.info(`[memory] fact #${decision.targetId} replaced by #${factId}: ${decision.reason}`);
       }
 
-      for (const entity of validEntities) {
-        const slug = slugify(entity);
-        if (slug) db.prepare("INSERT OR IGNORE INTO entity_mentions (fact_id, entity_slug) VALUES (?, ?)").run(factId, slug);
-      }
-      try { extractRelations(db, parsed.content, validEntities, factId); } catch {}
-      if (hasFts) {
-        try { db.prepare("INSERT INTO facts_fts (rowid, content) VALUES (?, ?)").run(factId, parsed.content); } catch {}
-      }
+      linkFact(db, hasFts, factId, parsed.content, validEntities);
 
       facts.push({
         id: factId, kind: parsed.kind, content: parsed.content, entities: validEntities,

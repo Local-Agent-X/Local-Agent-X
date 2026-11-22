@@ -1,7 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openDatabaseSafe } from "../memory/index-db.js";
-import { slugify } from "../memory/utils.js";
+import { linkFact } from "../memory/fact-links.js";
 import { installFactEvents, isErased, withFactActor } from "../memory/fact-events.js";
 import { uniqueEvidenceJson } from "../memory/index-reflect.js";
 import { createLogger } from "../logger.js";
@@ -71,6 +71,16 @@ interface ExportedFact {
   // replacement fact, not a local row ID — IDs differ per machine. The
   // import resolves this to a local row ID in a second pass.
   invalidated_by_key: { kind: string; content: string; entities: string } | null;
+}
+
+/** The entity names in a synced row's `entities` JSON; none when malformed. */
+function entityNames(entitiesJson: string): string[] {
+  try {
+    const parsed: unknown = JSON.parse(entitiesJson);
+    return Array.isArray(parsed) ? parsed.filter((e): e is string => typeof e === "string" && e.length > 0) : [];
+  } catch {
+    return [];
+  }
 }
 
 function identityKey(f: { kind: string; content: string; entities: string }): string {
@@ -182,9 +192,6 @@ export function importFactsFromSync(dataDir: string, syncDir: string): { inserte
         `UPDATE facts SET valid_to = ?, invalidation_reason = ?, last_updated = ?
          WHERE id = ? AND last_updated < ?`
       );
-      const insertMentionStmt = db.prepare(
-        "INSERT OR IGNORE INTO entity_mentions (fact_id, entity_slug) VALUES (?, ?)"
-      );
 
       for (const r of remote) {
         const key = identityKey(r);
@@ -207,21 +214,11 @@ export function importFactsFromSync(dataDir: string, syncDir: string): { inserte
             );
             const newId = res.lastInsertRowid as number;
             idForKey.set(key, newId);
-            // facts_fts is external-content with no triggers: a row that is
-            // not written here is invisible to every fact search on this
-            // machine until a full rebuild. Same statement index-facts.ts
-            // runs for a locally learned fact.
-            try { db.prepare("INSERT INTO facts_fts (rowid, content) VALUES (?, ?)").run(newId, r.content); }
-            catch (e) { logger.warn(`[sync.facts] facts_fts insert failed for #${newId}: ${(e as Error).message}`); }
-
-            try {
-              const ents: string[] = JSON.parse(r.entities) || [];
-              for (const e of ents) {
-                if (typeof e === "string" && e.length > 0) {
-                  insertMentionStmt.run(newId, slugify(e));
-                }
-              }
-            } catch { /* malformed entities JSON — skip mentions */ }
+            // No trigger writes a fact's search row, mentions or relation
+            // edges: without them it is invisible to search, name recall and
+            // graph traversal on this machine. The same call a locally
+            // learned fact gets.
+            linkFact(db, true, newId, r.content, entityNames(r.entities));
 
             inserted++;
           } catch (e) {

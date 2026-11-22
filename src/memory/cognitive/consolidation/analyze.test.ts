@@ -2,7 +2,7 @@
 // pairs of very different size are skipped unread; both must leave the groups exactly
 // what comparing every pair's text gives.
 import { describe, expect, it } from "vitest";
-import { mergeRelatedFacts } from "./analyze.js";
+import { countContradictions, mergeRelatedFacts } from "./analyze.js";
 import { textSimilarity } from "./utils.js";
 import type { FactEntry } from "./types.js";
 
@@ -50,5 +50,28 @@ describe("mergeRelatedFacts", () => {
     const groups = mergeRelatedFacts(facts).map((m) => m.original.map((f) => f.content));
     expect(groups.length).toBeGreaterThan(0);
     expect(groups).toEqual(groupsByFullComparison(facts, 0.7));
+  });
+});
+
+// The nightly report counts contradictions by the rule the memory write path
+// uses to end a contradicted fact (contradiction-sweep.ts), not one of its own.
+describe("countContradictions", () => {
+  const at = (content: string, createdAt: number, entity?: string): FactEntry => ({ ...fact(content), createdAt, entity });
+
+  it("counts one single-value slot holding two values, and a rule with its retraction", () => {
+    expect(countContradictions([at("Peter works at Google", 1, "Peter"), at("Peter works at Microsoft", 2, "Peter")])).toBe(1);
+    expect(countContradictions([
+      at("Always greet in Spanish at the start of every conversation", 1),
+      at("No Spanish greetings", 2),
+    ])).toBe(1);
+  });
+
+  it("does not count facts that add to each other, or history beside the present", () => {
+    expect(countContradictions([
+      at("Peter likes coffee", 1, "Peter"),
+      at("Peter likes tea", 2, "Peter"),
+      at("Peter worked at Google", 3, "Peter"),
+      at("Peter works at Microsoft", 4, "Peter"),
+    ])).toBe(0);
   });
 });

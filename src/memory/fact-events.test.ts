@@ -114,6 +114,22 @@ describe("undo", () => {
     expect(memory.recallByEntity("odalys").map((f) => f.id)).toContain(id);
   });
 
+  it("restores a deleted row's relation edges, and drops the edges of wording that was reverted", () => {
+    const edges = () => memory.getRelationsFor("odalys").map((r) => `${r.predicate} ${r.object}`);
+    const id = said("@Odalys keeps her sailboat at [[Marina Bay]]");
+    expect(edges()).toContain("links-to marina-bay");
+
+    withFactActor(db(), "script", () => db().prepare("DELETE FROM facts WHERE id = ?").run(id));
+    db().prepare("DELETE FROM entity_relations WHERE fact_id = ?").run(id);
+    expect(memory.undoMemoryChange(memory.memoryChanges({ ops: ["delete"] })[0].id, "user:undo").ok).toBe(true);
+    expect(edges()).toContain("links-to marina-bay");
+
+    db().prepare("UPDATE facts SET content = '@Odalys keeps her sailboat at [[Harbor Point]]' WHERE id = ?").run(id);
+    db().prepare("INSERT INTO entity_relations (subject, predicate, object, fact_id, created_at) VALUES ('odalys', 'links-to', 'harbor-point', ?, 0)").run(id);
+    expect(memory.undoMemoryChange(memory.memoryChanges({ factId: id, ops: ["change"] })[0].id, "user:undo").ok).toBe(true);
+    expect(edges()).toEqual(["links-to marina-bay"]);
+  });
+
   it("reverts an in-place change and ends a fact whose creation is undone", () => {
     const id = said("@Acme ships on Fridays");
     db().prepare("UPDATE facts SET content = 'Acme ships on Mondays' WHERE id = ?").run(id);

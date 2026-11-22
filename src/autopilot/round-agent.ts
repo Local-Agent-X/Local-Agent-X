@@ -22,6 +22,7 @@ import { renderPromptSection } from "../context/system-prompt-builder.js";
 
 import { createLogger } from "../logger.js";
 import { OP_TYPE } from "../ops/op-types.js";
+import { toolsTagged } from "../tool-registry.js";
 const logger = createLogger("autopilot.round-agent");
 
 export interface RoundAgentDeps {
@@ -63,9 +64,11 @@ export interface RoundAgentResult {
   durationMs: number;
 }
 
+const SCHEDULING_TOOLS: ReadonlySet<string> = new Set(toolsTagged("scheduling"));
+
 /** Tools the round agent gets. Mission scheduling is filtered out (no recursive scheduling). */
 function filterAutopilotTools(allTools: ToolDefinition[]): ToolDefinition[] {
-  return allTools.filter(t => !t.name.startsWith("mission_schedule_"));
+  return allTools.filter(t => !SCHEDULING_TOOLS.has(t.name));
 }
 
 export async function runAutopilotRound(

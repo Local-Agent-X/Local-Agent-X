@@ -46,6 +46,25 @@ describe("augmentByName — a call to a tool the schema does not carry", () => {
     expect([...toolMap.keys()]).toEqual(["read"]);
   });
 
+  // The scheduled-job runner leaves the mission_schedule_* tools off the job's
+  // list. That alone did not hold: a job that called one by name had it loaded
+  // here, because only a delegated worker's denylist was checked. Each tool's
+  // row refuses the cron context (`deniedIn.cron`), and loading reads it.
+  it("a scheduled job cannot name its way to a tool its row refuses a job; a chat can", () => {
+    for (const name of ["mission_schedule_create", "mission_schedule_list"]) {
+      unifiedRegistry.register(tool(name));
+      const jobTools = new Map([["read", tool("read")]]);
+      expect(canCallByName(name, opId(), jobTools, "cron"), name).toBe(false);
+      expect(augmentByName(name, opId(), jobTools, undefined, "cron"), name).toBe(false);
+      expect([...jobTools.keys()]).toEqual(["read"]);
+      // A tool no row refuses loads for a job as it does anywhere.
+      expect(augmentByName("grep", opId(), jobTools, undefined, "cron")).toBe(true);
+
+      const chatTools = new Map([["read", tool("read")]]);
+      expect(augmentByName(name, opId(), chatTools, undefined, "local"), name).toBe(true);
+    }
+  });
+
   it("a delegated worker cannot name its way to a denied tool, and can still name an allowed one", () => {
     const toolMap = new Map([["read", tool("read")]]);
     // Denied for delegated workers: orchestration, and every worktree-required

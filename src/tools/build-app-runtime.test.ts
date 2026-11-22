@@ -219,6 +219,28 @@ describe("restorePersistedAppBuildRuntimes", () => {
     }
   });
 
+  // The guarded tools were a list of names beside the builder's belt; a tool
+  // added to the belt and not to the list would have written into a project
+  // Product Build owns. The guard now asks each tool's policy row.
+  it("guards every builder tool but the ones that only read", async () => {
+    const appDir = mkdtempSync(join(tmpdir(), "lax-build-dispatch-belt-"));
+    try {
+      mkdirSync(join(appDir, "spec"), { recursive: true });
+      writeFileSync(join(appDir, "spec", "plan.md"), "# Product plan\n", "utf-8");
+      const guarded = guardAppBuildDispatcher(successfulDispatcher(), { appName: "belt-app", appDir });
+      const passed: string[] = [];
+      for (const tool of builderToolsForTier("full-stack")) {
+        await guarded.dispatch(call(tool.name)).then(
+          () => passed.push(tool.name),
+          (error) => expect(error, tool.name).toBeInstanceOf(ProductBuildOwnershipChangedError),
+        );
+      }
+      expect(passed.sort()).toEqual(["glob", "process_status", "read"]);
+    } finally {
+      rmSync(appDir, { recursive: true, force: true });
+    }
+  });
+
   it("blocks mutation when ownership appears after adapter construction", async () => {
     const appDir = mkdtempSync(join(tmpdir(), "lax-build-dispatch-adapter-race-"));
     const id = "ownership-after-adapter-construction";

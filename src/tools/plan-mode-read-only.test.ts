@@ -100,8 +100,10 @@ describe("plan mode keys a send on where its row says it delivers", () => {
 });
 
 describe("the other row-declared facts the gates read", () => {
-  it("no row denies a tool by call context: a scheduled job browses and makes images, gated per call", () => {
-    expect(CONTEXT_RESTRICTED_TOOLS).toEqual({});
+  it("only the schedule is denied by call context: a scheduled job browses and makes images, gated per call, and does not schedule jobs", () => {
+    expect(CONTEXT_RESTRICTED_TOOLS).toEqual(Object.fromEntries(
+      ["create", "delete", "list", "update", "toggle", "reports"].map((verb) => [`mission_schedule_${verb}`, ["cron"]]),
+    ));
   });
 
   it("an always-allow covers the whole tool only for LAX's own bookkeeping", () => {

@@ -31,22 +31,20 @@ import type { AppTier } from "./app-tier.js";
 import { checkProductBuildOwnership } from "./build-app-collision.js";
 import { OP_TYPE } from "../ops/op-types.js";
 import { markDesignDelivered } from "./app-tools/design-gate.js";
+import { isReadOnlyCall } from "../tool-registry.js";
 
 // delete_file: a shell rm of files the user didn't name is refused with "use
 // delete_file instead" (unnamed-delete-gate.ts); without it a builder could not
 // clear the scaffold's starter files at all (live 2026-10-16). Trash + Undo.
 const BASE_TOOLS = [writeTool, readTool, editTool, deleteFileTool, bashTool, globTool, connectorCreateTool];
-const MUTATING_APP_BUILD_TOOLS = new Set([
-  writeTool.name,
-  editTool.name,
-  deleteFileTool.name,
-  bashTool.name,
-  connectorCreateTool.name,
-  processStartTool.name,
-  processKillTool.name,
-  appServeBackendTool.name,
-  appServeFrontendTool.name,
-]);
+
+/** Does this builder call change the project? Plan mode's question, read off
+ *  the tool's policy row, so a tool added to the builder's belt is guarded by
+ *  what its row says and not by being remembered in a list here. */
+function mutatesProject(call: ToolCall): boolean {
+  const args = call.args && typeof call.args === "object" ? (call.args as Record<string, unknown>) : {};
+  return !isReadOnlyCall(call.tool, args);
+}
 
 export function builderToolsForTier(tier: AppTier): typeof BASE_TOOLS {
   if (tier === "quick-html") return BASE_TOOLS;
@@ -75,7 +73,7 @@ export function guardAppBuildDispatcher(
   onBlocked?: () => void,
 ): ToolDispatcher {
   const dispatch = async (call: ToolCall) => {
-    if (MUTATING_APP_BUILD_TOOLS.has(call.tool)) {
+    if (mutatesProject(call)) {
       const ownership = checkProductBuildOwnership(target.appDir, target.appName);
       if (ownership.blocked) {
         onBlocked?.();
@@ -93,7 +91,7 @@ export function guardAppBuildDispatcher(
     ...(delegate.dispatchBatch
       ? {
           async dispatchBatch(calls: ToolCall[]) {
-            if (calls.every((call) => !MUTATING_APP_BUILD_TOOLS.has(call.tool))) {
+            if (calls.every((call) => !mutatesProject(call))) {
               return delegate.dispatchBatch!(calls);
             }
             const results: ToolDispatchResult[] = [];

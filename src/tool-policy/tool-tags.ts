@@ -31,6 +31,7 @@ export const TOOL_TAGS = [
   "team",              // sees, messages or escalates to the agent's team
   "project-brief",     // reads or updates a project's shared brief
   "delegation",        // starts another agent or worker run
+  "scheduling",        // lists, creates or changes a scheduled mission
   "app-build",         // builds an app, or plans or runs an app build
   "app-build-spec",    // the steps of a /greenfield build: plan, seal the scenarios, run, judge
   "secret-store",      // stores a secret the user hands over, or lists the stored ones

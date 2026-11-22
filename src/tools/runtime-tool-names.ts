@@ -1,6 +1,6 @@
-// The set of tool names the runtime can actually dispatch, built the way boot
-// builds it: `allTools` plus every plugin's tools plus the app-build tier and
-// the arikernel bridge. Coverage tests use this instead of `allTools` because
+// The set of tool names the runtime can actually dispatch: `allTools`, every
+// plugin's tools as boot registers them (register-plugins.ts, the walk
+// boot itself makes), the app-build tier and the arikernel bridge. Coverage tests use this instead of `allTools` because
 // most tools register through plugins (`setting`, `http_request`, memory,
 // browser, agents, …) — a check over `allTools` alone never saw them, which is
 // how a plugin tool could ship without a policy entry and hit default-deny
@@ -11,7 +11,7 @@ import { join } from "node:path";
 import type { ToolDefinition } from "../types.js";
 import type { ToolPluginContext } from "./plugin.js";
 import { allTools } from "./registry-build.js";
-import { plugins } from "./plugins.js";
+import { registerPlugins } from "./register-plugins.js";
 import { unifiedRegistry } from "./registry.js";
 import { builderToolsForTier } from "./build-app-runtime.js";
 import { createArikernelBridgeTools } from "./arikernel-bridge.js";
@@ -32,7 +32,7 @@ export async function collectRuntimeTools(): Promise<Map<string, ToolDefinition>
   const add = (tool: ToolDefinition) => { if (!tools.has(tool.name)) tools.set(tool.name, tool); };
   allTools.forEach(add);
   try {
-    for (const plugin of plugins) (await plugin.register(ctx)).forEach(add);
+    for await (const { kept } of registerPlugins(ctx)) kept.forEach(add);
     builderToolsForTier("full-stack").forEach(add);
     createArikernelBridgeTools({ sqliteDatabase: {} as never }).forEach(add);
   } finally {

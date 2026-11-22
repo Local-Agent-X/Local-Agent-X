@@ -1,6 +1,7 @@
 import { allTools } from "../tools.js";
 import { unifiedRegistry } from "../tools/registry.js";
-import { plugins, BRIDGE_PLUGIN_IDS } from "../tools/plugins.js";
+import { BRIDGE_PLUGIN_IDS } from "../tools/plugins.js";
+import { registerPlugins } from "../tools/register-plugins.js";
 import type { CronService } from "../cron/cron-service.js";
 import type { SecretsStore } from "../secrets.js";
 import type { ServerEvent, ToolDefinition } from "../types.js";
@@ -60,32 +61,17 @@ export async function bootstrapTools(deps: {
 
   const allAgentTools: ToolDefinition[] = [];
   const outputsById = new Map<string, ToolDefinition[]>();
-  const seenTools = new Set<string>();
 
-  // Stamp audiences on plugin-produced tools from the canonical map,
-  // same as registry-build.ts does for the static allTools. Without
-  // this, plugin tools have `audiences === undefined` even when listed
-  // in AUDIENCES_BY_TOOL, so they fail the audience filter in
-  // tool-search.ts:82 and miss corePinned in tool-selection.ts:105.
-  // Symptom: agent_create / project_create only reach the model via
-  // the RAG semantic step — whichever sibling has higher embedding
-  // similarity wins the slot, often leaving the right tool out.
-  const { applyAudiences } = await import("../tools/audience-map.js");
-
-  for (const plugin of plugins) {
-    const produced = await plugin.register(ctx);
-    applyAudiences(produced);
+  // The first definition of a name is the one both dispatch paths see: the
+  // registry keeps its first entry, and a name→tool map built over
+  // allAgentTools (the MCP bridge) would keep the LAST, so the bridge ran a
+  // different tool than chat for the same name.
+  for await (const { plugin, produced, kept, duplicates } of registerPlugins(ctx)) {
     outputsById.set(plugin.id, produced);
-    for (const tool of produced) {
-      // The first definition is the one both dispatch paths see: the registry
-      // keeps its first entry, and a name→tool map built over allAgentTools
-      // (the MCP bridge) would keep the LAST, so the bridge ran a different
-      // tool than chat for the same name.
-      if (seenTools.has(tool.name)) {
-        logger.warn(`[tools] Duplicate tool name: "${tool.name}" — first definition kept, plugin=${plugin.id}'s dropped`);
-        continue;
-      }
-      seenTools.add(tool.name);
+    for (const name of duplicates) {
+      logger.warn(`[tools] Duplicate tool name: "${name}" — first definition kept, plugin=${plugin.id}'s dropped`);
+    }
+    for (const tool of kept) {
       allAgentTools.push(tool);
       if (toolRegistry.get(tool.name)) continue;
       toolRegistry.register(tool, {

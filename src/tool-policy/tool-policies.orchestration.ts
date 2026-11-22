@@ -6,6 +6,11 @@
 
 import type { ToolPolicyRow } from "./tool-policies.types.js";
 
+/** Why a scheduled job gets no mission_schedule_* call. Leaving the tools out
+ *  of the job's list did not hold: a tool called by name is loaded on the spot,
+ *  so a job could still schedule jobs with no one watching. */
+const NOT_FROM_A_JOB = { cron: "a scheduled job does not read or change the schedule: missions are set from a chat the user is in" } as const;
+
 export const TOOL_POLICIES_ORCHESTRATION: Record<string, ToolPolicyRow> = {
   // ── Project containers (project_* glob) ──
   project_create:       { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [], blurb: { say: "make a project for the dashboard work", does: "Create a project container." }, reads: ["session"] },
@@ -51,13 +56,15 @@ export const TOOL_POLICIES_ORCHESTRATION: Record<string, ToolPolicyRow> = {
 
   // ── Mission schedules ──
   // mission_schedule_* (cron/tools.ts) has a family glob (allow-mission-schedule);
-  // the entries below carry each tool's class and risk.
-  mission_schedule_create:  { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["voice-fast"], reads: ["session"], blurb: { say: "every morning at 8, summarize my unread email", does: "Schedule a recurring mission." } },
-  mission_schedule_delete:  { kernel: "internal", risk: "destructive", capabilities: [], tags: [], undo: { pairedWith: "mission_schedule_create" } },
-  mission_schedule_list:    { kernel: "internal", risk: "safe", capabilities: [], tags: ["voice-fast"], blurb: { does: "List scheduled missions." } },
-  mission_schedule_update:  { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["voice-fast"], reads: ["session"] },
-  mission_schedule_toggle:  { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["voice-fast"], blurb: { does: "Enable/disable a scheduled mission." } },
-  mission_schedule_reports: { kernel: "internal", risk: "safe", capabilities: [], tags: ["voice-fast"] },
+  // the entries below carry each tool's class and risk. `scheduling` is what
+  // the unattended tool sets leave out (a delegated worker, an autopilot
+  // round), and a scheduled job is refused the call itself (NOT_FROM_A_JOB).
+  mission_schedule_create:  { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["scheduling", "voice-fast"], deniedIn: NOT_FROM_A_JOB, reads: ["session"], blurb: { say: "every morning at 8, summarize my unread email", does: "Schedule a recurring mission." } },
+  mission_schedule_delete:  { kernel: "internal", risk: "destructive", capabilities: [], tags: ["scheduling"], deniedIn: NOT_FROM_A_JOB, undo: { pairedWith: "mission_schedule_create" } },
+  mission_schedule_list:    { kernel: "internal", risk: "safe", capabilities: [], tags: ["scheduling", "voice-fast"], deniedIn: NOT_FROM_A_JOB, blurb: { does: "List scheduled missions." } },
+  mission_schedule_update:  { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["scheduling", "voice-fast"], deniedIn: NOT_FROM_A_JOB, reads: ["session"] },
+  mission_schedule_toggle:  { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["scheduling", "voice-fast"], deniedIn: NOT_FROM_A_JOB, blurb: { does: "Enable/disable a scheduled mission." } },
+  mission_schedule_reports: { kernel: "internal", risk: "safe", capabilities: [], tags: ["scheduling", "voice-fast"], deniedIn: NOT_FROM_A_JOB },
   // The agent writes to the user in the app (inbox, phone alert): a reminder
   // from a scheduled mission. Delivers only to the user's own inbox.
   notify_user:              { kernel: "internal", risk: "safe", capabilities: [], tags: [], destination: [{ to: "user" }], rules: [{ id: "allow-notify-user", decision: "allow", reason: "Writes to the user's own inbox (and their phone alert); nobody else receives it", priority: 50 }] },

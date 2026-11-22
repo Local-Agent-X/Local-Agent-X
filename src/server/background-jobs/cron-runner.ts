@@ -16,6 +16,7 @@ import type { IntegrationRegistry } from "../../integrations/index.js";
 import { validateMissionOutputConfirmed } from "../../cron/output-validation.js";
 import { createLogger } from "../../logger.js";
 import { CRON_SYSTEM_PROMPT } from "./prompts.js";
+import { deniedInContext } from "../../tool-registry.js";
 import { stripCronPreamble, stripSaveInstructions } from "./prompt-cleaning.js";
 import { setSessionProfile, clearSessionProfile } from "../../autonomy/profile-store.js";
 import { registerSessionOwner, clearSessionOwner, jobBrowserProfile, setJobExistsCheck } from "../../browser/session-owner-registry.js";
@@ -131,9 +132,11 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
       : (prepared.provider === "anthropic" || prepared.provider === "anthropic-api" ? "claude-sonnet-4-6" : prepared.model);
     const providerName = String(prepared.provider);
     const wrappedPrompt = `<scheduled_task>\n${cleanedPrompt}\n</scheduled_task>`;
-    // No recursive scheduling. Writes and shell answer to the same rules as a
-    // delegated agent's (security/layer WORKER_CONTEXTS), in the job's folder.
-    const cronTools = prepared.tools.filter(t => !t.name.startsWith("mission_schedule_"));
+    // No recursive scheduling: the tools whose rows refuse a scheduled job
+    // (`deniedIn.cron`) are not offered, and the security layer refuses the
+    // call if one is named anyway. Writes and shell answer to the same rules as
+    // a delegated agent's (security/layer WORKER_CONTEXTS), in the job's folder.
+    const cronTools = prepared.tools.filter(t => !deniedInContext(t.name, "cron"));
     const missionDir = missionFolder(config.workspace, jobMeta?.name, jobId);
     mkdirSync(missionDir, { recursive: true });
     const workspace = provisionAgentWorkspace({

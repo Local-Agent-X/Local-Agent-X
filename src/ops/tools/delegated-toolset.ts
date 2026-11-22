@@ -53,18 +53,16 @@ export const BUILD_MUTATION_TOOLS: readonly string[] = selectTools({
  *  - the `delegation` tools (op_submit*, agent_spawn): no
  *    recursion-depth guard exists in this repo — a worker that can spawn
  *    workers is unbounded fan-out.
- *  - mission_schedule_* (prefix, see DENIED_TOOL_PREFIXES): scheduling stays
- *    on the interactive surfaces; an unattended worker must not install
- *    recurring jobs.
+ *  - the `scheduling` tools (mission_schedule_*): scheduling stays on the
+ *    interactive surfaces; an unattended worker must not install recurring
+ *    jobs.
  *  - WORKTREE_REQUIRED_TOOLS (write/edit/bash + the registered synonyms,
  *    src/security/layer/types.ts): a read-only worker has no worktree, so the
  *    security layer would hard-block every call. Offering tools that always
  *    fail recreates the confused-worker failure this campaign fixed. A build
  *    worker with a work root takes BUILD_MUTATION_TOOLS back out of this set.
  */
-const DENIED_TOOL_NAMES: ReadonlySet<string> = new Set([...toolsTagged("delegation"), ...WORKTREE_REQUIRED_TOOLS]);
-
-const DENIED_TOOL_PREFIXES: readonly string[] = ["mission_schedule_"];
+const DENIED_TOOL_NAMES: ReadonlySet<string> = new Set([...toolsTagged("delegation", "scheduling"), ...WORKTREE_REQUIRED_TOOLS]);
 
 /** A build worker mutates only when it was submitted with a work root. */
 export function delegatedWorkerMayMutate(belt: DelegatedBelt): boolean {
@@ -80,8 +78,7 @@ export function delegatedWorkerMayMutate(belt: DelegatedBelt): boolean {
  */
 export function isDeniedForDelegatedWorker(name: string, belt?: DelegatedBelt): boolean {
   if (belt && delegatedWorkerMayMutate(belt) && BUILD_MUTATION_TOOLS.includes(name)) return false;
-  if (DENIED_TOOL_NAMES.has(name)) return true;
-  return DENIED_TOOL_PREFIXES.some((prefix) => name.startsWith(prefix));
+  return DENIED_TOOL_NAMES.has(name);
 }
 
 /**

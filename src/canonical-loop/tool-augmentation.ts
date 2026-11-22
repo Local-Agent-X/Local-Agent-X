@@ -41,7 +41,7 @@ import { toolSearchResultNames } from "../tools/tool-search-result.js";
 import { registerToolsForOp } from "./runtime.js";
 import { isDeniedForDelegatedWorker, type DelegatedBelt } from "../ops/tools/delegated-toolset.js";
 import { readOp } from "../ops/op-store.js";
-import { hiddenForSession } from "../tool-registry.js";
+import { deniedInContext, hiddenForSession } from "../tool-registry.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("canonical-loop.tool-augmentation");
@@ -63,11 +63,13 @@ function reachOf(opId: string, callContext: CallContext | undefined): CallerReac
 }
 
 /** A registered tool this caller may not load: outside a bounded run's
- *  allow-list, on a delegated worker's denylist, or kept out of the op's
- *  session (an in-editor chat does not spawn or steer workers). */
+ *  allow-list, on a delegated worker's denylist, kept out of the op's session
+ *  (an in-editor chat does not spawn or steer workers), or refused in this
+ *  call context by its own row (a scheduled job does not schedule jobs). */
 function deniedForCaller(name: string, callContext: CallContext | undefined, reach: CallerReach): boolean {
   if (reach.bounded) return true;
   if (hiddenForSession(name, reach.sessionId)) return true;
+  if (callContext && deniedInContext(name, callContext)) return true;
   return callContext === "delegated" && isDeniedForDelegatedWorker(name, reach.belt);
 }
 

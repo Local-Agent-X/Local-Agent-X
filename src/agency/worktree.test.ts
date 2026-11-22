@@ -583,6 +583,35 @@ describe("createNamedWorktree stale-branch preflight (C17)", () => {
     }
   });
 
+  // Live 2026-11-22: a chunk's worktree folder was deleted from outside. Git
+  // kept the worktree on record and refused the path, so every resume built
+  // that chunk without a worktree.
+  it("makes the worktree again at a path whose folder vanished while git still lists it", () => {
+    const { repo, g } = initRepo();
+    const name = "c17-vanished-folder";
+    const path = join(WORKTREE_BASE, name);
+    mkdirSync(WORKTREE_BASE, { recursive: true });
+    g(["worktree", "add", "-b", "autobuild/c1-old", path]);
+    writeFileSync(join(path, "work.txt"), "unsaved");
+    rmSync(path, { recursive: true, force: true }); // gone from disk, still on git's record
+    expect(g(["worktree", "list", "--porcelain"])).toContain("prunable");
+    try {
+      const wt = createNamedWorktree(name, BRANCH, repo, "run-3");
+      expect(wt).not.toBeNull();
+      expect(wt!.path).toBe(path);
+      expect(wt!.branch).toBe(BRANCH);
+      expect(existsSync(join(path, ".git"))).toBe(true);
+      expect(g(["rev-parse", "--abbrev-ref", "HEAD"], path)).toBe(BRANCH);
+      // One record for the path, the new one; the old worktree's branch is kept.
+      expect(g(["worktree", "list", "--porcelain"])).not.toContain("prunable");
+      expect(g(["branch", "--list", "autobuild/c1-old"])).toContain("autobuild/c1-old");
+    } finally {
+      try { cleanupWorktree(name); } catch { /* best-effort */ }
+      activeWorktrees.delete(name);
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
   it("side-steps (never deletes) a branch another worktree has checked out", () => {
     const { repo, g, baseHead } = initRepo();
     const name = "c17-stale-checked-out";

@@ -175,6 +175,20 @@ export function listCheckedOutBranches(repoRoot: string): Set<string> {
 }
 
 /**
+ * Whether git still has a worktree on record at `wtPath` though its folder is
+ * gone. Git keeps the record until a prune, and refuses to add a worktree
+ * there again ("missing but already registered"). Throws if git cannot list
+ * worktrees.
+ */
+export function hasVanishedWorktreeAt(repoRoot: string, wtPath: string): boolean {
+  if (existsSync(wtPath)) return false;
+  const key = (p: string): string => (process.platform === "win32" ? resolve(p).toLowerCase() : resolve(p));
+  const want = key(wtPath);
+  return git(["worktree", "list", "--porcelain"], repoRoot).split("\n")
+    .some((line) => line.startsWith("worktree ") && key(line.slice("worktree ".length).trim()) === want);
+}
+
+/**
  * After the orphan sweep, delete leftover agent branches (selfedit/<slug>/<ts>,
  * autopilot/<slug>/<ts>, autobuild/c<N>) that are FULLY MERGED into the current
  * base and not checked out in any worktree. A successful self_edit merge already

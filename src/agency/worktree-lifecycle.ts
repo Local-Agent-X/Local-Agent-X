@@ -8,17 +8,26 @@ import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 import { activeWorktrees, git, commitWithFallbackIdentity, logger, MAX_CONCURRENT_WORKTREES, WORKTREE_BASE, worktreeSlotAvailable } from "./worktree-core.js";
-import { linkDirectoryInto, listCheckedOutBranches, unlinkSharedJunctions } from "./worktree-junctions.js";
+import { hasVanishedWorktreeAt, linkDirectoryInto, listCheckedOutBranches, unlinkSharedJunctions } from "./worktree-junctions.js";
 import { claimRecoveredWorktree, forgetWorktreeOwnership, ownsWorktree, registerWorktreeOwnership } from "./worktree-recovery.js";
 import { findMergeOverlaps, noteMerged, overlapSummary, type MergeOverlap } from "./merge-overlap.js";
 
 /** Cut `branch` at HEAD and check it out at `wtPath`. When the checkout is
  *  refused (a crashed run left a directory at the path), the branch just cut
- *  is deleted again, so a failed attempt leaves nothing behind. */
+ *  is deleted again, so a failed attempt leaves nothing behind.
+ *
+ *  A worktree whose folder vanished (deleted from outside, a temp cleaner)
+ *  stays on git's record, and git refuses the path until that record goes:
+ *  every resume of a build then cost the chunk its worktree, and it was built
+ *  without isolation instead (label-check chunk 3, 2026-11-22). `--force`
+ *  replaces exactly that one record, and is passed only when the folder is
+ *  gone and git still lists it. The old worktree's branch is left as it is. */
 function addWorktreeOnNewBranch(repoRoot: string, wtPath: string, branch: string): void {
+  const vanished = hasVanishedWorktreeAt(repoRoot, wtPath);
+  if (vanished) logger.warn(`[worktree] ${wtPath} is on git's record but its folder is gone; replacing the record`);
   git(["branch", branch, "HEAD"], repoRoot);
   try {
-    git(["worktree", "add", wtPath, branch], repoRoot);
+    git(["worktree", "add", ...(vanished ? ["--force"] : []), wtPath, branch], repoRoot);
   } catch (e) {
     // `-d`, never `-D`: the branch sits at HEAD, so only a branch that gained
     // commits in between survives, and the add's error is the one reported.

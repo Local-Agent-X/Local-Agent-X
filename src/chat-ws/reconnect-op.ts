@@ -8,7 +8,7 @@
 
 import type { WebSocket } from "ws";
 import { createLogger } from "../logger.js";
-import { redactEventCredentials } from "../security/index.js";
+import { sendFrame } from "./frames.js";
 
 const logger = createLogger("chat-ws");
 
@@ -60,24 +60,24 @@ export async function handleReconnectOp(ws: WebSocket, sessionId: string, opId: 
       if (event.type === "state_changed") {
         const to = b.to as string | undefined;
         if (to === "succeeded" || to === "failed" || to === "cancelled") {
-          ws.send(JSON.stringify({
+          sendFrame(ws, {
             type: "event",
             sessionId,
             event: { type: "done", usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 } },
             _opId: opId,
             _seq: event.seq,
-          }));
+          });
         }
       } else if (event.type === "error") {
         const code = (b.code as string | undefined) ?? "error";
         const message = (b.message as string | undefined) ?? "";
-        ws.send(JSON.stringify({
+        sendFrame(ws, {
           type: "event",
           sessionId,
           event: { type: "error", message: `${code}${message ? ": " + message.slice(0, 240) : ""}` },
           _opId: opId,
           _seq: event.seq,
-        }));
+        });
       }
     });
 
@@ -103,20 +103,20 @@ export async function handleReconnectOp(ws: WebSocket, sessionId: string, opId: 
         const messages = readOpMessages(opId);
         const text = joinAssistantText(messages);
         if (text) {
-          ws.send(JSON.stringify({
+          sendFrame(ws, {
             type: "event",
             sessionId,
-            event: redactEventCredentials({ type: "stream", text, replace: true }),
+            event: { type: "stream", text, replace: true },
             _opId: opId,
             _replay: true,
-          }));
+          });
         }
       } catch { /* best-effort replay */ }
     } else {
-      ws.send(JSON.stringify({
+      sendFrame(ws, {
         type: "error",
         message: `reconnect_op failed: ${result.code} ${result.message}`,
-      }));
+      });
     }
     // Held until this op's next reconnect_op replaces it, or the socket closes.
     if (result.ok) holdSubscription(result.off);

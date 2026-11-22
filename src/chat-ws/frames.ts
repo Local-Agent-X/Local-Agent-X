@@ -12,12 +12,16 @@ import type { ServerEvent } from "../types.js";
 import type { InboxFrame } from "../inbox/types.js";
 import type { WorkersSnapshotFrame } from "../broker-transport/vendor/protocol.js";
 import type { AgentSpawnEvent, AgentResultEvent } from "../server/handler-events-agent-result.js";
+import type { ProcessRelayBrowserDelivery } from "../canonical-loop/public/process-relay.js";
 import { redactEventCredentials } from "../security/index.js";
 
 export interface SidebarPin { name: string; icon: string; url: string }
 
-/** A per-session event, relayed to the tabs subscribed to the session. */
-export type SessionEventFrame = { type: "event"; sessionId: string; event: ServerEvent; _replay?: true };
+/** A per-session event, relayed to the tabs subscribed to the session.
+ *  `_opId` and `_seq` are set on a reconnect replay (reconnect-op.ts): the op
+ *  the event was read from, which the tab's stuck-stream watchdog counts as
+ *  activity, and its position in that op's event log. */
+export type SessionEventFrame = { type: "event"; sessionId: string; event: ServerEvent; _replay?: true; _opId?: string; _seq?: number };
 
 export type GlobalFrame =
   | SessionEventFrame
@@ -51,6 +55,8 @@ export type GlobalFrame =
   | { type: "agent-output"; agentId: string; output: string }
   | ({ type: "agent-complete"; displayName: string; sessionId: string; parentAgentId: string | null } & AgentResultEvent)
   | WorkersSnapshotFrame
+  /** A batch of one worker process's events (process-relay-delivery.ts). */
+  | ProcessRelayBrowserDelivery
   /** A holder of work claims changed: re-read /api/work-claims (routes/agents/work-claims.ts). */
   | { type: "work_claims_changed" }
   /** A collab started, moved on a round or ended: re-read /api/collab (routes/agents/collab.ts). */
@@ -64,7 +70,7 @@ export const GLOBAL_FRAME_TYPES = [
   "event", "active_chats", "session_snapshot", "pong", "error", "approval_resolved", "settings_changed", "sidebar_pins_changed",
   "chat_list_changed", "app-files-changed", "app:state", "app:event", "projects_changed", "learning_changed",
   "history_changed", "system_health", "inbox_item", "inbox_changed",
-  "agent-spawn", "agent-update", "agent-output", "agent-complete", "workers_snapshot",
+  "agent-spawn", "agent-update", "agent-output", "agent-complete", "workers_snapshot", "process_relay_delivery",
   "work_claims_changed", "collab_changed",
 ] as const satisfies readonly GlobalFrameType[];
 
@@ -72,11 +78,14 @@ type MissingFromList = Exclude<GlobalFrameType, (typeof GLOBAL_FRAME_TYPES)[numb
 const _everyFrameTypeListed: MissingFromList extends never ? true : never = true;
 void _everyFrameTypeListed;
 
-/** A frame as it goes on the wire. A session event's text has its
- *  credentials masked here, the step every chat-socket send passes through
- *  (the SSE half calls the same redactEventCredentials). */
+/** A frame as it goes on the wire. The text of every event it carries (one
+ *  session event, or a worker relay's batch) has its credentials masked here,
+ *  the step every chat-socket send passes through (the SSE half calls the same
+ *  redactEventCredentials). */
 export function serializeFrame(frame: GlobalFrame): string {
-  return JSON.stringify(frame.type === "event" ? { ...frame, event: redactEventCredentials(frame.event) } : frame);
+  if (frame.type === "event") return JSON.stringify({ ...frame, event: redactEventCredentials(frame.event) });
+  if (frame.type === "process_relay_delivery") return JSON.stringify({ ...frame, events: frame.events.map(redactEventCredentials) });
+  return JSON.stringify(frame);
 }
 
 /** Send one frame on one socket. */

@@ -21,7 +21,7 @@ function redactLeaves(value: unknown): unknown {
 }
 
 /** A chat event as a client may see it: the text it carries (stream and
- *  reasoning text, tool args, progress and results) with credentials masked.
+ *  reasoning text, tool args, progress and results, error text) with credentials masked.
  *  The one step every transport sends through (SSE, the chat socket and its
  *  replay, and the phone relay riding that socket), so no client gets a
  *  credential another client would have had masked. */
@@ -38,6 +38,10 @@ export function redactEventCredentials(event: ServerEvent): ServerEvent {
       return event.message ? { ...event, message: redact(event.message) } : event;
     case "tool_end":
       return event.result ? { ...event, result: redact(event.result) } : event;
+    // An error's text is whatever the failing layer said, and a provider or
+    // tool can quote the request it refused.
+    case "error":
+      return event.message ? { ...event, message: redact(event.message) } : event;
     default:
       return event;
   }

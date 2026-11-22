@@ -25,6 +25,7 @@ const DISPATCHERS = [
   "public/js/chat-stream-reducer.js",
   "public/js/chat-stream-admit.js",
   "public/js/chat-approval-rediscovery.js",
+  "public/js/chat-ws-process-relay.js",
   "public/js/apps-ide-ws.js",
   "public/js/notifications.js",
   "public/js/thinking-phrases.js",

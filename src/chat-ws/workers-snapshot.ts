@@ -14,6 +14,7 @@ import type { WebSocket } from "ws";
 import type { WorkerSnapshot, WorkersSnapshotFrame } from "../broker-transport/vendor/protocol.js";
 import type { LiveWorker } from "../canonical-loop/index.js";
 import type { FieldAgentStatus } from "../agency/handler-types.js";
+import { sendFrame } from "./frames.js";
 
 export interface WorkersSnapshotSources {
   canonical: () => LiveWorker[];
@@ -78,5 +79,5 @@ async function defaultSources(): Promise<WorkersSnapshotSources> {
 
 export async function sendWorkersSnapshot(ws: WebSocket, sources?: WorkersSnapshotSources): Promise<void> {
   const frame = buildWorkersSnapshot(sources ?? await defaultSources());
-  if (ws.readyState === 1 /* OPEN */) ws.send(JSON.stringify(frame));
+  if (ws.readyState === 1 /* OPEN */) sendFrame(ws, frame);
 }

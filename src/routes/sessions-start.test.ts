@@ -5,8 +5,16 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createServer } from "node:http";
+import { existsSync, mkdtempSync, realpathSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import type { AddressInfo } from "node:net";
 
+const TMP_WS = realpathSync(mkdtempSync(join(tmpdir(), "lax-sessions-start-")));
+vi.mock("../config.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../config.js")>();
+  return { ...actual, workspacePath: (...segs: string[]) => resolve(TMP_WS, ...segs) };
+});
 vi.mock("../ops/idle-nudge.js", () => ({ scheduleIdleNudge: vi.fn() }));
 vi.mock("../inbox/producers.js", () => ({ inboxJobResult: vi.fn() }));
 
@@ -17,12 +25,21 @@ import { scheduleIdleNudge } from "../ops/idle-nudge.js";
 import { checkEgressTaint, clearSessionTaint, recordSensitiveRead } from "../data-lineage/taint.js";
 import type { ServerContext } from "../server-context.js";
 import type { Session } from "../types.js";
+import type { Project } from "../agent-store/index.js";
 
 const sessions = new Map<string, Session>();
+const projects: Project[] = [];
+const broadcasts: unknown[] = [];
 const ctx = {
   sessionStore: { load: (id: string) => sessions.get(id) ?? null },
   saveSession: async (s: Session) => { sessions.set(s.id, s); },
   flushSession: async () => {},
+  broadcastAll: (frame: unknown) => { broadcasts.push(frame); },
+  projectStore: {
+    list: () => projects,
+    findByName: (name: string) => projects.find((p) => p.name === name) ?? null,
+    create: (p: Omit<Project, "id">) => { const made = { ...p, id: `proj-${projects.length + 1}` } as Project; projects.push(made); return made; },
+  },
 } as unknown as ServerContext;
 
 const ran: Array<{ sessionId: string; message: string }> = [];
@@ -32,6 +49,8 @@ const settled = () => new Promise<void>((r) => { turnDone = r; });
 beforeEach(() => {
   sessions.clear();
   ran.length = 0;
+  projects.length = 0;
+  broadcasts.length = 0;
   _resetStartedOffersForTest();
   sessions.set("origin", { id: "origin", title: "Phone apps", messages: [], createdAt: 0, updatedAt: 0, projectId: "p1" } as Session);
   setChatHandler(async (sessionId, message) => {
@@ -125,6 +144,40 @@ describe("POST /api/sessions/start", () => {
     expect(started.folder).toBe("apps/calendar");
     expect(started.mode).toBeUndefined();
     drainPendingNotifications("app-chat");
+  });
+
+  it("tells open tabs the chat list changed, so the new chat shows at once", async () => {
+    const done = settled();
+    await post(offer);
+    await done;
+    expect(broadcasts).toContainEqual({ type: "chat_list_changed", at: expect.any(Number) });
+  });
+
+  it("an offer naming a new project folder starts a code chat on workspace/apps/<folder>", async () => {
+    let meta: unknown;
+    setChatHandler(async (sessionId, message, _a, m) => {
+      meta = m;
+      sessions.get(sessionId)!.messages.push({ role: "user", content: message }, { role: "assistant", content: "ok" });
+      turnDone();
+    });
+    const done = settled();
+    const { status, data } = await post({ ...offer, folder: "petbook" });
+    await done;
+    expect(status).toBe(200);
+    const folder = resolve(TMP_WS, "apps", "petbook");
+    expect(data.folder).toBe(folder);
+    expect(existsSync(folder)).toBe(true);
+    expect(projects).toEqual([expect.objectContaining({ workspace: folder, codeFolder: true })]);
+    const started = sessions.get(String(data.sessionId))!;
+    expect(started).toMatchObject({ mode: "code", projectId: projects[0].id });
+    expect(started.folder).toBeUndefined();
+    expect(meta).toMatchObject({ mode: "code" });
+  });
+
+  it("refuses a folder that is not one plain name", async () => {
+    expect((await post({ ...offer, folder: "../escape" })).status).toBe(400);
+    expect((await post({ ...offer, folder: "a/b" })).status).toBe(400);
+    expect(ran).toHaveLength(0);
   });
 
   it("refuses an offer without a title or brief, and one from a chat that is gone", async () => {

@@ -138,7 +138,7 @@ function renderSessionOffer(offer) {
       const res = await apiFetch('/api/sessions/start', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ sessionId: originId, title: offer.title, brief: offer.brief }),
+        body: JSON.stringify({ sessionId: originId, title: offer.title, brief: offer.brief, ...(offer.folder ? { folder: offer.folder } : {}) }),
       });
       const data = await res.json();
       if (!res.ok || !data.ok) throw new Error(data.error || `HTTP ${res.status}`);

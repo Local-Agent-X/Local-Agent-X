@@ -4,6 +4,7 @@ import { getLaxDir } from "../lax-data-dir.js";
 import { join } from "node:path";
 import { setupChatWebSocket } from "../chat-ws/index.js";
 import { setInboxAnswerer } from "../chat-ws/inbox-frames.js";
+import { setLinkedChatStarter, startLinkedChat } from "../session/start-linked-chat.js";
 import { actOnInbox, mutateInbox, rateFromInbox, replyFromInbox } from "../routes/inbox.js";
 import { startPhonePush } from "../phone-push/index.js";
 import { startLiveApprovalCopies } from "../inbox/live-approval.js";
@@ -98,6 +99,8 @@ export function wireWsChat(deps: {
     rate: (id, rating) => rateFromInbox(buildCtx(), id, rating),
     reply: (id, text) => replyFromInbox(buildCtx(), id, text),
   });
+  // session_start's "start now" reaches the same chat creation a card's tap does.
+  setLinkedChatStarter((req) => startLinkedChat(buildCtx(), req));
   // A new inbox item also rings the phones that asked for its kind.
   startPhonePush();
   startLiveApprovalCopies();

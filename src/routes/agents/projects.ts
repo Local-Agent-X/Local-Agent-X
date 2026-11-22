@@ -4,22 +4,10 @@ import type { Project } from "../../agent-store/index.js";
 import { seedProjectRosters } from "../../project-rosters.js";
 import { createLogger } from "../../logger.js";
 import { codeSessionFolder } from "../../session/project-folder.js";
-import { basename, dirname, resolve } from "node:path";
+import { broadcastProjectsChanged, codeFolderProject } from "../../agent-store/code-folder-project.js";
 
 const logger = createLogger("routes.agents.projects");
 
-/** Push a projects_changed event to every connected client. The frontend
- *  WS handler (public/js/chat-ws-handler.js) reacts by re-rendering both
- *  the Agents-page dropdown (loadProjects) and the chat sidebar
- *  (syncProjectsFromServer). Same pattern as the project_create tool
- *  uses. Best-effort: a missing chat-ws import (tests, scripts) doesn't
- *  fail the route. */
-async function broadcastProjectsChanged(): Promise<void> {
-  try {
-    const { broadcastAll } = await import("../../chat-ws/index.js");
-    broadcastAll({ type: "projects_changed" });
-  } catch { /* no WS context — request itself still succeeded */ }
-}
 
 export const handleProjectRoutes: RouteHandler = async (method, url, req, res, ctx: ServerContext, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
@@ -143,20 +131,4 @@ async function createCodeFolder(
 /** A code folder as /api/code-folders shows it: what a session is filed under. */
 function codeFolderView(p: Project): { id: string; name: string; workspace: string } {
   return { id: p.id, name: p.name, workspace: p.workspace ?? "" };
-}
-
-/** The code-folder project for `folder` (a real directory): the one already on
- *  the sidebar, or a new one. Shared by the sidebar's add-folder and a chat
- *  continuing in Code mode on the repo it worked in (sessions-fork.ts). */
-export async function codeFolderProject(folder: string, store: ServerContext["projectStore"]): Promise<Project> {
-  const same = (p: Project) => p.codeFolder && p.workspace && resolve(p.workspace).toLowerCase() === resolve(folder).toLowerCase();
-  const existing = store.list().find(same);
-  if (existing) return existing;
-  const base = basename(folder) || folder;
-  let name = base;
-  if (store.findByName(name)) name = `${base} (${basename(dirname(folder)) || "folder"})`;
-  for (let n = 2; store.findByName(name); n++) name = `${base} ${n}`;
-  const project = store.create({ name, description: "", workspace: folder, codeFolder: true, agentIds: [] });
-  await broadcastProjectsChanged();
-  return project;
 }

@@ -20,7 +20,7 @@ import type { ServerContext } from "../server-context.js";
 import { isValidSessionId, readBody, jsonResponse } from "../server-utils.js";
 import { parseChatMode } from "../session/mode.js";
 import { codeSessionFolder } from "../session/project-folder.js";
-import { codeFolderProject } from "./agents/projects.js";
+import { codeFolderProject } from "../agent-store/code-folder-project.js";
 
 const MAX_BRIEF_BYTES = 200 * 1024;
 

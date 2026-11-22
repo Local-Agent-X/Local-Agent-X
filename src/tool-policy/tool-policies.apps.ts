@@ -207,12 +207,16 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   // already wrote (tools/code-handoff-tool.ts). Reads two paths it was given,
   // writes nothing and sends nothing off-box: internal and safe. Deferred (no
   // audience): the prompt names it for the rare turn that needs it.
-  // An offer card only: the user's tap starts the chat (routes/sessions-start.ts).
+  // An offer card the user's tap starts (routes/sessions-start.ts), or, when
+  // the user asked for it in this chat, a chat started at once
+  // (session/start-linked-chat.ts): only from an attended chat that has taken
+  // in no outside content, else it falls back to the card. `folder` creates
+  // workspace/apps/<folder> for it. The new chat's turns go through every gate.
   session_start: {
-    kernel: "internal", risk: "safe", capabilities: [], tags: [],
-    blurb: { does: "Offer a separate task its own chat, which runs on its own and reports back." },
-    prompt: "When you notice a task of its own while working (a bug in code you are not changing, a follow-up you would otherwise only mention for later), offer it with session_start instead of just naming it or doing it inline. Never for the work the user asked you to do now.",
-    rules: [{ id: "allow-session-start", decision: "allow", reason: "Offer a new chat on the reply (no I/O sink; the user starts it)", priority: 50 }],
+    kernel: "internal", risk: "workspace-write", capabilities: [], tags: [], reads: ["session"],
+    blurb: { say: "start 3 new projects", does: "Give a separate task its own chat, which runs on its own and reports back." },
+    prompt: "When you notice a task of its own while working (a bug in code you are not changing, a follow-up you would otherwise only mention for later), offer it with session_start instead of just naming it or doing it inline. When the user asks for work in chats of its own (\"start these as new projects\"), start each with session_start start:\"now\" (and `folder` for a new project) instead of doing it here.",
+    rules: [{ id: "allow-session-start", decision: "allow", reason: "Offer or start a linked chat (its turns run through every gate)", priority: 50 }],
   },
   code_handoff: {
     kernel: "internal", risk: "safe", capabilities: [], tags: [],

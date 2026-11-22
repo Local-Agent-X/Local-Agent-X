@@ -29,6 +29,7 @@ import { emitLaunchReadiness } from "../loop-effects.js";
 import type { LoopEvent, LoopOptions, LoopResult } from "./types.js";
 import { haltedResult, safeGet } from "./types.js";
 import { buildChunkWithRetry } from "./chunk-attempt.js";
+import { isPhaseGatePause } from "../chunk-review/index.js";
 import { handleAction } from "./handle-action.js";
 import { runParallelWaves } from "./parallel-waves.js";
 
@@ -152,7 +153,7 @@ export async function runBuildLoop(opts: LoopOptions): Promise<LoopResult> {
     // halt is from the phase-gate gate AND the project carries a
     // .lax-launch.json. Per spec: score >= 7 → proceed;
     // score < 7 → spawn one fix-worker, re-score, halt if still < 7.
-    if (finalAction === "halt" && finalOutcome.findings.some(f => f.gate === "phase-gate")) {
+    if (isPhaseGatePause(finalOutcome)) {
       const recovery = await attemptPhaseGateScoring(opts, chunk, emit, totalChunks);
       if (recovery.kind === "recovered") {
         finalAction = "proceed";

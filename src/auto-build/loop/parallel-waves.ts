@@ -34,10 +34,10 @@
  *     build-exec gate ONCE on the merged base (loop/merged-regate) and HALT
  *     before the next wave if it fails. See merged-regate.ts.
  *
- * Differences from the serial path (documented, safe): per-chunk phase-gate
- * auto-scoring recovery is NOT run here (it allocates a dev-server port and
- * running it concurrently risks collisions — a phase-gate halt is treated as a
- * plain halt); LAUNCH_READINESS.md is NOT written into each worktree (concurrent
+ * Differences from the serial path (documented, safe): a phase's verification
+ * gate is scored once every chunk of the phase has merged, on the merged base,
+ * between waves (loop/phase-gate-pause.ts), not right after the chunk that
+ * closes it; LAUNCH_READINESS.md is NOT written into each worktree (concurrent
  * appends to that shared file would collide on merge-back), surfaced via event +
  * chunk outcome (the source of truth) instead.
  */
@@ -50,6 +50,8 @@ import { createNamedWorktree, mergeWorktree, cleanupWorktree } from "../../agenc
 import type { ParsedChunk } from "../plan-parser.js";
 import type { ChunkReviewOutcome, ReviewAction } from "../chunk-review/index.js";
 import { buildChunkWithRetry } from "./chunk-attempt.js";
+import { createPhasePauseTracker, type PhasePauseTracker } from "./phase-gate-pause.js";
+import { isPhaseGatePause } from "../chunk-review/index.js";
 import { handleAction } from "./handle-action.js";
 import { reGateMergedTree, warnFootprintEscapes } from "./merged-regate.js";
 import { buildChunkInWorktree, commitDispatchedChunk, preserveWorktreeWork } from "./parallel-chunk-build.js";
@@ -97,7 +99,12 @@ type StepResult =
  * the same shape as the serial path so the caller (run.ts / the orchestrator)
  * is agnostic to which path ran.
  */
-export async function runParallelWaves(ctx: ParallelWavesContext): Promise<LoopResult> {
+/** The run's own state beside the shared context: which phases paused at
+ *  their verification gate and wait for all their chunks to land. */
+type RunContext = ParallelWavesContext & { phasePauses: PhasePauseTracker };
+
+export async function runParallelWaves(input: ParallelWavesContext): Promise<LoopResult> {
+  const ctx: RunContext = { ...input, phasePauses: createPhasePauseTracker(input.chunks) };
   const { opts, chunks, totalChunks, maxConcurrentChunks, emit, events, outcomes } = ctx;
   const waves = planWaves(chunks);
   let chunksCommitted = 0;
@@ -139,6 +146,11 @@ export async function runParallelWaves(ctx: ParallelWavesContext): Promise<LoopR
       chunksCommitted, emit, events, outcomes,
     });
     if (regate.kind === "halt") return regate.result;
+
+    // A phase whose chunks have all landed is scored on the merged base now,
+    // before the next wave builds on it (phase-gate-pause.ts).
+    const phase = await ctx.phasePauses.scoreFinished(ctx, chunksCommitted);
+    if (phase.kind === "halt") return phase.result;
   }
 
   const lastChunk = chunks[chunks.length - 1].number;
@@ -148,7 +160,7 @@ export async function runParallelWaves(ctx: ParallelWavesContext): Promise<LoopR
 
 /** Build one batch (≤ maxConcurrentChunks disjoint chunks) concurrently, then
  *  merge them back SERIALLY. Enforces rules 1 + 2 (rule 3 re-gate is per-wave). */
-async function runBatch(ctx: ParallelWavesContext, batch: ParsedChunk[], chunksCommittedIn: number): Promise<StepResult> {
+async function runBatch(ctx: RunContext, batch: ParsedChunk[], chunksCommittedIn: number): Promise<StepResult> {
   const { opts, totalChunks, emit, events, outcomes } = ctx;
   let chunksCommitted = chunksCommittedIn;
 
@@ -200,7 +212,8 @@ async function runBatch(ctx: ParallelWavesContext, batch: ParsedChunk[], chunksC
     //    work — including any succeeded siblings' — is silently destroyed. A
     //    parallel halt must not lose more than a serial one (which leaves the
     //    work in the tree). Commit, THEN tear down.
-    const failed = built.find(r => r.finalAction !== "proceed" && r.finalAction !== "amend_spec");
+    // A chunk paused at its phase's gate was accepted: it merges like the rest.
+    const failed = built.find(r => r.finalAction !== "proceed" && r.finalAction !== "amend_spec" && !isPhaseGatePause(r.finalOutcome));
     if (failed) {
       const preserved: string[] = [];
       for (const d of dispatched) if (preserveWorktreeWork(ctx, d)) preserved.push(d.branch);
@@ -239,6 +252,7 @@ async function runBatch(ctx: ParallelWavesContext, batch: ParsedChunk[], chunksC
         return { kind: "halt", result: { status: "halted", lastChunk: d.chunk.number, chunksCommitted, haltReason: reason, outcomes, events } };
       }
       chunksCommitted++;
+      ctx.phasePauses.landed(r.chunk, r.finalOutcome);
       emit({ type: "commit", chunkNumber: d.chunk.number, totalChunks, message: `Merged chunk ${d.chunk.number} back to base (${res.files} file(s) from '${d.branch}').` });
       emit({
         type: "chunk-landed", chunkNumber: d.chunk.number, totalChunks,
@@ -273,7 +287,7 @@ async function runBatch(ctx: ParallelWavesContext, batch: ParsedChunk[], chunksC
  * Worktree-cap fallback: build one chunk SERIALLY on the base tree, reusing the
  * serial-path primitives (buildChunkWithRetry + handleAction).
  */
-async function buildChunkOnBaseSerial(ctx: ParallelWavesContext, chunk: ParsedChunk, chunksCommittedIn: number): Promise<StepResult> {
+async function buildChunkOnBaseSerial(ctx: RunContext, chunk: ParsedChunk, chunksCommittedIn: number): Promise<StepResult> {
   const { opts, totalChunks, emit, events, outcomes } = ctx;
   let chunksCommitted = chunksCommittedIn;
 
@@ -296,11 +310,14 @@ async function buildChunkOnBaseSerial(ctx: ParallelWavesContext, chunk: ParsedCh
     emitLaunchReadiness(opts.projectDir, chunk, finalOutcome.report.launchReadiness);
   }
 
+  // A phase pause lands like a proceed; the phase is scored once the wave is in.
+  const paused = isPhaseGatePause(finalOutcome);
   const handled = await handleAction({
     chunk, totalChunks, projectDir: opts.projectDir,
-    finalAction, finalOutcome, chunksCommitted, outcomes, events, emit,
+    finalAction: paused ? "proceed" : finalAction, finalOutcome, chunksCommitted, outcomes, events, emit,
   });
   if (handled.kind === "halt") return { kind: "halt", result: handled.result };
+  ctx.phasePauses.landed(chunk, finalOutcome);
   return { kind: "advance", chunksCommitted: handled.chunksCommitted };
 }
 

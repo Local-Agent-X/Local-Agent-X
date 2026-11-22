@@ -95,17 +95,27 @@ export function runChunkReview(input: ChunkReviewInput): ChunkReviewOutcome {
   collect(gateTestFailures(report));
   collect(gateSpecGapJudgment(report));
 
+  return verdictFrom(findings, report);
+}
+
+/** The strongest finding decides; no findings is a proceed. */
+function verdictFrom(findings: GateFinding[], report: ChunkReport): ChunkReviewOutcome {
   if (findings.length === 0) {
     return { action: "proceed", reasoning: "All gates passed.", findings, report };
   }
-
-  // Highest-rank action wins.
   let winner = findings[0];
   for (const f of findings) {
     if (ACTION_RANK[f.action] > ACTION_RANK[winner.action]) winner = f;
   }
-
   return { action: winner.action, reasoning: winner.reasoning, findings, report };
+}
+
+/** The outcome is a pause at a phase's verification gate after the chunk was
+ *  accepted, not a halt on the chunk's own work: the loop scores the phase
+ *  and goes on (serial: run.ts; parallel: loop/phase-gate-pause.ts). */
+export function isPhaseGatePause(outcome: Pick<ChunkReviewOutcome, "action" | "findings">): boolean {
+  const halts = outcome.findings.filter(f => f.action === "halt");
+  return outcome.action === "halt" && halts.length > 0 && halts.every(f => f.gate === "phase-gate");
 }
 
 /**
@@ -139,6 +149,24 @@ export async function runChunkReviewWithJudgment(
   buildExec: BuildExecRunner = runBuildExecGate,
 ): Promise<ChunkReviewOutcome> {
   const base = runChunkReview(input);
+  const pause = base.findings.find(f => f.gate === "phase-gate");
+  if (!pause) return reviewChunkWork(input, base, hook, signal, buildExec);
+  // A chunk that closes a phase is still built, tested and judged like any
+  // other; the phase's verification gate is a pause after it is accepted.
+  const work = await reviewChunkWork(input, verdictFrom(base.findings.filter(f => f !== pause), base.report), hook, signal, buildExec);
+  if (work.action !== "proceed" && work.action !== "amend_spec") return work;
+  return { ...work, action: "halt", reasoning: pause.reasoning, findings: [...work.findings, pause] };
+}
+
+/** The build-exec gate, the chunk judge and the spec-gap hook, over the
+ *  mechanical verdict on the chunk's own work. */
+async function reviewChunkWork(
+  input: ChunkReviewInput & { projectDir: string },
+  base: ChunkReviewOutcome,
+  hook: JudgmentHook | undefined,
+  signal: AbortSignal | undefined,
+  buildExec: BuildExecRunner,
+): Promise<ChunkReviewOutcome> {
   if (base.action !== "proceed") return base;
 
   // Execution-grounded gate first: a build/test that actually FAILS, or an

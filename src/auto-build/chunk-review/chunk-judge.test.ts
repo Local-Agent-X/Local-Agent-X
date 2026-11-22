@@ -31,7 +31,7 @@ vi.mock("./skeptic.js", () => ({
 
 const { scoreChunkScenarios, defaultChunkJudge } = await import("./chunk-judge.js");
 const { chunkJudgingFinding, chunkJudgingSummary } = await import("./chunk-verdict.js");
-const { runChunkReviewWithJudgment } = await import("./index.js");
+const { runChunkReviewWithJudgment, isPhaseGatePause } = await import("./index.js");
 const { writeScenario } = await import("../../holdout/store.js");
 const { parsePlanText } = await import("../plan-parser.js");
 type ChunkJudging = import("./chunk-verdict.js").ChunkJudging;
@@ -236,5 +236,47 @@ describe("the judge stage in the chunk review", () => {
     const o = await review(CLEAN, async () => { throw new Error("playwright missing"); });
     expect(o.action).toBe("proceed");
     expect(o.judging?.skeptic).toEqual({ status: "not-run", finding: "the chunk judge crashed: playwright missing" });
+  });
+});
+
+describe("a chunk that closes a phase", () => {
+  const CLEAN = "STATUS: done\nDONE_WHEN: met\nCHANGED: src/cart.ts\nTESTS: 2/2\nNEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\nLAUNCH_READINESS: none\nNOTE: clean.";
+  const gated = parsePlanText([
+    "# Plan",
+    "## Phase A — Core",
+    "### Chunk 4 — Checkout",
+    "- **Class:** trunk → `/senior-engineer`",
+    "- **Slice:** pay for the cart.",
+    "- **Depends on:** —",
+    "- **Scenarios:** 2",
+    "- **Done when:** an order is recorded.",
+    "",
+    "## Phase verification gates",
+    "- Phase A: scenarios 1-3 pass.",
+  ].join("\n"));
+  const review = (judge: () => Promise<ChunkJudging>) => runChunkReviewWithJudgment({
+    chunk: gated.chunks[0], allChunks: gated.chunks, plan: gated, rawReport: CLEAN, projectDir: "/proj",
+    chunkJudge: { judge: vi.fn(judge), preSha: "abc", baseProjectDir: "/proj" },
+  }, undefined, undefined, async () => null);
+
+  it("is still judged: a broken chunk goes back to its builder instead of pausing", async () => {
+    const o = await review(async () => judging({ skeptic: { status: "broken", finding: "refund twice" } }));
+    expect(o.action).toBe("push_back");
+    expect(isPhaseGatePause(o)).toBe(false);
+  });
+
+  it("a green chunk then pauses at the phase's gate, with its judging attached", async () => {
+    const o = await review(async () => judging());
+    expect(o.action).toBe("halt");
+    expect(isPhaseGatePause(o)).toBe(true);
+    expect(o.findings.at(-1)?.gate).toBe("phase-gate");
+    expect(o.judging?.skeptic.status).toBe("holds");
+  });
+
+  it("a real halt beside the phase gate is not a pause", () => {
+    expect(isPhaseGatePause({ action: "halt", findings: [
+      { gate: "phase-gate", action: "halt", reasoning: "gate" },
+      { gate: "build-exec", action: "halt", reasoning: "npm test failed" },
+    ] })).toBe(false);
   });
 });

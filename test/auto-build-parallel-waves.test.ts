@@ -46,6 +46,8 @@ const shared = vi.hoisted(() => ({
   /** When set, the mocked build-exec gate THROWS this message (infra-crash path). */
   regateThrow: null as string | null,
   /** What each dispatched runChunkOnce was handed for judging. */
+  /** What the mocked phase-gate scoring returns. */
+  phaseScore: { kind: "recovered" } as { kind: string; reason?: string },
   judgeWiring: [] as Array<{ projectDir: string; baseProjectDir?: string; chunkJudge?: unknown }>,
 }));
 
@@ -64,6 +66,14 @@ vi.mock("../src/auto-build/chunk-review/gate-build-exec.js", () => ({
 }));
 
 // Mock the worktree lib — the whole point of the isolation.
+// Phase-gate scoring on the merged base (parallel phase pauses).
+vi.mock("../src/auto-build/loop-phase-gate.js", () => ({
+  attemptPhaseGateScoring: vi.fn(async (_opts: unknown, chunk: { number: number }) => {
+    shared.calls.push(`phase-score:${chunk.number}`);
+    return shared.phaseScore;
+  }),
+}));
+
 vi.mock("../src/agency/worktree.js", () => ({
   createNamedWorktree: vi.fn((name: string, branch: string) => {
     shared.calls.push(`create:${name}`);
@@ -104,6 +114,10 @@ const { parsePlanText } = await import("../src/auto-build/plan-parser.js");
 const { parseChunkReport } = await import("../src/auto-build/chunk-review/report-parser.js");
 
 function makeOutcome(action: string, changed: string[] = []) {
+  // "pause": an accepted chunk that closes a phase with a verification gate.
+  if (action === "pause") {
+    return { action: "halt", reasoning: "phase A gate", findings: [{ gate: "phase-gate", action: "halt", reasoning: "phase A gate" }], report: { ...parseChunkReport(""), changed } };
+  }
   return {
     action,
     reasoning: action === "halt" ? "chunk gate halted the build" : `chunk ${action}`,
@@ -161,6 +175,7 @@ beforeEach(() => {
   shared.regateProjectDirs.length = 0;
   shared.regateThrow = null;
   shared.judgeWiring.length = 0;
+  shared.phaseScore = { kind: "recovered" };
   vi.clearAllMocks();
 
   projectDir = mkdtempSync(join(tmpdir(), "parallel-waves-test-"));
@@ -488,5 +503,29 @@ describe("parallel path — chunk judging", () => {
       expect(w.baseProjectDir).toBe(projectDir);
       expect(w.projectDir).toMatch(/^\/fake-worktree\//);
     }
+  });
+});
+
+describe("parallel path — a phase's verification gate", () => {
+  const GATED = `${TWO_DISJOINT}\n\n## Phase verification gates\n- Phase A: the core scenarios pass.`;
+
+  it("merges the chunk that closes the phase, then scores the phase on the merged base", async () => {
+    shared.chunkActions.set(2, "pause");
+    const result = await run(GATED, 2);
+    expect(result.status).toBe("complete");
+    expect(result.chunksCommitted).toBe(2);
+    const score = shared.calls.indexOf("phase-score:2");
+    expect(score).toBeGreaterThan(shared.calls.indexOf("merge:autobuild-c1"));
+    expect(score).toBeGreaterThan(shared.calls.indexOf("merge:autobuild-c2"));
+    expect(result.outcomes.find(o => o.chunkNumber === 2)?.action).toBe("proceed");
+  });
+
+  it("a phase that fails its scoring halts after the merge, with the reason", async () => {
+    shared.chunkActions.set(2, "pause");
+    shared.phaseScore = { kind: "halt-with-context", reason: "phase A: checkout scenario still 4/10" };
+    const result = await run(GATED, 2);
+    expect(result.status).toBe("halted");
+    expect(result.chunksCommitted).toBe(2);
+    expect(result.haltReason).toContain("checkout scenario still 4/10");
   });
 });

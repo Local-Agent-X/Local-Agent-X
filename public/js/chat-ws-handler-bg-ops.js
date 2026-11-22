@@ -21,6 +21,9 @@ function handleBgOpQueued(msg) {
         // C6 run-lineage: the op that spawned this worker (C1 stamps it).
         // Lets the AGENTS panel nest workers under their spawning op.
         parentOpId: msg.event.parentOpId,
+        // The chat this frame was sent for: whose panel lists the card
+        // (chat-agent-feeds-scope.js).
+        chatId: msg.sessionId,
       });
     }
     return true;
@@ -43,7 +46,7 @@ function handleBgOpStarted(msg) {
     // updateAgentFeed is no-op if the card doesn't exist; addAgentFeed
     // is idempotent on existing IDs. So calling both is safe.
     if (typeof updateAgentFeed === 'function') {
-      updateAgentFeed(msg.event.opId, { status: 'working', output: '▶ started\n', sessionId: msg.sessionId, lastActivityMs: Date.now(), parentOpId: msg.event.parentOpId, type: msg.event.opType, startedAt: bgOpStartedAtMs(msg.event.startedAt) });
+      updateAgentFeed(msg.event.opId, { status: 'working', output: '▶ started\n', sessionId: msg.sessionId, chatId: msg.sessionId, lastActivityMs: Date.now(), parentOpId: msg.event.parentOpId, type: msg.event.opType, startedAt: bgOpStartedAtMs(msg.event.startedAt) });
     }
     if (typeof addAgentFeed === 'function') {
       // Friendlier card name. Cron missions arrive with task =
@@ -72,6 +75,7 @@ function handleBgOpStarted(msg) {
         // Without these the watchdog has nowhere to send the
         // replay and worker cards fell behind silently.
         sessionId: msg.sessionId,
+        chatId: msg.sessionId,
         lastActivityMs: Date.now(),
         // C6 run-lineage parent (see handleBgOpQueued). Set-once in the
         // agent record so re-broadcasts never clobber it.
@@ -248,6 +252,7 @@ function handleBgOpCompleted(msg) {
         role: 'coder',
         status: statusLabel,
         output: '',
+        chatId: msg.sessionId,
       });
     }
     // For headless ops, update ONLY an existing dock card: updateAgentFeed

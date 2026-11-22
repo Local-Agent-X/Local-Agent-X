@@ -7,7 +7,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Op } from "../../ops/types.js";
-import { othersInProjectOf, workClaimRows } from "./work-claims.js";
+import { othersInProjectOf, rowsOfChat, workClaimRows } from "./work-claims.js";
 import { holderNamesFrom, recordClaims, _resetWorkClaimsForTest, _setWorkClaimsForTest } from "../../agency/work-claims.js";
 import { ownCopyView } from "./own-copy.js";
 import { clearSessionOwner, registerChildSessionOwner } from "../../browser/session-owner-registry.js";
@@ -43,6 +43,21 @@ describe("GET /api/work-claims rows", () => {
     const others = othersInProjectOf("chat-a");
     expect(others.map((o) => [o.displayName, o.clashesWithMe]).sort()).toEqual([["Docs", false], ["Fix STT", true]]);
     expect(othersInProjectOf("chat-elsewhere")).toEqual([]);
+  });
+
+  // The panel's "This chat" view: the chat and the agents working for it.
+  it("a chat's own rows are the chat and the agents it started, not another chat's", () => {
+    recordClaims({ sessionId: "chat-a", opId: "op-a", paths: [join(repo, "src", "voice")], source: "declared", displayName: "Voice chat" });
+    recordClaims({ sessionId: "agent-1", opId: "op-w", paths: [join(repo, "src", "voice", "stt.ts")], source: "written", displayName: "Fix STT" });
+    recordClaims({ sessionId: "chat-c", opId: "op-c", paths: [join(repo, "docs", "a.md")], source: "written", displayName: "Docs" });
+    registerChildSessionOwner("agent-1", "chat-a");
+    try {
+      expect(rowsOfChat("chat-a", workClaimRows()).map((r) => r.displayName).sort()).toEqual(["Fix STT", "Voice chat"]);
+      expect(rowsOfChat("chat-c", workClaimRows()).map((r) => r.displayName)).toEqual(["Docs"]);
+      expect(rowsOfChat("chat-elsewhere", workClaimRows())).toEqual([]);
+    } finally {
+      clearSessionOwner("agent-1");
+    }
   });
 });
 

@@ -193,6 +193,8 @@ function newChat(projectId, mode) {
   // until the agent opens a page in it).
   try { if (window.laxBrowserSessionBind) window.laxBrowserSessionBind.bindSession(activeChat.id); } catch {}
   try { if (window.laxPreviewTab) window.laxPreviewTab.onChatChanged(); } catch {}
+  // The Agents and Artifacts tabs list this chat's own (chat-artifacts.js).
+  try { if (window.laxSidePanelChat) window.laxSidePanelChat.onChatChanged(); } catch {}
   // The tile grid puts this chat's pane where its live view was (chat-tiles.js).
   try { if (window.laxChatTiles) window.laxChatTiles.onChatChanged(); } catch {}
   if (window.renderMessages) renderMessages();
@@ -257,6 +259,8 @@ function selectChat(id) {
   try { if (window.laxBrowserSessionBind) window.laxBrowserSessionBind.bindSession(id); } catch {}
   // The Preview tab shows this chat's app, if it is a code session on one.
   try { if (window.laxPreviewTab) window.laxPreviewTab.onChatChanged(); } catch {}
+  // The Agents and Artifacts tabs list this chat's own (chat-artifacts.js).
+  try { if (window.laxSidePanelChat) window.laxSidePanelChat.onChatChanged(); } catch {}
   // The tile grid puts this chat's pane where its live view was (chat-tiles.js).
   try { if (window.laxChatTiles) window.laxChatTiles.onChatChanged(); } catch {}
   focusChatInput();
@@ -311,6 +315,7 @@ function dropChatLocally(id) {
   saveChats(); renderSidebar();
   if (window.renderMessages) renderMessages();
   try { if (window.laxBrowserSessionBind) window.laxBrowserSessionBind.bindSession(activeChat ? activeChat.id : null); } catch {}
+  try { if (window.laxSidePanelChat) window.laxSidePanelChat.onChatChanged(); } catch {}
   // A deleted chat leaves the tile grid (chat-tiles.js).
   try { if (window.laxChatTiles) window.laxChatTiles.onChatChanged(); } catch {}
 }
@@ -367,6 +372,7 @@ function archiveChat(id, e) {
   saveChats(); renderSidebar();
   if (window.renderMessages) renderMessages();
   try { if (window.laxBrowserSessionBind) window.laxBrowserSessionBind.bindSession(activeChat ? activeChat.id : null); } catch {}
+  try { if (window.laxSidePanelChat) window.laxSidePanelChat.onChatChanged(); } catch {}
 }
 
 async function exportChat(id, e) {

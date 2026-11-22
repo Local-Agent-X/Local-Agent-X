@@ -16,9 +16,10 @@ const miscJs = readFileSync(join(here, "../public/js/chat-ws-handler-misc.js"), 
 const esc = (s: unknown) => String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;");
 let rows: unknown[] = [];
 let others: unknown[] = [];
+let mine: unknown[] = [];
 let ownCopy: unknown = null;
 let orchestrator: unknown = null;
-const apiFetch = vi.fn(async (_url: string, _init?: unknown) => ({ ok: true, json: async () => ({ holders: rows, others, ownCopy, orchestrator }) }));
+const apiFetch = vi.fn(async (_url: string, _init?: unknown) => ({ ok: true, json: async () => ({ holders: rows, mine, others, ownCopy, orchestrator }) }));
 
 type Claims = {
   refreshWorkClaims: () => Promise<void>; workClaimsHtml: (r: unknown[]) => string;
@@ -182,5 +183,33 @@ describe("who is working on what", () => {
     const handleAgentFeedEvent = new Function("refreshWorkClaims", `${miscJs}\nreturn handleAgentFeedEvent;`)(refreshWorkClaims);
     handleAgentFeedEvent({ type: "work_claims_changed" });
     expect(refreshWorkClaims).toHaveBeenCalledTimes(1);
+  });
+});
+
+// With the panel's switch (chat-agent-feeds-scope.js) the strip lists the chat
+// on screen: itself, the agents it started and the others in its project.
+describe("the strip follows the panel's This chat / All chats switch", () => {
+  const scopeJs = readFileSync(join(here, "../public/js/chat-agent-feeds-scope.js"), "utf8");
+  const row = (sessionId: string, displayName: string) => ({ sessionId, kind: "chat", displayName, task: "", state: "active", folder: "repo", areas: [], clashesWith: [] });
+  function loadScoped(): Claims & { setAgentFeedsScope: (s: string) => void } {
+    return new Function("esc", "apiFetch", "setInterval", `var agentFeedsData = {}; ${scopeJs}
+${claimsJs}
+return { refreshWorkClaims, workClaimsHtml, ownCopyAction, orchestratorAction, toggleAgentsPanel, dismissAgentsClash, setAgentFeedsScope };`)(esc, apiFetch, () => 0);
+  }
+  const names = () => [...document.querySelectorAll("#work-claims .work-claim-name")].map((el) => el.textContent);
+
+  it("lists this chat's own rows and its project's others once each; All lists every holder", async () => {
+    localStorage.clear();
+    (window as { activeChat?: unknown }).activeChat = { id: "chat-a" };
+    rows = [row("chat-a", "Voice chat"), row("agent-1", "Fix STT"), row("chat-elsewhere", "Another project")];
+    mine = [row("chat-a", "Voice chat"), row("agent-1", "Fix STT")];
+    others = [row("agent-1", "Fix STT"), row("chat-c", "Docs")];
+    const claims = loadScoped();
+    await claims.refreshWorkClaims();
+    expect(names()).toEqual(["Voice chat", "Fix STT", "Docs"]);
+    claims.setAgentFeedsScope("all");
+    expect(names()).toEqual(["Voice chat", "Fix STT", "Another project"]);
+    localStorage.clear();
+    mine = [];
   });
 });

@@ -1,16 +1,33 @@
 // Artifacts tab in the right sidebar — lists images, videos, files, and links
-// extracted from all chat sessions (server does the extraction, see
+// extracted from the chat on screen, or from every chat with the tab's
+// "This chat / All chats" switch (server does the extraction, see
 // src/routes/artifacts.ts). Also owns tab switching for the sidebar; the
 // AGENTS tab keeps everything it had (chat-agent-feeds*.js untouched).
 
 var sidePanelTab = 'agents';
 var artifactsCache = null;
 var artifactsFetchedAt = 0;
+// What artifactsCache holds: a chat's id, or 'all'.
+var artifactsCacheFor = '';
+var ARTIFACTS_SCOPE_KEY = 'lax_artifacts_scope';
+var artifactsScope = (function() {
+  try { return localStorage.getItem(ARTIFACTS_SCOPE_KEY) === 'all' ? 'all' : 'chat'; } catch (e) { return 'chat'; }
+})();
 var artifactsFilter = 'all';
 var ARTIFACTS_TTL_MS = 15000;
 
 // Each tab is a #side-tab-<name> button and a #<name>-tab-body pane.
 var SIDE_PANEL_TABS = ['agents', 'preview', 'inbox', 'artifacts', 'changes', 'browser', 'android', 'terminal'];
+
+// The chat on screen changed: each tab that lists one chat's things turns to
+// that chat. Called from every place the chat on screen changes
+// (app-sidebar-actions.js), beside the Browser bind and the Preview tab's own.
+window.laxSidePanelChat = {
+  onChatChanged: function() {
+    if (window.laxAgentFeedsScope) window.laxAgentFeedsScope.onChatChanged();
+    if (sidePanelTab === 'artifacts') loadArtifacts(false);
+  },
+};
 
 function switchSidePanelTab(tab) {
   sidePanelTab = tab;
@@ -48,15 +65,34 @@ function switchSidePanelTab(tab) {
   }
 }
 
+// The chat whose artifacts the tab shows, or 'all'.
+function artifactsWanted() {
+  var chatId = '';
+  try { chatId = (typeof activeChat !== 'undefined' && activeChat && activeChat.id) || ''; } catch (e) { /* no chat open */ }
+  return artifactsScope === 'all' || !chatId ? 'all' : chatId;
+}
+
+function setArtifactsScope(scope) {
+  artifactsScope = scope === 'all' ? 'all' : 'chat';
+  try { localStorage.setItem(ARTIFACTS_SCOPE_KEY, artifactsScope); } catch (e) { /* private mode: the choice lasts the page */ }
+  loadArtifacts(false);
+}
+
 function loadArtifacts(force) {
-  if (!force && artifactsCache && Date.now() - artifactsFetchedAt < ARTIFACTS_TTL_MS) {
+  var wanted = artifactsWanted();
+  if (!force && artifactsCache && artifactsCacheFor === wanted && Date.now() - artifactsFetchedAt < ARTIFACTS_TTL_MS) {
     renderArtifacts();
     return;
   }
   var list = document.getElementById('artifacts-list');
+  // Another chat's list never shows under this chat while its own loads.
+  if (artifactsCacheFor !== wanted) artifactsCache = null;
   if (list && !artifactsCache) list.innerHTML = '<div class="artifacts-empty">Loading…</div>';
-  apiJson('/api/artifacts').then(function(data) {
+  apiJson('/api/artifacts' + (wanted === 'all' ? '' : '?session=' + encodeURIComponent(wanted))).then(function(data) {
+    // The chat changed while this was in flight: its own request answers it.
+    if (wanted !== artifactsWanted()) return;
     artifactsCache = (data && data.artifacts) || [];
+    artifactsCacheFor = wanted;
     artifactsFetchedAt = Date.now();
     renderArtifacts();
   }).catch(function() {
@@ -88,6 +124,10 @@ function renderArtifacts() {
   var filtersEl = document.getElementById('artifacts-filters');
   var listEl = document.getElementById('artifacts-list');
   if (!filtersEl || !listEl) return;
+  var scopeEl = document.getElementById('artifacts-scope');
+  if (scopeEl && typeof panelScopeHtml === 'function') {
+    scopeEl.innerHTML = panelScopeHtml(artifactsScope, 'setArtifactsScope', 'What this chat made, read or linked', 'Every chat’s artifacts');
+  }
   var items = artifactsCache || [];
 
   var counts = { all: items.length, image: 0, video: 0, file: 0, link: 0 };
@@ -101,7 +141,7 @@ function renderArtifacts() {
 
   var visible = artifactsFilter === 'all' ? items : items.filter(function(a) { return a.type === artifactsFilter; });
   if (!visible.length) {
-    listEl.innerHTML = '<div class="artifacts-empty">No artifacts yet</div>';
+    listEl.innerHTML = '<div class="artifacts-empty">' + (artifactsCacheFor === 'all' ? 'No artifacts yet' : 'No artifacts in this chat yet') + '</div>';
     return;
   }
   listEl.innerHTML = visible.map(function(a, i) {

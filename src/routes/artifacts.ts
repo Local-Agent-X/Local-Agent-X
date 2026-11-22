@@ -1,5 +1,8 @@
 /**
- * Artifacts route — GET /api/artifacts
+ * Artifacts route — GET /api/artifacts[?session=<id>]
+ *
+ * With `session`, that chat's artifacts only: the tab opens on the chat on
+ * screen, and reading one chat does not load every session on disk.
  *
  * Scans persisted chat sessions and extracts the artifacts they produced or
  * touched: images, videos, files (paths the agent read/wrote), and links
@@ -157,8 +160,9 @@ export const handleArtifactRoutes: RouteHandler = async (method, url, req, res, 
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
 
   const metas = ctx.sessionStore.list().filter(s => !isSyntheticSessionId(s.id));
+  const only = url.searchParams.get("session");
   const all: ArtifactItem[] = [];
-  for (const meta of metas) {
+  for (const meta of only ? metas.filter((m) => m.id === only) : metas) {
     const cached = scanCache.get(meta.id);
     if (cached && cached.updatedAt === meta.updatedAt) {
       all.push(...cached.items);

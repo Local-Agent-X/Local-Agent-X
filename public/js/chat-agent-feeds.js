@@ -6,6 +6,8 @@
 // Background-op events (`bg_op_queued/started/progress/completed`) flow in
 // from chat-ws-handler-bg-ops.js.
 //
+// Which chat's:  chat-agent-feeds-scope.js (loads BEFORE this file; the list
+//                shows the chat on screen, or every chat's with the switch)
 // Layout HTML:   chat-agent-feeds-jobs.js (pure)
 // Detail HTML:   chat-agent-feeds-render.js (pure; the embedded card)
 // Controls:      chat-agent-feeds-actions.js
@@ -100,14 +102,18 @@ function addAgentFeed(agent) {
     if (agent.type && !existing.type) existing.type = agent.type;
     if (agent.startedAt && !existing.startedAt) existing.startedAt = agent.startedAt;
     if (agent.sessionId && !existing.sessionId) existing.sessionId = agent.sessionId;
+    if (agent.chatId && !existing.chatId) existing.chatId = agent.chatId;
   } else {
     agentFeedsData[agent.id] = agent;
     if (agent.status) _setAgentStatus(agent, agent.status);
   }
   agentFeedsData[agent.id].seenAt = Date.now();
   // Honor the auto-open preference: the record lands either way, only the
-  // open animation is suppressed when AUTO is off.
-  if (agentFeedsAutoOpen && !agentFeedsOpen) toggleAgentFeeds();
+  // open animation is suppressed when AUTO is off. A chat that is not on
+  // screen never opens the panel: its sidebar row is marked instead.
+  var onScreen = typeof feedIsOnScreen !== 'function' || feedIsOnScreen(agentFeedsData[agent.id]);
+  if (onScreen) { if (agentFeedsAutoOpen && !agentFeedsOpen) toggleAgentFeeds(); }
+  else if (!existing) markFeedChatActive(agentFeedsData[agent.id]);
   _renderAgentFeedsList();
 }
 
@@ -141,6 +147,7 @@ function updateAgentFeed(agentId, update) {
   // sessionId + lastActivityMs feed the reconnect replay in chat-ws.js and
   // the stall badge: sessionId is set-once, lastActivityMs bumps per signal.
   if (update.sessionId && !existing.sessionId) existing.sessionId = update.sessionId;
+  if (update.chatId && !existing.chatId) existing.chatId = update.chatId;
   if (update.lastActivityMs) existing.lastActivityMs = update.lastActivityMs;
   if (update.parentOpId && !existing.parentOpId) existing.parentOpId = update.parentOpId;
   if (update.type && !existing.type) existing.type = update.type;
@@ -221,7 +228,7 @@ function reconcileAgentFeeds(workers) {
     var w = live[wIds[k]];
     if (agentFeedsData[w.opId]) continue;
     agentFeedsData[w.opId] = {
-      id: w.opId, name: w.task || 'Worker', currentTask: w.task, sessionId: w.sessionId,
+      id: w.opId, name: w.task || 'Worker', currentTask: w.task, sessionId: w.sessionId, chatId: w.sessionId,
       type: w.opType, parentOpId: w.parentOpId, totalTokens: w.totalTokens,
       startedAt: w.startedAt ? Date.parse(w.startedAt) : undefined,
       output: w.lastLine ? w.lastLine + '\n' : '', seenAt: Date.now(),
@@ -240,12 +247,14 @@ function removeAgentFeed(agentId) {
 
 // The trash icon on the Finished drawer: drop every record the drawer
 // lists — a finished job with all its workers, a finished task, a finished
-// ambient op. Live records are never touched.
+// ambient op. Live records are never touched, nor another chat's that the
+// drawer is not showing.
 function clearFinishedAgentFeeds() {
-  var parts = partitionAmbient(agentFeedsData);
+  var shown = _shownAgentFeeds();
+  var parts = partitionAmbient(shown);
   var tree = buildAgentFeedTree(parts.main);
   var ids = [];
-  for (var i = 0; i < tree.length; i++) if (jobIsFinished(tree[i], agentFeedsData)) ids = ids.concat(jobCollectIds(tree[i]));
+  for (var i = 0; i < tree.length; i++) if (jobIsFinished(tree[i], shown)) ids = ids.concat(jobCollectIds(tree[i]));
   var amb = Object.keys(parts.ambient);
   for (var a = 0; a < amb.length; a++) if (isTerminalStatus(parts.ambient[amb[a]].status)) ids.push(amb[a]);
   for (var k = 0; k < ids.length; k++) { delete agentFeedsData[ids[k]]; delete animatedCardIds[ids[k]]; delete jobsViewState.expanded[ids[k]]; }
@@ -291,10 +300,17 @@ function toggleAgentFinished() {
   _toggleSection(document.querySelector('.job-finished'), '.job-finished-list', jobsViewState.finishedOpen);
 }
 
+// The records the list draws: the chat on screen's, or every chat's
+// (chat-agent-feeds-scope.js).
+function _shownAgentFeeds() {
+  return typeof visibleAgentFeeds === 'function' ? visibleAgentFeeds() : agentFeedsData;
+}
+
 function _renderAgentFeedsList() {
   var list = document.getElementById('agent-feeds-list');
   if (!list) return;
-  list.innerHTML = renderBackgroundTasks(agentFeedsData, jobsViewState, Date.now());
+  jobsViewState.chatLabel = typeof agentFeedChatLabel === 'function' ? agentFeedChatLabel : null;
+  list.innerHTML = renderBackgroundTasks(_shownAgentFeeds(), jobsViewState, Date.now());
   // Animate only jobs and tasks that are new this rebuild.
   var fresh = Array.from(list.querySelectorAll('.job, .job-task')).filter(function(el) {
     var key = el.getAttribute('data-job-id') || el.getAttribute('data-agent-row');
@@ -306,11 +322,13 @@ function _renderAgentFeedsList() {
   _updateAgentCount();
 }
 
-// The tab badge counts what is still running; finished work sits in the drawer.
+// The tab badge counts what is still running in the list as shown; finished
+// work sits in the drawer.
 function _updateAgentCount() {
   var count = 0;
-  var ids = Object.keys(agentFeedsData);
-  for (var i = 0; i < ids.length; i++) if (!isTerminalStatus(agentFeedsData[ids[i]].status)) count++;
+  var shown = _shownAgentFeeds();
+  var ids = Object.keys(shown);
+  for (var i = 0; i < ids.length; i++) if (!isTerminalStatus(shown[ids[i]].status)) count++;
   var el = document.getElementById('agent-count');
   if (el) el.textContent = String(count);
 }

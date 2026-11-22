@@ -120,6 +120,8 @@ describe("handleBgOpCompleted — headless completions never toast or interrupt 
 			role: "coder",
 			status: "failed",
 			output: "",
+			// The chat the frame was sent for: whose Agents tab lists the card.
+			chatId: "chat-1",
 		});
 		expect(h.updateAgentFeed).toHaveBeenCalledWith("op-real-1", {
 			status: "failed",

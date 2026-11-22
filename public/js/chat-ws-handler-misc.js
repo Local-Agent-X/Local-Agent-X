@@ -205,7 +205,7 @@ function handleAgentFeedEvent(msg) {
     // an auto-build chunk runner under its orchestrator, whose card id === that
     // parent op id) nests under it. null (a chat-spawned agent with no worker
     // parent) → parentOpId undefined → the card renders as a root, unchanged.
-    if (typeof addAgentFeed === 'function') addAgentFeed({ id: msg.agentId, name: msg.name, role: msg.role, status: msg.status || 'working', currentTask: msg.task, parentOpId: msg.parentAgentId || undefined });
+    if (typeof addAgentFeed === 'function') addAgentFeed({ id: msg.agentId, name: msg.name, role: msg.role, status: msg.status || 'working', currentTask: msg.task, parentOpId: msg.parentAgentId || undefined, chatId: msg.parentSessionId || undefined });
   } else if (msg.type === 'agent-update' && msg.agentId) {
     // Only what an update carries: the whole frame put its own type,
     // "agent-update", on the card as the card's type and label.

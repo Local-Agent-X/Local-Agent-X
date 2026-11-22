@@ -4,7 +4,8 @@
  *   GET /api/work-claims — every live holder (chats and workers): its task,
  *   the areas it claims, its state, and the other holders its claims overlap.
  *   With `?session=<id>`, also `others`: the agents working in that chat's
- *   project, for the strip in its window.
+ *   project, for the strip in its window; and `mine`: that chat and the agents
+ *   it started, which with `others` is what the panel lists for one chat.
  *
  * Open tabs are told to re-read it by a `work_claims_changed` frame whenever
  * a holder changes in this process; the panel also re-reads on a timer, which
@@ -60,6 +61,11 @@ export function workClaimRows(names?: HolderNames): WorkClaimRow[] {
   return all.map((h) => rowOf(h, all));
 }
 
+/** A chat's own rows: the chat, and every agent working on its behalf. */
+export function rowsOfChat(sessionId: string, rows: WorkClaimRow[]): WorkClaimRow[] {
+  return rows.filter((r) => r.sessionId === sessionId || onSameErrand(r.sessionId, sessionId));
+}
+
 /** The other agents working in the repos `sessionId` works in, each flagged
  *  when its claims overlap that session's: the strip a chat window shows. */
 export function othersInProjectOf(sessionId: string, names?: HolderNames): Array<WorkClaimRow & { clashesWithMe: boolean }> {
@@ -79,10 +85,11 @@ export const handleWorkClaimRoutes: RouteHandler = async (method, url, req, res,
   const session = url.searchParams.get("session");
   const sessions = ctx.sessionStore.list();
   const names = holderNamesFrom(sessions);
+  const holders = workClaimRows(names);
   const forChat = session
-    ? { others: othersInProjectOf(session, names), ownCopy: ownCopyView(ctx, session, names), orchestrator: orchestratorView(ctx, session, sessions) }
+    ? { mine: rowsOfChat(session, holders), others: othersInProjectOf(session, names), ownCopy: ownCopyView(ctx, session, names), orchestrator: orchestratorView(ctx, session, sessions) }
     : {};
-  jsonResponse(res, 200, { holders: workClaimRows(names), ...forChat }, req);
+  jsonResponse(res, 200, { holders, ...forChat }, req);
   return true;
 };
 

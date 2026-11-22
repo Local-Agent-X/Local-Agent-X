@@ -110,4 +110,26 @@ describe("GET /api/artifacts", () => {
     expect(items.find((i) => i.ref === "https://example.com/page")?.openUrl).toBeUndefined();
     expect(body).not.toContain("tok-0123456789");
   });
+
+  // The tab opens on the chat on screen: one chat's artifacts, read without
+  // loading every other session (520 MB of them on the owner's machine).
+  it("with ?session, returns that chat's artifacts and loads no other session", async () => {
+    const mk = (id: string, file: string) => ({ id, title: id, updatedAt: 1, messages: [{ role: "tool", content: `View: /images/${file}` }] });
+    const sessions = [mk("scope-a", "a.png"), mk("scope-b", "b.png")];
+    const loaded: string[] = [];
+    const ctx = {
+      config: { authToken: "tok-0123456789" },
+      sessionStore: { list: () => sessions, load: (id: string) => { loaded.push(id); return sessions.find((s) => s.id === id); } },
+    } as unknown as ServerContext;
+    const ask = async (query: string) => {
+      let body = "";
+      const res = { writeHead() { return res; }, setHeader() {}, end(b: string) { body = b; } } as unknown as ServerResponse;
+      await handleArtifactRoutes("GET", new URL(`http://127.0.0.1/api/artifacts${query}`), { headers: {} } as IncomingMessage, res, ctx, "operator" as never);
+      return (JSON.parse(body).artifacts as Array<{ ref: string }>).map((i) => i.ref);
+    };
+    expect(await ask("?session=scope-b")).toEqual(["/images/b.png"]);
+    expect(loaded).toEqual(["scope-b"]);
+    expect(await ask("?session=no-such-chat")).toEqual([]);
+    expect((await ask("")).sort()).toEqual(["/images/a.png", "/images/b.png"]);
+  });
 });

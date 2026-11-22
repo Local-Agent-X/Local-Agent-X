@@ -337,10 +337,14 @@ function renderBackgroundTasks(dataMap, state, now) {
   var st = state || {};
   var parts = partitionAmbient(dataMap || {});
   var tree = buildAgentFeedTree(parts.main);
-  var running = '', finished = [];
+  var running = '', finished = [], lastChat = '';
   for (var i = 0; i < tree.length; i++) {
     var node = tree[i];
     if (jobIsFinished(node, dataMap)) { finished.push(node); continue; }
+    // With every chat's work listed, each run of jobs sits under its chat's name.
+    var chat = st.chatLabel ? st.chatLabel(jobCollectIds(node)[0]) : '';
+    if (chat && chat !== lastChat) running += '<div class="job-chat">' + esc(chat) + '</div>';
+    lastChat = chat;
     running += (node.kind === 'card' && !(node.children || []).length)
       ? renderTaskCard(dataMap[node.id], now, !!(st.expanded && st.expanded[node.id]))
       : renderJob(node, dataMap, now, st.expanded, st.phaseOpen);

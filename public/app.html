@@ -368,6 +368,8 @@
              renderBackgroundTasks (chat-agent-feeds-jobs.js). -->
         <!-- Who is working on what, chats and workers alike, and where two of
              them are in the same files (chat-agent-feeds-claims.js). -->
+        <!-- This chat's agents, or every chat's (chat-agent-feeds-scope.js). -->
+        <div id="agent-feeds-scope" class="panel-scope" role="group" aria-label="This chat or all chats"></div>
         <div id="work-claims" class="work-claims" style="display:none"></div>
         <div id="agent-feeds-list" class="agent-feeds-list"></div>
       </div>
@@ -405,6 +407,8 @@
         <div class="notif-list" id="notif-list"><div class="notif-empty">No notifications yet</div></div>
       </div>
       <div id="artifacts-tab-body" class="side-tab-body" style="display:none">
+        <!-- This chat's artifacts, or every chat's (chat-artifacts.js). -->
+        <div id="artifacts-scope" class="panel-scope" role="group" aria-label="This chat or all chats"></div>
         <div id="artifacts-filters" class="artifacts-filters"></div>
         <div id="artifacts-list" class="artifacts-list"></div>
       </div>
@@ -1847,7 +1851,7 @@
 <script src="/js/app-state.js?v=v2"></script>
 <script src="/js/sidebar-mode.js?v=v7"></script>
 <script src="/js/app-sync.js?v=v5"></script>
-<script src="/js/app-sidebar-actions.js?v=v8"></script>
+<script src="/js/app-sidebar-actions.js?v=v9"></script>
 <script src="/js/app-sidebar-render.js?v=v7"></script>
 <script src="/js/app-sidebar-project-files.js?v=v2"></script>
 <script src="/js/update-progress-bar.js?v=1"></script>
@@ -1869,19 +1873,20 @@
      control-button HTML references on*Agent handlers. -->
 <script src="/js/chat-agent-feeds-render.js?v=v6"></script>
 <script src="/js/chat-agent-feeds-ambient.js?v=v2"></script>
-<script src="/js/chat-agent-feeds-jobs.js?v=v1"></script>
+<script src="/js/chat-agent-feeds-jobs.js?v=v2"></script>
 <script src="/js/chat-agent-feeds-actions.js?v=v3"></script>
 <script src="/js/chat-agent-feeds-autoopen.js?v=v1"></script>
-<script src="/js/chat-agent-feeds.js?v=v9"></script>
+<script src="/js/chat-agent-feeds-scope.js?v=v1"></script>
+<script src="/js/chat-agent-feeds.js?v=v10"></script>
 <script src="/js/chat-agent-feeds-resize.js?v=v1"></script>
 <script src="/js/chat-agent-feeds-sync.js?v=v1"></script>
-<script src="/js/chat-agent-feeds-claims.js?v=v6"></script>
+<script src="/js/chat-agent-feeds-claims.js?v=v7"></script>
 <script src="/js/chat-tiles-core.js?v=v3"></script>
 <script src="/js/chat-tiles-view.js?v=v2"></script>
 <script src="/js/chat-tiles-drag.js?v=v1"></script>
 <script src="/js/chat-collab.js?v=v3"></script>
 <script src="/js/chat-tiles.js?v=v6"></script>
-<script src="/js/chat-artifacts.js?v=v4"></script>
+<script src="/js/chat-artifacts.js?v=v5"></script>
 <script src="/js/browser-tab-strip.js?v=v5"></script>
 <script src="/js/browser-workspace.js?v=v1"></script>
 <script src="/js/browser-error-card.js?v=v1"></script>
@@ -1928,8 +1933,8 @@
      dispatchBgOpEvent, dispatchChatStreamEvent, handleAgentFeedEvent,
      renderBuildRunSummary. -->
 <script src="/js/chat-ws-handler-build-summary.js?v=v1"></script>
-<script src="/js/chat-ws-handler-bg-ops.js?v=v2"></script>
-<script src="/js/chat-ws-handler-misc.js?v=v5"></script>
+<script src="/js/chat-ws-handler-bg-ops.js?v=v3"></script>
+<script src="/js/chat-ws-handler-misc.js?v=v6"></script>
 <script src="/js/chat-ws-handler-chat-events.js?v=v2"></script>
 <script src="/js/chat-ws-process-relay.js?v=v1"></script>
 <script src="/js/chat-ws-handler.js?v=v4"></script>

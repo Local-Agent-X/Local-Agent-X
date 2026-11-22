@@ -19,6 +19,8 @@
 
 var WORK_CLAIMS_REFRESH_MS = 15000;
 var workClaimsRows = [];
+// The chat on screen and the agents it started (the route's `mine`).
+var workClaimsMine = [];
 
 var WORK_CLAIM_STATE = { active: 'working now', idle: 'between messages', recent: 'lately' };
 
@@ -41,10 +43,23 @@ function workClaimsHtml(rows) {
   return '<div class="work-claims-title">WORKING ON</div>' + rows.map(workClaimRowHtml).join('');
 }
 
+// The rows the strip lists: this chat's own and the others in its project, or
+// every holder with the panel on All (chat-agent-feeds-scope.js).
+function shownWorkClaimRows() {
+  if (typeof agentFeedsScope === 'undefined' || agentFeedsScope === 'all' || !workClaimsChatId()) return workClaimsRows;
+  var seen = {}, out = [];
+  workClaimsMine.concat(otherAgentsRows).forEach(function (r) {
+    if (seen[r.sessionId]) return;
+    seen[r.sessionId] = 1;
+    out.push(r);
+  });
+  return out;
+}
+
 function renderWorkClaims() {
   var host = document.getElementById('work-claims');
   if (!host) return;
-  var html = workClaimsHtml(workClaimsRows);
+  var html = workClaimsHtml(shownWorkClaimRows());
   host.innerHTML = html;
   host.style.display = html ? '' : 'none';
 }
@@ -268,6 +283,7 @@ async function refreshWorkClaims() {
     if (!res || !res.ok) return;
     var data = await res.json();
     workClaimsRows = Array.isArray(data.holders) ? data.holders : [];
+    workClaimsMine = Array.isArray(data.mine) ? data.mine : [];
     otherAgentsRows = Array.isArray(data.others) ? data.others : [];
     ownCopyState = data.ownCopy || null;
     orchestratorState = data.orchestrator || null;

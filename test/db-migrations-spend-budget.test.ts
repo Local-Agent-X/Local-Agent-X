@@ -21,7 +21,7 @@
  * points at a fresh temp dir per test — the user's real ~/.lax is never touched.
  */
 import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, statSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -171,5 +171,24 @@ describe("migration v4 — spend-budget-defaults", () => {
     expect(result.error).toBeUndefined();
     expect(existsSync(cfgPath())).toBe(false);
     expect(markerRecorded()).toBe(true);
+  });
+});
+
+describe("migration writes to config.json", () => {
+  // config.json holds the access token; a rewrite without a mode left it
+  // readable by other local users. Modes are POSIX-only.
+  it.skipIf(process.platform === "win32")("keep the file private (0o600)", async () => {
+    writeConfig({ dailyBudgetUsd: 0, sessionBudgetUsd: 0 });
+    await runMigrations(dataDir);
+    expect(readConfig().dailyBudgetUsd).toBe(75);
+    expect(statSync(cfgPath()).mode & 0o777).toBe(0o600);
+  });
+
+  it("go to the data dir the runner was given", async () => {
+    const given = mkdtempSync(join(tmpdir(), "db-migrations-given-"));
+    tmpDirs.push(given);
+    writeFileSync(join(given, "config.json"), JSON.stringify({ dailyBudgetUsd: 0 }), "utf-8");
+    await runMigrations(given);
+    expect(JSON.parse(readFileSync(join(given, "config.json"), "utf-8")).dailyBudgetUsd).toBe(75);
   });
 });

@@ -5,7 +5,8 @@ import type { IncomingMessage } from "node:http";
 import type { RouteHandler } from "../../server-context.js";
 import type { SidebarPin } from "../../chat-ws/frames.js";
 import { jsonResponse, safeParseBody, atomicWriteFileSync } from "../../server-utils.js";
-import { FLIPPABLE_SETTINGS, RUNTIME_SETTINGS, BROADCAST_KEYS, operatorOnlyRefusal, publicSchema, settingSpec } from "../../settings-schema.js";
+import { RUNTIME_SETTINGS, operatorOnlyRefusal, publicSchema, settingSpec } from "../../settings-schema.js";
+import { applySettings } from "../../settings-apply.js";
 import { isUserOwnedSetting, strictlyTightens } from "../../settings-change-direction.js";
 import { loadSettings, saveSettings } from "../../settings.js";
 import { getRuntimeConfig } from "../../config.js";
@@ -126,60 +127,14 @@ export const handlePreferencesRoutes: RouteHandler = async (method, url, req, re
       const refusal = agentSettingsRefusal(body);
       if (refusal) { json(403, { error: refusal }); return true; }
     }
-    const merged = { ...loadSettings(), ...body };
-    // Atomic write — same race as cron-service.saveJobs() pre-9ec343f.
-    // Concurrent POST /api/settings from two clients was overwriting
-    // each other's merges in a non-atomic read-modify-write sequence,
-    // and a hot-reloader reading the file mid-write could JSON.parse-crash.
-    saveSettings(merged);
-
-    // Broadcast UI-sync fields (theme, provider, model) over WS so other
-    // tabs/windows pick up the change without a reload.
-    const broadcastBody: Record<string, unknown> = {};
-    for (const key of Object.keys(body)) {
-      if (!BROADCAST_KEYS.has(key)) continue;
-      const spec = FLIPPABLE_SETTINGS.find((field) => field.field === key);
-      const parsed = spec?.validate.safeParse(body[key]);
-      if (parsed?.success) broadcastBody[key] = parsed.data;
-    }
-    if (Object.keys(broadcastBody).length > 0) {
-      try {
-        const { broadcastAll } = await import("../../chat-ws/index.js");
-        broadcastAll({ type: "settings_changed", settings: broadcastBody });
-      } catch {}
-    }
-    // Runtime-bound fields: validate, then mirror into config.json + ctx.config
-    // so getRuntimeConfig() returns the new value on the next read. Invalid
-    // values are dropped silently — the field stays at its old runtime value
-    // and the next GET will reflect that, so the UI re-syncs without us
-    // needing a 400 round-trip path.
-    let runtimeChanged = false;
-    let browserModeChanged = false;
-    const localOnlyWasEnabled = runtimeConfig.localOnlyMode === true;
-    for (const field of RUNTIME_SETTINGS) {
-      if (!(field.field in body)) continue;
-      const parsed = field.validate.safeParse(body[field.field]);
-      if (!parsed.success) continue;
-      if (field.field === "browserMode" && runtimeConfig.browserMode !== parsed.data) browserModeChanged = true;
-      (runtimeConfig as unknown as Record<string, unknown>)[field.field] = parsed.data;
-      runtimeChanged = true;
-    }
-    if (runtimeChanged) {
-      const { saveConfig } = await import("../../config.js");
-      saveConfig(runtimeConfig);
-    }
-    // After the save above: it merges the running config over config.json,
+    // settings.json, the running config + config.json for runtime fields, the
+    // effects of a changed runtime field, and the broadcast to open tabs
+    // (settings-apply.ts). A runtime value that fails its schema is dropped
+    // silently — it keeps its old value and the next GET re-syncs the UI.
+    await applySettings(body);
+    // After the runtime save: it merges the running config over config.json,
     // and the running config still holds the old port and workspace.
     const workspaceRefused = persistBootFields(ctx.dataDir, body);
-    if (browserModeChanged) {
-      const { closeAllBrowsers } = await import("../../browser/index.js");
-      await closeAllBrowsers();
-    }
-    if (!localOnlyWasEnabled && runtimeConfig.localOnlyMode === true) {
-      const { activateLocalOnlyMode } = await import("../../local-only-policy.js");
-      ctx.agentSync.stopHeartbeat();
-      await activateLocalOnlyMode();
-    }
 
     json(200, workspaceRefused ? { ok: true, workspaceRefused } : { ok: true }); return true;
   }

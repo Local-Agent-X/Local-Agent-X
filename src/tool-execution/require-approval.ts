@@ -31,7 +31,7 @@ import {
   taintedPromotionQuotaExhausted,
   trustedCurrentUserEvidence,
 } from "../memory/promotion-gate.js";
-import { hasExternalIngestion } from "../data-lineage/external.js";
+import { externalSourcesOf, hasExternalIngestion } from "../data-lineage/external.js";
 import { classifyShellTier, isShellTierTool } from "./shell-approval-tier.js";
 import { getSandboxStatus } from "../sandbox/index.js";
 import { takeUnnamedDeleteDecision, UNNAMED_DELETE_DECLINED_TEXT, UNNAMED_DELETE_USE_TRASH_TEXT } from "./unnamed-delete-gate.js";
@@ -312,7 +312,7 @@ export const requireApprovalPhase: Phase = async (ctx) => {
   }
 
   const review = ctx.publishReview;
-  const card = promotion ? { context: describePromotionForHuman(promotion) } : approvalCardText({
+  const card = promotion ? { context: describePromotionForHuman(promotion, externalSourcesOf(ctx.sessionId || "default")) } : approvalCardText({
     toolName: ctx.tc.name, args: ctx.args, sessionId: ctx.sessionId, destructive, policyReason: ctx.policyApprovalReason, line: ctx.approvalContext,
     review: review ? { context: reviewCardContext(publishOps[0], review, ctx.approvalContext), preview: reviewPreview(publishOps[0], review) } : undefined,
   });

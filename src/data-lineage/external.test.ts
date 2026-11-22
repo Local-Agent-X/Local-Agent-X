@@ -23,6 +23,7 @@ import {
 	propagateExternalIngestion,
 	isExternalIngestingTool,
 	externalContentVerdict,
+	externalSourcesOf,
 } from "./external.js";
 import { adjudicatePayload } from "./payload-overlap.js";
 import { computeFingerprints, type TaintEntry } from "./fingerprint.js";
@@ -86,6 +87,20 @@ describe("external-ingestion registry", () => {
 const PAGE =
 	"Account recovery\n\nYour recovery phrase is velvet-harbor-ninety. Store it somewhere safe; " +
 	"support will never ask you for it. Two-factor codes rotate every thirty seconds.";
+
+describe("externalSourcesOf — what the chat read, for the memory-approval card", () => {
+	it("names each site once, in reading order, or the tool when the read had no URL", () => {
+		const sid = "sources-1";
+		const page = "word ".repeat(80);
+		recordExternalIngestion(sid, page + "a", "web_fetch https://ods.od.nih.gov/About/Site_Policies.aspx");
+		recordExternalIngestion(sid, page + "b", "browser https://ods.od.nih.gov/factsheets/Zinc");
+		recordExternalIngestion(sid, page + "c", "email_read");
+		recordExternalIngestion(sid);
+		expect(externalSourcesOf(sid)).toEqual(["ods.od.nih.gov", "email_read"]);
+		clearExternalIngestion(sid);
+		expect(externalSourcesOf(sid)).toEqual([]);
+	});
+});
 
 describe("externalContentVerdict — do THESE bytes come from the ingested content?", () => {
 	it("a session that ingested nothing is clean for any text", () => {

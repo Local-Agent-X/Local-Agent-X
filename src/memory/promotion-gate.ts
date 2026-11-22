@@ -259,11 +259,26 @@ function friendlyTarget(target: string): string {
   return "long-term memory";
 }
 
+/** A single note is shown whole up to this length: the person approving it must
+ *  be able to read what they approve (a 240-char cut hid the end of a note). */
+const NOTE_SHOWN_CHARS = 1200;
+
+/** Why the card is asking at all, when the chat read something from outside:
+ *  without it the card reads as a random interruption. */
+function whyAsking(readFrom: readonly string[]): string {
+  if (readFrom.length === 0) return "";
+  const named = readFrom.slice(0, 3).join(", ") + (readFrom.length > 3 ? ` and ${readFrom.length - 3} more` : "");
+  return `\n\nI'm asking because this chat read ${named}. After a chat reads outside content, it needs your OK to save ` +
+    "to memory: a page could slip in text dressed up as a note.";
+}
+
 /** The approval-card question a non-engineer can actually act on: says what is
- *  being saved and where, in plain language, with the content quoted. Replaces
- *  the old "Promote this exact model-originated content… Source=…; target=…"
- *  wording that read as jargon to everyone but its author. */
-export function describePromotionForHuman(promotion: MemoryPromotionClaims): string {
+ *  being saved and where, in plain language, with the content quoted, and why
+ *  it is asking when the chat read outside content (`readFrom`, the sites or
+ *  sources, data-lineage/external.ts externalSourcesOf). Replaces the old
+ *  "Promote this exact model-originated content… Source=…; target=…" wording
+ *  that read as jargon to everyone but its author. */
+export function describePromotionForHuman(promotion: MemoryPromotionClaims, readFrom: readonly string[] = []): string {
   // Batched remember: one capability covers several facts (one per line).
   // A human approving 25 facts must SEE that it's 25 facts — collapsing the
   // batch into a 240-char excerpt would show two and hide the rest.
@@ -273,11 +288,11 @@ export function describePromotionForHuman(promotion: MemoryPromotionClaims): str
     const shown = lines.slice(0, 3).map((line) => `• ${line.length > 120 ? line.slice(0, 120) + "…" : line}`);
     const more = lines.length - shown.length;
     return `Save these ${lines.length} facts to ${friendlyTarget(promotion.target)} so I can use them in future chats?\n\n` +
-      shown.join("\n") + (more > 0 ? `\n…and ${more} more` : "");
+      shown.join("\n") + (more > 0 ? `\n…and ${more} more` : "") + whyAsking(readFrom);
   }
   const oneLine = promotion.content.trim().replace(/\s+/g, " ");
-  const excerpt = oneLine.length > 240 ? oneLine.slice(0, 240) + "…" : oneLine;
-  return `Save this to ${friendlyTarget(promotion.target)} so I can use it in future chats?\n\n“${excerpt}”`;
+  const excerpt = oneLine.length > NOTE_SHOWN_CHARS ? oneLine.slice(0, NOTE_SHOWN_CHARS) + "…" : oneLine;
+  return `Save this to ${friendlyTarget(promotion.target)} so I can use it in future chats?\n\n“${excerpt}”` + whyAsking(readFrom);
 }
 
 const UNTRUSTED_MARKERS = EXTERNAL_CONTENT_EVIDENCE_RE;

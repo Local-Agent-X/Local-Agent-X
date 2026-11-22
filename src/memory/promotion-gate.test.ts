@@ -366,6 +366,20 @@ describe("describePromotionForHuman — the approval card a non-engineer can act
     expect(msg).not.toMatch(/memory:daily-log|provenance|Source=|model-originated/);
   });
 
+  it("shows a long single note whole, and says why it is asking when the chat read outside content", () => {
+    const note = "Label Check: ODS Public Use Policy verified 2026-11-21 in browser — most content public domain, may be reproduced if unmodified, must not imply ODS endorsement. " +
+      "Fact sheets readable in browser (web_fetch is refused by the site), so the build cites the pages and quotes nothing.";
+    const msg = describePromotionForHuman({ ...base, content: note, target: "memory:daily-log" }, ["ods.od.nih.gov", "email_read"]);
+    expect(msg).toContain("quotes nothing.");
+    expect(msg).not.toContain("…");
+    expect(msg).toContain("this chat read ods.od.nih.gov, email_read");
+    expect(msg).toContain("needs your OK to save to memory");
+  });
+
+  it("gives no reason line for a chat that read nothing from outside", () => {
+    expect(describePromotionForHuman({ ...base, content: "x", target: "memory:daily-log" })).not.toContain("I'm asking because");
+  });
+
   it("maps each target to a human label", () => {
     expect(describePromotionForHuman({ ...base, content: "x", target: "memory:retain" })).toContain("your long-term memory");
     expect(describePromotionForHuman({ ...base, content: "x", target: "memory:project-brief" })).toContain("the project brief");
@@ -390,11 +404,14 @@ describe("describePromotionForHuman — the approval card a non-engineer can act
     expect(msg).toContain("• One. Two. Three. Four.");
   });
 
-  it("collapses whitespace and truncates a long body so the card stays readable", () => {
-    const long = "word ".repeat(200);
-    const msg = describePromotionForHuman({ ...base, content: long, target: "memory:daily-log" });
-    expect(msg).toContain("…");
-    expect(msg).not.toContain("\n\nword word word word"); // one-lined, not a wall of text
-    expect(msg.length).toBeLessThan(360);
+  it("collapses whitespace, shows a note whole, and cuts only one past what a card can hold", () => {
+    const note = "word \t ".repeat(200); // ~1000 chars once one-lined: shown whole
+    const whole = describePromotionForHuman({ ...base, content: note, target: "memory:daily-log" });
+    expect(whole).not.toContain("…");
+    expect(whole).not.toContain("\t"); // one-lined, not a wall of text
+    const long = "word ".repeat(400);
+    const cut = describePromotionForHuman({ ...base, content: long, target: "memory:daily-log" });
+    expect(cut).toContain("…");
+    expect(cut.length).toBeLessThan(1350);
   });
 });

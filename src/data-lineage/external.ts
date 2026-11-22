@@ -188,6 +188,27 @@ export function hasExternalIngestion(sessionId: string): boolean {
 }
 
 /**
+ * What this session read from outside, in words a person recognizes: each
+ * read's site (`ods.od.nih.gov`), or the tool that brought it in when it named
+ * no URL (`email_read`), deduped in reading order. Empty for a clean session.
+ * For the memory-approval card, which says why it is asking.
+ */
+export function externalSourcesOf(sessionId: string): string[] {
+	const state = externalIngestSessions.get(sessionId);
+	if (!state) return [];
+	const names = new Set<string>();
+	for (const { target } of state.entries) {
+		const [tool, url] = target.split(" ", 2);
+		let name = tool === "external" ? "" : tool;
+		if (url) {
+			try { name = new URL(url).hostname || name; } catch { /* not a URL: keep the tool's name */ }
+		}
+		if (name) names.add(name);
+	}
+	return [...names];
+}
+
+/**
  * Does `text` carry bytes from the external content this session ingested?
  * The memory-promotion twin of the browser/http write adjudicators
  * (tool-execution/taint-scope.ts) — the same verdict core over this

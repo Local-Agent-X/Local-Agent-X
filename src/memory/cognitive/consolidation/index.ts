@@ -23,7 +23,8 @@
  * stage is the rebuild (consolidation-pipeline.ts).
  */
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { atomicWriteFileSync } from "../../../util/json-store.js";
 import {
   LOG_PATH,
   type ConsolidationLogEntry,
@@ -157,6 +158,6 @@ export class MemoryConsolidator {
   private saveHistory(): void {
     // Keep last 90 entries to prevent unbounded growth
     const trimmed = this.history.slice(-90);
-    writeFileSync(LOG_PATH, JSON.stringify(trimmed, null, 2), "utf-8");
+    atomicWriteFileSync(LOG_PATH, JSON.stringify(trimmed, null, 2));
   }
 }

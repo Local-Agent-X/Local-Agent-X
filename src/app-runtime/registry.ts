@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { atomicWriteFileSync } from "../util/json-store.js";
 import { join, resolve } from "node:path";
 
 import { getLaxDir } from "../lax-data-dir.js";
@@ -99,15 +100,15 @@ export class AppRegistry {
 
     const dir = appDir(def.id);
     mkdirSync(dir, { recursive: true });
-    writeFileSync(defPath(def.id), JSON.stringify(def, null, 2), "utf-8");
+    atomicWriteFileSync(defPath(def.id), JSON.stringify(def, null, 2));
 
     const state: AppState = {
       componentValues: {},
       actionQueue: [],
       metadata: { lastAgentUpdate: Date.now(), lastUserUpdate: 0, version: 1 },
     };
-    writeFileSync(statePath(def.id), JSON.stringify(state, null, 2), "utf-8");
-    writeFileSync(eventsPath(def.id), "[]", "utf-8");
+    atomicWriteFileSync(statePath(def.id), JSON.stringify(state, null, 2));
+    atomicWriteFileSync(eventsPath(def.id), "[]");
 
     writeAuditEntry(def.id, actor, "app:create", {
       name: def.name,
@@ -155,7 +156,7 @@ export class AppRegistry {
         ? { ...existing.permissions, ...partial.permissions }
         : existing.permissions,
     };
-    writeFileSync(defPath(id), JSON.stringify(updated, null, 2), "utf-8");
+    atomicWriteFileSync(defPath(id), JSON.stringify(updated, null, 2));
 
     writeAuditEntry(id, actor, "app:update", {
       version: updated.version,
@@ -340,7 +341,7 @@ export class AppRegistry {
       def.permissions.allowedAgents.push(agentId);
     }
     def.permissions.accessLevels[agentId] = level;
-    writeFileSync(defPath(appId), JSON.stringify(def, null, 2), "utf-8");
+    atomicWriteFileSync(defPath(appId), JSON.stringify(def, null, 2));
 
     writeAuditEntry(appId, actor, "access:grant", { agentId, level });
     return { success: true };
@@ -355,7 +356,7 @@ export class AppRegistry {
 
     def.permissions.allowedAgents = def.permissions.allowedAgents.filter(a => a !== agentId);
     delete def.permissions.accessLevels[agentId];
-    writeFileSync(defPath(appId), JSON.stringify(def, null, 2), "utf-8");
+    atomicWriteFileSync(defPath(appId), JSON.stringify(def, null, 2));
 
     writeAuditEntry(appId, actor, "access:revoke", { agentId });
     return { success: true };

@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
-import { randomBytes } from "node:crypto";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { atomicWriteFileSync } from "../util/json-store.js";
 import type { OrchestratorState } from "./types.js";
 import { STATE_FILE } from "./types.js";
 import { getLaxDir } from "../lax-data-dir.js";
@@ -22,11 +22,9 @@ function loadState(): OrchestratorState {
 
 export function saveState(state: OrchestratorState): void {
   if (!existsSync(getLaxDir())) mkdirSync(getLaxDir(), { recursive: true });
-  const tmp = STATE_FILE + "." + randomBytes(4).toString("hex") + ".tmp";
-  writeFileSync(tmp, JSON.stringify(state, null, 2), "utf-8");
-  try { renameSync(tmp, STATE_FILE); } catch {
-    try { unlinkSync(tmp); } catch { /* ignore */ }
-  }
+  // Cadence counters and a short error log: a save that cannot land is made
+  // again by the next message, so it never fails the turn.
+  try { atomicWriteFileSync(STATE_FILE, JSON.stringify(state, null, 2)); } catch { /* next save */ }
 }
 
 export const orchestratorState: OrchestratorState = loadState();

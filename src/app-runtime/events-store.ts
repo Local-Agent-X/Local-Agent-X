@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { atomicWriteFileSync } from "../util/json-store.js";
 import { randomBytes } from "node:crypto";
 
 import { eventsPath } from "./paths.js";
@@ -34,7 +35,7 @@ export function pushEvent(
   const events = readEvents(id);
   events.push(full);
   const trimmed = events.length > MAX_EVENTS_STORED ? events.slice(-MAX_EVENTS_STORED) : events;
-  writeFileSync(eventsPath(id), JSON.stringify(trimmed, null, 2), "utf-8");
+  atomicWriteFileSync(eventsPath(id), JSON.stringify(trimmed, null, 2));
 
   const state = readState(id);
   if (state) {
@@ -51,7 +52,7 @@ export function consumeEvents(id: string, eventIds: string[]): void {
   for (const e of events) {
     if (idSet.has(e.id)) e.consumed = true;
   }
-  writeFileSync(eventsPath(id), JSON.stringify(events, null, 2), "utf-8");
+  atomicWriteFileSync(eventsPath(id), JSON.stringify(events, null, 2));
 }
 
 export function getUnconsumedEvents(id: string): AppEvent[] {

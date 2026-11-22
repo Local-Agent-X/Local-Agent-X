@@ -16,13 +16,12 @@ import { randomBytes } from "node:crypto";
  * - Graceful degradation: if no link exists, channels work independently (no breakage)
  */
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { atomicWriteFileSync } from "../util/json-store.js";
 import { join } from "node:path";
-import { createRequire } from "node:module";
 import { getLaxDir } from "../lax-data-dir.js";
 import { getMessagingChannelDefinition, isMessagingChannelId } from "./channel-registry.js";
 import type { ChannelId } from "../channel-context.js";
-const require = createRequire(import.meta.url);
 
 const LAX_DIR = getLaxDir();
 const LINKS_FILE = join(LAX_DIR, "identity-links.json");
@@ -65,12 +64,8 @@ function loadLinks(): void {
   } catch { identityGroups = []; }
 }
 
-/** Atomic write: write to temp file then rename (prevents partial writes on crash) */
 function saveLinks(): void {
-  const tmpFile = LINKS_FILE + ".tmp";
-  writeFileSync(tmpFile, JSON.stringify(identityGroups, null, 2), "utf-8");
-  const { renameSync } = require("node:fs");
-  renameSync(tmpFile, LINKS_FILE);
+  atomicWriteFileSync(LINKS_FILE, JSON.stringify(identityGroups, null, 2));
 }
 
 /**

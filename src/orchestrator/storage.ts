@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { atomicWriteFileSync } from "../util/json-store.js";
 import type { OrchestrationExample } from "./types.js";
 import { EXAMPLES_FILE, MAX_EXAMPLES } from "./types.js";
 
@@ -9,11 +10,15 @@ export function loadExamples(): OrchestrationExample[] {
   return [];
 }
 
+function writeExamples(examples: OrchestrationExample[]): void {
+  atomicWriteFileSync(EXAMPLES_FILE, JSON.stringify(examples, null, 2));
+}
+
 export function saveExample(example: OrchestrationExample): void {
   const examples = loadExamples();
   examples.push(example);
   if (examples.length > MAX_EXAMPLES) examples.splice(0, examples.length - MAX_EXAMPLES);
-  writeFileSync(EXAMPLES_FILE, JSON.stringify(examples, null, 2), "utf-8");
+  writeExamples(examples);
 }
 
 export function rateOrchestration(index: number, quality: "good" | "bad", notes?: string): void {
@@ -21,7 +26,7 @@ export function rateOrchestration(index: number, quality: "good" | "bad", notes?
   if (index >= 0 && index < examples.length) {
     examples[index].quality = quality;
     if (notes) examples[index].notes = notes;
-    writeFileSync(EXAMPLES_FILE, JSON.stringify(examples, null, 2), "utf-8");
+    writeExamples(examples);
   }
 }
 
@@ -56,5 +61,5 @@ export function autoRateLastExample(userReply: string): void {
     last.notes = "auto-rated: negative user response";
   }
 
-  writeFileSync(EXAMPLES_FILE, JSON.stringify(examples, null, 2), "utf-8");
+  writeExamples(examples);
 }

@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, unlinkSync } from "node:fs";
+import { atomicWriteFileSync } from "../../util/json-store.js";
 import { join } from "node:path";
 
 import { createLogger } from "../../logger.js";
@@ -57,7 +58,7 @@ export function pullMemoryDir(dataDir: string, syncDir: string): void {
 
       if (isDailyChatArchive(f)) {
         // Trust-boundary content — write through unchanged, preserves prior behavior.
-        writeFileSync(localPath, merged, "utf-8");
+        atomicWriteFileSync(localPath, merged);
         continue;
       }
 

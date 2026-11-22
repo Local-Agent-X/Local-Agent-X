@@ -1,4 +1,5 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { atomicWriteFileSync } from "../util/json-store.js";
 import { randomBytes } from "node:crypto";
 
 import { appDir, statePath } from "./paths.js";
@@ -29,7 +30,7 @@ export function writeState(id: string, state: AppState): void {
   const serialized = JSON.stringify(state, null, 2);
   if (serialized.length > MAX_STATE_SIZE_BYTES) return;
 
-  writeFileSync(statePath(id), serialized, "utf-8");
+  atomicWriteFileSync(statePath(id), serialized);
 }
 
 export function updateComponentValues(

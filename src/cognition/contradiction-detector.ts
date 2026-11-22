@@ -9,6 +9,7 @@
  */
 
 import { getLaxDir } from "../lax-data-dir.js";
+import { atomicWriteFileSync } from "../util/json-store.js";
 import { getUniversalIndex } from "../memory/universal-index.js";
 import type { ModuleSignal } from "../orchestrator/types.js";
 import {
@@ -26,7 +27,6 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
-  writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 
@@ -251,6 +251,6 @@ export class ContradictionDetector {
   private saveHistory(): void {
     // Keep last 500 entries
     const trimmed = this.history.slice(-500);
-    writeFileSync(HISTORY_FILE, JSON.stringify(trimmed, null, 2), "utf-8");
+    atomicWriteFileSync(HISTORY_FILE, JSON.stringify(trimmed, null, 2));
   }
 }

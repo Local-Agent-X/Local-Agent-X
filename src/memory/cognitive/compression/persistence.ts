@@ -3,12 +3,12 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
-  writeFileSync,
 } from "node:fs";
 import { join } from "node:path";
 
 import { COMPRESSED_DIR } from "./constants.js";
 import { getLaxDir } from "../../../lax-data-dir.js";
+import { atomicWriteFileSync } from "../../../util/json-store.js";
 import type { StoredCompression } from "./types.js";
 import { runMemoryGate } from "../../write-safely.js";
 import { createInternalMemoryContext } from "../../promotion-gate.js";
@@ -23,10 +23,10 @@ export function storedPath(id: string): string {
   return join(COMPRESSED_DIR, `${id}.json`);
 }
 
+/** A stored compression by id; null when there is none or its file cannot be read. */
 export function loadStored(id: string): StoredCompression | null {
   const filePath = storedPath(id);
-  if (!existsSync(filePath)) return null;
-  return JSON.parse(readFileSync(filePath, "utf-8")) as StoredCompression;
+  return existsSync(filePath) ? readStoredFile(filePath) : null;
 }
 
 export function writeStored(stored: StoredCompression): void {
@@ -37,7 +37,7 @@ export function writeStored(stored: StoredCompression): void {
     target,
     promotion: { origin: "unknown", source: "session-compression" },
   });
-  writeFileSync(target, gated, "utf-8");
+  atomicWriteFileSync(target, gated);
 }
 
 export function writeStoredAtPath(filePath: string, stored: StoredCompression): void {
@@ -48,7 +48,7 @@ export function writeStoredAtPath(filePath: string, stored: StoredCompression): 
     target: filePath,
     promotion: createInternalMemoryContext(content, filePath, "compression-rewrite"),
   });
-  writeFileSync(filePath, gated, "utf-8");
+  atomicWriteFileSync(filePath, gated);
 }
 
 export function listStoredFiles(): string[] {

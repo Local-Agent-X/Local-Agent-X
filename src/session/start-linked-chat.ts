@@ -58,8 +58,11 @@ export function projectFolder(name: string): string {
 }
 
 export async function startLinkedChat(ctx: ServerContext, req: LinkedChatRequest): Promise<StartedChat> {
-  const origin = ctx.sessionStore.load(req.originId);
-  if (!origin) throw new StartChatError("The chat that started this is gone.");
+  // The starting chat is on disk once a turn of it has been saved; during its
+  // first turn (where "start 4 new projects" is usually typed) it is only in the
+  // server's cache. A caller that cannot vouch for the id checks the store first
+  // (routes/sessions-start.ts answers 404); the tool's id is its own live chat.
+  const origin = ctx.sessionStore.load(req.originId) ?? ctx.getOrCreateSession(req.originId);
   const folder = req.folder ? projectFolder(req.folder) : undefined;
   const project = folder ? await codeFolderProject(folder, ctx.projectStore) : undefined;
   const code = folder !== undefined || sessionModeOf(origin) === "code";

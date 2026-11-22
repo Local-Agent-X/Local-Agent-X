@@ -19,6 +19,7 @@ vi.mock("../ops/idle-nudge.js", () => ({ scheduleIdleNudge: vi.fn() }));
 vi.mock("../inbox/producers.js", () => ({ inboxJobResult: vi.fn() }));
 
 import { handleSessionStart, _resetStartedOffersForTest } from "./sessions-start.js";
+import { startLinkedChat } from "../session/start-linked-chat.js";
 import { setChatHandler } from "../chat-ws/chat-handler.js";
 import { drainPendingNotifications, formatNotificationsForSystemPrompt } from "../ops/pending-notifications.js";
 import { scheduleIdleNudge } from "../ops/idle-nudge.js";
@@ -28,11 +29,14 @@ import type { Session } from "../types.js";
 import type { Project } from "../agent-store/index.js";
 
 const sessions = new Map<string, Session>();
+/** Sessions saved to disk; the rest are only in the server's cache (a chat in its first turn). */
+const onDisk = new Set<string>();
 const projects: Project[] = [];
 const broadcasts: unknown[] = [];
 const ctx = {
-  sessionStore: { load: (id: string) => sessions.get(id) ?? null },
-  saveSession: async (s: Session) => { sessions.set(s.id, s); },
+  sessionStore: { load: (id: string) => (onDisk.has(id) ? sessions.get(id) ?? null : null) },
+  getOrCreateSession: (id: string) => sessions.get(id) ?? (() => { const s = { id, title: "New Chat", messages: [], createdAt: 0, updatedAt: 0 } as Session; sessions.set(id, s); return s; })(),
+  saveSession: async (s: Session) => { sessions.set(s.id, s); onDisk.add(s.id); },
   flushSession: async () => {},
   broadcastAll: (frame: unknown) => { broadcasts.push(frame); },
   projectStore: {
@@ -53,6 +57,8 @@ beforeEach(() => {
   broadcasts.length = 0;
   _resetStartedOffersForTest();
   sessions.set("origin", { id: "origin", title: "Phone apps", messages: [], createdAt: 0, updatedAt: 0, projectId: "p1" } as Session);
+  onDisk.clear();
+  for (const id of ["origin", "code-origin", "app-chat"]) onDisk.add(id);
   setChatHandler(async (sessionId, message) => {
     ran.push({ sessionId, message });
     sessions.get(sessionId)!.messages.push({ role: "user", content: message }, { role: "assistant", content: "Fixed the Recents layout and committed it." });
@@ -178,6 +184,15 @@ describe("POST /api/sessions/start", () => {
     expect((await post({ ...offer, folder: "../escape" })).status).toBe(400);
     expect((await post({ ...offer, folder: "a/b" })).status).toBe(400);
     expect(ran).toHaveLength(0);
+  });
+
+  it("the tool can start a chat from a chat still in its first turn (cached, not yet on disk)", async () => {
+    sessions.set("first-turn", { id: "first-turn", title: "Hackathon ideas", messages: [], createdAt: 0, updatedAt: 0 } as Session);
+    const done = settled();
+    const chat = await startLinkedChat(ctx, { originId: "first-turn", title: "Shop Helper", brief: "Run /greenfield.", folder: "shop-helper" });
+    await done;
+    expect(sessions.get(chat.sessionId)).toMatchObject({ startedFrom: "first-turn", mode: "code" });
+    drainPendingNotifications("first-turn");
   });
 
   it("refuses an offer without a title or brief, and one from a chat that is gone", async () => {

@@ -176,9 +176,12 @@ export function matchTier(m: SecretMatch): "control" | "advisory" {
 
 /**
  * A guess, put to a person: what the scan took for a key, `where` it sits, and
- * enough of the text to judge it by (a file name reads as one) without putting
- * a whole real key on a card. "the shape of a Key-Value Secret in the data
- * being sent ("PAIRING_…token,")".
+ * enough of the text to judge it by without putting a whole real key on a
+ * card (a card's text is logged). The flagged text keeps its ends, and what it
+ * is attached to is shown around it: the name it is assigned to and the rest
+ * of its own word, never a neighbouring value. "random-looking text on line 71
+ * ("url": "https://ods.od.nih.gov/factsheets/Calcium-…sional/")" reads as a
+ * web address; `("Calcium-…sional")` alone read as nothing (2026-11-21).
  */
 export function secretMatchPhrase(scanned: string, match: SecretMatch, where: string): string {
   const what = match.type === "high-entropy-token"
@@ -186,7 +189,31 @@ export function secretMatchPhrase(scanned: string, match: SecretMatch, where: st
     : `the shape of ${/^[aeiou]/i.test(match.pattern) ? "an" : "a"} ${match.pattern}`;
   const seen = scanned.slice(match.startIndex, match.endIndex);
   const masked = seen.length <= 12 ? seen.slice(0, 2) + "…" : `${seen.slice(0, 8)}…${seen.slice(-6)}`;
-  return `${what} ${where} ("${masked}")`;
+  const [before, after] = attachedText(scanned, match);
+  return `${what} ${where} ("${before}${masked}${after}")`;
+}
+
+const CONTEXT_CHARS = 60;
+
+/** What the flagged text is attached to, on its own line: before it, the name
+ *  it is assigned to (`"url": "`, `TOKEN=`) and the start of its own word (a
+ *  URL's host and path); after it, the end of that word. Stops at whitespace,
+ *  quotes and list punctuation, so the value beside it is never shown. */
+function attachedText(scanned: string, match: SecretMatch): [string, string] {
+  const lineStart = scanned.lastIndexOf("\n", match.startIndex - 1) + 1;
+  const left = scanned.slice(Math.max(lineStart, match.startIndex - CONTEXT_CHARS), match.startIndex);
+  const right = scanned.slice(match.endIndex, match.endIndex + CONTEXT_CHARS).split("\n")[0];
+  const before = left.match(/(?:[\w.$-]{1,40}["']?\s*[:=]\s*["']?)?[^\s"'`,;{}()[\]]*$/)?.[0] ?? "";
+  const after = right.match(/^[^\s"'`,;{}()[\]]*/)?.[0] ?? "";
+  // Cut by the length cap, not by a boundary: say so.
+  return [before.length === CONTEXT_CHARS ? `…${before}` : before, after.length === CONTEXT_CHARS ? `${after}…` : after];
+}
+
+/** Files whose content the secret scan does not judge: a data URI in a
+ *  stylesheet or an SVG is image bytes, not a token. */
+export function isSecretScannedFile(filePath: string): boolean {
+  const ext = filePath.split(".").pop()?.toLowerCase() || "";
+  return ext !== "css" && ext !== "svg";
 }
 
 /** Redact all detected secrets from text */

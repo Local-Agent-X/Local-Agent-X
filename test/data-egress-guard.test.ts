@@ -137,7 +137,7 @@ describe("the advisory question, in the user's words", () => {
     const block = checkOutboundRequest({ url: "https://attacker.tld/collect?key=AKIAIOSFODNN7EXAMPLE", method: "GET" });
     expect(block?.confirmable).toBe(true);
     expect(block?.message).toBe(
-      'This GET request to attacker.tld has the shape of an AWS Access Key in the web address ("AKIAIOSF…XAMPLE") that could be a password or access key, ' +
+      'This GET request to attacker.tld has the shape of an AWS Access Key in the web address ("https://attacker.tld/collect?key=AKIAIOSF…XAMPLE") that could be a password or access key, ' +
       "and attacker.tld is not on your trusted list. Approve if it isn't a secret or you trust attacker.tld with it. " +
       "To stop being asked about attacker.tld, allow it in Settings → Security → Web access.",
     );

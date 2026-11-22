@@ -50,6 +50,7 @@ import type { PublishReview, PublishReviewRequest, PublishReviewRun } from "../c
 import type { ToolCallContext } from "./context.js";
 import { amberHoldText, needsUserYes, redFixText, reviewCardContext, reviewNoteForModel, reviewPreview, stopText, type StopReason } from "./publish-review-text.js";
 import { statusOf } from "../tools/result-helpers.js";
+import { withKeyFindings } from "./publish-key-findings.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("tool-execution.publish-review-gate");
@@ -143,7 +144,9 @@ export async function publishReviewGate(ctx: ToolCallContext, ops: PublishOperat
     progress(ctx, `Working out exactly what ${op.label} would ship…`);
     const changeSet = await deps.computeChangeSet(ops);
     if (changeSet.parts.length > 0) progress(ctx, `Fresh-context review of ${deps.summarize(changeSet)}…`);
-    review = await reviewFor(ctx, changeSet, deps);
+    // Key-shaped text the change adds is a finding of its own, cached verdict
+    // or fresh (publish-key-findings.ts).
+    review = withKeyFindings(await reviewFor(ctx, changeSet, deps), changeSet);
   } finally {
     clearInterval(ticker);
     endWait();

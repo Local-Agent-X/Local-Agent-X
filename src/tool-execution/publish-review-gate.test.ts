@@ -596,3 +596,35 @@ describe("a git push is routine: it asks only when it is tainted", () => {
     expect((await requireApprovalPhase(ctx({ sessionId: session("Autonomous"), callContext: "cron" }))).kind).toBe("halt");
   });
 });
+
+// A key in what would ship is a finding of its own (publish-key-findings.ts),
+// whatever the model's review said: the same RED path decides.
+describe("a key in the change — RED whatever the review said", () => {
+  // Assembled at runtime so the repo's own scanners do not flag this file.
+  const KEY = `ghp_${"abcdefghijklmnopqrstuvwxyz1234567890"}`;
+  function withKeyInDiff(f: Fake): void {
+    const base = changeSet(f.fingerprint);
+    f.set = { ...base, parts: [{ ...base.parts[0], files: [{ status: "A", path: ".env" }], fileDiffs: [{ path: ".env", text: `--- /dev/null\n+++ b/.env\n@@ -0,0 +1,1 @@\n+API_TOKEN=${KEY}` }] }] };
+  }
+
+  it("a GREEN review under the most permissive profile still asks, naming the file and line, key masked", async () => {
+    withKeyInDiff(fake(GREEN));
+    const events: ServerEvent[] = [];
+    const c = ctx({ sessionId: session("Autonomous"), answer: true, events });
+    expect((await requireApprovalPhase(c)).kind).toBe("continue");
+    const [card] = cards(events);
+    expect(card.preview).toMatchObject({ kind: "publish-review", status: "RED", overrideLabel: "Push anyway", findings: [expect.objectContaining({ severity: "red", location: ".env:1" })] });
+    expect(JSON.stringify(card)).toContain("API_TOKEN=");
+    expect(JSON.stringify(card.preview)).not.toContain(KEY);
+  });
+
+  it("unattended: blocked, no card", async () => {
+    withKeyInDiff(fake(GREEN));
+    const events: ServerEvent[] = [];
+    const c = ctx({ sessionId: session("Autonomous"), callContext: "cron", events });
+    expect((await requireApprovalPhase(c)).kind).toBe("halt");
+    expect(cards(events)).toEqual([]);
+    expect(lastText(c)).toContain(".env:1");
+    expect(lastText(c)).toContain("unattended run, so nobody can override it");
+  });
+});

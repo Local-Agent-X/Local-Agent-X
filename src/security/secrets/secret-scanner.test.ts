@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { randomBytes, createHash, generateKeyPairSync } from "node:crypto";
-import { scanForSecrets, redactSecrets, scanKnownSecretValues, matchTier } from "./secret-scanner.js";
+import { scanForSecrets, redactSecrets, scanKnownSecretValues, matchTier, secretMatchPhrase } from "./secret-scanner.js";
 import { checkOutboundPayload } from "../../tools/http-egress-guard.js";
 import { buildNormalizedView } from "./secret-normalize.js";
 import {
@@ -554,6 +554,15 @@ describe("scanForSecrets — high-entropy detector (positives)", () => {
     expect(missed).toBeLessThan(60);
   });
 
+  // Nor does the two-names one (Calcium-HealthProfessional): both sides must be
+  // spelled as words, so a key with one separator in it is still a key. These
+  // are the shapes a looser rule let through when it was measured.
+  it("flags keys with one separator whose halves are not words (the name-pair exemption stays narrow)", () => {
+    for (const token of ["baqIL-HYQyvJgnoEjezVyrsjS", "JLXEkvoAwg-xhoXuepUz3Y4K", "KmajzkmYHZGBcebfMFWIJ-BahitL", "bywkrFXUkafpqzp_YvxRTKEOl"]) {
+      expect(scanForSecrets(`value ${token} end`).clean, token).toBe(false);
+    }
+  });
+
   // The hex-of-text exemption must not swallow hex key material: random bytes
   // decode to about 37% printable, far under the text ratio.
   it("flags random hex key material that is not a hash length", () => {
@@ -591,6 +600,8 @@ describe("scanForSecrets — high-entropy detector (false-positive traps stay cl
     // TB2 build-pov-ray (2026-10-27): a download refused as carrying a token.
     ["a URL path of title-case words", "https://cept.org/files/download/software/Official-POV-Ray_Source_Code/Old_Versions/POV-Ray/v22/povray-2.2-full.tar.gz.gz"],
     ["an upper/title-case slug", "see Release_Notes-FINAL-Draft_2026 for details"],
+    // A build stopped for approval on a data file citing NIH fact sheets (2026-11-21).
+    ["two names joined by a hyphen, in a URL", "https://ods.od.nih.gov/factsheets/Calcium-HealthProfessional/ and /Magnesium-HealthProfessional/ and /Omega3FattyAcids-HealthProfessional/"],
     // A Three.js download held for approval as carrying a token (2026-11-03).
     ["a CamelCase file name in a CDN URL", "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/shaders/LuminosityHighPassShader.js"],
     ["CamelCase identifiers with a short word or an acronym", "getElementsByClassName UnrealBloomPassToScreen WebGLRenderTargetCubeMap HTMLParserFactoryBuilder"],
@@ -959,4 +970,36 @@ describe("ADR 0006 — the peel finds the key or says it could not look", () => 
     const token = "%41" + "x".repeat(6 * 1024 * 1024);
     expect(typeof scanForSecrets(token).clean).toBe("boolean");
   }, 120_000);
+});
+
+// A guess put to a person has to be judgeable: the flagged text keeps its ends
+// and is shown with what it is attached to, never with the value beside it.
+describe("secretMatchPhrase — what a card says about a guess", () => {
+  const token = randomBytes(30).toString("base64").replace(/[+/=]/g, "x").slice(0, 40);
+  const phrase = (text: string) => {
+    const match = scanForSecrets(text).matches.find((m) => m.type === "high-entropy-token")!;
+    return secretMatchPhrase(text, match, "on line 1");
+  };
+
+  it("shows the name the text is assigned to", () => {
+    const said = phrase(`const a = 1; sessionBlob = "${token}";`);
+    expect(said).toContain(`random-looking text on line 1 ("sessionBlob = "${token.slice(0, 8)}…${token.slice(-6)}")`);
+    expect(said).not.toContain(token);
+  });
+
+  it("shows the web address a flagged path segment sits in", () => {
+    const said = phrase(`{"source": "https://files.example.org/reports/${token}/summary.pdf"}`);
+    expect(said).toContain(`https://files.example.org/reports/${token.slice(0, 8)}…${token.slice(-6)}/summary.pdf`);
+  });
+
+  it("never shows the value beside it", () => {
+    const said = phrase(`password: "hunter2", blob: "${token}", pin: "4321"`);
+    expect(said).toContain(`blob: "`);
+    expect(said).not.toContain("hunter2");
+    expect(said).not.toContain("4321");
+  });
+
+  it("stays on the flagged text's own line", () => {
+    expect(phrase(`first line has words\n${token}\nlast line has words`)).toContain(`("${token.slice(0, 8)}…${token.slice(-6)}")`);
+  });
 });

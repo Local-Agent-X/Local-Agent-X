@@ -13,13 +13,13 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 72 top-level dirs · 72 live · 0 with no live importer · 2101 non-test source files · 74 oversized · 260 nearing the size cap.
+**Totals:** 72 top-level dirs · 72 live · 0 with no live importer · 2103 non-test source files · 74 oversized · 260 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 187 | 30 | XL | 1 |
+| `src/ops/` | 188 | 31 | XL | 1 |
 | `src/security/` | 168 | 64 | XL | 2 |
 | `src/tools/` | 139 | 243 | XL | 9 |
 | `src/tool-execution/` | 105 | 91 | XL | 2 |
@@ -51,7 +51,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/autonomy/` | 19 | 6 | M |  |
 | `src/net/` | 19 | 12 | L |  |
 | `src/orchestrator/` | 19 | 24 | L |  |
-| `src/server/` *(entrypoint)* | 19 | 76 | XL | 4 |
+| `src/server/` *(entrypoint)* | 19 | 77 | XL | 4 |
 | `src/voice/` | 19 | 80 | XL | 1 |
 | `src/agents/` | 17 | 14 | L |  |
 | `src/cognition/` | 17 | 34 | XL |  |

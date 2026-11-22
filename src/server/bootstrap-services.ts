@@ -19,6 +19,7 @@ import { fetchLocalOllamaTags } from "../ollama-cloud.js";
 import { askReachableFairly } from "../embedding-providers/ollama.js";
 import { embeddingModelInstalled, decideEmbeddingModelAction } from "./embedding-model-match.js";
 import { startEventLoopSentinel } from "./event-loop-sentinel.js";
+import { startHeapGrowthWatch } from "./heap-growth-watch.js";
 import { DEFAULT_EMBEDDING_PROVIDER } from "../embedding-providers/types.js";
 import type { LAXConfig } from "../types.js";
 
@@ -249,6 +250,7 @@ export async function bootstrapServices(config: LAXConfig): Promise<Bootstrapped
   // boot — the 90-110s freezes seen in production logged nothing at all,
   // because a blocked loop cannot log. See event-loop-sentinel.ts.
   startEventLoopSentinel();
+  startHeapGrowthWatch();
   const _bsT = (name: string) => {
     const t = Date.now();
     return () => {

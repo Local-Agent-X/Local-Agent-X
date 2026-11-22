@@ -228,7 +228,7 @@ describe("invokeDefinition — routes through registered canonical-loop driver",
     EventBus.on("handler:agent-result", (d) => { results.push(d as typeof results[number]); });
 
     const ref = invokeDefinition(TEST_DEF, "task", {});
-    await waitFor(() => driverSignal !== null, 500);
+    await waitFor(() => driverSignal !== null);
 
     expect(driverSignal!.aborted).toBe(false);
     Handler.getInstance().cancelAgent(ref.runId);

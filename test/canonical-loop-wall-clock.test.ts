@@ -35,11 +35,12 @@ import {
   type CanonicalEvent,
 } from "../src/canonical-loop/index.js";
 import { createEventPump } from "../src/canonical-loop/chat-runner/event-pump.js";
-import { readOp, newOpId } from "../src/ops/op-store.js";
+import { newOpId } from "../src/ops/op-store.js";
 import type { Op } from "../src/ops/types.js";
 import type { ServerEvent } from "../src/types.js";
 
 import { FakeAdapter, scriptLongStreamingTurn } from "./canonical-loop/fake-adapter.js";
+import { awaitOpState } from "./canonical-loop/harness.js";
 
 const OPS_BASE = join(homedir(), ".lax", "operations");
 const tracked: string[] = [];
@@ -80,19 +81,6 @@ function mkOp(maxWallTimeMs: number): Op {
   };
 }
 
-async function awaitState(opId: string, target: "failed", timeoutMs = 3_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    const op = readOp(opId);
-    if (op?.canonical?.state === target) return;
-    if (Date.now() > deadline) {
-      const events = readCanonicalEvents(opId).map(e => e.type).join(",");
-      throw new Error(`awaitState(${target}) timed out for ${opId} — events=[${events}], state=${op?.canonical?.state}`);
-    }
-    await new Promise(r => setTimeout(r, 5));
-  }
-}
-
 describe("canonical-loop — wall-clock ceiling", () => {
   it("fails an overrunning interactive op without classifying it as user-cancelled", async () => {
     const op = mkOp(100);
@@ -102,7 +90,7 @@ describe("canonical-loop — wall-clock ceiling", () => {
     registerAdapterForOp(op.id, () => adapter);
 
     canonicalLoopEntry(op);
-    await awaitState(op.id, "failed", 3_000);
+    await awaitOpState(op.id, "failed");
 
     const events = readCanonicalEvents(op.id);
     expect(events.some(e => e.type === "cancel_requested")).toBe(false);
@@ -130,7 +118,7 @@ describe("canonical-loop — wall-clock ceiling", () => {
     })();
 
     canonicalLoopEntry(op);
-    await awaitState(op.id, "failed", 3_000);
+    await awaitOpState(op.id, "failed");
     const terminal = await drain;
     pump.dispose();
 

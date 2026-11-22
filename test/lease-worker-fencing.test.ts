@@ -17,6 +17,7 @@ import {
 import { _setStrictOpWriteFailureForTest, newOpId, readOp } from "../src/ops/op-store.js";
 import type { Adapter, TurnResult } from "../src/canonical-loop/adapter-contract.js";
 import type { Op } from "../src/ops/types.js";
+import { awaitOpState } from "./canonical-loop/harness.js";
 
 const opsBase = join(homedir(), ".lax", "operations");
 let opId = "";
@@ -76,7 +77,7 @@ describe("worker lease fencing", () => {
     }));
 
     canonicalLoopEntry(makeOp(opId));
-    await waitFor(() => readOp(opId)?.canonical?.state === "succeeded", 3_000);
+    await awaitOpState(opId, "succeeded");
     expect(readCanonicalEvents(opId).filter(event => event.type === "lease_acquired")).toHaveLength(1);
   });
 
@@ -84,11 +85,11 @@ describe("worker lease fencing", () => {
     const adapter = new AbortCompletesAdapter();
     registerAdapterForOp(opId, () => adapter);
     canonicalLoopEntry(makeOp(opId));
-    await waitFor(() => readOp(opId)?.canonical?.state === "running");
+    await awaitOpState(opId, "running");
 
     const lock = join(opsBase, opId, "operation.lock");
     writeFileSync(lock, "foreign-live-holder", { flag: "wx" });
-    await waitFor(() => adapter.abortCalls > 0, 3_000);
+    await waitFor(() => adapter.abortCalls > 0);
     rmSync(lock, { force: true });
 
     const gate = join(opsBase, opId, "lease-child-gate");
@@ -122,10 +123,8 @@ function makeOp(id: string): Op {
   };
 }
 
-async function waitFor(predicate: () => boolean, timeoutMs = 1_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  while (!predicate()) {
-    if (Date.now() >= deadline) throw new Error("condition not reached before timeout");
-    await new Promise(resolve => setTimeout(resolve, 10));
-  }
+/** Polls until `predicate` holds. No budget of its own: one shorter than a slow
+ *  runner's stall fails a healthy run, and the test's timeout bounds a regression. */
+async function waitFor(predicate: () => boolean): Promise<void> {
+  while (!predicate()) await new Promise(resolve => setTimeout(resolve, 10));
 }

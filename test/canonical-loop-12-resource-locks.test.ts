@@ -113,17 +113,6 @@ async function awaitTerminal(opId: string, timeoutMs = 8_000): Promise<void> {
   }
 }
 
-async function awaitRunning(opId: string, timeoutMs = 3_000): Promise<void> {
-  const deadline = Date.now() + timeoutMs;
-  for (;;) {
-    if (readOp(opId)?.canonical?.state === "running") return;
-    if (Date.now() > deadline) {
-      throw new Error(`awaitRunning timed out for ${opId} — state=${readOp(opId)?.canonical?.state}`);
-    }
-    await new Promise(r => setTimeout(r, 5));
-  }
-}
-
 // ── (a) two gpu:0 ops serialize; the second launches after the first ────────
 
 describe("scheduler serializes ops that share a resource lock", () => {
@@ -256,7 +245,7 @@ describe("evicting a resource-lock holder releases the lock (recovery path)", ()
     });
 
     canonicalLoopEntry(a);
-    await awaitRunning(a.id);
+    await awaitOpState(a.id, "running");
 
     // B enqueues + pumps in canonicalLoopEntry, but gpu:0 is held → it is
     // skipped and sits queued, NOT running.
@@ -288,7 +277,7 @@ describe("evicting a resource-lock holder releases the lock (recovery path)", ()
       new FakeAdapter({ script: [scriptLongStreamingTurn({ chunkIntervalMs: 15, maxChunks: 40 })] }));
 
     canonicalLoopEntry(a);
-    await awaitRunning(a.id);
+    await awaitOpState(a.id, "running");
     expect(anyHeld(["gpu:0"]), "holder should be holding gpu:0 while running").toBe(true);
 
     expect(evictWorker(a.id)).toBe(true);

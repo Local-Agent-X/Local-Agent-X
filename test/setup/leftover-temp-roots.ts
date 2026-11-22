@@ -31,7 +31,7 @@ const WINDOWS_LOCK_CODES = new Set(["ENOTEMPTY", "EBUSY", "EPERM", "ETIMEDOUT"])
 
 /** rm backs off linearly, retryDelay more per try, and retries each entry in the tree
  *  on its own, so a held tree can outlast vitest's 10 s hook and teardown timeouts.
- *  A wall-clock deadline caps each delete below them: a test file deletes its two roots
+ *  A wall-clock deadline caps each delete below them: a test file deletes its roots
  *  side by side within 5 s, and the sweep deletes all its roots side by side within 8 s. */
 const FILE_RETRY = { maxRetries: process.platform === "win32" ? 8 : 5, retryDelay: 100 };
 const SWEEP_RETRY = { maxRetries: 10, retryDelay: 200 };

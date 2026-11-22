@@ -2,6 +2,8 @@
 // it opts in. test-env.ts gives every test file a temp workspace of its own;
 // these pin that the default config resolves there, and that loading the
 // config from the checkout never links or replaces the checkout's workspace/.
+// The same holds for the machine's worktree folder, which the installed app
+// builds in while the suite runs.
 
 import { describe, it, expect } from "vitest";
 import { lstatSync, readlinkSync } from "node:fs";
@@ -11,6 +13,7 @@ import { loadConfig, workspaceRoot } from "../../src/config.js";
 import { resolveAgentPath } from "../../src/workspace/paths.js";
 import { isEphemeralPath } from "../../src/workspace/lifecycle.js";
 import { pathIsWithin } from "../../src/security/layer/path-within.js";
+import { WORKTREE_BASE } from "../../src/agency/worktree-core.js";
 
 function checkoutWorkspace(): unknown {
   try {
@@ -23,6 +26,17 @@ function checkoutWorkspace(): unknown {
 }
 // Taken before any test loads the config (workspaceRoot() does, lazily).
 const checkoutWorkspaceAtStart = checkoutWorkspace();
+
+describe("test files make worktrees in a folder of their own", () => {
+  it("the worktree folder is this file's, not the one the installed app uses", () => {
+    const machines = resolve(tmpdir(), "lax-worktrees");
+    expect(resolve(WORKTREE_BASE)).toBe(resolve(process.env.LAX_WORKTREE_BASE!));
+    expect(resolve(WORKTREE_BASE)).not.toBe(machines);
+    expect(pathIsWithin(machines, resolve(WORKTREE_BASE))).toBe(false);
+    // Still under the temp root: the file gate and the boot sweep treat it as before.
+    expect(pathIsWithin(resolve(tmpdir()), resolve(WORKTREE_BASE))).toBe(true);
+  });
+});
 
 describe("test files run in a workspace of their own", () => {
   it("the default workspace is a temp folder, not the checkout's", () => {

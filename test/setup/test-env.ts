@@ -56,6 +56,14 @@ process.env.USERPROFILE = home;
 const workspaceHost = mkdtempSync(join(tmpdir(), "lax-workspace-"));
 process.env.LAX_WORKSPACE = join(workspaceHost, "app", "workspace");
 mkdirSync(process.env.LAX_WORKSPACE, { recursive: true });
+// No test makes, lists or deletes a worktree in the machine's worktree folder
+// (%TEMP%/lax-worktrees), which the installed app is using. The build engine
+// names its worktrees autobuild-c<n> there; a test that cleared "its"
+// autobuild-c1..c3 deleted a running build's chunk 3 twice (2026-11-22), and
+// the boot sweep and recovery tests walk the same folder. Each file gets one
+// of its own.
+const worktreeHost = mkdtempSync(join(tmpdir(), "lax-test-worktrees-"));
+process.env.LAX_WORKTREE_BASE = join(worktreeHost, "lax-worktrees");
 // Never route a test's safe-delete into the developer's real OS Trash — force
 // the ~/.lax fallback so trash assertions are deterministic and self-contained.
 process.env.LAX_NO_NATIVE_TRASH = "1";
@@ -99,5 +107,5 @@ globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) =>
 // an indexer or scanner may hold it longer), so a root Windows still holds is
 // deleted at the end of the run instead (leftover-temp-roots.ts).
 afterAll(async () => {
-  await Promise.all([removeTestRoot(home), removeTestRoot(workspaceHost)]);
+  await Promise.all([removeTestRoot(home), removeTestRoot(workspaceHost), removeTestRoot(worktreeHost)]);
 });

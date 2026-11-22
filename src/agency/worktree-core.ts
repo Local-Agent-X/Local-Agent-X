@@ -28,7 +28,11 @@ export interface WorktreeEntry {
   recovered?: boolean;
 }
 
-export const WORKTREE_BASE = join(tmpdir(), "lax-worktrees");
+/** Where every worktree is made. One folder per machine, so a second process
+ *  that must not share it sets LAX_WORKTREE_BASE: the unit suite does, because
+ *  its build-engine test cleared `autobuild-c1..c3` here by name and deleted a
+ *  running build's chunk 3 (2026-11-22). */
+export const WORKTREE_BASE = process.env.LAX_WORKTREE_BASE || join(tmpdir(), "lax-worktrees");
 export const activeWorktrees = new Map<string, WorktreeEntry>();
 /** Recovered work is quarantined here until its exact durable run resumes. */
 export const pendingRecoveredWorktrees = new Map<string, WorktreeEntry>();

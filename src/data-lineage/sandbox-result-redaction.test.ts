@@ -420,7 +420,9 @@ describe("run-sandboxed redacts sensitive results before delivery (no taint on s
   });
 
   it("memory_search output containing only a high-entropy identifier does not taint", async () => {
-    const identifier = "useIframeNavigationApiHandlerFactory7f3a9c1e";
+    // A long hash on the name, so the entropy pass still flags it (a name with
+    // only a short code in it is not flagged at all, 2026-11-22).
+    const identifier = "useIframeNavigationApiHandlerFactory7f3a9c1eB8dQ2wZx";
     const detected = detectSecretsInOutput(identifier);
     expect(detected.matched).toBe(true);
     expect(detected.structured).toBe(false);

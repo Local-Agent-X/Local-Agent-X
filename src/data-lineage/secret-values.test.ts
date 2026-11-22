@@ -93,8 +93,10 @@ describe("maskSecretValues — values masked in place, names and structure kept"
     expect(r.values).toEqual([pem]);
   });
 
+  // The identifier carries a long hash, so the entropy pass still flags it (a
+  // name with only a short code in it is not flagged at all, 2026-11-22).
   it("leaves a high-entropy identifier alone", () => {
-    const line = "server/x.ts:42: const u = req.user; // useIframeNavigationApiHandlerFactory7f3a9c1e";
+    const line = "server/x.ts:42: const u = req.user; // useIframeNavigationApiHandlerFactory7f3a9c1eB8dQ2wZx";
     expect(scanForSecrets(line).matches.some((m) => m.type === "high-entropy-token")).toBe(true);
     expect(maskSecretValues(line).masked).toBe(0);
   });

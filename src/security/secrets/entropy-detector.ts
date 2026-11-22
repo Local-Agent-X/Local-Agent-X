@@ -197,11 +197,45 @@ function isCamelIdentifier(run: string): boolean {
   return letters.filter(p => p.length < 3).length <= Math.max(1, Math.floor(letters.length / 3));
 }
 
+// A name made of words with a short code in it: `Johnson-Health-Tech-
+// Maternity-and-Paternity-Leave-BNFT23_E304972_N1` (a Glassdoor page),
+// `VitaminB6-HealthProfessional` (an NIH fact sheet), a resume's file name
+// with an id in front. Each shape rule above covers one costume; a page or file
+// name mixes them, and 4 of the 7 URLs this machine's chats sent in 30 days
+// that the scan flagged were names like these (2026-11-22). The rule: split on
+// separators, case and digits; at least two pronounceable words of five
+// letters or more; words make up at least 80% of the letters; and what is left
+// besides numbers (an acronym, a code) is six characters at most, too short to
+// hide a key. Measured on 300k random 24-48 character keys per alphabet that
+// the scan flags, the keys this clears: base64url 2, letters and digits 1,
+// letters 3, letters with one hyphen 2, letters and digits with two
+// underscores 0. A 22-character random id with a size suffix
+// (`o29oBjZuSK3eaHYKvyDGHF-625-80`) is still flagged: it is key-sized.
+const NAME_PIECE = /[A-Z]{2,}(?=[A-Z][a-z]|[0-9]|$)|[A-Z]?[a-z]+|[A-Z]+|[0-9]+/g;
+function isSayableWord(p: string): boolean {
+  if (p.length < 3 || !/^[A-Z]?[a-z]+$/.test(p)) return false;
+  const w = p.toLowerCase();
+  const vowels = (w.match(/[aeiouy]/g) ?? []).length;
+  return vowels / w.length >= 0.25 && /[aeiou]/.test(w) && !/[^aeiouy]{4}/.test(w) && !/[aeiouy]{3}/.test(w);
+}
+/** Exported for its measurement test (secret-scanner.test.ts). */
+export function isNameWithCode(run: string): boolean {
+  const pieces = run.split(/[-_./]/).filter(Boolean).flatMap((p) => p.match(NAME_PIECE) ?? [p]);
+  if (pieces.join("") !== run.replace(/[-_./]/g, "")) return false;
+  const words = pieces.filter(isSayableWord);
+  if (words.filter((w) => w.length >= 5).length < 2) return false;
+  const length = (ps: string[]) => ps.reduce((n, p) => n + p.length, 0);
+  const letters = pieces.filter((p) => !/^[0-9]+$/.test(p));
+  const leftover = letters.filter((p) => !isSayableWord(p));
+  return length(words) >= 0.8 * length(letters) && length(leftover) <= 6;
+}
+
 function isExcludedBase64(run: string): boolean {
   // UUIDs contain `-`, so they surface in the base64-ish run; exclude them.
   if (UUID_RE.test(run)) return true;
   if (isSlug(run)) return true;
   if (isCamelIdentifier(run)) return true;
+  if (isNameWithCode(run)) return true;
   // Require MIXED CASE. A secret drawn from the base64(url) alphabet (62+
   // symbols) almost always contains both an uppercase and a lowercase letter —
   // across 5k random 40/48-char tokens, every one did. Lowercase-only-

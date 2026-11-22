@@ -1,6 +1,7 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { randomBytes, createHash, generateKeyPairSync } from "node:crypto";
-import { scanForSecrets, redactSecrets, scanKnownSecretValues, matchTier, secretMatchPhrase } from "./secret-scanner.js";
+import { scanForSecrets, redactSecrets, scanKnownSecretValues, matchTier, secretMatchPhrase } from "./secret-scanner.js";
+import { isNameWithCode } from "./entropy-detector.js";
 import { checkOutboundPayload } from "../../tools/http-egress-guard.js";
 import { buildNormalizedView } from "./secret-normalize.js";
 import {
@@ -563,6 +564,33 @@ describe("scanForSecrets — high-entropy detector (positives)", () => {
     }
   });
 
+  // Nor does the name-with-a-code one (a Glassdoor page name): it needs two
+  // sayable words of five letters or more covering most of the run, and at
+  // most six other characters. Measured at about 1 in 150k random keys (8 in
+  // 1.5M); the bound below allows a few in 50k, so a looser rule fails here
+  // (the first version measured cleared 1 in 400). The rule is asked directly:
+  // the scan's older rules clear some random keys on their own.
+  it("flags random keys that are not words with a short code (the name-with-code exemption stays narrow)", () => {
+    const alphabets = [
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
+    ];
+    let missed = 0;
+    for (const letters of alphabets) {
+      for (let i = 0; i < 25_000; i++) {
+        const token = [...randomBytes(24 + (i % 25))].map((b) => letters[b % letters.length]).join("");
+        if (isNameWithCode(token)) missed++;
+      }
+    }
+    expect(missed).toBeLessThan(5);
+  });
+
+  it("still flags a key-sized random id inside a name, and a key with a short word on it", () => {
+    for (const token of ["o29oBjZuSK3eaHYKvyDGHF-625-80", "Profile-ERKc54H452eUISsEPcjKvnq6xrZgsNRX", "Health-Records-qX7vTn4KpW9sYb"]) {
+      expect(scanForSecrets(`value ${token} end`).clean, token).toBe(false);
+    }
+  });
+
   // The hex-of-text exemption must not swallow hex key material: random bytes
   // decode to about 37% printable, far under the text ratio.
   it("flags random hex key material that is not a hash length", () => {
@@ -602,6 +630,11 @@ describe("scanForSecrets — high-entropy detector (false-positive traps stay cl
     ["an upper/title-case slug", "see Release_Notes-FINAL-Draft_2026 for details"],
     // A build stopped for approval on a data file citing NIH fact sheets (2026-11-21).
     ["two names joined by a hyphen, in a URL", "https://ods.od.nih.gov/factsheets/Calcium-HealthProfessional/ and /Magnesium-HealthProfessional/ and /Omega3FattyAcids-HealthProfessional/"],
+    // Page and file names that mix words with a short code (2026-11-22: 4 of
+    // the 7 URLs this machine's chats sent in 30 days that the scan flagged).
+    ["a page name of words with a short code", "https://www.glassdoor.com/Benefits/Johnson-Health-Tech-Maternity-and-Paternity-Leave-BNFT23_E304972_N1.htm"],
+    ["a fact sheet name with a digit in a word", "https://ods.od.nih.gov/factsheets/VitaminB6-HealthProfessional/"],
+    ["a file name with an id in front", "http://127.0.0.1:3000/uploads/afd05421-Jordan-Smith-Resume-Senior-Engineer.pdf"],
     // A Three.js download held for approval as carrying a token (2026-11-03).
     ["a CamelCase file name in a CDN URL", "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/shaders/LuminosityHighPassShader.js"],
     ["CamelCase identifiers with a short word or an acronym", "getElementsByClassName UnrealBloomPassToScreen WebGLRenderTargetCubeMap HTMLParserFactoryBuilder"],

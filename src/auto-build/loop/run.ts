@@ -28,8 +28,7 @@ import { attemptPhaseGateScoring } from "../loop-phase-gate.js";
 import { emitLaunchReadiness } from "../loop-effects.js";
 import type { LoopEvent, LoopOptions, LoopResult } from "./types.js";
 import { haltedResult, safeGet } from "./types.js";
-import { runChunkOnce } from "./run-chunk-once.js";
-import { handlePushBack } from "./handle-push-back.js";
+import { buildChunkWithRetry } from "./chunk-attempt.js";
 import { handleAction } from "./handle-action.js";
 import { runParallelWaves } from "./parallel-waves.js";
 
@@ -139,42 +138,15 @@ export async function runBuildLoop(opts: LoopOptions): Promise<LoopResult> {
       return haltedResult(`git rev-parse HEAD failed before chunk ${chunk.number}: ${preSha.error}`, chunk.number, outcomes, events);
     }
 
-    const outcome = await runChunkOnce({
-      chunk,
-      totalChunks,
-      planPath: opts.planPath,
-      plan: opts.plan,
-      projectDir: opts.projectDir,
-      preSha: preSha.value,
-      subprocessTimeoutMs: opts.subprocessTimeoutMs,
-      signal: opts.signal,
-      emit,
-      retryReason: undefined,
-      judgmentHook: opts.judgmentHook,
-      parentSessionId: opts.parentSessionId,
-      parentOpId: opts.parentOpId,
-      // Thread already-committed chunks' distilled learnings into this
-      // chunk's task so the worker inherits SPEC_GAPS / NOTE context
-      // instead of rediscovering the project from zero.
-      priorOutcomes: outcomes,
+    // Build, review and judge the chunk; a push_back gets one more attempt.
+    // Already-committed chunks' distilled learnings go into its task so the
+    // worker inherits SPEC_GAPS / NOTE context instead of rediscovering the
+    // project from zero.
+    const attempt = await buildChunkWithRetry({
+      opts, chunk, totalChunks, emit, preSha: preSha.value, priorOutcomes: outcomes,
     });
-
-    let finalOutcome = outcome;
-    let finalAction = outcome.action;
-
-    if (outcome.action === "push_back") {
-      const pb = await handlePushBack({
-        chunk, totalChunks,
-        planPath: opts.planPath, plan: opts.plan,
-        projectDir: opts.projectDir, preSha: preSha.value,
-        subprocessTimeoutMs: opts.subprocessTimeoutMs, signal: opts.signal, emit,
-        judgmentHook: opts.judgmentHook,
-        parentOpId: opts.parentOpId,
-        outcome,
-      });
-      finalOutcome = pb.finalOutcome;
-      finalAction = pb.finalAction;
-    }
+    let finalOutcome = attempt.finalOutcome;
+    let finalAction = attempt.finalAction;
 
     // Phase-gate scoring + auto-fix push-back. Fires only when the
     // halt is from the phase-gate gate AND the project carries a

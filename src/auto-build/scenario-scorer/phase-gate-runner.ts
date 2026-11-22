@@ -136,21 +136,27 @@ function pickScenarioFiles(projectDir: string, plan: ParsedPlan, chunk: ParsedCh
   const project = basename(projectDir);
   const scenarioDir = projectHoldoutDir(project);
   if (!scenarioDir) return [];
-  const all = listScenarios(project);
+  const matched = sealedScenarioFilesFor(project, plan.chunks.filter(c => c.phase === chunk.phase));
+  return matched.length > 0 ? matched : listScenarios(project).map(f => join(scenarioDir, f));
+}
 
-  const phaseChunks = plan.chunks.filter(c => c.phase === chunk.phase);
-  const phaseScenarioNumbers = new Set<number>();
-  for (const c of phaseChunks) {
+/** The sealed scenario files the given chunks name in their `Scenarios:` field
+ *  ("1, 4 (partial)" → files `01-…`, `04-…`), as absolute paths. Empty when the
+ *  chunks name none, or the project has no sealed suite. The phase gate falls
+ *  back to the whole suite on empty; a chunk's own judging does not. */
+export function sealedScenarioFilesFor(project: string, chunks: ParsedChunk[]): string[] {
+  const scenarioDir = projectHoldoutDir(project);
+  if (!scenarioDir) return [];
+  const wanted = new Set<number>();
+  for (const c of chunks) {
     const nums = (c.scenarios || "").match(/\d+/g);
-    if (nums) for (const n of nums) phaseScenarioNumbers.add(Number(n));
+    if (nums) for (const n of nums) wanted.add(Number(n));
   }
-
-  const matched = all
+  if (wanted.size === 0) return [];
+  return listScenarios(project)
     .filter(f => {
       const num = Number((f.match(/^(\d+)/) || [])[1]);
-      return Number.isFinite(num) && phaseScenarioNumbers.has(num);
+      return Number.isFinite(num) && wanted.has(num);
     })
     .map(f => join(scenarioDir, f));
-
-  return matched.length > 0 ? matched : all.map(f => join(scenarioDir, f));
 }

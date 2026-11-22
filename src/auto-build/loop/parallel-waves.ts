@@ -49,8 +49,7 @@ import { emitLaunchReadiness } from "../loop-effects.js";
 import { createNamedWorktree, mergeWorktree, cleanupWorktree } from "../../agency/worktree.js";
 import type { ParsedChunk } from "../plan-parser.js";
 import type { ChunkReviewOutcome, ReviewAction } from "../chunk-review/index.js";
-import { runChunkOnce } from "./run-chunk-once.js";
-import { handlePushBack } from "./handle-push-back.js";
+import { buildChunkWithRetry } from "./chunk-attempt.js";
 import { handleAction } from "./handle-action.js";
 import { reGateMergedTree, warnFootprintEscapes } from "./merged-regate.js";
 import { buildChunkInWorktree, commitDispatchedChunk, preserveWorktreeWork } from "./parallel-chunk-build.js";
@@ -272,7 +271,7 @@ async function runBatch(ctx: ParallelWavesContext, batch: ParsedChunk[], chunksC
 
 /**
  * Worktree-cap fallback: build one chunk SERIALLY on the base tree, reusing the
- * serial-path primitives (runChunkOnce + handlePushBack + handleAction).
+ * serial-path primitives (buildChunkWithRetry + handleAction).
  */
 async function buildChunkOnBaseSerial(ctx: ParallelWavesContext, chunk: ParsedChunk, chunksCommittedIn: number): Promise<StepResult> {
   const { opts, totalChunks, emit, events, outcomes } = ctx;
@@ -288,30 +287,9 @@ async function buildChunkOnBaseSerial(ctx: ParallelWavesContext, chunk: ParsedCh
     return { kind: "halt", result: haltedResult(`git rev-parse HEAD failed before chunk ${chunk.number}: ${preSha.error}`, chunk.number, outcomes, events) };
   }
 
-  const outcome = await runChunkOnce({
-    chunk, totalChunks,
-    planPath: opts.planPath, plan: opts.plan,
-    projectDir: opts.projectDir, preSha: preSha.value,
-    subprocessTimeoutMs: opts.subprocessTimeoutMs, signal: opts.signal, emit,
-    retryReason: undefined,
-    judgmentHook: opts.judgmentHook,
-    parentSessionId: opts.parentSessionId, parentOpId: opts.parentOpId,
-    priorOutcomes: outcomes,
+  const { finalOutcome, finalAction } = await buildChunkWithRetry({
+    opts, chunk, totalChunks, emit, preSha: preSha.value, priorOutcomes: outcomes,
   });
-
-  let finalOutcome = outcome;
-  let finalAction = outcome.action;
-  if (outcome.action === "push_back") {
-    const pb = await handlePushBack({
-      chunk, totalChunks,
-      planPath: opts.planPath, plan: opts.plan,
-      projectDir: opts.projectDir, preSha: preSha.value,
-      subprocessTimeoutMs: opts.subprocessTimeoutMs, signal: opts.signal, emit,
-      judgmentHook: opts.judgmentHook, parentOpId: opts.parentOpId, outcome,
-    });
-    finalOutcome = pb.finalOutcome;
-    finalAction = pb.finalAction;
-  }
 
   outcomes.push({ chunkNumber: chunk.number, outcome: finalOutcome, action: finalAction });
   if (finalOutcome.report.launchReadiness) {

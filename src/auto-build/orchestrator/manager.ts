@@ -25,6 +25,7 @@ import { randomBytes } from "node:crypto";
 import type { ParsedPlan } from "../plan-parser.js";
 import { runBuildLoop, type LoopEvent, type LoopResult } from "../loop.js";
 import type { JudgmentHook } from "../chunk-review/judgment-hook.js";
+import { chunkJudgingSummary, type ChunkJudge } from "../chunk-review/chunk-verdict.js";
 import * as state from "./state.js";
 import type { OrchestratorState } from "./state.js";
 import * as registry from "./registry.js";
@@ -71,6 +72,7 @@ export interface StartOrchestrationOptions {
   startingChunk: number;
   maxChunks?: number;
   judgmentHook?: JudgmentHook;
+  chunkJudge?: ChunkJudge;
   subprocessTimeoutMs?: number;
 }
 
@@ -205,6 +207,7 @@ async function runOrchestrationLoop(orch: ActiveOrchestration, opts: StartOrches
       maxChunks: opts.maxChunks,
       signal: orch.abortController.signal,
       judgmentHook: opts.judgmentHook,
+      chunkJudge: opts.chunkJudge,
       subprocessTimeoutMs: opts.subprocessTimeoutMs,
       parentSessionId: opts.sessionId,
       // The orchestrator card's id in the AGENTS panel IS orch.opId (it's the
@@ -323,7 +326,8 @@ function buildSummaryText(s: OrchestratorState, result: LoopResult): string {
     lines.push(``);
     lines.push(`Per-chunk verdicts:`);
     for (const o of result.outcomes) {
-      lines.push(`  chunk ${o.chunkNumber}: ${o.action}`);
+      const judged = o.outcome.judging ? ` — ${chunkJudgingSummary(o.outcome.judging)}` : "";
+      lines.push(`  chunk ${o.chunkNumber}: ${o.action}${judged}`);
     }
   }
   return lines.join("\n");

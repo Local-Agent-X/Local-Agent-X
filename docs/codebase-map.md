@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 72 top-level dirs · 72 live · 0 with no live importer · 2092 non-test source files · 74 oversized · 261 nearing the size cap.
+**Totals:** 72 top-level dirs · 72 live · 0 with no live importer · 2097 non-test source files · 74 oversized · 261 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -76,7 +76,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/bridge-voice/` | 8 | 5 | S |  |
 | `src/mcp-client/` | 8 | 11 | L | 1 |
 | `src/telegram-bridge/` | 8 | 6 | M |  |
-| `src/auto-build/` | 7 | 52 | XL | 2 |
+| `src/auto-build/` | 7 | 57 | XL | 2 |
 | `src/android/` | 6 | 7 | M |  |
 | `src/credentials/` | 6 | 1 | S |  |
 | `src/publish-review/` | 5 | 8 | M |  |
@@ -388,6 +388,7 @@ job. Comments are free: never cut them to fit.
 - `src/canonical-loop/adapters/anthropic/stream-consume.ts#streamConsume` — 100+ own code lines (cap 100)
 - `src/anthropic-client/stream-cli.ts#streamViaColdSpawn` — 90+ own code lines (cap 100)
 - `src/app-renderer/components.ts#renderComponent` — 90+ own code lines (cap 100)
+- `src/auto-build/loop/run-chunk-once.ts#runChunkOnce` — 90+ own code lines (cap 100)
 - `src/auto-build/orchestrator/manager.ts#startOrchestration` — 90+ own code lines (cap 100)
 - `src/autopilot/start.ts#startAutopilot` — 90+ own code lines (cap 100)
 - `src/canonical-loop/adapters/anthropic-transport.ts#stream` — 90+ own code lines (cap 100)
@@ -474,7 +475,6 @@ job. Comments are free: never cut them to fit.
 - `src/auto-build/loop/handle-action.ts#handleAction` — 70+ own code lines (cap 100)
 - `src/auto-build/loop/handle-push-back.ts#handlePushBack` — 70+ own code lines (cap 100)
 - `src/auto-build/loop/parallel-waves.ts#runBatch` — 70+ own code lines (cap 100)
-- `src/auto-build/loop/run-chunk-once.ts#runChunkOnce` — 70+ own code lines (cap 100)
 - `src/autopilot/validate.ts#validateRound` — 70+ own code lines (cap 100)
 - `src/browser/in-app-resolve-scripts.ts#textSearchScript` — 70+ own code lines (cap 100)
 - `src/browser/launcher.ts#launchAgentChrome` — 70+ own code lines (cap 100)

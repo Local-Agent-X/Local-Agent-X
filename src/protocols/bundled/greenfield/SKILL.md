@@ -168,8 +168,10 @@ two agents scaffolding at once produce two apps.
    (a screen, an isolated feature, glue) under `/vibe-code`: verify by
    behavior, do not read every line. Do not vibe a payments integration; do
    not senior-engineer a button color.
-3. Run `check`. Have the judge score the chunk's scenarios with
-   `holdout_judge`.
+3. Run `check`. The engine has already scored the chunk's **Scenarios:**
+   and set a skeptic agent on its diff; the run summary shows each score and
+   the skeptic's verdict. A chunk that names no scenario is not scored: judge
+   it with `holdout_judge`.
 4. On a failure, assume the spec was ambiguous, then that the build is wrong,
    and only last that the scenario is wrong (`references/holdout.md`, section 7).
 5. Show the owner what landed and the scores. Mark the chunk done in the
@@ -179,8 +181,9 @@ two agents scaffolding at once produce two apps.
 conflict and dependency graph from each chunk's **Files:**, then runs waves:
 every chunk whose dependencies are green and whose files overlap nothing in
 flight goes out together, each in its own worktree. Each chunk is reviewed,
-and each phase is scored against the sealed suite before the next starts;
-follow it with `build_plan_status`. Decide engineering questions and record
+scored against its own scenarios and attacked by a skeptic before it lands,
+and each phase is scored again against the sealed suite before the next
+starts; follow it with `build_plan_status`. Decide engineering questions and record
 them; park product, taste, money and risk questions and keep the run moving.
 The ledger, not the conversation, holds the state.
 `references/autonomous.md`.

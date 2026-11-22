@@ -1,0 +1,55 @@
+/**
+ * One chunk's attempts: build it, have it reviewed (gates, the real build, the
+ * chunk judge), and on a push_back build it once more through the advisor
+ * (handle-push-back.ts), whose second miss is a halt. The one way every path
+ * builds a chunk: the serial loop (run.ts), a worktree build (parallel-chunk-
+ * build.ts) and the worktree-cap fallback on base (parallel-waves.ts).
+ */
+
+import type { ParsedChunk } from "../plan-parser.js";
+import type { ChunkReviewOutcome, ReviewAction } from "../chunk-review/index.js";
+import { runChunkOnce } from "./run-chunk-once.js";
+import { handlePushBack } from "./handle-push-back.js";
+import type { EmitFn, LoopOptions, LoopResult } from "./types.js";
+
+export interface ChunkAttemptInput {
+  opts: LoopOptions;
+  chunk: ParsedChunk;
+  totalChunks: number;
+  emit: EmitFn;
+  /** HEAD of the tree the chunk builds in, before it starts. */
+  preSha: string;
+  /** Chunks already landed: their learnings go into the first brief. */
+  priorOutcomes: LoopResult["outcomes"];
+  /** The tree to build in when it is not the project itself (a worktree). */
+  workTree?: string;
+  /** Concurrent-build slot (parallel path): a distinct dev-server port. */
+  workerIndex?: number;
+}
+
+export interface ChunkAttemptResult {
+  finalOutcome: ChunkReviewOutcome;
+  finalAction: ReviewAction;
+}
+
+export async function buildChunkWithRetry(a: ChunkAttemptInput): Promise<ChunkAttemptResult> {
+  const { opts, chunk, totalChunks, emit, preSha } = a;
+  const shared = {
+    chunk, totalChunks, emit, preSha,
+    planPath: opts.planPath, plan: opts.plan,
+    projectDir: a.workTree ?? opts.projectDir,
+    subprocessTimeoutMs: opts.subprocessTimeoutMs, signal: opts.signal,
+    judgmentHook: opts.judgmentHook, parentOpId: opts.parentOpId,
+    // The judge finds the sealed suite by the project's name, never a worktree's.
+    chunkJudge: opts.chunkJudge, baseProjectDir: opts.projectDir, workerIndex: a.workerIndex,
+  };
+
+  const outcome = await runChunkOnce({
+    ...shared,
+    retryReason: undefined,
+    parentSessionId: opts.parentSessionId,
+    priorOutcomes: a.priorOutcomes,
+  });
+  if (outcome.action !== "push_back") return { finalOutcome: outcome, finalAction: outcome.action };
+  return handlePushBack({ ...shared, outcome });
+}

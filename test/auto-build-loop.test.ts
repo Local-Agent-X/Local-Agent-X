@@ -378,3 +378,49 @@ describe("runBuildLoop — event stream", () => {
     expect(result.events.filter(e => e.type === "chunk-landed")).toHaveLength(1);
   });
 });
+
+describe("runBuildLoop — chunk judging (held-out scenarios + skeptic)", () => {
+  type Judging = import("../src/auto-build/chunk-review/chunk-verdict.js").ChunkJudging;
+  const green: Judging = {
+    scenarios: { status: "scored", reason: "", scores: [{ file: "01-boot.md", score: 9, passed: true, reasoning: "boots", failedCriteria: [] }] },
+    skeptic: { status: "holds", finding: "tried an empty config" },
+  };
+  const broken: Judging = { ...green, skeptic: { status: "broken", finding: "SKEPTIC-FINDING: crashes on an empty config" } };
+
+  it("a failed judging sends the chunk back once with the finding, then lands it when the retry is green", async () => {
+    __pushReport(CLEAN_REPORT("src/skeleton.ts"));
+    __pushReport(CLEAN_REPORT("src/skeleton.ts"));
+    const verdicts = [broken, green];
+    const judgeInputs: Array<{ baseProjectDir: string; preSha: string }> = [];
+    const result = await runBuildLoop({
+      projectDir, planPath: join(projectDir, "spec", "plan.md"), plan: parsePlanText(TWO_CHUNK_PLAN),
+      startingChunk: 1, maxChunks: 1,
+      chunkJudge: async (input) => { judgeInputs.push(input); return verdicts.shift()!; },
+    });
+    expect(result.status).toBe("complete");
+    expect(result.chunksCommitted).toBe(1);
+    expect(judgeInputs).toHaveLength(2);
+    expect(judgeInputs[0].baseProjectDir).toBe(projectDir);
+    expect(judgeInputs[0].preSha).toMatch(/^[0-9a-f]{40}$/);
+    // The retry worker was told what the skeptic found.
+    const { runChunkAgent } = await import("../src/auto-build/agents/chunk-runner.js");
+    const retryTask = (vi.mocked(runChunkAgent).mock.calls[1][0] as { task: string }).task;
+    expect(retryTask).toContain("SKEPTIC-FINDING: crashes on an empty config");
+    expect(result.outcomes[0].outcome.judging?.skeptic.status).toBe("holds");
+    expect(result.events.some(e => e.message.includes("judged: scenarios 1/1 passed"))).toBe(true);
+  });
+
+  it("a chunk that fails judging twice halts the build with the finding", async () => {
+    __pushReport(CLEAN_REPORT("src/skeleton.ts"));
+    __pushReport(CLEAN_REPORT("src/skeleton.ts"));
+    const result = await runBuildLoop({
+      projectDir, planPath: join(projectDir, "spec", "plan.md"), plan: parsePlanText(TWO_CHUNK_PLAN),
+      startingChunk: 1,
+      chunkJudge: async () => broken,
+    });
+    expect(result.status).toBe("halted");
+    expect(result.chunksCommitted).toBe(0);
+    expect(result.haltReason).toContain("SKEPTIC-FINDING");
+    expect(git("log --format=%s")).not.toContain("chunk 1: Skeleton");
+  });
+});

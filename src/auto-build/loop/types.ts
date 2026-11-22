@@ -1,6 +1,7 @@
 import type { ParsedPlan } from "../plan-parser.js";
 import type { ChunkReviewOutcome, ReviewAction } from "../chunk-review/index.js";
 import type { JudgmentHook } from "../chunk-review/judgment-hook.js";
+import type { ChunkJudge } from "../chunk-review/chunk-verdict.js";
 
 export type LoopEventType =
   | "git-baseline"
@@ -56,6 +57,13 @@ export interface LoopOptions {
    * Pure no-op when undefined; never downgrades a halt/push_back/amend_spec.
    */
   judgmentHook?: JudgmentHook;
+  /**
+   * Optional chunk judge (chunk-review/chunk-judge.ts): once a chunk's build
+   * and tests pass, score its held-out scenarios and set a skeptic on it; a
+   * failure is a push_back. The build tools pass {@link defaultChunkJudge};
+   * undefined → chunks are not judged (tests, other callers).
+   */
+  chunkJudge?: ChunkJudge;
   /**
    * Max chunks to build IN PARALLEL within this orchestration (S3). Optional
    * override for {@link LAXConfig.maxConcurrentChunks}; when omitted, run.ts

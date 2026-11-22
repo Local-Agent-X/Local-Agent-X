@@ -45,6 +45,8 @@ const shared = vi.hoisted(() => ({
   regateProjectDirs: [] as string[],
   /** When set, the mocked build-exec gate THROWS this message (infra-crash path). */
   regateThrow: null as string | null,
+  /** What each dispatched runChunkOnce was handed for judging. */
+  judgeWiring: [] as Array<{ projectDir: string; baseProjectDir?: string; chunkJudge?: unknown }>,
 }));
 
 // Mock the build-exec gate so the S4 integration re-gate is controllable per
@@ -85,9 +87,10 @@ vi.mock("../src/agency/worktree.js", () => ({
 // delay so concurrent dispatch is OBSERVABLE (both build-starts precede any
 // build-end when two chunks run under Promise.all).
 vi.mock("../src/auto-build/loop/run-chunk-once.js", () => ({
-  runChunkOnce: vi.fn(async (opts: { chunk: { number: number }; workerIndex?: number }) => {
+  runChunkOnce: vi.fn(async (opts: { chunk: { number: number }; workerIndex?: number; projectDir: string; baseProjectDir?: string; chunkJudge?: unknown }) => {
     shared.calls.push(`build-start:${opts.chunk.number}`);
     shared.workerIndices.push({ chunk: opts.chunk.number, workerIndex: opts.workerIndex });
+    shared.judgeWiring.push({ projectDir: opts.projectDir, baseProjectDir: opts.baseProjectDir, chunkJudge: opts.chunkJudge });
     await new Promise((r) => setTimeout(r, 15));
     shared.calls.push(`build-end:${opts.chunk.number}`);
     const action = shared.chunkActions.get(opts.chunk.number) ?? "proceed";
@@ -157,6 +160,7 @@ beforeEach(() => {
   shared.regateResults.length = 0;
   shared.regateProjectDirs.length = 0;
   shared.regateThrow = null;
+  shared.judgeWiring.length = 0;
   vi.clearAllMocks();
 
   projectDir = mkdtempSync(join(tmpdir(), "parallel-waves-test-"));
@@ -463,5 +467,26 @@ describe("back-compat — maxConcurrentChunks=1 takes the serial path", () => {
     expect(shared.calls.some((c) => c.startsWith("commit:"))).toBe(false);
     // workerIndex is undefined on the serial path (never assigned).
     expect(shared.workerIndices.every((w) => w.workerIndex === undefined)).toBe(true);
+  });
+});
+
+describe("parallel path — chunk judging", () => {
+  it("hands each worktree chunk the judge and the BASE project, whose name finds the sealed suite", async () => {
+    const chunkJudge = vi.fn();
+    const result = await runBuildLoop({
+      projectDir,
+      planPath: join(projectDir, "spec", "plan.md"),
+      plan: parsePlanText(TWO_DISJOINT),
+      startingChunk: 1,
+      maxConcurrentChunks: 2,
+      chunkJudge,
+    });
+    expect(result.status).toBe("complete");
+    expect(shared.judgeWiring).toHaveLength(2);
+    for (const w of shared.judgeWiring) {
+      expect(w.chunkJudge).toBe(chunkJudge);
+      expect(w.baseProjectDir).toBe(projectDir);
+      expect(w.projectDir).toMatch(/^\/fake-worktree\//);
+    }
   });
 });

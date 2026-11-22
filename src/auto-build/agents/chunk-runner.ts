@@ -8,10 +8,11 @@
  * "handler:agent-result" EventBus event. The result fires after the
  * underlying canonical op reaches a terminal state.
  *
- * Two roles exposed:
+ * Roles exposed:
  *   - "chunk-runner-trunk" — /senior-engineer methodology, for trunk + mixed
  *   - "chunk-runner-leaf"  — /vibe-code methodology, for leaf
  *   - "scenario-fix"       — /senior-engineer + scenario-fix constraints
+ *   - "chunk-skeptic"      — no methodology; tries to prove a chunk wrong, read + run only
  *
  * The systemPrompt is computed at first invocation per role and cached.
  * Skill body comes from `src/protocols/bundled/<name>/SKILL.md` (the same
@@ -28,9 +29,9 @@ import type { AgentDefinition } from "../../agents/types.js";
 import { EventBus } from "../../event-bus.js";
 import { Handler } from "../../agency/handler.js";
 import { loadSkillBody } from "../skill-bodies.js";
-import { CODING_KIT } from "../../tools/tool-kits.js";
+import { CODING_KIT, REVIEW_KIT } from "../../tools/tool-kits.js";
 
-export type ChunkAgentRole = "chunk-runner-trunk" | "chunk-runner-leaf" | "scenario-fix";
+export type ChunkAgentRole = "chunk-runner-trunk" | "chunk-runner-leaf" | "scenario-fix" | "chunk-skeptic";
 
 export interface ChunkAgentInvocation {
   role: ChunkAgentRole;
@@ -122,10 +123,59 @@ const SCENARIO_FIX_DISCIPLINE_BLOCK =
   `## Report format — same as chunk-runner\n\n` +
   `STATUS / DONE_WHEN / CHANGED / TESTS / NEW_FAILURES / PRE_EXISTING_FAILURES / SPEC_GAPS / LAUNCH_READINESS / NOTE`;
 
-const SKILL_FOR_ROLE: Record<ChunkAgentRole, "senior-engineer" | "vibe-code"> = {
-  "chunk-runner-trunk": "senior-engineer",
-  "chunk-runner-leaf": "vibe-code",
-  "scenario-fix": "senior-engineer",
+// The /greenfield skill's skeptic (references/autonomous.md, section 6): a
+// model is a poor critic of its own work, so this one starts from "it is
+// broken" and has to be talked out of it by evidence it gathers itself.
+const SKEPTIC_DISCIPLINE_BLOCK =
+  `# Chunk skeptic\n\n` +
+  `Another agent just built one chunk of an app and says it is done and correct. Your job is to ` +
+  `PROVE IT WRONG. You are not here to fix anything, and you have no tool that writes or edits files.\n\n` +
+  `## Mandate\n\n` +
+  `- Read the change: run \`git diff <pre-chunk sha>\` and \`git status\` in the project (the sha is in your task), ` +
+  `then read what the diff touches and what calls it.\n` +
+  `- Hunt for: the input it breaks on, the case it missed, the existing seam it forked instead of ` +
+  `extending, the test that cannot fail, a claim in the builder's report the code does not back.\n` +
+  `- Show it, do not assert it: run the tests, run the code with the breaking input, cite file:line. ` +
+  `Throwaway probes go in a temp folder outside the project, never in it.\n` +
+  `- Judge against the chunk's slice and done-when and the project's \`spec/\`, not against your taste. ` +
+  `Style you would have written differently is not a break.\n` +
+  `- Default to broken if unsure: HOLDS means you tried and the change survived.\n\n` +
+  `## Verdict format (parsed — keep it exact)\n\n` +
+  `Your run's LAST message is exactly this, column-0 lines, nothing after:\n\n` +
+  `VERDICT: BROKEN | HOLDS\n` +
+  `FINDING: <BROKEN: what breaks, the input or case, file:line, and how you showed it. HOLDS: what you tried.>`;
+
+/** What each role is: the methodology skill it inherits (none for the
+ *  skeptic, which builds nothing), its closing discipline, its tools, and its
+ *  card. The skeptic gets no write or edit tool: it shows a break, it does not
+ *  fix one. */
+interface RoleSpec {
+  skill: "senior-engineer" | "vibe-code" | null;
+  discipline: string;
+  agentRole: string;
+  tools: readonly string[];
+  name: string;
+  description: string;
+  icon: string;
+}
+
+const ROLE_SPECS: Record<ChunkAgentRole, RoleSpec> = {
+  "chunk-runner-trunk": {
+    skill: "senior-engineer", discipline: DISCIPLINE_BLOCK, agentRole: "implementer", tools: CODING_KIT,
+    name: "Chunk runner (trunk/mixed)", description: "Implements a trunk or mixed chunk from a build plan.", icon: "🏗️",
+  },
+  "chunk-runner-leaf": {
+    skill: "vibe-code", discipline: DISCIPLINE_BLOCK, agentRole: "implementer", tools: CODING_KIT,
+    name: "Chunk runner (leaf)", description: "Implements a leaf chunk (UI, isolated features) from a build plan.", icon: "🎨",
+  },
+  "scenario-fix": {
+    skill: "senior-engineer", discipline: SCENARIO_FIX_DISCIPLINE_BLOCK, agentRole: "implementer", tools: CODING_KIT,
+    name: "Scenario fix worker", description: "Fixes phase-gate scenario failures without violating spec/constitution.", icon: "🔧",
+  },
+  "chunk-skeptic": {
+    skill: null, discipline: SKEPTIC_DISCIPLINE_BLOCK, agentRole: "reviewer", tools: REVIEW_KIT,
+    name: "Chunk skeptic", description: "Tries to prove a just-built chunk wrong before it counts as done.", icon: "🔍",
+  },
 };
 
 const DEF_CACHE = new Map<ChunkAgentRole, AgentDefinition>();
@@ -134,32 +184,22 @@ function getDefinition(role: ChunkAgentRole): AgentDefinition {
   const cached = DEF_CACHE.get(role);
   if (cached) return cached;
 
-  const skill = SKILL_FOR_ROLE[role];
-  const skillBody = loadSkillBody(skill);
-  const isFix = role === "scenario-fix";
-
-  const systemPrompt =
-    `# Worker methodology — /${skill}\n\n` +
-    `Load-bearing methodology this worker inherits. Read it before touching code; ` +
-    `it's the discipline the review pass enforces against.\n\n` +
-    `---\n\n${skillBody}\n\n---\n\n` +
-    (isFix ? SCENARIO_FIX_DISCIPLINE_BLOCK : DISCIPLINE_BLOCK);
+  const spec = ROLE_SPECS[role];
+  const methodology = spec.skill
+    ? `# Worker methodology — /${spec.skill}\n\n` +
+      `Load-bearing methodology this worker inherits. Read it before touching code; ` +
+      `it's the discipline the review pass enforces against.\n\n` +
+      `---\n\n${loadSkillBody(spec.skill)}\n\n---\n\n`
+    : "";
 
   const def: AgentDefinition = {
     id: `builtin-${role}`,
-    name: role === "scenario-fix" ? "Scenario fix worker" :
-          role === "chunk-runner-leaf" ? "Chunk runner (leaf)" :
-          "Chunk runner (trunk/mixed)",
-    role: "implementer",
-    systemPrompt,
-    allowedTools: [...CODING_KIT],
-    description:
-      role === "scenario-fix"
-        ? "Fixes phase-gate scenario failures without violating spec/constitution."
-        : role === "chunk-runner-leaf"
-        ? "Implements a leaf chunk (UI, isolated features) from a build plan."
-        : "Implements a trunk or mixed chunk from a build plan.",
-    icon: role === "scenario-fix" ? "🔧" : role === "chunk-runner-leaf" ? "🎨" : "🏗️",
+    name: spec.name,
+    role: spec.agentRole,
+    systemPrompt: methodology + spec.discipline,
+    allowedTools: [...spec.tools],
+    description: spec.description,
+    icon: spec.icon,
   };
   DEF_CACHE.set(role, def);
   return def;

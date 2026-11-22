@@ -10,7 +10,7 @@ import { blocked } from "../../tools/result-helpers.js";
 import { sessionIdOf } from "../../tool-execution/internal-args.js";
 import { parsePlanFile } from "../plan-parser.js";
 import { AUTO_BUILD_DISABLED_RECOVERY, isFeatureEnabled, FEATURE_FLAG_ENV } from "../tool.js";
-import { defaultJudgmentHook } from "../chunk-review/judgment-hook.js";
+import { DEFAULT_CHUNK_REVIEW } from "../chunk-review/default-review.js";
 import { isActiveForProject, startOrchestration, listActive } from "./manager.js";
 import { computeResumeWindow, finalizeCompletedResume, readProjectState } from "./resume.js";
 import { listAll as listRegistry } from "./registry.js";
@@ -161,7 +161,7 @@ export const buildPlanResumeTool: ToolDefinition = {
       plan,
       startingChunk: window.startingChunk,
       maxChunks: window.maxChunks,
-      judgmentHook: defaultJudgmentHook,
+      ...DEFAULT_CHUNK_REVIEW,
     });
 
     return {

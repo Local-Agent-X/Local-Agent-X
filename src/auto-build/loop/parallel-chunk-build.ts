@@ -14,8 +14,7 @@
 import { getHeadSha } from "../git-helpers.js";
 import { applyAdditiveSpecAmendment } from "../loop-effects.js";
 import { commitInWorktree } from "../../agency/worktree.js";
-import { runChunkOnce } from "./run-chunk-once.js";
-import { handlePushBack } from "./handle-push-back.js";
+import { buildChunkWithRetry } from "./chunk-attempt.js";
 import { safeGet } from "./types.js";
 import type { ParallelWavesContext, DispatchedChunk, BuiltChunk } from "./parallel-waves.js";
 
@@ -36,35 +35,13 @@ export async function buildChunkInWorktree(ctx: ParallelWavesContext, d: Dispatc
     message: `Starting chunk ${d.chunk.number}/${totalChunks} in worktree ${d.name} (worker ${d.workerIndex}): ${d.chunk.title} (${d.chunk.klass})`,
   });
 
-  const outcome = await runChunkOnce({
-    chunk: d.chunk, totalChunks,
-    planPath: opts.planPath, plan: opts.plan,
-    projectDir: d.worktreePath,           // isolated worktree, NOT the base tree
+  const { finalOutcome, finalAction } = await buildChunkWithRetry({
+    opts, chunk: d.chunk, totalChunks, emit,
     preSha: preShaVal,
-    subprocessTimeoutMs: opts.subprocessTimeoutMs,
-    signal: opts.signal, emit,
-    retryReason: undefined,
-    judgmentHook: opts.judgmentHook,
-    parentSessionId: opts.parentSessionId, parentOpId: opts.parentOpId, // nest card under orchestrator
+    workTree: d.worktreePath,             // isolated worktree, NOT the base tree
     priorOutcomes: outcomes,              // learnings from already-merged chunks
     workerIndex: d.workerIndex,           // unique per concurrent build (S5 ports)
   });
-
-  let finalOutcome = outcome;
-  let finalAction = outcome.action;
-
-  if (outcome.action === "push_back") {
-    const pb = await handlePushBack({
-      chunk: d.chunk, totalChunks,
-      planPath: opts.planPath, plan: opts.plan,
-      projectDir: d.worktreePath, preSha: preShaVal,
-      subprocessTimeoutMs: opts.subprocessTimeoutMs, signal: opts.signal, emit,
-      judgmentHook: opts.judgmentHook, parentOpId: opts.parentOpId,
-      outcome,
-    });
-    finalOutcome = pb.finalOutcome;
-    finalAction = pb.finalAction;
-  }
 
   return { dispatched: d, chunk: d.chunk, finalOutcome, finalAction };
 }

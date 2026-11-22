@@ -27,6 +27,7 @@ import {
 } from "./gates.js";
 import type { JudgmentHook } from "./judgment-hook.js";
 import { runBuildExecGate, type BuildExecRunner } from "./gate-build-exec.js";
+import { chunkJudgingFinding, type ChunkJudge, type ChunkJudgeInput, type ChunkJudging } from "./chunk-verdict.js";
 
 export interface ChunkReviewInput {
   /** The chunk we just ran. */
@@ -43,7 +44,13 @@ export interface ChunkReviewInput {
    * `git diff <pre-sha> -- spec/` and passes the output.
    */
   specDiff?: string;
+  /** Judge the chunk against its held-out scenarios and a skeptic once the
+   *  build-exec gate passes (chunk-judge.ts). Absent → no judging. */
+  chunkJudge?: ChunkJudgeRun;
 }
+
+/** The judge and what it needs beyond the review's own input. */
+export type ChunkJudgeRun = { judge: ChunkJudge } & Omit<ChunkJudgeInput, "chunk" | "rawReport" | "projectDir" | "signal">;
 
 export interface ChunkReviewOutcome {
   action: ReviewAction;
@@ -56,6 +63,8 @@ export interface ChunkReviewOutcome {
   /** The project's structure check passed but listed what is nearing a size
    *  cap: carried into the next chunk's context, never a finding. */
   structureNote?: string;
+  /** The chunk's scenario scores and the skeptic's verdict, when it was judged. */
+  judging?: ChunkJudging;
 }
 
 const ACTION_RANK: Record<ReviewAction, number> = {
@@ -149,7 +158,15 @@ export async function runChunkReviewWithJudgment(
       report: base.report,
     };
   }
-  const passed: ChunkReviewOutcome = structureNote ? { ...base, structureNote } : base;
+  let passed: ChunkReviewOutcome = structureNote ? { ...base, structureNote } : base;
+
+  // The chunk's held-out scenarios and the skeptic. Runs on a build that
+  // actually built; a push_back here outranks the spec-gap hook's amend_spec.
+  if (input.chunkJudge) {
+    const judged = await judgeChunk(input, input.chunkJudge, passed, signal);
+    if (judged.action !== "proceed") return judged;
+    passed = judged;
+  }
 
   if (!hook) return passed;
 
@@ -168,12 +185,34 @@ export async function runChunkReviewWithJudgment(
     reasoning: result.reasoning,
   };
   return {
+    ...passed,
     action: "amend_spec",
     reasoning: result.reasoning,
-    findings: [...base.findings, finding],
+    findings: [...passed.findings, finding],
     report: reportWithGap,
-    ...(structureNote ? { structureNote } : {}),
   };
+}
+
+/** Run the chunk judge and fold its verdict into the outcome. A judge that
+ *  throws fails open (an infra crash must not wedge the build), recorded as
+ *  unverified on the outcome rather than dropped. */
+async function judgeChunk(
+  input: ChunkReviewInput & { projectDir: string },
+  run: ChunkJudgeRun,
+  passed: ChunkReviewOutcome,
+  signal?: AbortSignal,
+): Promise<ChunkReviewOutcome> {
+  const { judge, ...ctx } = run;
+  let judging: ChunkJudging;
+  try {
+    judging = await judge({ ...ctx, chunk: input.chunk, rawReport: input.rawReport, projectDir: input.projectDir, signal });
+  } catch (e) {
+    const why = `the chunk judge crashed: ${(e as Error).message}`;
+    judging = { scenarios: { status: "not-run", reason: why, scores: [] }, skeptic: { status: "not-run", finding: why } };
+  }
+  const finding = chunkJudgingFinding(input.chunk.number, judging);
+  if (!finding) return { ...passed, judging };
+  return { ...passed, action: finding.action, reasoning: finding.reasoning, findings: [...passed.findings, finding], judging };
 }
 
 export type { GateFinding, ReviewAction, ChunkReport };

@@ -5,6 +5,7 @@ import { runChunkReviewWithJudgment, type ChunkReviewOutcome } from "../chunk-re
 import { parseChunkReport } from "../chunk-review/report-parser.js";
 import type { ReviewAction } from "../chunk-review/gates.js";
 import type { JudgmentHook } from "../chunk-review/judgment-hook.js";
+import { chunkJudgingSummary, type ChunkJudge } from "../chunk-review/chunk-verdict.js";
 import { gitDiffPath } from "../git-helpers.js";
 import type { EmitFn } from "./types.js";
 
@@ -39,14 +40,17 @@ export interface RunChunkOnceOptions {
    * and avoid a same-port collision. 0 / undefined = the serial single-build
    * path (byte-identical to today). See loop/parallel-waves.ts.
    *
-   * NOTE (remaining hop): the port-allocating consumer is
-   * scenario-scorer/phase-gate-runner → launchApp(workerIndex). The parallel
-   * path currently DEFERS per-chunk phase-gate auto-recovery, so no concurrent
-   * launchApp actually fires today; this value is carried to runChunkOnce and
-   * surfaced on the spawn event, and the last hop into runPhaseGateScoring is
-   * left for whoever enables per-chunk phase-gate scoring under concurrency.
+   * The chunk judge (chunk-review/chunk-judge.ts) carries it to
+   * scoreScenarioFiles → launchApp(workerIndex), so concurrent chunks score
+   * against servers on distinct ports.
    */
   workerIndex?: number;
+  /** Judge the chunk against its held-out scenarios and a skeptic before it
+   *  counts (chunk-review/chunk-judge.ts). Absent → not judged. */
+  chunkJudge?: ChunkJudge;
+  /** The project the build is for, when `projectDir` is a worktree of it: the
+   *  judge finds the sealed suite by this folder's name. Defaults to projectDir. */
+  baseProjectDir?: string;
 }
 
 /** Minimal chunk-agent result shape this decision needs. */
@@ -169,7 +173,26 @@ export async function runChunkOnce(opts: RunChunkOnceOptions): Promise<ChunkRevi
     rawReport: subResult.stdout,
     specDiff,
     projectDir: opts.projectDir,
+    chunkJudge: opts.chunkJudge ? {
+      judge: opts.chunkJudge,
+      preSha: opts.preSha,
+      baseProjectDir: opts.baseProjectDir ?? opts.projectDir,
+      workerIndex: opts.workerIndex,
+      parentSessionId: opts.parentSessionId,
+      parentOpId: opts.parentOpId,
+      onProgress: (msg) => opts.emit({ type: "review-result", chunkNumber: opts.chunk.number, totalChunks: opts.totalChunks, message: `[judge] ${msg}` }),
+    } : undefined,
   }, opts.judgmentHook, opts.signal);
+
+  if (outcome.judging) {
+    opts.emit({
+      type: "review-result",
+      chunkNumber: opts.chunk.number,
+      totalChunks: opts.totalChunks,
+      message: `Chunk ${opts.chunk.number} judged: ${chunkJudgingSummary(outcome.judging)}`,
+      data: { judging: outcome.judging },
+    });
+  }
 
   opts.emit({
     type: "review-result",

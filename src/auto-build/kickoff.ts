@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import { isAbsolute, resolve } from "node:path";
 import type { ToolResult } from "../types.js";
 import { blocked } from "../tools/result-helpers.js";
-import { defaultJudgmentHook } from "./chunk-review/judgment-hook.js";
+import { DEFAULT_CHUNK_REVIEW } from "./chunk-review/default-review.js";
 import { checkSystemic, readBuildState } from "./failure-recovery.js";
 import { startOrchestration } from "./orchestrator/manager.js";
 import type {
@@ -163,7 +163,7 @@ export function createBuildPlanKickoff(
         plan,
         startingChunk,
         maxChunks,
-        judgmentHook: defaultJudgmentHook,
+        ...DEFAULT_CHUNK_REVIEW,
       });
     } catch (error) {
       const message = (error as Error).message;

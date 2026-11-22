@@ -7,6 +7,7 @@ import type { EmitFn } from "./types.js";
 import { safeGet } from "./types.js";
 import { runChunkOnce } from "./run-chunk-once.js";
 import { parsePlanFile } from "../plan-parser.js";
+import type { ChunkJudge } from "../chunk-review/chunk-verdict.js";
 
 export interface HandlePushBackOptions {
   chunk: ParsedChunk;
@@ -24,6 +25,14 @@ export interface HandlePushBackOptions {
    *  → retry worker card renders as a root, unchanged. */
   parentOpId?: string;
   outcome: ChunkReviewOutcome;
+  /** Carried onto the retry so it is judged like the first attempt. */
+  chunkJudge?: ChunkJudge;
+  baseProjectDir?: string;
+  workerIndex?: number;
+}
+
+function judgeOpts(opts: HandlePushBackOptions) {
+  return { chunkJudge: opts.chunkJudge, baseProjectDir: opts.baseProjectDir, workerIndex: opts.workerIndex };
 }
 
 export interface HandlePushBackResult {
@@ -89,6 +98,7 @@ export async function handlePushBack(opts: HandlePushBackOptions): Promise<Handl
       retryReason: `spec was amended to clarify: ${advice.specAddition.slice(0, 200)}`,
       judgmentHook: opts.judgmentHook,
       parentOpId: opts.parentOpId,
+      ...judgeOpts(opts),
     });
     return {
       finalOutcome: retryOutcome,
@@ -96,8 +106,10 @@ export async function handlePushBack(opts: HandlePushBackOptions): Promise<Handl
     };
   }
 
+  // The advisor's hint steers the retry; the review's own finding (a failed
+  // scenario's gap, the skeptic's break) still reaches the builder in full.
   const retryReason = adviceAction === "retry-with-hint" && advice?.retryHint
-    ? advice.retryHint
+    ? `${advice.retryHint}\n\nWhat the review found:\n${outcome.reasoning}`
     : outcome.reasoning;
   const retryOutcome = await runChunkOnce({
     chunk, totalChunks, planPath: opts.planPath, plan: opts.plan,
@@ -106,6 +118,7 @@ export async function handlePushBack(opts: HandlePushBackOptions): Promise<Handl
     retryReason,
     judgmentHook: opts.judgmentHook,
     parentOpId: opts.parentOpId,
+    ...judgeOpts(opts),
   });
   const finalAction: ReviewAction = retryOutcome.action === "push_back" ? "halt" : retryOutcome.action;
   if (retryOutcome.action === "push_back") {

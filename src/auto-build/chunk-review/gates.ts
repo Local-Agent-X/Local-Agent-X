@@ -42,7 +42,9 @@ export interface GateFinding {
     | "launch-readiness"
     | "test-failures"
     | "spec-gap-judgment"
-    | "build-exec";
+    | "build-exec"
+    | "chunk-scenarios"
+    | "skeptic";
   action: ReviewAction;
   /** One-sentence reasoning. Surfaced to the user on halts. */
   reasoning: string;

@@ -143,7 +143,11 @@ complete when a fresh agent could finish the chunk from it alone:
 
 ## 6. Judging a chunk
 
-When a builder returns, three things happen before the chunk is `green`:
+When a builder returns, three things happen before the chunk is `green`.
+`run_build_plan` does all three itself: its build gate re-runs the build and
+the tests, then it scores the chunk's **Scenarios:** and sets a skeptic agent
+on the diff. A failure sends the chunk back once with the finding; a second
+halts the run.
 
 1. **Re-verify independently.** Run `check` and the tests yourself; confirm the
    named seam was used, not a new file beside it.

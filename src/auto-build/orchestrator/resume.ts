@@ -26,7 +26,7 @@ import { listAll, unregister } from "./registry.js";
 import * as state from "./state.js";
 import { startOrchestration, isActiveForProject } from "./manager.js";
 import { parsePlanFile } from "../plan-parser.js";
-import { defaultJudgmentHook } from "../chunk-review/judgment-hook.js";
+import { DEFAULT_CHUNK_REVIEW } from "../chunk-review/default-review.js";
 import { broadcastToSession } from "../../ops/session-bridge.js";
 import { isFeatureEnabled } from "../tool.js";
 import { createLogger } from "../../logger.js";
@@ -156,7 +156,7 @@ function tryResumeOne(projectDir: string, sessionId: string): { outcome: ResumeO
       plan,
       startingChunk: window.startingChunk,
       maxChunks: window.maxChunks,
-      judgmentHook: defaultJudgmentHook,
+      ...DEFAULT_CHUNK_REVIEW,
     });
 
     // Surface a notice in the originating chat session so the user

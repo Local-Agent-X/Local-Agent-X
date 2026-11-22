@@ -199,7 +199,7 @@ export async function resolveProvider(
     // can route through the Codex CLI even when the main provider is Claude.
     const cr = await resolveCredential("codex", { configOpenAIKey: config.openaiApiKey });
     codexApiKey = cr?.credential || undefined;
-    if (!codexApiKey) codexApiKey = secretsStore.get("OPENAI_API_KEY") || undefined;
+    if (!codexApiKey) codexApiKey = (await resolveCredential("openai", { configOpenAIKey: config.openaiApiKey }))?.credential || undefined;
   } else if (provider === "custom") {
     customBaseURL = getSetting<string>("customBaseUrl") || undefined;
   }

@@ -68,7 +68,7 @@ src/security/layer/kernel-class-policy.ts#evaluateByKernelClass 132
 src/self-edit/sandbox.ts#runSelfEditInSandbox 198
 src/self-edit/tool.ts#selfEditTool.execute 117
 src/server/background-jobs/cron-runner.ts#cronService.onExecute:callback 166
-src/server/bootstrap-services.ts#initOrRefreshEmbeddingProvider 107
+src/server/bootstrap-services.ts#initOrRefreshEmbeddingProvider 105
 src/server/handler-events.ts#agentRunDriver 111
 src/server/index.ts#startServer 131
 src/tool-execution/pre-dispatch.ts#assertToolCallAllowed 184
@@ -82,5 +82,5 @@ src/tools/project-tools.ts#createProjectTools 110
 src/tools/read-imports.ts#buildImportAppendix 108
 src/tools/secret-tools.ts#createSecretTools 111
 src/tools/shell-tool.ts#bashTool.execute 120
-src/voice/voice-session/model-init.ts#initializeVoiceStack 124
+src/voice/voice-session/model-init.ts#initializeVoiceStack 119
 src/whatsapp-bridge/message-handler.ts#handleMessagesUpsert 179

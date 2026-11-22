@@ -1,6 +1,7 @@
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { canonicalFetch, EgressRedirectBlocked, egressBlockedResult } from "./web-egress.js";
 import { wrapExternalContent } from "../sanitize.js";
+import { resolveServiceKey } from "../auth/resolve.js";
 
 /**
  * image_search — find DIRECT image URLs on the web so the agent can embed them
@@ -87,7 +88,7 @@ type Provider = "brave" | "ddg" | "wikimedia";
  *  license-clean files are the wrong pictures for a product or a place. Empty
  *  when none answers. */
 export async function searchWebImages(query: string, max: number, signal: AbortSignal): Promise<ImageHit[]> {
-  const key = process.env.BRAVE_API_KEY;
+  const key = resolveServiceKey("BRAVE_API_KEY");
   for (const p of (key ? ["brave", "ddg"] : ["ddg"]) as Provider[]) {
     try {
       const hits = dedupe(await run(p, query, max, key, signal));
@@ -144,7 +145,7 @@ export const imageSearchTool: ToolDefinition = {
     const max = Math.min(Math.max(Number(args.max_results) || 8, 1), 20);
     const timeout = AbortSignal.timeout(15_000);
     const merged = signal ? AbortSignal.any([signal, timeout]) : timeout;
-    const key = process.env.BRAVE_API_KEY;
+    const key = resolveServiceKey("BRAVE_API_KEY");
     const chain: Provider[] = key ? ["brave", "ddg", "wikimedia"] : ["ddg", "wikimedia"];
 
     let lastErr = "";

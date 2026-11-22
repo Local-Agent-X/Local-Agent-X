@@ -26,7 +26,7 @@ import {
   type WhisperModelPaths,
 } from "../whisper-model-fetch.js";
 import { createTier4, tier4ModelDownloaded, tier4VariantFromEnv } from "../tier4/index.js";
-import { createSttProvider, resolveSttProviderName } from "../stt-providers/index.js";
+import { createSttProvider, resolveSttProviderName, STT_KEY_NAME } from "../stt-providers/index.js";
 import type { Tier4StreamingTTS } from "../tier4/types.js";
 import { isValidKokoroVoice } from "../tier4/kokoro-voices.js";
 import type { ResolvedVoiceSettings } from "./settings.js";
@@ -225,17 +225,11 @@ export async function initializeVoiceStack(deps: ModelInitDeps): Promise<Initial
         provider: voiceSettings.whisperDevice,
       });
     } else {
-      // Map provider → secret name. Encrypted secrets store is the source
-      // of truth; process.env is a fallback for env-driven deployments.
-      // Without this, picking "Groq" in the UI silently fell back to
-      // local-whisper because the adapter throws on missing key and we
-      // catch+fallback below.
-      const SECRET_BY_PROVIDER: Record<string, string> = {
-        groq: "GROQ_API_KEY",
-        openai: "OPENAI_API_KEY",
-        mistral: "MISTRAL_API_KEY",
-      };
-      const secretName = SECRET_BY_PROVIDER[sttProviderName];
+      // Encrypted secrets store is the source of truth; process.env is a
+      // fallback for env-driven deployments. Without this, picking "Groq" in
+      // the UI silently fell back to local-whisper because the adapter throws
+      // on missing key and we catch+fallback below.
+      const secretName = (STT_KEY_NAME as Record<string, string>)[sttProviderName];
       const apiKey = (secretName && getSecret(secretName)) || process.env[secretName ?? ""] || undefined;
       logger.info(`[voice-session] ${ctx.sessionId}: STT provider=${sttProviderName} (cloud, key ${apiKey ? "present" : "MISSING"})`);
       try {

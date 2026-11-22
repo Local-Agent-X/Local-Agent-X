@@ -10,15 +10,11 @@
  * visible in the agent activity surface. UI-only addition — does not
  * change loop behavior, signals, or events.
  */
-import { existsSync, readdirSync, statSync } from "node:fs";
-import { getLaxDir } from "../lax-data-dir.js";
-import { join } from "node:path";
-import { readOp } from "../ops/op-store.js";
+import { opsWhere } from "../ops/op-index.js";
 import { readLatestOpTurn } from "./store.js";
 import type { PendingApprovalRecord } from "./types.js";
 
 const ACTIVE_STATES = new Set(["queued", "running", "paused", "cancelling"]);
-const OPS_BASE = join(getLaxDir(), "operations");
 
 export interface ActiveCanonicalOp {
   /** Marker so callers can distinguish canonical rows from legacy pool rows. */
@@ -44,39 +40,16 @@ export interface ActiveCanonicalOp {
   pendingApproval: PendingApprovalRecord | null;
 }
 
-/** Ops last read as not active, by the stamp their operation.json had then. Nearly all
- *  of the thousands of ops on disk are finished, and reading and parsing every one
- *  (144 MB on one install) froze the server ~0.5 s on each listing, which runs each
- *  time a chat connects: a voice call cut out (2026-11-05). An op is skipped while its
- *  file is unchanged; any write (op-store writes by rename) re-reads it. */
-const inactiveAt = new Map<string, string>();
-
-function opFileStamp(opId: string): string | null {
-  try {
-    const st = statSync(join(OPS_BASE, opId, "operation.json"));
-    return `${st.mtimeMs}:${st.size}`;
-  } catch {
-    return null;
-  }
-}
-
+/** Nearly all of the thousands of ops on disk are finished, and reading and parsing
+ *  every one (144 MB on one install) froze the server ~0.5 s on each listing, which
+ *  runs each time a chat connects: a voice call cut out (2026-11-05). The op index
+ *  (ops/op-index.ts) knows which ops are still in flight without reading the rest. */
 export function listActiveCanonicalOps(): ActiveCanonicalOp[] {
-  if (!existsSync(OPS_BASE)) return [];
-  let dirs: string[];
-  try { dirs = readdirSync(OPS_BASE); } catch { return []; }
-
   const out: ActiveCanonicalOp[] = [];
-  for (const opId of dirs) {
-    const stamp = opFileStamp(opId);
-    if (stamp === null || inactiveAt.get(opId) === stamp) continue;
-    const op = readOp(opId);
-    if (!op) continue;
+  for (const op of opsWhere((facts) => facts.open)) {
+    const opId = op.id;
     const c = op.canonical;
-    if (!c || c.flagValue !== true || typeof c.state !== "string" || !ACTIVE_STATES.has(c.state)) {
-      inactiveAt.set(opId, stamp);
-      continue;
-    }
-    inactiveAt.delete(opId);
+    if (!c || c.flagValue !== true || typeof c.state !== "string" || !ACTIVE_STATES.has(c.state)) continue;
 
     let adapter: string | null = null;
     let adapterVersion: string | null = null;

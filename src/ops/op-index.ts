@@ -97,9 +97,17 @@ export interface OpFacts {
   open: boolean;
   /** It waits on other ops. */
   hasDependencies: boolean;
+  /** When it last moved, in ms: finished, else started, else created. Absent
+   *  when none of those dates can be read. */
+  endedAt?: number;
 }
 
 const CANONICAL_TERMINAL = new Set(["succeeded", "failed", "cancelled"]);
+
+function lastMovedAt(op: Op): number | undefined {
+  const at = Date.parse(op.completedAt || op.startedAt || op.createdAt || "");
+  return Number.isFinite(at) ? at : undefined;
+}
 
 function isSettled(op: Op): boolean {
   const state = op.canonical?.state;
@@ -108,6 +116,7 @@ function isSettled(op: Op): boolean {
 
 /** An op's facts: what the index keeps of it. */
 export function opFactsOf(op: Op): OpFacts {
+  const endedAt = lastMovedAt(op);
   return {
     ...(op.sessionId ? { sessionId: op.sessionId } : {}),
     ...(op.canonical?.sessionId ? { canonicalSessionId: op.canonical.sessionId } : {}),
@@ -116,10 +125,12 @@ export function opFactsOf(op: Op): OpFacts {
     ...(op.appUrl ? { appUrl: op.appUrl } : {}),
     open: !isSettled(op),
     hasDependencies: (op.dependsOn?.length ?? 0) > 0,
+    ...(endedAt !== undefined ? { endedAt } : {}),
   };
 }
 
 let index: OpScanner<OpFacts> | undefined;
+/** One index per process, over the store op-store reads (OPS_BASE). */
 const theIndex = (): OpScanner<OpFacts> => (index ??= createOpScanner(OPS_BASE, readOp, opFactsOf, isSettled));
 
 /** The ops whose facts match, read fresh from the store, in no set order. */
@@ -131,6 +142,19 @@ export function opsWhere(matches: (facts: OpFacts) => boolean): Op[] {
     if (op) out.push(op);
   }
   return out;
+}
+
+/** The ids of the ops whose facts match, without reading any of them. */
+export function opIdsWhere(matches: (facts: OpFacts) => boolean): string[] {
+  const out: string[] = [];
+  for (const [id, facts] of theIndex().refresh()) if (matches(facts)) out.push(id);
+  return out;
+}
+
+/** The ids of the ops still in flight: what a recovery pass has to look at.
+ *  Every other op is finished and can never need recovering. */
+export function openOpIds(): string[] {
+  return opIdsWhere((facts) => facts.open);
 }
 
 /** Fill the index in the background so the first query does not pay for it. */

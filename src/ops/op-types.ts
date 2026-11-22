@@ -51,6 +51,16 @@ export const OP_TYPE = {
 
 export type HarnessOpType = (typeof OP_TYPE)[keyof typeof OP_TYPE];
 
+/** The app's own upkeep runs. Nobody asked for one, and what it produces is
+ *  kept elsewhere (memory, skills, lessons, the inbox), so these are the only
+ *  ops whose records are deleted once finished (ops/op-retention.ts). A run
+ *  the user asked for or reads back (a turn, an agent, a build, a scheduled
+ *  job, a review of their work) is never one of these. */
+export const UPKEEP_OP_TYPES: ReadonlySet<string> = new Set([
+  OP_TYPE.memoryConsolidation, OP_TYPE.skillReview, OP_TYPE.failureReview,
+  OP_TYPE.mailWatch, OP_TYPE.travelWatch,
+]);
+
 /** Labels a MODEL gives the ops it delegates (op_submit's `type`, ops/tools/shared.ts)
  *  that the harness still treats specially. Not harness op types: nothing creates them
  *  by these names, a model chooses them. */

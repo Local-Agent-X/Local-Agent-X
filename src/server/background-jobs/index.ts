@@ -53,7 +53,8 @@ export type RegisteredJobName =
   | "mail-watch"
   | "plan-reminders"
   | "travel-watch"
-  | "update-prepare";
+  | "update-prepare"
+  | "op-retention";
 
 /**
  * Overlap policy for every registered job, in one place. Not documentation —
@@ -133,6 +134,11 @@ export type RegisteredJobName =
  *     minutes, and the pass refuses to start while one is running anyway
  *     (update-background.ts), since a click can join it.
  *
+ *   op-retention (skip)
+ *     Deletes the records of upkeep runs that finished over a week ago
+ *     (ops/op-retention.ts). A second pass would only find them gone; a
+ *     dropped tick costs a day.
+ *
  *   mail-watch (skip)
  *     Two passes at once would both read past the same checkpoint and raise
  *     the same mail twice (the inbox key dedupes the item, not the model
@@ -152,6 +158,7 @@ export const JOB_OVERLAP: Record<RegisteredJobName, OverlapPolicy> = {
   "plan-reminders": "skip",
   "travel-watch": "skip",
   "update-prepare": "skip",
+  "op-retention": "skip",
 };
 
 /** Name + declared policy in one spread, so a registration can never carry a
@@ -238,6 +245,22 @@ function registerUpdatePrepare(scheduler: JobScheduler, foregroundIdle: () => bo
       const { prepareUpdateInBackground } = await import("../../update-background.js");
       const outcome = await prepareUpdateInBackground(config.authToken);
       if (outcome === "prepared" || outcome === "failed") logger.info(`[update-prepare] pass: ${outcome}`);
+    },
+  });
+}
+
+/** Keeps the op store from only ever growing: once a day, while the user is
+ *  idle, the records of finished upkeep runs older than a week are deleted. */
+function registerOpRetention(scheduler: JobScheduler, foregroundIdle: () => boolean): void {
+  scheduler.register({
+    ...withOverlapPolicy("op-retention"),
+    intervalMs: 24 * 60 * 60 * 1000,
+    startupDelayMs: 20 * 60 * 1000,
+    shouldRun: foregroundIdle,
+    run: async () => {
+      const { pruneFinishedUpkeepOps } = await import("../../ops/op-retention.js");
+      const r = await pruneFinishedUpkeepOps();
+      if (r.pruned > 0 || r.failed > 0) logger.info(`[op-retention] pass: deleted=${r.pruned} failed=${r.failed}`);
     },
   });
 }
@@ -466,6 +489,7 @@ export function startBackgroundJobs(deps: {
 
   registerLearningUpkeep(scheduler, foregroundIdle, { config, dataDir, secretsStore, security, toolPolicy });
   registerUpdatePrepare(scheduler, foregroundIdle, config);
+  registerOpRetention(scheduler, foregroundIdle);
   registerWatchers(scheduler, deps);
 
   // Backfill scans every file and re-embeds — see decideBackfill in

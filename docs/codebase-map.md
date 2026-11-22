@@ -13,13 +13,13 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 72 top-level dirs · 72 live · 0 with no live importer · 2102 non-test source files · 74 oversized · 259 nearing the size cap.
+**Totals:** 72 top-level dirs · 72 live · 0 with no live importer · 2103 non-test source files · 74 oversized · 258 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 188 | 31 | XL | 1 |
+| `src/ops/` | 189 | 32 | XL | 1 |
 | `src/security/` | 168 | 64 | XL | 2 |
 | `src/tools/` | 139 | 243 | XL | 9 |
 | `src/tool-execution/` | 105 | 91 | XL | 2 |
@@ -339,9 +339,9 @@ job. Comments are free: never cut them to fit.
 - `src/browser/layout-report.ts` — 320+ code lines (cap 350)
 - `src/canonical-loop/adapters/tool-call-text-corpus.ts` — 320+ code lines (cap 350)
 - `src/memory/tools/facts.ts` — 320+ code lines (cap 350)
-- `src/ops/op-store.ts` — 320+ code lines (cap 350)
 - `src/protocols/learned-effectiveness.ts` — 320+ code lines (cap 350)
 - `src/protocols/learned-lifecycle.ts` — 320+ code lines (cap 350)
+- `src/server/background-jobs/index.ts` — 320+ code lines (cap 350)
 - `src/tools/edit-tools.ts` — 320+ code lines (cap 350)
 - `src/auto-build/workflow-resolver.ts` — 310+ code lines (cap 350)
 - `src/browser/manager.ts` — 310+ code lines (cap 350)
@@ -349,7 +349,6 @@ job. Comments are free: never cut them to fit.
 - `src/routes/connector-proxy.ts` — 310+ code lines (cap 350)
 - `src/security/layer/security-audit.ts` — 310+ code lines (cap 350)
 - `src/security/layer/shell-detectors.ts` — 310+ code lines (cap 350)
-- `src/server/background-jobs/index.ts` — 310+ code lines (cap 350)
 - `src/tool-execution/side-effect-journal.ts` — 310+ code lines (cap 350)
 - `src/tools/spreadsheet-tools.ts` — 310+ code lines (cap 350)
 - `src/whatsapp-bridge/index.ts` — 310+ code lines (cap 350)

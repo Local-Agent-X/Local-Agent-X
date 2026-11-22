@@ -4,11 +4,8 @@
  * this module only decides WHICH ops pay for repair and recovery, and how the
  * work is paced.
  */
-import { existsSync, readdirSync } from "node:fs";
-import { readdir } from "node:fs/promises";
-import { join } from "node:path";
-import { getLaxDir } from "../lax-data-dir.js";
 import { readOp } from "../ops/op-store.js";
+import { openOpIds } from "../ops/op-index.js";
 import type { Op } from "../ops/types.js";
 import { isLeaseExpired } from "./lease.js";
 import { rebuildDependencyScheduling } from "./scheduler.js";
@@ -32,6 +29,11 @@ import { recoverStaleOp, type RecoveryOutcome } from "./recovery.js";
  * blocking boot for minutes and keeping the 30s janitor permanently
  * mid-sweep. Pause and terminal control remains authoritative.
  *
+ * Which ops are looked at comes from the op index (ops/op-index.ts): the ones
+ * still in flight. Listing the folder and reading every record parsed the whole
+ * store, 449 MB on the owner's machine, on every pass of the periodic janitor
+ * (2026-11-22).
+ *
  * Safe to call once at server boot. Periodic callers must use the cooperative
  * sweep below so operation history cannot starve worker heartbeats. No-op if
  * the operations dir is missing. Resilient to per-op read errors (logs and skips).
@@ -40,7 +42,7 @@ import { recoverStaleOp, type RecoveryOutcome } from "./recovery.js";
  */
 export function sweepStaleCanonicalOps(): { opId: string; outcome: RecoveryOutcome }[] {
   rebuildDependencyScheduling();
-  const opIds = listOperationIds();
+  const opIds = openOpIds();
   const out: { opId: string; outcome: RecoveryOutcome }[] = [];
   for (const opId of opIds) {
     let op;
@@ -107,7 +109,7 @@ export async function sweepStaleCanonicalOpsCooperatively(
     throw new Error("Cooperative recovery sweep bounds must be positive");
   }
 
-  const opIds = await (options.listOpIds ?? listOperationIdsAsync)();
+  const opIds = await (options.listOpIds ?? openOpIds)();
   const readCandidate = options.readCandidate ?? readOp;
   const recoverCandidate = options.recoverCandidate ?? recoverStaleOp;
   const reconcileCandidate = options.reconcileCandidate ?? reconcilePublishedTurnCommitsForRecovery;
@@ -147,15 +149,6 @@ export async function sweepStaleCanonicalOpsCooperatively(
   return out;
 }
 
-function listOperationIds(): string[] {
-  const opsBase = join(getLaxDir(), "operations");
-  if (!existsSync(opsBase)) return [];
-  try { return readdirSync(opsBase); } catch { return []; }
-}
-async function listOperationIdsAsync(): Promise<string[]> {
-  const opsBase = join(getLaxDir(), "operations");
-  try { return await readdir(opsBase); } catch { return []; }
-}
 function yieldRecoverySlice(): Promise<void> {
   return new Promise((resolve) => {
     const immediate = setImmediate(resolve);

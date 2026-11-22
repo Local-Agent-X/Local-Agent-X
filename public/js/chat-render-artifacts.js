@@ -127,6 +127,7 @@ function renderTimelineBlocks(bodyEl, blocks, opts) {
       bubble.className = 'inline-inject-bubble';
       bubble.textContent = b.text || '';
       div.appendChild(bubble);
+      if (b.queueState === 'queued' && typeof window.sendNowButton === 'function') div.appendChild(window.sendNowButton(b));
       bodyEl.appendChild(div);
       rendered = true;
     }

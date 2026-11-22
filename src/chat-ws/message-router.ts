@@ -23,7 +23,7 @@ import { handleReconnectOp } from "./reconnect-op.js";
 import { handleIdeRuntimeError } from "./ide-runtime-error.js";
 // Static import, like everything the inject path touches: that path is
 // synchronous by contract (see inject-router.ts's import note).
-import { handleInject } from "./inject-router.js";
+import { handleInject, handleSendNow } from "./inject-router.js";
 import { hasActiveTurn } from "../session/turn-lock.js";
 import { setEnforcedPlanMode, isEnforcedPlanMode } from "../canonical-loop/public/plan-ledger.js";
 import { clearSoftPlanMode } from "../tools/plan-tools.js";
@@ -151,6 +151,11 @@ export function attachMessageRouter(ctx: RouterContext): void {
         msg.message.trim(),
         typeof msg.injectId === "string" && msg.injectId ? msg.injectId : undefined,
       );
+      return;
+    }
+
+    if (type === "send_now" && sessionId) {
+      handleSendNow(ws, sessionId, typeof msg.injectId === "string" && msg.injectId ? msg.injectId : undefined);
       return;
     }
 

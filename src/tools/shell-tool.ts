@@ -11,7 +11,8 @@ import { registerOwnedGroup } from "./owned-listeners.js";
 import { workspaceRoot } from "../config.js";
 import { resolveSecretEnv, secretEnvOf, secretEnvProgram, withheldOutputNote, type ResolvedSecretEnv, type SecretEnv } from "./shell-secret-env.js";
 import { inboxWithheldOutput } from "../inbox/producers.js";
-import { cwdOf, onEventOf, onProgressOf, toolCallIdOf } from "../tool-execution/internal-args.js";
+import { cwdOf, onEventOf, onProgressOf, sessionIdOf, toolCallIdOf } from "../tool-execution/internal-args.js";
+import { holdForSendNow, movedToBackgroundResult } from "./shell-handoff.js";
 import { vendorDriftHint } from "../protocols/vendor-drift.js";
 
 type WithheldRun = { secrets: ResolvedSecretEnv & { withheld: string }; secretEnv: SecretEnv; command: string; key: string };
@@ -140,6 +141,30 @@ function failureNotices(run: {
   ].filter(Boolean).join("\n");
 }
 
+/** A command run inside the Docker sandbox, which has no host and no network:
+ *  a failure says so, so the agent reports the constraint instead of
+ *  concluding it lacks the tool. */
+function runInDockerSandbox(cmd: string): ToolResult {
+  const sandboxStart = Date.now();
+  const result = execInSandbox(cmd);
+  const sandboxDuration = Date.now() - sandboxStart;
+  const meta = { exit_code: result.exitCode, duration_ms: sandboxDuration, sandbox: "docker" };
+  if (result.exitCode === 0) {
+    return ok(
+      result.stdout || `[exit 0 in ${sandboxDuration}ms — command succeeded with no captured output]`,
+      meta,
+    );
+  }
+  const sandboxNotice =
+    "[sandbox: this command ran inside a Docker container (Alpine Linux, --network=none, workspace-only). " +
+    "Host-OS commands (ipconfig, Get-NetIPConfiguration, etc.) and network access are not available. " +
+    "If host access is required, tell the user to set LAX_SANDBOX=host or toggle Sandbox in Settings.]\n";
+  return err(
+    `${sandboxNotice}${result.stderr || result.stdout || `Exit code: ${result.exitCode}`}`,
+    { ...meta, stderr: result.stderr },
+  );
+}
+
 export const bashTool: ToolDefinition = {
   name: "bash",
   compactDescription: "Run a shell command (bash; Git Bash on Windows, else PowerShell — write POSIX sh). ESCAPE HATCH ONLY: prefer read/write/edit/glob/grep/http_request/browser over cat/echo/sed/ls/find/curl. Never dump env/credential files.",
@@ -216,29 +241,13 @@ export const bashTool: ToolDefinition = {
     // guarded selection waits, and it settles to guarded or host, never docker.
     if (getSandboxMode() === "docker") {
       if (secrets) return err("secret_env is not available in the Docker sandbox: the container gets no host secrets.");
-      const sandboxStart = Date.now();
-      const result = execInSandbox(cmd);
-      const sandboxDuration = Date.now() - sandboxStart;
-      const meta = { exit_code: result.exitCode, duration_ms: sandboxDuration, sandbox: "docker" };
-      if (result.exitCode === 0) {
-        return ok(
-          result.stdout || `[exit 0 in ${sandboxDuration}ms — command succeeded with no captured output]`,
-          meta,
-        );
-      }
-      // Surface the constraint so the model reports it correctly to the user
-      // instead of concluding it lacks tools. Host-OS commands and network are
-      // unavailable inside the container.
-      const sandboxNotice =
-        "[sandbox: this command ran inside a Docker container (Alpine Linux, --network=none, workspace-only). " +
-        "Host-OS commands (ipconfig, Get-NetIPConfiguration, etc.) and network access are not available. " +
-        "If host access is required, tell the user to set LAX_SANDBOX=host or toggle Sandbox in Settings.]\n";
-      return err(
-        `${sandboxNotice}${result.stderr || result.stdout || `Exit code: ${result.exitCode}`}`,
-        { ...meta, stderr: result.stderr },
-      );
+      return runInDockerSandbox(cmd);
     }
 
+    // A run scrubbed or withheld for a vault secret keeps its output rules by
+    // running to the end here; any other can be moved to the background when
+    // the user sends a message now (shell-handoff.ts).
+    const sendNowHold = secrets ? null : holdForSendNow(sessionIdOf(args));
     try {
       // _cwd (worktree, set by enforce-policy) wins; otherwise the WORKSPACE —
       // the same anchor relative agent paths resolve against (workspace/paths.ts)
@@ -265,7 +274,8 @@ export const bashTool: ToolDefinition = {
         // shell exits; the call returns when the shell does.
         settleOn: "exit",
         onOutput: progress.onOutput,
-      });
+        handoff: sendNowHold?.signal,
+      }).finally(() => sendNowHold?.release());
 
       // Map structured outcome to a tool-result envelope. metadata carries
       // structured fields (exit_code, duration_ms, stderr, recovery) so the
@@ -273,6 +283,7 @@ export const bashTool: ToolDefinition = {
       if (outcome.kind === "abort") {
         return err("Aborted", { duration_ms: outcome.durationMs });
       }
+      if (outcome.kind === "handoff") return movedToBackgroundResult(outcome, cmd, cwd, timeout);
       if (outcome.kind === "timeout") {
         const [stdout, stderr] = [scrub(outcome.stdout), scrub(outcome.stderr)];
         if (withheldRun) return withheldRunResult(withheldRun, `timed out after ${timeout / 1000}s`, stdout, stderr, true, { duration_ms: outcome.durationMs });

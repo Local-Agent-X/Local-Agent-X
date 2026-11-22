@@ -282,6 +282,16 @@
     return changed;
   }
 
+  // The user pressed Send now on a still-queued inject: what the button under
+  // it says (chat-send-now.js). Nothing to mark once it was consumed.
+  function markInjectSendNow(sessionId, injectId, state) {
+    const e = entries.get(sessionId);
+    const b = e && e.blocks.find(x => x.type === 'inject' && x.injectId === injectId);
+    if (!b || b.queueState !== 'queued' || b.sendNow === state) return false;
+    b.sendNow = state;
+    return true;
+  }
+
   // Adopt an in-flight turn this client never started — page reload mid-turn,
   // or switching into a chat whose turn began while unwatched. The server's
   // subscribe replay has already refilled content/reasoning/blocks/toolEvents
@@ -356,7 +366,7 @@
   window.ChatStreamStore = {
     get, ensure,
     startTurn, adoptTurn, reanchorTurn, applyEvent, bumpActivity, isSupersededFrame,
-    addInject, consumeInject,
+    addInject, consumeInject, markInjectSendNow,
     isStreaming, isActive, inflightOps,
     subscribe, subscribeAll,
   };

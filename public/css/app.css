@@ -438,6 +438,7 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
 .inline-inject{display:flex;justify-content:flex-end;margin:10px 0}
 .inline-inject-bubble{background:var(--surface-2);border:1px solid var(--border);border-radius:18px;padding:8px 16px;max-width:85%;white-space:pre-wrap;word-break:break-word;font-size:.92rem}
 .inline-inject.queued .inline-inject-bubble{opacity:.55;border-style:dashed}
+.inline-inject{flex-wrap:wrap}.inline-inject-send-now{flex-basis:100%;text-align:right;margin-top:4px;background:none;border:none;padding:0 6px;color:var(--accent);font-size:.8rem;cursor:pointer}.inline-inject-send-now:hover:not(:disabled){text-decoration:underline}.inline-inject-send-now:disabled{color:var(--muted);cursor:default}
 /* Inline notice rendered when the agent's turn stops early (middleware
    abort, ceiling, stale evidence). Small, muted, italic — distinct from
    message body text and never persisted into chat history. The full

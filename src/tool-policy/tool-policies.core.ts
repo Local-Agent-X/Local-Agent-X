@@ -15,7 +15,7 @@ export const TOOL_POLICIES_CORE: Record<string, ToolPolicyRow> = {
     // backstop won the race, the command kept running, and the model was told
     // the harness had failed (2026-09-17).
     kernel: "shell", ariAction: "exec", risk: "shell", capabilities: ["sensitive-read", "shell"], tags: ["shell"], essentialRank: 4, blurb: { say: "run `npm test` in the project", does: "Run a shell command." }, timeoutMs: 130_000, shellCommand: { arg: "command", waitsForExit: true }, secretEnv: true, output: "command",
-    reads: ["cwd"], category: "coding",
+    reads: ["cwd", "session"], category: "coding",
     prompt: "Only use bash for shell commands. Never use it for file read/write/search — use dedicated tools. Probe for installed tools with targeted commands (command -v / where / Get-Command); never dump the environment (printenv/env/set) — secret-shaped output is redacted and wastes the call.",
     rateLimit: { maxCalls: 30, windowMs: 60_000, action: "block" },
     // No `rm -rf` deny here: the irreversible-op floor (tool-execution) cards

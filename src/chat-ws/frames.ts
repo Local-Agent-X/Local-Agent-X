@@ -35,6 +35,10 @@ export type GlobalFrame =
    *  decision was recorded on the op for recovery to apply
    *  (approval-durable-resolve.ts). A live settle rides the session envelope. */
   | { type: "approval_resolved"; approvalId: string; toolName: string; approved: boolean; delivery: "delivered" | "recorded" }
+  /** The reply to Send now on a queued message (inject-router.ts): how many
+   *  shell commands the agent was waiting on moved to the background so it
+   *  reads the message now; 0, and it reads it when its current step ends. */
+  | { type: "send_now_result"; sessionId: string; injectId?: string; movedToBackground: number }
   /** One or more settings changed, by field; a tab redraws what it shows for
    *  each. The keys are settings-schema fields plus the section snapshots
    *  (`egress`, `sandbox`) and the catalog flags (`plugins`, `secrets`,
@@ -67,7 +71,7 @@ export type GlobalFrameType = GlobalFrame["type"];
 /** Every frame type, for the two-sided test; the compiler checks it matches
  *  the union in both directions. */
 export const GLOBAL_FRAME_TYPES = [
-  "event", "active_chats", "session_snapshot", "pong", "error", "approval_resolved", "settings_changed", "sidebar_pins_changed",
+  "event", "active_chats", "session_snapshot", "pong", "error", "approval_resolved", "send_now_result", "settings_changed", "sidebar_pins_changed",
   "chat_list_changed", "app-files-changed", "app:state", "app:event", "projects_changed", "learning_changed",
   "history_changed", "system_health", "inbox_item", "inbox_changed",
   "agent-spawn", "agent-update", "agent-output", "agent-complete", "workers_snapshot", "process_relay_delivery",

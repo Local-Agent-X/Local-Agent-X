@@ -144,6 +144,7 @@ function dispatchChatWsNonEvent(msg) {
   // a run that already ended, a redirect that failed, an unknown approval).
   // It used to be dropped on the floor: the click looked like it worked.
   if (msg.type === 'error' && msg.message) showControlErrorToast(msg.message);
+  if (msg.type === 'send_now_result' && typeof window.handleSendNowResult === 'function') window.handleSendNowResult(msg);
   // The user inbox (notifications.js): a new or changed item, or another tab
   // answered one.
   if ((msg.type === 'inbox_item' || msg.type === 'inbox_changed') && typeof handleInboxFrame === 'function') handleInboxFrame(msg);

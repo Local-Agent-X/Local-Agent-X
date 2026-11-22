@@ -244,22 +244,73 @@ export function startSession(
     markExited();
   });
   child.on("exit", (code, signal) => {
-    session.exitCode = code;
-    session.exitSignal = signal;
-    session.exitedAt = Date.now();
-    session.child = null;
-    unregisterOwnedProcess(child.pid);
-    // A signal death (code null) is the dev-server "code null" gremlin: log the
-    // signal + age so a SIGKILL (our killProcessGroup) is distinguishable from an
-    // external SIGTERM/SIGSEGV at the source, not just in the persisted failure.
-    if (code === null && signal) {
-      logger.warn(`session ${sessionId} killed by ${signal} after ${Date.now() - session.startedAt}ms: ${command.slice(0, 80)}`);
-    }
+    recordExit(session, child.pid, code, signal);
     deliverWithheld();
     markExited();
   });
 
   return { session };
+}
+
+/** A tracked session's process ended: its exit fields, and its port is no
+ *  longer the agent's to reach. */
+function recordExit(session: ProcessSession, pid: number | undefined, code: number | null, signal: NodeJS.Signals | null): void {
+  session.exitCode = code;
+  session.exitSignal = signal;
+  session.exitedAt = Date.now();
+  session.child = null;
+  unregisterOwnedProcess(pid);
+  // A signal death (code null) is the dev-server "code null" gremlin: log the
+  // signal + age so a SIGKILL (our killProcessGroup) is distinguishable from an
+  // external SIGTERM/SIGSEGV at the source, not just in the persisted failure.
+  if (code === null && signal) {
+    logger.warn(`session ${session.sessionId} killed by ${signal} after ${Date.now() - session.startedAt}ms: ${session.command.slice(0, 80)}`);
+  }
+}
+
+/**
+ * Track a command that is already running as a session, so process_status and
+ * process_kill reach it: a bash call the user moved to the background to have
+ * their message read (shell-handoff.ts). `output` is the run's own capture,
+ * which keeps filling. The command keeps the deadline it had: past `killAt`
+ * it is ended as its timeout would have ended it.
+ */
+export function adoptSession(
+  child: ChildProcess,
+  command: string,
+  cwd: string,
+  output: { readonly stdout: string; readonly stderr: string },
+  startedAt: number,
+  killAt: number,
+): ProcessSession {
+  let markExited!: () => void;
+  const session: ProcessSession = {
+    sessionId: newSessionId(),
+    command,
+    cwdHint: cwd,
+    pid: child.pid ?? null,
+    child,
+    startedAt,
+    exitedAt: null,
+    exitCode: null,
+    exitSignal: null,
+    exited: new Promise<void>((r) => { markExited = r; }),
+    get stdout() { return output.stdout; },
+    get stderr() { return output.stderr; },
+    truncated: false,
+    totalBytes: 0,
+  };
+  SESSIONS.set(session.sessionId, session);
+  registerOwnedProcess(child.pid);
+  child.unref();
+  const deadline = setTimeout(() => killSession(session), Math.max(0, killAt - Date.now()));
+  deadline.unref();
+  child.on("exit", (code, signal) => {
+    clearTimeout(deadline);
+    recordExit(session, child.pid, code, signal);
+    markExited();
+  });
+  return session;
 }
 
 /**

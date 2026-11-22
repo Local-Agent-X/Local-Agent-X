@@ -13,7 +13,10 @@ import { randomUUID } from "node:crypto";
 import { createLogger } from "../logger.js";
 import { recordUserLinks } from "../browser/site-provenance.js";
 import { getApprovalManager } from "../approval-manager.js";
+import type { WebSocket } from "ws";
 import { broadcastToSession } from "./broadcast.js";
+import { sendFrame } from "./frames.js";
+import { sendNow } from "../tools/shell-handoff.js";
 import { getChatHandler } from "./chat-handler.js";
 // Static imports for the inject hot path. Previously these were `await
 // import(...)` inside the handler, but every `await` yields the event loop
@@ -110,6 +113,21 @@ export function handleInject(sessionId: string, text: string, clientInjectId?: s
   } catch (e) {
     logger.warn(`[ws-chat] inject failed: ${(e as Error).message}`);
   }
+}
+
+/**
+ * Handle one `send_now` frame: the user pressed Send now under a message still
+ * queued for the running turn. Every shell command the chat is waiting on
+ * moves to the background and keeps running (src/tools/shell-handoff.ts), so
+ * the turn's next step, which drains the queue, comes now. Nothing moves once
+ * the queue is empty: the message was read already. The reply says how many
+ * moved, so the button can say whether the agent reads it now or after the
+ * step it is on.
+ */
+export function handleSendNow(ws: Pick<WebSocket, "send">, sessionId: string, injectId?: string): void {
+  const moved = hasInjects(sessionId) ? sendNow(sessionId) : 0;
+  logger.info(`[ws-chat] send now sess=${sessionId} moved=${moved}`);
+  sendFrame(ws, { type: "send_now_result", sessionId, ...(injectId ? { injectId } : {}), movedToBackground: moved });
 }
 
 // A queued inject has exactly ONE drainer: drainInjectsIntoTurn, at the top of

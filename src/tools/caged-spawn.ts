@@ -206,10 +206,21 @@ export interface CagedRunOptions extends CagedSpawnOptions {
   onSpawn?: (pid: number) => void;
 }
 
+/** A run that can be handed over while it runs. */
+export interface CagedHandoffOptions extends CagedRunOptions {
+  /** Fired to stop waiting without stopping the command: the run settles as
+   *  `handoff` with the live child and its capture, which keeps filling. The
+   *  timeout no longer applies; whoever takes the child owns it from there. */
+  handoff: AbortSignal | undefined;
+}
+
 export type CagedRunOutcome =
   | { kind: "exit"; code: number | null; signal: NodeJS.Signals | null; stdout: string; stderr: string; durationMs: number; sandboxMode: SandboxMode }
   | { kind: "timeout"; stdout: string; stderr: string; durationMs: number }
   | { kind: "abort"; durationMs: number };
+
+/** Only a run given a `handoff` signal can settle this way. */
+export type CagedHandoffOutcome = { kind: "handoff"; child: CagedChild; captured: CagedOutput; durationMs: number };
 
 /**
  * Run `spec` under the cage to completion. A timeout or an abort kills the
@@ -218,7 +229,9 @@ export type CagedRunOutcome =
  * `sandboxMode` on an exit is the mode the command ran under, for reading a
  * denial in its output.
  */
-export async function runCaged(spec: CagedSpawnSpec, opts: CagedRunOptions): Promise<CagedRunOutcome> {
+export async function runCaged(spec: CagedSpawnSpec, opts: CagedHandoffOptions): Promise<CagedRunOutcome | CagedHandoffOutcome>;
+export async function runCaged(spec: CagedSpawnSpec, opts: CagedRunOptions): Promise<CagedRunOutcome>;
+export async function runCaged(spec: CagedSpawnSpec, opts: CagedRunOptions & { handoff?: AbortSignal }): Promise<CagedRunOutcome | CagedHandoffOutcome> {
   const waitStart = Date.now();
   let child: CagedChild;
   try {
@@ -230,7 +243,7 @@ export async function runCaged(spec: CagedSpawnSpec, opts: CagedRunOptions): Pro
   const sandboxMode = getSandboxMode();
   const startMs = Date.now();
   if (child.pid) opts.onSpawn?.(child.pid);
-  return new Promise<CagedRunOutcome>((resolveP, rejectP) => {
+  return new Promise<CagedRunOutcome | CagedHandoffOutcome>((resolveP, rejectP) => {
     const captured: CagedOutput = { stdout: "", stderr: "" };
     let capturedChars = 0;
     let settled = false;
@@ -243,21 +256,27 @@ export async function runCaged(spec: CagedSpawnSpec, opts: CagedRunOptions): Pro
       killTree();
       settle(() => resolveP({ kind: "timeout", durationMs: Date.now() - startMs, stdout: captured.stdout, stderr: captured.stderr }));
     }, opts.timeoutMs);
+    const onHandoff = (): void => settle(() => resolveP({ kind: "handoff", child, captured, durationMs: Date.now() - startMs }));
     function settle(finish: () => void): void {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
       opts.signal?.removeEventListener("abort", onAbort);
+      opts.handoff?.removeEventListener("abort", onHandoff);
       finish();
     }
     // Aborted while the env and grants were prepared: the child is already up.
     if (opts.signal?.aborted) { onAbort(); return; }
     opts.signal?.addEventListener("abort", onAbort, { once: true });
+    if (opts.handoff?.aborted) { onHandoff(); return; }
+    opts.handoff?.addEventListener("abort", onHandoff, { once: true });
 
+    // After a handoff the capture goes on filling for the new owner, but the
+    // run's own progress reports stop: the call they belonged to has returned.
     const capture = (stream: keyof CagedOutput) => (chunk: string): void => {
       capturedChars += chunk.length;
       if (capturedChars <= MAX_CAPTURE_CHARS) captured[stream] += chunk;
-      opts.onOutput?.(captured);
+      if (!settled) opts.onOutput?.(captured);
     };
     child.stdout.setEncoding("utf-8");
     child.stderr.setEncoding("utf-8");

@@ -3,7 +3,7 @@
  */
 
 import type { ToolResult } from "../../types.js";
-import { listDevices, listAvds, startEmulator, stopEmulator, resolveSerial } from "../../android/index.js";
+import { listDevices, listAvds, startEmulator, stopEmulator, resolveSerial, releaseDevice } from "../../android/index.js";
 import { ok, err } from "../result-helpers.js";
 
 export async function handleListDevices(): Promise<ToolResult> {
@@ -32,5 +32,6 @@ export async function handleStartEmulator(args: Record<string, unknown>): Promis
 export async function handleStopEmulator(args: Record<string, unknown>): Promise<ToolResult> {
   const serial = await resolveSerial(args.device ? String(args.device) : undefined);
   await stopEmulator(serial);
+  releaseDevice(serial);
   return ok(`Emulator ${serial} stopped.`);
 }

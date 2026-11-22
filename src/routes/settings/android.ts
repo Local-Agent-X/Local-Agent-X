@@ -7,7 +7,7 @@
 
 import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse, readBody } from "../../server-utils.js";
-import { checkAndroidSdk, installAndroidSdk, listDevices, startEmulator, stopEmulator, keyEvent } from "../../android/index.js";
+import { checkAndroidSdk, installAndroidSdk, listDevices, startEmulator, stopEmulator, keyEvent, deviceHolder, releaseDevice } from "../../android/index.js";
 
 interface InstallState {
   running: boolean;
@@ -18,7 +18,7 @@ interface InstallState {
 
 const state: InstallState = { running: false, lastStep: null, error: null, completedAt: null };
 
-export const handleAndroidRoutes: RouteHandler = async (method, url, req, res, _ctx, _role) => {
+export const handleAndroidRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
 
   if (method === "GET" && url.pathname === "/api/android/sdk/status") {
@@ -46,8 +46,15 @@ export const handleAndroidRoutes: RouteHandler = async (method, url, req, res, _
   // Same startEmulator/stopEmulator/listDevices the agent's `android` tool calls —
   // the UI's Start/Stop button is just another caller, not a parallel path.
 
+  // Each device with the chat whose agent is driving it, if one is
+  // (android/device-hold.ts), so the tab can say whose it is.
   if (method === "GET" && url.pathname === "/api/android/devices") {
-    json(200, { devices: await listDevices() });
+    const titles = new Map(ctx.sessionStore.list().map((s) => [s.id, s.title]));
+    const devices = (await listDevices()).map((device) => {
+      const sessionId = deviceHolder(device.serial);
+      return sessionId ? { ...device, heldBy: { sessionId, title: titles.get(sessionId) || "another chat" } } : device;
+    });
+    json(200, { devices });
     return true;
   }
 
@@ -66,6 +73,7 @@ export const handleAndroidRoutes: RouteHandler = async (method, url, req, res, _
     const body = JSON.parse((await readBody(req)) || "{}") as { serial?: string };
     if (!body.serial) { json(400, { ok: false, error: "serial is required" }); return true; }
     await stopEmulator(body.serial);
+    releaseDevice(body.serial);
     json(200, { ok: true });
     return true;
   }

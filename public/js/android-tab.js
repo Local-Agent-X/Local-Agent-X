@@ -22,6 +22,15 @@
     if (stopBtn) stopBtn.disabled = !running;
   }
 
+  // One chat's agent drives a device at a time (src/android/device-hold.ts):
+  // say whose it is, so a second chat's "device is busy" has an answer.
+  function holderLabel(heldBy) {
+    if (!heldBy || !heldBy.sessionId) return '';
+    var here = '';
+    try { here = (typeof activeChat !== 'undefined' && activeChat && activeChat.id) || ''; } catch (e) { here = ''; }
+    return heldBy.sessionId === here ? ' · this chat’s agent is using it' : ' · in use by ' + heldBy.title;
+  }
+
   async function refreshStatus() {
     try {
       var res = await fetch('/api/android/devices');
@@ -29,7 +38,7 @@
       var device = (data.devices || []).find(function (d) { return d.state === 'device'; });
       if (device) {
         currentSerial = device.serial;
-        setStatus(device.model ? device.serial + ' (' + device.model + ')' : device.serial);
+        setStatus((device.model ? device.serial + ' (' + device.model + ')' : device.serial) + holderLabel(device.heldBy));
         setButtons(true);
       } else {
         currentSerial = null;
@@ -91,5 +100,5 @@
     if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   }
 
-  window.laxAndroidTab = { onTabShown: onTabShown, onTabHidden: onTabHidden, start: start, stop: stop, key: key };
+  window.laxAndroidTab = { onTabShown: onTabShown, onTabHidden: onTabHidden, start: start, stop: stop, key: key, refresh: refreshStatus };
 })();

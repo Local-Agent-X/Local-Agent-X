@@ -27,6 +27,8 @@ window.laxSidePanelChat = {
     if (window.laxAgentFeedsScope) window.laxAgentFeedsScope.onChatChanged();
     if (sidePanelTab === 'artifacts') loadArtifacts(false);
     if (window.laxTerminalPanel && window.laxTerminalPanel.onChatChanged) window.laxTerminalPanel.onChatChanged();
+    // The device is the same one in every chat; whose agent has it reads differently in each.
+    if (sidePanelTab === 'android' && window.laxAndroidTab && window.laxAndroidTab.refresh) window.laxAndroidTab.refresh();
   },
 };
 

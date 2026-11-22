@@ -4,7 +4,7 @@
  * action handlers live alongside this file:
  *   description.ts   — static tool name + description + parameters schema
  *   action-tables.ts — read-only action classification (drives `effect`)
- *   gates.ts          — SDK-readiness pre-dispatch gate
+ *   gates.ts          — SDK-readiness pre-dispatch gate; one chat drives a device at a time
  *   devices.ts        — list_devices, start_emulator, stop_emulator
  *   interact.ts       — tap, swipe, type_text, key_event
  *   apps.ts           — install_apk, launch_app, list_apps, port_forward, open_url
@@ -19,7 +19,7 @@ import {
   ANDROID_TOOL_PARAMETERS,
 } from "./description.js";
 import { READ_ONLY_ACTIONS } from "./action-tables.js";
-import { sdkReadinessGate } from "./gates.js";
+import { deviceHoldGate, sdkReadinessGate } from "./gates.js";
 import { handleListDevices, handleStartEmulator, handleStopEmulator } from "./devices.js";
 import { handleTap, handleSwipe, handleTypeText, handleKeyEvent } from "./interact.js";
 import { handleInstallApk, handleLaunchApp, handleListApps, handlePortForward, handleOpenUrl } from "./apps.js";
@@ -38,7 +38,7 @@ export function createAndroidTools(): ToolDefinition[] {
     async execute(args) {
       const action = String(args.action || "");
       try {
-        const gated = sdkReadinessGate(action);
+        const gated = sdkReadinessGate(action) ?? await deviceHoldGate(action, args);
         if (gated) return gated;
         switch (action) {
           case "list_devices": return await handleListDevices();

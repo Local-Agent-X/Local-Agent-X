@@ -14,7 +14,7 @@
  * (POs, invoices, customers, vendors). Hostname is the trust boundary;
  * path is incidental.
  *
- * Storage: ~/.lax/threat-trust-ledger.json (per-machine, never synced —
+ * Storage: <data dir>/threat-trust-ledger.json (per-machine, never synced —
  * security state stays local). Persists across server restarts; cleared
  * only by explicit user action.
  *
@@ -31,20 +31,18 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "../lax-data-dir.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("threat.trust-ledger");
 
-// Resolved on every load/save (not cached at import) so test isolation
-// via HOME / USERPROFILE redirects writes to a temp dir. Reads env vars
-// directly — Node's os.homedir() on Windows goes through
-// GetUserProfileDirectory() (Win32 API) and ignores process.env, so
-// env-based isolation only works if we read the env ourselves. Mirrors
-// the pattern in src/config.ts:getConfigDir.
+// In the data dir, resolved on every load/save (not cached at import), so a
+// relocated data dir (LAX_DATA_DIR) and test isolation both hold. Its own
+// `<home>/.lax` left the ledger behind when the data dir moved — outside the
+// control-file protection, which guards the data dir's copy
+// (security/layer/lax-data-catalog.ts).
 function ledgerPath(): string {
-  const home = process.env.HOME || process.env.USERPROFILE || homedir();
-  return join(home, ".lax", "threat-trust-ledger.json");
+  return join(getLaxDir(), "threat-trust-ledger.json");
 }
 
 export interface LearnedPattern {

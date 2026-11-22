@@ -11,7 +11,8 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { createRequire } from "node:module";
-import { LAX_DIR, MEMORY_DIR, type FactEntry } from "./types.js";
+import { MEMORY_DIR, type FactEntry } from "./types.js";
+import { getLaxDir } from "../../../lax-data-dir.js";
 import { todayDateStr } from "./utils.js";
 import { entityMentionRe } from "../../utils.js";
 
@@ -20,7 +21,7 @@ const require = createRequire(import.meta.url);
 export function loadSqliteFacts(days: number): FactEntry[] {
   try {
     const Database = require("better-sqlite3");
-    const dbPath = join(LAX_DIR, "memory.db");
+    const dbPath = join(getLaxDir(), "memory.db");
     if (!existsSync(dbPath)) return [];
     const db = new Database(dbPath, { readonly: true });
     const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;

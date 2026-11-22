@@ -37,11 +37,12 @@ function sourceFiles(dir: string, out: string[] = []): string[] {
 }
 
 // What a path is joined onto when it means the data dir: the resolver, the
-// names the codebase gives its result, and an inline `<home>, ".lax"`.
+// names the codebase gives its result, a passed-in dir falling back to the
+// resolver, and an inline `<home>, ".lax"`.
 const DATA_DIR_BASES = [
   String.raw`getLaxDir\(\)`,
   String.raw`(?:this\.)?(?:LAX_DIR|laxDir|dataDir)`,
-  String.raw`\w+\s*\|\|\s*join\(homedir\(\),\s*"\.lax"\)`,
+  String.raw`\w+\s*\|\|\s*getLaxDir\(\)`,
   String.raw`[\w.]+(?:\(\))?\s*,\s*"\.lax"`,
 ];
 

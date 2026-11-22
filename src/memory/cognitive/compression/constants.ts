@@ -1,8 +1,7 @@
 import { join } from "node:path";
 import { getLaxDir } from "../../../lax-data-dir.js";
 
-export const LAX_DIR = getLaxDir();
-export const COMPRESSED_DIR = join(LAX_DIR, "memory-compressed");
+export const COMPRESSED_DIR = join(getLaxDir(), "memory-compressed");
 export const MS_PER_DAY = 86_400_000;
 
 export const STOP_WORDS = new Set([

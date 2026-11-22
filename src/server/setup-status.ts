@@ -20,7 +20,7 @@
 // condition it described actively misleads.)
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { getLaxDir } from "../lax-data-dir.js";
 import { DEFAULT_EMBEDDING_PROVIDER } from "../embedding-providers/types.js";
 
 export interface DegradedComponent {
@@ -173,7 +173,7 @@ export function normalizeInstallHardwareProfile(value: unknown): InstallHardware
 /** Read the installer's record of optional steps that degraded. Absent file =
  *  no report (an older install, or a dev clone) — NOT "nothing degraded". */
 export function readInstallReport(dataDir?: string): InstallReport | null {
-  const path = join(dataDir || join(homedir(), ".lax"), "install-report.json");
+  const path = join(dataDir || getLaxDir(), "install-report.json");
   if (!existsSync(path)) return null;
   try {
     const parsed = JSON.parse(readFileSync(path, "utf-8")) as InstallReport;

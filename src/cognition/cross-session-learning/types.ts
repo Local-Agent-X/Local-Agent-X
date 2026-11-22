@@ -274,7 +274,6 @@ export function normalizeLegacyEvidenceIdentities(data: SessionData): boolean {
   return changed;
 }
 
-export const LAX_DIR = getLaxDir();
-export const DATA_FILE = join(LAX_DIR, "cross-session-data.json");
+export const DATA_FILE = join(getLaxDir(), "cross-session-data.json");
 export const REJECTION_COOLDOWN_DAYS = 30;
 export const MS_PER_DAY = 86400000;

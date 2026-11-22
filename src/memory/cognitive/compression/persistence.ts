@@ -7,13 +7,14 @@ import {
 } from "node:fs";
 import { join } from "node:path";
 
-import { COMPRESSED_DIR, LAX_DIR } from "./constants.js";
+import { COMPRESSED_DIR } from "./constants.js";
+import { getLaxDir } from "../../../lax-data-dir.js";
 import type { StoredCompression } from "./types.js";
 import { runMemoryGate } from "../../write-safely.js";
 import { createInternalMemoryContext } from "../../promotion-gate.js";
 
 export function ensureDirs(): void {
-  for (const dir of [LAX_DIR, COMPRESSED_DIR]) {
+  for (const dir of [getLaxDir(), COMPRESSED_DIR]) {
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   }
 }

@@ -35,7 +35,6 @@ import {
 	getAttachedViewId,
 	getBrowserView,
 	hideBrowserView,
-	isViewAdopted,
 	listBrowserViews,
 	setBrowserChatOverlay,
 	setAgentViewEvictedNotifier,
@@ -58,22 +57,18 @@ import {
 	claimUnownedViews,
 	claimUserView,
 	currentViewId,
-	forgetChat,
 	forgetView,
 	homeViewId,
 	isHomeViewId,
 	isRested,
 	noteBackgroundAgentView,
-	pagesToRest,
 	restedViewsOf,
-	restView,
 	setBoundChat,
 	setCurrentViewId,
 	shownInBoundChat,
 	userViewOwner,
-	viewChat,
-	wakeRested,
 } from "./browser-chat-views";
+import { closeChatViews, restIdlePages, startPageRestTimer, wakeRestedPage } from "./browser-chat-pages";
 import { sessionIdFromViewId } from "./contract/browser-view-ids";
 import { SHARED_BROWSER_PARTITION } from "./browser-partition";
 import { markHumanNavigation } from "./in-app-browser";
@@ -107,8 +102,6 @@ let userTabSeq = 0;
 // Microtask-level debounce for the no-payload pool-change poke: a burst of
 // pool mutations (create+show, close cascade) collapses into ONE re-list.
 let viewsChangedQueued = false;
-// How often the pages of chats off screen are checked for resting.
-const REST_CHECK_MS = 60_000;
 
 /**
  * CSS px (renderer) → window DIPs. getBoundingClientRect reports zoom-scaled
@@ -123,52 +116,6 @@ export function scaleRectToDip(rect: Rectangle, zoomFactor: number): Rectangle {
 		width: Math.round(rect.width * zoomFactor),
 		height: Math.round(rect.height * zoomFactor),
 	};
-}
-
-/** A resting page is wanted again: make its view anew and load its address.
- *  Undefined when `viewId` is not a resting page. */
-function wakeView(viewId: string): WebContentsView | undefined {
-	const record = wakeRested(viewId);
-	if (!record) return undefined;
-	createBrowserView(viewId, { partition: SHARED_BROWSER_PARTITION, agentDriven: false });
-	const view = getBrowserView(viewId)!;
-	// The person's own page coming back, as when they opened it.
-	markHumanNavigation(viewId);
-	void prepareEmbeddedChromeIdentityForNavigation(view.webContents)
-		.then(() => view.webContents.loadURL(record.url))
-		.catch(() => { /* ERR_ABORTED etc. — nav-state carries the real outcome */ });
-	return view;
-}
-
-/** A page that must stay loaded: on screen, driven by an agent, or playing sound. */
-function pageIsBusy(viewId: string): boolean {
-	if (getAttachedViewId() === viewId || isViewAdopted(viewId)) return true;
-	const wc = getBrowserView(viewId)?.webContents;
-	return !!wc && !wc.isDestroyed() && wc.isCurrentlyAudible();
-}
-
-/** Put to rest the user pages of chats that have been off screen long enough
- *  (browser-chat-views.ts pagesToRest): close the view, keep the tab. */
-function restIdlePages(): void {
-	const live = listBrowserViews().filter((v) => !v.agentDriven && v.url !== "" && v.url !== "about:blank");
-	for (const viewId of pagesToRest(live.map((v) => v.viewId), Date.now(), pageIsBusy)) {
-		const info = live.find((v) => v.viewId === viewId)!;
-		restView(viewId, info.url, info.title);
-		closeBrowserView(viewId);
-	}
-}
-
-/** A chat was deleted: close every view of it, its agent's included (the
- *  server is told, as for a tab closed from the strip), and forget the chat. */
-function closeChatViews(chat: string): void {
-	if (boundChat() === chat) bindChat(null);
-	for (const info of listBrowserViews()) {
-		if (viewChat(info.viewId, info.agentDriven) !== chat) continue;
-		closeBrowserView(info.viewId);
-		if (info.agentDriven) emitAgentViewClosed(info.viewId);
-	}
-	forgetChat(chat);
-	sendViewsChanged();
 }
 
 /** Lazily create the home view of the chat on screen on first use and wire it. */
@@ -190,7 +137,7 @@ function ensureHomeView(): { viewId: string; view: WebContentsView } {
 function ensureCurrentView(): { viewId: string; view: WebContentsView } {
 	const viewId = currentViewId();
 	if (!isHomeViewId(viewId)) {
-		const view = getBrowserView(viewId) ?? wakeView(viewId);
+		const view = getBrowserView(viewId) ?? wakeRestedPage(viewId);
 		if (view) {
 			wireNavPushes(viewId, view.webContents);
 			return { viewId, view };
@@ -340,7 +287,7 @@ export function setupBrowserIPC(): void {
 	setupBrowserPageControls(currentViewId);
 	setupBrowserDownloadsIPC();
 	setupBrowserPermissionBarIPC();
-	setInterval(restIdlePages, REST_CHECK_MS).unref();
+	startPageRestTimer();
 
 	ipcMain.handle("browser-set-bounds", (event: IpcMainInvokeEvent, rect: Rectangle) => {
 		if (!isTrustedBrowserSender(event.sender)) return;
@@ -460,7 +407,10 @@ export function setupBrowserIPC(): void {
 	// A chat was deleted (public/js/browser-session-bind.js closeChat).
 	ipcMain.handle("browser-close-chat", (event: IpcMainInvokeEvent, chat: unknown): void => {
 		if (!isTrustedBrowserSender(event.sender)) return;
-		if (typeof chat === "string" && chat) closeChatViews(chat);
+		if (typeof chat !== "string" || !chat) return;
+		if (boundChat() === chat) bindChat(null); // the pane leaves the chat before its views close
+		closeChatViews(chat);
+		sendViewsChanged();
 	});
 
 	// Flip which pool view the anchor drives + shows. The target must already
@@ -469,7 +419,7 @@ export function setupBrowserIPC(): void {
 	// in-flight agent ops keep running while the user watches another view.
 	ipcMain.handle("browser-switch-view", (event: IpcMainInvokeEvent, viewId: string): BrowserNavState | null => {
 		if (!isTrustedBrowserSender(event.sender)) return null;
-		const view = viewId === homeViewId() ? ensureHomeView().view : getBrowserView(viewId) ?? wakeView(viewId);
+		const view = viewId === homeViewId() ? ensureHomeView().view : getBrowserView(viewId) ?? wakeRestedPage(viewId);
 		if (!view) return null; // vanished/never-existed — renderer re-lists and recovers
 		setCurrentViewId(viewId);
 		wireNavPushes(viewId, view.webContents);

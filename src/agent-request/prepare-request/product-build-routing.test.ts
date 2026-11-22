@@ -21,7 +21,7 @@ function tool(name: string): ToolDefinition {
 
 const allTools = [
   "read", "write", "bash", "tool_search", "agent_spawn", "self_edit",
-  "build_app", "start_app_build", "finalize_app_build", "run_build_plan",
+  "build_app", "start_app_build", "holdout_write", "holdout_seal", "holdout_judge", "run_build_plan",
   "build_plan_status", "build_plan_resume",
 ].map(tool);
 
@@ -128,29 +128,35 @@ describe("durable continuation action mapping", () => {
 });
 
 describe("canonical tool selection routing", () => {
-  it("forces /app-build into Product Build and structurally removes Quick Build", async () => {
+  it("forces /greenfield into Product Build and structurally removes Quick Build", async () => {
     const result = await selection({
-      message: `${SLASH_COMMAND_MARKER} \`/app-build\`. The user's argument: Build me a CRM`,
+      message: `${SLASH_COMMAND_MARKER} \`/greenfield\`. The user's argument: Build me a CRM`,
     });
     const names = result.tools.map(item => item.name);
     expect(result.forcedToolName).toBe("start_app_build");
     expect(names).toContain("start_app_build");
     expect(names).not.toContain("build_app");
-    expect(names).not.toContain("write");
   });
 
-  it("keeps later /app-build planning turns Product-only through sign-off", async () => {
+  it("keeps later /greenfield turns on the build's own tools, and leaves it the tools to write its spec", async () => {
     const result = await selection({
       message: "Everything is locked in",
       priorMethodology: true,
     });
     const names = result.tools.map(item => item.name);
     expect(result.forcedToolName).toBeUndefined();
-    expect(names).toContain("start_app_build");
-    expect(names).toContain("finalize_app_build");
+    for (const name of ["holdout_write", "holdout_seal", "run_build_plan", "holdout_judge", "write"]) expect(names).toContain(name);
     expect(names).not.toContain("build_app");
-    expect(names).not.toContain("write");
-    expect(result.productBuildTurn?.directive).toContain("call finalize_app_build");
+    expect(result.productBuildTurn?.directive).toContain("run_build_plan");
+  });
+
+  it("does not treat another slash command as a build", async () => {
+    const result = await selection({
+      message: `${SLASH_COMMAND_MARKER} \`/senior-engineer\`. The user's argument: fix the login bug`,
+    });
+    expect(result.productBuildTurn).toBeNull();
+    expect(result.forcedToolName).toBeUndefined();
+    expect(result.tools.map(item => item.name)).toContain("write");
   });
 
   // op-outcomes 2026-09-15: build-shaped wording used to be classified as a

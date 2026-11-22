@@ -15,7 +15,7 @@
  * Bundled bodies live at:
  *   src/protocols/bundled/senior-engineer/SKILL.md
  *   src/protocols/bundled/vibe-code/SKILL.md
- *   src/protocols/bundled/app-build/SKILL.md
+ *   src/protocols/bundled/greenfield/SKILL.md
  *
  * Same directory the Protocols browser scans — one source of truth for the
  * SKILL.md content AND for the directory path: we import bundledProtocolsDir()

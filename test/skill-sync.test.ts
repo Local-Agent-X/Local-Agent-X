@@ -98,7 +98,7 @@ describe("companion files", () => {
     syncSkills(skills, bundled, ["new-project"]);
 
     writeFileSync(join(dir, "references", "couplings.md"), "# couplings\n\nmoved on\n");
-    expect(skillDrift(skills, bundled, ["new-project"])).toEqual([`new-project/references/couplings.md differs from ${join(dir, "references", "couplings.md")}`]);
+    expect(skillDrift(skills, bundled, ["new-project"])).toEqual([`new-project/references/couplings.md differs from the adapted ${join(dir, "references", "couplings.md")}`]);
     expect(skillDrift(null, bundled, ["new-project"])).toEqual([]);
     syncSkills(skills, bundled, ["new-project"]);
 
@@ -126,6 +126,17 @@ describe("the bundled copies", () => {
     const manifest = JSON.parse(readFileSync(join(dir, "UPSTREAM.json"), "utf-8"));
     expect(Object.keys(manifest.files)).toEqual(["references/couplings.md", "references/registry-pattern.md", "references/retrofit.md", "references/templates.md"]);
     for (const file of text.matchAll(/`(references\/[a-z-]+\.md)`/g)) expect(manifest.files).toHaveProperty(file[1]);
+  });
+
+  it("greenfield, references included, names LAX's tools and seal, never Claude Code's hook, folders or tools", () => {
+    const dir = join(BUNDLED_DIR, "greenfield");
+    const manifest = JSON.parse(readFileSync(join(dir, "UPSTREAM.json"), "utf-8"));
+    const files = ["SKILL.md", ...Object.keys(manifest.files)];
+    expect(files).toEqual(expect.arrayContaining(["references/holdout.md", "references/autonomous.md", "references/spec.md"]));
+    const all = files.map((f) => readFileSync(join(dir, f), "utf-8").replace(/\r\n/g, "\n")).join("\n");
+    for (const lax of ["holdout_write", "holdout_seal", "holdout_judge", "run_build_plan", "project_kit", "agent_spawn"]) expect(all).toContain(lax);
+    expect(all).not.toMatch(/Claude Code|~\/\.claude|\.claude\/|~\/\.holdout|holdout-guard|PreToolUse|grand-daddy|AskUserQuestion|`Workflow`|`Agent`|TodoWrite/);
+    expect(readFileSync(join(dir, "SKILL.md"), "utf-8")).not.toMatch(/^\s+- (?:Workflow|TodoWrite)$/m);
   });
 });
 

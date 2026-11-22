@@ -79,7 +79,7 @@ describe("capability-class membership (single source of truth)", () => {
     expect([...CAPABILITY_CLASS_MEMBERS["workspace-write"]].sort()).toEqual(writers);
     // The document and generator tools write files too; a "don't edit files"
     // ban or the read-only preset used to let them through.
-    for (const t of ["spreadsheet", "document", "presentation", "pdf", "create_chart", "finalize_app_build", "extract_site_assets"]) {
+    for (const t of ["spreadsheet", "document", "presentation", "pdf", "create_chart", "extract_site_assets"]) {
       expect(writers, t).toContain(t);
     }
   });

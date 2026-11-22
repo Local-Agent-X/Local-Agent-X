@@ -32,7 +32,7 @@ export const TOOL_TAGS = [
   "project-brief",     // reads or updates a project's shared brief
   "delegation",        // starts another agent or worker run
   "app-build",         // builds an app, or plans or runs an app build
-  "app-build-spec",    // the spec-first /app-build planning steps
+  "app-build-spec",    // the steps of a /greenfield build: plan, seal the scenarios, run, judge
   "secret-store",      // stores a secret the user hands over, or lists the stored ones
   "updates",           // checks for or installs a new version of the app
   "voice-fast",        // answers within a spoken turn, or hands the work off, and is safe to call by voice

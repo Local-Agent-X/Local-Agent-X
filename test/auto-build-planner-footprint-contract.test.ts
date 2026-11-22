@@ -1,45 +1,39 @@
-// Contract test: the /app-build planner methodology (SKILL.md) must keep teaching
-// the model to declare per-chunk file footprints, AND its worked example must stay
-// in a format the plan parser actually accepts and turns into a footprint.
+// Contract test: the /greenfield skill must keep teaching the model to declare
+// per-chunk file footprints, AND its worked example must stay in a format the
+// plan parser actually accepts and turns into a footprint.
 //
-// Why this exists: the parallel build path (S3) only fans chunks out when the plan
-// declares disjoint `**Files:**` footprints (S1 parser + S2 conflict-graph). The
-// planner learns to emit those from the methodology in
-// src/protocols/bundled/app-build/SKILL.md. If that guidance or its example ever
-// drifts out of the parseable grammar, parallelism silently reverts to serial with
-// no test failure anywhere — this guards that seam.
+// Why this exists: the parallel build path only fans chunks out when the plan
+// declares disjoint `**Files:**` footprints (the parser + conflict-graph). The
+// planner learns to emit those from the skill's plan reference,
+// src/protocols/bundled/greenfield/references/spec.md (section 8). If that
+// guidance or its example ever drifts out of the parseable grammar, parallelism
+// silently reverts to serial with no test failure anywhere — this guards that seam.
 import { describe, it, expect } from "vitest";
-import { loadSkillBody } from "../src/auto-build/skill-bodies.js";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { BUNDLED_DIR } from "../scripts/check-skill-sync.mjs";
 import { parsePlanText } from "../src/auto-build/plan-parser.js";
 
-describe("app-build planner ↔ parser footprint contract", () => {
-  const body = loadSkillBody("app-build");
+describe("greenfield planner ↔ parser footprint contract", () => {
+  const body = readFileSync(join(BUNDLED_DIR, "greenfield", "references", "spec.md"), "utf-8").replace(/\r\n/g, "\n");
 
-  it("the methodology still instructs the planner to declare per-chunk files", () => {
-    expect(body).toMatch(/Declare the files each chunk touches/i);
-    // The rationale must survive too — it's why a planner bothers to be accurate.
-    expect(body.toLowerCase()).toContain("parallel");
+  it("the skill still instructs the planner to declare per-chunk files", () => {
+    expect(body).toContain("**Files** is what autonomous mode schedules on.");
+    expect(body).toContain("`run_build_plan` parses exactly this shape");
   });
 
-  it("the methodology's chunk example parses into the exact footprint the builder schedules on", () => {
-    // Pull the indented worked-example block (starts at the Chunk 3 heading, ends
-    // at the first blank line) out of the markdown and dedent it 4 spaces.
-    const lines = body.split("\n");
-    const start = lines.findIndex((l) => /^\s*### Chunk 3 — User profile page/.test(l));
-    expect(start, "example chunk heading present in SKILL.md").toBeGreaterThan(-1);
-    const block: string[] = [];
-    for (let i = start; i < lines.length; i++) {
-      if (lines[i].trim() === "") break;
-      block.push(lines[i].replace(/^ {4}/, "")); // dedent the code-block indent
-    }
-    const plan = parsePlanText(block.join("\n"));
+  it("the skill's chunk example parses into the exact footprint the builder schedules on", () => {
+    const fence = body.indexOf("```markdown\n## Phase B — Accounts");
+    expect(fence, "example chunk present in references/spec.md").toBeGreaterThan(-1);
+    const example = body.slice(fence + "```markdown\n".length, body.indexOf("\n```", fence + 3));
+    const plan = parsePlanText(example);
     const chunk = plan.chunks.find((c) => c.number === 3);
     expect(chunk, "the example must parse into a chunk").toBeDefined();
-    // The load-bearing assertion: the example yields a concrete, non-empty footprint
-    // (empty would make the conflict-graph serialize it — no parallelism).
+    // The load-bearing assertion: a concrete, non-empty footprint (empty would make
+    // the conflict-graph serialize it — no parallelism).
     expect(chunk!.footprint).toEqual(["src/routes/profile.tsx", "src/api/profile.ts"]);
-    // And the companions the parallel scheduler also reads.
     expect(chunk!.dependsOn).toEqual([1, 2]);
     expect(chunk!.klass).toBe("leaf");
+    expect(chunk!.scenarios).toBe("4, 5");
   });
 });

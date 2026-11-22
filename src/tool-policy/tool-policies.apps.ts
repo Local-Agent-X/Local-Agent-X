@@ -111,7 +111,7 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   // (app-tools/project-kit-tool.ts): the on-request route for a project that
   // was not started by a build tool or the write tool.
   project_kit:           { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [], reads: ["session"] },
-  // The app-build ops (build_app, start/finalize_app_build, run_build_plan),
+  // The app-build ops (build_app, start_app_build, run_build_plan, holdout_judge),
   // self_edit, op_submit*/op_wait and agent_spawn/agent_create run for minutes
   // by design: timeoutMs 0, since killing a real long-runner is the bigger bug.
   // A build reports to, and its workflow state belongs to, the chat that
@@ -138,17 +138,17 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   app_rebuild:           { kernel: "shell", ariAction: "exec", risk: "shell", capabilities: ["egress", "shell"], tags: [], timeoutMs: 300_000, output: "command" },
   create_page:           { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [], rules: [{ id: "allow-create-page", decision: "allow", reason: "Create custom pages", priority: 50 }] },
   start_app_build:       { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["app-build", "app-build-spec"], timeoutMs: 0, reads: ["session"], reach: { kind: "indirect-network", why: "its builder installs packages and fetches assets" }, rules: [{ id: "allow-start-app-build", decision: "allow", reason: "App-build kickoff handle", priority: 50 }] },
-  // finalize creates project_dir and writes the spec into it; run reads the
-  // plan under it (the build's own writes run under the worker's gates).
-  finalize_app_build:    { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["app-build", "app-build-spec"], timeoutMs: 0, reads: ["session"], reach: { kind: "indirect-network", why: "its builder installs packages and fetches assets" }, pathArgs: [{ arg: "project_dir", action: "write" }], rules: [{ id: "allow-finalize-app-build", decision: "allow", reason: "App-build finalize handle", priority: 50 }] },
   // A build's held-out scenarios (src/holdout/): written and sealed by name,
   // never by path, so the seal refuses every path that reaches the store.
   // Writing replaces a scenario until the seal; the seal cannot be undone.
   holdout_write:         { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["app-build-spec"], rules: [{ id: "allow-holdout-write", decision: "allow", reason: "Write a held-out scenario into the sealed store, by project name", priority: 50 }] },
   holdout_seal:          { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["app-build-spec"], rules: [{ id: "allow-holdout-seal", decision: "allow", reason: "Seal a build's held-out scenarios", priority: 50 }] },
-  build_plan_resume:     { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["app-build"], blurb: { does: "Resume a paused app build." }, reads: ["session"], pathArgs: [{ arg: "project_dir", action: "read" }], rules: [{ id: "allow-build-plan-resume", decision: "allow", reason: "Auto-build resume handle", priority: 50 }] },
-  build_plan_status:     { kernel: "internal", risk: "safe", capabilities: [], tags: ["app-build"], blurb: { does: "Check an app build's status." }, liveState: "fresh", pathArgs: [{ arg: "project_dir", action: "read" }], rules: [{ id: "allow-build-plan-status", decision: "allow", reason: "Auto-build status read", priority: 50 }] },
-  run_build_plan:        { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["app-build"], blurb: { does: "Run a staged app-build plan." }, timeoutMs: 0, reads: ["session"], reach: { kind: "indirect-network", why: "its builder installs packages and fetches assets" }, pathArgs: [{ arg: "project_dir", action: "read" }], rules: [{ id: "allow-run-build-plan", decision: "allow", reason: "Auto-build loop kickoff", priority: 50 }] },
+  // Starts the project's app from its .lax-launch.json, as a build's phase
+  // gate does, and scores it against the sealed suite (auto-build/holdout-judge-tool.ts).
+  holdout_judge:         { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["app-build", "app-build-spec"], timeoutMs: 0, reach: { kind: "indirect-network", why: "it starts the project's app, which may fetch what it needs" }, pathArgs: [{ arg: "project_dir", action: "read" }], rules: [{ id: "allow-holdout-judge", decision: "allow", reason: "Score the running app against its sealed scenarios", priority: 50 }] },
+  build_plan_resume:     { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["app-build", "app-build-spec"], blurb: { does: "Resume a paused app build." }, reads: ["session"], pathArgs: [{ arg: "project_dir", action: "read" }], rules: [{ id: "allow-build-plan-resume", decision: "allow", reason: "Auto-build resume handle", priority: 50 }] },
+  build_plan_status:     { kernel: "internal", risk: "safe", capabilities: [], tags: ["app-build", "app-build-spec"], blurb: { does: "Check an app build's status." }, liveState: "fresh", pathArgs: [{ arg: "project_dir", action: "read" }], rules: [{ id: "allow-build-plan-status", decision: "allow", reason: "Auto-build status read", priority: 50 }] },
+  run_build_plan:        { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["app-build", "app-build-spec"], blurb: { does: "Run a staged app-build plan." }, timeoutMs: 0, reads: ["session"], reach: { kind: "indirect-network", why: "its builder installs packages and fetches assets" }, pathArgs: [{ arg: "project_dir", action: "read" }], rules: [{ id: "allow-run-build-plan", decision: "allow", reason: "Auto-build loop kickoff", priority: 50 }] },
 
   // ── UI / state / config ──
   sidebar_pin:    { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [], blurb: { say: "pin this to the sidebar", does: "Pin an item to the sidebar." }, wholeToolGrant: true },

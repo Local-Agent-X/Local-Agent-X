@@ -1,0 +1,11 @@
+{
+  "upstream": "~/.claude/skills/greenfield/SKILL.md",
+  "sha256": "30001743b1b2976718459724f27dedf3ec96f2f63d40302130089bffab2638c3",
+  "files": {
+    "references/autonomous.md": "bd87b1986cac2e63ee676caf648943164f902a21c2fe4e8ce55d4e793be9694b",
+    "references/gates.md": "35d86bf6dd0488f62812bb38d88bb7f7f96264eecf54488cfc9b3076878b5a54",
+    "references/holdout.md": "a4a709d3430ac4ad9c8fc9f2480c2d176114e4b9a40f27f24d8a009c112b0172",
+    "references/spec.md": "3846d66361589002180e4ad41dfec7c862e0a62c19ef80a40b798568696978a3",
+    "references/structure.md": "3402e6c90afacef05fdb512169825565d0534e30aa2c89defa74b7742fd024b5"
+  }
+}

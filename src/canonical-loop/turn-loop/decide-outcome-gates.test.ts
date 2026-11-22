@@ -30,15 +30,15 @@ const APP_WRITE: ToolCall[] = [{ toolCallId: "t1", tool: "write", args: { path: 
 beforeEach(() => { mockRenderVerify.mockClear(); });
 
 describe("render-verify gate — appDescription is the user's ask, not the slash template", () => {
-  const EXPANDED = expandSlashCommand("/app-build a todo app with dark mode")!.agentMessage;
+  const EXPANDED = expandSlashCommand("/greenfield a todo app with dark mode")!.agentMessage;
 
   it("premise: on the chat path op.task is the EXPANDED message", () => {
     expect(EXPANDED).toContain("**SLASH COMMAND**");
-    expect(EXPANDED).toContain("# /app-build methodology");
+    expect(EXPANDED).toContain("# /greenfield methodology");
     expect(EXPANDED.length).toBeGreaterThan(1000);
   });
 
-  it("hands the screenshot judge `/app-build a todo app with dark mode`, never the SKILL.md body", async () => {
+  it("hands the screenshot judge `/greenfield a todo app with dark mode`, never the SKILL.md body", async () => {
     const out = await renderVerify.evaluate({
       op: op({ id: "op-slash", type: "app_build", task: EXPANDED, appUrl: "http://127.0.0.1:7007/apps/todo/index.html" }),
       turnIdx: 1,
@@ -49,7 +49,7 @@ describe("render-verify gate — appDescription is the user's ask, not the slash
     expect(mockRenderVerify).toHaveBeenCalledTimes(1);
     expect(mockRenderVerify).toHaveBeenCalledWith("op-slash", {
       appUrl: "http://127.0.0.1:7007/apps/todo/index.html",
-      appDescription: "/app-build a todo app with dark mode",
+      appDescription: "/greenfield a todo app with dark mode",
     });
   });
 

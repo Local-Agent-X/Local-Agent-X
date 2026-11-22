@@ -12,11 +12,11 @@ import type { ToolDefinition } from "../../types.js";
 import type { ChannelKind } from "../types.js";
 import type { ChatMode } from "../../session/mode.js";
 import { filterToolsForMessage } from "../tool-filter.js";
-import { isSlashCommandExpansion } from "../../slash-commands.js";
 import { createLogger } from "../../logger.js";
 import { CAPABILITY_CLASS_MEMBERS } from "../../tool-registry.js";
 import {
   applyProductBuildToolRoute,
+  isGreenfieldExpansion,
   productBuildMethodologyTurn,
   resolveProductBuildContinuationTurn,
   type ContinuationResolver,
@@ -165,14 +165,13 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
         input.continuationResolver,
       );
 
-  // A slash command (e.g. /app-build) is an EXPLICIT user-chosen workflow whose
-  // injected methodology body defines how the agent works and which tools to
-  // call. priorMethodology extends it across the whole session — only the
-  // first turn carries the marker.
-  const inMethodology = isSlashCommandExpansion(input.message) || input.priorMethodology === true;
-  const methodologyTurn = inMethodology
-    ? productBuildMethodologyTurn(isSlashCommandExpansion(input.message))
-    : null;
+  // /greenfield is an EXPLICIT user-chosen build whose injected skill defines
+  // how the agent works and which tools to call. priorMethodology extends it
+  // across the whole session — only the first turn carries the marker. Other
+  // slash commands are not builds and get no build route.
+  const firstGreenfieldTurn = isGreenfieldExpansion(input.message);
+  const inMethodology = firstGreenfieldTurn || input.priorMethodology === true;
+  const methodologyTurn = inMethodology ? productBuildMethodologyTurn(firstGreenfieldTurn) : null;
   const productBuildTurn = continuationTurn ?? methodologyTurn;
 
   // Tier gates how hard we shrink the schema. Weak/medium models are paralyzed
@@ -360,10 +359,12 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
     }
   }
 
-  // Explicit build-workflow turn: the background op owns the build, so deny the
-  // main agent the tools to build it inline (the dual-build fix). Applied after
-  // every other selection step so no path re-adds them.
-  if (productBuildTurn && !isBridge) {
+  // Continuing a build: the background op owns it, so deny the main agent the
+  // tools to build it inline (the dual-build fix). Applied after every other
+  // selection step so no path re-adds them. A /greenfield turn keeps them: its
+  // orchestrator writes spec/ and the ledger and runs the checks itself, and
+  // hands the product code to run_build_plan.
+  if (productBuildTurn?.kind !== "methodology" && productBuildTurn && !isBridge) {
     tools = stripInlineBuildTools(tools, input.allAgentTools);
   }
 
@@ -396,7 +397,7 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
     tools,
     tier,
     productBuildTurn,
-    // Only a workflow the user chose explicitly (/app-build) pins a tool. A
+    // Only a workflow the user chose explicitly (/greenfield) pins a tool. A
     // continuation is matched from wording, which is a guess (product-build-routing.ts).
     forcedToolName: productBuildTurn?.kind === "methodology" ? productBuildTurn.targetTool : undefined,
     isBridge,

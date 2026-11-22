@@ -59,6 +59,23 @@ export async function runPhaseGateScoring(opts: PhaseGateRunnerOptions): Promise
     return { kind: "no-spec", reason: `no sealed scenarios for ${basename(opts.projectDir)} to score` };
   }
   opts.onProgress?.(`scoring ${scenarioPaths.length} scenarios for ${opts.chunk.phase}`);
+  return scoreScenarioFiles({ ...opts, launch, scenarioPaths });
+}
+
+export interface ScoreScenarioFilesOptions {
+  projectDir: string;
+  launch: NonNullable<ReturnType<typeof readLaunchSpec>>;
+  scenarioPaths: string[];
+  threshold?: number;
+  signal?: AbortSignal;
+  onProgress?: (msg: string) => void;
+  workerIndex?: number;
+}
+
+/** Start the app, score each scenario file against it, stop the app. The one
+ *  scoring run: a phase gate's and the holdout_judge tool's. */
+export async function scoreScenarioFiles(opts: ScoreScenarioFilesOptions): Promise<PhaseGateRunnerOutcome> {
+  const { launch, scenarioPaths } = opts;
 
   let app: Awaited<ReturnType<typeof launchApp>> | null = null;
   try {

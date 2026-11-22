@@ -54,9 +54,9 @@ export const renderVerifyGate: CompletionGate = {
     // (e.g. phone-triggered). appDescription is what the screenshot judge is
     // told the app IS (`The app is described as: "…"` in vision-verify.ts) —
     // the user's ask, not the methodology. On the chat path op.task is stamped
-    // AFTER slash expansion, so for `/app-build a todo app` it is the marker
+    // AFTER slash expansion, so for `/greenfield a todo app` it is the marker
     // plus the whole SKILL.md body; userAuthoredRequest recovers
-    // `/app-build a todo app` and passes a non-expansion through unchanged.
+    // `/greenfield a todo app` and passes a non-expansion through unchanged.
     // The judge never needs the template: the mandated design spec reaches it
     // separately via getDesignSpec(opId) inside the bootstrap probe.
     const gate = await runRenderVerifyGate(op.id, { appUrl: op.appUrl, appDescription: userAuthoredRequest(op.task ?? "") });

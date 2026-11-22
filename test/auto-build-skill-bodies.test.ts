@@ -26,8 +26,8 @@ describe("loadSkillBody — bundled skills are present and readable", () => {
     expect(body.toLowerCase()).toContain("vibe code in prod responsibly");
   });
 
-  it("loads app-build body without frontmatter", () => {
-    const body = loadSkillBody("app-build");
+  it("loads greenfield body without frontmatter", () => {
+    const body = loadSkillBody("greenfield");
     expect(body.length).toBeGreaterThan(500);
     expect(body.startsWith("---")).toBe(false);
     expect(body.toLowerCase()).toMatch(/spec|chunk|plan/);

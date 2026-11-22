@@ -26,13 +26,10 @@ import { platformRoot } from "../platform-root.js";
 import { searchBase } from "../tools/glob-tool.js";
 import { searchRoot } from "../tools/grep-tool.js";
 import { setAriRequired } from "../ari-kernel/state.js";
-import {
-  createFinalizeAppBuildTool,
-  startAppBuildTool,
-} from "../auto-build/app-build-tool.js";
+import { startAppBuildTool } from "../auto-build/app-build-tool.js";
 import type { BuildPlanKickoff } from "../auto-build/kickoff.js";
 import { readAppBuildWorkflow } from "../auto-build/workflow-state.js";
-import { FEATURE_FLAG_ENV } from "../auto-build/tool.js";
+import { FEATURE_FLAG_ENV, createRunBuildPlanTool } from "../auto-build/tool.js";
 import { planTools } from "../tools/plan-tools.js";
 
 const SESSION = "agent-seam-test-1";
@@ -44,9 +41,7 @@ const dispatchKickoff: BuildPlanKickoff = async input => ({
   session_id: "op_dispatch_test",
   metadata: { op_id: "op_dispatch_test", project_dir: input.projectDir },
 });
-const dispatchFinalizeAppBuildTool = createFinalizeAppBuildTool({
-  kickoff: dispatchKickoff,
-});
+const dispatchRunBuildPlanTool = createRunBuildPlanTool(dispatchKickoff);
 
 afterEach(() => clearSessionWorkRoot(SESSION));
 
@@ -128,12 +123,12 @@ describe("app-build trusted session stamping (canonical dispatch seam)", () => {
   });
 
   async function dispatchAppBuild(
-    name: "start_app_build" | "finalize_app_build",
+    name: "start_app_build" | "run_build_plan",
     args: Record<string, unknown>,
   ) {
     const tool = name === "start_app_build"
       ? startAppBuildTool
-      : dispatchFinalizeAppBuildTool;
+      : dispatchRunBuildPlanTool;
     return dispatchOne(
       { id: `call-${name}`, name, args },
       {
@@ -145,20 +140,13 @@ describe("app-build trusted session stamping (canonical dispatch seam)", () => {
     );
   }
 
-  it("stamps start_app_build and finalize_app_build with the trusted session", async () => {
+  it("stamps start_app_build and run_build_plan with the trusted session, linking the build to the chat", async () => {
     const started = await dispatchAppBuild("start_app_build", { concept: "a calendar" });
     expect(started.isError).toBe(false);
     expect(readAppBuildWorkflow(SESSION_ID)).toMatchObject({ phase: "planning" });
 
     const projectDir = join(dataDir, "calendar-project");
-    const finalized = await dispatchAppBuild("finalize_app_build", {
-      project_dir: projectDir,
-      project_name: "Calendar",
-      product_md: "# Product\n\nCalendar.",
-      constitution_md: "# Constitution\n\nNo silent failures.",
-      plan_md: "# Plan\n\n## Phase A\n\n### Chunk 1 — Init\n\n- **Class:** trunk\n- **Slice:** initialize.\n- **Done when:** boots.",
-      scenarios: [{ filename: "01-happy.md", content: "# Happy path" }],
-    });
+    const finalized = await dispatchAppBuild("run_build_plan", { project_dir: projectDir });
     expect(finalized.isError).toBe(false);
     expect(finalized.status).toBe("running");
     expect(readAppBuildWorkflow(SESSION_ID)).toMatchObject({

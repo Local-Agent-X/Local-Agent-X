@@ -58,7 +58,7 @@ export async function handleApproveCommand(
 /**
  * Slash-command interceptor. Runs BEFORE memory recall, history truncation,
  * or anything else that reads `message`. When the user typed `/<known-skill>`
- * (e.g. /app-build, /senior-engineer, /vibe-code), the SKILL.md body is
+ * (e.g. /greenfield, /senior-engineer, /vibe-code), the SKILL.md body is
  * inlined as load-bearing methodology and the agent sees a rewritten
  * message. Unknown commands pass through unchanged so we don't swallow
  * legitimate slash-prefixed input. See src/slash-commands.ts.

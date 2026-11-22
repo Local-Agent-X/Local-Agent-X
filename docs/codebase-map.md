@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 72 top-level dirs · 72 live · 0 with no live importer · 2090 non-test source files · 75 oversized · 263 nearing the size cap.
+**Totals:** 72 top-level dirs · 72 live · 0 with no live importer · 2090 non-test source files · 74 oversized · 261 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -21,7 +21,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 186 | 30 | XL | 1 |
 | `src/security/` | 167 | 64 | XL | 2 |
-| `src/tools/` | 140 | 243 | XL | 9 |
+| `src/tools/` | 139 | 243 | XL | 9 |
 | `src/tool-execution/` | 104 | 90 | XL | 2 |
 | `src/workspace/` | 92 | 3 | M |  |
 | `src/canonical-loop/` | 90 | 294 | XL | 10 |
@@ -62,11 +62,11 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/app-renderer/` | 13 | 7 | M | 1 |
 | `src/routes/` | 13 | 115 | XL | 16 |
 | `src/agent-loop/` | 12 | 1 | S |  |
-| `src/app-scaffold/` | 12 | 7 | M |  |
 | `src/ari-kernel/` | 12 | 12 | M |  |
 | `src/integrations/` | 12 | 15 | M |  |
 | `src/sync/` | 12 | 27 | L |  |
 | `src/whatsapp-bridge/` | 12 | 8 | M | 1 |
+| `src/app-scaffold/` | 11 | 7 | M |  |
 | `src/calendar/` | 10 | 10 | M |  |
 | `src/agent-guards/` | 9 | 13 | L |  |
 | `src/codex-client/` | 9 | 7 | M |  |
@@ -76,15 +76,15 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/bridge-voice/` | 8 | 5 | S |  |
 | `src/mcp-client/` | 8 | 11 | L | 1 |
 | `src/telegram-bridge/` | 8 | 6 | M |  |
-| `src/auto-build/` | 7 | 52 | XL | 3 |
+| `src/auto-build/` | 7 | 52 | XL | 2 |
 | `src/android/` | 6 | 7 | M |  |
 | `src/credentials/` | 6 | 1 | S |  |
 | `src/publish-review/` | 5 | 8 | M |  |
 | `src/embedding-providers/` | 4 | 8 | M |  |
+| `src/holdout/` | 4 | 3 | S |  |
 | `src/hooks/` | 4 | 3 | M |  |
 | `src/language-intel/` | 4 | 5 | M |  |
 | `src/routing/` | 4 | 6 | M |  |
-| `src/holdout/` | 3 | 3 | S |  |
 | `src/phone-push/` | 3 | 5 | M |  |
 | `src/conversation/` | 2 | 3 | M |  |
 | `src/llm-dispatch/` | 2 | 2 | M |  |
@@ -252,7 +252,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/anthropic-client/stream-api.ts#streamViaAPI`
 - `src/anthropic-client/stream-cli/stream-parse.ts#processStreamLine`
 - `src/app-renderer/client-script.ts#renderClientScript`
-- `src/auto-build/app-build-tool.ts#finalize_app_build.execute`
 - `src/auto-build/kickoff.ts#createBuildPlanKickoff:returned`
 - `src/auto-build/loop/run.ts#runBuildLoop`
 - `src/autopilot/loop.ts#runAutopilotLoop`
@@ -334,7 +333,6 @@ job. Comments are free: never cut them to fit.
 - `src/canonical-loop/container-runtime-projection.ts` — 330+ code lines (cap 350)
 - `src/net/egress-proxy-core.ts` — 330+ code lines (cap 350)
 - `src/update-rollback.ts` — 330+ code lines (cap 350)
-- `src/auto-build/app-build-tool.ts` — 320+ code lines (cap 350)
 - `src/broker-transport/phone-projection.ts` — 320+ code lines (cap 350)
 - `src/browser/layout-report.ts` — 320+ code lines (cap 350)
 - `src/canonical-loop/adapters/tool-call-text-corpus.ts` — 320+ code lines (cap 350)
@@ -471,7 +469,6 @@ job. Comments are free: never cut them to fit.
 - `src/anthropic-client/warm-pool/stream-prompt.ts#processFrame` — 70+ own code lines (cap 100)
 - `src/anthropic-client/warm-pool/stream-prompt.ts#streamViaWarmPool` — 70+ own code lines (cap 100)
 - `src/ari-kernel/evaluate.ts#ariEvaluate` — 70+ own code lines (cap 100)
-- `src/auto-build/app-build-tool.ts#createFinalizeAppBuildTool` — 70+ own code lines (cap 100)
 - `src/auto-build/chunk-review/gate-done-when.ts#gateDoneWhen` — 70+ own code lines (cap 100)
 - `src/auto-build/loop-phase-gate.ts#runAdvisorDrivenRecovery` — 70+ own code lines (cap 100)
 - `src/auto-build/loop/handle-action.ts#handleAction` — 70+ own code lines (cap 100)

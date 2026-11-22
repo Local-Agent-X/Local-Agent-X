@@ -1,8 +1,8 @@
 /**
- * Plan parser — reads an /app-build plan.md and extracts ordered chunks
+ * Plan parser — reads a /greenfield plan.md and extracts ordered chunks
  * with class (trunk/leaf/mixed) and done-when text.
  *
- * Expected shape (matches /app-build output, validated against Bookwell):
+ * Expected shape (the /greenfield skill teaches it, references/spec.md; validated against Bookwell):
  *
  *   # <title>
  *   ## Phase A — Foundation

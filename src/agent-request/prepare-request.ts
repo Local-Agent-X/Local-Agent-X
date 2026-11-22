@@ -23,7 +23,7 @@ import { createLogger } from "../logger.js";
 import { buildContext, isTrivialToolRequest, memoryPromptInputs } from "./prepare-request/build-context.js";
 import { selectTools, type ToolSelectionResult } from "./prepare-request/tool-selection.js";
 import { getLearnedProtocolSuggestion } from "../protocols/learned-suggestion.js";
-import { isSlashCommandExpansion } from "../slash-commands.js";
+import { isGreenfieldExpansion } from "./prepare-request/product-build-routing.js";
 import { detectAndBoostCurate } from "./prepare-request/curate-nudge.js";
 import { buildSystemPromptWithTelemetry } from "./prepare-request/build-system-prompt.js";
 import { createPromptTelemetry, logPromptTelemetry } from "../prompt-telemetry.js";
@@ -93,11 +93,11 @@ async function selectMessageTools(
   protocolSuggestion: ReturnType<typeof getLearnedProtocolSuggestion>,
   stepStart: (label: string) => () => void,
 ): Promise<ToolSelectionResult> {
-  // A slash-command methodology (e.g. /app-build) runs across MANY turns, but
-  // only its FIRST turn carries the marker. Treat the whole session as
-  // methodology-active once ANY prior user turn was a slash-command expansion.
+  // A /greenfield build runs across MANY turns, but only its FIRST turn carries
+  // the slash marker. Treat the whole session as a build once ANY prior user
+  // turn was a /greenfield expansion.
   const priorMethodology = cleanHistory.some(
-    (m) => m.role === "user" && typeof m.content === "string" && isSlashCommandExpansion(m.content),
+    (m) => m.role === "user" && typeof m.content === "string" && isGreenfieldExpansion(m.content),
   );
   const end = stepStart("selectTools");
   const toolSel = await selectTools({

@@ -1,7 +1,7 @@
 # app-scaffold
 
 **Owns:** The structure kit a project built by the agent starts with — the guidance docs (AGENTS.md, ARCHITECTURE.md owner table, ADR 0001, docs/history), the vendored check scripts and seal tests (`kit/`), the one command that runs them, the package.json wiring, and the reading of the project kind on disk (`project-kind.ts`) that decides what the kit writes.
-**Does not own:** Where a project is created → `src/tools/framework-scaffold-run.ts` (Vite baseline), `src/auto-build/materialize.ts` (Product Build), `src/tools/build-app.ts` (other real tiers); the gates that run the check → `src/canonical-loop/adapters/app-build-structure-gate.ts` (done-claim, which also adopts the kit for a new build's self-scaffolded project), `src/auto-build/chunk-review/gate-build-exec.ts` (chunk gate); the command that verifies a project → `src/agent-guards/build-command.ts`.
+**Does not own:** Where a project is created → `src/tools/framework-scaffold-run.ts` (Vite baseline), the `/greenfield` skill's foundation phase (Product Build, `project_kit`), `src/tools/build-app.ts` (other real tiers); the gates that run the check → `src/canonical-loop/adapters/app-build-structure-gate.ts` (done-claim, which also adopts the kit for a new build's self-scaffolded project), `src/auto-build/chunk-review/gate-build-exec.ts` (chunk gate); the command that verifies a project → `src/agent-guards/build-command.ts`.
 **Entry:** `project-kit.ts` — `projectKitFiles` (the files, for a staged writer), `applyProjectKit` (write + wire), `adoptProjectKit` (the kit for a project someone else created, once), `structureCheckCommand` (the gate's command, null without the kit), `structureWarningNote` (`structure-check-output.ts`: what a passing check said is nearing a size cap, as the gates' note for the agent's next turn).
 
 ## Invariants
@@ -18,7 +18,6 @@
 | If you change | Also check | Guard |
 |---|---|---|
 | `STRUCTURE_CHECK_SCRIPT` / `STRUCTURE_CHECK_COMMAND` | the chunk gate's command list, the verify adapter's done gate, the build prompt lines | `project-kit.test.ts`, `test/auto-build-chunk-review.test.ts` |
-| the kit's file list (`projectKitFiles`) | Product Build's artifact queue must not collide with it (`spec/`, `scenarios/`, `twins/`, `README.md`) | `src/auto-build/materialize.test.ts` |
 | the stock-docs record (`STOCK_DOCS_MANIFEST`, `stockDocHash`) | the kit's `check-doc-paths.mjs` reads it beside itself | `project-kit.test.ts` (the doc-path describes) |
 | a kit script's flags or its root rule | `check-structure.mjs` forwards `--root` and the size caps (`--max-code` / `--warn-code` / `--max-fn` / `--warn-fn`, `--ratchet`); `project-kind.ts`; `scripts/check-source-hygiene.mjs` and `scripts/gen-codebase-map.mjs`, which run this repo's own size rule through `kit/check-code-size.mjs` and `kit/code-size.mjs` | the skill's probes; `project-kit.test.ts` runs the vendored copy; `project-kind.test.ts`; `test/source-hygiene-gate.test.ts` |
 | the kit's code-line counter (`kit/code-size*.mjs`) | every project's size check and map, and this repo's | `kit-code-size.test.ts` (tricky inputs per language), `kit-size-ratchet.test.ts` |

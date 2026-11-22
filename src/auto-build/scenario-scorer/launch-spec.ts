@@ -12,8 +12,8 @@
  *
  * Lives at `<project_dir>/.lax-launch.json`. Optional — when absent,
  * the scenario-scorer skips and the loop halts at the phase gate
- * normally (manual scoring). /app-build emits this file as part of the
- * spec phase.
+ * normally (manual scoring). /greenfield writes this file in its foundation
+ * phase.
  */
 
 import { existsSync, readFileSync } from "node:fs";

@@ -4,6 +4,7 @@ import {
   type AppBuildContinuationResolution,
 } from "../../auto-build/workflow-resolver.js";
 import { toolsTagged } from "../../tool-registry.js";
+import { SLASH_COMMAND_MARKER } from "../../slash-commands.js";
 
 export type ProductBuildAction =
   | "build_app"
@@ -108,6 +109,16 @@ export function resolveProductBuildContinuationTurn(
   return continuationTurn(resolver(sessionId));
 }
 
+const GREENFIELD_EXPANSION = /^\s*`\/greenfield`/;
+
+/** True for the expanded message of a `/greenfield` invocation: the one slash
+ *  command that is a Product Build. Others (`/senior-engineer`, `/vibe-code`, …)
+ *  are methodologies for ordinary work, not builds, and keep the ordinary tools. */
+export function isGreenfieldExpansion(message: string): boolean {
+  const s = (message || "").trimStart();
+  return s.startsWith(SLASH_COMMAND_MARKER) && GREENFIELD_EXPANSION.test(s.slice(SLASH_COMMAND_MARKER.length));
+}
+
 export function productBuildMethodologyTurn(firstTurn: boolean): ProductBuildTurn {
   if (firstTurn) {
     return {
@@ -115,9 +126,9 @@ export function productBuildMethodologyTurn(firstTurn: boolean): ProductBuildTur
       action: "start_app_build",
       targetTool: "start_app_build",
       allowedWorkflowTools: ["start_app_build"],
-      reason: "The user explicitly invoked /app-build.",
+      reason: "The user explicitly invoked /greenfield.",
       directive:
-        "The user explicitly invoked /app-build. Call start_app_build now with the user's concept. " +
+        "The user explicitly invoked /greenfield. Call start_app_build now with the user's idea. " +
         "Do not call build_app and do not build inline.",
     };
   }
@@ -125,10 +136,11 @@ export function productBuildMethodologyTurn(firstTurn: boolean): ProductBuildTur
     kind: "methodology",
     action: "conversation",
     allowedWorkflowTools: toolsTagged("app-build-spec"),
-    reason: "This session is already running the /app-build methodology.",
+    reason: "This session is already running a /greenfield build.",
     directive:
-      "The /app-build Product Build methodology is active. Continue its spec-first planning conversation. " +
-      "When the user signs off, call finalize_app_build; it starts the orchestrator automatically. " +
+      "A /greenfield build is active. Continue it from where its ledger (spec/ledger.md) says it is. " +
+      "Write scenarios with holdout_write and seal them with holdout_seal; when the owner approves the plan, " +
+      "start the build with run_build_plan and score it with holdout_judge. " +
       "Never call build_app and never build inline.",
   };
 }

@@ -1,7 +1,7 @@
 /**
  * Parse a scenario .md file into {persona, steps, passCriteria}.
  *
- * Format (matches what /app-build emits, validated against the Bookwell +
+ * Format (matches what the older /app-build emitted, validated against the Bookwell +
  * Petbook reference scenarios):
  *
  *   # Scenario NN — Title
@@ -31,7 +31,8 @@ export function parseScenarioFile(path: string): ParsedScenario {
 export function parseScenarioText(raw: string, path: string): ParsedScenario {
   const title = (raw.match(/^#\s+(.+?)\s*$/m) || [])[1]?.trim() || "(untitled scenario)";
   const persona = matchBoldField(raw, "Persona") || "";
-  const passCriteria = matchBoldField(raw, "Pass criteria") || "";
+  // /greenfield writes "Satisfaction criteria"; the older /app-build wrote "Pass criteria".
+  const passCriteria = matchBoldField(raw, "Pass criteria") || matchBoldField(raw, "Satisfaction criteria") || "";
   const steps = parseStepList(raw);
 
   if (steps.length === 0) {

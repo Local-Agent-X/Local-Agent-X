@@ -1,12 +1,13 @@
 /**
- * run_build_plan — run an /app-build plan to code-completion.
+ * run_build_plan — run a /greenfield plan (spec/plan.md) to code-completion.
  *
- * The canonical validation and orchestration kickoff live in kickoff.ts so
- * finalization and direct invocation cannot drift.
+ * The canonical validation and orchestration kickoff live in kickoff.ts; a
+ * build started from a chat is linked to it here.
  */
 
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { sessionIdOf } from "../tool-execution/internal-args.js";
+import { upsertAppBuildWorkflow } from "./workflow-state.js";
 import {
   kickoffBuildPlan,
   type BuildPlanKickoff,
@@ -20,14 +21,14 @@ export function createRunBuildPlanTool(
   return {
     name: "run_build_plan",
     description:
-      "Run an /app-build plan to code-completion. **Returns immediately with an opId**; the actual " +
+      "Run a /greenfield plan (`spec/plan.md`) to code-completion. **Returns immediately with an opId**; the actual " +
       "build runs in the background and progresses live in the AGENTS sidebar. State persists " +
       "across LAX restarts; use `build_plan_resume` to pick up where a halted build left off.\n\n" +
       "Loop: spawns a fresh Claude Code (or Codex) subprocess per chunk with the right skill " +
       "(/senior-engineer for trunk, /vibe-code for leaf), runs the /chunk-review gates (done-when + " +
       "additive spec-diff + phase-gate + launch-readiness + test-failure), halts at phase-gates and " +
       "launch-readiness blockers. Each gate halt persists to disk so a restart can resume.\n\n" +
-      "Companion to /app-build: where that produces the spec, this consumes it.\n\n" +
+      "Companion to /greenfield: where that produces the spec, this consumes it.\n\n" +
       "Opt-out via LAX_AUTO_BUILD_ENABLED env flag — default ON. Set the flag to " +
       "0/false/no/off to disable for this server.",
     parameters: {
@@ -55,16 +56,32 @@ export function createRunBuildPlanTool(
       required: ["project_dir"],
     },
     async execute(args, signal): Promise<ToolResult> {
-      return kickoff({
+      const sessionId = sessionIdOf(args);
+      const kick = await kickoff({
         projectDir: args.project_dir,
         planPath: args.plan_path,
         startingChunk: args.starting_chunk,
         maxChunks: args.max_chunks,
-        sessionId: sessionIdOf(args),
+        sessionId,
         signal,
       });
+      return linkToChat(kick, sessionId);
     },
   };
 }
 
 export const runBuildPlanTool = createRunBuildPlanTool();
+
+/** A build started from a chat belongs to that chat: its "continue the build"
+ *  and "how is it going" turns find it (workflow-resolver.ts). */
+function linkToChat(kick: ToolResult, sessionId: string | undefined): ToolResult {
+  const projectDir = typeof kick.metadata?.project_dir === "string" ? kick.metadata.project_dir : undefined;
+  if (!sessionId || kick.isError || kick.status !== "running" || !projectDir) return kick;
+  const opId = String(kick.metadata?.op_id || kick.session_id || "").trim();
+  try {
+    upsertAppBuildWorkflow({ sessionId, phase: "running", projectDir, ...(opId ? { opId } : {}) });
+    return kick;
+  } catch (e) {
+    return { ...kick, metadata: { ...kick.metadata, workflow_link_error: (e as Error).message } };
+  }
+}

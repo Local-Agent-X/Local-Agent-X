@@ -44,7 +44,7 @@ const ARGS: Record<string, string> = {
 
 describe("bundled protocol directory", () => {
   it("is enumerated from disk and includes the five shipped templates", () => {
-    for (const name of ["app-build", "brownfield", "refactor-godfiles", "senior-engineer", "vibe-code"]) {
+    for (const name of ["greenfield", "brownfield", "refactor-godfiles", "senior-engineer", "vibe-code"]) {
       expect(BUNDLED).toContain(name);
     }
   });

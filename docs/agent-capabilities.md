@@ -142,9 +142,9 @@ demand via tool search and aren't all listed here.)
 - `build_plan_status` — Check an app build's status.
 - `build_plan_resume` — Resume a paused app build.
 - `start_app_build`
-- `finalize_app_build`
 - `holdout_write`
 - `holdout_seal`
+- `holdout_judge`
 
 ### Secrets
 

@@ -15,14 +15,14 @@ import { describe, it, expect } from "vitest";
 import { expandSlashCommand, listAvailableSlashCommands, isSlashCommandExpansion, SLASH_COMMAND_MARKER } from "../src/slash-commands.js";
 
 describe("expandSlashCommand — known commands", () => {
-  it("expands /app-build with arg", () => {
-    const r = expandSlashCommand("/app-build a calendar booking app for solo coaches");
+  it("expands /greenfield with arg", () => {
+    const r = expandSlashCommand("/greenfield a calendar booking app for solo coaches");
     expect(r).not.toBeNull();
-    expect(r!.command).toBe("app-build");
+    expect(r!.command).toBe("greenfield");
     expect(r!.argText).toBe("a calendar booking app for solo coaches");
     expect(r!.agentMessage).toContain("SLASH COMMAND");
-    expect(r!.agentMessage).toContain("/app-build");
-    // SKILL.md body inlined — sanity-check a known phrase from app-build
+    expect(r!.agentMessage).toContain("/greenfield");
+    // SKILL.md body inlined — sanity-check a known phrase from greenfield
     expect(r!.agentMessage.toLowerCase()).toMatch(/spec|chunk|scenarios/);
     expect(r!.agentMessage).toContain("a calendar booking app for solo coaches");
   });
@@ -42,8 +42,8 @@ describe("expandSlashCommand — known commands", () => {
     expect(r!.agentMessage.toLowerCase()).toContain("vibe code in prod responsibly");
   });
 
-  it("handles bare /app-build (no args) by instructing the agent to ask", () => {
-    const r = expandSlashCommand("/app-build");
+  it("handles bare /greenfield (no args) by instructing the agent to ask", () => {
+    const r = expandSlashCommand("/greenfield");
     expect(r).not.toBeNull();
     expect(r!.argText).toBe("");
     expect(r!.agentMessage).toContain("no argument");
@@ -51,26 +51,26 @@ describe("expandSlashCommand — known commands", () => {
   });
 
   it("normalizes uppercase command names to lowercase lookup", () => {
-    const r = expandSlashCommand("/APP-BUILD a tiny inventory tracker");
+    const r = expandSlashCommand("/GREENFIELD a tiny inventory tracker");
     expect(r).not.toBeNull();
-    expect(r!.command).toBe("app-build");
+    expect(r!.command).toBe("greenfield");
   });
 
   it("preserves the original message for UI display", () => {
-    const original = "/app-build a coffee shop POS";
+    const original = "/greenfield a coffee shop POS";
     const r = expandSlashCommand(original);
     expect(r!.originalMessage).toBe(original);
   });
 
   it("captures multi-line arg text", () => {
-    const r = expandSlashCommand("/app-build a thing\nwith multiple\nrequirement lines");
+    const r = expandSlashCommand("/greenfield a thing\nwith multiple\nrequirement lines");
     expect(r).not.toBeNull();
     expect(r!.argText).toContain("multiple");
     expect(r!.argText).toContain("requirement lines");
   });
 
   it("trims whitespace around the arg", () => {
-    const r = expandSlashCommand("/app-build    spaced out   ");
+    const r = expandSlashCommand("/greenfield    spaced out   ");
     expect(r!.argText).toBe("spaced out");
   });
 });
@@ -85,7 +85,7 @@ describe("expandSlashCommand — pass-through cases", () => {
   // too (2026-10-26: "/send_email /blast-radius /canonical-check" at the end
   // of a message reached the model as plain text).
   it("expands a known command written mid-sentence", () => {
-    expect(expandSlashCommand("can you /app-build something")?.command).toBe("app-build");
+    expect(expandSlashCommand("can you /greenfield something")?.command).toBe("greenfield");
   });
 
   it("returns null for unknown slash commands", () => {
@@ -111,7 +111,7 @@ describe("expandSlashCommand — pass-through cases", () => {
 describe("listAvailableSlashCommands", () => {
   it("includes the three bundled SKILL.md protocols", () => {
     const cmds = listAvailableSlashCommands();
-    expect(cmds).toContain("app-build");
+    expect(cmds).toContain("greenfield");
     expect(cmds).toContain("senior-engineer");
     expect(cmds).toContain("vibe-code");
   });
@@ -132,8 +132,8 @@ describe("isSlashCommandExpansion — intent-forcing skip signal", () => {
   // ask-questions-first methodology (the "it just built the app" bug). This
   // detector is the gate; round-trip it against a real expansion so the marker
   // can't drift out of sync with the wrapper.
-  it("detects a real /app-build expansion (the exact bug case)", () => {
-    const r = expandSlashCommand("/app-build i want to build a pokemon card catalog sorter");
+  it("detects a real /greenfield expansion (the exact bug case)", () => {
+    const r = expandSlashCommand("/greenfield i want to build a pokemon card catalog sorter");
     expect(isSlashCommandExpansion(r!.agentMessage)).toBe(true);
   });
 
@@ -149,7 +149,7 @@ describe("isSlashCommandExpansion — intent-forcing skip signal", () => {
   });
 
   it("tolerates leading whitespace before the marker", () => {
-    expect(isSlashCommandExpansion(`\n  ${SLASH_COMMAND_MARKER} \`/app-build\``)).toBe(true);
+    expect(isSlashCommandExpansion(`\n  ${SLASH_COMMAND_MARKER} \`/greenfield\``)).toBe(true);
   });
 });
 

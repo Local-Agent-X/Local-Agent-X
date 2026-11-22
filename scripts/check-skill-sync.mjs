@@ -2,11 +2,12 @@
 /**
  * Bundled-skill gate for the skills Local Agent X ships from the owner's own
  * Claude Code skills (~/.claude/skills): senior-engineer, canonical-check,
- * blast-radius and new-project under src/protocols/bundled/. The skill is the
+ * blast-radius, new-project and greenfield under src/protocols/bundled/. The skill is the
  * source of truth; the bundled copy is that text with its Claude Code tool
  * names swapped for LAX's (ADAPTATIONS), so it is never hand-edited.
  *
- * A skill's references/*.md travel with it, byte for byte: the protocol loader
+ * A skill's references/*.md travel with it, through COMPANION_ADAPTATIONS when
+ * they name Claude Code's tools (else byte for byte): the protocol loader
  * serves whatever sits beside a bundled SKILL.md (src/protocols/skill-files.ts).
  * Its scripts/ and assets/ do not: new-project's are the structure kit, vendored
  * once at src/app-scaffold/kit/ by scripts/check-kit-sync.mjs.
@@ -33,17 +34,21 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { GREENFIELD, GREENFIELD_FILES } from "./skill-adaptations/greenfield.mjs";
 
 const repoRoot = fileURLToPath(new URL("..", import.meta.url));
 export const BUNDLED_DIR = join(repoRoot, "src", "protocols", "bundled");
-export const SYNCED_SKILLS = ["senior-engineer", "canonical-check", "blast-radius", "new-project"];
+export const SYNCED_SKILLS = ["senior-engineer", "canonical-check", "blast-radius", "new-project", "greenfield"];
 
 /** Claude Code tool → LAX tool, for the frontmatter's allowed-tools list. LAX has
  *  no PowerShell tool: its `bash` is the one shell, so a skill allowing both
- *  shells lists `bash` once (adaptSkill drops the duplicate). */
+ *  shells lists `bash` once (adaptSkill drops the duplicate). `null` is a tool
+ *  LAX has no counterpart for, whose work the adapted text gives to another
+ *  (Workflow's waves to run_build_plan, TodoWrite's list to the task tools the
+ *  prompt already carries): it is dropped from the list. */
 export const TOOL_NAMES = {
   Read: "read", Write: "write", Edit: "edit", Glob: "glob", Grep: "grep", Bash: "bash", PowerShell: "bash",
-  Agent: "agent_spawn", AskUserQuestion: "ask_user",
+  Agent: "agent_spawn", AskUserQuestion: "ask_user", Workflow: null, TodoWrite: null,
 };
 
 // What a project built here gets instead of copying the skill's scripts by hand:
@@ -73,11 +78,11 @@ export const ADAPTATIONS = {
     ['a **single** Explore agent (breadth "medium")', `a **single** ${HELPER}`],
   ],
   "new-project": [
-    // Siblings LAX does not bundle (src/protocols/bundled/ has app-build and brownfield).
-    ["Also use before /app-build or /grand-daddy-green scaffolding", "Also use before /app-build scaffolding"],
+    // Siblings LAX does not bundle; /greenfield is LAX's one new-build skill.
+    ["Also use before /app-build or /grand-daddy-green scaffolding", "Also use before /greenfield scaffolding"],
     [" (and the tests to run), an optional hook that steers grep toward those references, module seal", " (and the tests to run), module seal"],
     ["- `/brownfield`, `/grand-daddy-brown`: carry out", "- `/brownfield`: carry out"],
-    ["- `/app-build`, `/grand-daddy-green`: build a new app", "- `/app-build`: build a new app"],
+    ["- `/app-build`, `/grand-daddy-green`: build a new app", "- `/greenfield`: build a new app"],
     // Step 2: the kit is written by a tool, not copied from ~/.claude/skills.
     ["The project must own its checks. CI and other machines can't reach\n`~/.claude/skills`. Copy these into `scripts/`:", KIT_INTRO],
     ["| From this skill | Purpose |", "| What `project_kit` writes | Purpose |"],
@@ -87,6 +92,13 @@ export const ADAPTATIONS = {
     [HOOK_OFFER, HOOK_NOT_SHIPPED],
     ["- With the hook on: grep for a camelCase name → the reply carries the `refs`\n  hint once, and a second grep for it doesn't.", "- No hook probe: the refs hint hook is not shipped here."],
   ],
+  greenfield: GREENFIELD,
+};
+
+/** The same swaps for a skill's references/*.md, per file: they name Claude
+ *  Code's tools and folders as much as SKILL.md does. */
+export const COMPANION_ADAPTATIONS = {
+  greenfield: GREENFIELD_FILES,
 };
 
 const lf = (text) => text.replace(/\r\n/g, "\n");
@@ -100,7 +112,7 @@ function adaptFrontmatter(name, front) {
     if (!m) return [line];
     const [, lead, tool] = m;
     if (!(tool in TOOL_NAMES)) throw new Error(`${name}: allowed-tools names ${tool}, which TOOL_NAMES does not map to a LAX tool`);
-    if (seen.has(TOOL_NAMES[tool])) return [];
+    if (TOOL_NAMES[tool] === null || seen.has(TOOL_NAMES[tool])) return [];
     seen.add(TOOL_NAMES[tool]);
     return [lead + TOOL_NAMES[tool]];
   }).join("\n");
@@ -112,11 +124,21 @@ export function adaptSkill(name, text) {
   if (!text.startsWith("---") || end < 0) throw new Error(`${name}: no frontmatter`);
   // The phrases are swapped in the frontmatter too: a description names siblings.
   let out = adaptFrontmatter(name, text.slice(0, end)) + text.slice(end);
-  for (const [from, to] of ADAPTATIONS[name] ?? []) {
-    if (!out.includes(from)) throw new Error(`${name}: the skill no longer says "${from}"; update ADAPTATIONS in scripts/check-skill-sync.mjs`);
+  return swap(name, out, ADAPTATIONS[name]);
+}
+
+function swap(label, text, pairs = []) {
+  let out = text;
+  for (const [from, to] of pairs) {
+    if (!out.includes(from)) throw new Error(`${label}: the skill no longer says "${from}"; update ADAPTATIONS in scripts/check-skill-sync.mjs (or scripts/skill-adaptations/)`);
     out = out.split(from).join(to);
   }
   return out;
+}
+
+/** A companion file's text as LAX ships it. */
+export function adaptCompanion(name, file, text) {
+  return swap(`${name}/${file}`, text, COMPANION_ADAPTATIONS[name]?.[file]);
 }
 
 /** Where the owner's skills are, or null when this machine has none. */
@@ -149,7 +171,13 @@ function companionDrift(bundledDir, name, manifest, skillDir) {
     const upstream = skillDir && join(skillDir, file);
     if (!upstream) continue;
     if (!existsSync(upstream)) drift.push(`${name}/${file} is bundled but no longer in ${skillDir}`);
-    else if (lf(readFileSync(upstream, "utf-8")) !== text) drift.push(`${name}/${file} differs from ${upstream}`);
+    else {
+      try {
+        if (adaptCompanion(name, file, lf(readFileSync(upstream, "utf-8"))) !== text) drift.push(`${name}/${file} differs from the adapted ${upstream}`);
+      } catch (e) {
+        drift.push(e.message);
+      }
+    }
   }
   if (skillDir) {
     for (const file of companionFiles(skillDir)) {
@@ -191,7 +219,7 @@ export function syncSkills(skillsDir = findSkillsDir(), bundledDir = BUNDLED_DIR
     const files = companionFiles(skillDir);
     if (files.length > 0) manifest.files = {};
     for (const file of files) {
-      const companion = lf(readFileSync(join(skillDir, file), "utf-8"));
+      const companion = adaptCompanion(name, file, lf(readFileSync(join(skillDir, file), "utf-8")));
       mkdirSync(dirname(join(bundledDir, name, file)), { recursive: true });
       writeFileSync(join(bundledDir, name, file), companion);
       manifest.files[file] = hashOf(companion);

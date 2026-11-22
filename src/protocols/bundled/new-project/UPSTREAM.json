@@ -1,6 +1,6 @@
 {
   "upstream": "~/.claude/skills/new-project/SKILL.md",
-  "sha256": "8bc79a82ff2dcf1539c84b26244e0cbced673c82a4fc73544c4a03d6370d98ac",
+  "sha256": "30bf2105adcffe2460c5cdb3451a94580a3924f5eaff2d896c5279cd71897b8e",
   "files": {
     "references/couplings.md": "5cb840e0d1cc7849071c2b0ace0e596b416972f919c8aa632ac0ad5a62139d1a",
     "references/registry-pattern.md": "fbde37ff69b0d1583c21fb8d30f82e1c6a03386b5ec1e64eeb0c63b9fbcb6496",

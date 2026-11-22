@@ -1,6 +1,6 @@
 // Apps-tab "build an app" entry points — split out of apps.js, the gallery
 // itself. The dedicated Apps surface signals serious intent, so the
-// primary action routes to the GUIDED /app-build skill in a fresh chat
+// primary action routes to the GUIDED /greenfield skill in a fresh chat
 // (spec-first, asks questions, can go full-stack). ⚡ Quick is the escape hatch
 // for an instant one-shot HTML app in the IDE. Slash expansion + the
 // intent-classifier skip happen server-side. Both rely on globals: enterIdeView
@@ -15,7 +15,7 @@ function sendAppsChatMessage() {
   if (typeof newChat === 'function') newChat();
   const msg = document.getElementById('msg-input');
   if (msg) {
-    msg.value = '/app-build ' + text;
+    msg.value = '/greenfield ' + text;
     if (typeof sendMessage === 'function') sendMessage();
   }
 }

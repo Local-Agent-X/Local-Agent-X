@@ -128,7 +128,7 @@ describe("run_build_plan — arg validation", () => {
     const res = await testRunBuildPlanTool.execute({ project_dir: tmp });
     expect(res.isError).toBe(true);
     expect(res.content).toContain("plan not found");
-    expect(res.content).toContain("/app-build");
+    expect(res.content).toContain("/greenfield");
   });
 
   // Minimal valid plan: parser requires at least one chunk to parse.

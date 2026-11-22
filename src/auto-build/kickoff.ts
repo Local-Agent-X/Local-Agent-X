@@ -104,7 +104,7 @@ export function createBuildPlanKickoff(
       : resolve(projectDir, "spec", "plan.md");
     if (!existsSync(planPath)) {
       return {
-        content: `plan not found at ${planPath}. Run /app-build first to produce spec/plan.md, or pass plan_path explicitly.`,
+        content: `plan not found at ${planPath}. Plan it with /greenfield first (it writes spec/plan.md), or pass plan_path explicitly.`,
         isError: true,
       };
     }

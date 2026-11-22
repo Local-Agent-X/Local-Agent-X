@@ -198,6 +198,8 @@ contextBridge.exposeInMainWorld("desktop", {
       viewId: string; url: string; title: string; canGoBack: boolean; canGoForward: boolean; loading: boolean;
       loadError: { code: number; description: string; url: string } | null;
     } | null> => ipcRenderer.invoke("browser-bind-chat", sessionId),
+    // A chat was deleted: its browser views are closed and forgotten.
+    closeChat: (sessionId: string): Promise<void> => ipcRenderer.invoke("browser-close-chat", sessionId),
     // Multi-view switcher: enumerate the pool views of the chat on screen (its
     // home view and user tabs + its agent-driven views) and flip which one the
     // anchor drives/shows. switchView returns the switched-to view's nav-state.

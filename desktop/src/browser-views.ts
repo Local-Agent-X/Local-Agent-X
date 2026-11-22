@@ -107,6 +107,11 @@ export function setViewAdopted(viewId: string, adopted: boolean): void {
 	else adoptedViews.delete(viewId);
 }
 
+/** Whether an agent is driving this user view right now. */
+export function isViewAdopted(viewId: string): boolean {
+	return adoptedViews.has(viewId);
+}
+
 /** A (re)spawned server child means every old adoption died with its backend
  *  and no "release" will ever arrive — without this, a mid-adoption server
  *  crash left the user's own tab quarantining downloads until it closed. */

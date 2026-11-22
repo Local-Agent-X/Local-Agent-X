@@ -38,6 +38,7 @@ describe("one chat drives a device at a time", () => {
     expect(refused.isError).toBe(true);
     expect(refused.status).toBe("error"); // it can work later: not a policy block
     expect(refused.content).toContain("emulator-5554 is in use by another chat");
+    expect(refused.content).toContain("this app tracks and shows one");
     expect(refused.metadata).toMatchObject({ androidStatus: "device-held", heldBy: "chat-a" });
     expect(adb.tap).toHaveBeenCalledTimes(1);
     expect(deviceHolder("emulator-5554")).toBe("chat-a");

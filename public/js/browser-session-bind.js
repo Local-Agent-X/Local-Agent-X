@@ -54,5 +54,11 @@
 		bound.then(function () { return bridge.listViews(); }).then(apply).catch(function () {});
 	}
 
-	window.laxBrowserSessionBind = { bindSession: bindSession, apply: apply };
+	// A chat was deleted (app-sidebar-actions.js): its browser tabs go with it.
+	function closeChat(sessionId) {
+		if (!sessionId || !bridge || !bridge.closeChat) return;
+		Promise.resolve(bridge.closeChat(sessionId)).catch(function () {});
+	}
+
+	window.laxBrowserSessionBind = { bindSession: bindSession, apply: apply, closeChat: closeChat };
 })();

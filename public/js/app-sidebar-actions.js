@@ -317,6 +317,8 @@ function dropChatLocally(id) {
   saveChats(); renderSidebar();
   if (window.renderMessages) renderMessages();
   try { if (window.laxBrowserSessionBind) window.laxBrowserSessionBind.bindSession(activeChat ? activeChat.id : null); } catch {}
+  // After the bind, so the pane is off the deleted chat before its tabs close.
+  try { if (window.laxBrowserSessionBind && window.laxBrowserSessionBind.closeChat) window.laxBrowserSessionBind.closeChat(id); } catch {}
   try { if (window.laxSidePanelChat) window.laxSidePanelChat.onChatChanged(); } catch {}
   // A deleted chat leaves the tile grid (chat-tiles.js).
   try { if (window.laxChatTiles) window.laxChatTiles.onChatChanged(); } catch {}

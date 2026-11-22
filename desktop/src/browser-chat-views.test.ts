@@ -7,15 +7,23 @@ import {
 	claimUnownedViews,
 	claimUserView,
 	currentViewId,
+	forgetChat,
 	forgetView,
 	homeViewId,
 	isHomeViewId,
+	isRested,
+	MAX_LIVE_BACKGROUND_PAGES,
 	noteBackgroundAgentView,
+	pagesToRest,
+	REST_AFTER_MS,
+	restedViewsOf,
+	restView,
 	setBoundChat,
 	setCurrentViewId,
 	shownInBoundChat,
 	userViewOwner,
 	viewChat,
+	wakeRested,
 	_resetBrowserChatViewsForTest,
 } from "./browser-chat-views";
 
@@ -121,5 +129,98 @@ describe("an agent browsing in a chat that is not on screen", () => {
 		expect(currentViewId("chat-b")).toBe("user-7");
 		noteBackgroundAgentView("view-chat-b-shared", "chat-b", holdsPage([]));
 		expect(currentViewId("chat-b")).toBe("view-chat-b-shared");
+	});
+});
+
+// Every chat's pages staying loaded only ever grew. A page of a chat that has
+// been off screen a while rests: its view is closed, its tab is kept, and
+// showing it again loads its address.
+describe("pages of chats left off screen come to rest", () => {
+	const never = () => false;
+	/** Open a user page in `chat`, then leave that chat for `next` at `leftAtMs`. */
+	function openThenLeave(viewId: string, chat: string, next: string, leftAtMs: number): void {
+		setBoundChat(chat, 0);
+		claimUserView(viewId);
+		setBoundChat(next, leftAtMs);
+	}
+
+	it("a page rests once its chat has been off screen long enough, never before", () => {
+		openThenLeave("user-1", "chat-a", "chat-b", 1_000);
+		expect(pagesToRest(["user-1"], 1_000 + REST_AFTER_MS - 1, never)).toEqual([]);
+		expect(pagesToRest(["user-1"], 1_000 + REST_AFTER_MS, never)).toEqual(["user-1"]);
+	});
+
+	it("never rests a page of the chat on screen, one playing sound or one an agent is driving, or one that belongs to no chat", () => {
+		openThenLeave("user-1", "chat-a", "chat-b", 0);
+		claimUserView("user-2"); // chat-b's, on screen
+		const longAfter = REST_AFTER_MS * 10;
+		expect(pagesToRest(["user-1", "user-2", "foreground"], longAfter, never)).toEqual(["user-1"]);
+		expect(pagesToRest(["user-1", "user-2"], longAfter, (id) => id === "user-1")).toEqual([]);
+	});
+
+	it("coming back to a chat before its pages rest keeps them loaded", () => {
+		openThenLeave("user-1", "chat-a", "chat-b", 0);
+		setBoundChat("chat-a", REST_AFTER_MS - 1);
+		setBoundChat("chat-b", REST_AFTER_MS); // left again: the wait starts over
+		expect(pagesToRest(["user-1"], REST_AFTER_MS * 2 - 1, never)).toEqual([]);
+	});
+
+	it("past the cap, the pages whose chat left longest ago rest at once", () => {
+		const pages: string[] = [];
+		for (let i = 0; i <= MAX_LIVE_BACKGROUND_PAGES + 1; i++) {
+			setBoundChat(`chat-${i}`, i * 10);
+			claimUserView(`user-${i}`);
+			pages.push(`user-${i}`);
+		}
+		setBoundChat("chat-now", 1_000);
+		// Two over the cap: the two chats left first lose their pages, nobody else.
+		expect(pagesToRest(pages, 2_000, never)).toEqual(["user-0", "user-1"]);
+	});
+
+	it("a resting page keeps its tab, its chat and its place in the pane, and wakes with its address", () => {
+		openThenLeave("user-1", "chat-a", "chat-b", 0);
+		setCurrentViewId("user-1", "chat-a");
+		restView("user-1", "https://docs.example/page", "Docs");
+		expect(isRested("user-1")).toBe(true);
+		expect(restedViewsOf("chat-a")).toEqual([{ viewId: "user-1", chat: "chat-a", url: "https://docs.example/page", title: "Docs" }]);
+		expect(restedViewsOf("chat-b")).toEqual([]);
+		// Back in the chat: the pane still points at the page, which wakes once.
+		setBoundChat("chat-a", 10);
+		expect(currentViewId()).toBe("user-1");
+		expect(wakeRested("user-1")).toMatchObject({ url: "https://docs.example/page" });
+		expect(wakeRested("user-1")).toBeUndefined();
+		expect(userViewOwner("user-1")).toBe("chat-a");
+	});
+
+	it("closing a resting tab forgets it", () => {
+		openThenLeave("user-1", "chat-a", "chat-b", 0);
+		restView("user-1", "https://docs.example/page", "Docs");
+		forgetView("user-1");
+		expect(isRested("user-1")).toBe(false);
+		expect(restedViewsOf("chat-a")).toEqual([]);
+	});
+});
+
+describe("a deleted chat", () => {
+	it("is forgotten whole: its tabs, its resting pages, its pane", () => {
+		setBoundChat("chat-a", 0);
+		claimUserView("user-1");
+		claimUserView("user-2");
+		setCurrentViewId("user-2");
+		setBoundChat("chat-b", 10);
+		claimUserView("user-3");
+		restView("user-1", "https://a.example/", "A");
+		forgetChat("chat-a");
+		expect([userViewOwner("user-1"), userViewOwner("user-2"), userViewOwner("user-3")]).toEqual([undefined, undefined, "chat-b"]);
+		expect(restedViewsOf("chat-a")).toEqual([]);
+		expect(currentViewId("chat-a")).toBe("home-chat-a");
+		expect(boundChat()).toBe("chat-b");
+	});
+
+	it("deleted while on screen leaves no chat bound", () => {
+		setBoundChat("chat-a", 0);
+		forgetChat("chat-a");
+		expect(boundChat()).toBeNull();
+		expect(currentViewId()).toBe("foreground");
 	});
 });

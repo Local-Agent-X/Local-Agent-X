@@ -1362,6 +1362,15 @@ describe("browser panel ↔ chat session binding", () => {
     expect(listViews).toHaveBeenCalledTimes(1);
   });
 
+  it("a deleted chat's browser tabs are closed on the desktop", async () => {
+    const closeChat = vi.fn().mockResolvedValue(undefined);
+    reload({ closeChat, listViews: vi.fn().mockResolvedValue([]), switchView: vi.fn() });
+    (window.laxBrowserSessionBind as unknown as { closeChat(id: string | null): void }).closeChat("chat-gone");
+    expect(closeChat).toHaveBeenCalledWith("chat-gone");
+    (window.laxBrowserSessionBind as unknown as { closeChat(id: string | null): void }).closeChat(null);
+    expect(closeChat).toHaveBeenCalledTimes(1);
+  });
+
   it("surfaces the view scoped to the bound session (view-<sessionId>-*)", async () => {
     const switchView = vi.fn().mockResolvedValue({ viewId: "view-chat-B-work" });
     reload({

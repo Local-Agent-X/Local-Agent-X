@@ -49,7 +49,7 @@ export async function deviceHoldGate(action: string, args: Record<string, unknow
   if (!heldBy) return null;
   return err(
     `Android device ${serial} is in use by another chat. It frees up ${Math.round(HOLD_IDLE_MS / 60_000)} minutes after that chat last used it. ` +
-    "Do not work around this (another emulator would fight for the same ports): do the parts of the task that need no device, then try again, or tell the user the device is busy.",
+    "Do not start another emulator to get around this: this app tracks and shows one. Do the parts of the task that need no device, then try again, or tell the user the device is busy.",
     { androidStatus: "device-held", heldBy },
   );
 }

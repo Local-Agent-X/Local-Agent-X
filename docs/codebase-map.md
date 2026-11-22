@@ -36,7 +36,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/tool-policy/` | 48 | 22 | L |  |
 | `src/local-runtimes/` | 45 | 28 | XL |  |
 | `src/threat/` | 43 | 13 | L |  |
-| `src/auth/` | 36 | 11 | L |  |
+| `src/auth/` | 38 | 11 | L |  |
 | `src/agent-store/` | 30 | 8 | M | 1 |
 | `src/inbox/` | 30 | 7 | M |  |
 | `src/broker-transport/` | 29 | 51 | XL |  |
@@ -371,6 +371,7 @@ job. Comments are free: never cut them to fit.
 - `src/memory/tools/save.ts` — 290+ code lines (cap 350)
 - `src/ops/operation-requirements.ts` — 290+ code lines (cap 350)
 - `src/protocols/skills-install.ts` — 290+ code lines (cap 350)
+- `src/server/bootstrap-services.ts` — 290+ code lines (cap 350)
 - `src/telegram-bridge/bridge.ts` — 290+ code lines (cap 350)
 - `src/tool-execution/sensitive-read-taint.ts` — 290+ code lines (cap 350)
 - `src/browser/runtime.ts` — 280+ code lines (cap 350)
@@ -379,7 +380,6 @@ job. Comments are free: never cut them to fit.
 - `src/memory/index-facts-mutate.ts` — 280+ code lines (cap 350)
 - `src/protocols/builder.ts` — 280+ code lines (cap 350)
 - `src/screen-capture.ts` — 280+ code lines (cap 350)
-- `src/server/bootstrap-services.ts` — 280+ code lines (cap 350)
 - `src/test-suite.ts` — 280+ code lines (cap 350)
 - `src/tools/build-app-spawn.ts` — 280+ code lines (cap 350)
 - `src/tools/http-egress-guard.ts` — 280+ code lines (cap 350)

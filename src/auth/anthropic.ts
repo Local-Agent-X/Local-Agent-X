@@ -252,7 +252,7 @@ export function isAnthropicTokenExpired(tokens: AnthropicTokens | null): boolean
  */
 export function isAnthropicCliAuthenticated(): boolean {
   try {
-    const credPath = join(homedir(), ".claude", ".credentials.json");
+    const credPath = getClaudeCredentialsPath();
     if (existsSync(credPath)) {
       try {
         const cred = JSON.parse(readFileSync(credPath, "utf-8"));

@@ -5,6 +5,7 @@ import { htmlToText } from "../app-renderer/sanitize.js";
 // public hosts, but a provider redirect is still a redirect.
 import { canonicalFetch, EgressRedirectBlocked, egressBlockedResult } from "./web-egress.js";
 import { wrapExternalContent } from "../sanitize.js";
+import { resolveServiceKey } from "../auth/resolve.js";
 
 interface SearchResult { title: string; url: string; snippet: string }
 
@@ -111,7 +112,7 @@ export const webSearchTool: ToolDefinition = {
     const max = Math.min(Math.max(Number(args.max_results) || 8, 1), 20);
     const timeout = AbortSignal.timeout(15_000);
     const merged = signal ? AbortSignal.any([signal, timeout]) : timeout;
-    const braveKey = process.env.BRAVE_API_KEY;
+    const braveKey = resolveServiceKey("BRAVE_API_KEY");
     const chain: Provider[] = braveKey ? ["brave", "ddg"] : ["ddg"];
 
     const settled = await Promise.allSettled(queries.map(q => searchOneQuery(q, max, chain, braveKey, merged)));

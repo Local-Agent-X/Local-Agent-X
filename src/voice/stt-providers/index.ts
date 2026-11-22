@@ -17,6 +17,7 @@ import type { SttProviderConfig, SttProviderName } from "./types.js";
 import { createGroqTranscriber } from "./groq.js";
 import { createOpenAITranscriber } from "./openai.js";
 import { createMistralTranscriber } from "./mistral.js";
+import { getSecretsStoreSingleton } from "../../secrets.js";
 
 // Re-export the existing local impl so callers can import it via this
 // barrel. We deliberately don't wrap it: the local path needs model paths
@@ -36,6 +37,20 @@ export interface LocalSttOpts extends WhisperTranscriberOptions {
 const VALID_NAMES: ReadonlySet<SttProviderName> = new Set<SttProviderName>([
   "local-whisper", "groq", "openai", "mistral",
 ]);
+
+/** The name each cloud provider's key is saved under, in Settings → Secrets
+ *  and in the environment. */
+export const STT_KEY_NAME = { groq: "GROQ_API_KEY", openai: "OPENAI_API_KEY", mistral: "MISTRAL_API_KEY" } as const;
+
+/** A cloud provider's config with the key saved in Settings → Secrets filled in
+ *  when the caller passed none. Every caller gets it, so a saved key works on
+ *  each voice path, not only the one that looked it up; with nothing saved, the
+ *  provider reads its own environment variables. */
+function withSavedKey(name: keyof typeof STT_KEY_NAME, cfg: SttProviderConfig = {}): SttProviderConfig {
+  if (cfg.apiKey) return cfg;
+  const saved = getSecretsStoreSingleton()?.get(STT_KEY_NAME[name]);
+  return saved ? { ...cfg, apiKey: saved } : cfg;
+}
 
 /** Validate + normalize the provider env knob. Returns undefined on miss. */
 export function resolveSttProviderName(): SttProviderName | undefined {
@@ -66,11 +81,11 @@ export function createSttProvider(
       return createWhisperTranscriber(paths, rest);
     }
     case "groq":
-      return createGroqTranscriber(opts.cloud);
+      return createGroqTranscriber(withSavedKey("groq", opts.cloud));
     case "openai":
-      return createOpenAITranscriber(opts.cloud);
+      return createOpenAITranscriber(withSavedKey("openai", opts.cloud));
     case "mistral":
-      return createMistralTranscriber(opts.cloud);
+      return createMistralTranscriber(withSavedKey("mistral", opts.cloud));
     default: {
       const exhaustive: never = name;
       throw new Error(`unknown STT provider: ${String(exhaustive)}`);

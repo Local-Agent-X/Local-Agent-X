@@ -7,6 +7,7 @@ import { SecurityLayer } from "../security/index.js";
 import { installedToolPolicy, type LiveToolPolicy } from "../tool-policy/index.js";
 import { SessionStore, MemoryIndex, MemoryManager, ensurePersonalityFiles } from "../memory/index.js";
 import { SecretsStore } from "../secrets.js";
+import { PROVIDERS } from "../providers/registry.js";
 import { AgentSync } from "../sync/index.js";
 import { adoptPulledSessions } from "../sync/on-sessions-pulled.js";
 import { RBACManager, setInternalAgentToken } from "../rbac.js";
@@ -57,6 +58,14 @@ export interface BootstrappedServices {
  * provider couldn't be backed by its preferred model — e.g. ollama unreachable
  * or model still missing).
  */
+/** The key a keyed embedding provider is created with: the provider's own key
+ *  order (auth-provider.ts), so embeddings use the key chat uses. Local-only
+ *  mode is enforced by the embedding provider itself. */
+async function embeddingApiKey(embProvider: string, config: LAXConfig, secretsStore: SecretsStore): Promise<string | undefined> {
+  if (embProvider !== "openai" && embProvider !== "gemini") return undefined;
+  return (await PROVIDERS[embProvider].auth.resolve({ configOpenAIKey: config.openaiApiKey }, secretsStore))?.credential;
+}
+
 export async function initOrRefreshEmbeddingProvider(deps: {
   config: LAXConfig;
   dataDir: string;
@@ -169,9 +178,7 @@ export async function initOrRefreshEmbeddingProvider(deps: {
       }
     }
 
-    let apiKey: string | undefined;
-    if (embProvider === "openai") apiKey = secretsStore.get("OPENAI_API_KEY") || config.openaiApiKey;
-    else if (embProvider === "gemini") apiKey = secretsStore.get("GEMINI_API_KEY");
+    const apiKey = await embeddingApiKey(embProvider, config, secretsStore);
     const provider = createEmbeddingProvider({ provider: embProvider, apiKey, model: resolvedEmbModel });
     await memoryIndex.setEmbeddingProvider(provider);
     // Share the same provider with anyone else that needs embeddings (protocol

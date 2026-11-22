@@ -22,3 +22,15 @@ export async function resolveCredential(
   const store = getSecretsStoreSingleton();
   return PROVIDERS[provider].auth.resolve(opts ?? {}, store);
 }
+
+/**
+ * The key for a service that is not a chat provider (web search, speech to
+ * text): the one saved in Settings → Secrets, else the environment variable of
+ * the same name — the order the keyed providers use (auth-provider.ts
+ * envKeyAuth). Reading only the environment ignored a key the user saved.
+ */
+export function resolveServiceKey(name: string): string | undefined {
+  const saved = getSecretsStoreSingleton()?.get(name);
+  if (saved) return saved;
+  return process.env[name]?.trim() || undefined;
+}

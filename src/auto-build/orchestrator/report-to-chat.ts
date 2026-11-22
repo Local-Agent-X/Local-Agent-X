@@ -28,13 +28,20 @@ export interface BuildEnd {
   filesChanged: string[];
 }
 
+/** A project folder spelled with forward slashes, whichever computer wrote
+ *  it: the spelling a tool call takes, and the one `basename` splits on every
+ *  platform (on Linux it does not split a Windows path at "\\"). */
+function portablePath(dir: string): string {
+  return dir.replace(/\\/g, "/");
+}
+
 function oneLine(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
 /** The notice's two lines: what happened, and what to call next. */
 export function buildEndNotice(end: BuildEnd): { summary: string; next: string } {
-  const dir = JSON.stringify(end.projectDir.replace(/\\/g, "/"));
+  const dir = JSON.stringify(portablePath(end.projectDir));
   const landed = `${end.chunksCommitted}/${end.totalChunks} chunks landed.`;
   if (!end.halt) {
     return { summary: `${landed} The build finished.`, next: "carry on with the step that follows the build." };
@@ -48,7 +55,7 @@ export function buildEndNotice(end: BuildEnd): { summary: string; next: string }
 }
 
 export function reportBuildToChat(end: BuildEnd): void {
-  const task = `The build of ${basename(end.projectDir)} (run_build_plan)`;
+  const task = `The build of ${basename(portablePath(end.projectDir))} (run_build_plan)`;
   const status = end.halt ? "failed" : "completed";
   const notice = buildEndNotice(end);
   pushPendingNotification(end.sessionId, {

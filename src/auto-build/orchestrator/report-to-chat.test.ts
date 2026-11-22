@@ -49,6 +49,16 @@ describe("reportBuildToChat", () => {
     expect(calls.announced).toEqual([["fork-89dc", { opId: "op_1", task: "The build of label-check (run_build_plan)", status: "failed" }, false]]);
   });
 
+  // The name was taken with the platform's own basename, which on Linux does
+  // not split a Windows path: the task read "The build of C:\\ws\\apps\\label-check".
+  it("names the project by its folder, however the path is spelled", () => {
+    for (const projectDir of ["C:\\ws\\apps\\label-check", "C:/ws/apps/label-check", "/home/u/ws/apps/label-check"]) {
+      calls.queued.length = 0;
+      reportBuildToChat({ ...halted, projectDir });
+      expect((calls.queued[0][1] as { task: string }).task, projectDir).toBe("The build of label-check (run_build_plan)");
+    }
+  });
+
   it("what the chat's next prompt shows carries the halt and the next call", () => {
     reportBuildToChat(halted);
     const shown = formatNotificationsForSystemPrompt([calls.queued[0][1] as Notification]);

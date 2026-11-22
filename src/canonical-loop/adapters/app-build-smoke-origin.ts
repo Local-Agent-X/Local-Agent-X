@@ -53,16 +53,26 @@ export function staticSmokeServeRoot(appDir: string): string {
 }
 
 /**
+ * Where the smoke serves the build. `workspace-app`: mounted at `/apps/<id>/`,
+ * how LAX itself serves a workspace app. `site-root`: a finished build folder
+ * served at `/`, how a static host (Firebase, Vercel, Netlify) serves a site,
+ * for a project that ships to one (the auto-build gate,
+ * auto-build/chunk-review/gate-build-exec.ts). Either way a missing asset is a
+ * 404 the page shows as an error, never a file the filesystem happened to have.
+ */
+export type SmokeMount = { kind: "workspace-app" } | { kind: "site-root"; dir: string };
+
+/**
  * Serve `appDir` on an ephemeral loopback port under the workspace-app serving
- * policy, mounted at `/apps/<basename>/`. Bound to 127.0.0.1 only — the port is
+ * policy, mounted per `at`. Bound to 127.0.0.1 only — the port is
  * open for the life of one smoke and must not be reachable off the box. Caller
  * MUST call `close()`.
  */
-export async function startStaticSmokeOrigin(appDir: string): Promise<SmokeOrigin> {
+export async function startStaticSmokeOrigin(appDir: string, at: SmokeMount = { kind: "workspace-app" }): Promise<SmokeOrigin> {
   const appId = basename(appDir);
-  const distDir = staticBuildDistDir(appDir);
+  const distDir = at.kind === "site-root" ? at.dir : staticBuildDistDir(appDir);
   const serveRoot = distDir ?? appDir;
-  const mount = `/apps/${appId}`;
+  const mount = at.kind === "site-root" ? "" : `/apps/${appId}`;
   const server = createServer((req, res) => {
     let pathname: string;
     try {

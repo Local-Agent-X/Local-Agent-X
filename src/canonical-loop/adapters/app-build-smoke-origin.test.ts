@@ -45,3 +45,32 @@ describe("app_build smoke origin — bundled faces", () => {
     expect((await fetch(`${base}/apps/demo/`)).status).toBe(200);
   });
 });
+
+describe("app_build smoke origin — a build served at the site root", () => {
+  // A build that ships to a static host links its files from the root
+  // (`/_expo/…`): from file:// they miss, served at `/` they resolve.
+  async function startSite(): Promise<string> {
+    root = mkdtempSync(join(tmpdir(), "smoke-origin-site-"));
+    const dist = join(root, "label-check", "dist");
+    mkdirSync(join(dist, "_expo", "static"), { recursive: true });
+    writeFileSync(join(dist, "index.html"), '<!doctype html><script src="/_expo/static/entry.js"></script>');
+    writeFileSync(join(dist, "_expo", "static", "entry.js"), "console.log('up')");
+    origin = await startStaticSmokeOrigin(join(root, "label-check"), { kind: "site-root", dir: dist });
+    return origin.url;
+  }
+
+  it("serves the page at / and its root-absolute assets", async () => {
+    const url = await startSite();
+    expect(new URL(url).pathname).toBe("/");
+    expect(await (await fetch(url)).text()).toContain("/_expo/static/entry.js");
+    const script = await fetch(new URL("/_expo/static/entry.js", url));
+    expect(script.status).toBe(200);
+    expect(script.headers.get("content-type")).toContain("javascript");
+  });
+
+  it("routes a client-side path to the page but 404s a missing asset", async () => {
+    const url = await startSite();
+    expect((await fetch(new URL("/meds/", url))).status).toBe(200);
+    expect((await fetch(new URL("/meds/_expo/static/entry.js", url))).status).toBe(404);
+  });
+});

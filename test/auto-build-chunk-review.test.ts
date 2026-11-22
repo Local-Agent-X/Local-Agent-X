@@ -821,10 +821,10 @@ describe("build-exec gate: the project's scripts run in the shell cage", () => {
     }
   });
 
-  it("halts on a failing script, quoting its output in arrival order", async () => {
+  it("sends the chunk back on a failing script, quoting its output in arrival order", async () => {
     seam.runInstead = node("console.log('compiling'); setTimeout(() => { console.error('error TS2345'); process.exit(1); }, 50)");
     const finding = await runBuildExecGate({ projectDir: dir });
-    expect(finding?.action).toBe("halt");
+    expect(finding?.action).toBe("push_back");
     expect(finding?.reasoning).toMatch(/^`npm run build` exited 1 .*compiling\s+error TS2345/s);
   });
 

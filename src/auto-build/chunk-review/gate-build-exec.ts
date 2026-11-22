@@ -9,8 +9,10 @@
  *
  *   1. Run the project's real build/test command (npm scripts) and read the
  *      ACTUAL exit code — not report.testsPass. A non-zero build or test run
- *      halts, naming the failing command + output tail.
- *   2. If the build produced a static entry (index.html), headless-smoke it:
+ *      sends the chunk back to its builder (push_back: one retry, then a
+ *      halt), naming the failing command + output tail.
+ *   2. If the build produced a static entry (index.html), serve its folder at
+ *      a loopback site root and headless-smoke it:
  *      load the page, assert zero console errors AND a real root/canvas node
  *      mounted. A blank canvas / console explosion — the exact "says fixed but
  *      isn't" failure for a browser game — halts here even when the build is
@@ -23,11 +25,13 @@
  */
 
 import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { runCaged, type CagedRunOutcome } from "../../tools/caged-spawn.js";
 import { nodeScriptArgv, npmCommandArgv } from "../../tools/program-argv.js";
 import { structureCheckCommand, structureWarningNote } from "../../app-scaffold/project-kit.js";
 import { smokeUrl } from "../scenario-scorer/smoke.js";
+import { startStaticSmokeOrigin, type SmokeMount, type SmokeOrigin } from "../../canonical-loop/public/static-smoke-origin.js";
+import { staticBuildDistDir } from "../../tools/app-run-target.js";
 import type { GateFinding } from "./gates.js";
 
 const BUILD_TIMEOUT_MS = 180_000;
@@ -87,8 +91,8 @@ function commandArgv(command: string) {
 
 /**
  * Find a static HTML entry the build emitted, to smoke-test. Checks the
- * common output locations in order. Returns the absolute file path (as a
- * file:// URL is derived by the caller) or null when the project isn't a
+ * common output locations in order. Returns the absolute file path (its folder
+ * is served over http for the smoke) or null when the project isn't a
  * static/browser build (a server or CLI project — nothing to headless-load).
  */
 export function findStaticEntry(projectDir: string): string | null {
@@ -136,8 +140,9 @@ function truncate(s: string, n: number): string {
 
 /**
  * The production build-exec gate. Runs the real build/test commands, then
- * headless-smokes the static entry if one was produced. Returns a `halt`
- * finding on the first real failure, or null when everything the gate could
+ * headless-smokes the static entry if one was produced. Returns a `push_back`
+ * finding on the first failure the chunk caused (its builder gets one more
+ * attempt with it), a `halt` when the check itself could not run, or null when everything the gate could
  * observe actually worked. A project with nothing runnable (no scripts, no
  * static entry) returns null — this gate can only strengthen the verdict, it
  * never invents a failure it didn't observe.
@@ -164,7 +169,7 @@ export const runBuildExecGate: BuildExecRunner = async (input) => {
     if (result.outcome.kind === "timeout") {
       return {
         gate: "build-exec",
-        action: "halt",
+        action: "push_back",
         reasoning:
           `\`${command}\` did not finish within ${Math.round(BUILD_TIMEOUT_MS / 1000)}s — the chunk reported done ` +
           `but the build/test command hangs. Output tail: ${truncate(result.outputTail, 400) || "(none)"}`,
@@ -173,7 +178,7 @@ export const runBuildExecGate: BuildExecRunner = async (input) => {
     if (result.outcome.code !== 0 && command === structure) {
       return {
         gate: "build-exec",
-        action: "halt",
+        action: "push_back",
         reasoning:
           `\`${command}\` exited ${result.outcome.code}: the project breaks its own structure rules (AGENTS.md). ` +
           `For a size failure, find the job that grew and move it into a module named after that job; ` +
@@ -184,7 +189,7 @@ export const runBuildExecGate: BuildExecRunner = async (input) => {
     if (result.outcome.code !== 0) {
       return {
         gate: "build-exec",
-        action: "halt",
+        action: "push_back",
         reasoning:
           `\`${command}\` exited ${result.outcome.code} — the report claimed done but the command actually FAILS. ` +
           `This is the "says fixed but isn't" case; do not trust the report's TESTS line. ` +
@@ -200,19 +205,36 @@ export const runBuildExecGate: BuildExecRunner = async (input) => {
   const entry = findStaticEntry(projectDir);
   if (!entry) return null; // not a browser build — nothing to smoke
 
-  const fileUrl = "file://" + entry.replace(/\\/g, "/");
-  const smoke = await smokeUrl(fileUrl, SMOKE_LOAD_TIMEOUT_MS, signal);
+  // Served over http the way it will be served: under /apps/<name>/ when LAX
+  // itself serves this build (its run-target manifest says so), otherwise at a
+  // site root, as a static host does. From file:// a build's root-absolute
+  // links (`/_expo/…`, `/assets/…`) miss, so a correct build failed here and a
+  // builder "fixed" it by breaking the real deploy (label-check chunk 1,
+  // 2026-11-21).
+  const mount: SmokeMount = staticBuildDistDir(projectDir) ? { kind: "workspace-app" } : { kind: "site-root", dir: dirname(entry) };
+  let origin: SmokeOrigin;
+  try {
+    origin = await startStaticSmokeOrigin(projectDir, mount);
+  } catch (e) {
+    return { gate: "build-exec", action: "halt", reasoning: `The built page could not be served for its smoke test (${truncate((e as Error).message, 200)}).` };
+  }
+  let smoke: Awaited<ReturnType<typeof smokeUrl>>;
+  try {
+    smoke = await smokeUrl(origin.url, SMOKE_LOAD_TIMEOUT_MS, signal);
+  } finally {
+    await origin.close();
+  }
   if (smoke.loadError && smoke.loadError !== "aborted") {
     return {
       gate: "build-exec",
-      action: "halt",
+      action: "push_back",
       reasoning: `Built page failed to load headlessly (${smoke.loadError}). The artifact the chunk shipped doesn't open.`,
     };
   }
   if (smoke.consoleErrors.length > 0) {
     return {
       gate: "build-exec",
-      action: "halt",
+      action: "push_back",
       reasoning:
         `Built page throws ${smoke.consoleErrors.length} console error(s) on load — it builds but is broken at runtime. ` +
         `First: "${truncate(smoke.consoleErrors[0], 200)}". The report's "done" is not observable in the running app.`,
@@ -221,7 +243,7 @@ export const runBuildExecGate: BuildExecRunner = async (input) => {
   if (!smoke.rootMounted) {
     return {
       gate: "build-exec",
-      action: "halt",
+      action: "push_back",
       reasoning:
         `Built page loads with no console errors but renders NOTHING — no canvas painted and no mount root has content. ` +
         `This is the blank-screen "says fixed but isn't" failure: the report claims done, the app shows an empty page.`,

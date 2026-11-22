@@ -139,7 +139,8 @@ export function isPhaseGatePause(outcome: Pick<ChunkReviewOutcome, "action" | "f
  * chunk that writes `STATUS: done` about a broken build (or a game that
  * renders a blank canvas) is caught here even though every string-based gate
  * passed it. It fires only when the mechanical verdict is already "proceed"
- * and can only elevate proceed → halt (never downgrades a real halt/push_back).
+ * and can only elevate proceed → push_back or halt (never downgrades a real
+ * halt/push_back).
  * Injectable so tests stub the runner instead of spawning a build.
  */
 export async function runChunkReviewWithJudgment(

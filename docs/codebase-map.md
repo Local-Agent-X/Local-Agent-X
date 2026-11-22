@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 72 top-level dirs · 72 live · 0 with no live importer · 2098 non-test source files · 74 oversized · 260 nearing the size cap.
+**Totals:** 72 top-level dirs · 72 live · 0 with no live importer · 2099 non-test source files · 74 oversized · 260 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -24,7 +24,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/tools/` | 139 | 243 | XL | 9 |
 | `src/tool-execution/` | 105 | 90 | XL | 2 |
 | `src/workspace/` | 92 | 3 | M |  |
-| `src/canonical-loop/` | 90 | 294 | XL | 10 |
+| `src/canonical-loop/` | 91 | 295 | XL | 10 |
 | `src/providers/` | 80 | 28 | L | 1 |
 | `src/session/` | 77 | 15 | L |  |
 | `src/memory/` | 63 | 162 | XL | 3 |
@@ -389,6 +389,7 @@ job. Comments are free: never cut them to fit.
 - `src/canonical-loop/adapters/anthropic/stream-consume.ts#streamConsume` — 100+ own code lines (cap 100)
 - `src/anthropic-client/stream-cli.ts#streamViaColdSpawn` — 90+ own code lines (cap 100)
 - `src/app-renderer/components.ts#renderComponent` — 90+ own code lines (cap 100)
+- `src/auto-build/chunk-review/gate-build-exec.ts#runBuildExecGate` — 90+ own code lines (cap 100)
 - `src/auto-build/loop/run-chunk-once.ts#runChunkOnce` — 90+ own code lines (cap 100)
 - `src/auto-build/orchestrator/manager.ts#startOrchestration` — 90+ own code lines (cap 100)
 - `src/autopilot/start.ts#startAutopilot` — 90+ own code lines (cap 100)
@@ -431,7 +432,6 @@ job. Comments are free: never cut them to fit.
 - `src/agent-request/prepare-request/build-system-prompt.ts#buildSystemPromptWithTelemetry` — 80+ own code lines (cap 100)
 - `src/agents/tools.ts#createAgentTools` — 80+ own code lines (cap 100)
 - `src/auth/index.ts#createServer:callback` — 80+ own code lines (cap 100)
-- `src/auto-build/chunk-review/gate-build-exec.ts#runBuildExecGate` — 80+ own code lines (cap 100)
 - `src/broker-transport/vendor/chat.ts#parseEvent` — 80+ own code lines (cap 100)
 - `src/canonical-loop/adapters/canonical-to-transport.ts#canonicalToTransport` — 80+ own code lines (cap 100)
 - `src/canonical-loop/agent-runner/runtime-surface.ts#rehydrateAgentRuntimeSurface` — 80+ own code lines (cap 100)

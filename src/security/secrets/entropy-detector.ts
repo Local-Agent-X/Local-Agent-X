@@ -122,7 +122,24 @@ function isSlug(run: string): boolean {
   const parts = run.split(/[-_/.]/);
   if (parts.length < 2 || parts.some(p => p.length === 0)) return false;
   if (parts.length >= 3 && (parts.every(p => /^[a-z0-9]+$/.test(p)) || isWordSlug(parts) || isWordPath(parts))) return true;
+  if (parts.length === 2 && isNamePair(parts)) return true;
   return isHashedName(run);
+}
+
+// Two names joined by one separator: `Calcium-HealthProfessional`. A build was
+// stopped for approval on a data file citing NIH fact sheets, whose pages are
+// named that way (label-check, 2026-11-21). With only two parts the slug rules
+// above did not apply. Each part must be spelled as words: a word is three
+// letters or more, lowercase after its first, and holds a vowel; a number may
+// follow a word. isCamelIdentifier is too loose for a pair (it passes
+// `HYQyvJgnoEjezVyrsjS`: single capitals and `y` as a vowel), so this has its
+// own shape. Measured on 300k random 24-48 character keys per alphabet, the
+// keys this rule clears that were flagged before: base64url 0, letters and
+// digits 0, letters with one hyphen 1, letters with one underscore 2.
+const WORDS_NAME = /^[A-Z]?[a-z]{2,}(?:[A-Z][a-z]{2,}|[0-9]{1,4})*$/;
+function isNamePair(parts: string[]): boolean {
+  const name = (p: string) => p.length >= 4 && WORDS_NAME.test(p) && (p.match(/[A-Z]?[a-z]+/g) ?? []).every(w => /[aeiou]/i.test(w));
+  return parts.every(name);
 }
 
 // The same costume in title or upper case: every part a word (`Source`, `POV`,

@@ -13,18 +13,18 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 72 top-level dirs · 72 live · 0 with no live importer · 2100 non-test source files · 74 oversized · 260 nearing the size cap.
+**Totals:** 72 top-level dirs · 72 live · 0 with no live importer · 2101 non-test source files · 74 oversized · 260 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 187 | 30 | XL | 1 |
-| `src/security/` | 167 | 64 | XL | 2 |
+| `src/security/` | 168 | 64 | XL | 2 |
 | `src/tools/` | 139 | 243 | XL | 9 |
-| `src/tool-execution/` | 105 | 90 | XL | 2 |
+| `src/tool-execution/` | 105 | 91 | XL | 2 |
+| `src/canonical-loop/` | 92 | 295 | XL | 10 |
 | `src/workspace/` | 92 | 3 | M |  |
-| `src/canonical-loop/` | 91 | 295 | XL | 10 |
 | `src/providers/` | 80 | 28 | L | 1 |
 | `src/session/` | 77 | 15 | L |  |
 | `src/memory/` | 63 | 162 | XL | 3 |
@@ -79,7 +79,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/auto-build/` | 7 | 59 | XL | 2 |
 | `src/android/` | 6 | 7 | M |  |
 | `src/credentials/` | 6 | 1 | S |  |
-| `src/publish-review/` | 5 | 8 | M |  |
+| `src/publish-review/` | 6 | 8 | M |  |
 | `src/embedding-providers/` | 4 | 8 | M |  |
 | `src/holdout/` | 4 | 3 | S |  |
 | `src/hooks/` | 4 | 3 | M |  |

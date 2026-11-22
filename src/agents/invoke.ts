@@ -32,6 +32,7 @@ import { AgentCatalog } from "./catalog.js";
 import { Handler } from "../agency/handler.js";
 import { AgentTemplateStore, ProjectStore } from "../agent-store/index.js";
 import { ProjectRosterStore } from "../project-rosters.js";
+import { sessionModelPins, type ModelPinStore } from "../session/model-pin.js";
 import { EventBus } from "../event-bus.js";
 import { dispatchAgentRun, type AgentRunDriverRequest, type AgentRunDriverResult } from "./runtime.js";
 import { inheritSessionProfile } from "../autonomy/profile-store.js";
@@ -314,23 +315,31 @@ function capTools(allowed: string[], override: string[] | undefined): string[] {
  *   1. opts.modelOverride        — per-run pick (delegation tools)
  *   2. roster.model              — per-project override (set via UI/PATCH)
  *   3. def.defaultModel          — template-level default
- *   4. undefined                 — fall through to the global default
+ *   4. the parent chat's model   — what the user picked in the chat that
+ *                                  started the run (session/model-pin.ts),
+ *                                  so a build's workers, a skeptic or a
+ *                                  spawned helper run on the model on screen
+ *   5. undefined                 — fall through to the global default
  *                                  at resolveProvider time.
  *
  * The roster lookup is gated on opts.scope — agents invoked without a
  * project scope (main chat, headless ops) can't have a per-project
- * override, so we skip the store hit.
+ * override, so we skip the store hit. A chat with no pin of its own runs on
+ * the global default too, so rung 5 covers it.
  */
 export function resolveAgentModel(
   def: AgentDefinition,
   opts: InvokeOpts,
+  pins: ModelPinStore = sessionModelPins(),
 ): AgentModelPin | undefined {
   if (opts.modelOverride) return opts.modelOverride;
   if (opts.scope) {
     const roster = ProjectRosterStore.getInstance().get(opts.scope.projectId, def.id);
     if (roster?.model) return roster.model;
   }
-  return def.defaultModel;
+  if (def.defaultModel) return def.defaultModel;
+  const chat = opts.parentSessionId ? pins.get(opts.parentSessionId) : null;
+  return chat ? { provider: chat.provider, model: chat.model } : undefined;
 }
 
 export function applyProjectToolGate(allowed: string[], opts: InvokeOpts): string[] {

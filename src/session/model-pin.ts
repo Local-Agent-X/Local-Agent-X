@@ -12,7 +12,10 @@
  * The turn reads the pin as its provider/model override
  * (`routes/chat/run-chat-turn/orchestrator.ts`), the provider picker reads it
  * through `GET /api/providers?session=` and sets it through
- * `POST /api/sessions/<id>/model` (`routes/settings/providers.ts`).
+ * `POST /api/sessions/<id>/model` (`routes/settings/providers.ts`). An agent
+ * the chat starts (a build's workers, a spawned helper) runs on it too, unless
+ * the agent's run, project or template names a model (`agents/invoke.ts`
+ * resolveAgentModel).
  */
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";

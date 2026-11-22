@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 72 top-level dirs · 72 live · 0 with no live importer · 2097 non-test source files · 74 oversized · 261 nearing the size cap.
+**Totals:** 72 top-level dirs · 72 live · 0 with no live importer · 2098 non-test source files · 74 oversized · 261 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -26,7 +26,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/workspace/` | 92 | 3 | M |  |
 | `src/canonical-loop/` | 90 | 294 | XL | 10 |
 | `src/providers/` | 80 | 28 | L | 1 |
-| `src/session/` | 76 | 15 | L |  |
+| `src/session/` | 77 | 15 | L |  |
 | `src/memory/` | 63 | 162 | XL | 3 |
 | `src/data-lineage/` | 61 | 12 | L |  |
 | `src/util/` | 59 | 3 | S |  |
@@ -76,7 +76,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/bridge-voice/` | 8 | 5 | S |  |
 | `src/mcp-client/` | 8 | 11 | L | 1 |
 | `src/telegram-bridge/` | 8 | 6 | M |  |
-| `src/auto-build/` | 7 | 57 | XL | 2 |
+| `src/auto-build/` | 7 | 58 | XL | 2 |
 | `src/android/` | 6 | 7 | M |  |
 | `src/credentials/` | 6 | 1 | S |  |
 | `src/publish-review/` | 5 | 8 | M |  |

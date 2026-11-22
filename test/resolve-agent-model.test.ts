@@ -6,7 +6,8 @@
  *   1. opts.modelOverride  (per-run pin)
  *   2. roster.model        (per-project pin)
  *   3. def.defaultModel    (template-level pin)
- *   4. undefined           (fall through to global default)
+ *   4. the parent chat's pin (session/model-pin.ts)
+ *   5. undefined           (fall through to global default)
  *
  * Each test isolates one rung and asserts the higher rungs win. The
  * ProjectRosterStore fixture mirrors project-rosters.test.ts: back up
@@ -14,13 +15,14 @@
  * in afterEach.
  */
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { afterAll, afterEach, beforeEach, describe, expect, it } from "vitest";
+import { existsSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 
 import { resolveAgentModel } from "../src/agents/invoke.js";
 import { ProjectRosterStore } from "../src/project-rosters.js";
+import { createModelPinStore } from "../src/session/model-pin.js";
 import type { AgentDefinition } from "../src/agents/types.js";
 
 const ROSTERS_FILE = join(homedir(), ".lax", "project-rosters.json");
@@ -115,5 +117,30 @@ describe("resolveAgentModel — four-rung lookup chain", () => {
     const def: AgentDefinition = { ...BASE_DEF, defaultModel: { provider: "anthropic", model: "claude-sonnet-4-6" } };
     expect(resolveAgentModel(def, { scope: { projectId: "proj-A" } }))
       .toEqual({ provider: "anthropic", model: "claude-sonnet-4-6" });
+  });
+});
+
+describe("resolveAgentModel — the parent chat's model", () => {
+  // A throwaway pin file, never the install's session-model-pins.json.
+  const dir = mkdtempSync(join(tmpdir(), "resolve-agent-model-pins-"));
+  const pins = createModelPinStore(join(dir, "pins.json"));
+  pins.set("chat-opus", { provider: "anthropic", model: "claude-opus-5-5" });
+  afterAll(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("an agent a chat starts runs on the model picked in that chat", () => {
+    expect(resolveAgentModel({ ...BASE_DEF }, { parentSessionId: "chat-opus" }, pins))
+      .toEqual({ provider: "anthropic", model: "claude-opus-5-5" });
+  });
+
+  it("a chat with no pin, or a run with no parent chat, falls through to the global default", () => {
+    expect(resolveAgentModel({ ...BASE_DEF }, { parentSessionId: "chat-unpinned" }, pins)).toBeUndefined();
+    expect(resolveAgentModel({ ...BASE_DEF }, {}, pins)).toBeUndefined();
+  });
+
+  it("an explicit run pick or a template's own model still wins over the chat's", () => {
+    const templated: AgentDefinition = { ...BASE_DEF, defaultModel: { provider: "xai", model: "grok-4.5" } };
+    expect(resolveAgentModel(templated, { parentSessionId: "chat-opus" }, pins)).toEqual({ provider: "xai", model: "grok-4.5" });
+    expect(resolveAgentModel({ ...BASE_DEF }, { parentSessionId: "chat-opus", modelOverride: { provider: "codex", model: "gpt-5.5" } }, pins))
+      .toEqual({ provider: "codex", model: "gpt-5.5" });
   });
 });

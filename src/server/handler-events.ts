@@ -179,7 +179,7 @@ export function registerHandlerEvents(deps: {
       workspace.promptBlock += await installWorktreeDependencies(workspace, runSessionId, signal);
       const { resolveProvider } = await import("../agent-request/index.js");
       // Thread the resolved per-agent model pin into the provider chain.
-      // resolveAgentModel (invoke.ts) already walked run→roster→template;
+      // resolveAgentModel (invoke.ts) already walked run→roster→template→parent chat;
       // the pin arrives here as req.modelOverride. When unset, we fall
       // through to the global default (no override args).
       const { provider, apiKey, model } = await resolveProvider(

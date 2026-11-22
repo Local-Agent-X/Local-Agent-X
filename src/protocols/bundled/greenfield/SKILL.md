@@ -183,7 +183,9 @@ every chunk whose dependencies are green and whose files overlap nothing in
 flight goes out together, each in its own worktree. Each chunk is reviewed,
 scored against its own scenarios and attacked by a skeptic before it lands,
 and each phase is scored again against the sealed suite before the next
-starts; follow it with `build_plan_status`. Decide engineering questions and record
+starts. Then end your turn rather than poll: the chat is woken with the
+result when the run halts or finishes, and `build_plan_status` shows where it
+is in between. Decide engineering questions and record
 them; park product, taste, money and risk questions and keep the run moving.
 The ledger, not the conversation, holds the state.
 `references/autonomous.md`.

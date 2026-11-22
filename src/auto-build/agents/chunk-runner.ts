@@ -38,6 +38,9 @@ export interface ChunkAgentInvocation {
   /** The chunk-specific task body (slice, done-when, retry framing, etc).
    *  System prompt + discipline lives in the AgentDefinition. */
   task: string;
+  /** What this run is, in a few words ("Chunk 3/13: Checkout"): the run's
+   *  name in the agents panel and the first line of its task. */
+  title?: string;
   /** Absolute path to the PROJECT directory the agent works in.
    *  Without this, the agent runs from the LAX repo root and can't
    *  find the project's app/ tree. (Live failure 2026-05-12: chunk
@@ -237,8 +240,13 @@ export async function runChunkAgent(opts: ChunkAgentInvocation): Promise<ChunkAg
       `outside it, and don't look for the project in the LAX repo or the LAX workspace root.\n\n` +
       `---\n\n${opts.task}`
     : opts.task;
+  // The title leads the task: the agents panel, the work claims and the logs
+  // name a run by its task's first line, and "## Working directory" named
+  // every build worker the same (label-check, 2026-11-21).
+  const fullTask = opts.title ? `${opts.title}\n\n${taskWithCwd}` : taskWithCwd;
 
-  const ref = invokeDefinition(def, taskWithCwd, {
+  const ref = invokeDefinition(def, fullTask, {
+    ...(opts.title ? { nameOverride: opts.title } : {}),
     parentSessionId: opts.parentSessionId,
     // The orchestrator run's op id becomes this worker's spawn parent, so its
     // AGENTS-panel card nests under the orchestrator card. invokeDefinition

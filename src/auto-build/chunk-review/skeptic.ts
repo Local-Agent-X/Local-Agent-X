@@ -94,6 +94,7 @@ export async function runChunkSkeptic(input: SkepticInput): Promise<SkepticVerdi
   const result = await runChunkAgent({
     role: "chunk-skeptic",
     task: buildSkepticTask(input),
+    title: `Skeptic: chunk ${input.chunk.number}, ${input.chunk.title}`,
     projectDir: input.projectDir,
     timeoutMs: input.timeoutMs ?? SKEPTIC_TIMEOUT_MS,
     signal: input.signal,

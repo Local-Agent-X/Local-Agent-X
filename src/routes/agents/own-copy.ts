@@ -18,7 +18,7 @@ import { join } from "node:path";
 import type { RouteHandler, ServerContext } from "../../server-context.js";
 import { jsonResponse, safeParseBody } from "../../server-utils.js";
 import { leaveOwnCopy, mergeOwnCopy, ownCopyOf, startOwnCopy } from "../../agency/chat-own-copy.js";
-import { liveHolders, namedHolders, type HolderNames } from "../../agency/work-claims.js";
+import { liveHolders, namedHolders, onSameErrand, type HolderNames } from "../../agency/work-claims.js";
 import { locateInRepo } from "../../agency/repo-locate.js";
 import { sessionProjectFolder } from "../../session/project-folder.js";
 import { isPinnableSessionId } from "../../session/model-pin.js";
@@ -49,7 +49,8 @@ export function ownCopyView(ctx: Pick<ServerContext, "sessionStore">, sessionId:
   // project folder is the one the others write (2026-11-20).
   const mine = inRepo.find((h) => h.sessionId === sessionId)?.checkout ?? place.checkout;
   const sharers = inRepo
-    .filter((h) => h.sessionId !== sessionId && h.state !== "recent" && sameCheckout(h.checkout, mine))
+    // The chat's own agents (a build's workers) write its folder for it.
+    .filter((h) => h.sessionId !== sessionId && h.state !== "recent" && !onSameErrand(h.sessionId, sessionId) && sameCheckout(h.checkout, mine))
     .map((h) => h.displayName);
   return { copy: null, sharesFolderWith: sharers };
 }

@@ -31,6 +31,7 @@ import type { Op } from "../ops/types.js";
 import { isLeaseExpired } from "../canonical-loop/public/op-facts.js";
 import { locateInRepo } from "./repo-locate.js";
 import { normRepoPath, repoPathsOverlap } from "./path-overlap.js";
+import { getSessionOwner } from "../browser/session-owner-registry.js";
 
 export const CHAT_IDLE_HOLD_MS = 30 * 60_000;
 export const RECENT_MS = 2 * 60 * 60_000;
@@ -109,6 +110,14 @@ function write(h: WorkHolder): void {
   atomicWriteFileSync(file, JSON.stringify(h));
   cache = null;
   notifyClaimsChanged();
+}
+
+/** Whether one holder works for the other: an agent a chat started (a build's
+ *  worker, a spawned helper) edits the chat's files on its behalf, which is
+ *  not two chats colliding. The session-owner registry maps a run's session to
+ *  the chat it was started from, flattened to the root, while the run lives. */
+export function onSameErrand(a: string, b: string): boolean {
+  return getSessionOwner(a)?.browserSessionId === b || getSessionOwner(b)?.browserSessionId === a;
 }
 
 /** Whether a holder is working now, between messages, lately, or gone. */
@@ -285,7 +294,7 @@ export function findClashes(sessionId: string, absPaths: string[], fallbackRoot?
     if (!place) continue;
     const target = normRepoPath(place.rel);
     for (const other of liveHolders(place.repoKey)) {
-      if (other.sessionId === sessionId) continue;
+      if (other.sessionId === sessionId || onSameErrand(other.sessionId, sessionId)) continue;
       const claim = other.claims.find((c) => repoPathsOverlap(normRepoPath(c.path), target));
       if (!claim) continue;
       out.push({ path: place.rel, other, claim, sameCheckout: sameDir(other.checkout, place.checkout) });

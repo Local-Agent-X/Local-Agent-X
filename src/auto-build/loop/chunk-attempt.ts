@@ -39,7 +39,7 @@ export async function buildChunkWithRetry(a: ChunkAttemptInput): Promise<ChunkAt
     planPath: opts.planPath, plan: opts.plan,
     projectDir: a.workTree ?? opts.projectDir,
     subprocessTimeoutMs: opts.subprocessTimeoutMs, signal: opts.signal,
-    judgmentHook: opts.judgmentHook, parentOpId: opts.parentOpId,
+    judgmentHook: opts.judgmentHook, parentOpId: opts.parentOpId, parentSessionId: opts.parentSessionId,
     // The judge finds the sealed suite by the project's name, never a worktree's.
     chunkJudge: opts.chunkJudge, baseProjectDir: opts.projectDir, workerIndex: a.workerIndex,
   };
@@ -47,7 +47,6 @@ export async function buildChunkWithRetry(a: ChunkAttemptInput): Promise<ChunkAt
   const outcome = await runChunkOnce({
     ...shared,
     retryReason: undefined,
-    parentSessionId: opts.parentSessionId,
     priorOutcomes: a.priorOutcomes,
   });
   if (outcome.action !== "push_back") return { finalOutcome: outcome, finalAction: outcome.action };

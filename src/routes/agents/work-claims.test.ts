@@ -10,6 +10,7 @@ import type { Op } from "../../ops/types.js";
 import { othersInProjectOf, workClaimRows } from "./work-claims.js";
 import { holderNamesFrom, recordClaims, _resetWorkClaimsForTest, _setWorkClaimsForTest } from "../../agency/work-claims.js";
 import { ownCopyView } from "./own-copy.js";
+import { clearSessionOwner, registerChildSessionOwner } from "../../browser/session-owner-registry.js";
 import type { SessionMetadata } from "../../memory/session-metadata-cache.js";
 import type { Session } from "../../types.js";
 import { _resetRepoLocateCacheForTest } from "../../agency/repo-locate.js";
@@ -76,5 +77,40 @@ describe("the strip names chats as the chat list does", () => {
     expect(ownCopyView(ctx as never, "chat-mine").sharesFolderWith).toEqual(["Shared"]);
     recordClaims({ sessionId: "chat-mine", opId: "op-m", paths: [join(own, "a.ts")], source: "written", displayName: "Mine" });
     expect(ownCopyView(ctx as never, "chat-mine").sharesFolderWith).toEqual([]);
+  });
+});
+
+// Live 2026-11-21 (label-check): a build's worker, editing the project for the
+// chat that started it, raised "same folder" on that chat; and a worker that
+// had finished was still shown clashing with the one that retried its chunk.
+describe("a chat's own build workers", () => {
+  const ctx = () => ({ sessionStore: { load: (id: string) => ({ id, title: id, messages: [], createdAt: 0, updatedAt: 0, folder: repo }) as unknown as Session } });
+
+  it("are not chats sharing its folder or clashing with it; another chat's worker still is", () => {
+    recordClaims({ sessionId: "chat-a", opId: "op-a", paths: [join(repo, "package.json")], source: "written", displayName: "Build chat" });
+    recordClaims({ sessionId: "agent-own", opId: "op-w", paths: [join(repo, "package.json")], source: "written", displayName: "Chunk 1/13: App skeleton" });
+    recordClaims({ sessionId: "agent-other", opId: "op-w", paths: [join(repo, "package.json")], source: "written", displayName: "Someone else's worker" });
+    registerChildSessionOwner("agent-own", "chat-a");
+    try {
+      expect(ownCopyView(ctx() as never, "chat-a").sharesFolderWith).toEqual(["Someone else's worker"]);
+      const others = Object.fromEntries(othersInProjectOf("chat-a").map((o) => [o.sessionId, o.clashesWithMe]));
+      expect(others).toEqual({ "agent-own": false, "agent-other": true });
+      const row = workClaimRows().find((r) => r.sessionId === "chat-a")!;
+      expect(row.clashesWith).toEqual(["Someone else's worker"]);
+    } finally {
+      clearSessionOwner("agent-own");
+    }
+  });
+
+  it("a worker that has finished clashes with nothing", () => {
+    _setWorkClaimsForTest({
+      dir: join(repo, "..", "holders"),
+      readOp: (id) => ({ id, lane: "agent", status: id === "op-done" ? "completed" : "running", task: id, canonical: { leaseExpiresAt: new Date(Date.now() + 60_000).toISOString() } }) as unknown as Op,
+    });
+    recordClaims({ sessionId: "agent-first", opId: "op-done", paths: [join(repo, "package.json")], source: "written", displayName: "Chunk 1/13: App skeleton" });
+    recordClaims({ sessionId: "agent-retry", opId: "op-live", paths: [join(repo, "package.json")], source: "written", displayName: "Chunk 1/13: App skeleton (retry)" });
+    const rows = Object.fromEntries(workClaimRows().map((r) => [r.sessionId, r]));
+    expect(rows["agent-first"]).toMatchObject({ state: "recent", clashesWith: [] });
+    expect(rows["agent-retry"].clashesWith).toEqual([]);
   });
 });

@@ -105,6 +105,7 @@ export async function runPreflightProbe(
     const result = await runner({
       role: "chunk-runner-trunk",
       task: preflightTask(projectRootFwd, token),
+      title: "Build preflight check",
       projectDir: opts.projectDir,
       parentSessionId: opts.parentSessionId,
       parentOpId: opts.parentOpId,

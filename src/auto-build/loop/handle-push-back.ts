@@ -25,14 +25,19 @@ export interface HandlePushBackOptions {
    *  → retry worker card renders as a root, unchanged. */
   parentOpId?: string;
   outcome: ChunkReviewOutcome;
-  /** Carried onto the retry so it is judged like the first attempt. */
+  /** Carried onto the retry so it runs and is judged like the first attempt:
+   *  the chat it works for (whose model it runs on), and the chunk judge. */
+  parentSessionId?: string;
   chunkJudge?: ChunkJudge;
   baseProjectDir?: string;
   workerIndex?: number;
 }
 
-function judgeOpts(opts: HandlePushBackOptions) {
-  return { chunkJudge: opts.chunkJudge, baseProjectDir: opts.baseProjectDir, workerIndex: opts.workerIndex };
+function carried(opts: HandlePushBackOptions) {
+  return {
+    parentSessionId: opts.parentSessionId,
+    chunkJudge: opts.chunkJudge, baseProjectDir: opts.baseProjectDir, workerIndex: opts.workerIndex,
+  };
 }
 
 export interface HandlePushBackResult {
@@ -98,7 +103,7 @@ export async function handlePushBack(opts: HandlePushBackOptions): Promise<Handl
       retryReason: `spec was amended to clarify: ${advice.specAddition.slice(0, 200)}`,
       judgmentHook: opts.judgmentHook,
       parentOpId: opts.parentOpId,
-      ...judgeOpts(opts),
+      ...carried(opts),
     });
     return {
       finalOutcome: retryOutcome,
@@ -118,7 +123,7 @@ export async function handlePushBack(opts: HandlePushBackOptions): Promise<Handl
     retryReason,
     judgmentHook: opts.judgmentHook,
     parentOpId: opts.parentOpId,
-    ...judgeOpts(opts),
+    ...carried(opts),
   });
   const finalAction: ReviewAction = retryOutcome.action === "push_back" ? "halt" : retryOutcome.action;
   if (retryOutcome.action === "push_back") {

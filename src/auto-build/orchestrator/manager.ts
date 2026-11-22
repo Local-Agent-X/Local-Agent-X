@@ -26,6 +26,7 @@ import type { ParsedPlan } from "../plan-parser.js";
 import { runBuildLoop, type LoopEvent, type LoopResult } from "../loop.js";
 import type { JudgmentHook } from "../chunk-review/judgment-hook.js";
 import { chunkJudgingSummary, type ChunkJudge } from "../chunk-review/chunk-verdict.js";
+import { reportBuildToChat } from "./report-to-chat.js";
 import * as state from "./state.js";
 import type { OrchestratorState } from "./state.js";
 import * as registry from "./registry.js";
@@ -193,7 +194,9 @@ export function startOrchestration(opts: StartOrchestrationOptions): StartOrches
       `op_id: ${opId}\n` +
       `project_dir: ${opts.projectDir}\n` +
       `chunks: ${opts.startingChunk} → ${opts.maxChunks ? opts.startingChunk + opts.maxChunks - 1 : opts.plan.chunks.length} of ${opts.plan.chunks.length}\n` +
-      `Live progress in the AGENTS sidebar. The chat is free to use; a completion notice will arrive when the build halts or finishes.`,
+      `Live progress in the AGENTS sidebar. Do not poll for it (no sleep, no git log loops): end your turn now. ` +
+      `When the build halts or finishes, this chat is woken with the result and can carry on from there; ` +
+      `build_plan_status answers any time in between.`,
   };
 }
 
@@ -288,6 +291,12 @@ function onLoopComplete(orch: ActiveOrchestration, result: LoopResult): void {
     filesChanged: collectChangedFiles(result),
     metadata: buildSummaryMetadata(orch.liveState, result),
   });
+  reportBuildToChat({
+    sessionId: orch.sessionId, opId: orch.opId, projectDir: orch.projectDir,
+    chunksCommitted: orch.liveState.chunksCommitted, totalChunks: orch.liveState.totalChunks,
+    ...(isHalted ? { halt: { chunk: orch.liveState.currentChunk, reason: orch.liveState.haltReason || result.haltReason } } : {}),
+    filesChanged: collectChangedFiles(result),
+  });
 
   logger.info(`[orchestrator] ${orch.opId} ${result.status}: chunks=${result.chunksCommitted}/${orch.liveState.totalChunks}`);
 }
@@ -307,6 +316,12 @@ function onLoopCrash(orch: ActiveOrchestration, err: Error): void {
     opId: orch.opId,
     status: "failed",
     summary: `Build orchestrator crashed: ${err.message}\nState preserved at ${orch.projectDir}/${state.ORCHESTRATOR_STATE_FILENAME}. Run build_plan_resume to retry.`,
+    filesChanged: [],
+  });
+  reportBuildToChat({
+    sessionId: orch.sessionId, opId: orch.opId, projectDir: orch.projectDir,
+    chunksCommitted: orch.liveState.chunksCommitted, totalChunks: orch.liveState.totalChunks,
+    halt: { chunk: orch.liveState.currentChunk, reason: `the build orchestrator crashed: ${err.message}` },
     filesChanged: [],
   });
   logger.error(`[orchestrator] ${orch.opId} crashed: ${err.message}`);

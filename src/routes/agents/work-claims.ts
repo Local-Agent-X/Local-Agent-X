@@ -14,7 +14,7 @@
 import { basename } from "node:path";
 import type { RouteHandler } from "../../server-context.js";
 import { jsonResponse } from "../../server-utils.js";
-import { holderNamesFrom, namedHolders, setClaimsChangedListener, type HolderNames, type HolderView } from "../../agency/work-claims.js";
+import { holderNamesFrom, namedHolders, onSameErrand, setClaimsChangedListener, type HolderNames, type HolderView } from "../../agency/work-claims.js";
 import { areasOf, reposOfSession } from "../../agency/other-agents-block.js";
 import { normRepoPath, repoPathsOverlap } from "../../agency/path-overlap.js";
 import { handleOwnCopyRoutes, ownCopyView } from "./own-copy.js";
@@ -48,8 +48,9 @@ function rowOf(h: HolderView, all: HolderView[]): WorkClaimRow {
     state: h.state,
     folder: basename(h.checkout),
     areas: areasOf(h),
-    clashesWith: all
-      .filter((o) => o !== h && o.repoKey === h.repoKey && o.state !== "recent" && overlaps(h, o))
+    // A run that has ended (`recent`) is not changing anything any more.
+    clashesWith: h.state === "recent" ? [] : all
+      .filter((o) => o !== h && o.repoKey === h.repoKey && o.state !== "recent" && !onSameErrand(h.sessionId, o.sessionId) && overlaps(h, o))
       .map((o) => o.displayName),
   };
 }
@@ -68,7 +69,7 @@ export function othersInProjectOf(sessionId: string, names?: HolderNames): Array
   const mine = here.filter((h) => h.sessionId === sessionId);
   return here
     .filter((h) => h.sessionId !== sessionId)
-    .map((h) => ({ ...rowOf(h, all), clashesWithMe: mine.some((m) => m.repoKey === h.repoKey && overlaps(h, m)) }));
+    .map((h) => ({ ...rowOf(h, all), clashesWithMe: !onSameErrand(h.sessionId, sessionId) && mine.some((m) => m.repoKey === h.repoKey && overlaps(h, m)) }));
 }
 
 export const handleWorkClaimRoutes: RouteHandler = async (method, url, req, res, ctx, role) => {

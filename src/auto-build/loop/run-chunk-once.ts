@@ -121,6 +121,7 @@ export async function runChunkOnce(opts: RunChunkOnceOptions): Promise<ChunkRevi
   const subResult = await runChunkAgent({
     role,
     task,
+    title: `Chunk ${opts.chunk.number}/${opts.totalChunks}: ${opts.chunk.title}${opts.retryReason ? " (retry)" : ""}`,
     projectDir: opts.projectDir,
     timeoutMs: opts.subprocessTimeoutMs,
     signal: opts.signal,

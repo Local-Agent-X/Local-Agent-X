@@ -9,6 +9,7 @@ import {
   _resetWorkClaimsForTest, _setWorkClaimsForTest,
 } from "./work-claims.js";
 import { noteRunFinished, _resetFinishedNotesForTest } from "./finished-note.js";
+import { clearSessionOwner, registerChildSessionOwner } from "../browser/session-owner-registry.js";
 import { notesSince, postNote, _resetHandoverNotesForTest, _setHandoverNotesForTest } from "./handover-notes.js";
 
 let root: string;
@@ -106,6 +107,22 @@ describe("claims between parallel agents", () => {
     op("op-2", "interactive", "running", "second", new Date(Date.now() + 60_000).toISOString());
     touchHolders("chat-a", "op-2", "Voice chat");
     expect(liveHolders()[0]).toMatchObject({ state: "active", displayName: "Voice chat", task: "second" });
+  });
+});
+
+describe("a chat and the agents it started", () => {
+  it("a build worker editing the chat's files is not a clash; another chat's worker still is", () => {
+    op("op-w", "agent", "running", "Chunk 1/13: App skeleton", new Date(Date.now() + 60_000).toISOString());
+    recordClaims({ sessionId: "agent-chunk-1", opId: "op-w", paths: [join(main, "package.json")], source: "written" });
+    registerChildSessionOwner("agent-chunk-1", "chat-a");
+    try {
+      expect(findClashes("chat-a", [join(main, "package.json")])).toEqual([]);
+      expect(findClashes("chat-b", [join(main, "package.json")])).toHaveLength(1);
+    } finally {
+      clearSessionOwner("agent-chunk-1");
+    }
+    // Once the run ends its record goes, and a lingering claim is judged as any other.
+    expect(findClashes("chat-a", [join(main, "package.json")])).toHaveLength(1);
   });
 });
 

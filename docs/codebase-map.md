@@ -13,19 +13,19 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2118 non-test source files · 72 oversized · 261 nearing the size cap.
+**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2119 non-test source files · 71 oversized · 261 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 189 | 32 | XL | 1 |
+| `src/ops/` | 190 | 32 | XL | 1 |
 | `src/security/` | 167 | 65 | XL | 2 |
 | `src/tools/` | 142 | 246 | XL | 9 |
 | `src/tool-execution/` | 107 | 91 | XL | 2 |
-| `src/canonical-loop/` | 92 | 296 | XL | 9 |
+| `src/canonical-loop/` | 92 | 297 | XL | 8 |
 | `src/workspace/` | 92 | 3 | M |  |
-| `src/providers/` | 79 | 28 | L | 1 |
+| `src/providers/` | 80 | 28 | L | 1 |
 | `src/session/` | 78 | 15 | L |  |
 | `src/util/` | 71 | 3 | S |  |
 | `src/memory/` | 65 | 163 | XL | 3 |
@@ -267,7 +267,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/canonical-loop/adapters/openai-compat/canonical-to-chat-param.ts#canonicalToChatParam`
 - `src/canonical-loop/chat-runner/event-pump.ts#subscribeOpEvents:callback`
 - `src/canonical-loop/container-execution-backend.ts`
-- `src/canonical-loop/runtime-failover.ts`
 - `src/canonical-loop/session-bridge-observer.ts#recordCanonicalEventWithSink`
 - `src/canonical-loop/turn-loop/decide-outcome.ts#decideTurnOutcome`
 - `src/canonical-loop/worker.ts#drive`

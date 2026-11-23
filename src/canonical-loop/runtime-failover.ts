@@ -1,31 +1,31 @@
-import { resolveCredential } from "../auth/resolve.js";
 import { getRuntimeConfig } from "../config.js";
-import { resolveContextWindow } from "../context-manager/model-windows.js";
 import {
   getBillableCostForModelSince,
   getSessionBillableCost,
   getTodayBillableCost,
   isBillableSource,
 } from "../cost-tracker.js";
-import { isLocalOnlyMode, localProviderDecision } from "../local-only-policy.js";
-import { getLocalRuntimes, hasPublishedCertification } from "../local-runtimes/index.js";
 import { readOp, tryWithOpLock, writeOpStrict } from "../ops/op-store.js";
 import { resolveOperationRequirements } from "../ops/operation-requirements.js";
 import { resourceLocksForProvider } from "../ops/provider-matrix.js";
 import { runtimeTargetIdentity } from "../ops/target-identity.js";
 import type { ExactDelegatedRuntimeDescriptor, Op } from "../ops/types.js";
-import { PROVIDER_IDS, type ProviderId } from "../providers/provider-ids.js";
-import { PROVIDERS } from "../providers/registry.js";
 import { getSetting } from "../settings.js";
 import { normalizeRuntimeFailure } from "./runtime-failure-category.js";
 import { hasAmbiguousSideEffects } from "../tool-execution/side-effect-journal.js";
-import { resolveProviderRuntime } from "./provider-adapter-factory.js";
 import { targetMeetsRequirements } from "./target-requirements.js";
 import { registerAdapterForOp, releaseRuntimeSurfaceForRetry } from "./runtime.js";
 import { createRecoveredAdapterFactory } from "./runtime-reconstruction.js";
-import { sealDelegatedRuntime, verifyDelegatedRuntimeIntegrity } from "./runtime-integrity.js";
+import { verifyDelegatedRuntimeIntegrity } from "./runtime-integrity.js";
 import { readOpMessages } from "./store.js";
 import type { RuntimeFailoverState } from "./types.js";
+import type { ProviderId } from "../providers/provider-ids.js";
+import {
+  enumerateFailoverCandidates,
+  exactLocalCertification,
+  failoverProviderAllowed,
+  type FailoverCandidate,
+} from "./runtime-failover-candidates.js";
 import {
   appendRuntimeRoutingFeedback,
   createRuntimeRoutingFeedback,
@@ -39,10 +39,6 @@ const ROUTING_FEEDBACK_FAILURES = new Set([
   "model_not_found", "overloaded", "rate_limit", "server_error", "timeout",
 ]);
 
-export interface FailoverCandidate {
-  descriptor: ExactDelegatedRuntimeDescriptor;
-  certified: boolean;
-}
 export function resourceLocksAfterRuntimeFailover(
   locks: readonly string[] | undefined,
   priorProvider: string,
@@ -142,7 +138,7 @@ export function validatePersistedFailoverTarget(
   const resolved = resolveOperationRequirements(op, readOpMessages(op.id));
   const snapshot = descriptor.capabilitySnapshot;
   return !resolved.pinnedTarget
-    && providerAllowed(descriptor.provider)
+    && failoverProviderAllowed(descriptor.provider)
     && !!snapshot
     && targetMeetsRequirements(resolved.requirements, snapshot, exactLocalCertification(descriptor), descriptor.model)
     && liveBudgetAllows(descriptor, op.canonical?.sessionId ?? op.sessionId ?? "")
@@ -172,7 +168,7 @@ export async function attemptRuntimeFailover(op: Op, reportedCode: string, messa
   const failover = persisted.canonical?.runtimeFailover;
   const now = Date.now();
   const attempted = attemptedTargetsForEpoch(currentIdentity, failover, now);
-  const candidates = await enumerateCandidates(persisted, current, attempted);
+  const candidates = await enumerateFailoverCandidates(persisted, current, attempted);
   const selected = candidates.find(candidate => {
     const snapshot = candidate.descriptor.capabilitySnapshot;
     return !!snapshot && targetMeetsRequirements(resolved.requirements, snapshot, candidate.certified, candidate.descriptor.model)
@@ -231,77 +227,6 @@ export async function attemptRuntimeFailover(op: Op, reportedCode: string, messa
     provider: selected.descriptor.provider,
     model: selected.descriptor.model,
   };
-}
-
-async function enumerateCandidates(
-  op: Op,
-  current: ExactDelegatedRuntimeDescriptor,
-  attempted: ReadonlySet<string>,
-): Promise<FailoverCandidate[]> {
-  const out: FailoverCandidate[] = [];
-  for (const provider of PROVIDER_IDS) {
-    if (!providerAllowed(provider)) continue;
-    const credential = await resolveCredential(provider, {
-      configOpenAIKey: provider === "openai" ? getRuntimeConfig().openaiApiKey : undefined,
-    });
-    if (!credential) continue;
-    for (const model of modelsFor(provider)) {
-      try {
-        const runtime = await resolveProviderRuntime(provider, model, {
-          apiKey: credential.credential,
-          authSource: credential.source,
-          customBaseURL: getSetting<string>("customBaseUrl"),
-        });
-        if (runtime.identity.capabilitySnapshot?.contextWindowTokens === null) {
-          const context = resolveContextWindow(model);
-          if (context.provenance === "exact" || context.provenance === "probed") {
-            runtime.identity.capabilitySnapshot.contextWindowTokens = context.tokens;
-          }
-        }
-        let targetCredential = credential;
-        if (runtime.identity.credentialProvider !== provider) {
-          const resolved = await resolveCredential(runtime.identity.credentialProvider);
-          if (!resolved || resolved.credential !== runtime.apiKey) continue;
-          targetCredential = resolved;
-        }
-        const descriptor = sealDelegatedRuntime(op.id, {
-          kind: "delegated-op",
-          adapter: "provider-exact",
-          ...runtime.identity,
-          authSource: targetCredential.source,
-          sessionId: current.sessionId,
-          surface: current.surface,
-        });
-        if (attempted.has(runtimeTargetIdentity(descriptor))) continue;
-        out.push({
-          descriptor,
-          certified: exactLocalCertification(descriptor),
-        });
-      } catch { /* unavailable candidates are normal */ }
-    }
-  }
-  return out;
-}
-
-function modelsFor(provider: ProviderId): string[] {
-  if (provider !== "local") {
-    const model = PROVIDERS[provider].defaultModel;
-    return model ? [model] : [];
-  }
-  return [...new Set((getLocalRuntimes() ?? []).flatMap(runtime => runtime.models.map(model => model.id)))].sort();
-}
-
-function exactLocalCertification(descriptor: ExactDelegatedRuntimeDescriptor): boolean {
-  if (descriptor.target.kind !== "local-runtime") return descriptor.capabilitySnapshot?.locality !== "local";
-  const runtimeId = descriptor.target.runtimeId;
-  const runtime = (getLocalRuntimes() ?? []).find(item => item.id === runtimeId);
-  const model = runtime?.models.find(item => item.id === descriptor.model);
-  return !!runtime && !!model && hasPublishedCertification(runtime, model);
-}
-
-function providerAllowed(provider: ProviderId): boolean {
-  if (!isLocalOnlyMode()) return true;
-  return localProviderDecision(provider, getRuntimeConfig(), getSetting<string>("customBaseUrl")).allowed;
 }
 
 function liveBudgetAllows(descriptor: ExactDelegatedRuntimeDescriptor, sessionId: string): boolean {

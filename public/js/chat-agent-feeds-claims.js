@@ -13,6 +13,8 @@
 // other agents working there, and a banner (#agents-clash) only when one of
 // them is in this chat's files or folder.
 //
+// A row in either list opens that agent's work: chat-agent-feeds-claim-open.js.
+//
 // Pure HTML: workClaimsHtml(rows), otherAgentsStripHtml(rows, own, orch, open),
 // agentsClashHtml(clash, message).
 // External deps: apiFetch, esc (shared.js).
@@ -24,12 +26,20 @@ var workClaimsMine = [];
 
 var WORK_CLAIM_STATE = { active: 'working now', idle: 'between messages' };
 
+// What a click on a row opens (chat-agent-feeds-claim-open.js): the worker's
+// job detail, or the chat.
+function workClaimOpenAttrs(row) {
+  var what = row.kind === 'chat' ? 'Open this chat' : 'Show what this agent is doing';
+  return ' role="button" tabindex="0" title="' + what + '" data-claim-open="' + esc(row.sessionId || '') + '"'
+    + ' data-claim-op="' + esc(row.opId || '') + '" data-claim-name="' + esc(row.displayName || row.sessionId || '') + '"';
+}
+
 function workClaimRowHtml(row) {
   var areas = (row.areas || []).map(function (a) { return '<code>' + esc(a) + '</code>'; }).join(' ');
   var clash = (row.clashesWith || []).length
     ? '<div class="work-claim-clash" title="Both are changing the same files">&#9888; same files as ' + esc(row.clashesWith.join(', ')) + '</div>'
     : '';
-  return '<div class="work-claim-row ' + esc(row.state) + (clash ? ' clash' : '') + '">'
+  return '<div class="work-claim-row ' + esc(row.state) + (clash ? ' clash' : '') + '"' + workClaimOpenAttrs(row) + '>'
     + '<div class="work-claim-head"><span class="work-claim-dot"></span>'
     + '<span class="work-claim-name">' + esc(row.displayName || row.sessionId) + '</span>'
     + '<span class="work-claim-meta">' + esc(row.kind) + ' · ' + esc(WORK_CLAIM_STATE[row.state] || row.state) + ' · ' + esc(row.folder || '') + '</span></div>'
@@ -82,7 +92,7 @@ var agentsClashDismissed = '';
 
 function otherAgentRowHtml(row) {
   var areas = (row.areas || []).map(function (a) { return '<code>' + esc(a) + '</code>'; }).join(' ');
-  return '<div class="other-agent ' + esc(row.state) + (row.clashesWithMe ? ' clash' : '') + '">'
+  return '<div class="other-agent ' + esc(row.state) + (row.clashesWithMe ? ' clash' : '') + '"' + workClaimOpenAttrs(row) + '>'
     + '<div class="work-claim-head"><span class="work-claim-dot"></span>'
     + '<span class="work-claim-name">' + esc(row.displayName || row.sessionId) + '</span>'
     + '<span class="work-claim-meta">' + esc(row.kind || 'chat') + ' · ' + esc(WORK_CLAIM_STATE[row.state] || row.state) + '</span></div>'

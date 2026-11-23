@@ -1752,6 +1752,10 @@ body.agent-feeds-resizing .agent-feeds{transition:none!important}
 .work-claims-title{font-size:10px;letter-spacing:.08em;color:var(--muted);padding:0 2px}
 .work-claim-row{background:var(--surface-2);border:1px solid var(--border);border-radius:8px;padding:7px 10px;font-size:12px}
 .work-claim-row.clash{border-color:#f59e0b}
+/* A row opens the agent's work (chat-agent-feeds-claim-open.js). */
+.work-claim-row[data-claim-open],.other-agent[data-claim-open]{cursor:pointer}
+.work-claim-row[data-claim-open]:hover,.other-agent[data-claim-open]:hover{border-color:var(--accent)}
+.work-claim-row[data-claim-open]:focus-visible,.other-agent[data-claim-open]:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .work-claim-head{display:flex;align-items:center;gap:6px;min-width:0}
 .work-claim-dot{flex:none;width:7px;height:7px;border-radius:50%;background:var(--muted)}
 .work-claim-row.active .work-claim-dot{background:var(--accent)}

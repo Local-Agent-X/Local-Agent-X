@@ -144,6 +144,7 @@ export function invokeDefinition(
       templateId,
       modelOverride,
       workRoot: opts.workRoot,
+      writesOnlyUnder: opts.writesOnlyUnder,
       workDir: opts.workDir,
       touches: opts.touches,
       harnessAuthoredTask: opts.harnessAuthoredTask,

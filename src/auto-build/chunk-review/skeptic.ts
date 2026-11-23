@@ -19,7 +19,9 @@
  */
 
 import type { ParsedChunk } from "../plan-parser.js";
-import { runChunkAgent } from "../agents/chunk-runner.js";
+import { existsSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { runChunkAgent, SKEPTIC_PROBE_DIR } from "../agents/chunk-runner.js";
 
 export type SkepticStatus = "broken" | "holds" | "not-run";
 
@@ -91,16 +93,26 @@ export function parseSkepticVerdict(raw: string): SkepticVerdict {
 }
 
 export async function runChunkSkeptic(input: SkepticInput): Promise<SkepticVerdict> {
-  const result = await runChunkAgent({
-    role: "chunk-skeptic",
-    task: buildSkepticTask(input),
-    title: `Skeptic: chunk ${input.chunk.number}, ${input.chunk.title}`,
-    projectDir: input.projectDir,
-    timeoutMs: input.timeoutMs ?? SKEPTIC_TIMEOUT_MS,
-    signal: input.signal,
-    parentSessionId: input.parentSessionId,
-    parentOpId: input.parentOpId,
-  });
+  // The probe folder is the skeptic's own: gone when it finishes, so no probe
+  // reaches the chunk's commit or the next reviewer. A folder of that name the
+  // project already had is left alone.
+  const probes = join(input.projectDir, SKEPTIC_PROBE_DIR);
+  const ownFolder = !existsSync(probes);
+  let result: Awaited<ReturnType<typeof runChunkAgent>>;
+  try {
+    result = await runChunkAgent({
+      role: "chunk-skeptic",
+      task: buildSkepticTask(input),
+      title: `Skeptic: chunk ${input.chunk.number}, ${input.chunk.title}`,
+      projectDir: input.projectDir,
+      timeoutMs: input.timeoutMs ?? SKEPTIC_TIMEOUT_MS,
+      signal: input.signal,
+      parentSessionId: input.parentSessionId,
+      parentOpId: input.parentOpId,
+    });
+  } finally {
+    if (ownFolder) rmSync(probes, { recursive: true, force: true });
+  }
   if (result.exitCode !== 0) {
     return {
       status: "not-run",

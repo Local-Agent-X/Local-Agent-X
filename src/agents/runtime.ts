@@ -51,6 +51,8 @@ export interface AgentRunDriverRequest {
    *  Set by callers whose workers operate on a project that is NOT the
    *  LAX repo (auto-build chunk workers). */
   workRoot?: string;
+  /** Mirrors InvokeOpts.writesOnlyUnder. */
+  writesOnlyUnder?: string;
   /** Mirrors InvokeOpts.workDir — the folder the driver isolates for the run. */
   workDir?: string;
   /** Mirrors InvokeOpts.touches — the run's declared area of work. */

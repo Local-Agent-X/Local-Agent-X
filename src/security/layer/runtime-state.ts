@@ -39,12 +39,13 @@ export function restoreSecurityFences(
   if (!Array.isArray(entries) || entries.length > 100) throw new Error("invalid persisted worktree fences");
   for (const e of entries) {
     if (!e || typeof e.sessionId !== "string" || !e.sessionId
-      || [e.worktree, e.repoRoot].some((p) => typeof p !== "string" || !isAbsolute(p) || p.includes("\0"))) {
+      || [e.worktree, e.repoRoot].some((p) => typeof p !== "string" || !isAbsolute(p) || p.includes("\0"))
+      || (e.filesOnly !== undefined && e.filesOnly !== true)) {
       throw new Error("invalid persisted worktree fence");
     }
   }
   clear();
-  for (const e of entries) add(e.sessionId, { worktree: e.worktree, repoRoot: e.repoRoot });
+  for (const e of entries) add(e.sessionId, { worktree: e.worktree, repoRoot: e.repoRoot, ...(e.filesOnly ? { filesOnly: true as const } : {}) });
 }
 
 /**

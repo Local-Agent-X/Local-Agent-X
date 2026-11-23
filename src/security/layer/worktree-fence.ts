@@ -33,6 +33,12 @@ export interface WorktreeFence {
   worktree: string;
   /** The checkout it was cut from (`git rev-parse --show-toplevel`). */
   repoRoot: string;
+  /** Fence the file tools only: `worktree` is a scratch folder inside the
+   *  project under review (auto-build's chunk skeptic writes its probe tests
+   *  to `<project>/.skeptic`), and the shell runs as it would unfenced, so the
+   *  reviewer can run the project's own tests from its root. Shell file writes
+   *  stay refused by their own rule (use the write/edit tools). */
+  filesOnly?: true;
 }
 
 /** Inside the fenced repository and outside the agent's own worktree, by the
@@ -49,8 +55,11 @@ function inWorktree(fence: WorktreeFence, path: string): string {
 }
 
 const ruling = (fence: WorktreeFence) =>
-  `It is inside ${fence.repoRoot}, the repository your worktree was cut from. Read it freely, but change files only in ` +
-  `your worktree, ${fence.worktree}: your branch merges back into ${fence.repoRoot} when you finish.`;
+  fence.filesOnly
+    ? `It is inside ${fence.repoRoot}, the project under review. Read it freely, but write files only in ${fence.worktree}, ` +
+      `your scratch folder for probe tests.`
+    : `It is inside ${fence.repoRoot}, the repository your worktree was cut from. Read it freely, but change files only in ` +
+      `your worktree, ${fence.worktree}: your branch merges back into ${fence.repoRoot} when you finish.`;
 
 function refuse(reason: string): SecurityDecision {
   return { allowed: false, reason: `Blocked: ${reason}`, userHint: USER_HINTS.fileSystem };
@@ -59,7 +68,8 @@ function refuse(reason: string): SecurityDecision {
 /** A file tool writing, editing or deleting `absPath`. */
 export function fenceWriteRefusal(fence: WorktreeFence, absPath: string): SecurityDecision | null {
   if (!inFence(fence, absPath)) return null;
-  return refuse(`${absPath} would be changed. ${ruling(fence)} Write ${inWorktree(fence, absPath)} instead.`);
+  const instead = fence.filesOnly ? "" : ` Write ${inWorktree(fence, absPath)} instead.`;
+  return refuse(`${absPath} would be changed. ${ruling(fence)}${instead}`);
 }
 
 /** A process started (or restarted) with `cwd` as its folder: whatever it runs
@@ -195,7 +205,7 @@ export function fenceCallRefusal(
     }
   }
   const command = shellCommandOf(toolName, args);
-  if (command === undefined) return null;
+  if (command === undefined || fence.filesOnly) return null;
   const named = typeof args.cwd === "string" && args.cwd ? resolveAgentPathFrom(workspace, args.cwd, sessionId) : undefined;
   if (named) {
     const refused = fenceProcessCwdRefusal(fence, named);

@@ -43,6 +43,8 @@ export interface AgentWorkspace {
   workRoot: string | null;
   /** The work root is a scratch folder made for this run (removed if left empty). */
   scratch?: true;
+  /** The run's file tools are fenced to a folder inside the work root (writesOnlyUnder). */
+  writeFenced?: true;
   /** Prompt block telling the agent where it works. */
   promptBlock: string;
 }
@@ -125,6 +127,9 @@ interface ProvisionOpts {
   requiresWorktree: boolean;
   workDir?: string;
   workRoot?: string;
+  /** With workRoot: the folder inside it the run's file tools may write
+   *  (agents/types.ts InvokeOpts.writesOnlyUnder). */
+  writesOnlyUnder?: string;
   /** The workspace a scratch folder is made under (default: the configured one). */
   workspace?: string;
   /** Files or folders the run was started to change, relative to its work
@@ -172,10 +177,15 @@ function provisionFolder(opts: ProvisionOpts): AgentWorkspace {
   }
   if (opts.workRoot) {
     anchor(security, runSessionId, opts.workRoot);
+    if (opts.writesOnlyUnder) {
+      mkdirSync(opts.writesOnlyUnder, { recursive: true });
+      security.fenceToWorktree(runSessionId, { worktree: resolve(opts.writesOnlyUnder), repoRoot: resolve(opts.workRoot), filesOnly: true });
+    }
     const workRootFwd = opts.workRoot.replace(/\\/g, "/");
     return {
       worktree: null,
       workRoot: opts.workRoot,
+      ...(opts.writesOnlyUnder ? { writeFenced: true as const } : {}),
       promptBlock: `\n\n--- PROJECT ROOT ---\nAll your work happens under: ${workRootFwd}\nRelative paths in file tools resolve against it. For bash, cd "${workRootFwd}" first. Do not read or write anywhere else.\n--- END PROJECT ROOT ---\n`,
     };
   }
@@ -217,6 +227,7 @@ export function releaseAgentWorkspace(ws: AgentWorkspace, security: SecurityLaye
   }
   if (ws.workRoot) {
     security.removeAllowedPath(ws.workRoot, runSessionId);
+    if (ws.writeFenced) security.releaseFence(runSessionId);
     clearSessionWorkRoot(runSessionId);
     if (ws.scratch) {
       try { if (readdirSync(ws.workRoot).length === 0) rmdirSync(ws.workRoot); } catch { /* already gone, or in use: leave it */ }

@@ -136,6 +136,31 @@ describe("provisionAgentWorkspace — a spawned agent can run commands where it 
     expect(sec.fenceOf(session)).toBeUndefined();
   });
 
+  // The auto-build chunk skeptic: it writes throwaway probe tests and must not
+  // change the code it reviews (label-check, 2026-11-23: with no write at all it
+  // could only trace the code by hand).
+  it("a work root with writesOnlyUnder: the file tools write only there, the shell still runs the project's tests", () => {
+    const project = join(BASE, "reviewed-project");
+    mkdirSync(join(project, "src"), { recursive: true });
+    const probes = join(project, ".skeptic");
+    const sec = new SecurityLayer(roots.workspace, "common");
+    const session = "agent-run-skeptic";
+    const ws = provisionAgentWorkspace({ agentId: "ws-test-skeptic", runSessionId: session, security: sec, requiresWorktree: false, workRoot: project, writesOnlyUnder: probes });
+    const call = (toolName: string, args: Record<string, unknown>) => sec.evaluate({ toolName, args, sessionId: session, callContext: "delegated" });
+    try {
+      expect(existsSync(probes)).toBe(true);
+      expect(call("write", { path: join(probes, "probe.test.ts"), content: "it('x', () => {});" }).allowed).toBe(true);
+      const refused = call("write", { path: join(project, "src", "match.ts"), content: "export {};" });
+      expect(refused.allowed).toBe(false);
+      expect(refused.reason).toContain("write files only in");
+      expect(call("edit", { path: join(project, "src", "match.ts"), old_string: "a", new_string: "b" }).allowed).toBe(false);
+      expect(call("bash", { command: `cd ${JSON.stringify(project)} && npx jest .skeptic/probe.test.ts` }).allowed).toBe(true);
+    } finally {
+      releaseAgentWorkspace(ws, sec, session);
+    }
+    expect(sec.fenceOf(session)).toBeUndefined();
+  });
+
   it("a plain folder becomes the run's scoped work root", () => {
     const dir = join(BASE, "plain-run");
     mkdirSync(dir);

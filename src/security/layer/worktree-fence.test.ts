@@ -47,6 +47,35 @@ describe("worktree fence — file tools", () => {
   });
 });
 
+// A files-only fence: a reviewer's scratch folder inside the project it
+// reviews. Its file tools write only there; its shell runs as unfenced so it
+// can run the project's tests from the root.
+describe("worktree fence — files only", () => {
+  const probes = join(wt, ".skeptic");
+  const filesOnly: WorktreeFence = { worktree: probes, repoRoot: wt, filesOnly: true };
+
+  it("refuses a file-tool write anywhere in the project outside the scratch folder, without a path to write instead", () => {
+    const refused = fenceCallRefusal(filesOnly, "write", { path: join(wt, "src", "a.ts"), content: "x" }, BASE, "s");
+    expect(refused?.allowed).toBe(false);
+    expect(refused?.reason).toContain("write files only in");
+    expect(refused?.reason).not.toContain("instead");
+    expect(fenceCallRefusal(filesOnly, "write", { path: join(probes, "probe.test.ts"), content: "x" }, BASE, "s")).toBeNull();
+  });
+
+  it("does not fence the shell: a test run from the project root goes through", () => {
+    expect(fenceCallRefusal(filesOnly, "bash", { command: `cd ${q(wt)} && npx jest .skeptic/probe.test.ts` }, BASE, "s")).toBeNull();
+    expect(fenceCallRefusal(fence, "bash", { command: `cd ${q(repo)} && npm test` }, BASE, "s")).not.toBeNull();
+  });
+
+  it("survives the trip to a worker process, and a malformed flag is refused", async () => {
+    const { restoreSecurityFences } = await import("./runtime-state.js");
+    const got: WorktreeFence[] = [];
+    restoreSecurityFences([{ sessionId: "s", ...filesOnly }], () => {}, (_s, f) => got.push(f));
+    expect(got).toEqual([filesOnly]);
+    expect(() => restoreSecurityFences([{ sessionId: "s", ...filesOnly, filesOnly: "yes" as never }], () => {}, () => {})).toThrow();
+  });
+});
+
 describe("worktree fence — shell", () => {
   const refused = (command: string, base = wt) => fenceShellRefusal(fence, command, base) !== null;
 

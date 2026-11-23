@@ -2,15 +2,22 @@
 // direction (not-run, never broken), and what its brief hands it.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const agent = vi.hoisted(() => ({
   result: { stdout: "", exitCode: 0, durationMs: 1 } as { stdout: string; exitCode: number; durationMs: number; error?: string },
   calls: [] as Array<{ role: string; task: string; projectDir?: string }>,
+  /** What the skeptic does in the project while it runs (writes a probe). */
+  during: undefined as ((projectDir: string) => void) | undefined,
 }));
 
 vi.mock("../agents/chunk-runner.js", () => ({
+  SKEPTIC_PROBE_DIR: ".skeptic",
   runChunkAgent: vi.fn(async (opts: { role: string; task: string; projectDir?: string }) => {
     agent.calls.push(opts);
+    agent.during?.(opts.projectDir!);
     return agent.result;
   }),
 }));
@@ -88,5 +95,25 @@ describe("runChunkSkeptic", () => {
     const v = await runChunkSkeptic({ chunk, rawReport: "", preSha: "abc", projectDir: "/proj" });
     expect(v.status).toBe("not-run");
     expect(v.finding).toContain("timed out");
+  });
+
+  // Its probe tests are its own: gone when it finishes, so none reaches the
+  // chunk's commit; a folder of that name the project already had stays.
+  it("deletes the probe folder it wrote in, and leaves one the project already had", async () => {
+    const project = mkdtempSync(join(tmpdir(), "lax-skeptic-probes-"));
+    try {
+      agent.result = { stdout: "VERDICT: HOLDS\nFINDING: ran 3 probes.", exitCode: 0, durationMs: 1 };
+      agent.during = (dir) => { mkdirSync(join(dir, ".skeptic"), { recursive: true }); writeFileSync(join(dir, ".skeptic", "probe.test.ts"), "it('x', () => {});"); };
+      await runChunkSkeptic({ chunk, rawReport: "", preSha: "abc", projectDir: project });
+      expect(existsSync(join(project, ".skeptic"))).toBe(false);
+
+      mkdirSync(join(project, ".skeptic"));
+      writeFileSync(join(project, ".skeptic", "theirs.txt"), "the project's own");
+      await runChunkSkeptic({ chunk, rawReport: "", preSha: "abc", projectDir: project });
+      expect(existsSync(join(project, ".skeptic", "theirs.txt"))).toBe(true);
+    } finally {
+      agent.during = undefined;
+      rmSync(project, { recursive: true, force: true });
+    }
   });
 });

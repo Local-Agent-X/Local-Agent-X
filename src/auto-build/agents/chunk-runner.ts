@@ -30,6 +30,7 @@ import { EventBus } from "../../event-bus.js";
 import { Handler } from "../../agency/handler.js";
 import { loadSkillBody } from "../skill-bodies.js";
 import { CODING_KIT, REVIEW_KIT } from "../../tools/tool-kits.js";
+import { join } from "node:path";
 
 export type ChunkAgentRole = "chunk-runner-trunk" | "chunk-runner-leaf" | "scenario-fix" | "chunk-skeptic";
 
@@ -126,20 +127,28 @@ const SCENARIO_FIX_DISCIPLINE_BLOCK =
   `## Report format — same as chunk-runner\n\n` +
   `STATUS / DONE_WHEN / CHANGED / TESTS / NEW_FAILURES / PRE_EXISTING_FAILURES / SPEC_GAPS / LAUNCH_READINESS / NOTE`;
 
+/** The skeptic's probe folder, at the root of the tree it reviews: its `write`
+ *  is fenced there, git never sees it, and it is deleted after the run. */
+export const SKEPTIC_PROBE_DIR = ".skeptic";
+
 // The /greenfield skill's skeptic (references/autonomous.md, section 6): a
 // model is a poor critic of its own work, so this one starts from "it is
 // broken" and has to be talked out of it by evidence it gathers itself.
 const SKEPTIC_DISCIPLINE_BLOCK =
   `# Chunk skeptic\n\n` +
   `Another agent just built one chunk of an app and says it is done and correct. Your job is to ` +
-  `PROVE IT WRONG. You are not here to fix anything, and you have no tool that writes or edits files.\n\n` +
+  `PROVE IT WRONG. You are not here to fix anything: you cannot edit the project, and \`write\` writes only ` +
+  `in \`${SKEPTIC_PROBE_DIR}/\` at the project root, your scratch folder for probe tests.\n\n` +
   `## Mandate\n\n` +
   `- Read the change: run \`git diff <pre-chunk sha>\` and \`git status\` in the project (the sha is in your task), ` +
   `then read what the diff touches and what calls it.\n` +
   `- Hunt for: the input it breaks on, the case it missed, the existing seam it forked instead of ` +
   `extending, the test that cannot fail, a claim in the builder's report the code does not back.\n` +
   `- Show it, do not assert it: run the tests, run the code with the breaking input, cite file:line. ` +
-  `Throwaway probes go in a temp folder outside the project, never in it.\n` +
+  `To test a suspicion, \`write\` a probe test into \`${SKEPTIC_PROBE_DIR}/\` (e.g. \`${SKEPTIC_PROBE_DIR}/probe.test.ts\`, ` +
+  `importing the code under test by relative path) and run it with the project's own test runner by its path ` +
+  `(\`npx jest ${SKEPTIC_PROBE_DIR}/probe.test.ts\`, \`npx vitest run ${SKEPTIC_PROBE_DIR}/probe.test.ts\`). ` +
+  `The folder is deleted when you finish and is never part of the change. A break you ran beats one you traced.\n` +
   `- Judge against the chunk's slice and done-when and the project's \`spec/\`, not against your taste. ` +
   `Style you would have written differently is not a break.\n` +
   `- Default to broken if unsure: HOLDS means you tried and the change survived.\n\n` +
@@ -217,6 +226,10 @@ function getDefinition(role: ChunkAgentRole): AgentDefinition {
  * code; the same call works for Anthropic, Codex, etc.
  */
 export async function runChunkAgent(opts: ChunkAgentInvocation): Promise<ChunkAgentResult> {
+  // Unfenced, the skeptic's write would reach the whole work area.
+  if (opts.role === "chunk-skeptic" && !opts.projectDir) {
+    return { stdout: "", exitCode: 1, durationMs: 0, error: "the chunk skeptic needs the project folder it reviews" };
+  }
   const def = getDefinition(opts.role);
   const startedAt = Date.now();
   const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
@@ -258,6 +271,9 @@ export async function runChunkAgent(opts: ChunkAgentInvocation): Promise<ChunkAg
     // without it the delegated-bash/write gate blocks the worker (live
     // failure 2026-07-01: chunk 1 denied "requires worktree isolation").
     workRoot: opts.projectDir,
+    // The skeptic's `write` reaches its probe folder only: it must not change
+    // the code it reviews.
+    ...(opts.role === "chunk-skeptic" ? { writesOnlyUnder: join(opts.projectDir!, SKEPTIC_PROBE_DIR) } : {}),
     // The task (preamble included) is harness prose, not user speech — without
     // this, the instruction ledger reads "Never touch paths outside it" as a
     // user workspace-write ban and every worker write is hard-denied (live

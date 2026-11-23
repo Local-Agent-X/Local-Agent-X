@@ -174,6 +174,7 @@ const LOOP_EXCLUDES = [
   "*.log",
   ".lax-build-run.json",
   ".lax-build-history.json",
+  ".skeptic/",
   ".lax-preflight-*",
   ".primal-orchestrator-state.json",
   ".primal-build-state.json",
@@ -212,9 +213,13 @@ async function ensureLoopExcludes(cwd: string): Promise<void> {
     const gitDir = isAbsolute(gitDirRaw) ? gitDirRaw : join(cwd, gitDirRaw);
     const excludePath = join(gitDir, "info", "exclude");
     const existing = existsSync(excludePath) ? readFileSync(excludePath, "utf-8") : "";
-    if (existing.includes(EXCLUDE_MARKER)) return;
+    // A project excluded by an older list gets the patterns added since.
+    const have = new Set(existing.split(/\r?\n/));
+    const missing = LOOP_EXCLUDES.filter((p) => !have.has(p));
+    if (existing.includes(EXCLUDE_MARKER) && missing.length === 0) return;
+    const block = existing.includes(EXCLUDE_MARKER) ? missing : [EXCLUDE_MARKER, ...LOOP_EXCLUDES];
     mkdirSync(join(gitDir, "info"), { recursive: true });
-    writeFileSync(excludePath, existing + (existing.endsWith("\n") || !existing ? "" : "\n") + EXCLUDE_MARKER + "\n" + LOOP_EXCLUDES.join("\n") + "\n");
+    writeFileSync(excludePath, existing + (existing.endsWith("\n") || !existing ? "" : "\n") + block.join("\n") + "\n");
   } catch { /* best-effort — a failed exclude write must not block the build */ }
 }
 

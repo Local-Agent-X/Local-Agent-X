@@ -135,6 +135,11 @@ export interface InvokeOpts {
    *  removes it when the run ends. Ignored when the definition provisions
    *  a real worktree. */
   workRoot?: string;
+  /** A folder inside workRoot that the run's file tools may write; nothing
+   *  else in workRoot is theirs to change, and the shell runs as usual
+   *  (agency/agent-workspace.ts, a files-only worktree fence). For a reviewer
+   *  that writes throwaway probes but must not touch the code it reviews. */
+  writesOnlyUnder?: string;
   /** The folder the task is about (an existing project or repo, or a new
    *  folder name under the workspace). The driver isolates it automatically —
    *  a git repo gets its own worktree, merged back when the run ends — and

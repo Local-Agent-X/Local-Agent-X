@@ -42,9 +42,12 @@ export function selectTools(selection: ToolSelection): string[] {
 export const CODING_KIT_TAGS: readonly ToolTag[] = ["file-read", "file-write", "file-edit", "file-search", "shell", "change-review"];
 export const CODING_KIT: readonly string[] = toolsTagged(...CODING_KIT_TAGS);
 
-/** What a reviewer that must SHOW a break needs: read, discover, run, and see
- *  what changed, with no file write or edit. The auto-build chunk skeptic. */
-export const REVIEW_KIT: readonly string[] = toolsTagged("file-read", "file-search", "shell", "change-review");
+/** What a reviewer that must SHOW a break needs: read, discover, run, see what
+ *  changed, and `write` for throwaway probe tests. No edit. The auto-build chunk
+ *  skeptic, whose run fences `write` to its probe folder (chunk-runner.ts,
+ *  agent-workspace.ts writesOnlyUnder): with no write at all it could not test
+ *  a suspicion and judged by tracing the code (label-check, 2026-11-23). */
+export const REVIEW_KIT: readonly string[] = [...toolsTagged("file-read", "file-search", "shell", "change-review"), "write"];
 
 /** The coding kit plus the web and an image viewer: the app-builder worker and
  *  the generic Worker template, which build against live references. */

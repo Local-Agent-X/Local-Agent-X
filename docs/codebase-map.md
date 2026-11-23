@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2119 non-test source files · 71 oversized · 261 nearing the size cap.
+**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2119 non-test source files · 70 oversized · 262 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -23,7 +23,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/security/` | 167 | 65 | XL | 2 |
 | `src/tools/` | 142 | 246 | XL | 9 |
 | `src/tool-execution/` | 107 | 91 | XL | 2 |
-| `src/canonical-loop/` | 92 | 297 | XL | 8 |
+| `src/canonical-loop/` | 92 | 297 | XL | 7 |
 | `src/workspace/` | 92 | 3 | M |  |
 | `src/providers/` | 80 | 28 | L | 1 |
 | `src/session/` | 78 | 15 | L |  |
@@ -266,7 +266,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/canonical-loop/adapters/openai-compat.ts#OpenAICompatAdapter.runTurn`
 - `src/canonical-loop/adapters/openai-compat/canonical-to-chat-param.ts#canonicalToChatParam`
 - `src/canonical-loop/chat-runner/event-pump.ts#subscribeOpEvents:callback`
-- `src/canonical-loop/container-execution-backend.ts`
 - `src/canonical-loop/session-bridge-observer.ts#recordCanonicalEventWithSink`
 - `src/canonical-loop/turn-loop/decide-outcome.ts#decideTurnOutcome`
 - `src/canonical-loop/worker.ts#drive`
@@ -327,6 +326,7 @@ job. Comments are free: never cut them to fit.
 
 - `src/agency/worktree-recovery.ts` — 340+ code lines (cap 350)
 - `src/browser/downloads.ts` — 340+ code lines (cap 350)
+- `src/canonical-loop/container-execution-backend.ts` — 340+ code lines (cap 350)
 - `src/canonical-loop/provider-adapter-factory.ts` — 340+ code lines (cap 350)
 - `src/canonical-loop/checkpoint.ts` — 330+ code lines (cap 350)
 - `src/canonical-loop/container-runtime-projection.ts` — 330+ code lines (cap 350)

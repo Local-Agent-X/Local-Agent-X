@@ -29,6 +29,7 @@ import { ProcessExecutionBackend } from "./process-execution-backend.js";
 import {
   bindContainerLaunchIntent,
   bindContainerLaunchProjection,
+  containerOwnershipLabels,
   createContainerLaunchIntent,
   intentMatchesPlacement,
   readContainerLaunchIntent,
@@ -183,7 +184,7 @@ export class ContainerExecutionBackend implements ExecutionBackend {
         placement: request.placement,
       });
       container = await this.runtime.create({ ...projected, name,
-        labels: { ...projected.labels, ...ownershipLabels(request.op.id, request.placement) } });
+        labels: { ...projected.labels, ...containerOwnershipLabels({ opId: request.op.id, backendId: request.placement.backendId, targetId: request.placement.targetId, placementRevision: request.placement.revision }) } });
       intent = bindContainerLaunchIntent(intent, container);
       writeContainerLaunchIntent(intent);
       projection.writeBootstrap({ op: request.op, token, placement: request.placement, container });
@@ -216,9 +217,9 @@ export class ContainerExecutionBackend implements ExecutionBackend {
     }
     const state = intent.container
       ? await this.runtime.inspect(intent.container.containerId)
-      : await this.runtime.inspectNamed(intent.name, ownershipLabels(request.op.id, request.placement))
+      : await this.runtime.inspectNamed(intent.name, containerOwnershipLabels({ opId: request.op.id, backendId: request.placement.backendId, targetId: request.placement.targetId, placementRevision: request.placement.revision }))
         ?? await this.runtime.fenceCreateName({ name: intent.name, image,
-          labels: ownershipLabels(request.op.id, request.placement) });
+          labels: containerOwnershipLabels({ opId: request.op.id, backendId: request.placement.backendId, targetId: request.placement.targetId, placementRevision: request.placement.revision }) });
     if (!state) {
       await (await this.reopenProjection(request.op, intent))?.cleanup();
       removeContainerLaunchIntent(intent);
@@ -359,11 +360,6 @@ function readProcessExecutionClaimIntent(
     throw new Error("container ownership is missing its exact sealed launch intent");
   }
   return intent;
-}
-
-function ownershipLabels(opId: string, placement: ExecutionPlacement): Record<string, string> {
-  return { "lax.execution.backend": placement.backendId, "lax.execution.op": opId,
-    "lax.execution.revision": String(placement.revision), "lax.execution.target": placement.targetId };
 }
 
 function launchName(opId: string, revision: number, token: string): string {

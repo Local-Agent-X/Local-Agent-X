@@ -5,6 +5,7 @@ import { readOp } from "../ops/op-store.js";
 import type { Op } from "../ops/types.js";
 import type { DockerExecutionRuntime } from "../sandbox/docker-execution-runtime.js";
 import {
+  containerOwnershipLabels,
   intentMatchesPlacement,
   readContainerLaunchIntent,
   removeContainerLaunchIntent,
@@ -86,10 +87,10 @@ async function cleanTerminalIntent(
   }
   const state = intent.container
     ? await runtime.inspect(intent.container.containerId)
-    : await runtime.inspectNamed(intent.name, ownershipLabels(intent))
+    : await runtime.inspectNamed(intent.name, containerOwnershipLabels(intent))
       ?? await runtime.fenceCreateName({ name: intent.name,
         image: await runtime.resolvePinnedImage(intent.imageReference),
-        labels: ownershipLabels(intent) });
+        labels: containerOwnershipLabels(intent) });
   if (state) {
     if (state.imageId !== intent.imageId || (intent.container
       && (state.containerId !== intent.container.containerId
@@ -110,12 +111,6 @@ async function cleanTerminalIntent(
   if (!removeContainerLaunchIntent(intent)) {
     throw new Error("terminal container intent changed during cleanup");
   }
-}
-
-function ownershipLabels(intent: ContainerLaunchIntent): Record<string, string> {
-  return { "lax.execution.backend": intent.backendId, "lax.execution.op": intent.opId,
-    "lax.execution.revision": String(intent.placementRevision),
-    "lax.execution.target": intent.targetId };
 }
 
 function ownedByTerminalPlacement(op: Op, intent: ContainerLaunchIntent): boolean {

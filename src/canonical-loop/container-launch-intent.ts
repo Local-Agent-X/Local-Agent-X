@@ -90,6 +90,26 @@ export function intentMatchesPlacement(
     && intent.imageId === imageId;
 }
 
+/**
+ * The Docker labels that mark a container as this op's, at this placement.
+ * One definition: the launch stamps them, the projection builds them into its
+ * spec, and the terminal janitor finds the container again by them, so a key
+ * spelled differently in one place would strand a container no one cleans up.
+ */
+export function containerOwnershipLabels(owner: {
+  opId: string;
+  backendId: string;
+  targetId: string;
+  placementRevision: number;
+}): Record<string, string> {
+  return {
+    "lax.execution.backend": owner.backendId,
+    "lax.execution.op": owner.opId,
+    "lax.execution.revision": String(owner.placementRevision),
+    "lax.execution.target": owner.targetId,
+  };
+}
+
 function validate(intent: ContainerLaunchIntent, opId: string): void {
   if (!intent || intent.schemaVersion !== 1 || intent.opId !== opId || !intent.backendId
     || !intent.targetId || !Number.isSafeInteger(intent.placementRevision) || intent.placementRevision < 1

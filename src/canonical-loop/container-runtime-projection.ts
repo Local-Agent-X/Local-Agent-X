@@ -32,6 +32,7 @@ import {
 } from "../sandbox/docker-execution-runtime.js";
 import type { ContainerLaunchProjection } from "./container-execution-backend.js";
 import { sealContainerBootstrap } from "./container-bootstrap.js";
+import { containerOwnershipLabels } from "./container-launch-intent.js";
 import { assertCurrentContainerConnectivity, captureContainerConnectivity,
   configuredContainerNetwork,
   type ContainerConnectivityIdentity } from "./container-connectivity.js";
@@ -243,12 +244,9 @@ async function materializeProjection(
         user: containerUser(),
         memoryLimit: process.env.LAX_CONTAINER_EXECUTION_MEMORY ?? "4g",
         pidsLimit: 256,
-        labels: {
-          "lax.execution.backend": placement.backendId,
-          "lax.execution.op": op.id,
-          "lax.execution.revision": String(placement.revision),
-          "lax.execution.target": placement.targetId,
-        },
+        labels: containerOwnershipLabels({
+          opId: op.id, backendId: placement.backendId, targetId: placement.targetId, placementRevision: placement.revision,
+        }),
       };
     },
     writeBootstrap({ token, placement, container }): void {

@@ -36,11 +36,19 @@ export function selectTools(selection: ToolSelection): string[] {
   return [...tagged.filter((name) => !except.includes(name)), ...plus];
 }
 
-/** What a coding worker needs: read, discover, modify, run. The self_edit
- *  surgeon, the auto-build chunk runners and the app-builder worker all start
- *  from it; the builder adds the web and a viewer. */
-export const CODING_KIT_TAGS: readonly ToolTag[] = ["file-read", "file-write", "file-edit", "file-search", "shell", "change-review"];
-export const CODING_KIT: readonly string[] = toolsTagged(...CODING_KIT_TAGS);
+/** What a coding worker needs: read, discover, modify, run, and remove what it
+ *  made. The self_edit surgeon, the auto-build chunk runners and the
+ *  app-builder worker all start from it; the builder adds the web and a viewer.
+ *  file-delete is delete_file (to the trash) and its undo restore_file: without
+ *  it a worker's throwaway probe could not be removed, the shell's `rm` is
+ *  refused, and the probe rode into the chunk's commit ("delete_file isn't
+ *  available in this run … please delete it by hand", label-check 2026-11-23). */
+export const CODING_KIT_TAGS: readonly ToolTag[] = ["file-read", "file-write", "file-edit", "file-delete", "file-search", "shell", "change-review"];
+/** The coding kit, plus bulk_replace: the shell's refusal of a sed or perl
+ *  edit across files sends a worker to it, and a worker has no tool_search to
+ *  load it (15 refusals across label-check's chunk runs, 2026-11-23). Its
+ *  edit-variant siblings stay out, as small sets leave that tag out. */
+export const CODING_KIT: readonly string[] = [...toolsTagged(...CODING_KIT_TAGS), "bulk_replace"];
 
 /** What a reviewer that must SHOW a break needs: read, discover, run, see what
  *  changed, and `write` for throwaway probe tests. No edit. The auto-build chunk
@@ -51,7 +59,7 @@ export const REVIEW_KIT: readonly string[] = [...toolsTagged("file-read", "file-
 
 /** The coding kit plus the web and an image viewer: the app-builder worker and
  *  the generic Worker template, which build against live references. */
-export const BUILDER_KIT: readonly string[] = toolsTagged(...CODING_KIT_TAGS, "web-read", "web-search", "image-view");
+export const BUILDER_KIT: readonly string[] = [...CODING_KIT, ...toolsTagged("web-read", "web-search", "image-view")];
 
 /** What a code session (session/mode.ts) loads up front: read, find (structural
  *  search included: who uses a name is a coding question), change and run code,
@@ -66,11 +74,6 @@ export const CODE_SESSION_KIT: ToolSelection = {
   tags: CODING_KIT_TAGS,
   plus: {
     tool_search: "loads any other tool by name or purpose; without it the rest of the catalog is out of reach",
-    // The prompt's own loop for a throwaway check script is write, run, then
-    // delete_file. Deferred, every run that followed it spent a model step on
-    // tool_search first: all three park-walk runs of the 2026-11-17 parity
-    // battery, ~5 s each, and 24 deletes across its 39 core runs.
-    delete_file: "removes the throwaway script a change was checked with (the prompt's write, run, delete loop); restore_file joins as its undo",
     update_plan: "a multi-step change keeps its steps on record, live under the reply; the open-steps gate reads them",
     wrap_up: "closes a turn that changed code with what is done and what is not verified",
     session_start: "offers a separate task (a bug found in passing, a follow-up) its own code session in this folder instead of doing it inline",

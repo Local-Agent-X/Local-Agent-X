@@ -63,8 +63,11 @@ describe("selectTools — a code session", () => {
     // (the step list one task at a time, as the Claude Code CLI keeps it), and
     // delete_file: the prompt's throwaway-script loop ends with it, and loading
     // it by tool_search cost every such run a step (parity battery 2026-11-17).
+    // delete_file now comes from the coding kit's file-delete tag, which carries
+    // its undo restore_file too: it joined the loaded set as delete_file's undo
+    // counterpart before, so a session ships the same tools; the kit counts it.
     expect(KIT).toContain("delete_file");
-    expect(KIT.length).toBeLessThanOrEqual(18);
+    expect(KIT.length).toBeLessThanOrEqual(19);
   });
 
   it("ships the same set whatever the message says", async () => {

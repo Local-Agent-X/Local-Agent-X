@@ -29,7 +29,7 @@ import type { AgentDefinition } from "../../agents/types.js";
 import { EventBus } from "../../event-bus.js";
 import { Handler } from "../../agency/handler.js";
 import { loadSkillBody } from "../skill-bodies.js";
-import { CODING_KIT, REVIEW_KIT } from "../../tools/tool-kits.js";
+import { BUILDER_KIT, REVIEW_KIT } from "../../tools/tool-kits.js";
 import { join } from "node:path";
 
 export type ChunkAgentRole = "chunk-runner-trunk" | "chunk-runner-leaf" | "scenario-fix" | "chunk-skeptic";
@@ -189,15 +189,15 @@ interface RoleSpec {
 
 const ROLE_SPECS: Record<ChunkAgentRole, RoleSpec> = {
   "chunk-runner-trunk": {
-    skill: "senior-engineer", discipline: DISCIPLINE_BLOCK, agentRole: "implementer", tools: CODING_KIT,
+    skill: "senior-engineer", discipline: DISCIPLINE_BLOCK, agentRole: "implementer", tools: BUILDER_KIT,
     name: "Chunk runner (trunk/mixed)", description: "Implements a trunk or mixed chunk from a build plan.", icon: "🏗️",
   },
   "chunk-runner-leaf": {
-    skill: "vibe-code", discipline: DISCIPLINE_BLOCK, agentRole: "implementer", tools: CODING_KIT,
+    skill: "vibe-code", discipline: DISCIPLINE_BLOCK, agentRole: "implementer", tools: BUILDER_KIT,
     name: "Chunk runner (leaf)", description: "Implements a leaf chunk (UI, isolated features) from a build plan.", icon: "🎨",
   },
   "scenario-fix": {
-    skill: "senior-engineer", discipline: SCENARIO_FIX_DISCIPLINE_BLOCK, agentRole: "implementer", tools: CODING_KIT,
+    skill: "senior-engineer", discipline: SCENARIO_FIX_DISCIPLINE_BLOCK, agentRole: "implementer", tools: BUILDER_KIT,
     name: "Scenario fix worker", description: "Fixes phase-gate scenario failures without violating spec/constitution.", icon: "🔧",
   },
   "chunk-skeptic": {

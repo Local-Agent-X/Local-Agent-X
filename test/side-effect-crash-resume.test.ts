@@ -11,6 +11,14 @@ import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 
 const fixture = resolve("test/fixtures/side-effect-crash-worker.ts");
+
+// Every child is a new Node process that loads the dispatch path through tsx,
+// which is seconds each on a busy machine, so each child gets CHILD_TIMEOUT_MS.
+// A test's own budget is the rounds of children it starts one after another:
+// the suite's default is one round and a half, and the restart-sweep test runs
+// three, so it timed out on a slow runner with every child inside its budget.
+const CHILD_TIMEOUT_MS = 10_000;
+const rounds = (count: number): number => count * CHILD_TIMEOUT_MS + 5_000;
 let root: string;
 let ledger: string;
 
@@ -25,7 +33,7 @@ function run(
     cwd: process.cwd(),
     env: { ...process.env, LAX_DATA_DIR: root, LAX_DISABLE_OS_KEYCHAIN: "1" },
     encoding: "utf-8",
-    timeout: 10_000,
+    timeout: CHILD_TIMEOUT_MS,
   });
 }
 
@@ -41,6 +49,7 @@ function runAsync(
       cwd: process.cwd(),
       env: { ...process.env, LAX_DATA_DIR: root, LAX_DISABLE_OS_KEYCHAIN: "1" },
       stdio: ["ignore", "ignore", "pipe"],
+      timeout: CHILD_TIMEOUT_MS,
     });
     let stderr = "";
     child.stderr.setEncoding("utf8");
@@ -103,7 +112,7 @@ describe("persisted side-effect journal crash/restart/resume", () => {
       runAsync("same-operation", "", "non-idempotent"),
     ], [0, 0]);
     expect(ledgerRows().filter(row => row.opId === "same-operation")).toHaveLength(1);
-  });
+  }, rounds(1));
 
   it("runs once when the process dies after prepare but before the effect", () => {
     expect(run("before", "prepared").status).toBe(86);
@@ -113,7 +122,7 @@ describe("persisted side-effect journal crash/restart/resume", () => {
     expect(resumed.status).toBe(0);
     expect(childResult<{ content: string }>(resumed.stdout).content).toContain("receipt:before");
     expect(ledgerRows().filter(row => row.opId === "before")).toHaveLength(1);
-  });
+  }, rounds(2));
 
   it("uses the pinned external key after effect-before-result death", () => {
     expect(run("after-effect", "effect_returned").status).toBe(86);
@@ -123,7 +132,7 @@ describe("persisted side-effect journal crash/restart/resume", () => {
     expect(resumed.status).toBe(0);
     expect(childResult<{ content: string }>(resumed.stdout).content).toContain("receipt:after-effect");
     expect(ledgerRows().filter(row => row.opId === "after-effect")).toHaveLength(1);
-  });
+  }, rounds(2));
 
   it("returns the recorded result after result persistence but before turn commit", () => {
     expect(run("after-result", "completed").status).toBe(86);
@@ -133,7 +142,7 @@ describe("persisted side-effect journal crash/restart/resume", () => {
     expect(resumed.status).toBe(0);
     expect(childResult<{ content: string }>(resumed.stdout).content).toContain("receipt:after-result");
     expect(ledgerRows().filter(row => row.opId === "after-result")).toHaveLength(1);
-  });
+  }, rounds(2));
 
   it("requires explicit reconciliation for an ambiguous non-idempotent outcome", () => {
     expect(run("ambiguous", "effect_returned", "non-idempotent").status).toBe(86);
@@ -145,7 +154,7 @@ describe("persisted side-effect journal crash/restart/resume", () => {
     expect(result.isError).toBe(true);
     expect(result.content).toContain("reconciliation_required");
     expect(ledgerRows().filter(row => row.opId === "ambiguous")).toHaveLength(1);
-  });
+  }, rounds(2));
 
   it("preserves two concurrent operation journals through the restart sweep", async () => {
     await expectAsyncStatuses([
@@ -159,7 +168,7 @@ describe("persisted side-effect journal crash/restart/resume", () => {
       cwd: process.cwd(),
       env: { ...process.env, LAX_DATA_DIR: root, LAX_DISABLE_OS_KEYCHAIN: "1" },
       encoding: "utf-8",
-      timeout: 10_000,
+      timeout: CHILD_TIMEOUT_MS,
     });
     expect(swept.status).toBe(0);
     const outcomes = childResult<Array<{ opId: string; outcome: { kind: string } }>>(swept.stdout);
@@ -169,5 +178,5 @@ describe("persisted side-effect journal crash/restart/resume", () => {
     await expectAsyncStatuses([runAsync("concurrent-a"), runAsync("concurrent-b")], [0, 0]);
     expect(ledgerRows().filter(row => row.opId === "concurrent-a")).toHaveLength(1);
     expect(ledgerRows().filter(row => row.opId === "concurrent-b")).toHaveLength(1);
-  });
+  }, rounds(3));
 });

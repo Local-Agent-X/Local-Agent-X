@@ -26,6 +26,9 @@
  *     >85% printable ASCII. Real key material decodes to high-binary bytes
  *     (~40-50% printable). FN accepted: a secret that happens to be base64 of
  *     printable text slips through (rare for raw key bytes).
+ *   - a base64 run that opens with a file format's signature (an image, an
+ *     archive, a font): see encoded-file-spans.ts. FN accepted: a key someone
+ *     deliberately wrapped in a file header, which the decode engine still reads.
  * The thresholds (length floors + bits/char) are set ABOVE where natural
  * language, file paths, CSS/minified-code soup land, so those stay clean. They
  * are intentionally conservative, not maximally sensitive — known-shape
@@ -33,6 +36,7 @@
  */
 
 import { hexWordRuns, isStdBase64Char, isUrlBase64Char, paddedClassRuns } from "./char-runs.js";
+import { encodedFileSpans } from "./encoded-file-spans.js";
 
 export interface EntropyMatch {
   startIndex: number;
@@ -328,14 +332,15 @@ function overlapsSorted(spans: readonly EntropyMatch[], start: number, end: numb
  */
 export function detectHighEntropyTokens(text: string): EntropyMatch[] {
   const out: EntropyMatch[] = [];
-  const exempt = publicKeySpans(text);
-  const isPublicKey = (start: number, end: number) => exempt.some(([s, e]) => start < e && s < end);
+  // Made to be published (a public key) or not key material at all (a file in base64).
+  const exempt = [...publicKeySpans(text), ...encodedFileSpans(text)];
+  const isExempt = (start: number, end: number) => exempt.some(([s, e]) => start < e && s < end);
 
   for (const { run, index } of hexWordRuns(text, HEX_RUN_MIN)) {
     if (run.length < MIN_HEX_LEN) continue;
     if (isExcludedHex(run)) continue;
     if (shannonEntropy(run) < MIN_HEX_ENTROPY) continue;
-    if (isPublicKey(index, index + run.length)) continue;
+    if (isExempt(index, index + run.length)) continue;
     out.push({ startIndex: index, endIndex: index + run.length, value: run });
   }
 
@@ -348,7 +353,7 @@ export function detectHighEntropyTokens(text: string): EntropyMatch[] {
     if (/^[0-9a-fA-F]+$/.test(run)) continue;
     if (isExcludedBase64(run)) continue;
     if (shannonEntropy(run) < MIN_BASE64_ENTROPY) continue;
-    if (isPublicKey(index, index + run.length)) continue;
+    if (isExempt(index, index + run.length)) continue;
     out.push({ startIndex: index, endIndex: index + run.length, value: run });
   }
 

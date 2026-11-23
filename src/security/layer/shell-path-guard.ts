@@ -7,7 +7,7 @@ import type { FileAccessMode, InlineEvalPolicy } from "./types.js";
 import { evaluateFileAccess } from "./file-access.js";
 import { evaluateShellCommand } from "./shell-policy.js";
 import { detectScriptWrite } from "./shell-detectors.js";
-import { inPlaceEditTargets } from "./shell-in-place-edit.js";
+import { inPlaceEditOperands } from "./shell-in-place-edit.js";
 import {
   execBasename, isShellReparseFlag, maskQuotedRedirects, resolveRealArgv0Index, splitShellSegments, tokenizeCommand,
 } from "./shell-lex.js";
@@ -184,19 +184,34 @@ export function evaluateShellPaths(command: string, ctx: ShellPathGuardCtx): Sec
  */
 function redirectOrTargetRefusal(command: string, decision: SecurityDecision, ctx: ShellPathGuardCtx): SecurityDecision {
   if (decision.reason !== detectScriptWrite(command)) return decision;
-  const edited = new Set(inPlaceEditTargets(command).map(expandTilde));
-  for (const tok of placedPathTokens(command, ctx.workspace)) {
-    if (tok.action !== "write" && !edited.has(tok.path)) continue;
-    const write = evaluateFileAccess(ctx.workspace, ctx.fileAccessMode, ctx.allowedPathCheck, "write", tok.path, ctx.sessionId);
+  const redirects = placedPathTokens(command, ctx.workspace).filter((tok) => tok.action === "write").map((tok) => tok.path);
+  for (const target of [...redirects, ...placedInPlaceEditTargets(command, ctx.workspace)]) {
+    const write = evaluateFileAccess(ctx.workspace, ctx.fileAccessMode, ctx.allowedPathCheck, "write", target, ctx.sessionId);
     if (!write.allowed) {
       return {
         allowed: false,
-        reason: `Blocked: this shell edit targets "${tok.path}", and the write/edit tools refuse that path too, so they are no way around it. ${write.reason}`,
+        reason: `Blocked: this shell edit targets "${target}", and the write/edit tools refuse that path too, so they are no way around it. ${write.reason}`,
         userHint: USER_HINTS.fileSystem,
       };
     }
   }
   return decision;
+}
+
+/**
+ * The files an in-place editor would rewrite, each placed in the folder its
+ * command runs in. Read from the editor's own operands, not from the command's
+ * path-shaped words: after `cd /etc`, `sed -i … hosts` names a file that looks
+ * like no path at all, and its refusal went back to the dead-end redirect. A
+ * folder the `cd` rule cannot place leaves the file as written, relative to
+ * the workspace, as before.
+ */
+function placedInPlaceEditTargets(command: string, workspace: string): string[] {
+  return positionsWithCwd(command, workspace).flatMap(({ position, cwd }) =>
+    inPlaceEditOperands(position).map((operand) => {
+      const file = expandTilde(operand);
+      return typeof cwd === "string" && !isAbsolute(file) ? resolve(cwd, file) : file;
+    }));
 }
 
 /**

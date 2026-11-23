@@ -154,6 +154,27 @@ describe("a shell edit redirected to the file tools", () => {
     expect(d.reason).toMatch(/write\/edit tools refuse that path too/);
   });
 
+  // The same edit after a `cd`: the file is named relative to the folder the
+  // command moved into. The refusal went back to "Use the edit tool", which
+  // refuses that file, because the editor's operand no longer matched the
+  // path once it was resolved from the `cd`.
+  it("still names the real refusal when the file is named relative to a cd", () => {
+    setSwitch(undefined);
+    const sys = SYSTEM_FILE.replace(/\\/g, "/");
+    const dir = sys.slice(0, sys.lastIndexOf("/"));
+    const name = sys.slice(sys.lastIndexOf("/") + 1);
+    const d = evaluateShellCommandAndPaths(`cd ${dir} && sed -i -e 's/a/b/' ${name}`, ctx());
+    expect(d.allowed).toBe(false);
+    expect(d.reason).toMatch(/write\/edit tools refuse that path too/);
+    expect(d.reason).not.toMatch(/Use the edit tool/);
+  });
+
+  it("after a cd, an edit the file tools can take is still sent to them", () => {
+    setSwitch(undefined);
+    const d = evaluateShellCommandAndPaths("cd docs && sed -i -e 's/a/b/' ../notes.txt", ctx());
+    expect(d.reason).toMatch(/Use the edit tool/);
+  });
+
   // Found 2026-11-12: `cat > <system path> <<'EOF'` passed the security layer
   // in unrestricted mode while `write` to the same path was refused. The shell
   // gets the file tools' floors now, in every form a write can take.

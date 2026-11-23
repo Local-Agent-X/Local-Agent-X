@@ -22,18 +22,23 @@ export function editsInPlace(p: CommandPosition): boolean {
  * `-i`/`-f`/`-v` each take a value.
  */
 export function inPlaceEditTargets(command: string): string[] {
+  return commandPositions(command).positions.flatMap(inPlaceEditOperands);
+}
+
+/** The files one command position would rewrite in place, as the command
+ *  wrote them; none when it is not an in-place editor. For a caller that
+ *  places each file in the folder that position runs in (after a `cd`). */
+export function inPlaceEditOperands(p: CommandPosition): string[] {
+  if (!editsInPlace(p)) return [];
   const out: string[] = [];
-  for (const p of commandPositions(command).positions) {
-    if (!editsInPlace(p)) continue;
-    const args = p.words.slice(p.at + 1);
-    const takesValue = AWK_FAMILY.has(p.bin) ? /^-[ifv]$/ : /^(-[a-zA-Z]*[ef]|--expression|--file)$/;
-    let scriptSeen = false;
-    for (let i = 0; i < args.length; i++) {
-      if (takesValue.test(args[i])) { scriptSeen ||= !/^-[iv]$/.test(args[i]); i++; continue; }
-      if (args[i].startsWith("-")) continue;
-      if (scriptSeen) out.push(args[i]);
-      scriptSeen = true;
-    }
+  const args = p.words.slice(p.at + 1);
+  const takesValue = AWK_FAMILY.has(p.bin) ? /^-[ifv]$/ : /^(-[a-zA-Z]*[ef]|--expression|--file)$/;
+  let scriptSeen = false;
+  for (let i = 0; i < args.length; i++) {
+    if (takesValue.test(args[i])) { scriptSeen ||= !/^-[iv]$/.test(args[i]); i++; continue; }
+    if (args[i].startsWith("-")) continue;
+    if (scriptSeen) out.push(args[i]);
+    scriptSeen = true;
   }
   return out;
 }

@@ -137,7 +137,7 @@ const definition = {
   version: QUALIFICATION_BENCHMARK_CATALOG_VERSION,
   packs: [
     {
-      schema: QUALIFICATION_BENCHMARK_PACK_SCHEMA, schemaVersion: 1, id: "installer", version: 5,
+      schema: QUALIFICATION_BENCHMARK_PACK_SCHEMA, schemaVersion: 1, id: "installer", version: 6,
       gate: { id: "installer", script: "test:installer-qualification", timeoutMs: 10 * 60_000, preflightScripts: [] },
       scenarios: [
         { id: "contract", version: 1, testPath: "test/installer-contract.test.ts", assertionCount: 23, assertionManifestSha256: "sha256:e3ab089e51e06f1b15df9b891a28e89a92ffab3456dcd18797a344e77ae0cf30", platformIndependent: false, allowedSkips: [] },
@@ -148,7 +148,9 @@ const definition = {
         // assertion's fullName from the vitest JSON reporter, sort, hash the
         // JSON array. A stale pin fails every release gate with
         // "benchmark reporter assertion manifest does not match the catalog".
-        { id: "rollback", version: 4, testPath: "test/installer-rollback.test.ts", assertionCount: 56, assertionManifestSha256: "sha256:d673f9421a0d6c95f5d1e2e7e465510cd0b72570f50e8dfb79e5f413d6bcf646", platformIndependent: false, allowedSkips: [] },
+        // Refreshed again for the leftover-folder cleanup after a completed
+        // install (GitHub issue #8; 59 tests).
+        { id: "rollback", version: 5, testPath: "test/installer-rollback.test.ts", assertionCount: 59, assertionManifestSha256: "sha256:9b0ecc5707ea3c7493132bc3d87c18600856d9a9ca84a68ed72d7c8af12fe794", platformIndependent: false, allowedSkips: [] },
       ],
     },
     {

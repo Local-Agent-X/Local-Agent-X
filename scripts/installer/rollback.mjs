@@ -39,6 +39,8 @@ function syncDirectory(path) {
 }
 
 const supersededStamp = () => new Date().toISOString().replace(/[:.]/g, "-");
+/** The sibling folder an interrupted attempt's rollback directory is moved to, before its stamp. */
+const SUPERSEDED_ATTEMPT_PREFIX = "install-rollback.superseded-";
 
 export function createInstallRollback(context) {
   if (!context.installRoot) {
@@ -156,13 +158,34 @@ export function createInstallRollback(context) {
    *  sibling. The bases are bound first so every path assertion during the
    *  move also re-proves the data root is the one the journal recorded. */
   const archiveInterruptedAttempt = (journal) => {
-    const archived = `install-rollback.superseded-${supersededStamp()}`;
+    const archived = `${SUPERSEDED_ATTEMPT_PREFIX}${supersededStamp()}`;
     boundBases = { install: directoryIdentity(root), data: journal.identity.dataBase };
     movePath(dataDirectory, "install-rollback", dataDirectory, archived);
     context.reporter?.warn(
       `The previous install attempt was interrupted and its leftovers were moved to ${join(dataDirectory, archived)}. `
         + "Nothing in that folder is needed; delete it to reclaim the space.",
     );
+  };
+
+  /** Remove the leftovers of interrupted attempts, all but the newest. Each
+   *  interrupted install moved its rollback folder aside and told the user to
+   *  delete it; nothing did, and each can hold hundreds of megabytes. The
+   *  newest stays for diagnosis. The name's stamp is an ISO time, so the names
+   *  sort by age. A folder that cannot be removed (a link, a path that
+   *  escaped, a file in use) is reported and left: the install that just
+   *  completed is not failed over old leftovers. */
+  const pruneSupersededAttempts = () => {
+    let names;
+    try {
+      names = readdirSync(dataDirectory).filter((name) => name.startsWith(SUPERSEDED_ATTEMPT_PREFIX)).sort();
+    } catch { return; }
+    for (const name of names.slice(0, -1)) {
+      try {
+        removePath(dataDirectory, name, { recursive: true, force: true });
+      } catch (error) {
+        context.reporter?.warn(`Old install leftovers could not be removed (${join(dataDirectory, name)}): ${error.message}`);
+      }
+    }
   };
 
   const load = () => {
@@ -348,6 +371,7 @@ export function createInstallRollback(context) {
       fault("after-verified");
       assertJournalPaths(journal);
       removePath(dataDirectory, "install-rollback", { recursive: true, force: true });
+      pruneSupersededAttempts();
     },
   };
 }

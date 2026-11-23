@@ -196,6 +196,64 @@ describe("installer artifact rollback", () => {
     expect(readFileSync(join(archived, "artifacts", "dist", "index.js"), "utf-8")).toBe("verified-old");
   });
 
+  // GitHub issue #8: each interrupted install left a folder that can hold
+  // hundreds of megabytes, said it was safe to delete, and nothing deleted it.
+  it("a completed install removes the leftovers of older interrupted attempts and keeps the newest", () => {
+    const f = fixture();
+    const leftover = (stamp: string) => {
+      const dir = join(f.dataDirectory, `install-rollback.superseded-${stamp}`);
+      mkdirSync(join(dir, "artifacts", "dist"), { recursive: true });
+      writeFileSync(join(dir, "artifacts", "dist", "index.js"), stamp);
+      return dir;
+    };
+    const oldest = leftover("2026-09-01T10-00-00-000Z");
+    const middle = leftover("2026-09-20T10-00-00-000Z");
+    const newest = leftover("2026-10-02T10-00-00-000Z");
+    const unrelated = join(f.dataDirectory, "install-rollback-notes.txt");
+    writeFileSync(unrelated, "not a leftover");
+
+    const rollback = createInstallRollback(f);
+    rollback.begin();
+    expect(existsSync(oldest) && existsSync(middle) && existsSync(newest)).toBe(true); // nothing goes until the install is proven
+    rollback.verified();
+
+    expect(existsSync(oldest)).toBe(false);
+    expect(existsSync(middle)).toBe(false);
+    expect(readFileSync(join(newest, "artifacts", "dist", "index.js"), "utf-8")).toBe("2026-10-02T10-00-00-000Z");
+    expect(readFileSync(unrelated, "utf-8")).toBe("not a leftover");
+    expect(existsSync(join(f.dataDirectory, "install-rollback"))).toBe(false);
+  });
+
+  it("an install that is rolled back removes no leftovers", () => {
+    const f = fixture();
+    const older = join(f.dataDirectory, "install-rollback.superseded-2026-09-01T10-00-00-000Z");
+    const newer = join(f.dataDirectory, "install-rollback.superseded-2026-10-02T10-00-00-000Z");
+    for (const dir of [older, newer]) mkdirSync(dir, { recursive: true });
+    const rollback = createInstallRollback(f);
+    rollback.begin();
+    rollback.rollback("build failed");
+    expect(existsSync(older) && existsSync(newer)).toBe(true);
+  });
+
+  it.runIf(CAN_CREATE_DIRECTORY_LINK)("a leftover that cannot be removed is reported and does not fail the completed install", () => {
+    const f = fixture();
+    const blocked = join(f.dataDirectory, "install-rollback.superseded-2026-09-01T10-00-00-000Z");
+    const newest = join(f.dataDirectory, "install-rollback.superseded-2026-10-02T10-00-00-000Z");
+    for (const dir of [blocked, newest]) mkdirSync(dir, { recursive: true });
+    const outside = join(f.base, "outside");
+    mkdirSync(outside);
+    writeFileSync(join(outside, "precious.txt"), "do not delete");
+    rmSync(blocked, { recursive: true });
+    symlinkSync(outside, blocked, "junction"); // a leftover name that is a link out of the data folder
+    const warn = vi.fn();
+    const rollback = createInstallRollback({ ...f, reporter: { warn } });
+    rollback.begin();
+    expect(() => rollback.verified()).not.toThrow();
+    expect(readFileSync(join(outside, "precious.txt"), "utf-8")).toBe("do not delete");
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("Old install leftovers could not be removed"));
+    expect(existsSync(newest)).toBe(true);
+  });
+
   it("moves a terminal journal's surviving backup bytes aside and the next install completes", async () => {
     const f = fixture();
     createInstallRollback(f).begin();

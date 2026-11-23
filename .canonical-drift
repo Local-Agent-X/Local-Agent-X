@@ -44,7 +44,6 @@ launchApp src x2
 listDevices src x2
 loadStore src x2
 logger src x2
-MS_PER_DAY src x3
 ok src x2
 opEditedSourceUnverified src x2
 OrchestratorState src x2
@@ -71,7 +70,6 @@ RuntimeInfo src x2
 saveStore src x2
 ScanOptions src x2
 selectTools src x2
-sleep src x3
 slugify src x2
 startConfigWatcher src x2
 startHeartbeat src x2

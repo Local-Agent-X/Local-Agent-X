@@ -1,10 +1,7 @@
 import { createLogger } from "../logger.js";
+import { sleep } from "../util/time.js";
 
 const logger = createLogger("embedding-providers");
-
-export function sleep(ms: number): Promise<void> {
-  return new Promise((r) => setTimeout(r, ms));
-}
 
 export async function fetchWithRetry(
   url: string,

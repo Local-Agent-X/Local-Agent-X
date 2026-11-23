@@ -48,7 +48,8 @@ import { unnamedDeletes } from "../src/tool-execution/unnamed-delete-gate.js";
 import { announceNoticedDeletes } from "../src/tool-execution/unnamed-delete-preauth.js";
 import { stillPresentAfterDelete } from "../src/tool-execution/verify-shell-deletes.js";
 import { canonicalizeAttachmentPath, checkAttachmentPaths } from "../src/tools/http-egress-guard.js";
-import { startSession, killSession, sleep, type ProcessSession } from "../src/tools/process-session.js";
+import { startSession, killSession, type ProcessSession } from "../src/tools/process-session.js";
+import { sleep } from "../src/util/time.js";
 
 const SESSION = "work-root-parity";
 let workRoot: string;

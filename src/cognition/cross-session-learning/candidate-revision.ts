@@ -1,5 +1,6 @@
 import type { LearnedCandidate, LearnedCandidateState } from "./types.js";
-import { CANDIDATE_TRANSITIONS, hasCandidateEvidenceIdentity, MS_PER_DAY, REJECTION_COOLDOWN_DAYS } from "./types.js";
+import { CANDIDATE_TRANSITIONS, hasCandidateEvidenceIdentity, REJECTION_COOLDOWN_DAYS } from "./types.js";
+import { MS_PER_DAY } from "../../util/time.js";
 
 export interface CandidateRevision {
   state: LearnedCandidateState;

@@ -16,7 +16,8 @@
  */
 import { mkdirSync, appendFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { SESSIONS, sleep, tailLines, pidsOnPort } from "./process-session.js";
+import { SESSIONS, tailLines, pidsOnPort } from "./process-session.js";
+import { sleep } from "../util/time.js";
 import { processTable, type Proc } from "./owned-listeners.js";
 import { killProcessGroupSync } from "../process-tree-kill.js";
 import { getLaxDir } from "../lax-data-dir.js";

@@ -30,8 +30,8 @@ import {
   killSession,
   pidsOnPort,
   tailLines,
-  sleep,
 } from "./process-session.js";
+import { sleep } from "../util/time.js";
 import { resolveSecretEnv, secretEnvOf, type ResolvedSecretEnv, type SecretEnv } from "./shell-secret-env.js";
 
 const SECRET_ENV_PARAM = {

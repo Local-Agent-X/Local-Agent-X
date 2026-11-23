@@ -1,6 +1,6 @@
 import type Database from "better-sqlite3";
 import type { Chunk, EmbeddingProvider, MemoryConfig } from "./types.js";
-import { sleep } from "./utils.js";
+import { sleep } from "../util/time.js";
 import { decodeEmbedding, encodeEmbedding } from "./embedding-codec.js";
 import { yieldEventLoop } from "./index-embedding-reconcile.js";
 import { embeddableChunksWhere } from "./embedding-reach.js";

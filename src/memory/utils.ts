@@ -208,10 +208,6 @@ export function sha256(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
 
-export function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
 export function cosineSimilarity(a: number[], b: number[]): number {
   if (a.length !== b.length) return 0;
   let dot = 0, normA = 0, normB = 0;

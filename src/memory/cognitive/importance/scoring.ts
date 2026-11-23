@@ -2,10 +2,10 @@ import type { RetainedFact } from "../../types.js";
 import type { ImportanceScore } from "./types.js";
 import {
   EMOTION_KEYWORDS,
-  MS_PER_DAY,
   RECENCY_HALF_LIFE_DAYS,
   WEIGHTS,
 } from "./constants.js";
+import { MS_PER_DAY } from "../../../util/time.js";
 
 export function calcRichness(content: string, entityCount: number): number {
   // Facts are short atomic statements, not the long markdown documents this

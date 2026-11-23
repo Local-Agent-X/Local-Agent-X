@@ -1,6 +1,7 @@
 import { join } from "node:path";
 
-import { COMPRESSED_DIR, MS_PER_DAY } from "./constants.js";
+import { COMPRESSED_DIR } from "./constants.js";
+import { MS_PER_DAY } from "../../../util/time.js";
 import {
   ensureDirs,
   listStoredFiles,

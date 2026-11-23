@@ -10,7 +10,6 @@ export const WEIGHTS = {
 };
 
 export const RECENCY_HALF_LIFE_DAYS = 14;
-export const MS_PER_DAY = 86400000;
 
 export const EMOTION_KEYWORDS = [
   "love", "hate", "angry", "happy", "sad", "excited", "afraid", "fear",

@@ -19,7 +19,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 190 | 32 | XL | 1 |
+| `src/ops/` | 191 | 32 | XL | 1 |
 | `src/security/` | 167 | 65 | XL | 2 |
 | `src/tools/` | 142 | 246 | XL | 9 |
 | `src/tool-execution/` | 107 | 91 | XL | 2 |
@@ -72,11 +72,11 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/agent-guards/` | 9 | 13 | L |  |
 | `src/plugin-system/` | 9 | 10 | L | 1 |
 | `src/screen-stream/` | 9 | 12 | L |  |
+| `src/auto-build/` | 8 | 62 | XL | 1 |
 | `src/autopilot/` | 8 | 14 | L | 1 |
 | `src/bridge-voice/` | 8 | 6 | M |  |
 | `src/mcp-client/` | 8 | 11 | L | 1 |
 | `src/telegram-bridge/` | 8 | 6 | M |  |
-| `src/auto-build/` | 7 | 62 | XL | 1 |
 | `src/android/` | 6 | 8 | M |  |
 | `src/credentials/` | 6 | 1 | S |  |
 | `src/publish-review/` | 6 | 8 | M |  |

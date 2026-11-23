@@ -235,23 +235,16 @@ function handleInjectConsumed(msg) {
 }
 
 // Reconcile renderer-side state against the server's truth on every WS
-// subscribe. Two things to fix:
-//   1. Worker chips stuck on "working" — the bg_op completion / failure event
-//      went out while this client wasn't subscribed (page reload, server
-//      restart, leave-and-back). Any chip keyed to this session whose opId
-//      isn't in liveOpIds is server-confirmed terminal — flip it to done.
-//      "Already terminal" is isTerminalStatus (chat-agent-feeds-render.js),
-//      the ONE status set: a `partial` card (checkpoint stop, released on
-//      terminal so never live) used to miss an inline done/failed/cancelled
-//      list here and was re-labelled "done" on every reconnect.
-//   2. Chat messages missing — selectChat lazy-hydrates on click, but a user
+// subscribe: plan mode, learning notices, and chat messages missing.
+// (Worker cards stuck on "working" are workers_snapshot's to end:
+// reconcileAgentFeeds in chat-agent-feeds.js, see below.)
+//   Chat messages missing — selectChat lazy-hydrates on click, but a user
 //      sitting on the chat at WS-(re)connect time never triggers selectChat
 //      and stays on the stale localStorage copy. Force a hydrate when
 //      server's count exceeds local.
 function reconcileSessionSnapshot(msg) {
   try {
     const sessionId = msg.sessionId;
-    const liveSet = new Set(msg.liveOpIds || []);
 
     // Server is source of truth for enforced plan mode — reconcile on every
     // (re)connect so the chip survives page reloads and server restarts.
@@ -265,15 +258,13 @@ function reconcileSessionSnapshot(msg) {
       attachLearningNotices(sessionId, msg.learningNotices);
     }
 
-    if (typeof agentFeedsData !== 'undefined') {
-      for (const opId of Object.keys(agentFeedsData)) {
-        const data = agentFeedsData[opId];
-        if (!data || data.sessionId !== sessionId) continue;
-        if (liveSet.has(opId)) continue;
-        if (isTerminalStatus(data.status)) continue;
-        if (typeof updateAgentFeed === 'function') updateAgentFeed(opId, { status: 'done' });
-      }
-    }
+    // Which worker cards are still running is not decided here. liveOpIds is
+    // this chat's canonical ops only: a build orchestrator and a named agent
+    // (keyed by its agent id) are never in it, so marking every other card
+    // "done" ended running builds and workers on every chat open (label-check,
+    // 2026-11-23: its orchestrator and a chunk worker read "Completed" while
+    // they worked). The whole live set comes in workers_snapshot on every
+    // connect, and reconcileAgentFeeds (chat-agent-feeds.js) is the one judge.
 
     if (typeof chats !== 'undefined' && Array.isArray(chats) && typeof msg.messageCount === 'number') {
       const chat = chats.find(c => c.id === sessionId);

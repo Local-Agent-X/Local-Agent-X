@@ -228,18 +228,21 @@ function loadWs(agentFeedsData: Feed) {
 
 const frames = (sent: string[]) => sent.map((s) => JSON.parse(s) as { type: string; opId?: string });
 
-describe("session_snapshot reconcile — a partial card that is not live stays partial", () => {
-  it("leaves partial (and every other terminal status) alone; a stale working card is still flipped to done", () => {
+// The session snapshot's liveOpIds is the chat's canonical ops only: a build
+// orchestrator and a named agent's card (keyed by its agent id) are never in
+// it, so ending every other card ended running builds on each chat open
+// (label-check, 2026-11-23). Which cards are alive is workers_snapshot's call.
+describe("session_snapshot reconcile — never ends a worker card", () => {
+  it("leaves every card as it is, running orchestrators and agents included", () => {
     const feeds: Feed = {
       opPartial: { sessionId: "chat-1", status: "partial" },
       opWorking: { sessionId: "chat-1", status: "working" },
-      opDone: { sessionId: "chat-1", status: "done" },
-      opOtherSession: { sessionId: "chat-2", status: "working" },
+      op_orchestrator: { sessionId: "chat-1", status: "working", type: "orchestrator" },
+      "field-agent-4-x": { sessionId: "chat-1", status: "working" },
     };
     const h = loadHandler(feeds);
     h.reconcileSessionSnapshot({ sessionId: "chat-1", liveOpIds: [] });
-    expect(h.updateAgentFeed).toHaveBeenCalledTimes(1);
-    expect(h.updateAgentFeed).toHaveBeenCalledWith("opWorking", { status: "done" });
+    expect(h.updateAgentFeed).not.toHaveBeenCalled();
   });
 });
 

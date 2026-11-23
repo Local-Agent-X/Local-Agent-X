@@ -15,6 +15,7 @@ import type { WorkerSnapshot, WorkersSnapshotFrame } from "../broker-transport/v
 import type { LiveWorker } from "../canonical-loop/index.js";
 import type { FieldAgentStatus } from "../agency/handler-types.js";
 import { sendFrame } from "./frames.js";
+import { OP_TYPE } from "../ops/op-types.js";
 
 export interface WorkersSnapshotSources {
   canonical: () => LiveWorker[];
@@ -22,6 +23,12 @@ export interface WorkersSnapshotSources {
   autopilot: () => { id: string; topic?: string }[];
   /** Named agents still running (agency/handler.ts). */
   agents: () => { id: string; name: string; task?: string; sessionId?: string; startedAt: number }[];
+  /** Build orchestrators running in this process (auto-build/orchestrator/
+   *  manager.ts). Neither a canonical op nor a named agent, so a snapshot
+   *  without them ended every running build's card: label-check's orchestrator
+   *  read "Completed" three minutes into its run (2026-11-23). Absent in a test
+   *  that lists none. */
+  orchestrators?: () => { opId: string; projectDir: string; sessionId: string; startedAt: number }[];
   /** What each agent is changing and who else is in the same files
    *  (routes/agents/work-claims.ts); absent in a test that lists none. */
   claims?: () => { sessionId: string; opId: string | null; areas: string[]; clashesWith: string[] }[];
@@ -57,19 +64,29 @@ export function buildWorkersSnapshot(sources: WorkersSnapshotSources): WorkersSn
       opType: "agent_spawn", startedAt: new Date(agent.startedAt).toISOString(),
     });
   }
+  for (const orch of sources.orchestrators?.() ?? []) {
+    if (listed.has(orch.opId)) continue;
+    // The task the orchestrator card was started with (manager.ts bg_op_started).
+    workers.push({
+      opId: orch.opId, sessionId: orch.sessionId, task: `Build orchestrator: ${orch.projectDir}`, status: "running",
+      opType: OP_TYPE.orchestrator, startedAt: new Date(orch.startedAt).toISOString(),
+    });
+  }
   return { type: "workers_snapshot", workers: withClaims(workers, sources.claims?.() ?? []) };
 }
 
 async function defaultSources(): Promise<WorkersSnapshotSources> {
-  const [{ listLiveWorkers }, { listActiveAutopilotOps }, { Handler }, { workClaimRows }] = await Promise.all([
+  const [{ listLiveWorkers }, { listActiveAutopilotOps }, { Handler }, { workClaimRows }, { listActive: listActiveOrchestrations }] = await Promise.all([
     import("../canonical-loop/index.js"),
     import("../autopilot/loop.js"),
     import("../agency/handler.js"),
     import("../routes/agents/work-claims.js"),
+    import("../auto-build/orchestrator/manager.js"),
   ]);
   return {
     claims: workClaimRows,
     canonical: listLiveWorkers,
+    orchestrators: listActiveOrchestrations,
     autopilot: () => listActiveAutopilotOps().map((op) => ({ id: op.id, topic: op.autopilot?.topic })),
     agents: () => (Handler.getInstance().getAgentStatus() as FieldAgentStatus[])
       .filter((a) => a.status !== "succeeded" && a.status !== "failed")

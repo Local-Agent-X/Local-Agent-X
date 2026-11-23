@@ -58,6 +58,23 @@ describe("workers contract with the phone", () => {
     });
   });
 
+  // A running build orchestrator is neither a canonical op nor a named agent;
+  // left out, a client ended its card while the build ran (2026-11-23).
+  it("lists a running build orchestrator by the op id its card carries", () => {
+    const frame = buildWorkersSnapshot({
+      canonical: () => [],
+      autopilot: () => [],
+      agents: () => [],
+      orchestrators: () => [{ opId: "op_orch_1", projectDir: "C:/apps/label-check", sessionId: "s1", startedAt: Date.UTC(2026, 10, 23) }],
+    });
+    expect(parseWorkersSnapshot(JSON.parse(JSON.stringify(frame)))).toEqual({
+      type: "workers_snapshot",
+      workers: [
+        { opId: "op_orch_1", sessionId: "s1", task: "Build orchestrator: C:/apps/label-check", status: "running", opType: "orchestrator", startedAt: "2026-11-23T00:00:00.000Z" },
+      ],
+    });
+  });
+
   it("a worker's row says what it is changing and who else is in the same files, and the phone reads it", () => {
     const frame = buildWorkersSnapshot({
       canonical: () => [{ opId: "op_1", sessionId: "s1", task: "Build", status: "running" }, { opId: "op_2", sessionId: "s1", task: "Docs", status: "running" }],

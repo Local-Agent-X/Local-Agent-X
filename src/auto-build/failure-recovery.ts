@@ -37,9 +37,26 @@ export interface HaltRecord {
   reason: string;
 }
 
+/**
+ * A chunk a run set aside, for the next run to pick up from: the branch its
+ * work was kept on and what the reviews found, oldest first. Each resume used
+ * to rebuild a set-aside chunk from nothing, so it lost the last run's fixes
+ * and met a new finding every time: label-check's chunk 3 was set aside in
+ * four runs, on six branches (2026-11-22). Cleared when the chunk lands.
+ */
+export interface SetAsideRecord {
+  branch?: string;
+  findings: string[];
+}
+
 export interface BuildState {
   haltHistory: HaltRecord[];
+  /** Keyed by chunk number. */
+  setAside?: Record<string, SetAsideRecord>;
 }
+
+const MAX_CARRIED_FINDINGS = 8;
+const CARRIED_FINDING_CHARS = 1_500;
 
 export function statePath(projectDir: string): string {
   return join(projectDir, STATE_FILENAME);
@@ -52,10 +69,45 @@ export function readBuildState(projectDir: string): BuildState {
   try {
     const raw = JSON.parse(readFileSync(p, "utf-8")) as Partial<BuildState>;
     const history = Array.isArray(raw.haltHistory) ? raw.haltHistory : [];
-    return { haltHistory: history.slice(-MAX_HISTORY) };
+    const setAside = raw.setAside && typeof raw.setAside === "object" ? raw.setAside : undefined;
+    return { haltHistory: history.slice(-MAX_HISTORY), ...(setAside ? { setAside } : {}) };
   } catch {
     return { haltHistory: [] };
   }
+}
+
+function writeBuildState(projectDir: string, state: BuildState): void {
+  try {
+    writeFileSync(statePath(projectDir), JSON.stringify(state, null, 2));
+  } catch {
+    // Best-effort — recovery state is auxiliary, not load-bearing.
+  }
+}
+
+/** Record that `chunk` was set aside: where its work is kept and what was found. */
+export function recordSetAside(projectDir: string, chunk: number, branch: string | undefined, finding: string): void {
+  const state = readBuildState(projectDir);
+  const prior = state.setAside?.[chunk];
+  const text = finding.trim().slice(0, CARRIED_FINDING_CHARS);
+  const findings = (prior?.findings.includes(text) ? prior.findings : [...(prior?.findings ?? []), text]).slice(-MAX_CARRIED_FINDINGS);
+  // A run that wrote nothing new keeps the branch the earlier work is on.
+  const kept = branch ?? prior?.branch;
+  state.setAside = { ...state.setAside, [chunk]: { ...(kept ? { branch: kept } : {}), findings } };
+  writeBuildState(projectDir, state);
+}
+
+/** What an earlier run left for `chunk`, if it set the chunk aside. */
+export function setAsideRecordFor(projectDir: string, chunk: number): SetAsideRecord | undefined {
+  return readBuildState(projectDir).setAside?.[chunk];
+}
+
+/** A chunk that landed has nothing left to carry. */
+export function clearSetAside(projectDir: string, chunk: number): void {
+  const state = readBuildState(projectDir);
+  if (!state.setAside?.[chunk]) return;
+  const { [chunk]: _landed, ...rest } = state.setAside;
+  state.setAside = rest;
+  writeBuildState(projectDir, state);
 }
 
 export function appendHalt(projectDir: string, record: Omit<HaltRecord, "at">): void {

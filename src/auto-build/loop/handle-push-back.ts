@@ -50,6 +50,9 @@ export interface HandlePushBackOptions {
   chunkJudge?: ChunkJudge;
   baseProjectDir?: string;
   workerIndex?: number;
+  /** Findings from earlier runs of a set-aside chunk (carry-over.ts), kept
+   *  fixed in every round like this run's own earlier rounds. */
+  earlierFindings?: string[];
 }
 
 export interface HandlePushBackResult {
@@ -135,7 +138,7 @@ async function planRound(opts: HandlePushBackOptions, round: Round): Promise<Rou
 export async function handlePushBack(opts: HandlePushBackOptions): Promise<HandlePushBackResult> {
   const { totalChunks, emit } = opts;
   let round: Round = { chunk: opts.chunk, plan: opts.plan, outcome: opts.outcome };
-  const earlier: string[] = [];
+  const earlier: string[] = [...(opts.earlierFindings ?? [])];
 
   for (let n = 1; ; n++) {
     const next = await planRound(opts, round);

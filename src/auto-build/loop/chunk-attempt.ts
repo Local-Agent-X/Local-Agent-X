@@ -26,6 +26,9 @@ export interface ChunkAttemptInput {
   workTree?: string;
   /** Concurrent-build slot (parallel path): a distinct dev-server port. */
   workerIndex?: number;
+  /** A chunk an earlier run set aside (carry-over.ts): the opening of its
+   *  first brief, and the findings every fix round must keep fixed. */
+  carryOver?: { brief: string; findings: string[] };
 }
 
 export interface ChunkAttemptResult {
@@ -47,9 +50,9 @@ export async function buildChunkWithRetry(a: ChunkAttemptInput): Promise<ChunkAt
 
   const outcome = await runChunkOnce({
     ...shared,
-    retryReason: undefined,
+    retryReason: a.carryOver?.brief,
     priorOutcomes: a.priorOutcomes,
   });
   if (outcome.action !== "push_back") return { finalOutcome: outcome, finalAction: outcome.action };
-  return handlePushBack({ ...shared, outcome });
+  return handlePushBack({ ...shared, outcome, earlierFindings: a.carryOver?.findings });
 }

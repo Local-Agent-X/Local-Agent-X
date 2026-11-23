@@ -54,7 +54,7 @@
 
 import { planWaves } from "../conflict-graph.js";
 import { getHeadSha } from "../git-helpers.js";
-import { appendHalt } from "../failure-recovery.js";
+import { appendHalt, clearSetAside, recordSetAside } from "../failure-recovery.js";
 import { emitLaunchReadiness } from "../loop-effects.js";
 import { createNamedWorktree, mergeWorktree, cleanupWorktree } from "../../agency/worktree.js";
 import type { ParsedChunk } from "../plan-parser.js";
@@ -281,6 +281,7 @@ async function runBatch(ctx: RunContext, batch: ParsedChunk[], chunksCommittedIn
       }
       chunksCommitted++;
       ctx.landedThisRun.push(d.chunk.number);
+      clearSetAside(opts.projectDir, d.chunk.number);
       ctx.phasePauses.landed(r.chunk, r.finalOutcome);
       emit({ type: "commit", chunkNumber: d.chunk.number, totalChunks, message: `Merged chunk ${d.chunk.number} back to base (${res.files} file(s) from '${d.branch}').` });
       emit({
@@ -359,6 +360,7 @@ async function buildChunkOnBaseSerial(ctx: RunContext, chunk: ParsedChunk, chunk
   });
   if (handled.kind === "halt") return { kind: "halt", result: handled.result };
   ctx.landedThisRun.push(chunk.number);
+  clearSetAside(opts.projectDir, chunk.number);
   ctx.phasePauses.landed(chunk, finalOutcome);
   return { kind: "advance", chunksCommitted: handled.chunksCommitted };
 }
@@ -378,6 +380,7 @@ function setChunkAside(ctx: RunContext, r: BuiltChunk): void {
   });
   const gate = r.finalOutcome.findings.find(f => f.action === "halt" || f.action === "push_back")?.gate || "";
   appendHalt(opts.projectDir, { chunk: d.chunk.number, gate, reason: reason.slice(0, 200) });
+  recordSetAside(opts.projectDir, d.chunk.number, kept ? d.branch : undefined, reason);
 }
 
 /** Set aside a chunk that passed its review but whose work could not be merged
@@ -391,6 +394,7 @@ function setAsideUnmerged(ctx: RunContext, d: DispatchedChunk, error: string | u
     message: `Chunk ${d.chunk.number} set aside, the build goes on without it: ${reason.replace(/\s+/g, " ").slice(0, 300)} Work kept on branch '${d.branch}'.`,
   });
   appendHalt(opts.projectDir, { chunk: d.chunk.number, gate: "worktree-merge", reason: reason.slice(0, 200) });
+  recordSetAside(opts.projectDir, d.chunk.number, d.branch, reason);
 }
 
 /** cleanupWorktree, guarded — never let a cleanup error mask the real halt. */

@@ -81,7 +81,10 @@ export function createSignalAuthenticator(deps: SignalAuthDeps): SignalAuthentic
         logger.info(`[broker-transport] pinned the signing key of phone ${state.pairedPhoneId}`);
         return true;
       }
-      if (auth?.pair) logger.warn("[broker-transport] a pairing proof did not check out against the last QR shown");
+      // Only a proof checked against a QR still open has failed. A paired phone
+      // goes on sending the proof it made at scan time, after the one-time
+      // secret is gone; its answer is judged by its pinned key just below.
+      if (auth?.pair && state.pairingSecret) logger.warn("[broker-transport] a pairing proof did not check out against the last QR shown");
       const pinned = pinnedKeyFor(state);
       if (!pinned) return true;
       if (auth && verifySignature(pinned, signalAuthMessage(input), auth.sig)) return true;

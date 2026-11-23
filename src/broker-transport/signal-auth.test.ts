@@ -3,8 +3,13 @@
 // the peer. The phone's half is played here with node:crypto over the same vendored
 // message builders the phone app uses.
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { createHmac, generateKeyPairSync, sign, type KeyObject } from "node:crypto";
+
+const warnings = vi.hoisted(() => [] as string[]);
+vi.mock("../logger.js", () => ({
+  createLogger: () => ({ debug() {}, info() {}, error() {}, warn: (m: string) => { warnings.push(m); } }),
+}));
 import { createSignalAuthenticator, verifySignature, REFUSED_ANSWER_MESSAGE } from "./signal-auth.js";
 import { BrokerVoiceDialer, type VoicePeerLike } from "./broker-voice-dialer.js";
 import { pairingProofMessage, signalAuthMessage, type SignalAuth, type SignalAuthInput } from "./vendor/index.js";
@@ -71,6 +76,25 @@ describe("signal auth — a pairing from before pinning", () => {
     expect(auth.checkAnswer("O", "A", phoneAuth("O", "A", { secret: SECRET }))).toBe(true);
     expect(state().pinnedPhone).toEqual({ deviceId: "phone-9", key: PHONE.raw });
     expect(state().pairingSecret).toBeUndefined(); // one-time
+  });
+
+  // The live log said "a pairing proof did not check out" 52 times in two days:
+  // every reconnect of the already-paired phone, which keeps sending its scan
+  // proof after the desktop has spent the one-time secret.
+  it("a paired phone re-sending its scan proof is accepted by its pinned key, with no warning", () => {
+    const { auth, state } = harness({ pairingSecret: SECRET });
+    expect(auth.checkAnswer("O", "A", phoneAuth("O", "A", { secret: SECRET }))).toBe(true);
+    warnings.length = 0;
+    expect(auth.checkAnswer("O2", "A2", phoneAuth("O2", "A2", { secret: SECRET }))).toBe(true);
+    expect(state().pinnedPhone?.key).toBe(PHONE.raw);
+    expect(warnings).toEqual([]);
+  });
+
+  it("a proof that fails against a QR still open is still warned about", () => {
+    const { auth } = harness({ pairingSecret: SECRET });
+    warnings.length = 0;
+    auth.checkAnswer("O", "A", phoneAuth("O", "A", { secret: Buffer.alloc(32, 1).toString("base64url") }));
+    expect(warnings.some((w) => w.includes("did not check out"))).toBe(true);
   });
 
   it("does not pin a key whose proof used some other secret (a relay can't know the QR's)", () => {

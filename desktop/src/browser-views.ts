@@ -355,6 +355,13 @@ function offstageSize(entry: PoolEntry): { width: number; height: number } {
 
 export function setBrowserViewBounds(viewId: string, bounds: Rectangle): void {
 	const entry = requireEntry(viewId);
+	// A collapsed pane reports a zero-area rect. It hides an attached view, but
+	// it is no geometry: kept as the view's size, every later offstage park
+	// rendered at 1x1 and each screenshot came back a speck.
+	if (bounds.width <= 0 || bounds.height <= 0) {
+		if (attachedId === viewId) entry.view.setBounds(bounds);
+		return;
+	}
 	entry.bounds = bounds;
 	// The renderer reporting its measured anchor rect IS the negotiation.
 	const firstNegotiation = !entry.boundsNegotiated;

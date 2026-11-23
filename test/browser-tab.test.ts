@@ -1212,6 +1212,42 @@ describe("browser-views pool seams (real module)", () => {
     expect(h.offstageHosts.at(-1)!.children).toHaveLength(0);
   });
 
+  it("a collapsed pane's zero-area rect hides the view but is never kept as its size", () => {
+    realViews.createBrowserView("collapse-1", { partition: "persist:lax-profile-default", agentDriven: true });
+    try {
+      const view = realViews.getBrowserView("collapse-1") as unknown as { lastBounds: unknown; visible: boolean | undefined };
+      realViews.showBrowserView("collapse-1");
+      realViews.setBrowserViewBounds("collapse-1", { x: 10, y: 20, width: 900, height: 700 });
+      // The pane collapses while the view is on screen: it is hidden...
+      realViews.setBrowserViewBounds("collapse-1", { x: 0, y: 0, width: 0, height: 0 });
+      expect(view.lastBounds).toEqual({ x: 0, y: 0, width: 0, height: 0 });
+      // ...and parked later at the last real size, so a screenshot is not a speck.
+      realViews.hideBrowserView("collapse-1");
+      expect(view.lastBounds).toEqual({ x: 0, y: 0, width: 900, height: 700 });
+      // A zero rect reported while parked changes nothing.
+      realViews.setBrowserViewBounds("collapse-1", { x: 0, y: 0, width: 0, height: 0 });
+      expect(view.lastBounds).toEqual({ x: 0, y: 0, width: 900, height: 700 });
+    } finally {
+      realViews.closeBrowserView("collapse-1");
+    }
+  });
+
+  it("a zero-area first report is no negotiation: the view stays unpainted until real geometry", () => {
+    realViews.createBrowserView("nv-0", { partition: "persist:lax-profile-default" });
+    try {
+      const view = realViews.getBrowserView("nv-0") as unknown as { lastBounds: unknown; visible: boolean | undefined };
+      realViews.showBrowserView("nv-0");
+      realViews.setBrowserViewBounds("nv-0", { x: 0, y: 0, width: 0, height: 0 });
+      expect(view.visible).toBe(false);
+      const rect = { x: 40, y: 50, width: 600, height: 480 };
+      realViews.setBrowserViewBounds("nv-0", rect);
+      expect(view.lastBounds).toEqual(rect);
+      expect(view.visible).toBe(true);
+    } finally {
+      realViews.closeBrowserView("nv-0");
+    }
+  });
+
   it("never paints before geometry: un-negotiated show is zero-area + hidden, first bounds report reveals", () => {
     // The regression this pins: DEFAULT_BOUNDS (800x600 @ 0,0) is a guess that
     // is correct nowhere — painting it flashed the view in the window corner.

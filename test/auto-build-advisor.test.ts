@@ -253,6 +253,28 @@ describe("chunk-review-push-back situation", () => {
     expect(prompt).toContain("retry-with-hint");
   });
 
+  // label-check chunk 3 (2026-11-23): the worker found two done-when lines
+  // contradicting each other and offered a rule-following fix and one needing
+  // curated NIH sources; the advisor halted and the build stopped.
+  it("tells the advisor to settle a spec contradiction by precedence, on the record, and halt only for what only the user has", () => {
+    const prompt = buildAdvisorPrompt({
+      kind: "chunk-review-push-back",
+      chunk: baseChunk,
+      reviewReason: "Chunk reported STATUS=partial with an explicit SPEC_GAPS entry.",
+      workerReport:
+        "NOTE: partial\nSPEC_GAPS: Three lines (Bacopa, Olive leaf, Rhodiola) must return an empty not-in-data list, but none is in " +
+        "data/interactions.json and the spec says unmatched names go on that list. Option A: add them (needs curated NIH sources). " +
+        "Option B: expect their names in not-in-data.\nDONE_WHEN: unmet",
+      projectDir: "/tmp/proj",
+    });
+    expect(prompt).toContain("Resolve, don't stop");
+    expect(prompt).toContain("the constitution first, then the spec's general rules");
+    expect(prompt).toContain("Never invent such facts");
+    expect(prompt).toContain("Decided during the build:");
+    expect(prompt).toContain("Halt only when every way forward needs something only the user has");
+    expect(prompt).toContain("Option B");
+  });
+
   it("consultAdvisor returns retry-with-hint for push-back", async () => {
     const situation: ChunkReviewPushBackSituation = {
       kind: "chunk-review-push-back",

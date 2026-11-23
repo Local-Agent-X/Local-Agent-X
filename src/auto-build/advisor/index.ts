@@ -193,6 +193,33 @@ function buildPhaseGatePrompt(situation: PhaseGateFailureSituation): string {
   );
 }
 
+/**
+ * The build runs unattended: a halt sets the chunk, and every chunk that waits
+ * on it, aside until a person comes back. label-check's chunk 3 worker found
+ * two of its done-when lines contradicting each other (three supplements had
+ * to be both "unmatched, so listed" and "listed nowhere") and offered two
+ * fixes, one that follows the spec's own rule and one that needs a person to
+ * curate NIH sources. The advisor called it a design decision and halted, and
+ * the build stopped with three chunks waiting (2026-11-23). A contradiction the
+ * spec's own rules settle is the orchestrator's to settle, on the record.
+ */
+export const RESOLVE_DONT_STOP =
+  `## Resolve, don't stop\n\n` +
+  `The build runs unattended. A halt sets this chunk, and every chunk that depends on it, aside ` +
+  `until a person returns, so halting is the last resort.\n\n` +
+  `- When the worker reports a contradiction or a choice between options (SPEC_GAPS, STATUS=partial), ` +
+  `resolve it yourself by precedence: the constitution first, then the spec's general rules (a rule ` +
+  `the done-when states, the product or architecture docs), then a specific example or test line. ` +
+  `The more specific line is the one that was written wrong.\n` +
+  `- An option that needs invented facts (sources, citations, data values, prices, legal text) or a ` +
+  `person to curate something loses to one that follows the existing rules. Never invent such facts.\n` +
+  `- Choose amend-spec-additively. The specAddition starts with "Decided during the build:" and says ` +
+  `what conflicted, which rule wins and why, and exactly what the conflicting lines now expect, so the ` +
+  `worker can finish and the user can see and reverse the call later.\n` +
+  `- Halt only when every way forward needs something only the user has: a credential or account, ` +
+  `money, a fact only a person can supply with no rule-following alternative, or a choice the spec, ` +
+  `constitution and product docs give no basis for and that would be costly to undo.\n\n`;
+
 function buildPushBackPrompt(situation: ChunkReviewPushBackSituation): string {
   const constitution = readConstitution(situation.projectDir);
   return (
@@ -211,10 +238,12 @@ function buildPushBackPrompt(situation: ChunkReviewPushBackSituation): string {
     `- **retry-with-hint** — re-fire the chunk with a sharpened retryHint that focuses the worker ` +
     `on the specific gap. Use when the worker's report shows it misunderstood scope or missed a ` +
     `done-when criterion.\n` +
-    `- **amend-spec-additively** — the spec was ambiguous in a way that caused the failure. ` +
-    `Provide a specAddition that nails the ambiguity. Then the worker re-runs with the clearer spec.\n` +
-    `- **halt** — failure looks fundamental: missing creds, broken dependency, design decision ` +
-    `needed. Halt with haltReason naming what the human must resolve.\n\n` +
+    `- **amend-spec-additively** — the spec was ambiguous, or two of its lines contradict each other, ` +
+    `in a way that caused the failure. Provide a specAddition that settles it. Then the worker re-runs ` +
+    `with the clearer spec.\n` +
+    `- **halt** — only when EVERY way forward needs something only the user has (see below). ` +
+    `Halt with haltReason naming exactly what the user must supply.\n\n` +
+    RESOLVE_DONT_STOP +
     `Hard rules: same as the phase-gate situation — no spec weakening, no test bypassing.\n\n` +
     `Reply with ONE JSON line, nothing else:\n` +
     `{"action": "retry-as-is" | "retry-with-hint" | "amend-spec-additively" | "halt",\n` +

@@ -112,7 +112,12 @@ async function planRound(opts: HandlePushBackOptions, round: Round): Promise<Rou
     const amend = await applyAdditiveSpecAmendment(opts.projectDir, chunk, advice.specAddition);
     if (!amend.ok) return { kind: "halt", reasoning: `additive-diff gate rejected advisor's spec amendment: ${amend.error}` };
     await safeGet(() => commitSpecAmendment(opts.projectDir, chunk));
-    emit({ type: "spec-amended", chunkNumber: chunk.number, totalChunks, message: `advisor amended spec additively before retry` });
+    // The call is made for the user, so it is said in full where the
+    // orchestrator reports from, not only in spec/build-state.md.
+    emit({
+      type: "spec-amended", chunkNumber: chunk.number, totalChunks,
+      message: `advisor amended spec additively before retry (spec/build-state.md): ${advice.specAddition.replace(/\s+/g, " ").slice(0, 600)}`,
+    });
     // The amendment may sharpen the current chunk's Slice/Done when. Reparse
     // before retry so the worker and review gates use the amended contract,
     // not the stale object captured at build kickoff.

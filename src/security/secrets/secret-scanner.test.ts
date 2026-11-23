@@ -1,6 +1,6 @@
 import { describe, it, expect, afterEach } from "vitest";
 import { randomBytes, createHash, generateKeyPairSync } from "node:crypto";
-import { scanForSecrets, redactSecrets, scanKnownSecretValues, matchTier, secretMatchPhrase } from "./secret-scanner.js";
+import { scanForSecrets, redactSecrets, scanKnownSecretValues, matchTier, secretMatchPhrase } from "./secret-scanner.js";
 import { isNameWithCode } from "./entropy-detector.js";
 import { checkOutboundPayload } from "../../tools/http-egress-guard.js";
 import { buildNormalizedView } from "./secret-normalize.js";
@@ -512,6 +512,26 @@ describe("scanForSecrets — Password in URL is scheme-anchored", () => {
 });
 
 // ── Shannon-entropy detector for UNKNOWN (unprefixed) secrets ────────────────
+/**
+ * Bytes from a seeded PRNG (mulberry32), for the tests below that count how
+ * many of thousands of random keys an exemption wrongly clears. Drawn from
+ * `randomBytes` each run, a sample sometimes landed on the bar by chance: the
+ * name-with-code count was 5 against `< 5` on main's Linux runner (2026-11-23)
+ * while the measured rate is under 1 per 50k sample. Seeded, the sample is the
+ * same on every run and machine, and a failure reproduces.
+ */
+function seededBytes(seed: number): (count: number) => Buffer {
+  let a = seed >>> 0;
+  const next = (): number => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return (t ^ (t >>> 14)) >>> 0;
+  };
+  return (count) => Buffer.from(Array.from({ length: count }, () => next() & 0xff));
+}
+
 describe("scanForSecrets — high-entropy detector (positives)", () => {
   // base64url alphabet, no `=` padding, no `-`/`_` runs that would read as a
   // slug. Assembled at runtime so CI's own scanner doesn't flag the diff.
@@ -533,9 +553,10 @@ describe("scanForSecrets — high-entropy detector (positives)", () => {
   // The word-slug exemption must not swallow real keys: a random base64url
   // token split on `-`/`_` almost never has every part read as a word.
   it("flags random base64url tokens that contain - and _ (the word-slug exemption stays narrow)", () => {
+    const bytes = seededBytes(0x5106);
     let missed = 0;
     for (let i = 0; i < 2000; i++) {
-      const token = randomBytes(30).toString("base64url").slice(0, 40);
+      const token = bytes(30).toString("base64url").slice(0, 40);
       if (!/[A-Z]/.test(token) || !/[a-z]/.test(token) || !/[-_]/.test(token)) continue;
       if (scanForSecrets(`value ${token} end`).clean) missed++;
     }
@@ -547,9 +568,10 @@ describe("scanForSecrets — high-entropy detector (positives)", () => {
   // the bound below sits well over the expected ~11 misses in 10k.
   it("flags random letters-only mixed-case tokens (the CamelCase exemption stays narrow)", () => {
     const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+    const bytes = seededBytes(0xca3e1);
     let missed = 0;
     for (let i = 0; i < 10_000; i++) {
-      const token = [...randomBytes(32)].map((b) => letters[b % 52]).join("");
+      const token = [...bytes(32)].map((b) => letters[b % 52]).join("");
       if (scanForSecrets(`value ${token} end`).clean) missed++;
     }
     expect(missed).toBeLessThan(60);
@@ -575,10 +597,11 @@ describe("scanForSecrets — high-entropy detector (positives)", () => {
       "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz",
       "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
     ];
+    const bytes = seededBytes(0x4a3e);
     let missed = 0;
     for (const letters of alphabets) {
       for (let i = 0; i < 25_000; i++) {
-        const token = [...randomBytes(24 + (i % 25))].map((b) => letters[b % letters.length]).join("");
+        const token = [...bytes(24 + (i % 25))].map((b) => letters[b % letters.length]).join("");
         if (isNameWithCode(token)) missed++;
       }
     }

@@ -76,8 +76,8 @@ export const handleHealthRoutes: RouteHandler = async (method, url, req, res) =>
 
   if (url.pathname === "/api/health/providers") {
     try {
-      const { getProviderHealth } = await import("../ops/provider-matrix.js");
-      jsonResponse(res, 200, { providers: getProviderHealth() }, req);
+      const { providerProfiles } = await import("../ops/provider-matrix.js");
+      jsonResponse(res, 200, { providers: providerProfiles() }, req);
     } catch (e) {
       jsonResponse(res, 500, { error: (e as Error).message }, req);
     }

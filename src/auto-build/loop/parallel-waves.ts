@@ -193,7 +193,7 @@ export async function runParallelWaves(input: ParallelWavesContext): Promise<Loo
     const regate = await reGateMergedTree({
       projectDir: opts.projectDir, signal: opts.signal, totalChunks,
       waveIndex: w, lastChunkNumber: wave.chunks[wave.chunks.length - 1].number,
-      chunksCommitted, emit, events, outcomes,
+      chunksCommitted, emit, events, outcomes, opId: opts.parentOpId ?? `auto-build:${opts.projectDir}`,
     });
     if (regate.kind === "halt") return regate.result;
 

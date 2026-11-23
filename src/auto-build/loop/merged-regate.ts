@@ -29,6 +29,7 @@
  */
 
 import { runBuildExecGate } from "../chunk-review/gate-build-exec.js";
+import { installIfBehindLockfile } from "../../agency/worktree-deps.js";
 import { footprintEscapes } from "../conflict-graph.js";
 import { appendHalt } from "../failure-recovery.js";
 import type { ParsedChunk } from "../plan-parser.js";
@@ -52,6 +53,8 @@ export interface ReGateInput {
   emit: EmitFn;
   events: LoopEvent[];
   outcomes: LoopResult["outcomes"];
+  /** The run's op id, for the audit record of the dependency install. */
+  opId: string;
 }
 
 /**
@@ -70,6 +73,26 @@ export interface ReGateInput {
 export async function reGateMergedTree(input: ReGateInput): Promise<ReGateResult> {
   const { projectDir, signal, totalChunks, waveIndex, lastChunkNumber, chunksCommitted, emit, events, outcomes } = input;
   if (signal?.aborted) return { kind: "ok" };
+
+  // Each chunk installed its packages in its own worktree; the merge brought
+  // back only package.json and the lockfile. Build the merged tree on the
+  // packages it names, or the re-gate reports a missing module as a break.
+  const deps = await installIfBehindLockfile(projectDir, input.opId, signal);
+  if (!deps.ok) {
+    const reason =
+      `Integration re-gate could not run after wave ${waveIndex + 1}: the merged chunks changed the project's ` +
+      `dependencies (${deps.behind.join(", ")}) and \`npm ci\` failed in ${projectDir} (${deps.why}). Build HALTED; ` +
+      `run \`npm ci\` there, then resume.`;
+    emit({ type: "halt", chunkNumber: lastChunkNumber, totalChunks, message: reason });
+    appendHalt(projectDir, { chunk: lastChunkNumber, gate: "integration-regate", reason: reason.slice(0, 200) });
+    return { kind: "halt", result: { status: "halted", lastChunk: lastChunkNumber, chunksCommitted, haltReason: reason, outcomes, events } };
+  }
+  if (deps.behind.length > 0) {
+    emit({
+      type: "review-result", chunkNumber: lastChunkNumber, totalChunks,
+      message: `Installed the merged project's dependencies before the re-gate (${deps.behind.join(", ")} changed).`,
+    });
+  }
 
   let finding: Awaited<ReturnType<typeof runBuildExecGate>> = null;
   try {

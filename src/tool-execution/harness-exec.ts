@@ -28,7 +28,7 @@ export interface HarnessCommand {
   timeoutMs: number;
   signal?: AbortSignal;
   /** Who is running this and why — lands in the audit record. */
-  purpose: "build-verify" | "spec-probe" | "structure-check" | "worktree-deps";
+  purpose: "build-verify" | "spec-probe" | "structure-check" | "worktree-deps" | "base-deps";
   /** The op the check belongs to, for the audit record. */
   opId: string;
 }

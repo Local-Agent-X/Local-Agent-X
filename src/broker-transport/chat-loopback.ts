@@ -13,6 +13,12 @@ import type { LoopbackChatSocket } from "./chat-bridge.js";
 export function openBrokerChatLoopback(port: number, operatorToken: string): LoopbackChatSocket {
   const url = `ws://127.0.0.1:${port}/ws/chat?token=${encodeURIComponent(operatorToken)}`;
   const ws = new WebSocket(url);
+  // ws reports a failed or aborted handshake as an 'error' event, a tick after
+  // close() returns, so the try/catch below cannot see it. With no listener it
+  // was an uncaught exception: the phone's chat channel closing before this
+  // socket had opened reached the crash guard (desktop log, 2026-11-22). The
+  // 'close' that follows still tells the bridge the socket is gone.
+  ws.on("error", () => { /* followed by 'close' */ });
   return {
     send: (text) => {
       if (ws.readyState === WebSocket.OPEN) ws.send(text);

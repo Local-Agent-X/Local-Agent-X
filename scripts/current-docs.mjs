@@ -39,6 +39,7 @@ export const currentDocs = [
   "docs/proposals/shell-sandbox-reuse-plan.md",
   "docs/proposals/taint-scoped-to-data-flow.md",
   "docs/proposals/egress-consolidation.md",
+  "docs/proposals/security-modes.md",
   "docs/harness/README.md",
   "docs/harness/LOCAL_MODEL_HARNESS_BRIEF.md",
   "docs/harness/MODEL_AUTO_ADAPT_BRIEF.md",

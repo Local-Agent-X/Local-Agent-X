@@ -133,9 +133,11 @@ describe("key-value credential assignments — declaration vs live secret", () =
     // The asymmetry is deliberate. Masking a placeholder costs nothing; missing a
     // real secret in redaction is a leak. So credential-patterns.ts stays
     // unguarded and must keep redacting a declaration the scorer now ignores.
+    // (An ALL_CAPS_NAME is a name in both, never a value: credential-patterns.ts
+    // namesWhereCredentialLives.)
     const { redact } = await import("../security/secrets/credential-patterns.js");
-    expect(flagged(`apiKey: "YOUR_API_KEY_HERE"`)).toBe(false);
-    expect(redact(`apiKey: "YOUR_API_KEY_HERE"`)).toContain("REDACTED");
+    expect(flagged(`apiKey: "your-api-key-here"`)).toBe(false);
+    expect(redact(`apiKey: "your-api-key-here"`)).toContain("REDACTED");
   });
 });
 

@@ -15,7 +15,7 @@
  * decodedPayloadViews, SecretMatch, ScanResult) is re-exported here unchanged.
  */
 
-import { CREDENTIAL_PATTERNS } from "./credential-patterns.js";
+import { CREDENTIAL_PATTERNS, catalogMatches } from "./credential-patterns.js";
 import { detectHighEntropyTokens } from "./entropy-detector.js";
 import {
   type SecretMatch,
@@ -61,9 +61,7 @@ export function scanForSecrets(text: string): ScanResult {
   const matches: SecretMatch[] = [];
 
   for (const pattern of CREDENTIAL_PATTERNS) {
-    pattern.regex.lastIndex = 0;
-    let match: RegExpExecArray | null;
-    while ((match = pattern.regex.exec(text)) !== null) {
+    for (const match of catalogMatches(pattern, text)) {
       const value = match[1] || match[0];
       // The captured value is the tail of every capturing catalog shape
       // (label, then value), so its last occurrence in the match is its span.

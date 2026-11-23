@@ -17,7 +17,7 @@
  * the payload buys silence; the most it buys is a block of its own payload.
  */
 
-import { CREDENTIAL_PATTERNS } from "./credential-patterns.js";
+import { CREDENTIAL_PATTERNS, catalogMatches, type CredentialPattern } from "./credential-patterns.js";
 import { type CharRun, hexWordRuns, isAnyBase64Char, maximalRuns, paddedClassRuns } from "./char-runs.js";
 
 export interface SecretMatch {
@@ -55,21 +55,18 @@ export function maskSecret(value: string): string {
 // gated by decode round-trips / normalization, never raw prose, and (b) the
 // pattern body itself (`sk-ant-…{20,}`, `AKIA…{16}`, an `eyJ…` JWT triple) is the
 // discriminating signal — the `\b` was a cheap pre-filter, not the security.
-const DERIVED_VIEW_PATTERNS: ReadonlyArray<{ name: string; regex: RegExp }> =
+const DERIVED_VIEW_PATTERNS: ReadonlyArray<Pick<CredentialPattern, "name" | "regex" | "namesNotValue">> =
   CREDENTIAL_PATTERNS.map((p) => ({
     name: p.name,
     regex: new RegExp(p.regex.source.replace(/^\\b/, ""), p.regex.flags),
+    namesNotValue: p.namesNotValue,
   }));
 
 // The first catalog shape a DERIVED view trips, by name: the anchor-relaxed
 // catalog, so a synthetic prefix byte can't hide a key behind a broken `\b`.
 function firstMatchNameDerived(text: string): string | undefined {
   for (const pattern of DERIVED_VIEW_PATTERNS) {
-    pattern.regex.lastIndex = 0;
-    if (pattern.regex.test(text)) {
-      pattern.regex.lastIndex = 0;
-      return pattern.name;
-    }
+    if (!catalogMatches(pattern, text).next().done) return pattern.name;
   }
   return undefined;
 }

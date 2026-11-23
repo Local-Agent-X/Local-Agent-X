@@ -10,7 +10,7 @@
  * encoding handling.
  */
 
-import { CREDENTIAL_PATTERNS } from "./credential-patterns.js";
+import { CREDENTIAL_PATTERNS, catalogMatches } from "./credential-patterns.js";
 import { normalizeHomoglyphs, stripControlChars } from "../../sanitize.js";
 import { knownSecretValues, hasKnownSecretValues } from "./known-secrets.js";
 import {
@@ -96,9 +96,7 @@ export function scanNormalizedView(
 
   const out: SecretMatch[] = [];
   for (const pattern of CREDENTIAL_PATTERNS) {
-    pattern.regex.lastIndex = 0;
-    let match: RegExpExecArray | null;
-    while ((match = pattern.regex.exec(normalized)) !== null) {
+    for (const match of catalogMatches(pattern, normalized)) {
       const ns = match.index;
       const ne = match.index + match[0].length;
       const origStart = outToOrig[ns] ?? ns;

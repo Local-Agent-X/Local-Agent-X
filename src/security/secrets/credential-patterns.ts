@@ -2,7 +2,7 @@
 // Single source of truth for "what counts as a credential" across the codebase.
 // Consumers today:
 //   1. hooks/hook-engine.ts scrubEnv()      → CREDENTIAL_ENV_PREFIXES (env-var NAMES)
-//   2. security/credentials.ts redactCredentials() → CREDENTIAL_KEY_PATTERNS (inline VALUES)
+//   2. security/credentials.ts redactCredentials() → redact() (inline VALUES)
 //   3. security/secret-scanner.ts            → CREDENTIAL_PATTERNS (position-aware scan)
 //
 // Add new credential shapes to CREDENTIAL_PATTERNS, not in the call sites.
@@ -37,6 +37,56 @@ export interface CredentialPattern {
    *  literal `-----BEGIN CERTIFICATE-----` from ever leaving the box would
    *  protect nothing and break every certificate upload. */
   marker?: true;
+  /** The captured value is code naming where the credential lives, not the
+   *  credential. Every scan of the catalog drops such a match (`catalogMatches`). */
+  namesNotValue?: (value: string) => boolean;
+}
+
+/**
+ * Every match of `pattern` in `text` that is a credential: the regex's matches
+ * minus those its `namesNotValue` drops. Every scan of the catalog reads
+ * through this, so the rule is the same for the raw text, its normalized view
+ * and its decoded views.
+ */
+export function* catalogMatches(pattern: Pick<CredentialPattern, "regex" | "namesNotValue">, text: string): Generator<RegExpExecArray> {
+  pattern.regex.lastIndex = 0;
+  let match: RegExpExecArray | null;
+  while ((match = pattern.regex.exec(text)) !== null) {
+    if (!pattern.namesNotValue?.(match[1] || match[0])) yield match;
+  }
+}
+
+// ── A name is not a value ──
+// In code and config, the right side of `token = …` is as often a NAME for the
+// credential as the credential: an environment variable, a property path, a
+// placeholder, a call that fetches it. Masking a name hid it from the agent and
+// registered it as a secret, so every later file or request carrying the name
+// was refused, in every chat, until restart. That refused the write of a TV
+// remote's pairing modules (`pairing.token`, `String(key)`, 2026-11-20) and an
+// app's Firebase setup (`process.env.EXPO_PUBLIC_APPCHECK_DEBUG_TOKEN`, 32
+// characters, past the old 30-letter cap, 2026-11-22). Matched case-sensitively,
+// which the catalog's case-insensitive regex cannot do: `MY_DB_PASSWORD` is a
+// name, `xK9_mQ2…` is not.
+// A name segment: an ALL_CAPS_SNAKE name of any length, or a word of letters
+// with at most three digits at its end (`apiKeyV2`). A token has digits inside
+// its run (`eyJ1Ijoi…`), so a dotted key such as `pk.eyJ1…` is still a value.
+const ENV_NAME = "[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+";
+const NAME_SEGMENT = `(?:${ENV_NAME}|[A-Za-z_$][A-Za-z_$]{0,29}[0-9]{0,3})`;
+const CODE_NAME_RES: readonly RegExp[] = [
+  /^\$\{/, // a template interpolation, ${{ secrets.X }}
+  /^\{\{\s*[\w.-]+\s*\}\}$/, // a {{SECRET_NAME}} placeholder
+  /^\$[A-Za-z_]\w*$/, // a shell variable
+  /^[A-Za-z_$][\w$.]*[([]/, // a call or index: String(key), process.env["X"], os.getenv("X")
+  new RegExp(`^${NAME_SEGMENT}(?:\\.${NAME_SEGMENT})+$`), // a property path
+  new RegExp(`^${ENV_NAME}$`), // an environment variable's name
+];
+
+/** Whether a Key-Value value is a name for the credential rather than the
+ *  credential. The punctuation code closes a value with is not part of it. */
+export function namesWhereCredentialLives(value: string): boolean {
+  const unquoted = value.replace(/^`/, "");
+  const bare = unquoted.replace(/[`;)}\]]+$/, "");
+  return CODE_NAME_RES.some((re) => re.test(bare) || re.test(unquoted));
 }
 
 /**
@@ -188,20 +238,21 @@ export const CREDENTIAL_PATTERNS: readonly CredentialPattern[] = [
   // marker as its value, which was then withheld and registered, and every
   // later command printing that marker was refused (TB2 qemu-alpine-ssh,
   // 2026-10-27).
-  // A value that opens with a template interpolation (`${…}`), a call
-  // (`String(key)`, `encodeURIComponent(saved.token)`) or a property read of
-  // letters-only names (`pairing.token`) is code computing the value, never
-  // the value: these refused the write of a TV remote's pairing modules, three
-  // times (2026-11-20). A token has digits or a long random run, so a
-  // dotted key (`pk.eyJ1…`) is still a value.
-  { type: "generic", name: "Key-Value Secret", regex: new RegExp(`(?:${CREDENTIAL_KEY_NAMES})[ \\t]*[:=][ \\t]*["']?(?!\\$\\{)(?![A-Za-z_$][\\w$.]*\\()(?![A-Za-z_$]{1,30}(?:\\.[A-Za-z_$]{1,30})+(?:[\\s,;)}\\]"']|$))(?=(?:[*•]*[^\\s"',*•]){8})([^\\s"',]{12,})`, "gi") },
+  // A value that is a name for the credential (an environment variable, a
+  // property path, a placeholder, a call) is not the credential: see
+  // namesWhereCredentialLives above.
+  {
+    type: "generic", name: "Key-Value Secret",
+    regex: new RegExp(`(?:${CREDENTIAL_KEY_NAMES})[ \\t]*[:=][ \\t]*["']?(?=(?:[*•]*[^\\s"',*•]){8})([^\\s"',]{12,})`, "gi"),
+    namesNotValue: namesWhereCredentialLives,
+  },
   { type: "generic", name: "Base64 Secret Assignment", regex: /(?:private[_-]?key|client[_-]?secret|signing[_-]?key)[ \t]*[:=][ \t]*["']?([A-Za-z0-9+/=]{40,})/gi },
 ];
 
 /**
  * Flat list of just the regexes, derived from the structured catalog.
- * Kept for the inline-value redactor in security/credentials.ts and the
- * `redact()` helper below — callers that don't need the type/name metadata.
+ * A bare regex does not carry `namesNotValue`: to find credentials, scan
+ * through `catalogMatches` (or call `redact()` / `scanForSecrets`), never these.
  */
 export const CREDENTIAL_KEY_PATTERNS: readonly RegExp[] = CREDENTIAL_PATTERNS.map((p) => p.regex);
 
@@ -240,9 +291,10 @@ export function isMaskedDisplay(value: string): boolean {
  */
 export function redact(text: string): string {
   let result = text;
-  for (const pattern of CREDENTIAL_KEY_PATTERNS) {
-    const p = new RegExp(pattern.source, pattern.flags);
+  for (const pattern of CREDENTIAL_PATTERNS) {
+    const p = new RegExp(pattern.regex.source, pattern.regex.flags);
     result = result.replace(p, (match, captured) => {
+      if (typeof captured === "string" && pattern.namesNotValue?.(captured)) return match;
       if (captured && captured.length > 12) {
         return match.replace(captured, maskValue(captured));
       }

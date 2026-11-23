@@ -16,6 +16,9 @@ import type { Op } from "./types.js";
 const fsReads = vi.hoisted(() => ({ operations: 0 }));
 // Runs after a lock token is written: a test plants a rival claim there.
 const lockWrite = vi.hoisted(() => ({ after: null as (() => void) | null }));
+// How many times the next lock mkdirs are refused, and with which code: Windows
+// refuses one for a moment while the last release's folder is still being deleted.
+const lockMkdir = vi.hoisted(() => ({ refusals: 0, code: "EPERM" }));
 vi.mock("node:fs", async (importActual) => {
   const actual = await importActual<typeof import("node:fs")>();
   return {
@@ -24,6 +27,13 @@ vi.mock("node:fs", async (importActual) => {
       if (typeof path === "string" && path.endsWith("operation.json")) fsReads.operations++;
       return (actual.readFileSync as (...args: unknown[]) => unknown)(path, ...rest);
     }) as typeof actual.readFileSync,
+    mkdirSync: ((path: unknown, ...rest: unknown[]) => {
+      if (typeof path === "string" && path.endsWith("operation.lock") && lockMkdir.refusals > 0) {
+        lockMkdir.refusals--;
+        throw Object.assign(new Error(`${lockMkdir.code}: operation not permitted, mkdir ${path}`), { code: lockMkdir.code });
+      }
+      return (actual.mkdirSync as (...args: unknown[]) => unknown)(path, ...rest);
+    }) as typeof actual.mkdirSync,
     writeFileSync: ((path: unknown, ...rest: unknown[]) => {
       (actual.writeFileSync as (...args: unknown[]) => unknown)(path, ...rest);
       if (typeof path === "string" && /operation\.lock[\\/]/.test(path)) lockWrite.after?.();
@@ -270,6 +280,33 @@ describe("withOpLock — a write never runs unlocked", () => {
 
 // On Windows a release's rmdir can fail while a scanner holds the folder: the
 // token is gone, the directory stays, and its mtime reads as a fresh claim.
+// The Windows runner failed a restart's recovery on one refused mkdir of the
+// lock folder (2026-11-23); a release already retried the same refusals.
+describe("withOpLock — a lock folder Windows refuses for a moment", () => {
+  it("is retried until it can be created, and the write runs", () => {
+    const op = newOpId("lockrefused");
+    writeOp({ id: op, status: "pending" } as unknown as Op);
+    for (const code of ["EPERM", "EBUSY", "EACCES"]) {
+      lockMkdir.code = code;
+      lockMkdir.refusals = 3;
+      expect(withOpLock(op, () => code)).toBe(code);
+      expect(lockMkdir.refusals).toBe(0);
+    }
+  });
+
+  it("still gives up at the deadline when the refusal does not pass", () => {
+    const op = newOpId("lockrefusedforever");
+    writeOp({ id: op, status: "pending" } as unknown as Op);
+    lockMkdir.code = "EPERM";
+    lockMkdir.refusals = Number.MAX_SAFE_INTEGER;
+    try {
+      expect(tryWithOpLock(op, () => "ran", 50)).toEqual({ acquired: false });
+    } finally {
+      lockMkdir.refusals = 0;
+    }
+  });
+});
+
 describe("withOpLock — an empty lock directory is not a claim", () => {
   it("an empty lock left by a failed release no longer blocks for two seconds", () => {
     const id = "op_lock_empty_left";

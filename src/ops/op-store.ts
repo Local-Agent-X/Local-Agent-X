@@ -239,6 +239,14 @@ export function tryWithOpLock<T>(opId: string, fn: () => T, waitMs = LOCK_WAIT_M
       // The directory was reclaimed between mkdir and the token: try again.
       // With no op directory there is no lock to wait for.
       if ((e as NodeJS.ErrnoException).code === "ENOENT" && Date.now() < deadline && existsSync(opDir(opId))) continue;
+      // Windows refuses the mkdir for a moment while the folder of the same
+      // name from the last release is still being deleted (EPERM), or while a
+      // scanner holds it: the same refusals a release retries. Failing on one
+      // failed a restart's recovery on the Windows runner (2026-11-23).
+      if (transientFsRefusal(e) && Date.now() < deadline) {
+        sleepSync(LOCK_RETRY_MS);
+        continue;
+      }
       if ((e as NodeJS.ErrnoException).code !== "EEXIST") {
         logger.warn(`[op-store] cannot create lock for ${opId}: ${(e as Error).message}`);
         cleanupOwnedLock(lockPath, token);
@@ -297,8 +305,9 @@ function soleClaim(lockPath: string, token: string): boolean {
   }
 }
 
-/** A removal Windows refuses for a moment (a scanner or indexer has it open). */
-function transientRemoveError(error: unknown): boolean {
+/** A folder operation Windows refuses for a moment: a scanner or indexer has
+ *  it open, or a folder of that name is still being deleted. */
+function transientFsRefusal(error: unknown): boolean {
   const code = (error as NodeJS.ErrnoException).code;
   return code === "EBUSY" || code === "EPERM" || code === "EACCES";
 }
@@ -306,7 +315,7 @@ function transientRemoveError(error: unknown): boolean {
 function retryRemoval(remove: () => void): void {
   for (let attempt = 0; ; attempt++) {
     try { remove(); return; } catch (e) {
-      if (attempt >= RELEASE_RETRIES || !transientRemoveError(e)) return;
+      if (attempt >= RELEASE_RETRIES || !transientFsRefusal(e)) return;
       sleepSync(LOCK_RETRY_MS);
     }
   }

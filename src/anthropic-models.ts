@@ -42,6 +42,8 @@ export function normalizeAnthropicModel(model: string, mode: AnthropicAuthMode =
   // every account; LAX never replays them (signatures are not kept), so it has
   // nothing to trip.
   if (matchesModelRef(lower, ["claude-fable-5-2", "claude-fable.5.2"]) || lower === "claude-fable-5-2[1m]") return "claude-fable-5-2";
+  // Mythos 5.2 — same price and 1M/128K shape as Fable 5.2 (LiteLLM, 2026-11-23).
+  if (matchesModelRef(lower, ["claude-mythos-5-2", "claude-mythos.5.2"]) || lower === "claude-mythos-5-2[1m]") return "claude-mythos-5-2";
   // Fable 5.1 / Mythos 5.1 — same 1M/128K/always-on shape as their .0 siblings
   // under their own ids. Listed so the dated-snapshot rule can't leave them
   // unnormalized and falling back to the 8K output floor.
@@ -314,7 +316,7 @@ export function anthropicMaxOutputTokens(model: string): number {
   if (matchesModelRef(id, ["claude-haiku-4-5"])) return 64_000;
   if (
     matchesModelRef(id, [
-      "claude-fable-5", "claude-fable-5-1", "claude-fable-5-2", "claude-mythos-5", "claude-mythos-5-1",
+      "claude-fable-5", "claude-fable-5-1", "claude-fable-5-2", "claude-mythos-5", "claude-mythos-5-1", "claude-mythos-5-2",
       "claude-opus-5-5", "claude-opus-5", "claude-sonnet-5-5", "claude-sonnet-5", "claude-haiku-5-5",
       "claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-opus-4-5",
       "claude-sonnet-4-6", "claude-sonnet-4-5",

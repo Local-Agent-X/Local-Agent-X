@@ -109,7 +109,7 @@ export interface ProviderMetaAnthropic {
 export type ProviderMeta = ProviderMetaHttp | ProviderMetaAnthropic;
 
 const ANTHROPIC_MODELS = [
-  "claude-opus-5-5", "claude-opus-5", "claude-mythos-5-1", "claude-mythos-5", "claude-fable-5-2", "claude-fable-5-1", "claude-fable-5",
+  "claude-opus-5-5", "claude-opus-5", "claude-mythos-5-2", "claude-mythos-5-1", "claude-mythos-5", "claude-fable-5-2", "claude-fable-5-1", "claude-fable-5",
   "claude-sonnet-5-5", "claude-haiku-5-5", "claude-sonnet-5", "claude-opus-4-8", "claude-opus-4-7", "claude-sonnet-4-6", "claude-opus-4-6", "claude-haiku-4-5",
   "claude-sonnet-4-5", "claude-opus-4-5",
 ];
@@ -151,12 +151,8 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
       "grok-4.20-0309-reasoning",
       "grok-4.20-0309-non-reasoning",
       "grok-4.20-multi-agent-0309",
-      // Coding-specialist models — selectable so the app-builder can run on a
-      // model trained for agentic coding instead of the generalist grok-4.3.
-      // resolveBuildModel honors whatever's selected, so picking one here drives
-      // the build path. grok-code-fast-1, its old name, was retired by xAI on
-      // 2026-05-15 (LiteLLM deprecation_date; the pricing recheck went red).
-      "grok-build-0.1",
+      // No coding specialist: grok-build-0.1 (grok-code-fast-1 before it) was
+      // retired by xAI on 2026-11-19 (LiteLLM deprecation_date).
     ],
     // Multi-agent/heavy tier: served via a deferred (async) completion flow,
     // not the streaming /chat/completions path the chat adapter drives, so it
@@ -180,11 +176,12 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     // gpt-5-pro, gpt-5.5-pro) are Responses-API-only per their model pages, so
     // they are priced but not offered — the chat adapter cannot drive them.
     models: [
+      "gpt-6.2-sol", "gpt-6.2-astra", "gpt-6.2-astra-law", "gpt-6-astra-law", "gpt-6-rosalind",
       "gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
       "gpt-5.4-nano", "gpt-5.2", "gpt-5.1", "gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-4o", "gpt-4o-mini", "o3-pro",
     ],
-    // o3-pro shuts down 2026-12-11; OpenAI names gpt-5.6-sol its replacement.
-    defaultModel: "gpt-5.6-sol",
+    // The newest Sol, as on the subscription lane (2026-11-23).
+    defaultModel: "gpt-6.2-sol",
     // Non-reasoning: the reasoning defaults hide their think server-side, so a
     // long think streams nothing and the idle watchdog can't tell it from a
     // hang. gpt-4o-mini has no hidden think to stall on.
@@ -198,12 +195,17 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     transport: "http",
     id: "codex",
     label: "OpenAI Codex",
-    // What a ChatGPT plan serves, as its /models lists it (2026-10-26); the
+    // What a ChatGPT plan serves, as its /models lists it (2026-10-26; the
+    // gpt-6.2 pair and the -law / rosalind variants added 2026-11-23 from
+    // OpenAI's pricing page, which lists them for ChatGPT too); the
     // runtime catalog (model-catalog.ts) tracks changes between releases.
     // gpt-5.5, gpt-5.4 and gpt-5.4-mini are refused on a plan ("not supported
     // when using Codex with a ChatGPT account").
-    models: ["gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"],
-    defaultModel: "gpt-6.1-sol",
+    models: [
+      "gpt-6.2-sol", "gpt-6.2-astra", "gpt-6.2-astra-law", "gpt-6-astra-law", "gpt-6-rosalind",
+      "gpt-6.1-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6-luna", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna",
+    ],
+    defaultModel: "gpt-6.2-sol",
     backgroundModel: "gpt-6-luna",
     // Codex uses ChatGPT OAuth via getApiKey(); chat-runner routes it
     // through its own adapter, not openai-compat. baseURL here is the
@@ -253,7 +255,10 @@ export const PROVIDERS: Record<ProviderId, ProviderMeta> = {
     // 3.1 Pro the only Pro; the 2.5 line is "limited access, not for new
     // projects"; gemini-3-pro-preview and gemini-2.0-flash are shut down.
     models: [
+      "gemini-4-neon",
+      "gemini-4-carbon",
       "gemini-4-argon",
+      "gemini-4-hydrogen",
       "gemini-3.1-pro-preview",
       "gemini-2.5-pro",
       "gemini-3.8-flash",

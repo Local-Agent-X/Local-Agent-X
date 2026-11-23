@@ -2,7 +2,8 @@ import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import {
-  applyWindowDrift, compareWindows, findSourceWindow, formatTokens, parseWindowRows, sameWindow, upstreamModelsMissing, upstreamRetired,
+  applyWindowDrift, compareWindows, findSourceWindow, formatTokens, parseWindowRows, partitionDeclined, sameWindow, upstreamModelsMissing,
+  upstreamRetired,
 } from "../scripts/model-windows-drift.mjs";
 
 // A slice of LiteLLM's model_prices_and_context_window.json shape, as of the
@@ -30,6 +31,11 @@ const SOURCE = {
   "gemini/gemini-3.5-flash": { litellm_provider: "gemini", mode: "chat", max_input_tokens: 1_048_576 },
   "gemini/gemini-3-pro-image": { litellm_provider: "gemini", mode: "chat", max_input_tokens: 65_536 },
   "vertex_ai/gemini-3-pro-preview": { litellm_provider: "vertex_ai", mode: "chat", max_input_tokens: 1_048_576 },
+  // What a ChatGPT plan serves (the codex lane): no price, Responses mode.
+  "chatgpt/gpt-5.6": { litellm_provider: "chatgpt", mode: "responses", max_input_tokens: 922_000 },
+  "chatgpt/gpt-5.4": { litellm_provider: "chatgpt", mode: "responses", max_input_tokens: 1_050_000 },
+  "chatgpt/gpt-5.3-codex": { litellm_provider: "chatgpt", mode: "responses", max_input_tokens: 272_000 },
+  "chatgpt/gpt-5.2": { litellm_provider: "chatgpt", mode: "responses", max_input_tokens: 272_000, deprecation_date: "2026-08-31" },
 };
 
 const TABLE = [
@@ -130,6 +136,54 @@ describe("upstream models LAX does not list", () => {
     expect(upstreamModelsMissing(SOURCE, known, { providers: ["xai"], today: "2026-09-27" })).toEqual([
       { provider: "xai", id: "grok-4.7", maxInput: 500_000 },
     ]);
+  });
+
+  // The subscription lane had no check at all: OpenAI shipped gpt-6.2 to
+  // ChatGPT plans and nothing compared the plan's lineup with the codex list.
+  it("checks what a ChatGPT plan serves against the subscription lane's own list", () => {
+    // gpt-5.4 is on the API list (in `known`) but not the codex lane: still a gap.
+    expect(upstreamModelsMissing(SOURCE, new Set(["gpt-5.6"]), { providers: ["chatgpt"], today: "2026-09-27" })).toEqual([
+      { provider: "chatgpt", id: "gpt-5.4", maxInput: 1_050_000 },
+    ]);
+  });
+
+  it("leaves chatgpt rows out of the first-party default", () => {
+    const providers = upstreamModelsMissing(SOURCE, known, { today: "2026-09-27" }).map((m) => m.provider);
+    expect(providers).not.toContain("chatgpt");
+  });
+});
+
+describe("unlisted models a human declined", () => {
+  const missing = [
+    { provider: "chatgpt", id: "gpt-5.4", maxInput: 1_050_000 },
+    { provider: "openai", id: "gpt-5.4-pro", maxInput: 1_050_000 },
+  ];
+  const declined = {
+    "chatgpt:gpt-5.4": "a plan refuses the gpt-5.4 family",
+    "chatgpt:gpt-5.1": "gone",
+    "gemini:gemini-9": "not checked this run",
+  };
+
+  it("keeps only undecided models open, and carries the reason on the declined ones", () => {
+    const out = partitionDeclined(missing, declined, ["openai", "chatgpt"]);
+    expect(out.open).toEqual([{ provider: "openai", id: "gpt-5.4-pro", maxInput: 1_050_000 }]);
+    expect(out.declined).toEqual([{ provider: "chatgpt", id: "gpt-5.4", maxInput: 1_050_000, reason: "a plan refuses the gpt-5.4 family" }]);
+  });
+
+  it("names decline entries that match nothing, only for the providers checked", () => {
+    expect(partitionDeclined(missing, declined, ["openai", "chatgpt"]).stale).toEqual(["chatgpt:gpt-5.1"]);
+  });
+});
+
+describe("the shipped decline list", () => {
+  const file = fileURLToPath(new URL("../scripts/upstream-models-declined.json", import.meta.url));
+  const list = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+
+  it("keys every entry <provider>:<id> with a non-empty reason", () => {
+    for (const [key, reason] of Object.entries(list)) {
+      expect(key, key).toMatch(/^(anthropic|openai|gemini|xai|chatgpt):\S+$/);
+      expect(typeof reason === "string" && reason.trim().length > 0, key).toBe(true);
+    }
   });
 });
 

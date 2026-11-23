@@ -10,13 +10,16 @@
  * (scripts/model-windows-drift.mjs) — and WARNS on drift; price rows it can't
  * match keep the date check — a WARN once PRICES_VERIFIED_AT is past the
  * staleness window. The same file lists what the providers serve, so the check
- * also reports first-party chat models upstream that LAX's registry, window
- * table and price table all lack (WARN only: a human reviews a new release).
+ * also reports chat models upstream that LAX does not list: first-party models
+ * that the registry, window table and price table all lack, and models a
+ * ChatGPT plan serves (LiteLLM's `chatgpt/` rows) that the codex lane lacks.
+ * Each one is red under --strict until it is listed or recorded, with its
+ * reason, in scripts/upstream-models-declined.json.
  * Offline, every row falls back to the date check; the build never fails or
  * hangs on the network (8s timeout).
- *   --strict  exit non-zero on price or window drift, or an unreachable model
- *             file (the weekly CI job; a red run is the alert). The build stays
- *             warn-only.
+ *   --strict  exit non-zero on price or window drift, a retired or an unlisted
+ *             model, or an unreachable model file (the weekly CI job; a red run
+ *             is the alert). The build stays warn-only.
  *   --apply   rewrite drifted price rows in src/pricing/model-prices.ts and
  *             drifted window rows in src/context-manager/model-windows.ts in
  *             place, for a developer to review and commit. Never used by the
@@ -31,7 +34,9 @@ import { dirname, join } from "node:path";
 import {
   applyDrift, comparePrices, fetchPriceSource, parseDefaultCacheRead, parsePriceRows, LITELLM_PRICES_URL,
 } from "./pricing-drift.mjs";
-import { applyWindowDrift, compareWindows, parseWindowRows, upstreamModelsMissing, upstreamRetired } from "./model-windows-drift.mjs";
+import {
+  applyWindowDrift, compareWindows, parseWindowRows, partitionDeclined, upstreamModelsMissing, upstreamRetired,
+} from "./model-windows-drift.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const STRICT = process.argv.includes("--strict");
@@ -44,6 +49,8 @@ const WINDOW_FILE = "src/context-manager/model-windows.ts";
 // with no single authoritative rate, so they're exempt (priced best-effort).
 const METERED = ["xai", "openai", "codex", "anthropic", "anthropic-api", "gemini"];
 const STALE_DAYS = 90;
+const DECLINED_FILE = "scripts/upstream-models-declined.json";
+const UPSTREAM_PROVIDERS = ["anthropic", "openai", "gemini", "xai", "chatgpt"];
 
 const registry = readFileSync(join(root, "src/providers/registry.ts"), "utf8");
 const priceTable = readFileSync(join(root, PRICE_FILE), "utf8");
@@ -173,6 +180,7 @@ if (!source) {
 let windowSummary = "windows unchecked";
 let windowFailure = false;
 let retiredFailure = false;
+let unlistedFailure = false;
 if (source) {
   const windows = compareWindows(parseWindowRows(modelWindows), source);
   for (const d of windows.drift) {
@@ -191,15 +199,26 @@ if (source) {
   windowFailure = windows.drift.length > 0;
   windowSummary = `${windows.matched.length} windows match LiteLLM, ${windows.drift.length} drifted, ${windows.pinned.length} pinned, ${windows.unmatched.length} unmatched`;
 
-  // New releases: first-party chat models the providers serve that LAX lists
-  // nowhere. WARN only — a registry entry needs a price, a window and a human.
+  // New releases: chat models the providers serve that LAX lists nowhere, and
+  // models a ChatGPT plan serves that the codex lane lacks. Red under --strict
+  // until listed (with a price and a window) or declined with a reason; a WARN
+  // that nothing failed on sat unread while OpenAI shipped five (2026-11-23).
   const known = new Set([...registryModels, ...ctxKeys, ...priced]);
   const today = new Date().toISOString().slice(0, 10);
-  const fresh = upstreamModelsMissing(source, known, { providers: ["anthropic", "openai", "gemini", "xai"], today });
-  if (fresh.length > 0) {
-    console.warn(`check-pricing-coverage: WARN — ${fresh.length} upstream models LAX does not list (review for src/providers/registry.ts, with a price and a window):`);
-    for (const m of fresh) console.warn(`  - ${m.provider}: ${m.id}${m.maxInput ? ` (max_input_tokens ${m.maxInput})` : ""}`);
+  const unlisted = [
+    ...upstreamModelsMissing(source, known, { today }),
+    ...upstreamModelsMissing(source, new Set(modelsFor("codex")), { providers: ["chatgpt"], today }),
+  ];
+  const declinedList = JSON.parse(readFileSync(join(root, DECLINED_FILE), "utf8"));
+  const review = partitionDeclined(unlisted, declinedList, UPSTREAM_PROVIDERS);
+  if (review.open.length > 0) {
+    console.warn(`check-pricing-coverage: UNLISTED — ${review.open.length} upstream models LAX does not list (add each to src/providers/registry.ts with a price and a window, or record why not in ${DECLINED_FILE}; "chatgpt" means the codex lane):`);
+    for (const m of review.open) console.warn(`  - ${m.provider}: ${m.id}${m.maxInput ? ` (max_input_tokens ${m.maxInput})` : ""}`);
   }
+  if (review.stale.length > 0) {
+    console.warn(`check-pricing-coverage: WARN — ${DECLINED_FILE} entries that no longer match an unlisted model (remove them): ${review.stale.join(", ")}`);
+  }
+  unlistedFailure = review.open.length > 0;
   // Retirements: a row whose provider has retired the model (LiteLLM's
   // deprecation_date has passed). Red under --strict, like drift.
   const retired = upstreamRetired(source, known, today);
@@ -220,8 +239,8 @@ if (ctxMissing.length > 0) {
 }
 
 const ctxCovered = total - ctxMissing.length;
-const failed = (rateFailure || windowFailure || retiredFailure) && (STRICT || (APPLY && !source));
+const failed = (rateFailure || windowFailure || retiredFailure || unlistedFailure) && (STRICT || (APPLY && !source));
 console.log(
-  `check-pricing-coverage: ${failed ? "FAIL" : "OK"} (${total} metered models priced, ${ctxCovered}/${total} with exact context window, ${rateSummary}, ${windowSummary}, verified ${verifiedAt ?? "unknown"})`,
+  `check-pricing-coverage: ${failed ? "FAIL" : "OK"} (${total} metered models priced, ${ctxCovered}/${total} with exact context window, ${rateSummary}, ${windowSummary}, ${unlistedFailure ? "unlisted upstream models" : "no unlisted upstream models"}, verified ${verifiedAt ?? "unknown"})`,
 );
 if (failed) process.exit(1);

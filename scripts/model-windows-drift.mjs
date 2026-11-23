@@ -116,22 +116,28 @@ export function applyWindowDrift(text, drift) {
 // dated snapshots, betas and modality variants (tts, image, audio, realtime,
 // embeddings) that are not chat models LAX would list; a candidate is a
 // current-generation chat id the registry could add as-is.
+const openaiCandidate = (id) => /^(gpt-[5-9]|o[3-9])/.test(id)
+  && !/-\d{4}-\d{2}-\d{2}$|chat-latest|codex|search|audio|realtime|tts|transcri|image|cyber|^ft:/.test(id);
 const CANDIDATE_FILTERS = {
   anthropic: (id) => /^claude-(opus|sonnet|haiku|fable|mythos)-\d/.test(id) && !/-\d{8}$/.test(id),
-  openai: (id) => /^(gpt-[5-9]|o[3-9])/.test(id)
-    && !/-\d{4}-\d{2}-\d{2}$|chat-latest|codex|search|audio|realtime|tts|transcri|image|cyber|^ft:/.test(id),
+  openai: openaiCandidate,
   gemini: (id) => /^gemini-\d/.test(id)
     && !/tts|image|embedding|live|audio|computer-use|robotics|customtools|-\d{2}-\d{2}$/.test(id),
   xai: (id) => /^grok-/.test(id) && !/beta|experimental|latest|gv2|image|vision|-\d{4}$/.test(id),
+  // LiteLLM's `chatgpt/` rows: what a ChatGPT plan serves (the codex lane).
+  chatgpt: openaiCandidate,
 };
+const FIRST_PARTY_UPSTREAM = ["anthropic", "openai", "gemini", "xai"];
 
 /**
- * First-party chat models upstream that `known` (the registry's ids plus the
- * window and price tables' keys) lacks, per provider — the "sooner than later"
- * nudge to review new releases. Deprecated ids (deprecation_date on or before
- * `today`, ISO date) are skipped. Returns [{ provider, id, maxInput }].
+ * Chat models upstream that `known` lacks, per provider — the "sooner than
+ * later" nudge to review new releases. By default the first-party providers,
+ * against the registry's ids plus the window and price tables' keys; pass
+ * `providers: ["chatgpt"]` with one lane's ids to check what a ChatGPT plan
+ * serves. Deprecated ids (deprecation_date on or before `today`, ISO date) are
+ * skipped. Returns [{ provider, id, maxInput }].
  */
-export function upstreamModelsMissing(source, known, { providers = Object.keys(CANDIDATE_FILTERS), today } = {}) {
+export function upstreamModelsMissing(source, known, { providers = FIRST_PARTY_UPSTREAM, today } = {}) {
   const out = [];
   const seen = new Set();
   for (const [key, entry] of Object.entries(source)) {
@@ -146,6 +152,25 @@ export function upstreamModelsMissing(source, known, { providers = Object.keys(C
     out.push({ provider, id, maxInput: typeof entry.max_input_tokens === "number" ? entry.max_input_tokens : null });
   }
   return out.sort((a, b) => a.provider.localeCompare(b.provider) || a.id.localeCompare(b.id));
+}
+
+/**
+ * Split upstreamModelsMissing's result by the reviewed decline list
+ * (`{ "<provider>:<id>": "<reason>" }`): `open` still needs a decision,
+ * `declined` was looked at and left out on purpose, and `stale` names decline
+ * entries for `providers` that no longer match anything, so the list shrinks.
+ */
+export function partitionDeclined(missing, declined, providers) {
+  const open = [];
+  const kept = [];
+  const hit = new Set();
+  for (const m of missing) {
+    const key = `${m.provider}:${m.id}`;
+    if (Object.prototype.hasOwnProperty.call(declined, key)) { kept.push({ ...m, reason: declined[key] }); hit.add(key); }
+    else open.push(m);
+  }
+  const stale = Object.keys(declined).filter((k) => providers.includes(k.split(":")[0]) && !hit.has(k)).sort();
+  return { open, declined: kept, stale };
 }
 
 /**

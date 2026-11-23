@@ -36,6 +36,7 @@ export const PRICING: Record<string, ModelPricing> = {
   "claude-fable-5": { input: 10, output: 50 },
   "claude-fable-5-1": { input: 10, output: 50, cacheRead: 0.025 },
   "claude-fable-5-2": { input: 8, output: 40, cacheRead: 0.025 }, // $0.20/MTok cache reads; Claude API reference 2026-11-03
+  "claude-mythos-5-2": { input: 8, output: 40, cacheRead: 0.025 }, // $0.20/MTok cache reads; platform.claude.com pricing via LiteLLM 2026-11-23
   "claude-mythos-5-1": { input: 10, output: 50, cacheRead: 0.025 },
   "claude-mythos-5": { input: 10, output: 50 }, // platform.claude.com models overview 2026-09-27: reads at the standard 10%
   "claude-opus-5-5": { input: 4, output: 20, cacheRead: 0.05 },
@@ -70,8 +71,15 @@ export const PRICING: Record<string, ModelPricing> = {
   // these numbers, so the cap under-counts on those requests. Do not "fix" this
   // by inflating the base rate — that over-charges the common case; it needs a
   // tiered shape, tracked separately.
+  // gpt-6.2 pair and domain variants: developers.openai.com/api/docs/pricing
+  // via LiteLLM, read 2026-11-23 (cached in $0.10 / $0.40 / $1).
+  "gpt-6.2-astra-law": { input: 8, output: 40, cacheRead: 0.05 },
+  "gpt-6.2-astra": { input: 8, output: 40, cacheRead: 0.05 },
+  "gpt-6.2-sol": { input: 2, output: 10, cacheRead: 0.05 },
   "gpt-6.1-sol": { input: 2, output: 10, cacheRead: 0.05 },
+  "gpt-6-astra-law": { input: 10, output: 50 },
   "gpt-6-astra": { input: 10, output: 50 },
+  "gpt-6-rosalind": { input: 10, output: 50 },
   "gpt-6-sol": { input: 2, output: 10 },
   "gpt-6-luna": { input: 0.1, output: 0.5 },
   "gpt-5.6-sol": { input: 4, output: 20 },
@@ -113,11 +121,15 @@ export const PRICING: Record<string, ModelPricing> = {
   "grok-4.20-multi-agent": { input: 1.25, output: 2.5, cacheRead: 0.16 },
   "grok-4.20": { input: 1.25, output: 2.5, cacheRead: 0.16 },
   "grok-code-fast": { input: 1, output: 2, cacheRead: 0.2 },
-  "grok-build-0.1": { input: 1, output: 2, cacheRead: 0.2 }, // x.ai/api, verified 2026-09-27
   // Gemini (≤200k context tier — ai.google.dev/gemini-api/docs/pricing, read
   // 2026-09-27). 3.6 / 3.7 / 3.8 Flash are promotional through 2026-12-31 and
   // double on 2027-01-01 — recheck then.
+  // gemini-4 neon / carbon / hydrogen: aistudio.google.com/docs/pricing via
+  // LiteLLM, read 2026-11-23.
+  "gemini-4-neon": { input: 3, output: 15, cacheRead: 0.05 },
+  "gemini-4-carbon": { input: 2, output: 10, cacheRead: 0.05 },
   "gemini-4-argon": { input: 2, output: 10, cacheRead: 0.05 },
+  "gemini-4-hydrogen": { input: 1.5, output: 7.5, cacheRead: 0.05 },
   "gemini-3.1-pro-preview": { input: 2, output: 12 },
   "gemini-2.5-pro": { input: 1.25, output: 10 },
   "gemini-3.8-flash": { input: 0.75, output: 3.75 },

@@ -1,0 +1,6 @@
+{
+  "chatgpt:gpt-5.2": "Older generation; absent from a ChatGPT plan's /models on 2026-10-26, which is what the codex list mirrors. Offered on the API lane.",
+  "chatgpt:gpt-5.3-instant": "Older generation, 128k window; absent from a ChatGPT plan's /models on 2026-10-26.",
+  "chatgpt:gpt-5.4-pro": "A plan refuses the gpt-5.4 family ('not supported when using Codex with a ChatGPT account', 2026-10-26).",
+  "chatgpt:gpt-6.1-terra": "Served on a plan (window probe 2026-10-31) but OpenAI publishes no API price, and every codex row needs one for spend estimates; the live catalog still shows it to a signed-in user."
+}

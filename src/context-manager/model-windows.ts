@@ -23,9 +23,16 @@ const MODEL_CONTEXTS: Record<string, number> = {
   // gpt-6.1-terra, gpt-6-luna, gpt-5.6-sol, gpt-5.6-terra and gpt-5.6-luna
   // each served 899,314 and closed at 950K. 922,000 = the 1,050,000 window
   // minus the 128,000 output reservation, the same on every one of them.
+  // gpt-6.2 and the -law / rosalind variants: same 1,050,000 / 128,000 page
+  // figures (LiteLLM 922,000 input, 2026-11-23), not yet probed live.
+  "gpt-6.2-astra-law": 922_000,
+  "gpt-6.2-astra": 922_000,
+  "gpt-6.2-sol": 922_000,
   "gpt-6.1-sol": 922_000,
   "gpt-6.1-terra": 922_000,
+  "gpt-6-astra-law": 922_000,
   "gpt-6-astra": 922_000,
+  "gpt-6-rosalind": 922_000,
   "gpt-6-sol": 922_000,
   "gpt-6-luna": 922_000,
   "gpt-5.6": 922_000,      // bare alias routes to Sol
@@ -48,16 +55,14 @@ const MODEL_CONTEXTS: Record<string, number> = {
   "gpt-4o-mini": 128_000,
   "o3-pro": 200_000,
   // xAI — docs.x.ai/docs/models, read 2026-09-27: grok-4.7 / 4.6 500k;
-  // grok-4.5 / 4.3 / 4.20 1M; grok-build-0.1 256k (its old name
-  // grok-code-fast-1 was retired 2026-05-15). The undated grok-4.20 ids and
-  // grok-code-fast are LiteLLM-only aliases of the dated rows.
+  // grok-4.5 / 4.3 / 4.20 1M. The undated grok-4.20 ids and grok-code-fast
+  // are LiteLLM-only aliases of the dated rows.
   // Probed 2026-10-31 (tmp/window-probe-xai.ts over the SuperGrok sign-in,
   // logs in reports/): grok-4.5 refuses 983,199 tokens with "input_too_large
   // … > 500000 tokens", so it is 500k on the lane whatever the docs page says
   // (LiteLLM had it right); grok-4.6 served 491,248 and refused 509,853 (">
   // 500000"); grok-4.3 served 994,453; grok-4.20-0309-reasoning and
-  // -non-reasoning served ~992,700 and refused ~1,013,500 ("> 1000000");
-  // grok-build-0.1 served 248,563 and refused 268,434 ("> 256000"); grok-4.7
+  // -non-reasoning served ~992,700 and refused ~1,013,500 ("> 1000000"); grok-4.7
   // was probed 2026-10-26 (476,817 served, 500,834 refused).
   "grok-4.7": 500_000,
   "grok-4.6": 500_000,
@@ -71,7 +76,6 @@ const MODEL_CONTEXTS: Record<string, number> = {
   "grok-4.20-multi-agent": 1_000_000,
   "grok-4.20": 1_000_000,
   "grok-code-fast": 256_000,
-  "grok-build-0.1": 256_000,
   // Anthropic — the Models API / model catalog rates every model from Opus 4.6
   // and Sonnet 4.6 on at 1M (LiteLLM agrees). Opus 4.5, Sonnet 4.5 and Haiku
   // 4.5 are 200k: Sonnet 4.5's 1M was a beta-header feature LAX never sends.
@@ -79,6 +83,7 @@ const MODEL_CONTEXTS: Record<string, number> = {
   "claude-fable-5": 1_000_000,
   "claude-fable-5-1": 1_000_000,
   "claude-fable-5-2": 1_000_000,
+  "claude-mythos-5-2": 1_000_000,
   "claude-mythos-5-1": 1_000_000,
   "claude-mythos-5": 1_000_000,
   "claude-sonnet-5-5": 1_000_000,
@@ -100,7 +105,10 @@ const MODEL_CONTEXTS: Record<string, number> = {
   "claude-opus-5-5[1m]": 1_000_000,
   // Gemini — ai.google.dev model pages, read 2026-09-27: "Input token limit
   // 1,048,576" for every listed Pro and Flash model (LiteLLM: the same figure).
+  "gemini-4-neon": 1_048_576,
+  "gemini-4-carbon": 1_048_576,
   "gemini-4-argon": 1_048_576,
+  "gemini-4-hydrogen": 1_048_576,
   "gemini-3.1-pro-preview": 1_048_576,
   "gemini-2.5-pro": 1_048_576,
   "gemini-3.8-flash": 1_048_576,

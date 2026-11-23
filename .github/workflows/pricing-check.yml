@@ -6,9 +6,11 @@ name: Pricing recheck
 # a model we list (or the file became unreachable). Fix by confirming on the
 # provider's pricing/model page, then `node scripts/check-pricing-coverage.mjs
 # --apply` locally, review the diff and commit — or `// pin:` a window row the
-# provider's docs contradict LiteLLM on. The run also lists first-party chat
-# models the providers serve that LAX does not (a WARN, never red): review
-# them for the registry. This job never commits or opens PRs.
+# provider's docs contradict LiteLLM on. A model the providers serve that LAX
+# does not list (first-party, or on a ChatGPT plan for the codex lane) is red
+# too: add it to the registry with a price and a window, or record why not in
+# scripts/upstream-models-declined.json. So is a listed model the provider has
+# retired. This job never commits or opens PRs.
 
 on:
   schedule:

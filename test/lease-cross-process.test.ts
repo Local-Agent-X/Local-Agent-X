@@ -65,21 +65,41 @@ function runAction(dataDir: string, action: "heartbeat" | "release", opId: strin
   });
 }
 
+// The 24 contenders start at once, each a new Node process loading the lease
+// code through tsx: about 3.7 s alone on the Windows runner, and far longer
+// with 24 loading together. A fixed 10 s wait for all of them failed main
+// there with every child still starting (2026-11-23). The wait now lasts as
+// long as the children are still on their way, ends at once if one dies first,
+// and the children are always stopped when the test gives up.
+const CONTENDERS = 24;
+const GATE_BUDGET_MS = 90_000;
+
 describe("lease acquisition across real processes", () => {
   it("elects exactly one fresh owner and fences old same-owner generations", async () => {
     const { dataDir, opId, gateDir } = makePersistedOp();
-    const owners = Array.from({ length: 24 }, (_, index) => `worker-${index}`);
+    const owners = Array.from({ length: CONTENDERS }, (_, index) => `worker-${index}`);
     const children = owners.map(owner => spawn(
       process.execPath,
       ["--import=tsx", fixture, "acquire", opId, owner, "0", gateDir],
       { cwd: process.cwd(), env: childEnv(dataDir), windowsHide: true },
     ));
-    const completions = children.map(collect);
+    const exited = new Map<number, string>();
+    const completions = children.map((child, index) => collect(child).then((out) => {
+      exited.set(index, out.stderr);
+      return out;
+    }));
 
-    const readyDeadline = Date.now() + 10_000;
-    while (owners.some(owner => !exists(join(gateDir, `ready-${owner}`)))) {
-      if (Date.now() >= readyDeadline) throw new Error("children did not reach lease gate");
-      await new Promise(resolve => setTimeout(resolve, 10));
+    try {
+      const readyDeadline = Date.now() + GATE_BUDGET_MS;
+      while (owners.some(owner => !exists(join(gateDir, `ready-${owner}`)))) {
+        const early = owners.findIndex((owner, index) => exited.has(index) && !exists(join(gateDir, `ready-${owner}`)));
+        if (early >= 0) throw new Error(`${owners[early]} exited before the lease gate: ${exited.get(early)}`);
+        if (Date.now() >= readyDeadline) throw new Error("children did not reach lease gate");
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+    } catch (e) {
+      for (const child of children) child.kill();
+      throw e;
     }
     writeFileSync(join(gateDir, "go"), "go");
     const outputs = await Promise.all(completions);
@@ -106,7 +126,7 @@ describe("lease acquisition across real processes", () => {
       leaseOwner: winner.owner,
       leaseGeneration: winner.generation,
     });
-  }, 30_000);
+  }, GATE_BUDGET_MS + 30_000);
 });
 
 function exists(path: string): boolean {

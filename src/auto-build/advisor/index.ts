@@ -178,8 +178,10 @@ function buildPhaseGatePrompt(situation: PhaseGateFailureSituation): string {
     `- **amend-spec-additively** — the spec is missing a constraint that, if encoded, would catch ` +
     `this class of failure. Provide a specAddition that ADDS a constraint without weakening any ` +
     `existing rule. The additive-diff gate will reject non-additive edits.\n` +
-    `- **halt** — the failure is ambiguous, requires a design decision, or attempt 2 already failed. ` +
-    `Provide a haltReason listing what the human needs to decide.\n\n` +
+    `- **halt** — only when EVERY way forward needs something only the user has (see below), or ` +
+    `attempt 2 already failed with no different fix path. Provide a haltReason naming exactly what ` +
+    `the user must supply.\n\n` +
+    RESOLVE_DONT_STOP +
     `## Hard rules\n\n` +
     `1. You CANNOT weaken the constitution to make a scenario pass.\n` +
     `2. You CANNOT propose deleting or relaxing existing spec constraints.\n` +
@@ -207,8 +209,8 @@ export const RESOLVE_DONT_STOP =
   `## Resolve, don't stop\n\n` +
   `The build runs unattended. A halt sets this chunk, and every chunk that depends on it, aside ` +
   `until a person returns, so halting is the last resort.\n\n` +
-  `- When the worker reports a contradiction or a choice between options (SPEC_GAPS, STATUS=partial), ` +
-  `resolve it yourself by precedence: the constitution first, then the spec's general rules (a rule ` +
+  `- When a report shows a contradiction or a choice between options (a worker's SPEC_GAPS or ` +
+  `STATUS=partial, a scenario that fails because two spec lines disagree), resolve it yourself by precedence: the constitution first, then the spec's general rules (a rule ` +
   `the done-when states, the product or architecture docs), then a specific example or test line. ` +
   `The more specific line is the one that was written wrong.\n` +
   `- An option that needs invented facts (sources, citations, data values, prices, legal text) or a ` +

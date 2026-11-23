@@ -275,6 +275,17 @@ describe("chunk-review-push-back situation", () => {
     expect(prompt).toContain("Option B");
   });
 
+  // One rule for every unattended decision: the phase-gate advisor resolves a
+  // contradiction the same way, and no longer halts on "a design decision".
+  it("the phase-gate advisor carries the same rule", () => {
+    const prompt = buildAdvisorPrompt({
+      kind: "phase-gate-scenario-failure", chunk: baseChunk, failedReports: [], passedReports: [], projectDir: "/tmp/proj", attemptNumber: 1,
+    });
+    expect(prompt).toContain("Resolve, don't stop");
+    expect(prompt).toContain("Decided during the build:");
+    expect(prompt).not.toContain("requires a design decision");
+  });
+
   it("consultAdvisor returns retry-with-hint for push-back", async () => {
     const situation: ChunkReviewPushBackSituation = {
       kind: "chunk-review-push-back",

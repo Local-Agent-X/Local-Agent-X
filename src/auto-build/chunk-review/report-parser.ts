@@ -142,8 +142,10 @@ function normalizeListText(text: string): string {
   return t;
 }
 
+/** "none", or "none" with the reason after it ("none (DSLD needs no key)"):
+ *  read as an item, the reason set label-check's chunk 7 aside (2026-11-22). */
 function isNoneLike(t: string): boolean {
-  return /^(none|—|-|n\/a|nothing|null)$/i.test(t.trim());
+  return /^(none|—|-|n\/a|nothing|null)(\s*[(:;,.—–-].*)?$/i.test(t.trim());
 }
 
 /** The worker's own words (NOTE / SPEC_GAPS), formatted to travel WITH a

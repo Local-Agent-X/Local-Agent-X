@@ -234,8 +234,9 @@ export function gatePhaseGate(
  * Doesn't halt by default — launch-readiness items are valid and expected.
  * But: any item must have a concrete "how to verify" step, not just
  * "test in staging." If LAUNCH_READINESS text is non-empty but lacks
- * concrete verb-phrases (set/run/assert/stand up/complete/verify) → halt
- * and ask the user to sharpen the item.
+ * concrete verb-phrases (set/run/assert/stand up/complete/verify) → the
+ * worker sharpens it (push_back): it wrote the item, it can say how to check
+ * it.
  */
 export function gateLaunchReadiness(report: ChunkReport): GateFinding | null {
   const text = report.launchReadiness.trim();
@@ -246,7 +247,7 @@ export function gateLaunchReadiness(report: ChunkReport): GateFinding | null {
   if (!concreteVerbRe.test(text)) {
     return {
       gate: "launch-readiness",
-      action: "halt",
+      action: "push_back",
       reasoning:
         `LAUNCH_READINESS item lacks a concrete verify step. Each item must name how to verify it before launch ` +
         `(e.g. "set X env, run Y test, assert Z"), not just "test in staging". ` +

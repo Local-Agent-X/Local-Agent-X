@@ -223,8 +223,8 @@ describe("Bookwell fixture: chunk-clean-proceed → proceed", () => {
   });
 });
 
-describe("Bookwell fixture: chunk-6 silent deferral → halt", () => {
-  it("halts when DONE_WHEN: met but NOTE says 'launch-readiness deferred'", () => {
+describe("Bookwell fixture: chunk-6 silent deferral → back to the worker", () => {
+  it("sends the chunk back when DONE_WHEN: met but NOTE says 'launch-readiness deferred'", () => {
     const f = loadFixture("chunk-06-silent-deferral.json");
     const chunk = chunkFromFixture(f);
     const outcome = runChunkReview({
@@ -233,7 +233,7 @@ describe("Bookwell fixture: chunk-6 silent deferral → halt", () => {
       plan: emptyPlan(chunk),
       rawReport: f.agentReport,
     });
-    expect(outcome.action).toBe("halt");
+    expect(outcome.action).toBe("push_back");
     expect(outcome.reasoning.toLowerCase()).toMatch(/deferr|integration test|silent/);
     const fired = outcome.findings.find(g => g.gate === "done-when");
     expect(fired).toBeDefined();
@@ -305,7 +305,7 @@ describe("Bookwell fixture: chunk-12 stale-data gap → mechanical proceed, amen
     expect(outcome.action).toBe("proceed");
   });
 
-  it("hook is NOT called when the mechanical verdict is already halt", async () => {
+  it("hook is NOT called when the mechanical verdict already sends the chunk back", async () => {
     const f = loadFixture("chunk-06-silent-deferral.json");
     const chunk = chunkFromFixture(f);
     let hookCalled = false;
@@ -320,7 +320,7 @@ describe("Bookwell fixture: chunk-12 stale-data gap → mechanical proceed, amen
       rawReport: f.agentReport,
       projectDir: "/tmp/unused",
     }, trackingHook);
-    expect(outcome.action).toBe("halt");
+    expect(outcome.action).toBe("push_back");
     expect(hookCalled).toBe(false);
   });
 
@@ -430,13 +430,34 @@ describe("Done-when gate edge cases", () => {
     expect(gateDoneWhen(baseChunk, r)!.action).toBe("halt");
   });
 
-  it("halts on deferred-to-launch-readiness when done-when names a mechanical contract", () => {
+  it("sends a deferral of a mechanical contract back to the worker to run it", () => {
     const r = parseChunkReport(
       "STATUS: done\nDONE_WHEN: deferred-to-launch-readiness\nCHANGED: x.ts\nTESTS: 5/5\n" +
       "NEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\n" +
       "LAUNCH_READINESS: integration test needs real creds; set X env then run pnpm test Y\nNOTE: ok"
     );
-    expect(gateDoneWhen(baseChunk, r)!.action).toBe("halt");
+    const f = gateDoneWhen(baseChunk, r)!;
+    expect(f.action).toBe("push_back");
+    expect(f.reasoning).toContain("Run every check the done-when names");
+  });
+
+  // label-check chunk 7 (2026-11-22): the plan told the worker to leave the
+  // live API call for launch, and the gate set the chunk aside for doing so,
+  // three runs in a row.
+  it("passes a deferral the done-when itself orders", () => {
+    const chunk = {
+      ...baseChunk,
+      doneWhen:
+        "standardize() calls GET https://api.example.org/search and returns a name. Tests use the committed fixture. " +
+        "Do not call the live API. Report this in LAUNCH_READINESS: \"Live check: GET returns 200 (run by the orchestrator before launch).\"",
+    };
+    const r = parseChunkReport(
+      "STATUS: done\nDONE_WHEN: deferred-to-launch-readiness\nCHANGED: client.ts\nTESTS: 132/132\n" +
+      "NEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\n" +
+      "LAUNCH_READINESS: Live check: run GET https://api.example.org/search?q=x and assert it returns 200 (run by the orchestrator before launch)\nNOTE: ok"
+    );
+    expect(gateDoneWhen(chunk, r)).toBeNull();
+    expect(gateLaunchReadiness(r)).toBeNull();
   });
 
   it("permits 'met' when NOTE has no contradictory phrases", () => {
@@ -459,13 +480,23 @@ describe("Launch-readiness gate", () => {
     expect(gateLaunchReadiness(r)).toBeNull();
   });
 
-  it("halts on a vague launch-readiness item", () => {
+  it("sends a vague launch-readiness item back to the worker to sharpen", () => {
     const r = parseChunkReport(
       "STATUS: done\nDONE_WHEN: met\nCHANGED: x.ts\nTESTS: 5/5\nNEW_FAILURES: none\n" +
       "PRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\n" +
       "LAUNCH_READINESS: something about staging at some point.\nNOTE: clean"
     );
-    expect(gateLaunchReadiness(r)!.action).toBe("halt");
+    expect(gateLaunchReadiness(r)!.action).toBe("push_back");
+  });
+
+  // label-check chunk 7's first set-aside: "none (DSLD needs no key)" read as a vague item.
+  it("reads 'none' with an explanation after it as no item", () => {
+    const r = parseChunkReport(
+      "STATUS: done\nDONE_WHEN: met\nCHANGED: x.ts\nTESTS: 5/5\nNEW_FAILURES: none\n" +
+      "PRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\n" +
+      "LAUNCH_READINESS: none (DSLD needs no key)\nNOTE: clean"
+    );
+    expect(gateLaunchReadiness(r)).toBeNull();
   });
 });
 
@@ -645,12 +676,12 @@ describe("Missing-credentials recovery (the no-Supabase-keys class)", () => {
     expect(f).toBeNull(); // sanctioned deferral — gateLaunchReadiness enforces concreteness
   });
 
-  it("still halts a mechanical deferral with no credential story", () => {
+  it("still refuses a mechanical deferral with no credential story, and sends it back to run", () => {
     const f = gateDoneWhen(
       chunkFromFixture(loadFixture("chunk-06-silent-deferral.json")),
       report("done", "Ran out of steam on the tests.", "verify later", "deferred-to-launch-readiness")
     )!;
-    expect(f.action).toBe("halt");
+    expect(f.action).toBe("push_back");
     expect(f.reasoning).toContain("silent-deferral");
   });
 });
@@ -731,7 +762,7 @@ describe("build-exec gate: observed failure overrides a clean report", () => {
     expect(outcome.action).toBe("proceed");
   });
 
-  it("does NOT run when the mechanical verdict is already halt", async () => {
+  it("does NOT run when the mechanical verdict already sends the chunk back", async () => {
     const f = loadFixture("chunk-06-silent-deferral.json");
     const chunk = chunkFromFixture(f);
     let execCalled = false;
@@ -740,7 +771,7 @@ describe("build-exec gate: observed failure overrides a clean report", () => {
       { chunk, allChunks: [chunk], plan: emptyPlan(chunk), rawReport: f.agentReport, projectDir: "/tmp/unused" },
       undefined, undefined, trackingExec,
     );
-    expect(outcome.action).toBe("halt");
+    expect(outcome.action).toBe("push_back");
     expect(execCalled).toBe(false);
   });
 });

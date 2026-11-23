@@ -11,14 +11,15 @@
  *  (b) DONE_WHEN == "unmet" or "unknown" → halt
  *  (c) DONE_WHEN == "deferred-to-launch-readiness" but the chunk's
  *      plan-level done-when names an "integration test" or specific
- *      observable behavior (not a launch-time concern) → halt; this is
- *      the chunk-6 silent-deferral pattern. EXCEPTION: a deferral whose
- *      LAUNCH_READINESS names the missing credentials is the sanctioned
- *      missing-creds path; gateLaunchReadiness still enforces concreteness.
+ *      observable behavior (not a launch-time concern) → push_back: run it;
+ *      this is the chunk-6 silent-deferral pattern. EXCEPTIONS: a deferral
+ *      the done-when itself orders (it names LAUNCH_READINESS or "before
+ *      launch"), and one whose LAUNCH_READINESS names the missing
+ *      credentials; gateLaunchReadiness still enforces concreteness.
  *  (d) STATUS == "done", DONE_WHEN == "met", BUT the NOTE body contains
  *      a contradictory phrase ("deferred", "stub", "todo", "follow up",
  *      "didn't run") indicating the structured field is too optimistic
- *      → halt. This catches the chunk-6 case even when the agent
+ *      → push_back: run it. This catches the chunk-6 case even when the agent
  *      mis-fills the structured field.
  */
 
@@ -71,17 +72,24 @@ export function gateDoneWhen(chunk: ParsedChunk, report: ChunkReport): GateFindi
     };
   }
 
-  // (c) Silent deferral pattern — see the header. The cred carve-out lets a
-  // deferral through only when LAUNCH_READINESS names the credentials.
+  // (c) Silent deferral pattern — see the header. A deferral passes when the
+  // plan itself orders it (the done-when names launch-readiness: "report this
+  // in LAUNCH_READINESS … run before launch") or when LAUNCH_READINESS names
+  // the missing credentials; gateLaunchReadiness still enforces concreteness.
+  // Any other deferral of a check the worker can run goes BACK to the worker
+  // to run it: setting the chunk aside on the spot threw away label-check's
+  // chunk 7, deferred because its plan said to, three runs in a row, and its
+  // chunk 9, whose worker had run and passed every check it named
+  // (2026-11-22).
   if (report.doneWhen === "deferred-to-launch-readiness") {
     const isMechanicalContract = /\b(integration test|unit test|asserts?|returns?|test|passes?)\b/i.test(chunk.doneWhen);
-    if (isMechanicalContract && !CRED_TERM.test(report.launchReadiness)) {
+    if (isMechanicalContract && !planOrdersDeferral(chunk.doneWhen) && !CRED_TERM.test(report.launchReadiness)) {
       return {
         gate: "done-when",
-        action: "halt",
+        action: "push_back",
         reasoning:
           `Chunk's done-when ("${truncate(chunk.doneWhen, 120)}") names a mechanical verification, ` +
-          `but the report defers it to launch-readiness. This is the silent-deferral pattern — halt and surface to the user.`,
+          `but the report defers it to launch-readiness (the silent-deferral pattern). ${RUN_IT_HERE}${workerWords(report)}`,
       };
     }
   }
@@ -106,16 +114,28 @@ export function gateDoneWhen(chunk: ParsedChunk, report: ChunkReport): GateFindi
       if (note.includes(phrase)) {
         return {
           gate: "done-when",
-          action: "halt",
+          action: "push_back",
           reasoning:
-            `Report says DONE_WHEN: met but NOTE contains "${phrase}". ` +
-            `The structured field contradicts the prose — treat this as a silent deferral and halt.`,
+            `Report says DONE_WHEN: met but NOTE contains "${phrase}": the structured field contradicts the prose ` +
+            `(a silent deferral). ${RUN_IT_HERE}`,
         };
       }
     }
   }
 
   return null;
+}
+
+/** What the worker is sent back to do about a deferral it was not told to make. */
+const RUN_IT_HERE =
+  `Run every check the done-when names that can run on this machine (tests, builds, compiles, a public API call) ` +
+  `and report DONE_WHEN: met once they pass. Put in LAUNCH_READINESS only what truly cannot run here (a real ` +
+  `device, a third-party account or credential this machine does not have), each with how to verify it.`;
+
+/** The plan's own done-when tells the worker to leave part of it for launch:
+ *  it names LAUNCH_READINESS, or a check run "before launch". */
+function planOrdersDeferral(doneWhen: string): boolean {
+  return /\bLAUNCH[_ -]READINESS\b|\bbefore launch\b/i.test(doneWhen);
 }
 
 function truncate(s: string, n: number): string {

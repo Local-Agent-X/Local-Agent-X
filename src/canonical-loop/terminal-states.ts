@@ -7,9 +7,6 @@
  * agent, control-api) all need to recognise that set; before this file each
  * redeclared its own `new Set([...])` locally — different files, identical
  * contents, durable drift hazard (F13).
- *
- * The companion `Run` contract in `src/agents/run.ts` re-exports `TerminalState`
- * so persistence and Handler call sites use the same vocabulary.
  */
 
 export const TERMINAL_STATES = ["succeeded", "failed", "cancelled"] as const;

@@ -42,7 +42,6 @@ IS_WIN src x2
 KOKORO_VOICES src x2
 launchApp src x2
 listDevices src x2
-listProviders src x2
 loadStore src x2
 logger src x2
 MS_PER_DAY src x3
@@ -63,7 +62,6 @@ RegistryEntry src x2
 RegressionAuditProviderOverride src x2
 release src x2
 REPEAT_WINDOW_MS src x2
-resetCircuit src x2
 resolveConflicts src x2
 RestoreResult src x3
 ReviewVerdict src x2
@@ -78,7 +76,6 @@ slugify src x2
 startConfigWatcher src x2
 startHeartbeat src x2
 statePath src x3
-TERMINAL_STATUSES src x2
 ToolCall src x2
 ToolCallContext src x2
 TrustLevel src x2

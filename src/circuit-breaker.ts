@@ -158,14 +158,6 @@ export function resetAllCircuits(): void {
   breakers.clear();
 }
 
-/** Reset every breaker for a (session, tool) pair — all call signatures. */
-export function resetCircuit(sessionId: string | undefined, toolName: string): void {
-  const prefix = `${sessionId || "default"}::${toolName}::`;
-  for (const k of breakers.keys()) {
-    if (k.startsWith(prefix)) breakers.delete(k);
-  }
-}
-
 /** Snapshot of breakers that are currently open or half-open. */
 export function getCircuitSnapshot(): Array<{ key: string; state: BreakerState; consecutiveFailures: number; totalTrips: number }> {
   const out: Array<{ key: string; state: BreakerState; consecutiveFailures: number; totalTrips: number }> = [];

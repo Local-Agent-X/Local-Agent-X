@@ -34,17 +34,6 @@ export { GeminiEmbeddings } from "./gemini.js";
 export { OllamaEmbeddings } from "./ollama.js";
 export { LocalEmbeddings } from "./local.js";
 
-const PROVIDER_NAMES: EmbeddingProviderType[] = [
-  "openai",
-  "gemini",
-  "ollama",
-  "local",
-];
-
-export function listProviders(): string[] {
-  return [...PROVIDER_NAMES];
-}
-
 /**
  * Create an embedding provider based on configuration.
  * Falls back to 'local' if no API key is provided and the requested provider needs one.

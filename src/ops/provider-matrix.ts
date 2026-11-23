@@ -36,10 +36,6 @@ export function registerProvider(caps: ProviderRuntimeProfile): void {
   logger.info(`[provider-matrix] registered ${caps.id} (${caps.label}, maxConcurrent=${caps.maxConcurrent})`);
 }
 
-export function listProviders(): ProviderRuntimeProfile[] {
-  return [...REGISTRY.values()];
-}
-
 export function getProvider(id: string): ProviderRuntimeProfile | undefined {
   return REGISTRY.get(id);
 }

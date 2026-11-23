@@ -191,7 +191,12 @@ async function rewriteWorktreePaths(ctx: ToolCallContext): Promise<void> {
   const { tc, args, sessionId } = ctx;
   if (!sessionId) return;
   try {
-    let wtPath = ctx.security.fenceOf(sessionId)?.worktree;
+    // A files-only fence (the chunk skeptic's probe folder) bounds where file
+    // tools write; it is not where the run works, so paths stay anchored at the
+    // session's work root. Anchored at the fence, the skeptic's reads of
+    // src/… opened .skeptic/src/… (label-check, 2026-11-23).
+    const fence = ctx.security.fenceOf(sessionId);
+    let wtPath = fence?.filesOnly ? undefined : fence?.worktree;
     if (!wtPath && sessionId.startsWith("agent-")) {
       const { getWorktreePath } = await import("../agency/worktree.js");
       wtPath = getWorktreePath(sessionId.slice(6));

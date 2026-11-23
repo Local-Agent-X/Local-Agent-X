@@ -128,7 +128,7 @@ export class AppRegistry {
       // Corrupted app definition surfaces to the caller as "not found",
       // which then shows "App not found" / "Access denied" in the UI —
       // very confusing when the file exists but is unreadable. Log so
-      // a corrupted JSON in ~/.lax/apps/<id>/def.json is debuggable.
+      // a corrupted JSON in ~/.lax/apps/<id>/definition.json is debuggable.
       logger.warn(`failed to parse app definition ${id}: ${(e as Error).message}`);
       return null;
     }

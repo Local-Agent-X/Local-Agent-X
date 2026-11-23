@@ -6,10 +6,10 @@
  * agent reported "No apps created yet".
  *
  * Three sources, in precedence order (first to claim an id wins):
- *   1. Registry apps      — ~/.lax/apps/<id>/def.json (LAX-native app definitions).
+ *   1. Registry apps      — ~/.lax/apps/<id>/definition.json (LAX-native app definitions).
  *   2. Workspace HTML apps — workspace/apps/<id>/index.html with no registry def.
  *   3. Full-stack apps     — a workspace app with a persisted dev-server record
- *      but NEITHER a def.json NOR a root index.html (Next.js / Vite / a real
+ *      but NEITHER a definition.json NOR a root index.html (Next.js / Vite / a real
  *      backend). Without this pass those apps are invisible in the grid despite
  *      being fully built — their only on-disk marker is the dev-server record.
  *
@@ -137,7 +137,7 @@ export function buildAppList(deps: AppListDeps): AppListEntry[] {
     } catch (e) { logger.warn("[apps] workspace scan error:", (e as Error).message); }
   }
 
-  // Pass 3: full-stack apps — a dev-server record but no def.json and no root
+  // Pass 3: full-stack apps — a dev-server record but no definition.json and no root
   // index.html (skipped by both passes above). The workspace dir mtime is the
   // "updated" time; the folder name is the title. URL is the reverse-proxy
   // route with NO trailing slash: a Next.js app sets basePath: "/apps/<id>", and

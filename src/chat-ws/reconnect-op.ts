@@ -89,7 +89,8 @@ export async function handleReconnectOp(ws: WebSocket, sessionId: string, opId: 
     // already-streamed content and the bubble would visibly duplicate
     // the response. Live failure 2026-05-19: same sentence appearing
     // 2-3× stacked inside one bubble; fixed on chat-leave+return
-    // because renderMessages rebuilds from op_messages (single copy).
+    // because the chat is then reloaded from the saved session
+    // (routes/session-read.ts), which holds a single copy.
     //
     // AND it must be exactly ONE replace for the whole op. A multi-
     // iteration turn (text → tool → more text) commits N assistant

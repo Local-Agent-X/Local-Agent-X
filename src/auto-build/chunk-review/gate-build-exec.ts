@@ -27,6 +27,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { runCaged, type CagedRunOutcome } from "../../tools/caged-spawn.js";
+import { cagedFailureNotice } from "../../tools/caged-failure-notice.js";
 import { nodeScriptArgv, npmCommandArgv } from "../../tools/program-argv.js";
 import { structureCheckCommand, structureWarningNote } from "../../app-scaffold/project-kit.js";
 import { smokeUrl } from "../scenario-scorer/smoke.js";
@@ -193,7 +194,10 @@ export const runBuildExecGate: BuildExecRunner = async (input) => {
         reasoning:
           `\`${command}\` exited ${result.outcome.code} — the report claimed done but the command actually FAILS. ` +
           `This is the "says fixed but isn't" case; do not trust the report's TESTS line. ` +
-          `Output tail: ${truncate(result.outputTail, 500) || "(none)"}`,
+          `Output tail: ${truncate(result.outputTail, 500) || "(none)"}` +
+          // The cage, not the project: a test refused its own database or a
+          // local model over loopback (tools/caged-failure-notice.ts).
+          cagedFailureNotice(result.outcome),
       };
     }
     if (command === structure) {

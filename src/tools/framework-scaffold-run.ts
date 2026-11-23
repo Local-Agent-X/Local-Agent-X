@@ -9,6 +9,7 @@
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { runCaged, type CagedRunOutcome } from "./caged-spawn.js";
+import { cagedFailureNotice } from "./caged-failure-notice.js";
 import { npmCommandArgv } from "./program-argv.js";
 import type { DetectedFramework } from "./framework-detect.js";
 import {
@@ -131,5 +132,5 @@ async function runScaffoldCommand(
   }
   if (outcome.kind === "abort") throw new Error(`scaffold step was stopped: ${command}`);
   if (outcome.kind === "timeout") throw new Error(`scaffold step timed out after ${Math.round(SCAFFOLD_STEP_TIMEOUT_MS / 1000)}s: ${command}`);
-  if (outcome.code !== 0) throw new Error(`scaffold step exited ${outcome.code}: ${command}${outcome.stderr.trim() ? `\n${outcome.stderr.trim().slice(-800)}` : ""}`);
+  if (outcome.code !== 0) throw new Error(`scaffold step exited ${outcome.code}: ${command}${outcome.stderr.trim() ? `\n${outcome.stderr.trim().slice(-800)}` : ""}${cagedFailureNotice(outcome)}`);
 }

@@ -14,6 +14,7 @@ import { join, resolve } from "node:path";
 import type { DetectedFramework } from "./framework-detect.js";
 import { staticBuildCommand } from "./app-run-target.js";
 import { runCaged, type CagedRunOutcome } from "./caged-spawn.js";
+import { cagedFailureNotice } from "./caged-failure-notice.js";
 import { npmCommandArgv } from "./program-argv.js";
 
 // A production bundle (esbuild/rollup over the whole tree) is quick relative to
@@ -101,7 +102,7 @@ async function runBuildCommand(
 	if (outcome.kind === "timeout") {
 		throw Object.assign(new Error(`static build timed out after ${Math.round(STATIC_BUILD_TIMEOUT_MS / 1000)}s: ${command}${tail}`), { timedOut: true });
 	}
-	if (outcome.code !== 0) throw new Error(`static build exited ${outcome.code}: ${command}${tail}`);
+	if (outcome.code !== 0) throw new Error(`static build exited ${outcome.code}: ${command}${tail}${cagedFailureNotice(outcome)}`);
 }
 
 // ── Staleness ────────────────────────────────────────────────────────────────

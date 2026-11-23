@@ -273,3 +273,23 @@ export function loopbackRefusalHint(
     : "the guarded shell runs in its own network namespace and only registered local service ports are bridged into it; the user can add the port to \"localServicePorts\" in their security settings (~/.lax/security.json) — you cannot edit that file — or you can use the native http_request tool for an HTTP API";
   return `[sandbox: loopback port ${port} refused inside the bash network cage (mode "guarded") — a service IS listening on it on this machine; ${route}. This is the sandbox, not the service being down. If the user needs the shell to reach it directly, they can change the sandbox mode in Settings → Security (or LAX_SANDBOX=host); offer that rather than disabling it yourself.]`;
 }
+
+/**
+ * Every cage notice a failed command's output earns, in the order to read
+ * them: a denied file, then a denied connection, then a refused loopback port
+ * that is listening on the host. One list for every caged run (the shell tool,
+ * a build's own commands), so a command the cage stopped never reads as a
+ * broken project or a dead service just because of which tool ran it.
+ */
+export function cageDenialNotices(
+  mode: SandboxMode,
+  output: string,
+  listening: (port: number) => boolean | null,
+  platform: NodeJS.Platform = process.platform,
+): string[] {
+  return [
+    sandboxDenialHint(mode, output),
+    networkDenialHint(mode, output, platform),
+    loopbackRefusalHint(mode, output, listening, platform),
+  ].filter((notice): notice is string => notice !== null);
+}

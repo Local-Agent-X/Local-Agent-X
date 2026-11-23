@@ -1,6 +1,6 @@
 import type { ServerEvent, ToolDefinition, ToolResult } from "../types.js";
 import type { SandboxMode } from "../sandbox/types.js";
-import { getSandboxMode, execInSandbox, sandboxDenialHint, networkDenialHint, loopbackRefusalHint } from "../sandbox/index.js";
+import { getSandboxMode, execInSandbox, cageDenialNotices } from "../sandbox/index.js";
 import { isPortBound } from "./process-session.js";
 import { ok, err, blocked, timeout as timeoutResult } from "./result-helpers.js";
 import { detectTargetShell, translateForShell, powershellCmdletHint, quotedGlobHint, windowsPathHint, workspacePrefixHint } from "./shell-translate.js";
@@ -122,16 +122,12 @@ function failureNotices(run: {
     // `workspace/x` in a command is `<workspace>/workspace/x` — the file tools
     // forgive that prefix, bash cannot; say so instead of "No such file".
     workspacePrefixHint(stderr, cwd, undefined, command) ?? quotedGlobHint(command),
-    // If the kernel cage (guarded/seatbelt/bwrap) denied a credential dir, the
-    // bare "Operation not permitted" reads as a mystery — name the sandbox + the
-    // off switch so the agent reports it right instead of flailing.
-    sandboxDenialHint(sandboxMode, out),
-    // Same seam for NETWORK denials: the cage's connect-EPERM otherwise reads
-    // as "host is down" and the agent reports a lie. File hint first, then net.
-    networkDenialHint(sandboxMode, out),
-    // A refused loopback port that is listening on the host is the cage too
-    // (Windows, Linux): otherwise the agent restarts a database that is fine.
-    loopbackRefusalHint(sandboxMode, out, isPortBound),
+    // What the kernel cage did to the command. A denied credential dir reads as
+    // a mystery "Operation not permitted", a denied connect as "host is down",
+    // and a refused loopback port as a dead database: each notice names the
+    // sandbox and the way through, so the agent reports it right (file first,
+    // then network, then loopback; sandbox/denial-hints.ts).
+    ...cageDenialNotices(sandboxMode, out, isPortBound),
     // A vendor CLI that fails may have moved past the pinned skill that
     // told the agent to run it (protocols/vendor-drift.ts).
     vendorDriftHint(command, code, stderr),

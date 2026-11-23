@@ -10,7 +10,7 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { atomicWriteFileSync } from "../util/json-store.js";
 import {
   activeWorktrees, git, gitAsync, logger, MAX_PENDING_RECOVERED_WORKTREES,
-  pendingRecoveredWorktrees, type WorktreeEntry, WORKTREE_BASE, worktreeSlotAvailable,
+  pendingRecoveredWorktrees, type WorktreeEntry, WORKTREE_BASE, worktreeRemoveArgs, worktreeSlotAvailable,
 } from "./worktree-core.js";
 import { unlinkAllShallowReparsePoints } from "./worktree-junctions.js";
 import { reapAppOwnWorktrees } from "./worktree-boot-sweep.js";
@@ -283,7 +283,7 @@ async function disposeRegistered(record: OwnershipRecord, base: string): Promise
   if (unlinkAllShallowReparsePoints(record.path).length) return false;
   try {
     forgetWorktreeOwnership(ownershipEntry(record, false));
-    await gitAsync(["worktree", "remove", record.path, "--force"], record.repoRoot);
+    await gitAsync(worktreeRemoveArgs(record.path), record.repoRoot);
     try { await gitAsync(["branch", "-d", record.branch], record.repoRoot); } catch { /* absent */ }
     return true;
   } catch { return false; }

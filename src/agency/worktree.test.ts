@@ -13,7 +13,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from "node:
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { activeWorktrees, logger, MAX_CONCURRENT_WORKTREES, WORKTREE_BASE, worktreeSlotAvailable, type WorktreeEntry } from "./worktree-core.js";
+import { activeWorktrees, logger, MAX_CONCURRENT_WORKTREES, WORKTREE_BASE, worktreeRemoveArgs, worktreeSlotAvailable, type WorktreeEntry } from "./worktree-core.js";
 import { createWorktree, createNamedWorktree, cleanupWorktree, mergeWorktree } from "./worktree-lifecycle.js";
 import { pruneMergedAgentBranches } from "./worktree-junctions.js";
 import { getMergeDeltaDiff, getMergeDeltaFiles, securitySensitiveChangedFiles, commitInWorktree } from "./worktree-state.js";
@@ -293,6 +293,28 @@ describe("concurrent-worktree cap", () => {
       expect(worktreeSlotAvailable()).toBe(true);
     } finally {
       clearFill(filled);
+    }
+  });
+
+  // Build worktrees were left in Temp: git could not delete their deep
+  // node_modules ("Filename too long") and the cleanup said "Cleaned up".
+  it("removes a worktree with long paths allowed, and says so when a copy is left on disk", () => {
+    expect(worktreeRemoveArgs("C:/t/w")).toEqual(["-c", "core.longpaths=true", "worktree", "remove", "C:/t/w", "--force"]);
+    const left = mkdtempSync(join(tmpdir(), "lax-wt-left-"));
+    const id = `left-on-disk-${Date.now().toString(36)}`;
+    // tmpdir is no git repository, so the removal fails and the folder stays.
+    activeWorktrees.set(id, { path: left, branch: `agent/${id}`, baseBranch: "main", repoRoot: tmpdir(), mergedSuccessfully: false });
+    const warn = vi.spyOn(logger, "warn");
+    const info = vi.spyOn(logger, "info");
+    try {
+      cleanupWorktree(id);
+      expect(activeWorktrees.has(id)).toBe(false);
+      expect(warn.mock.calls.some(([m]) => String(m).includes(`${id} could not be removed and is still on disk`))).toBe(true);
+      expect(info.mock.calls.some(([m]) => String(m).includes(`Cleaned up ${id}`))).toBe(false);
+    } finally {
+      warn.mockRestore();
+      info.mockRestore();
+      rmSync(left, { recursive: true, force: true });
     }
   });
 

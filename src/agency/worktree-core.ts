@@ -87,6 +87,17 @@ const GIT_TIMEOUT_MS = 30_000;
  */
 export const GIT_OUTPUT_CAP = 8 * 1024 * 1024;
 
+/**
+ * The argv that removes a worktree folder. On Windows git refuses paths past
+ * 260 characters unless core.longpaths is on, and a build worktree's
+ * node_modules goes far past that: the removal failed with "Filename too long"
+ * and left the whole copy in Temp (desktop log, 2026-11-22). Git on other
+ * platforms has no such limit and ignores the setting.
+ */
+export function worktreeRemoveArgs(path: string): string[] {
+  return ["-c", "core.longpaths=true", "worktree", "remove", path, "--force"];
+}
+
 /** The one place a string command is split into argv, for both runners. */
 function toArgv(args: string[] | string): string[] {
   return Array.isArray(args) ? args : args.split(/\s+/).filter(Boolean);

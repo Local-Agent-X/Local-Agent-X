@@ -7,7 +7,7 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-import { activeWorktrees, git, commitWithFallbackIdentity, logger, MAX_CONCURRENT_WORKTREES, WORKTREE_BASE, worktreeSlotAvailable } from "./worktree-core.js";
+import { activeWorktrees, git, commitWithFallbackIdentity, logger, MAX_CONCURRENT_WORKTREES, WORKTREE_BASE, worktreeRemoveArgs, worktreeSlotAvailable } from "./worktree-core.js";
 import { hasVanishedWorktreeAt, linkDirectoryInto, listCheckedOutBranches, unlinkSharedJunctions } from "./worktree-junctions.js";
 import { claimRecoveredWorktree, forgetWorktreeOwnership, ownsWorktree, registerWorktreeOwnership } from "./worktree-recovery.js";
 import { findMergeOverlaps, noteMerged, overlapSummary, type MergeOverlap } from "./merge-overlap.js";
@@ -202,7 +202,14 @@ export function cleanupWorktree(agentId: string): void {
   }
 
   forgetWorktreeOwnership(wt);
-  try { git(["worktree", "remove", wt.path, "--force"], wt.repoRoot); } catch { /* already gone */ }
+  try { git(worktreeRemoveArgs(wt.path), wt.repoRoot); }
+  catch (e) {
+    // Gone already is fine. A copy git could not delete stays in Temp and the
+    // next build has to work around it: say so, never "Cleaned up".
+    if (existsSync(wt.path)) {
+      logger.warn(`[worktree] ${agentId} could not be removed and is still on disk at ${wt.path}: ${(e as Error).message.split("\n")[0]}`);
+    }
+  }
 
   // Only delete branch if merge was successful — preserve it on conflict so user can resolve
   if (wt.mergedSuccessfully) {
@@ -212,7 +219,7 @@ export function cleanupWorktree(agentId: string): void {
   }
 
   activeWorktrees.delete(agentId);
-  logger.info(`[worktree] Cleaned up ${agentId}`);
+  if (!existsSync(wt.path)) logger.info(`[worktree] Cleaned up ${agentId}`);
 }
 
 /** Cleanup all worktrees on shutdown */

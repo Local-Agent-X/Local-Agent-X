@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2116 non-test source files · 73 oversized · 258 nearing the size cap.
+**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2116 non-test source files · 73 oversized · 259 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -375,6 +375,7 @@ job. Comments are free: never cut them to fit.
 - `src/tool-execution/sensitive-read-taint.ts` — 290+ code lines (cap 350)
 - `src/browser/runtime.ts` — 280+ code lines (cap 350)
 - `src/canonical-loop/scheduler.ts` — 280+ code lines (cap 350)
+- `src/context/system-prompt-builder.ts` — 280+ code lines (cap 350)
 - `src/mcp-client/index.ts` — 280+ code lines (cap 350)
 - `src/memory/index-facts-mutate.ts` — 280+ code lines (cap 350)
 - `src/protocols/builder.ts` — 280+ code lines (cap 350)

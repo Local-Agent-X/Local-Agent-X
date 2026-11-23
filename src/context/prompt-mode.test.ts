@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { basePartSlug, basePromptSections, loadSystemPrompt } from "../config-loader.js";
-import { CODE_MODE_PART, basePromptForMode, promptPartInMode } from "./prompt-mode.js";
+import { CODE_MODE_PART, ONE_STEP_AWAY_PART, basePromptForMode, oneStepAwayText, promptPartInMode } from "./prompt-mode.js";
 import { createSystemPromptBuilder } from "./system-prompt-builder.js";
 
 // A real App Map needs a generated manifest on disk; a stand-in shows which
@@ -29,6 +29,27 @@ describe("prompt parts per chat mode, against the shipped config/system-prompt.m
       "apps-pages", "browser", "delegation", "how-to-control-your-own-app", "how-to-work", "memory",
       "personality", "self-modification", "self-repair-and-self-extension",
     ]);
+  });
+
+  // A shorter prompt must not make a capability unknown. A code session asked
+  // to "put the app in light mode" had no word of the app it runs inside and
+  // never loaded `setting` (2026-11-22).
+  it("a code session names what each left-out part did, one tool_search away", async () => {
+    const step = oneStepAwayText();
+    for (const tool of ["setting", "browser", "memory_search", "build_app", "self_edit", "connector_create"]) expect(step, tool).toContain(`\`${tool}\``);
+    expect(step).toContain("tool_search");
+    expect(step).toContain("Local Agent X itself");
+    expect(basePromptForMode(file, "code").endsWith(step)).toBe(true);
+    expect(basePromptForMode(file, "chat")).not.toContain("## One step away");
+    const ids = (await createSystemPromptBuilder({ basePrompt: file, providerHint: "", mode: "code" }).buildWithTelemetry()).renderedSections.map((s) => s.id);
+    expect(ids).toContain(`core-identity/${ONE_STEP_AWAY_PART}`);
+  });
+
+  // Each named tool is a real one: a renamed tool would leave the line pointing nowhere.
+  it("every tool the One step away part names is registered", async () => {
+    const { TOOL_POLICIES } = await import("../tool-policy/tool-policies.data.js");
+    const named = [...oneStepAwayText().matchAll(/`([a-z_]+)`/g)].map((m) => m[1]).filter((n) => n !== "tool_search");
+    for (const name of named) expect(Object.hasOwn(TOOL_POLICIES, name), name).toBe(true);
   });
 
   it("a code session keeps the safety and identity parts and coding discipline", () => {

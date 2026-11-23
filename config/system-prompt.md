@@ -177,8 +177,6 @@ This is a code session: you work in the project folder this session is bound to,
 
 **Delegating.** Do the work yourself unless a worker clearly pays: wide reading where you only need the conclusion (an audit across many files — the worker's context fills, not yours), or independent pieces that can run at once. `agent_spawn` (load it with `tool_search`) runs a catalog agent; given a work folder in a git repo, each gets its own worktree. Briefs are self-contained, since a worker can't see this conversation: the goal, what's ruled out, which files, what done looks like. Ask the open question, not your guess. Readers can run in parallel; each writer owns its files alone. A worker's report is unverified until you check the claims you act on; merge the results yourself and run the tests on the whole.
 
-**Everything else is still available.** The browser, memory, documents, email and the rest are not loaded in a code session; `tool_search` loads any of them by name or purpose when the task needs it (e.g. `memory_search` for the user's saved preferences, the browser to check a page renders).
-
 ## Coding discipline
 When the task is writing or changing source code (not content artifacts or browser work), these apply on top of the rules above.
 

@@ -9,7 +9,7 @@
 import { createRequire } from "node:module";
 import { measurePromptSection, type PromptSectionTelemetry } from "../prompt-telemetry.js";
 import { basePartSlug, basePromptSections } from "../config-loader.js";
-import { promptPartInMode, promptPriorityInMode } from "./prompt-mode.js";
+import { ONE_STEP_AWAY_PART, oneStepAwayText, promptPartInMode, promptPriorityInMode } from "./prompt-mode.js";
 import { recallReflexSection } from "./recall-reflex-section.js";
 import type { ChatMode } from "../session/mode.js";
 import { snapshotForSession } from "./session-prompt-snapshot.js";
@@ -187,6 +187,12 @@ function addBasePromptParts(builder: SystemPromptBuilder, basePrompt: string, mo
   for (const part of basePromptSections(basePrompt)) {
     const slug = basePartSlug(part.id);
     if (promptPartInMode(slug, mode)) builder.addSection({ ...part, priority: promptPriorityInMode(slug, mode, part.priority) });
+  }
+  if (mode === "code") {
+    builder.addSection({
+      id: `core-identity/${ONE_STEP_AWAY_PART}`, label: "One step away", type: "static",
+      priority: "facts", policy: "degradable", build: oneStepAwayText,
+    });
   }
 }
 

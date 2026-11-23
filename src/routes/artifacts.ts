@@ -162,7 +162,12 @@ export const handleArtifactRoutes: RouteHandler = async (method, url, req, res, 
   const metas = ctx.sessionStore.list().filter(s => !isSyntheticSessionId(s.id));
   const only = url.searchParams.get("session");
   const all: ArtifactItem[] = [];
+  // list() is newest first and every item carries its session's time, so once
+  // MAX_ITEMS are found no older session can reach the page: the rest are not
+  // read. "All chats" loaded every session on its first call after a restart
+  // (520 MB on the owner's machine), on the server's one thread.
   for (const meta of only ? metas.filter((m) => m.id === only) : metas) {
+    if (all.length >= MAX_ITEMS) break;
     const cached = scanCache.get(meta.id);
     if (cached && cached.updatedAt === meta.updatedAt) {
       all.push(...cached.items);
@@ -176,12 +181,15 @@ export const handleArtifactRoutes: RouteHandler = async (method, url, req, res, 
     );
     scanCache.set(meta.id, { updatedAt: meta.updatedAt, items });
     all.push(...items);
+    // A session read from disk is a synchronous parse: let other requests in.
+    await new Promise<void>((resolve) => setImmediate(resolve));
   }
   // Drop cache entries for deleted sessions so they can't leak stale rows.
   const live = new Set(metas.map(m => m.id));
   for (const id of scanCache.keys()) if (!live.has(id)) scanCache.delete(id);
 
   all.sort((a, b) => b.ts - a.ts);
+  // `total` counts what was read, which stops at the cap: past it, "at least".
   json(200, { artifacts: all.slice(0, MAX_ITEMS).map((item) => withOpenUrl(item, ctx.config.authToken)), total: all.length });
   return true;
 };

@@ -132,4 +132,29 @@ describe("GET /api/artifacts", () => {
     expect(await ask("?session=no-such-chat")).toEqual([]);
     expect((await ask("")).sort()).toEqual(["/images/a.png", "/images/b.png"]);
   });
+
+  // "All chats" read every session on its first call after a restart. The
+  // page shows the newest 1000 items, so the sessions older than those are
+  // never needed.
+  it("for all chats, stops reading once the newest sessions fill the page, and shows the same page", async () => {
+    const mk = (id: string, updatedAt: number, count: number) => ({
+      id, title: id, updatedAt,
+      messages: [{ role: "tool", content: Array.from({ length: count }, (_, i) => `View: /images/${id}-${i}.png`).join("\n") }],
+    });
+    const sessions = [mk("cap-new", 30, 600), mk("cap-mid", 20, 600), mk("cap-old", 10, 600)];
+    const loaded: string[] = [];
+    const ctx = {
+      config: { authToken: "tok-0123456789" },
+      sessionStore: { list: () => sessions, load: (id: string) => { loaded.push(id); return sessions.find((s) => s.id === id); } },
+    } as unknown as ServerContext;
+    let body = "";
+    const res = { writeHead() { return res; }, setHeader() {}, end(b: string) { body = b; } } as unknown as ServerResponse;
+    await handleArtifactRoutes("GET", new URL("http://127.0.0.1/api/artifacts"), { headers: {} } as IncomingMessage, res, ctx, "operator" as never);
+    const items = JSON.parse(body).artifacts as Array<{ sessionId: string }>;
+    expect(loaded).toEqual(["cap-new", "cap-mid"]);
+    expect(items).toHaveLength(1000);
+    expect(items.filter((i) => i.sessionId === "cap-new")).toHaveLength(600);
+    expect(items.filter((i) => i.sessionId === "cap-mid")).toHaveLength(400);
+    expect(items.some((i) => i.sessionId === "cap-old")).toBe(false);
+  });
 });

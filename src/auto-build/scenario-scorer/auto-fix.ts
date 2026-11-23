@@ -60,7 +60,7 @@ export async function runAutoFixWorker(opts: AutoFixOptions): Promise<AutoFixRes
     task,
     title: `Scenario fix: after chunk ${opts.chunk.number}, ${opts.chunk.title}`,
     projectDir: opts.projectDir,
-    timeoutMs: opts.subprocessTimeoutMs,
+    silenceLimitMs: opts.subprocessTimeoutMs,
     signal: opts.signal,
     parentSessionId: opts.parentSessionId,
     parentOpId: opts.parentOpId,

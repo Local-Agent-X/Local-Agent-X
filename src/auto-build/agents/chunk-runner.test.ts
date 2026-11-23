@@ -37,10 +37,34 @@ afterEach(() => {
 });
 
 describe("runChunkAgent lifecycle cancellation (AB-1)", () => {
-  it("timeout → cancels the underlying run (exit 124)", async () => {
-    const res = await runChunkAgent({ role: "chunk-runner-leaf", task: "do the thing", timeoutMs: 5 });
+  it("silence → cancels the underlying run (exit 124) and says it went silent", async () => {
+    const res = await runChunkAgent({ role: "chunk-runner-leaf", task: "do the thing", silenceLimitMs: 5 });
     expect(res.exitCode).toBe(124);
+    expect(res.error).toContain("went silent");
     expect(cancelSpy).toHaveBeenCalledWith(RUN_ID);
+  });
+
+  // label-check chunk 3 (2026-11-23): a worker editing steadily was killed by a
+  // fixed 30-minute clock. Output and tool calls keep a run alive.
+  it("a run that keeps working outlives its silence limit; only going quiet ends it", async () => {
+    const p = runChunkAgent({ role: "chunk-runner-trunk", task: "do the thing", silenceLimitMs: 60 });
+    for (let i = 0; i < 6; i++) {
+      await new Promise((r) => setTimeout(r, 30));
+      await EventBus.emit("handler:agent-output", { agentId: RUN_ID, output: "[tool] edit..." });
+    }
+    await EventBus.emit("handler:agent-output", { agentId: "someone-else", output: "[tool] bash..." });
+    const res = await p;
+    expect(res.exitCode).toBe(124);
+    expect(res.durationMs).toBeGreaterThanOrEqual(180);
+  });
+
+  it("a deadline (the preflight probe) ends the run however busy it is", async () => {
+    const p = runChunkAgent({ role: "chunk-runner-trunk", task: "probe", silenceLimitMs: 60_000, deadlineMs: 50 });
+    const keepBusy = setInterval(() => { void EventBus.emit("handler:agent-output", { agentId: RUN_ID, output: "[tool] bash..." }); }, 10);
+    const res = await p;
+    clearInterval(keepBusy);
+    expect(res.exitCode).toBe(124);
+    expect(res.error).toContain("deadline");
   });
 
   it("caller abort → cancels the underlying run (exit 130)", async () => {
@@ -55,7 +79,7 @@ describe("runChunkAgent lifecycle cancellation (AB-1)", () => {
   });
 
   it("natural completion → does NOT cancel (run already terminal)", async () => {
-    const p = runChunkAgent({ role: "chunk-runner-leaf", task: "do the thing", timeoutMs: 60_000 });
+    const p = runChunkAgent({ role: "chunk-runner-leaf", task: "do the thing", silenceLimitMs: 60_000 });
     await EventBus.emit("handler:agent-result", { agentId: RUN_ID, success: true, result: "STATUS: done" });
     const res = await p;
     expect(res.exitCode).toBe(0);
@@ -65,7 +89,7 @@ describe("runChunkAgent lifecycle cancellation (AB-1)", () => {
 
 describe("runChunkAgent spawn lineage", () => {
   it("maps parentOpId → invokeDefinition parentAgentId so the worker is an orchestrator child", async () => {
-    const p = runChunkAgent({ role: "scenario-fix", task: "fix it", parentSessionId: "chat-session-1", parentOpId: "orchestrator-op-77", timeoutMs: 60_000 });
+    const p = runChunkAgent({ role: "scenario-fix", task: "fix it", parentSessionId: "chat-session-1", parentOpId: "orchestrator-op-77", silenceLimitMs: 60_000 });
     await EventBus.emit("handler:agent-result", { agentId: RUN_ID, success: true, result: "STATUS: done" });
     await p;
     expect(invokeCalls).toHaveLength(1);
@@ -79,7 +103,7 @@ describe("runChunkAgent task provenance", () => {
     // The working-directory preamble ("Never touch paths outside it") is
     // harness prose. Without this flag it extracts as a user workspace-write
     // ban and every worker write is hard-denied (2026-07-22 Merchhelm halt).
-    const p = runChunkAgent({ role: "chunk-runner-trunk", task: "do the thing", projectDir: "/tmp/proj", timeoutMs: 60_000 });
+    const p = runChunkAgent({ role: "chunk-runner-trunk", task: "do the thing", projectDir: "/tmp/proj", silenceLimitMs: 60_000 });
     await EventBus.emit("handler:agent-result", { agentId: RUN_ID, success: true, result: "STATUS: done" });
     await p;
     expect(invokeCalls).toHaveLength(1);

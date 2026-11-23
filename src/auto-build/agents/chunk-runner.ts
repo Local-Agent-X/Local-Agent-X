@@ -57,8 +57,15 @@ export interface ChunkAgentInvocation {
    *  Undefined → no parent linkage (parentAgentId null) → card renders as a
    *  root, unchanged. */
   parentOpId?: string;
-  /** Wall-clock kill deadline. Default: 30 min per chunk. */
-  timeoutMs?: number;
+  /** How long the run may go silent — no streamed output, no tool call —
+   *  before it is ended as hung. Default 30 min. Not a cap on a working run:
+   *  every output or tool call starts the count again. A run that keeps
+   *  working without getting anywhere is the work check-in's to end
+   *  (canonical-loop/work-check-in.ts: no file changed in 72 tool calls). */
+  silenceLimitMs?: number;
+  /** A hard cap on the whole run, for a probe that must answer quickly (the
+   *  build preflight). Unset for real work. */
+  deadlineMs?: number;
   /** Caller cancellation. Maps to the agent's abort signal via Handler. */
   signal?: AbortSignal;
 }
@@ -74,7 +81,16 @@ export interface ChunkAgentResult {
   error?: string;
 }
 
-const DEFAULT_TIMEOUT_MS = 30 * 60_000;
+/**
+ * How long a worker may go without streaming a word or calling a tool. A fixed
+ * 30-minute deadline used to end every chunk run, working or not: label-check's
+ * chunk 3 worker was editing (41 tool calls, the last seconds before the
+ * cutoff) when it was killed, and its report was lost (2026-11-23). Spawned
+ * agents run with no wall clock (server/handler-events.ts wallClockMs: 0);
+ * this only catches a run that has gone silent, which the work check-in
+ * cannot see because it counts turns.
+ */
+const DEFAULT_SILENCE_LIMIT_MS = 30 * 60_000;
 
 const DISCIPLINE_BLOCK =
   `## Discipline (load-bearing — do not skip)\n\n` +
@@ -232,7 +248,7 @@ export async function runChunkAgent(opts: ChunkAgentInvocation): Promise<ChunkAg
   }
   const def = getDefinition(opts.role);
   const startedAt = Date.now();
-  const timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
+  const silenceLimitMs = opts.silenceLimitMs ?? DEFAULT_SILENCE_LIMIT_MS;
 
   // Prepend a working-directory anchor so the agent doesn't look for
   // the project tree inside the LAX repo root. This is load-bearing —
@@ -295,7 +311,9 @@ export async function runChunkAgent(opts: ChunkAgentInvocation): Promise<ChunkAg
       if (settled) return;
       settled = true;
       EventBus.off("handler:agent-result", resultHandler);
-      clearTimeout(timer);
+      EventBus.off("handler:agent-output", activityHandler);
+      clearTimeout(silence);
+      clearTimeout(deadline);
       opts.signal?.removeEventListener("abort", abortListener);
       if (cancelRun) Handler.getInstance().cancelAgent(agentId);
       resolve(result);
@@ -314,9 +332,22 @@ export async function runChunkAgent(opts: ChunkAgentInvocation): Promise<ChunkAg
 
     EventBus.on("handler:agent-result", resultHandler);
 
-    const timer = setTimeout(() => {
-      finish({ stdout: "", exitCode: 124, durationMs: Date.now() - startedAt, error: `chunk agent timed out after ${timeoutMs}ms` }, true);
-    }, timeoutMs);
+    // Every streamed word and every tool call is the run being alive.
+    const minutes = (ms: number) => `${Math.round(ms / 60_000)} min`;
+    const onSilence = () => finish({
+      stdout: "", exitCode: 124, durationMs: Date.now() - startedAt,
+      error: `chunk agent went silent: no output or tool call for ${minutes(silenceLimitMs)}`,
+    }, true);
+    let silence = setTimeout(onSilence, silenceLimitMs);
+    const activityHandler = (data: unknown): void => {
+      if ((data as { agentId?: string }).agentId !== agentId || settled) return;
+      clearTimeout(silence);
+      silence = setTimeout(onSilence, silenceLimitMs);
+    };
+    EventBus.on("handler:agent-output", activityHandler);
+    const deadline = opts.deadlineMs === undefined ? undefined : setTimeout(() => {
+      finish({ stdout: "", exitCode: 124, durationMs: Date.now() - startedAt, error: `chunk agent ran past its ${minutes(opts.deadlineMs!)} deadline` }, true);
+    }, opts.deadlineMs);
 
     const abortListener = () => {
       finish({ stdout: "", exitCode: 130, durationMs: Date.now() - startedAt, error: "aborted by caller" }, true);

@@ -40,15 +40,16 @@ export interface SkepticInput {
   preSha: string;
   /** The tree the chunk was built in (its worktree on the parallel path). */
   projectDir: string;
-  timeoutMs?: number;
+  /** How long the skeptic may go silent before it counts as hung (default 15 min). */
+  silenceLimitMs?: number;
   signal?: AbortSignal;
   parentSessionId?: string;
   parentOpId?: string;
 }
 
-/** A skeptic gets a shorter leash than a builder: it reads and runs, it does
- *  not build. */
-const SKEPTIC_TIMEOUT_MS = 15 * 60_000;
+/** A skeptic gets a shorter leash than a builder: it reads and runs probes, it
+ *  does not build, so 15 minutes with no output or tool call means it hung. */
+const SKEPTIC_SILENCE_LIMIT_MS = 15 * 60_000;
 const MAX_REPORT_CHARS = 4_000;
 
 export function buildSkepticTask(input: Pick<SkepticInput, "chunk" | "rawReport" | "preSha">): string {
@@ -105,7 +106,7 @@ export async function runChunkSkeptic(input: SkepticInput): Promise<SkepticVerdi
       task: buildSkepticTask(input),
       title: `Skeptic: chunk ${input.chunk.number}, ${input.chunk.title}`,
       projectDir: input.projectDir,
-      timeoutMs: input.timeoutMs ?? SKEPTIC_TIMEOUT_MS,
+      silenceLimitMs: input.silenceLimitMs ?? SKEPTIC_SILENCE_LIMIT_MS,
       signal: input.signal,
       parentSessionId: input.parentSessionId,
       parentOpId: input.parentOpId,

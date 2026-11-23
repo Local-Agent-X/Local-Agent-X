@@ -110,7 +110,7 @@ export async function runPreflightProbe(
       parentSessionId: opts.parentSessionId,
       parentOpId: opts.parentOpId,
       signal: opts.signal,
-      timeoutMs: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+      deadlineMs: opts.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     });
     return verdict(result, token, paths);
   } catch (e) {

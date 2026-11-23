@@ -45,7 +45,9 @@ export interface LoopOptions {
    *  is not always a prefix. They are skipped, and count as landed for the
    *  chunks that depend on them (orchestrator/state.ts landedChunks). */
   landedChunks?: number[];
-  /** Optional override for subprocess timeout per chunk. */
+  /** How long a chunk worker may go silent (no output, no tool call) before it
+   *  is ended as hung (agents/chunk-runner.ts silenceLimitMs; default 30 min).
+   *  Not a cap on a run that is working. */
   subprocessTimeoutMs?: number;
   /** Chat session that owns this orchestration — propagated to chunk-worker
    *  agents so the UI can thread their activity back to the right chat. */

@@ -123,7 +123,7 @@ export async function runChunkOnce(opts: RunChunkOnceOptions): Promise<ChunkRevi
     task,
     title: `Chunk ${opts.chunk.number}/${opts.totalChunks}: ${opts.chunk.title}${opts.retryReason ? " (retry)" : ""}`,
     projectDir: opts.projectDir,
-    timeoutMs: opts.subprocessTimeoutMs,
+    silenceLimitMs: opts.subprocessTimeoutMs,
     signal: opts.signal,
     parentSessionId: opts.parentSessionId,
     parentOpId: opts.parentOpId,

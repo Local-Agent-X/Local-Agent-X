@@ -11,7 +11,10 @@
  */
 
 import {
+  closeSync,
   existsSync,
+  fsyncSync,
+  openSync,
   writeFileSync,
   readFileSync,
   renameSync,
@@ -116,13 +119,34 @@ function attemptWriteOp(op: Op, strict: boolean): Error | null {
       target,
       JSON.stringify(record, null, 2),
       { mode: 0o600 },
-      injectedWriteFailure(strict),
+      injectedWriteFailure(strict) ?? FLUSHED_OP_WRITE,
     );
     return null;
   } catch (e) {
     return e as Error;
   }
 }
+
+/**
+ * The atomic write with its new bytes flushed to disk before the rename. The
+ * rename can reach the disk before the data does: after a crash or power loss
+ * the record is then all zero bytes, unreadable, and its op is gone from every
+ * view (an operation.json of 12,369 NULs, 2026-11-18). Flushing first means a
+ * crash leaves the old record or the new one.
+ */
+const FLUSHED_OP_WRITE: AtomicWriteOperations = {
+  write: (path, data, opts) => {
+    const fd = openSync(path, "w", opts.mode ?? 0o600);
+    try {
+      writeFileSync(fd, data, { encoding: opts.encoding });
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+  },
+  rename: renameSync,
+  unlink: (path) => rmSync(path, { force: true }),
+};
 
 /**
  * Test seam: fail one strict write at a chosen point. `seen` advances once per

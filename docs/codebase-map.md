@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2118 non-test source files · 72 oversized · 260 nearing the size cap.
+**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2118 non-test source files · 72 oversized · 261 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -368,6 +368,7 @@ job. Comments are free: never cut them to fit.
 - `src/memory/index-schema-migrations.ts` — 290+ code lines (cap 350)
 - `src/memory/promotion-gate.ts` — 290+ code lines (cap 350)
 - `src/memory/tools/save.ts` — 290+ code lines (cap 350)
+- `src/ops/op-store.ts` — 290+ code lines (cap 350)
 - `src/ops/operation-requirements.ts` — 290+ code lines (cap 350)
 - `src/protocols/skills-install.ts` — 290+ code lines (cap 350)
 - `src/server/bootstrap-services.ts` — 290+ code lines (cap 350)

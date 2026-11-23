@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2119 non-test source files · 70 oversized · 262 nearing the size cap.
+**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2120 non-test source files · 69 oversized · 263 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -45,7 +45,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/agent-request/` | 26 | 16 | L | 3 |
 | `src/classifiers/` | 26 | 18 | L |  |
 | `src/desktop-contract/` | 24 | 11 | M |  |
-| `src/sandbox/` | 24 | 16 | L | 1 |
+| `src/sandbox/` | 24 | 17 | L |  |
 | `src/app-runtime/` | 23 | 13 | L |  |
 | `src/protocols/` | 21 | 51 | XL |  |
 | `src/server/` *(entrypoint)* | 20 | 77 | XL | 4 |
@@ -295,7 +295,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/routes/settings/local-runtimes.ts#handleLocalRuntimesRoutes`
 - `src/routes/settings/preferences.ts#handlePreferencesRoutes`
 - `src/routes/settings/providers.ts#handleProvidersRoutes`
-- `src/sandbox/docker-execution-runtime.ts`
 - `src/security/layer/file-access.ts#evaluateFileAccess`
 - `src/security/layer/kernel-class-policy.ts#evaluateByKernelClass`
 - `src/self-edit/sandbox.ts#runSelfEditInSandbox`
@@ -339,6 +338,7 @@ job. Comments are free: never cut them to fit.
 - `src/memory/tools/facts.ts` — 320+ code lines (cap 350)
 - `src/protocols/learned-effectiveness.ts` — 320+ code lines (cap 350)
 - `src/protocols/learned-lifecycle.ts` — 320+ code lines (cap 350)
+- `src/sandbox/docker-execution-runtime.ts` — 320+ code lines (cap 350)
 - `src/server/background-jobs/index.ts` — 320+ code lines (cap 350)
 - `src/tools/edit-tools.ts` — 320+ code lines (cap 350)
 - `src/auto-build/workflow-resolver.ts` — 310+ code lines (cap 350)

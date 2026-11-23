@@ -57,7 +57,6 @@ src/routes/sessions.ts#handleSessionRoutes 102
 src/routes/settings/local-runtimes.ts#handleLocalRuntimesRoutes 122
 src/routes/settings/preferences.ts#handlePreferencesRoutes 122
 src/routes/settings/providers.ts#handleProvidersRoutes 111
-src/sandbox/docker-execution-runtime.ts 363
 src/security/layer/file-access.ts#evaluateFileAccess 105
 src/security/layer/kernel-class-policy.ts#evaluateByKernelClass 132
 src/self-edit/sandbox.ts#runSelfEditInSandbox 198

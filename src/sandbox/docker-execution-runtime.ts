@@ -1,13 +1,15 @@
 import { execFile, type ExecFileOptions } from "node:child_process";
 import { promisify } from "node:util";
-import { holdValidatedMounts, validateMountShape } from "./docker-mount-lease.js";
+import { holdValidatedMounts } from "./docker-mount-lease.js";
+import {
+  DOCKER_NAME_PATTERN,
+  DOCKER_PINNED_IMAGE,
+  DOCKER_SHA256_DIGEST,
+  validateContainerSpec,
+} from "./docker-container-spec.js";
 
 const execFileAsync = promisify(execFile);
-const SHA256 = /^sha256:[a-f0-9]{64}$/;
-const PINNED_IMAGE = /^([^\s@]+)@(sha256:[a-f0-9]{64})$/;
 const CONTAINER_ID = /^[a-f0-9]{64}$/;
-const DOCKER_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
-const NETWORK_NAME = /^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,127}$/;
 
 export interface DockerCommandResult {
   stdout: string;
@@ -115,7 +117,7 @@ export class DockerCliExecutionRuntime implements DockerExecutionRuntime {
   }
 
   async resolvePinnedImage(reference: string): Promise<DockerImageIdentity> {
-    const parsed = PINNED_IMAGE.exec(reference);
+    const parsed = DOCKER_PINNED_IMAGE.exec(reference);
     if (!parsed) throw new Error("container execution image must be pinned by sha256 digest");
     const requestedDigest = parsed[2];
     const result = await this.run([
@@ -127,14 +129,14 @@ export class DockerCliExecutionRuntime implements DockerExecutionRuntime {
     try { repoDigests = JSON.parse(repoDigestsRaw ?? "null"); }
     catch { throw new Error("Docker returned ambiguous image digest metadata"); }
     const imageId = imageIdRaw?.trim();
-    if (!Array.isArray(repoDigests) || !repoDigests.includes(reference) || !imageId || !SHA256.test(imageId)) {
+    if (!Array.isArray(repoDigests) || !repoDigests.includes(reference) || !imageId || !DOCKER_SHA256_DIGEST.test(imageId)) {
       throw new Error("Docker image does not match the pinned execution image");
     }
     return { reference, requestedDigest, imageId };
   }
 
   async create(spec: DockerContainerSpec): Promise<DockerContainerIdentity> {
-    validateSpec(spec, this.policy);
+    validateContainerSpec(spec, this.policy);
     const network = spec.network === "none" ? "none" : await this.resolveApprovedNetwork(spec.network.name);
     const heldMounts = holdValidatedMounts(spec.mounts, this.policy.approvedMountRoots);
     const args = [
@@ -267,7 +269,7 @@ export class DockerCliExecutionRuntime implements DockerExecutionRuntime {
   }
 
   async inspectNamed(name: string, labels: Readonly<Record<string, string>>): Promise<DockerContainerState | null> {
-    if (!DOCKER_NAME.test(name)) throw new Error("invalid container execution name");
+    if (!DOCKER_NAME_PATTERN.test(name)) throw new Error("invalid container execution name");
     try {
       const result = await this.run([
         "container", "inspect", name,
@@ -320,49 +322,10 @@ export class DockerCliExecutionRuntime implements DockerExecutionRuntime {
   }
 }
 
-function validateSpec(spec: DockerContainerSpec, policy: DockerExecutionPolicy): void {
-  if (!DOCKER_NAME.test(spec.name)) throw new Error("invalid container execution name");
-  if (!PINNED_IMAGE.test(spec.image.reference) || !SHA256.test(spec.image.requestedDigest)
-    || !SHA256.test(spec.image.imageId)) throw new Error("invalid container execution image identity");
-  if (spec.network !== "none" && !NETWORK_NAME.test(spec.network.name)) {
-    throw new Error("invalid container execution network");
-  }
-  if (spec.network !== "none" && (policy.allowedNetwork === null
-    || spec.network.name !== policy.allowedNetwork.name
-    || ["host", "default", "bridge", "none"].includes(spec.network.name.toLowerCase()))) {
-    throw new Error("container execution network is not approved");
-  }
-  if (!validMemoryLimit(spec.memoryLimit)) throw new Error("invalid container memory limit");
-  if (spec.user && (!Number.isSafeInteger(spec.user.uid) || spec.user.uid < 1
-    || !Number.isSafeInteger(spec.user.gid) || spec.user.gid < 1)) {
-    throw new Error("invalid non-root container user");
-  }
-  if (!Number.isSafeInteger(spec.pidsLimit) || spec.pidsLimit < 16 || spec.pidsLimit > 4096) {
-    throw new Error("invalid container pid limit");
-  }
-  for (const [key, value] of [...Object.entries(spec.environment), ...Object.entries(spec.labels)]) {
-    if (!/^[A-Za-z_][A-Za-z0-9_.-]*$/.test(key) || value.includes("\0") || value.includes("\n")) {
-      throw new Error("invalid container execution metadata");
-    }
-  }
-  for (const mount of spec.mounts) validateMountShape(mount);
-}
-
 function isDefinitiveCreateRejection(error: unknown): boolean {
   const command = error as { code?: unknown; signal?: unknown; killed?: unknown } | null;
   return !!command && command.killed !== true && command.signal == null
     && (typeof command.code === "number" || command.code === "ENOENT");
-}
-
-function validMemoryLimit(value: string): boolean {
-  const match = /^(\d+)([kmg])?$/i.exec(value);
-  if (!match) return false;
-  const amount = Number(match[1]);
-  const multiplier = match[2]?.toLowerCase() === "g" ? 1024 ** 3
-    : match[2]?.toLowerCase() === "m" ? 1024 ** 2
-      : match[2]?.toLowerCase() === "k" ? 1024 : 1;
-  const bytes = amount * multiplier;
-  return Number.isSafeInteger(bytes) && bytes >= 64 * 1024 ** 2 && bytes <= 64 * 1024 ** 3;
 }
 
 function bindMountArg(mount: DockerBindMount): string {
@@ -380,7 +343,7 @@ function parseContainerState(
   runningRaw: string | undefined,
   exitRaw: string | undefined,
 ): DockerContainerState {
-  if (!canonicalIso(createdAt) || !SHA256.test(imageId ?? "")
+  if (!canonicalIso(createdAt) || !DOCKER_SHA256_DIGEST.test(imageId ?? "")
     || (runningRaw !== "true" && runningRaw !== "false") || !/^-?\d+$/.test(exitRaw ?? "")) {
     throw new Error("Docker returned ambiguous container metadata");
   }

@@ -1,4 +1,5 @@
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, renameSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { dirname, resolve } from "node:path";
 
 let syncHook: ((path: string) => void) | null = null;
@@ -43,4 +44,17 @@ export function fsyncDirectory(path: string): void {
     if (fd !== null) try { closeSync(fd); } catch { /* preserve primary failure */ }
   }
   syncHook?.(resolve(path));
+}
+
+/** Replace `path` with `content` so a crash leaves the old file or the new
+ *  one, never a torn write: written and fsynced under a private name
+ *  (`<path>.<pid>.<uuid>.tmp`, which crash repair recognizes), renamed into
+ *  place, and the rename published by syncing the folder. */
+export function writeFileDurably(path: string, content: string): void {
+  ensureDurableDirectory(dirname(path));
+  const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
+  const fd = openSync(tmp, "wx", 0o600);
+  try { writeFileSync(fd, content, "utf8"); fsyncSync(fd); } finally { closeSync(fd); }
+  renameSync(tmp, path);
+  fsyncDirectory(dirname(path));
 }

@@ -29,7 +29,6 @@ src/canonical-loop/adapters/openai-compat.ts#OpenAICompatAdapter.runTurn 107
 src/canonical-loop/adapters/openai-compat/canonical-to-chat-param.ts#canonicalToChatParam 101
 src/canonical-loop/chat-runner/event-pump.ts#subscribeOpEvents:callback 122
 src/canonical-loop/container-execution-backend.ts 351
-src/canonical-loop/process-relay-journal.ts 376
 src/canonical-loop/runtime-failover.ts 351
 src/canonical-loop/session-bridge-observer.ts#recordCanonicalEventWithSink 153
 src/canonical-loop/turn-loop/decide-outcome.ts#decideTurnOutcome 107

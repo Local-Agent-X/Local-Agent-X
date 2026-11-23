@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2116 non-test source files · 73 oversized · 259 nearing the size cap.
+**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2117 non-test source files · 72 oversized · 260 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -23,7 +23,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/security/` | 167 | 65 | XL | 2 |
 | `src/tools/` | 142 | 246 | XL | 9 |
 | `src/tool-execution/` | 107 | 91 | XL | 2 |
-| `src/canonical-loop/` | 92 | 295 | XL | 10 |
+| `src/canonical-loop/` | 92 | 296 | XL | 9 |
 | `src/workspace/` | 92 | 3 | M |  |
 | `src/providers/` | 79 | 28 | L | 1 |
 | `src/session/` | 78 | 15 | L |  |
@@ -55,7 +55,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/voice/` | 18 | 80 | XL | 1 |
 | `src/agents/` | 17 | 13 | L |  |
 | `src/cognition/` | 17 | 34 | XL |  |
-| `src/persistence/` | 16 | 3 | M |  |
+| `src/persistence/` | 17 | 3 | M |  |
 | `src/self-edit/` | 16 | 19 | L | 2 |
 | `src/anthropic-client/` | 15 | 23 | L | 2 |
 | `src/cron/` | 14 | 14 | L |  |
@@ -267,7 +267,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/canonical-loop/adapters/openai-compat/canonical-to-chat-param.ts#canonicalToChatParam`
 - `src/canonical-loop/chat-runner/event-pump.ts#subscribeOpEvents:callback`
 - `src/canonical-loop/container-execution-backend.ts`
-- `src/canonical-loop/process-relay-journal.ts`
 - `src/canonical-loop/runtime-failover.ts`
 - `src/canonical-loop/session-bridge-observer.ts#recordCanonicalEventWithSink`
 - `src/canonical-loop/turn-loop/decide-outcome.ts#decideTurnOutcome`
@@ -354,6 +353,7 @@ job. Comments are free: never cut them to fit.
 - `src/whatsapp-bridge/index.ts` — 310+ code lines (cap 350)
 - `src/autopilot/loop.ts` — 300+ code lines (cap 350)
 - `src/canonical-loop/process-execution-backend.ts` — 300+ code lines (cap 350)
+- `src/canonical-loop/process-relay-journal.ts` — 300+ code lines (cap 350)
 - `src/cron/cron-service.ts` — 300+ code lines (cap 350)
 - `src/local-runtimes/certification-runner.ts` — 300+ code lines (cap 350)
 - `src/memory/index-core.ts` — 300+ code lines (cap 350)

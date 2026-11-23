@@ -5,15 +5,13 @@ import {
   openSync,
   readFileSync,
   readdirSync,
-  renameSync,
   rmSync,
   truncateSync,
   writeFileSync,
 } from "node:fs";
-import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
-import { computeDurableRecordMac, verifyDurableRecordMac } from "../app-runtime/audit-signing.js";
-import { ensureDurableDirectory, fsyncDirectory } from "../persistence/durable-directory.js";
+import { ensureDurableDirectory, fsyncDirectory, writeFileDurably } from "../persistence/durable-directory.js";
+import { readRelayAcknowledgements, writeRelayAcknowledgements } from "./process-relay-acks.js";
 import { opDir } from "../ops/event-log.js";
 import { readOp, tryWithOpLock } from "../ops/op-store.js";
 import { readCanonicalEvents } from "./store.js";
@@ -25,7 +23,6 @@ import {
 import {
   createRelayGeneration,
   createRelayRecord,
-  stableStringify,
   verifyRelayGeneration,
   verifyRelayRecord,
   type ProcessRelayKind,
@@ -34,16 +31,6 @@ import {
   type ProcessRelayTarget,
   type SealedProcessRelayGeneration,
 } from "./process-relay-contract.js";
-
-const ACK_DOMAIN = "canonical-process-relay-ack-v1";
-
-interface RelayAckState {
-  schemaVersion: 1;
-  generationId: string;
-  acknowledgements: Record<string, ProcessRelayTarget[]>;
-}
-
-interface SealedRelayAckState { state: RelayAckState; mac: string }
 
 export interface ProcessRelayGenerationState {
   sealedGeneration: SealedProcessRelayGeneration;
@@ -77,12 +64,8 @@ export function initializeProcessRelayJournal(
       return readGeneration(path).sealedGeneration;
     }
     ensureDurableDirectory(dirname(path));
-    writeAtomic(path, `${JSON.stringify(sealed)}\n`);
-    writeAckState(ackPath(claim.opId, sealed.generation.generationId), {
-      schemaVersion: 1,
-      generationId: sealed.generation.generationId,
-      acknowledgements: {},
-    });
+    writeFileDurably(path, `${JSON.stringify(sealed)}\n`);
+    writeRelayAcknowledgements(ackPath(claim.opId, sealed.generation.generationId), sealed.generation.generationId, new Map());
     return sealed;
   });
 }
@@ -182,12 +165,7 @@ export function acknowledgeProcessRelayTarget(
     const acknowledged = current.acknowledgements.get(cursor) ?? new Set<ProcessRelayTarget>();
     acknowledged.add(target);
     current.acknowledgements.set(cursor, acknowledged);
-    writeAckState(current.ackPath, {
-      schemaVersion: 1,
-      generationId: current.sealedGeneration.generation.generationId,
-      acknowledgements: Object.fromEntries([...current.acknowledgements]
-        .map(([key, values]) => [String(key), [...values].sort()])),
-    });
+    writeRelayAcknowledgements(current.ackPath, current.sealedGeneration.generation.generationId, current.acknowledgements);
     state.acknowledgements = current.acknowledgements;
   });
 }
@@ -210,12 +188,7 @@ export function acknowledgeProcessRelayBrowserDelivery(identity: {
     if (acknowledged.has("browser-render")) return true;
     acknowledged.add("browser-render");
     state.acknowledgements.set(identity.cursor, acknowledged);
-    writeAckState(state.ackPath, {
-      schemaVersion: 1,
-      generationId: identity.generationId,
-      acknowledgements: Object.fromEntries([...state.acknowledgements]
-        .map(([key, values]) => [String(key), [...values].sort()])),
-    });
+    writeRelayAcknowledgements(state.ackPath, identity.generationId, state.acknowledgements);
     return true;
   });
 }
@@ -246,19 +219,9 @@ export function cleanupCompletedProcessRelay(opId: string): boolean {
 
 function readGeneration(path: string): ProcessRelayGenerationState {
   const { sealedGeneration, records } = readJournal(path);
-  const ack = readAckState(ackPath(sealedGeneration.generation.opId, sealedGeneration.generation.generationId), sealedGeneration.generation.generationId);
-  const acknowledgements = new Map<number, Set<ProcessRelayTarget>>();
-  for (const [cursorText, targets] of Object.entries(ack.acknowledgements)) {
-    if (!/^[1-9]\d*$/.test(cursorText)) throw new Error("process relay acknowledgement is ambiguous");
-    const cursor = Number(cursorText);
-    const record = records.find(candidate => candidate.cursor === cursor);
-    if (!record || !Number.isSafeInteger(cursor) || targets.some(target => !record.targets.includes(target))) {
-      throw new Error("process relay acknowledgement is ambiguous");
-    }
-    acknowledgements.set(cursor, new Set(targets));
-  }
-  return { sealedGeneration, records, acknowledgements, journalPath: path,
-    ackPath: ackPath(sealedGeneration.generation.opId, sealedGeneration.generation.generationId) };
+  const { opId, generationId } = sealedGeneration.generation;
+  const acknowledgements = readRelayAcknowledgements(ackPath(opId, generationId), generationId, records);
+  return { sealedGeneration, records, acknowledgements, journalPath: path, ackPath: ackPath(opId, generationId) };
 }
 
 function readJournal(path: string): {
@@ -298,11 +261,7 @@ function repairRelayCrashArtifacts(opId: string, directory: string): void {
     const ack = ackPath(opId, journal.sealedGeneration.generation.generationId);
     if (!existsSync(ack)) {
       if (journal.records.length > 0) throw new Error("process relay acknowledgement state is missing");
-      writeAckState(ack, {
-        schemaVersion: 1,
-        generationId: journal.sealedGeneration.generation.generationId,
-        acknowledgements: {},
-      });
+      writeRelayAcknowledgements(ack, journal.sealedGeneration.generation.generationId, new Map());
     }
   }
 }
@@ -341,41 +300,6 @@ function assertCurrentGeneration(claim: ExecutionOwnerClaim, sessionId: string):
   }
 }
 
-function readAckState(path: string, generationId: string): RelayAckState {
-  if (!existsSync(path)) throw new Error("process relay acknowledgement state is missing");
-  const sealed = JSON.parse(readFileSync(path, "utf8")) as Partial<SealedRelayAckState>;
-  const state = sealed.state as Partial<RelayAckState> | undefined;
-  if (!state || state.schemaVersion !== 1 || state.generationId !== generationId
-    || !state.acknowledgements || typeof state.acknowledgements !== "object"
-    || typeof sealed.mac !== "string"
-    || !verifyDurableRecordMac(ACK_DOMAIN, stableStringify(state), sealed.mac)) {
-    throw new Error("process relay acknowledgement integrity check failed");
-  }
-  for (const targets of Object.values(state.acknowledgements)) {
-    if (!Array.isArray(targets) || new Set(targets).size !== targets.length
-      || targets.some(target => target !== "canonical-core" && target !== "session-observer" && target !== "browser-render")) {
-      throw new Error("invalid process relay acknowledgement target");
-    }
-  }
-  return state as RelayAckState;
-}
-
-function writeAckState(path: string, state: RelayAckState): void {
-  const sealed: SealedRelayAckState = {
-    state,
-    mac: computeDurableRecordMac(ACK_DOMAIN, stableStringify(state)),
-  };
-  writeAtomic(path, JSON.stringify(sealed));
-}
-
-function writeAtomic(path: string, content: string): void {
-  ensureDurableDirectory(dirname(path));
-  const tmp = `${path}.${process.pid}.${randomUUID()}.tmp`;
-  const fd = openSync(tmp, "wx", 0o600);
-  try { writeFileSync(fd, content, "utf8"); fsyncSync(fd); } finally { closeSync(fd); }
-  renameSync(tmp, path);
-  fsyncDirectory(dirname(path));
-}
 function appendAndFlush(path: string, content: string): void {
   const fd = openSync(path, "a", 0o600);
   try { writeFileSync(fd, content, "utf8"); fsyncSync(fd); } finally { closeSync(fd); }

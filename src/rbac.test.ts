@@ -142,7 +142,30 @@ describe("RBAC agent role is fenced out of the cage, autonomy, undo and voice-se
     expect(rbac.checkEndpoint("agent", "POST", "/api/sandbox").reason).toContain("Settings → Security → Bash Sandbox");
     expect(rbac.checkEndpoint("agent", "POST", "/api/mcp/servers").reason).toContain("Settings → Tools & Integrations → MCP Servers");
     expect(rbac.checkEndpoint("agent", "POST", "/api/sync/pull").reason).toContain("Settings → Sync");
-    for (const route of AGENT_DENIED_ROUTES) expect(route.place, route.prefix).toMatch(/^Settings → /);
+    for (const route of AGENT_DENIED_ROUTES) {
+      if (route.tool) expect(route.tool, route.prefix).toMatch(/^[a-z]+_send$/);
+      else expect(route.place, route.prefix).toMatch(/^Settings → /);
+    }
+  });
+
+  // A message sent as the user goes through the send tools, whose policy rows
+  // name the recipient; the direct routes sent to anyone with no check.
+  it.each([
+    ["/api/whatsapp/send", "whatsapp_send"],
+    ["/api/telegram/send", "telegram_send"],
+  ])("agent POST %s is refused and pointed at %s", (path, tool) => {
+    const reason = `Role "agent" cannot send through ${path}: use the ${tool} tool, which checks who the message goes to.`;
+    expect(rbac.checkEndpoint("agent", "POST", path)).toEqual({ allowed: false, role: "agent", reason, userHint: USER_HINTS.policy });
+    const r = gate("POST", path, rbac.getInternalAgentToken());
+    expect(r.status).toBe(403);
+    expect(JSON.parse(r.body).error).toBe(reason);
+    expect(rbac.checkEndpoint("operator", "POST", path).allowed).toBe(true);
+  });
+
+  it("leaves the bridge routes that are not sends open to the agent", () => {
+    for (const path of ["/api/whatsapp/status", "/api/whatsapp/connect", "/api/telegram/status", "/api/telegram/connect"]) {
+      expect(rbac.checkEndpoint("agent", "POST", path).allowed, path).toBe(true);
+    }
   });
 
   it("keeps the generic policy hint for the other roles", () => {

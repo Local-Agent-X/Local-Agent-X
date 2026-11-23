@@ -57,7 +57,7 @@ Strike any you want dropped, and add any that are missing.
 | L7 | A deletion outside the project folder asks you (`rm -rf`, `dd`, force-push) | Card |
 | L8 | A publish the review marks RED is blocked unless you override it on the card | Blocked + card |
 | L9 | A value already known to be a secret is never typed into a shell line that goes to the network | Refused |
-| L10 | A message is sent as you only through the send tools (`whatsapp_send`, `telegram_send`, email), never by a direct request to LAX's own send routes | **Open today** (§3) |
+| L10 | A message is sent as you only through the send tools (`whatsapp_send`, `telegram_send`, email), never by a direct request to LAX's own send routes | Closed (step 0, done) |
 
 Who may command the agent (owner, allowed numbers, pairing, sign-out) is on
 purpose not a limit. You ask for these, so a limit would break real requests.
@@ -126,8 +126,8 @@ Other facts the plan relies on:
 - **The agent's requests to LAX's own server** carry the agent's identity
   (`selfCallAuthHeader`, `src/tools/web-egress.ts`). A fixed list of routes
   refuses it (`src/rbac-agent-denials.ts`). Every other route accepts a change
-  from the agent with no check, including `/api/whatsapp/send` and
-  `/api/telegram/send`. That's how the agent shows you the pairing QR today, and
+  from the agent with no check. (`/api/whatsapp/send` and `/api/telegram/send`
+  were among them until step 0 closed them.) That's how the agent shows you the pairing QR today, and
   also a path no mode reaches.
 - **Who started a turn** is partly recorded. `callContext` (`local`, `api`,
   `delegated`, `cron`, in `src/security/layer/types.ts`) and `chatUnattended`
@@ -218,7 +218,7 @@ No new settings file and no second switch.
 
 ## 7. Order of work
 
-0. **L10, now, on its own.** `/api/whatsapp/send` and `/api/telegram/send`
+0. **Done: L10.** `/api/whatsapp/send` and `/api/telegram/send`
    join `src/rbac-agent-denials.ts`, with `place` naming the send tool so the
    agent is pointed at `whatsapp_send` / `telegram_send`. The agent already has
    those tools and nothing you do uses the direct routes, so nothing changes for

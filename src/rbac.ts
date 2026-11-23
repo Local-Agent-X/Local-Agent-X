@@ -110,9 +110,12 @@ export function checkEndpointAccess(role: Role, method: string, pathname: string
   const perms = ROLE_PERMISSIONS[role];
 
   if (perms.deniedEndpoints.some((denied) => endpointUnder(denied, pathname))) {
-    const place = role === "agent" ? agentDeniedRouteFor(pathname)?.place : undefined;
-    return place
-      ? { allowed: false, role, reason: `Role "agent" cannot access ${pathname}: only the user can, in ${place}.`, userHint: `That's yours to change, in ${place}.` }
+    const route = role === "agent" ? agentDeniedRouteFor(pathname) : undefined;
+    if (route?.tool) {
+      return { allowed: false, role, reason: `Role "agent" cannot send through ${pathname}: use the ${route.tool} tool, which checks who the message goes to.`, userHint: USER_HINTS.policy };
+    }
+    return route?.place
+      ? { allowed: false, role, reason: `Role "agent" cannot access ${pathname}: only the user can, in ${route.place}.`, userHint: `That's yours to change, in ${route.place}.` }
       : { allowed: false, role, reason: `Role "${role}" cannot access ${pathname}`, userHint: USER_HINTS.policy };
   }
 

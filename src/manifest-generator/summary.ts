@@ -28,7 +28,7 @@ export function securitySettingsLine(): string {
  * off that LAX "doesn't have a single sandbox mode switch" (2026-10-03).
  */
 export function userOnlyControlsLine(): string {
-  const places = [...new Set(AGENT_DENIED_ROUTES.map((r) => r.place))];
+  const places = [...new Set(AGENT_DENIED_ROUTES.flatMap((r) => (r.place ? [r.place] : [])))];
   const named = places.map((p) => `${p.split(" → ").pop()} (${p})`).join("; ");
   return `- **The user's alone through the UI** (no API route of yours changes these): ${named}. Where a dedicated tool exists, it may act on the user's explicit request — \`setting\` for a security field the user asks you to change (widening asks them to confirm), \`request_secret\` for a secret, \`mcp_add_server\` for an MCP server. Without one, say it is theirs to change and where, and do not look for another way.`;
 }

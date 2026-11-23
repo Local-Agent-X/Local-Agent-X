@@ -5,14 +5,15 @@
  * per-process internal agent token (tools/web-egress.ts selfCallAuthHeader),
  * so any route missing from this list is reachable by an injected agent.
  * RBACManager.checkEndpoint matches each prefix as the exact path or a prefix
- * ending at "/", for every method. `place` is where in Settings the user makes
- * the change themselves: the refusal names it, so the agent can send the user
- * there instead of hunting for another route.
+ * ending at "/", for every method. Each route names what the agent does
+ * instead, so the refusal points somewhere and the agent doesn't hunt for
+ * another route: `place` is where in Settings the user makes the change
+ * themselves; `tool` is the agent's own tool for the same action, which carries
+ * the checks the route skips.
  */
-export interface AgentDeniedRoute {
-  prefix: string;
-  place: string;
-}
+export type AgentDeniedRoute =
+  | { prefix: string; place: string; tool?: undefined }
+  | { prefix: string; tool: string; place?: undefined };
 
 export const AGENT_DENIED_ROUTES: readonly AgentDeniedRoute[] = [
   // Deny every sensitive sink reachable over HTTP. Benign self-calls
@@ -89,6 +90,14 @@ export const AGENT_DENIED_ROUTES: readonly AgentDeniedRoute[] = [
   // another repository, which the next push uploads the user's memory and
   // sessions to. Only the user starts a pull or changes where sync goes.
   { prefix: "/api/sync", place: "Settings → Sync" },
+
+  // A message sent as the user goes out through whatsapp_send / telegram_send,
+  // whose policy rows declare who it goes to, so the send rules see the
+  // recipient. These routes send to any number or chat the body names with no
+  // check at all: a page that talks the agent into a self-call here sends as
+  // the user. Nothing in the app's own pages calls them with the agent's token.
+  { prefix: "/api/whatsapp/send", tool: "whatsapp_send" },
+  { prefix: "/api/telegram/send", tool: "telegram_send" },
 ];
 
 export const AGENT_DENIED_ENDPOINTS: readonly string[] = AGENT_DENIED_ROUTES.map((r) => r.prefix);

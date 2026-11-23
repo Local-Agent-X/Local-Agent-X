@@ -28,6 +28,8 @@ export interface TerminalContainerJanitorOptions {
   runtime?: DockerExecutionRuntime;
   projectionRecovery?: ContainerProjectionRecovery;
   listOpIds?: () => string[];
+  /** Test seam: how an op is read. */
+  readOp?: (opId: string) => Op | null;
 }
 
 export interface TerminalContainerJanitorResult {
@@ -45,9 +47,15 @@ export async function reconcileTerminalContainerExecutions(
   for (const opId of (options.listOpIds ?? listOperationIds)()) {
     let op: Op | null;
     let intent: ContainerLaunchIntent | null;
-    try { op = readOp(opId); intent = readContainerLaunchIntent(opId); }
-    catch { result.deferred.push(opId); continue; }
-    if (!op || !intent || !isTerminalState(op.canonical?.state)) continue;
+    // The launch record first: an op that never ran in a container has none,
+    // and that is nearly every op. Reading each op to learn so parsed the whole
+    // store on every pass.
+    try {
+      intent = readContainerLaunchIntent(opId);
+      if (!intent) continue;
+      op = (options.readOp ?? readOp)(opId);
+    } catch { result.deferred.push(opId); continue; }
+    if (!op || !isTerminalState(op.canonical?.state)) continue;
     if (!ownedByTerminalPlacement(op, intent)) { result.deferred.push(opId); continue; }
     available ??= await runtime.probe();
     if (!available) { result.deferred.push(opId); continue; }

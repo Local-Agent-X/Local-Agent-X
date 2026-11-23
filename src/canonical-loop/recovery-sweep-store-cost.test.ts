@@ -69,4 +69,31 @@ describe("a pass over a store of mostly finished ops", () => {
     writeOp(mkOp("op_live_3", "running", "chat-a"));
     expect(openOpIds().sort()).toEqual(["op_live_2", "op_live_3"]);
   });
+
+  // Boot restored app builds from listOps(): every op ever run, parsed, to find
+  // the one or two builds that were paused when the server stopped.
+  it("boot restores the app builds still open, found through the index of open ops", async () => {
+    const { restorePersistedAppBuildRuntimes } = await import("../tools/build-app-runtime.js");
+    const { resetCanonicalRuntime } = await import("./index.js");
+    const { clearSessionWorkRoot } = await import("../workspace/paths.js");
+    const build = (id: string, state: "paused" | "succeeded"): Op => ({
+      ...mkOp(id, "succeeded", "chat-build"),
+      type: "app_build", lane: "build" as Op["lane"],
+      status: (state === "paused" ? "paused" : "completed") as Op["status"],
+      canonical: { flagValue: true, state, sessionId: "chat-build", leaseOwner: null, leaseExpiresAt: null } as unknown as Op["canonical"],
+      runtimeDescriptor: {
+        kind: "app-build", strategy: "in-canonical-sub-agent", provider: "test-provider",
+        appName: `app-${id}`, appDir: join(dataDir, "apps", id), appUrl: `/apps/${id}/`,
+        prompt: "Build it", brief: "Build it", systemPrompt: "You build apps.", tier: "quick-html",
+      },
+    });
+    writeOp(build("op_build_paused", "paused"));
+    writeOp(build("op_build_done", "succeeded"));
+    try {
+      expect(restorePersistedAppBuildRuntimes()).toEqual(["op_build_paused"]);
+    } finally {
+      resetCanonicalRuntime();
+      clearSessionWorkRoot("op_build_paused");
+    }
+  });
 });

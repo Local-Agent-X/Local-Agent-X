@@ -12,7 +12,7 @@ const { reconcileTerminalContainerExecutions } = await import("./container-termi
 const { bindContainerLaunchIntent, bindContainerLaunchProjection,
   createContainerLaunchIntent, readContainerLaunchIntent, writeContainerLaunchIntent } =
   await import("./container-launch-intent.js");
-const { writeOp } = await import("../ops/op-store.js");
+const { writeOp, readOp } = await import("../ops/op-store.js");
 
 const container = { containerId: "c".repeat(64), createdAt: "2026-07-21T12:00:00.000Z",
   imageId: `sha256:${"b".repeat(64)}` };
@@ -46,6 +46,28 @@ describe("terminal container janitor", () => {
     expect(runtime.stop).toHaveBeenCalledWith(container.containerId);
     expect(cleanup).toHaveBeenCalledOnce();
     expect(readContainerLaunchIntent(op.id)).toBeNull();
+  });
+
+  // Nearly every op never ran in a container. The janitor parsed each one to
+  // learn that, on every pass: the whole store, about once a minute.
+  it("reads only the ops that have a launch record", async () => {
+    const withRecord = terminalOp("op-terminal-with-record");
+    writeOp(withRecord);
+    writeContainerLaunchIntent(createContainerLaunchIntent({ opId: withRecord.id,
+      placement: withRecord.canonical!.executionPlacement!, token: "record-token",
+      name: "lax-op-with-record", imageReference, imageId: container.imageId }));
+    const plain = ["op-plain-1", "op-plain-2", "op-plain-3"];
+    for (const id of plain) writeOp(terminalOp(id));
+    const read: string[] = [];
+    const runtime = { probe: vi.fn().mockResolvedValue(false) } as unknown as DockerExecutionRuntime;
+
+    const result = await reconcileTerminalContainerExecutions({ runtime,
+      listOpIds: () => [...plain, withRecord.id],
+      readOp: (id) => { read.push(id); return readOp(id); } });
+
+    expect(read).toEqual([withRecord.id]);
+    // No container runtime to ask: the one op with a record waits for the next pass.
+    expect(result).toEqual({ cleaned: [], deferred: [withRecord.id] });
   });
 
   it("fences an absent name before removing an unbound launch intent", async () => {

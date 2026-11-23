@@ -19,7 +19,7 @@ import {
 import { SecurityLayer } from "../security/index.js";
 import { loadFileAccessModeAtLeast } from "../security/layer/index.js";
 import type { AppBuildRuntimeDescriptor, Op } from "../ops/types.js";
-import { listOps } from "../ops/op-store.js";
+import { opsWhere } from "../ops/op-index.js";
 import { clearSessionWorkRoot, setSessionWorkRoot } from "../workspace/paths.js";
 import { readTool, writeTool, editTool, deleteFileTool } from "./file-tools.js";
 import { bashTool } from "./shell-tools.js";
@@ -205,7 +205,13 @@ export function registerAppBuildRuntime(
   return { registered: true };
 }
 
-export function restorePersistedAppBuildRuntimes(ops: Op[] = listOps()): string[] {
+/** The app builds that can still run. A finished build is never resumed, so
+ *  the store's finished ops (nearly all of it) are not read to find these. */
+function openAppBuildOps(): Op[] {
+  return opsWhere((facts) => facts.type === OP_TYPE.appBuild && facts.open);
+}
+
+export function restorePersistedAppBuildRuntimes(ops: Op[] = openAppBuildOps()): string[] {
   const restored: string[] = [];
   for (const op of ops) {
     const descriptor = op.runtimeDescriptor;

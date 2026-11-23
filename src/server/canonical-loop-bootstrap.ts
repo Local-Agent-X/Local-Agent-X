@@ -125,14 +125,15 @@ export function bootstrapCanonicalLoop(configReader?: () => LAXConfig, chatCtx?:
       try { return await fn(); } finally { stepMs.push(`${name}=${Date.now() - s}ms`); }
     };
     try {
+      // First, and in slices that yield: every step below asks the index which
+      // ops are still open, and whichever asked first used to pay for the whole
+      // first pass over the store in one go, on the server's one thread.
+      await timed("opIndex", () => warmOpIndex());
       const restored = await timed("restoreAppBuildRuntimes", () => restorePersistedAppBuildRuntimes());
       await timed("processRelays", () => reconcileAllPendingProcessRelays());
       await timed("containerExecutions", () => reconcileTerminalContainerExecutions());
       const recovered = await timed("staleOpSweep", () => sweepStaleCanonicalOpsCooperatively());
       const learned = await timed("learnedOutcomes", () => reconcileCanonicalLearnedOutcomes());
-      // So the first question about the store (the phone opening a chat) does not
-      // pay for the first pass over it.
-      await timed("opIndex", () => warmOpIndex());
       const dt = Date.now() - t;
       if (recovered.length > 0) {
         const summary = recovered

@@ -245,6 +245,11 @@ export async function handleBrowserBridgeMessage(proc: ChildProcess, msg: Browse
  *  leaving the fallback time to answer. */
 export const CAPTURE_PAGE_DEADLINE_MS = 4_000;
 
+/** How long the CDP fallback gets. With capturePage's deadline it still ends
+ *  inside the server's 10 s bridge timeout, so a fallback that hangs is
+ *  reported as what it is, not as a bare "timed out after 10000ms". */
+export const CAPTURE_CDP_DEADLINE_MS = 5_000;
+
 /** capturePage's PNG as base64, or "" when it is empty or not back in time. */
 export async function capturePageWithin(wc: Pick<Electron.WebContents, "capturePage">, ms: number): Promise<string> {
 	let timer: NodeJS.Timeout | undefined;
@@ -265,9 +270,14 @@ export async function capturePageWithin(wc: Pick<Electron.WebContents, "captureP
 async function captureViaCdp(wc: Electron.WebContents): Promise<string> {
 	const dbg = wc.debugger;
 	const attachedHere = !dbg.isAttached();
+	let timer: NodeJS.Timeout | undefined;
 	try {
 		if (attachedHere) dbg.attach("1.3");
-		const { data } = (await dbg.sendCommand("Page.captureScreenshot", { format: "png" })) as { data?: string };
+		const late = new Promise<never>((_, reject) => {
+			timer = setTimeout(() => reject(new Error(`CDP screenshot did not answer within ${CAPTURE_CDP_DEADLINE_MS} ms`)), CAPTURE_CDP_DEADLINE_MS);
+		});
+		const shot = dbg.sendCommand("Page.captureScreenshot", { format: "png" }) as Promise<{ data?: string }>;
+		const { data } = await Promise.race([shot, late]);
 		if (!data) throw new Error("CDP returned no data");
 		return data;
 	} catch (e) {
@@ -276,6 +286,7 @@ async function captureViaCdp(wc: Electron.WebContents): Promise<string> {
 			`${e instanceof Error ? e.message : String(e)} — surface the view or re-observe instead of capturing`,
 		);
 	} finally {
+		clearTimeout(timer);
 		if (attachedHere && dbg.isAttached()) {
 			try { dbg.detach(); } catch { /* already gone */ }
 		}

@@ -157,7 +157,7 @@ vi.mock("../desktop/src/browser-ipc", async (importOriginal) => {
 });
 
 import { autoSurfaceAgentView, isTrustedBrowserSender, scaleRectToDip, setupBrowserIPC } from "../desktop/src/browser-ipc";
-import { CAPTURE_PAGE_DEADLINE_MS, handleBrowserBridgeMessage } from "../desktop/src/server-bridge-browser";
+import { CAPTURE_CDP_DEADLINE_MS, CAPTURE_PAGE_DEADLINE_MS, handleBrowserBridgeMessage } from "../desktop/src/server-bridge-browser";
 
 // The REAL pool module (mocked deps): exercises getAttachedViewId + the
 // pool-change listener seam against actual pool state.
@@ -1061,6 +1061,37 @@ describe("server bridge auto-surface hook + close guard (server-bridge-browser.t
       expect(proc.send).toHaveBeenCalledWith(
         expect.objectContaining({ type: "lax:browser-capture-result", id: 11, ok: true, pngB64: "aGFuZw==" }),
       );
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  // Both capture paths could hang; the model then read only "browser capture
+  // timed out after 10000ms" from the server's bridge timeout, with no cause.
+  it("a CDP fallback that never answers fails inside the bridge timeout, saying so, and detaches", async () => {
+    vi.useFakeTimers();
+    try {
+      const wc = makeWc("");
+      (wc as { capturePage?: unknown }).capturePage = () => new Promise(() => {});
+      const dbg = {
+        attached: false,
+        isAttached: () => dbg.attached,
+        attach: vi.fn(() => { dbg.attached = true; }),
+        detach: vi.fn(() => { dbg.attached = false; }),
+        sendCommand: vi.fn(() => new Promise(() => {})),
+      };
+      (wc as { debugger?: unknown }).debugger = dbg;
+      h.viewsById.set("agent-cdp-hang", { webContents: wc });
+      await handleBrowserBridgeMessage(proc as never, { type: "lax:browser-capture", id: 12, viewId: "agent-cdp-hang" } as never);
+      await vi.advanceTimersByTimeAsync(CAPTURE_PAGE_DEADLINE_MS + CAPTURE_CDP_DEADLINE_MS + 10);
+      expect(CAPTURE_PAGE_DEADLINE_MS + CAPTURE_CDP_DEADLINE_MS).toBeLessThan(10_000);
+      expect(proc.send).toHaveBeenCalledWith(expect.objectContaining({
+        type: "lax:browser-capture-result",
+        id: 12,
+        ok: false,
+        error: expect.stringContaining(`CDP screenshot did not answer within ${CAPTURE_CDP_DEADLINE_MS} ms`),
+      }));
+      expect(dbg.detach).toHaveBeenCalled();
     } finally {
       vi.useRealTimers();
     }

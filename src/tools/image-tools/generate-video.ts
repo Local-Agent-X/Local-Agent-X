@@ -15,19 +15,15 @@ const xaiLogger = createLogger("image-tools.xai");
 /** Video generation server URL — configurable via config.videoServerUrl */
 function getVideoServerUrl(): string { return getRuntimeConfig().videoServerUrl; }
 
-/** Generate video via xAI Grok Imagine (text-to-video, async polling).
- *  POST /v1/videos/generations returns { request_id }, then we poll
- *  GET /v1/videos/{request_id} until status=done. Final body has the
- *  video URL, which we fetch and save as MP4. */
-async function generateViaXaiVideo(
+/** The reference images of a video request, as xAI takes them: a local file
+ *  becomes a data URL, anything else is passed through. With none given and a
+ *  prompt that points at an earlier image, the most recent local image is used
+ *  (`usedFallback`). `sources` names each one for the tool's result. */
+function videoReferenceImages(
   prompt: string,
-  apiKey: string,
-  duration: number,
   referenceImageUrls: string[] | undefined,
   sessionId: string | undefined,
-): Promise<ToolResult> {
-  const headers = { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` };
-
+): { refs: Array<{ url: string }>; sources: string[]; usedFallback: boolean } {
   const fileToBase64Ref = (filePath: string) => ({ url: imageFileToDataUrl(filePath), source: filePath });
 
   // Normalize. Grok's tool-call sometimes serializes an array as a
@@ -65,6 +61,23 @@ async function generateViaXaiVideo(
       xaiLogger.info(`[xai-video] auto-using recent local image as ref: ${recent}`);
     }
   }
+  return { refs, sources: refSources, usedFallback };
+}
+
+/** Generate video via xAI Grok Imagine (text-to-video, async polling).
+ *  POST /v1/videos/generations returns { request_id }, then we poll
+ *  GET /v1/videos/{request_id} until status=done. Final body has the
+ *  video URL, which we fetch and save as MP4. */
+async function generateViaXaiVideo(
+  prompt: string,
+  apiKey: string,
+  duration: number,
+  referenceImageUrls: string[] | undefined,
+  sessionId: string | undefined,
+): Promise<ToolResult> {
+  const headers = { "Content-Type": "application/json", "Authorization": `Bearer ${apiKey}` };
+
+  const { refs, sources: refSources, usedFallback } = videoReferenceImages(prompt, referenceImageUrls, sessionId);
   // Reference-image path caps at 10s per xAI's docs.
   const clamped = Math.max(1, Math.min(refs.length > 0 ? 10 : 15, Math.floor(duration)));
 

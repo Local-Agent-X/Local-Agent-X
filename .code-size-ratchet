@@ -64,7 +64,6 @@ src/tools/app-tools/app-template.ts#renderStarterHtml 119
 src/tools/build-app.ts#buildAppTool.execute 131
 src/tools/email-mutate-tools.ts#withSession:callback 111
 src/tools/http-request.ts#tool.execute 149
-src/tools/image-tools/generate-video.ts#generateViaXaiVideo 109
 src/tools/secret-tools.ts#createSecretTools 111
 src/tools/shell-tool.ts#bashTool.execute 106
 src/voice/voice-session/model-init.ts#initializeVoiceStack 119

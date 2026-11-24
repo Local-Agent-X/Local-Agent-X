@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2164 non-test source files · 60 oversized · 273 nearing the size cap.
+**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2164 non-test source files · 59 oversized · 274 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -21,7 +21,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 191 | 32 | XL | 1 |
 | `src/security/` | 171 | 66 | XL | 2 |
-| `src/tools/` | 145 | 267 | XL | 7 |
+| `src/tools/` | 145 | 267 | XL | 6 |
 | `src/tool-execution/` | 107 | 91 | XL | 2 |
 | `src/workspace/` | 95 | 3 | M |  |
 | `src/canonical-loop/` | 92 | 298 | XL | 6 |
@@ -303,7 +303,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/tools/build-app.ts#buildAppTool.execute`
 - `src/tools/email-mutate-tools.ts#withSession:callback`
 - `src/tools/http-request.ts#tool.execute`
-- `src/tools/image-tools/generate-video.ts#generateViaXaiVideo`
 - `src/tools/secret-tools.ts#createSecretTools`
 - `src/tools/shell-tool.ts#bashTool.execute`
 - `src/voice/voice-session/model-init.ts#initializeVoiceStack`
@@ -454,6 +453,7 @@ job. Comments are free: never cut them to fit.
 - `src/server/bootstrap-services.ts#initOrRefreshEmbeddingProvider` — 80+ own code lines (cap 100)
 - `src/threat/threat-engine.ts#ThreatEngine.evaluateToolResult` — 80+ own code lines (cap 100)
 - `src/tools/asset-tools.ts#extractSiteAssetsTool.execute` — 80+ own code lines (cap 100)
+- `src/tools/image-tools/generate-video.ts#generateViaXaiVideo` — 80+ own code lines (cap 100)
 - `src/tools/image-tools/generate-video.ts#generateVideoTool.execute` — 80+ own code lines (cap 100)
 - `src/tools/pdf-tools.ts#pdfCreate.execute` — 80+ own code lines (cap 100)
 - `src/tools/shared/image-binary-meta.ts#parseDimensions` — 80+ own code lines (cap 100)

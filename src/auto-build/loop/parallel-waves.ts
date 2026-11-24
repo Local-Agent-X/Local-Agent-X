@@ -34,7 +34,8 @@
  *     is set aside with its branch PRESERVED, named in the run's summary; the
  *     chunks after it still merge, since a failed merge is aborted in its own
  *     worktree and leaves the base as it was. The one exception is the files
- *     every chunk edits (ARCHITECTURE.md, the generated map): those are settled
+ *     every chunk edits (ARCHITECTURE.md, the generated map, package.json and
+ *     its lockfile when chunks each add packages): those are settled
  *     by rule (shared-file-merge.ts) and judged by the re-gate. Silent
  *     corruption is the one unacceptable outcome.
  * (3) RE-GATE THE MERGED TREE (S4). Rule 2 catches TEXTUAL conflicts only; a
@@ -64,9 +65,12 @@ import { createPhasePauseTracker, type PhasePauseTracker } from "./phase-gate-pa
 import { isPhaseGatePause } from "../chunk-review/index.js";
 import { handleAction } from "./handle-action.js";
 import { reGateMergedTree, warnFootprintEscapes } from "./merged-regate.js";
-import { anythingSetAside, createSetAsideLedger, holdBackWaiting, setAsideSummary, type SetAsideLedger } from "./set-aside.js";
-import { createSharedFileMerge, regenerateSharedFiles, type SharedFileMerge } from "./shared-file-merge.js";
+import { anythingSetAside, createSetAsideLedger, endWithSetAside, holdBackWaiting, MAX_SET_ASIDE, type SetAsideLedger } from "./set-aside.js";
+import { createSharedFileMerge, regenerateSharedFiles, relockMergedProject, type SharedFileMerge } from "./shared-file-merge.js";
 import { buildChunkInWorktree, commitDispatchedChunk, preserveWorktreeWork } from "./parallel-chunk-build.js";
+import { copyLocalFiles } from "./worktree-local-files.js";
+import { pickUpSetAsideWork } from "./carry-over.js";
+import { isSetAsideCase, setChunkAsideInTree } from "./tree-set-aside.js";
 import type { EmitFn, LoopEvent, LoopOptions, LoopResult } from "./types.js";
 import { haltedResult, safeGet } from "./types.js";
 
@@ -123,18 +127,8 @@ type RunContext = ParallelWavesContext & {
   sharedMerge: SharedFileMerge;
 };
 
-/** Chunks set aside in one run before the build stops trying: past this it is
- *  no longer about one chunk, and each one costs its fix rounds. */
-const MAX_SET_ASIDE = 3;
-
-/** End a run that set chunks aside: halted, saying what landed and what did not. */
-function endWithSetAside(ctx: RunContext, chunksCommitted: number): LoopResult {
-  const { ledger, totalChunks, emit, events, outcomes } = ctx;
-  const reason = setAsideSummary(ledger, ctx.landedThisRun);
-  const at = ledger.setAside[0]?.chunk ?? ledger.waiting[0].chunk;
-  emit({ type: "halt", chunkNumber: at, totalChunks, message: reason });
-  return { status: "halted", lastChunk: at, chunksCommitted, haltReason: reason, outcomes, events };
-}
+const endRunWithSetAside = (ctx: RunContext, chunksCommitted: number): LoopResult =>
+  endWithSetAside(ctx.ledger, ctx.landedThisRun, { ...ctx, chunksCommitted });
 
 export async function runParallelWaves(input: ParallelWavesContext): Promise<LoopResult> {
   const { opts, totalChunks, maxConcurrentChunks, emit, events, outcomes } = input;
@@ -183,7 +177,7 @@ export async function runParallelWaves(input: ParallelWavesContext): Promise<Loo
       const step = await runBatch(ctx, buildable, chunksCommitted);
       if (step.kind === "halt") return step.result;
       chunksCommitted = step.chunksCommitted;
-      if (ctx.ledger.setAside.length >= MAX_SET_ASIDE) return endWithSetAside(ctx, chunksCommitted);
+      if (ctx.ledger.setAside.length >= MAX_SET_ASIDE) return endRunWithSetAside(ctx, chunksCommitted);
     }
 
     // S4 rule 3 — re-gate the now-fully-merged wave on base BEFORE cutting the
@@ -203,7 +197,7 @@ export async function runParallelWaves(input: ParallelWavesContext): Promise<Loo
     if (phase.kind === "halt") return phase.result;
   }
 
-  if (anythingSetAside(ctx.ledger)) return endWithSetAside(ctx, chunksCommitted);
+  if (anythingSetAside(ctx.ledger)) return endRunWithSetAside(ctx, chunksCommitted);
   const lastChunk = chunks[chunks.length - 1].number;
   emit({ type: "complete", chunkNumber: lastChunk, totalChunks, message: `Loop complete (parallel): ${chunksCommitted} chunks committed.` });
   return { status: "complete", lastChunk, chunksCommitted, haltReason: "", outcomes, events };
@@ -241,6 +235,15 @@ async function runBatch(ctx: RunContext, batch: ParsedChunk[], chunksCommittedIn
     // this run side-steps to `autobuild/c<N>-2`. Git ops go by `name`, but every
     // "git checkout <branch>" recovery hint reads this field.
     dispatched.push({ chunk, name, branch: wt.branch, worktreePath: wt.path, workerIndex: workerIndex++ });
+    // Git gave the worktree the tracked files; the project's ignored config
+    // (an env file, a service config) comes across here (worktree-local-files.ts).
+    const local = copyLocalFiles(opts.projectDir, wt.path);
+    if (local.length > 0) {
+      emit({
+        type: "review-result", chunkNumber: chunk.number, totalChunks,
+        message: `Chunk ${chunk.number}'s worktree got the project's ${local.length} git-ignored local file(s): ${local.slice(0, 8).join(", ")}${local.length > 8 ? ", …" : ""}.`,
+      });
+    }
   }
 
   // Wrap everything past worktree creation: ANY throw cleans up every worktree
@@ -294,18 +297,7 @@ async function runBatch(ctx: RunContext, batch: ParsedChunk[], chunksCommittedIn
       // parallel conflict). Empty/undeclared footprint never warns.
       warnFootprintEscapes({ chunk: d.chunk, changed: r.finalOutcome.report.changed, totalChunks, emit });
     }
-    // A merge that took the base's copy of the generated map leaves it one
-    // batch behind: generate it from the merged project before the re-gate.
-    if (ctx.sharedMerge.mapIsStale()) {
-      const regenerated = await regenerateSharedFiles(opts.projectDir, opts.signal);
-      ctx.sharedMerge.mapRegenerated();
-      emit({
-        type: "review-result", chunkNumber: batch[batch.length - 1].number, totalChunks,
-        message: regenerated.ok
-          ? `Codebase map after the merged batch: ${regenerated.detail}.`
-          : `WARNING: the codebase map could not be regenerated after the merged batch (${regenerated.detail}); the re-gate will say whether it is stale.`,
-      });
-    }
+    await regenerateAfterMerges(ctx, batch[batch.length - 1].number);
   } catch (err) {
     // A genuine throw escaped the batch — reclaim every worktree it created
     // (idempotent: cleanupWorktreeSafe no-ops on an already-merged/cleaned
@@ -323,6 +315,36 @@ async function runBatch(ctx: RunContext, batch: ParsedChunk[], chunksCommittedIn
   }
 
   return { kind: "advance", chunksCommitted };
+}
+
+/** What a batch's merges settled by taking the base's copy is one batch
+ *  behind: produce it again from the merged project before the re-gate builds
+ *  it. The generated map, and the lockfile of a package.json two chunks both
+ *  added packages to (shared-file-merge.ts). */
+async function regenerateAfterMerges(ctx: RunContext, chunkNumber: number): Promise<void> {
+  const { opts, totalChunks, emit } = ctx;
+  if (ctx.sharedMerge.mapIsStale()) {
+    const regenerated = await regenerateSharedFiles(opts.projectDir, opts.signal);
+    ctx.sharedMerge.mapRegenerated();
+    emit({
+      type: "review-result", chunkNumber, totalChunks,
+      message: regenerated.ok
+        ? `Codebase map after the merged batch: ${regenerated.detail}.`
+        : `WARNING: the codebase map could not be regenerated after the merged batch (${regenerated.detail}); the re-gate will say whether it is stale.`,
+    });
+  }
+  const lockfiles = ctx.sharedMerge.staleLockfiles();
+  if (lockfiles.length === 0) return;
+  const relocked = await relockMergedProject(opts.projectDir, lockfiles, opts.parentOpId ?? `auto-build:${opts.projectDir}`, opts.signal);
+  ctx.sharedMerge.lockfilesRewritten();
+  for (const r of relocked) {
+    emit({
+      type: "review-result", chunkNumber, totalChunks,
+      message: r.ok
+        ? `${r.lockfile} after the merged batch, which added packages in more than one chunk: ${r.detail}.`
+        : `WARNING: ${r.lockfile} could not be written again after the merged batch (${r.detail}); it names only some of the packages package.json does, so the re-gate's build may not find the rest.`,
+    });
+  }
 }
 
 /**
@@ -343,17 +365,25 @@ async function buildChunkOnBaseSerial(ctx: RunContext, chunk: ParsedChunk, chunk
     return { kind: "halt", result: haltedResult(`git rev-parse HEAD failed before chunk ${chunk.number}: ${preSha.error}`, chunk.number, outcomes, events) };
   }
 
+  const carryOver = pickUpSetAsideWork({ projectDir: opts.projectDir, tree: opts.projectDir, chunk, totalChunks, emit });
   const { finalOutcome, finalAction } = await buildChunkWithRetry({
     opts, chunk, totalChunks, emit, preSha: preSha.value, priorOutcomes: outcomes,
+    ...(carryOver ? { carryOver } : {}),
   });
 
   outcomes.push({ chunkNumber: chunk.number, outcome: finalOutcome, action: finalAction });
+  // A phase pause lands like a proceed; the phase is scored once the wave is in.
+  const paused = isPhaseGatePause(finalOutcome);
+  // Still not green: set aside like a chunk built in a worktree, its work
+  // moved out of the base tree onto a branch (tree-set-aside.ts).
+  if (isSetAsideCase(finalAction, paused, opts.signal)
+    && setChunkAsideInTree({ projectDir: opts.projectDir, chunk, totalChunks, preSha: preSha.value, outcome: finalOutcome, ledger: ctx.ledger, emit })) {
+    return { kind: "advance", chunksCommitted };
+  }
   if (finalOutcome.report.launchReadiness) {
     emitLaunchReadiness(opts.projectDir, chunk, finalOutcome.report.launchReadiness);
   }
 
-  // A phase pause lands like a proceed; the phase is scored once the wave is in.
-  const paused = isPhaseGatePause(finalOutcome);
   const handled = await handleAction({
     chunk, totalChunks, projectDir: opts.projectDir,
     finalAction: paused ? "proceed" : finalAction, finalOutcome, chunksCommitted, outcomes, events, emit,

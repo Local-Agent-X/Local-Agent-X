@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2122 non-test source files · 69 oversized · 263 nearing the size cap.
+**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2124 non-test source files · 69 oversized · 263 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -31,7 +31,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/memory/` | 65 | 163 | XL | 3 |
 | `src/data-lineage/` | 61 | 12 | L |  |
 | `src/browser/` | 55 | 95 | XL | 5 |
-| `src/agency/` | 51 | 40 | XL |  |
+| `src/agency/` | 53 | 40 | XL |  |
 | `src/chat-ws/` | 49 | 23 | L |  |
 | `src/tool-policy/` | 48 | 22 | L |  |
 | `src/local-runtimes/` | 45 | 28 | XL |  |
@@ -72,7 +72,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/agent-guards/` | 9 | 13 | L |  |
 | `src/plugin-system/` | 9 | 10 | L | 1 |
 | `src/screen-stream/` | 9 | 12 | L |  |
-| `src/auto-build/` | 8 | 63 | XL | 1 |
+| `src/auto-build/` | 8 | 65 | XL | 1 |
 | `src/autopilot/` | 8 | 14 | L | 1 |
 | `src/bridge-voice/` | 8 | 6 | M |  |
 | `src/mcp-client/` | 8 | 11 | L | 1 |
@@ -470,6 +470,7 @@ job. Comments are free: never cut them to fit.
 - `src/auto-build/chunk-review/gate-done-when.ts#gateDoneWhen` — 70+ own code lines (cap 100)
 - `src/auto-build/loop-phase-gate.ts#runAdvisorDrivenRecovery` — 70+ own code lines (cap 100)
 - `src/auto-build/loop/handle-action.ts#handleAction` — 70+ own code lines (cap 100)
+- `src/auto-build/loop/run.ts#runChunksInOrder` — 70+ own code lines (cap 100)
 - `src/autopilot/validate.ts#validateRound` — 70+ own code lines (cap 100)
 - `src/browser/in-app-resolve-scripts.ts#textSearchScript` — 70+ own code lines (cap 100)
 - `src/browser/launcher.ts#launchAgentChrome` — 70+ own code lines (cap 100)
@@ -524,7 +525,6 @@ job. Comments are free: never cut them to fit.
 - `src/agents/invoke.ts#invokeDefinition` — 60+ own code lines (cap 100)
 - `src/auth/anthropic-login.ts#completeAnthropicCliOAuth` — 60+ own code lines (cap 100)
 - `src/auto-build/loop/parallel-waves.ts#runBatch` — 60+ own code lines (cap 100)
-- `src/auto-build/loop/run.ts#runChunksInOrder` — 60+ own code lines (cap 100)
 - `src/auto-build/orchestrator/resume.ts#computeResumeWindow` — 60+ own code lines (cap 100)
 - `src/auto-build/orchestrator/resume.ts#tryResumeOne` — 60+ own code lines (cap 100)
 - `src/auto-build/orchestrator/tools.ts#buildPlanResumeTool.execute` — 60+ own code lines (cap 100)

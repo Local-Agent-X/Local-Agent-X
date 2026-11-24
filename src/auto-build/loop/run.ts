@@ -10,8 +10,9 @@
  *
  *   proceed     → commit; advance
  *   amend_spec  → apply additive spec edit; commit separately; advance
- *   push_back   → respawn once with retryReason; if still bad, halt
- *   halt        → return now with reasoning
+ *   push_back   → fixed round by round (handle-push-back.ts)
+ *   halt        → the chunk is set aside and the build goes on without it
+ *                 (tree-set-aside.ts); a phase gate that failed still stops
  *
  * The loop NEVER:
  *   - Auto-applies a non-additive spec amendment (the additive-diff gate
@@ -28,7 +29,12 @@ import { attemptPhaseGateScoring } from "../loop-phase-gate.js";
 import { emitLaunchReadiness } from "../loop-effects.js";
 import type { EmitFn, LoopEvent, LoopOptions, LoopResult } from "./types.js";
 import { haltedResult, safeGet } from "./types.js";
-import { buildChunkWithRetry } from "./chunk-attempt.js";
+import { buildChunkWithRetry, type ChunkAttemptResult } from "./chunk-attempt.js";
+import type { ParsedChunk } from "../plan-parser.js";
+import { clearSetAside } from "../failure-recovery.js";
+import { pickUpSetAsideWork } from "./carry-over.js";
+import { anythingSetAside, createSetAsideLedger, endWithSetAside, holdBackWaiting, MAX_SET_ASIDE, type SetAsideLedger } from "./set-aside.js";
+import { isSetAsideCase, setChunkAsideInTree } from "./tree-set-aside.js";
 import { isPhaseGatePause } from "../chunk-review/index.js";
 import { handleAction } from "./handle-action.js";
 import { runParallelWaves } from "./parallel-waves.js";
@@ -128,9 +134,46 @@ export async function runBuildLoop(opts: LoopOptions): Promise<LoopResult> {
 }
 
 /**
+ * The chunk that closes a phase pauses at the phase's verification gate, and
+ * the phase is scored there when the project carries a .lax-launch.json:
+ * score >= 7 → proceed; below → one fix-worker, re-score, halt if still
+ * below; no launch spec → the halt stands, for manual scoring.
+ *
+ * A phase with a chunk set aside or waiting cannot be scored yet: its closing
+ * chunk lands like any accepted chunk, as on the parallel path
+ * (phase-gate-pause.ts), and the run ends halted on what was set aside.
+ */
+async function scorePhaseIfPaused(a: {
+  opts: LoopOptions; chunk: ParsedChunk; totalChunks: number; emit: EmitFn; ledger: SetAsideLedger; attempt: ChunkAttemptResult;
+}): Promise<ChunkAttemptResult> {
+  const { opts, chunk, totalChunks, emit, attempt } = a;
+  if (!isPhaseGatePause(attempt.finalOutcome)) return attempt;
+  const notLanded = [...a.ledger.setAside, ...a.ledger.waiting].map((c) => c.chunk)
+    .filter((n) => opts.plan.chunks.find((c) => c.number === n)?.phase === chunk.phase);
+  if (notLanded.length > 0) {
+    emit({
+      type: "review-result", chunkNumber: chunk.number, totalChunks,
+      message: `${chunk.phase}: not scored at its gate, since chunk(s) ${notLanded.join(", ")} of it did not land this run. Chunk ${chunk.number} lands unscored.`,
+    });
+    return { finalOutcome: attempt.finalOutcome, finalAction: "proceed" };
+  }
+  const recovery = await attemptPhaseGateScoring(opts, chunk, emit, totalChunks);
+  if (recovery.kind === "recovered") {
+    emit({ type: "review-result", chunkNumber: chunk.number, totalChunks, message: `phase-gate auto-scoring passed — overriding halt to proceed` });
+    return { finalOutcome: attempt.finalOutcome, finalAction: "proceed" };
+  }
+  if (recovery.kind === "halt-with-context") {
+    return { finalOutcome: { ...attempt.finalOutcome, reasoning: recovery.reason }, finalAction: attempt.finalAction };
+  }
+  return attempt;
+}
+
+/**
  * The serial path: build the chunks of the window one after another in the
- * project tree. A chunk that is still not green halts the build, since its
- * work is in the tree, uncommitted, and nothing can be built past it.
+ * project tree. A chunk that is still not green is set aside, as on the
+ * parallel path: its work is moved out of the tree onto a branch
+ * (tree-set-aside.ts), the chunks that depend on it wait, and the rest build
+ * on. The run then ends halted, saying what landed and what did not.
  */
 async function runChunksInOrder(run: {
   opts: LoopOptions;
@@ -146,6 +189,9 @@ async function runChunksInOrder(run: {
   let chunksCommitted = 0;
   // Chunks an earlier run landed past one it set aside are not built again.
   const alreadyLanded = new Set(opts.landedChunks ?? []);
+  const ledger = createSetAsideLedger();
+  const landedThisRun: number[] = [];
+  const endSetAside = (): LoopResult => endWithSetAside(ledger, landedThisRun, { chunksCommitted, totalChunks, emit, events, outcomes });
 
   for (let i = startIdx; i < endIdx; i++) {
     if (opts.signal?.aborted) {
@@ -154,6 +200,12 @@ async function runChunksInOrder(run: {
 
     const chunk = chunks[i];
     if (alreadyLanded.has(chunk.number)) continue;
+    // A chunk that depends on one that did not land is not started.
+    const [waiting] = holdBackWaiting(ledger, [chunk]).held;
+    if (waiting) {
+      emit({ type: "chunk-set-aside", chunkNumber: chunk.number, totalChunks, message: `Chunk ${chunk.number} not started: it depends on chunk ${waiting.on}, which did not land.` });
+      continue;
+    }
     emit({ type: "chunk-start", chunkNumber: chunk.number, totalChunks, message: `Starting chunk ${chunk.number}/${totalChunks}: ${chunk.title} (${chunk.klass})` });
 
     const preSha = await safeGet(() => getHeadSha(opts.projectDir));
@@ -162,34 +214,25 @@ async function runChunksInOrder(run: {
     }
 
     // Build, review and judge the chunk; a push_back is fixed round by round
-    // (handle-push-back.ts). On this serial path a chunk that still is not
-    // green halts the build: its work is in the project tree, uncommitted, so
-    // nothing can be built past it. The parallel path sets it aside instead.
-    // Already-committed chunks' distilled learnings go into its task so the
-    // worker inherits SPEC_GAPS / NOTE context instead of rediscovering the
-    // project from zero.
+    // (handle-push-back.ts). A chunk an earlier run set aside starts from its
+    // kept work and findings (carry-over.ts). Already-committed chunks'
+    // distilled learnings go into its task so the worker inherits SPEC_GAPS /
+    // NOTE context instead of rediscovering the project from zero.
+    const carryOver = pickUpSetAsideWork({ projectDir: opts.projectDir, tree: opts.projectDir, chunk, totalChunks, emit });
     const attempt = await buildChunkWithRetry({
       opts, chunk, totalChunks, emit, preSha: preSha.value, priorOutcomes: outcomes,
+      ...(carryOver ? { carryOver } : {}),
     });
-    let finalOutcome = attempt.finalOutcome;
-    let finalAction = attempt.finalAction;
-
-    // Phase-gate scoring + auto-fix push-back. Fires only when the
-    // halt is from the phase-gate gate AND the project carries a
-    // .lax-launch.json. Per spec: score >= 7 → proceed;
-    // score < 7 → spawn one fix-worker, re-score, halt if still < 7.
-    if (isPhaseGatePause(finalOutcome)) {
-      const recovery = await attemptPhaseGateScoring(opts, chunk, emit, totalChunks);
-      if (recovery.kind === "recovered") {
-        finalAction = "proceed";
-        emit({ type: "review-result", chunkNumber: chunk.number, totalChunks, message: `phase-gate auto-scoring passed — overriding halt to proceed` });
-      } else if (recovery.kind === "halt-with-context") {
-        finalOutcome = { ...finalOutcome, reasoning: recovery.reason };
-      }
-      // kind === "no-spec" → leave the halt unchanged for manual scoring.
-    }
+    const judged = await scorePhaseIfPaused({ opts, chunk, totalChunks, emit, ledger, attempt });
+    const { finalOutcome, finalAction } = judged;
 
     outcomes.push({ chunkNumber: chunk.number, outcome: finalOutcome, action: finalAction });
+
+    if (isSetAsideCase(finalAction, isPhaseGatePause(finalOutcome), opts.signal)
+      && setChunkAsideInTree({ projectDir: opts.projectDir, chunk, totalChunks, preSha: preSha.value, outcome: finalOutcome, ledger, emit })) {
+      if (ledger.setAside.length >= MAX_SET_ASIDE) return endSetAside();
+      continue;
+    }
 
     // Surface launch-readiness items regardless of action (they don't
     // halt by default — the launch-readiness gate halts only when items
@@ -211,8 +254,11 @@ async function runChunksInOrder(run: {
     });
     if (handled.kind === "halt") return handled.result;
     chunksCommitted = handled.chunksCommitted;
+    landedThisRun.push(chunk.number);
+    clearSetAside(opts.projectDir, chunk.number);
   }
 
+  if (anythingSetAside(ledger)) return endSetAside();
   emit({ type: "complete", chunkNumber: chunks[endIdx - 1].number, totalChunks, message: `Loop complete: ${chunksCommitted} chunks committed.` });
   return {
     status: "complete",

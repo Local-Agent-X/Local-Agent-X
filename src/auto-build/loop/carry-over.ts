@@ -14,6 +14,8 @@
 import { git } from "../../agency/worktree-core.js";
 import { HARNESS_COMMIT_IDENTITY, isNoGitIdentity } from "../../git-safety.js";
 import { setAsideRecordFor } from "../failure-recovery.js";
+import type { ParsedChunk } from "../plan-parser.js";
+import type { EmitFn } from "./types.js";
 
 export interface CarryOver {
   /** The branch the earlier run kept the chunk's work on, when it still exists. */
@@ -66,4 +68,27 @@ export function carryOverBrief(carry: CarryOver, merged: boolean): string {
       carry.findings.map((f) => `- ${f.replace(/\s+/g, " ").trim()}`).join("\n")
     : "";
   return work + found;
+}
+
+/**
+ * Start a chunk an earlier run set aside from its kept work and findings:
+ * merge the kept branch into `tree` (the chunk's worktree, or the project
+ * itself for a chunk built there) and say so. Returns the opening of the
+ * worker's brief and the findings its fix rounds keep fixed; undefined for a
+ * chunk building for the first time.
+ */
+export function pickUpSetAsideWork(a: { projectDir: string; tree: string; chunk: ParsedChunk; totalChunks: number; emit: EmitFn }): { brief: string; findings: string[] } | undefined {
+  const { chunk } = a;
+  const carry = carryOverFor(a.projectDir, chunk.number);
+  if (!carry) return undefined;
+  const merge = carry.branch ? mergeCarriedWork(a.tree, carry.branch) : null;
+  a.emit({
+    type: "review-result", chunkNumber: chunk.number, totalChunks: a.totalChunks,
+    message: merge
+      ? merge.merged
+        ? `Chunk ${chunk.number} picks up the last run's work from '${carry.branch}', with ${carry.findings.length} earlier finding(s) to keep fixed.`
+        : `Chunk ${chunk.number}'s last work on '${carry.branch}' no longer merges (${merge.detail}); building fresh with ${carry.findings.length} earlier finding(s).`
+      : `Chunk ${chunk.number} builds with ${carry.findings.length} finding(s) from earlier runs.`,
+  });
+  return { brief: carryOverBrief(carry, merge?.merged ?? false), findings: carry.findings };
 }

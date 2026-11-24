@@ -16,6 +16,11 @@
  * builds only what is left.
  */
 import type { ParsedChunk } from "../plan-parser.js";
+import type { EmitFn, LoopEvent, LoopResult } from "./types.js";
+
+/** Chunks set aside in one run before the build stops trying: past this it is
+ *  no longer about one chunk, and each one costs its fix rounds. */
+export const MAX_SET_ASIDE = 3;
 
 export interface SetAsideChunk {
   chunk: number;
@@ -82,6 +87,21 @@ export function setAsideSummary(ledger: SetAsideLedger, landed: number[]): strin
   if (ledger.waiting.length) {
     parts.push(`Not started, waiting on those: ${ledger.waiting.map((w) => `chunk ${w.chunk} (on ${w.on})`).join(", ")}.`);
   }
-  parts.push("Fix what was found (or change the plan), then resume: chunks that landed are not built again.");
+  parts.push(
+    "Resume to have each set-aside chunk picked up from its branch with what was found; chunks that landed are not built again. " +
+    "A finding is fixed in the code: the plan changes only for a decision of the owner's, or to settle two of its own lines that contradict each other.",
+  );
   return parts.join("\n");
+}
+
+/** End a run that set chunks aside: halted, saying what landed and what did not. */
+export function endWithSetAside(
+  ledger: SetAsideLedger,
+  landed: number[],
+  run: { chunksCommitted: number; totalChunks: number; emit: EmitFn; events: LoopEvent[]; outcomes: LoopResult["outcomes"] },
+): LoopResult {
+  const reason = setAsideSummary(ledger, landed);
+  const at = ledger.setAside[0]?.chunk ?? ledger.waiting[0].chunk;
+  run.emit({ type: "halt", chunkNumber: at, totalChunks: run.totalChunks, message: reason });
+  return { status: "halted", lastChunk: at, chunksCommitted: run.chunksCommitted, haltReason: reason, outcomes: run.outcomes, events: run.events };
 }

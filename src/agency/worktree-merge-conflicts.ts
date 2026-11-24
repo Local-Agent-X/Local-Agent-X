@@ -6,7 +6,7 @@
  * branch, so a conflict stays in the worktree and never reaches a person's
  * checkout. By default a conflict ends the merge: it is aborted and the branch
  * is kept for a person. A caller may pass a resolver instead. The resolver is
- * handed the conflicted files and either settles ALL of them (with the two
+ * handed the conflicted files and either settles ALL of them (with the
  * helpers here) or says no; a half-settled merge is still aborted. Nothing
  * here decides WHICH files may be settled by rule: that is the caller's
  * knowledge of its own project (auto-build/loop/shared-file-merge.ts).
@@ -77,4 +77,58 @@ export function unionMergeConflicted(worktreePath: string, file: string): void {
 export function takeBaseCopy(worktreePath: string, file: string): void {
   git(["checkout", "--theirs", "--", file], worktreePath);
   git(["add", "--", file], worktreePath);
+}
+
+type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
+type JsonObject = { [key: string]: Json };
+const isObject = (v: Json | undefined): v is JsonObject => v !== null && typeof v === "object" && !Array.isArray(v);
+const same = (a: Json | undefined, b: Json | undefined): boolean => JSON.stringify(a) === JSON.stringify(b);
+const byName = (a: string, b: string): number => a.localeCompare(b, "en");
+const inOrder = (keys: string[]): boolean => keys.every((key, i) => i === 0 || byName(keys[i - 1], key) <= 0);
+
+/**
+ * One value merged three ways; `undefined` is "the key is absent". A side that
+ * left the value as the ancestor had it yields to the side that changed it.
+ * Two objects merge key by key. Anything else both sides changed differently
+ * is a conflict: `null`.
+ */
+function mergeJsonValue(base: Json | undefined, ours: Json | undefined, theirs: Json | undefined): { value: Json | undefined } | null {
+  if (same(ours, theirs) || same(base, theirs)) return { value: ours };
+  if (same(base, ours)) return { value: theirs };
+  if (!isObject(ours) || !isObject(theirs)) return null;
+  const ancestor = isObject(base) ? base : {};
+  const keys = [...Object.keys(theirs), ...Object.keys(ours).filter((key) => !(key in theirs))];
+  // An object the base kept in name order (a dependency map) stays in it.
+  if (inOrder(Object.keys(theirs))) keys.sort(byName);
+  const merged: JsonObject = {};
+  for (const key of keys) {
+    const entry = mergeJsonValue(ancestor[key], ours[key], theirs[key]);
+    if (!entry) return null;
+    if (entry.value !== undefined) merged[key] = entry.value;
+  }
+  return { value: merged };
+}
+
+function parseJson(text: string): Json | undefined {
+  try { return JSON.parse(text) as Json; } catch { return undefined; }
+}
+
+/**
+ * Settle a conflicted JSON file key by key: right for a manifest where each
+ * side added its own entries (two chunks each adding a package to
+ * package.json), which git's line merge calls a conflict because the lines
+ * touch. Returns false, with the file left conflicted, when a side is not
+ * JSON or both sides gave one key different values: that is a decision.
+ */
+export function mergeJsonConflicted(worktreePath: string, file: string): boolean {
+  const theirsText = stage(worktreePath, 3, file);
+  const ours = parseJson(stage(worktreePath, 2, file));
+  const theirs = parseJson(theirsText);
+  if (ours === undefined || theirs === undefined) return false;
+  const merged = mergeJsonValue(parseJson(stage(worktreePath, 1, file)), ours, theirs);
+  if (!merged || merged.value === undefined) return false;
+  const indent = theirsText.match(/^([ \t]+)"/m)?.[1] ?? "  ";
+  writeFileSync(join(worktreePath, file), `${JSON.stringify(merged.value, null, indent)}\n`);
+  git(["add", "--", file], worktreePath);
+  return true;
 }

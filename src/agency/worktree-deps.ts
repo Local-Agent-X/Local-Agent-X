@@ -37,11 +37,24 @@ function lockfileFolder(ws: AgentWorkspace): string | null {
 
 type InstallResult = { ok: true } | { ok: false; why: string };
 
-async function npmCi(dir: string, opId: string, purpose: "worktree-deps" | "base-deps", signal?: AbortSignal): Promise<InstallResult> {
+async function npm(args: string, dir: string, opId: string, purpose: "worktree-deps" | "base-deps", signal?: AbortSignal): Promise<InstallResult> {
   const { executeHarnessCommand } = await import("../tool-execution/harness-exec.js");
-  const r = await executeHarnessCommand({ command: "npm ci --no-audit --no-fund", cwd: dir, timeoutMs: INSTALL_TIMEOUT_MS, purpose, opId, signal });
+  const r = await executeHarnessCommand({ command: `npm ${args} --no-audit --no-fund`, cwd: dir, timeoutMs: INSTALL_TIMEOUT_MS, purpose, opId, signal });
   if (r.ok) return { ok: true };
   return { ok: false, why: r.output.trim().split("\n").filter(Boolean).slice(-3).join(" / ").slice(0, 400) || r.status };
+}
+
+const npmCi = (dir: string, opId: string, purpose: "worktree-deps" | "base-deps", signal?: AbortSignal): Promise<InstallResult> =>
+  npm("ci", dir, opId, purpose, signal);
+
+/**
+ * Write a checkout's lockfile again from its package.json, installing nothing.
+ * For the checkout parallel work merged into: two chunks that each added a
+ * package leave a package.json naming both and a lockfile that is one side's,
+ * and `npm ci` refuses a lockfile that does not match its manifest.
+ */
+export function relockDependencies(dir: string, opId: string, signal?: AbortSignal): Promise<InstallResult> {
+  return npm("install --package-lock-only --ignore-scripts", dir, opId, "base-deps", signal);
 }
 
 /**

@@ -15,7 +15,7 @@ import { getHeadSha } from "../git-helpers.js";
 import { applyAdditiveSpecAmendment } from "../loop-effects.js";
 import { commitInWorktree } from "../../agency/worktree.js";
 import { buildChunkWithRetry } from "./chunk-attempt.js";
-import { carryOverBrief, carryOverFor, mergeCarriedWork } from "./carry-over.js";
+import { pickUpSetAsideWork } from "./carry-over.js";
 import { safeGet } from "./types.js";
 import type { ParallelWavesContext, DispatchedChunk, BuiltChunk } from "./parallel-waves.js";
 
@@ -32,7 +32,7 @@ export async function buildChunkInWorktree(ctx: ParallelWavesContext, d: Dispatc
   // change, the earlier run's work included.
   const preSha = await safeGet(() => getHeadSha(d.worktreePath));
   const preShaVal = preSha.ok ? preSha.value : "";
-  const carryOver = pickUpSetAsideWork(ctx, d);
+  const carryOver = pickUpSetAsideWork({ projectDir: opts.projectDir, tree: d.worktreePath, chunk: d.chunk, totalChunks, emit });
 
   emit({
     type: "chunk-start", chunkNumber: d.chunk.number, totalChunks,
@@ -49,23 +49,6 @@ export async function buildChunkInWorktree(ctx: ParallelWavesContext, d: Dispatc
   });
 
   return { dispatched: d, chunk: d.chunk, finalOutcome, finalAction };
-}
-
-/** A chunk an earlier run set aside starts from its kept work and findings
- *  (carry-over.ts); undefined for a chunk building for the first time. */
-function pickUpSetAsideWork(ctx: ParallelWavesContext, d: DispatchedChunk): { brief: string; findings: string[] } | undefined {
-  const carry = carryOverFor(ctx.opts.projectDir, d.chunk.number);
-  if (!carry) return undefined;
-  const merge = carry.branch ? mergeCarriedWork(d.worktreePath, carry.branch) : null;
-  ctx.emit({
-    type: "review-result", chunkNumber: d.chunk.number, totalChunks: ctx.totalChunks,
-    message: merge
-      ? merge.merged
-        ? `Chunk ${d.chunk.number} picks up the last run's work from '${carry.branch}', with ${carry.findings.length} earlier finding(s) to keep fixed.`
-        : `Chunk ${d.chunk.number}'s last work on '${carry.branch}' no longer merges (${merge.detail}); building fresh with ${carry.findings.length} earlier finding(s).`
-      : `Chunk ${d.chunk.number} builds with ${carry.findings.length} finding(s) from earlier runs.`,
-  });
-  return { brief: carryOverBrief(carry, merge?.merged ?? false), findings: carry.findings };
 }
 
 /**

@@ -180,6 +180,71 @@ describe("runBuildLoop — halt path", () => {
     expect(log).not.toContain("chunk 1: Skeleton");
     expect(log).not.toContain("chunk 2: Feature");
   });
+
+  // One chunk that cannot go green no longer costs the chunks that do not
+  // depend on it: its work leaves the tree for a branch and the build goes on.
+  const THREE_CHUNK_PLAN = [
+    TWO_CHUNK_PLAN,
+    "",
+    "### Chunk 3 — Independent",
+    "- **Class:** leaf → `/vibe-code`",
+    "- **Slice:** a part nothing waits on.",
+    "- **Depends on:** —",
+    "- **Scenarios:** —",
+    "- **Done when:** it works.",
+  ].join("\n");
+
+  it("sets the failed chunk aside on a branch, holds back what depends on it, and builds the rest", async () => {
+    __pushReport(HALT_REPORT_BLOCKED);            // chunk 1
+    __pushReport(CLEAN_REPORT("src/mock-2.ts"));  // chunk 3 (chunk 2 waits on 1)
+    writeFileSync(join(projectDir, "spec", "plan.md"), THREE_CHUNK_PLAN);
+    git("commit -qam plan");
+
+    const result = await runBuildLoop({
+      projectDir, planPath: join(projectDir, "spec", "plan.md"), plan: parsePlanText(THREE_CHUNK_PLAN), startingChunk: 1,
+    });
+
+    expect(result.status).toBe("halted");
+    expect(result.chunksCommitted).toBe(1);
+    expect(result.haltReason).toContain("Landed this run: chunk 3.");
+    expect(result.haltReason).toContain("Set aside — chunk 1 (Skeleton)");
+    expect(result.haltReason).toContain("Its work is on branch 'autobuild/c1'.");
+    expect(result.haltReason).toContain("waiting on those: chunk 2 (on 1)");
+    expect(result.events.filter(e => e.type === "chunk-landed").map(e => e.chunkNumber)).toEqual([3]);
+
+    // Chunk 1's work is on its branch and out of the tree chunk 3 built in.
+    expect(git("show autobuild/c1:src/mock-1.ts")).toContain("mock agent call 1");
+    expect(existsSync(join(projectDir, "src", "mock-1.ts"))).toBe(false);
+    const log = git("log --format=%s main");
+    expect(log).toContain("chunk 3: Independent");
+    expect(log).not.toContain("chunk 1");
+    expect(git("status --porcelain").trim()).toBe("");
+    // On record for the next run to pick up.
+    const history = JSON.parse(readFileSync(join(projectDir, ".lax-build-history.json"), "utf-8"));
+    expect(history.setAside["1"].branch).toBe("autobuild/c1");
+  });
+
+  it("the next run picks the set-aside chunk up from its branch, then builds what waited on it", async () => {
+    writeFileSync(join(projectDir, "spec", "plan.md"), THREE_CHUNK_PLAN);
+    git("commit -qam plan");
+    const run = (landedChunks: number[]) => runBuildLoop({
+      projectDir, planPath: join(projectDir, "spec", "plan.md"), plan: parsePlanText(THREE_CHUNK_PLAN), startingChunk: 1, landedChunks,
+    });
+    __pushReport(HALT_REPORT_BLOCKED);
+    __pushReport(CLEAN_REPORT("src/mock-2.ts"));
+    await run([]);
+
+    __pushReport(CLEAN_REPORT("src/mock-3.ts"));  // chunk 1 again
+    __pushReport(CLEAN_REPORT("src/mock-4.ts"));  // chunk 2
+    const resumed = await run([3]);
+
+    expect(resumed.status).toBe("complete");
+    expect(resumed.events.some(e => e.message.includes("picks up the last run's work from 'autobuild/c1'"))).toBe(true);
+    expect(existsSync(join(projectDir, "src", "mock-1.ts"))).toBe(true); // the first run's work came back
+    expect(resumed.events.filter(e => e.type === "chunk-landed").map(e => e.chunkNumber)).toEqual([1, 2]);
+    const history = JSON.parse(readFileSync(join(projectDir, ".lax-build-history.json"), "utf-8"));
+    expect(history.setAside ?? {}).toEqual({});
+  });
 });
 
 describe("runBuildLoop — amend_spec path", () => {

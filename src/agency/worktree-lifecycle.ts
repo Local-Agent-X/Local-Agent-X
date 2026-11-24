@@ -292,7 +292,7 @@ function branchExists(branch: string, repoRoot: string): boolean {
  * unmerged work is never lost and creation never fails on a leftover. Returns
  * the branch name to actually create.
  */
-function resolveStaleBranchName(branchName: string, repoRoot: string): string {
+export function resolveStaleBranchName(branchName: string, repoRoot: string): string {
   if (!branchExists(branchName, repoRoot)) return branchName;
   let checkedOut: Set<string>;
   try { checkedOut = listCheckedOutBranches(repoRoot); }

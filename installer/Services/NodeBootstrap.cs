@@ -163,11 +163,7 @@ public class NodeBootstrap
         {
             var url = $"https://nodejs.org/dist/v{NODE_FALLBACK_VERSION}/{pkg}.zip";
             OnLogLine?.Invoke($"Downloading {url}");
-            using (var http = new HttpClient())
-            {
-                http.DefaultRequestHeaders.UserAgent.ParseAdd("LocalAgentXInstaller/1.0");
-                File.WriteAllBytes(zip, http.GetByteArrayAsync(url, ct).GetAwaiter().GetResult());
-            }
+            DownloadRuntime(url, zip, ct);
             OnStatus?.Invoke("Unpacking the Node.js runtime…");
             Directory.CreateDirectory(installRoot);
             if (Directory.Exists(nodeDir)) Directory.Delete(nodeDir, true);
@@ -205,11 +201,7 @@ public class NodeBootstrap
         {
             var url = $"https://nodejs.org/dist/v{NODE_FALLBACK_VERSION}/{pkg}.tar.gz";
             OnLogLine?.Invoke($"Downloading {url}");
-            using (var http = new HttpClient())
-            {
-                http.DefaultRequestHeaders.UserAgent.ParseAdd("LocalAgentXInstaller/1.0");
-                File.WriteAllBytes(tgz, http.GetByteArrayAsync(url, ct).GetAwaiter().GetResult());
-            }
+            DownloadRuntime(url, tgz, ct);
             OnStatus?.Invoke("Unpacking the Node.js runtime…");
             if (Directory.Exists(runtimeDir)) Directory.Delete(runtimeDir, true);
             Directory.CreateDirectory(runtimeDir);
@@ -231,6 +223,15 @@ public class NodeBootstrap
             try { File.Delete(tgz); } catch { }
         }
     }
+
+    // The runtime archive is tens of MB. It is fetched with the same loop as the
+    // source archive: no limit on the whole download, only on silence, with
+    // retries. (A plain HttpClient gives the whole body 100 s, which a slow
+    // link can't meet.)
+    void DownloadRuntime(string url, string destPath, CancellationToken ct) =>
+        StallAwareDownload.DownloadAsync(
+            url, destPath, "nodejs.org", "nodejs.org",
+            status => OnStatus?.Invoke(status), null, ct).GetAwaiter().GetResult();
 
     // PATH/process helpers live in InstallerShell. These thin wrappers forward
     // this bootstrap's OnLogLine sink so the call sites below read unchanged.

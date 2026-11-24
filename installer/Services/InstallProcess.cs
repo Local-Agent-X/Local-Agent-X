@@ -12,6 +12,10 @@ public class InstallProcess
     public event Action<ProgressEvent>? OnEvent;
     public event Action<int>? OnExit;
 
+    // The run whose events are delivered. Cancel clears it, and a new Start
+    // replaces it, so output or an exit that arrives late from a killed run
+    // (Kill does not wait for the process to end) is dropped instead of
+    // landing on the run that followed it.
     private Process? _proc;
 
     public void Start(string repoRoot, string? installedCommit = null, bool installOllama = false, bool installOllamaMemoryModel = false)
@@ -53,10 +57,11 @@ public class InstallProcess
         if (!string.IsNullOrEmpty(Environment.ProcessPath))
             psi.Environment["LAX_INSTALLER_EXE"] = Environment.ProcessPath;
 
-        _proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
-        _proc.OutputDataReceived += (_, e) =>
+        var proc = new Process { StartInfo = psi, EnableRaisingEvents = true };
+        _proc = proc;
+        proc.OutputDataReceived += (_, e) =>
         {
-            if (string.IsNullOrWhiteSpace(e.Data)) return;
+            if (!ReferenceEquals(_proc, proc) || string.IsNullOrWhiteSpace(e.Data)) return;
             try
             {
                 var evt = JsonSerializer.Deserialize<ProgressEvent>(e.Data);
@@ -73,20 +78,25 @@ public class InstallProcess
             }
             OnEvent?.Invoke(new ProgressEvent { Type = "log", Level = "info", Line = e.Data });
         };
-        _proc.ErrorDataReceived += (_, e) =>
+        proc.ErrorDataReceived += (_, e) =>
         {
-            if (string.IsNullOrWhiteSpace(e.Data)) return;
+            if (!ReferenceEquals(_proc, proc) || string.IsNullOrWhiteSpace(e.Data)) return;
             OnEvent?.Invoke(new ProgressEvent { Type = "log", Level = "warn", Line = e.Data });
         };
-        _proc.Exited += (_, _) => OnExit?.Invoke(_proc?.ExitCode ?? -1);
+        proc.Exited += (_, _) =>
+        {
+            if (ReferenceEquals(_proc, proc)) OnExit?.Invoke(proc.ExitCode);
+        };
 
-        _proc.Start();
-        _proc.BeginOutputReadLine();
-        _proc.BeginErrorReadLine();
+        proc.Start();
+        proc.BeginOutputReadLine();
+        proc.BeginErrorReadLine();
     }
 
     public void Cancel()
     {
-        try { _proc?.Kill(entireProcessTree: true); } catch { /* already exited */ }
+        var proc = _proc;
+        _proc = null;
+        try { proc?.Kill(entireProcessTree: true); } catch { /* already exited */ }
     }
 }

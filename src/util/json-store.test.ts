@@ -180,3 +180,18 @@ describe("atomicity", () => {
     expect(readdirSync(dir).filter((n) => n.includes(".tmp."))).toEqual([]);
   });
 });
+
+describe("a store given a path function", () => {
+  it("asks for the path on every load and save, so it follows a folder chosen later", () => {
+    let folder = join(dir, "first");
+    const store = createJsonStore(() => join(folder, "demo.json"), { defaults: demoDefaults });
+    store.save({ ...demoDefaults(), count: 1 });
+    expect(existsSync(join(dir, "first", "demo.json"))).toBe(true);
+
+    folder = join(dir, "second");
+    expect(store.load().count).toBe(0);
+    store.mutate((draft) => { draft.count = 2; });
+    expect(JSON.parse(readFileSync(join(dir, "second", "demo.json"), "utf-8")).count).toBe(2);
+    expect(JSON.parse(readFileSync(join(dir, "first", "demo.json"), "utf-8")).count).toBe(1);
+  });
+});

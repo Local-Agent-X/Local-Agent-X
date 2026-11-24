@@ -46,8 +46,7 @@ interface MilestoneStore extends Record<string, unknown> {
 
 // ── Constants ───────────────────────────────────────────────
 
-const LAX_DIR = getLaxDir();
-const STORE_FILE = join(LAX_DIR, "milestones.json");
+const storeFile = (): string => join(getLaxDir(), "milestones.json");
 
 // ── Built-in milestone definitions ──────────────────────────
 
@@ -188,7 +187,7 @@ function buildMilestoneDefs(): MilestoneDef[] {
 
 // ── Persistence ─────────────────────────────────────────────
 
-const jsonStore = createJsonStore<MilestoneStore>(STORE_FILE, {
+const jsonStore = createJsonStore<MilestoneStore>(storeFile, {
   defaults: () => ({ unlocked: [], knownTools: [], birthday: null, startDate: null }),
 });
 

@@ -42,8 +42,7 @@ type StyleStore = {
 
 // ── Constants ───────────────────────────────────────────────
 
-const LAX_DIR = getLaxDir();
-const STORE_FILE = join(LAX_DIR, "language-style.json");
+const storeFile = (): string => join(getLaxDir(), "language-style.json");
 
 const CASUAL_GREETINGS = /^(yo|hey|sup|ayy|heyy|heya|yoo|waddup|what'?s? ?up)\b/i;
 const FORMAL_GREETINGS = /^(hello|good morning|good afternoon|good evening|greetings|dear)\b/i;
@@ -100,7 +99,7 @@ function emptyStore(): StyleStore {
   };
 }
 
-const styleStore = createJsonStore<StyleStore>(STORE_FILE, {
+const styleStore = createJsonStore<StyleStore>(storeFile, {
   defaults: emptyStore,
 });
 

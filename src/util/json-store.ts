@@ -13,8 +13,8 @@
  *     caller's in-memory object stays in sync, matching the old copies)
  *
  * Everything is synchronous — all existing callers are sync. Callers pass an
- * explicit absolute filePath (usually getLaxDir()-derived) so tests can point
- * a store at a mkdtemp dir and never touch ~/.lax.
+ * explicit absolute path, or a function giving one (see createJsonStore), so
+ * tests can point a store at a mkdtemp dir and never touch ~/.lax.
  *
  * Do NOT hand-roll atomicWrite/loadStore/saveStore elsewhere; extend this.
  */
@@ -176,13 +176,21 @@ function applyCaps<T extends Record<string, unknown>>(
   }
 }
 
+/**
+ * `file` is the store's path, or a function giving it. Pass a function when
+ * the path hangs off the data dir and the store is built at module level: it
+ * is asked on every load and save, so the store follows the data dir in force
+ * at that moment instead of the one at import.
+ */
 export function createJsonStore<T extends Record<string, unknown>>(
-  filePath: string,
+  file: string | (() => string),
   options: JsonStoreOptions<T>,
 ): JsonStore<T> {
   const { defaults, caps, upgrade } = options;
+  const pathNow = typeof file === "function" ? file : () => file;
 
   function load(): T {
+    const filePath = pathNow();
     if (!existsSync(filePath)) return defaults();
     try {
       const raw = readFileSync(filePath, "utf-8");
@@ -195,6 +203,7 @@ export function createJsonStore<T extends Record<string, unknown>>(
   }
 
   function save(value: T): void {
+    const filePath = pathNow();
     ensureDirFor(filePath);
     applyCaps(value, caps);
     atomicWriteFileSync(filePath, JSON.stringify(value, null, 2));

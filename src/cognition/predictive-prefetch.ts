@@ -51,8 +51,7 @@ interface ScheduleStore extends Record<string, unknown> {
 
 // ── Constants ───────────────────────────────────────────────
 
-const LAX_DIR = getLaxDir();
-const PROFILE_FILE = join(LAX_DIR, "schedule-profile.json");
+const profileFile = (): string => join(getLaxDir(), "schedule-profile.json");
 const MAX_ENTRIES = 2000;
 const SAVE_DEBOUNCE_MS = 5_000;
 
@@ -80,19 +79,19 @@ const CREATIVE_KEYWORDS = [
 
 // ── Persistence ─────────────────────────────────────────────
 
-const jsonStore = createJsonStore<ScheduleStore>(PROFILE_FILE, {
+const jsonStore = createJsonStore<ScheduleStore>(profileFile, {
   defaults: () => ({ entries: [], cache: {} }),
 });
 
 function saveStore(store: ScheduleStore): void {
-  ensureDirFor(PROFILE_FILE);
+  ensureDirFor(profileFile());
   if (store.entries.length > MAX_ENTRIES) {
     store.entries = store.entries.slice(-MAX_ENTRIES);
   }
   // Written COMPACT, not through jsonStore.save (which pretty-prints): the
   // debounced flush persists up to 2000 entries and the AM-5 regression test
   // pins the compact format.
-  atomicWriteFileSync(PROFILE_FILE, JSON.stringify(store));
+  atomicWriteFileSync(profileFile(), JSON.stringify(store));
 }
 
 // ── Helpers ─────────────────────────────────────────────────

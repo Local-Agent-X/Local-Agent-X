@@ -6,11 +6,11 @@ import { runMemoryGate } from "../../write-safely.js";
 import type { MemoryPromotionContext } from "../../promotion-gate.js";
 import { atomicWriteFileSync, createJsonStore, ensureDirFor } from "../../../util/json-store.js";
 
-const PATTERNS_FILE = join(getLaxDir(), "proactive-patterns.json");
+const patternsFile = (): string => join(getLaxDir(), "proactive-patterns.json");
 const MAX_INTERACTIONS = 2000;
 const MAX_PATTERNS = 500;
 
-const store = createJsonStore<PatternsFile>(PATTERNS_FILE, {
+const store = createJsonStore<PatternsFile>(patternsFile, {
   defaults: () => ({ patterns: [], interactions: [], topicIndex: {} }),
 });
 
@@ -19,7 +19,7 @@ export function loadPatterns(): PatternsFile {
 }
 
 export function savePatterns(data: PatternsFile, promotion?: MemoryPromotionContext): void {
-  ensureDirFor(PATTERNS_FILE);
+  ensureDirFor(patternsFile());
   if (data.interactions.length > MAX_INTERACTIONS) {
     data.interactions = data.interactions.slice(-MAX_INTERACTIONS);
   }
@@ -35,8 +35,8 @@ export function savePatterns(data: PatternsFile, promotion?: MemoryPromotionCont
   const gated = runMemoryGate({
     content: serialized,
     source: "tool",
-    target: PATTERNS_FILE,
+    target: patternsFile(),
     promotion,
   });
-  atomicWriteFileSync(PATTERNS_FILE, gated);
+  atomicWriteFileSync(patternsFile(), gated);
 }

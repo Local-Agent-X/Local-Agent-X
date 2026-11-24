@@ -47,8 +47,7 @@ type HistoryStore = {
 
 // ── Constants ───────────────────────────────────────────────
 
-const LAX_DIR = getLaxDir();
-const STORE_FILE = join(LAX_DIR, "shared-history.json");
+const storeFile = (): string => join(getLaxDir(), "shared-history.json");
 const MAX_MOMENTS = 2000;
 
 // ── Category keywords for auto-detection ────────────────────
@@ -64,7 +63,7 @@ const CATEGORY_KEYWORDS: Record<MomentCategory, RegExp[]> = {
 
 // ── Persistence ─────────────────────────────────────────────
 
-const historyStore = createJsonStore<HistoryStore>(STORE_FILE, {
+const historyStore = createJsonStore<HistoryStore>(storeFile, {
   defaults: () => ({ moments: [], firstInteraction: null, conversationCount: 0 }),
   caps: { moments: MAX_MOMENTS },
 });

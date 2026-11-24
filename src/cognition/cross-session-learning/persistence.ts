@@ -1,12 +1,14 @@
 import type { SessionData } from "./types.js";
-import { DATA_FILE } from "./types.js";
+import { join } from "node:path";
+import { getLaxDir } from "../../lax-data-dir.js";
 import { createJsonStore, ensureDirFor } from "../../util/json-store.js";
 import Database from "better-sqlite3";
 
-const MUTEX_FILE = `${DATA_FILE}.lock.sqlite`;
+const dataFile = (): string => join(getLaxDir(), "cross-session-data.json");
+const mutexFile = (): string => `${dataFile()}.lock.sqlite`;
 const LOCK_TIMEOUT_MS = 5_000;
 
-const store = createJsonStore<SessionData>(DATA_FILE, {
+const store = createJsonStore<SessionData>(dataFile, {
   defaults: () => ({ actions: [], candidates: [] }),
   // Only the candidates survive a load. The retired run log's entries and its
   // `lastPrune` stamp are dropped; `actions` is kept, empty (see SessionData).
@@ -22,7 +24,7 @@ const store = createJsonStore<SessionData>(DATA_FILE, {
 });
 
 export function ensureDir(): void {
-  ensureDirFor(DATA_FILE);
+  ensureDirFor(dataFile());
 }
 
 export function loadData(): SessionData {
@@ -41,8 +43,8 @@ export function mutateData<T>(
   let mutationError: unknown;
   let mutationFailed = false;
   try {
-    ensureDirFor(MUTEX_FILE);
-    db = new Database(MUTEX_FILE, { timeout: LOCK_TIMEOUT_MS });
+    ensureDirFor(mutexFile());
+    db = new Database(mutexFile(), { timeout: LOCK_TIMEOUT_MS });
     db.pragma(`busy_timeout = ${LOCK_TIMEOUT_MS}`);
     db.exec("BEGIN IMMEDIATE");
 

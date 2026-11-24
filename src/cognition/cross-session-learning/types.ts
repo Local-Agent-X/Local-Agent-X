@@ -1,7 +1,5 @@
-import { join } from "node:path";
 import { createHash } from "node:crypto";
 import { isProxy } from "node:util/types";
-import { getLaxDir } from "../../lax-data-dir.js";
 import {
   INVALID_PROPERTY, MISSING_PROPERTY, denseArray, exactKeys, hasEvidenceIdentity,
   optional, ownDataValue, plainRecord, safeJson, stringArray,
@@ -274,5 +272,4 @@ export function normalizeLegacyEvidenceIdentities(data: SessionData): boolean {
   return changed;
 }
 
-export const DATA_FILE = join(getLaxDir(), "cross-session-data.json");
 export const REJECTION_COOLDOWN_DAYS = 30;

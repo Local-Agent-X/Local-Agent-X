@@ -47,8 +47,7 @@ interface CorrectionStore extends Record<string, unknown> {
 
 // ── Constants ───────────────────────────────────────────────
 
-const LAX_DIR = getLaxDir();
-const STORE_FILE = join(LAX_DIR, "correction-history.json");
+const storeFile = (): string => join(getLaxDir(), "correction-history.json");
 const MAX_RECORDS = 500;
 
 // ── LLM confirm (gate → confirm → fail-open) ────────────────
@@ -103,7 +102,7 @@ const DEFAULT_CONFIRM: ConfirmCorrectionFn = (userMessage, agentMessage) =>
 
 // ── Persistence ─────────────────────────────────────────────
 
-const jsonStore = createJsonStore<CorrectionStore>(STORE_FILE, {
+const jsonStore = createJsonStore<CorrectionStore>(storeFile, {
   defaults: () => ({ records: [] }),
   caps: { records: MAX_RECORDS },
 });

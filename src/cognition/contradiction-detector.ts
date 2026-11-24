@@ -40,8 +40,7 @@ export type {
 //  Constants
 // ══════════════════════════════════════════════════════════
 
-const LAX_DIR = getLaxDir();
-const HISTORY_FILE = join(LAX_DIR, "contradiction-history.json");
+const historyFile = (): string => join(getLaxDir(), "contradiction-history.json");
 
 // ══════════════════════════════════════════════════════════
 //  ContradictionDetector (singleton)
@@ -52,7 +51,7 @@ export class ContradictionDetector {
   private history: ContradictionRecord[];
 
   private constructor() {
-    if (!existsSync(LAX_DIR)) mkdirSync(LAX_DIR, { recursive: true });
+    if (!existsSync(getLaxDir())) mkdirSync(getLaxDir(), { recursive: true });
     this.history = this.loadHistory();
   }
 
@@ -239,8 +238,8 @@ export class ContradictionDetector {
 
   private loadHistory(): ContradictionRecord[] {
     try {
-      if (existsSync(HISTORY_FILE)) {
-        return JSON.parse(readFileSync(HISTORY_FILE, "utf-8"));
+      if (existsSync(historyFile())) {
+        return JSON.parse(readFileSync(historyFile(), "utf-8"));
       }
     } catch {
       // Corrupt — start fresh
@@ -251,6 +250,6 @@ export class ContradictionDetector {
   private saveHistory(): void {
     // Keep last 500 entries
     const trimmed = this.history.slice(-500);
-    atomicWriteFileSync(HISTORY_FILE, JSON.stringify(trimmed, null, 2));
+    atomicWriteFileSync(historyFile(), JSON.stringify(trimmed, null, 2));
   }
 }

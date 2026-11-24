@@ -26,11 +26,10 @@ export type { Emotion, EmotionState, EmotionRecord, EmotionalProfile };
 
 // ── Persistence ─────────────────────────────────────────────
 
-const LAX_DIR = getLaxDir();
-const HISTORY_FILE = join(LAX_DIR, "emotional-history.json");
+const historyFile = (): string => join(getLaxDir(), "emotional-history.json");
 const MAX_ENTRIES = 1000;
 
-const historyStore = createJsonStore<{ records: EmotionRecord[] }>(HISTORY_FILE, {
+const historyStore = createJsonStore<{ records: EmotionRecord[] }>(historyFile, {
   defaults: () => ({ records: [] }),
   // FIFO: keep only the most recent MAX_ENTRIES
   caps: { records: MAX_ENTRIES },

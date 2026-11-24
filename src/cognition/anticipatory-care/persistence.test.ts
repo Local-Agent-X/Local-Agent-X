@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { UpcomingEvent } from "./types.js";
 
-// persistence.ts binds STORE_FILE = join(getLaxDir(), …) at import, so isolate
-// the data dir BEFORE the dynamic import below (top-level await runs at eval).
+// Isolate the data dir for the whole file. (persistence.ts asks for it on each
+// load and save; the last test here proves that.)
 const prevLaxDir = process.env.LAX_DATA_DIR;
 const tmp = mkdtempSync(join(tmpdir(), "lax-anticipatory-persist-"));
 process.env.LAX_DATA_DIR = tmp;
@@ -62,5 +62,20 @@ describe("anticipatory-care persistence", () => {
     // e500 has the OLDEST date and must be the one dropped.
     expect(persisted.some((e) => e.id === "e500")).toBe(false);
     expect(persisted[0].id).toBe("e0"); // newest date first after the cap sort
+  });
+});
+
+describe("anticipatory-care persistence and the data dir", () => {
+  it("writes under a data dir set after the module was imported", () => {
+    const later = mkdtempSync(join(tmpdir(), "lax-anticipatory-later-"));
+    process.env.LAX_DATA_DIR = later;
+    try {
+      saveStore({ events: [event(7, "2026-08-01")] });
+      expect(JSON.parse(readFileSync(join(later, "upcoming-events.json"), "utf-8")).events[0].id).toBe("e7");
+      expect(loadStore().events.map((e) => e.id)).toEqual(["e7"]);
+    } finally {
+      process.env.LAX_DATA_DIR = tmp;
+      rmSync(later, { recursive: true, force: true });
+    }
   });
 });

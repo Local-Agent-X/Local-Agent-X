@@ -46,8 +46,7 @@ type TrustStore = {
 
 // ── Constants ───────────────────────────────────────────────
 
-const LAX_DIR = getLaxDir();
-const STORE_FILE = join(LAX_DIR, "trust-engine.json");
+const storeFile = (): string => join(getLaxDir(), "trust-engine.json");
 const MAX_SIGNALS = 1000;
 
 const POSITIVE_WEIGHTS: Record<PositiveSignal, number> = {
@@ -67,7 +66,7 @@ const NEGATIVE_WEIGHTS: Record<NegativeSignal, number> = {
 
 // ── Persistence ─────────────────────────────────────────────
 
-const trustStore = createJsonStore<TrustStore>(STORE_FILE, {
+const trustStore = createJsonStore<TrustStore>(storeFile, {
   defaults: () => ({
     firstSeen: Date.now(),
     signals: [],

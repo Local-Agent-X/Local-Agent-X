@@ -55,14 +55,13 @@ interface FrequencyStore extends Record<string, unknown> {
 
 // ── Persistence ─────────────────────────────────────────────
 
-const LAX_DIR = getLaxDir();
-const STORE_FILE = join(LAX_DIR, "topic-frequencies.json");
+const storeFile = (): string => join(getLaxDir(), "topic-frequencies.json");
 const MAX_ENTITIES = 500;
 const MAX_SESSIONS = 500;
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-const jsonStore = createJsonStore<FrequencyStore>(STORE_FILE, {
+const jsonStore = createJsonStore<FrequencyStore>(storeFile, {
   defaults: () => ({ entities: [], sessions: [] }),
   caps: {
     entities: { max: MAX_ENTITIES, keep: "head" },

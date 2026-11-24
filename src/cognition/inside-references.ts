@@ -53,8 +53,7 @@ interface ReferenceStore extends Record<string, unknown> {
 
 // ── Persistence ─────────────────────────────────────────────
 
-const LAX_DIR = getLaxDir();
-const STORE_FILE = join(LAX_DIR, "inside-references.json");
+const storeFile = (): string => join(getLaxDir(), "inside-references.json");
 const MAX_REFERENCES = 500;
 const MAX_PENDING = 2000;
 const AUTO_THRESHOLD = 3; // phrases need 3+ uses to auto-register
@@ -63,7 +62,7 @@ const AUTO_THRESHOLD = 3; // phrases need 3+ uses to auto-register
 // than naming its subject. Short messages get the benefit of the doubt too.
 const SHORTHAND_OPENER = /^(that|this|the one|you know|it|same)\b/i;
 
-const jsonStore = createJsonStore<ReferenceStore>(STORE_FILE, {
+const jsonStore = createJsonStore<ReferenceStore>(storeFile, {
   defaults: () => ({ references: [], pendingPhrases: [] }),
   caps: {
     references: { max: MAX_REFERENCES, keep: "head" },

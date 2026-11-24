@@ -3,11 +3,11 @@ import type { EventStore } from "./types.js";
 import { getLaxDir } from "../../lax-data-dir.js";
 import { createJsonStore } from "../../util/json-store.js";
 
-const STORE_FILE = join(getLaxDir(), "upcoming-events.json");
+const storeFile = (): string => join(getLaxDir(), "upcoming-events.json");
 const MAX_EVENTS = 500;
 export const DAY_MS = 24 * 60 * 60 * 1000;
 
-const store = createJsonStore<EventStore>(STORE_FILE, {
+const store = createJsonStore<EventStore>(storeFile, {
   defaults: () => ({ events: [] }),
 });
 

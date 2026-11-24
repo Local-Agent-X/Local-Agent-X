@@ -47,11 +47,10 @@ export interface NarrativeStore {
 
 // ── Persistence ─────────────────────────────────────────────
 
-const LAX_DIR = getLaxDir();
-const STORE_FILE = join(LAX_DIR, "narratives.json");
+const storeFile = (): string => join(getLaxDir(), "narratives.json");
 const MAX_NARRATIVES = 2000;
 
-const narrativeStore = createJsonStore<{ narratives: Narrative[] }>(STORE_FILE, {
+const narrativeStore = createJsonStore<{ narratives: Narrative[] }>(storeFile, {
   defaults: () => ({ narratives: [] }),
   caps: { narratives: MAX_NARRATIVES },
 });

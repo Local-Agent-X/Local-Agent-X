@@ -199,6 +199,25 @@ export function findBrand(ref: string, { bySlug = true } = {}): Brand | null {
   return listBrands().find((b) => (bySlug && same(b.slug, ref)) || same(b.name, ref) || b.aliases.some((a) => same(a, ref))) ?? null;
 }
 
+const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/** The saved brand a message names first, by its name, folder name or an
+ *  alias, as whole words in any case ("nutrishop mckinney" names Nutrishop).
+ *  Read by the brand-match middleware, which fills the brand into Office
+ *  calls, and by the turn notice that tells the agent about it. */
+export function brandNamedIn(message: string, brands: Brand[] = listBrands()): Brand | null {
+  let best: { brand: Brand; at: number } | null = null;
+  for (const brand of brands) {
+    for (const name of [brand.name, brand.slug, ...brand.aliases]) {
+      if (name.trim().length < 2) continue;
+      const words = name.trim().split(/[\s-]+/).map(escapeRe).join("[\\s-]*");
+      const at = message.search(new RegExp(`(?<![\\p{L}\\p{N}])${words}(?![\\p{L}\\p{N}])`, "iu"));
+      if (at >= 0 && (!best || at < best.at)) best = { brand, at };
+    }
+  }
+  return best?.brand ?? null;
+}
+
 export function defaultBrand(): Brand | null {
   return listBrands().find((b) => b.isDefault) ?? null;
 }

@@ -6,11 +6,11 @@
  */
 import { rmSync } from "node:fs";
 import { beforeEach, describe, expect, it } from "vitest";
-import { brandMatchMiddleware, brandNamedIn } from "./brand-match.js";
+import { brandMatchMiddleware } from "./brand-match.js";
 import { officeThemeGuardMiddleware } from "./office-theme-guard.js";
 import { makeCanonicalLoopContext } from "./ctx.test-helper.js";
 import type { ToolCall } from "../contract-types.js";
-import { brandsDir, listBrands, saveBrand } from "../../tools/shared/brand-store.js";
+import { brandNamedIn, brandsDir, listBrands, saveBrand } from "../../tools/shared/brand-store.js";
 
 beforeEach(() => {
   rmSync(brandsDir(), { recursive: true, force: true });

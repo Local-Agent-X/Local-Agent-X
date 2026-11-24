@@ -13,6 +13,7 @@ import { buildTurnContextCached } from "../turn-context-cache.js";
 import { createLogger } from "../../logger.js";
 import { harnessNotice } from "../../context/system-prompt-builder.js";
 import { getLearnedProtocolSuggestion, type LearnedProtocolSuggestion } from "../../protocols/learned-suggestion.js";
+import { brandTurnNotice } from "../../tools/shared/brand-theme.js";
 import { identityNamesFrom, renderIdentityNames } from "../../context/identity-names.js";
 import { renderRecalledMemory, type RecalledMemory } from "../../memory/auto-search-context.js";
 import { uncarriedRecall } from "../recall-carry.js";
@@ -61,7 +62,7 @@ export interface BuildContextResult {
   relevantMemories: string;
   smartContext: string;
   memoryContext: string;
-  /** First-party protocol-load notice, already wrapped as a harness note.
+  /** First-party protocol-load notice (and the saved-brand notice), already wrapped as harness notes.
    *  Empty when nothing matched. Deliberately NOT part of smartContext — see
    *  the comment at the assignment site. */
   protocolNotice: string;
@@ -168,9 +169,14 @@ export async function buildContext(input: BuildContextInput): Promise<BuildConte
   const learnedSuggestion = input.protocolSuggestion === undefined
     ? getLearnedProtocolSuggestion(input.message)
     : input.protocolSuggestion;
-  const protocolNotice = learnedSuggestion
+  // The saved brand the message names rides the same first-party channel: it
+  // too is harness-composed (brandTurnNotice keeps the brand's name to plain
+  // characters) and changes what the model does, so it outlives memory when
+  // a small profile sheds sections (prompt-degradation.ts).
+  const brandNotice = brandTurnNotice(input.message);
+  const protocolNotice = (learnedSuggestion
     ? harnessNotice("LEARNED WORKFLOW", learnedSuggestion.nudge)
-    : "";
+    : "") + (brandNotice ? harnessNotice("SAVED BRAND", brandNotice) : "");
 
   const relevantMemories = renderRecalledMemory(recall);
   return { contextBlock, contextBlockVolatile, identityNames, recall, relevantMemories, smartContext, memoryContext, protocolNotice, notifications, knownProjectsFound };

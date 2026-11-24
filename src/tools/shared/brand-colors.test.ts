@@ -49,6 +49,23 @@ describe("brand palette", () => {
     expect(contrastRatio("FFFFFF", p.colors.accent)).toBeGreaterThanOrEqual(4.5);
   });
 
+  it("puts headings in the brand's own color, not its dark (NutriShop's orange stays orange)", () => {
+    // The brand Peter saved, 2026-11-24: headings came out #111111.
+    const p = brandPalette(brand({ primary: "FF5A00", secondary: "222222", accent: "FFD000", dark: "111111", light: "F5F5F5" }))!;
+    const [r, g, b] = [0, 2, 4].map((i) => parseInt(p.colors.heading.slice(i, i + 2), 16));
+    expect(r).toBeGreaterThan(150);
+    expect(r - b).toBeGreaterThan(120);
+    expect(g).toBeLessThan(r);
+    expect(contrastRatio(p.colors.heading, p.colors.band)).toBeGreaterThanOrEqual(4.5);
+    expect(p.colors.highlight).toBe("FFD000");
+  });
+
+  it("gives headings the brand's dark when its color only reads after going nearly black", () => {
+    const p = brandPalette(brand({ primary: "FFF27A", dark: "1B1B3A" }))!;
+    expect(contrastRatio(p.colors.heading, "FFFFFF")).toBeGreaterThanOrEqual(4.5);
+    expect(p.colors.heading).toBe("1B1B3A");
+  });
+
   it("uses the brand's own dark when white reads on it", () => {
     expect(brandPalette(brand({ primary: "E4572E", dark: "1B1B3A" }))!.colors.slideDark).toBe("1B1B3A");
   });

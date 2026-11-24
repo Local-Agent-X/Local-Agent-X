@@ -8,7 +8,7 @@
  * default brand applies if the user set one, and "none" makes a file
  * unbranded.
  */
-import { brandDir, defaultBrand, findBrand, listBrands, type Brand, type BrandKind } from "./brand-store.js";
+import { brandDir, brandNamedIn, defaultBrand, findBrand, listBrands, type Brand, type BrandKind } from "./brand-store.js";
 import { brandPalette } from "./brand-colors.js";
 import type { OfficeThemeOverride } from "./office-theme.js";
 
@@ -64,6 +64,29 @@ export function brandForCall(arg: unknown, kind: BrandKind): BrandForCall {
     return { error: `No saved brand "${ref}". ${names.length ? `Saved brands: ${names.join(", ")}.` : "No brands are saved yet; the brand tool saves one."}` };
   }
   return { brand, note: brand ? brandNote(brand, kind) : "" };
+}
+
+/**
+ * What the agent is told, before it starts, when the user's message names a
+ * saved brand: that the brand exists, that Office files are made in it
+ * without being asked, and that "template" or "style" for that company means
+ * the brand. On 2026-11-24 "a push pull split using nutrishop mckinney
+ * template" sent the agent searching the workspace for a template file while
+ * the saved brand sat unread. Empty when no brand is named.
+ */
+export function brandTurnNotice(message: string): string {
+  let brand: Brand | null;
+  try { brand = brandNamedIn(message); } catch { return ""; } // an unreadable library never blocks a turn
+  if (!brand) return "";
+  // The name is the user's, but this notice is read as the harness's: keep
+  // it to characters that cannot close the notice or read as markup.
+  const name = brand.name.replace(/[^\p{L}\p{N} &'.,-]/gu, "").slice(0, 80);
+  const has = [brandPalette(brand) && "colors", (brand.fonts.heading || brand.fonts.body) && "fonts", brand.logo && "logo",
+    brand.letterhead && "letterhead", brand.assets.some((a) => a.kind === "template") && "templates", (brand.notes || Object.keys(brand.rules).length) && "rules"]
+    .filter(Boolean).join(", ");
+  return `The user's message names the saved brand "${name}" (${has || "nothing saved in it yet"}). ` +
+    `A deck, document, PDF, sheet or chart you make for this request is made in it automatically; a "template", "style" or "look" for ${name} means this brand, not a file to search for. ` +
+    (has ? `brand(action:"get", name:"${name}") shows what it holds.` : `Its look is empty: ask the user for its colors or logo, or save them with the brand tool when they give them.`);
 }
 
 /** The `brand` parameter the Office tools share. */

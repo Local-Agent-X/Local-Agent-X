@@ -18,28 +18,11 @@ import type { CanonicalMiddleware } from "./types.js";
 import { isHarnessAuthoredTask } from "./types.js";
 import { recordGuardFire } from "../turn-loop/guard-fire.js";
 import { OFFICE_KIT } from "../../tools/tool-kits.js";
-import { listBrands, type Brand } from "../../tools/shared/brand-store.js";
+import { brandNamedIn, listBrands, type Brand } from "../../tools/shared/brand-store.js";
 
 /** The tools that take a `brand`: the Office family and the chart renderer
  *  whose images go into those files. */
 const BRANDED_TOOLS = new Set([...OFFICE_KIT, "create_chart"]);
-
-const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-
-/** The saved brand the message names first, by its name, slug or an alias,
- *  as whole words in any case. */
-export function brandNamedIn(message: string, brands: Brand[]): Brand | null {
-  let best: { brand: Brand; at: number } | null = null;
-  for (const brand of brands) {
-    for (const name of [brand.name, brand.slug, ...brand.aliases]) {
-      if (name.trim().length < 2) continue;
-      const words = name.trim().split(/[\s-]+/).map(escape).join("[\\s-]*");
-      const at = message.search(new RegExp(`(?<![\\p{L}\\p{N}])${words}(?![\\p{L}\\p{N}])`, "iu"));
-      if (at >= 0 && (!best || at < best.at)) best = { brand, at };
-    }
-  }
-  return best?.brand ?? null;
-}
 
 function hasBrand(args: unknown): boolean {
   return !!args && typeof args === "object" && "brand" in (args as Record<string, unknown>)

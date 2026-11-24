@@ -4,12 +4,19 @@
 // colors and logo; the editor below saves through /api/brands, files go up
 // through /api/upload first and are then copied into the brand. A change made
 // in another tab, or by the agent's brand tool, repaints through loadBrands.
+//
+// The editor saves as you go: each field saves when you leave it. Before
+// 2026-11-24 only its own Save button at the foot of a long form saved, the
+// Settings window's SAVE at the top did not, and a brand's colors were lost
+// that way.
 (function () {
   var COLOR_ROLES = [['primary', 'Main color'], ['secondary', 'Second color'], ['accent', 'Accent'], ['dark', 'Dark (covers, titles)'], ['light', 'Light (cards)']];
   var IMAGES = [['logo', 'logo', 'Logo'], ['logoOnDark', 'logo_on_dark', 'Logo for dark backgrounds'], ['letterhead', 'letterhead', 'Letterhead (top of documents and PDFs)']];
   var KINDS = [['deck', 'Decks'], ['doc', 'Documents'], ['pdf', 'PDFs'], ['sheet', 'Spreadsheets'], ['email', 'Emails']];
   var brands = [];
   var editing = null; // the slug being edited, '' for a new brand
+  var saveTimer = null;
+  var saving = null; // the save in flight, so a file action waits for it
 
   function esc2(s) { return typeof esc === 'function' ? esc(s == null ? '' : s) : String(s == null ? '' : s).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; }); }
   function $(id) { return document.getElementById(id); }
@@ -36,12 +43,21 @@
     }).join('');
   }
 
-  async function loadBrands() {
+  /** The editor is redrawn only when asked and nobody is typing in it, so a
+   *  save (or the broadcast it causes) never wipes the field in hand. */
+  function typingInEditor() { var ed = $('brand-editor'); return !!ed && ed.contains(document.activeElement) && /^(INPUT|TEXTAREA|SELECT)$/.test(document.activeElement.tagName); }
+
+  async function loadBrands(opts) {
+    var redraw = !opts || opts.editor !== false;
     try {
       var data = await apiJson('/api/brands');
       brands = Array.isArray(data.brands) ? data.brands : [];
       renderList();
-      if (editing) { var b = brands.find(function (x) { return x.slug === editing; }); if (b) renderEditor(b); else closeEditor(); }
+      if (editing) {
+        var b = brands.find(function (x) { return x.slug === editing; });
+        if (!b) closeEditor();
+        else if (redraw && !typingInEditor()) renderEditor(b);
+      }
     } catch (e) {
       var el = $('brand-list');
       if (el) el.textContent = "Couldn't load your brands.";
@@ -90,7 +106,7 @@
         + '<input type="color" id="brand-cp-' + r[0] + '" value="' + esc2(v || '#ffffff') + '" aria-label="Pick ' + r[1] + '" style="width:34px;height:30px;padding:0;border:1px solid var(--border);border-radius:4px">'
         + '<input class="field-input" id="brand-c-' + r[0] + '" value="' + esc2(v) + '" placeholder="none" autocomplete="off"/></div></div>';
     }).join('');
-    el.innerHTML = '<div class="section-title">' + (b.slug ? esc2(b.name) : 'New brand') + '</div>'
+    el.innerHTML = '<div class="section-title">' + (b.slug ? esc2(b.name) : 'New brand') + '</div><div class="field-hint">Changes save as you go.</div>'
       + '<div class="field-row">' + field('brand-name', 'Name', b.name, 'NutriShop') + field('brand-aliases', 'Also called (comma between)', (b.aliases || []).join(', '), 'the store, NS McKinney') + '</div>'
       + '<label class="field-hint" style="display:flex;align-items:center;gap:8px;margin-top:6px"><input type="checkbox" id="brand-default"' + (b.isDefault ? ' checked' : '') + '> Use for every file that names no brand</label>'
       + '<div class="section-title" style="margin-top:16px;font-size:.9rem">Colors</div><div class="field-hint">Readable shades for text and backgrounds are worked out from these.</div><div class="field-row">' + colors + '</div>'
@@ -100,11 +116,16 @@
       + area('brand-notes', 'For everything', b.notes, 'Always "NutriShop", one word. Never use stock photos of pills.')
       + KINDS.map(function (k) { return area('brand-rule-' + k[0], k[1], (b.rules || {})[k[0]], ''); }).join('')
       + imagesBlock(b)
-      + '<div class="btn-row" style="margin-top:14px"><button type="button" class="action-btn primary" id="brand-save">Save</button><button type="button" class="action-btn secondary" id="brand-cancel">Close</button>'
+      + '<div class="btn-row" style="margin-top:14px"><button type="button" class="action-btn primary" id="brand-save">Save now</button><button type="button" class="action-btn secondary" id="brand-cancel">Close</button>'
       + (b.slug ? '<button type="button" class="action-btn secondary" id="brand-delete" style="margin-left:auto">Delete brand</button>' : '')
       + '<span id="brand-ed-status" class="field-hint" aria-live="polite"></span></div>';
     COLOR_ROLES.forEach(function (r) {
       $('brand-cp-' + r[0]).addEventListener('input', function (ev) { $('brand-c-' + r[0]).value = ev.target.value.toUpperCase(); });
+      // A typed color moves the swatch beside it, so what shows is what saves.
+      $('brand-c-' + r[0]).addEventListener('input', function (ev) {
+        var h = ev.target.value.trim().replace(/^#?/, '#');
+        if (/^#[0-9a-f]{6}$/i.test(h)) $('brand-cp-' + r[0]).value = h.toLowerCase();
+      });
     });
   }
 
@@ -134,11 +155,28 @@
     } catch (e) { editorStatus(e && e.message ? e.message : 'That did not work'); return null; }
   }
 
-  async function save() {
+  async function saveNow() {
+    clearTimeout(saveTimer);
+    if (!$('brand-name')) return;
     var b = formBrand();
     if (!b.name) { editorStatus('Give the brand a name.'); return; }
+    var wasNew = !editing;
     var r = await post('/api/brands/save', { ref: editing || undefined, brand: b });
-    if (r) { editing = r.brand.slug; await loadBrands(); editorStatus('Saved.'); }
+    if (r) {
+      editing = r.brand.slug;
+      await loadBrands({ editor: wasNew && !typingInEditor() });
+      editorStatus('Saved.');
+    }
+  }
+  function save() { saving = saveNow().finally(function () { saving = null; }); return saving; }
+  function saveSoon() { clearTimeout(saveTimer); saveTimer = setTimeout(save, 400); }
+  /** A file action changes the brand on the server: save what is typed first,
+   *  so the save cannot land after it and put the old values back. */
+  async function settled() {
+    if (saveTimer) await save();
+    else if (saving) await saving;
+    if (!editing) { editorStatus('Give the brand a name first.'); return false; }
+    return true;
   }
 
   async function upload(file) {
@@ -151,6 +189,7 @@
   }
 
   async function addFile(file, role, note) {
+    if (!(await settled())) return;
     editorStatus('Uploading…');
     try {
       var up = await upload(file);
@@ -159,20 +198,22 @@
   }
 
   async function importFile(file) {
+    if (!(await settled())) return;
     editorStatus('Reading ' + file.name + '…');
     try {
       var up = await upload(file);
       var r = await post('/api/brands/import', { brand: editing, upload: up.url, name: file.name });
-      if (r) { await loadBrands(); editorStatus('Read ' + (r.found.found || []).length + ' colors from ' + file.name + '. Check them and save.'); }
+      if (r) { await loadBrands(); editorStatus('Read ' + (r.found.found || []).length + ' colors from ' + file.name + '. You can change them below; changes save as you go.'); }
     } catch (e) { editorStatus(e.message); }
   }
 
   async function importSite() {
     var url = $('brand-import-url').value.trim();
     if (!url) { editorStatus('Type the website address.'); return; }
+    if (!(await settled())) return;
     editorStatus('Reading ' + url + '…');
     var r = await post('/api/brands/import', { brand: editing, url: url });
-    if (r) { await loadBrands(); editorStatus('Read ' + (r.found.found || []).length + ' colors from the site' + (r.brand.logo ? ' and its logo' : '') + '. Check them and save.'); }
+    if (r) { await loadBrands(); editorStatus('Read ' + (r.found.found || []).length + ' colors from the site' + (r.brand.logo ? ' and its logo' : '') + '. You can change them below; changes save as you go.'); }
   }
 
   function wire() {
@@ -202,6 +243,9 @@
     });
     ed.addEventListener('change', function (ev) {
       var t = ev.target;
+      // Every brand field saves when it changes; the file pickers and the
+      // import and new-file fields are their own actions.
+      if (t.type !== 'file' && !/^brand-(asset|import)-/.test(t.id || '')) { saveSoon(); return; }
       if (!t.files || !t.files[0]) return;
       if (t.hasAttribute('data-brand-upload-role')) addFile(t.files[0], t.getAttribute('data-brand-upload-role'));
       else if (t.id === 'brand-asset-file') addFile(t.files[0], $('brand-asset-kind').value, $('brand-asset-note').value);
@@ -210,6 +254,6 @@
     loadBrands();
   }
 
-  window.loadBrands = loadBrands;
+  window.loadBrands = function () { return loadBrands(); };
   document.addEventListener('DOMContentLoaded', wire);
 }());

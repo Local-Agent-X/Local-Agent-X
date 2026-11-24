@@ -30,6 +30,15 @@ export function untilContrast(c: string, against: string, min: number, toward: "
   return toward;
 }
 
+/** Like untilContrast toward black, also saying how far it had to go (0–1). */
+function shadeThatReads(c: string, against: string, min: number): { color: string; t: number } {
+  for (let t = 0; t <= 1.0001; t += 0.04) {
+    const m = mixHex(c, "000000", t);
+    if (contrastRatio(m, against) >= min) return { color: m, t };
+  }
+  return { color: "000000", t: 1 };
+}
+
 /** Saturation-ish: how far from grey (0–255). Greys make poor accents. */
 const chroma = (h: string) => { const c = rgb(h); return Math.max(...c) - Math.min(...c); };
 
@@ -37,7 +46,9 @@ const chroma = (h: string) => { const c = rgb(h); return Math.max(...c) - Math.m
 export function brandPalette(b: Brand): { colors: OfficeTheme["colors"]; chartPalette: string[] } | null {
   const primary = b.colors.primary ?? b.colors.accent ?? b.colors.secondary ?? b.colors.dark;
   if (!primary) return null;
-  const second = [b.colors.secondary, b.colors.accent].find((c) => c && c !== primary);
+  // The brand's second color: the first other one with some color in it (a
+  // charcoal "secondary" is ink, not a color to mark things with).
+  const second = [b.colors.secondary, b.colors.accent].find((c) => c && c !== primary && chroma(c) > 40);
 
   // The dark ground: the brand's dark when white reads on it, else the
   // primary taken most of the way to black so it still carries the hue.
@@ -45,7 +56,7 @@ export function brandPalette(b: Brand): { colors: OfficeTheme["colors"]; chartPa
   const slideDark = untilContrast(darkBase, "FFFFFF", 9, "000000");
   // The accent white text and muted text sit on: the primary, darkened only
   // as far as reading needs.
-  const accent = untilContrast(primary, "FFFFFF", 5.6, "000000");
+  const accent = untilContrast(primary, "FFFFFF", 4.6, "000000");
   // Muted text on dark grounds: a tint of the dark that still reads on both
   // the dark and the accent.
   let onDarkMuted = mixHex(slideDark, "FFFFFF", 0.7);
@@ -57,12 +68,20 @@ export function brandPalette(b: Brand): { colors: OfficeTheme["colors"]; chartPa
   const highlight = [second, primary, b.colors.accent, mixHex(primary, "FFFFFF", 0.55), "D4AF37"]
     .find((c): c is string => !!c && chroma(c) > 40 && contrastRatio(c, slideDark) >= 3)
     ?? untilContrast(primary, slideDark, 3, "FFFFFF");
-  const heading = untilContrast(b.colors.dark ?? mixHex(primary, "000000", 0.65), "FFFFFF", 9, "000000");
   const band = b.colors.light && contrastRatio(b.colors.light, "000000") >= 17 ? b.colors.light : mixHex(primary, "FFFFFF", 0.93);
+  // Headings carry the brand: its main color at the nearest shade that reads
+  // on the page and the cards. Until 2026-11-24 headings took the brand's
+  // dark, so NutriShop's orange came out as black headings over a thin brown
+  // rule and the document did not look like NutriShop at all. A color that
+  // only reads after going most of the way to black (a pale yellow turns
+  // olive) gives the brand's dark instead.
+  const ownShade = shadeThatReads(primary, band, 4.5);
+  const heading = ownShade.t <= 0.45 ? ownShade.color
+    : untilContrast(b.colors.dark ?? mixHex(primary, "000000", 0.65), band, 4.5, "000000");
   const body = untilContrast(mixHex("23262B", slideDark, 0.25), band, 7, "000000");
   const colors: OfficeTheme["colors"] = {
-    heading: untilContrast(heading, band, 4.5, "000000"),
-    subheading: untilContrast(mixHex(heading, "FFFFFF", 0.12), "FFFFFF", 7, "000000"),
+    heading,
+    subheading: untilContrast(mixHex(heading, "000000", 0.12), "FFFFFF", 4.5, "000000"),
     body,
     accent: untilContrast(accent, band, 3, "000000"),
     accentText: "FFFFFF",

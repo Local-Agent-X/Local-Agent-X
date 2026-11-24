@@ -25,6 +25,7 @@ function readEvents(options: ReadEventsOptions = {}): Array<Record<string, unkno
       riskLevel: "low",
       context: "Read file: qualification-note.txt",
       requiresApproval: false,
+      startedAt: 1_795_000_000_000,
     },
     {
       type: "tool_end",

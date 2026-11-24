@@ -106,8 +106,11 @@ function isTurnProvider(event: Record<string, unknown>): boolean {
 // session, its event sink) are the dispatcher's channel to the tool and never
 // ride an event (tool-execution/internal-args.ts).
 function isToolStart(event: Record<string, unknown>): boolean {
-  if (!hasExactOwnKeys(event, ["type", "toolName", "toolCallId", "args", "riskLevel", "context", "requiresApproval"])) return false;
+  // The exact fields the server puts on a tool_start (tool-execution/resolve-tool.ts).
+  // `startedAt` is when the call began, in epoch ms.
+  if (!hasExactOwnKeys(event, ["type", "toolName", "toolCallId", "args", "riskLevel", "context", "requiresApproval", "startedAt"])) return false;
   if (!isPlainRecord(event.args) || !hasExactOwnKeys(event.args, ["path"])) return false;
+  if (typeof event.startedAt !== "number" || !Number.isFinite(event.startedAt) || event.startedAt <= 0) return false;
   return event.type === "tool_start"
     && event.toolName === "read"
     && isNonemptyString(event.toolCallId)

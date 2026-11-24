@@ -99,7 +99,8 @@ function sameContent(item: StoredInboxItem, next: ReturnType<typeof fromInput>):
     && JSON.stringify(item.link ?? null) === JSON.stringify(next.link ?? null)
     && JSON.stringify(item.actions ?? null) === JSON.stringify(next.actions ?? null)
     && JSON.stringify(item.deferredCall ?? null) === JSON.stringify(next.deferredCall ?? null)
-    && item.liveApprovalId === next.liveApprovalId;
+    && item.liveApprovalId === next.liveApprovalId
+    && item.appChatRequest?.appId === next.appChatRequest?.appId;
 }
 
 function fromInput(input: InboxInput): Omit<StoredInboxItem, "id" | "createdAt"> {
@@ -113,6 +114,7 @@ function fromInput(input: InboxInput): Omit<StoredInboxItem, "id" | "createdAt">
     ...(input.key ? { key: input.key } : {}),
     ...(input.deferredCall ? { deferredCall: input.deferredCall } : {}),
     ...(input.liveApprovalId ? { liveApprovalId: input.liveApprovalId } : {}),
+    ...(input.appChatRequest ? { appChatRequest: input.appChatRequest } : {}),
     ...(input.feedback ? { feedback: input.feedback } : {}),
   };
 }
@@ -211,7 +213,7 @@ export function createInboxStore(filePath: string, clock: () => number = Date.no
     claimApproval: (id, resolution) => mutate((items, now): ApprovalClaim => {
       const item = items.find((candidate) => candidate.id === id);
       if (!item) return { kind: "missing" };
-      if (item.kind !== "approval" || (!item.deferredCall && !item.liveApprovalId)) return { kind: "not-approval" };
+      if (item.kind !== "approval" || (!item.deferredCall && !item.liveApprovalId && !item.appChatRequest)) return { kind: "not-approval" };
       if (!isPinned(item)) return { kind: "answered" };
       item.resolvedAt = now;
       item.resolution = resolution;

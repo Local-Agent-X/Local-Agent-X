@@ -67,6 +67,10 @@ export const LAX_DATA_CATALOG: readonly LaxDataEntry[] = [
   ...at("blocked", "decides which local ports the shell's network proxy listens on, which the Windows cage permits", "shell-proxy-ports.json"),
   ...at("blocked", "decides which access tokens the app accepts and what each may do", "tokens.json"),
   ...at("blocked", "lists the data flows you approved, which then run without asking", "threat-trust-ledger.json"),
+  ...at("blocked", "decides which apps may start conversations with your agents, with your powers", "app-chat-grants.json"),
+  // A port is an app's browser origin: one written here for another app would
+  // hand that app what the first one stored in the browser (app-origins.ts).
+  ...at("blocked", "decides which local address each app is served from, which keeps apps apart in the browser", "app-origin-ports.json"),
   // A build's sealed acceptance scenarios: a builder that could change (or
   // read) them would be grading its own work (holdout-seal.ts).
   ...at("blocked", "holds a build's sealed test scenarios, which only the build's judge reads", "holdout"),

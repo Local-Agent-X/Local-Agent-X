@@ -18,6 +18,11 @@ import { structureKitAdoptionPromptLine, structureKitPromptLine } from "../app-s
 const WEBSITE_NOUN_IN_PROMPT_RE =
   /\b(website|web ?site|landing page|landing|home ?page|marketing ?page|micro ?site|one[- ]?pager|business site|biz site|menu page|portfolio|splash page|brochure site)\b/i;
 
+/** How a built app talks to the user's agents (src/routes/app-chat.ts), in the
+ *  one wording both builder prompts carry. */
+const APP_CHAT_RULE =
+  "Need the app to talk to the user's AI agents (a chat panel, an assistant, several named agents)? Use the helper LAX injects into the page: const reply = window.lax.chat('<thread>', message, { persona: '<role of this thread>' }); for await (const e of reply) yields {type:'delta',text}, {type:'replace',text}, {type:'needs_approval'}, {type:'error',message}, then {type:'done'}; await reply.text() gives the whole reply; lax.chatHistory(thread) and lax.chatStop(thread) exist too. Each thread name (lowercase letters, digits, - _) is its own conversation: one thread and persona per agent. Never call /api/chat or the chat WebSocket from an app, and never build a proxy or a file-polling bridge for it: those are refused by design. The user approves each app once in their Local Agent X inbox; until then a call rejects with error.code 'needs_approval', so show 'Approve this app in Local Agent X, then try again' with a retry button, and handle 'denied' and 'busy'. If window.lax is undefined, say the app must be opened from Local Agent X.";
+
 export function looksLikeWebsiteRequest(prompt: string): boolean {
   return WEBSITE_NOUN_IN_PROMPT_RE.test(prompt);
 }
@@ -225,6 +230,7 @@ Environment:
 - The preview iframe enforces this CSP: script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data: https: blob:; font-src 'self' data:; connect-src 'self'.
 - External CDNs (Tailwind, jsdelivr, unpkg, Google Fonts) are blocked at the network layer. Inline or self-host.
 - Need real data from an external API? You CANNOT fetch it cross-origin here (connect-src 'self' blocks it) and you must NOT edit core LAX. Call the connector_create tool to define a connector (name, upstream, auth none/bearer/header/signed, allow-list of exact "METHOD /path" entries), then have the app call the same-origin proxy /api/connectors/<name>/<path> with header Authorization: 'Bearer ' + window.__LAX_CONNECTOR_TOKEN__. The server holds the secret and forwards. An honest empty/error state until it returns is fine; faked data is not.
+- ${APP_CHAT_RULE}
 - After write/edit, the preview reloads automatically; runtime errors are forwarded back to you in the next turn.
 ${context}${assetManifest}
 Instructions: ${prompt}
@@ -272,6 +278,7 @@ export function renderPersonaPrompt(): string {
     "- The app must run on first load — include every script, style, and handler it references; no functions called but never defined, no half-wired features.",
     ...NATIVE_BUILD_RULE_LINES,
     "- Need real data from an external API (broker, CRM, any keyed/signed service)? Don't fetch it directly — the sandbox blocks cross-origin calls. Call the connector_create tool to define a connector (upstream + auth + an allow-list of exact METHOD /path entries) and have the app call the same-origin proxy /api/connectors/<name>/<path> with the header Authorization: 'Bearer ' + window.__LAX_CONNECTOR_TOKEN__. Never edit core LAX to add an integration.",
+    `- ${APP_CHAT_RULE}`,
     "- Do NOT ask questions — just build it based on the instructions",
     "- After writing files, output: APP_READY: <appUrl from the per-build context>",
     WEBSITE_RULES_FRAGMENT +

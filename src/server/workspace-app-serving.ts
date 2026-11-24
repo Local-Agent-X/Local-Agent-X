@@ -11,6 +11,7 @@ import { APP_CONTENT_TYPES, workspaceAppHtmlHeaders, connectorBootstrapScript, r
 import { answerLiveReloadPoll, decideFrontendServe, proxyFrontendDevServer } from "./dev-server-proxy.js";
 import { phoneErrorPipeScript } from "./error-pipe-inject.js";
 import { ideFrameBridgeScript, uiOrigins } from "./ide-frame-bridge.js";
+import { appChatClientScript } from "./app-chat-inject.js";
 import type { LAXConfig } from "../types.js";
 import { selfPort } from "../security/layer/loopback-grant.js";
 
@@ -78,7 +79,7 @@ export function serveWorkspaceApp(
         res.end();
         return true;
       }
-      deps.proxyFrontendDevServer(req, res, frontend.port, url, deriveConnectorCapability(config.authToken), { publicDir, uiPort: config.port });
+      deps.proxyFrontendDevServer(req, res, frontend.port, url, deriveConnectorCapability(config.authToken), { publicDir, uiPort: config.port, operatorToken: config.authToken });
       return true;
     }
   }
@@ -110,7 +111,7 @@ export function serveWorkspaceApp(
   const connectorCapability = deriveConnectorCapability(config.authToken);
   const instrumentation = req.headers["x-lax-tunnel"]
     ? (appId ? phoneErrorPipeScript(publicDir, appId) : "")
-    : ideFrameBridgeScript(publicDir, config.port);
+    : ideFrameBridgeScript(publicDir, config.port) + appChatClientScript(publicDir, config.authToken, appId ?? "");
   const bootstrap = connectorBootstrapScript(connectorCapability) + instrumentation;
   html = html.includes("<head>") ? html.replace("<head>", "<head>" + bootstrap) : html.includes("<body>") ? html.replace("<body>", "<body>" + bootstrap) : bootstrap + html;
   res.writeHead(200, headers); res.end(html); return true;

@@ -23,6 +23,8 @@ function handleSettingsChanged(msg) {
     _providersCacheTime = 0;
     if (typeof loadProviders === 'function') loadProviders().then(() => updateStatusBar()).catch(() => {});
   }
+  // An app was allowed to talk to the user's agents, or lost that (apps-chat-grants.js).
+  if (msg.settings.appChatGrants && typeof decorateAppChatGrants === 'function') decorateAppChatGrants();
   // One chat's own model changed (chat-model-pin.js): redraw if it is on screen.
   if (msg.settings.sessionModel && typeof laxOnSessionModelChanged === 'function') laxOnSessionModelChanged(msg.settings.sessionModel);
   // A local-runtime sweep found a different set (bootstrap-services.ts): the

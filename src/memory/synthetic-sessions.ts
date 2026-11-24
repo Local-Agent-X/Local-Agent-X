@@ -31,7 +31,13 @@
 // external content. Never memory, never recalled into a chat as one of theirs.
 // `travel-watch-` mirrors background-jobs/travel-watch-prompt.ts
 // TRAVEL_WATCH_SESSION_PREFIX: a flight-status lookup over web pages.
-export const SYNTHETIC_SESSION_PREFIXES = ["dream-", "cron-", "ide-", "eval_", "skill-review-", "failure-review-", "mail-watch-", "travel-watch-"] as const;
+// `appchat-` mirrors server/app-chat-turn.ts APP_CHAT_SESSION_PREFIX: a thread
+// an app the user allowed holds with their agents. Its "user" messages were
+// written by the app's page, not by the user, so it is never memory, never
+// summarized and never recalled as one of their chats; it stays in the chat
+// list (below), because its turns run with the user's powers and they must be
+// able to read what an app had their agents do.
+export const SYNTHETIC_SESSION_PREFIXES = ["dream-", "cron-", "ide-", "eval_", "skill-review-", "failure-review-", "mail-watch-", "travel-watch-", "appchat-"] as const;
 
 export function isSyntheticSessionId(id: string): boolean {
   return SYNTHETIC_SESSION_PREFIXES.some((p) => id.startsWith(p));
@@ -67,7 +73,11 @@ const INTERNAL_SCRATCH_PREFIXES: readonly string[] =
 // USER-SCHEDULED task whose failure must still nudge/notify
 // (test/idle-nudge-headless.test.ts pins it). hidden ⊃ headless is pinned in
 // test/chat-ws-headless-filter.test.ts.
-export const CHAT_LIST_HIDDEN_PREFIXES: readonly string[] = INTERNAL_SCRATCH_PREFIXES;
+//
+// `appchat-` is left out too, for the opposite reason to ide-: not because the
+// user is in the conversation, but because they are not, and it acts for them.
+export const CHAT_LIST_HIDDEN_PREFIXES: readonly string[] =
+  INTERNAL_SCRATCH_PREFIXES.filter((p) => p !== "appchat-");
 
 export function isHiddenFromChatLists(id: string): boolean {
   return CHAT_LIST_HIDDEN_PREFIXES.some((p) => id.startsWith(p));

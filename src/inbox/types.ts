@@ -102,6 +102,9 @@ export interface StoredInboxItem extends InboxItem {
   /** For a copy of a chat's live approval card (live-approval.ts): the card
    *  it answers. Never leaves the server, like `deferredCall`. */
   liveApprovalId?: string;
+  /** For an app asking to talk to the user's agents (app-chat-approval.ts):
+   *  the app the answer is for. Never leaves the server, like `deferredCall`. */
+  appChatRequest?: { appId: string };
 }
 
 export interface InboxInput {
@@ -115,6 +118,7 @@ export interface InboxInput {
   key?: string;
   deferredCall?: DeferredCallRecord;
   liveApprovalId?: string;
+  appChatRequest?: { appId: string };
   /** Offer the user a rating ("unrated" to start). */
   feedback?: InboxFeedback;
   /** Ring the phone even inside the user's quiet hours (a travel change).

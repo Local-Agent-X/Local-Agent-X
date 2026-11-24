@@ -18,6 +18,7 @@ import { createLogger } from "../logger.js";
 import { workspacePath } from "../config.js";
 import { phoneErrorPipeScript } from "./error-pipe-inject.js";
 import { ideFrameBridgeScript, uiOrigins } from "./ide-frame-bridge.js";
+import { appChatClientScript } from "./app-chat-inject.js";
 import { agentAppFramingCsp, connectorBootstrapScript } from "./app-serving-policy.js";
 
 const logger = createLogger("server.dev-server-proxy");
@@ -185,7 +186,7 @@ export function proxyFrontendDevServer(
   port: number,
   url: URL,
   connectorToken: string,
-  opts: { coldStartWaitMs?: number; publicDir?: string; uiPort?: number } = {},
+  opts: { coldStartWaitMs?: number; publicDir?: string; uiPort?: number; /** Given, a desktop document also gets the app's chat client (app-chat-inject.ts). */ operatorToken?: string } = {},
 ): void {
   // A websocket upgrade (Vite HMR) cannot be proxied here — this forwarder only
   // handles a normal HTTP response, so forwarding an upgrade would HANG (Node
@@ -252,7 +253,8 @@ export function proxyFrontendDevServer(
             // origin, so it gets the frame bridge for the picker and error capture.
             const instrumentation = tunneled
               ? liveReloadScript(appId) + (opts.publicDir ? phoneErrorPipeScript(opts.publicDir, appId) : "")
-              : (opts.publicDir && opts.uiPort ? ideFrameBridgeScript(opts.publicDir, opts.uiPort) : "");
+              : (opts.publicDir && opts.uiPort ? ideFrameBridgeScript(opts.publicDir, opts.uiPort) : "")
+                + (opts.publicDir && opts.operatorToken ? appChatClientScript(opts.publicDir, opts.operatorToken, appId) : "");
             const inject = connectorBootstrapScript(connectorToken) + instrumentation;
             const html = injectHead(Buffer.concat(chunks).toString("utf-8"), inject);
             delete out["content-length"];

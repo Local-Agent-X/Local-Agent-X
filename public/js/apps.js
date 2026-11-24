@@ -149,6 +149,8 @@ async function loadApps() {
     }
     // Re-apply the search filter — the rebuild above wiped display state.
     if (typeof applyAppsSearchFilter === 'function') applyAppsSearchFilter();
+    // Which of these apps may talk to the user's agents (apps-chat-grants.js).
+    if (typeof decorateAppChatGrants === 'function') decorateAppChatGrants();
   } catch (e) {
     grid.innerHTML = '<p style="color:var(--muted)">Failed to load apps</p>';
   }
@@ -323,6 +325,7 @@ async function exportApp(id, name) {
     html = html.replace(/var API = [^;]+;/, 'var API = ""; // Exported - no live connection');
     html = html.replace(/var AUTH = [^;]+;/, 'var AUTH = "";');
     html = html.replace(/<script>window\.__LAX_CONNECTOR_TOKEN__=[^<]*<\/script>/g, '');
+    html = html.replace(/<script data-lax-app-chat>[\s\S]*?<\/script>/g, '');
 
     // Download as HTML file
     const blob = new Blob([html], { type: 'text/html' });

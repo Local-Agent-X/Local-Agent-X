@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { randomId } from "../src/util/ids.js";
+import { APP_CHAT_SESSION_PREFIX, appChatSessionId } from "../src/server/app-chat-turn.js";
 import {
   CHAT_LIST_HIDDEN_PREFIXES,
   isExcludedFromFailureCounts,
@@ -41,6 +42,18 @@ describe("isSyntheticSessionId", () => {
     expect(id.startsWith("eval_")).toBe(true); // prefix only — body format is ids.test.ts's pin
     expect(isSyntheticSessionId(id)).toBe(true);
     expect(isSyntheticSessionId(`${id}.jsonl`)).toBe(true);
+  });
+
+  // Derived from the real minter, like eval_ above: an app's thread with the
+  // user's agents (server/app-chat-turn.ts).
+  it("classifies an app's chat thread, which stays in the chat list and out of memory", () => {
+    const id = appChatSessionId("staff-hub", "scheduler");
+    expect(id.startsWith(APP_CHAT_SESSION_PREFIX)).toBe(true);
+    expect(SYNTHETIC_SESSION_PREFIXES).toContain(APP_CHAT_SESSION_PREFIX);
+    expect(isSyntheticSessionId(id)).toBe(true);
+    expect(isHiddenFromChatLists(id)).toBe(false);
+    expect(isExcludedFromSessionSummaries(id)).toBe(true);
+    expect(isExcludedFromTranscriptSearch(`${id}.jsonl`)).toBe(true);
   });
 
   it("treats real user conversations as NOT synthetic", () => {

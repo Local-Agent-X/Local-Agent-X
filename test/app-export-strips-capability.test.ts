@@ -8,6 +8,8 @@ import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { connectorBootstrapScript } from "../src/server/app-serving-policy.js";
+import { appChatClientScript } from "../src/server/app-chat-inject.js";
+import { deriveAppChatCapability } from "../src/server/app-connector-auth.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const appsJs = readFileSync(join(here, "../public/js/apps.js"), "utf8");
@@ -38,5 +40,26 @@ describe("app export", () => {
 		expect(out).not.toContain("__LAX_CONNECTOR_TOKEN__");
 		expect(out).toContain("<title>Demo</title>");
 		expect(out).toContain("<h1>Hi</h1>");
+	});
+
+	it("drops the app's chat client and its capability, and leaves the app's own scripts", async () => {
+		const chat = appChatClientScript(join(here, "../public"), "operator-token", "demo");
+		expect(chat).toContain("__laxInstallAppChat(");
+		const own = "<script>window.mine = 1;</script>";
+		const served = `<html><head>${connectorBootstrapScript(CAPABILITY)}${chat}<title>Demo</title>${own}</head><body><h1>Hi</h1></body></html>`;
+		const out = await exportServed(served);
+		expect(out).not.toContain(deriveAppChatCapability("operator-token", "demo"));
+		expect(out).not.toContain("data-lax-app-chat");
+		expect(out).not.toContain("__laxInstallAppChat");
+		expect(out).toContain(own);
+		expect(out).toContain("<h1>Hi</h1>");
+	});
+
+	it("the injected chat client cannot close its own script tag, and is injected for an app id only", () => {
+		const source = readFileSync(join(here, "../public/js/app-chat-client.js"), "utf8");
+		expect(source).not.toMatch(/<\/script/i);
+		for (const bad of ["", "a.b", "../x", "a\"b", "x".repeat(65)]) {
+			expect(appChatClientScript(join(here, "../public"), "operator-token", bad), bad).toBe("");
+		}
 	});
 });

@@ -45,6 +45,11 @@ describe("device allowlist", () => {
       "/api/projects/proj-1",
       "/api/connectors", // the listing names every connector and its folder
       "/api/connectorsX/evil",
+      // An app's conversations with the user's agents, and who may have them:
+      // the tunnel carries the operator's authority, so neither is the phone's.
+      "/api/app-chat/hub/threads/main/messages",
+      "/api/app-chat-grants",
+      "/api/app-chat-grants/hub/forget",
       "/uploads", // no trailing slash → not the served prefix
       "/uploadsX/evil",
       "/",

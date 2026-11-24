@@ -23,6 +23,8 @@ import { jsonResponse, safeParseBody } from "../server-utils.js";
 import { inboxStore, listInbox, toInboxView, type InboxFrame } from "../inbox/index.js";
 import { approveInboxItem, declineInboxItem, INBOX_REFUSAL_TEXT, type InboxActResult } from "../inbox/approvals.js";
 import { answerLiveApproval, liveApprovalOf } from "../inbox/live-approval.js";
+import { answerAppChatRequest, appChatRequestOf } from "../inbox/app-chat-approval.js";
+import { recordAppChatAnswer } from "../app-runtime/chat-grants.js";
 import { getApprovalManager } from "../approval-manager.js";
 import { dispatchApprovedCall, resolveApprovedTool } from "../tool-execution/index.js";
 import { SecurityLayer } from "../security/index.js";
@@ -80,6 +82,14 @@ export async function actOnInbox(ctx: ServerContext, id: string, action: "approv
     return answerLiveApproval(id, action === "approve",
       (approvalId, approved) => getApprovalManager().resolveApproval(approvalId, approved),
       () => broadcastChanged(ctx, action, id));
+  }
+  // An app asking to talk to the user's agents: the answer is remembered for
+  // that app; nothing runs.
+  if (appChatRequestOf(id)) {
+    return answerAppChatRequest(id, action === "approve", (appId, approved) => {
+      recordAppChatAnswer(appId, approved ? "granted" : "denied");
+      ctx.broadcastAll({ type: "settings_changed", settings: { appChatGrants: true } });
+    }, () => broadcastChanged(ctx, action, id));
   }
   if (action === "decline") {
     const result = declineInboxItem(id);

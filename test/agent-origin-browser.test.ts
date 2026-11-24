@@ -17,6 +17,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { agentOrigin, routeUiAgentPaths, startAgentOrigin } from "../src/server/agent-origin.js";
 import { ensureAppOrigin } from "../src/server/app-origins.js";
+import { deriveAppChatCapability } from "../src/server/app-connector-auth.js";
 import type { ServerContext } from "../src/server-context.js";
 import type { LAXConfig } from "../src/types.js";
 
@@ -182,6 +183,9 @@ describe.skipIf(!chromiumAvailable)("a pinned agent app in a real browser", () =
 				expect(tried.ok && tried.value !== "", route).toBe(false);
 			}
 			expect(JSON.stringify(report.data)).not.toContain(VICTIM_SECRET);
+			// Nor the capability its page was handed for talking to the user's agents.
+			expect(await victimPage.content()).toContain(deriveAppChatCapability(OP_TOKEN, "victim"));
+			expect(JSON.stringify(report.data)).not.toContain(deriveAppChatCapability(OP_TOKEN, "victim"));
 		} finally {
 			await browser.close();
 		}

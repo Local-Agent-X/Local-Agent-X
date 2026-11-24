@@ -1,6 +1,6 @@
 // Capability tokens an embedded app uses in place of the operator token: one
-// that reaches the connector proxy and nothing else, and one per registry app
-// for that app's own state.
+// that reaches the connector proxy and nothing else, one per registry app for
+// that app's own state, and one per app for talking to the user's agents.
 //
 // A served app is a LOWER-TRUST principal than the operator: it's AI/user
 // generated, pulls unvetted dependencies, and renders remote data. So the app
@@ -55,5 +55,24 @@ export function verifyAppDataCapability(operatorToken: string, appId: string, to
   if (!token || !operatorToken) return false;
   const a = Buffer.from(token);
   const b = Buffer.from(deriveAppDataCapability(operatorToken, appId));
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+// An app the user allowed to talk to their agents (app-runtime/chat-grants.ts)
+// starts chat turns through /api/app-chat/<id>/… (routes/app-chat.ts). Its page
+// is handed this: bound to the one app id, admitted only for those calls and
+// only on that app's own listener (agent-origin.ts). Holding it opens nothing
+// by itself: every call still needs the user's grant for that app. A label of
+// its own, so neither of the capabilities above can stand in for it.
+const APP_CHAT_LABEL = "lax-app-chat-capability:v1\n";
+
+export function deriveAppChatCapability(operatorToken: string, appId: string): string {
+  return createHmac("sha256", operatorToken).update(APP_CHAT_LABEL + appId).digest("hex");
+}
+
+export function verifyAppChatCapability(operatorToken: string, appId: string, token: string): boolean {
+  if (!token || !operatorToken) return false;
+  const a = Buffer.from(token);
+  const b = Buffer.from(deriveAppChatCapability(operatorToken, appId));
   return a.length === b.length && timingSafeEqual(a, b);
 }

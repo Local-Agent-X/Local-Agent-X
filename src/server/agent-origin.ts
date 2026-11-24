@@ -29,9 +29,12 @@
  *     which the asking page cannot read.
  *   - Here, no page is given the operator token and none is accepted. The LAX
  *     APIs an app calls are the connector proxy, /api/connectors/*, behind the
- *     connector capability injected into the page, and a registry-rendered
- *     app's own state calls, behind a capability bound to that app id (both in
- *     app-connector-auth.ts). Every other /api path is refused. An app's
+ *     connector capability injected into the page, a registry-rendered app's
+ *     own state calls, behind a capability bound to that app id, and, for an
+ *     app the user allowed, its conversations with the user's agents
+ *     (routes/app-chat.ts), behind a capability bound to that app id too (all
+ *     three in app-connector-auth.ts). The last two are answered only on that
+ *     app's own listener. Every other /api path is refused. An app's
  *     frontend dev server is proxied here too (dev-server-proxy.ts).
  *   - The UI's origins may read the pages served here (CORS on GET), for the
  *     gallery's Export.
@@ -45,7 +48,7 @@ import type { AddressInfo } from "node:net";
 import { join, resolve } from "node:path";
 import { appIdOfPath, closeAllAppOrigins, ensureAppOrigin, initAppOrigins } from "./app-origins.js";
 import { jsonResponse } from "../server-utils.js";
-import { authorizeAppConnectorHttp, verifyAppDataCapability } from "./app-connector-auth.js";
+import { authorizeAppConnectorHttp, verifyAppChatCapability, verifyAppDataCapability } from "./app-connector-auth.js";
 import { uiOrigins } from "./ide-frame-bridge.js";
 import { deriveFilesLinkCapability, signAgentFilePath, verifyFilesLinkCapability } from "./agent-file-links.js";
 import { serveAgentFile } from "./static-assets.js";
@@ -53,6 +56,7 @@ import { serveWorkspaceApp } from "./workspace-app-serving.js";
 import { APP_CONTENT_TYPES, resolveBundledFontFile } from "./app-serving-policy.js";
 import { handleAppRoutes } from "../routes/apps.js";
 import { handleConnectorProxyRoutes } from "../routes/connector-proxy.js";
+import { APP_CHAT_PREFIX, handleAppChatCall } from "../routes/app-chat.js";
 import { createLogger } from "../logger.js";
 import { setAgentOriginPort } from "../security/layer/agent-origin-port.js";
 import type { ServerContext } from "../server-context.js";
@@ -78,6 +82,11 @@ export interface AgentOriginDeps {
   getCtx: () => ServerContext;
   /** Where each app's port is remembered; the data dir's file when not given. */
   appPortsFile?: string;
+}
+
+/** The two names a loopback listener's origin goes by. */
+function listenerOrigins(port: number): string[] {
+  return [`http://127.0.0.1:${port}`, `http://localhost:${port}`];
 }
 
 function bearerToken(req: IncomingMessage): string {
@@ -124,6 +133,14 @@ async function routeAgentRequest(method: string, url: URL, req: IncomingMessage,
   if (url.pathname.startsWith("/api/")) {
     const token = bearerToken(req);
     if (isAppDataCall(method, url.pathname, token, config.authToken, scope)) return handleAppRoutes(method, url, req, res, deps.getCtx(), "user");
+    // An app's conversations with the user's agents: that app's chat
+    // capability, on that app's own listener, from that app's own page.
+    if (url.pathname.startsWith(APP_CHAT_PREFIX)) {
+      const admitted = scope.kind === "app" && verifyAppChatCapability(config.authToken, scope.appId, token)
+        && await handleAppChatCall(method, url, req, res, deps.getCtx(), scope.appId, listenerOrigins(scope.port()));
+      if (!admitted) jsonResponse(res, 401, { error: "Unauthorized" }, req);
+      return true;
+    }
     if (!authorizeAppConnectorHttp(token, url.pathname, config.authToken)) {
       jsonResponse(res, 401, { error: "Unauthorized" }, req);
       return true;

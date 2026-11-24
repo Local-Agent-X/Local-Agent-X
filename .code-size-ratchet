@@ -56,7 +56,6 @@ src/security/layer/kernel-class-policy.ts#evaluateByKernelClass 132
 src/self-edit/sandbox.ts#runSelfEditInSandbox 198
 src/self-edit/tool.ts#selfEditTool.execute 117
 src/server/background-jobs/cron-runner.ts#cronService.onExecute:callback 166
-src/server/bootstrap-services.ts#initOrRefreshEmbeddingProvider 105
 src/server/handler-events.ts#agentRunDriver 111
 src/server/index.ts#startServer 120
 src/tool-execution/pre-dispatch.ts#assertToolCallAllowed 184

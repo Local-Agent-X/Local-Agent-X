@@ -67,6 +67,19 @@ async function embeddingApiKey(embProvider: string, config: LAXConfig, secretsSt
   return (await PROVIDERS[embProvider].auth.resolve({ configOpenAIKey: config.openaiApiKey }, secretsStore))?.credential;
 }
 
+/** Ask Ollama to pull the fallback embedding model, unless it is installed.
+ *  Throws what the request throws; each caller decides whether that matters. */
+async function pullFallbackEmbedderIfMissing(ollamaUrl: string, fallbackModel: string, installed: string[]): Promise<void> {
+  if (embeddingModelInstalled(fallbackModel, installed)) return;
+  await fetch(`${ollamaUrl}/api/pull`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: fallbackModel, stream: false }),
+    signal: AbortSignal.timeout(120_000),
+  });
+  logger.info(`[memory] Pulled ${fallbackModel} as fallback`);
+}
+
 export async function initOrRefreshEmbeddingProvider(deps: {
   config: LAXConfig;
   dataDir: string;
@@ -139,30 +152,12 @@ export async function initOrRefreshEmbeddingProvider(deps: {
               } else {
                 degraded = true;
                 logger.warn(`[memory] Failed to pull ${targetModel} — trying ${fallbackModel}`);
-                if (!embeddingModelInstalled(fallbackModel, installed)) {
-                  await fetch(`${ollamaUrl}/api/pull`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ name: fallbackModel, stream: false }),
-                    signal: AbortSignal.timeout(120_000),
-                  });
-                  logger.info(`[memory] Pulled ${fallbackModel} as fallback`);
-                }
+                await pullFallbackEmbedderIfMissing(ollamaUrl, fallbackModel, installed);
               }
             } catch (pullErr) {
               degraded = true;
               logger.warn(`[memory] Model pull failed: ${(pullErr as Error).message}`);
-              if (!embeddingModelInstalled(fallbackModel, installed)) {
-                try {
-                  await fetch(`${ollamaUrl}/api/pull`, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ name: fallbackModel, stream: false }),
-                    signal: AbortSignal.timeout(120_000),
-                  });
-                  logger.info(`[memory] Pulled ${fallbackModel} as fallback`);
-                } catch {}
-              }
+              try { await pullFallbackEmbedderIfMissing(ollamaUrl, fallbackModel, installed); } catch {}
             }
           }
         } else {

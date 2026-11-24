@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2155 non-test source files · 61 oversized · 272 nearing the size cap.
+**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2155 non-test source files · 60 oversized · 273 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -48,7 +48,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/desktop-contract/` | 24 | 11 | M |  |
 | `src/sandbox/` | 24 | 17 | L |  |
 | `src/protocols/` | 22 | 51 | XL |  |
-| `src/server/` *(entrypoint)* | 21 | 80 | XL | 4 |
+| `src/server/` *(entrypoint)* | 21 | 80 | XL | 3 |
 | `src/voice/` | 20 | 80 | XL | 1 |
 | `src/autonomy/` | 19 | 6 | M |  |
 | `src/net/` | 19 | 12 | L |  |
@@ -294,7 +294,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/self-edit/sandbox.ts#runSelfEditInSandbox`
 - `src/self-edit/tool.ts#selfEditTool.execute`
 - `src/server/background-jobs/cron-runner.ts#cronService.onExecute:callback`
-- `src/server/bootstrap-services.ts#initOrRefreshEmbeddingProvider`
 - `src/server/handler-events.ts#agentRunDriver`
 - `src/server/index.ts#startServer`
 - `src/tool-execution/pre-dispatch.ts#assertToolCallAllowed`
@@ -362,7 +361,6 @@ job. Comments are free: never cut them to fit.
 - `src/ops/op-store.ts` — 290+ code lines (cap 350)
 - `src/ops/operation-requirements.ts` — 290+ code lines (cap 350)
 - `src/protocols/skills-install.ts` — 290+ code lines (cap 350)
-- `src/server/bootstrap-services.ts` — 290+ code lines (cap 350)
 - `src/telegram-bridge/bridge.ts` — 290+ code lines (cap 350)
 - `src/tool-execution/sensitive-read-taint.ts` — 290+ code lines (cap 350)
 - `src/agency/worktree-lifecycle.ts` — 280+ code lines (cap 350)
@@ -372,6 +370,7 @@ job. Comments are free: never cut them to fit.
 - `src/mcp-client/index.ts` — 280+ code lines (cap 350)
 - `src/memory/index-facts-mutate.ts` — 280+ code lines (cap 350)
 - `src/protocols/builder.ts` — 280+ code lines (cap 350)
+- `src/server/bootstrap-services.ts` — 280+ code lines (cap 350)
 - `src/test-suite.ts` — 280+ code lines (cap 350)
 - `src/tools/build-app-spawn.ts` — 280+ code lines (cap 350)
 - `src/tools/http-egress-guard.ts` — 280+ code lines (cap 350)
@@ -451,6 +450,7 @@ job. Comments are free: never cut them to fit.
 - `src/server/api-request-router.ts#routeApiRequest` — 80+ own code lines (cap 100)
 - `src/server/background-jobs/dream-check.ts#registerDreamRunner:callback` — 80+ own code lines (cap 100)
 - `src/server/bootstrap-services.ts#bootstrapServices` — 80+ own code lines (cap 100)
+- `src/server/bootstrap-services.ts#initOrRefreshEmbeddingProvider` — 80+ own code lines (cap 100)
 - `src/threat/threat-engine.ts#ThreatEngine.evaluateToolResult` — 80+ own code lines (cap 100)
 - `src/tools/asset-tools.ts#extractSiteAssetsTool.execute` — 80+ own code lines (cap 100)
 - `src/tools/image-tools/generate-video.ts#generateVideoTool.execute` — 80+ own code lines (cap 100)

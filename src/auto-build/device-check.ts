@@ -78,18 +78,34 @@ export interface DeviceLogReport {
   leaks: Leak[];
 }
 
+// Android `logcat -v threadtime`: `MM-DD HH:MM:SS.mmm  pid  tid L Tag: message`.
 const THREADTIME = /^\d\d-\d\d (\d\d):(\d\d):(\d\d)\.(\d{3})\s+\d+\s+\d+\s+[VDIWEF]\s+([^:]*?)\s*:\s?(.*)$/;
+// iOS, both shapes: the Simulator's `log show --style syslog`
+// (`2026-11-24 00:10:01.123456-0600  host Process[pid]: message`) and a
+// syslog captured from an iPhone (`… Process[pid] <Notice>: message`). The
+// process is the line's tag; the message is everything after its colon.
+const IOS_LINE = /^\d{4}-\d\d-\d\d[ T](\d\d):(\d\d):(\d\d)\.(\d{3})\d*\S*\s+(?:\S+\s+)?([\w.-]+)(?:\(\S*\))?\[\d+\](?:\s*<\w+>)?:\s?(.*)$/;
+
+/** A log line as time, tag and message, from either platform's format. */
+function parseLine(line: string): { at: number; tag: string; message: string } | null {
+  const m = THREADTIME.exec(line) ?? IOS_LINE.exec(line);
+  if (!m) return null;
+  const [, h, mi, s, ms, tag, message] = m;
+  return { at: ((Number(h) * 60 + Number(mi)) * 60 + Number(s)) * 1000 + Number(ms), tag, message };
+}
 
 function stageOf(line: string, tag: string): StageSeen | null {
-  const m = THREADTIME.exec(line);
-  if (!m) return null;
-  const [, h, mi, s, ms, logTag, message] = m;
-  const own = logTag === tag ? message : message.startsWith(tag + " ") ? message.slice(tag.length + 1) : null;
+  const parsed = parseLine(line);
+  if (!parsed) return null;
+  const { at, tag: logTag, message } = parsed;
+  // The stage is the message's own text (`<tag> stage=…`, a JS console line,
+  // which iOS may prefix with its category) or logged under the tag itself.
+  const marker = new RegExp(`(?:^|[\\s:)\\]])${tag.replace(/\./g, "\\.")} (?=stage=)`).exec(message);
+  const own = logTag === tag ? message : marker ? message.slice(marker.index + marker[0].length) : null;
   const stage = own === null ? null : /(?:^|\s)stage=([\w.-]+)/.exec(own);
   if (!stage) return null;
   const where = /(?:^|\s)where=([\w-]+)/.exec(own!)?.[1];
   const took = /(?:^|\s)ms=(\d+)/.exec(own!)?.[1];
-  const at = ((Number(h) * 60 + Number(mi)) * 60 + Number(s)) * 1000 + Number(ms);
   return { stage: stage[1], at, ...(where ? { where } : {}), ...(took ? { ms: Number(took) } : {}) };
 }
 
@@ -107,14 +123,15 @@ export function analyzeDeviceLog(log: string, spec: DeviceSpec): DeviceLogReport
   spec.private.forEach((value, index) => {
     const needle = value.toLowerCase();
     const hits = lines.filter((l) => l.toLowerCase().includes(needle));
-    if (hits.length) leaks.push({ index, lines: hits.length, tags: [...new Set(hits.map((l) => THREADTIME.exec(l)?.[5] ?? "?"))] });
+    if (hits.length) leaks.push({ index, lines: hits.length, tags: [...new Set(hits.map((l) => parseLine(l)?.tag ?? "?"))] });
   });
   return { lines: lines.length, run, missing, leaks };
 }
 
 export interface DeviceCheckFacts {
   date: string;
-  device: { serial: string; model: string; android: string };
+  /** `os` as the ledger says it: "Android 16", "iOS 18.1". */
+  device: { serial: string; model: string; os: string };
   spec: DeviceSpec;
   installed: boolean;
   report: DeviceLogReport;
@@ -136,7 +153,7 @@ export function deviceLedgerLine(f: DeviceCheckFacts): string {
       ? `Searched ${report.lines} log lines for ${spec.private.length} test value${spec.private.length === 1 ? "" : "s"}: none found.`
       : `LEAK: ${report.leaks.map((l) => `test value ${l.index + 1} on ${l.lines} line${l.lines === 1 ? "" : "s"} (log tag ${l.tags.join(", ")})`).join("; ")}.`;
   return `- ${f.date} device check (device_check, run by LAX): ${deviceCheckPassed(f) ? "PASS" : "FAIL"} on ${f.device.model}, ` +
-    `Android ${f.device.android} (${f.device.serial}), app ${spec.package}${f.installed ? "" : " NOT INSTALLED"}. ` +
+    `${f.device.os} (${f.device.serial}), app ${spec.package}${f.installed ? "" : " NOT INSTALLED"}. ` +
     `Stages: ${stages || "none logged"}${span}.` +
     (report.missing.length ? ` Missing: ${report.missing.join(", ")}.` : "") + ` ${privacy}`;
 }

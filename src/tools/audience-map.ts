@@ -197,6 +197,7 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   browser: ["main-chat", "spawned-agent", "operator"],
   // Android emulator control — mobile-testing counterpart to browser.
   android: ["main-chat", "spawned-agent", "operator"],
+  ios: ["main-chat", "spawned-agent", "operator"],
 
   // Apps. app_create/app_list are deferred — the keyword router's
   // /\bapp\b|dashboard|tracker/ rule surfaces app_* on the messages that

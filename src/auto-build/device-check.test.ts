@@ -7,6 +7,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const adb = vi.hoisted(() => ({ log: "", installed: ["app.labelcheck"], fail: "" }));
+const ios = vi.hoisted(() => ({ kind: "simulator" as "simulator" | "iphone", log: "", installed: true }));
+vi.mock("../ios/index.js", () => ({
+  resolveIosTarget: async () => ios.kind === "simulator"
+    ? { kind: "simulator", udid: "SIM-1", name: "iPhone 16", os: "iOS 18.1", booted: true }
+    : { kind: "iphone", udid: "00008130-AA", name: "Test iPhone", os: "iOS 18.1", model: "iPhone16,2" },
+  simulatorHasApp: async () => ios.installed,
+  simulatorLog: async () => ios.log,
+  usbIphoneApps: async () => (ios.installed ? ["app.labelcheck"] : []),
+}));
 vi.mock("../android/index.js", () => ({
   resolveSerial: async (s?: string) => { if (adb.fail) throw new Error(adb.fail); return s ?? "R5CX123"; },
   deviceInfo: async () => ({ model: "SM-S948U1", android: "16" }),
@@ -65,7 +74,7 @@ describe("reading the device log", () => {
 
 describe("the ledger line", () => {
   const facts = (log: string, installed = true) => ({
-    date: "2026-11-24", device: { serial: "R5CX123", model: "SM-S948U1", android: "16" }, spec: SPEC, installed, report: analyzeDeviceLog(log, SPEC),
+    date: "2026-11-24", device: { serial: "R5CX123", model: "SM-S948U1", os: "Android 16" }, spec: SPEC, installed, report: analyzeDeviceLog(log, SPEC),
   });
 
   it("PASS names the device, each stage with where and time, the span and the privacy search", () => {
@@ -157,5 +166,66 @@ describe("device_check, end to end with adb faked", () => {
     const r = await run();
     expect(r.isError).toBe(true);
     expect(r.content).toContain("has no .lax-device.json");
+  });
+});
+
+// iOS: the Simulator's `log show --style syslog`, and a syslog captured from a
+// real iPhone with pymobiledevice3, which keeps no log to read back.
+const simLine = (t: string, proc: string, msg: string) => `2026-11-24 00:10:${t}123-0600  localhost ${proc}[4412]: ${msg}`;
+const phoneLine = (t: string, proc: string, msg: string) => `2026-11-24 00:10:${t}456 ${proc}[4412] <Notice>: ${msg}`;
+
+describe("reading an iOS log", () => {
+  it("finds the stages in a Simulator log, JS lines (with their category) and native-tag lines alike", () => {
+    const log = [
+      simLine("01.", "LabelCheck", "(ReactNativeJS) LabelCheck stage=photo where=device"),
+      simLine("01.", "LabelCheck", "stage=ocr where=device ms=280"),
+      simLine("05.", "LabelCheck", "LabelCheck stage=extract where=device ms=4100"),
+      simLine("05.", "SpringBoard", "unrelated"),
+      simLine("06.", "LabelCheck", "LabelCheck stage=result"),
+    ].join("\n");
+    const r = analyzeDeviceLog(log, SPEC);
+    expect(r.missing).toEqual([]);
+    expect(r.run.map((s) => [s.stage, s.where, s.ms])).toEqual([
+      ["photo", "device", undefined], ["ocr", "device", 280], ["extract", "device", 4100], ["result", undefined, undefined],
+    ]);
+  });
+
+  it("reads an iPhone syslog capture, and names the process a leaked value was logged by", () => {
+    const log = [phoneLine("01.", "LabelCheck", "LabelCheck stage=photo"), phoneLine("02.", "mediaserverd", "saved Testamycin")].join("\n");
+    const r = analyzeDeviceLog(log, SPEC);
+    expect(r.run.map((s) => s.stage)).toEqual(["photo"]);
+    expect(r.leaks).toEqual([{ index: 0, lines: 1, tags: ["mediaserverd"] }]);
+  });
+});
+
+describe("device_check on iOS, with the device faked", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), "lax-device-check-ios-"));
+    writeFileSync(join(dir, ".lax-device.json"), JSON.stringify(SPEC));
+    ios.kind = "simulator"; ios.installed = true;
+    ios.log = ["photo", "ocr", "extract", "result"].map((s, i) => simLine(`0${i}.`, "LabelCheck", `LabelCheck stage=${s}`)).join("\n");
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  const run = (extra: Record<string, unknown> = {}) => deviceCheckTool.execute({ project_dir: dir, platform: "ios", ...extra }, new AbortController().signal);
+
+  it("PASS on a Simulator reads its own log and names it in the ledger", async () => {
+    const r = await run();
+    expect(r.content).toContain("PASS on iPhone 16 Simulator, iOS 18.1 (SIM-1), app app.labelcheck.");
+  });
+
+  it("a real iPhone without a captured log says how to capture one, and writes nothing", async () => {
+    ios.kind = "iphone";
+    const r = await run();
+    expect(r.isError).toBe(true);
+    expect(r.content).toContain("pymobiledevice3 syslog live");
+  });
+
+  it("a real iPhone with a captured log is checked from that file", async () => {
+    ios.kind = "iphone";
+    const file = join(dir, "phone.log");
+    writeFileSync(file, ["photo", "ocr", "extract", "result"].map((s, i) => phoneLine(`0${i}.`, "LabelCheck", `LabelCheck stage=${s}`)).join("\n"));
+    const r = await run({ log_file: file });
+    expect(r.content).toContain("PASS on Test iPhone (iPhone16,2), iOS 18.1");
   });
 });

@@ -122,6 +122,7 @@ demand via tool search and aren't all listed here.)
 
 - `browser` — Drive a real browser. _e.g._ "open google.com and search for X"
 - `android`
+- `ios`
 
 ### Apps. app_create/app_list are deferred
 
@@ -158,4 +159,4 @@ demand via tool search and aren't all listed here.)
 - `presentation`
 
 ---
-_78 capabilities · 54 with a description · 24 awaiting a blurb (add one to the tool's policy row)._
+_79 capabilities · 54 with a description · 25 awaiting a blurb (add one to the tool's policy row)._

@@ -116,7 +116,7 @@ describe("strict local-only policy matrix", () => {
         expect(decided(name), `${name} reaches a network service`).toBe(false);
       }
     }
-    for (const name of CAPABILITY_CLASS_MEMBERS.shell) expect(decided(name), `${name} runs a subprocess`).toBe(name === "android");
+    for (const name of CAPABILITY_CLASS_MEMBERS.shell) expect(decided(name), `${name} runs a subprocess`).toBe(name === "android" || name === "ios");
     for (const name of ["read", "write", "edit", "glob", "memory_save", "task_create", "spreadsheet", "document", "sql_schema", "agent_status"]) {
       expect(decided(name), name).toBe(true);
     }
@@ -129,7 +129,7 @@ describe("strict local-only policy matrix", () => {
     expect(indirect).toEqual(expect.arrayContaining(["build_app", "apply_update", "connector_create", "youtube_analyze"]));
     for (const name of indirect) expect(localOnlyToolDecision(name, { url: "http://127.0.0.1:5173" }, strict).allowed, name).toBe(false);
     const device = toolsWhere((row) => row.reach?.kind === "local-device");
-    expect(device).toEqual(["android"]);
+    expect(device).toEqual(["android", "ios"]);
     for (const name of device) expect(hasCapability(name, "shell"), `${name}: local-device only means something on a shell tool`).toBe(true);
   });
 

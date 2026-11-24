@@ -65,6 +65,7 @@ const NOT_TOOL_LISTS: ReadonlyArray<Registered & { why: string }> = [
   { file: "src/tool-policy/toggles.ts", owner: "RULE_FOR", why: "the tool-policy toggle's switch names, keyed to policy rule ids; http is not a tool" },
   { file: "src/tool-policy/toggles.ts", owner: "policyToggleStates()", why: "the tool-policy toggle's switch names (bash/http/browser); http is not a tool" },
   { file: "src/protocols/skill-md-parser.ts", owner: "CATEGORY_MAP", why: "words in a skill's name, mapped to its display category" },
+  { file: "src/auto-build/device-check-tool.ts", owner: ".enum", why: "the phone platforms device_check reads (android/ios), which share their names with the device tools" },
   { file: "src/canonical-loop/adapters/tool-call-text-corpus.ts", owner: ".tools", why: "a corpus case's offered tool set, with a near-miss name (read_file) on purpose" },
   { file: "scripts/local-qualification/lifecycle-helpers.ts", owner: "LIFECYCLE_BARRIERS", why: "the qualification lifecycle's barrier steps (write is a step)" },
 ];

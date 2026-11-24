@@ -14,7 +14,7 @@
 import { appendFileSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ToolDefinition, ToolResult } from "../types.js";
-import { deviceInfo, dumpLog, listApps, resolveSerial } from "../android/index.js";
+import { readAndroidDevice, readIosDevice } from "./device-check-read.js";
 import { resolveProjectDir } from "./project-paths.js";
 import { analyzeDeviceLog, deviceCheckPassed, deviceLedgerLine, DEVICE_SPEC_FILENAME, readDeviceSpec, type DeviceCheckFacts } from "./device-check.js";
 
@@ -51,7 +51,8 @@ export const deviceCheckTool: ToolDefinition = {
   name: "device_check",
   compactDescription: "Read the connected phone's log: did the app's core flow run there, stage by stage, and did any test value leak.",
   description:
-    "The phone half of a mobile build's finish gates. Reads the connected Android device's log against the project's " +
+    "The phone half of a mobile build's finish gates. Reads the connected Android device's or iOS Simulator's log (or a log " +
+    "captured from a real iPhone, `log_file`) against the project's " +
     `\`${DEVICE_SPEC_FILENAME}\` (app id, log tag, the core flow's stages, test values that must never be logged) and reports ` +
     "whether the latest run of the flow ran every stage on the device, where each ran and how long it took, and whether any " +
     "test value appears anywhere in the log. Writes the verdict to the project's spec/ledger.md. Install the build and run the " +
@@ -60,7 +61,9 @@ export const deviceCheckTool: ToolDefinition = {
     type: "object",
     properties: {
       project_dir: { type: "string", description: "The project: a bare name (`workspace/apps/<name>`) or its absolute path." },
-      device: { type: "string", description: "The device's adb serial. Omit when one device is connected." },
+      platform: { type: "string", enum: ["android", "ios"], description: "Which phone: android (default) or ios." },
+      device: { type: "string", description: "The device's adb serial, or the Simulator's / iPhone's udid. Omit when one is connected." },
+      log_file: { type: "string", description: "A log captured from the device while the flow ran. Required for a real iPhone, which keeps no log to read back: start `pymobiledevice3 syslog live > <file>` with process_start before the flow." },
     },
     required: ["project_dir"],
   },
@@ -77,14 +80,16 @@ export const deviceCheckTool: ToolDefinition = {
     }
     let facts: DeviceCheckFacts;
     try {
-      const serial = await resolveSerial(typeof args.device === "string" && args.device ? args.device : undefined);
-      const [info, apps, log] = [await deviceInfo(serial), await listApps(serial, false), await dumpLog(serial)];
+      const device = typeof args.device === "string" && args.device ? args.device : undefined;
+      const logFile = typeof args.log_file === "string" && args.log_file ? args.log_file : undefined;
+      const read = args.platform === "ios" ? readIosDevice : readAndroidDevice;
+      const reading = await read(spec.package, device, logFile);
       facts = {
         date: new Date().toISOString().slice(0, 10),
-        device: { serial, ...info },
+        device: reading.device,
         spec,
-        installed: apps.some((a) => a.packageName === spec.package),
-        report: analyzeDeviceLog(log, spec),
+        installed: reading.installed,
+        report: analyzeDeviceLog(reading.log, spec),
       };
     } catch (e) {
       return { content: `Could not read the device: ${(e as Error).message}`, isError: true };

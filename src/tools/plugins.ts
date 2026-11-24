@@ -10,6 +10,7 @@ import { imageTools } from "./image-tools/index.js";
 import { createSecretTools } from "./secret-tools.js";
 import { createBrowserTools } from "./browser-tools/index.js";
 import { createAndroidTools } from "./android-tools/index.js";
+import { createIosTools } from "./ios-tools/index.js";
 import { createProtocolFamilyTools } from "../protocols/protocol-tool.js";
 import { createCronTools } from "../cron/cron-service.js";
 import { createHandlerTools } from "../agency/handler.js";
@@ -98,6 +99,12 @@ export const plugins: ToolPlugin[] = [
     id: "android",
     register() {
       return createAndroidTools();
+    },
+  },
+  {
+    id: "ios",
+    register() {
+      return createIosTools();
     },
   },
   {

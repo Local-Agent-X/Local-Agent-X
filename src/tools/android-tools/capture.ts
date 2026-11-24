@@ -29,19 +29,24 @@ async function encodeInlineJpeg(buffer: Buffer): Promise<{ b64: string } | { err
 
 export async function handleScreenshot(args: Record<string, unknown>): Promise<ToolResult> {
   const serial = await resolveSerial(args.device ? String(args.device) : undefined);
-  const buffer = await adbScreenshot(serial);
+  return deviceScreenshotResult(await adbScreenshot(serial), "android", serial);
+}
+
+/** A device screenshot as a tool result: saved under uploads/, and shown to
+ *  the model inline as a downscaled JPEG. The android and ios tools share it. */
+export async function deviceScreenshotResult(buffer: Buffer, platform: "android" | "ios", device: string): Promise<ToolResult> {
   const dir = join(getLaxDir(), "uploads");
   mkdirSync(dir, { recursive: true });
-  const file = join(dir, `android-screenshot-${Date.now()}.png`);
+  const file = join(dir, `${platform}-screenshot-${Date.now()}.png`);
   writeFileSync(file, buffer);
-  const header = `Screenshot captured\nDevice: ${serial}\nSize: ${buffer.length} bytes\nSaved: ${file}`;
+  const header = `Screenshot captured\nDevice: ${device}\nSize: ${buffer.length} bytes\nSaved: ${file}`;
   const inline = await encodeInlineJpeg(buffer);
   if ("error" in inline) {
     return err(`${header}\n\nInline preview unavailable (${inline.error}). Use 'view_image' on the saved path to see the screen.`);
   }
   const result: ToolResult & { _image: { mime: string; b64: string; path: string; question: string } } = {
     content: `${header}\n\nThe device screen is shown to you inline (downscaled JPEG) — no extra call needed.`,
-    _image: { mime: "image/jpeg", b64: inline.b64, path: file, question: `This is the current Android screen on device ${serial}.` },
+    _image: { mime: "image/jpeg", b64: inline.b64, path: file, question: `This is the current ${platform === "ios" ? "iOS" : "Android"} screen on device ${device}.` },
   };
   return result;
 }

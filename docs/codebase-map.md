@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2156 non-test source files · 60 oversized · 273 nearing the size cap.
+**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2164 non-test source files · 60 oversized · 273 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -21,7 +21,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 191 | 32 | XL | 1 |
 | `src/security/` | 171 | 66 | XL | 2 |
-| `src/tools/` | 144 | 265 | XL | 7 |
+| `src/tools/` | 144 | 267 | XL | 7 |
 | `src/tool-execution/` | 107 | 91 | XL | 2 |
 | `src/workspace/` | 95 | 3 | M |  |
 | `src/canonical-loop/` | 92 | 298 | XL | 6 |
@@ -72,7 +72,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/agent-guards/` | 9 | 13 | L |  |
 | `src/plugin-system/` | 9 | 10 | L |  |
 | `src/screen-stream/` | 9 | 12 | L |  |
-| `src/auto-build/` | 8 | 67 | XL | 1 |
+| `src/auto-build/` | 8 | 68 | XL | 1 |
 | `src/autopilot/` | 8 | 14 | L | 1 |
 | `src/bridge-voice/` | 8 | 6 | M |  |
 | `src/mcp-client/` | 8 | 11 | L | 1 |
@@ -86,6 +86,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/hooks/` | 4 | 3 | M |  |
 | `src/language-intel/` | 4 | 5 | M |  |
 | `src/routing/` | 4 | 6 | M |  |
+| `src/ios/` | 3 | 5 | S |  |
 | `src/phone-push/` | 3 | 5 | M |  |
 | `src/conversation/` | 2 | 3 | M |  |
 | `src/llm-dispatch/` | 2 | 3 | M |  |

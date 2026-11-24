@@ -1,4 +1,12 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
+import { join, resolve } from "node:path";
+
+const WORKSPACE = resolve("/lax-test-home/Documents/Local Agent X/workspace");
+vi.mock("../config.js", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../config.js")>()),
+  workspaceRoot: () => WORKSPACE,
+}));
+
 import { extractSessionArtifacts, handleArtifactRoutes } from "./artifacts.js";
 import { signServedMediaPath } from "../server/agent-file-links.js";
 import type { IncomingMessage, ServerResponse } from "node:http";
@@ -90,6 +98,25 @@ describe("extractSessionArtifacts", () => {
     expect(items).toHaveLength(1);
     expect(items[0]).toMatchObject({ type: "image", ref: "/uploads/abc123.png", name: "abc123.png" });
   });
+
+  // A search result's image URL on another site carries "/uploads/2022/02/…"
+  // (WordPress); read as ours it became a "2022" row that opened nothing.
+  it("never takes a served-media path out of another site's URL", () => {
+    const items = extractSessionArtifacts([
+      { role: "tool", content: "2. https://www.barrybros.com/wp-content/uploads/2022/02/Depositphotos_178702214_S.jpg.webp (999×583)" },
+      { role: "assistant", content: "Found https://cdn.example.com/images/hero.png and /images/notreally/nested.png" },
+    ], meta);
+    expect(items.filter((i) => i.type !== "link").map((i) => i.ref)).toEqual([]);
+  });
+
+  it("still takes this machine's own media, as a path or on the loopback origin", () => {
+    const items = extractSessionArtifacts([
+      { role: "tool", content: "View: /images/a.png\nSaved to http://127.0.0.1:7007/videos/b.mp4" },
+      { role: "user", content: [{ type: "text", text: "from telegram: http://localhost:7007/uploads/c.jpg" }] },
+      { role: "assistant", content: "Here it is: (/uploads/d.png)" },
+    ], meta);
+    expect(items.filter((i) => i.type !== "link").map((i) => i.ref)).toEqual(["/images/a.png", "/videos/b.mp4", "/uploads/d.png"]);
+  });
 });
 
 describe("GET /api/artifacts", () => {
@@ -109,6 +136,35 @@ describe("GET /api/artifacts", () => {
     expect(items.find((i) => i.ref === "/images/cat.png")?.openUrl).toBe(`/images/cat.png?sig=${signServedMediaPath("tok-0123456789", "/images/cat.png")}`);
     expect(items.find((i) => i.ref === "https://example.com/page")?.openUrl).toBeUndefined();
     expect(body).not.toContain("tok-0123456789");
+  });
+
+  // The panel opened only /files/ refs; a deck the agent made with
+  // presentation({file_path: "workspace/LAX-Pitch-Deck.pptx"}) was a row that
+  // copied its path to nowhere (2026-11-23).
+  it("gives a file in the workspace its /files/ address, resolved as the tool resolved its path", async () => {
+    const call = (name: string, args: Record<string, unknown>) => ({ function: { name, arguments: JSON.stringify(args) } });
+    const session = { id: "files-s", title: "T", updatedAt: 1, messages: [{ role: "assistant", content: "", tool_calls: [
+      call("presentation", { action: "create", file_path: "workspace/LAX-Pitch-Deck.pptx" }),
+      call("write", { path: "notes/Invoice #42 q?.md", content: "x" }),
+      call("write", { path: join(WORKSPACE, "images", "logo.png"), content: "x" }),
+      call("read", { path: resolve("/etc/hosts") }),
+      call("read", { path: "workspace/../outside.txt" }),
+    ] }] };
+    const ctx = {
+      config: { authToken: "tok-0123456789" },
+      sessionStore: { list: () => [session], load: () => session },
+    } as unknown as ServerContext;
+    let body = "";
+    const res = { writeHead() { return res; }, setHeader() {}, end(b: string) { body = b; } } as unknown as ServerResponse;
+    await handleArtifactRoutes("GET", new URL("http://127.0.0.1/api/artifacts"), { headers: {} } as IncomingMessage, res, ctx, "operator" as never);
+    const openUrl = Object.fromEntries((JSON.parse(body).artifacts as Array<{ name: string; openUrl?: string }>).map((i) => [i.name, i.openUrl]));
+    expect(openUrl).toEqual({
+      "LAX-Pitch-Deck.pptx": "/files/LAX-Pitch-Deck.pptx",
+      "Invoice #42 q?.md": "/files/notes/Invoice%20%2342%20q%3F.md",
+      "logo.png": "/files/images/logo.png",
+      hosts: undefined,
+      "outside.txt": undefined,
+    });
   });
 
   // The tab opens on the chat on screen: one chat's artifacts, read without

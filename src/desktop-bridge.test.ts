@@ -201,4 +201,20 @@ describe("desktop-bridge", () => {
     await vi.advanceTimersByTimeAsync(8_000);
     expect(await p).toBe(null);
   });
+
+  // Main opens the workspace files the user clicks from the path the server
+  // announces; it guessed <projectRoot>/workspace before, and on a machine whose
+  // workspace is in Documents every click did nothing (2026-11-23).
+  it("desktopAnnounceWorkspaceRoot tells main the workspace, and sends nothing outside the desktop", async () => {
+    process.env.LAX_DESKTOP_BRIDGE = "1";
+    const sent: unknown[] = [];
+    process.send = ((m: unknown) => { sent.push(m); return true; }) as unknown as typeof process.send;
+    const bridge = await import("./desktop-bridge.js");
+    expect(bridge.desktopAnnounceWorkspaceRoot("C:\Users\me\Documents\Local Agent X\workspace")).toBe(true);
+    expect(sent).toEqual([{ type: "lax:workspace-root", path: "C:\Users\me\Documents\Local Agent X\workspace" }]);
+
+    delete process.env.LAX_DESKTOP_BRIDGE;
+    expect(bridge.desktopAnnounceWorkspaceRoot("/elsewhere")).toBe(false);
+    expect(sent).toHaveLength(1);
+  });
 });

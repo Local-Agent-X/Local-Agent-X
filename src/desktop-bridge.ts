@@ -215,6 +215,18 @@ export function desktopRelaunchApp(): boolean {
   catch (e) { logger.warn(`[bridge] relaunch-app send failed: ${(e as Error).message}`); return false; }
 }
 
+/** Fire-and-forget: tell Electron main where the workspace is. Main opens the
+ *  workspace files the user clicks (desktop/src/open-workspace-file.ts) from this
+ *  path, the server's own workspaceRoot(), rather than <projectRoot>/workspace,
+ *  which is the workspace only while a junction holds (2026-11-23: a deck in
+ *  Documents\Local Agent X\workspace did nothing when clicked). Sent at boot;
+ *  the workspace changes only across a restart, which sends it again. */
+export function desktopAnnounceWorkspaceRoot(path: string): boolean {
+  if (!desktopBridgeAvailable()) return false;
+  try { send({ type: "lax:workspace-root", path }); return true; }
+  catch (e) { logger.warn(`[bridge] workspace-root send failed: ${(e as Error).message}`); return false; }
+}
+
 /** Fire-and-forget: push one Android device frame to Electron main
  *  (desktop/src/android-view.ts), which relays it to the renderer canvas
  *  sink. No reply — src/android/frame-stream.ts calls this every polled

@@ -23,8 +23,8 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/security/` | 167 | 65 | XL | 2 |
 | `src/tools/` | 142 | 246 | XL | 9 |
 | `src/tool-execution/` | 107 | 91 | XL | 2 |
+| `src/workspace/` | 93 | 3 | M |  |
 | `src/canonical-loop/` | 92 | 297 | XL | 7 |
-| `src/workspace/` | 92 | 3 | M |  |
 | `src/providers/` | 80 | 28 | L | 1 |
 | `src/session/` | 78 | 15 | L |  |
 | `src/util/` | 78 | 4 | S |  |

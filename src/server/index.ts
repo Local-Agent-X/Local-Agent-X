@@ -14,12 +14,45 @@ import { runMigrations } from "../db-migrations.js";
 import { registerHandlerEvents } from "./handler-events.js";
 import { startBackgroundJobs } from "./background-jobs.js";
 import { createLogger } from "../logger.js";
-import { getRuntimeConfig } from "../config.js";
+import { getRuntimeConfig, workspaceRoot } from "../config.js";
 import type { ProviderId } from "../providers/provider-ids.js";
 import { isLocalModelQualificationBoot } from "../qualification-boot.js";
 import { OTAManager } from "../ota-update.js";
 
 const bootLogger = createLogger("server.index");
+
+/** What the server and Electron main tell each other over the desktop bridge,
+ *  wired once at boot for the server's lifetime. Outside the desktop app the
+ *  bridge is absent and each piece is a no-op. */
+async function wireDesktopBridge(chatWs: Pick<ReturnType<typeof createHttpServer>["chatWs"], "getActiveChats" | "stopChat">): Promise<void> {
+  const { registerDesktopPanicHandler, desktopAnnounceWorkspaceRoot } = await import("../desktop-bridge.js");
+  const { disarmComputerControl } = await import("../computer-control.js");
+  // Main opens the workspace files the user clicks from here (no reply).
+  desktopAnnounceWorkspaceRoot(workspaceRoot());
+  // Desktop panic hotkey (main → lax:panic-abort): the one reliable way to halt
+  // an agent that's driving the mouse/keyboard — stop every in-flight run and
+  // disarm computer control so it can't resume on the next turn.
+  registerDesktopPanicHandler(() => {
+    const active = chatWs.getActiveChats();
+    for (const sid of active) chatWs.stopChat(sid);
+    // Both switches are off in the running config before this call returns;
+    // the saves and the broadcast to open tabs follow.
+    void disarmComputerControl().catch((e) => bootLogger.error(`[panic] disarm failed: ${(e as Error).message}`));
+  });
+  // Arm the in-app browser bridge's reverse listener (desktop egress-asks
+  // fail closed until this answers), same bridge, same lifetime.
+  const { initBrowserBridgeClient } = await import("../browser/bridge-client.js");
+  initBrowserBridgeClient();
+  // Mirror user-view adoptions to the desktop's trust resolver (downloads
+  // stay quarantined + loopback carve-out closes while the agent drives an
+  // adopted tab) — same bridge, same lifetime.
+  const { wireAdoptionMirror } = await import("../browser/adoption-mirror.js");
+  wireAdoptionMirror();
+  // Record user browser navigations (ui:browser bus) into shared history —
+  // same lifetime as the bridge listener that produces those events.
+  const { initHistoryRecorder } = await import("../browser/history-recorder.js");
+  initHistoryRecorder();
+}
 
 export async function startServer(config: LAXConfig) {
   // Per-phase boot timing. Boot has crept up to 60-90s on developer
@@ -256,33 +289,7 @@ export async function startServer(config: LAXConfig) {
   chatWsHolder.value = chatWs;
   (await import("../user-notice.js")).drainUserNotices(); // one-shot notices a migration recorded: into the inbox, once
 
-  // Desktop panic hotkey (main → lax:panic-abort): the one reliable way to halt
-  // an agent that's driving the mouse/keyboard — stop every in-flight run and
-  // disarm computer control so it can't resume on the next turn.
-  {
-    const { registerDesktopPanicHandler } = await import("../desktop-bridge.js");
-    const { disarmComputerControl } = await import("../computer-control.js");
-    registerDesktopPanicHandler(() => {
-      const active = chatWs.getActiveChats();
-      for (const sid of active) chatWs.stopChat(sid);
-      // Both switches are off in the running config before this call returns;
-      // the saves and the broadcast to open tabs follow.
-      void disarmComputerControl().catch((e) => bootLogger.error(`[panic] disarm failed: ${(e as Error).message}`));
-    });
-    // Arm the in-app browser bridge's reverse listener (desktop egress-asks
-    // fail closed until this answers), same bridge, same lifetime.
-    const { initBrowserBridgeClient } = await import("../browser/bridge-client.js");
-    initBrowserBridgeClient();
-    // Mirror user-view adoptions to the desktop's trust resolver (downloads
-    // stay quarantined + loopback carve-out closes while the agent drives an
-    // adopted tab) — same bridge, same lifetime.
-    const { wireAdoptionMirror } = await import("../browser/adoption-mirror.js");
-    wireAdoptionMirror();
-    // Record user browser navigations (ui:browser bus) into shared history —
-    // same lifetime as the bridge listener that produces those events.
-    const { initHistoryRecorder } = await import("../browser/history-recorder.js");
-    initHistoryRecorder();
-  }
+  await wireDesktopBridge(chatWs);
 
   // Wire the message-count provider used by the WS session_snapshot event.
   // chat-ws can't import SessionStore directly (would pull memory.ts into a

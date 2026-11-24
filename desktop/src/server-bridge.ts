@@ -8,6 +8,7 @@ import {
 } from "./server-bridge-browser";
 import { captureScreenInMain } from "./screen-capture-native";
 import { handleAndroidFrameMessage } from "./android-view";
+import { setWorkspaceRoot } from "./open-workspace-file";
 import { isLoopbackAppUrl } from "./contract/loopback-app-url.js";
 import { isServerToMainMessage, type MainToServerMessage, type ProbeAppError, type ProbeAppReply, type ProbeAppRequest } from "./contract/ipc.js";
 
@@ -22,6 +23,8 @@ import { isServerToMainMessage, type MainToServerMessage, type ProbeAppError, ty
 //   - probe-app: loads a built app in an invisible BrowserWindow and reports
 //     runtime evidence (console errors, failed loads, blankness, optional
 //     screenshot) so the server can verify a build actually renders.
+//   - workspace-root: where the workspace is, for opening the files the user
+//     clicks (open-workspace-file.ts).
 //   - lax:browser-*: drives the in-app browser view pool (lifecycle, navigate,
 //     exec, input, capture, abort) — dispatched to server-bridge-browser.ts,
 //     which also wires the partition egress guard to ask the server for its
@@ -57,6 +60,9 @@ export function attachServerBridge(proc: ChildProcess, handlers: ServerBridgeHan
     switch (msg.type) {
       case "lax:android-frame":
         handleAndroidFrameMessage(msg);
+        return;
+      case "lax:workspace-root":
+        setWorkspaceRoot(msg.path);
         return;
       case "lax:trash-item": {
         let ok = false;

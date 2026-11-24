@@ -64,7 +64,7 @@ src/self-edit/tool.ts#selfEditTool.execute 117
 src/server/background-jobs/cron-runner.ts#cronService.onExecute:callback 166
 src/server/bootstrap-services.ts#initOrRefreshEmbeddingProvider 105
 src/server/handler-events.ts#agentRunDriver 111
-src/server/index.ts#startServer 131
+src/server/index.ts#startServer 120
 src/tool-execution/pre-dispatch.ts#assertToolCallAllowed 184
 src/tool-execution/require-approval.ts#requireApprovalPhase 182
 src/tools/app-tools/app-template.ts#renderStarterHtml 119

@@ -170,8 +170,11 @@ function openArtifact(filter, idx) {
   }
   // Workspace files: the same opener as a chat link (shared-dom.js), so an
   // Office file goes to its program and anything viewable renders in a window.
-  if (/^\/files\//.test(a.ref)) {
-    openFileLink(a.ref);
+  // A tool's path ("workspace/deck.pptx") arrives with the /files/ address the
+  // server resolved for it (openUrl).
+  var filesUrl = /^\/files\//.test(a.ref) ? a.ref : (/^\/files\//.test(a.openUrl || '') ? a.openUrl : null);
+  if (filesUrl) {
+    openFileLink(filesUrl);
     return;
   }
   // Served media (/images|/videos|/uploads): a window can't send the auth

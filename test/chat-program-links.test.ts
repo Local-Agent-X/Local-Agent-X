@@ -218,7 +218,7 @@ describe("the agent's URL never becomes markup around a program link", () => {
 });
 
 // What ShellExecute would run for a project-relative path, read independently of
-// md(): Node's win32 resolve (as desktop/src/open-project-file.ts resolves), then
+// md(): Node's win32 resolve (as desktop/src/open-workspace-file.ts resolves), then
 // Win32's NUL truncation and trailing dot/space strip.
 function programOpened(relativePath: string): string | null {
 	const name = win32.basename(win32.resolve("C:\\root", relativePath.split("\0")[0])).replace(/[. ]+$/, "");
@@ -297,6 +297,29 @@ describe("the click opens the file the label names", () => {
 
 	it("a backtick file link is labelled with the file's own name", () => {
 		expect(renderLink("`workspace/R&D's plan.docx`").a.textContent).toBe("📄 R&D's plan.docx");
+	});
+
+	// The opener answers with a reason when it does not open the file. Dropped,
+	// a refused click looked like a dead link (2026-11-23: a deck the opener
+	// looked for in the wrong folder).
+	it("a file the opener refuses says why, instead of doing nothing", async () => {
+		const toast = vi.fn();
+		(globalThis as { showControlErrorToast?: unknown }).showControlErrorToast = toast;
+		try {
+			const h = loadClickHandler();
+			h.openFile.mockResolvedValueOnce("rejected: no such file");
+			h.click(renderLink("[Open LAX-Pitch-Deck.pptx](workspace/LAX-Pitch-Deck.pptx)").a);
+			await new Promise((r) => setTimeout(r, 0));
+			expect(h.openFile).toHaveBeenCalledWith("workspace/LAX-Pitch-Deck.pptx");
+			expect(toast).toHaveBeenCalledWith("Couldn't open LAX-Pitch-Deck.pptx: rejected: no such file");
+
+			h.openFile.mockResolvedValueOnce("");
+			h.click(renderLink("[deck](workspace/LAX-Pitch-Deck.pptx)").a);
+			await new Promise((r) => setTimeout(r, 0));
+			expect(toast).toHaveBeenCalledTimes(1);
+		} finally {
+			delete (globalThis as { showControlErrorToast?: unknown }).showControlErrorToast;
+		}
 	});
 
 	// The page is agent-written; as window.opener this window would hand it the

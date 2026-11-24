@@ -17,6 +17,9 @@ import { jsonResponse } from "../server-utils.js";
 import { isSyntheticSessionId } from "../memory/synthetic-sessions.js";
 import { declaredPaths, pathSpecsForCall } from "../tool-registry.js";
 import { signServedMediaPath } from "../server/agent-file-links.js";
+import { workspaceRoot } from "../config.js";
+import { resolveAgentPathFrom } from "../workspace/paths.js";
+import { isAbsolute, relative, sep } from "node:path";
 
 export interface ArtifactItem {
   /** image | video | file | link */
@@ -29,18 +32,36 @@ export interface ArtifactItem {
   sessionTitle: string;
   /** Session updatedAt (per-message timestamps are not persisted in the rich form) */
   ts: number;
-  /** For served media: the ref with this one file's signature, the URL the UI
-   *  opens in a window, so no window URL carries the operator token. Added per
-   *  response (it follows the token), never cached. */
+  /** What the UI opens. Served media: the ref with this one file's signature,
+   *  so no window URL carries the operator token. A file in the workspace: its
+   *  /files/ address, which the UI opens the way it opens a chat link to it (an
+   *  Office file in its program). Added per response (it follows the token and
+   *  the workspace), never cached. */
   openUrl?: string;
 }
 
 const SERVED_MEDIA_REF = /^\/(?:images|videos|uploads)\/[^?#]+$/;
 
-/** The item as sent: served media gets its signed openUrl. */
-function withOpenUrl(item: ArtifactItem, operatorToken: string): ArtifactItem {
-  if (!SERVED_MEDIA_REF.test(item.ref)) return item;
-  return { ...item, openUrl: `${item.ref}?sig=${signServedMediaPath(operatorToken, item.ref)}` };
+/** The /files/ address of a tool's path argument, when the file is in the
+ *  workspace. The ref is what the tool was given ("workspace/deck.pptx", an
+ *  absolute path), resolved by the resolver the tool itself used; the panel only
+ *  knew how to open /files/ refs, so a deck the agent made was a row that did
+ *  nothing (2026-11-23). */
+function workspaceFilesUrl(ref: string, workspace: string): string | undefined {
+  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(ref) || ref.startsWith("/files/")) return undefined;
+  const rel = relative(workspace, resolveAgentPathFrom(workspace, ref));
+  if (!rel || rel === ".." || rel.startsWith(".." + sep) || isAbsolute(rel)) return undefined;
+  return "/files/" + rel.split(sep).map(encodeURIComponent).join("/");
+}
+
+/** The item as sent, with what the UI opens for it. */
+function withOpenUrl(item: ArtifactItem, operatorToken: string, workspace: string): ArtifactItem {
+  if (SERVED_MEDIA_REF.test(item.ref)) {
+    return { ...item, openUrl: `${item.ref}?sig=${signServedMediaPath(operatorToken, item.ref)}` };
+  }
+  if (item.type === "link") return item;
+  const openUrl = workspaceFilesUrl(item.ref, workspace);
+  return openUrl ? { ...item, openUrl } : item;
 }
 
 const IMAGE_EXT = /\.(png|jpe?g|gif|webp|bmp|svg|ico|avif)$/i;
@@ -52,8 +73,13 @@ function callFilePaths(name: string, args: Record<string, unknown>): string[] {
   return pathSpecsForCall(name, args).filter((spec) => !spec.searchRoot).flatMap((spec) => declaredPaths(args, spec) ?? []);
 }
 
-/** Served-media breadcrumbs embedded in tool-result text ("View: /images/x.png"). */
-const SERVED_MEDIA_RE = /\/(?:images|videos|uploads)\/[A-Za-z0-9._%-]+/g;
+/** Served-media breadcrumbs embedded in tool-result text ("View: /images/x.png").
+ *  Only a path of its own, or one on this machine's loopback origin (the
+ *  bridges' and ComfyUI's "http://127.0.0.1:<port>/images/x.png"): not one
+ *  inside another site's URL, whose ".../wp-content/uploads/2022/02/x.webp" made
+ *  an "/uploads/2022" row that opened nothing (2026-11-23). Served media names
+ *  are one segment, so a match followed by another "/" is someone else's too. */
+const SERVED_MEDIA_RE = /(?:(?<![\w.%~/:-])|(?<=https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?))\/(?:images|videos|uploads)\/[A-Za-z0-9._%-]+(?![\w.%/-])/g;
 /** Markdown links in assistant prose: [title](https://…) */
 const MD_LINK_RE = /\[([^\]\n]{1,200})\]\((https?:\/\/[^\s)]+)\)/g;
 /** Bare URLs in assistant prose. */
@@ -190,6 +216,7 @@ export const handleArtifactRoutes: RouteHandler = async (method, url, req, res, 
 
   all.sort((a, b) => b.ts - a.ts);
   // `total` counts what was read, which stops at the cap: past it, "at least".
-  json(200, { artifacts: all.slice(0, MAX_ITEMS).map((item) => withOpenUrl(item, ctx.config.authToken)), total: all.length });
+  const workspace = workspaceRoot();
+  json(200, { artifacts: all.slice(0, MAX_ITEMS).map((item) => withOpenUrl(item, ctx.config.authToken, workspace)), total: all.length });
   return true;
 };

@@ -22,13 +22,18 @@ export interface RestartServerRequest { type: "lax:restart-server" }
 export interface RelaunchAppRequest { type: "lax:relaunch-app" }
 /** One Android device frame for the renderer's canvas; no reply. */
 export interface AndroidFrameMessage { type: "lax:android-frame"; viewId: string; pngBase64: string }
+/** Where the agent's workspace is (the server's workspaceRoot(), absolute),
+ *  sent once at boot: main opens a workspace file the user clicks from there,
+ *  not from a guess of its own; no reply. */
+export interface WorkspaceRootMessage { type: "lax:workspace-root"; path: string }
 
 export type ServerToMainMessage =
   | TrashItemRequest | ProbeAppRequest | CaptureScreenRequest
-  | RestartServerRequest | RelaunchAppRequest | AndroidFrameMessage;
+  | RestartServerRequest | RelaunchAppRequest | AndroidFrameMessage | WorkspaceRootMessage;
 
 export const SERVER_TO_MAIN_TYPES = [
   "lax:trash-item", "lax:probe-app", "lax:capture-screen", "lax:restart-server", "lax:relaunch-app", "lax:android-frame",
+  "lax:workspace-root",
 ] as const satisfies readonly ServerToMainMessage["type"][];
 
 // ── Main → server ─────────

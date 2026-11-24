@@ -17,6 +17,7 @@ interface Tab {
   switchSidePanelTab: (tab: string) => void;
   setArtifactsScope: (scope: string) => void;
   setChat: (id: string | null) => void;
+  openArtifact: (filter: string, idx: number) => void;
 }
 
 let answers: Array<{ url: string; resolve: (data: unknown) => void }> = [];
@@ -27,22 +28,24 @@ async function answer(i: number, artifacts: unknown[]): Promise<void> {
   await Promise.resolve(); await Promise.resolve();
 }
 
+const openFileLink = vi.fn();
+
 function load(activeId: string | null = "chat-a"): Tab {
   document.body.innerHTML = '<div id="artifacts-tab-body"><div id="artifacts-scope"></div><div id="artifacts-filters"></div><div id="artifacts-list"></div></div>';
   const factory = new Function(
-    "document", "apiJson", "esc", "startChat",
+    "document", "apiJson", "esc", "startChat", "openFileLink",
     "var agentFeedsData = {}; var activeChat = startChat ? { id: startChat } : null; var chats = [];\n"
       + scopeJs + "\n" + artifactsJs
-      + "\nreturn { switchSidePanelTab, setArtifactsScope,"
+      + "\nreturn { switchSidePanelTab, setArtifactsScope, openArtifact,"
       + " setChat: function(id) { activeChat = id ? { id: id } : null; window.laxSidePanelChat.onChatChanged(); } };",
   );
-  return factory(document, apiJson, esc, activeId) as Tab;
+  return factory(document, apiJson, esc, activeId, openFileLink) as Tab;
 }
 
 const names = (): string[] => Array.from(document.querySelectorAll(".artifact-name")).map((el) => el.textContent ?? "");
 const listText = (): string => document.getElementById("artifacts-list")!.textContent ?? "";
 
-beforeEach(() => { localStorage.clear(); answers = []; apiJson.mockClear(); });
+beforeEach(() => { localStorage.clear(); answers = []; apiJson.mockClear(); openFileLink.mockClear(); });
 
 describe("the Artifacts tab is the chat on screen's", () => {
   it("asks for this chat's artifacts when shown", async () => {
@@ -102,5 +105,35 @@ describe("the This chat / All chats switch", () => {
     const tab = load(null);
     tab.switchSidePanelTab("artifacts");
     expect(apiJson).toHaveBeenCalledWith("/api/artifacts");
+  });
+});
+
+// A file the agent made is listed by the path its tool was given
+// ("workspace/LAX-Pitch-Deck.pptx"). The panel opened only /files/ refs, so the
+// row copied that path to nowhere (2026-11-23); the server now sends the file's
+// /files/ address as openUrl, and the row opens it like a chat link.
+describe("clicking a file row", () => {
+  it("opens a workspace file at the /files/ address the server resolved", async () => {
+    const tab = load("chat-a");
+    tab.switchSidePanelTab("artifacts");
+    await answer(0, [{ ...item("LAX-Pitch-Deck.pptx", "chat-a"), openUrl: "/files/LAX-Pitch-Deck.pptx" }]);
+    tab.openArtifact("all", 0);
+    expect(openFileLink).toHaveBeenCalledWith("/files/LAX-Pitch-Deck.pptx");
+  });
+
+  it("a /files/ ref still opens as itself", async () => {
+    const tab = load("chat-a");
+    tab.switchSidePanelTab("artifacts");
+    await answer(0, [{ type: "file", name: "a.docx", ref: "/files/a.docx", sessionId: "chat-a", sessionTitle: "chat-a", ts: 1 }]);
+    tab.openArtifact("all", 0);
+    expect(openFileLink).toHaveBeenCalledWith("/files/a.docx");
+  });
+
+  it("a served-media openUrl is never taken for a workspace file", async () => {
+    const tab = load("chat-a");
+    tab.switchSidePanelTab("artifacts");
+    await answer(0, [{ ...item("hosts", "chat-a"), ref: "/etc/hosts", openUrl: undefined }]);
+    tab.openArtifact("all", 0);
+    expect(openFileLink).not.toHaveBeenCalled();
   });
 });

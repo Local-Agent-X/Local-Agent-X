@@ -97,6 +97,106 @@ describe("structural_search — language-intel path (TS/JS)", () => {
   });
 });
 
+// What a change touches. `greetUser` is used by three constants in b.ts; one
+// of them is used by a function in c.ts, which a test file uses. A method is
+// named by its line, since two types may each have one of the same name.
+const C_TS = [
+  'import { g1 as first } from "./b.js";',
+  "",
+  "export function shout(): string {",
+  "  return first.toUpperCase();",
+  "}",
+  "",
+  "export class Greeter {",
+  "  hello(): string { return shout(); }",
+  "}",
+  "",
+].join("\n");
+const C_TEST_TS = ['import { shout, Greeter } from "./c.js";', "shout();", "new Greeter().hello();", ""].join("\n");
+
+function reachFixture(): void {
+  tsFixture();
+  writeFileSync(join(dir, "c.ts"), C_TS);
+  writeFileSync(join(dir, "c.test.ts"), C_TEST_TS);
+}
+
+describe("structural_search — reach mode", () => {
+  it("lists the declarations that use the symbol and the tests to run", async () => {
+    reachFixture();
+    const res = await structuralSearchTool.execute({ symbol: "greetUser", path: dir, mode: "reach" });
+    expect(res.isError).toBeUndefined();
+    expect(res.content).toContain('reach of "greetUser" (a.ts:2)');
+    expect(res.content).toContain("depth 1");
+    expect(res.content).toContain("hop 1: 3 declaration(s) in 1 file(s)");
+    expect(res.content).toMatch(/b\.ts {2}g1:3, g2:4, g3:5/);
+    expect(res.content).not.toContain("hop 2");
+    expect(res.content).toContain("tests to run (0)");
+  });
+
+  it("follows the users' users at a greater depth, through a renamed import, to the test file", async () => {
+    reachFixture();
+    const res = await structuralSearchTool.execute({ symbol: "greetUser", path: dir, mode: "reach", depth: 3 });
+    expect(res.content).toContain("hop 2: 1 declaration(s) in 1 file(s)");
+    expect(res.content).toMatch(/c\.ts {2}shout:3/);
+    expect(res.content).toMatch(/hop 3: 1 declaration\(s\)[\s\S]*c\.ts {2}Greeter:7/);
+    expect(res.content).toMatch(/tests to run \(1\)[^\n]*\n {2}c\.test\.ts/);
+  });
+
+  it("holds depth to its ceiling", async () => {
+    reachFixture();
+    const res = await structuralSearchTool.execute({ symbol: "greetUser", path: dir, mode: "reach", depth: 99 });
+    expect(res.content).toContain("depth 3");
+  });
+
+  it("says reach needs the language service when the symbol is not TS/JS", async () => {
+    writeFileSync(join(dir, "main.py"), "def greet_user():\n    pass\n");
+    const res = await structuralSearchTool.execute({ symbol: "greet_user", path: dir, mode: "reach" });
+    expect(res.isError).toBe(true);
+    expect(res.content).toContain("Reach needs the language service");
+  });
+
+  it("refuses an unknown mode, naming the three it has", async () => {
+    const res = await structuralSearchTool.execute({ symbol: "x", path: dir, mode: "callers" });
+    expect(res.isError).toBe(true);
+    expect(res.content).toContain('"references", "definition" or "reach"');
+  });
+});
+
+describe("structural_search — naming the symbol by file", () => {
+  it("<file>:<line> finds the uses of a method", async () => {
+    reachFixture();
+    const res = await structuralSearchTool.execute({ symbol: "c.ts:8", path: dir });
+    expect(res.isError).toBeUndefined();
+    const hitLines = res.content.split("\n").filter((l) => /:\d+:/.test(l));
+    expect(hitLines.some((l) => l.startsWith("[def] c.ts:8:"))).toBe(true);
+    expect(hitLines.some((l) => l.startsWith("c.test.ts:3:"))).toBe(true);
+  });
+
+  it("<file>#<Name> anchors on that file's declaration, with no ambiguity note", async () => {
+    reachFixture();
+    writeFileSync(join(dir, "d.ts"), "export function shout(): number { return 1; }\n");
+    const bare = await structuralSearchTool.execute({ symbol: "shout", path: dir });
+    expect(bare.content).toContain("same-named declarations found");
+    expect(bare.content).toContain("<file>#shout");
+    const named = await structuralSearchTool.execute({ symbol: "d.ts#shout", path: dir });
+    expect(named.content).not.toContain("same-named");
+    expect(named.content).toContain("[def] d.ts:1:");
+    expect(named.content).not.toContain("c.ts:");
+  });
+
+  it("refuses a file outside the search root, and says so for one that is not there", async () => {
+    reachFixture();
+    for (const symbol of ["../elsewhere.ts:1", `${join(dir, "..", "elsewhere.ts")}#x`, "../../etc/passwd:1"]) {
+      const res = await structuralSearchTool.execute({ symbol, path: dir });
+      expect(res.isError, symbol).toBe(true);
+      expect(res.content, symbol).toContain("outside the search root");
+    }
+    const missing = await structuralSearchTool.execute({ symbol: "nope.ts#shout", path: dir });
+    expect(missing.isError).toBe(true);
+    expect(missing.content).toContain("Nothing found");
+  });
+});
+
 describe("structural_search — same-name ambiguity disclosure", () => {
   it("anchors on the module-level declaration (not an earlier-file parameter) and lists the others", async () => {
     tsFixture();

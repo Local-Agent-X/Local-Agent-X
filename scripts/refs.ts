@@ -12,15 +12,14 @@
  *   --tests                              list each use in test files (default: counted only)
  *   --depth N                            how far a change reaches: the declarations that use it,
  *                                        those that use them, ... N hops out, and the tests to run
- *                                        (scripts/lib/symbol-reach.ts)
+ *                                        (src/language-intel/reach.ts)
  *
  * The module-level questions ("which modules import this one", dead modules)
  * are docs/codebase-map.md and `npm run deps`.
  */
 import { readFileSync } from "node:fs";
 import { relative, resolve, sep } from "node:path";
-import { getLanguageIntel, type ReferenceHit, type SymbolLocation } from "../src/language-intel/index.js";
-import { IMPORT_LINE, symbolReach } from "./lib/symbol-reach.js";
+import { IMPORT_LINE, getLanguageIntel, type ReferenceHit, type SymbolLocation } from "../src/language-intel/index.js";
 
 const REPO = process.cwd();
 const SRC = resolve(REPO, "src");
@@ -43,21 +42,6 @@ async function duplicates(): Promise<void> {
   console.log(`# Exported names declared in more than one non-test file (${dups.length})`);
   console.log("The same name is not always the same job; each is a place to check for a second implementation.\n");
   for (const [name, at] of dups) console.log(`${name} (${at.length})\n${at.sort().map((a) => `  ${a}`).join("\n")}`);
-}
-
-/** The declarations a query names: a position, one file's declaration, or every module-level one. */
-async function targetsOf(q: string): Promise<SymbolLocation[]> {
-  const pos = /^(.+?):(\d+)(?::(\d+))?$/.exec(q);
-  if (pos && !q.includes("#")) {
-    const file = resolve(REPO, pos[1]);
-    const line = Number(pos[2]);
-    const text = readFileSync(file, "utf8").split(/\r?\n/)[line - 1] ?? "";
-    const column = pos[3] ? Number(pos[3]) : (text.search(/[A-Za-z_$]/) + 1 || 1);
-    return [{ file, line, column }];
-  }
-  const [file, name] = q.includes("#") ? q.split("#") : [null, q];
-  const found = await intel.findSymbolPositions(SRC, name, { limit: 200 });
-  return found.filter((p) => p.kind === "declaration" && p.topLevel && (!file || resolve(p.file) === resolve(REPO, file)));
 }
 
 function print(target: SymbolLocation, hits: ReferenceHit[]): void {
@@ -89,7 +73,7 @@ function print(target: SymbolLocation, hits: ReferenceHit[]): void {
 
 async function printReach(target: SymbolLocation): Promise<void> {
   // Only a runnable test ends the walk; a test helper is followed to the tests that use it.
-  const reach = await symbolReach((loc) => intel.findReferences(loc), target, depth, (f) => /\.test\.[^.]+$/.test(f));
+  const reach = await intel.reach(target, depth, (f) => /\.test\.[^.]+$/.test(f));
   const line = readFileSync(target.file, "utf8").split(/\r?\n/)[target.line - 1] ?? "";
   console.log(`\n## Reach of ${rel(target.file)}:${target.line}  ${line.trim().slice(0, 100)}  (depth ${depth})`);
   reach.hops.forEach((decls, i) => {
@@ -118,7 +102,8 @@ async function main(): Promise<number> {
     return 2;
   }
   const started = Date.now();
-  const targets = await targetsOf(query);
+  // A position, one file's declaration, or every module-level one (src/language-intel/symbol-query.ts).
+  const targets = await intel.symbolTargets(SRC, query, { base: REPO });
   if (targets.length === 0) {
     console.error(`No module-level declaration named ${query} under src/. For a member or a local, pass <file>:<line> of its declaration.`);
     return 1;

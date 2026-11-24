@@ -160,7 +160,11 @@ function collectSymbolHits(
   limit: number,
 ): void {
   const text = ts.sys.readFile(file);
-  if (text === undefined) return;
+  // A file whose text never spells the name holds no identifier of it, so it
+  // is not parsed at all: on a large tree that is nearly every file, and the
+  // difference between seconds and milliseconds a query. (A name written with
+  // a unicode escape is the one spelling this skips.)
+  if (text === undefined || !text.includes(symbolName)) return;
   // A pure parse — comments and string contents never become Identifier
   // nodes, which is what makes this regex-false-positive-proof.
   const sf = ts.createSourceFile(file, text, ts.ScriptTarget.Latest, /*setParentNodes*/ true);

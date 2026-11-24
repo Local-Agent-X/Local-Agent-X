@@ -9,8 +9,12 @@
 
 import type { ExportedDeclaration, FileDiagnostic, LanguageIntelProvider, ReferenceHit, SymbolLocation } from "./types.js";
 import { TsLanguageIntelProvider } from "./ts-provider.js";
+import { clearReachSources, symbolReach, type Reach, type ReachLimits } from "./reach.js";
+import { symbolTargets, type SymbolQueryOptions } from "./symbol-query.js";
 
 export type { ExportedDeclaration, FileDiagnostic, LanguageIntelProvider, ReferenceHit, SymbolLocation } from "./types.js";
+export { IMPORT_LINE, enclosingDeclaration, type Reach, type ReachedDeclaration, type ReachLimits } from "./reach.js";
+export { symbolQueryFile, type SymbolQueryOptions } from "./symbol-query.js";
 
 export interface LanguageIntel {
   supports(file: string): boolean;
@@ -19,6 +23,12 @@ export interface LanguageIntel {
   getDiagnostics(files: string[]): Promise<FileDiagnostic[]>;
   findSymbolPositions(root: string, symbolName: string, opts?: { limit?: number }): Promise<SymbolLocation[]>;
   listExportedDeclarations(root: string): Promise<ExportedDeclaration[]>;
+  /** The declarations (or the position) a query names: `<Name>`,
+   *  `<file>#<Name>` or `<file>:<line>[:col]` (symbol-query.ts). */
+  symbolTargets(root: string, query: string, opts?: SymbolQueryOptions): Promise<SymbolLocation[]>;
+  /** How far a change to `start` reaches, hop by hop, and the test files that
+   *  use what it reaches (reach.ts). `isTest` says where the walk ends. */
+  reach(start: SymbolLocation, depth: number, isTest: (file: string) => boolean, limits?: ReachLimits): Promise<Reach>;
   dispose(): void;
 }
 
@@ -36,7 +46,7 @@ function providerFor(file: string): LanguageIntelProvider | null {
 }
 
 export function getLanguageIntel(): LanguageIntel {
-  return {
+  const intel: LanguageIntel = {
     supports: (file) => providerFor(file) !== null,
 
     findReferences: async (loc) =>
@@ -72,13 +82,19 @@ export function getLanguageIntel(): LanguageIntel {
       return out;
     },
 
+    symbolTargets: (root, query, opts) => symbolTargets(intel.findSymbolPositions, root, query, opts),
+
+    reach: (start, depth, isTest, limits) => symbolReach(intel.findReferences, start, depth, isTest, limits),
+
     dispose: disposeLanguageIntel,
   };
+  return intel;
 }
 
 /** Dispose every provider (and their cached LanguageServices). For tests
  *  and process shutdown. */
 export function disposeLanguageIntel(): void {
+  clearReachSources();
   if (providers === null) return;
   for (const provider of providers) provider.dispose();
   providers = null;

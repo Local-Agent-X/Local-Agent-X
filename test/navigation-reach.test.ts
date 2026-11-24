@@ -8,8 +8,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { buildImportGraph, importersByHop, testsReaching } from "../scripts/lib/import-graph.mjs";
-import { enclosingDeclaration, symbolReach } from "../scripts/lib/symbol-reach.js";
-import { getLanguageIntel } from "../src/language-intel/index.js";
+import { enclosingDeclaration, getLanguageIntel } from "../src/language-intel/index.js";
 
 let repo: string;
 const at = (p: string) => resolve(repo, p);
@@ -68,7 +67,7 @@ describe("refs --depth: which declarations a change reaches, symbol by symbol", 
 
   it("follows a renamed import to the declarations that use it, and stops at tests", async () => {
     const intel = getLanguageIntel();
-    const reach = await symbolReach((loc) => intel.findReferences(loc), { file: at("src/base.ts"), line: 1, column: 17 }, 2, (f) => /\.test\./.test(f));
+    const reach = await intel.reach({ file: at("src/base.ts"), line: 1, column: 17 }, 2, (f) => /\.test\./.test(f));
     expect(reach.hops[0].map((d) => d.name)).toEqual(["mid"]);
     expect(reach.hops[1].map((d) => d.name).sort()).toEqual(["top", "viaHelper"]);
     expect(reach.moduleScope.map((m) => m.file)).toEqual([at("src/registry.ts")]);

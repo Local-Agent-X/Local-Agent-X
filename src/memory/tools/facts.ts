@@ -78,173 +78,178 @@ function formatToolError(prefix: string, result: { error?: string; matches?: num
 }
 
 
-export function createFactsTools(memory: MemoryIndex) {
-  return [
-    {
-      name: "remember",
-      compactDescription: "Save a durable fact to long-term memory (preferences, environment, conventions, decisions). One sentence per fact; several facts → ONE call with facts[]. Set provenance: user_statement, tool_observation or inference.",
-      description:
-        "Save a durable fact to long-term memory. Use whenever you learn something the next session should know — " +
-        "user preferences, environment quirks, project conventions, names, decisions, recurring workflows. " +
-        "Facts are stored in the indexed Facts DB and injected into future sessions automatically. " +
-        "\n\n" +
-        "Write ONE compact statement per fact, phrased as a complete sentence (not a fragment): " +
-        "'User prefers terse responses' not 'terse'. Phrase generally for transfer ('user prefers business-suite-level dashboards') " +
-        "not verbatim ('user said use the facebook dashboard'). " +
-        "Multiple new facts → ONE call with `facts[]` (never one call per fact); " +
-        "each is stored as a separate fact, and kind/confidence/provenance apply to all of them. " +
-        "\n\n" +
-        "Optional `kind` (default 'observation'): 'world' for objective facts, 'experience' for things that happened, " +
-        "'opinion' for preferences/judgments, 'observation' for general statements. " +
-        "Mention entities with @-prefix to index them: 'User's wife is @Sam.' " +
-        "Always set `provenance`: `user_statement` only for something the user directly said, " +
-        "`tool_observation` only for a successful tool result, or `inference` for any interpretation. " +
-        "This argument is model-declared and does not itself verify a tool execution; tool observations remain unverified. " +
-        "Inferences are confidence-capped and must preserve uncertainty; never upgrade suggested/recommended " +
-        "language into happened/enforced/current language. " +
-        "\n\n" +
-        "Don't use for: session task state, ephemeral TODOs, raw conversation excerpts, trivial info, " +
-        "scalar identity fields (use memory_set_user_field for Name/Location/Role/Pronouns).",
-      parameters: {
-        type: "object",
-        properties: {
-          content: { type: "string", description: "The fact to remember, as one sentence (for several facts use facts instead; leave this empty then)" },
-          facts: {
-            type: "array",
-            items: { type: "string" },
-            description: "Batch save: several facts in ONE call, each item one compact sentence (same constraints as content)",
-          },
-          kind: {
-            type: "string",
-            enum: VALID_KINDS,
-            description: "Fact category (default 'observation')",
-          },
-          confidence: {
-            type: "number",
-            description: "0.0-1.0 confidence; model-declared inference and tool observation are capped at 0.6",
-          },
-          provenance: {
-            type: "string",
-            enum: VALID_PROVENANCE,
-            description: "Evidence origin. Defaults to inference, never to verified fact.",
-          },
+/** remember: save one fact or several, each with where it came from. */
+function rememberTool(memory: MemoryIndex) {
+  return {
+    name: "remember",
+    compactDescription: "Save a durable fact to long-term memory (preferences, environment, conventions, decisions). One sentence per fact; several facts → ONE call with facts[]. Set provenance: user_statement, tool_observation or inference.",
+    description:
+      "Save a durable fact to long-term memory. Use whenever you learn something the next session should know — " +
+      "user preferences, environment quirks, project conventions, names, decisions, recurring workflows. " +
+      "Facts are stored in the indexed Facts DB and injected into future sessions automatically. " +
+      "\n\n" +
+      "Write ONE compact statement per fact, phrased as a complete sentence (not a fragment): " +
+      "'User prefers terse responses' not 'terse'. Phrase generally for transfer ('user prefers business-suite-level dashboards') " +
+      "not verbatim ('user said use the facebook dashboard'). " +
+      "Multiple new facts → ONE call with `facts[]` (never one call per fact); " +
+      "each is stored as a separate fact, and kind/confidence/provenance apply to all of them. " +
+      "\n\n" +
+      "Optional `kind` (default 'observation'): 'world' for objective facts, 'experience' for things that happened, " +
+      "'opinion' for preferences/judgments, 'observation' for general statements. " +
+      "Mention entities with @-prefix to index them: 'User's wife is @Sam.' " +
+      "Always set `provenance`: `user_statement` only for something the user directly said, " +
+      "`tool_observation` only for a successful tool result, or `inference` for any interpretation. " +
+      "This argument is model-declared and does not itself verify a tool execution; tool observations remain unverified. " +
+      "Inferences are confidence-capped and must preserve uncertainty; never upgrade suggested/recommended " +
+      "language into happened/enforced/current language. " +
+      "\n\n" +
+      "Don't use for: session task state, ephemeral TODOs, raw conversation excerpts, trivial info, " +
+      "scalar identity fields (use memory_set_user_field for Name/Location/Role/Pronouns).",
+    parameters: {
+      type: "object",
+      properties: {
+        content: { type: "string", description: "The fact to remember, as one sentence (for several facts use facts instead; leave this empty then)" },
+        facts: {
+          type: "array",
+          items: { type: "string" },
+          description: "Batch save: several facts in ONE call, each item one compact sentence (same constraints as content)",
         },
-        // Exactly one of content/facts — enforced in execute (JSON Schema
-        // exactly-one-of is not expressible in this flat tool-schema shape).
-        required: [],
+        kind: {
+          type: "string",
+          enum: VALID_KINDS,
+          description: "Fact category (default 'observation')",
+        },
+        confidence: {
+          type: "number",
+          description: "0.0-1.0 confidence; model-declared inference and tool observation are capped at 0.6",
+        },
+        provenance: {
+          type: "string",
+          enum: VALID_PROVENANCE,
+          description: "Evidence origin. Defaults to inference, never to verified fact.",
+        },
       },
-      async execute(args: Record<string, unknown>) {
-        // The same reading the approval phase stamped (rememberRequestOf), so
-        // the stamped string, the facts derived from it and the rows that land
-        // are the same N strings.
-        const request = rememberRequestOf(args);
-        if (!request.text) {
-          return { content: "nothing to save: put one fact in content, or several in facts[]", isError: true };
-        }
+      // Exactly one of content/facts — enforced in execute (JSON Schema
+      // exactly-one-of is not expressible in this flat tool-schema shape).
+      required: [],
+    },
+    async execute(args: Record<string, unknown>) {
+      // The same reading the approval phase stamped (rememberRequestOf), so
+      // the stamped string, the facts derived from it and the rows that land
+      // are the same N strings.
+      const request = rememberRequestOf(args);
+      if (!request.text) {
+        return { content: "nothing to save: put one fact in content, or several in facts[]", isError: true };
+      }
 
-        const kind = args.kind ? (String(args.kind) as FactKind) : undefined;
-        if (kind && !VALID_KINDS.includes(kind)) {
-          return { content: `kind must be one of: ${VALID_KINDS.join(", ")}`, isError: true };
-        }
-        const requestedConfidence = args.confidence != null ? Number(args.confidence) : undefined;
-        if (requestedConfidence !== undefined && (isNaN(requestedConfidence) || requestedConfidence < 0 || requestedConfidence > 1)) {
-          return { content: "confidence must be a number between 0 and 1", isError: true };
-        }
-        const provenance = parseProvenance(args.provenance);
-        const confidence = groundedConfidence(provenance, requestedConfidence);
+      const kind = args.kind ? (String(args.kind) as FactKind) : undefined;
+      if (kind && !VALID_KINDS.includes(kind)) {
+        return { content: `kind must be one of: ${VALID_KINDS.join(", ")}`, isError: true };
+      }
+      const requestedConfidence = args.confidence != null ? Number(args.confidence) : undefined;
+      if (requestedConfidence !== undefined && (isNaN(requestedConfidence) || requestedConfidence < 0 || requestedConfidence > 1)) {
+        return { content: "confidence must be a number between 0 and 1", isError: true };
+      }
+      const provenance = parseProvenance(args.provenance);
+      const confidence = groundedConfidence(provenance, requestedConfidence);
 
-        // The exact string the dispatch approval phase stamped the promotion
-        // capability over (describeMemoryPromotionRequest reads it the same way).
-        const stampedContent = request.text;
-        // One round trip, zero retries: a batched call — facts[] or a
-        // multi-fact blob in content — is split in code and saved fact by
-        // fact. The old "split it and retry" hint cost a full inference
-        // round trip per fact. facts[] items are taken as declared (never
-        // sentence-split); only an undeclared blob is split further.
-        const atomicFacts = request.declared
-          ? splitDeclaredFacts(request.text)
-          : (looksLikeMultiFactBlob(request.text) ? splitMultiFactBlob(request.text) : [request.text]);
+      // The exact string the dispatch approval phase stamped the promotion
+      // capability over (describeMemoryPromotionRequest reads it the same way).
+      const stampedContent = request.text;
+      // One round trip, zero retries: a batched call — facts[] or a
+      // multi-fact blob in content — is split in code and saved fact by
+      // fact. The old "split it and retry" hint cost a full inference
+      // round trip per fact. facts[] items are taken as declared (never
+      // sentence-split); only an undeclared blob is split further.
+      const atomicFacts = request.declared
+        ? splitDeclaredFacts(request.text)
+        : (looksLikeMultiFactBlob(request.text) ? splitMultiFactBlob(request.text) : [request.text]);
 
-        try {
-          const target = "memory:retain";
-          const promotion = promotionContextFromToolArgs(args, {
-            content: stampedContent,
-            source: "model-tool:remember",
+      try {
+        const target = "memory:retain";
+        const promotion = promotionContextFromToolArgs(args, {
+          content: stampedContent,
+          source: "model-tool:remember",
+          target,
+          sessionId: sessionIdOf(args) ?? "default",
+        });
+        if (!promotion.capability) {
+          return {
+            content: "BLOCKED: memory write arrived at the sink without its promotion capability — the approval-phase stamp was lost in dispatch (plumbing bug, not a policy denial)",
+            isError: true,
+          };
+        }
+        if (promotion.provenance !== `model-declared:${provenance}` || promotion.confidence !== confidence) {
+          return { content: "BLOCKED: approved provenance/confidence does not match this fact", isError: true };
+        }
+        if (atomicFacts.length === 1) {
+          const gated = runMemoryGate({
+            content: atomicFacts[0],
+            source: "tool",
             target,
-            sessionId: sessionIdOf(args) ?? "default",
+            promotion,
           });
-          if (!promotion.capability) {
+          const result = memory.rememberFact(gated, {
+            kind,
+            confidence,
+            sourceFile: authorizedSource(provenance, promotion),
+            promotion,
+            sourceMessageId: userMessageIdOf(args),
+            by: actorOf(args),
+          });
+          if (!result.ok) {
+            return { content: formatToolError("remember failed", result), isError: true };
+          }
+          const f = result.fact!;
+          if (result.alreadySaved) {
+            return { content: `Already saved as #${f.id}, nothing added: ${displayContent(f).slice(0, 80)}` };
+          }
+          memory.markDirty();
+          if (result.indexFailed) {
             return {
-              content: "BLOCKED: memory write arrived at the sink without its promotion capability — the approval-phase stamp was lost in dispatch (plumbing bug, not a policy denial)",
+              content:
+                `Fact #${f.id} saved but keyword index failed (recall may not find it): ${result.indexError ?? "facts_fts insert error"}`,
               isError: true,
             };
           }
-          if (promotion.provenance !== `model-declared:${provenance}` || promotion.confidence !== confidence) {
-            return { content: "BLOCKED: approved provenance/confidence does not match this fact", isError: true };
-          }
-          if (atomicFacts.length === 1) {
-            const gated = runMemoryGate({
-              content: atomicFacts[0],
-              source: "tool",
-              target,
-              promotion,
-            });
-            const result = memory.rememberFact(gated, {
-              kind,
-              confidence,
-              sourceFile: authorizedSource(provenance, promotion),
-              promotion,
-              sourceMessageId: userMessageIdOf(args),
-              by: actorOf(args),
-            });
-            if (!result.ok) {
-              return { content: formatToolError("remember failed", result), isError: true };
-            }
-            const f = result.fact!;
-            if (result.alreadySaved) {
-              return { content: `Already saved as #${f.id}, nothing added: ${displayContent(f).slice(0, 80)}` };
-            }
-            memory.markDirty();
-            if (result.indexFailed) {
-              return {
-                content:
-                  `Fact #${f.id} saved but keyword index failed (recall may not find it): ${result.indexError ?? "facts_fts insert error"}`,
-                isError: true,
-              };
-            }
-            return {
-              content: `Remembered [${f.kind}, c=${f.confidence}, provenance=${provenance}] #${f.id}: ${displayContent(f).slice(0, 80)}`,
-            };
-          }
-          // Batch: derive per-fact capabilities from the ONE stamped parent
-          // (consumed exactly once, same as the single path; the atomic facts
-          // are re-split from the STAMPED text, never taken from later args),
-          // then run each through the canonical single-fact sink. The report
-          // never claims more than landed — partial success lists each
-          // saved / blocked / skipped fact on its own line.
-          const derived = splitBatchPromotionContext(promotion, request.declared);
-          const results = saveFactsBatch(memory, derived.facts, derived.contexts, {
-            kind,
-            confidence,
-            sourceMessageId: userMessageIdOf(args),
-            sourceFile: authorizedSource(provenance, promotion),
-            target,
-            by: actorOf(args),
-          });
-          const report = batchReport(results, `${kind ?? "observation"}, c=${confidence}, provenance=${provenance}`);
-          if (!report.isError) memory.markDirty();
-          return { content: report.content, isError: report.isError };
-        } catch (e) {
-          if (e instanceof MemoryWriteBlocked) {
-            return { content: `BLOCKED: ${e.reason}`, isError: true };
-          }
-          if ((e as Error).message.includes("memory promotion capability")) {
-            return { content: `BLOCKED: ${(e as Error).message}`, isError: true };
-          }
-          throw e;
+          return {
+            content: `Remembered [${f.kind}, c=${f.confidence}, provenance=${provenance}] #${f.id}: ${displayContent(f).slice(0, 80)}`,
+          };
         }
-      },
+        // Batch: derive per-fact capabilities from the ONE stamped parent
+        // (consumed exactly once, same as the single path; the atomic facts
+        // are re-split from the STAMPED text, never taken from later args),
+        // then run each through the canonical single-fact sink. The report
+        // never claims more than landed — partial success lists each
+        // saved / blocked / skipped fact on its own line.
+        const derived = splitBatchPromotionContext(promotion, request.declared);
+        const results = saveFactsBatch(memory, derived.facts, derived.contexts, {
+          kind,
+          confidence,
+          sourceMessageId: userMessageIdOf(args),
+          sourceFile: authorizedSource(provenance, promotion),
+          target,
+          by: actorOf(args),
+        });
+        const report = batchReport(results, `${kind ?? "observation"}, c=${confidence}, provenance=${provenance}`);
+        if (!report.isError) memory.markDirty();
+        return { content: report.content, isError: report.isError };
+      } catch (e) {
+        if (e instanceof MemoryWriteBlocked) {
+          return { content: `BLOCKED: ${e.reason}`, isError: true };
+        }
+        if ((e as Error).message.includes("memory promotion capability")) {
+          return { content: `BLOCKED: ${(e as Error).message}`, isError: true };
+        }
+        throw e;
+      }
     },
+  };
+}
+
+export function createFactsTools(memory: MemoryIndex) {
+  return [
+    rememberTool(memory),
 
     {
       name: "update_fact",

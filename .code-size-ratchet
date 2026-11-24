@@ -33,7 +33,6 @@ src/canonical-loop/worker.ts#drive 184
 src/config.ts#loadConfig 132
 src/mcp-client/manifest.ts#assessMcpManifest 118
 src/memory/index-schema-migrations.ts#db.transaction:callback 259
-src/memory/tools/facts.ts#createFactsTools 108
 src/ops/tools/op-submit-async.ts#opSubmitAsyncTool.execute 114
 src/plugin-system.ts 366
 src/plugin-system.ts#PluginManager.loadPluginAtPath 136

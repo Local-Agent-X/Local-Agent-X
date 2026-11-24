@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2144 non-test source files · 63 oversized · 270 nearing the size cap.
+**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2144 non-test source files · 62 oversized · 270 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -28,7 +28,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/providers/` | 80 | 28 | L | 1 |
 | `src/util/` | 80 | 4 | S |  |
 | `src/session/` | 79 | 15 | L |  |
-| `src/memory/` | 66 | 163 | XL | 2 |
+| `src/memory/` | 66 | 163 | XL | 1 |
 | `src/data-lineage/` | 62 | 12 | L |  |
 | `src/browser/` | 55 | 95 | XL | 5 |
 | `src/agency/` | 54 | 40 | XL |  |
@@ -271,7 +271,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/config.ts#loadConfig`
 - `src/mcp-client/manifest.ts#assessMcpManifest`
 - `src/memory/index-schema-migrations.ts#db.transaction:callback`
-- `src/memory/tools/facts.ts#createFactsTools`
 - `src/ops/tools/op-submit-async.ts#opSubmitAsyncTool.execute`
 - `src/plugin-system.ts`
 - `src/plugin-system.ts#PluginManager.loadPluginAtPath`
@@ -323,13 +322,13 @@ job. Comments are free: never cut them to fit.
 - `src/canonical-loop/provider-adapter-factory.ts` — 340+ code lines (cap 350)
 - `src/canonical-loop/checkpoint.ts` — 330+ code lines (cap 350)
 - `src/canonical-loop/container-runtime-projection.ts` — 330+ code lines (cap 350)
+- `src/memory/tools/facts.ts` — 330+ code lines (cap 350)
 - `src/net/egress-proxy-core.ts` — 330+ code lines (cap 350)
 - `src/update-rollback.ts` — 330+ code lines (cap 350)
 - `src/auto-build/orchestrator/manager.ts` — 320+ code lines (cap 350)
 - `src/broker-transport/phone-projection.ts` — 320+ code lines (cap 350)
 - `src/browser/layout-report.ts` — 320+ code lines (cap 350)
 - `src/canonical-loop/adapters/tool-call-text-corpus.ts` — 320+ code lines (cap 350)
-- `src/memory/tools/facts.ts` — 320+ code lines (cap 350)
 - `src/protocols/learned-effectiveness.ts` — 320+ code lines (cap 350)
 - `src/protocols/learned-lifecycle.ts` — 320+ code lines (cap 350)
 - `src/sandbox/docker-execution-runtime.ts` — 320+ code lines (cap 350)

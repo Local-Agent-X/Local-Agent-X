@@ -56,7 +56,7 @@ const DEFAULT_LEASE_CONFIG: LeaseConfig = {
 };
 
 let CONFIG: LeaseConfig = { ...DEFAULT_LEASE_CONFIG };
-type LeaseRacePoint = "before_acquire_lock" | "before_recovery_lock";
+type LeaseRacePoint = "before_acquire_lock" | "acquire_lock_wait_exhausted" | "before_recovery_lock";
 let raceHook: ((point: LeaseRacePoint) => void) | null = null;
 // The clock every lease expiry is stamped and judged by. A test drives expiry
 // by moving it; a lease shortened under the real clock instead expires on any
@@ -91,6 +91,23 @@ export function _setLeaseRaceHookForTest(hook: ((point: LeaseRacePoint) => void)
  * Callers refresh only by presenting the exact claim to heartbeatLease. */
 export function acquireLease(opId: string, workerId: string): LeaseAcquireResult {
   raceHook?.("before_acquire_lock");
+  const first = tryAcquireLease(opId, workerId);
+  if (first !== "lock_wait_exhausted") return first;
+  // The row could not say yet: the lock's holder may be the winner, still
+  // writing its claim. A process's first read can take a second on a slow
+  // disk, longer than one lock budget, and the Windows runner caught 2 of 23
+  // losers answering lock_unavailable in that gap (2026-11-24). Wait one more
+  // budget and judge from that attempt; a lock held the whole time is still
+  // lock_unavailable.
+  raceHook?.("acquire_lock_wait_exhausted");
+  const second = tryAcquireLease(opId, workerId);
+  return second === "lock_wait_exhausted" ? { ok: false, reason: "lock_unavailable" } : second;
+}
+
+/** One attempt: the result, or "lock_wait_exhausted" when the lock stayed
+ *  busy for its whole budget and the persisted row cannot say the lease is
+ *  held. */
+function tryAcquireLease(opId: string, workerId: string): LeaseAcquireResult | "lock_wait_exhausted" {
   const locked = tryWithOpLock(opId, (): LeaseAcquireResult => {
     const op = readOp(opId);
     if (!op) return { ok: false, reason: "unknown_op" };
@@ -118,7 +135,7 @@ export function acquireLease(opId: string, workerId: string): LeaseAcquireResult
   // when the persisted row cannot say.
   const op = readOp(opId);
   if (leaseClaimFromOp(op) && !isLeaseExpired(op)) return { ok: false, reason: "held" };
-  return { ok: false, reason: "lock_unavailable" };
+  return "lock_wait_exhausted";
 }
 
 export function heartbeatLease(opId: string, claim: LeaseClaim): LeaseActionResult {

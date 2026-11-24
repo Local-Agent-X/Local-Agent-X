@@ -127,6 +127,30 @@ describe("exact lease claims", () => {
     rmSync(lock, { force: true });
   });
 
+  it("a loser whose lock wait runs out before a slow winner writes its claim still learns the lease is held", () => {
+    // Windows CI, 2026-11-24: the winner held the lock longer than one budget
+    // (a fresh process's first read), so 2 of 23 losers found no claim yet
+    // and answered lock_unavailable. They wait one more budget instead.
+    const op = makeAndPersistOp(ctx);
+    setLeaseConfig({ leaseDurationMs: 60_000, heartbeatIntervalMs: 10_000 });
+    const lock = join(opDir(op.id), "operation.lock");
+    writeFileSync(lock, "slow-winner", { flag: "wx" });
+    _setLeaseRaceHookForTest((point) => {
+      if (point !== "acquire_lock_wait_exhausted") return;
+      // The winner finishes: its claim lands, then its lock goes.
+      const row = readOp(op.id)!;
+      row.canonical = { leaseOwner: "w-A", leaseGeneration: 1, leaseExpiresAt: new Date(Date.now() + 60_000).toISOString() };
+      writeOp(row);
+      rmSync(lock, { force: true });
+    });
+    try {
+      expect(acquireLease(op.id, "w-B")).toEqual({ ok: false, reason: "held" });
+    } finally {
+      _setLeaseRaceHookForTest(null);
+      rmSync(lock, { force: true });
+    }
+  });
+
   it("an expired lease behind a busy lock is still lock_unavailable: only the holder may take it over", () => {
     const op = makeAndPersistOp(ctx);
     const row = readOp(op.id)!;

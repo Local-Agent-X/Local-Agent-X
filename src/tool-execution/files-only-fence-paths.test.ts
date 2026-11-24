@@ -11,6 +11,7 @@ import { setSessionWorkRoot, clearSessionWorkRoot } from "../workspace/paths.js"
 import { dispatchOne } from "./dispatch-one.test-helper.js";
 import { startAriKernel, stopAriKernel } from "../ari-kernel/lifecycle.js";
 import { readTool } from "../tools/read-write-tools.js";
+import { globTool } from "../tools/glob-tool.js";
 
 const SESSION = "agent-files-only-fence-test";
 let dir: string;
@@ -51,5 +52,36 @@ describe("relative paths under a files-only fence", () => {
     );
     expect(result.status ?? "ok").toBe("ok");
     expect(result.content).toContain("export const rule = 'v1';");
+  });
+});
+
+// A worker's search outside its worktree used to be swapped for the worktree
+// root and reported "ok, 0 matches" from a folder it never named; a seal probe
+// read that as "not refused" and stopped the build (label-check-sol, 2026-11-24).
+describe("a search root under a worktree fence", () => {
+  const glob = (path: string, security: SecurityLayer) => dispatchOne(
+    { id: "g1", name: "glob", args: { pattern: "**/*.ts", path } },
+    { toolMap: new Map([["glob", globTool]]), security, sessionId: SESSION, callContext: "delegated" },
+  );
+
+  it("outside the worktree and its checkout: refused, nothing searched", async () => {
+    const worktree = join(dir, "wt");
+    mkdirSync(join(worktree, "src"), { recursive: true });
+    writeFileSync(join(worktree, "src", "own.ts"), "x\n");
+    const outside = join(dir, "elsewhere");
+    mkdirSync(outside, { recursive: true });
+    const result = await glob(outside, securityFor({ worktree, repoRoot: project }));
+    expect(result.status).toBe("blocked");
+    expect(result.content).toContain("nothing was searched there");
+    expect(result.content).not.toContain("own.ts");
+  });
+
+  it("in the checkout the worktree was cut from: searches the same place in the worktree", async () => {
+    const worktree = join(dir, "wt2");
+    mkdirSync(join(worktree, "src"), { recursive: true });
+    writeFileSync(join(worktree, "src", "copy.ts"), "x\n");
+    const result = await glob(join(project, "src"), securityFor({ worktree, repoRoot: project }));
+    expect(result.status ?? "ok").toBe("ok");
+    expect(result.content).toContain("copy.ts");
   });
 });

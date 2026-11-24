@@ -18,7 +18,7 @@ import { createWorktree, createNamedWorktree, cleanupWorktree, mergeWorktree } f
 import { pruneMergedAgentBranches } from "./worktree-junctions.js";
 import { getMergeDeltaDiff, getMergeDeltaFiles, securitySensitiveChangedFiles, commitInWorktree } from "./worktree-state.js";
 import { scanWorktreeForStagedSecrets } from "../self-edit/exfil-scan.js";
-import { rewritePathForWorktree } from "../tool-execution/worktree-paths.js";
+import { rewritePathForWorktree, searchOutsideWorktree } from "../tool-execution/worktree-paths.js";
 import { pathSpecsForCall } from "../tool-registry.js";
 
 /** Rewrite as dispatch does: by the tool's own declared path spec. */
@@ -63,12 +63,33 @@ describe("Worktree path rewriting", () => {
     expect(rw("grep", undefined, WT)).toBe(WT);
   });
 
-  it("clamps absolute glob path that escapes worktree", () => {
-    expect(rw("glob", "/etc/passwd", WT)).toBe(WT);
+  // Refused (null), never swapped for the worktree root: the swap reported
+  // "ok, 0 matches" from a folder the model never named (2026-11-24).
+  it("refuses an absolute glob path that escapes worktree", () => {
+    expect(rw("glob", "/etc/passwd", WT)).toBeNull();
   });
 
-  it("clamps absolute grep path that escapes worktree", () => {
-    expect(rw("grep", "C:\\Users\\secrets", WT)).toBe(WT);
+  it("refuses an absolute grep path that escapes worktree", () => {
+    expect(rw("grep", "C:\\Users\\secrets", WT)).toBeNull();
+  });
+
+  it("refuses a search of LAX's sealed holdout from a worker", () => {
+    expect(rw("glob", "C:/Users/peter/.lax/holdout/label-check-sol", WT)).toBeNull();
+  });
+
+  it("a search of the checkout the worktree was cut from becomes the same place in the worktree", () => {
+    const repo = join(tmpdir(), "repos", "label-check");
+    const spec = pathSpecsForCall("grep").find((s) => s.arg === "path")?.searchRoot;
+    expect(rewritePathForWorktree(repo, WT, spec, repo)).toBe(WT);
+    expect(rewritePathForWorktree(join(repo, "spec"), WT, spec, repo)).toBe(join(WT, "spec"));
+    expect(rewritePathForWorktree(join(repo, "..", "other"), WT, spec, repo)).toBeNull();
+  });
+
+  it("the refusal names the worktree and is a blocked result, not an ok one", () => {
+    const r = searchOutsideWorktree("/etc", WT);
+    expect(r.status).toBe("blocked");
+    expect(r.content).toContain(WT);
+    expect(r.content).toContain("nothing was searched there");
   });
 
   it("allows absolute glob path within worktree", () => {

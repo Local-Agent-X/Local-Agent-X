@@ -25,7 +25,7 @@ import { egressAggregateGate, type EgressBlocker } from "./egress-gates.js";
 import { askUserGates } from "./ask-user-gates.js";
 import { outboundIsTaintFree, withoutUntrustedContent } from "./taint-scope.js";
 import { kernelDenyBlocker, kernelDenyResult } from "./kernel-block.js";
-import { rewritePathForWorktree } from "./worktree-paths.js";
+import { rewritePathForWorktree, searchOutsideWorktree } from "./worktree-paths.js";
 import { blocked } from "../tools/result-helpers.js";
 
 export { egressGuardGate, dataLineageGate, canaryEgressGate } from "./egress-gates.js";
@@ -187,9 +187,9 @@ function sessionPolicyGate(ctx: ToolCallContext): PhaseOutcome {
 // chain so security evaluates the actual path.
 // The session's worktree fence names its worktree whatever the session id and
 // in a forked worker too, where the in-process worktree registry is empty.
-async function rewriteWorktreePaths(ctx: ToolCallContext): Promise<void> {
+async function rewriteWorktreePaths(ctx: ToolCallContext): Promise<PhaseOutcome> {
   const { tc, args, sessionId } = ctx;
-  if (!sessionId) return;
+  if (!sessionId) return CONTINUE;
   try {
     // A files-only fence (the chunk skeptic's probe folder) bounds where file
     // tools write; it is not where the run works, so paths stay anchored at the
@@ -197,21 +197,26 @@ async function rewriteWorktreePaths(ctx: ToolCallContext): Promise<void> {
     // src/… opened .skeptic/src/… (label-check, 2026-11-23).
     const fence = ctx.security.fenceOf(sessionId);
     let wtPath = fence?.filesOnly ? undefined : fence?.worktree;
+    let repoRoot = fence?.repoRoot;
     if (!wtPath && sessionId.startsWith("agent-")) {
-      const { getWorktreePath } = await import("../agency/worktree.js");
+      const { getWorktreePath, getWorktreeRepoRoot } = await import("../agency/worktree.js");
       wtPath = getWorktreePath(sessionId.slice(6));
+      repoRoot = getWorktreeRepoRoot(sessionId.slice(6));
     }
-    if (!wtPath) return;
+    if (!wtPath) return CONTINUE;
     // Every path the call opens, by its declared arg (a list-valued arg is
     // gated per element and left as written).
     for (const spec of pathSpecsForCall(tc.name, args)) {
       if (spec.json || spec.each) continue;
       const raw = args[spec.arg];
       if (raw === undefined && !spec.searchRoot) continue;
-      args[spec.arg] = rewritePathForWorktree(raw === undefined ? undefined : String(raw), wtPath, spec.searchRoot);
+      const path = rewritePathForWorktree(raw === undefined ? undefined : String(raw), wtPath, spec.searchRoot, repoRoot);
+      if (path === null) return terminate(ctx, { rendered: "model", result: searchOutsideWorktree(String(raw), wtPath), allowed: false });
+      args[spec.arg] = path;
     }
     if (anchorsShellAtCwd(tc.name)) args._cwd = wtPath;
   } catch { /* worktree module not available */ }
+  return CONTINUE;
 }
 
 // Pre-dispatch chain blocks set ctx.result and return BLOCK. Audit still
@@ -370,7 +375,8 @@ async function securityAndValidationGates(ctx: ToolCallContext): Promise<PhaseOu
   if (outcome.kind !== "continue") return outcome;
   outcome = sessionPolicyGate(ctx);
   if (outcome.kind !== "continue") return outcome;
-  await rewriteWorktreePaths(ctx);
+  outcome = await rewriteWorktreePaths(ctx);
+  if (outcome.kind !== "continue") return outcome;
 
   outcome = await runPreDispatch(ctx);
   if (outcome.kind !== "continue") return outcome;

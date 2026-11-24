@@ -246,29 +246,50 @@ describe("session_snapshot reconcile — never ends a worker card", () => {
   });
 });
 
-describe("chat-ws.js — a partial card is never replayed via reconnect_op", () => {
+// A worker card is never replayed with reconnect_op: the replay feeds the chat
+// stream of the card's session, never the card, and a build orchestrator or a
+// named agent has no op event log, so every quiet spell drew "reconnect_op
+// failed: unknown_op" over the chat (label-check, 2026-11-23). A quiet card is
+// checked against the live worker set instead; a stopped card asks nothing.
+describe("chat-ws.js — a quiet worker card asks for the live worker set, never a replay", () => {
   const stale = Date.now() - 10 * 60_000;
-  const feeds = (): Feed => ({
-    opPartial: { sessionId: "chat-1", status: "partial", lastActivityMs: stale },
-    opWorking: { sessionId: "chat-1", status: "working", lastActivityMs: stale },
-  });
+  const types = (sent: string[]) => frames(sent).map((f) => f.type);
 
-  it("the stuck-worker watchdog skips the partial card and replays only the working one", () => {
-    const w = loadWs(feeds());
+  it("the watchdog asks once for the live set when a working card goes quiet, and leaves its activity alone", () => {
+    const feeds: Feed = {
+      op_orchestrator: { sessionId: "chat-1", status: "working", type: "orchestrator", lastActivityMs: stale },
+      "field-agent-7-x": { sessionId: "chat-1", status: "working", lastActivityMs: stale },
+    };
+    const w = loadWs(feeds);
     w.connectChatWs();
     const ws = w.sockets[0];
     ws.sent.length = 0;
     w.watchdog.fn();
-    const replayed = frames(ws.sent).filter((f) => f.type === "reconnect_op").map((f) => f.opId);
-    expect(replayed).toEqual(["opWorking"]);
+    expect(types(ws.sent)).toEqual(["workers_list"]);
+    expect(feeds.op_orchestrator.lastActivityMs).toBe(stale);
+    // The next scan, 15s on, does not ask again.
+    ws.sent.length = 0;
+    w.watchdog.fn();
+    expect(types(ws.sent)).toEqual([]);
   });
 
-  it("the onopen non-terminal replay skips the partial card too", () => {
-    const w = loadWs(feeds());
+  it("a stopped card asks nothing", () => {
+    const w = loadWs({ opPartial: { sessionId: "chat-1", status: "partial", lastActivityMs: stale } });
+    w.connectChatWs();
+    const ws = w.sockets[0];
+    ws.sent.length = 0;
+    w.watchdog.fn();
+    expect(types(ws.sent)).toEqual([]);
+  });
+
+  it("connecting replays no worker card", () => {
+    const w = loadWs({
+      opPartial: { sessionId: "chat-1", status: "partial", lastActivityMs: stale },
+      op_orchestrator: { sessionId: "chat-1", status: "working", type: "orchestrator", lastActivityMs: stale },
+    });
     w.connectChatWs();
     const ws = w.sockets[0];
     ws.onopen!();
-    const replayed = frames(ws.sent).filter((f) => f.type === "reconnect_op").map((f) => f.opId);
-    expect(replayed).toEqual(["opWorking"]);
+    expect(types(ws.sent)).not.toContain("reconnect_op");
   });
 });

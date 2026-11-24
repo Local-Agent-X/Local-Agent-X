@@ -31,6 +31,9 @@
   // genuinely hung workers without spamming reconnect_op against healthy
   // long-running ops.
   var STUCK_WORKER_REPLAY_THRESHOLD_MS = 180_000;
+  // One ask for the whole live set covers every quiet card, so at most one
+  // per threshold, however many cards are quiet.
+  var lastWorkersAskMs = 0;
   setInterval(function() {
     // Read the socket once per scan through the accessor chat-ws.js publishes:
     // a retired socket is no longer window.chatWs, so it can never be used here.
@@ -58,36 +61,33 @@
         console.warn('[ws] reconnect_op send failed:', e && e.message);
       }
     }
-    // Worker ops live in agentFeedsData (chat-agent-feeds.js), not the chat
-    // stream store — keep the worker-specific scan here. Symptom from the
-    // field: "worker activity moved from 8 to 15 but i had to leave to
-    // another page and come back" — bg_op_progress events landed server-side
-    // but the bubble wasn't repainting until route re-entry. reconnect_op
-    // replays the missed events on the same wire chat-turn replays use.
-    // Skips terminal states — isTerminalStatus (chat-agent-feeds-render.js) is
-    // the one status set; an inline list here missed `partial` and replayed a
-    // checkpoint-stopped card via reconnect_op every 15s forever.
-    if (typeof agentFeedsData === 'object' && agentFeedsData) {
+    // Worker cards live in agentFeedsData (chat-agent-feeds.js), not the chat
+    // stream store, and a quiet one is checked against the server's live
+    // worker set (workers_list → reconcileAgentFeeds, the one judge): a card
+    // whose end this page missed is cleared, a live one is left alone. It was
+    // a reconnect_op replay, which cannot serve a card: the replay feeds the
+    // chat stream of the card's session, never the card, and a build
+    // orchestrator or a named agent has no op event log at all, so every quiet
+    // spell drew "reconnect_op failed: unknown_op" over the chat (label-check,
+    // 2026-11-23). A card's lastActivityMs is left alone too: it is what the
+    // stall badge reads, and bumping it here made a quiet job look active.
+    // Terminal cards are skipped: isTerminalStatus (chat-agent-feeds-render.js)
+    // is the one status set.
+    if (typeof agentFeedsData === 'object' && agentFeedsData && now - lastWorkersAskMs >= STUCK_WORKER_REPLAY_THRESHOLD_MS) {
       var workerIds = Object.keys(agentFeedsData);
       for (var i = 0; i < workerIds.length; i++) {
-        var wid = workerIds[i];
-        var w = agentFeedsData[wid];
-        if (!w || !w.sessionId) continue;
-        if (isTerminalStatus(w.status)) continue;
+        var w = agentFeedsData[workerIds[i]];
+        if (!w || isTerminalStatus(w.status)) continue;
         var wLast = w.lastActivityMs || 0;
         if (wLast === 0 || now - wLast < STUCK_WORKER_REPLAY_THRESHOLD_MS) continue;
-        console.warn('[ws] Stuck worker detected for opId=' + wid + ' (no events for ' + Math.round((now - wLast) / 1000) + 's) — replaying via reconnect_op');
+        lastWorkersAskMs = now;
         try {
-          chatWs.send(JSON.stringify({
-            type: 'reconnect_op',
-            sessionId: w.sessionId,
-            opId: wid,
-            sinceSeq: -1,
-          }));
-          w.lastActivityMs = now;
+          if (typeof noteWorkersSnapshotAsked === 'function') noteWorkersSnapshotAsked();
+          chatWs.send(JSON.stringify({ type: 'workers_list' }));
         } catch (e) {
-          console.warn('[ws] worker reconnect_op send failed:', e && e.message);
+          console.warn('[ws] workers_list send failed:', e && e.message);
         }
+        break;
       }
     }
   }, STUCK_STREAM_CHECK_INTERVAL_MS);

@@ -163,31 +163,12 @@ function connectChatWs() {
         sinceSeq: -1,
       }));
     }
-    // Also replay any non-terminal worker ops. The chat WS heartbeat
-    // force-closes half-open connections — during the close → reconnect
-    // window (~3s + handshake) bg_op_progress events are broadcast but not
-    // delivered. Without this the sidebar card froze at whatever line was
-    // last received and only caught up minutes later when the watchdog
-    // tripped at 180s.
-    if (typeof agentFeedsData === 'object' && agentFeedsData) {
-      var wIds = Object.keys(agentFeedsData);
-      for (var wi = 0; wi < wIds.length; wi++) {
-        var w = agentFeedsData[wIds[wi]];
-        if (!w || !w.sessionId) continue;
-        if (isTerminalStatus(w.status)) continue;
-        try {
-          ws.send(JSON.stringify({
-            type: 'reconnect_op',
-            sessionId: w.sessionId,
-            opId: wIds[wi],
-            sinceSeq: -1,
-          }));
-        } catch (e) { /* best-effort — watchdog will retry */ }
-      }
-    }
     // The live worker set, whole: ends every card whose end this page never
     // heard and draws any worker that started while it wasn't listening
-    // (reconcileAgentFeeds in chat-agent-feeds.js).
+    // (reconcileAgentFeeds in chat-agent-feeds.js). Worker cards are not
+    // replayed with reconnect_op: a replay feeds the chat stream of the card's
+    // session, never the card, and a build orchestrator or named agent has no
+    // op event log, so each reconnect drew "reconnect_op failed: unknown_op".
     if (typeof noteWorkersSnapshotAsked === 'function') {
       noteWorkersSnapshotAsked();
       try { ws.send(JSON.stringify({ type: 'workers_list' })); } catch (e) { /* the next connect asks again */ }

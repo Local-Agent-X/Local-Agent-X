@@ -69,11 +69,9 @@ function handleBgOpStarted(msg) {
         status: 'working',
         currentTask: msg.event.task || '',
         output: '',
-        // Stamp sessionId + lastActivityMs so the stuck-stream
-        // watchdog (chat-ws.js) can replay missed events via
-        // reconnect_op the same way it does for chat-turn ops.
-        // Without these the watchdog has nowhere to send the
-        // replay and worker cards fell behind silently.
+        // Stamp sessionId + lastActivityMs: the stall badge and the
+        // watchdog's quiet-card check (chat-ws-watchdog.js) read the
+        // latter; the chat scope reads the former.
         sessionId: msg.sessionId,
         chatId: msg.sessionId,
         lastActivityMs: Date.now(),

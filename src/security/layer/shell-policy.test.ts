@@ -131,6 +131,13 @@ describe("evaluateShellCommand (posix) — mode-aware rm", () => {
     }
   });
 
+  it("unrestricted: the floor reads a root reached through dot-dot, doubled slashes or $HOME", () => {
+    for (const cmd of ["rm -rf ~/..", "rm -rf /etc//", "rm -rf /./etc", "rm -rf /usr/local/../..", "rm -rf /tmp/../home", 'rm -rf "$HOME"', "rm -rf $HOME/.."]) {
+      expect(U(cmd).allowed, cmd).toBe(false);
+    }
+    expect(U("rm -rf /tmp/build/../build2").allowed).toBe(true);
+  });
+
   // Audit 2026-10-27: the floor read only a bare `rm`, split on whitespace.
   it("unrestricted: the floor holds behind a wrapper and inside a shell's body", () => {
     for (const cmd of ["timeout 60 rm -rf ~", "nohup rm -rf /", "sudo rm -rf /etc", `bash -c "rm -rf ~"`, "nice -n 5 rm -rf /usr"]) {
@@ -195,6 +202,16 @@ describe("evaluateShellCommand (win32) — PowerShell semantics", () => {
       expect(UW(cmd).allowed, cmd).toBe(false);
     }
     expect(UW(`rm -rf ~/Downloads`).allowed).toBe(true); // user data stays deletable
+  });
+
+  // The floor took a path as typed. The shell tool on Windows runs Git Bash,
+  // where the same folders are written with forward slashes or as /c/...
+  it("the Windows floor holds for forward-slash, Git Bash and dot-dot spellings", () => {
+    for (const cmd of [`rm -rf C:/Windows`, `rm -rf C:/Users/`, `rm -rf /c/Users`, `rm -rf /c/Windows/System32`, `rm -rf /c/`, `rm -rf ~/..`, `rm -rf C:/Users/me/..`]) {
+      expect(UW(cmd).allowed, cmd).toBe(false);
+    }
+    expect(UW(`rm -rf /c/Users/me/projects/app/dist`).allowed).toBe(true);
+    expect(UW(`rm -rf C:/Users/me/Downloads/old`).allowed).toBe(true);
   });
 
   // Audit 2026-10-27: only `rm` reached the floor; PowerShell and cmd.exe

@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { posix, win32 } from "node:path";
 import type { DeleteCall } from "./shell-delete-targets.js";
 
 // ── The irreducible "cannot delete, even in unrestricted mode" floor ──
@@ -54,16 +54,65 @@ export interface DeleteFloor {
 	rootsOnly?: boolean;
 }
 
+// The spellings of "my home folder" a shell expands before the delete runs.
+const HOME_PREFIX = /^(?:~|\$HOME|\$\{HOME\}|\$USERPROFILE|\$\{USERPROFILE\}|\$env:USERPROFILE|\$\{env:USERPROFILE\}|%USERPROFILE%)(?=$|[\\/])/i;
+// A drive as Git Bash, WSL and Cygwin spell it: /c/Users, /mnt/c/Users, /cygdrive/c/Users.
+const POSIX_STYLE_DRIVE = /^\/(?:mnt\/|cygdrive\/)?([A-Za-z])(?=$|\/)/;
+// Plainly a Windows path wherever it is met: a drive letter or a UNC share.
+const WINDOWS_SHAPED = /^(?:[A-Za-z]:(?:[\\/]|$)|\\\\)/;
+
+/** A path in the one form every spelling of it reduces to. `windows` says
+ *  which rules read it: `\` separators, and case does not matter. */
+interface CanonicalPath { path: string; windows: boolean }
+
 /**
- * True when deleting `rawTarget` would break the OS or wipe the user's home —
- * the floor that holds even in unrestricted mode. Handles `~` expansion, a
- * trailing `/`, and a trailing `/*` / `/.` "everything under here" glob (so
- * `rm -rf ~/*` and `rm -rf /*` are caught), then checks the normalized target
- * against the protected roots and the platform's system-dir patterns.
+ * The one absolute path `written` names, or null when it is relative. Lexical
+ * only: nothing is read from disk. `C:/Users`, `/c/Users` and `C:\Users\` are
+ * one folder; `/etc//` and `/./etc` are `/etc`; `/home/me/..` is `/home`; and
+ * a trailing `/*` ("everything under here") is the folder itself.
  *
- * A RELATIVE target (`./build`, `dist`) is never catastrophic — it resolves
- * under the project, not at a system root — so only absolute / `~` targets can
- * trip this.
+ * Windows rules apply on Windows, and anywhere to a path that is plainly a
+ * Windows one, so a Windows home folder is still read right by a caller that
+ * pins a POSIX platform (the test suite does, on a Windows machine).
+ */
+function canonicalPath(written: string, platform: NodeJS.Platform): CanonicalPath | null {
+	let t = written;
+	// Git Bash runs the shell tool on Windows, so a drive is as often written
+	// `/c/Users` or `C:/Users` as `C:\Users`.
+	if (platform === "win32") t = t.replace(POSIX_STYLE_DRIVE, (_m, drive: string) => `${drive.toUpperCase()}:`);
+	const windows = platform === "win32" || WINDOWS_SHAPED.test(t);
+	const paths = windows ? win32 : posix;
+	if (windows) {
+		t = t.replace(/\//g, "\\");
+		if (/^[A-Za-z]:$/.test(t)) t += "\\";
+	}
+	if (!paths.isAbsolute(t)) return null;
+	t = t.replace(/[\\/]\*$/, paths.sep);
+	t = paths.normalize(t);
+	if (t.length > paths.parse(t).root.length) t = t.replace(/[\\/]+$/, "");
+	return { path: t, windows };
+}
+
+/** A delete target as typed, with its quotes off and the home folder written
+ *  out, in canonical form. Null when it is empty or relative. */
+function canonicalDeleteTarget(rawTarget: string, home: string, platform: NodeJS.Platform): CanonicalPath | null {
+	let t = rawTarget.trim().replace(/^['"]+|['"]+$/g, "");
+	if (!t) return null;
+	const homeRef = HOME_PREFIX.exec(t);
+	if (homeRef) t = home + t.slice(homeRef[0].length);
+	return canonicalPath(t, platform);
+}
+
+/**
+ * True when deleting `rawTarget` would break the OS or wipe the user's home:
+ * the floor that holds even in unrestricted mode. The target is read in
+ * canonical form (canonicalPath), so no spelling of a protected folder gets
+ * past: the filesystem or a drive root, the home folder or any folder above
+ * it, a protected root, or anything under a system directory.
+ *
+ * A RELATIVE target (`./build`, `dist`) is never catastrophic: it resolves
+ * under the project, not at a system root. Only absolute and home-relative
+ * targets can trip this.
  */
 export function isCatastrophicDeleteTarget(
 	rawTarget: string,
@@ -71,37 +120,32 @@ export function isCatastrophicDeleteTarget(
 	platform: NodeJS.Platform = process.platform,
 	floor: DeleteFloor = {},
 ): boolean {
-	const sep = platform === "win32" ? "\\" : "/";
-	let t = rawTarget.trim().replace(/^['"]+|['"]+$/g, "");
-	if (!t) return false;
+	const target = canonicalDeleteTarget(rawTarget, home, platform);
+	if (target === null) return false;
+	const t = target.path;
+	const sep = target.windows ? "\\" : "/";
+	const key = (p: string): string => (target.windows ? p.toLowerCase() : p);
 
-	// ~ expansion, exactly as bash does it.
-	if (t === "~") t = home;
-	else if (t.startsWith("~/") || t.startsWith("~\\")) t = join(home, t.slice(2));
+	// Filesystem root (`/`) or a Windows drive root (`C:\`).
+	if (t === sep || /^[A-Za-z]:\\?$/.test(t)) return true;
 
-	// Strip a trailing "delete everything under here" glob or slash so
-	// `/System/`, `/System/*`, `/System/.` all normalize to `/System`, and
-	// `/*` / `~/*` collapse to their root. An empty result means the root `/`.
-	t = t.replace(/[\\/](?:\*|\.)?$/, "");
-	if (t === "") t = sep;
-
-	// Filesystem root (`/`) or a bare Windows drive root (`C:\`, `D:/`).
-	if (t === sep || /^[A-Za-z]:[\\/]?$/.test(t)) return true;
-
-	const norm = platform === "win32" ? t.toLowerCase() : t;
+	// The home folder, or a folder above it: deleting either removes the home.
+	const homePath = canonicalPath(home, platform);
+	if (homePath && homePath.windows === target.windows) {
+		const h = key(homePath.path);
+		if (h === key(t) || h.startsWith(key(t) + sep)) return true;
+	}
 
 	// Equals a protected root itself.
 	for (const r of catastrophicRoots(home, platform)) {
-		const rn = platform === "win32" ? r.toLowerCase() : r;
-		if (norm === rn) return true;
+		if (key(t) === key(r)) return true;
 	}
 
 	if (floor.rootsOnly) return false;
 
-	// Sits under a shared system directory (re-add a trailing sep so the
-	// subpath patterns, which require one, match the bare dir too).
-	const probe = t.endsWith(sep) ? t : t + sep;
-	for (const p of systemDirPatterns(platform)) if (p.test(probe)) return true;
+	// Sits under a shared system directory (the subpath patterns require a
+	// trailing separator, so add one to match the bare directory too).
+	for (const p of systemDirPatterns(platform)) if (p.test(t + sep)) return true;
 
 	return false;
 }

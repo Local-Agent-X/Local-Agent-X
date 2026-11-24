@@ -47,125 +47,130 @@ async function broadcastProjectsChanged(): Promise<void> {
   } catch { /* no WS context (e.g. test) — tool itself still succeeded */ }
 }
 
+/** project_create: make a project, optionally with its first agents. */
+function projectCreateTool(): ToolDefinition {
+  return {
+    name: "project_create",
+    description:
+      "Create a new project (organization-scoped container for a roster of agents). " +
+      "Use this when the user asks to set up a project, organization, company, team, " +
+      "or workspace for a group of agents to collaborate in. The project shows up in " +
+      "the Agents page Projects tab; agents added to it can be scoped via project_id " +
+      "on agent_list / agent_spawn. Optionally seed with agent template ids — they " +
+      "become real roster entries (with CEO-led reportsTo wiring when builtin-ceo is " +
+      "in the list). Pass `summary` to seed the project brief, then interview the " +
+      "user to flesh it out — the brief becomes the shared context every agent reads.",
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Project display name (e.g. 'Acme Fitness Dallas')" },
+        description: { type: "string", description: "One-line description" },
+        summary: {
+          type: "string",
+          description:
+            "Optional paragraph on what this project/business is about — goals, " +
+            "what it does, current state. Seeds the project brief. After creating, " +
+            "interview the user to flesh it out (the tool result will remind you).",
+        },
+        agent_ids: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional agent template ids to seed on the roster (e.g. ['builtin-ceo', 'tpl-...'])",
+        },
+        workspace: { type: "string", description: "Optional project-specific workspace directory" },
+        secret_keys: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional secret keys this project's agents can access",
+        },
+        allowed_tools: {
+          type: "array",
+          items: { type: "string" },
+          description: "Optional tool name restrictions for this project's agents",
+        },
+      },
+      required: ["name"],
+    },
+    async execute(args) {
+      try {
+        const name = String(args.name).trim();
+        if (!name) return err("project_create requires a non-empty `name`.");
+        const agentIds = Array.isArray(args.agent_ids) ? args.agent_ids.map(String) : [];
+        const store = ProjectStore.getInstance();
+
+        // Idempotent on name. Two reasons:
+        //  1. User policy: project names are unique (case-insensitive).
+        //  2. The Anthropic CLI/MCP path loops project_create when its
+        //     own text reply phrases the result as a pending question
+        //     ("want me to add agents?"). Returning the EXISTING project
+        //     with an explicit "already exists" body breaks that loop —
+        //     the model stops re-issuing "Created project ..." because
+        //     the tool result no longer reads like fresh work.
+        const existing = store.findByName(name);
+        if (existing) {
+          return ok(
+            `Project '${existing.name}' already exists (id: ${existing.id}). ` +
+            `Nothing was created. To add agents, call project_add_agent with project_id=${existing.id}. ` +
+            `If you intended a separate project, retry with a distinct name (e.g. '${name} 2' or '${name} Dallas').`,
+          );
+        }
+
+        const project = store.create({
+          name,
+          description: args.description ? String(args.description) : "",
+          agentIds,
+          workspace: args.workspace ? String(args.workspace) : undefined,
+          secretKeys: Array.isArray(args.secret_keys) ? args.secret_keys.map(String) : undefined,
+          allowedTools: Array.isArray(args.allowed_tools) ? args.allowed_tools.map(String) : undefined,
+        });
+        await seedProjectRosters(project.id, agentIds);
+
+        // Seed the brief from the summary. Best-effort: a failed brief write
+        // must not fail project creation (the project already exists).
+        const summary = args.summary ? String(args.summary).trim() : "";
+        let briefSeeded = false;
+        if (summary) {
+          try {
+            await updateProjectBrief(project.id, `## Overview\n${summary}`, {
+              title: project.name,
+              promotion: promotionContextFromToolArgs(args, {
+                content: summary,
+                source: "model-tool:project_create",
+                target: "memory:project-brief",
+                sessionId: sessionIdOf(args) ?? "default",
+              }),
+            });
+            briefSeeded = true;
+          } catch (e) {
+            // swallow — project is created; brief can be filled in later
+            void e;
+          }
+        }
+
+        await broadcastProjectsChanged();
+        const rosterLine = agentIds.length > 0
+          ? ` Seeded roster: ${agentIds.length} agent(s).`
+          : ` Roster is empty; call project_add_agent to populate it.`;
+        const briefLine = briefSeeded ? ` Brief started from your summary.` : "";
+        // Drive the onboarding interview: the model runs it in its normal
+        // conversation loop, recording answers via project_brief_update. The
+        // brief is the project's shared source of truth for every agent.
+        const interviewLine =
+          ` Now interview the user to build the brief — ask a few clarifying questions` +
+          ` (goals, current state, key products/people, success metrics, constraints),` +
+          ` a couple at a time, and record each answer with project_brief_update` +
+          ` (project='${project.name}'). Keep it conversational, not a form.`;
+        return ok(`Created project '${project.name}' (id: ${project.id}).${rosterLine}${briefLine}${interviewLine}`);
+      } catch (e) {
+        return err(`Failed to create project: ${String(e)}`);
+      }
+    },
+  };
+}
+
 export function createProjectTools(): ToolDefinition[] {
   return [
-    {
-      name: "project_create",
-      description:
-        "Create a new project (organization-scoped container for a roster of agents). " +
-        "Use this when the user asks to set up a project, organization, company, team, " +
-        "or workspace for a group of agents to collaborate in. The project shows up in " +
-        "the Agents page Projects tab; agents added to it can be scoped via project_id " +
-        "on agent_list / agent_spawn. Optionally seed with agent template ids — they " +
-        "become real roster entries (with CEO-led reportsTo wiring when builtin-ceo is " +
-        "in the list). Pass `summary` to seed the project brief, then interview the " +
-        "user to flesh it out — the brief becomes the shared context every agent reads.",
-      parameters: {
-        type: "object",
-        properties: {
-          name: { type: "string", description: "Project display name (e.g. 'Acme Fitness Dallas')" },
-          description: { type: "string", description: "One-line description" },
-          summary: {
-            type: "string",
-            description:
-              "Optional paragraph on what this project/business is about — goals, " +
-              "what it does, current state. Seeds the project brief. After creating, " +
-              "interview the user to flesh it out (the tool result will remind you).",
-          },
-          agent_ids: {
-            type: "array",
-            items: { type: "string" },
-            description: "Optional agent template ids to seed on the roster (e.g. ['builtin-ceo', 'tpl-...'])",
-          },
-          workspace: { type: "string", description: "Optional project-specific workspace directory" },
-          secret_keys: {
-            type: "array",
-            items: { type: "string" },
-            description: "Optional secret keys this project's agents can access",
-          },
-          allowed_tools: {
-            type: "array",
-            items: { type: "string" },
-            description: "Optional tool name restrictions for this project's agents",
-          },
-        },
-        required: ["name"],
-      },
-      async execute(args) {
-        try {
-          const name = String(args.name).trim();
-          if (!name) return err("project_create requires a non-empty `name`.");
-          const agentIds = Array.isArray(args.agent_ids) ? args.agent_ids.map(String) : [];
-          const store = ProjectStore.getInstance();
-
-          // Idempotent on name. Two reasons:
-          //  1. User policy: project names are unique (case-insensitive).
-          //  2. The Anthropic CLI/MCP path loops project_create when its
-          //     own text reply phrases the result as a pending question
-          //     ("want me to add agents?"). Returning the EXISTING project
-          //     with an explicit "already exists" body breaks that loop —
-          //     the model stops re-issuing "Created project ..." because
-          //     the tool result no longer reads like fresh work.
-          const existing = store.findByName(name);
-          if (existing) {
-            return ok(
-              `Project '${existing.name}' already exists (id: ${existing.id}). ` +
-              `Nothing was created. To add agents, call project_add_agent with project_id=${existing.id}. ` +
-              `If you intended a separate project, retry with a distinct name (e.g. '${name} 2' or '${name} Dallas').`,
-            );
-          }
-
-          const project = store.create({
-            name,
-            description: args.description ? String(args.description) : "",
-            agentIds,
-            workspace: args.workspace ? String(args.workspace) : undefined,
-            secretKeys: Array.isArray(args.secret_keys) ? args.secret_keys.map(String) : undefined,
-            allowedTools: Array.isArray(args.allowed_tools) ? args.allowed_tools.map(String) : undefined,
-          });
-          await seedProjectRosters(project.id, agentIds);
-
-          // Seed the brief from the summary. Best-effort: a failed brief write
-          // must not fail project creation (the project already exists).
-          const summary = args.summary ? String(args.summary).trim() : "";
-          let briefSeeded = false;
-          if (summary) {
-            try {
-              await updateProjectBrief(project.id, `## Overview\n${summary}`, {
-                title: project.name,
-                promotion: promotionContextFromToolArgs(args, {
-                  content: summary,
-                  source: "model-tool:project_create",
-                  target: "memory:project-brief",
-                  sessionId: sessionIdOf(args) ?? "default",
-                }),
-              });
-              briefSeeded = true;
-            } catch (e) {
-              // swallow — project is created; brief can be filled in later
-              void e;
-            }
-          }
-
-          await broadcastProjectsChanged();
-          const rosterLine = agentIds.length > 0
-            ? ` Seeded roster: ${agentIds.length} agent(s).`
-            : ` Roster is empty; call project_add_agent to populate it.`;
-          const briefLine = briefSeeded ? ` Brief started from your summary.` : "";
-          // Drive the onboarding interview: the model runs it in its normal
-          // conversation loop, recording answers via project_brief_update. The
-          // brief is the project's shared source of truth for every agent.
-          const interviewLine =
-            ` Now interview the user to build the brief — ask a few clarifying questions` +
-            ` (goals, current state, key products/people, success metrics, constraints),` +
-            ` a couple at a time, and record each answer with project_brief_update` +
-            ` (project='${project.name}'). Keep it conversational, not a form.`;
-          return ok(`Created project '${project.name}' (id: ${project.id}).${rosterLine}${briefLine}${interviewLine}`);
-        } catch (e) {
-          return err(`Failed to create project: ${String(e)}`);
-        }
-      },
-    },
+    projectCreateTool(),
 
     {
       name: "project_list",

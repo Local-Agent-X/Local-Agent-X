@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2144 non-test source files · 64 oversized · 269 nearing the size cap.
+**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2144 non-test source files · 63 oversized · 270 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -21,7 +21,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 191 | 32 | XL | 1 |
 | `src/security/` | 168 | 66 | XL | 2 |
-| `src/tools/` | 142 | 258 | XL | 8 |
+| `src/tools/` | 142 | 258 | XL | 7 |
 | `src/tool-execution/` | 107 | 91 | XL | 2 |
 | `src/workspace/` | 93 | 3 | M |  |
 | `src/canonical-loop/` | 92 | 297 | XL | 6 |
@@ -306,7 +306,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/tools/email-mutate-tools.ts#withSession:callback`
 - `src/tools/http-request.ts#tool.execute`
 - `src/tools/image-tools/generate-video.ts#generateViaXaiVideo`
-- `src/tools/project-tools.ts#createProjectTools`
 - `src/tools/secret-tools.ts#createSecretTools`
 - `src/tools/shell-tool.ts#bashTool.execute`
 - `src/voice/voice-session/model-init.ts#initializeVoiceStack`
@@ -582,6 +581,7 @@ job. Comments are free: never cut them to fit.
 - `src/tools/image-tools/edit-image.ts#editImageTool.execute` — 60+ own code lines (cap 100)
 - `src/tools/process-session.ts#startSession` — 60+ own code lines (cap 100)
 - `src/tools/process-tools-defs.ts#processRestartTool.execute` — 60+ own code lines (cap 100)
+- `src/tools/project-tools.ts#createProjectTools` — 60+ own code lines (cap 100)
 - `src/tools/telegram-tools.ts#telegramSend.execute` — 60+ own code lines (cap 100)
 - `src/voice/audio-ws.ts#ws.on:callback@208` — 60+ own code lines (cap 100)
 - `src/voice/voice-session/index.ts#createVoiceSessionFactory:returned` — 60+ own code lines (cap 100)

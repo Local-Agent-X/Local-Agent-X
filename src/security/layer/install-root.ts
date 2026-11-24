@@ -5,6 +5,7 @@ import { workspaceRoot } from "../../config.js";
 import { platformRoot } from "../../platform-root.js";
 import { portableRuntimeRoot, resolveWindowsShell, windowsShellInstallRoot } from "../../tools/shell-env.js";
 import { realpathDeep } from "../../workspace/paths.js";
+import { win32OpenedName } from "./lax-control-files.js";
 import { pathIsWithin } from "./path-within.js";
 
 // The owner's rule (2026-10-02): the agent may not modify the folder Local
@@ -47,12 +48,18 @@ import { pathIsWithin } from "./path-within.js";
  * any casing. Case-insensitive macOS volumes accept any casing too, and there
  * a posix comparison is case-sensitive. The native realpath answers with the
  * name on disk for every segment that exists; a tail that does not exist yet
- * is kept as typed. When the native call fails for any other reason (some
+ * is kept as typed, less the trailing dots, spaces and stream suffixes Windows
+ * drops when it opens a name (win32OpenedName). When the native call fails for any other reason (some
  * virtual drives refuse it) the JS realpath stands in, which can still throw
  * on a symlink cycle exactly as it does for the gate.
  */
 export function onDiskPath(p: string): string {
-  let cur = resolve(p);
+  // The name Windows opens, before the filesystem is asked: a shell reaches
+  // the install through `local-agent-x.` (a trailing dot) as surely as through
+  // its real name, and the native call, which takes a path literally, would
+  // answer that no such folder exists.
+  const opened = process.platform === "win32" ? win32OpenedName(resolve(p)) : resolve(p);
+  let cur = opened;
   let tail = "";
   for (;;) {
     try {
@@ -61,7 +68,7 @@ export function onDiskPath(p: string): string {
     } catch (e) {
       const code = (e as NodeJS.ErrnoException).code;
       const parent = dirname(cur);
-      if ((code !== "ENOENT" && code !== "ENOTDIR") || parent === cur) return realpathDeep(p);
+      if ((code !== "ENOENT" && code !== "ENOTDIR") || parent === cur) return realpathDeep(opened);
       tail = tail ? join(basename(cur), tail) : basename(cur);
       cur = parent;
     }

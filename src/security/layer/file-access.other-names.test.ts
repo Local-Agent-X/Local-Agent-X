@@ -4,9 +4,11 @@
 import { execSync } from "node:child_process";
 import { closeSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { platformRoot } from "../../platform-root.js";
 import { evaluateFileAccess } from "./file-access.js";
+import { isProtectedInstallPath } from "./install-root.js";
 import { win32OpenedName } from "./lax-control-files.js";
 import { openValidatedRead } from "./validated-io.js";
 
@@ -24,6 +26,24 @@ describe("win32OpenedName", () => {
     expect(win32OpenedName("C:\\Users\\me\\notes.v2.txt")).toBe("C:\\Users\\me\\notes.v2.txt");
     expect(win32OpenedName("C:\\a\\.\\b\\..\\c")).toBe("C:\\a\\.\\b\\..\\c");
     expect(win32OpenedName("C:\\.env")).toBe("C:\\.env");
+  });
+});
+
+describe("the install folder reached by another name", () => {
+  const root = resolve(platformRoot());
+  const sibling = (name: string, ...rest: string[]): string => join(dirname(root), name, ...rest);
+
+  it("is protected by its own name, and a folder beside it is not", () => {
+    expect(isProtectedInstallPath(join(root, "package.json"))).toBe(true);
+    expect(isProtectedInstallPath(sibling(`${basename(root)}-other`, "package.json"))).toBe(false);
+  });
+
+  it.skipIf(!WINDOWS)("is protected with a trailing dot or space on its folder, or a stream suffix", () => {
+    expect(isProtectedInstallPath(sibling(`${basename(root)}.`, "package.json"))).toBe(true);
+    expect(isProtectedInstallPath(sibling(`${basename(root)}.`, "src", "index.ts"))).toBe(true);
+    expect(isProtectedInstallPath(sibling(`${basename(root)} `, "package.json"))).toBe(true);
+    expect(isProtectedInstallPath(sibling(`${basename(root)}::$INDEX_ALLOCATION`, "package.json"))).toBe(true);
+    expect(isProtectedInstallPath(join(root, "src.", "index.ts."))).toBe(true);
   });
 });
 

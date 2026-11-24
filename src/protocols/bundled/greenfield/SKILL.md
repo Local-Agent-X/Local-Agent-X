@@ -231,8 +231,10 @@ recorded phase. Never re-interview or re-plan what the ledger shows as settled.
   did not.
 - **Run scenarios against the live app.** A scenario that passes against a mock
   and fails against reality is not a scenario.
-- **The spec grows during the build.** Every misbuilt chunk shows what was
-  ambiguous. Add the clarification; do not only fix the code.
+- **The spec grows during the build, by clarification only.** A misbuilt chunk
+  shows what the spec left ambiguous or said two ways. Add that clarification;
+  do not only fix the code. What a reviewer finds beyond the spec is not a
+  clarification: it is a follow-up in the ledger, or a question for the owner.
 - **`spec/` and `twins/` are committed from day one**, in the same repo as the
   code. The suite has its own repository, outside it.
 - **Out of scope is sacred.**

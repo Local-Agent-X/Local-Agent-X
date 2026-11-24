@@ -174,3 +174,13 @@ headings: the judge scores a phase's scenarios when its last chunk lands.
 - **Files** is what autonomous mode schedules on. A chunk whose footprint
   you cannot predict is mis-scoped; split it.
 - A chunk that would take more than one agent session is two chunks.
+- **A rule over open-ended input says how far it reaches.** Some rules cover
+  input no list can exhaust: any text a person types, any file, any label.
+  Where a chunk states one, mark it `(strict)` or `(scoped)` and give it
+  examples. `strict`: it must hold for every input, and one input that breaks
+  it fails the chunk. Keep it for safety, money and data-loss rules, and expect
+  it to cost review rounds. `scoped`: it is judged on its examples and on
+  inputs of the same kind; an input of a new kind is a follow-up in the ledger,
+  for a later chunk or for v2. A rule that is not marked is scoped. Which one a
+  rule is belongs to the owner: ask when the rule is written, in the interview
+  or at the plan's approval, not when a reviewer finds the first odd input.

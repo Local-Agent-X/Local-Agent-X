@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { SKEPTIC_BAR_BLOCK, SKEPTIC_BREAK_GROUNDS } from "./skeptic-bar.js";
+import { SKEPTIC_BAR_BLOCK, SKEPTIC_BREAK_GROUNDS, SKEPTIC_RULE_REACH } from "./skeptic-bar.js";
 
 const agent = vi.hoisted(() => ({
   result: { stdout: "", exitCode: 0, durationMs: 1 } as { stdout: string; exitCode: number; durationMs: number; error?: string },
@@ -143,6 +143,21 @@ describe("the skeptic's bar", () => {
     expect(skill).toMatch(/Unsure whether the contract covers the case at all: follow-up/);
     expect(SKEPTIC_BAR_BLOCK).toMatch(/is a FOLLOW-UP, not a break/);
     expect(SKEPTIC_BAR_BLOCK).toMatch(/Unsure whether the contract covers the case at all: FOLLOW-UP/);
+  });
+
+  // A rule over open-ended input is quotable for any odd input, so how far it
+  // reaches is the plan's to mark and the skeptic's to read, in the same words.
+  it("reads a rule's reach the way the skill marks it: strict, scoped, and scoped when unmarked", () => {
+    expect(SKEPTIC_RULE_REACH).toHaveLength(4);
+    for (const sentence of SKEPTIC_RULE_REACH) {
+      expect(skill).toContain(sentence);
+      expect(flat(SKEPTIC_BAR_BLOCK)).toContain(sentence);
+    }
+    const planning = flat(readFileSync(
+      fileURLToPath(new URL("../../protocols/bundled/greenfield/references/spec.md", import.meta.url)), "utf-8",
+    ));
+    expect(planning).toMatch(/mark it `\(strict\)` or `\(scoped\)`/);
+    expect(planning).toContain("A rule that is not marked is scoped.");
   });
 });
 

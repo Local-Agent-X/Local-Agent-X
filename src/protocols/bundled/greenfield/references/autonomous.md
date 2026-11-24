@@ -174,6 +174,13 @@ line in the ledger, and the chunk is still green. The spec says what done is; a
 reviewer does not add to it. Unsure whether the change does what the contract
 says: broken. Unsure whether the contract covers the case at all: follow-up.
 
+A rule over open-ended input (any text, file or label a person might bring)
+reaches as far as it is marked. A `strict` rule must hold for every input: one
+input that breaks it is a break. A `scoped` rule is judged on the examples
+listed with it and on inputs of the same kind: an input of a new kind is a
+follow-up. A rule that is not marked is scoped. The plan marks them
+(`references/spec.md`, section 8); the skeptic does not re-mark them.
+
 Green means the scenarios pass **and** the skeptic shows no such break.
 Otherwise the chunk returns to `pending` with the finding attached (the judge's
 gap as written, the skeptic's finding in full), or to `parked` if it needs the

@@ -32,7 +32,6 @@ src/canonical-loop/turn-loop/decide-outcome.ts#decideTurnOutcome 107
 src/canonical-loop/worker.ts#drive 184
 src/config.ts#loadConfig 132
 src/mcp-client/manifest.ts#assessMcpManifest 118
-src/memory/date-parser.ts#parseDateRange 102
 src/memory/index-schema-migrations.ts#db.transaction:callback 259
 src/memory/tools/facts.ts#createFactsTools 108
 src/ops/tools/op-submit-async.ts#opSubmitAsyncTool.execute 114

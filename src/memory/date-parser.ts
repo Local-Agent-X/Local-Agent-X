@@ -65,6 +65,31 @@ function startOfYear(d: Date): Date {
   return new Date(d.getFullYear(), 0, 1);
 }
 
+/** "3 days ago", "a week ago", "two months ago": the day, week, month or year
+ *  that many units back. Null when the query says nothing of the kind. */
+function agoRange(q: string, today: Date): DateRange | null {
+  const ago = q.match(/\b(\d+|a|an|one|two|three|four|five|six|seven|eight|nine|ten)\s+(day|week|month|year)s?\s+ago\b/);
+  if (!ago) return null;
+  const words: Record<string, number> = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
+  const n = /^\d+$/.test(ago[1]) ? parseInt(ago[1]) : (words[ago[1]] || 1);
+  const unit = ago[2];
+  let start: Date, end: Date;
+  if (unit === "day") {
+    start = addDays(today, -n);
+    end = addDays(start, 1);
+  } else if (unit === "week") {
+    start = addDays(today, -7 * n);
+    end = addDays(start, 7);
+  } else if (unit === "month") {
+    start = new Date(today.getFullYear(), today.getMonth() - n, 1);
+    end = new Date(today.getFullYear(), today.getMonth() - n + 1, 1);
+  } else {
+    start = new Date(today.getFullYear() - n, 0, 1);
+    end = new Date(today.getFullYear() - n + 1, 0, 1);
+  }
+  return { start, end, confidence: "hard", matched: ago[0] };
+}
+
 /**
  * Parse a query string for temporal references.
  * Returns the FIRST matched range, or null.
@@ -96,27 +121,8 @@ export function parseDateRange(query: string, now: Date = new Date()): DateRange
   }
 
   // ── HARD: "N (days|weeks|months|years) ago" ──
-  const ago = q.match(/\b(\d+|a|an|one|two|three|four|five|six|seven|eight|nine|ten)\s+(day|week|month|year)s?\s+ago\b/);
-  if (ago) {
-    const words: Record<string, number> = { a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10 };
-    const n = /^\d+$/.test(ago[1]) ? parseInt(ago[1]) : (words[ago[1]] || 1);
-    const unit = ago[2];
-    let start: Date, end: Date;
-    if (unit === "day") {
-      start = addDays(today, -n);
-      end = addDays(start, 1);
-    } else if (unit === "week") {
-      start = addDays(today, -7 * n);
-      end = addDays(start, 7);
-    } else if (unit === "month") {
-      start = new Date(today.getFullYear(), today.getMonth() - n, 1);
-      end = new Date(today.getFullYear(), today.getMonth() - n + 1, 1);
-    } else {
-      start = new Date(today.getFullYear() - n, 0, 1);
-      end = new Date(today.getFullYear() - n + 1, 0, 1);
-    }
-    return { start, end, confidence: "hard", matched: ago[0] };
-  }
+  const ago = agoRange(q, today);
+  if (ago) return ago;
 
   // ── HARD: "last week" / "this week" / "next week" ──
   if (/\blast\s+week\b/.test(q)) {

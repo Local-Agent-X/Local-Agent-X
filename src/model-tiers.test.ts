@@ -167,9 +167,15 @@ describe("shrinkToolsForTier — medium manifest size", () => {
     // curated look a deck is made in (office-designs.ts): without it every
     // deck a medium model made was navy on white whatever it was for. The
     // enum is the cost, ~12 tokens. The ceiling moved 10,800 → 10,850.
+    //
+    // Re-measured 2026-11-23: 10,912. presentation gained `purpose` (pitch,
+    // sales, update, training, report, legal, kids, promo): it sets the
+    // deck's limits and the playbook the agent reviews its slides against
+    // (deck-purposes.ts). The enum is the cost, ~16 tokens. The ceiling
+    // moved 10,850 → 10,925.
     expect(before).toBeGreaterThan(12_000);
     expect(after).toBeLessThanOrEqual(before / 2);
-    expect(after).toBeLessThanOrEqual(10_850);
+    expect(after).toBeLessThanOrEqual(10_925);
   });
 
   it("shortens parameter descriptions past the cap and leaves shorter ones verbatim", () => {

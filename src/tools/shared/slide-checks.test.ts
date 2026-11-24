@@ -4,6 +4,7 @@
  */
 import { describe, expect, it } from "vitest";
 import { checkDeck, contrastRatio, MAX_WORDS_PER_SLIDE } from "./slide-checks.js";
+import { deckLimits } from "./deck-purposes.js";
 import type { SlidePlan, TextElement } from "./slide-plan.js";
 
 function text(over: Partial<TextElement> = {}): TextElement {
@@ -48,7 +49,17 @@ describe("checkDeck", () => {
 
   it("flags a slide with more words than a projected slide can carry", () => {
     const words = Array(MAX_WORDS_PER_SLIDE + 5).fill("word").join(" ");
-    expect(checkDeck([slide([text({ paragraphs: [words] })])]).join()).toMatch(/too much to read/);
+    expect(checkDeck([slide([text({ paragraphs: [words] })])]).join()).toMatch(/words is too much for a projected slide/);
+  });
+
+  it("holds a deck to its purpose's limits: a report may say more, a kids' deck far less", () => {
+    const sixty = text({ paragraphs: [Array(60).fill("word").join(" ")] });
+    expect(checkDeck([slide([sixty])], deckLimits("report"))).toEqual([]);
+    expect(checkDeck([slide([sixty])], deckLimits("pitch")).join()).toMatch(/too much for a pitch deck \(at most 40\)/);
+    const small = text({ fit: { size: 16, lines: [["Hello"]], height: 0.3, overflow: false, indent: 0 } });
+    expect(checkDeck([slide([small])], deckLimits("kids")).join()).toMatch(/shrink to 16pt, too small for a kids deck \(at least 24pt\)/);
+    // Slide furniture is not held to the audience's reading size.
+    expect(checkDeck([slide([{ ...small, role: "slide number" }])], deckLimits("kids"))).toEqual([]);
   });
 
   it("flags a run of one layout, the sameness an audience feels", () => {

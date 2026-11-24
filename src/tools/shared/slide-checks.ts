@@ -6,6 +6,7 @@
  * the user the deck is done.
  */
 import type { Box, SlidePlan, TextElement } from "./slide-plan.js";
+import { deckLimits, type DeckLimits } from "./deck-purposes.js";
 
 /** WCAG relative luminance of a 6-digit hex color. */
 function luminance(hexColor: string): number {
@@ -48,18 +49,24 @@ const snippet = (el: TextElement) => {
   return s.length > 40 ? `${s.slice(0, 40)}…` : s;
 };
 
-/** Over this many words a slide is a document, not something to project. */
-export const MAX_WORDS_PER_SLIDE = 75;
-export const MAX_BULLETS = 6;
+/** Over this many words a slide is a document, not something to project:
+ *  the limit when the deck's purpose is not given (deck-purposes.ts). */
+export const MAX_WORDS_PER_SLIDE = deckLimits(undefined).maxWords;
 
-function slideFindings(plan: SlidePlan, n: number): string[] {
+/** Text that is slide furniture, not what the audience reads: no size rule. */
+const FURNITURE = new Set(["slide number", "footer", "contact", "stat note", "caption", "photo caption", "attribution"]);
+
+function slideFindings(plan: SlidePlan, n: number, limits: DeckLimits): string[] {
   const out: string[] = [];
   let words = 0;
   for (const el of plan.elements) {
     if (el.kind !== "text") continue;
     if (el.role !== "slide number" && el.role !== "footer") words += el.paragraphs.join(" ").split(/\s+/).filter(Boolean).length;
     if (el.fit.overflow) out.push(`slide ${n}: the ${el.role} ("${snippet(el)}") does not fit its space even at ${el.fit.size}pt; shorten it or split the slide`);
-    if (el.bullets && el.paragraphs.length > MAX_BULLETS) out.push(`slide ${n}: ${el.paragraphs.length} bullets; keep it to ${MAX_BULLETS} or fewer, or split the slide`);
+    if (el.bullets && el.paragraphs.length > limits.maxBullets) out.push(`slide ${n}: ${el.paragraphs.length} bullets; keep it to ${limits.maxBullets} or fewer${forWhom(limits)}, or split the slide`);
+    if (limits.minTextPt && !FURNITURE.has(el.role) && el.fit.size < limits.minTextPt) {
+      out.push(`slide ${n}: the ${el.role} had to shrink to ${el.fit.size}pt, too small${forWhom(limits)} (at least ${limits.minTextPt}pt); say less on this slide`);
+    }
     const ground = groundUnder(plan, el);
     if (ground) {
       const ratio = contrastRatio(el.color, ground);
@@ -67,7 +74,7 @@ function slideFindings(plan: SlidePlan, n: number): string[] {
       if (ratio < (large ? 3 : 4.5)) out.push(`slide ${n}: the ${el.role} is hard to read (contrast ${ratio.toFixed(1)}:1 on its background)`);
     }
   }
-  if (words > MAX_WORDS_PER_SLIDE) out.push(`slide ${n}: ${words} words is too much to read on a projected slide; cut it down or move the detail to speaker notes`);
+  if (words > limits.maxWords) out.push(`slide ${n}: ${words} words is too much${forWhom(limits)} (at most ${limits.maxWords}); cut it down or move the detail to speaker notes`);
   return out;
 }
 
@@ -85,7 +92,9 @@ function repetitionFindings(plans: SlidePlan[]): string[] {
   return out;
 }
 
-/** Every finding for a deck, in slide order. */
-export function checkDeck(plans: SlidePlan[]): string[] {
-  return [...plans.flatMap((p, i) => slideFindings(p, i + 1)), ...repetitionFindings(plans)];
+const forWhom = (limits: DeckLimits) => (limits.purpose ? ` for a ${limits.purpose} deck` : " for a projected slide");
+
+/** Every finding for a deck, in slide order, against its purpose's limits. */
+export function checkDeck(plans: SlidePlan[], limits: DeckLimits = deckLimits(undefined)): string[] {
+  return [...plans.flatMap((p, i) => slideFindings(p, i + 1, limits)), ...repetitionFindings(plans)];
 }

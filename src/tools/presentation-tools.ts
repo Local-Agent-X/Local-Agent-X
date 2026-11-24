@@ -11,6 +11,7 @@ import { buildDeck, SLIDE_LAYOUTS, type SlideSpec } from "./shared/pptx-render.j
 import type { SlideBrand } from "./shared/slide-layout-kit.js";
 import { previewDeck, type DeckPreview } from "./shared/deck-preview.js";
 import { chooseDeckDesign, designNote, noteDeckDesign, DESIGN_PARAM_SCHEMA } from "./shared/deck-design-choice.js";
+import { PURPOSE_PARAM_SCHEMA } from "./shared/deck-purposes.js";
 import { collapseFamily } from "./shared/collapse-family.js";
 import { SOURCES_DOC_SENTENCE, SOURCES_PARAM_SCHEMA } from "./shared/provenance-sources.js";
 import { outlineToSlides } from "./presentation-outline.js";
@@ -74,8 +75,9 @@ const SLIDE_SPEC_DOC =
   "A deck of only 'content' slides reads as a wall: use stats for numbers, a chart for trends, columns for comparisons. " +
   "Images: a web URL or workspace path (image_search finds URLs; pass each result's fallback URL as fallback_source). " +
   "Keep slides projectable: short titles, ≤5 bullets of one line, detail in notes. Text is fitted to its box automatically. " +
-  "Choose the `design` that fits the audience and purpose (an investor pitch, a legal briefing and a kids' lesson should " +
-  "not look alike); the parameter lists each design and what it suits.";
+  "Set `purpose` (pitch, sales, update, training, report, legal, kids, promo): it sets the deck's rules and the playbook " +
+  "you review the rendered slides against. Choose the `design` that fits the audience (an investor pitch, a legal " +
+  "briefing and a kids' lesson should not look alike); each parameter lists its options.";
 
 // ── presentation_create ──
 const presentationCreate: ToolDefinition = {
@@ -92,6 +94,7 @@ const presentationCreate: ToolDefinition = {
       images: IMAGES_PARAM_SCHEMA,
       theme: THEME_PARAM_SCHEMA,
       design: DESIGN_PARAM_SCHEMA,
+      purpose: PURPOSE_PARAM_SCHEMA,
       sources: SOURCES_PARAM_SCHEMA,
     },
   },
@@ -100,7 +103,7 @@ const presentationCreate: ToolDefinition = {
       const fp = resolvePath(args.file_path as string, sessionIdOf(args));
       const slides = JSON.parse(args.slides as string) as SlideSpec[];
       if (!slides.length) return err("slides array is empty");
-      const design = chooseDeckDesign(args.design);
+      const design = chooseDeckDesign(args.design, false, args.purpose);
       const theme = resolveOfficeTheme(args.theme, design.name);
       const specs = (args.images as ImageSpec[] | undefined) ?? [];
       const acquired = await acquireImages(specs);
@@ -120,9 +123,9 @@ const presentationCreate: ToolDefinition = {
       }
       const chartCount = slides.filter((s) => s.chart).length;
       noteDeckDesign(design.name);
-      const preview = await previewDeck(deck.plans, theme);
+      const preview = await previewDeck(deck.plans, theme, args.purpose);
       return withPreview(ok(`Created presentation with ${deck.plans.length} slide(s)${chartCount ? `, ${chartCount} chart(s)` : ""}: ${fp}${noteBlock(imageNotes)}\n${designNote(design, args.design)}\n\n${preview.text}`, {
-        file_path: fp, slide_count: deck.plans.length, image_count: embedded, chart_count: chartCount, slide_findings: preview.findings, design: design.name,
+        file_path: fp, slide_count: deck.plans.length, image_count: embedded, chart_count: chartCount, slide_findings: preview.findings, design: design.name, purpose: args.purpose ?? null,
       }), preview);
     } catch (e) { return err(`Failed to create presentation: ${(e as Error).message}`); }
   },
@@ -157,13 +160,14 @@ const presentationAddSlide: ToolDefinition = {
       images: IMAGES_PARAM_SCHEMA,
       theme: THEME_PARAM_SCHEMA,
       design: DESIGN_PARAM_SCHEMA,
+      purpose: PURPOSE_PARAM_SCHEMA,
     },
   },
   async execute(args) {
     try {
       const spec = JSON.parse(args.slide as string) as SlideSpec;
       const pos = (args.position as number) ?? 2;
-      const design = chooseDeckDesign(args.design, true);
+      const design = chooseDeckDesign(args.design, true, args.purpose);
       const theme = resolveOfficeTheme(args.theme, design.name);
       const specs = (args.images as ImageSpec[] | undefined) ?? [];
       const acquired = await acquireImages(specs);
@@ -184,9 +188,9 @@ const presentationAddSlide: ToolDefinition = {
         return err(allImagesFailedMsg(requested, imageNotes, outPath), { file_path: outPath, position: pos, image_count: 0, images_requested: requested });
       }
       noteDeckDesign(design.name);
-      const preview = await previewDeck(deck.plans, theme);
+      const preview = await previewDeck(deck.plans, theme, args.purpose);
       return withPreview(ok(`Created new slide file: ${outPath}${noteBlock(imageNotes)}\n${designNote(design, args.design)}\n\n${preview.text}`, {
-        file_path: outPath, position: pos, image_count: embedded, slide_findings: preview.findings, design: design.name,
+        file_path: outPath, position: pos, image_count: embedded, slide_findings: preview.findings, design: design.name, purpose: args.purpose ?? null,
       }), preview);
     } catch (e) { return err(`Failed to add slide: ${(e as Error).message}`); }
   },
@@ -212,6 +216,7 @@ const presentationFromOutline: ToolDefinition = {
       images: IMAGES_PARAM_SCHEMA,
       theme: THEME_PARAM_SCHEMA,
       design: DESIGN_PARAM_SCHEMA,
+      purpose: PURPOSE_PARAM_SCHEMA,
       sources: SOURCES_PARAM_SCHEMA,
     },
   },
@@ -220,7 +225,7 @@ const presentationFromOutline: ToolDefinition = {
       const fp = resolvePath(args.file_path as string, sessionIdOf(args));
       const slides = outlineToSlides(args.outline as string);
       if (!slides.length) return err("Outline produced no slides");
-      const design = chooseDeckDesign(args.design);
+      const design = chooseDeckDesign(args.design, false, args.purpose);
       const theme = resolveOfficeTheme(args.theme, design.name);
       const specs = (args.images as ImageSpec[] | undefined) ?? [];
       // A dead image URL must not cost the user the deck. Acquire, remember the
@@ -249,9 +254,9 @@ const presentationFromOutline: ToolDefinition = {
         return err(allImagesFailedMsg(specs.length, acquired.notes, fp), { file_path: fp, slide_count: slides.length, image_count: 0, images_requested: specs.length });
       }
       noteDeckDesign(design.name);
-      const preview = await previewDeck(deck.plans, theme);
+      const preview = await previewDeck(deck.plans, theme, args.purpose);
       return withPreview(ok(`Created presentation from outline with ${deck.plans.length} slide(s): ${fp}${noteBlock(acquired.notes)}\n${designNote(design, args.design)}\n\n${preview.text}`, {
-        file_path: fp, slide_count: deck.plans.length, image_count: acquired.images.length, slide_findings: preview.findings, design: design.name,
+        file_path: fp, slide_count: deck.plans.length, image_count: acquired.images.length, slide_findings: preview.findings, design: design.name, purpose: args.purpose ?? null,
       }), preview);
     } catch (e) { return err(`Failed from outline: ${(e as Error).message}`); }
   },
@@ -374,6 +379,7 @@ export const presentationTools: ToolDefinition[] = [
       images: IMAGES_PARAM_SCHEMA,
       theme: THEME_PARAM_SCHEMA,
       design: DESIGN_PARAM_SCHEMA,
+      purpose: PURPOSE_PARAM_SCHEMA,
       sources: SOURCES_PARAM_SCHEMA,
     },
     required: ["file_path"],

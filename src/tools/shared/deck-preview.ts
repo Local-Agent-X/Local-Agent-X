@@ -15,6 +15,7 @@ import type { OfficeTheme } from "./office-theme.js";
 import type { SlidePlan } from "./slide-plan.js";
 import { contactSheets } from "./slide-raster.js";
 import { checkDeck } from "./slide-checks.js";
+import { deckLimits, isDeckPurpose, loadPlaybook, playbookName } from "./deck-purposes.js";
 
 export interface PreviewImage { path: string; question: string; mime: string; b64: string }
 
@@ -26,10 +27,12 @@ export interface DeckPreview {
   findings: string[];
 }
 
-/** Render, check, and word the look-before-delivering step. A render failure
- *  never fails the deck: the file is written; the text says what is missing. */
-export async function previewDeck(plans: SlidePlan[], t: OfficeTheme): Promise<DeckPreview> {
-  const findings = checkDeck(plans);
+/** Render, check, and word the look-before-delivering step, against the
+ *  deck's purpose when it has one: its limits in the check, its playbook in
+ *  the review. A render failure never fails the deck: the file is written;
+ *  the text says what is missing. */
+export async function previewDeck(plans: SlidePlan[], t: OfficeTheme, purpose?: unknown): Promise<DeckPreview> {
+  const findings = checkDeck(plans, deckLimits(purpose));
   const lines: string[] = [];
   lines.push(findings.length
     ? `Slide check found ${findings.length} problem(s):\n${findings.map((f) => `- ${f}`).join("\n")}`
@@ -56,6 +59,12 @@ export async function previewDeck(plans: SlidePlan[], t: OfficeTheme): Promise<D
     );
   } catch (e) {
     lines.push(`Slides could not be rendered for review (${(e as Error).message}); the deck itself was written.`);
+  }
+  if (isDeckPurpose(purpose)) {
+    const playbook = await loadPlaybook(purpose);
+    if (playbook) lines.push(`\nReview the slides against the ${purpose} playbook (${playbookName(purpose)}):\n${playbook}`);
+  } else {
+    lines.push("No purpose was given; set `purpose` so the deck is held to the right rules and playbook.");
   }
   return { text: lines.join("\n"), images, findings };
 }

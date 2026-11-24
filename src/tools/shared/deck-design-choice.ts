@@ -12,6 +12,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "../../lax-data-dir.js";
 import { OFFICE_DESIGNS, OFFICE_DESIGN_NAMES, isOfficeDesignName, type OfficeDesignName } from "./office-designs.js";
+import { DECK_PURPOSES, isDeckPurpose } from "./deck-purposes.js";
 
 /** Designs that suit most audiences: the ones a deck gets when none is
  *  named. The specialist ones (legal, kids, hospitality, creative, launch)
@@ -47,13 +48,18 @@ export interface DeckDesignChoice {
   by: "named" | "continued" | "rotation";
 }
 
-/** The design for a new deck, or (`extending`) for a slide joining the last one. */
-export function chooseDeckDesign(requested: unknown, extending = false): DeckDesignChoice {
+/** The design for a new deck, or (`extending`) for a slide joining the last
+ *  one. Unnamed, it rotates through the designs that suit the deck's purpose
+ *  (a legal deck never lands on the kids' design), or the general ones. */
+export function chooseDeckDesign(requested: unknown, extending = false, purpose?: unknown): DeckDesignChoice {
   if (isOfficeDesignName(requested)) return { name: requested, by: "named" };
   const recent = readRecent();
   if (extending && recent[0]) return { name: recent[0], by: "continued" };
-  const unused = GENERAL_DESIGNS.find((n) => !recent.includes(n));
-  const oldest = [...GENERAL_DESIGNS].sort((a, b) => recent.indexOf(b) - recent.indexOf(a))[0];
+  const pool: readonly OfficeDesignName[] = isDeckPurpose(purpose) ? DECK_PURPOSES[purpose].designs : GENERAL_DESIGNS;
+  const unused = pool.find((n) => !recent.includes(n));
+  // Never used ranks oldest; otherwise the furthest back in the recent list.
+  const age = (n: OfficeDesignName) => (recent.includes(n) ? recent.indexOf(n) : Infinity);
+  const oldest = [...pool].sort((a, b) => age(b) - age(a))[0];
   return { name: unused ?? oldest, by: "rotation" };
 }
 

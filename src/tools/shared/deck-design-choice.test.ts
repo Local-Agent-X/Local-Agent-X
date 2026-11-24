@@ -36,6 +36,13 @@ describe("chooseDeckDesign", () => {
     expect(GENERAL_DESIGNS).toContain(chooseDeckDesign(undefined).name);
   });
 
+  it("rotates an unnamed deck through the designs its purpose suits", () => {
+    const first = chooseDeckDesign(undefined, false, "legal");
+    expect(first).toEqual({ name: "ledger", by: "rotation" });
+    noteDeckDesign(first.name);
+    expect(chooseDeckDesign(undefined, false, "legal").name).toBe("graphite");
+  });
+
   it("gives a slide added to a deck that deck's design", () => {
     noteDeckDesign("evergreen");
     expect(chooseDeckDesign(undefined, true)).toEqual({ name: "evergreen", by: "continued" });

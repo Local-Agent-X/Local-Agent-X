@@ -47,6 +47,17 @@ describe("presentation create shows the agent its deck", () => {
     expect(r.content).toMatch(/Design: ledger\./);
   });
 
+  it("hands the agent the purpose's playbook to review the slides against", async () => {
+    const r = await run({
+      action: "create", file_path: join(dir, "pitch.pptx"), purpose: "pitch",
+      slides: JSON.stringify([{ layout: "title", title: "Acme" }, { layout: "closing", title: "Raising $1M" }]),
+    });
+    expect(r.content).toMatch(/Review the slides against the pitch playbook \(deck-pitch\)/);
+    expect(r.content).toMatch(/Pitch deck playbook/);
+    expect(r.metadata?.purpose).toBe("pitch");
+    expect(["midnight", "signal", "harbor"]).toContain(r.metadata?.design);
+  });
+
   it("names the problems it found, so the agent fixes them before replying", async () => {
     const r = await run({
       action: "create", file_path: join(dir, "samey.pptx"),

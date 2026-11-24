@@ -97,6 +97,7 @@ import {
 import {
   buildVerifyGate,
   designVerifyGate,
+  figuresVerifyGate,
   renderVerifyGate,
   regressionAuditGate,
   specAuditGate,
@@ -562,7 +563,7 @@ describe("E2 — the merged whole", () => {
   it("the table the loop walks is assembled from BOTH gate modules, by identity", () => {
     expect(COMPLETION_GATE_ORDER).toEqual([
       "render-verify", "build-verify", "spec-probe", "spec-audit", "regression-audit", "design-verify",
-      "unresolved-tool-intent", "failed-call", "earned-done", "late-inject", "framework-serve",
+      "figures-verify", "unresolved-tool-intent", "failed-call", "earned-done", "late-inject", "framework-serve",
     ]);
     const byName = new Map(COMPLETION_GATES.map(g => [g.name, g]));
     expect(byName.get("render-verify")).toBe(renderVerifyGate);
@@ -571,6 +572,7 @@ describe("E2 — the merged whole", () => {
     expect(byName.get("spec-audit")).toBe(specAuditGate);
     expect(byName.get("regression-audit")).toBe(regressionAuditGate);
     expect(byName.get("design-verify")).toBe(designVerifyGate);
+    expect(byName.get("figures-verify")).toBe(figuresVerifyGate);
     // The contract module is the leaf both sides share: the same CONTINUE
     // value and the same fire factory, or the "one table" claim is cosmetic.
     expect(CONTINUE.reopen).toBe(false);

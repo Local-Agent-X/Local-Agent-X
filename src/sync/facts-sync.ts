@@ -141,6 +141,39 @@ export function exportFactsForSync(dataDir: string, syncDir: string): { exported
   }
 }
 
+interface LocalFact { id: number; last_updated: number; valid_to: number | null }
+
+/**
+ * This machine's facts by identity (kind, content, entities), read once.
+ * Several rows can share one identity (a fact and the copy that replaced it).
+ */
+function localFactsByIdentity(db: ReturnType<typeof openDatabaseSafe>): Map<string, LocalFact[]> {
+  const rows = db.prepare("SELECT id, kind, content, entities, last_updated, valid_to FROM facts ORDER BY id")
+    .all() as Array<LocalFact & { kind: string; content: string; entities: string }>;
+  const byIdentity = new Map<string, LocalFact[]>();
+  for (const row of rows) {
+    const key = identityKey(row);
+    const fact = { id: row.id, last_updated: row.last_updated, valid_to: row.valid_to };
+    const same = byIdentity.get(key);
+    if (same) same.push(fact); else byIdentity.set(key, [fact]);
+  }
+  return byIdentity;
+}
+
+/** The row an import merges into: the one still valid, then the most recently
+ *  updated. The order the per-fact query used, applied to rows as they stand
+ *  now, so an update made earlier in the same import is seen. */
+function mergeTarget(rows: LocalFact[] | undefined): LocalFact | undefined {
+  let best: LocalFact | undefined;
+  for (const row of rows ?? []) {
+    if (!best) { best = row; continue; }
+    const rowLive = row.valid_to === null;
+    const bestLive = best.valid_to === null;
+    if (rowLive !== bestLive ? rowLive : row.last_updated > best.last_updated) best = row;
+  }
+  return best;
+}
+
 export function importFactsFromSync(dataDir: string, syncDir: string): { inserted: number; updated: number; skipped: number } {
   const inPath = join(syncDir, FACTS_FILENAME);
   if (!existsSync(inPath)) return { inserted: 0, updated: 0, skipped: 0 };
@@ -176,11 +209,10 @@ export function importFactsFromSync(dataDir: string, syncDir: string): { inserte
     const idForKey = new Map<string, number>();
 
     const txn = db.transaction(() => {
-      const findStmt = db.prepare(
-        `SELECT id, last_updated, valid_to, invalidated_by, invalidation_reason
-         FROM facts WHERE kind = ? AND content = ? AND entities = ?
-         ORDER BY (valid_to IS NULL) DESC, last_updated DESC LIMIT 1`
-      );
+      // This machine's fact for each identity, read once. A lookup per synced
+      // fact scanned the whole table each time (no index covers the three
+      // columns), so an import of N facts cost N scans: seconds at every start.
+      const local = localFactsByIdentity(db);
       const insertStmt = db.prepare(
         `INSERT INTO facts (kind, content, entities, confidence, evidence_for, evidence_against,
                             source_file, source_line, timestamp, last_updated,
@@ -195,9 +227,7 @@ export function importFactsFromSync(dataDir: string, syncDir: string): { inserte
 
       for (const r of remote) {
         const key = identityKey(r);
-        const existing = findStmt.get(r.kind, r.content, r.entities) as
-          | { id: number; last_updated: number; valid_to: number | null; invalidation_reason: string | null }
-          | undefined;
+        const existing = mergeTarget(local.get(key));
 
         if (!existing) {
           // Erased here at the user's request: another machine's copy is not
@@ -214,6 +244,9 @@ export function importFactsFromSync(dataDir: string, syncDir: string): { inserte
             );
             const newId = res.lastInsertRowid as number;
             idForKey.set(key, newId);
+            // A later line with the same identity must find this row, as a
+            // query would have.
+            local.set(key, [...(local.get(key) ?? []), { id: newId, last_updated: r.last_updated, valid_to: r.valid_to ?? null }]);
             // No trigger writes a fact's search row, mentions or relation
             // edges: without them it is invisible to search, name recall and
             // graph traversal on this machine. The same call a locally
@@ -240,6 +273,8 @@ export function importFactsFromSync(dataDir: string, syncDir: string): { inserte
         const validityDiffers = (existing.valid_to ?? null) !== (r.valid_to ?? null);
         if (remoteNewer && validityDiffers) {
           updateStmt.run(r.valid_to, r.invalidation_reason, r.last_updated, existing.id, r.last_updated);
+          existing.valid_to = r.valid_to ?? null;
+          existing.last_updated = r.last_updated;
           updated++;
         } else {
           skipped++;

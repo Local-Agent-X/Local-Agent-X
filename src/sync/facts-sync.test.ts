@@ -98,3 +98,44 @@ describe("a fact synced from another machine", () => {
     expect(importFactsFromSync(join(root, "data"), join(root, "sync"))).toMatchObject({ inserted: 0, skipped: 1 });
   });
 });
+
+// The import reads this machine's facts once and matches each synced fact
+// against them, where it used to query the table per fact. What it does with
+// each fact must not change.
+describe("importing facts this machine already holds", () => {
+  const rowsOf = (): Array<{ content: string; valid_to: number | null; last_updated: number }> => {
+    const db = memory["db"] as import("better-sqlite3").Database;
+    return db.prepare("SELECT content, valid_to, last_updated FROM facts ORDER BY id").all() as Array<{ content: string; valid_to: number | null; last_updated: number }>;
+  };
+  const importOnce = (lines: object[]): { inserted: number; updated: number; skipped: number } => {
+    writeFileSync(join(root, "sync", "facts.jsonl"), lines.map((l) => JSON.stringify(l)).join("\n") + "\n");
+    memory.close();
+    const result = importFactsFromSync(join(root, "data"), join(root, "sync"));
+    memory = new MemoryIndex(join(root, "data"), { minScore: -1 });
+    return result;
+  };
+
+  it("skips them on a second import, adding no row", () => {
+    const other = { ...remoteFact, content: "The office closes at six on Fridays", entities: "[]" };
+    expect(importOnce([remoteFact, other])).toMatchObject({ inserted: 2 });
+    expect(importOnce([remoteFact, other])).toEqual({ inserted: 0, updated: 0, skipped: 2 });
+    expect(rowsOf()).toHaveLength(2);
+  });
+
+  it("merges a fact listed twice in one file into the row the first line made", () => {
+    const ended = { ...remoteFact, valid_to: 1_700_000_500_000, invalidation_reason: "superseded", last_updated: 1_700_000_500_000 };
+    const result = importOnce([remoteFact, ended]);
+    expect(result).toEqual({ inserted: 1, updated: 1, skipped: 0 });
+    expect(rowsOf()).toEqual([{ content: remoteFact.content, valid_to: 1_700_000_500_000, last_updated: 1_700_000_500_000 }]);
+  });
+
+  it("ends a fact here when a newer copy elsewhere ended it, and leaves it when the copy is older", () => {
+    importOnce([remoteFact]);
+    const endedLater = { ...remoteFact, valid_to: 1_700_000_900_000, invalidation_reason: "no longer true", last_updated: 1_700_000_900_000 };
+    expect(importOnce([endedLater])).toEqual({ inserted: 0, updated: 1, skipped: 0 });
+    expect(rowsOf()[0]).toMatchObject({ valid_to: 1_700_000_900_000 });
+    const olderAndLive = { ...remoteFact, last_updated: 1_600_000_000_000 };
+    expect(importOnce([olderAndLive])).toEqual({ inserted: 0, updated: 0, skipped: 1 });
+    expect(rowsOf()[0]).toMatchObject({ valid_to: 1_700_000_900_000 });
+  });
+});

@@ -37,6 +37,7 @@ import { anythingSetAside, createSetAsideLedger, endWithSetAside, holdBackWaitin
 import { isSetAsideCase, setChunkAsideInTree } from "./tree-set-aside.js";
 import { isPhaseGatePause } from "../chunk-review/index.js";
 import { handleAction } from "./handle-action.js";
+import { createPhasePauseTracker } from "./phase-gate-pause.js";
 import { runParallelWaves } from "./parallel-waves.js";
 
 /**
@@ -140,12 +141,12 @@ export async function runBuildLoop(opts: LoopOptions): Promise<LoopResult> {
  * below; no launch spec → the halt stands, for manual scoring.
  *
  * A phase with a chunk set aside or waiting cannot be scored yet: its closing
- * chunk lands like any accepted chunk, as on the parallel path
- * (phase-gate-pause.ts), and the run ends halted on what was set aside.
+ * chunk lands like any accepted chunk and the phase owes its gate (`gateOwed`),
+ * which the run that lands the phase's last chunk scores (phase-gate-pause.ts).
  */
 async function scorePhaseIfPaused(a: {
   opts: LoopOptions; chunk: ParsedChunk; totalChunks: number; emit: EmitFn; ledger: SetAsideLedger; attempt: ChunkAttemptResult;
-}): Promise<ChunkAttemptResult> {
+}): Promise<ChunkAttemptResult & { gateOwed?: boolean }> {
   const { opts, chunk, totalChunks, emit, attempt } = a;
   if (!isPhaseGatePause(attempt.finalOutcome)) return attempt;
   const notLanded = [...a.ledger.setAside, ...a.ledger.waiting].map((c) => c.chunk)
@@ -155,7 +156,7 @@ async function scorePhaseIfPaused(a: {
       type: "review-result", chunkNumber: chunk.number, totalChunks,
       message: `${chunk.phase}: not scored at its gate, since chunk(s) ${notLanded.join(", ")} of it did not land this run. Chunk ${chunk.number} lands unscored.`,
     });
-    return { finalOutcome: attempt.finalOutcome, finalAction: "proceed" };
+    return { finalOutcome: attempt.finalOutcome, finalAction: "proceed", gateOwed: true };
   }
   const recovery = await attemptPhaseGateScoring(opts, chunk, emit, totalChunks);
   if (recovery.kind === "recovered") {
@@ -192,6 +193,11 @@ async function runChunksInOrder(run: {
   const ledger = createSetAsideLedger();
   const landedThisRun: number[] = [];
   const endSetAside = (): LoopResult => endWithSetAside(ledger, landedThisRun, { chunksCommitted, totalChunks, emit, events, outcomes });
+  // Phases an earlier run left owing their gate are scored here once their last chunk lands.
+  const phasePauses = createPhasePauseTracker({
+    projectDir: opts.projectDir, planChunks: chunks,
+    landedBefore: [...chunks.slice(0, startIdx).map((c) => c.number), ...alreadyLanded],
+  });
 
   for (let i = startIdx; i < endIdx; i++) {
     if (opts.signal?.aborted) {
@@ -223,8 +229,7 @@ async function runChunksInOrder(run: {
       opts, chunk, totalChunks, emit, preSha: preSha.value, priorOutcomes: outcomes,
       ...(carryOver ? { carryOver } : {}),
     });
-    const judged = await scorePhaseIfPaused({ opts, chunk, totalChunks, emit, ledger, attempt });
-    const { finalOutcome, finalAction } = judged;
+    const { finalOutcome, finalAction, gateOwed } = await scorePhaseIfPaused({ opts, chunk, totalChunks, emit, ledger, attempt });
 
     outcomes.push({ chunkNumber: chunk.number, outcome: finalOutcome, action: finalAction });
 
@@ -256,6 +261,9 @@ async function runChunksInOrder(run: {
     chunksCommitted = handled.chunksCommitted;
     landedThisRun.push(chunk.number);
     clearSetAside(opts.projectDir, chunk.number);
+    phasePauses.landed(chunk, finalOutcome, !gateOwed);
+    const phase = await phasePauses.scoreFinished({ opts, totalChunks, emit, events, outcomes }, chunksCommitted);
+    if (phase.kind === "halt") return phase.result;
   }
 
   if (anythingSetAside(ledger)) return endSetAside();

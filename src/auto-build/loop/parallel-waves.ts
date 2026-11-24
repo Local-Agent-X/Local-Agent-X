@@ -143,7 +143,8 @@ export async function runParallelWaves(input: ParallelWavesContext): Promise<Loo
     emit({ type: "complete", chunkNumber: last, totalChunks, message: "Loop complete (parallel): every chunk in scope had already landed." });
     return { status: "complete", lastChunk: last, chunksCommitted: 0, haltReason: "", outcomes, events };
   }
-  const ctx: RunContext = { ...input, chunks, phasePauses: createPhasePauseTracker(chunks), ledger: createSetAsideLedger(), landedThisRun: [], sharedMerge: createSharedFileMerge() };
+  const phasePauses = createPhasePauseTracker({ projectDir: opts.projectDir, planChunks: opts.plan.chunks, landedBefore });
+  const ctx: RunContext = { ...input, chunks, phasePauses, ledger: createSetAsideLedger(), landedThisRun: [], sharedMerge: createSharedFileMerge() };
   const waves = planWaves(chunks, landedBefore);
   let chunksCommitted = 0;
 

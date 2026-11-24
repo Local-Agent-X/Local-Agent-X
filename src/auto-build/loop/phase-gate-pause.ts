@@ -1,5 +1,5 @@
 /**
- * Phase verification gates on the parallel path.
+ * A phase's verification gate when its chunks do not land in order.
  *
  * The chunk that closes a phase is reviewed, built and judged like any other;
  * its review then pauses at the phase's gate (chunk-review/index.ts
@@ -7,14 +7,21 @@
  * In parallel the closing chunk is the last by NUMBER, not by time: a sibling
  * of the same phase may still be building in another worktree. So here the
  * paused chunk is merged like any accepted chunk, and the phase is scored on
- * the merged base once every chunk of it in this run has landed, through the
- * serial path's own scoring and recovery (loop-phase-gate.ts).
+ * the merged base once every chunk of it has landed, through the serial
+ * path's own scoring and recovery (loop-phase-gate.ts).
+ *
+ * "Every chunk" can take more than one run: a chunk of the phase that was set
+ * aside lands in a later one, which never builds the closing chunk again. So a
+ * phase that lands its closing chunk unscored is put on record
+ * (failure-recovery.ts owedPhaseGates), and whichever run lands the phase's
+ * last missing chunk scores it. Both paths: the serial loop records a phase it
+ * could not score for the same reason (run.ts).
  */
 
 import type { ParsedChunk } from "../plan-parser.js";
 import { isPhaseGatePause, type ChunkReviewOutcome } from "../chunk-review/index.js";
 import { attemptPhaseGateScoring } from "../loop-phase-gate.js";
-import { appendHalt } from "../failure-recovery.js";
+import { appendHalt, clearOwedPhaseGate, owedPhaseGates, recordOwedPhaseGate } from "../failure-recovery.js";
 import type { EmitFn, LoopEvent, LoopOptions, LoopResult } from "./types.js";
 
 export interface PhasePauseScope {
@@ -28,29 +35,48 @@ export interface PhasePauseScope {
 export type PhaseScoreResult = { kind: "ok" } | { kind: "halt"; result: LoopResult };
 
 export interface PhasePauseTracker {
-  /** A chunk merged into base; remember its phase if its review paused at the gate. */
-  landed(chunk: ParsedChunk, outcome: ChunkReviewOutcome): void;
-  /** Score every paused phase whose chunks in this run have all landed. */
+  /** A chunk landed in the base. When its review paused at its phase's gate
+   *  and the phase was not scored there (`scored` false, the default), the
+   *  phase owes its gate from now on. */
+  landed(chunk: ParsedChunk, outcome: ChunkReviewOutcome, scored?: boolean): void;
+  /** Score every phase that owes its gate and whose chunks have all landed. */
   scoreFinished(scope: PhasePauseScope, chunksCommitted: number): Promise<PhaseScoreResult>;
 }
 
-/** `runChunks` is the run's window: a phase's chunks outside it are not
- *  waited for (an earlier run built them, or a later one will). */
-export function createPhasePauseTracker(runChunks: ParsedChunk[]): PhasePauseTracker {
-  const landedNumbers = new Set<number>();
+export interface PhasePauseInput {
+  projectDir: string;
+  /** Every chunk of the plan: a phase is finished when all of its chunks landed. */
+  planChunks: ParsedChunk[];
+  /** Chunks that landed before this run: the ones before its window, and the
+   *  ones inside it an earlier run landed past a chunk it set aside. */
+  landedBefore: number[];
+}
+
+export function createPhasePauseTracker(input: PhasePauseInput): PhasePauseTracker {
+  const { projectDir, planChunks } = input;
+  const landedNumbers = new Set<number>(input.landedBefore);
   const paused = new Map<string, { chunk: ParsedChunk; reasoning: string }>();
+  // Phases an earlier run left owing their gate.
+  for (const [phase, owed] of Object.entries(owedPhaseGates(projectDir))) {
+    const chunk = planChunks.find((c) => c.number === owed.chunk && c.phase === phase);
+    if (chunk) paused.set(phase, { chunk, reasoning: owed.reasoning });
+  }
 
   return {
-    landed(chunk, outcome) {
+    landed(chunk, outcome, scored = false) {
       landedNumbers.add(chunk.number);
-      if (isPhaseGatePause(outcome)) paused.set(chunk.phase, { chunk, reasoning: outcome.reasoning });
+      if (scored || !isPhaseGatePause(outcome)) return;
+      paused.set(chunk.phase, { chunk, reasoning: outcome.reasoning });
+      recordOwedPhaseGate(projectDir, chunk.phase, { chunk: chunk.number, reasoning: outcome.reasoning });
     },
 
     async scoreFinished(scope, chunksCommitted) {
       for (const [phase, { chunk, reasoning }] of [...paused]) {
-        const inRun = runChunks.filter(c => c.phase === phase);
-        if (!inRun.every(c => landedNumbers.has(c.number))) continue;
+        const ofPhase = planChunks.filter(c => c.phase === phase);
+        if (!ofPhase.every(c => landedNumbers.has(c.number))) continue;
         paused.delete(phase);
+        // The gate is reached now, whatever it says: scored, or left to a person.
+        clearOwedPhaseGate(projectDir, phase);
 
         const rec = await attemptPhaseGateScoring(scope.opts, chunk, scope.emit, scope.totalChunks);
         if (rec.kind === "recovered") {

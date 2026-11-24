@@ -49,10 +49,27 @@ export interface SetAsideRecord {
   findings: string[];
 }
 
+/**
+ * A phase whose closing chunk landed while the phase's verification gate was
+ * still unscored, because another chunk of the phase had not landed (it was
+ * set aside). The gate is only reached through the closing chunk's review, so
+ * a later run that builds just the set-aside chunk never came back to it and
+ * the phase went unscored for good. The record brings it back: the phase is
+ * scored once all its chunks have landed (loop/phase-gate-pause.ts).
+ */
+export interface OwedPhaseGate {
+  /** The chunk that closes the phase: the one its gate is scored for. */
+  chunk: number;
+  /** The gate's own words from that chunk's review. */
+  reasoning: string;
+}
+
 export interface BuildState {
   haltHistory: HaltRecord[];
   /** Keyed by chunk number. */
   setAside?: Record<string, SetAsideRecord>;
+  /** Keyed by phase name. */
+  owedPhaseGates?: Record<string, OwedPhaseGate>;
 }
 
 const MAX_CARRIED_FINDINGS = 8;
@@ -70,7 +87,8 @@ export function readBuildState(projectDir: string): BuildState {
     const raw = JSON.parse(readFileSync(p, "utf-8")) as Partial<BuildState>;
     const history = Array.isArray(raw.haltHistory) ? raw.haltHistory : [];
     const setAside = raw.setAside && typeof raw.setAside === "object" ? raw.setAside : undefined;
-    return { haltHistory: history.slice(-MAX_HISTORY), ...(setAside ? { setAside } : {}) };
+    const owedPhaseGates = raw.owedPhaseGates && typeof raw.owedPhaseGates === "object" ? raw.owedPhaseGates : undefined;
+    return { haltHistory: history.slice(-MAX_HISTORY), ...(setAside ? { setAside } : {}), ...(owedPhaseGates ? { owedPhaseGates } : {}) };
   } catch {
     return { haltHistory: [] };
   }
@@ -107,6 +125,27 @@ export function clearSetAside(projectDir: string, chunk: number): void {
   if (!state.setAside?.[chunk]) return;
   const { [chunk]: _landed, ...rest } = state.setAside;
   state.setAside = rest;
+  writeBuildState(projectDir, state);
+}
+
+/** Record that `phase` still owes its gate: its closing chunk landed unscored. */
+export function recordOwedPhaseGate(projectDir: string, phase: string, gate: OwedPhaseGate): void {
+  const state = readBuildState(projectDir);
+  state.owedPhaseGates = { ...state.owedPhaseGates, [phase]: { chunk: gate.chunk, reasoning: gate.reasoning.slice(0, CARRIED_FINDING_CHARS) } };
+  writeBuildState(projectDir, state);
+}
+
+/** The phases that still owe their gate, by name. */
+export function owedPhaseGates(projectDir: string): Record<string, OwedPhaseGate> {
+  return readBuildState(projectDir).owedPhaseGates ?? {};
+}
+
+/** `phase`'s gate was reached: scored, or handed to a person. */
+export function clearOwedPhaseGate(projectDir: string, phase: string): void {
+  const state = readBuildState(projectDir);
+  if (!state.owedPhaseGates?.[phase]) return;
+  const { [phase]: _reached, ...rest } = state.owedPhaseGates;
+  state.owedPhaseGates = rest;
   writeBuildState(projectDir, state);
 }
 

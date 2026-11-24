@@ -13,9 +13,13 @@ function normalizeOutline(raw: string): string {
     .replace(/([.!?])\s+([A-Z])/g, "$1\n$2");
 }
 
-export function outlineToSlides(md: string): SlideSpec[] {
-  const slides: SlideSpec[] = [];
-  let cur: SlideSpec | null = null;
+/** An outline makes three kinds of slide; the template action lays only
+ *  these on a template's own layouts. */
+export type OutlineSlide = Pick<SlideSpec, "title" | "body" | "bullets"> & { layout: "title" | "section" | "content" };
+
+export function outlineToSlides(md: string): OutlineSlide[] {
+  const slides: OutlineSlide[] = [];
+  let cur: OutlineSlide | null = null;
   let first = true;
   for (const raw of normalizeOutline(md).split("\n")) {
     const line = raw.trimEnd();

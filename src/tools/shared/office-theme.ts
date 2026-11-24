@@ -31,6 +31,13 @@ export interface OfficeTheme {
     band: string;        // banded table/row fill
     border: string;      // table/cell borders
     muted: string;       // captions, footers, subtitles
+    // Slides only (Word/Excel/PDF never read these): the ground a slide is
+    // painted on. Every slide was white before, so a cover was a memo page.
+    slideBackground: string; // content slides
+    slideDark: string;       // cover, section, closing, photo slides
+    onDark: string;          // text on slideDark / accent grounds
+    onDarkMuted: string;     // secondary text on dark grounds
+    highlight: string;       // the second accent: rules and marks on dark
   };
   doc: {
     titleSize: number; h1Size: number; h2Size: number; h3Size: number;
@@ -82,6 +89,11 @@ export const DEFAULT_OFFICE_THEME: OfficeTheme = {
     band: "F2F5F9",
     border: "D9DEE5",
     muted: "6B7280",
+    slideBackground: "FFFFFF",
+    slideDark: "0F1B2D",
+    onDark: "FFFFFF",
+    onDarkMuted: "B6C2D3",
+    highlight: "C9A227",
   },
   doc: { titleSize: 26, h1Size: 16, h2Size: 13, h3Size: 11.5, bodySize: 11, lineSpacing: 1.15 },
   ppt: { titleSlideSize: 36, sectionSize: 30, titleSize: 24, bodySize: 16, bulletSize: 16, subtitleSize: 14 },

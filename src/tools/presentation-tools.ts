@@ -7,7 +7,9 @@ import { acquireImages, AllImagesFailedError, IMAGES_PARAM_SCHEMA, type AcquireO
 import { resolveAgentPath as resolvePath, sessionIdOf } from "../workspace/paths.js";
 import { resolveOfficeTheme, brandAuthor, brandFooter, THEME_PARAM_SCHEMA } from "./shared/office-theme.js";
 import { acquireBrandLogo } from "./shared/office-brand.js";
-import { applySlide, appendImageSlides, type SlideSpec, type SlideBrand } from "./shared/pptx-render.js";
+import { buildDeck, SLIDE_LAYOUTS, type SlideSpec } from "./shared/pptx-render.js";
+import type { SlideBrand } from "./shared/slide-layout-kit.js";
+import { previewDeck, type DeckPreview } from "./shared/deck-preview.js";
 import { collapseFamily } from "./shared/collapse-family.js";
 import { SOURCES_DOC_SENTENCE, SOURCES_PARAM_SCHEMA } from "./shared/provenance-sources.js";
 import { outlineToSlides } from "./presentation-outline.js";
@@ -48,21 +50,29 @@ function ok(content: string, metadata?: Record<string, unknown>): ToolResult {
 }
 function err(content: string, metadata?: Record<string, unknown>): ToolResult { return { content, isError: true, metadata }; }
 
+/** The rendered slides ride the result's `_images` envelope, so the model
+ *  sees them with the result text, in the same call. */
+function withPreview(result: ToolResult, preview: DeckPreview): ToolResult {
+  return preview.images.length ? { ...result, _images: preview.images } : result;
+}
+
 function ensureDir(p: string): void { mkdirSync(dirname(p), { recursive: true }); }
 
-// Shared guidance appended to the create-tool descriptions so the model builds
-// VISUAL slides by default instead of walls of text.
+// Shared guidance appended to the create-tool descriptions: what each layout
+// is for, so a deck is built from the right pieces instead of one layout.
 const SLIDE_SPEC_DOC =
-  "Each slide spec: {title?, layout?: 'title'|'section'|'content'|'blank', " +
-  "body?, bullets?: string[], notes?, image?: {source, fallback_source?, caption?}, " +
-  "chart?: {type:'bar'|'line'|'pie'|'doughnut'|'area', categories?: string[], " +
-  "series: [{name, values: number[]}], title?}}. " +
-  "VISUAL BY DEFAULT: EVERY content slide should carry an `image` or a `chart` — a slide that is " +
-  "only text is the exception (title/section dividers), not the norm. When a slide presents numbers, " +
-  "comparisons, or trends, use a `chart` with the actual data; otherwise give it an `image` " +
-  "(a web URL or workspace file path — use image_search to find URLs, and pass each result's " +
-  "fallback URL as fallback_source). Run enough image searches to cover all slides. " +
-  "Keep bullets short (≤5 per slide, one line each). image+text or chart+text auto-lay side by side.";
+  `Each slide spec: {layout?: ${SLIDE_LAYOUTS.map((l) => `'${l}'`).join("|")}, title?, body?, bullets?: string[], notes?, ` +
+  "image?: {source, fallback_source?, caption?}, chart?: {type:'bar'|'line'|'pie'|'doughnut'|'area', categories?: string[], " +
+  "series: [{name, values: number[]}], title?}, stats?: [{value, label}], columns?: [{heading, body?, bullets?}], " +
+  "steps?: [{label, text?}], attribution?}. " +
+  "LAYOUTS — pick the one that fits what the slide says, and mix them: 'title' the cover (title; body = tagline, then a blank " +
+  "line and contact lines; an image fills its side panel); 'section' a divider; 'content' text with a photo or chart beside it " +
+  "(sides alternate automatically); 'stats' 1-4 big numbers; 'columns' 2-3 side-by-side cards (comparisons, options, plans); " +
+  "'timeline' 2-6 steps (roadmap, process, history); 'quote' a testimonial (body + attribution); 'statement' the one sentence " +
+  "the audience must remember; 'image' a full-bleed photo with title and caption; 'closing' the ask, next steps or contact. " +
+  "A deck of only 'content' slides reads as a wall: use stats for numbers, a chart for trends, columns for comparisons. " +
+  "Images: a web URL or workspace path (image_search finds URLs; pass each result's fallback URL as fallback_source). " +
+  "Keep slides projectable: short titles, ≤5 bullets of one line, detail in notes. Text is fitted to its box automatically.";
 
 // ── presentation_create ──
 const presentationCreate: ToolDefinition = {
@@ -95,24 +105,19 @@ const presentationCreate: ToolDefinition = {
       if (args.title) pptx.title = args.title as string;
       pptx.author = (args.author as string) || brandAuthor(theme) || "";
       pptx.layout = "LAYOUT_WIDE";
-      const imageNotes = [...acquired.notes];
-      let slideImagesPlaced = 0;
-      for (const s of slides) {
-        const r = await applySlide(pptx, s, theme, brand);
-        if (r.imagePlaced) slideImagesPlaced++;
-        imageNotes.push(...r.notes);
-      }
-      appendImageSlides(pptx, acquired.images, theme);
+      const deck = await buildDeck(pptx, slides, acquired.images, theme, brand);
+      const imageNotes = [...acquired.notes, ...deck.notes];
       const requested = slides.filter((s) => s.image).length + specs.length;
-      const embedded = slideImagesPlaced + acquired.images.length;
+      const embedded = deck.imagesPlaced + acquired.images.length;
       await pptx.writeFile({ fileName: fp });
       if (requested > 0 && embedded === 0) {
         return err(allImagesFailedMsg(requested, imageNotes, fp), { file_path: fp, slide_count: slides.length, image_count: 0, images_requested: requested });
       }
       const chartCount = slides.filter((s) => s.chart).length;
-      return ok(`Created presentation with ${slides.length + acquired.images.length} slide(s)${chartCount ? `, ${chartCount} chart(s)` : ""}: ${fp}${noteBlock(imageNotes)}`, {
-        file_path: fp, slide_count: slides.length + acquired.images.length, image_count: embedded, chart_count: chartCount,
-      });
+      const preview = await previewDeck(deck.plans, theme);
+      return withPreview(ok(`Created presentation with ${deck.plans.length} slide(s)${chartCount ? `, ${chartCount} chart(s)` : ""}: ${fp}${noteBlock(imageNotes)}\n\n${preview.text}`, {
+        file_path: fp, slide_count: deck.plans.length, image_count: embedded, chart_count: chartCount, slide_findings: preview.findings,
+      }), preview);
     } catch (e) { return err(`Failed to create presentation: ${(e as Error).message}`); }
   },
 };
@@ -161,16 +166,19 @@ const presentationAddSlide: ToolDefinition = {
       if (args.title) pptx.title = args.title as string;
       pptx.author = brandAuthor(theme) || "";
       pptx.layout = "LAYOUT_WIDE";
-      const r = await applySlide(pptx, spec, theme, brand);
-      appendImageSlides(pptx, acquired.images, theme);
-      const imageNotes = [...acquired.notes, ...r.notes];
+      // A single slide for another deck: no slide number of its own.
+      const deck = await buildDeck(pptx, [spec], acquired.images, theme, brand, false);
+      const imageNotes = [...acquired.notes, ...deck.notes];
       const requested = (spec.image ? 1 : 0) + specs.length;
-      const embedded = (r.imagePlaced ? 1 : 0) + acquired.images.length;
+      const embedded = deck.imagesPlaced + acquired.images.length;
       await pptx.writeFile({ fileName: outPath });
       if (requested > 0 && embedded === 0) {
         return err(allImagesFailedMsg(requested, imageNotes, outPath), { file_path: outPath, position: pos, image_count: 0, images_requested: requested });
       }
-      return ok(`Created new slide file: ${outPath}${noteBlock(imageNotes)}`, { file_path: outPath, position: pos, image_count: embedded });
+      const preview = await previewDeck(deck.plans, theme);
+      return withPreview(ok(`Created new slide file: ${outPath}${noteBlock(imageNotes)}\n\n${preview.text}`, {
+        file_path: outPath, position: pos, image_count: embedded, slide_findings: preview.findings,
+      }), preview);
     } catch (e) { return err(`Failed to add slide: ${(e as Error).message}`); }
   },
 };
@@ -224,15 +232,15 @@ const presentationFromOutline: ToolDefinition = {
       pptx.layout = "LAYOUT_WIDE";
       // Outline slides are text-only (no spec.image), so the images param is
       // the only image path.
-      for (const s of slides) await applySlide(pptx, s, theme, brand);
-      appendImageSlides(pptx, acquired.images, theme);
+      const deck = await buildDeck(pptx, slides, acquired.images, theme, brand);
       await pptx.writeFile({ fileName: fp });
       if (allImagesFailed) {
         return err(allImagesFailedMsg(specs.length, acquired.notes, fp), { file_path: fp, slide_count: slides.length, image_count: 0, images_requested: specs.length });
       }
-      return ok(`Created presentation from outline with ${slides.length + acquired.images.length} slide(s): ${fp}${noteBlock(acquired.notes)}`, {
-        file_path: fp, slide_count: slides.length + acquired.images.length, image_count: acquired.images.length,
-      });
+      const preview = await previewDeck(deck.plans, theme);
+      return withPreview(ok(`Created presentation from outline with ${deck.plans.length} slide(s): ${fp}${noteBlock(acquired.notes)}\n\n${preview.text}`, {
+        file_path: fp, slide_count: deck.plans.length, image_count: acquired.images.length, slide_findings: preview.findings,
+      }), preview);
     } catch (e) { return err(`Failed from outline: ${(e as Error).message}`); }
   },
 };

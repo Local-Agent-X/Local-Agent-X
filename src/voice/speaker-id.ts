@@ -7,18 +7,15 @@ import { execFileSync } from "node:child_process";
 import { writeFileSync, readFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
+import { tmpPath as voiceTmpPath } from "./paths.js";
 import { randomBytes } from "node:crypto";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
 const SPEAKERS_DIR = join(getLaxDir(), "speakers");
-const TMP_DIR = join(getLaxDir(), "voice-tmp");
 if (!existsSync(SPEAKERS_DIR)) mkdirSync(SPEAKERS_DIR, { recursive: true });
-if (!existsSync(TMP_DIR)) mkdirSync(TMP_DIR, { recursive: true });
 
-function tmpPath(ext: string): string {
-  return join(TMP_DIR, `spk_${randomBytes(6).toString("hex")}.${ext}`);
-}
+const tmpPath = (ext: string): string => voiceTmpPath(ext, "spk_");
 
 export interface SpeakerProfile {
   id: string;

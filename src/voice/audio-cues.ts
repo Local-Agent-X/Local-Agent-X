@@ -7,13 +7,11 @@ import { writeFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
-import { randomBytes } from "node:crypto";
+import { tmpPath } from "./paths.js";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
-const TMP_DIR = join(getLaxDir(), "voice-tmp");
 const CACHE_DIR = join(getLaxDir(), "audio-cues");
-if (!existsSync(TMP_DIR)) mkdirSync(TMP_DIR, { recursive: true });
 if (!existsSync(CACHE_DIR)) mkdirSync(CACHE_DIR, { recursive: true });
 
 export type CueEvent =
@@ -128,7 +126,7 @@ export function getCueAudio(event: CueEvent): Buffer {
 /** Play a cue sound (non-blocking) */
 export function playCue(event: CueEvent): void {
   const wav = getCueAudio(event);
-  const tmpFile = join(TMP_DIR, `cue_${randomBytes(4).toString("hex")}.wav`);
+  const tmpFile = tmpPath("wav", "cue_");
   writeFileSync(tmpFile, wav);
 
   const player = spawn("ffplay", [

@@ -11,11 +11,9 @@
 
 import { execFileSync } from "node:child_process";
 import { writeFileSync, readFileSync, existsSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
-import { randomBytes } from "node:crypto";
 
 import { createLogger } from "../logger.js";
-import { KOKORO_MODEL, KOKORO_VOICES, PIPER_EXE, PIPER_VOICE, TMP_DIR, tmpPath } from "./paths.js";
+import { KOKORO_MODEL, KOKORO_VOICES, PIPER_EXE, PIPER_VOICE, tmpPath } from "./paths.js";
 import { cleanForTTS } from "./text-cleaning.js";
 
 const logger = createLogger("voice");
@@ -104,7 +102,7 @@ $s.SetOutputToWaveFile('${outPath.replace(/\\/g, "\\\\")}')
 $s.Speak('${escaped}')
 $s.Dispose()
 `.trim();
-  const scriptPath = join(TMP_DIR, `sapi_${randomBytes(6).toString("hex")}.ps1`);
+  const scriptPath = tmpPath("ps1", "sapi_");
   try {
     writeFileSync(scriptPath, ps, "utf-8");
     try {

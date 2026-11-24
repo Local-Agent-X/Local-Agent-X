@@ -4,18 +4,11 @@
  */
 
 import { execSync, execFileSync } from "node:child_process";
-import { readFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
-import { join } from "node:path";
-import { getLaxDir } from "../lax-data-dir.js";
-import { randomBytes } from "node:crypto";
+import { readFileSync, existsSync, unlinkSync } from "node:fs";
+import { tmpPath as voiceTmpPath } from "../voice/paths.js";
 import { ffmpegBin } from "../ffmpeg-bin.js";
 
-const TMP_DIR = join(getLaxDir(), "voice-tmp");
-if (!existsSync(TMP_DIR)) mkdirSync(TMP_DIR, { recursive: true });
-
-function tmpPath(ext: string): string {
-  return join(TMP_DIR, `cam_${randomBytes(6).toString("hex")}.${ext}`);
-}
+const tmpPath = (ext: string): string => voiceTmpPath(ext, "cam_");
 
 /** Both entry points drive ffmpeg's DirectShow input ("-f dshow"), which only
  *  exists on Windows; elsewhere ffmpeg would fail with an opaque "Unknown

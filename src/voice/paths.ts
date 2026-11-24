@@ -3,7 +3,7 @@
 // drop a plain binary alongside the build dir. Kokoro / Piper / Chatterbox
 // all live under ~/.lax/workspace/voice-chat/.
 
-import { existsSync, mkdirSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { randomBytes } from "node:crypto";
@@ -24,9 +24,17 @@ export const PIPER_VOICE = join(VOICE_DIR, "piper", "voices", "en_US-ryan-medium
 export const KOKORO_MODEL = join(VOICE_DIR, "kokoro", "kokoro-v1.0.onnx");
 export const KOKORO_VOICES = join(VOICE_DIR, "kokoro", "voices-v1.0.bin");
 
-export const TMP_DIR = join(getLaxDir(), "voice-tmp");
-if (!existsSync(TMP_DIR)) mkdirSync(TMP_DIR, { recursive: true });
+/** The scratch folder for audio, camera and screen files that are deleted
+ *  after use. Resolved and created on each call, so it follows the data
+ *  folder in force at the time rather than the one at import. */
+export function voiceTmpDir(): string {
+  const dir = join(getLaxDir(), "voice-tmp");
+  mkdirSync(dir, { recursive: true });
+  return dir;
+}
 
-export function tmpPath(ext: string): string {
-  return join(TMP_DIR, `${randomBytes(6).toString("hex")}.${ext}`);
+/** A fresh file path in the scratch folder. `prefix` names the caller in the
+ *  file name ("cam_", "spk_"). */
+export function tmpPath(ext: string, prefix = ""): string {
+  return join(voiceTmpDir(), `${prefix}${randomBytes(6).toString("hex")}.${ext}`);
 }

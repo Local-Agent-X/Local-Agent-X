@@ -4,20 +4,13 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { writeFileSync, readFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
+import { writeFileSync, readFileSync, existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { getLaxDir } from "../lax-data-dir.js";
-import { randomBytes } from "node:crypto";
+import { VOICE_DIR, tmpPath as voiceTmpPath } from "./paths.js";
 import { EventEmitter } from "node:events";
 
 const IS_WIN = process.platform === "win32";
-const TMP_DIR = join(getLaxDir(), "voice-tmp");
-const VOICE_DIR = join(getLaxDir(), "workspace", "voice-chat");
-if (!existsSync(TMP_DIR)) mkdirSync(TMP_DIR, { recursive: true });
-
-function tmpPath(ext: string): string {
-  return join(TMP_DIR, `fast_${randomBytes(6).toString("hex")}.${ext}`);
-}
+const tmpPath = (ext: string): string => voiceTmpPath(ext, "fast_");
 
 export interface PipelineMetrics {
   sttMs: number;

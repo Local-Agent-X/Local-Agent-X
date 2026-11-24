@@ -4,10 +4,9 @@
  */
 
 import { execFileSync } from "node:child_process";
-import { writeFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
+import { writeFileSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { getLaxDir } from "./lax-data-dir.js";
-import { randomBytes } from "node:crypto";
+import { tmpPath, voiceTmpDir } from "./voice/paths.js";
 import { ffmpegBin } from "./ffmpeg-bin.js";
 import { captureScreenMacImpl } from "./screen-capture-mac.js";
 import { desktopBridgeAvailable, desktopCaptureScreen } from "./desktop-bridge.js";
@@ -18,8 +17,6 @@ const FFMPEG = ffmpegBin();
 // benign: enumeration isn't capture, so Defender's AMSI never flags it. The
 // Windows screenshot itself uses ffmpeg gdigrab because AMSI blocks the
 // System.Drawing CopyFromScreen pattern as a screen-grabber signature.
-const TMP_DIR = join(getLaxDir(), "voice-tmp");
-if (!existsSync(TMP_DIR)) mkdirSync(TMP_DIR, { recursive: true });
 
 export interface ScreenCaptureOptions {
   /** Capture a specific monitor (0-based index). Omit for primary. */
@@ -118,7 +115,7 @@ export function captureScreen(options: ScreenCaptureOptions = {}): ScreenCapture
         throw monitorRangeError(monitorIdx, monitors);
       }
     }
-    return captureScreenMacImpl({ ...options, format, scale, region: effectiveRegion }, TMP_DIR);
+    return captureScreenMacImpl({ ...options, format, scale, region: effectiveRegion }, voiceTmpDir());
   }
 
   // Resolve the capture rectangle in virtual-desktop coordinates. gdigrab's
@@ -312,7 +309,7 @@ foreach ($s in $screens) {
   $i++
 }
 `;
-  const scriptPath = join(TMP_DIR, `monitors_${randomBytes(6).toString("hex")}.ps1`);
+  const scriptPath = tmpPath("ps1", "monitors_");
   writeFileSync(scriptPath, ps, "utf-8");
   try {
     const output = execFileSync(

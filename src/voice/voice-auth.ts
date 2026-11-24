@@ -7,20 +7,16 @@ import { execFileSync } from "node:child_process";
 import { writeFileSync, readFileSync, existsSync, mkdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
-import { randomBytes } from "node:crypto";
+import { tmpPath as voiceTmpPath } from "./paths.js";
 
 const verifyAttempts = new Map<string, number[]>();
 const VERIFY_MAX_ATTEMPTS = 5;
 const VERIFY_WINDOW_MS = 60_000;
 
 const AUTH_DIR = join(getLaxDir(), "voice-auth");
-const TMP_DIR = join(getLaxDir(), "voice-tmp");
 if (!existsSync(AUTH_DIR)) mkdirSync(AUTH_DIR, { recursive: true });
-if (!existsSync(TMP_DIR)) mkdirSync(TMP_DIR, { recursive: true });
 
-function tmpPath(ext: string): string {
-  return join(TMP_DIR, `auth_${randomBytes(6).toString("hex")}.${ext}`);
-}
+const tmpPath = (ext: string): string => voiceTmpPath(ext, "auth_");
 
 export interface Voiceprint {
   userId: string;

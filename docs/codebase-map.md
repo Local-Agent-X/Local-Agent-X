@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2121 non-test source files · 69 oversized · 264 nearing the size cap.
+**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2121 non-test source files · 69 oversized · 263 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -49,10 +49,10 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/app-runtime/` | 23 | 13 | L |  |
 | `src/protocols/` | 21 | 51 | XL |  |
 | `src/server/` *(entrypoint)* | 20 | 77 | XL | 4 |
+| `src/voice/` | 20 | 80 | XL | 1 |
 | `src/autonomy/` | 19 | 6 | M |  |
 | `src/net/` | 19 | 12 | L |  |
 | `src/orchestrator/` | 19 | 24 | L |  |
-| `src/voice/` | 18 | 80 | XL | 1 |
 | `src/agents/` | 17 | 13 | L |  |
 | `src/cognition/` | 17 | 34 | XL |  |
 | `src/persistence/` | 17 | 3 | M |  |
@@ -379,7 +379,6 @@ job. Comments are free: never cut them to fit.
 - `src/mcp-client/index.ts` — 280+ code lines (cap 350)
 - `src/memory/index-facts-mutate.ts` — 280+ code lines (cap 350)
 - `src/protocols/builder.ts` — 280+ code lines (cap 350)
-- `src/screen-capture.ts` — 280+ code lines (cap 350)
 - `src/test-suite.ts` — 280+ code lines (cap 350)
 - `src/tools/build-app-spawn.ts` — 280+ code lines (cap 350)
 - `src/tools/http-egress-guard.ts` — 280+ code lines (cap 350)

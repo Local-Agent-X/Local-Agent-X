@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2165 non-test source files · 59 oversized · 274 nearing the size cap.
+**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2167 non-test source files · 59 oversized · 274 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -24,11 +24,11 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/tools/` | 145 | 267 | XL | 6 |
 | `src/tool-execution/` | 107 | 91 | XL | 2 |
 | `src/workspace/` | 96 | 3 | M |  |
-| `src/canonical-loop/` | 92 | 298 | XL | 6 |
+| `src/canonical-loop/` | 93 | 299 | XL | 6 |
 | `src/util/` | 84 | 4 | S |  |
 | `src/providers/` | 80 | 28 | L | 1 |
 | `src/session/` | 79 | 15 | L |  |
-| `src/memory/` | 66 | 163 | XL | 1 |
+| `src/memory/` | 68 | 164 | XL | 1 |
 | `src/data-lineage/` | 62 | 12 | L |  |
 | `src/browser/` | 55 | 95 | XL | 5 |
 | `src/agency/` | 54 | 40 | XL |  |
@@ -88,10 +88,10 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/routing/` | 4 | 6 | M |  |
 | `src/ios/` | 3 | 5 | S |  |
 | `src/phone-push/` | 3 | 5 | M |  |
+| `src/types/` | 3 | 3 | S |  |
 | `src/conversation/` | 2 | 3 | M |  |
 | `src/llm-dispatch/` | 2 | 3 | M |  |
 | `src/manifest-generator/` | 2 | 8 | M |  |
-| `src/types/` | 2 | 3 | S |  |
 | `src/pricing/` | 1 | 1 | S |  |
 
 ## No live importer (dead / superseded candidates)

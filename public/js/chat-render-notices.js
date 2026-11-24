@@ -243,6 +243,22 @@ function renderReviewNotice(n) {
   return el;
 }
 
+// Figures notes — the figures check on a reply's deliverables, shown on the
+// reply it checked: "checking…" while it runs, then whether the figures
+// match, were corrected after the answer, or could not be (src/canonical-loop/
+// figure-check-note.ts). Saved with the chat, so it is the record that a file
+// changed after the user read the answer.
+//
+// Exposes (global): renderFigureNotice(notice)
+
+function renderFigureNotice(n) {
+  const el = document.createElement('div');
+  el.className = 'figure-notice figure-notice-' + esc(n.status || 'checking');
+  el.setAttribute('data-id', n.id || '');
+  el.textContent = n.text || '';
+  return el;
+}
+
 // Handoff notices — the agent offers to continue this chat's coding work in
 // Code mode (src/tools/code-handoff-tool.ts): a session on the repo, starting
 // from the brief it wrote. The button runs the same move the sidebar's

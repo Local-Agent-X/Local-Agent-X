@@ -22,6 +22,7 @@
 
 import { setSessionBroadcaster } from "../ops/session-bridge.js";
 import { setIdleNudgeBroadcaster } from "../ops/idle-nudge.js";
+import { setFigureCheckBroadcaster } from "../canonical-loop/public/verification-pass.js";
 import { GLOBAL_EVENT_TYPES } from "./process-relay-delivery.js";
 import { activeChats } from "./state.js";
 import { broadcastAll, broadcastToSession } from "./broadcast.js";
@@ -58,4 +59,7 @@ export function wireBridgeBroadcasters(): void {
     if (chat) pushCappedEvent(chat, event);
     broadcastToSession(sessionId, event);
   });
+
+  // The figures check's note on a reply: to the open tabs of that chat only.
+  setFigureCheckBroadcaster((sessionId, event) => broadcastToSession(sessionId, event));
 }

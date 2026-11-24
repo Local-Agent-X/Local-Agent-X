@@ -49,6 +49,7 @@ import { getRuntimeConfig } from "../config.js";
 import { readOp } from "../ops/op-store.js";
 import { listOpsForSession } from "../ops/session-bridge.js";
 import type { Op } from "../ops/types.js";
+import { figureCheckStarted, figureCheckUpdate } from "./figure-check-note.js";
 
 import { createLogger } from "../logger.js";
 import { OP_TYPE } from "../ops/op-types.js";
@@ -230,8 +231,12 @@ function fireVerificationDebounce(sessionId: string): void {
 		if (deliverables.length === 0) return;
 		VERIFIED_ARTIFACTS.set(sessionId, entry.signatures);
 		PENDING_VERIFIER_SESSIONS.add(sessionId);
+		// The reply's "checking the figures" note (figure-check-note.ts), and
+		// its end when no check could be submitted after all.
+		figureCheckStarted(sessionId, deliverables);
 		void submitter()({ parentOp: entry.parentOp, sessionId, deliverables })
-			.catch((e) => warnOnce("submission failed", e))
+			.then((submitted) => { if (!submitted) figureCheckUpdate(sessionId, "unchecked"); })
+			.catch((e) => { figureCheckUpdate(sessionId, "unchecked"); warnOnce("submission failed", e); })
 			.finally(() => PENDING_VERIFIER_SESSIONS.delete(sessionId));
 	} catch (e) {
 		warnOnce("debounce fire failed", e);

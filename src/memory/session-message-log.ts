@@ -150,12 +150,19 @@ export function readSessionLog(dir: string, id: string): Session | null {
  *  imports it from this module. */
 export { projectSessionForUI } from "./session-ui-projection.js";
 import { projectSessionForUI } from "./session-ui-projection.js";
+import { attachReplyNotes, deleteReplyNotes, readReplyNotes } from "./reply-notes.js";
 
 /** Disk-read convenience: load + project. Equivalent to
  *  `readSessionLog(...).then(projectSessionForUI)`. */
 export function readSessionLogForUI(dir: string, id: string): Session | null {
   const session = readSessionLog(dir, id);
-  return session ? projectSessionForUI(session) : null;
+  return session ? withReplyNotes(projectSessionForUI(session), dir) : null;
+}
+
+/** A projected chat with the notes that landed on its replies after they
+ *  ended (reply-notes.ts): the screen's copy only, never the model's. */
+export function withReplyNotes(session: Session, dir: string): Session {
+  return { ...session, messages: attachReplyNotes(session.messages as Array<Session["messages"][number] & { role: string }>, readReplyNotes(dir, session.id)) };
 }
 
 /**
@@ -237,6 +244,7 @@ export function deleteSessionLog(dir: string, id: string): void {
   if (existsSync(backup)) {
     try { unlinkSync(backup); } catch { /* best-effort */ }
   }
+  deleteReplyNotes(dir, id);
 }
 
 /** List every session id that has a jsonl file in the directory. */

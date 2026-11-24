@@ -89,7 +89,7 @@ export const SESSION_EVENT_TYPES = new Set<string>([
   "done", "stopped", "error", "secret_request", "secrets_request",
   "approval_requested", "approval_timeout", "approval_resolved", "delete_notice", "file_changes", "review_notice", "code_handoff", "learning_notice", "context_status",
   "visual", "bg_op_queued", "bg_op_queue_reordered", "bg_op_started",
-  "bg_op_progress", "bg_op_completed", "bg_op_nudge", "av_blocked_warning",
+  "bg_op_progress", "bg_op_completed", "bg_op_nudge", "reply_note", "av_blocked_warning",
   "worker_stream", "worker_done", "chat_op_started", "inject_queued",
   "inject_consumed", "plan_mode_changed", "tool_chip", "op_heartbeat",
   "turn_provider", "prepare_progress",

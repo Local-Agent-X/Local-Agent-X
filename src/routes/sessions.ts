@@ -173,8 +173,7 @@ export const handleSessionRoutes: RouteHandler = async (method, url, req, res, c
     const asOf = Date.now();
     const session = ctx.getOrCreateSession(id);
     if (raw) { json(200, session); return true; }
-    const { projectSessionForUI } = await import("../memory/session-message-log.js");
-    json(200, { ...projectSessionForUI(session), asOf });
+    json(200, { ...ctx.sessionStore.projectForUI(session), asOf });
     return true;
   }
 

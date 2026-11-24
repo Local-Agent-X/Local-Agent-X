@@ -47,6 +47,7 @@ const ALL_SERVER_EVENT_TYPES: Record<ServerEvent["type"], true> = {
   bg_op_progress: true,
   bg_op_completed: true,
   bg_op_nudge: true,
+  reply_note: true,
   av_blocked_warning: true,
   worker_stream: true,
   worker_done: true,

@@ -499,6 +499,14 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
 .review-notice-amber{border-left-color:var(--warn)}
 .review-notice-red{border-left-color:var(--danger)}
 .review-notice-list{margin:6px 0 0;padding-left:18px}
+/* The figures check on a reply (chat-render-notices.js renderFigureNotice): a
+   quiet line while it runs, the result in the verdict's colour on its edge. */
+.figure-notice{margin:8px 0;padding:6px 12px;border-left:3px solid var(--border);color:var(--muted);font-size:.8rem}
+.figure-notice-checking::before,.figure-notice-correcting::before{content:'';display:inline-block;width:7px;height:7px;margin-right:8px;border-radius:50%;background:var(--accent);animation:turn-now-pulse 1.4s ease-in-out infinite}
+.figure-notice-confirmed{border-left-color:var(--ok)}
+.figure-notice-corrected{border-left-color:var(--warn);color:var(--text)}
+.figure-notice-mismatch{border-left-color:var(--danger);color:var(--text)}
+@media (prefers-reduced-motion: reduce){.figure-notice-checking::before,.figure-notice-correcting::before{animation:none}}
 .review-notice-finding{margin:4px 0}
 .review-notice-severity{font-weight:600;text-transform:uppercase;font-size:.72rem}
 .review-notice-location{font-family:var(--mono);font-size:.78rem}

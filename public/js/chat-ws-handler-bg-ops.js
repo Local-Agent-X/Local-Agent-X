@@ -192,6 +192,34 @@ function handleBgOpNudge(msg) {
   } catch(e) { console.warn('[bg_op_nudge] failed', e); return false; }
 }
 
+// A note landing on a reply after it ended: the figures check, "checking" then
+// its result (src/canonical-loop/figure-check-note.ts). It joins the reply it
+// belongs to, the last one at or before the note's time (the same rule the
+// server uses on reload, src/memory/reply-notes.ts), replacing its earlier
+// state. The server saved it already, so a reload shows the same.
+function attachReplyNote(messages, note) {
+  let target = -1;
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const m = messages[i];
+    if (!m || m.role !== 'assistant') continue;
+    if (target < 0) target = i;
+    if (typeof m._at === 'number' && m._at <= note.at) { target = i; break; }
+  }
+  if (target < 0) return false;
+  const m = messages[target];
+  m._notices = (m._notices || []).filter(n => n.id !== note.id).concat([note]);
+  return true;
+}
+
+function handleReplyNote(msg) {
+  try {
+    const note = msg.event && msg.event.note;
+    if (!note || !activeChat || activeChat.id !== msg.sessionId) return true;
+    if (attachReplyNote(activeChat.messages || [], note) && typeof renderMessages === 'function') renderMessages();
+    return true;
+  } catch (e) { console.warn('[reply_note] failed', e); return false; }
+}
+
 // Card status token for a bg_op_completed status. The token is the card's CSS
 // class AND its terminal check (chat-agent-feeds-render.js TERMINAL_AGENT_
 // STATUSES), so it must stay a bare word; the human label is derived from it
@@ -303,6 +331,7 @@ function dispatchBgOpEventChecked(msg) {
     case 'worker_done':            return handleWorkerDone(msg);
     case 'av_blocked_warning':     return handleAvBlockedWarning(msg);
     case 'bg_op_nudge':            return handleBgOpNudge(msg);
+    case 'reply_note':             return handleReplyNote(msg);
     case 'bg_op_completed':        return handleBgOpCompleted(msg);
     default: return null;
   }

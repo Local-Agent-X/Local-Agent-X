@@ -16,3 +16,6 @@
  * render/design verification bridge — a different tier entirely.
  */
 export { cancelAllVerificationDebounces } from "../verification-spend.js";
+// The chat socket wires the figures check's note on a reply to the open tabs
+// (chat-ws/bridge-wiring.ts); figure-check-note.ts is as light as the spend module.
+export { setFigureCheckBroadcaster } from "../figure-check-note.js";

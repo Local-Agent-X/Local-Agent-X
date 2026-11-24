@@ -14,6 +14,7 @@ import type { CanonicalEvent } from "./types.js";
 import { inboxStore } from "../inbox/index.js";
 import { VERIFICATION_OP_TYPE } from "./verification-spend.js";
 import { attemptDeliverableCorrection, correctionContextOf } from "./verification-correct.js";
+import { figureCheckUpdate } from "./figure-check-note.js";
 
 // Spy-wrap the two side-channel sinks the observer feeds on terminal state so
 // the headless-job cases below can prove "no notification, no nudge". The real
@@ -22,6 +23,8 @@ vi.mock("../ops/idle-nudge.js", async (importOriginal) => {
   const real = await importOriginal<typeof import("../ops/idle-nudge.js")>();
   return { ...real, scheduleIdleNudge: vi.fn(real.scheduleIdleNudge) };
 });
+// The figures check's note on the reply (figure-check-note.ts): recorded, not written.
+vi.mock("./figure-check-note.js", () => ({ figureCheckUpdate: vi.fn(), figureCheckStarted: vi.fn(), setFigureCheckBroadcaster: vi.fn() }));
 vi.mock("./verification-correct.js", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./verification-correct.js")>()),
   attemptDeliverableCorrection: vi.fn(async () => false),
@@ -446,14 +449,16 @@ describe("session-bridge-observer — headless sessions stamp bg_op_completed", 
 
 // The verification tier is the harness checking and correcting its own work.
 // Nothing of it is a worker in front of the user: no card, no progress line,
-// no "that op just finished". A DISCREPANCIES verdict submits a correction;
-// only when none can be submitted does the agent get a rework instruction and
-// the user an idle-time line. A finished correction tells both what changed.
+// no "that op just finished", no idle-time line. Its one trace for the user is
+// the note on the reply it checked (figure-check-note.ts). A DISCREPANCIES
+// verdict submits a correction; only when none can be submitted does the
+// agent get a rework instruction. A finished correction tells the agent.
 describe("session-bridge-observer — the verification tier is internal", () => {
   const CONFIRMED = "VERDICT: CONFIRMED\n| value | deliverable says | independent source says | match? |\n|---|---|---|---|\n| a | 1 | 1 | yes |";
   const DISCREPANCIES = "VERDICT: DISCREPANCIES\n| value | deliverable says | independent source says | match? |\n|---|---|---|---|\n| a | 1 | 2 | no |\n| b | 3 | 3 | yes |";
 
   beforeEach(() => {
+    vi.mocked(figureCheckUpdate).mockClear();
     vi.mocked(scheduleIdleNudge).mockClear();
     vi.mocked(pushPendingNotification).mockClear();
     vi.mocked(attemptDeliverableCorrection).mockReset();
@@ -491,6 +496,10 @@ describe("session-bridge-observer — the verification tier is internal", () => 
     expect(pushPendingNotification).not.toHaveBeenCalled();
     expect(scheduleIdleNudge).not.toHaveBeenCalled();
     if (to !== "queued" && to !== "running") expect(listOpsForSession(sessionId)).toEqual([]);
+    // Its one trace is the note on the reply: the figures match, or could not be checked.
+    if (to === "succeeded") expect(figureCheckUpdate).toHaveBeenCalledWith(sessionId, "confirmed");
+    else if (to === "failed" || to === "cancelled") expect(figureCheckUpdate).toHaveBeenCalledWith(sessionId, "unchecked");
+    else expect(figureCheckUpdate).not.toHaveBeenCalled();
   });
 
   it("DISCREPANCIES submits a correction and, once submitted, says nothing itself", async () => {
@@ -511,7 +520,7 @@ describe("session-bridge-observer — the verification tier is internal", () => 
     expect(scheduleIdleNudge).not.toHaveBeenCalled();
   });
 
-  it("when no correction can be submitted, the agent is told to correct the work and the user hears one idle-time line", async () => {
+  it("when no correction can be submitted, the agent is told to correct the work and the reply's note says so", async () => {
     const sessionId = "sess-obs-verify-rework";
     const opId = "op_verify_deliverable_rework_1";
     verifyOp(opId, DISCREPANCIES);
@@ -523,14 +532,16 @@ describe("session-bridge-observer — the verification tier is internal", () => 
     await vi.waitFor(() => expect(pushPendingNotification).toHaveBeenCalledTimes(1));
     expect(pushPendingNotification).toHaveBeenCalledWith(sessionId, expect.objectContaining({
       opId, task: "Verification pass: build the sheet", summary: expect.stringContaining("| a | 1 | 2 | no |"),
-      verification: { mismatched: 1, checked: 2, corrected: false },
+      verification: { mismatched: 1, checked: 2, corrected: false }, surfacedViaNudge: true,
     }));
-    expect(scheduleIdleNudge).toHaveBeenCalledWith(sessionId, "Verification pass: build the sheet");
+    expect(figureCheckUpdate).toHaveBeenCalledWith(sessionId, "correcting", 1);
+    expect(figureCheckUpdate).toHaveBeenLastCalledWith(sessionId, "mismatch", 1);
+    expect(scheduleIdleNudge).not.toHaveBeenCalled();
     expect(bgEventsFor(broadcast, opId)).toEqual([]);
     cancelIdleNudge(sessionId);
   });
 
-  it("a finished correction tells the agent and the user what was corrected, with no card", () => {
+  it("a finished correction tells the agent and marks the reply's note corrected, with no card and no extra line", () => {
     const sessionId = "sess-obs-correct-done";
     const opId = "op_correct_deliverable_done_1";
     makeOp(opId, "correct_deliverable");
@@ -548,9 +559,10 @@ describe("session-bridge-observer — the verification tier is internal", () => 
     expect(bgEventsFor(broadcast, opId)).toEqual([]);
     expect(pushPendingNotification).toHaveBeenCalledWith(sessionId, expect.objectContaining({
       opId, task: "build the sheet", summary: expect.stringContaining("CORRECTED: 1 values"),
-      verification: { mismatched: 1, checked: 2, corrected: true },
+      verification: { mismatched: 1, checked: 2, corrected: true }, surfacedViaNudge: true,
     }));
-    expect(scheduleIdleNudge).toHaveBeenCalledWith(sessionId, "build the sheet");
+    expect(figureCheckUpdate).toHaveBeenCalledWith(sessionId, "corrected", 1);
+    expect(scheduleIdleNudge).not.toHaveBeenCalled();
     expect(listOpsForSession(sessionId)).toEqual([]);
     cancelIdleNudge(sessionId);
   });
@@ -569,9 +581,10 @@ describe("session-bridge-observer — the verification tier is internal", () => 
 
     expect(bgEventsFor(broadcast, opId)).toEqual([]);
     expect(pushPendingNotification).toHaveBeenCalledWith(sessionId, expect.objectContaining({
-      opId, summary: DISCREPANCIES, verification: { mismatched: 1, checked: 2, corrected: false },
+      opId, summary: DISCREPANCIES, verification: { mismatched: 1, checked: 2, corrected: false }, surfacedViaNudge: true,
     }));
-    expect(scheduleIdleNudge).toHaveBeenCalledTimes(1);
+    expect(figureCheckUpdate).toHaveBeenCalledWith(sessionId, "mismatch", 1);
+    expect(scheduleIdleNudge).not.toHaveBeenCalled();
     cancelIdleNudge(sessionId);
   });
 });

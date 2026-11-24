@@ -152,16 +152,9 @@ function fireNudge(sessionId: string): void {
 }
 
 function composeNudgeText(items: PendingNotification[]): string {
-  // The harness's own re-check of a deliverable: the user hears the finding
-  // in the agent's words, never that an op finished.
-  const checks = items.filter(i => i.verification);
-  if (checks.length === items.length) {
-    const mismatched = checks.reduce((a, i) => a + (i.verification?.mismatched ?? 0), 0);
-    const count = mismatched > 0 ? `${mismatched} figure${mismatched === 1 ? "" : "s"}` : "some figures";
-    return checks.every(i => i.verification?.corrected)
-      ? `Heads up — I re-checked the figures in what I built against their sources and corrected ${count} that didn't match.`
-      : `Heads up — I re-checked the figures in what I built against their sources; ${count} don't match and I couldn't correct them automatically. Want me to go through them?`;
-  }
+  // The figures check never comes through here: its result is a note on the
+  // reply it checked (canonical-loop/figure-check-note.ts), and its
+  // notifications arrive already marked as told.
   if (items.length === 1 && items[0].linkedChat) {
     const n = items[0];
     return n.status === "completed"

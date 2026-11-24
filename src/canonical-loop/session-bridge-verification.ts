@@ -6,21 +6,23 @@
  * op just finished". session-bridge-observer.ts routes both op types here
  * instead of through its worker surfaces.
  *
- * What does come out:
- *   - a DISCREPANCIES verdict submits a correction (verification-correct.ts);
- *     if none can be submitted, the agent gets a rework instruction (the
- *     pending notification carries the verifier's table) and the user one
- *     idle-time line asking whether to go through them;
- *   - a finished correction tells the user, in one idle-time line, that the
- *     figures were corrected, and tells the agent so it can say what changed
- *     if asked;
+ * What does come out is one note on the reply whose deliverables were
+ * checked (figure-check-note.ts), saved with the chat and updated in place:
+ *   - a DISCREPANCIES verdict marks it "correcting" and submits a correction
+ *     (verification-correct.ts); if none can be submitted, the note says the
+ *     figures do not match and asks, and the agent gets a rework instruction
+ *     (the pending notification carries the verifier's table);
+ *   - a finished correction marks it "corrected", and tells the agent so it
+ *     can say what changed if asked;
  *   - a correction that did not finish falls back to the rework instruction;
- *   - a confirmed, unverifiable, stopped or failed pass is logged and nothing
- *     more.
+ *   - a confirmed pass marks it "match"; an unverifiable, stopped or failed
+ *     one, "couldn't check".
+ * The agent's notifications are marked as already told, so it does not
+ * announce them again, and no separate idle-time chat line is posted.
  */
 import { getTaskForOp, proactiveSpeakToSession, releaseOpFromSession } from "../ops/session-bridge.js";
 import { pushPendingNotification } from "../ops/pending-notifications.js";
-import { scheduleIdleNudge } from "../ops/idle-nudge.js";
+import { figureCheckUpdate } from "./figure-check-note.js";
 import { resolveTerminalOpStatus } from "./checkpoint-stop.js";
 import { extractFinalAssistantText, verificationReport } from "./session-bridge-extractors.js";
 import { attemptDeliverableCorrection, correctionContextOf } from "./verification-correct.js";
@@ -44,10 +46,12 @@ export function recordVerificationEvent(event: CanonicalEvent, core: boolean, se
   const summary = to === "succeeded" ? extractFinalAssistantText(event.opId) : "";
   const report = verificationReport(summary);
   if (report.verdict !== "DISCREPANCIES") {
-    logger.info(`verification pass ${event.opId} ended ${to}${report.verdict ? ` (${report.verdict})` : ""} — nothing to surface`);
+    logger.info(`verification pass ${event.opId} ended ${to}${report.verdict ? ` (${report.verdict})` : ""}`);
+    figureCheckUpdate(sessionId, report.verdict === "CONFIRMED" ? "confirmed" : "unchecked");
     return;
   }
   logger.info(`verification pass ${event.opId}: discrepancies on ${report.mismatched} of ${report.checked} values — correcting`);
+  figureCheckUpdate(sessionId, "correcting", report.mismatched);
   void attemptDeliverableCorrection({
     verificationOpId: event.opId, sessionId, verdictText: summary, mismatched: report.mismatched, checked: report.checked,
   }).then((submitted) => {
@@ -71,20 +75,22 @@ export function recordCorrectionEvent(event: CanonicalEvent, core: boolean, sess
   }
   const summary = extractFinalAssistantText(event.opId);
   logger.info(`correction ${event.opId} finished: ${summary.split("\n")[0]?.slice(0, 120) ?? ""}`);
+  // The user's record is the note on the reply; the agent's is the pending
+  // notification, marked as already told so it does not announce it again.
   pushPendingNotification(sessionId, {
     opId: event.opId, status: "completed", summary, filesChanged: [], task, completedAt: Date.now(),
-    verification: { mismatched, checked, corrected: true },
+    verification: { mismatched, checked, corrected: true }, surfacedViaNudge: true,
   });
+  figureCheckUpdate(sessionId, "corrected", mismatched);
   proactiveSpeakToSession(sessionId, `Verification finished: I corrected ${mismatched} value${mismatched === 1 ? "" : "s"} that did not match their sources.`);
-  scheduleIdleNudge(sessionId, task);
 }
 
-/** The agent corrects it on its next turn; the user is asked once the chat is idle. */
+/** The agent corrects it on its next turn if asked; the note on the reply asks the user. */
 function surfaceRework(sessionId: string, opId: string, task: string, table: string, mismatched: number, checked: number): void {
   pushPendingNotification(sessionId, {
     opId, status: "completed", summary: table, filesChanged: [], task, completedAt: Date.now(),
-    verification: { mismatched, checked, corrected: false },
+    verification: { mismatched, checked, corrected: false }, surfacedViaNudge: true,
   });
+  figureCheckUpdate(sessionId, "mismatch", mismatched);
   proactiveSpeakToSession(sessionId, `Verification finished: ${mismatched} value${mismatched === 1 ? "" : "s"} did not match their sources and could not be corrected automatically.`);
-  scheduleIdleNudge(sessionId, task);
 }

@@ -23,6 +23,8 @@ import {
   deleteSessionLog,
   listSessionIds,
   migrateAllLegacy,
+  projectSessionForUI,
+  withReplyNotes,
 } from "./session-message-log.js";
 import { SessionMetadataCache, metadataOf, type SessionMetadata } from "./session-metadata-cache.js";
 
@@ -71,6 +73,12 @@ export class SessionStore {
    */
   loadForUI(id: string): Session | null {
     return readSessionLogForUI(this.dir, id);
+  }
+
+  /** The UI projection of a session already in hand, with the notes that
+   *  landed on its replies after they ended (reply-notes.ts). */
+  projectForUI(session: Session): Session {
+    return withReplyNotes(projectSessionForUI(session), this.dir);
   }
 
   list(): SessionMetadata[] {

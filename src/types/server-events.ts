@@ -225,6 +225,8 @@ export type ServerEvent =
   // Neither completed nor failed — the card labels it "stopped (unfinished)".
   | { type: "bg_op_completed"; opId: string; status: "completed" | "partial" | "failed" | "cancelled"; summary: string; filesChanged: string[]; metadata?: Record<string, unknown>; resultUrl?: string; headless?: boolean }
   | { type: "bg_op_nudge"; opIds: string[]; text: string }
+  /** A note landing on a reply after it ended: the figures check (memory/reply-notes.ts). */
+  | { type: "reply_note"; note: import("../memory/reply-notes.js").ReplyNote }
   // Antivirus interference detected. Bash tool detected ≥3 powershell
   // processes killed mid-stream within 60s — the AV-behavior-shield
   // signature. UI renders as a sticky banner with a one-time message

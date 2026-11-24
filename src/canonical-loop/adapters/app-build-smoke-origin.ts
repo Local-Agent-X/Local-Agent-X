@@ -33,7 +33,7 @@ import { readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { AddressInfo } from "node:net";
 import { staticBuildDistDir } from "../../tools/app-run-target.js";
-import { APP_CONTENT_TYPES, WORKSPACE_APP_HTML_HEADERS, resolveAppStaticFile, resolveBundledFontFile } from "../../server/app-serving-policy.js";
+import { APP_CONTENT_TYPES, workspaceAppHtmlHeaders, resolveAppStaticFile, resolveBundledFontFile } from "../../server/app-serving-policy.js";
 import { platformRoot } from "../../platform-root.js";
 
 export interface SmokeOrigin {
@@ -93,7 +93,7 @@ export async function startStaticSmokeOrigin(appDir: string, at: SmokeMount = { 
     const headers: Record<string, string> = { "Content-Type": APP_CONTENT_TYPES[ext] || "application/octet-stream" };
     // Assets carry no policy headers, exactly as the real route serves them:
     // the CSP that governs the page comes from the document response.
-    if (ext === "html") Object.assign(headers, WORKSPACE_APP_HTML_HEADERS);
+    if (ext === "html") Object.assign(headers, workspaceAppHtmlHeaders([]));
     let body: Buffer;
     try {
       body = readFileSync(resolved.path);

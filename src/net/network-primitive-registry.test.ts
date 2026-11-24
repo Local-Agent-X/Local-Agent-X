@@ -147,6 +147,7 @@ const LOOPBACK: readonly Registered[] = [
 const SERVERS: readonly Registered[] = [
   { file: "src/server/lifecycle.ts", uses: ["server"], why: "inbound server: the UI origin's HTTP server" },
   { file: "src/server/agent-origin.ts", uses: ["server"], why: "inbound server: the agent origin's loopback listener for workspace apps and files" },
+  { file: "src/server/app-origins.ts", uses: ["server"], why: "inbound server: one loopback listener per app, so each app is its own browser origin" },
   { file: "src/server/ws-operator-auth.ts", uses: ["server"], why: "inbound server: the WebSocket upgrade of every operator endpoint (chat, voice audio), origin-checked and token-gated in one place" },
   { file: "src/canonical-loop/adapters/app-build-smoke-origin.ts", uses: ["server"], why: "inbound server: serves a built app on loopback for the smoke gate" },
   { file: "src/browser/egress-worker.ts", uses: ["server"], why: "local IPC: the browser egress worker's pipe, answering allow/deny asks" },

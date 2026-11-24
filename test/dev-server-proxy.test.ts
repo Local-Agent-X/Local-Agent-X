@@ -172,7 +172,9 @@ describe("proxyFrontendDevServer (desktop-first live frontend)", () => {
       proxyFrontendDevServer(req, res, up, new URL(req.url!, "http://localhost"), "T", { publicDir, uiPort: 7007 }));
     const desktop = await fetch(`http://127.0.0.1:${proxy}/apps/spa/`);
     const csp = desktop.headers.get("content-security-policy") || "";
-    expect(csp).toContain("frame-ancestors 'self' http://127.0.0.1:* http://localhost:*");
+    // Framable by itself and the UI's origins by name: no other loopback page,
+    // so not another app.
+    expect(csp).toContain("frame-ancestors 'self' http://127.0.0.1:7007 http://localhost:7007;");
     expect(csp).not.toContain("allow-top-navigation");
     const body = await desktop.text();
     expect(body).toContain('__laxInstallIdeFrameBridge(["http://127.0.0.1:7007","http://localhost:7007"])');

@@ -60,32 +60,73 @@ function isWebLink(href) {
 // frames load through this origin's redirect and /files links get the
 // capability only when clicked.
 var laxAgent = { origin: '', filesLinkToken: '' };
+// Each app has an origin of its own (src/server/app-origins.ts), so one app's
+// page cannot read another's. App id to that origin, as the server gave it.
+const laxAppOrigins = new Map();
 function refreshLaxAgent() {
   return fetch('/api/agent-origin', { headers: { Authorization: 'Bearer ' + AUTH_TOKEN } })
     .then(r => (r.ok ? r.json() : null))
-    .then(d => { if (d) laxAgent = d; })
+    .then(d => { if (d) { laxAgent = d; laxAppOrigins.clear(); } })
     .catch(() => {});
 }
 const laxAgentReady = refreshLaxAgent();
 
+// One app's origin, asked of the server once and remembered; '' when there is
+// no such app or the server did not answer.
+function laxAppOrigin(appId) {
+  if (laxAppOrigins.has(appId)) return Promise.resolve(laxAppOrigins.get(appId));
+  return fetch('/api/agent-origin?app=' + encodeURIComponent(appId), { headers: { Authorization: 'Bearer ' + AUTH_TOKEN } })
+    .then(r => (r.ok ? r.json() : null))
+    .then(d => {
+      const origin = (d && d.appOrigin) || '';
+      if (origin) laxAppOrigins.set(appId, origin);
+      return origin;
+    })
+    .catch(() => '');
+}
+
+// Is this an origin the server named as an app's own?
+function isLaxAppOrigin(origin) {
+  for (const known of laxAppOrigins.values()) if (known === origin) return true;
+  return false;
+}
+
+// The app a link on this origin shows, or '' when it shows none.
+function laxAppIdOf(url) {
+  if (url.origin !== location.origin) return '';
+  const m = url.pathname.match(/^\/(?:apps|dashboards)\/([a-zA-Z0-9_-]{1,64})(?:\/|$)/);
+  return m ? m[1] : '';
+}
+
 // Where a frame showing agent content loads it, and whether the frame may keep
-// the origin it lands on. /apps and /dashboards go straight to the agent
-// origin; /files goes through this origin's redirect. A page this UI's origin
-// would render keeps no origin at all (ownOrigin false), so it cannot reach the
-// shell's DOM, storage or window.desktop. Only http(s): a javascript: src runs
-// in the frame. Cache-busted so an agent's edits show on every load.
+// the origin it lands on. /apps and /dashboards go straight to that app's own
+// origin, once it is known (agentFrameTargetFor asks first); /files goes
+// through this origin's redirect. A page this UI's origin would render keeps
+// no origin at all (ownOrigin false), so it cannot reach the shell's DOM,
+// storage or window.desktop. Only http(s): a javascript: src runs in the
+// frame. Cache-busted so an agent's edits show on every load.
 function agentFrameTarget(href) {
   let url;
   try { url = new URL(href, location.href); } catch { return null; }
   if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
-  if (url.origin === location.origin && laxAgent.origin && /^\/(apps|dashboards)\//.test(url.pathname)) {
-    url = new URL(url.pathname + url.search + url.hash, laxAgent.origin);
-  }
+  const appOrigin = laxAppOrigins.get(laxAppIdOf(url));
+  if (appOrigin) url = new URL(url.pathname + url.search + url.hash, appOrigin);
   if (url.origin === location.origin && url.pathname.startsWith('/files/') && laxAgent.filesLinkToken) {
     url.searchParams.set('ft', laxAgent.filesLinkToken);
   }
   url.searchParams.set('_t', String(Date.now()));
   return { src: url.href, ownOrigin: url.origin !== location.origin };
+}
+
+// agentFrameTarget once the origin it needs is known: the agent origin, and
+// for an app's page that app's own. Every frame that shows agent content loads
+// through this, so an app never lands on the redirect with no origin.
+function agentFrameTargetFor(href) {
+  let appId = '';
+  try { appId = laxAppIdOf(new URL(href, location.href)); } catch { /* agentFrameTarget answers null */ }
+  return laxAgentReady
+    .then(() => (appId ? laxAppOrigin(appId) : ''))
+    .then(() => agentFrameTarget(href));
 }
 
 // Every /files link this UI opens carries the files-link capability, never the

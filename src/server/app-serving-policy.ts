@@ -34,15 +34,17 @@ import { appPermissionsPolicy } from "../broker-transport/vendor/index.js";
 /** The CSP part every app document on the agent origin carries, whichever
  *  route renders it (static, dev-server proxy, registry renderer).
  *
- *  Apps are served from the agent origin (agent-origin.ts) and framed by the UI
- *  on another loopback port, so framing is granted to loopback pages rather
- *  than to the app's own origin. `sandbox` keeps the app its own (agent) origin
- *  for storage and its own requests, but withholds top-level navigation: a
- *  framed app cannot steer the shell around it. */
-export const AGENT_APP_FRAMING_CSP =
-  "frame-ancestors 'self' http://127.0.0.1:* http://localhost:*; " +
-  "sandbox allow-scripts allow-same-origin allow-forms allow-modals allow-popups " +
-  "allow-popups-to-escape-sandbox allow-downloads allow-pointer-lock";
+ *  Each app is served from an origin of its own (agent-origin.ts) and framed by
+ *  the UI on another loopback port, so framing is granted to the app itself
+ *  and to `framers`, the UI's origins by name (ide-frame-bridge.ts uiOrigins),
+ *  never to loopback at large: one app cannot frame another. `sandbox` keeps
+ *  the app its own origin for storage and its own requests, but withholds
+ *  top-level navigation: a framed app cannot steer the shell around it. */
+export function agentAppFramingCsp(framers: readonly string[]): string {
+  return `frame-ancestors ${["'self'", ...framers].join(" ")}; ` +
+    "sandbox allow-scripts allow-same-origin allow-forms allow-modals allow-popups " +
+    "allow-popups-to-escape-sandbox allow-downloads allow-pointer-lock";
+}
 
 /** The script every route that serves an app document injects, so the app can
  *  reach a backend through /api/connectors/*. Export strips it by this shape. */
@@ -68,18 +70,22 @@ export const UI_PAGE_PERMISSIONS_POLICY = "camera=(self), microphone=(self), geo
 const WORKSPACE_APP_CSP =
   "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; " +
   "img-src 'self' data: blob:; connect-src 'self' http://127.0.0.1:* http://localhost:*; " +
-  "object-src 'none'; base-uri 'self'; form-action 'self'; " + AGENT_APP_FRAMING_CSP;
+  "object-src 'none'; base-uri 'self'; form-action 'self'; ";
 
 /** Security + cache headers sent with a served app's HTML (not with its assets —
- *  the policy that governs a page comes from the document response). */
-export const WORKSPACE_APP_HTML_HEADERS: Readonly<Record<string, string>> = Object.freeze({
-  "Content-Security-Policy": WORKSPACE_APP_CSP,
-  "X-Content-Type-Options": "nosniff",
-  "Referrer-Policy": "no-referrer",
-  "Permissions-Policy": AGENT_APP_PERMISSIONS_POLICY,
-  "Cache-Control": "no-cache, must-revalidate",
-  "Pragma": "no-cache",
-});
+ *  the policy that governs a page comes from the document response). `framers`
+ *  is who may frame it besides itself: the UI's origins on the served route,
+ *  nobody for the smoke gate, which loads the page top-level. */
+export function workspaceAppHtmlHeaders(framers: readonly string[]): Readonly<Record<string, string>> {
+  return Object.freeze({
+    "Content-Security-Policy": WORKSPACE_APP_CSP + agentAppFramingCsp(framers),
+    "X-Content-Type-Options": "nosniff",
+    "Referrer-Policy": "no-referrer",
+    "Permissions-Policy": AGENT_APP_PERMISSIONS_POLICY,
+    "Cache-Control": "no-cache, must-revalidate",
+    "Pragma": "no-cache",
+  });
+}
 
 /** Extension → Content-Type for app files. */
 export const APP_CONTENT_TYPES: Readonly<Record<string, string>> = Object.freeze({

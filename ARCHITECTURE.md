@@ -42,7 +42,7 @@ Paths below were verified against the tree (the generated map's importer counts
 
 | Capability | Canonical code | Notes |
 |---|---|---|
-| **Server entry + HTTP boot** | `src/index.ts` → `src/server/index.ts`, `src/server/lifecycle.ts` | Services: `src/server/bootstrap-services.ts`. Tools: `src/server/bootstrap-tools.ts`. Loop adapter registration: `src/server/canonical-loop-bootstrap.ts`. A second loopback listener, `src/server/agent-origin.ts`, serves agent-written apps/files from its own origin so they cannot touch the shell's DOM or token. |
+| **Server entry + HTTP boot** | `src/index.ts` → `src/server/index.ts`, `src/server/lifecycle.ts` | Services: `src/server/bootstrap-services.ts`. Tools: `src/server/bootstrap-tools.ts`. Loop adapter registration: `src/server/canonical-loop-bootstrap.ts`. More loopback listeners, `src/server/agent-origin.ts`, serve agent-written apps and files from origins that are not the UI's, so they cannot touch the shell's DOM or token: one shared listener for workspace files, and one per app (`src/server/app-origins.ts` owns which exist and each app's port), so one app's page cannot read another's. |
 | **Agent / turn loop** | `src/canonical-loop/` | Entry `index.ts`; driver `turn-loop.ts`; chat runner `chat-runner.ts`; durable event store `store.ts`. One of the most-imported subsystems (see the map) — this is *the* loop. The module boundary is sealed: outside consumers import `index.ts` or the `public/` sub-barrels, enforced by `interface-seal.test.ts`. `src/agent-loop/` is one live file, `inject-queue.ts` (mid-turn user injections), consumed by the loop, `src/agency/handler.ts` and `src/chat-ws/inject-router.ts`. |
 | **Per-turn request pipeline** | `src/agent-request/prepare-request.ts` + `prepare-request/` | The whole per-turn assembly: provider/model resolution, attachments, context build, system prompt, tool selection, learned-protocol suggestion. Per-provider history cleanup (orphan repair, control markers, refused turns) is `src/providers/sanitize.ts`; tool results are not tag-stripped there. Every tool result is screened once at dispatch (`src/tool-execution/injection-exposure.ts`): a note on the rendered result, never an edit to the content. |
 | **Provider adapters + routing** | `src/providers/registry.ts`, `src/providers/provider-ids.ts` | Loop-side transports: `src/canonical-loop/adapters/`. Wire-level adapters: `src/providers/adapters/` (`openai-http`, `ollama-native`, `codex-cli`) over the `src/providers/adapter/base-adapter.ts` contract. Credential resolution: `src/auth/resolve.ts`. |
@@ -134,8 +134,8 @@ both have many static importers and sit in the subsystem map above.
 
 ## One-line architecture
 
-A local HTTP server on `127.0.0.1` (plus an agent-origin sibling listener for
-agent-written pages) runs a durable, lane-based **op model** (`src/ops/`) on
+A local HTTP server on `127.0.0.1` (plus agent-origin sibling listeners for
+agent-written pages, one per app) runs a durable, lane-based **op model** (`src/ops/`) on
 top of a provider-agnostic **turn loop** (`src/canonical-loop/`); every tool
 call is gated by an in-process **security kernel** (`src/ari-kernel/` +
 `packages/arikernel/`) against a single **default-deny policy table**

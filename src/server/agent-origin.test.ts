@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { agentOrigin, routeUiAgentPaths, startAgentOrigin } from "./agent-origin.js";
+import { appOriginIfOpen, ensureAppOrigin } from "./app-origins.js";
 import { evaluateEgressForUrl } from "../security/layer/network-policy.js";
 import { deriveFilesLinkCapability, signAgentFilePath, verifyAgentFileSignature } from "./agent-file-links.js";
 import { deriveAppDataCapability, deriveConnectorCapability } from "./app-connector-auth.js";
@@ -47,14 +48,14 @@ beforeAll(async () => {
     consumeActions: () => {},
   };
   const ctx = { config, appRegistry, broadcastAll: () => {} } as unknown as ServerContext;
-  agentServer = await startAgentOrigin({ config, publicDir, getCtx: () => ctx });
+  agentServer = await startAgentOrigin({ config, publicDir, getCtx: () => ctx, appPortsFile: join(root, "app-origin-ports.json") });
 
   // The UI side, with the role the real auth gate would have resolved passed
   // in by the test: routeUiAgentPaths runs after authorizeRequest.
-  uiServer = createServer((req, res) => {
+  uiServer = createServer(async (req, res) => {
     const url = new URL(req.url || "/", "http://127.0.0.1");
     const role = (req.headers["x-test-role"] as Role | undefined) ?? "operator";
-    if (!routeUiAgentPaths(req.method || "GET", url, req, res, config, role)) { res.writeHead(599); res.end(); }
+    if (!await routeUiAgentPaths(req.method || "GET", url, req, res, config, role)) { res.writeHead(599); res.end(); }
   });
   await new Promise<void>((resolve) => uiServer.listen(0, "127.0.0.1", resolve));
   uiBase = `http://127.0.0.1:${(uiServer.address() as AddressInfo).port}`;
@@ -70,6 +71,14 @@ afterAll(async () => {
 
 const ui = (path: string, init: RequestInit = {}) => fetch(`${uiBase}${path}`, { redirect: "manual", ...init });
 const agent = (path: string, init: RequestInit = {}) => fetch(`${agentOrigin()}${path}`, { redirect: "manual", ...init });
+/** The origin that is one app's own. */
+const originOf = async (appId: string) => {
+  const origin = await ensureAppOrigin(appId);
+  if (!origin) throw new Error(`no origin for app ${appId}`);
+  return origin;
+};
+/** A request to an app's own listener. */
+const app = async (appId: string, path: string, init: RequestInit = {}) => fetch(`${await originOf(appId)}${path}`, { redirect: "manual", ...init });
 const signed = (rel: string) => `/files/${rel}?sig=${signAgentFilePath(OP_TOKEN, rel)}`;
 
 // Live 2026-10-16: the agent built an app and could not open it. The UI's
@@ -99,7 +108,7 @@ describe("the agent origin serves the bundled design-system faces", () => {
   });
 
   it("an app page's policy lets it load a same-origin font", async () => {
-    const csp = (await agent("/apps/demo/")).headers.get("content-security-policy") || "";
+    const csp = (await app("demo", "/apps/demo/")).headers.get("content-security-policy") || "";
     const fontSrc = csp.split(";").map((d) => d.trim()).find((d) => d.startsWith("font-src"));
     const governing = fontSrc ?? csp.split(";").map((d) => d.trim()).find((d) => d.startsWith("default-src")) ?? "";
     expect(governing).toContain("'self'");
@@ -111,12 +120,14 @@ describe("the agent can look at what it built", () => {
     const res = await ui("/apps/demo/");
     expect(res.status).toBe(302);
     const location = res.headers.get("location") || "";
-    expect(new URL(location).port).toBe(new URL(agentOrigin()).port);
+    expect(location).toBe(`${await originOf("demo")}/apps/demo/`);
+    expect(new URL(location).port).not.toBe(new URL(agentOrigin()).port);
     expect(evaluateEgressForUrl(location, String(UI_PORT)).allowed).toBe(true);
   });
 
-  it("the admission is that exact port, not loopback at large", () => {
-    const other = Number(new URL(agentOrigin()).port) + 1;
+  it("the admission is that exact port, not loopback at large", async () => {
+    const other = Number(new URL(await originOf("demo")).port) + 1;
+    if (String(other) === new URL(agentOrigin()).port || `http://127.0.0.1:${other}` === appOriginIfOpen("board")) return;
     expect(evaluateEgressForUrl(`http://127.0.0.1:${other}/apps/demo/`, String(UI_PORT)).allowed).toBe(false);
   });
 });
@@ -134,14 +145,14 @@ describe("the UI origin refuses agent paths", () => {
   it("redirects /apps to the agent origin and drops any token from the query", async () => {
     const res = await ui(`/apps/demo/?token=${OP_TOKEN}&ft=x&_t=1`);
     expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toBe(`${agentOrigin()}/apps/demo/?_t=1`);
+    expect(res.headers.get("location")).toBe(`${await originOf("demo")}/apps/demo/?_t=1`);
     expect(await res.text()).toBe("");
   });
 
   it("redirects registry-rendered /dashboards the same way", async () => {
     const res = await ui("/dashboards/board");
     expect(res.status).toBe(302);
-    expect(res.headers.get("location")).toBe(`${agentOrigin()}/dashboards/board`);
+    expect(res.headers.get("location")).toBe(`${await originOf("board")}/dashboards/board`);
   });
 
   it("refuses /files without the files-link capability, including with the operator token", async () => {
@@ -189,11 +200,11 @@ describe("the UI origin refuses agent paths", () => {
 });
 
 describe("agent-origin pages carry no operator token and cannot reach the UI", () => {
-  it("serves an app framed only by loopback pages, sandboxed without top navigation", async () => {
-    const res = await agent("/apps/demo/");
+  it("serves an app framed only by itself and the UI, sandboxed without top navigation", async () => {
+    const res = await app("demo", "/apps/demo/");
     expect(res.status).toBe(200);
     const csp = res.headers.get("content-security-policy") ?? "";
-    expect(csp).toContain("frame-ancestors 'self' http://127.0.0.1:* http://localhost:*");
+    expect(csp).toContain(`frame-ancestors 'self' http://127.0.0.1:${UI_PORT} http://localhost:${UI_PORT};`);
     expect(csp).toMatch(/sandbox allow-scripts allow-same-origin /);
     expect(csp).not.toContain("allow-top-navigation");
     expect(res.headers.get("x-frame-options")).toBeNull();
@@ -204,14 +215,14 @@ describe("agent-origin pages carry no operator token and cannot reach the UI", (
   });
 
   it("installs the IDE frame bridge addressed to the UI's origins only", async () => {
-    const html = await (await agent("/apps/demo/")).text();
+    const html = await (await app("demo", "/apps/demo/")).text();
     expect(html).toContain(`__laxInstallIdeFrameBridge(["http://127.0.0.1:${UI_PORT}","http://localhost:${UI_PORT}"])`);
     expect(html).toContain("function __laxInstallErrorPipe(");
     expect(html).not.toContain('postMessage(payload,"*")');
   });
 
   it("gives a phone over the broker the fetch error pipe instead of the frame bridge", async () => {
-    const html = await (await agent("/apps/demo/", { headers: { "x-lax-tunnel": "1" } })).text();
+    const html = await (await app("demo", "/apps/demo/", { headers: { "x-lax-tunnel": "1" } })).text();
     expect(html).not.toContain("__laxInstallIdeFrameBridge(");
     expect(html).toContain("/api/apps/demo/runtime-error");
   });
@@ -252,11 +263,11 @@ describe("agent-origin pages carry no operator token and cannot reach the UI", (
   });
 
   it("renders a registry app with its own state capability, framable by the UI, and no operator token", async () => {
-    const res = await agent("/apps/board/");
+    const res = await app("board", "/apps/board/");
     expect(res.status).toBe(200);
     expect(res.headers.get("x-frame-options")).toBeNull();
     const csp = res.headers.get("content-security-policy") ?? "";
-    expect(csp).toContain("frame-ancestors 'self' http://127.0.0.1:* http://localhost:*");
+    expect(csp).toContain(`frame-ancestors 'self' http://127.0.0.1:${UI_PORT} http://localhost:${UI_PORT};`);
     expect(csp).not.toContain("allow-top-navigation");
     const html = await res.text();
     expect(html).toContain(`var API = "";`);
@@ -267,30 +278,36 @@ describe("agent-origin pages carry no operator token and cannot reach the UI", (
 
   it("reaches a registry app's own state calls with that app's capability only", async () => {
     const own = { Authorization: `Bearer ${deriveAppDataCapability(OP_TOKEN, "board")}` };
+    const board = (path: string, init: RequestInit = {}) => app("board", path, init);
     const post = (path: string, headers: Record<string, string>) =>
-      agent(path, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ type: "click", actionIds: [] }) });
-    const state = await agent("/api/apps/board/state", { headers: own });
+      board(path, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ type: "click", actionIds: [] }) });
+    const state = await board("/api/apps/board/state", { headers: own });
     expect(state.status).toBe(200);
     expect(await state.json()).toEqual({ componentValues: { n: 1 }, actionQueue: [] });
     expect((await post("/api/apps/board/events", own)).status).toBe(200);
     expect((await post("/api/apps/board/actions/consume", own)).status).toBe(200);
 
     const other = { Authorization: `Bearer ${deriveAppDataCapability(OP_TOKEN, "other")}` };
-    expect((await agent("/api/apps/board/state", { headers: other })).status).toBe(401);
-    expect((await agent("/api/apps/board/state", { headers: { Authorization: `Bearer ${OP_TOKEN}` } })).status).toBe(401);
-    expect((await agent("/api/apps/board/state")).status).toBe(401);
+    expect((await board("/api/apps/board/state", { headers: other })).status).toBe(401);
+    expect((await board("/api/apps/board/state", { headers: { Authorization: `Bearer ${OP_TOKEN}` } })).status).toBe(401);
+    expect((await board("/api/apps/board/state")).status).toBe(401);
     // Only the calls the rendered page makes: not a state write, not the app's files.
     expect((await post("/api/apps/board/state", own)).status).toBe(401);
-    expect((await agent("/api/apps/board/files", { headers: own })).status).toBe(401);
-    expect((await agent("/api/apps/board/audit", { headers: own })).status).toBe(401);
+    expect((await board("/api/apps/board/files", { headers: own })).status).toBe(401);
+    expect((await board("/api/apps/board/audit", { headers: own })).status).toBe(401);
+    // Its own capability opens its state on its own listener only: not on the
+    // shared one, and not on another app's.
+    expect((await agent("/api/apps/board/state", { headers: own })).status).toBe(401);
+    expect((await app("demo", "/api/apps/board/state", { headers: own })).status).toBe(401);
   });
 
   it("lets the UI's origins read its pages (the gallery's Export), and no other origin", async () => {
-    const readBy = async (origin: string) => (await agent("/apps/demo/", { headers: { Origin: origin } })).headers.get("access-control-allow-origin");
+    const readBy = async (origin: string) => (await app("demo", "/apps/demo/", { headers: { Origin: origin } })).headers.get("access-control-allow-origin");
     expect(await readBy(`http://127.0.0.1:${UI_PORT}`)).toBe(`http://127.0.0.1:${UI_PORT}`);
     expect(await readBy(`http://localhost:${UI_PORT}`)).toBe(`http://localhost:${UI_PORT}`);
     expect(await readBy("http://127.0.0.1:5173")).toBeNull();
     expect(await readBy(agentOrigin())).toBeNull();
+    expect(await readBy(await originOf("board"))).toBeNull();
     expect(await readBy("https://evil.example")).toBeNull();
   });
 
@@ -301,7 +318,7 @@ describe("agent-origin pages carry no operator token and cannot reach the UI", (
   });
 
   it("answers only to its own host name (DNS rebinding)", async () => {
-    const { port } = new URL(agentOrigin());
+    const { port } = new URL(await originOf("demo"));
     const statusFor = (host: string) => new Promise<number>((resolve, reject) => {
       const req = request({ host: "127.0.0.1", port, path: "/apps/demo/", headers: { host } }, (res) => {
         res.resume();
@@ -317,6 +334,52 @@ describe("agent-origin pages carry no operator token and cannot reach the UI", (
   });
 });
 
+describe("each app has an origin of its own", () => {
+  it("gives two apps different origins, neither the shared one", async () => {
+    const demo = await originOf("demo");
+    const board = await originOf("board");
+    expect(demo).not.toBe(board);
+    expect([demo, board]).not.toContain(agentOrigin());
+    expect(appOriginIfOpen("demo")).toBe(demo);
+  });
+
+  it("an app's listener serves that app alone: another app's path is sent to its own origin", async () => {
+    const res = await app("demo", "/apps/board/");
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe(`${await originOf("board")}/apps/board/`);
+    expect(await res.text()).toBe("");
+    for (const path of ["/apps/demo/../board/", "/apps/demo/%2e%2e/board/", "/apps/demo/..%5Cboard/"]) {
+      expect((await app("demo", path)).status, path).not.toBe(200);
+    }
+  });
+
+  it("the shared listener serves no app, only the way to it", async () => {
+    const res = await agent("/apps/demo/");
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe(`${await originOf("demo")}/apps/demo/`);
+  });
+
+  it("an app's listener serves no workspace file", async () => {
+    expect((await app("demo", signed("reports/q3.html"))).status).toBe(404);
+  });
+
+  it("opens no listener for an app that does not exist, or a segment that is no app id", async () => {
+    for (const path of ["/apps/ghost/", "/apps/%41bc/", "/apps/a.b/", "/apps/", `/apps/${"x".repeat(65)}/`]) {
+      expect((await ui(path)).status, path).toBe(404);
+    }
+    expect(appOriginIfOpen("ghost")).toBeNull();
+    expect(await ensureAppOrigin("ghost")).toBeNull();
+    expect((await agent("/apps/ghost/")).status).toBe(404);
+  });
+
+  it("tells the operator an app's origin on request", async () => {
+    const body = await (await ui("/api/agent-origin?app=demo")).json() as { origin: string; appOrigin: string | null };
+    expect(body.origin).toBe(agentOrigin());
+    expect(body.appOrigin).toBe(await originOf("demo"));
+    expect((await (await ui("/api/agent-origin?app=ghost")).json() as { appOrigin: string | null }).appOrigin).toBeNull();
+  });
+});
+
 describe("the phone over the broker still opens apps", () => {
   // The tunnel (broker-transport/http-tunnel-bridge.ts) fetches the UI origin
   // with the operator token and follows redirects; the token header must not
@@ -324,7 +387,7 @@ describe("the phone over the broker still opens apps", () => {
   it("follows the UI redirect to the agent origin with the tunnel marker intact", async () => {
     const res = await fetch(`${uiBase}/apps/demo/`, { headers: { Authorization: `Bearer ${OP_TOKEN}`, "x-lax-tunnel": "1" } });
     expect(res.status).toBe(200);
-    expect(new URL(res.url).origin).toBe(agentOrigin());
+    expect(new URL(res.url).origin).toBe(await originOf("demo"));
     const html = await res.text();
     expect(html).toContain("/api/apps/demo/runtime-error");
     expect(html).not.toContain(OP_TOKEN);

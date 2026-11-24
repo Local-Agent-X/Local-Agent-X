@@ -12,16 +12,20 @@ import { connectorBootstrapScript } from "../src/server/app-serving-policy.js";
 const here = dirname(fileURLToPath(import.meta.url));
 const appsJs = readFileSync(join(here, "../public/js/apps.js"), "utf8");
 const CAPABILITY = "connector-capability-value";
+const APP_ORIGIN = "http://127.0.0.1:51300";
 
 async function exportServed(served: string): Promise<string> {
 	let blob: Blob | null = null;
 	const URLShim = { createObjectURL: (b: Blob) => { blob = b; return "blob:x"; }, revokeObjectURL: () => {} };
-	const fetchShim = async () => ({ ok: true, text: async () => served });
+	const fetched: string[] = [];
+	const fetchShim = async (url: string) => { fetched.push(url); return { ok: true, text: async () => served }; };
 	const exportApp = new Function(
-		"fetch", "URL", "laxAgentReady", "laxAgent", "alert",
+		"fetch", "URL", "laxAgentReady", "laxAppOrigin", "alert",
 		`${appsJs}\nreturn exportApp;`,
-	)(fetchShim, URLShim, Promise.resolve(), { origin: "http://127.0.0.1:51234" }, (m: string) => { throw new Error(m); });
+	)(fetchShim, URLShim, Promise.resolve(), async (id: string) => (id === "demo" ? APP_ORIGIN : ""), (m: string) => { throw new Error(m); });
 	await exportApp("demo", "Demo");
+	// Read from the app's own origin, the one that serves it.
+	expect(fetched).toEqual([`${APP_ORIGIN}/apps/demo`]);
 	if (!blob) throw new Error("no download");
 	return (blob as Blob).text();
 }

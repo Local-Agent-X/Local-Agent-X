@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequestHandler } from "./request-handler.js";
 import { agentOrigin, startAgentOrigin } from "./agent-origin.js";
+import { ensureAppOrigin } from "./app-origins.js";
 import { deriveFilesLinkCapability } from "./agent-file-links.js";
 import { deriveConnectorCapability } from "./app-connector-auth.js";
 import type { ServerContext } from "../server-context.js";
@@ -139,7 +140,7 @@ beforeAll(async () => {
   // Agent paths redirect to the agent origin; stand it up as boot does. The
   // real public dir supplies the IDE frame bridge it injects into app pages.
   const ctx = { config: deps.config, appRegistry: deps.appRegistry } as unknown as ServerContext;
-  agentServer = await startAgentOrigin({ config: deps.config, publicDir: fileURLToPath(new URL("../../public", import.meta.url)), getCtx: () => ctx });
+  agentServer = await startAgentOrigin({ config: deps.config, publicDir: fileURLToPath(new URL("../../public", import.meta.url)), getCtx: () => ctx, appPortsFile: join(tmpDir, "app-origin-ports.json") });
 });
 
 afterAll(async () => {
@@ -333,7 +334,8 @@ describe("static-build app serving (/apps/<id>/ → dist/)", () => {
   it("serves the built index.html at /apps/<id>/ with the connector bootstrap injected", async () => {
     const res = await fetch(`${base()}/apps/${APP}/`);
     expect(res.status).toBe(200);
-    expect(new URL(res.url).origin).toBe(agentOrigin()); // served after the UI's redirect, never by the UI origin
+    expect(new URL(res.url).origin).toBe(await ensureAppOrigin(APP)); // served after the UI's redirect, by the app's own origin, never the UI's
+    expect(new URL(res.url).origin).not.toBe(agentOrigin());
     expect(res.headers.get("content-type")).toContain("text/html");
     const html = await res.text();
     expect(html).toContain("<title>built</title>");
@@ -408,7 +410,7 @@ describe("request-handler extraction preserves the recorded legacy contract", ()
       const res = await fetch(`${base()}${path}`, { redirect: "manual", headers: { Authorization: `Bearer ${OP_TOKEN}` } });
       expect(res.status, path).toBe(302);
       const location = res.headers.get("location") ?? "";
-      expect(new URL(location).origin, path).toBe(agentOrigin());
+      expect(new URL(location).origin, path).toBe(await ensureAppOrigin("spa-app"));
       expect(location, path).not.toContain(OP_TOKEN);
     }
     const files = await fetch(`${base()}/files/secret.txt?token=${OP_TOKEN}`, { redirect: "manual" });

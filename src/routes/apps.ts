@@ -10,7 +10,8 @@ import { readDevServerRecord, registerDevServer } from "../tools/dev-server.js";
 import { awaitDevServerCage } from "../tools/dev-server-tools.js";
 import { listBuiltApps } from "../app-runtime/app-list.js";
 import { deriveAppDataCapability } from "../server/app-connector-auth.js";
-import { AGENT_APP_FRAMING_CSP, AGENT_APP_PERMISSIONS_POLICY } from "../server/app-serving-policy.js";
+import { agentAppFramingCsp, AGENT_APP_PERMISSIONS_POLICY } from "../server/app-serving-policy.js";
+import { uiOrigins } from "../server/ide-frame-bridge.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("routes.apps");
@@ -52,7 +53,7 @@ export const handleAppRoutes: RouteHandler = async (method, url, req, res, ctx, 
     const html = renderApp(def, ctx.config.port || 7007, deriveAppDataCapability(ctx.config.authToken, appId));
     res.writeHead(200, {
       "Content-Type": "text/html", "X-Content-Type-Options": "nosniff",
-      "Content-Security-Policy": AGENT_APP_FRAMING_CSP, "Referrer-Policy": "no-referrer",
+      "Content-Security-Policy": agentAppFramingCsp(uiOrigins(ctx.config.port || 7007)), "Referrer-Policy": "no-referrer",
       "Permissions-Policy": AGENT_APP_PERMISSIONS_POLICY,
     });
     res.end(html);

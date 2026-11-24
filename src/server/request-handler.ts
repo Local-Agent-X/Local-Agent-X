@@ -100,7 +100,7 @@ export function createRequestHandler(deps: RequestHandlerDeps): RequestHandler {
 
     // Agent-authored apps and files live on the agent origin (agent-origin.ts);
     // this origin only redirects to them, ahead of every route that could render one.
-    if (routeUiAgentPaths(method, url, req, res, deps.config, authorization.role)) return;
+    if (await routeUiAgentPaths(method, url, req, res, deps.config, authorization.role)) return;
     const ctx = createServerContext(deps);
     if (await routeApiRequest(method, url, req, res, ctx, authorization.role, deps.config, deps.dataDir)) return;
     if (serveProtectedAssets(method, url, req, res, deps.config, deps.dataDir)) return;

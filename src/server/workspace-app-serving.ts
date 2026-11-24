@@ -7,10 +7,10 @@ import { ensureDevServerRunning, readDevServerRecord, registerDevServer, listDev
 import { isPortBound } from "../tools/process-session.js";
 import { registerFrameworkDevServerFromDisk } from "../canonical-loop/public/build-adapters.js";
 import { deriveConnectorCapability } from "./app-connector-auth.js";
-import { APP_CONTENT_TYPES, WORKSPACE_APP_HTML_HEADERS, connectorBootstrapScript, resolveAppStaticFile } from "./app-serving-policy.js";
+import { APP_CONTENT_TYPES, workspaceAppHtmlHeaders, connectorBootstrapScript, resolveAppStaticFile } from "./app-serving-policy.js";
 import { answerLiveReloadPoll, decideFrontendServe, proxyFrontendDevServer } from "./dev-server-proxy.js";
 import { phoneErrorPipeScript } from "./error-pipe-inject.js";
-import { ideFrameBridgeScript } from "./ide-frame-bridge.js";
+import { ideFrameBridgeScript, uiOrigins } from "./ide-frame-bridge.js";
 import type { LAXConfig } from "../types.js";
 import { selfPort } from "../security/layer/loopback-grant.js";
 
@@ -101,7 +101,7 @@ export function serveWorkspaceApp(
   if (appId) { try { deps.ensureDevServerRunning(appId); } catch {} }
   // Shared with the app_build smoke gate's local origin (app-serving-policy.ts)
   // so the gate loads a build under the SAME policy this route serves it with.
-  Object.assign(headers, WORKSPACE_APP_HTML_HEADERS);
+  Object.assign(headers, workspaceAppHtmlHeaders(uiOrigins(config.port)));
   let html = readFileSync(appFile, "utf-8");
   // This page runs on the agent origin: it is handed the connector capability,
   // never the operator token. A phone over the broker gets the fetch error

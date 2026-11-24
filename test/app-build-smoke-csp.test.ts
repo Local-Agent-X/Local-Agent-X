@@ -26,7 +26,8 @@ import { fileURLToPath } from "node:url";
 import { runAppSmokeGate } from "../src/canonical-loop/adapters/app-build-smoke-gate.js";
 import { startStaticSmokeOrigin } from "../src/canonical-loop/adapters/app-build-smoke-origin.js";
 import { writeRunTargetManifest } from "../src/tools/app-run-target.js";
-import { WORKSPACE_APP_HTML_HEADERS } from "../src/server/app-serving-policy.js";
+import { workspaceAppHtmlHeaders } from "../src/server/app-serving-policy.js";
+import { uiOrigins } from "../src/server/ide-frame-bridge.js";
 import { serveWorkspaceApp, type AppServingDeps } from "../src/server/workspace-app-serving.js";
 import type { LAXConfig } from "../src/types.js";
 
@@ -262,7 +263,7 @@ describe("smoke origin and the real route serve ONE policy", () => {
     mkdirSync(appDir, { recursive: true });
     writeFileSync(join(appDir, "index.html"), "<!doctype html><html><body><p>hi</p></body></html>");
 
-    const config = { workspace: root, authToken: "operator-token" } as LAXConfig;
+    const config = { workspace: root, authToken: "operator-token", port: 7007 } as LAXConfig;
     const deps: AppServingDeps = {
       readDevServerRecord: () => null,
       ensureFrameworkRegistered: () => {},
@@ -287,25 +288,34 @@ describe("smoke origin and the real route serve ONE policy", () => {
       await fromOrigin.text();
       // Equality alone can never catch BOTH sides dropping a header together,
       // so every header is also pinned to its literal policy value.
-      for (const [name, value] of Object.entries(WORKSPACE_APP_HTML_HEADERS)) {
+      // The one difference is who may frame the page: the route names the UI's
+      // origins, the gate loads the page top-level and names nobody.
+      const routeHeaders = workspaceAppHtmlHeaders(uiOrigins(config.port));
+      const gateHeaders = workspaceAppHtmlHeaders([]);
+      for (const name of Object.keys(gateHeaders)) {
         const h = name.toLowerCase();
-        expect(fromRoute.headers.get(h), `route header ${h}`).toBe(value);
-        expect(fromOrigin.headers.get(h), `smoke-origin header ${h}`).toBe(value);
+        expect(fromRoute.headers.get(h), `route header ${h}`).toBe(routeHeaders[name]);
+        expect(fromOrigin.headers.get(h), `smoke-origin header ${h}`).toBe(gateHeaders[name]);
+        if (name !== "Content-Security-Policy") expect(routeHeaders[name], h).toBe(gateHeaders[name]);
       }
+      const withoutFraming = (csp: string) => csp.replace(/frame-ancestors [^;]*;/, "frame-ancestors;");
+      expect(withoutFraming(routeHeaders["Content-Security-Policy"])).toBe(withoutFraming(gateHeaders["Content-Security-Policy"]));
       expect(fromRoute.headers.get("content-type")).toBe("text/html");
       expect(fromOrigin.headers.get("content-type")).toBe("text/html");
       // The policy itself must keep saying the two things the gate relies on.
-      expect(WORKSPACE_APP_HTML_HEADERS["Content-Security-Policy"])
+      expect(gateHeaders["Content-Security-Policy"])
         .toContain("connect-src 'self' http://127.0.0.1:* http://localhost:*");
-      // Apps live on the agent origin and the UI frames them from another
-      // loopback port, so framing is CSP frame-ancestors, never X-Frame-Options.
-      expect(WORKSPACE_APP_HTML_HEADERS["Content-Security-Policy"])
-        .toContain("frame-ancestors 'self' http://127.0.0.1:* http://localhost:*");
+      // Each app lives on its own origin and the UI frames it from another
+      // loopback port, so framing is CSP frame-ancestors, never X-Frame-Options,
+      // and names the UI's origins: no other loopback page, so not another app.
+      expect(gateHeaders["Content-Security-Policy"]).toContain("frame-ancestors 'self';");
+      expect(routeHeaders["Content-Security-Policy"])
+        .toContain(`frame-ancestors 'self' http://127.0.0.1:${config.port} http://localhost:${config.port};`);
       // An app the agent builds may ask for the camera, microphone and location
       // (a camera app's offline copy and a weather app both need them).
-      expect(WORKSPACE_APP_HTML_HEADERS["Permissions-Policy"])
+      expect(gateHeaders["Permissions-Policy"])
         .toBe("camera=(self), microphone=(self), geolocation=(self)");
-      expect(Object.keys(WORKSPACE_APP_HTML_HEADERS)).toEqual([
+      expect(Object.keys(gateHeaders)).toEqual([
         "Content-Security-Policy", "X-Content-Type-Options",
         "Referrer-Policy", "Permissions-Policy", "Cache-Control", "Pragma",
       ]);

@@ -15,6 +15,10 @@ const read = (file: string) => readFileSync(join(here, "../public", file), "utf8
 
 const UI = "http://127.0.0.1:7007";
 const AGENT = "http://127.0.0.1:51234";
+// Each app has an origin of its own; the server names it on request.
+const APP_ORIGINS: Record<string, string> = { demo: "http://127.0.0.1:51300", board: "http://127.0.0.1:51301" };
+const DEMO = APP_ORIGINS.demo;
+const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
 const UI_ORIGINS = [UI, "http://localhost:7007"];
 const OP_TOKEN = "operator-token-value";
 
@@ -23,11 +27,18 @@ type AgentState = { origin: string; filesLinkToken: string };
 
 function loadSharedMd(answer: AgentState | null) {
 	const lookup = answer ? Promise.resolve({ ok: true, json: () => answer }) : new Promise(() => {});
+	const fetchStub = (url: string) => {
+		const app = new URL(url, UI).searchParams.get("app");
+		if (app === null || !answer) return lookup;
+		return Promise.resolve({ ok: true, json: () => ({ ...answer, appOrigin: APP_ORIGINS[app] ?? null }) });
+	};
 	return new Function(
 		"AUTH_TOKEN", "fetch", "location",
-		`${read("js/shared-escape.js")}\n${read("js/shared-md.js")}\nreturn { agentFrameTarget, agentFilesHref, linkPath, ready: laxAgentReady, agent: () => laxAgent };`,
-	)(OP_TOKEN, () => lookup, { origin: UI, href: `${UI}/` }) as {
+		`${read("js/shared-escape.js")}\n${read("js/shared-md.js")}\nreturn { agentFrameTarget, agentFrameTargetFor, isLaxAppOrigin, agentFilesHref, linkPath, ready: laxAgentReady, agent: () => laxAgent };`,
+	)(OP_TOKEN, fetchStub, { origin: UI, href: `${UI}/` }) as {
 		agentFrameTarget: (href: string) => FrameTarget;
+		agentFrameTargetFor: (href: string) => Promise<FrameTarget>;
+		isLaxAppOrigin: (origin: string) => boolean;
 		agentFilesHref: (href: string) => string;
 		linkPath: (href: string) => string;
 		ready: Promise<void>;
@@ -66,20 +77,19 @@ describe("app.html frames agent content without the shell's origin", () => {
 // apps-ide-tools-files.js ideLoadPreview, the one loader for the IDE preview
 // (entering the IDE and every refresh after an edit).
 describe("the IDE preview loads the app off the shell's origin", () => {
-	it("from the agent origin, which the frame may keep, with no token", async () => {
+	it("from the app's own origin, which the frame may keep, with no token", async () => {
 		const md = loadSharedMd({ origin: AGENT, filesLinkToken: "ft-cap" });
 		const frame = appHtmlElement("ide-preview-frame");
 		const win: Record<string, unknown> = {};
 		const onLoad = vi.fn();
 		const { ideLoadPreview } = new Function(
-			"window", "_ideAppId", "laxAgentReady", "agentFrameTarget", "_ideOnPreviewLoad",
+			"window", "_ideAppId", "agentFrameTargetFor", "_ideOnPreviewLoad",
 			`${read("js/apps-ide-tools-files.js")}\nreturn { ideLoadPreview };`,
-		)(win, "demo", md.ready, md.agentFrameTarget, onLoad) as { ideLoadPreview: (f: HTMLIFrameElement) => void };
+		)(win, "demo", md.agentFrameTargetFor, onLoad) as { ideLoadPreview: (f: HTMLIFrameElement) => void };
 		ideLoadPreview(frame);
-		await md.ready;
-		await Promise.resolve();
+		await settle();
 		const src = new URL(frame.src);
-		expect(src.origin).toBe(AGENT);
+		expect(src.origin).toBe(DEMO);
 		expect(src.pathname).toBe("/apps/demo/index.html");
 		expect(frame.src).not.toContain("token=");
 		expect(frame.src).not.toContain(OP_TOKEN);
@@ -235,15 +245,23 @@ return { resultLinkHtml };`,
 });
 
 describe("agentFrameTarget", () => {
-	it("loads /apps and /dashboards from the agent origin, which the frame may keep", async () => {
+	it("loads /apps and /dashboards from that app's own origin, which the frame may keep", async () => {
 		const md = loadSharedMd({ origin: AGENT, filesLinkToken: "ft-cap" });
-		await md.ready;
-		for (const href of ["/apps/demo/", "/dashboards/board", `${UI}/apps/demo/?x=1`]) {
-			const target = md.agentFrameTarget(href)!;
-			expect(new URL(target.src).origin, href).toBe(AGENT);
+		for (const [href, origin] of [["/apps/demo/", DEMO], ["/dashboards/board", APP_ORIGINS.board], [`${UI}/apps/demo/?x=1`, DEMO]]) {
+			const target = (await md.agentFrameTargetFor(href))!;
+			expect(new URL(target.src).origin, href).toBe(origin);
 			expect(target.ownOrigin, href).toBe(true);
 			expect(new URL(target.src).searchParams.get("_t"), href).toMatch(/^\d+$/);
 		}
+		expect(md.isLaxAppOrigin(DEMO)).toBe(true);
+		expect(md.isLaxAppOrigin(AGENT)).toBe(false);
+	});
+
+	it("an app the server does not know goes through the UI's redirect with no origin", async () => {
+		const md = loadSharedMd({ origin: AGENT, filesLinkToken: "ft-cap" });
+		const target = (await md.agentFrameTargetFor("/apps/ghost/"))!;
+		expect(new URL(target.src).origin).toBe(UI);
+		expect(target.ownOrigin).toBe(false);
 	});
 
 	it("gives a page this UI's origin would render no origin at all", async () => {
@@ -275,7 +293,7 @@ describe("agentFrameTarget", () => {
 		const md = loadSharedMd({ origin: AGENT, filesLinkToken: "ft-cap" });
 		await md.ready;
 		for (const href of ["/apps/demo/", "/dashboards/board", "/files/a.html", "/tasks.html"]) {
-			const src = md.agentFrameTarget(href)!.src;
+			const src = (await md.agentFrameTargetFor(href))!.src;
 			expect(src, href).not.toContain(OP_TOKEN);
 			expect(src, href).not.toContain("token=");
 		}
@@ -300,12 +318,12 @@ function loadAppJs(pins: Array<{ name: string; url: string }>) {
 	});
 	const noop = () => {};
 	const api = new Function(
-		"document", "AUTH_TOKEN", "fetch", "laxAgentReady", "agentFrameTarget",
+		"document", "AUTH_TOKEN", "fetch", "agentFrameTargetFor",
 		"renderSidebar", "checkAuth", "syncChatsFromServer", "migrateLegacyLocalStorageProjects", "syncProjectsFromServer",
 		"renderChatList", "apiFetch", "esc", "setTimeout", "setInterval",
 		`${read("js/app.js")}\nreturn { navigate, setPins: (p) => { _sidebarPins = p; } };`,
 	)(
-		doc, OP_TOKEN, () => new Promise(noop), md.ready, md.agentFrameTarget,
+		doc, OP_TOKEN, () => new Promise(noop), md.agentFrameTargetFor,
 		noop, noop, () => Promise.resolve(), () => Promise.resolve(), noop,
 		noop, () => Promise.reject(new Error("offline")), (s: string) => s, noop, noop,
 	) as { navigate: (route: string) => void; setPins: (p: unknown) => void };
@@ -314,32 +332,29 @@ function loadAppJs(pins: Array<{ name: string; url: string }>) {
 }
 
 describe("app.js pins load agent content off the shell's origin", () => {
-	it("a pinned app loads from the agent origin, keeps that origin, and carries no token", async () => {
-		const { api, frame, ready } = loadAppJs([{ name: "Demo", url: "/apps/demo/" }]);
+	it("a pinned app loads from its own origin, keeps that origin, and carries no token", async () => {
+		const { api, frame } = loadAppJs([{ name: "Demo", url: "/apps/demo/" }]);
 		api.navigate("pin:Demo");
-		await ready;
-		await Promise.resolve();
-		expect(new URL(frame.src).origin).toBe(AGENT);
+		await settle();
+		expect(new URL(frame.src).origin).toBe(DEMO);
 		expect(frame.src).not.toContain(OP_TOKEN);
 		expect(frame.src).not.toContain("token=");
 		expect(frame.sandbox.contains("allow-same-origin")).toBe(true);
 	});
 
 	it("a pin this UI's origin would render keeps no origin", async () => {
-		const { api, frame, ready } = loadAppJs([{ name: "Shell", url: "/tasks.html" }]);
+		const { api, frame } = loadAppJs([{ name: "Shell", url: "/tasks.html" }]);
 		frame.sandbox.add("allow-same-origin");
 		api.navigate("pin:Shell");
-		await ready;
-		await Promise.resolve();
+		await settle();
 		expect(new URL(frame.src).origin).toBe(UI);
 		expect(frame.sandbox.contains("allow-same-origin")).toBe(false);
 	});
 
 	it("a javascript: pin is never loaded", async () => {
-		const { api, frame, ready } = loadAppJs([{ name: "Evil", url: "javascript:parent.desktop.terminal.create()" }]);
+		const { api, frame } = loadAppJs([{ name: "Evil", url: "javascript:parent.desktop.terminal.create()" }]);
 		api.navigate("pin:Evil");
-		await ready;
-		await Promise.resolve();
+		await settle();
 		expect(frame.getAttribute("src")).toBeNull();
 		expect(frame.sandbox.contains("allow-same-origin")).toBe(false);
 	});
@@ -348,15 +363,15 @@ describe("app.js pins load agent content off the shell's origin", () => {
 // The shell half: apps-ide-picker.js + apps-ide-errors.js, against stand-in
 // preview frames whose windows the test controls: the App IDE's, and the right
 // panel's Preview tab, whose picks go into the main chat's composer.
-function loadIdeShell() {
+function loadIdeShell(previewSrc = `${DEMO}/apps/demo/index.html`) {
 	const previewWindow = { postMessage: vi.fn() };
 	const tabWindow = { postMessage: vi.fn() };
 	const input = document.createElement("textarea");
 	const composer = document.createElement("textarea");
 	const messages = document.createElement("div");
 	const frames: Record<string, unknown> = {
-		"ide-preview-frame": { contentWindow: previewWindow },
-		"preview-tab-frame": { contentWindow: tabWindow },
+		"ide-preview-frame": { contentWindow: previewWindow, src: previewSrc },
+		"preview-tab-frame": { contentWindow: tabWindow, src: `${DEMO}/apps/demo/index.html` },
 		"ide-chat-input": input,
 		"msg-input": composer,
 		"ide-chat-messages": messages,
@@ -369,9 +384,9 @@ function loadIdeShell() {
 	};
 	const win = { addEventListener: (type: string, fn: (e: unknown) => void) => { if (type === "message") handlers.push(fn); } };
 	const api = new Function(
-		"document", "window", "laxAgent", "chatWs", "_ideSessionId",
+		"document", "window", "isLaxAppOrigin", "chatWs", "_ideSessionId",
 		`${read("js/apps-ide-picker.js")}\n${read("js/apps-ide-errors.js")}\nreturn { ideTogglePicker, togglePicker, ideMessageFromPreview, ideDrainErrorsForAgent };`,
-	)(doc, win, { origin: AGENT, filesLinkToken: "ft" }, undefined, undefined) as {
+	)(doc, win, (origin: string) => Object.values(APP_ORIGINS).includes(origin), undefined, undefined) as {
 		ideTogglePicker: () => void;
 		togglePicker: (surface: string, on?: boolean) => void;
 		ideMessageFromPreview: (e: unknown) => boolean;
@@ -381,20 +396,20 @@ function loadIdeShell() {
 	return { api, previewWindow, tabWindow, input, composer, messages, deliver };
 }
 
-describe("the shell takes IDE messages only from the preview frame at the agent origin", () => {
+describe("the shell takes IDE messages only from the preview frame at its app's origin", () => {
 	const pick = { type: "lax-ide-pick", selector: "#buy", text: "Buy", dims: "10x10px" };
 	const error = { type: "lax-ide-runtime-error", kind: "error", message: "boom", source: "app.js", line: 1, col: 2 };
 
-	it("toggling the picker posts to the agent origin only", () => {
+	it("toggling the picker posts to the previewed app's origin only", () => {
 		const { api, previewWindow } = loadIdeShell();
 		api.ideTogglePicker();
-		expect(previewWindow.postMessage).toHaveBeenCalledWith({ type: "lax-ide-picker", on: true }, AGENT);
+		expect(previewWindow.postMessage).toHaveBeenCalledWith({ type: "lax-ide-picker", on: true }, DEMO);
 		for (const call of previewWindow.postMessage.mock.calls) expect(call[1]).not.toBe("*");
 	});
 
-	it("a pick from the preview at the agent origin fills the chat input", () => {
+	it("a pick from the preview at its app's origin fills the chat input", () => {
 		const { previewWindow, input, deliver } = loadIdeShell();
-		deliver(pick, AGENT, previewWindow);
+		deliver(pick, DEMO, previewWindow);
 		expect(input.value).toContain("`#buy`");
 	});
 
@@ -402,35 +417,47 @@ describe("the shell takes IDE messages only from the preview frame at the agent 
 		const { previewWindow, input, deliver } = loadIdeShell();
 		deliver(pick, UI, previewWindow);
 		deliver(pick, "null", previewWindow);
-		deliver(pick, AGENT, { postMessage: () => {} }); // a pinned app, or a frame nested in the preview
+		deliver(pick, AGENT, previewWindow); // the shared agent origin serves no app
+		deliver(pick, APP_ORIGINS.board, previewWindow); // another app's origin
+		deliver(pick, DEMO, { postMessage: () => {} }); // a pinned app, or a frame nested in the preview
 		expect(input.value).toBe("");
 	});
 
 	it("the Preview tab's picker posts to its own frame, and its pick fills the main composer", () => {
 		const { api, previewWindow, tabWindow, input, composer, deliver } = loadIdeShell();
 		api.togglePicker("preview");
-		expect(tabWindow.postMessage).toHaveBeenCalledWith({ type: "lax-ide-picker", on: true }, AGENT);
+		expect(tabWindow.postMessage).toHaveBeenCalledWith({ type: "lax-ide-picker", on: true }, DEMO);
 		expect(previewWindow.postMessage).not.toHaveBeenCalled();
-		deliver(pick, AGENT, tabWindow);
+		deliver(pick, DEMO, tabWindow);
 		expect(composer.value).toContain("`#buy`");
 		expect(input.value).toBe("");
 		// A pick turns the picker off.
-		expect(tabWindow.postMessage).toHaveBeenLastCalledWith({ type: "lax-ide-picker", on: false }, AGENT);
+		expect(tabWindow.postMessage).toHaveBeenLastCalledWith({ type: "lax-ide-picker", on: false }, DEMO);
 	});
 
 	it("the Preview tab's frame is not the App IDE's for its errors", () => {
 		const { api, tabWindow, messages, deliver } = loadIdeShell();
-		expect(api.ideMessageFromPreview({ data: error, origin: AGENT, source: tabWindow })).toBe(false);
-		deliver(error, AGENT, tabWindow);
+		expect(api.ideMessageFromPreview({ data: error, origin: DEMO, source: tabWindow })).toBe(false);
+		deliver(error, DEMO, tabWindow);
 		expect(messages.children.length).toBe(0);
 	});
 
-	it("runtime errors are taken only from the preview at the agent origin", () => {
+	it("a frame not showing an app's own origin is neither ordered nor heard", () => {
+		for (const src of ["", `${UI}/apps/demo/index.html`, `${AGENT}/apps/demo/index.html`, "http://127.0.0.1:9999/"]) {
+			const { api, previewWindow, input, deliver } = loadIdeShell(src);
+			api.ideTogglePicker();
+			expect(previewWindow.postMessage, src).not.toHaveBeenCalled();
+			deliver(pick, src ? new URL(src).origin : DEMO, previewWindow);
+			expect(input.value, src).toBe("");
+		}
+	});
+
+	it("runtime errors are taken only from the preview at its app's origin", () => {
 		const { api, previewWindow, messages, deliver } = loadIdeShell();
 		deliver(error, "http://127.0.0.1:9999", previewWindow);
-		deliver(error, AGENT, { postMessage: () => {} });
+		deliver(error, DEMO, { postMessage: () => {} });
 		expect(messages.children.length).toBe(0);
-		deliver(error, AGENT, previewWindow);
+		deliver(error, DEMO, previewWindow);
 		expect(messages.children.length).toBe(1);
 		expect(api.ideDrainErrorsForAgent()).toContain("boom");
 	});

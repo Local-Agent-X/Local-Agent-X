@@ -53,8 +53,7 @@ function navigate(route) {
     const pinName = route.slice(4); // strip "pin:"
     const pin = _sidebarPins.find(p => p.name === pinName);
     if (pin) {
-      laxAgentReady.then(() => {
-        const target = agentFrameTarget(pin.url);
+      agentFrameTargetFor(pin.url).then((target) => {
         if (!target) return;
         pinIframe.sandbox.toggle('allow-same-origin', target.ownOrigin);
         pinIframe.src = target.src;

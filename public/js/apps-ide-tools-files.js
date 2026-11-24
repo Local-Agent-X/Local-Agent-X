@@ -129,9 +129,9 @@ function _ideDoRefresh() {
 }
 
 // Loads the app's workspace files (never the registry render) into the preview.
-// The app is agent-built, so agentFrameTarget (shared-md.js) loads it from the
-// agent origin, and the frame keeps that origin only because it is not this
-// one. Waiting for the agent origin keeps the preview off the redirect, which
+// The app is agent-built, so agentFrameTargetFor (shared-md.js) loads it from
+// the app's own origin, and the frame keeps that origin only because it is not
+// this one. Waiting for that origin keeps the preview off the redirect, which
 // would land it with no origin, where the picker's origin check refuses it.
 function ideLoadPreview(frame) {
   window._ideAppUrl = `/apps/${_ideAppId}/index.html`;
@@ -146,9 +146,8 @@ function ideLoadPreview(frame) {
 // moved on from.
 function loadAppPreview(frame, appId, stillWanted, onLoad) {
   const url = `/apps/${appId}/index.html`;
-  laxAgentReady.then(() => {
+  agentFrameTargetFor(url).then((target) => {
     if (!stillWanted(appId)) return;
-    const target = agentFrameTarget(url);
     if (!target) return;
     frame.sandbox.toggle('allow-same-origin', target.ownOrigin);
     if (onLoad) frame.addEventListener('load', onLoad, { once: true });

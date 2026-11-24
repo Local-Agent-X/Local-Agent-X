@@ -311,9 +311,11 @@ async function deleteCustomPage(name) {
 
 async function exportApp(id, name) {
   try {
-    // The rendered HTML, from the agent origin that serves it (it lets this UI read it)
+    // The rendered HTML, from the app's own origin that serves it (it lets this UI read it)
     await laxAgentReady;
-    const r = await fetch(`${laxAgent.origin}/apps/${id}`);
+    const origin = await laxAppOrigin(id);
+    if (!origin) throw new Error('Failed to fetch app');
+    const r = await fetch(`${origin}/apps/${id}`);
     if (!r.ok) throw new Error('Failed to fetch app');
     let html = await r.text();
 

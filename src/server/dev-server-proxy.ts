@@ -17,8 +17,8 @@ import { join } from "node:path";
 import { createLogger } from "../logger.js";
 import { workspacePath } from "../config.js";
 import { phoneErrorPipeScript } from "./error-pipe-inject.js";
-import { ideFrameBridgeScript } from "./ide-frame-bridge.js";
-import { AGENT_APP_FRAMING_CSP, connectorBootstrapScript } from "./app-serving-policy.js";
+import { ideFrameBridgeScript, uiOrigins } from "./ide-frame-bridge.js";
+import { agentAppFramingCsp, connectorBootstrapScript } from "./app-serving-policy.js";
 
 const logger = createLogger("server.dev-server-proxy");
 
@@ -131,14 +131,14 @@ const COLD_START_POLL_MS = 300;
 // the brief cold window before the redirect path takes over. connect-src already
 // allows it; these two directives just have to match.
 const DEV_ORIGIN = "http://127.0.0.1:* http://localhost:*";
-const DEV_FRONTEND_CSP =
+const devFrontendCsp = (framers: readonly string[]): string =>
   "default-src 'self'; " +
   `script-src 'self' 'unsafe-inline' 'unsafe-eval' ${DEV_ORIGIN}; ` +
   "style-src 'self' 'unsafe-inline'; " +
   `img-src 'self' data: blob: ${DEV_ORIGIN}; ` +
   "font-src 'self' data:; " +
   "connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:* wss://127.0.0.1:* wss://localhost:*; " +
-  "object-src 'none'; base-uri 'self'; " + AGENT_APP_FRAMING_CSP;
+  "object-src 'none'; base-uri 'self'; " + agentAppFramingCsp(framers);
 
 /** Holding page shown while a frontend dev server is still cold-starting (its
  *  boot outran the proxy's inline retry budget). Polls the same app URL and
@@ -260,7 +260,7 @@ export function proxyFrontendDevServer(
             // body we're sending is modified, uncompressed text, so any inherited
             // encoding header would make the browser mis-decode it and hang.
             delete out["content-encoding"];
-            out["Content-Security-Policy"] = DEV_FRONTEND_CSP;
+            out["Content-Security-Policy"] = devFrontendCsp(opts.uiPort ? uiOrigins(opts.uiPort) : []);
             out["Cache-Control"] = "no-cache, must-revalidate";
             out["X-Content-Type-Options"] = "nosniff";
             res.writeHead(up.statusCode || 200, out);

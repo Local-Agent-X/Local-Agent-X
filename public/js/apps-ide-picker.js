@@ -3,10 +3,10 @@
 // of it gets dropped into the chat input so the user can describe what to
 // change about it.
 //
-// The preview is an agent-built page on the agent origin
+// The preview is an agent-built page on its app's own origin
 // (src/server/agent-origin.ts), so the shell cannot reach into its document.
 // The page runs the picker itself (apps-ide-frame-bridge.js, which the server
-// injects); the shell turns it on and off by postMessage addressed to the agent
+// injects); the shell turns it on and off by postMessage addressed to that
 // origin, and takes picks only from a preview frame's own window at that
 // origin. Nothing on disk is modified.
 //
@@ -34,12 +34,21 @@ function _previewWindowOf(surface) {
   return frame ? frame.contentWindow : null;
 }
 
-/** The surface whose preview frame sent `e`, from the agent origin; null for any other window. */
+/** The origin a surface's preview frame was loaded from, when that is an app's
+ *  own origin as the server named it (shared-md.js); '' otherwise. */
+function _previewOriginOf(surface) {
+  const frame = document.getElementById(PICKER_SURFACES[surface].frame);
+  let origin = '';
+  try { origin = frame && frame.src ? new URL(frame.src).origin : ''; } catch { /* not a URL: no origin */ }
+  return origin && isLaxAppOrigin(origin) ? origin : '';
+}
+
+/** The surface whose preview frame sent `e`, from the origin of the app it shows; null for any other window. */
 function _pickerSurfaceOf(e) {
-  if (!laxAgent.origin || e.origin !== laxAgent.origin) return null;
   for (const surface of Object.keys(PICKER_SURFACES)) {
     const preview = _previewWindowOf(surface);
-    if (preview && e.source === preview) return surface;
+    const origin = _previewOriginOf(surface);
+    if (preview && origin && e.source === preview && e.origin === origin) return surface;
   }
   return null;
 }
@@ -53,7 +62,8 @@ function ideMessageFromPreview(e) {
 
 function _postPicker(surface, on) {
   const preview = _previewWindowOf(surface);
-  if (preview && laxAgent.origin) preview.postMessage({ type: 'lax-ide-picker', on }, laxAgent.origin);
+  const origin = _previewOriginOf(surface);
+  if (preview && origin) preview.postMessage({ type: 'lax-ide-picker', on }, origin);
 }
 
 // Called after a preview iframe's load event: the new document starts with the

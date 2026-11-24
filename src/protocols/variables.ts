@@ -8,7 +8,7 @@ import { join } from "node:path";
 import type { ToolDefinition } from "../types.js";
 import { getLaxDir } from "../lax-data-dir.js";
 
-const VARIABLES_PATH = join(getLaxDir(), "protocol-variables.json");
+const variablesPath = (): string => join(getLaxDir(), "protocol-variables.json");
 
 export interface VariableScope {
   global: Record<string, unknown>;
@@ -21,15 +21,15 @@ function ensureDir(): void {
 }
 
 export function loadVariables(): VariableScope {
-  if (existsSync(VARIABLES_PATH)) {
-    try { return JSON.parse(readFileSync(VARIABLES_PATH, "utf-8")); } catch {}
+  if (existsSync(variablesPath())) {
+    try { return JSON.parse(readFileSync(variablesPath(), "utf-8")); } catch {}
   }
   return { global: {}, protocols: {} };
 }
 
 export function saveVariables(vars: VariableScope): void {
   ensureDir();
-  writeFileSync(VARIABLES_PATH, JSON.stringify(vars, null, 2), "utf-8");
+  writeFileSync(variablesPath(), JSON.stringify(vars, null, 2), "utf-8");
 }
 
 export function getVariable(key: string, protocolName?: string): unknown {

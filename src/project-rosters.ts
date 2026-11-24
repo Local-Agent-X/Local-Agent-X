@@ -32,9 +32,9 @@ import { createLogger } from "./logger.js";
 import { getLaxDir } from "./lax-data-dir.js";
 const logger = createLogger("project-rosters");
 
-const ROSTERS_FILE = join(getLaxDir(), "project-rosters.json");
-const LEGACY_TEMPLATES_FILE = join(getLaxDir(), "agent-templates.json");
-const LEGACY_PROJECTS_FILE = join(getLaxDir(), "agent-projects.json");
+const rostersFile = (): string => join(getLaxDir(), "project-rosters.json");
+const legacyTemplatesFile = (): string => join(getLaxDir(), "agent-templates.json");
+const legacyProjectsFile = (): string => join(getLaxDir(), "agent-projects.json");
 
 /** One agent's membership record in one project. */
 export interface ProjectRoster {
@@ -93,11 +93,11 @@ export class ProjectRosterStore {
   private rosters: RosterIndex = {};
 
   private constructor() {
-    if (existsSync(ROSTERS_FILE)) {
+    if (existsSync(rostersFile())) {
       try {
-        this.rosters = JSON.parse(readFileSync(ROSTERS_FILE, "utf-8"));
+        this.rosters = JSON.parse(readFileSync(rostersFile(), "utf-8"));
       } catch (e) {
-        logger.warn(`failed to parse ${ROSTERS_FILE}: ${(e as Error).message}; starting empty`);
+        logger.warn(`failed to parse ${rostersFile()}: ${(e as Error).message}; starting empty`);
         this.rosters = {};
       }
       // Idempotent backfill: catches projects created via the buggy
@@ -115,8 +115,8 @@ export class ProjectRosterStore {
   private backfillFromProjectAgentIds(): void {
     let projects: LegacyProject[] = [];
     try {
-      if (existsSync(LEGACY_PROJECTS_FILE)) {
-        projects = JSON.parse(readFileSync(LEGACY_PROJECTS_FILE, "utf-8"));
+      if (existsSync(legacyProjectsFile())) {
+        projects = JSON.parse(readFileSync(legacyProjectsFile(), "utf-8"));
       }
     } catch { return; }
     const now = Date.now();
@@ -168,13 +168,13 @@ export class ProjectRosterStore {
     let templates: LegacyAgentTemplate[] = [];
     let projects: LegacyProject[] = [];
     try {
-      if (existsSync(LEGACY_TEMPLATES_FILE)) {
-        templates = JSON.parse(readFileSync(LEGACY_TEMPLATES_FILE, "utf-8"));
+      if (existsSync(legacyTemplatesFile())) {
+        templates = JSON.parse(readFileSync(legacyTemplatesFile(), "utf-8"));
       }
     } catch { /* empty templates is fine */ }
     try {
-      if (existsSync(LEGACY_PROJECTS_FILE)) {
-        projects = JSON.parse(readFileSync(LEGACY_PROJECTS_FILE, "utf-8"));
+      if (existsSync(legacyProjectsFile())) {
+        projects = JSON.parse(readFileSync(legacyProjectsFile(), "utf-8"));
       }
     } catch { /* empty projects is fine */ }
 
@@ -206,7 +206,7 @@ export class ProjectRosterStore {
   }
 
   private persist(): void {
-    writeFileSync(ROSTERS_FILE, JSON.stringify(this.rosters, null, 2), "utf-8");
+    writeFileSync(rostersFile(), JSON.stringify(this.rosters, null, 2), "utf-8");
   }
 
   /** Get one roster entry. Returns undefined when the agent isn't on

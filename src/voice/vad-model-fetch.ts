@@ -10,7 +10,7 @@ import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { isLocalOnlyMode, LOCAL_ONLY_BLOCK_MESSAGE } from "../local-only-policy.js";
 
-const MODEL_DIR = join(getLaxDir(), "models", "vad");
+const modelDirNow = (): string => join(getLaxDir(), "models", "vad");
 const MODEL_NAME = "silero_vad.onnx";
 const MODEL_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx";
 // k2-fsa ships the int8-quantized Silero (~630KB, vs the stock 1.85MB
@@ -24,7 +24,7 @@ export interface VadModelPaths {
 }
 
 export function getVadModelPaths(): VadModelPaths {
-  return { modelDir: MODEL_DIR, model: join(MODEL_DIR, MODEL_NAME) };
+  return { modelDir: modelDirNow(), model: join(modelDirNow(), MODEL_NAME) };
 }
 
 export function vadModelExists(): boolean {

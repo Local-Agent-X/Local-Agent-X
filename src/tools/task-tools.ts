@@ -20,20 +20,20 @@ interface Task {
   updated_at: string;
 }
 
-const TASKS_PATH = join(getLaxDir(), "tasks.json");
+const tasksPath = (): string => join(getLaxDir(), "tasks.json");
 const STATUS_ICON: Record<Task["status"], string> =
   { pending: "\u23F3", in_progress: "\uD83D\uDD04", completed: "\u2705", failed: "\u274C" };
 const VALID_STATUSES = new Set(["pending", "in_progress", "completed", "failed"]);
 
 function loadTasks(): Task[] {
   try {
-    return JSON.parse(readFileSync(TASKS_PATH, "utf-8")) as Task[];
+    return JSON.parse(readFileSync(tasksPath(), "utf-8")) as Task[];
   } catch { return []; }
 }
 
 function saveTasks(tasks: Task[]): void {
   mkdirSync(getLaxDir(), { recursive: true });
-  writeFileSync(TASKS_PATH, JSON.stringify(tasks, null, 2), "utf-8");
+  writeFileSync(tasksPath(), JSON.stringify(tasks, null, 2), "utf-8");
 }
 
 function now(): string { return new Date().toISOString(); }

@@ -17,7 +17,7 @@ import { currentProcessIncarnation, processAlive } from "../persistence/process-
 import { createLogger } from "../logger.js";
 const logger = createLogger("autopilot.lock");
 
-const LOCK_DIR = join(getLaxDir(), "autopilot");
+const lockDir = (): string => join(getLaxDir(), "autopilot");
 
 function getRepoHash(): string {
   try {
@@ -30,7 +30,7 @@ function getRepoHash(): string {
 }
 
 function getLockPath(): string {
-  return join(LOCK_DIR, `${getRepoHash()}.lock`);
+  return join(lockDir(), `${getRepoHash()}.lock`);
 }
 
 /** The live holder of the lock at `lockPath`, or null when there is none
@@ -50,7 +50,7 @@ function liveHolder(lockPath: string): AutopilotLockFile | null {
  *  blocked. The file is created exclusively, so two starts that both found it
  *  stale cannot both take it. */
 export function acquireLock(opId: string, topic: string): AutopilotLockFile | null {
-  if (!existsSync(LOCK_DIR)) mkdirSync(LOCK_DIR, { recursive: true, mode: 0o700 });
+  if (!existsSync(lockDir())) mkdirSync(lockDir(), { recursive: true, mode: 0o700 });
   const lockPath = getLockPath();
   const lock: AutopilotLockFile = {
     pid: process.pid,

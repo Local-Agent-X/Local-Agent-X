@@ -21,13 +21,13 @@ export type PublisherSignatureVerdict =
   | { status: "unknown-key"; publisher: TrustedPublisher }
   | { status: "invalid"; publisher: TrustedPublisher; keyId: string | null };
 
-const TRUSTED_PUBLISHERS_PATH = join(getLaxDir(), "trusted-publishers.json");
+const trustedPublishersPath = (): string => join(getLaxDir(), "trusted-publishers.json");
 const ED25519_SPKI_PREFIX = Buffer.from("302a300506032b6570032100", "hex");
 
 export function readTrustedPublishers(): TrustedPublishersFile {
-  if (!existsSync(TRUSTED_PUBLISHERS_PATH)) return {};
+  if (!existsSync(trustedPublishersPath())) return {};
   try {
-    return JSON.parse(readFileSync(TRUSTED_PUBLISHERS_PATH, "utf-8"));
+    return JSON.parse(readFileSync(trustedPublishersPath(), "utf-8"));
   } catch {
     return {};
   }

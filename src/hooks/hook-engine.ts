@@ -25,7 +25,7 @@ interface SecurityEvaluator {
   evaluate(ctx: { toolName: string; args: Record<string, unknown>; sessionId: string; callContext?: string }): { allowed: boolean; reason: string };
 }
 
-const HOOKS_PATH = join(getLaxDir(), "hooks.json");
+const hooksPath = (): string => join(getLaxDir(), "hooks.json");
 const IS_WINDOWS = process.platform === "win32";
 
 function scrubEnv(): Record<string, string> {
@@ -87,10 +87,10 @@ export class HookEngine {
 
   reload(): void {
     try {
-      if (!existsSync(HOOKS_PATH)) { this.hooks = []; return; }
-      const config = JSON.parse(readFileSync(HOOKS_PATH, "utf-8")) as HooksConfig;
+      if (!existsSync(hooksPath())) { this.hooks = []; return; }
+      const config = JSON.parse(readFileSync(hooksPath(), "utf-8")) as HooksConfig;
       this.hooks = Array.isArray(config.hooks) ? config.hooks : [];
-      logger.info(`[hooks] Loaded ${this.hooks.length} hooks from ${HOOKS_PATH}`);
+      logger.info(`[hooks] Loaded ${this.hooks.length} hooks from ${hooksPath()}`);
     } catch (e) {
       logger.warn(`[hooks] Failed to load hooks: ${(e as Error).message}`);
       this.hooks = [];

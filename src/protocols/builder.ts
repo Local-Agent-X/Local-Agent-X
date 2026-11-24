@@ -34,7 +34,7 @@ export function customProtocolsPath(): string {
   return join(protocolsDir(), "custom.json");
 }
 
-const LEGACY_PATH = join(getLaxDir(), "custom-protocols.json");
+const legacyPath = (): string => join(getLaxDir(), "custom-protocols.json");
 let _migrationRan = false;
 
 /** One-time migration: ~/.lax/custom-protocols.json → workspace/protocols/custom.json.
@@ -44,10 +44,10 @@ function migrateLegacyCustomProtocols(): void {
   if (_migrationRan) return;
   _migrationRan = true;
   try {
-    if (!existsSync(LEGACY_PATH)) return;
+    if (!existsSync(legacyPath())) return;
     const newPath = customProtocolsPath();
     if (existsSync(newPath)) return; // workspace already has one — keep it, don't clobber
-    renameSync(LEGACY_PATH, newPath);
+    renameSync(legacyPath(), newPath);
     logger.info(`[protocols] Migrated custom protocols → ${newPath}`);
   } catch (e) {
     logger.warn(`[protocols] Legacy migration failed: ${(e as Error).message}`);

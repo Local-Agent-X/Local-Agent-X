@@ -36,7 +36,7 @@ export interface Recording {
   events: RecordingEvent[];
 }
 
-const RECORDINGS_DIR = join(getLaxDir(), "recordings");
+const recordingsDir = (): string => join(getLaxDir(), "recordings");
 
 function ensureDir(dir: string): void {
   if (!existsSync(dir)) {
@@ -154,7 +154,7 @@ export class DemoRecorder {
     if (!this.recording) {
       throw new Error("No active recording to save");
     }
-    const target = path ?? join(RECORDINGS_DIR, `${this.recording.id}.json`);
+    const target = path ?? join(recordingsDir(), `${this.recording.id}.json`);
     const dir = target.substring(0, target.lastIndexOf("/") !== -1 ? target.lastIndexOf("/") : target.lastIndexOf("\\"));
     ensureDir(dir);
     writeFileSync(target, JSON.stringify(this.recording, null, 2), "utf-8");
@@ -169,10 +169,10 @@ export class DemoRecorder {
   }
 
   static listRecordings(): string[] {
-    ensureDir(RECORDINGS_DIR);
-    return readdirSync(RECORDINGS_DIR)
+    ensureDir(recordingsDir());
+    return readdirSync(recordingsDir())
       .filter((f) => f.endsWith(".json"))
-      .map((f) => join(RECORDINGS_DIR, f));
+      .map((f) => join(recordingsDir(), f));
   }
 
   toMarkdown(): string {

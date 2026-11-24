@@ -89,7 +89,7 @@ export const DEFAULT_OFFICE_THEME: OfficeTheme = {
   brand: {}, // unbranded by default — no app branding, no user branding
 };
 
-const USER_THEME_PATH = join(getLaxDir(), "office-theme.json");
+const userThemePath = (): string => join(getLaxDir(), "office-theme.json");
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -134,8 +134,8 @@ function loadUserTheme(): OfficeThemeOverride | null {
   if (_userThemeCache && Date.now() - _userThemeCache.at < 5000) return _userThemeCache.value;
   let value: OfficeThemeOverride | null = null;
   try {
-    if (existsSync(USER_THEME_PATH)) {
-      const parsed = JSON.parse(readFileSync(USER_THEME_PATH, "utf-8"));
+    if (existsSync(userThemePath())) {
+      const parsed = JSON.parse(readFileSync(userThemePath(), "utf-8"));
       if (isObject(parsed)) value = parsed as OfficeThemeOverride;
     }
   } catch {

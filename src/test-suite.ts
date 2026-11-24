@@ -20,7 +20,7 @@ interface TestResult {
 
 const results: TestResult[] = [];
 
-const CONFIG_PATH = join(getLaxDir(), "config.json");
+const configPathNow = (): string => join(getLaxDir(), "config.json");
 
 // Environment first (the same LAX_AUTH_TOKEN the server honors), then
 // ~/.lax/config.json. The decision lives in test-suite-token.ts so it is
@@ -29,7 +29,7 @@ const CONFIG_PATH = join(getLaxDir(), "config.json");
 function loadToken(): TokenResolution {
   return resolveToken({
     env: process.env,
-    configPath: CONFIG_PATH,
+    configPath: configPathNow(),
     readConfig: (path) => readFileSync(path, "utf-8"),
   });
 }
@@ -324,7 +324,7 @@ async function main(): Promise<void> {
   }
   // Say where the token came from: an env/file mismatch otherwise surfaces
   // only as a wall of 401s with nothing to point at.
-  logger.info(`Auth token from ${auth.source === "env" ? `env ${AUTH_TOKEN_ENV}` : CONFIG_PATH}`);
+  logger.info(`Auth token from ${auth.source === "env" ? `env ${AUTH_TOKEN_ENV}` : configPathNow()}`);
   const token = auth.token;
 
   const t0 = performance.now();

@@ -114,12 +114,12 @@ export interface UsageSummary {
 
 // ── File-based storage (lightweight, no extra deps) ──
 
-const USAGE_FILE = join(getLaxDir(), "usage-log.json");
+const usageFile = (): string => join(getLaxDir(), "usage-log.json");
 const MAX_RECORDS = 10000;
 
 function loadRecords(): UsageRecord[] {
   try {
-    if (existsSync(USAGE_FILE)) return JSON.parse(readFileSync(USAGE_FILE, "utf-8"));
+    if (existsSync(usageFile())) return JSON.parse(readFileSync(usageFile(), "utf-8"));
   } catch {}
   return [];
 }
@@ -127,7 +127,7 @@ function loadRecords(): UsageRecord[] {
 function saveRecords(records: UsageRecord[]): void {
   // Keep only last MAX_RECORDS
   const trimmed = records.length > MAX_RECORDS ? records.slice(-MAX_RECORDS) : records;
-  writeFileSync(USAGE_FILE, JSON.stringify(trimmed), "utf-8");
+  writeFileSync(usageFile(), JSON.stringify(trimmed), "utf-8");
 }
 
 // ── Public API ──

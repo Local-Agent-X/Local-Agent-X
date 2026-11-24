@@ -17,11 +17,11 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync } from "node
 import { join } from "node:path";
 import { getLaxDir } from "../../lax-data-dir.js";
 
-const TIER4_CACHE = join(getLaxDir(), "models", "tts", "kokoro-onnx");
+const tier4Cache = (): string => join(getLaxDir(), "models", "tts", "kokoro-onnx");
 
 export function getTier4CacheDir(): string {
-  if (!existsSync(TIER4_CACHE)) mkdirSync(TIER4_CACHE, { recursive: true });
-  return TIER4_CACHE;
+  if (!existsSync(tier4Cache())) mkdirSync(tier4Cache(), { recursive: true });
+  return tier4Cache();
 }
 
 export function configureHFCache(): void {

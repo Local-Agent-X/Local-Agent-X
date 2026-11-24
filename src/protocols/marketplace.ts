@@ -13,7 +13,7 @@ import { canonicalFetch } from "../tools/web-egress.js";
 import { trashRecord } from "../safe-delete.js";
 
 const MARKETPLACE_REGISTRY_URL = "https://raw.githubusercontent.com/local-agent-x/protocol-marketplace/main/registry.json";
-const CACHE_PATH = join(getLaxDir(), "marketplace-cache.json");
+const cachePath = (): string => join(getLaxDir(), "marketplace-cache.json");
 
 interface MarketplaceEntry {
   name: string;
@@ -31,9 +31,9 @@ interface MarketplaceCache {
 }
 
 function loadCache(): MarketplaceCache | null {
-  if (existsSync(CACHE_PATH)) {
+  if (existsSync(cachePath())) {
     try {
-      const cache: MarketplaceCache = JSON.parse(readFileSync(CACHE_PATH, "utf-8"));
+      const cache: MarketplaceCache = JSON.parse(readFileSync(cachePath(), "utf-8"));
       const oneHour = 60 * 60 * 1000;
       if (Date.now() - cache.fetchedAt < oneHour) return cache;
     } catch {}
@@ -44,7 +44,7 @@ function loadCache(): MarketplaceCache | null {
 function saveCache(cache: MarketplaceCache): void {
   const dir = getLaxDir();
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
-  writeFileSync(CACHE_PATH, JSON.stringify(cache, null, 2), "utf-8");
+  writeFileSync(cachePath(), JSON.stringify(cache, null, 2), "utf-8");
 }
 
 export async function fetchRegistry(): Promise<MarketplaceEntry[]> {

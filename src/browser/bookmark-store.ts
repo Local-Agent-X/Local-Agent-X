@@ -21,7 +21,7 @@ import { randomBytes } from "node:crypto";
 import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 
-const BOOKMARKS_FILE = join(getLaxDir(), "browser-bookmarks.json");
+const bookmarksFile = (): string => join(getLaxDir(), "browser-bookmarks.json");
 
 export interface BrowserBookmark {
   id: string;
@@ -78,8 +78,8 @@ export class BrowserBookmarkStore {
 
   private load(): void {
     try {
-      if (existsSync(BOOKMARKS_FILE)) {
-        this.bookmarks = JSON.parse(readFileSync(BOOKMARKS_FILE, "utf-8"));
+      if (existsSync(bookmarksFile())) {
+        this.bookmarks = JSON.parse(readFileSync(bookmarksFile(), "utf-8"));
       }
     } catch { this.bookmarks = []; }
   }
@@ -87,8 +87,8 @@ export class BrowserBookmarkStore {
   private persist(): void {
     // 0600 like the repo's other user-private stores; chmod covers a
     // pre-existing looser file (mode only applies on create).
-    writeFileSync(BOOKMARKS_FILE, JSON.stringify(this.bookmarks, null, 2), { encoding: "utf-8", mode: 0o600 });
-    try { chmodSync(BOOKMARKS_FILE, 0o600); } catch { /* best-effort on Windows ACL setups */ }
+    writeFileSync(bookmarksFile(), JSON.stringify(this.bookmarks, null, 2), { encoding: "utf-8", mode: 0o600 });
+    try { chmodSync(bookmarksFile(), 0o600); } catch { /* best-effort on Windows ACL setups */ }
   }
 
   /**

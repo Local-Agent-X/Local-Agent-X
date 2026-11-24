@@ -23,7 +23,7 @@ import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { containsSensitiveText, redactTarget } from "../orchestrator/ui-event-store.js";
 
-const HISTORY_FILE = join(getLaxDir(), "browser-history.json");
+const historyFile = (): string => join(getLaxDir(), "browser-history.json");
 
 /** Per-profile entry cap — oldest entries beyond this are evicted. */
 export const HISTORY_CAP = 500;
@@ -76,8 +76,8 @@ export class BrowserHistoryStore {
 
   private load(): void {
     try {
-      if (existsSync(HISTORY_FILE)) {
-        this.entries = JSON.parse(readFileSync(HISTORY_FILE, "utf-8"));
+      if (existsSync(historyFile())) {
+        this.entries = JSON.parse(readFileSync(historyFile(), "utf-8"));
       }
     } catch { this.entries = []; }
   }
@@ -85,8 +85,8 @@ export class BrowserHistoryStore {
   private persist(): void {
     // 0600: browsing breadcrumbs are the user's private data. mode only
     // applies on create, so chmod covers a pre-existing looser file.
-    writeFileSync(HISTORY_FILE, JSON.stringify(this.entries, null, 2), { encoding: "utf-8", mode: 0o600 });
-    try { chmodSync(HISTORY_FILE, 0o600); } catch { /* best-effort on Windows ACL setups */ }
+    writeFileSync(historyFile(), JSON.stringify(this.entries, null, 2), { encoding: "utf-8", mode: 0o600 });
+    try { chmodSync(historyFile(), 0o600); } catch { /* best-effort on Windows ACL setups */ }
   }
 
   /** Profiles whose most recent recordVisit was DROPPED by redaction — their

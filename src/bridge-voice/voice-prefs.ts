@@ -24,15 +24,15 @@ interface PrefsFile {
   whatsapp?: Record<string, boolean>;
 }
 
-const PREFS_PATH = join(getLaxDir(), "bridge-voice-prefs.json");
+const prefsPath = (): string => join(getLaxDir(), "bridge-voice-prefs.json");
 
 let cache: PrefsFile | null = null;
 
 function load(): PrefsFile {
   if (cache) return cache;
   try {
-    if (existsSync(PREFS_PATH)) {
-      const raw = JSON.parse(readFileSync(PREFS_PATH, "utf-8"));
+    if (existsSync(prefsPath())) {
+      const raw = JSON.parse(readFileSync(prefsPath(), "utf-8"));
       cache = {
         telegram: typeof raw.telegram === "object" && raw.telegram !== null ? raw.telegram : {},
         whatsapp: typeof raw.whatsapp === "object" && raw.whatsapp !== null ? raw.whatsapp : {},
@@ -50,7 +50,7 @@ function load(): PrefsFile {
 function save(prefs: PrefsFile): void {
   try {
     mkdirSync(getLaxDir(), { recursive: true });
-    writeFileSync(PREFS_PATH, JSON.stringify(prefs, null, 2));
+    writeFileSync(prefsPath(), JSON.stringify(prefs, null, 2));
   } catch (e) {
     logger.error(`failed to save prefs: ${(e as Error).message}`);
   }

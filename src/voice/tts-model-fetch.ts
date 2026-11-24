@@ -23,7 +23,7 @@ import { isLocalOnlyMode, LOCAL_ONLY_BLOCK_MESSAGE } from "../local-only-policy.
 import { createLogger } from "../logger.js";
 const logger = createLogger("voice.tts-model-fetch");
 
-const MODEL_DIR = join(getLaxDir(), "models", "tts");
+const modelDirNow = (): string => join(getLaxDir(), "models", "tts");
 const BUNDLE_NAME = "matcha-icefall-en_US-ljspeech";
 const BUNDLE_URL = `https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/${BUNDLE_NAME}.tar.bz2`;
 const VOCODER_URL = "https://github.com/k2-fsa/sherpa-onnx/releases/download/vocoder-models/vocos-22khz-univ.onnx";
@@ -39,7 +39,7 @@ export interface TTSModelPaths {
 }
 
 export function getTTSModelPaths(): TTSModelPaths {
-  const dir = join(MODEL_DIR, BUNDLE_NAME);
+  const dir = join(modelDirNow(), BUNDLE_NAME);
   return {
     modelDir: dir,
     acousticModel: join(dir, "model-steps-3.onnx"),
@@ -100,10 +100,10 @@ async function doDownload(
   if (isLocalOnlyMode()) throw new Error(LOCAL_ONLY_BLOCK_MESSAGE);
 
   const paths = getTTSModelPaths();
-  mkdirSync(MODEL_DIR, { recursive: true });
+  mkdirSync(modelDirNow(), { recursive: true });
   mkdirSync(paths.modelDir, { recursive: true });
 
-  const bundlePath = join(MODEL_DIR, `${BUNDLE_NAME}.tar.bz2`);
+  const bundlePath = join(modelDirNow(), `${BUNDLE_NAME}.tar.bz2`);
   const vocoderPath = paths.vocoder;
 
   // Clear any partial leftover from a previous failed run before starting
@@ -146,7 +146,7 @@ async function doDownload(
 
   // 2. Extract bundle
   try {
-    await extractTarBz2(bundlePath, MODEL_DIR);
+    await extractTarBz2(bundlePath, modelDirNow());
   } catch (e) {
     try { unlinkSync(bundlePath); } catch {}
     throw new Error(`TTS bundle extraction failed: ${(e as Error).message}`);

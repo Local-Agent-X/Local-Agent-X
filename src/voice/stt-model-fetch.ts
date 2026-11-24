@@ -15,7 +15,7 @@ import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import { isLocalOnlyMode, LOCAL_ONLY_BLOCK_MESSAGE } from "../local-only-policy.js";
 
-const MODEL_DIR = join(getLaxDir(), "models", "stt");
+const modelDirNow = (): string => join(getLaxDir(), "models", "stt");
 
 // Zipformer2 streaming English, int8 quantized (~70MB total). Released by
 // k2-fsa; Apache-2.0 code + CC0 tokens. The 2023-02-17 "20M" model we
@@ -51,7 +51,7 @@ export interface ModelPaths {
 }
 
 export function getModelPaths(): ModelPaths {
-  const dir = join(MODEL_DIR, MODEL_ID);
+  const dir = join(modelDirNow(), MODEL_ID);
   return {
     modelDir: dir,
     encoder: join(dir, "encoder-epoch-99-avg-1-chunk-16-left-128.int8.onnx"),

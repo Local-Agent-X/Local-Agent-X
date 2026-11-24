@@ -173,9 +173,16 @@ describe("shrinkToolsForTier — medium manifest size", () => {
     // deck's limits and the playbook the agent reviews its slides against
     // (deck-purposes.ts). The enum is the cost, ~16 tokens. The ceiling
     // moved 10,850 → 10,925.
+    //
+    // Re-measured 2026-11-23: 11,014. presentation, document, spreadsheet and
+    // pdf gained `brand`, the saved company look a file is made in
+    // (brand-theme.ts). Code fills it when the user names a brand
+    // (brand-match.ts), so its compact text is one short sentence for "none"
+    // and the brand the message does not name; ~22 tokens a family. The
+    // ceiling moved 10,925 → 11,025.
     expect(before).toBeGreaterThan(12_000);
     expect(after).toBeLessThanOrEqual(before / 2);
-    expect(after).toBeLessThanOrEqual(10_925);
+    expect(after).toBeLessThanOrEqual(11_025);
   });
 
   it("shortens parameter descriptions past the cap and leaves shorter ones verbatim", () => {

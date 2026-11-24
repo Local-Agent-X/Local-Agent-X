@@ -13,18 +13,18 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2144 non-test source files · 62 oversized · 270 nearing the size cap.
+**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2153 non-test source files · 62 oversized · 271 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 191 | 32 | XL | 1 |
-| `src/security/` | 168 | 66 | XL | 2 |
-| `src/tools/` | 142 | 258 | XL | 7 |
+| `src/security/` | 171 | 66 | XL | 2 |
+| `src/tools/` | 144 | 265 | XL | 7 |
 | `src/tool-execution/` | 107 | 91 | XL | 2 |
-| `src/workspace/` | 93 | 3 | M |  |
-| `src/canonical-loop/` | 92 | 297 | XL | 6 |
+| `src/workspace/` | 94 | 3 | M |  |
+| `src/canonical-loop/` | 92 | 298 | XL | 6 |
 | `src/providers/` | 80 | 28 | L | 1 |
 | `src/util/` | 80 | 4 | S |  |
 | `src/session/` | 79 | 15 | L |  |
@@ -32,7 +32,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/data-lineage/` | 62 | 12 | L |  |
 | `src/browser/` | 55 | 95 | XL | 5 |
 | `src/agency/` | 54 | 40 | XL |  |
-| `src/chat-ws/` | 49 | 23 | L |  |
+| `src/chat-ws/` | 50 | 23 | L |  |
 | `src/tool-policy/` | 48 | 22 | L |  |
 | `src/local-runtimes/` | 45 | 28 | XL |  |
 | `src/threat/` | 43 | 13 | L |  |
@@ -59,12 +59,12 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/self-edit/` | 16 | 19 | L | 2 |
 | `src/anthropic-client/` | 15 | 23 | L | 2 |
 | `src/cron/` | 14 | 14 | L |  |
-| `src/routes/` | 14 | 116 | XL | 15 |
+| `src/routes/` | 14 | 117 | XL | 15 |
 | `src/app-renderer/` | 13 | 7 | M | 1 |
+| `src/sync/` | 13 | 27 | L |  |
 | `src/agent-loop/` | 12 | 1 | S |  |
 | `src/ari-kernel/` | 12 | 12 | M |  |
 | `src/integrations/` | 12 | 15 | M |  |
-| `src/sync/` | 12 | 27 | L |  |
 | `src/app-scaffold/` | 11 | 7 | M |  |
 | `src/whatsapp-bridge/` | 11 | 8 | M | 1 |
 | `src/calendar/` | 10 | 10 | M |  |
@@ -320,6 +320,7 @@ job. Comments are free: never cut them to fit.
 - `src/browser/downloads.ts` — 340+ code lines (cap 350)
 - `src/canonical-loop/container-execution-backend.ts` — 340+ code lines (cap 350)
 - `src/canonical-loop/provider-adapter-factory.ts` — 340+ code lines (cap 350)
+- `src/tools/presentation-tools.ts` — 340+ code lines (cap 350)
 - `src/canonical-loop/checkpoint.ts` — 330+ code lines (cap 350)
 - `src/canonical-loop/container-runtime-projection.ts` — 330+ code lines (cap 350)
 - `src/memory/tools/facts.ts` — 330+ code lines (cap 350)
@@ -333,8 +334,8 @@ job. Comments are free: never cut them to fit.
 - `src/protocols/learned-lifecycle.ts` — 320+ code lines (cap 350)
 - `src/sandbox/docker-execution-runtime.ts` — 320+ code lines (cap 350)
 - `src/server/background-jobs/index.ts` — 320+ code lines (cap 350)
+- `src/tools/document-tools.ts` — 320+ code lines (cap 350)
 - `src/tools/edit-tools.ts` — 320+ code lines (cap 350)
-- `src/tools/presentation-tools.ts` — 320+ code lines (cap 350)
 - `src/auto-build/workflow-resolver.ts` — 310+ code lines (cap 350)
 - `src/browser/manager.ts` — 310+ code lines (cap 350)
 - `src/protocols/index.ts` — 310+ code lines (cap 350)
@@ -350,7 +351,6 @@ job. Comments are free: never cut them to fit.
 - `src/cron/cron-service.ts` — 300+ code lines (cap 350)
 - `src/local-runtimes/certification-runner.ts` — 300+ code lines (cap 350)
 - `src/memory/index-core.ts` — 300+ code lines (cap 350)
-- `src/tools/document-tools.ts` — 300+ code lines (cap 350)
 - `src/voice/voice-session/turn-runner.ts` — 300+ code lines (cap 350)
 - `src/api-docs.ts` — 290+ code lines (cap 350)
 - `src/auth/storage.ts` — 290+ code lines (cap 350)
@@ -376,6 +376,7 @@ job. Comments are free: never cut them to fit.
 - `src/test-suite.ts` — 280+ code lines (cap 350)
 - `src/tools/build-app-spawn.ts` — 280+ code lines (cap 350)
 - `src/tools/http-egress-guard.ts` — 280+ code lines (cap 350)
+- `src/tools/pdf-tools.ts` — 280+ code lines (cap 350)
 - `src/agency/handler-tools.ts#createHandlerTools` — 100+ own code lines (cap 100)
 - `src/auto-build/workflow-resolver.ts#candidateFromEvidence` — 100+ own code lines (cap 100)
 - `src/canonical-loop/adapters/anthropic/stream-consume.ts#streamConsume` — 100+ own code lines (cap 100)
@@ -453,6 +454,7 @@ job. Comments are free: never cut them to fit.
 - `src/threat/threat-engine.ts#ThreatEngine.evaluateToolResult` — 80+ own code lines (cap 100)
 - `src/tools/asset-tools.ts#extractSiteAssetsTool.execute` — 80+ own code lines (cap 100)
 - `src/tools/image-tools/generate-video.ts#generateVideoTool.execute` — 80+ own code lines (cap 100)
+- `src/tools/pdf-tools.ts#pdfCreate.execute` — 80+ own code lines (cap 100)
 - `src/tools/shared/image-binary-meta.ts#parseDimensions` — 80+ own code lines (cap 100)
 - `src/tools/web-fetch.ts#webFetchTool.execute` — 80+ own code lines (cap 100)
 - `src/update-extracted-validation.ts#validateExtractedUpdate` — 80+ own code lines (cap 100)
@@ -516,7 +518,6 @@ job. Comments are free: never cut them to fit.
 - `src/tools/edit-tools.ts#bulkReplaceTool.execute` — 70+ own code lines (cap 100)
 - `src/tools/image-tools/generate-image.ts#generateImageTool.execute` — 70+ own code lines (cap 100)
 - `src/tools/issue-tools/agent-whoami.ts#agentWhoAmITool.execute` — 70+ own code lines (cap 100)
-- `src/tools/pdf-tools.ts#pdfCreate.execute` — 70+ own code lines (cap 100)
 - `src/tools/read-imports.ts#buildImportAppendix` — 70+ own code lines (cap 100)
 - `src/voice/tts-model-fetch.ts#doDownload` — 70+ own code lines (cap 100)
 - `src/agency/agent-workspace.ts#provisionFolder` — 60+ own code lines (cap 100)

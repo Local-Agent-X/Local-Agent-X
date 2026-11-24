@@ -8,6 +8,8 @@ import { canonicalFetch, EgressRedirectBlocked } from "./web-egress.js";
 import { workspaceRoot } from "../config.js";
 import { resolveAgentPath, realpathDeep, sessionIdOf } from "../workspace/paths.js";
 import { confineToDir, writeValidatedFile } from "../security/layer/index.js";
+import { wrapExternalContent } from "../sanitize.js";
+import { readSiteBrand } from "./site-brand.js";
 
 const logger = createLogger("tools.asset-tools");
 
@@ -158,6 +160,33 @@ async function downloadOne(
   return { url, path: outPath, bytes: buf.byteLength, mime };
 }
 
+/** A site's brand: its look read (site-brand.ts) and its likeliest logos
+ *  downloaded, so the agent can save both with the brand tool. */
+async function brandLook(url: string, outDir: string, maxBytes: number): Promise<ReturnType<typeof ok>> {
+  let look: Awaited<ReturnType<typeof readSiteBrand>>;
+  try { look = await readSiteBrand(url); }
+  catch (e) {
+    if (e instanceof EgressRedirectBlocked) return err(`Failed to fetch source: blocked (SSRF): ${e.message}`);
+    return err(`Failed to read ${url}: ${(e as Error).message}`);
+  }
+  const used = new Set<string>();
+  const logos: DownloadedImage[] = [];
+  for (const [i, u] of look.logos.slice(0, 3).entries()) {
+    const r = await downloadOne(u, outDir, i, maxBytes, used).catch(() => null);
+    if (r && !("error" in r)) logos.push(r);
+  }
+  const workspace = realpathDeep(workspaceRoot());
+  const lines = [
+    `Brand look of ${url}:`,
+    `Colors, most used first: ${look.found.map((c) => `#${c}`).join(", ") || "none found"}`,
+    `Suggested: primary #${look.colors.primary ?? "?"}${look.colors.secondary ? `, secondary #${look.colors.secondary}` : ""}`,
+    `Fonts: ${[look.fonts.heading, look.fonts.body].filter(Boolean).join(", ") || "none found (system fonts)"}`,
+    logos.length ? `Logo candidates downloaded (look at them before choosing): ${logos.map((l) => relative(workspace, l.path)).join(", ")}` : "No logo image found on the page.",
+    "Save it with the brand tool: save (name, colors, fonts), then add_asset with the logo's path and role \"logo\".",
+  ];
+  return ok(wrapExternalContent(lines.join("\n"), url), { look: { ...look, logos: logos.map((l) => relative(workspace, l.path)) } });
+}
+
 export const extractSiteAssetsTool: ToolDefinition = {
   name: "extract_site_assets",
   description:
@@ -178,6 +207,10 @@ export const extractSiteAssetsTool: ToolDefinition = {
         type: "integer",
         description: `Per-image size cap in bytes. Default ${MAX_BYTES_PER_IMAGE_DEFAULT}.`,
       },
+      brand_look: {
+        type: "boolean",
+        description: "Read the site's brand instead: its logo (downloaded), colors and fonts, to save with the brand tool.",
+      },
     },
     required: ["url"],
   },
@@ -196,6 +229,8 @@ export const extractSiteAssetsTool: ToolDefinition = {
     try { outDir = workspaceOutputDir(outputDir, sessionIdOf(args)); }
     catch (e) { return err((e as Error).message); }
     if (!existsSync(outDir)) mkdirSync(outDir, { recursive: true });
+
+    if (args.brand_look === true) return brandLook(url, outDir, maxBytesPerImage);
 
     let html: string;
     try {

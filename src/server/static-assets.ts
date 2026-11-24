@@ -29,7 +29,7 @@ const AGENT_FILE_SVG_CSP = `sandbox; script-src 'none'; ${AGENT_FILE_FRAMING}`;
 export function serveProtectedAssets(method: string, url: URL, req: IncomingMessage, res: ServerResponse, config: LAXConfig, dataDir: string): boolean {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
   if (method !== "GET") return false;
-  if (!["/uploads/", "/videos/", "/images/"].some(route => url.pathname.startsWith(route))) return false;
+  if (!["/uploads/", "/videos/", "/images/", "/brands/"].some(route => url.pathname.startsWith(route))) return false;
 
   const authorization = req.headers.authorization || "";
   const provided = (authorization.startsWith("Bearer ") ? authorization.slice(7) : "") || url.searchParams.get("token") || "";
@@ -54,6 +54,7 @@ export function serveProtectedAssets(method: string, url: URL, req: IncomingMess
     if (ext === "svg") headers["Content-Security-Policy"] = "script-src 'none'";
     res.writeHead(200, headers); res.end(readFileSync(file)); return true;
   }
+  if (url.pathname.startsWith("/brands/")) { serveBrandFile(url, req, res, dataDir); return true; }
   for (const [prefix, subdir] of [["/videos/", "videos"], ["/images/", "images"]] as const) {
     if (url.pathname.startsWith(prefix)) {
       const file = confineToDir(resolve(config.workspace, subdir), url.pathname.replace(prefix, ""));
@@ -71,6 +72,32 @@ export function serveProtectedAssets(method: string, url: URL, req: IncomingMess
     }
   }
   return false;
+}
+
+/** A brand library file (tools/shared/brand-store.ts), for the Settings
+ *  page's Brands tab: /brands/<slug>/<file>. Images show inline (an SVG with
+ *  no script); anything else downloads. Not cached: a replaced logo keeps
+ *  its name. */
+function serveBrandFile(url: URL, req: IncomingMessage, res: ServerResponse, dataDir: string): void {
+  const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
+  const [slug, filename, ...rest] = url.pathname.slice("/brands/".length).split("/");
+  if (!slug || !filename || rest.length || /[^a-z0-9-]/.test(slug) || /[^a-zA-Z0-9._-]/.test(filename) || filename.startsWith(".")) {
+    json(400, { error: "Invalid brand file" });
+    return;
+  }
+  const file = confineToDir(join(dataDir, "brands", slug), filename);
+  if (!file) { json(403, { error: "Path traversal blocked" }); return; }
+  if (!existsSync(file)) { json(404, { error: "File not found" }); return; }
+  const ext = (filename.split(".").pop() || "").toLowerCase();
+  const image = MEDIA_CONTENT_TYPES[ext]?.startsWith("image/");
+  const headers: Record<string, string> = {
+    ...corsHeaders(req), "Content-Type": (image ? MEDIA_CONTENT_TYPES[ext] : UPLOAD_CONTENT_TYPES[ext]) || "application/octet-stream",
+    "Cache-Control": "no-cache", "X-Content-Type-Options": "nosniff",
+  };
+  if (!image) headers["Content-Disposition"] = `attachment; filename="${filename}"`;
+  if (ext === "svg") headers["Content-Security-Policy"] = MEDIA_SVG_CSP;
+  res.writeHead(200, headers);
+  res.end(readFileSync(file));
 }
 
 /** Workspace files, served ONLY on the agent origin (agent-origin.ts). The

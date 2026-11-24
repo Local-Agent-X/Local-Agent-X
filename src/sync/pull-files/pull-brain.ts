@@ -10,6 +10,7 @@ import {
   type SyncConfig,
 } from "../constants.js";
 import { pullDir } from "../mirror.js";
+import { applyTombstones, brandTombstonePaths } from "../tombstones.js";
 import { MERGED_BRAIN_FILES } from "./merge-helpers.js";
 
 const logger = createLogger("sync.pull-files.brain");
@@ -57,6 +58,8 @@ export function pullBrainDirs(dataDir: string, syncDir: string): void {
     const local = join(dataDir, dir);
     try {
       pullDir(remote, local, /* additiveOnly */ true);
+      // Brands removed on another machine (push-files.ts writes these).
+      if (dir === "brands") applyTombstones(brandTombstonePaths(dataDir, syncDir));
     } catch (e) {
       logger.warn(`[sync] brain pull skipped dir ${dir}: ${(e as Error).message}`);
     }

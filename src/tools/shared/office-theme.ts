@@ -5,9 +5,11 @@
  * styling from here so the house style stays consistent across formats.
  *
  * Layering (lowest → highest precedence):
- *   1. DEFAULT_OFFICE_THEME — the baked-in house style (Modern Slate / Navy).
- *   2. User override at ~/.lax/office-theme.json — a partial theme a user (or
- *      a future settings UI) drops in to re-skin every document.
+ *   1. DEFAULT_OFFICE_THEME — the baked-in house style (Modern Slate / Navy),
+ *      or the curated design chosen for the file (office-designs.ts).
+ *   2. The brand the file is made in — a company's saved look from the brand
+ *      library (brand-store.ts, brand-theme.ts). Until 2026-11-23 this layer
+ *      was one global ~/.lax/office-theme.json; it is migrated into a brand.
  *   3. Per-call override — a `theme` arg on a tool call, so an explicit agent
  *      instruction ("red headings, Times New Roman") wins for that one file.
  *
@@ -16,10 +18,9 @@
  * are in points; docx wants half-points, so use half() at the docx boundary.
  */
 
-import { existsSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { getLaxDir } from "../../lax-data-dir.js";
 import { OFFICE_DESIGNS, isOfficeDesignName } from "./office-designs.js";
+import type { Brand } from "./brand-store.js";
+import { brandOverride } from "./brand-theme.js";
 
 export interface OfficeTheme {
   fonts: { heading: string; body: string };
@@ -65,6 +66,14 @@ export interface OfficeBrand {
   logo?: string;
   /** Footer tagline. Defaults to `company`. */
   footer?: string;
+  /** For dark grounds (cover, closing slides), when the logo is dark. */
+  logoOnDark?: string;
+  /** A full-width header image a document or PDF opens with. */
+  letterhead?: string;
+  /** The brand library folder the three images above are files in. Set only
+   *  by the brand layer, never by a call: a call's logo resolves from the
+   *  workspace like any file it names. */
+  dir?: string;
 }
 
 export type OfficeThemeOverride = {
@@ -101,8 +110,6 @@ export const DEFAULT_OFFICE_THEME: OfficeTheme = {
   chartPalette: ["1F3A5F", "3E5C76", "6B8CAE", "A8C0D6", "C9A227", "7A2E3A"],
   brand: {}, // unbranded by default — no app branding, no user branding
 };
-
-const userThemePath = (): string => join(getLaxDir(), "office-theme.json");
 
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -141,25 +148,6 @@ export function normalizeHex(c: string): string {
   return String(c).replace(/^#/, "").trim().toUpperCase();
 }
 
-let _userThemeCache: { at: number; value: OfficeThemeOverride | null } | null = null;
-
-function loadUserTheme(): OfficeThemeOverride | null {
-  if (_userThemeCache && Date.now() - _userThemeCache.at < 5000) return _userThemeCache.value;
-  let value: OfficeThemeOverride | null = null;
-  try {
-    if (existsSync(userThemePath())) {
-      const parsed = JSON.parse(readFileSync(userThemePath(), "utf-8"));
-      if (isObject(parsed)) value = parsed as OfficeThemeOverride;
-    }
-  } catch {
-    // A malformed user theme must never break document generation — fall back
-    // to the house style.
-    value = null;
-  }
-  _userThemeCache = { at: Date.now(), value };
-  return value;
-}
-
 /** The theme a curated design makes: the house style with the design's
  *  palette, fonts and chart colors. Unknown names give the house style. */
 export function designTheme(design: unknown): OfficeTheme {
@@ -170,12 +158,13 @@ export function designTheme(design: unknown): OfficeTheme {
 
 /**
  * Resolve the effective theme: house style (or the chosen curated design,
- * office-designs.ts) ← user file ← per-call override.
+ * office-designs.ts) ← the brand (brand-theme.ts brandForCall) ← per-call
+ * override.
  * `callOverride` may be an object or a JSON string (tool args arrive as
  * strings); a parse failure is ignored so a bad override degrades to the
  * lower layers rather than failing the document.
  */
-export function resolveOfficeTheme(callOverride?: unknown, design?: unknown): OfficeTheme {
+export function resolveOfficeTheme(callOverride?: unknown, design?: unknown, brand?: Brand | null): OfficeTheme {
   let parsed: OfficeThemeOverride | null = null;
   if (typeof callOverride === "string" && callOverride.trim()) {
     try { parsed = JSON.parse(callOverride); } catch { parsed = null; }
@@ -188,7 +177,12 @@ export function resolveOfficeTheme(callOverride?: unknown, design?: unknown): Of
       Object.entries(parsed.colors).map(([k, v]) => [k, typeof v === "string" ? normalizeHex(v) : v]),
     ) as Partial<OfficeTheme["colors"]>;
   }
-  return mergeTheme(mergeTheme(designTheme(design), loadUserTheme()), parsed);
+  // A call never sets where brand files live: only the brand layer does.
+  if (parsed && isObject(parsed.brand)) delete (parsed.brand as { dir?: string }).dir;
+  const theme = mergeTheme(mergeTheme(designTheme(design), brand ? brandOverride(brand) : null), parsed);
+  // A logo the call names is the call's own file, found in the workspace.
+  if (parsed && isObject(parsed.brand) && parsed.brand.logo) theme.brand = { ...theme.brand, dir: undefined };
+  return theme;
 }
 
 /** Points → half-points (docx run/heading size unit). */

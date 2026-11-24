@@ -15,30 +15,46 @@ import { resolveAgentPath as resolvePath, sessionIdOf } from "../workspace/paths
 import { readValidatedFile } from "../security/layer/index.js";
 import { resolveOfficeTheme, half, brandAuthor, brandFooter, type OfficeTheme, THEME_PARAM_SCHEMA } from "./shared/office-theme.js";
 import { acquireBrandLogo, logoSize } from "./shared/office-brand.js";
+import { BRAND_PARAM_SCHEMA, brandForCall } from "./shared/brand-theme.js";
 import { markdownToDocx } from "./shared/md-to-docx.js";
 import { collapseFamily } from "./shared/collapse-family.js";
 import { SOURCES_DOC_SENTENCE, SOURCES_PARAM_SCHEMA } from "./shared/provenance-sources.js";
 
 const { Document, Packer, Paragraph, TextRun, ImageRun, BorderStyle, Header, Footer, PageNumber, AlignmentType } = docx;
 
-function logoImageRun(img: AcquiredImage, heightPx: number): docx.ImageRun {
+function logoImageRun(img: AcquiredImage, heightPx: number, alt = "Logo"): docx.ImageRun {
   const { w, h } = logoSize(img, heightPx);
   const type: "png" | "jpg" | "gif" = img.mimeType === "image/jpeg" ? "jpg" : img.mimeType === "image/gif" ? "gif" : "png";
-  const alt = "Logo";
   return new ImageRun({ type, data: img.buffer, transformation: { width: w, height: h }, altText: { title: alt, description: alt, name: alt } } as docx.IImageOptions);
 }
 
-/** Section header (logo, right-aligned) + footer (company + page number),
- *  built only as the brand/page-numbering needs them. */
-function sectionExtras(theme: OfficeTheme, logo: AcquiredImage | null): { headers?: { default: docx.Header }; footers: { default: docx.Footer } } {
+/** The width between a Letter page's default 1-inch margins, in pixels. */
+const TEXT_WIDTH_PX = 624;
+
+/** The brand's letterhead across the text width, no taller than 1.5 inches. */
+function letterheadRun(img: AcquiredImage): docx.ImageRun {
+  const ratio = img.width > 0 && img.height > 0 ? img.width / img.height : 6;
+  return logoImageRun(img, Math.min(144, Math.round(TEXT_WIDTH_PX / ratio)), "Letterhead");
+}
+
+type SectionExtras = { properties: { titlePage?: boolean }; headers?: { default: docx.Header; first?: docx.Header }; footers: { default: docx.Footer; first?: docx.Footer } };
+
+/** Section header + footer (company + page number), built only as the brand
+ *  and page numbering need them. A letterhead heads the first page and the
+ *  logo (right-aligned) the rest; without a letterhead the logo heads all. */
+function sectionExtras(theme: OfficeTheme, logo: AcquiredImage | null, letterhead: AcquiredImage | null = null): SectionExtras {
   const footerText = brandFooter(theme);
   const footerRuns: docx.TextRun[] = [];
   if (footerText) footerRuns.push(new TextRun({ text: `${footerText}    `, size: half(9), color: theme.colors.muted }));
   footerRuns.push(new TextRun({ children: [PageNumber.CURRENT], size: half(9), color: theme.colors.muted }));
-  const footer = new Footer({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: footerRuns })] });
-  if (!logo) return { footers: { default: footer } };
-  const header = new Header({ children: [new Paragraph({ alignment: AlignmentType.RIGHT, children: [logoImageRun(logo, 34)] })] });
-  return { headers: { default: header }, footers: { default: footer } };
+  const footer = () => new Footer({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: footerRuns })] });
+  const logoHeader = () => new Header({ children: logo ? [new Paragraph({ alignment: AlignmentType.RIGHT, children: [logoImageRun(logo, 34)] })] : [] });
+  if (letterhead) {
+    const first = new Header({ children: [new Paragraph({ alignment: AlignmentType.CENTER, children: [letterheadRun(letterhead)] })] });
+    return { properties: { titlePage: true }, headers: { default: logoHeader(), first }, footers: { default: footer(), first: footer() } };
+  }
+  if (!logo) return { properties: {}, footers: { default: footer() } };
+  return { properties: {}, headers: { default: logoHeader() }, footers: { default: footer() } };
 }
 
 /** Document-level style sheet derived from the theme: body font/size/color +
@@ -141,6 +157,7 @@ function buildDocument(
   images: AcquiredImage[] = [],
   theme: OfficeTheme = resolveOfficeTheme(),
   logo: AcquiredImage | null = null,
+  letterhead: AcquiredImage | null = null,
 ): docx.Document {
   const children = [
     ...(title ? [titleParagraph(theme, title)] : []),
@@ -153,7 +170,7 @@ function buildDocument(
     creator: brandAuthor(theme),
     title: title ?? "Document",
     styles: docStyles(theme),
-    sections: [{ properties: {}, ...sectionExtras(theme, logo), children }],
+    sections: [{ ...sectionExtras(theme, logo, letterhead), children }],
   });
 }
 
@@ -176,6 +193,7 @@ const documentCreate: ToolDefinition = {
       content: { type: "string", description: "Formatted text with \\n newlines. Use # for headings, - for bullets, **bold** for emphasis. Separate sections with blank lines (\\n\\n)." },
       images: IMAGES_PARAM_SCHEMA,
       theme: THEME_PARAM_SCHEMA,
+      brand: BRAND_PARAM_SCHEMA,
       sources: SOURCES_PARAM_SCHEMA,
     },
     required: ["file_path", "content"],
@@ -185,19 +203,22 @@ const documentCreate: ToolDefinition = {
       const filePath = resolvePath(String(args.file_path), sessionIdOf(args));
       const content = String(args.content);
       const title = args.title ? String(args.title) : undefined;
-      const theme = resolveOfficeTheme(args.theme);
+      const made = brandForCall(args.brand, "doc");
+      if ("error" in made) return err(made.error);
+      const theme = resolveOfficeTheme(args.theme, undefined, made.brand);
       const acquired = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
       const logo = await acquireBrandLogo(theme);
+      const letterhead = await acquireBrandLogo(theme, "letterhead");
 
       await mkdir(dirname(filePath), { recursive: true });
-      const doc = buildDocument(content, title, acquired.images, theme, logo);
+      const doc = buildDocument(content, title, acquired.images, theme, logo, letterhead);
       const buffer = await Packer.toBuffer(doc);
       await writeFile(filePath, buffer);
 
       const lineCount = content.split("\n").filter((l) => l.trim()).length;
       const imgSuffix = acquired.images.length ? `, ${acquired.images.length} image(s)` : "";
       const notes = acquired.notes.length ? `\nImage notes:\n${acquired.notes.join("\n")}` : "";
-      return ok(`Created ${filePath} (${lineCount} content lines${imgSuffix}, ${buffer.length} bytes)${notes}`);
+      return ok(`Created ${filePath} (${lineCount} content lines${imgSuffix}, ${buffer.length} bytes)${notes}${made.note ? `\n${made.note}` : ""}`);
     } catch (e: unknown) {
       return err(`Failed to create document: ${(e as Error).message}`);
     }
@@ -355,6 +376,7 @@ export const documentTools: ToolDefinition[] = [
       content: { type: "string", description: "(create) Formatted text with \\n newlines. Use # for headings, - for bullets, **bold** for emphasis. Separate sections with blank lines (\\n\\n)." },
       images: { ...IMAGES_PARAM_SCHEMA, description: `(create) ${IMAGES_PARAM_SCHEMA.description}` },
       theme: THEME_PARAM_SCHEMA,
+      brand: { ...BRAND_PARAM_SCHEMA, description: `(create) ${BRAND_PARAM_SCHEMA.description}` },
       find: { type: "string", description: "(edit) Text to find" },
       replace: { type: "string", description: "(edit) Replacement text" },
       template_path: { type: "string", description: "(template) Path to template .docx containing {{placeholder}} markers" },

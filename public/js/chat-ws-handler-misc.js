@@ -97,6 +97,8 @@ function handleSettingsChanged(msg) {
   }
   // A calendar was connected or disconnected (another tab): the Calendars card re-reads.
   if (msg.settings.calendars && typeof window.loadConnectedCalendars === 'function') window.loadConnectedCalendars();
+  // A brand was saved or changed (another tab, or the agent's brand tool through Settings): the Brands tab re-reads.
+  if (msg.settings.brands && typeof window.loadBrands === 'function') window.loadBrands();
   // The classifier model pin (Settings → AI & Models → Local Runtimes): the
   // picker repaints from the broadcast value, over the models it last listed.
   if ('localClassifierModel' in msg.settings && typeof renderLocalClassifierModel === 'function') {

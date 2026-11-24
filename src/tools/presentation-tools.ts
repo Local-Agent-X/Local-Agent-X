@@ -5,13 +5,14 @@ import { acquireImages, AllImagesFailedError, IMAGES_PARAM_SCHEMA, type AcquireO
 // Resolve caller paths the SAME way SecurityLayer's file-access gate does
 // (workspace anchored, no ~ expansion) so the gated path == the opened path.
 import { resolveAgentPath as resolvePath, sessionIdOf } from "../workspace/paths.js";
-import { resolveOfficeTheme, brandAuthor, brandFooter, THEME_PARAM_SCHEMA } from "./shared/office-theme.js";
+import { resolveOfficeTheme, brandAuthor, brandFooter, THEME_PARAM_SCHEMA, type OfficeTheme } from "./shared/office-theme.js";
 import { acquireBrandLogo } from "./shared/office-brand.js";
 import { buildDeck, SLIDE_LAYOUTS, type SlideSpec } from "./shared/pptx-render.js";
 import type { SlideBrand } from "./shared/slide-layout-kit.js";
 import { previewDeck, type DeckPreview } from "./shared/deck-preview.js";
-import { chooseDeckDesign, designNote, noteDeckDesign, DESIGN_PARAM_SCHEMA } from "./shared/deck-design-choice.js";
+import { chooseDeckDesign, designNote, noteDeckDesign, DESIGN_PARAM_SCHEMA, type DeckDesignChoice } from "./shared/deck-design-choice.js";
 import { PURPOSE_PARAM_SCHEMA } from "./shared/deck-purposes.js";
+import { BRAND_PARAM_SCHEMA, brandForCall } from "./shared/brand-theme.js";
 import { collapseFamily } from "./shared/collapse-family.js";
 import { SOURCES_DOC_SENTENCE, SOURCES_PARAM_SCHEMA } from "./shared/provenance-sources.js";
 import { outlineToSlides } from "./presentation-outline.js";
@@ -80,6 +81,20 @@ const SLIDE_SPEC_DOC =
   "briefing and a kids' lesson should not look alike); each parameter lists its options.";
 
 // ── presentation_create ──
+/** A deck's look: the design chosen for it, the brand it is made in (the
+ *  one it names, else the user's default), and the theme both make. A brand
+ *  with colors repaints the design; its logo sits on the dark cover and
+ *  closing, so the logo made for dark grounds is used when there is one. */
+interface DeckLook { design: DeckDesignChoice; theme: OfficeTheme; brand: SlideBrand; note: string; brandName: string | null }
+async function deckLook(args: Record<string, unknown>, extending: boolean): Promise<DeckLook | { error: string }> {
+  const made = brandForCall(args.brand, "deck");
+  if ("error" in made) return made;
+  const design = chooseDeckDesign(args.design, extending, args.purpose);
+  const theme = resolveOfficeTheme(args.theme, design.name, made.brand);
+  const brand: SlideBrand = { logo: (await acquireBrandLogo(theme, "logoOnDark")) ?? undefined, footer: brandFooter(theme) || undefined };
+  return { design, theme, brand, note: made.note || designNote(design, args.design), brandName: made.brand?.name ?? null };
+}
+
 const presentationCreate: ToolDefinition = {
   name: "presentation_create",
   description:
@@ -94,6 +109,7 @@ const presentationCreate: ToolDefinition = {
       images: IMAGES_PARAM_SCHEMA,
       theme: THEME_PARAM_SCHEMA,
       design: DESIGN_PARAM_SCHEMA,
+      brand: BRAND_PARAM_SCHEMA,
       purpose: PURPOSE_PARAM_SCHEMA,
       sources: SOURCES_PARAM_SCHEMA,
     },
@@ -103,11 +119,11 @@ const presentationCreate: ToolDefinition = {
       const fp = resolvePath(args.file_path as string, sessionIdOf(args));
       const slides = JSON.parse(args.slides as string) as SlideSpec[];
       if (!slides.length) return err("slides array is empty");
-      const design = chooseDeckDesign(args.design, false, args.purpose);
-      const theme = resolveOfficeTheme(args.theme, design.name);
+      const look = await deckLook(args, false);
+      if ("error" in look) return err(look.error);
+      const { design, theme, brand } = look;
       const specs = (args.images as ImageSpec[] | undefined) ?? [];
       const acquired = await acquireImages(specs);
-      const brand: SlideBrand = { logo: (await acquireBrandLogo(theme)) ?? undefined, footer: brandFooter(theme) || undefined };
       ensureDir(fp);
       const pptx = await makePptx();
       if (args.title) pptx.title = args.title as string;
@@ -124,8 +140,8 @@ const presentationCreate: ToolDefinition = {
       const chartCount = slides.filter((s) => s.chart).length;
       noteDeckDesign(design.name);
       const preview = await previewDeck(deck.plans, theme, args.purpose);
-      return withPreview(ok(`Created presentation with ${deck.plans.length} slide(s)${chartCount ? `, ${chartCount} chart(s)` : ""}: ${fp}${noteBlock(imageNotes)}\n${designNote(design, args.design)}\n\n${preview.text}`, {
-        file_path: fp, slide_count: deck.plans.length, image_count: embedded, chart_count: chartCount, slide_findings: preview.findings, design: design.name, purpose: args.purpose ?? null,
+      return withPreview(ok(`Created presentation with ${deck.plans.length} slide(s)${chartCount ? `, ${chartCount} chart(s)` : ""}: ${fp}${noteBlock(imageNotes)}\n${look.note}\n\n${preview.text}`, {
+        file_path: fp, slide_count: deck.plans.length, image_count: embedded, chart_count: chartCount, slide_findings: preview.findings, design: design.name, purpose: args.purpose ?? null, brand: look.brandName,
       }), preview);
     } catch (e) { return err(`Failed to create presentation: ${(e as Error).message}`); }
   },
@@ -160,6 +176,7 @@ const presentationAddSlide: ToolDefinition = {
       images: IMAGES_PARAM_SCHEMA,
       theme: THEME_PARAM_SCHEMA,
       design: DESIGN_PARAM_SCHEMA,
+      brand: BRAND_PARAM_SCHEMA,
       purpose: PURPOSE_PARAM_SCHEMA,
     },
   },
@@ -167,11 +184,11 @@ const presentationAddSlide: ToolDefinition = {
     try {
       const spec = JSON.parse(args.slide as string) as SlideSpec;
       const pos = (args.position as number) ?? 2;
-      const design = chooseDeckDesign(args.design, true, args.purpose);
-      const theme = resolveOfficeTheme(args.theme, design.name);
+      const look = await deckLook(args, true);
+      if ("error" in look) return err(look.error);
+      const { design, theme, brand } = look;
       const specs = (args.images as ImageSpec[] | undefined) ?? [];
       const acquired = await acquireImages(specs);
-      const brand: SlideBrand = { logo: (await acquireBrandLogo(theme)) ?? undefined, footer: brandFooter(theme) || undefined };
       const outPath = addSlideOutPath(resolvePath(args.file_path as string, sessionIdOf(args)), pos);
       ensureDir(outPath);
       const pptx = await makePptx();
@@ -189,8 +206,8 @@ const presentationAddSlide: ToolDefinition = {
       }
       noteDeckDesign(design.name);
       const preview = await previewDeck(deck.plans, theme, args.purpose);
-      return withPreview(ok(`Created new slide file: ${outPath}${noteBlock(imageNotes)}\n${designNote(design, args.design)}\n\n${preview.text}`, {
-        file_path: outPath, position: pos, image_count: embedded, slide_findings: preview.findings, design: design.name, purpose: args.purpose ?? null,
+      return withPreview(ok(`Created new slide file: ${outPath}${noteBlock(imageNotes)}\n${look.note}\n\n${preview.text}`, {
+        file_path: outPath, position: pos, image_count: embedded, slide_findings: preview.findings, design: design.name, purpose: args.purpose ?? null, brand: look.brandName,
       }), preview);
     } catch (e) { return err(`Failed to add slide: ${(e as Error).message}`); }
   },
@@ -216,6 +233,7 @@ const presentationFromOutline: ToolDefinition = {
       images: IMAGES_PARAM_SCHEMA,
       theme: THEME_PARAM_SCHEMA,
       design: DESIGN_PARAM_SCHEMA,
+      brand: BRAND_PARAM_SCHEMA,
       purpose: PURPOSE_PARAM_SCHEMA,
       sources: SOURCES_PARAM_SCHEMA,
     },
@@ -225,8 +243,9 @@ const presentationFromOutline: ToolDefinition = {
       const fp = resolvePath(args.file_path as string, sessionIdOf(args));
       const slides = outlineToSlides(args.outline as string);
       if (!slides.length) return err("Outline produced no slides");
-      const design = chooseDeckDesign(args.design, false, args.purpose);
-      const theme = resolveOfficeTheme(args.theme, design.name);
+      const look = await deckLook(args, false);
+      if ("error" in look) return err(look.error);
+      const { design, theme, brand } = look;
       const specs = (args.images as ImageSpec[] | undefined) ?? [];
       // A dead image URL must not cost the user the deck. Acquire, remember the
       // failure, build the slides anyway — the result below is still an error
@@ -240,7 +259,6 @@ const presentationFromOutline: ToolDefinition = {
         allImagesFailed = true;
         acquired = { images: [], notes: e.failures };
       }
-      const brand: SlideBrand = { logo: (await acquireBrandLogo(theme)) ?? undefined, footer: brandFooter(theme) || undefined };
       ensureDir(fp);
       const pptx = await makePptx();
       if (args.title) pptx.title = args.title as string;
@@ -255,8 +273,8 @@ const presentationFromOutline: ToolDefinition = {
       }
       noteDeckDesign(design.name);
       const preview = await previewDeck(deck.plans, theme, args.purpose);
-      return withPreview(ok(`Created presentation from outline with ${deck.plans.length} slide(s): ${fp}${noteBlock(acquired.notes)}\n${designNote(design, args.design)}\n\n${preview.text}`, {
-        file_path: fp, slide_count: deck.plans.length, image_count: acquired.images.length, slide_findings: preview.findings, design: design.name, purpose: args.purpose ?? null,
+      return withPreview(ok(`Created presentation from outline with ${deck.plans.length} slide(s): ${fp}${noteBlock(acquired.notes)}\n${look.note}\n\n${preview.text}`, {
+        file_path: fp, slide_count: deck.plans.length, image_count: acquired.images.length, slide_findings: preview.findings, design: design.name, purpose: args.purpose ?? null, brand: look.brandName,
       }), preview);
     } catch (e) { return err(`Failed from outline: ${(e as Error).message}`); }
   },
@@ -379,6 +397,7 @@ export const presentationTools: ToolDefinition[] = [
       images: IMAGES_PARAM_SCHEMA,
       theme: THEME_PARAM_SCHEMA,
       design: DESIGN_PARAM_SCHEMA,
+      brand: BRAND_PARAM_SCHEMA,
       purpose: PURPOSE_PARAM_SCHEMA,
       sources: SOURCES_PARAM_SCHEMA,
     },

@@ -153,7 +153,8 @@ demand via tool search and aren't all listed here.)
 ### Office documents
 
 - `document`
+- `brand`
 - `presentation`
 
 ---
-_76 capabilities · 54 with a description · 22 awaiting a blurb (add one to the tool's policy row)._
+_77 capabilities · 54 with a description · 23 awaiting a blurb (add one to the tool's policy row)._

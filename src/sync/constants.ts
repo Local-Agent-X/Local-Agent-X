@@ -110,8 +110,17 @@ export const BRAIN_JSON_FILES: readonly string[] = [
 // workspace sync (or the syncProtocols-only workspace subset path).
 export const BRAIN_DIRS: readonly string[] = [
   "agent-runs",
+  "brands",
   "dashboards",
 ] as const;
+
+// The brand library (tools/shared/brand-store.ts) keeps a company's Office
+// templates beside its logo, and a template is the point of saving one, so
+// that tree alone also carries Office files. Widening SYNC_EXTENSIONS itself
+// would start mirroring every .docx in the workspace.
+export const BRAIN_DIR_EXTENSIONS: Readonly<Record<string, ReadonlySet<string>>> = {
+  brands: new Set([...SYNC_EXTENSIONS, ".pptx", ".potx", ".docx", ".dotx", ".xlsx", ".xltx"]),
+};
 
 // `memory.db` is intentionally NOT in this list. The SQLite memory
 // store routinely sits in the hundreds of MB once a user has accrued

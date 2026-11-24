@@ -13,6 +13,7 @@ import { resolveAgentPath as resolvePath, sessionIdOf } from "../workspace/paths
 import { readValidatedFile } from "../security/layer/index.js";
 import { resolveOfficeTheme, brandAuthor, brandFooter, type OfficeTheme, THEME_PARAM_SCHEMA } from "./shared/office-theme.js";
 import { acquireBrandLogo, logoSize } from "./shared/office-brand.js";
+import { BRAND_PARAM_SCHEMA, brandForCall } from "./shared/brand-theme.js";
 import { collapseFamily } from "./shared/collapse-family.js";
 import { SOURCES_DOC_SENTENCE, SOURCES_PARAM_SCHEMA } from "./shared/provenance-sources.js";
 // pdfkit markdown/block renderers — pure layout with no I/O, kept apart from
@@ -105,6 +106,7 @@ const pdfCreate: ToolDefinition = {
       font_size: { type: "number", description: "Base body font size override (default: theme body size)" },
       images: IMAGES_PARAM_SCHEMA,
       theme: THEME_PARAM_SCHEMA,
+      brand: BRAND_PARAM_SCHEMA,
       sources: SOURCES_PARAM_SCHEMA,
     },
     required: ["file_path", "content"],
@@ -118,7 +120,9 @@ const pdfCreate: ToolDefinition = {
       if (!content.trim()) {
         return fail("pdf_create needs non-empty 'content' — the text/markdown body to render (e.g. \"# Title\\n\\nBody…\"). Pass it in the `content` field and retry.");
       }
-      const baseTheme = resolveOfficeTheme(args.theme);
+      const made = brandForCall(args.brand, "pdf");
+      if ("error" in made) return fail(made.error);
+      const baseTheme = resolveOfficeTheme(args.theme, undefined, made.brand);
       // Honor an explicit base font size by scaling the theme's doc sizes.
       const theme: OfficeTheme = args.font_size
         ? { ...baseTheme, doc: { ...baseTheme.doc, bodySize: args.font_size as number } }
@@ -126,6 +130,7 @@ const pdfCreate: ToolDefinition = {
       const title = (args.title as string) ?? "";
       const { images: acquired, notes: imageNotes } = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
       const logo = await acquireBrandLogo(theme);
+      const letterhead = await acquireBrandLogo(theme, "letterhead");
       // bufferPages lets us stamp a footer on every page after layout.
       const doc = new PDFDocument({ info: { Title: title, Author: brandAuthor(theme) }, bufferPages: true, lang: "en-US", displayTitle: true });
       const chunks: Buffer[] = [];
@@ -136,8 +141,16 @@ const pdfCreate: ToolDefinition = {
         doc.on("error", reject);
       });
 
-      // Brand masthead logo (png/jpeg only — pdfkit can't embed gif).
-      if (logo && (logo.mimeType === "image/png" || logo.mimeType === "image/jpeg")) {
+      // Brand masthead: the letterhead across the text width, else the logo
+      // (png/jpeg only — pdfkit can't embed gif).
+      const placeable = (img: typeof logo) => img && (img.mimeType === "image/png" || img.mimeType === "image/jpeg");
+      if (letterhead && placeable(letterhead)) {
+        const width = doc.page.width - doc.page.margins.left - doc.page.margins.right;
+        const ratio = letterhead.width > 0 && letterhead.height > 0 ? letterhead.width / letterhead.height : 6;
+        const h = Math.min(108, width / ratio);
+        doc.image(letterhead.buffer, doc.page.margins.left, doc.y, { width: h * ratio, height: h });
+        doc.y += h + 12;
+      } else if (logo && placeable(logo)) {
         const { w, h } = logoSize(logo, 34);
         doc.image(logo.buffer, doc.page.margins.left, doc.y, { width: w, height: h });
         doc.y += h + 8;
@@ -200,7 +213,7 @@ const pdfCreate: ToolDefinition = {
         ? `\nLAYOUT CHECK FAILED — the PDF was written, but: ${problems.join("; ")}. ` +
           "Do not tell the user it is ready. Change the content or images and create it again, or tell the user exactly what is wrong with it."
         : "";
-      return ok(`PDF created at ${filePath} (${buf.length} bytes${imgSuffix})${notes}${layout}`, problems.length ? { layoutProblems: problems } : undefined);
+      return ok(`PDF created at ${filePath} (${buf.length} bytes${imgSuffix})${notes}${layout}${made.note ? `\n${made.note}` : ""}`, problems.length ? { layoutProblems: problems } : undefined);
     } catch (e: unknown) {
       return fail(`Failed to create PDF: ${(e as Error).message}`);
     }
@@ -326,6 +339,7 @@ export const pdfTools: ToolDefinition[] = [
       font_size: { type: "number", description: "(create) Base body font size override" },
       images: IMAGES_PARAM_SCHEMA,
       theme: THEME_PARAM_SCHEMA,
+      brand: { ...BRAND_PARAM_SCHEMA, description: `(create) ${BRAND_PARAM_SCHEMA.description}` },
       files: { type: "string", description: "(merge) JSON array of input PDF paths" },
       output_path: { type: "string", description: "(merge) Output merged PDF path" },
       sources: SOURCES_PARAM_SCHEMA,

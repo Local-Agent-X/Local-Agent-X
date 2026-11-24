@@ -9,6 +9,7 @@ export { handleApprovalRoutes } from "./approvals.js";
 export { handleInboxRoutes } from "./inbox.js";
 export { handleAppChatGrantRoutes } from "./app-chat.js";
 export { handleCalendarRoutes } from "./calendars.js";
+export { handleBrandRoutes } from "./brands.js";
 export { handleIssueRoutes } from "./issues.js";
 export { handleRunsRoutes } from "./runs.js";
 export { handleAppRoutes } from "./apps.js";

@@ -242,6 +242,9 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   // document/presentation are main-chat eager; spreadsheet/pdf surface via
   // the keyword router for main-chat, eagerly for workers.
   document:     ["main-chat", "spawned-agent", "operator"],
+  // Saves a company's look when the user describes it in chat; the Office
+  // tools then apply it by code (tools/shared/brand-store.ts).
+  brand:        ["main-chat"],
   presentation: ["main-chat", "spawned-agent", "operator"],
   spreadsheet:  ["spawned-agent", "operator"],
   pdf:          ["spawned-agent", "operator"],

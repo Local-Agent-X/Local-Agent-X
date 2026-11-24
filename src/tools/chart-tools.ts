@@ -4,6 +4,7 @@ import { dirname } from "node:path";
 import type { ToolDefinition, ToolResult } from "../types.js";
 import { resolveAgentPath, sessionIdOf } from "../workspace/paths.js";
 import { resolveOfficeTheme, THEME_PARAM_SCHEMA } from "./shared/office-theme.js";
+import { BRAND_PARAM_SCHEMA, brandForCall } from "./shared/brand-theme.js";
 import { renderChartPng, isValidChart, type ChartSpec, type ChartType } from "./shared/office-chart.js";
 import { verifyWriteLanded } from "./verify.js";
 
@@ -39,6 +40,7 @@ const chartCreate: ToolDefinition = {
       width: { type: "number", description: "Image width in px (default 760)" },
       height: { type: "number", description: "Image height in px (default 460)" },
       theme: THEME_PARAM_SCHEMA,
+      brand: BRAND_PARAM_SCHEMA,
     },
   },
   async execute(args): Promise<ToolResult> {
@@ -54,7 +56,10 @@ const chartCreate: ToolDefinition = {
       };
       if (!isValidChart(spec)) return { content: "Invalid chart: need a valid type and a non-empty series with numeric values.", isError: true };
 
-      const theme = resolveOfficeTheme(args.theme);
+      // A chart goes into a branded file, so it takes the brand's colors too.
+      const made = brandForCall(args.brand, "doc");
+      if ("error" in made) return { content: made.error, isError: true };
+      const theme = resolveOfficeTheme(args.theme, undefined, made.brand);
       const png = await renderChartPng(spec, theme, { W: Number(args.width) || 760, H: Number(args.height) || 460 });
       const fp = chartOutPath(String(args.file_path), sessionIdOf(args));
       mkdirSync(dirname(fp), { recursive: true });

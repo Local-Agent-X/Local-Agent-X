@@ -115,10 +115,10 @@ conductor.
 non-`continue` verdict. Per phase, the middlewares that implement the hook:
 
 - **beforeTurn:** mid-turn-stale, instruction-ledger, loop-detection, open-steps, budget-ladder
-- **afterModelCall:** office-theme-guard, loop-detection, repeat-output, premature-completion (worker ops only), verify-gate, open-steps
+- **afterModelCall:** brand-match, office-theme-guard, loop-detection, repeat-output, premature-completion (worker ops only), verify-gate, open-steps
 - **afterToolExecution:** mid-turn-stale, loop-detection, repeat-output, verify-gate, post-edit-diagnostics, external-change-diff, dead-end, repeat-failure, thrash-guard
 
-Full registration order: mid-turn-stale, office-theme-guard, instruction-ledger,
+Full registration order: mid-turn-stale, brand-match, office-theme-guard, instruction-ledger,
 loop-detection, repeat-output, premature-completion, verify-gate, open-steps,
 budget-ladder, post-edit-diagnostics, external-change-diff,
 dead-end, repeat-failure, thrash-guard. `open-steps` is skipped when the op
@@ -161,7 +161,7 @@ an invocation. `outcome` (`GuardOutcome`, required on every `GuardFire`):
 | `nudge` | `turn-loop/nudges.ts` `appendNudgeAsUserMessage` — any synthetic user message that reached `op_messages`. |
 | `abort` | `middlewareAbortResult` (beforeTurn) and `turn-loop/apply-directive.ts`; only when the error bubble is really emitted. |
 | `suspend` | `turn-loop/suspension.ts` and `apply-directive.ts` (plus the idle watchdog). |
-| `rewrite` | `middlewares/office-theme-guard.ts` — edits the tool call instead of speaking. |
+| `rewrite` | `middlewares/office-theme-guard.ts`, `middlewares/brand-match.ts` — edit the tool call instead of speaking. |
 | `honest-terminal` | A completion gate that lets the turn end but authors the closing words; banked after `commitTurn`. |
 | `reopen` | A user follow-up that vetoed the terminal silently: `continuation-guard.ts` (inject already queued) or `decide-outcome-gates.ts` `late-inject` (landed during the verify gates). Sum both. |
 | `repair` | `decide-outcome-gates.ts` framework-serve — fixed the environment (a dev server), not the conversation; only on `handled && ok`. |

@@ -28,10 +28,16 @@ const logger = createLogger("sync.tombstones");
 // with the current set of apps and write zero tombstones — so a brand
 // new machine doesn't retroactively tombstone every app the user has.
 
+// The same mechanism carries brand deletions (data-dir brands/<slug>/, the
+// brand library): one folder per item, mirrored additively, so a delete
+// needs a tombstone to reach the other machines.
 export interface TombstonePaths {
   snapshotFile: string;
   tombstonesDir: string;
+  /** The local folder whose subfolders are the tombstoned items. */
   appsDir: string;
+  /** Where those items are mirrored in the sync repo, pruned on delete. */
+  syncItemsDir: string;
 }
 
 export function tombstonePaths(dataDir: string, syncDir: string): TombstonePaths {
@@ -39,6 +45,17 @@ export function tombstonePaths(dataDir: string, syncDir: string): TombstonePaths
     snapshotFile: join(dataDir, "sync-state", "last-pushed-apps.json"),
     tombstonesDir: join(syncDir, ".tombstones"),
     appsDir: workspacePath("apps"),
+    syncItemsDir: join(syncDir, "workspace", "apps"),
+  };
+}
+
+/** Brands: data-dir brands/<slug>/, mirrored at sync-repo/brands/. */
+export function brandTombstonePaths(dataDir: string, syncDir: string): TombstonePaths {
+  return {
+    snapshotFile: join(dataDir, "sync-state", "last-pushed-brands.json"),
+    tombstonesDir: join(syncDir, ".tombstones", "brands"),
+    appsDir: join(dataDir, "brands"),
+    syncItemsDir: join(syncDir, "brands"),
   };
 }
 
@@ -63,7 +80,7 @@ function listWorkspaceApps(appsDir: string): string[] {
  *      sync-repo/workspace/apps/ forever. We prune the tree of any app
  *      we just tombstoned in the same step.
  */
-export function writeTombstonesForDeletedApps(paths: TombstonePaths, syncDir: string): void {
+export function writeTombstonesForDeletedApps(paths: TombstonePaths): void {
   const { snapshotFile, tombstonesDir, appsDir } = paths;
   const current = new Set(listWorkspaceApps(appsDir));
   let last: string[] = [];
@@ -109,7 +126,7 @@ export function writeTombstonesForDeletedApps(paths: TombstonePaths, syncDir: st
       logger.info(`[sync] tombstone written for "${name}" (deleted on ${tombstone.deletedBy})`);
       // Prune the dead app tree from sync-repo so it doesn't accumulate.
       // additiveOnly mirroring leaves these behind otherwise.
-      const syncAppDir = join(syncDir, "workspace", "apps", name);
+      const syncAppDir = join(paths.syncItemsDir, name);
       if (existsSync(syncAppDir)) {
         try { rmSync(syncAppDir, { recursive: true, force: true }); }
         catch (e) { logger.warn(`[sync] failed to prune sync-repo/${name}: ${(e as Error).message}`); }
@@ -138,7 +155,11 @@ export function writeTombstonesForDeletedApps(paths: TombstonePaths, syncDir: st
  * workspace/apps/<name> tree (eager doesn't prune; only push does).
  */
 export function tombstoneAppEagerly(syncDir: string, name: string): void {
-  const tombstonesDir = join(syncDir, ".tombstones");
+  tombstoneEagerly(join(syncDir, ".tombstones"), name);
+}
+
+/** The eager tombstone for any tombstoned item kind, given its tombstone dir. */
+export function tombstoneEagerly(tombstonesDir: string, name: string): void {
   if (!existsSync(tombstonesDir)) mkdirSync(tombstonesDir, { recursive: true });
   const tombstone = { name, deletedAt: new Date().toISOString(), deletedBy: hostname() };
   writeFileSync(join(tombstonesDir, `${name}.json`), JSON.stringify(tombstone, null, 2));

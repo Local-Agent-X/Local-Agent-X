@@ -59,6 +59,7 @@ describe("default middleware stack completeness", () => {
 // registry.ts notes at orders 60/230/240.)
 const EXPECTED_ORDER = [
   "mid-turn-stale",
+  "brand-match",
   "office-theme-guard",
   "instruction-ledger",
   "loop-detection",

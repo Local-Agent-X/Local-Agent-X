@@ -18,6 +18,7 @@ import { resolveAgentPath as resolvePath, sessionIdOf } from "../workspace/paths
 import { openValidatedRead } from "../security/layer/index.js";
 import { resolveOfficeTheme, brandAuthor, brandFooter, THEME_PARAM_SCHEMA } from "./shared/office-theme.js";
 import { cleanText } from "./shared/office-md.js";
+import { BRAND_PARAM_SCHEMA, brandForCall } from "./shared/brand-theme.js";
 import { collapseFamily } from "./shared/collapse-family.js";
 import { SOURCES_DOC_SENTENCE, SOURCES_PARAM_SCHEMA } from "./shared/provenance-sources.js";
 // Pure formatting + the input caps (workbook bytes, rows, cells, padding). See
@@ -154,6 +155,7 @@ const spreadsheetWrite: ToolDefinition = {
       headers: { type: "array", items: { type: "string" }, description: "Column headers (auto-derived from data keys if omitted)" },
       images: IMAGES_PARAM_SCHEMA,
       theme: THEME_PARAM_SCHEMA,
+      brand: BRAND_PARAM_SCHEMA,
       sources: SOURCES_PARAM_SCHEMA,
     },
     required: ["file_path", "data"],
@@ -166,7 +168,9 @@ const spreadsheetWrite: ToolDefinition = {
       if (!Array.isArray(parsed)) return fail("data must be a JSON array");
       const { images: acquired, notes: imageNotes } = await acquireImages((args.images as ImageSpec[] | undefined) ?? []);
 
-      const theme = resolveOfficeTheme(args.theme);
+      const made = brandForCall(args.brand, "sheet");
+      if ("error" in made) return fail(made.error);
+      const theme = resolveOfficeTheme(args.theme, undefined, made.brand);
       const wb = new ExcelJS.Workbook();
       // Merging into an existing workbook loads it whole — same cap as read,
       // checked OUTSIDE the new-file catch so an oversized target fails loudly
@@ -228,7 +232,7 @@ const spreadsheetWrite: ToolDefinition = {
       if (!verified.ok) return fail(`Failed to write spreadsheet: ${verified.reason}`);
       const imgSuffix = acquired.length ? ` and ${acquired.length} image(s)` : "";
       const notes = imageNotes.length ? `\nImage notes:\n${imageNotes.join("\n")}` : "";
-      return ok(`Wrote ${parsed.length} rows${imgSuffix} to "${sheetName}" in ${filePath}${csv ? CSV_NOTE : ""}${notes}`);
+      return ok(`Wrote ${parsed.length} rows${imgSuffix} to "${sheetName}" in ${filePath}${csv ? CSV_NOTE : ""}${notes}${made.note ? `\n${made.note}` : ""}`);
     } catch (e: unknown) {
       return fail(String((e as Error).message ?? e));
     }
@@ -360,6 +364,7 @@ export const spreadsheetTools: ToolDefinition[] = [
       headers: { type: "array", items: { type: "string" }, description: "(write) Column headers (auto-derived from data keys if omitted)" },
       images: IMAGES_PARAM_SCHEMA,
       theme: THEME_PARAM_SCHEMA,
+      brand: { ...BRAND_PARAM_SCHEMA, description: `(write) ${BRAND_PARAM_SCHEMA.description}` },
       cell: { type: "string", description: '(edit) Cell reference e.g. "B5"' },
       value: { type: "string", description: "(edit) Value to set | (query) value to compare against" },
       formula: { type: "boolean", description: "(edit) Treat value as an Excel formula" },

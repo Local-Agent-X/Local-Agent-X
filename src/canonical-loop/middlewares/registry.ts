@@ -7,7 +7,7 @@
  *   beforeTurn:           mid-turn-stale, instruction-ledger (turn 0 only),
  *                         loop-detection, open-steps (turn-0 plan seed on
  *                         agent/background lanes), budget-ladder
- *   afterModelCall:       office-theme-guard, loop-detection, repeat-output,
+ *   afterModelCall:       brand-match, office-theme-guard, loop-detection, repeat-output,
  *                         premature-completion (worker ops only — forces one
  *                         more turn when a non-chat op ends tool-lessly with
  *                         nothing committed), verify-gate, open-steps
@@ -42,6 +42,7 @@ import { repeatOutputMiddleware } from "./repeat-output.js";
 import { deadEndMiddleware } from "./dead-end.js";
 import { repeatFailureMiddleware } from "./repeat-failure.js";
 import { officeThemeGuardMiddleware } from "./office-theme-guard.js";
+import { brandMatchMiddleware } from "./brand-match.js";
 import { prematureCompletionMiddleware } from "./premature-completion.js";
 import { openStepsMiddleware } from "./open-steps.js";
 import { budgetLadderMiddleware } from "./budget-ladder.js";
@@ -66,6 +67,10 @@ interface StackEntry {
  */
 const DEFAULT_STACK: StackEntry[] = [
   { order: 10, mw: midTurnStaleMiddleware },
+  // Fills `brand` on Office calls when the user's message names a saved
+  // brand, so a company's file is made in its look by code, not by the
+  // model remembering (brand-match.ts).
+  { order: 15, mw: brandMatchMiddleware },
   // Strips an uninvited per-call `theme` from office tools before dispatch
   // (house style is the default unless the user asked for a look).
   { order: 20, mw: officeThemeGuardMiddleware },

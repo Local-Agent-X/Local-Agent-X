@@ -262,6 +262,17 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
     { arg: "files", action: "read", json: true, forActions: ["merge"] },
     { arg: "output_path", action: "write",      forActions: ["merge"] },
   ] },
+  // The brand library (tools/shared/brand-store.ts): writes only inside the
+  // data dir's brands/ folder; the file a call copies in or reads is the
+  // `path` arg, gated like any read. Every action is listed so the gate's
+  // fail-closed action check passes the ones that open no path.
+  brand: { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [],
+    destructiveActions: {
+      remove: "moves a saved brand to the trash and removes it from the user's synced machines",
+      remove_file: "moves one of a brand's files to the trash",
+    },
+    rules: [{ id: "allow-brand", decision: "allow", reason: "The user's brand library: company looks applied to Office files", priority: 50 }],
+    pathArgs: [{ arg: "path", action: "read", forActions: ["list", "get", "save", "add_asset", "import", "remove_file", "remove"] }] },
   create_chart:     { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [], pathArgs: [{ arg: "file_path", action: "write" }], rules: [{ id: "allow-create-chart", decision: "allow", reason: "Chart PNG generation (workspace-confined)", priority: 50 }] },
   // The thumbnail is written beside the file (<file>.preview.png); the tool
   // gates that write itself through evaluateFileAccess (preview-tools.ts).

@@ -29,7 +29,9 @@ const MAX_DEST_PATH = 240;
  * copy's duration (seconds on a large workspace). Using fs/promises yields the
  * loop between every stat/read/write, so requests are serviced during the copy.
  */
-export async function mirrorDir(src: string, dest: string, additiveOnly = false): Promise<void> {
+export async function mirrorDir(
+  src: string, dest: string, additiveOnly = false, extensions: ReadonlySet<string> = SYNC_EXTENSIONS,
+): Promise<void> {
   await mkdir(dest, { recursive: true });
   const srcEntries = new Set<string>();
 
@@ -46,11 +48,11 @@ export async function mirrorDir(src: string, dest: string, additiveOnly = false)
       continue;
     }
     if (st.isDirectory()) {
-      if (!SKIP_DIRS.has(entry)) { srcEntries.add(entry); await mirrorDir(srcPath, destPath, additiveOnly); }
+      if (!SKIP_DIRS.has(entry)) { srcEntries.add(entry); await mirrorDir(srcPath, destPath, additiveOnly, extensions); }
     } else if (st.isFile()) {
       const ext = extname(entry).toLowerCase();
       const isDoc = /^(PROJECT|CHANGELOG|TODO|README)\.md$/i.test(entry);
-      if ((SYNC_EXTENSIONS.has(ext) || isDoc) && st.size <= MAX_FILE_SIZE) {
+      if ((extensions.has(ext) || isDoc) && st.size <= MAX_FILE_SIZE) {
         srcEntries.add(entry);
         await writeFile(destPath, await readFile(srcPath));
       }

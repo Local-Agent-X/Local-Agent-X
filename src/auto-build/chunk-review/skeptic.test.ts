@@ -2,9 +2,11 @@
 // direction (not-run, never broken), and what its brief hands it.
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { SKEPTIC_BAR_BLOCK, SKEPTIC_BREAK_GROUNDS } from "./skeptic-bar.js";
 
 const agent = vi.hoisted(() => ({
   result: { stdout: "", exitCode: 0, durationMs: 1 } as { stdout: string; exitCode: number; durationMs: number; error?: string },
@@ -61,7 +63,45 @@ describe("parseSkepticVerdict", () => {
     expect(parseSkepticVerdict("**VERDICT:** broken\n**FINDING:** x").status).toBe("broken");
   });
 
-  it("no verdict line is broken: the skill's default when unsure", () => {
+  it("a BROKEN finding leads with the ground it names", () => {
+    const v = parseSkepticVerdict([
+      "VERDICT: BROKEN",
+      'GROUND: spec/plan.md, chunk 3 done-when: "a booked slot disappears from the list"',
+      "FINDING: the slot is still listed after booking (src/book.ts:41); shown by a probe.",
+      "FOLLOW_UPS: none",
+    ].join("\n"));
+    expect(v.status).toBe("broken");
+    expect(v.finding).toBe(
+      'Breaks: spec/plan.md, chunk 3 done-when: "a booked slot disappears from the list"\n' +
+      "the slot is still listed after booking (src/book.ts:41); shown by a probe.",
+    );
+    expect(v.followUps).toBeUndefined();
+  });
+
+  // What the skeptic found beyond the contract is listed apart from the
+  // finding, so it can be recorded without holding the chunk back.
+  it("reads follow-ups apart from the finding, on HOLDS and on BROKEN", () => {
+    const holds = parseSkepticVerdict([
+      "VERDICT: HOLDS",
+      "FINDING: tried double booking, DST and an empty name.",
+      "FOLLOW_UPS:",
+      "- a slot name of 300 characters overflows the row; the spec names no length.",
+      "- no test for a slot booked at midnight.",
+    ].join("\n"));
+    expect(holds).toEqual({
+      status: "holds",
+      finding: "tried double booking, DST and an empty name.",
+      followUps: [
+        "a slot name of 300 characters overflows the row; the spec names no length.",
+        "no test for a slot booked at midnight.",
+      ],
+    });
+    const broken = parseSkepticVerdict("VERDICT: BROKEN\nGROUND: crash\nFINDING: throws on an empty list.\n**FOLLOW-UPS:** - long names overflow");
+    expect(broken.finding).toBe("Breaks: crash\nthrows on an empty list.");
+    expect(broken.followUps).toEqual(["long names overflow"]);
+  });
+
+  it("no verdict line is broken: it has not shown the change holds", () => {
     const v = parseSkepticVerdict("Looks fine to me overall.");
     expect(v.status).toBe("broken");
     expect(v.finding).toContain("no VERDICT line");
@@ -77,7 +117,32 @@ describe("buildSkepticTask", () => {
     expect(task).toContain("STATUS: done");
     expect(task).toContain("git diff abc1234");
     expect(task).toMatch(/Prove it wrong/);
-    expect(task).toMatch(/Default to broken if unsure/);
+    expect(task).toMatch(/beyond the contract is a follow-up, not a break/);
+  });
+});
+
+// The bar is the /greenfield skill's (references/autonomous.md, section 6). The
+// engine states it in its own prompt, so the two are pinned to each other: the
+// skill the app ships must still name every ground the skeptic is given.
+describe("the skeptic's bar", () => {
+  const flat = (text: string): string => text.replace(/\s+/g, " ");
+  const skill = flat(readFileSync(
+    fileURLToPath(new URL("../../protocols/bundled/greenfield/references/autonomous.md", import.meta.url)), "utf-8",
+  ));
+
+  it("gives the skeptic the skill's grounds, word for word", () => {
+    expect(SKEPTIC_BREAK_GROUNDS.length).toBeGreaterThan(0);
+    for (const ground of SKEPTIC_BREAK_GROUNDS) {
+      expect(skill).toContain(ground);
+      expect(flat(SKEPTIC_BAR_BLOCK)).toContain(ground);
+    }
+  });
+
+  it("both say that anything beyond the contract is a follow-up, and which way doubt goes", () => {
+    expect(skill).toMatch(/is a \*\*follow-up\*\*/);
+    expect(skill).toMatch(/Unsure whether the contract covers the case at all: follow-up/);
+    expect(SKEPTIC_BAR_BLOCK).toMatch(/is a FOLLOW-UP, not a break/);
+    expect(SKEPTIC_BAR_BLOCK).toMatch(/Unsure whether the contract covers the case at all: FOLLOW-UP/);
   });
 });
 

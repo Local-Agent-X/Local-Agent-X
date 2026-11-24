@@ -30,6 +30,7 @@ import { EventBus } from "../../event-bus.js";
 import { Handler } from "../../agency/handler.js";
 import { loadSkillBody } from "../skill-bodies.js";
 import { BUILDER_KIT, REVIEW_KIT } from "../../tools/tool-kits.js";
+import { SKEPTIC_BAR_BLOCK } from "../chunk-review/skeptic-bar.js";
 import { join } from "node:path";
 
 export type ChunkAgentRole = "chunk-runner-trunk" | "chunk-runner-leaf" | "scenario-fix" | "chunk-skeptic";
@@ -148,8 +149,9 @@ const SCENARIO_FIX_DISCIPLINE_BLOCK =
 export const SKEPTIC_PROBE_DIR = ".skeptic";
 
 // The /greenfield skill's skeptic (references/autonomous.md, section 6): a
-// model is a poor critic of its own work, so this one starts from "it is
-// broken" and has to be talked out of it by evidence it gathers itself.
+// model is a poor critic of its own work, so this one attacks the change with
+// evidence it gathers itself. What it may hold the chunk to is the chunk's
+// contract and nothing more (chunk-review/skeptic-bar.ts).
 const SKEPTIC_DISCIPLINE_BLOCK =
   `# Chunk skeptic\n\n` +
   `Another agent just built one chunk of an app and says it is done and correct. Your job is to ` +
@@ -164,14 +166,14 @@ const SKEPTIC_DISCIPLINE_BLOCK =
   `To test a suspicion, \`write\` a probe test into \`${SKEPTIC_PROBE_DIR}/\` (e.g. \`${SKEPTIC_PROBE_DIR}/probe.test.ts\`, ` +
   `importing the code under test by relative path) and run it with the project's own test runner by its path ` +
   `(\`npx jest ${SKEPTIC_PROBE_DIR}/probe.test.ts\`, \`npx vitest run ${SKEPTIC_PROBE_DIR}/probe.test.ts\`). ` +
-  `The folder is deleted when you finish and is never part of the change. A break you ran beats one you traced.\n` +
-  `- Judge against the chunk's slice and done-when and the project's \`spec/\`, not against your taste. ` +
-  `Style you would have written differently is not a break.\n` +
-  `- Default to broken if unsure: HOLDS means you tried and the change survived.\n\n` +
+  `The folder is deleted when you finish and is never part of the change. A break you ran beats one you traced.\n\n` +
+  SKEPTIC_BAR_BLOCK +
   `## Verdict format (parsed — keep it exact)\n\n` +
   `Your run's LAST message is exactly this, column-0 lines, nothing after:\n\n` +
   `VERDICT: BROKEN | HOLDS\n` +
-  `FINDING: <BROKEN: what breaks, the input or case, file:line, and how you showed it. HOLDS: what you tried.>`;
+  `GROUND: <BROKEN only: the contract line it breaks, quoted, with the file it is in; or one of: crash, data loss, security, test that cannot fail, false claim>\n` +
+  `FINDING: <BROKEN: what breaks, the input or case, file:line, and how you showed it. HOLDS: what you tried.>\n` +
+  `FOLLOW_UPS: <none, or one "- " line for each thing you found beyond the contract>`;
 
 /** What each role is: the methodology skill it inherits (none for the
  *  skeptic, which builds nothing), its closing discipline, its tools, and its

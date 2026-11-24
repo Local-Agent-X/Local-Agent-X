@@ -242,7 +242,9 @@ function buildPushBackPrompt(situation: ChunkReviewPushBackSituation): string {
     `done-when criterion.\n` +
     `- **amend-spec-additively** — the spec was ambiguous, or two of its lines contradict each other, ` +
     `in a way that caused the failure. Provide a specAddition that settles it. Then the worker re-runs ` +
-    `with the clearer spec.\n` +
+    `with the clearer spec. Never use it to turn what a reviewer found into a new requirement: a break ` +
+    `of a line the spec already has is fixed with retry-with-hint, and the spec, not a review, says ` +
+    `what done is.\n` +
     `- **halt** — only when EVERY way forward needs something only the user has (see below). ` +
     `Halt with haltReason naming exactly what the user must supply.\n\n` +
     RESOLVE_DONT_STOP +

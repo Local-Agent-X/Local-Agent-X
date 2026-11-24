@@ -1,7 +1,7 @@
 /**
  * Judging one chunk before it counts as green — the /greenfield skill's rule
  * (references/autonomous.md, section 6): a chunk is green when its held-out
- * scenarios pass AND a skeptic fails to break it.
+ * scenarios pass AND a skeptic shows no break of its contract (skeptic-bar.ts).
  *
  * A stage of the chunk review (chunk-review/index.ts runChunkReviewWithJudgment),
  * run after the mechanical gates and the build-exec gate have passed. Opt-in per

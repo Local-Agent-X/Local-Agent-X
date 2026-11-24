@@ -60,7 +60,8 @@ function scoreLine(s: ScenarioScore): string {
 
 /** The review finding a judging produces: push_back when a scenario failed,
  *  the app would not start for scoring, or the skeptic broke the chunk; null
- *  when nothing counts against it (not-run parts are recorded, not held). */
+ *  when nothing counts against it (not-run parts are recorded, not held, and
+ *  the skeptic's follow-ups never count). */
 export function chunkJudgingFinding(chunkNumber: number, j: ChunkJudging): GateFinding | null {
   const failed = j.scenarios.scores.filter(s => !s.passed);
   const scenariosAgainst = j.scenarios.status === "error" || failed.length > 0;
@@ -78,6 +79,14 @@ export function chunkJudgingFinding(chunkNumber: number, j: ChunkJudging): GateF
   };
 }
 
+/** What the skeptic found beyond the chunk's contract, for whoever keeps the
+ *  ledger: listed with the verdict, and never a reason the chunk is not green. */
+function followUpsNote(followUps: string[] | undefined): string {
+  if (!followUps?.length) return "";
+  const items = followUps.map((f) => f.replace(/\s+/g, " ").trim().slice(0, 300));
+  return `; ${items.length} follow-up(s) beyond the chunk's contract, for the ledger, not blocking: ${items.join(" | ")}`;
+}
+
 /** One line for events and the run summary: the scores and the skeptic. */
 export function chunkJudgingSummary(j: ChunkJudging): string {
   const sc = j.scenarios;
@@ -85,5 +94,5 @@ export function chunkJudgingSummary(j: ChunkJudging): string {
     ? `scenarios ${sc.scores.filter(s => s.passed).length}/${sc.scores.length} passed (${sc.scores.map(s => `${s.file} ${s.score}/10`).join(", ")})`
     : sc.status === "error" ? `scenarios could not be scored: ${sc.reason}` : `scenarios not scored: ${sc.reason}`;
   const skeptic = j.skeptic.status === "not-run" ? `skeptic did not run (unverified): ${j.skeptic.finding}` : `skeptic: ${j.skeptic.status}`;
-  return `${scenarios}; ${skeptic}`;
+  return `${scenarios}; ${skeptic}${followUpsNote(j.skeptic.followUps)}`;
 }

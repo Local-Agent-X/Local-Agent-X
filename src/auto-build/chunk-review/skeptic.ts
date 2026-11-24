@@ -9,10 +9,15 @@
  * returned. It gets the chunk's contract, the builder's report (the claim) and
  * the sha the chunk started from, and reads the diff itself.
  *
+ * What it may hold the chunk to is the chunk's contract (skeptic-bar.ts): a
+ * BROKEN verdict names its ground, and what the skeptic found beyond the
+ * contract comes back as follow-ups, which are recorded and never hold the
+ * chunk back.
+ *
  * Fail direction:
- *   - The skeptic answered with no parseable verdict → broken. The skill says
- *     "default to broken if unsure", and an agent that dodged the contract has
- *     not shown the change holds.
+ *   - The skeptic answered with no parseable verdict → broken. An agent that
+ *     dodged the verdict format has not shown the change holds. A BROKEN
+ *     verdict that names no ground stays broken for the same reason.
  *   - The skeptic never answered (crash, timeout, cancel) → not-run. Nothing
  *     was shown either way; the caller records the chunk as unverified and the
  *     build goes on, the same rule as every other gate's infra failure.
@@ -30,6 +35,9 @@ export interface SkepticVerdict {
   /** BROKEN: what breaks and how it was shown. HOLDS: what was tried.
    *  not-run: why the skeptic did not answer. */
   finding: string;
+  /** What it found beyond the chunk's contract: for the ledger, never a
+   *  reason to send the chunk back. Absent when it listed none. */
+  followUps?: string[];
 }
 
 export interface SkepticInput {
@@ -64,15 +72,31 @@ export function buildSkepticTask(input: Pick<SkepticInput, "chunk" | "rawReport"
     `## The change\n\n` +
     `The chunk started from commit \`${input.preSha}\`. Its work is everything since: ` +
     `\`git diff ${input.preSha}\` plus any new files \`git status\` lists as untracked.\n\n` +
-    `This change says it is done and correct. Prove it wrong: the input it breaks on, the case it ` +
-    `missed, the seam it forked, the test that cannot fail. Default to broken if unsure. End with ` +
-    `the VERDICT and FINDING lines.`
+    `This change says it is done and correct. Prove it wrong against the contract above and the ` +
+    `project's \`spec/\`: the input it breaks on, the case it missed, the seam it forked, the test ` +
+    `that cannot fail. What you find beyond the contract is a follow-up, not a break. End with the ` +
+    `VERDICT, GROUND, FINDING and FOLLOW_UPS lines.`
   );
 }
 
-/** Read the VERDICT / FINDING lines from the skeptic's last message. The last
- *  VERDICT line wins (a skeptic may quote the format before answering). No
- *  verdict line → broken: the skill's default when the skeptic is unsure. */
+/** A field's label at the start of a line, bold markers on either side of the colon allowed. */
+const FIELD = (name: string): RegExp => new RegExp(`^\\s*\\**${name}\\**\\s*:\\s*\\**\\s*`, "i");
+const FOLLOW_UPS = FIELD("FOLLOW[_ -]?UPS");
+const MAX_FOLLOW_UPS = 12;
+
+/** The lines under FOLLOW_UPS, one item each; "none" and blanks are nothing. */
+function parseFollowUps(lines: string[]): string[] {
+  return lines
+    .map((line) => line.replace(/^\s*[-*•]\s*/, "").trim())
+    .filter((line) => line && !/^\(?none\)?\.?$/i.test(line))
+    .slice(0, MAX_FOLLOW_UPS);
+}
+
+/** Read the verdict block from the skeptic's last message. The last VERDICT
+ *  line wins (a skeptic may quote the format before answering). No verdict
+ *  line → broken: it has not shown the change holds. A BROKEN finding leads
+ *  with the ground the skeptic named, so the builder sees which line of its
+ *  contract it broke. */
 export function parseSkepticVerdict(raw: string): SkepticVerdict {
   const lines = raw.split(/\r?\n/);
   let verdictAt = -1;
@@ -88,9 +112,17 @@ export function parseSkepticVerdict(raw: string): SkepticVerdict {
       finding: `The skeptic gave no VERDICT line, so the change is not shown to hold.${said ? ` Its last words: ${said}` : ""}`,
     };
   }
-  const after = lines.slice(verdictAt + 1).join("\n");
-  const finding = (after.match(/^\s*\**FINDING\**\s*:\s*([\s\S]*)$/im)?.[1] ?? after).trim();
-  return { status: verdict, finding: finding || "(no finding given)" };
+  const rest = lines.slice(verdictAt + 1);
+  const followAt = rest.findIndex((line) => FOLLOW_UPS.test(line));
+  const body = followAt < 0 ? rest : rest.slice(0, followAt);
+  const followUps = followAt < 0 ? [] : parseFollowUps([rest[followAt].replace(FOLLOW_UPS, ""), ...rest.slice(followAt + 1)]);
+
+  const groundAt = body.findIndex((line) => FIELD("GROUND").test(line));
+  const ground = groundAt < 0 ? "" : body[groundAt].replace(FIELD("GROUND"), "").trim();
+  const after = body.filter((_, i) => i !== groundAt).join("\n");
+  const said = (after.match(/^\s*\**FINDING\**\s*:\s*([\s\S]*)$/im)?.[1] ?? after).trim() || "(no finding given)";
+  const finding = verdict === "broken" && ground ? `Breaks: ${ground}\n${said}` : said;
+  return { status: verdict, finding, ...(followUps.length ? { followUps } : {}) };
 }
 
 export async function runChunkSkeptic(input: SkepticInput): Promise<SkepticVerdict> {

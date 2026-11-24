@@ -146,21 +146,40 @@ complete when a fresh agent could finish the chunk from it alone:
 When a builder returns, three things happen before the chunk is `green`.
 `run_build_plan` does all three itself: its build gate re-runs the build and
 the tests, then it scores the chunk's **Scenarios:** and sets a skeptic agent
-on the diff. A failure sends the chunk back once with the finding; a second
-halts the run.
+on the diff. A failure sends the chunk back with the finding, round by round
+while each round changes what the review says. A chunk that is still not
+green is set aside with its work kept on its branch, and the run builds on
+with every chunk that does not depend on it. The run's summary lists each
+skeptic's follow-ups: record them in the ledger.
 
 1. **Re-verify independently.** Run `check` and the tests yourself; confirm the
    named seam was used, not a new file beside it.
 2. **The judge** runs the chunk's scenarios from the index against the running
    app (`references/holdout.md`, section 6).
-3. **A skeptic** agent gets the diff and the claim: "This change says it is
-   done and correct. Prove it wrong: the input it breaks on, the case it
-   missed, the seam it forked, the test that cannot fail. Default to broken if
-   unsure."
+3. **A skeptic** agent gets the diff, the claim and the chunk's contract (its
+   slice, its done-when and `spec/`): "This change says it is done and
+   correct. Prove it wrong: the input it breaks on, the case it missed, the
+   seam it forked, the test that cannot fail."
 
-Green means the scenarios pass **and** the skeptic fails. Otherwise the chunk
-returns to `pending` with the finding attached (the judge's gap as written, the
-skeptic's finding in full), or to `parked` if it needs the owner.
+A skeptic's finding counts against the chunk only when it shows one of:
+
+- a done-when line or a `spec/` rule the change breaks, quoted as written;
+- a crash, lost or corrupted data, or a security hole;
+- a test that cannot fail, or a claim in the builder's report the code does
+  not back.
+
+Anything else it turns up (an input the spec never names, behavior the spec
+leaves open, a design it would have chosen differently) is a **follow-up**: a
+line in the ledger, and the chunk is still green. The spec says what done is; a
+reviewer does not add to it. Unsure whether the change does what the contract
+says: broken. Unsure whether the contract covers the case at all: follow-up.
+
+Green means the scenarios pass **and** the skeptic shows no such break.
+Otherwise the chunk returns to `pending` with the finding attached (the judge's
+gap as written, the skeptic's finding in full), or to `parked` if it needs the
+owner. A finding sends the chunk back to be fixed. It never becomes a new line
+in `spec/plan.md` or `spec/`: only the owner's decision, or a contradiction
+settled under section 7, changes those.
 
 ## 7. Deciding versus parking
 

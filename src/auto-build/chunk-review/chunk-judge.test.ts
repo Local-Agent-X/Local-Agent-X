@@ -160,6 +160,17 @@ describe("chunkJudgingFinding", () => {
     }))).toBeNull();
   });
 
+  // What the skeptic found beyond the chunk's contract is for the ledger: a
+  // chunk it could not break is green however long that list is.
+  it("a skeptic's follow-ups never hold the chunk back", () => {
+    const skeptic = { status: "holds" as const, finding: "tried", followUps: ["a 300-character name overflows", "no midnight test"] };
+    expect(chunkJudgingFinding(4, judging({ skeptic }))).toBeNull();
+    expect(chunkJudgingSummary(judging({ skeptic }))).toBe(
+      "scenarios 1/1 passed (02-checkout.md 8/10); skeptic: holds; 2 follow-up(s) beyond the chunk's contract, " +
+      "for the ledger, not blocking: a 300-character name overflows | no midnight test",
+    );
+  });
+
   it("a failed scenario → push_back with what the judge saw", () => {
     const f = chunkJudgingFinding(4, judging({
       scenarios: { status: "scored", reason: "", scores: [{ file: "02-checkout.md", score: 4, passed: false, reasoning: "total missing", failedCriteria: ["order total shown"] }] },

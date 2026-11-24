@@ -26,10 +26,9 @@ import { createLogger } from "../logger.js";
 import { createInternalMemoryContext } from "./promotion-gate.js";
 const logger = createLogger("memory-dream");
 
-const LAX_DIR = getLaxDir();
-const MEMORY_DIR = join(LAX_DIR, "memory");
-const SESSIONS_DIR = join(LAX_DIR, "sessions");
-const DREAM_STATE_PATH = join(LAX_DIR, "dream-state.json");
+const memoryDir = (): string => join(getLaxDir(), "memory");
+const sessionsDir = (): string => join(getLaxDir(), "sessions");
+const dreamStatePath = (): string => join(getLaxDir(), "dream-state.json");
 
 // Default batch token budget. Conservative at 20k so the dream prompt +
 // existing-memory context + assistant scratch space all fit comfortably
@@ -55,7 +54,7 @@ interface DreamState {
 
 function loadDreamState(): DreamState {
   try {
-    if (existsSync(DREAM_STATE_PATH)) return JSON.parse(readFileSync(DREAM_STATE_PATH, "utf-8"));
+    if (existsSync(dreamStatePath())) return JSON.parse(readFileSync(dreamStatePath(), "utf-8"));
   } catch {}
   return { lastDreamAt: 0, lastDreamSessionCount: 0, dreaming: false };
 }
@@ -64,16 +63,16 @@ function saveDreamState(state: DreamState): void {
   const gated = runMemoryGate({
     content: JSON.stringify(state, null, 2),
     source: "tool",
-    target: DREAM_STATE_PATH,
-    promotion: createInternalMemoryContext(JSON.stringify(state, null, 2), DREAM_STATE_PATH, "dream-state"),
+    target: dreamStatePath(),
+    promotion: createInternalMemoryContext(JSON.stringify(state, null, 2), dreamStatePath(), "dream-state"),
   });
-  writeFileSync(DREAM_STATE_PATH, gated, "utf-8");
+  writeFileSync(dreamStatePath(), gated, "utf-8");
 }
 
 /** Sessions no finished dream has read since they last changed. */
 function countUnreadSessions(state: DreamState): number {
-  if (!existsSync(SESSIONS_DIR)) return 0;
-  try { return countUnreviewedSessions(SESSIONS_DIR, loadReviewMarks(state)); }
+  if (!existsSync(sessionsDir())) return 0;
+  try { return countUnreviewedSessions(sessionsDir(), loadReviewMarks(state)); }
   catch { return 0; } // sessions dir unreadable: nothing to dream about
 }
 
@@ -120,8 +119,8 @@ function loadReviewMarks(state: DreamState = loadDreamState()): ReviewMarks {
  * detail survives) and a few already-read ones before them as context.
  */
 export function listRecentSessionTranscripts(n = DEFAULT_SESSION_COUNT): SessionTranscript[] {
-  if (!existsSync(SESSIONS_DIR)) return [];
-  return readUnreviewedSessions(SESSIONS_DIR, loadReviewMarks(), n);
+  if (!existsSync(sessionsDir())) return [];
+  return readUnreviewedSessions(sessionsDir(), loadReviewMarks(), n);
 }
 
 /**
@@ -177,9 +176,9 @@ export function formatTranscriptForPrompt(t: SessionTranscript): string {
 }
 
 function listMemoryFilesSnapshot(): string[] {
-  if (!existsSync(MEMORY_DIR)) return [];
+  if (!existsSync(memoryDir())) return [];
   try {
-    return readdirSync(MEMORY_DIR)
+    return readdirSync(memoryDir())
       .filter((f) => f.endsWith(".md"))
       .slice(0, 20);
   } catch { return []; }
@@ -205,7 +204,7 @@ export function buildDreamPromptForBatch(
 You are performing a dream — a reflective pass over recent raw conversations
 to consolidate detail-rich knowledge into durable memory.
 
-Memory directory: ${MEMORY_DIR}
+Memory directory: ${memoryDir()}
 
 ## Phase 1 — Orient
 
@@ -231,7 +230,7 @@ ${transcriptBlock}
 
 Use the available tools to:
 - read existing memory files before overwriting
-- write/edit memory files in ${MEMORY_DIR} with newly-learned facts
+- write/edit memory files in ${memoryDir()} with newly-learned facts
 - use \`remember\` for durable facts (one sentence per call; tag entities with @-prefix)
 - use \`update_fact\` to correct a fact already in memory; \`forget\` to mark one no longer true
 
@@ -278,7 +277,7 @@ You are performing a dream — but no recent raw session transcripts are
 available. Review your existing memory files for inconsistencies,
 duplicates, or stale entries instead.
 
-Memory directory: ${MEMORY_DIR}
+Memory directory: ${memoryDir()}
 
 Existing memory files:
 ${memFiles.length > 0 ? memFiles.map((f) => `- ${f}`).join("\n") : "- (no memory files yet)"}

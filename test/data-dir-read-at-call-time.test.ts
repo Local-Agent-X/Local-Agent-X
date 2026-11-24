@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadPrefs, savePrefs } from "../src/protocols/preferences.js";
 import { loadVariables, saveVariables } from "../src/protocols/variables.js";
+import { logRetry } from "../src/retry-telemetry.js";
 import { getModelPaths } from "../src/voice/stt-model-fetch.js";
 import { getTTSModelPaths } from "../src/voice/tts-model-fetch.js";
 import { getVadModelPaths } from "../src/voice/vad-model-fetch.js";
@@ -36,6 +37,20 @@ describe("paths under the data dir are read at call time", () => {
   it("protocol preferences are saved into the current data dir", () => {
     savePrefs(loadPrefs());
     expect(existsSync(join(dataDir, "protocol-prefs", "prefs.json"))).toBe(true);
+  });
+
+  it("retry telemetry is written under each data dir in turn, creating its folder again", () => {
+    logRetry({ kind: "custom" });
+    expect(existsSync(join(dataDir, "telemetry", "retries.jsonl"))).toBe(true);
+
+    const second = mkdtempSync(join(tmpdir(), "lax-data-dir-call-time-second-"));
+    process.env.LAX_DATA_DIR = second;
+    try {
+      logRetry({ kind: "custom" });
+      expect(existsSync(join(second, "telemetry", "retries.jsonl"))).toBe(true);
+    } finally {
+      rmSync(second, { recursive: true, force: true });
+    }
   });
 
   it("the voice model folders are under the current data dir", () => {

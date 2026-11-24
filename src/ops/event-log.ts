@@ -21,8 +21,8 @@ import type { OpEvent } from "./types.js";
 import { createLogger } from "../logger.js";
 const logger = createLogger("workers.event-log");
 
-const OPS_BASE = join(getLaxDir(), "operations");
-const OPS_ROOT = resolve(OPS_BASE);
+const opsBase = (): string => join(getLaxDir(), "operations");
+const opsRoot = (): string => resolve(opsBase());
 
 /**
  * Resolve the on-disk dir for an op. Creates if missing.
@@ -38,12 +38,12 @@ export function opDir(opId: string): string {
   if (opId.includes("\\")) {
     throw new Error(`[event-log] op id escapes operations root: ${JSON.stringify(opId)}`);
   }
-  const dir = join(OPS_BASE, opId);
+  const dir = join(opsBase(), opId);
   const resolved = resolve(dir);
-  if (resolved !== OPS_ROOT && !resolved.startsWith(OPS_ROOT + sep)) {
+  if (resolved !== opsRoot() && !resolved.startsWith(opsRoot() + sep)) {
     throw new Error(`[event-log] op id escapes operations root: ${JSON.stringify(opId)}`);
   }
-  if (resolved === OPS_ROOT) {
+  if (resolved === opsRoot()) {
     throw new Error(`[event-log] op id resolves to the operations root itself: ${JSON.stringify(opId)}`);
   }
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 });

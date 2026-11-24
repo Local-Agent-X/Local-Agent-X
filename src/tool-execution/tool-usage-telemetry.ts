@@ -21,12 +21,12 @@ import { join } from "node:path";
 import { createInterface } from "node:readline";
 import { getLaxDir } from "../lax-data-dir.js";
 
-const DIR = join(getLaxDir(), "telemetry");
-const FILE = join(DIR, "tool-usage.jsonl");
+const telemetryDir = (): string => join(getLaxDir(), "telemetry");
+const logFile = (): string => join(telemetryDir(), "tool-usage.jsonl");
 /** Present once the failures of past runs have been written into the log
  *  (server/background-jobs/failure-backfill.ts). Losing it costs one rescan:
  *  the backfill never writes a call the log already holds. */
-const BACKFILL_MARK = join(DIR, "failures-backfilled");
+const backfillMark = (): string => join(telemetryDir(), "failures-backfilled");
 
 /** Which failure a failed call was. Only a line carrying this is ever counted
  *  as a failure: lines written before it existed say "error" and nothing more. */
@@ -64,10 +64,11 @@ export interface ToolFailureEvent {
   failure: ToolFailureFields;
 }
 
-let _inited = false;
+let _initedDir: string | null = null;
 function ensure(): void {
-  if (_inited) return;
-  try { if (!existsSync(DIR)) mkdirSync(DIR, { recursive: true, mode: 0o700 }); _inited = true; } catch {}
+  const dir = telemetryDir();
+  if (_initedDir === dir) return;
+  try { if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 }); _initedDir = dir; } catch {}
 }
 
 /** Log one tool invocation. Silent — never throws. `ts` is for a call that
@@ -77,7 +78,7 @@ export function logToolUsage(event: Omit<ToolUsageEvent, "ts"> & { ts?: string }
     ensure();
     const { ts, ...rest } = event;
     const line = JSON.stringify({ ts: ts ?? new Date().toISOString(), ...rest }) + "\n";
-    appendFileSync(FILE, line);
+    appendFileSync(logFile(), line);
   } catch { /* telemetry must not break agent flow */ }
 }
 
@@ -101,7 +102,7 @@ function failureEventOf(line: string, sinceMs: number): ToolFailureEvent | null 
  * Every logged failure since `sinceMs`, oldest first. The log is never
  * rotated, so it is read as a stream, one line in memory at a time.
  */
-export async function readToolFailures(sinceMs: number, file: string = FILE): Promise<ToolFailureEvent[]> {
+export async function readToolFailures(sinceMs: number, file: string = logFile()): Promise<ToolFailureEvent[]> {
   if (!existsSync(file)) return [];
   const out: ToolFailureEvent[] = [];
   const lines = createInterface({ input: createReadStream(file, "utf-8"), crlfDelay: Infinity });
@@ -113,12 +114,12 @@ export async function readToolFailures(sinceMs: number, file: string = FILE): Pr
 }
 
 export function failureBackfillDone(): boolean {
-  return existsSync(BACKFILL_MARK);
+  return existsSync(backfillMark());
 }
 
 export function markFailureBackfillDone(): void {
   try {
     ensure();
-    writeFileSync(BACKFILL_MARK, new Date().toISOString());
+    writeFileSync(backfillMark(), new Date().toISOString());
   } catch { /* a lost mark is a rescan, not an error */ }
 }

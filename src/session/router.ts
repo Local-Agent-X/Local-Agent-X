@@ -23,8 +23,7 @@ import { getLaxDir } from "../lax-data-dir.js";
 import { getMessagingChannelDefinition, isMessagingChannelId } from "./channel-registry.js";
 import type { ChannelId } from "../channel-context.js";
 
-const LAX_DIR = getLaxDir();
-const LINKS_FILE = join(LAX_DIR, "identity-links.json");
+const linksFile = (): string => join(getLaxDir(), "identity-links.json");
 
 // ── Types ──
 
@@ -58,14 +57,14 @@ let identityGroups: IdentityGroup[] = [];
 
 function loadLinks(): void {
   try {
-    if (existsSync(LINKS_FILE)) {
-      identityGroups = JSON.parse(readFileSync(LINKS_FILE, "utf-8"));
+    if (existsSync(linksFile())) {
+      identityGroups = JSON.parse(readFileSync(linksFile(), "utf-8"));
     }
   } catch { identityGroups = []; }
 }
 
 function saveLinks(): void {
-  atomicWriteFileSync(LINKS_FILE, JSON.stringify(identityGroups, null, 2));
+  atomicWriteFileSync(linksFile(), JSON.stringify(identityGroups, null, 2));
 }
 
 /**

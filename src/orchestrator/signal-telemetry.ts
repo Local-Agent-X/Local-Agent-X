@@ -13,9 +13,9 @@ import { join } from "node:path";
 import { getLaxDir } from "../lax-data-dir.js";
 import type { ModuleSignal } from "./types.js";
 
-const DIR = join(getLaxDir(), "telemetry");
-const FILE = join(DIR, "signals.jsonl");
-const ROTATED = FILE + ".1";
+const telemetryDir = (): string => join(getLaxDir(), "telemetry");
+const logFile = (): string => join(telemetryDir(), "signals.jsonl");
+const rotated = (): string => logFile() + ".1";
 
 // Append-only JSONL with no rotation grows without bound (AM-9 symptom b).
 // Past the byte cap we roll the live file to signals.jsonl.1 (single
@@ -24,8 +24,8 @@ const MAX_BYTES = Number(process.env.LAX_SIGNAL_LOG_MAX_BYTES) || 5_000_000;
 
 function rotateIfNeeded(): void {
   try {
-    if (statSync(FILE).size >= MAX_BYTES) {
-      renameSync(FILE, ROTATED);
+    if (statSync(logFile()).size >= MAX_BYTES) {
+      renameSync(logFile(), rotated());
     }
   } catch { /* no live file yet, or rotate raced — nothing to roll */ }
 }
@@ -45,10 +45,11 @@ export interface SignalTrace {
   dropped: SignalRef[];
 }
 
-let _inited = false;
+let _initedDir: string | null = null;
 function ensure(): void {
-  if (_inited) return;
-  try { if (!existsSync(DIR)) mkdirSync(DIR, { recursive: true, mode: 0o700 }); _inited = true; } catch {}
+  const dir = telemetryDir();
+  if (_initedDir === dir) return;
+  try { if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 }); _initedDir = dir; } catch {}
 }
 
 export function toSignalRef(s: ModuleSignal): SignalRef {
@@ -65,6 +66,6 @@ export function logSignalTrace(trace: Omit<SignalTrace, "ts">): void {
     ensure();
     rotateIfNeeded();
     const row: SignalTrace = { ts: new Date().toISOString(), ...trace };
-    appendFileSync(FILE, JSON.stringify(row) + "\n", { encoding: "utf-8", mode: 0o600 });
+    appendFileSync(logFile(), JSON.stringify(row) + "\n", { encoding: "utf-8", mode: 0o600 });
   } catch {}
 }

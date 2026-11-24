@@ -30,7 +30,11 @@ function surface() {
   return { registry, live, tools };
 }
 
+// The plugin manager asks for the data dir each time it uses it, so the dir
+// stays set for the whole test and is put back here.
+const dataDirBefore = process.env.LAX_DATA_DIR;
 afterEach(() => {
+  if (dataDirBefore === undefined) delete process.env.LAX_DATA_DIR; else process.env.LAX_DATA_DIR = dataDirBefore;
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 
@@ -58,11 +62,9 @@ describe("plugin special identifier lifecycle", () => {
       }
       return readFileSync(path, encoding);
     });
-    const previous = process.env.LAX_DATA_DIR;
     process.env.LAX_DATA_DIR = root;
     vi.resetModules();
     const { PluginManager } = await import("../src/plugin-system.js");
-    if (previous === undefined) delete process.env.LAX_DATA_DIR; else process.env.LAX_DATA_DIR = previous;
 
     const firstSurface = surface();
     const first = new PluginManager(store);

@@ -24,8 +24,7 @@ import { getLaxDir } from "./lax-data-dir.js";
 export type { ProviderId };
 const logger = createLogger("model-fallback");
 
-const LAX_DIR = getLaxDir();
-const HEALTH_FILE = join(LAX_DIR, "provider-health.json");
+const healthFile = (): string => join(getLaxDir(), "provider-health.json");
 
 export interface ProviderHealth {
   id: ProviderId;
@@ -46,8 +45,8 @@ const healthMap = new Map<ProviderId, ProviderHealth>();
 
 function loadHealth(): void {
   try {
-    if (existsSync(HEALTH_FILE)) {
-      const data = JSON.parse(readFileSync(HEALTH_FILE, "utf-8")) as ProviderHealth[];
+    if (existsSync(healthFile())) {
+      const data = JSON.parse(readFileSync(healthFile(), "utf-8")) as ProviderHealth[];
       for (const h of data) healthMap.set(h.id, h);
     }
   } catch {}
@@ -55,7 +54,7 @@ function loadHealth(): void {
 
 function saveHealth(): void {
   try {
-    writeFileSync(HEALTH_FILE, JSON.stringify([...healthMap.values()], null, 2));
+    writeFileSync(healthFile(), JSON.stringify([...healthMap.values()], null, 2));
   } catch {}
 }
 

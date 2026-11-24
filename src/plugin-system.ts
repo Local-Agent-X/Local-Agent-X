@@ -24,10 +24,10 @@ interface LoadedPlugin {
   trustLevel: TrustLevel;
   manifestHash: string;
 }
-const PLUGINS_DIR = join(getLaxDir(), "plugins");
-const REGISTRY_PATH = join(PLUGINS_DIR, "registry.json");
+const pluginsDir = (): string => join(getLaxDir(), "plugins");
+const registryPath = (): string => join(pluginsDir(), "registry.json");
 function ensurePluginsDir(): void {
-  if (!existsSync(PLUGINS_DIR)) mkdirSync(PLUGINS_DIR, { recursive: true });
+  if (!existsSync(pluginsDir())) mkdirSync(pluginsDir(), { recursive: true });
 }
 export class PluginManager {
   private loaded = new Map<string, LoadedPlugin>();
@@ -36,7 +36,7 @@ export class PluginManager {
   private registryFailure: "invalid" | "unavailable" | undefined;
   private toolSurface: PluginToolSurfacePort | undefined;
   private secretLifecycle = new PluginSecretLifecycle();
-  constructor(private registryStore: PluginRegistryStore = createPluginRegistryStore(REGISTRY_PATH)) {}
+  constructor(private registryStore: PluginRegistryStore = createPluginRegistryStore(registryPath())) {}
   private readRegistry(): PluginRegistry {
     try { const registry = this.registryStore.read(); this.lastRegistry = registry; this.registryFailure = undefined; return registry; }
     catch (error) {
@@ -68,10 +68,10 @@ export class PluginManager {
     expectedRegistration?: { id: string; entryHash: string; manifestHash?: string; enable?: boolean },
     inspectSecretRequirements = false): Promise<PluginManifest> {
     const resolvedPath = resolve(pluginPath);
-    const realPluginsDir = realpathSync(PLUGINS_DIR);
+    const realPluginsDir = realpathSync(pluginsDir());
     const rel = relative(realPluginsDir, resolvedPath);
     if (rel.startsWith("..") || relative(realPluginsDir, resolvedPath) !== rel) {
-      throw new Error(`Plugin path must be within ${PLUGINS_DIR}. Got: ${pluginPath}`);
+      throw new Error(`Plugin path must be within ${pluginsDir()}. Got: ${pluginPath}`);
     }
 
     const manifestPath = join(resolvedPath, "manifest.json");
@@ -384,9 +384,9 @@ export class PluginManager {
 
   discoverPlugins(): string[] {
     ensurePluginsDir();
-    return readdirSync(PLUGINS_DIR, { withFileTypes: true })
+    return readdirSync(pluginsDir(), { withFileTypes: true })
       .filter((e) => e.isDirectory())
-      .map((e) => join(PLUGINS_DIR, e.name))
+      .map((e) => join(pluginsDir(), e.name))
       .filter((dir) => existsSync(join(dir, "manifest.json")));
   }
 }

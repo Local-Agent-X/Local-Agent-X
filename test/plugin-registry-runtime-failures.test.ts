@@ -32,11 +32,9 @@ async function harness(readCommitted?: (path: string, encoding: "utf-8") => stri
   }), "utf-8");
   const registryPath = join(root, "plugins", "registry.json");
   const store = createPluginRegistryStore(registryPath, undefined, readCommitted);
-  const previous = process.env.LAX_DATA_DIR;
   process.env.LAX_DATA_DIR = root;
   vi.resetModules();
   const { PluginManager } = await import("../src/plugin-system.js");
-  if (previous === undefined) delete process.env.LAX_DATA_DIR; else process.env.LAX_DATA_DIR = previous;
   const toolRegistry = new UnifiedToolRegistry();
   const live: ToolDefinition[] = [];
   const surface = new PluginToolSurface(toolRegistry, live, new ToolPolicy({
@@ -48,7 +46,11 @@ async function harness(readCommitted?: (path: string, encoding: "utf-8") => stri
   return { manager, store, registryPath, pluginDir, toolRegistry, live, surface };
 }
 
+// The plugin manager asks for the data dir each time it uses it, so the dir
+// stays set for the whole test and is put back here.
+const dataDirBefore = process.env.LAX_DATA_DIR;
 afterEach(() => {
+  if (dataDirBefore === undefined) delete process.env.LAX_DATA_DIR; else process.env.LAX_DATA_DIR = dataDirBefore;
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 

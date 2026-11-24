@@ -15,8 +15,8 @@ import { appendFileSync, existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "./lax-data-dir.js";
 
-const DIR = join(getLaxDir(), "telemetry");
-const FILE = join(DIR, "retries.jsonl");
+const telemetryDir = (): string => join(getLaxDir(), "telemetry");
+const logFile = (): string => join(telemetryDir(), "retries.jsonl");
 
 export type RetryKind =
   | "empty-response-fallback"    // primary provider returned 0 tokens → falling back
@@ -42,10 +42,11 @@ interface RetryEvent {
   detail?: Record<string, unknown>;
 }
 
-let _inited = false;
+let _initedDir: string | null = null;
 function ensure(): void {
-  if (_inited) return;
-  try { if (!existsSync(DIR)) mkdirSync(DIR, { recursive: true, mode: 0o700 }); _inited = true; } catch {}
+  const dir = telemetryDir();
+  if (_initedDir === dir) return;
+  try { if (!existsSync(dir)) mkdirSync(dir, { recursive: true, mode: 0o700 }); _initedDir = dir; } catch {}
 }
 
 /** Log a retry/failover event. Silent — never throws. */
@@ -53,6 +54,6 @@ export function logRetry(event: Omit<RetryEvent, "ts">): void {
   try {
     ensure();
     const line = JSON.stringify({ ts: new Date().toISOString(), ...event }) + "\n";
-    appendFileSync(FILE, line);
+    appendFileSync(logFile(), line);
   } catch { /* telemetry must not break agent flow */ }
 }

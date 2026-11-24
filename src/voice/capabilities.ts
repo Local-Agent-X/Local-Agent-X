@@ -5,9 +5,9 @@
 import { execSync } from "node:child_process";
 import { existsSync } from "node:fs";
 import {
-  WHISPER_EXE, WHISPER_MODEL,
-  PIPER_EXE, PIPER_VOICE,
-  KOKORO_MODEL, KOKORO_VOICES,
+  whisperExe, whisperModel,
+  piperExe, piperVoice,
+  kokoroModel, kokoroVoicesFile,
 } from "./paths.js";
 
 export interface VoiceCapabilities {
@@ -18,13 +18,13 @@ export interface VoiceCapabilities {
 }
 
 export async function detectCapabilities(): Promise<VoiceCapabilities> {
-  const stt = existsSync(WHISPER_EXE) && existsSync(WHISPER_MODEL) ? "whisper" as const : "none" as const;
+  const stt = existsSync(whisperExe()) && existsSync(whisperModel()) ? "whisper" as const : "none" as const;
 
   let tts: "kokoro" | "piper" | "none" = "none";
   let ttsVoice = "";
 
   // Kokoro (best quality) — Python module gate, not just files on disk.
-  if (existsSync(KOKORO_MODEL) && existsSync(KOKORO_VOICES)) {
+  if (existsSync(kokoroModel()) && existsSync(kokoroVoicesFile())) {
     try {
       execSync('python -c "from kokoro_onnx import Kokoro"', { timeout: 10000, stdio: "ignore" });
       tts = "kokoro";
@@ -34,7 +34,7 @@ export async function detectCapabilities(): Promise<VoiceCapabilities> {
     }
   }
 
-  if (tts === "none" && existsSync(PIPER_EXE) && existsSync(PIPER_VOICE)) {
+  if (tts === "none" && existsSync(piperExe()) && existsSync(piperVoice())) {
     tts = "piper";
     ttsVoice = "en_US-ryan-medium";
   }

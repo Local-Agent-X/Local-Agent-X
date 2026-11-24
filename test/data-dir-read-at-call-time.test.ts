@@ -11,6 +11,9 @@ import { loadVariables, saveVariables } from "../src/protocols/variables.js";
 import { runsDir } from "../src/agent-store/paths.js";
 import { tracesDir } from "../src/agents/run-trace.js";
 import { appDir, auditDir } from "../src/app-runtime/paths.js";
+import { profileStorePath } from "../src/autonomy/profile-store.js";
+import { rollbackDirPath } from "../src/autonomy/rollback.js";
+import { voiceDir, whisperModel } from "../src/voice/paths.js";
 import { sharedBrowserUserDataDir } from "../src/browser/launcher.js";
 import { compressedDir } from "../src/memory/cognitive/compression/constants.js";
 import { stateFile } from "../src/orchestrator/types.js";
@@ -67,6 +70,10 @@ describe("paths under the data dir are read at call time", () => {
     expect(sharedBrowserUserDataDir()).toBe(join(dataDir, "chrome-profile"));
     expect(compressedDir()).toBe(join(dataDir, "memory-compressed"));
     expect(stateFile()).toBe(join(dataDir, "orchestrator-state.json"));
+    expect(voiceDir()).toBe(join(dataDir, "workspace", "voice-chat"));
+    expect(whisperModel().startsWith(voiceDir())).toBe(true);
+    expect(profileStorePath()).toBe(join(dataDir, "autonomy-profile.json"));
+    expect(rollbackDirPath()).toBe(join(dataDir, "rollback"));
   });
 
   it("the voice model folders are under the current data dir", () => {

@@ -6,7 +6,7 @@
 import { execFileSync } from "node:child_process";
 import { writeFileSync, readFileSync, existsSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { VOICE_DIR, tmpPath as voiceTmpPath } from "./paths.js";
+import { voiceDir, tmpPath as voiceTmpPath } from "./paths.js";
 import { EventEmitter } from "node:events";
 
 const IS_WIN = process.platform === "win32";
@@ -51,10 +51,10 @@ export class FastVoicePipeline extends EventEmitter {
     };
 
     this.whisperExe = IS_WIN
-      ? join(VOICE_DIR, "whisper-bin", "Release", "whisper-cli.exe")
-      : join(VOICE_DIR, "whisper-bin", "whisper-cli");
+      ? join(voiceDir(), "whisper-bin", "Release", "whisper-cli.exe")
+      : join(voiceDir(), "whisper-bin", "whisper-cli");
     this.whisperModelPath = join(
-      VOICE_DIR, "whisper-bin", "models",
+      voiceDir(), "whisper-bin", "models",
       `ggml-${this.opts.whisperModel}.bin`,
     );
   }
@@ -101,9 +101,9 @@ export class FastVoicePipeline extends EventEmitter {
   synthesizeFast(text: string): { wav: Buffer; ms: number } {
     const start = Date.now();
     const piperExe = IS_WIN
-      ? join(VOICE_DIR, "piper", "piper", "piper.exe")
-      : join(VOICE_DIR, "piper", "piper", "piper");
-    const piperVoice = join(VOICE_DIR, "piper", "voices", "en_US-ryan-medium.onnx");
+      ? join(voiceDir(), "piper", "piper", "piper.exe")
+      : join(voiceDir(), "piper", "piper", "piper");
+    const piperVoice = join(voiceDir(), "piper", "voices", "en_US-ryan-medium.onnx");
 
     if (!existsSync(piperExe) || !existsSync(piperVoice)) {
       return { wav: Buffer.alloc(0), ms: Date.now() - start };

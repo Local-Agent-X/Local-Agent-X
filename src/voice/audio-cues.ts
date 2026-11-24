@@ -11,8 +11,12 @@ import { tmpPath } from "./paths.js";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
-const CACHE_DIR = join(getLaxDir(), "audio-cues");
-if (!existsSync(CACHE_DIR)) mkdirSync(CACHE_DIR, { recursive: true });
+/** Resolved, and created if missing, on each call. */
+const cacheDir = (): string => {
+  const dir = join(getLaxDir(), "audio-cues");
+  mkdirSync(dir, { recursive: true });
+  return dir;
+};
 
 export type CueEvent =
   | "ready"           // agent ready to listen
@@ -110,7 +114,7 @@ function generateTone(spec: ToneSpec): Buffer {
 
 /** Get WAV buffer for a cue event (cached) */
 export function getCueAudio(event: CueEvent): Buffer {
-  const cachePath = join(CACHE_DIR, `${event}.wav`);
+  const cachePath = join(cacheDir(), `${event}.wav`);
   if (existsSync(cachePath)) {
     return require("node:fs").readFileSync(cachePath);
   }

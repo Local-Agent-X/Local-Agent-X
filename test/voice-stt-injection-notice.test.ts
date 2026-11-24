@@ -17,9 +17,9 @@ vi.mock("../src/logger.js", () => ({
 }));
 
 vi.mock("../src/voice/paths.js", () => ({
-	WHISPER_EXE: "/fake/whisper",
-	WHISPER_MODEL: "/fake/model.bin",
-	VOICE_DIR: "/fake/voice",
+	whisperExe: () => "/fake/whisper",
+	whisperModel: () => "/fake/model.bin",
+	voiceDir: () => "/fake/voice",
 	tmpPath: () => "/fake/seg.wav",
 }));
 

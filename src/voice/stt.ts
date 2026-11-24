@@ -15,7 +15,7 @@ import { join } from "node:path";
 
 import { createLogger } from "../logger.js";
 import { detectInjection } from "../sanitize.js";
-import { WHISPER_EXE, WHISPER_MODEL, VOICE_DIR, tmpPath } from "./paths.js";
+import { whisperExe, whisperModel, voiceDir, tmpPath } from "./paths.js";
 import { stripTranscriptNoise } from "./transcript-noise.js";
 
 const logger = createLogger("voice");
@@ -36,8 +36,8 @@ export function transcribe(audioBuffer: Buffer): string {
   try {
     writeFileSync(wavPath, audioBuffer);
 
-    const output = execFileSync(WHISPER_EXE, [
-      "-m", WHISPER_MODEL,
+    const output = execFileSync(whisperExe(), [
+      "-m", whisperModel(),
       "-f", wavPath,
       "-np",    // no progress
       "-nt",    // no timestamps
@@ -91,10 +91,10 @@ export function whisperTranscribe(
   const lang = options.language ?? "en";
   const threads = options.threads ?? 4;
 
-  const modelPath = join(VOICE_DIR, "whisper-bin", "models", `ggml-${model}.bin`);
-  const effectiveModel = existsSync(modelPath) ? modelPath : WHISPER_MODEL;
+  const modelPath = join(voiceDir(), "whisper-bin", "models", `ggml-${model}.bin`);
+  const effectiveModel = existsSync(modelPath) ? modelPath : whisperModel();
 
-  if (!existsSync(WHISPER_EXE) || !existsSync(effectiveModel)) {
+  if (!existsSync(whisperExe()) || !existsSync(effectiveModel)) {
     return "";
   }
 
@@ -111,7 +111,7 @@ export function whisperTranscribe(
     ];
     if (options.translate) args.push("--translate");
 
-    const output = execFileSync(WHISPER_EXE, args, {
+    const output = execFileSync(whisperExe(), args, {
       encoding: "utf-8",
       timeout: 60_000,
     });
@@ -136,18 +136,18 @@ const LANGUAGE_WHISPER_MODELS: Record<string, string> = {
 export function multiLanguageTranscribe(
   audioBuffer: Buffer,
 ): { text: string; language: string; confidence: number } {
-  if (!existsSync(WHISPER_EXE)) {
+  if (!existsSync(whisperExe())) {
     return { text: "", language: "unknown", confidence: 0 };
   }
 
-  const multiModelPath = join(VOICE_DIR, "whisper-bin", "models", "ggml-base.bin");
-  const detectModel = existsSync(multiModelPath) ? multiModelPath : WHISPER_MODEL;
+  const multiModelPath = join(voiceDir(), "whisper-bin", "models", "ggml-base.bin");
+  const detectModel = existsSync(multiModelPath) ? multiModelPath : whisperModel();
 
   const wavPath = tmpPath("wav");
   try {
     writeFileSync(wavPath, audioBuffer);
 
-    const detectOutput = execFileSync(WHISPER_EXE, [
+    const detectOutput = execFileSync(whisperExe(), [
       "-m", detectModel,
       "-f", wavPath,
       "-np", "-nt",

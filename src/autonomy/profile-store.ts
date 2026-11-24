@@ -14,15 +14,14 @@ import {
   type ProfileName,
 } from "./profiles.js";
 
-const LAX_DIR = getLaxDir();
-const STORE_FILE = join(LAX_DIR, "autonomy-profile.json");
+const storeFile = (): string => join(getLaxDir(), "autonomy-profile.json");
 
 interface StoredState {
   profile: ProfileName;
 }
 
 function ensureDir(): void {
-  if (!existsSync(LAX_DIR)) mkdirSync(LAX_DIR, { recursive: true });
+  if (!existsSync(getLaxDir())) mkdirSync(getLaxDir(), { recursive: true });
 }
 
 function atomicWrite(path: string, data: string): void {
@@ -37,9 +36,9 @@ function atomicWrite(path: string, data: string): void {
 }
 
 export function loadProfileName(): ProfileName {
-  if (!existsSync(STORE_FILE)) return DEFAULT_PROFILE;
+  if (!existsSync(storeFile())) return DEFAULT_PROFILE;
   try {
-    const raw = readFileSync(STORE_FILE, "utf-8");
+    const raw = readFileSync(storeFile(), "utf-8");
     const parsed = JSON.parse(raw) as unknown;
     if (parsed && typeof parsed === "object" && "profile" in parsed) {
       const v = (parsed as { profile: unknown }).profile;
@@ -55,10 +54,11 @@ export function loadProfileName(): ProfileName {
 export function saveProfileName(name: ProfileName): void {
   ensureDir();
   const state: StoredState = { profile: name };
-  atomicWrite(STORE_FILE, JSON.stringify(state, null, 2));
+  atomicWrite(storeFile(), JSON.stringify(state, null, 2));
 }
 
-export const PROFILE_STORE_PATH = STORE_FILE;
+/** Where the chosen profile is saved, under the data dir in force now. */
+export const profileStorePath = storeFile;
 
 // ── Per-session profile overrides ───────────────────────────
 // Unattended runs (a cron job marked Autonomous, say) need a profile that

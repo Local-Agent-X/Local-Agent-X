@@ -13,7 +13,7 @@ import { execFileSync } from "node:child_process";
 import { writeFileSync, readFileSync, existsSync, unlinkSync } from "node:fs";
 
 import { createLogger } from "../logger.js";
-import { KOKORO_MODEL, KOKORO_VOICES, PIPER_EXE, PIPER_VOICE, tmpPath } from "./paths.js";
+import { kokoroModel, kokoroVoicesFile, piperExe, piperVoice, tmpPath } from "./paths.js";
 import { cleanForTTS } from "./text-cleaning.js";
 
 const logger = createLogger("voice");
@@ -34,7 +34,7 @@ export function synthesizeKokoro(
     const pyScript = `
 import sys, wave, numpy as np
 from kokoro_onnx import Kokoro
-k = Kokoro('${KOKORO_MODEL.replace(/\\/g, "/")}', '${KOKORO_VOICES.replace(/\\/g, "/")}')
+k = Kokoro('${kokoroModel().replace(/\\/g, "/")}', '${kokoroVoicesFile().replace(/\\/g, "/")}')
 samples, sr = k.create(sys.argv[1], voice=sys.argv[2], speed=float(sys.argv[3]), lang='en-us')
 with wave.open(sys.argv[4], 'wb') as f:
     f.setnchannels(1)
@@ -67,8 +67,8 @@ export function synthesizePiper(text: string): Buffer {
   const outPath = tmpPath("wav");
 
   try {
-    execFileSync(PIPER_EXE, [
-      "--model", PIPER_VOICE,
+    execFileSync(piperExe(), [
+      "--model", piperVoice(),
       "--output_file", outPath,
     ], {
       input: clean,

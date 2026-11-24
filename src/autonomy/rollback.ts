@@ -39,11 +39,11 @@ import { createLogger } from "../logger.js";
 
 const logger = createLogger("autonomy-rollback");
 
-const ROLLBACK_DIR = join(getLaxDir(), "rollback");
-const INDEX_FILE = join(ROLLBACK_DIR, "index.jsonl");
-const RESTORED_FILE = join(ROLLBACK_DIR, "restored.jsonl");
+const rollbackDir = (): string => join(getLaxDir(), "rollback");
+const indexFile = (): string => join(rollbackDir(), "index.jsonl");
+const restoredFile = (): string => join(rollbackDir(), "restored.jsonl");
 
-// A tool-call id names a directory under ROLLBACK_DIR that a restore deletes
+// A tool-call id names a directory under rollbackDir() that a restore deletes
 // recursively, and it comes back out of an index any file writer can append
 // to: no path separator, no leading dot. "|" stays: one provider's ids join a
 // call id and an item id with it.
@@ -106,7 +106,7 @@ function captureFile(toolCallId: string, filePath: string, n: number, keep: Capt
     if (st.isDirectory()) return { type: "none", reason: `${filePath} is a folder: a deleted folder goes to the trash, and restore_file brings it back` };
     if (st.size > MAX_BACKUP_BYTES) return { type: "none", reason: `${filePath} is ${st.size} bytes, over the ${MAX_BACKUP_BYTES}-byte backup cap` };
     if (keep === "final") return { type: "final", original: filePath, reason: "a credential file the user named for deletion: no copy is kept" };
-    const dir = join(ROLLBACK_DIR, toolCallId);
+    const dir = join(rollbackDir(), toolCallId);
     ensureDir(dir);
     if (keep === "seal") {
       const backup = join(dir, `${n}-${basename(filePath)}.sealed`);
@@ -145,7 +145,7 @@ export interface PendingCapture {
  */
 export function captureBeforeCall(call: RollbackCall, paths: readonly CapturePath[], now = Date.now()): PendingCapture | null {
   if (paths.length === 0) return null;
-  ensureDir(ROLLBACK_DIR);
+  ensureDir(rollbackDir());
   if (now - lastPruneAt > PRUNE_EVERY_MS) pruneRollbacks(now);
   if (!TOOL_CALL_ID.test(call.toolCallId)) {
     return { call, ts: now, entries: [{ path: null, before: statBefore(""), artifact: { type: "none", reason: "the tool call id cannot name a backup directory" } }] };
@@ -185,12 +185,12 @@ export function recordCapture(pending: PendingCapture | null): RollbackContract 
     else if (artifact.type === "file-backup") rmSync(artifact.backup, { force: true });
   }
   if (kept.length === 0) {
-    if (TOOL_CALL_ID.test(pending.call.toolCallId)) rmSync(join(ROLLBACK_DIR, pending.call.toolCallId), { recursive: true, force: true });
+    if (TOOL_CALL_ID.test(pending.call.toolCallId)) rmSync(join(rollbackDir(), pending.call.toolCallId), { recursive: true, force: true });
     return null;
   }
   const contract: RollbackContract = { ...pending.call, ts: pending.ts, artifacts: kept };
   try {
-    appendFileSync(INDEX_FILE, JSON.stringify(contract) + "\n");
+    appendFileSync(indexFile(), JSON.stringify(contract) + "\n");
   } catch (e) {
     logger.warn(`[rollback] failed to append index: ${(e as Error).message}`);
   }
@@ -204,7 +204,7 @@ function sweepExpired(c: RollbackContract, now: number): { contract: RollbackCon
   if (!c.artifacts.some((a) => expired(a, now))) return { contract: c, swept: false };
   const artifacts = c.artifacts.map((a): RollbackArtifact => {
     if (!expired(a, now) || a.type !== "file-backup") return a;
-    if (TOOL_CALL_ID.test(c.toolCallId) && dirname(resolve(a.backup)) === join(ROLLBACK_DIR, c.toolCallId)) rmSync(a.backup, { force: true });
+    if (TOOL_CALL_ID.test(c.toolCallId) && dirname(resolve(a.backup)) === join(rollbackDir(), c.toolCallId)) rmSync(a.backup, { force: true });
     return { type: "none", reason: `the sealed backup of ${a.original} expired after ${SEALED_TTL_MS / 3_600_000} hours` };
   });
   return { contract: { ...c, artifacts }, swept: true };
@@ -222,12 +222,12 @@ export function pruneRollbacks(now = Date.now()): number {
   const kept = new Set(keep.map((c) => c.toolCallId));
   for (const c of all) {
     if (!kept.has(c.toolCallId) && TOOL_CALL_ID.test(c.toolCallId)) {
-      rmSync(join(ROLLBACK_DIR, c.toolCallId), { recursive: true, force: true });
+      rmSync(join(rollbackDir(), c.toolCallId), { recursive: true, force: true });
     }
   }
-  writeFileSync(INDEX_FILE, keep.map((c) => JSON.stringify(c) + "\n").join(""));
-  const restored = readJsonl<{ toolCallId: string }>(RESTORED_FILE).filter((r) => kept.has(r.toolCallId));
-  writeFileSync(RESTORED_FILE, restored.map((r) => JSON.stringify(r) + "\n").join(""));
+  writeFileSync(indexFile(), keep.map((c) => JSON.stringify(c) + "\n").join(""));
+  const restored = readJsonl<{ toolCallId: string }>(restoredFile()).filter((r) => kept.has(r.toolCallId));
+  writeFileSync(restoredFile(), restored.map((r) => JSON.stringify(r) + "\n").join(""));
   return all.length - keep.length;
 }
 
@@ -244,11 +244,11 @@ function readJsonl<T>(path: string): T[] {
 
 /** Every contract on record, oldest first. */
 export function readContracts(): RollbackContract[] {
-  return readJsonl<RollbackContract>(INDEX_FILE).sort((a, b) => a.ts - b.ts);
+  return readJsonl<RollbackContract>(indexFile()).sort((a, b) => a.ts - b.ts);
 }
 
 export function loadRestoredIds(): Set<string> {
-  return new Set(readJsonl<{ toolCallId: string }>(RESTORED_FILE).map((r) => r.toolCallId));
+  return new Set(readJsonl<{ toolCallId: string }>(restoredFile()).map((r) => r.toolCallId));
 }
 
 export interface RollbackListEntry extends RollbackContract {
@@ -283,7 +283,7 @@ function undoTarget(toolCallId: string, a: RollbackArtifact, sessionId?: string)
   if (typeof a.original !== "string" || !isAbsolute(a.original)) return { error: "the contract's file paths are malformed" };
   if (a.type === "file-backup") {
     if (typeof a.backup !== "string") return { error: "the contract's file paths are malformed" };
-    if (dirname(resolve(a.backup)) !== join(ROLLBACK_DIR, toolCallId)) return { error: `not a backup of this call: ${a.backup}` };
+    if (dirname(resolve(a.backup)) !== join(rollbackDir(), toolCallId)) return { error: `not a backup of this call: ${a.backup}` };
     if (expired(a, Date.now())) return { error: `the sealed backup of ${a.original} expired` };
     if (!existsSync(a.backup)) return { error: `backup missing: ${a.backup}` };
     if (!lstatSync(a.backup).isFile()) return { error: `backup is not a regular file: ${a.backup}` };
@@ -314,10 +314,10 @@ export async function undoArtifact(toolCallId: string, a: RollbackArtifact, sess
 /** Mark calls undone and reclaim their backups: they are spent. */
 export function markRestored(toolCallIds: readonly string[], now = Date.now()): void {
   for (const id of toolCallIds) {
-    try { appendFileSync(RESTORED_FILE, JSON.stringify({ toolCallId: id, ts: now }) + "\n"); }
+    try { appendFileSync(restoredFile(), JSON.stringify({ toolCallId: id, ts: now }) + "\n"); }
     catch (e) { logger.warn(`[rollback] failed to log restoration: ${(e as Error).message}`); }
     if (!TOOL_CALL_ID.test(id)) continue;
-    try { rmSync(join(ROLLBACK_DIR, id), { recursive: true, force: true }); }
+    try { rmSync(join(rollbackDir(), id), { recursive: true, force: true }); }
     catch (e) { logger.warn(`[rollback] failed to clean ${id} dir: ${(e as Error).message}`); }
   }
 }
@@ -344,6 +344,5 @@ export async function restoreRollback(toolCallId: string): Promise<RestoreResult
   return { ok: true, restored, skipped };
 }
 
-export const ROLLBACK_INDEX_FILE = INDEX_FILE;
-export const ROLLBACK_RESTORED_FILE = RESTORED_FILE;
-export const ROLLBACK_DIR_PATH = ROLLBACK_DIR;
+export const rollbackIndexFile = indexFile;
+export const rollbackDirPath = rollbackDir;

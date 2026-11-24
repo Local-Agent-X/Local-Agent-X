@@ -9,8 +9,12 @@ import { getLaxDir } from "../lax-data-dir.js";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
-const TIMELINE_DIR = join(getLaxDir(), "voice-timeline");
-if (!existsSync(TIMELINE_DIR)) mkdirSync(TIMELINE_DIR, { recursive: true });
+/** Resolved, and created if missing, on each call. */
+const timelineDir = (): string => {
+  const dir = join(getLaxDir(), "voice-timeline");
+  mkdirSync(dir, { recursive: true });
+  return dir;
+};
 
 export type VoiceEventType =
   | "stt_start"
@@ -49,7 +53,7 @@ function dateKey(d: Date = new Date()): string {
 }
 
 function getLogPath(date?: Date): string {
-  return join(TIMELINE_DIR, `${dateKey(date)}.jsonl`);
+  return join(timelineDir(), `${dateKey(date)}.jsonl`);
 }
 
 /** Log a voice event */
@@ -150,8 +154,8 @@ export function getDaySummary(date?: Date): {
 
 /** List all days that have timeline data */
 export function listTimelineDays(): string[] {
-  if (!existsSync(TIMELINE_DIR)) return [];
-  return readdirSync(TIMELINE_DIR)
+  if (!existsSync(timelineDir())) return [];
+  return readdirSync(timelineDir())
     .filter((f) => f.endsWith(".jsonl"))
     .map((f) => f.replace(".jsonl", ""))
     .sort();
@@ -165,7 +169,7 @@ export function pruneTimeline(keepDays = 30): number {
 
   for (const day of days) {
     if (new Date(day) < cutoff) {
-      const p = join(TIMELINE_DIR, `${day}.jsonl`);
+      const p = join(timelineDir(), `${day}.jsonl`);
       try {
         require("node:fs").unlinkSync(p);
         removed++;

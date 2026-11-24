@@ -9,20 +9,22 @@ import { getLaxDir } from "../lax-data-dir.js";
 import { randomBytes } from "node:crypto";
 
 export const IS_WIN = process.platform === "win32";
-export const VOICE_DIR = join(getLaxDir(), "workspace", "voice-chat");
+/** Where the local voice engines are installed, under the data dir in force
+ *  now. Every path below hangs off it and is worked out when asked for. */
+export const voiceDir = (): string => join(getLaxDir(), "workspace", "voice-chat");
 
-export const WHISPER_EXE = IS_WIN
-  ? join(VOICE_DIR, "whisper-bin", "Release", "whisper-cli.exe")
-  : join(VOICE_DIR, "whisper-bin", "whisper-cli");
-export const WHISPER_MODEL = join(VOICE_DIR, "whisper-bin", "models", "ggml-base.en.bin");
+export const whisperExe = (): string => IS_WIN
+  ? join(voiceDir(), "whisper-bin", "Release", "whisper-cli.exe")
+  : join(voiceDir(), "whisper-bin", "whisper-cli");
+export const whisperModel = (): string => join(voiceDir(), "whisper-bin", "models", "ggml-base.en.bin");
 
-export const PIPER_EXE = IS_WIN
-  ? join(VOICE_DIR, "piper", "piper", "piper.exe")
-  : join(VOICE_DIR, "piper", "piper", "piper");
-export const PIPER_VOICE = join(VOICE_DIR, "piper", "voices", "en_US-ryan-medium.onnx");
+export const piperExe = (): string => IS_WIN
+  ? join(voiceDir(), "piper", "piper", "piper.exe")
+  : join(voiceDir(), "piper", "piper", "piper");
+export const piperVoice = (): string => join(voiceDir(), "piper", "voices", "en_US-ryan-medium.onnx");
 
-export const KOKORO_MODEL = join(VOICE_DIR, "kokoro", "kokoro-v1.0.onnx");
-export const KOKORO_VOICES = join(VOICE_DIR, "kokoro", "voices-v1.0.bin");
+export const kokoroModel = (): string => join(voiceDir(), "kokoro", "kokoro-v1.0.onnx");
+export const kokoroVoicesFile = (): string => join(voiceDir(), "kokoro", "voices-v1.0.bin");
 
 /** The scratch folder for audio, camera and screen files that are deleted
  *  after use. Resolved and created on each call, so it follows the data

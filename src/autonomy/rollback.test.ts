@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { homedir, tmpdir } from "node:os";
 import {
   captureBeforeCall, recordCapture, restoreRollback, listRollbacks, pruneRollbacks, readContracts,
-  ROLLBACK_DIR_PATH, ROLLBACK_INDEX_FILE, type RollbackContract,
+  rollbackDirPath, rollbackIndexFile, type RollbackContract,
 } from "./rollback.js";
 
 // A restore asks the file-access layer whether its target may be written, and
@@ -18,7 +18,7 @@ function freshId(): string {
 }
 
 function cleanup(id: string): void {
-  const dir = join(ROLLBACK_DIR_PATH, id);
+  const dir = join(rollbackDirPath(), id);
   if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
 }
 
@@ -78,7 +78,7 @@ describe("recordCapture keeps what the call changed", () => {
     const contract = capture(call(id), [target], () => writeFileSync(target, "after"))!;
     expect(contract).toMatchObject({ toolCallId: id, tool: "write", sessionId: "s-1", opId: "op-1" });
     expect(contract.artifacts.map((a) => a.type)).toEqual(["file-backup"]);
-    expect(readFileSync(ROLLBACK_INDEX_FILE, "utf-8")).toContain(id);
+    expect(readFileSync(rollbackIndexFile(), "utf-8")).toContain(id);
     cleanup(id); rmSync(target, { force: true });
   });
 
@@ -110,7 +110,7 @@ describe("recordCapture keeps what the call changed", () => {
     const script = join(tmpdir(), `lax-rb-read-${id}.py`);
     writeFileSync(script, "print(1)");
     expect(capture(call(id, "bash"), [script, join(tmpdir(), `lax-rb-never-${id}.txt`)])).toBeNull();
-    expect(existsSync(join(ROLLBACK_DIR_PATH, id))).toBe(false);
+    expect(existsSync(join(rollbackDirPath(), id))).toBe(false);
     expect(readContracts().some((c) => c.toolCallId === id)).toBe(false);
     rmSync(script, { force: true });
   });
@@ -181,7 +181,7 @@ describe("pruneRollbacks", () => {
     const ids = readContracts().map((c) => c.toolCallId);
     expect(ids).not.toContain(old);
     expect(ids).toContain(fresh);
-    expect(existsSync(join(ROLLBACK_DIR_PATH, old))).toBe(false);
+    expect(existsSync(join(rollbackDirPath(), old))).toBe(false);
     cleanup(fresh);
     rmSync(target, { force: true });
   });
@@ -192,12 +192,12 @@ describe("pruneRollbacks", () => {
 // ask for the restore a user would click.
 describe("restore trusts nothing the index names", () => {
   const forge = (contract: RollbackContract): void => {
-    mkdirSync(ROLLBACK_DIR_PATH, { recursive: true });
-    appendFileSync(ROLLBACK_INDEX_FILE, JSON.stringify(contract) + "\n");
+    mkdirSync(rollbackDirPath(), { recursive: true });
+    appendFileSync(rollbackIndexFile(), JSON.stringify(contract) + "\n");
   };
   const backupFor = (id: string, body: string): string => {
-    mkdirSync(join(ROLLBACK_DIR_PATH, id), { recursive: true });
-    const backup = join(ROLLBACK_DIR_PATH, id, "x.bak");
+    mkdirSync(join(rollbackDirPath(), id), { recursive: true });
+    const backup = join(rollbackDirPath(), id, "x.bak");
     writeFileSync(backup, body);
     return backup;
   };
@@ -209,19 +209,19 @@ describe("restore trusts nothing the index names", () => {
     try {
       const c = captureBeforeCall(call(`../${escape}`), [target])!;
       expect(c.entries[0].artifact.type).toBe("none");
-      expect(existsSync(join(ROLLBACK_DIR_PATH, "..", escape))).toBe(false);
+      expect(existsSync(join(rollbackDirPath(), "..", escape))).toBe(false);
     } finally {
-      rmSync(join(ROLLBACK_DIR_PATH, "..", escape), { recursive: true, force: true });
+      rmSync(join(rollbackDirPath(), "..", escape), { recursive: true, force: true });
       rmSync(target, { force: true });
     }
   });
 
   it("refuses an id that would make the post-restore cleanup delete the data dir", async () => {
-    const canary = join(ROLLBACK_DIR_PATH, "..", "canary.txt");
+    const canary = join(rollbackDirPath(), "..", "canary.txt");
     writeFileSync(canary, "still here");
     const original = homeFile(`lax-rb-dotdot-${Math.random().toString(36).slice(2, 10)}.txt`);
     forge({ toolCallId: "..", ts: Date.now(), tool: "write",
-      artifacts: [{ type: "file-backup", original, backup: join(ROLLBACK_DIR_PATH, "..", "canary.txt") }] });
+      artifacts: [{ type: "file-backup", original, backup: join(rollbackDirPath(), "..", "canary.txt") }] });
     try {
       expect((await restoreRollback("..")).ok).toBe(false);
       expect(existsSync(canary)).toBe(true);
@@ -285,8 +285,8 @@ describe("restore trusts nothing the index names", () => {
     const secret = homeFile(`lax-rb-linked-${id}.txt`);
     const leak = homeFile(`lax-rb-linkleak-${id}.txt`);
     writeFileSync(secret, "s3cret");
-    mkdirSync(join(ROLLBACK_DIR_PATH, id), { recursive: true });
-    const backup = join(ROLLBACK_DIR_PATH, id, "x.bak");
+    mkdirSync(join(rollbackDirPath(), id), { recursive: true });
+    const backup = join(rollbackDirPath(), id, "x.bak");
     try {
       try { symlinkSync(secret, backup, "file"); } catch { ctx.skip(); }
       forge({ toolCallId: id, ts: Date.now(), tool: "write",
@@ -341,7 +341,7 @@ MIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQC7fakefakefake
     const pending = captureBeforeCall(call(id, "delete_file"), [{ path: target, keep: "final" }])!;
     rmSync(target);
     expect(recordCapture(pending)!.artifacts).toEqual([{ type: "final", original: target, reason: expect.stringContaining("no copy is kept") }]);
-    expect(existsSync(join(ROLLBACK_DIR_PATH, id)), "no backup folder was made for it").toBe(false);
+    expect(existsSync(join(rollbackDirPath(), id)), "no backup folder was made for it").toBe(false);
     expect((await restoreRollback(id)).ok).toBe(false);
     expect(existsSync(target)).toBe(false);
   });

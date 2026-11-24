@@ -12,8 +12,12 @@ import { randomBytes } from "node:crypto";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
 
-const SPEAKERS_DIR = join(getLaxDir(), "speakers");
-if (!existsSync(SPEAKERS_DIR)) mkdirSync(SPEAKERS_DIR, { recursive: true });
+/** Resolved, and created if missing, on each call. */
+const speakersDir = (): string => {
+  const dir = join(getLaxDir(), "speakers");
+  mkdirSync(dir, { recursive: true });
+  return dir;
+};
 
 const tmpPath = (ext: string): string => voiceTmpPath(ext, "spk_");
 
@@ -83,14 +87,14 @@ function cosineSimilarity(a: number[], b: number[]): number {
 
 /** Load all enrolled speaker profiles */
 export function loadProfiles(): SpeakerProfile[] {
-  const indexPath = join(SPEAKERS_DIR, "profiles.json");
+  const indexPath = join(speakersDir(), "profiles.json");
   if (!existsSync(indexPath)) return [];
   return JSON.parse(readFileSync(indexPath, "utf-8"));
 }
 
 /** Save speaker profiles */
 function saveProfiles(profiles: SpeakerProfile[]): void {
-  const indexPath = join(SPEAKERS_DIR, "profiles.json");
+  const indexPath = join(speakersDir(), "profiles.json");
   writeFileSync(indexPath, JSON.stringify(profiles, null, 2), "utf-8");
 }
 

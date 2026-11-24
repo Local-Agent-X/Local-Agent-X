@@ -231,8 +231,8 @@ try {
 // short-circuits.
 try {
   const { existsSync } = await import("node:fs");
-  const { PROFILE_STORE_PATH, saveProfileName } = await import("./autonomy/profile-store.js");
-  if (!existsSync(PROFILE_STORE_PATH)) {
+  const { profileStorePath, saveProfileName } = await import("./autonomy/profile-store.js");
+  if (!existsSync(profileStorePath())) {
     const legacy = (config as { toolApproval?: string }).toolApproval;
     const mapped =
       legacy === "auto" ? "Power" :

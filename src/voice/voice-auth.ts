@@ -13,8 +13,12 @@ const verifyAttempts = new Map<string, number[]>();
 const VERIFY_MAX_ATTEMPTS = 5;
 const VERIFY_WINDOW_MS = 60_000;
 
-const AUTH_DIR = join(getLaxDir(), "voice-auth");
-if (!existsSync(AUTH_DIR)) mkdirSync(AUTH_DIR, { recursive: true });
+/** Resolved, and created if missing, on each call. */
+const authDir = (): string => {
+  const dir = join(getLaxDir(), "voice-auth");
+  mkdirSync(dir, { recursive: true });
+  return dir;
+};
 
 const tmpPath = (ext: string): string => voiceTmpPath(ext, "auth_");
 
@@ -104,13 +108,13 @@ function cosineSim(a: number[], b: number[]): number {
 }
 
 function loadVoiceprints(): Voiceprint[] {
-  const path = join(AUTH_DIR, "voiceprints.json");
+  const path = join(authDir(), "voiceprints.json");
   if (!existsSync(path)) return [];
   return JSON.parse(readFileSync(path, "utf-8"));
 }
 
 function saveVoiceprints(vps: Voiceprint[]): void {
-  writeFileSync(join(AUTH_DIR, "voiceprints.json"), JSON.stringify(vps, null, 2), "utf-8");
+  writeFileSync(join(authDir(), "voiceprints.json"), JSON.stringify(vps, null, 2), "utf-8");
 }
 
 /** Enroll a user's voiceprint from audio samples */

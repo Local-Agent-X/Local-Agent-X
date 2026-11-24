@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2136 non-test source files · 69 oversized · 264 nearing the size cap.
+**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2136 non-test source files · 68 oversized · 265 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -24,7 +24,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/tools/` | 142 | 258 | XL | 9 |
 | `src/tool-execution/` | 107 | 91 | XL | 2 |
 | `src/workspace/` | 93 | 3 | M |  |
-| `src/canonical-loop/` | 92 | 297 | XL | 7 |
+| `src/canonical-loop/` | 92 | 297 | XL | 6 |
 | `src/providers/` | 80 | 28 | L | 1 |
 | `src/session/` | 78 | 15 | L |  |
 | `src/util/` | 78 | 4 | S |  |
@@ -264,7 +264,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/browser/secret-fill.ts#withBrowserLock:callback`
 - `src/canonical-loop/adapters/app-build-adapter.ts#CliBuildAdapter.runTurn`
 - `src/canonical-loop/adapters/openai-compat.ts#OpenAICompatAdapter.runTurn`
-- `src/canonical-loop/adapters/openai-compat/canonical-to-chat-param.ts#canonicalToChatParam`
 - `src/canonical-loop/chat-runner/event-pump.ts#subscribeOpEvents:callback`
 - `src/canonical-loop/session-bridge-observer.ts#recordCanonicalEventWithSink`
 - `src/canonical-loop/turn-loop/decide-outcome.ts#decideTurnOutcome`
@@ -477,6 +476,7 @@ job. Comments are free: never cut them to fit.
 - `src/browser/launcher.ts#launchAgentChrome` — 70+ own code lines (cap 100)
 - `src/canonical-loop/adapters/app-build-smoke-gate.ts#runAppSmokeGate` — 70+ own code lines (cap 100)
 - `src/canonical-loop/adapters/gemini-native.ts#GeminiNativeAdapter.runTurn` — 70+ own code lines (cap 100)
+- `src/canonical-loop/adapters/openai-compat/canonical-to-chat-param.ts#canonicalToChatParam` — 70+ own code lines (cap 100)
 - `src/canonical-loop/chat-runner/register-adapter.ts#registerAdapterForChat` — 70+ own code lines (cap 100)
 - `src/canonical-loop/chat-tool-dispatcher.ts#shapeCallResult` — 70+ own code lines (cap 100)
 - `src/canonical-loop/container-execution-backend.ts#ContainerExecutionBackend.launchOrReattach` — 70+ own code lines (cap 100)

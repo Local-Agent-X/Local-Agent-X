@@ -291,6 +291,16 @@ function buildAgentCompleteRow(msg) {
   return '**' + label + ':**\n\n' + result;
 }
 
+// A stored agent report row (the format above). It stays in the chat's
+// messages so the model reads it in its history, but it is never drawn: the
+// report is the model's input, and the agent's sidebar card is the user's
+// surface. Drawn, every spawned agent's report landed under the chat's step
+// list and buried the run the user was following (2026-11-24).
+var AGENT_REPORT_ROW = /^\*\*Agent [\s\S]+? (?:completed|failed):\*\*\n\n/;
+function isAgentReportRow(msg) {
+  return !!msg && msg.role === 'assistant' && typeof msg.content === 'string' && AGENT_REPORT_ROW.test(msg.content);
+}
+
 function routeAgentCompleteToChat(msg) {
   var active = (typeof activeChat !== 'undefined' && activeChat) ? activeChat : null;
   var route = agentCompleteRouting(msg, active ? active.id : null);
@@ -299,7 +309,7 @@ function routeAgentCompleteToChat(msg) {
   // Empty result → the server persisted no chat row (evt.result gate), so
   // neither render nor store one; the sidebar card still reports completion.
   if (agentMsg === null) return;
-  if (route.render && typeof addMessageEl === 'function') addMessageEl('assistant', agentMsg);
+  // Stored, never drawn (isAgentReportRow).
   var chat = null;
   if (route.store) {
     if (active && active.id === route.store) chat = active;

@@ -60,12 +60,13 @@ function loadMisc(activeChat: Chat | null, chats: Chat[]) {
 		var window = {};
 		var setTimeout = function() {};
 		${miscSource}
-		return { handleAgentFeedEvent, agentCompleteRouting, buildAgentCompleteRow };
+		return { handleAgentFeedEvent, agentCompleteRouting, buildAgentCompleteRow, isAgentReportRow };
 	`);
 	const api = factory(activeChat, chats, addMessageEl, saveChats, updateAgentFeed) as {
 		handleAgentFeedEvent: (msg: Msg) => void;
 		agentCompleteRouting: (msg: Msg, activeChatId: string | null) => Route;
 		buildAgentCompleteRow: (msg: Msg) => string | null;
+		isAgentReportRow: (msg: Msg) => boolean;
 	};
 	return { ...api, addMessageEl, saveChats, updateAgentFeed };
 }
@@ -137,13 +138,12 @@ describe("handleAgentFeedEvent(agent-complete)", () => {
 		expect(active.updatedAt).toBe(1_000);
 	});
 
-	it("sessionId === active: renders live, stores on the active chat, bumps updatedAt, saves", () => {
+	it("sessionId === active: stores on the active chat for the model, draws nothing, bumps updatedAt, saves", () => {
 		const active = chat("chat-a", [{ role: "user", content: "hi" }]);
 		const other = chat("chat-b");
 		const h = loadMisc(active, [active, other]);
 		h.handleAgentFeedEvent(done({ parentAgentId: null, sessionId: "chat-a" }));
-		expect(h.addMessageEl).toHaveBeenCalledTimes(1);
-		expect(h.addMessageEl).toHaveBeenCalledWith("assistant", REPORT);
+		expect(h.addMessageEl).not.toHaveBeenCalled();
 		expect(active.messages).toEqual([{ role: "user", content: "hi" }, { role: "assistant", content: REPORT }]);
 		expect(active.updatedAt).toBeGreaterThan(1_000);
 		expect(other.messages).toHaveLength(0);
@@ -191,11 +191,11 @@ describe("handleAgentFeedEvent(agent-complete)", () => {
 		expect(active.updatedAt).toBe(1_000);
 	});
 
-	it("sessionId key absent (pre-C4a server): legacy — appends to whatever chat is open", () => {
+	it("sessionId key absent (pre-C4a server): legacy — stores on whatever chat is open, draws nothing", () => {
 		const active = chat("chat-a");
 		const h = loadMisc(active, [active]);
 		h.handleAgentFeedEvent(done());
-		expect(h.addMessageEl).toHaveBeenCalledWith("assistant", REPORT);
+		expect(h.addMessageEl).not.toHaveBeenCalled();
 		expect(active.messages).toEqual([{ role: "assistant", content: REPORT }]);
 		expect(h.saveChats).toHaveBeenCalledTimes(1);
 	});
@@ -205,7 +205,8 @@ describe("handleAgentFeedEvent(agent-complete)", () => {
 		const h = loadMisc(active, [active]);
 		h.handleAgentFeedEvent(done({ parentAgentId: null, sessionId: "chat-a", success: false, result: "Agent timed out" }));
 		expect(h.updateAgentFeed).toHaveBeenCalledWith("ag-1", expect.objectContaining({ status: "failed" }));
-		expect(h.addMessageEl).toHaveBeenCalledWith("assistant", "**Agent Worker failed:**\n\nAgent timed out");
+		expect(h.addMessageEl).not.toHaveBeenCalled();
+		expect(active.messages).toEqual([{ role: "assistant", content: "**Agent Worker failed:**\n\nAgent timed out" }]);
 	});
 
 	it("empty result → no chat row on any path (mirrors the server's evt.result persistence gate)", () => {
@@ -238,7 +239,7 @@ describe("success tri-state (card status + row wording agree with the server)", 
 			const h = loadMisc(active, [active]);
 			h.handleAgentFeedEvent(done({ parentAgentId: null, sessionId: "chat-a", success: c.success, result: "r" }));
 			expect(h.updateAgentFeed).toHaveBeenCalledWith("ag-1", expect.objectContaining({ status: c.card }));
-			expect(h.addMessageEl).toHaveBeenCalledWith("assistant", `**Agent Worker ${c.word}:**\n\nr`);
+			expect(active.messages).toEqual([{ role: "assistant", content: `**Agent Worker ${c.word}:**\n\nr` }]);
 		});
 	}
 });
@@ -298,5 +299,28 @@ describe("desktop notification (chat-ws-handler.js dispatchChatWsNonEvent)", () 
 		h.dispatchChatWsNonEvent(done({ parentAgentId: null, sessionId: "chat-b" }));
 		expect(h.showNotification).toHaveBeenCalledTimes(1);
 		expect(h.showNotification).toHaveBeenCalledWith("Agent Finished", "STATUS: green");
+	});
+});
+
+describe("agent report rows are the model's input, never drawn (isAgentReportRow)", () => {
+	it("recognizes every row the server persists, success and failure", () => {
+		const h = loadMisc(null, []);
+		for (const success of [true, false, undefined]) {
+			const content = agentCompleteChatRow("Label Check — seal probe", success, "line one\nline two");
+			expect(content).not.toBeNull();
+			expect(h.isAgentReportRow({ role: "assistant", content })).toBe(true);
+		}
+	});
+
+	it("leaves ordinary replies and user rows alone", () => {
+		const h = loadMisc(null, []);
+		expect(h.isAgentReportRow({ role: "assistant", content: "Agent Worker completed the task." })).toBe(false);
+		expect(h.isAgentReportRow({ role: "assistant", content: "**Agent notes:** all good" })).toBe(false);
+		expect(h.isAgentReportRow({ role: "user", content: REPORT })).toBe(false);
+	});
+
+	it("chat-render skips the row when a chat is drawn from history", () => {
+		const renderSource = readFileSync(join(process.cwd(), "public/js/chat-render.js"), "utf8");
+		expect(renderSource).toMatch(/isAgentReportRow\(msg\)\) return null;/);
 	});
 });

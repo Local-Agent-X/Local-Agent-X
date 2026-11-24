@@ -91,6 +91,8 @@ function renderMessage(msg, ctx) {
     return _buildLiveAssistantInto(parent, ctx.store);
   }
   if (!msg) return null;
+  // A spawned agent's report is the model's input, not a reply (chat-ws-handler-misc.js).
+  if (typeof isAgentReportRow === 'function' && isAgentReportRow(msg)) return null;
   if (msg.role === 'user') {
     const displayText = msg.attachments ? msg.content.replace(/^Attached files:\n[\s\S]*?\n\n/, '') : msg.content;
     const userEl = addMessageEl('user', displayText, msg.attachments, msg.timestamp);

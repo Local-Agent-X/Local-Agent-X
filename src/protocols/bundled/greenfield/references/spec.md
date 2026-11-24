@@ -72,6 +72,13 @@ sane engineering defaults for the stack. Examples:
 - "Every destructive action is reversible or gated by an explicit confirm."
 - "Every endpoint that returns or changes a user's data checks that the caller owns it."
 - "Errors reach the user as text they can act on. No silent fallback."
+- For an app on a phone: "The core flow logs each stage to the device log under
+  one tag (`<Tag> stage=<name>`, with where it ran and how long it took), and
+  never logs the user's data." Without it the finish gates cannot show the flow
+  ran on the device (`references/gates.md`, section 1). Write the same names
+  into `.lax-device.json` at the project root, which `device_check` reads:
+  `{"package": "<app id>", "tag": "<Tag>", "stages": ["<name>", ...],
+  "private": ["<a test value entered on the phone>", ...]}`.
 
 Show the draft, take additions and removals, then write the file.
 

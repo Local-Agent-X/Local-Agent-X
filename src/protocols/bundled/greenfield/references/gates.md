@@ -24,6 +24,21 @@ Chunks that pass alone still drift at the seams between them.
   "all" (`references/holdout.md`, section 6).
 - **The real build:** `check` and `build`, not a typecheck. For a compiled
   target, run the artifact and show its output.
+- **On the phone,** for an app people use on a phone: the build installed on a
+  real device (the one the spec names, when it names one), the core flow driven
+  on real input (a real photo, a real label, not a fixture), and evidence from
+  the device itself rather than the emulator or anyone's word for it. The
+  phone's log shows every stage of the core flow ran, where it ran (on the
+  device or in the cloud) and how long it took. A search of the whole log for
+  the test values entered on the device (a test medication, a test name) finds
+  none of the data the spec says must stay put. A stage the app does not log
+  cannot be shown, which is why the constitution carries that rule from the
+  start (`references/spec.md`, section 2). A step only the owner can do (taking
+  the photo) is asked for in exact words. Then run `device_check` with the
+  project: it reads the stages and test values from `.lax-device.json`, reads
+  the phone's log over adb, and writes its verdict to the ledger itself. The
+  gate passes on its PASS line, not on a summary of your own.
+  "Installed and opened" is not this gate.
 - **The project's own tests** green from a clean checkout, including a test at
   each place two chunks meet through a contract (one side produces, the other
   consumes). Add the missing ones now.

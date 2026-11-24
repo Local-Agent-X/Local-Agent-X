@@ -9,8 +9,8 @@
 export { androidSdkRoot, checkAndroidSdk, type AndroidSdkAvailability } from "./sdk-paths.js";
 export {
   listDevices, resolveSerial, screenshot, tap, swipe, typeText, keyEvent,
-  installApk, listApps, launchApp, reversePort, openUrl, KEY_EVENTS,
-  type AndroidDevice, type InstalledApp,
+  installApk, listApps, launchApp, reversePort, openUrl, KEY_EVENTS, dumpLog, deviceInfo,
+  type AndroidDevice, type InstalledApp, type DeviceInfo,
 } from "./adb.js";
 export { listAvds, startEmulator, stopEmulator, runningEmulators } from "./emulator.js";
 export { installAndroidSdk, getSdkStatus, type InstallProgress } from "./sdk-installer.js";

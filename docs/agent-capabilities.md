@@ -145,6 +145,7 @@ demand via tool search and aren't all listed here.)
 - `holdout_write`
 - `holdout_seal`
 - `holdout_judge`
+- `device_check`
 
 ### Secrets
 
@@ -157,4 +158,4 @@ demand via tool search and aren't all listed here.)
 - `presentation`
 
 ---
-_77 capabilities · 54 with a description · 23 awaiting a blurb (add one to the tool's policy row)._
+_78 capabilities · 54 with a description · 24 awaiting a blurb (add one to the tool's policy row)._

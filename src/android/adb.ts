@@ -76,6 +76,25 @@ export async function keyEvent(serial: string, key: string): Promise<void> {
   await runAdbText(["-s", serial, "shell", "input", "keyevent", code]);
 }
 
+/** The device's whole log buffer as text, one `threadtime` line per entry
+ *  (`MM-DD HH:MM:SS.mmm  pid  tid L Tag: message`). Reads; never clears. */
+export async function dumpLog(serial: string): Promise<string> {
+  const result = await runAdb(["-s", serial, "logcat", "-d", "-v", "threadtime"], 60_000);
+  if (result.code !== 0) throw new Error(result.stderr.trim() || `adb logcat exited with code ${result.code}`);
+  return result.stdout.toString("utf8");
+}
+
+export interface DeviceInfo {
+  model: string;
+  android: string;
+}
+
+/** The device's model and Android version, from its system properties. */
+export async function deviceInfo(serial: string): Promise<DeviceInfo> {
+  const prop = async (name: string) => (await runAdbText(["-s", serial, "shell", "getprop", name])).trim();
+  return { model: await prop("ro.product.model"), android: await prop("ro.build.version.release") };
+}
+
 export async function installApk(serial: string, apkPath: string): Promise<string> {
   return runAdbText(["-s", serial, "install", "-r", apkPath], 120_000);
 }

@@ -198,8 +198,8 @@ Scope creep ends more new builds than technical mistakes do.
 
 ### 8. Finish gates
 
-When every chunk is green: the whole suite end to end and the real build,
-agents that try to break the assembled app, a code-quality sweep, a security
+When every chunk is green: the whole suite end to end and the real build (on
+a real phone, for an app used on one), agents that try to break the assembled app, a code-quality sweep, a security
 review, and a look-and-feel pass. Fix what they find and judge it again.
 `references/gates.md`, sections 1-5.
 

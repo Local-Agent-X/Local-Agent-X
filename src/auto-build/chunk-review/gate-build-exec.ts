@@ -30,6 +30,7 @@ import { runCaged, type CagedRunOutcome } from "../../tools/caged-spawn.js";
 import { cagedFailureNotice } from "../../tools/caged-failure-notice.js";
 import { nodeScriptArgv, npmCommandArgv } from "../../tools/program-argv.js";
 import { structureCheckCommand, structureWarningNote } from "../../app-scaffold/project-kit.js";
+import { tokenizeCommand } from "../../security/layer/shell-lex.js";
 import { smokeUrl } from "../scenario-scorer/smoke.js";
 import { startStaticSmokeOrigin, type SmokeMount, type SmokeOrigin } from "../../canonical-loop/public/static-smoke-origin.js";
 import { staticBuildDistDir } from "../../tools/app-run-target.js";
@@ -47,6 +48,9 @@ export interface BuildExecInput {
   /** Called when the project's structure check PASSES but lists items nearing
    *  a size cap: a note for the next chunk's worker, never a finding. */
   onStructureNote?: (note: string) => void;
+  /** Called when the gate passes because it had nothing to observe: no build
+   *  or test to run. Not a failure, and not a pass either: the verdict says so. */
+  onUnverified?: (note: string) => void;
 }
 
 /** Injectable so tests don't spawn a real build/browser. */
@@ -84,9 +88,13 @@ export function discoverCommands(projectDir: string): string[] {
 }
 
 /** argv for one discovered command: the kit's own script by this process's
- *  node, anything else as the fixed npm line it is. */
+ *  node, anything else as the fixed npm line it is. Split as a shell reads it:
+ *  the structure check names TypeScript's folder in quotes, and a split on
+ *  spaces handed the project's check `"C:/…/typescript"` with the quotes in
+ *  it, which it read as a relative path and failed on (label-check-sol,
+ *  2026-11-24): a fix round spent on the harness's own argument. */
 function commandArgv(command: string) {
-  const [tool, ...args] = command.split(" ");
+  const [tool, ...args] = tokenizeCommand(command);
   return tool === "node" ? nodeScriptArgv(args) : npmCommandArgv(command);
 }
 
@@ -153,6 +161,7 @@ export const runBuildExecGate: BuildExecRunner = async (input) => {
   if (signal?.aborted) return null;
 
   const commands = discoverCommands(projectDir);
+  if (commands.length === 0) input.onUnverified?.("the project has no build or test script, so the chunk's code was not built or tested");
   const structure = structureCheckCommand(projectDir);
   for (const command of commands) {
     if (signal?.aborted) return null;

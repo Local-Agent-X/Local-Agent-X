@@ -16,6 +16,9 @@ export interface ChunkJudgeInput {
   rawReport: string;
   /** HEAD before the chunk was built. */
   preSha: string;
+  /** Every chunk of the plan: a scenario named by several is judged at the
+   *  last of them. Absent, the chunk is judged on every scenario it names. */
+  allChunks?: ParsedChunk[];
   /** The tree the chunk was built in: its worktree on the parallel path. */
   projectDir: string;
   /** The project the build is for. Its folder name names the sealed suite (a
@@ -36,6 +39,9 @@ export interface ScenarioScore {
   passed: boolean;
   reasoning: string;
   failedCriteria: string[];
+  /** Why the harness could not judge it, twice: no verdict either way, so it
+   *  never counts against the chunk, and the summary says it is unverified. */
+  unjudged?: string;
 }
 
 export interface ScenarioJudging {
@@ -63,7 +69,7 @@ function scoreLine(s: ScenarioScore): string {
  *  when nothing counts against it (not-run parts are recorded, not held, and
  *  the skeptic's follow-ups never count). */
 export function chunkJudgingFinding(chunkNumber: number, j: ChunkJudging): GateFinding | null {
-  const failed = j.scenarios.scores.filter(s => !s.passed);
+  const failed = j.scenarios.scores.filter(s => !s.passed && !s.unjudged);
   const scenariosAgainst = j.scenarios.status === "error" || failed.length > 0;
   const skepticAgainst = j.skeptic.status === "broken";
   if (!scenariosAgainst && !skepticAgainst) return null;
@@ -90,8 +96,13 @@ function followUpsNote(followUps: string[] | undefined): string {
 /** One line for events and the run summary: the scores and the skeptic. */
 export function chunkJudgingSummary(j: ChunkJudging): string {
   const sc = j.scenarios;
+  const unjudged = sc.scores.filter(s => s.unjudged);
+  const judged = sc.scores.filter(s => !s.unjudged);
+  const notJudged = unjudged.length
+    ? `; ${unjudged.length} could not be judged, so unverified (${unjudged.map(s => `${s.file}: ${s.unjudged}`).join("; ")})`
+    : "";
   const scenarios = sc.status === "scored"
-    ? `scenarios ${sc.scores.filter(s => s.passed).length}/${sc.scores.length} passed (${sc.scores.map(s => `${s.file} ${s.score}/10`).join(", ")})`
+    ? `scenarios ${judged.filter(s => s.passed).length}/${judged.length} passed (${judged.map(s => `${s.file} ${s.score}/10`).join(", ")})${notJudged}`
     : sc.status === "error" ? `scenarios could not be scored: ${sc.reason}` : `scenarios not scored: ${sc.reason}`;
   const skeptic = j.skeptic.status === "not-run" ? `skeptic did not run (unverified): ${j.skeptic.finding}` : `skeptic: ${j.skeptic.status}`;
   return `${scenarios}; ${skeptic}${followUpsNote(j.skeptic.followUps)}`;

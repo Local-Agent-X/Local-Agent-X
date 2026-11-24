@@ -852,6 +852,19 @@ describe("build-exec gate: the project's scripts run in the shell cage", () => {
     }
   });
 
+  // The check names TypeScript's folder in quotes; split on spaces, the script
+  // got the quotes as part of the path and failed (label-check-sol, 2026-11-24).
+  it("hands a kit project's structure check its TypeScript folder as one argument, without quotes", async () => {
+    mkdirSync(join(dir, "scripts"));
+    writeFileSync(join(dir, "scripts", "check-structure.mjs"), "");
+    expect(await runBuildExecGate({ projectDir: dir })).toBeNull();
+    const { args } = seam.wrapped[0];
+    const at = args.indexOf("--typescript");
+    if (at < 0) return; // no TypeScript of its own to name on this install
+    expect(args[at + 1]).not.toMatch(/"/);
+    expect(args[at + 1]).toMatch(/typescript$/);
+  });
+
   it("sends the chunk back on a failing script, quoting its output in arrival order", async () => {
     seam.runInstead = node("console.log('compiling'); setTimeout(() => { console.error('error TS2345'); process.exit(1); }, 50)");
     const finding = await runBuildExecGate({ projectDir: dir });

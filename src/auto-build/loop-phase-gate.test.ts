@@ -43,6 +43,18 @@ function loopOptions(): LoopOptions {
   };
 }
 
+describe("a phase gate the judge could not judge", () => {
+  beforeEach(() => { runPhaseGateScoring.mockReset(); runAutoFixWorker.mockReset(); consultAdvisor.mockReset(); });
+
+  it("is unverified, not passed, and sends no fix worker", async () => {
+    const crashed = { ...failedReport, scenarioTitle: "refund", abortReason: "judge returned unparseable response" } as ScoreReport;
+    runPhaseGateScoring.mockResolvedValueOnce({ kind: "unjudged", reports: [crashed], unjudgedReports: [crashed] });
+    const outcome = await attemptPhaseGateScoring(loopOptions(), chunk, () => {}, 1);
+    expect(outcome).toEqual({ kind: "unverified", reason: "1 scenario(s) could not be judged: refund (judge returned unparseable response)" });
+    expect(runAutoFixWorker).not.toHaveBeenCalled();
+  });
+});
+
 describe("attemptPhaseGateScoring → runAutoFixWorker lineage", () => {
   beforeEach(() => {
     runPhaseGateScoring.mockReset();

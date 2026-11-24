@@ -62,6 +62,7 @@ import type { ParsedChunk } from "../plan-parser.js";
 import type { ChunkReviewOutcome, ReviewAction } from "../chunk-review/index.js";
 import { buildChunkWithRetry } from "./chunk-attempt.js";
 import { createPhasePauseTracker, type PhasePauseTracker } from "./phase-gate-pause.js";
+import { createWallProbe } from "./wall-probe.js";
 import { isPhaseGatePause } from "../chunk-review/index.js";
 import { handleAction } from "./handle-action.js";
 import { reGateMergedTree, warnFootprintEscapes } from "./merged-regate.js";
@@ -149,6 +150,7 @@ export async function runParallelWaves(input: ParallelWavesContext): Promise<Loo
   const phasePauses = createPhasePauseTracker({ projectDir: opts.projectDir, planChunks: opts.plan.chunks, landedBefore });
   const ctx: RunContext = { ...input, chunks, phasePauses, ledger: createSetAsideLedger(), landedThisRun: [], sharedMerge: createSharedFileMerge() };
   const waves = planWaves(chunks, landedBefore);
+  const wallProbe = createWallProbe(opts);
   let chunksCommitted = 0;
 
   emit({
@@ -199,6 +201,9 @@ export async function runParallelWaves(input: ParallelWavesContext): Promise<Loo
     // before the next wave builds on it (phase-gate-pause.ts).
     const phase = await ctx.phasePauses.scoreFinished(ctx, chunksCommitted);
     if (phase.kind === "halt") return phase.result;
+    // Between waves, so no chunk's judge holds the app's port (wall-probe.ts).
+    const probe = await wallProbe.afterLanding(ctx, wave.chunks[wave.chunks.length - 1].number, chunksCommitted);
+    if (probe.kind === "halt") return probe.result;
   }
 
   if (anythingSetAside(ctx.ledger)) return endRunWithSetAside(ctx, chunksCommitted);

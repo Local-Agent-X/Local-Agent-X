@@ -80,18 +80,38 @@ describe("readLaunchSpec", () => {
   beforeEach(() => { dir = mkdtempSync(join(tmpdir(), "auto-build-launch-")); });
   afterEach(() => { try { rmSync(dir, { recursive: true, force: true }); } catch { /* best-effort */ } });
 
-  it("returns null when the file is missing", () => {
-    expect(readLaunchSpec(dir)).toBeNull();
+  const ok = () => {
+    const r = readLaunchSpec(dir);
+    if (r.kind !== "ok") throw new Error(`expected a usable spec, got ${JSON.stringify(r)}`);
+    return r.spec;
+  };
+
+  it("absent when the file is missing", () => {
+    expect(readLaunchSpec(dir)).toEqual({ kind: "absent" });
   });
 
-  it("returns null on malformed json", () => {
+  it("invalid, saying so, on malformed json", () => {
     writeFileSync(join(dir, LAUNCH_SPEC_FILENAME), "{not valid");
-    expect(readLaunchSpec(dir)).toBeNull();
+    const r = readLaunchSpec(dir);
+    expect(r.kind).toBe("invalid");
+    if (r.kind === "invalid") expect(r.reason).toContain("is not valid JSON");
   });
 
-  it("returns null when required fields are missing", () => {
-    writeFileSync(join(dir, LAUNCH_SPEC_FILENAME), JSON.stringify({ start: "pnpm dev" })); // no ready_url
-    expect(readLaunchSpec(dir)).toBeNull();
+  it("invalid when required fields are missing, naming them and what the file has instead", () => {
+    // label-check's own file (2026-11-21): read as no file at all, so no chunk was scored.
+    writeFileSync(join(dir, LAUNCH_SPEC_FILENAME), JSON.stringify({ name: "Label Check", command: "node scripts/serve-dist.mjs", port: 7070 }));
+    const r = readLaunchSpec(dir);
+    expect(r.kind).toBe("invalid");
+    if (r.kind !== "invalid") return;
+    expect(r.reason).toContain("has no start and ready_url (it has: name, command, port)");
+    expect(r.reason).toContain(`"start": "<command that starts the app>"`);
+  });
+
+  it("carries the app's test-mode settings, strings only", () => {
+    writeFileSync(join(dir, LAUNCH_SPEC_FILENAME), JSON.stringify({
+      start: "npm start", ready_url: "http://127.0.0.1:7070/", env: { EXPO_PUBLIC_TWIN: "1", PORT: 7070 },
+    }));
+    expect(ok().env).toEqual({ EXPO_PUBLIC_TWIN: "1" });
   });
 
   it("parses a complete spec", () => {
@@ -101,20 +121,19 @@ describe("readLaunchSpec", () => {
       ready_timeout_ms: 90000,
       test_credentials_env: "MGT_TEST_CREDS",
     }));
-    const spec = readLaunchSpec(dir);
-    expect(spec).not.toBeNull();
-    expect(spec!.start).toBe("pnpm dev");
-    expect(spec!.readyUrl).toBe("http://localhost:5173");
-    expect(spec!.readyTimeoutMs).toBe(90000);
-    expect(spec!.testCredentialsEnv).toBe("MGT_TEST_CREDS");
+    const spec = ok();
+    expect(spec.start).toBe("pnpm dev");
+    expect(spec.readyUrl).toBe("http://localhost:5173");
+    expect(spec.readyTimeoutMs).toBe(90000);
+    expect(spec.testCredentialsEnv).toBe("MGT_TEST_CREDS");
+    expect(spec.env).toBeUndefined();
   });
 
   it("defaults ready_timeout_ms when absent", () => {
     writeFileSync(join(dir, LAUNCH_SPEC_FILENAME), JSON.stringify({
       start: "pnpm dev", ready_url: "http://localhost:5173",
     }));
-    const spec = readLaunchSpec(dir);
-    expect(spec!.readyTimeoutMs).toBe(60000);
+    expect(ok().readyTimeoutMs).toBe(60000);
   });
 });
 

@@ -82,10 +82,11 @@ export function createPhasePauseTracker(input: PhasePauseInput): PhasePauseTrack
         // Scored on the merged base: what its run rewrites there is put back
         // (git-helpers.ts leavingTrackedFilesAsFound), or the next merge is refused.
         const { value: rec } = await leavingTrackedFilesAsFound(projectDir, () => attemptPhaseGateScoring(scope.opts, chunk, scope.emit, scope.totalChunks));
-        if (rec.kind === "recovered") {
+        if (rec.kind === "recovered" || rec.kind === "unverified") {
           const entry = scope.outcomes.find(o => o.chunkNumber === chunk.number);
           if (entry) entry.action = "proceed";
-          scope.emit({ type: "review-result", chunkNumber: chunk.number, totalChunks: scope.totalChunks, message: `${phase}: phase-gate scoring passed on the merged base — continuing` });
+          const said = rec.kind === "recovered" ? "phase-gate scoring passed on the merged base" : `phase gate unverified on the merged base: ${rec.reason}`;
+          scope.emit({ type: "review-result", chunkNumber: chunk.number, totalChunks: scope.totalChunks, message: `${phase}: ${said} — continuing` });
           continue;
         }
         // No launch spec → the gate stays a manual one, as on the serial path.

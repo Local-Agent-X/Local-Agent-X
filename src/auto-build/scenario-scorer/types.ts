@@ -27,6 +27,8 @@ export interface ProjectLaunchSpec {
   readyTimeoutMs: number;
   /** Optional secret name where test credentials live. Driver reads it. */
   testCredentialsEnv?: string;
+  /** The app's test mode: plain settings it is started with (launch-spec.ts). */
+  env?: Record<string, string>;
 }
 
 export type ScoreStepStatus = "ok" | "warn" | "fail" | "skipped";
@@ -67,8 +69,17 @@ export interface ScoreReport {
   reasoning: string;
   /** Wall-clock duration of the score run. */
   durationMs: number;
-  /** Set when the run aborted before scoring (e.g. dev server never came up). */
+  /** Set when the harness could not judge the scenario (the driver or the
+   *  judge broke): the report is then no verdict on the app, though `passed`
+   *  is false. Read it through {@link isUnjudged}. */
   abortReason?: string;
+}
+
+/** A report the harness could not produce a verdict for. "0 of 18 passed"
+ *  once hid 15 judge crashes behind real failures (label-check, 2026-11-24):
+ *  an unjudged scenario is neither a pass nor a failure the builder can fix. */
+export function isUnjudged(report: ScoreReport): boolean {
+  return report.abortReason !== undefined;
 }
 
 export interface ScoreOptions {

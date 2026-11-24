@@ -15,13 +15,24 @@ import type { ToolDefinition, ToolResult } from "../types.js";
 import { listScenarios } from "../holdout/store.js";
 import { projectHoldoutDir } from "../holdout/paths.js";
 import { resolveProjectDir } from "./project-paths.js";
-import { readLaunchSpec, LAUNCH_SPEC_FILENAME } from "./scenario-scorer/launch-spec.js";
+import { readLaunchSpec, LAUNCH_SPEC_FILENAME, LAUNCH_SPEC_SHAPE } from "./scenario-scorer/launch-spec.js";
 import { scoreScenarioFiles } from "./scenario-scorer/phase-gate-runner.js";
-import type { ScoreReport } from "./scenario-scorer/types.js";
+import { isUnjudged, type ScoreReport } from "./scenario-scorer/types.js";
 
 function line(r: ScoreReport): string {
+  if (isUnjudged(r)) return `- ${basename(r.scenarioPath)}: could not judge (tried twice): ${r.abortReason}`;
   const failed = r.failedCriteria.length ? ` Failed: ${r.failedCriteria.join("; ")}.` : "";
   return `- ${basename(r.scenarioPath)}: ${r.passed ? "pass" : "fail"}, ${r.score}/10. ${r.reasoning}${failed}`;
+}
+
+/** The count line: a scenario the harness could not judge is neither passed
+ *  nor failed, and is named as the judge's problem, not the app's. */
+function countLine(project: string, reports: ScoreReport[]): string {
+  const unjudged = reports.filter(isUnjudged).length;
+  const passed = reports.filter((r) => r.passed).length;
+  const failed = reports.length - unjudged - passed;
+  const notJudged = unjudged ? `, ${unjudged} could not be judged (a problem with the judge or its browser, not a verdict on the app)` : "";
+  return `Judged ${reports.length} scenarios for ${project}: ${passed} passed, ${failed} failed${notJudged}.`;
 }
 
 export const holdoutJudgeTool: ToolDefinition = {
@@ -54,17 +65,17 @@ export const holdoutJudgeTool: ToolDefinition = {
     const wanted = Array.isArray(args.scenarios) && args.scenarios.length > 0 ? args.scenarios.map(String) : sealed;
     const unknown = wanted.filter((f) => !sealed.includes(f));
     if (unknown.length) return { content: `Not in ${project}'s suite: ${unknown.join(", ")}. The index has: ${sealed.join(", ")}.`, isError: true };
-    const launch = readLaunchSpec(projectDir);
-    if (!launch) {
+    const read = readLaunchSpec(projectDir);
+    if (read.kind !== "ok") {
+      const why = read.kind === "invalid" ? read.reason : `${projectDir} has no ${LAUNCH_SPEC_FILENAME}, so the judge cannot start the app.`;
       return {
-        content: `The suite has ${sealed.length} scenarios (${sealed.join(", ")}), but ${projectDir} has no ${LAUNCH_SPEC_FILENAME}, ` +
-          "so the judge cannot start the app. Write it (how to start the app and the URL that answers when it is ready), then judge again.",
+        content: `The suite has ${sealed.length} scenarios (${sealed.join(", ")}). ${why} Write it as ${LAUNCH_SPEC_SHAPE}, then judge again.`,
         isError: true,
       };
     }
+    const launch = read.spec;
     const outcome = await scoreScenarioFiles({ projectDir, launch, scenarioPaths: wanted.map((f) => join(dir, f)), signal });
     if (outcome.kind === "error" || outcome.kind === "no-spec") return { content: `The judge could not run: ${outcome.reason}`, isError: true };
-    const passed = outcome.reports.filter((r) => r.passed).length;
-    return { content: `Judged ${outcome.reports.length} scenarios for ${project}: ${passed} passed.\n${outcome.reports.map(line).join("\n")}` };
+    return { content: `${countLine(project, outcome.reports)}\n${outcome.reports.map(line).join("\n")}` };
   },
 };

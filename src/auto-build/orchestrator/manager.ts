@@ -80,6 +80,8 @@ export interface StartOrchestrationOptions {
   landedChunks?: number[];
   judgmentHook?: JudgmentHook;
   chunkJudge?: ChunkJudge;
+  /** Run the finish gates once the plan's last chunk lands (loop/types.ts). */
+  finishGates?: boolean;
   subprocessTimeoutMs?: number;
 }
 
@@ -220,6 +222,7 @@ async function runOrchestrationLoop(orch: ActiveOrchestration, opts: StartOrches
       signal: orch.abortController.signal,
       judgmentHook: opts.judgmentHook,
       chunkJudge: opts.chunkJudge,
+      finishGates: opts.finishGates,
       subprocessTimeoutMs: opts.subprocessTimeoutMs,
       parentSessionId: opts.sessionId,
       // The orchestrator card's id in the AGENTS panel IS orch.opId (it's the
@@ -241,7 +244,8 @@ function onLoopEvent(orch: ActiveOrchestration, event: LoopEvent): void {
   // Update in-memory state + persist on chunk-state-changing events.
   let newState = orch.liveState;
   if (event.type === "chunk-start") newState = state.markChunkStarted(newState, event.chunkNumber);
-  else if (event.type === "chunk-landed") {
+  // A finish-gate fix chunk is not one of the plan's: it is not counted as one landing.
+  else if (event.type === "chunk-landed" && orch.scopeChunks.includes(event.chunkNumber)) {
     orch.landedChunks.add(event.chunkNumber);
     newState = state.noteChunkLanded(newState, event.chunkNumber);
     let nextScopeIdx = newState.chunksCommitted;
@@ -308,6 +312,7 @@ function onLoopComplete(orch: ActiveOrchestration, result: LoopResult): void {
     chunksCommitted: orch.scopeStartIdx + orch.landedChunks.size, totalChunks: orch.liveState.totalChunks,
     ...(isHalted ? { halt: { chunk: orch.liveState.currentChunk, reason: orch.liveState.haltReason || result.haltReason } } : {}),
     filesChanged: collectChangedFiles(result),
+    ...(result.openItems?.length ? { openItems: result.openItems } : {}),
   });
 
   logger.info(`[orchestrator] ${orch.opId} ${result.status}: chunks=${result.chunksCommitted}/${orch.liveState.totalChunks}`);
@@ -350,13 +355,15 @@ function buildSummaryText(s: OrchestratorState, result: LoopResult): string {
     lines.push(`Resume with: build_plan_resume({project_dir: "${s.projectDir.replace(/\\/g, "/")}"})`);
   } else if (s.phase === "complete") {
     lines.push(`Build complete. Review LAUNCH_READINESS.md before deploying.`);
+    if (result.openItems?.length) lines.push(``, `Open after the finish checks:`, ...result.openItems.map((item) => `  - ${item}`));
   }
   if (result.outcomes.length > 0) {
     lines.push(``);
     lines.push(`Per-chunk verdicts:`);
     for (const o of result.outcomes) {
       const judged = o.outcome.judging ? ` — ${chunkJudgingSummary(o.outcome.judging)}` : "";
-      lines.push(`  chunk ${o.chunkNumber}: ${o.action}${judged}`);
+      const unverified = o.outcome.unverified ? ` — unverified: ${o.outcome.unverified}` : "";
+      lines.push(`  chunk ${o.chunkNumber}: ${o.action}${judged}${unverified}`);
     }
   }
   return lines.join("\n");

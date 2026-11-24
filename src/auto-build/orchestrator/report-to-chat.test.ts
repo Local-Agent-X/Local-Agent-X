@@ -35,6 +35,15 @@ describe("buildEndNotice", () => {
     expect(n.summary).toBe("13/13 chunks landed. The build finished.");
     expect(n.next).toMatch(/step that follows the build/);
   });
+
+  // label-check's chat heard only "the build finished… carry on", and asked
+  // the owner whether to run the checks the engine had not (2026-11-23).
+  it("a finished build with open items names each, and says the app is not done", () => {
+    const n = buildEndNotice({ ...halted, chunksCommitted: 13, halt: undefined, openItems: ["scenario 05-scan.md fails (3/10): no flag", "the owner's walkthrough of the finished app is still to do"] });
+    expect(n.summary).toBe("13/13 chunks landed. The build finished; the finish checks left 2 open item(s).");
+    expect(n.next).toContain("- scenario 05-scan.md fails (3/10): no flag\n- the owner's walkthrough");
+    expect(n.next).toContain("Do not call the app done while any is open.");
+  });
 });
 
 describe("reportBuildToChat", () => {

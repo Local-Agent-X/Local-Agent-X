@@ -410,9 +410,11 @@ describe("runBuildLoop — event stream", () => {
       onEvent: e => events.push(`${e.chunkNumber}:${e.type}`),
     });
 
+    // The project has no build or test script: each chunk says it was not
+    // built or tested (chunk-review/index.ts `unverified`) before its verdict.
     expect(events).toEqual([
-      "1:chunk-start", "1:subprocess-spawned", "1:subprocess-returned", "1:review-result", "1:commit", "1:chunk-landed",
-      "2:chunk-start", "2:subprocess-spawned", "2:subprocess-returned", "2:review-result", "2:commit", "2:chunk-landed",
+      "1:chunk-start", "1:subprocess-spawned", "1:subprocess-returned", "1:review-result", "1:review-result", "1:commit", "1:chunk-landed",
+      "2:chunk-start", "2:subprocess-spawned", "2:subprocess-returned", "2:review-result", "2:review-result", "2:commit", "2:chunk-landed",
       "2:complete",
     ]);
   });

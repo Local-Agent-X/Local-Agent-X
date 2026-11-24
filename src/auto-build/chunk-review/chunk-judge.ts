@@ -24,19 +24,34 @@
  */
 
 import { basename } from "node:path";
-import { readLaunchSpec } from "../scenario-scorer/launch-spec.js";
-import { scoreScenarioFiles, sealedScenarioFilesFor } from "../scenario-scorer/phase-gate-runner.js";
+import { LAUNCH_SPEC_FILENAME, LAUNCH_SPEC_SHAPE, readLaunchSpec } from "../scenario-scorer/launch-spec.js";
+import { scoreScenarioFiles, sealedScenarioFilesDueAt, sealedScenarioFilesFor } from "../scenario-scorer/phase-gate-runner.js";
 import { runChunkSkeptic } from "./skeptic.js";
+import { isUnjudged } from "../scenario-scorer/types.js";
 import type { ChunkJudge, ChunkJudgeInput, ScenarioJudging } from "./chunk-verdict.js";
 
 export async function scoreChunkScenarios(input: ChunkJudgeInput): Promise<ScenarioJudging> {
   const project = basename(input.baseProjectDir);
-  const files = sealedScenarioFilesFor(project, [input.chunk]);
+  const files = input.allChunks
+    ? sealedScenarioFilesDueAt(project, input.chunk, input.allChunks)
+    : sealedScenarioFilesFor(project, [input.chunk]);
   if (files.length === 0) {
-    return { status: "not-run", reason: `chunk ${input.chunk.number} names no sealed scenario of ${project}`, scores: [] };
+    const named = sealedScenarioFilesFor(project, [input.chunk]).length > 0;
+    const reason = named
+      ? `chunk ${input.chunk.number}'s scenarios are judged when the last chunk that names them lands`
+      : `chunk ${input.chunk.number} names no sealed scenario of ${project}`;
+    return { status: "not-run", reason, scores: [] };
   }
-  const launch = readLaunchSpec(input.projectDir) ?? readLaunchSpec(input.baseProjectDir);
-  if (!launch) return { status: "not-run", reason: `${project} has no launch spec, so the app cannot be started`, scores: [] };
+  // The chunk names scenarios, so by now the judge must be able to start the
+  // app: a missing or unusable launch file is the builder's to fix, not a
+  // reason to land the chunk unscored (every chunk of label-check was).
+  let read = readLaunchSpec(input.projectDir);
+  if (read.kind === "absent") read = readLaunchSpec(input.baseProjectDir);
+  if (read.kind === "absent") {
+    return { status: "error", reason: `${project} has no ${LAUNCH_SPEC_FILENAME}, so the judge cannot start the app. Write it: ${LAUNCH_SPEC_SHAPE}.`, scores: [] };
+  }
+  if (read.kind === "invalid") return { status: "error", reason: read.reason, scores: [] };
+  const launch = read.spec;
 
   input.onProgress?.(`scoring ${files.length} scenario(s) for chunk ${input.chunk.number}`);
   const outcome = await scoreScenarioFiles({
@@ -55,6 +70,7 @@ export async function scoreChunkScenarios(input: ChunkJudgeInput): Promise<Scena
     scores: outcome.reports.map(r => ({
       file: basename(r.scenarioPath), score: r.score, passed: r.passed,
       reasoning: r.reasoning, failedCriteria: r.failedCriteria,
+      ...(isUnjudged(r) ? { unjudged: r.abortReason } : {}),
     })),
   };
 }

@@ -11,6 +11,7 @@ import type {
 } from "./orchestrator/manager.js";
 import { parsePlanFile } from "./plan-parser.js";
 import { resolveProjectDir } from "./project-paths.js";
+import { planCoverageNotes, planCoverageProblem } from "./scenario-coverage.js";
 
 export const FEATURE_FLAG_ENV = "LAX_AUTO_BUILD_ENABLED";
 const LEGACY_FEATURE_FLAG_ENV = "PRIMAL_AUTO_BUILD_ENABLED";
@@ -21,6 +22,27 @@ export function isFeatureEnabled(): boolean {
   const raw = process.env[FEATURE_FLAG_ENV] ?? process.env[LEGACY_FEATURE_FLAG_ENV] ?? "";
   const value = String(raw).trim().toLowerCase();
   return !["0", "false", "no", "off"].includes(value);
+}
+
+function disabledResult(): ToolResult {
+  return {
+    content:
+      `BLOCKED — run_build_plan was explicitly disabled via ${FEATURE_FLAG_ENV} ` +
+      `(set to 0/false/no/off). The tool is opt-out and runs by default; unset the flag ` +
+      `or set it to any other value, then restart to re-enable.`,
+    isError: true,
+    status: "blocked",
+    metadata: {
+      layer: "app-build",
+      recovery: AUTO_BUILD_DISABLED_RECOVERY,
+    },
+  };
+}
+
+/** Said once when the run starts: what it will not check (scenario-coverage.ts). */
+function withCoverageNotes(message: string, projectDir: string, plan: ReturnType<typeof parsePlanFile>): string {
+  const notes = planCoverageNotes(projectDir, plan);
+  return notes.length ? `${message}\n\nNot checked in this run:\n${notes.map((n) => `- ${n}`).join("\n")}` : message;
 }
 
 export interface BuildPlanKickoffInput {
@@ -72,20 +94,7 @@ export function createBuildPlanKickoff(
 
   return async input => {
     if (input.signal?.aborted) return cancelledKickoff();
-    if (!isFeatureEnabled()) {
-      return {
-        content:
-          `BLOCKED — run_build_plan was explicitly disabled via ${FEATURE_FLAG_ENV} ` +
-          `(set to 0/false/no/off). The tool is opt-out and runs by default; unset the flag ` +
-          `or set it to any other value, then restart to re-enable.`,
-        isError: true,
-        status: "blocked",
-        metadata: {
-          layer: "app-build",
-          recovery: AUTO_BUILD_DISABLED_RECOVERY,
-        },
-      };
-    }
+    if (!isFeatureEnabled()) return disabledResult();
 
     const projectDir = resolveProjectDir(input.projectDir);
     if (!projectDir) {
@@ -116,6 +125,8 @@ export function createBuildPlanKickoff(
       return { content: `plan parse failed: ${(error as Error).message}`, isError: true };
     }
     if (input.signal?.aborted) return cancelledKickoff();
+    const uncovered = planCoverageProblem(projectDir, plan);
+    if (uncovered) return { content: uncovered, isError: true };
 
     const buildState = readBuildState(projectDir);
     const systemic = checkSystemic(buildState);
@@ -177,7 +188,7 @@ export function createBuildPlanKickoff(
     }
 
     return {
-      content: kick.initialMessage,
+      content: withCoverageNotes(kick.initialMessage, projectDir, plan),
       status: "running",
       session_id: kick.opId,
       metadata: {

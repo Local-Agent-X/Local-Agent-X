@@ -49,8 +49,9 @@ export async function launchApp(projectDir: string, launch: ProjectLaunchSpec, s
   const verdict = evaluateShellCommand(launch.start, undefined, undefined, undefined, undefined, getSandboxStatus().confined);
   if (!verdict.allowed) throw new Error(`blocked by shell policy: ${verdict.reason}`);
 
-  // BROWSER=none stops Vite/CRA from launching a tab.
-  const env: Record<string, string> = { BROWSER: "none", FORCE_COLOR: "0" };
+  // BROWSER=none stops Vite/CRA from launching a tab. The launch file's own
+  // settings (its test mode) come first, so they cannot undo either.
+  const env: Record<string, string> = { ...launch.env, BROWSER: "none", FORCE_COLOR: "0" };
   // Only a parallel worker overrides the port, so worker 0's env stays
   // byte-identical (no PORT set → the project's own default or an inherited
   // PORT is untouched). PORT is the framework-agnostic lever: Next/CRA/Remix
@@ -60,6 +61,14 @@ export async function launchApp(projectDir: string, launch: ProjectLaunchSpec, s
   // $PORT") for parallel scoring to be collision-free. Over-allocating a port
   // the server ignores is a documented gap, not a silent success.
   if (workerIndex > 0) env.PORT = String(port);
+
+  // The judge scores only an app it started. A server already answering here
+  // (one an agent left running) passed the ready poll in place of ours, which
+  // had failed to bind; then it was stopped mid-suite and every scenario after
+  // read "connection refused" against the app (label-check, 2026-11-24).
+  if (await ping(url)) {
+    throw new Error(`something is already answering at ${url}, so the judge would score it instead of the app it starts. Stop whatever is serving there, then score again.`);
+  }
 
   const proc = await spawnCaged(launch.start, { cwd: projectDir, env, detached: process.platform !== "win32", signal });
   // While it runs, the port the app listens on is admitted to the cage and to

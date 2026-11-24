@@ -13,14 +13,14 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2171 non-test source files · 59 oversized · 274 nearing the size cap.
+**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2175 non-test source files · 59 oversized · 275 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 191 | 32 | XL | 1 |
-| `src/security/` | 171 | 66 | XL | 2 |
+| `src/security/` | 172 | 66 | XL | 2 |
 | `src/tools/` | 147 | 267 | XL | 6 |
 | `src/tool-execution/` | 107 | 92 | XL | 2 |
 | `src/workspace/` | 98 | 3 | M |  |
@@ -70,7 +70,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/agent-guards/` | 10 | 13 | L |  |
 | `src/calendar/` | 10 | 10 | M |  |
 | `src/codex-client/` | 10 | 7 | M |  |
-| `src/auto-build/` | 9 | 69 | XL | 1 |
+| `src/auto-build/` | 9 | 73 | XL | 1 |
 | `src/plugin-system/` | 9 | 10 | L |  |
 | `src/screen-stream/` | 9 | 12 | L |  |
 | `src/autopilot/` | 8 | 14 | L | 1 |
@@ -78,11 +78,11 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/mcp-client/` | 8 | 11 | L | 1 |
 | `src/telegram-bridge/` | 8 | 6 | M |  |
 | `src/android/` | 7 | 8 | M |  |
+| `src/holdout/` | 7 | 3 | S |  |
 | `src/credentials/` | 6 | 1 | S |  |
 | `src/publish-review/` | 6 | 9 | M |  |
 | `src/webrtc/` | 6 | 1 | S |  |
 | `src/embedding-providers/` | 4 | 8 | M |  |
-| `src/holdout/` | 4 | 3 | S |  |
 | `src/hooks/` | 4 | 3 | M |  |
 | `src/language-intel/` | 4 | 7 | M |  |
 | `src/routing/` | 4 | 6 | M |  |
@@ -319,12 +319,12 @@ job. Comments are free: never cut them to fit.
 - `src/canonical-loop/container-execution-backend.ts` — 340+ code lines (cap 350)
 - `src/canonical-loop/provider-adapter-factory.ts` — 340+ code lines (cap 350)
 - `src/tools/presentation-tools.ts` — 340+ code lines (cap 350)
+- `src/auto-build/orchestrator/manager.ts` — 330+ code lines (cap 350)
 - `src/canonical-loop/checkpoint.ts` — 330+ code lines (cap 350)
 - `src/canonical-loop/container-runtime-projection.ts` — 330+ code lines (cap 350)
 - `src/memory/tools/facts.ts` — 330+ code lines (cap 350)
 - `src/net/egress-proxy-core.ts` — 330+ code lines (cap 350)
 - `src/update-rollback.ts` — 330+ code lines (cap 350)
-- `src/auto-build/orchestrator/manager.ts` — 320+ code lines (cap 350)
 - `src/broker-transport/phone-projection.ts` — 320+ code lines (cap 350)
 - `src/browser/layout-report.ts` — 320+ code lines (cap 350)
 - `src/canonical-loop/adapters/tool-call-text-corpus.ts` — 320+ code lines (cap 350)
@@ -526,6 +526,7 @@ job. Comments are free: never cut them to fit.
 - `src/agents/invoke.ts#invokeDefinition` — 60+ own code lines (cap 100)
 - `src/auth/anthropic-login.ts#completeAnthropicCliOAuth` — 60+ own code lines (cap 100)
 - `src/auto-build/loop/parallel-waves.ts#runBatch` — 60+ own code lines (cap 100)
+- `src/auto-build/loop/run.ts#runBuildLoop` — 60+ own code lines (cap 100)
 - `src/auto-build/orchestrator/resume.ts#computeResumeWindow` — 60+ own code lines (cap 100)
 - `src/auto-build/orchestrator/resume.ts#tryResumeOne` — 60+ own code lines (cap 100)
 - `src/auto-build/orchestrator/tools.ts#buildPlanResumeTool.execute` — 60+ own code lines (cap 100)

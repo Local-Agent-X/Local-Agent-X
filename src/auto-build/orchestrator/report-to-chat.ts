@@ -26,6 +26,9 @@ export interface BuildEnd {
   /** Set when the run stopped short: the chunk it stopped at, and why. */
   halt?: { chunk: number; reason: string };
   filesChanged: string[];
+  /** What the finish gates left open (finish-gates/run.ts): named to the
+   *  chat, so a "complete" build is never read as checked and seen working. */
+  openItems?: string[];
 }
 
 /** A project folder spelled with forward slashes, whichever computer wrote
@@ -44,7 +47,12 @@ export function buildEndNotice(end: BuildEnd): { summary: string; next: string }
   const dir = JSON.stringify(portablePath(end.projectDir));
   const landed = `${end.chunksCommitted}/${end.totalChunks} chunks landed.`;
   if (!end.halt) {
-    return { summary: `${landed} The build finished.`, next: "carry on with the step that follows the build." };
+    if (!end.openItems?.length) return { summary: `${landed} The build finished.`, next: "carry on with the step that follows the build." };
+    return {
+      summary: `${landed} The build finished; the finish checks left ${end.openItems.length} open item(s).`,
+      next: `Open items:\n${end.openItems.map((i) => `- ${oneLine(i)}`).join("\n")}\n` +
+        "Fix what is yours to fix, park for the owner what is theirs, and tell the owner the rest. Do not call the app done while any is open.",
+    };
   }
   return {
     summary: `${landed} Halted at chunk ${end.halt.chunk}: ${oneLine(end.halt.reason)}`,

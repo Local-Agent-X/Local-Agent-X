@@ -13,6 +13,7 @@
  *   - "chunk-runner-leaf"  — /vibe-code methodology, for leaf
  *   - "scenario-fix"       — /senior-engineer + scenario-fix constraints
  *   - "chunk-skeptic"      — no methodology; tries to prove a chunk wrong, read + run only
+ *   - "finish-breaker"     — no methodology; attacks the finished app from one angle, read + run only
  *
  * The systemPrompt is computed at first invocation per role and cached.
  * Skill body comes from `src/protocols/bundled/<name>/SKILL.md` (the same
@@ -33,7 +34,13 @@ import { BUILDER_KIT, REVIEW_KIT } from "../../tools/tool-kits.js";
 import { SKEPTIC_BAR_BLOCK } from "../chunk-review/skeptic-bar.js";
 import { join } from "node:path";
 
-export type ChunkAgentRole = "chunk-runner-trunk" | "chunk-runner-leaf" | "scenario-fix" | "chunk-skeptic";
+export type ChunkAgentRole = "chunk-runner-trunk" | "chunk-runner-leaf" | "scenario-fix" | "chunk-skeptic" | "finish-breaker";
+
+/** Roles that show a break and fix nothing: their `write` reaches the probe
+ *  folder only, and they cannot run without the project they review. */
+function probesOnly(role: ChunkAgentRole): boolean {
+  return role === "chunk-skeptic" || role === "finish-breaker";
+}
 
 export interface ChunkAgentInvocation {
   role: ChunkAgentRole;
@@ -175,6 +182,21 @@ const SKEPTIC_DISCIPLINE_BLOCK =
   `FINDING: <BROKEN: what breaks, the input or case, file:line, and how you showed it. HOLDS: what you tried.>\n` +
   `FOLLOW_UPS: <none, or one "- " line for each thing you found beyond the contract>`;
 
+// The finish gates' break-it agents (finish-gates/breakers.ts): the whole app,
+// one angle each, after the last chunk landed. Not held to a chunk's contract:
+// what they report is graded by severity and fixed or listed.
+const FINISH_BREAKER_DISCIPLINE_BLOCK =
+  `# Break-it agent\n\n` +
+  `An app was just built and says it is finished. Your job is to BREAK IT from the angle your task names. ` +
+  `You fix nothing: you cannot edit the project, and \`write\` writes only in \`${SKEPTIC_PROBE_DIR}/\` at the ` +
+  `project root, your scratch folder for probe tests, deleted when you finish.\n\n` +
+  `- Show each finding, do not assert it: run the tests, run the code with the breaking input, cite file:line. ` +
+  `A probe test in \`${SKEPTIC_PROBE_DIR}/\` run with the project's own test runner by its path is the usual way.\n` +
+  `- Grade each finding: critical (data loss, a privacy or security hole, a crash on a main path), high (a main ` +
+  `flow wrong or a stated rule broken), medium (a real defect off the main path), low (polish).\n` +
+  `- Report only what you showed. Nothing found is a valid answer: "FINDINGS: none".\n\n` +
+  `End with the FINDINGS block your task gives, nothing after it.`;
+
 /** What each role is: the methodology skill it inherits (none for the
  *  skeptic, which builds nothing), its closing discipline, its tools, and its
  *  card. The skeptic gets no write or edit tool: it shows a break, it does not
@@ -205,6 +227,10 @@ const ROLE_SPECS: Record<ChunkAgentRole, RoleSpec> = {
   "chunk-skeptic": {
     skill: null, discipline: SKEPTIC_DISCIPLINE_BLOCK, agentRole: "reviewer", tools: REVIEW_KIT,
     name: "Chunk skeptic", description: "Tries to prove a just-built chunk wrong before it counts as done.", icon: "🔍",
+  },
+  "finish-breaker": {
+    skill: null, discipline: FINISH_BREAKER_DISCIPLINE_BLOCK, agentRole: "reviewer", tools: REVIEW_KIT,
+    name: "Break-it agent", description: "Attacks a finished app from one angle before the build reports done.", icon: "🧨",
   },
 };
 
@@ -245,8 +271,8 @@ function getDefinition(role: ChunkAgentRole): AgentDefinition {
  */
 export async function runChunkAgent(opts: ChunkAgentInvocation): Promise<ChunkAgentResult> {
   // Unfenced, the skeptic's write would reach the whole work area.
-  if (opts.role === "chunk-skeptic" && !opts.projectDir) {
-    return { stdout: "", exitCode: 1, durationMs: 0, error: "the chunk skeptic needs the project folder it reviews" };
+  if (probesOnly(opts.role) && !opts.projectDir) {
+    return { stdout: "", exitCode: 1, durationMs: 0, error: `the ${opts.role} needs the project folder it reviews` };
   }
   const def = getDefinition(opts.role);
   const startedAt = Date.now();
@@ -291,7 +317,7 @@ export async function runChunkAgent(opts: ChunkAgentInvocation): Promise<ChunkAg
     workRoot: opts.projectDir,
     // The skeptic's `write` reaches its probe folder only: it must not change
     // the code it reviews.
-    ...(opts.role === "chunk-skeptic" ? { writesOnlyUnder: join(opts.projectDir!, SKEPTIC_PROBE_DIR) } : {}),
+    ...(probesOnly(opts.role) ? { writesOnlyUnder: join(opts.projectDir!, SKEPTIC_PROBE_DIR) } : {}),
     // The task (preamble included) is harness prose, not user speech — without
     // this, the instruction ledger reads "Never touch paths outside it" as a
     // user workspace-write ban and every worker write is hard-denied (live

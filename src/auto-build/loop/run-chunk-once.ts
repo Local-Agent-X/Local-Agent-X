@@ -185,6 +185,9 @@ export async function runChunkOnce(opts: RunChunkOnceOptions): Promise<ChunkRevi
     } : undefined,
   }, opts.judgmentHook, opts.signal);
 
+  if (outcome.unverified) {
+    opts.emit({ type: "review-result", chunkNumber: opts.chunk.number, totalChunks: opts.totalChunks, message: `Chunk ${opts.chunk.number} unverified: ${outcome.unverified}` });
+  }
   if (outcome.judging) {
     opts.emit({
       type: "review-result",

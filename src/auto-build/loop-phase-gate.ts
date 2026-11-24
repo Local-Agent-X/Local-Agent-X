@@ -22,10 +22,18 @@ import { applyAdditiveSpecAmendment, commitSpecAmendment } from "./loop-effects.
 import { consultAdvisor, type AdvisorRecommendation } from "./advisor/index.js";
 import type { ScoreReport } from "./scenario-scorer/types.js";
 
+/** `unverified`: no scenario failed, but some could not be judged even on a
+ *  second try. Nothing for a fix worker to do, and not a pass either: the run
+ *  goes on and says so. */
 export type RecoveryOutcome =
   | { kind: "recovered" }
+  | { kind: "unverified"; reason: string }
   | { kind: "halt-with-context"; reason: string }
   | { kind: "no-spec" };
+
+function unjudgedNote(reports: ScoreReport[]): string {
+  return `${reports.length} scenario(s) could not be judged: ${reports.map(r => `${r.scenarioTitle} (${r.abortReason})`).join("; ")}`;
+}
 
 export async function attemptPhaseGateScoring(
   opts: LoopOptions,
@@ -46,6 +54,7 @@ export async function attemptPhaseGateScoring(
   if (firstPass.kind === "no-spec") return { kind: "no-spec" };
   if (firstPass.kind === "error") return { kind: "halt-with-context", reason: `phase-gate scoring errored: ${firstPass.reason}` };
   if (firstPass.kind === "proceed") return { kind: "recovered" };
+  if (firstPass.kind === "unjudged") return { kind: "unverified", reason: unjudgedNote(firstPass.unjudgedReports) };
 
   return await runAdvisorDrivenRecovery(opts, chunk, emit, totalChunks, firstPass.reports, firstPass.failedReports);
 }
@@ -124,6 +133,7 @@ async function runAdvisorDrivenRecovery(
       onProgress: (msg) => emit({ type: "review-result", chunkNumber: chunk.number, totalChunks, message: `[score-${attempt + 1}] ${msg}` }),
     });
     if (nextPass.kind === "proceed") return { kind: "recovered" };
+    if (nextPass.kind === "unjudged") return { kind: "unverified", reason: unjudgedNote(nextPass.unjudgedReports) };
     if (nextPass.kind === "no-spec" || nextPass.kind === "error") {
       return { kind: "halt-with-context", reason: `scoring pivoted unexpectedly on attempt ${attempt + 1}: ${nextPass.kind === "error" ? nextPass.reason : "launch spec disappeared"}` };
     }

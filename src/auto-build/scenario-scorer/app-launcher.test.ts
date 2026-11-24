@@ -132,6 +132,33 @@ describe("launchApp", () => {
     expect(seam.owned).toEqual([]);
   });
 
+  it("refuses to score a server it did not start: nothing is spawned while the port answers", async () => {
+    const other = (await import("node:http")).createServer((_q, s) => s.end("someone else's app"));
+    const port = await freePort();
+    await new Promise<void>((resolve) => other.listen(port, "127.0.0.1", resolve));
+    try {
+      const launch = { start: "npm run dev", readyUrl: `http://127.0.0.1:${port}/`, readyTimeoutMs: 15_000 };
+      await expect(launchApp(dir, launch)).rejects.toThrow(/already answering at http:\/\/127\.0\.0\.1:\d+\/, so the judge would score it/);
+      expect(seam.wrapped).toEqual([]);
+    } finally {
+      await new Promise((resolve) => other.close(resolve));
+    }
+  });
+
+  it("starts the app with its launch file's test-mode settings, under the launcher's own", async () => {
+    const port = await freePort();
+    const launch = { start: "npm run dev", readyUrl: `http://127.0.0.1:${port - 1}/`, readyTimeoutMs: 15_000, env: { EXPO_PUBLIC_TWIN: "1", BROWSER: "chrome" } };
+    const app = await launchApp(dir, launch, undefined, 1);
+    try {
+      const served = await (await fetch(app.url)).json() as Record<string, string>;
+      expect(served).toMatchObject({ EXPO_PUBLIC_TWIN: "1", BROWSER: "none" });
+    } finally {
+      await app.stop();
+    }
+    // Its exit, before the folder it ran in is removed.
+    expect(await until(() => seam.owned.length === 2)).toBe(true);
+  }, 20_000);
+
   it("a start line the shell policy refuses never reaches the cage", async () => {
     const launch = { start: "npm run dev -- --token {{API_TOKEN}}", readyUrl: "http://127.0.0.1:5173/", readyTimeoutMs: 15_000 };
     await expect(launchApp(dir, launch)).rejects.toThrow(/^blocked by shell policy: /);

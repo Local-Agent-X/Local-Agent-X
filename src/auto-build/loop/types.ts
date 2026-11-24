@@ -82,6 +82,12 @@ export interface LoopOptions {
    * path (see loop/parallel-waves.ts). Clamped to [1,12] in run.ts.
    */
   maxConcurrentChunks?: number;
+  /** Run the finish gates (finish-gates/run.ts) when the run lands the plan's
+   *  last chunk. The build tools pass true; tests and other callers leave it out. */
+  finishGates?: boolean;
+  /** The finish gates' own fix chunks: the judge was proven when the build
+   *  started, so the wall probe (loop/wall-probe.ts) is not run again. */
+  skipWallProbe?: boolean;
 }
 
 export interface LoopResult {
@@ -95,6 +101,9 @@ export interface LoopResult {
   /** All per-chunk review outcomes, in order. Useful for surfacing the full punch list. */
   outcomes: Array<{ chunkNumber: number; outcome: ChunkReviewOutcome; action: ReviewAction }>;
   events: LoopEvent[];
+  /** What the finish gates left open: unfixed findings, scenarios still
+   *  failing or unjudged, and the checks only a person can make. */
+  openItems?: string[];
 }
 
 export type EmitFn = (e: Omit<LoopEvent, "elapsedMs">) => void;

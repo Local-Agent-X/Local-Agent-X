@@ -63,6 +63,10 @@ export interface ChunkReviewOutcome {
   /** The project's structure check passed but listed what is nearing a size
    *  cap: carried into the next chunk's context, never a finding. */
   structureNote?: string;
+  /** Checks that should have run on the chunk and could not (a build check
+   *  that crashed, a project with nothing to build or test). The chunk is not
+   *  held for them, and is not reported as checked either. */
+  unverified?: string;
   /** The chunk's scenario scores and the skeptic's verdict, when it was judged. */
   judging?: ChunkJudging;
 }
@@ -174,10 +178,17 @@ async function reviewChunkWork(
   // artifact that loads blank, halts regardless of the LLM hook's opinion.
   let execFinding: GateFinding | null = null;
   let structureNote: string | undefined;
+  let unverified: string | undefined;
   try {
-    execFinding = await buildExec({ projectDir: input.projectDir, signal, onStructureNote: (n) => { structureNote = n; } });
-  } catch {
-    execFinding = null; // fail open — a gate crash must not wedge the loop
+    execFinding = await buildExec({
+      projectDir: input.projectDir, signal,
+      onStructureNote: (n) => { structureNote = n; },
+      onUnverified: (n) => { unverified = n; },
+    });
+  } catch (e) {
+    // Fail open — a gate crash must not wedge the loop — but on the record.
+    execFinding = null;
+    unverified = `the build-and-test check crashed, so the chunk's code was not built or tested: ${(e as Error).message}`;
   }
   if (execFinding) {
     return {
@@ -187,7 +198,7 @@ async function reviewChunkWork(
       report: base.report,
     };
   }
-  let passed: ChunkReviewOutcome = structureNote ? { ...base, structureNote } : base;
+  let passed: ChunkReviewOutcome = { ...base, ...(structureNote ? { structureNote } : {}), ...(unverified ? { unverified } : {}) };
 
   // The chunk's held-out scenarios and the skeptic. Runs on a build that
   // actually built; a push_back here outranks the spec-gap hook's amend_spec.
@@ -234,7 +245,7 @@ async function judgeChunk(
   const { judge, ...ctx } = run;
   let judging: ChunkJudging;
   try {
-    judging = await judge({ ...ctx, chunk: input.chunk, rawReport: input.rawReport, projectDir: input.projectDir, signal });
+    judging = await judge({ ...ctx, chunk: input.chunk, allChunks: input.allChunks, rawReport: input.rawReport, projectDir: input.projectDir, signal });
   } catch (e) {
     const why = `the chunk judge crashed: ${(e as Error).message}`;
     judging = { scenarios: { status: "not-run", reason: why, scores: [] }, skeptic: { status: "not-run", finding: why } };

@@ -25,12 +25,16 @@ import { readLaunchSpec } from "./launch-spec.js";
 import { launchApp } from "./app-launcher.js";
 import { parseScenarioFile } from "./parser.js";
 import { scoreScenario } from "./scorer.js";
-import type { ScoreReport } from "./types.js";
+import { isUnjudged, type ProjectLaunchSpec, type ScoreReport } from "./types.js";
 
+/** `failures` and `unjudged` keep the two apart: `failedReports` are verdicts
+ *  against the app, `unjudgedReports` scenarios the harness could not judge
+ *  even on a second try, which no builder can fix. */
 export type PhaseGateRunnerOutcome =
   | { kind: "no-spec"; reason: string }
   | { kind: "proceed"; reports: ScoreReport[] }
-  | { kind: "failures"; reports: ScoreReport[]; failedReports: ScoreReport[] }
+  | { kind: "failures"; reports: ScoreReport[]; failedReports: ScoreReport[]; unjudgedReports: ScoreReport[] }
+  | { kind: "unjudged"; reports: ScoreReport[]; unjudgedReports: ScoreReport[] }
   | { kind: "error"; reason: string };
 
 export interface PhaseGateRunnerOptions {
@@ -49,10 +53,12 @@ export interface PhaseGateRunnerOptions {
 }
 
 export async function runPhaseGateScoring(opts: PhaseGateRunnerOptions): Promise<PhaseGateRunnerOutcome> {
-  const launch = readLaunchSpec(opts.projectDir);
-  if (!launch) {
+  const read = readLaunchSpec(opts.projectDir);
+  if (read.kind === "absent") {
     return { kind: "no-spec", reason: `no ${opts.projectDir}/.lax-launch.json — falling back to manual phase-gate scoring` };
   }
+  if (read.kind === "invalid") return { kind: "error", reason: read.reason };
+  const launch = read.spec;
 
   const scenarioPaths = pickScenarioFiles(opts.projectDir, opts.plan, opts.chunk);
   if (scenarioPaths.length === 0) {
@@ -64,7 +70,7 @@ export async function runPhaseGateScoring(opts: PhaseGateRunnerOptions): Promise
 
 export interface ScoreScenarioFilesOptions {
   projectDir: string;
-  launch: NonNullable<ReturnType<typeof readLaunchSpec>>;
+  launch: ProjectLaunchSpec;
   scenarioPaths: string[];
   threshold?: number;
   signal?: AbortSignal;
@@ -93,6 +99,10 @@ export async function scoreScenarioFiles(opts: ScoreScenarioFilesOptions): Promi
   const scoringLaunch = app.url === launch.readyUrl ? launch : { ...launch, readyUrl: app.url };
 
   const reports: ScoreReport[] = [];
+  // The app this run started stopped: that is the app failing, not the harness.
+  const stopped = (): PhaseGateRunnerOutcome | null => app && app.proc.exitCode !== null
+    ? { kind: "error", reason: `the app stopped running during scoring (exit code ${app.proc.exitCode}): ${app.stderr.slice(-3).join("").slice(0, 300)}` }
+    : null;
   try {
     for (const path of scenarioPaths) {
       if (opts.signal?.aborted) {
@@ -102,24 +112,38 @@ export async function scoreScenarioFiles(opts: ScoreScenarioFilesOptions): Promi
         try { return parseScenarioFile(path); } catch (e) { opts.onProgress?.(`skip ${path}: ${(e as Error).message}`); return null; }
       })();
       if (!scenario) continue;
+      const dead = stopped();
+      if (dead) return dead;
       opts.onProgress?.(`scoring ${scenario.title}…`);
-      const report = await scoreScenario({
+      const score = () => scoreScenario({
         scenario,
         projectDir: opts.projectDir,
         launch: scoringLaunch,
         threshold: opts.threshold,
         signal: opts.signal,
       });
+      let report = await score();
+      if (isUnjudged(report)) {
+        const deadNow = stopped();
+        if (deadNow) return deadNow;
+        if (opts.signal?.aborted) return { kind: "error", reason: "aborted mid-scoring" };
+        // One more try: a driver or judge hiccup is the harness's, and the
+        // scenario gets a fresh run, told nothing about the first.
+        opts.onProgress?.(`could not judge ${scenario.title} (${report.abortReason}); trying once more`);
+        report = await score();
+      }
       reports.push(report);
-      opts.onProgress?.(`scored ${scenario.title}: ${report.score}/10 ${report.passed ? "PASS" : "FAIL"}`);
+      opts.onProgress?.(`scored ${scenario.title}: ${isUnjudged(report) ? `COULD NOT JUDGE (${report.abortReason})` : `${report.score}/10 ${report.passed ? "PASS" : "FAIL"}`}`);
     }
   } finally {
     await app.stop();
   }
 
-  const failed = reports.filter(r => !r.passed);
-  if (failed.length === 0) return { kind: "proceed", reports };
-  return { kind: "failures", reports, failedReports: failed };
+  const unjudged = reports.filter(isUnjudged);
+  const failed = reports.filter(r => !r.passed && !isUnjudged(r));
+  if (failed.length > 0) return { kind: "failures", reports, failedReports: failed, unjudgedReports: unjudged };
+  if (unjudged.length > 0) return { kind: "unjudged", reports, unjudgedReports: unjudged };
+  return { kind: "proceed", reports };
 }
 
 /**
@@ -145,13 +169,34 @@ function pickScenarioFiles(projectDir: string, plan: ParsedPlan, chunk: ParsedCh
  *  chunks name none, or the project has no sealed suite. The phase gate falls
  *  back to the whole suite on empty; a chunk's own judging does not. */
 export function sealedScenarioFilesFor(project: string, chunks: ParsedChunk[]): string[] {
-  const scenarioDir = projectHoldoutDir(project);
-  if (!scenarioDir) return [];
+  return sealedScenarioFilesNumbered(project, scenarioNumbersOf(chunks));
+}
+
+/** The scenario numbers the given chunks' `Scenarios:` fields name. */
+export function scenarioNumbersOf(chunks: ParsedChunk[]): Set<number> {
   const wanted = new Set<number>();
   for (const c of chunks) {
     const nums = (c.scenarios || "").match(/\d+/g);
     if (nums) for (const n of nums) wanted.add(Number(n));
   }
+  return wanted;
+}
+
+/** The sealed scenario files a chunk is judged on: the ones it names that no
+ *  later chunk of the plan names too. "4 (partial)" on three chunks was scored
+ *  after each, and the first two went back to their builders for work the
+ *  third was planned to do; a scenario is judged once the last chunk it
+ *  needs has landed. */
+export function sealedScenarioFilesDueAt(project: string, chunk: ParsedChunk, allChunks: ParsedChunk[]): string[] {
+  const at = allChunks.findIndex((c) => c.number === chunk.number);
+  const later = at < 0 ? new Set<number>() : scenarioNumbersOf(allChunks.slice(at + 1));
+  const due = new Set([...scenarioNumbersOf([chunk])].filter((n) => !later.has(n)));
+  return sealedScenarioFilesNumbered(project, due);
+}
+
+function sealedScenarioFilesNumbered(project: string, wanted: Set<number>): string[] {
+  const scenarioDir = projectHoldoutDir(project);
+  if (!scenarioDir) return [];
   if (wanted.size === 0) return [];
   return listScenarios(project)
     .filter(f => {

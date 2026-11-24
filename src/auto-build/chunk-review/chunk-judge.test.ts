@@ -95,10 +95,23 @@ describe("scoreChunkScenarios", () => {
     expect(fake.scoreCalls).toHaveLength(0);
   });
 
-  it("no launch spec anywhere → not-run with the reason", async () => {
+  // Every chunk of label-check landed unscored this way (2026-11-23): a chunk
+  // that names scenarios needs an app the judge can start, and that is the
+  // builder's to fix.
+  it("no launch file anywhere → counts against the chunk, saying what to write", async () => {
     const j = await scoreChunkScenarios(input("2", projectDirs()));
-    expect(j.status).toBe("not-run");
-    expect(j.reason).toContain("no launch spec");
+    expect(j.status).toBe("error");
+    expect(j.reason).toContain("has no .lax-launch.json");
+    expect(j.reason).toContain(`"ready_url"`);
+    expect(fake.scoreCalls).toHaveLength(0);
+  });
+
+  it("a launch file with the wrong keys counts against the chunk, naming them", async () => {
+    const dirs = projectDirs();
+    writeFileSync(join(dirs.worktree, ".lax-launch.json"), JSON.stringify({ command: "node serve.mjs", port: 7070 }));
+    const j = await scoreChunkScenarios(input("2", dirs));
+    expect(j.status).toBe("error");
+    expect(j.reason).toContain("(it has: command, port)");
   });
 
   it("finds the suite by the base project's name, runs the app in the worktree, on the worker's port", async () => {
@@ -113,6 +126,24 @@ describe("scoreChunkScenarios", () => {
       { file: "02-checkout.md", score: 4, passed: false, reasoning: "judge saw 4", failedCriteria: ["order total shown"] },
       { file: "03-refund.md", score: 9, passed: true, reasoning: "judge saw 9", failedCriteria: [] },
     ]);
+  });
+
+  // "4 (partial)" on several chunks was judged after each, and the earlier
+  // ones went back to their builders for work a later chunk was planned to do.
+  it("a scenario several chunks name is judged at the last of them only", async () => {
+    const dirs = projectDirs(); launch(dirs.base);
+    const multi = parsePlanText([
+      "# Plan", "## Phase A — Core",
+      ...[[3, "2 (partial)"], [4, "2, 3"], [5, "3"]].map(([n, sc]) => [
+        `### Chunk ${n} — Part`, "- **Class:** leaf", "- **Slice:** s", "- **Depends on:** —", `- **Scenarios:** ${sc}`, "- **Done when:** d",
+      ].join("\n")),
+    ].join("\n"));
+    const [c3, c4] = multi.chunks;
+    const early = await scoreChunkScenarios({ ...input("—", dirs), chunk: c3, allChunks: multi.chunks });
+    expect(early).toMatchObject({ status: "not-run", reason: "chunk 3's scenarios are judged when the last chunk that names them lands" });
+    fake.scoreOutcome = { kind: "proceed", reports: [report("02-checkout.md", 8)] };
+    await scoreChunkScenarios({ ...input("—", dirs), chunk: c4, allChunks: multi.chunks });
+    expect(fake.scoreCalls[0].scenarioPaths.map(p => p.split(/[\\/]/).pop())).toEqual(["02-checkout.md"]);
   });
 
   it("an app that would not start counts against the chunk; a cancel does not", async () => {
@@ -189,6 +220,37 @@ describe("chunkJudgingFinding", () => {
   });
 });
 
+// "0 of 18 passed" once hid 15 judge crashes (label-check, 2026-11-24). A
+// scenario the harness could not judge is not something a builder can fix.
+describe("a scenario the judge could not judge", () => {
+  const unjudged = { file: "03-refund.md", score: 0, passed: false, reasoning: "Scorer crashed", failedCriteria: [], unjudged: "judge returned unparseable response" };
+
+  it("never sends the chunk back, and the summary says it is unverified", () => {
+    const j = judging({ scenarios: { status: "scored", reason: "", scores: [{ file: "02-checkout.md", score: 8, passed: true, reasoning: "ok", failedCriteria: [] }, unjudged] } });
+    expect(chunkJudgingFinding(4, j)).toBeNull();
+    expect(chunkJudgingSummary(j)).toBe(
+      "scenarios 1/1 passed (02-checkout.md 8/10); 1 could not be judged, so unverified (03-refund.md: judge returned unparseable response); skeptic: holds",
+    );
+  });
+
+  it("a real failure beside it still goes back, naming only the failure", () => {
+    const failed = { file: "02-checkout.md", score: 3, passed: false, reasoning: "total missing", failedCriteria: [] };
+    const f = chunkJudgingFinding(4, judging({ scenarios: { status: "scored", reason: "", scores: [failed, unjudged] } }))!;
+    expect(f.action).toBe("push_back");
+    expect(f.reasoning).toContain("02-checkout.md");
+    expect(f.reasoning).not.toContain("03-refund.md");
+  });
+
+  it("is carried from the scorer's report", async () => {
+    const dirs = projectDirs(); launch(dirs.base);
+    const crashed = { ...report("03-refund.md", 0), abortReason: "page.goto: net::ERR_CONNECTION_REFUSED" };
+    fake.scoreOutcome = { kind: "unjudged", reports: [crashed], unjudgedReports: [crashed] };
+    const j = await scoreChunkScenarios(input("3", dirs));
+    expect(j.status).toBe("scored");
+    expect(j.scores[0].unjudged).toBe("page.goto: net::ERR_CONNECTION_REFUSED");
+  });
+});
+
 describe("chunkJudgingSummary", () => {
   it("names the scores and the skeptic, and says when nothing was verified", () => {
     expect(chunkJudgingSummary(judging())).toBe("scenarios 1/1 passed (02-checkout.md 8/10); skeptic: holds");
@@ -247,6 +309,22 @@ describe("the judge stage in the chunk review", () => {
     const o = await review(CLEAN, async () => { throw new Error("playwright missing"); });
     expect(o.action).toBe("proceed");
     expect(o.judging?.skeptic).toEqual({ status: "not-run", finding: "the chunk judge crashed: playwright missing" });
+  });
+
+  // The build-and-test check failed open with no record: a crash in it read
+  // the same as a build that passed.
+  it("a build check that crashes fails open, and the chunk says it was not built or tested", async () => {
+    const o = await review(CLEAN, async () => judging(), { buildExec: async () => { throw new Error("spawn EPERM"); } });
+    expect(o.action).toBe("proceed");
+    expect(o.unverified).toBe("the build-and-test check crashed, so the chunk's code was not built or tested: spawn EPERM");
+  });
+
+  it("a build check with nothing to run says so on the chunk", async () => {
+    const o = await review(CLEAN, async () => judging(), {
+      buildExec: async (input: { onUnverified?: (n: string) => void }) => { input.onUnverified?.("the project has no build or test script"); return null; },
+    } as never);
+    expect(o.unverified).toBe("the project has no build or test script");
+    expect((await review(CLEAN, async () => judging())).unverified).toBeUndefined();
   });
 });
 

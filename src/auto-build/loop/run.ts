@@ -38,6 +38,8 @@ import { isSetAsideCase, setChunkAsideInTree } from "./tree-set-aside.js";
 import { isPhaseGatePause } from "../chunk-review/index.js";
 import { handleAction } from "./handle-action.js";
 import { createPhasePauseTracker } from "./phase-gate-pause.js";
+import { createWallProbe } from "./wall-probe.js";
+import { runFinishGates } from "../finish-gates/run.js";
 import { runParallelWaves } from "./parallel-waves.js";
 
 /**
@@ -119,8 +121,8 @@ export async function runBuildLoop(opts: LoopOptions): Promise<LoopResult> {
   // opts.projectDir (each gets its own isolated worktree). The shared git
   // baseline + preflight probe above have already run for both paths.
   const maxConcurrentChunks = resolveMaxConcurrentChunks(opts.maxConcurrentChunks);
-  if (maxConcurrentChunks > 1) {
-    return runParallelWaves({
+  const result = maxConcurrentChunks > 1
+    ? await runParallelWaves({
       opts,
       chunks: chunks.slice(startIdx, endIdx),
       totalChunks,
@@ -128,10 +130,15 @@ export async function runBuildLoop(opts: LoopOptions): Promise<LoopResult> {
       emit,
       events,
       outcomes,
-    });
-  }
+    })
+    : await runChunksInOrder({ opts, startIdx, endIdx, emit, events, outcomes });
 
-  return runChunksInOrder({ opts, startIdx, endIdx, emit, events, outcomes });
+  // A run that lands the plan's last chunk goes on to the finish gates; their
+  // fix chunks are built here, serially, like any chunk of the plan.
+  return runFinishGates({
+    opts, result, emit,
+    buildFixes: (fixOpts) => runChunksInOrder({ opts: fixOpts, startIdx: 0, endIdx: fixOpts.plan.chunks.length, emit, events, outcomes }),
+  });
 }
 
 /**
@@ -161,6 +168,10 @@ async function scorePhaseIfPaused(a: {
   const recovery = await attemptPhaseGateScoring(opts, chunk, emit, totalChunks);
   if (recovery.kind === "recovered") {
     emit({ type: "review-result", chunkNumber: chunk.number, totalChunks, message: `phase-gate auto-scoring passed — overriding halt to proceed` });
+    return { finalOutcome: attempt.finalOutcome, finalAction: "proceed" };
+  }
+  if (recovery.kind === "unverified") {
+    emit({ type: "review-result", chunkNumber: chunk.number, totalChunks, message: `${chunk.phase}: phase gate unverified, continuing: ${recovery.reason}` });
     return { finalOutcome: attempt.finalOutcome, finalAction: "proceed" };
   }
   if (recovery.kind === "halt-with-context") {
@@ -198,6 +209,7 @@ async function runChunksInOrder(run: {
     projectDir: opts.projectDir, planChunks: chunks,
     landedBefore: [...chunks.slice(0, startIdx).map((c) => c.number), ...alreadyLanded],
   });
+  const wallProbe = createWallProbe(opts);
 
   for (let i = startIdx; i < endIdx; i++) {
     if (opts.signal?.aborted) {
@@ -264,6 +276,8 @@ async function runChunksInOrder(run: {
     phasePauses.landed(chunk, finalOutcome, !gateOwed);
     const phase = await phasePauses.scoreFinished({ opts, totalChunks, emit, events, outcomes }, chunksCommitted);
     if (phase.kind === "halt") return phase.result;
+    const probe = await wallProbe.afterLanding({ opts, totalChunks, emit, events, outcomes }, chunk.number, chunksCommitted);
+    if (probe.kind === "halt") return probe.result;
   }
 
   if (anythingSetAside(ledger)) return endSetAside();

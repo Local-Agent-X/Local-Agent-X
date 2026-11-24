@@ -19,6 +19,7 @@ export const TOOL_TAGS = [
   "web-read",          // fetches and reads a web page
   "http-api",          // sends a raw HTTP request to an API
   "web-browse",        // drives a real browser
+  "device",            // drives or reads a phone or emulator: installs, taps, types, screenshots, its log
   "image-view",        // looks at an image
   "image",             // makes, edits or finds an image, or reads the text in one
   "video",             // makes, watches or sends a video

@@ -43,7 +43,7 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   // gets denied outright, which would brick tap/screenshot/etc here).
   // Typed text lands in whatever app is on the device's screen, which the
   // check cannot name; open_url sends the URL to its site.
-  android:        { kernel: "shell", ariAction: "exec", risk: "shell", capabilities: ["shell"], tags: [], destination: [{ to: "site", arg: "url", forActions: ["open_url"] }, { to: "unknown", label: "the app on the Android device" }],
+  android:        { kernel: "shell", ariAction: "exec", risk: "shell", capabilities: ["shell"], tags: ["device"], destination: [{ to: "site", arg: "url", forActions: ["open_url"] }, { to: "unknown", label: "the app on the Android device" }],
     reach: { kind: "local-device", why: "adb reaches a plugged-in device or an emulator on this box" }, pathArgs: [{ arg: "apk_path", action: "read" }], rules: [{ id: "allow-android", decision: "allow", reason: "Android emulator/device control allowed at policy layer (subprocess spawn via adb/emulator, same tier as bash)", priority: 40 }] },
 
   // ── Apps (app_* glob) ──
@@ -146,7 +146,7 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   // Reads the connected phone's log, properties and package list (never
   // changes the device) and appends its verdict to the project's ledger
   // (auto-build/device-check-tool.ts).
-  device_check:          { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["app-build", "app-build-spec"], timeoutMs: 120_000, pathArgs: [{ arg: "project_dir", action: "write" }], rules: [{ id: "allow-device-check", decision: "allow", reason: "Read the phone's log for a build's device check", priority: 50 }] },
+  device_check:          { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["app-build", "app-build-spec", "device"], timeoutMs: 120_000, pathArgs: [{ arg: "project_dir", action: "write" }], rules: [{ id: "allow-device-check", decision: "allow", reason: "Read the phone's log for a build's device check", priority: 50 }] },
   // Starts the project's app from its .lax-launch.json, as a build's phase
   // gate does, and scores it against the sealed suite (auto-build/holdout-judge-tool.ts).
   holdout_judge:         { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["app-build", "app-build-spec"], timeoutMs: 0, reach: { kind: "indirect-network", why: "it starts the project's app, which may fetch what it needs" }, pathArgs: [{ arg: "project_dir", action: "read" }], rules: [{ id: "allow-holdout-judge", decision: "allow", reason: "Score the running app against its sealed scenarios", priority: 50 }] },

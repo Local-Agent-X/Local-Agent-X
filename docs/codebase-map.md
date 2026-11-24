@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2155 non-test source files · 60 oversized · 273 nearing the size cap.
+**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2156 non-test source files · 60 oversized · 273 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -23,7 +23,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/security/` | 171 | 66 | XL | 2 |
 | `src/tools/` | 144 | 265 | XL | 7 |
 | `src/tool-execution/` | 107 | 91 | XL | 2 |
-| `src/workspace/` | 94 | 3 | M |  |
+| `src/workspace/` | 95 | 3 | M |  |
 | `src/canonical-loop/` | 92 | 298 | XL | 6 |
 | `src/providers/` | 80 | 28 | L | 1 |
 | `src/util/` | 80 | 4 | S |  |
@@ -42,7 +42,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/broker-transport/` | 29 | 51 | XL |  |
 | `src/context-manager/` | 29 | 16 | M |  |
 | `src/context/` | 28 | 11 | M |  |
-| `src/agent-request/` | 26 | 16 | L | 3 |
+| `src/agent-request/` | 26 | 17 | L | 3 |
 | `src/app-runtime/` | 26 | 14 | L |  |
 | `src/classifiers/` | 26 | 18 | L |  |
 | `src/desktop-contract/` | 24 | 11 | M |  |
@@ -63,9 +63,9 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/app-renderer/` | 13 | 7 | M | 1 |
 | `src/sync/` | 13 | 27 | L |  |
 | `src/agent-loop/` | 12 | 1 | S |  |
+| `src/app-scaffold/` | 12 | 7 | M |  |
 | `src/ari-kernel/` | 12 | 12 | M |  |
 | `src/integrations/` | 12 | 15 | M |  |
-| `src/app-scaffold/` | 11 | 7 | M |  |
 | `src/whatsapp-bridge/` | 11 | 8 | M | 1 |
 | `src/calendar/` | 10 | 10 | M |  |
 | `src/codex-client/` | 10 | 7 | M |  |

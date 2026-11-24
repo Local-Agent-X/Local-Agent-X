@@ -27,8 +27,12 @@ Chunks that pass alone still drift at the seams between them.
 - **On the phone,** for an app people use on a phone: the build installed on a
   real device (the one the spec names, when it names one), the core flow driven
   on real input (a real photo, a real label, not a fixture), and evidence from
-  the device itself rather than the emulator or anyone's word for it. The
-  phone's log shows every stage of the core flow ran, where it ran (on the
+  the device itself rather than the emulator or anyone's word for it. Drive
+  every flow on an emulator first, on a debug build whose own log lines show
+  (the happy path, a permission denied, the app's data cleared, bad input), and
+  save the phone for what an emulator cannot do (the camera on a real object,
+  on-device AI); a release build is the last check, not where bugs are found.
+  The phone's log shows every stage of the core flow ran, where it ran (on the
   device or in the cloud) and how long it took. A search of the whole log for
   the test values entered on the device (a test medication, a test name) finds
   none of the data the spec says must stay put. A stage the app does not log

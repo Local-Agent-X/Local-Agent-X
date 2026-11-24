@@ -22,6 +22,7 @@ import {
   type ContinuationResolver,
   type ProductBuildTurn,
 } from "./product-build-routing.js";
+import { deviceToolNamesFor } from "./device-tools.js";
 
 const logger = createLogger("agent-request.prepare-request.tools");
 
@@ -139,7 +140,7 @@ async function codeSessionTools(input: ToolSelectionInput, tier: Tier): Promise<
   const { selectTools: selectKit, CODE_SESSION_KIT } = await import("../../tools/tool-kits.js");
   const { shrinkToolsForTier } = await import("../../tools/tier-tool-set.js");
   const { withUndoCounterparts } = await import("../../tools/undo-pairs.js");
-  const names = new Set([...selectKit(CODE_SESSION_KIT), ...(sessionToolNames.get(input.sessionId) ?? [])]);
+  const names = new Set([...selectKit(CODE_SESSION_KIT), ...(sessionToolNames.get(input.sessionId) ?? []), ...deviceToolNamesFor(input.sessionId)]);
   let tools = withUndoCounterparts(input.allAgentTools.filter((t) => names.has(t.name)), input.allAgentTools);
   // Compaction only, at the set's own size. Handing it the catalog made it
   // fill the set from the tier's essentials instead: a local model's code
@@ -287,7 +288,8 @@ export async function selectTools(input: ToolSelectionInput): Promise<ToolSelect
     const { modelToolRouting } = await import("../../local-runtimes/model-profile.js");
     const sticky = tier === "strong" || modelToolRouting(input.resolvedModel, { provider: input.resolvedProvider, tier }) === "mission";
     const known = sticky ? sessionToolNames.get(input.sessionId) : undefined;
-    const union = new Set([...(known ?? []), ...tools.map(t => t.name)]);
+    // A phone app's session always has the device tools (device-tools.ts).
+    const union = new Set([...(known ?? []), ...tools.map(t => t.name), ...deviceToolNamesFor(input.sessionId)]);
     tools = input.allAgentTools.filter(t => union.has(t.name));
     // The tier's DESCRIPTION compaction at the final set's own size, so every
     // pick survives (711f2cd6). Applied after the union so the bytes are a

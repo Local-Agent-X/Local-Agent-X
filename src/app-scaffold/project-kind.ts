@@ -113,3 +113,31 @@ export function detectProjectKind(dir: string): ProjectKind {
 /** Whether the directory holds a project at all: one of the project files
  *  the kit's scripts key their roots on. */
 export const hasProjectFile = (dir: string): boolean => detectProjectKind(dir).language !== "unknown";
+
+export type MobilePlatform = "android" | "ios";
+
+/** Cross-platform app frameworks: a project depending on one runs on both. */
+const MOBILE_FRAMEWORKS = ["expo", "react-native", "@capacitor/core", "@nativescript/core"];
+
+/**
+ * The phones the project runs on, read from its files: a cross-platform
+ * framework (Expo / React Native, Capacitor, NativeScript, Flutter) is both; a
+ * native Android app (`android/app/build.gradle[.kts]`, or a Gradle app module
+ * with its manifest) is Android; an Xcode project or an `ios/` folder is iOS.
+ * Empty for anything else. A session working in such a folder gets the device
+ * tools (agent-request/prepare-request/device-tools.ts).
+ */
+export function mobilePlatforms(dir: string): MobilePlatform[] {
+  if (!existsSync(dir)) return [];
+  const found = new Set<MobilePlatform>();
+  const pubspec = join(dir, "pubspec.yaml");
+  const flutter = existsSync(pubspec) && /^\s*flutter\s*:/m.test(readFileSync(pubspec, "utf-8"));
+  if (flutter || MOBILE_FRAMEWORKS.some((d) => hasDependency(readPackageJson(dir), d))) {
+    found.add("android");
+    found.add("ios");
+  }
+  const android = ["android/app/build.gradle", "android/app/build.gradle.kts", "app/src/main/AndroidManifest.xml"];
+  if (android.some((f) => existsSync(join(dir, f)))) found.add("android");
+  if (existsSync(join(dir, "ios")) || readdirSync(dir).some((n) => n.endsWith(".xcodeproj") || n.endsWith(".xcworkspace"))) found.add("ios");
+  return [...found];
+}

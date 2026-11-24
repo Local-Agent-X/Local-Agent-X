@@ -3,7 +3,7 @@
   "sha256": "d99215fc6237bf0b2e8a9357de917a691cb8d97c3bae1f3d9f1b180a043e2066",
   "files": {
     "references/autonomous.md": "cc6a26a3aa95c08f7fe63194a8e3c3245f49f7d3e6b56c96f7c3fe2a1aaea6a3",
-    "references/gates.md": "8d55d121927fc5829cf169a7e35ee1902a57340746e8b7aeca0a7d160516d5ec",
+    "references/gates.md": "fbb9c28c5f0aace22bf40df3066f00a481ae1c1a359ea24b5b0701f6db6fd029",
     "references/holdout.md": "a4a709d3430ac4ad9c8fc9f2480c2d176114e4b9a40f27f24d8a009c112b0172",
     "references/spec.md": "f2847a5f8bf86295f23275552126df5e9df618be94ba5403566d39736c8943c1",
     "references/structure.md": "3402e6c90afacef05fdb512169825565d0534e30aa2c89defa74b7742fd024b5"

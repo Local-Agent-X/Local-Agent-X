@@ -118,3 +118,28 @@ describe("the root rule is the kit script's root rule", () => {
     expect(scriptRoots).toEqual(expected);
   });
 });
+
+// A session in a phone app's folder gets the device tools
+// (agent-request/prepare-request/device-tools.ts); this decides which folders.
+describe("mobilePlatforms", () => {
+  it.each([
+    ["an Expo app", () => file("package.json", JSON.stringify({ dependencies: { expo: "~52.0.0" } })), ["android", "ios"]],
+    ["a bare React Native app", () => file("package.json", JSON.stringify({ dependencies: { "react-native": "0.76.0" } })), ["android", "ios"]],
+    ["a Capacitor app", () => file("package.json", JSON.stringify({ dependencies: { "@capacitor/core": "^6" } })), ["android", "ios"]],
+    ["a Flutter app", () => file("pubspec.yaml", "name: app\nflutter:\n  uses-material-design: true\n"), ["android", "ios"]],
+    ["a native Android app", () => { file("settings.gradle.kts"); file("app/src/main/AndroidManifest.xml", "<manifest/>"); }, ["android"]],
+    ["an android/ folder (prebuild)", () => { file("package.json", "{}"); file("android/app/build.gradle"); }, ["android"]],
+    ["an Xcode project", () => file("Shop.xcodeproj/project.pbxproj"), ["ios"]],
+    ["a web app", () => file("package.json", JSON.stringify({ dependencies: { react: "^19", vite: "^6" } })), []],
+    ["a Dart package that is not Flutter", () => file("pubspec.yaml", "name: lib\ndependencies:\n  http: any\n"), []],
+  ])("%s", async (_name, make, expected) => {
+    const { mobilePlatforms } = await import("./project-kind.js");
+    (make as () => void)();
+    expect(mobilePlatforms(dir).sort()).toEqual(expected);
+  });
+
+  it("a folder that does not exist is no phone app", async () => {
+    const { mobilePlatforms } = await import("./project-kind.js");
+    expect(mobilePlatforms(join(dir, "missing"))).toEqual([]);
+  });
+});

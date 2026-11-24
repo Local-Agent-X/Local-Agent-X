@@ -38,6 +38,12 @@ export const ANDROID_TOOL_DESCRIPTION =
   "if Expo Go is already installed on the device, or build a real debuggable APK from the project (e.g. an Android Gradle/EAS build) and " +
   "install_apk it — that APK IS the dev client and needs no Expo Go or store. If neither is possible, say so plainly instead of substituting " +
   "the app's marketing website in a browser — that is not the same app.\n\n" +
+  "TESTING A PHONE APP YOU BUILT OR CHANGED: drive every flow you touched on the emulator yourself before asking the user " +
+  "anything: the happy path, a permission denied, the app's data cleared and relaunched, bad input. Test a debug build fed by " +
+  "the dev server (port_forward its port) so the app's own log lines show; a release build is for the final check, not for " +
+  "finding bugs. Use the user's real phone only for what an emulator cannot do (the camera on a real object, on-device AI), " +
+  "and ask for that step in exact words. Then run device_check: it reads the phone's log for the flow's stages and records " +
+  "PASS or FAIL in the project's ledger. \"Installed and opened\" is not tested.\n\n" +
   "TIPS:\n" +
   "- Always screenshot before tap/swipe to get current coordinates — the screen may have changed since your last observation.\n" +
   "- start_emulator can take 30-90s on first boot; it blocks until the device is ready or the boot times out.";

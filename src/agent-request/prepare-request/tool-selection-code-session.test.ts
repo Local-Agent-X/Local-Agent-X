@@ -5,7 +5,7 @@
  * tool_search earlier in the session. Everything else stays loadable through
  * tool_search.
  */
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
@@ -93,5 +93,41 @@ describe("selectTools — a code session", () => {
 
   it("a chat keeps the per-message selection", async () => {
     expect(names(await turn("send an email about the release", "chat-1", "chat"))).toContain("email_send");
+  });
+});
+
+// A phone app's session gets the device tools whatever chose its set
+// (device-tools.ts): the android tool sat in no session's set, so a phone
+// app's build agent never touched a device (2026-11-23).
+describe("selectTools — a session working on a phone app", () => {
+  const withDevices = () => [...catalog(), tool("android"), tool("device_check")];
+  async function turnIn(dir: string, sessionId: string, mode: "code" | "chat") {
+    const { setSessionWorkRoot } = await import("../../workspace/paths.js");
+    setSessionWorkRoot(sessionId, dir);
+    return names((await selectTools({
+      message: "fix the scan screen", sessionId, channel: "web", mode, allAgentTools: withDevices(), bridgeTools: [],
+      resolvedProvider: "anthropic", resolvedModel: "claude-opus-5-5",
+    })).tools);
+  }
+  const project = (deps: Record<string, string>) => {
+    const dir = mkdtempSync(join(tmpdir(), "lax-mobile-session-"));
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ dependencies: deps }));
+    return dir;
+  };
+
+  it("a code session in an Expo app has android and device_check", async () => {
+    const picked = await turnIn(project({ expo: "~52.0.0" }), "code-expo", "code");
+    expect(picked).toEqual(expect.arrayContaining(["android", "device_check"]));
+  });
+
+  it("a chat bound to an Expo app has them too", async () => {
+    const picked = await turnIn(project({ expo: "~52.0.0" }), "chat-expo", "chat");
+    expect(picked).toEqual(expect.arrayContaining(["android", "device_check"]));
+  });
+
+  it("a code session in a web app does not", async () => {
+    const picked = await turnIn(project({ react: "^19", vite: "^6" }), "code-web", "code");
+    expect(picked).not.toContain("android");
+    expect(picked).not.toContain("device_check");
   });
 });

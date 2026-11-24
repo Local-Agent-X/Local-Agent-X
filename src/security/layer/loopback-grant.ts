@@ -17,7 +17,7 @@ import { networkInterfaces } from "node:os";
 import { isLoopbackHost } from "./ip-classification.js";
 import { isDisposableSandbox } from "./disposable-sandbox.js";
 import { ownedUnixSockets } from "../../tools/owned-listeners.js";
-import { agentOriginPort } from "./agent-origin-port.js";
+import { isAgentOriginPort } from "./agent-origin-port.js";
 import { liveLocalServicePorts, reservedLoopbackPorts } from "./security-config.js";
 
 let ownPort = "7007";
@@ -63,7 +63,7 @@ export function defaultPort(protocol: string): string {
 
 /** Is this one of this server's own ports (the UI origin or the agent origin)? */
 export function isOwnServerPort(port: string): boolean {
-  return port === ownPort || port === agentOriginPort();
+  return port === ownPort || isAgentOriginPort(port);
 }
 
 /**

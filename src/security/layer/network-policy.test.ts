@@ -13,7 +13,7 @@ import {
   isPrivateIPv4,
   isPrivateIPv6,
 } from "./ip-classification.js";
-import { setAgentOriginPort } from "./agent-origin-port.js";
+import { addAppOriginPort, removeAppOriginPort, setAgentOriginPort } from "./agent-origin-port.js";
 import { _setInterfaceAddressesForTests } from "./loopback-grant.js";
 
 const EMPTY_ALLOWLIST = new Set<string>();
@@ -462,6 +462,23 @@ describe("evaluateWebFetch — loopback alias names track the literal (C4)", () 
       // A public host on the same port is not this server.
       expect(evaluateWebFetch(EMPTY_ALLOWLIST, false, "7007", "http://10.0.0.5:53991/apps/bot/", "permissive").allowed).toBe(false);
     } finally {
+      setAgentOriginPort(null);
+    }
+  });
+
+  // Each app is served by its own listener; every one of them is this server.
+  it("allows an app's own listener port while it is bound, beside the shared one", () => {
+    setAgentOriginPort(53991);
+    addAppOriginPort(53993);
+    try {
+      const d = evaluateWebFetch(EMPTY_ALLOWLIST, false, "7007", "http://127.0.0.1:53993/apps/bot/", "permissive");
+      expect(d.allowed).toBe(true);
+      expect(d.reason).toBe("Self-call to own server (agent origin)");
+      expect(evaluateWebFetch(EMPTY_ALLOWLIST, false, "7007", "http://127.0.0.1:53991/files/a.txt", "permissive").allowed).toBe(true);
+      removeAppOriginPort(53993);
+      expect(evaluateWebFetch(EMPTY_ALLOWLIST, false, "7007", "http://127.0.0.1:53993/apps/bot/", "permissive").allowed).toBe(false);
+    } finally {
+      removeAppOriginPort(53993);
       setAgentOriginPort(null);
     }
   });

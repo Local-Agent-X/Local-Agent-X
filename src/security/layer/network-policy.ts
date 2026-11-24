@@ -18,7 +18,7 @@ import {
 import { resolveAndPinHost } from "./network-dns.js";
 export { resolveAndPinHost } from "./network-dns.js";
 import { manualRuntimeHostPorts, liveLocalServicePorts, reservedLoopbackPorts } from "./security-config.js";
-import { agentOriginPort } from "./agent-origin-port.js";
+import { isAgentOriginPort } from "./agent-origin-port.js";
 import { isThisMachineHost, loopbackServiceReachable } from "./loopback-grant.js";
 import { endpointHostPort } from "../../local-runtimes/admission.js";
 import { isLocalOnlyMode, isLoopbackUrl, LOCAL_ONLY_BLOCK_MESSAGE } from "../../local-only-policy.js";
@@ -110,7 +110,7 @@ export function evaluateWebFetch(
     if (parsed.port === port || (!parsed.port && port === "80")) {
       return { allowed: true, reason: "Self-call to own server" };
     }
-    if (parsed.port && parsed.port === agentOriginPort()) {
+    if (isAgentOriginPort(parsed.port)) {
       return { allowed: true, reason: "Self-call to own server (agent origin)" };
     }
   }

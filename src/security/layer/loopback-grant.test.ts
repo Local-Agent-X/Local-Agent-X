@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { selfPort, setSelfPort, shellLoopbackReachable, shellUnixSocketReachable } from "./loopback-grant.js";
 import { evaluateEgressForUrl } from "./network-policy.js";
-import { setAgentOriginPort } from "./agent-origin-port.js";
+import { addAppOriginPort, removeAppOriginPort, setAgentOriginPort } from "./agent-origin-port.js";
 
 let dir: string;
 let prev: string | undefined;
@@ -54,11 +54,17 @@ describe("the shell and http_request read one grant", () => {
     const original = selfPort();
     setSelfPort("7031");
     setAgentOriginPort(53991);
+    addAppOriginPort(53992);
     try {
       expect(egress("7031")).toBe(true);
       expect(shellLoopbackReachable("7031")).toBe(false);
       expect(shellLoopbackReachable("53991")).toBe(false);
+      // An app's own listener is this server's too.
+      expect(shellLoopbackReachable("53992")).toBe(false);
+      removeAppOriginPort(53992);
+      expect(shellLoopbackReachable("53992")).toBe(true);
     } finally {
+      removeAppOriginPort(53992);
       setSelfPort(original);
     }
   });

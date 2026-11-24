@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2153 non-test source files · 62 oversized · 271 nearing the size cap.
+**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2153 non-test source files · 61 oversized · 272 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -59,7 +59,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/self-edit/` | 16 | 19 | L | 2 |
 | `src/anthropic-client/` | 15 | 23 | L | 2 |
 | `src/cron/` | 14 | 14 | L |  |
-| `src/routes/` | 14 | 117 | XL | 15 |
+| `src/routes/` | 14 | 117 | XL | 14 |
 | `src/app-renderer/` | 13 | 7 | M | 1 |
 | `src/sync/` | 13 | 27 | L |  |
 | `src/agent-loop/` | 12 | 1 | S |  |
@@ -286,7 +286,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/routes/chat/run-chat-turn/orchestrator.ts#runChatTurn`
 - `src/routes/memory.ts#handleMemoryRoutes`
 - `src/routes/security.ts#handleSecurityRoutes`
-- `src/routes/sessions.ts#handleSessionRoutes`
 - `src/routes/settings/local-runtimes.ts#handleLocalRuntimesRoutes`
 - `src/routes/settings/preferences.ts#handlePreferencesRoutes`
 - `src/routes/settings/providers.ts#handleProvidersRoutes`
@@ -448,6 +447,7 @@ job. Comments are free: never cut them to fit.
 - `src/routes/bridges/secrets.ts#handleSecretsRoutes` — 80+ own code lines (cap 100)
 - `src/routes/chat.ts#handleChatRoutes` — 80+ own code lines (cap 100)
 - `src/routes/connector-proxy.ts#handleConnectorProxyRoutes` — 80+ own code lines (cap 100)
+- `src/routes/sessions.ts#handleSessionRoutes` — 80+ own code lines (cap 100)
 - `src/server/api-request-router.ts#routeApiRequest` — 80+ own code lines (cap 100)
 - `src/server/background-jobs/dream-check.ts#registerDreamRunner:callback` — 80+ own code lines (cap 100)
 - `src/server/bootstrap-services.ts#bootstrapServices` — 80+ own code lines (cap 100)

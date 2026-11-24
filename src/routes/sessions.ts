@@ -11,6 +11,48 @@ import { handleSessionBranchRoutes } from "./session-branches.js";
 import { isListedChat } from "../session/remove.js";
 import { handleSessionRemovalRoutes } from "./session-remove.js";
 
+/** A hit of the cross-session search: where in which chat the text was found. */
+export interface SessionSearchHit {
+  sessionId: string;
+  title: string;
+  matches: Array<{ role: string; snippet: string; index: number }>;
+}
+
+/**
+ * Chats whose messages contain `query` (already lowercased): the newest 100
+ * listed chats are scanned, up to 20 chats are returned, each with its first
+ * five matches and a snippet around each.
+ */
+export function searchSessions(store: Parameters<RouteHandler>[4]["sessionStore"], query: string): SessionSearchHit[] {
+  // Same hiding as the chat lists (one predicate — synthetic-sessions.ts):
+  // a search hit on a cron-/dream-/eval_/skill-review- transcript opens as
+  // a fake chat the sidebar refuses to list. Filter BEFORE the slice(0,100)
+  // scan budget so hidden transcripts can't crowd out real ones. ide- stays
+  // searchable — live user chats with their own surface.
+  const allSessions = store.list().filter(isListedChat);
+  const results: SessionSearchHit[] = [];
+  for (const meta of allSessions.slice(0, 100)) {
+    const session = store.load(meta.id);
+    if (!session) continue;
+    const matches: Array<{ role: string; snippet: string; index: number }> = [];
+    for (let i = 0; i < session.messages.length; i++) {
+      const m = session.messages[i];
+      const content = typeof m.content === "string" ? m.content : "";
+      const idx = content.toLowerCase().indexOf(query);
+      if (idx >= 0) {
+        const start = Math.max(0, idx - 50);
+        const end = Math.min(content.length, idx + query.length + 100);
+        matches.push({ role: m.role as string, snippet: content.slice(start, end), index: i });
+      }
+    }
+    if (matches.length > 0) {
+      results.push({ sessionId: meta.id, title: session.title, matches: matches.slice(0, 5) });
+    }
+    if (results.length >= 20) break;
+  }
+  return results;
+}
+
 export const handleSessionRoutes: RouteHandler = async (method, url, req, res, ctx, role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
 
@@ -35,32 +77,7 @@ export const handleSessionRoutes: RouteHandler = async (method, url, req, res, c
   if (method === "GET" && url.pathname === "/api/sessions/search") {
     const query = (url.searchParams.get("q") || "").toLowerCase().trim();
     if (!query || query.length < 2) { json(400, { error: "Query too short" }); return true; }
-    // Same hiding as the chat lists (one predicate — synthetic-sessions.ts):
-    // a search hit on a cron-/dream-/eval_/skill-review- transcript opens as
-    // a fake chat the sidebar refuses to list. Filter BEFORE the slice(0,100)
-    // scan budget so hidden transcripts can't crowd out real ones. ide- stays
-    // searchable — live user chats with their own surface.
-    const allSessions = ctx.sessionStore.list().filter(isListedChat);
-    const results: Array<{ sessionId: string; title: string; matches: Array<{ role: string; snippet: string; index: number }> }> = [];
-    for (const meta of allSessions.slice(0, 100)) {
-      const session = ctx.sessionStore.load(meta.id);
-      if (!session) continue;
-      const matches: Array<{ role: string; snippet: string; index: number }> = [];
-      for (let i = 0; i < session.messages.length; i++) {
-        const m = session.messages[i];
-        const content = typeof m.content === "string" ? m.content : "";
-        const idx = content.toLowerCase().indexOf(query);
-        if (idx >= 0) {
-          const start = Math.max(0, idx - 50);
-          const end = Math.min(content.length, idx + query.length + 100);
-          matches.push({ role: m.role as string, snippet: content.slice(start, end), index: i });
-        }
-      }
-      if (matches.length > 0) {
-        results.push({ sessionId: meta.id, title: session.title, matches: matches.slice(0, 5) });
-      }
-      if (results.length >= 20) break;
-    }
+    const results = searchSessions(ctx.sessionStore, query);
     json(200, { results, query });
     return true;
   }

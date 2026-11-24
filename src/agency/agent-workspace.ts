@@ -151,13 +151,24 @@ function declareTouches(ws: AgentWorkspace, opts: ProvisionOpts): void {
   } catch { /* coordination is best-effort: a run starts without its claim */ }
 }
 
+/** Why a worktree of `repoRoot` could not be made, in words the spawner can act
+ *  on. A repo with no commit has no HEAD to branch from — a freshly
+ *  initialized project spawned before its first commit (2026-11-24). */
+export function worktreeRefusal(repoRoot: string): string {
+  let hasCommit = true;
+  try { git("rev-parse --verify HEAD", repoRoot); } catch { hasCommit = false; }
+  return hasCommit
+    ? `could not create an isolated worktree of ${repoRoot} (see the server log)`
+    : `could not create an isolated worktree of ${repoRoot}: the repository has no commit yet, so there is nothing to branch from. Commit first, then spawn the agent again.`;
+}
+
 function provisionFolder(opts: ProvisionOpts): AgentWorkspace {
   const { agentId, runSessionId, security } = opts;
   if (opts.workDir) {
     const plan = planWorkDir(opts.workDir);
     if (plan.kind === "repo") {
       const worktree = createWorktree(agentId, plan.repoRoot);
-      if (!worktree) throw new AgentWorkspaceError(`could not create an isolated worktree of ${plan.repoRoot} (see the server log)`);
+      if (!worktree) throw new AgentWorkspaceError(worktreeRefusal(plan.repoRoot));
       const root = plan.subdir ? join(worktree.path, plan.subdir) : worktree.path;
       security.addAllowedPath(worktree.path, runSessionId);
       security.fenceToWorktree(runSessionId, { worktree: worktree.path, repoRoot: resolve(worktree.repoRoot) });

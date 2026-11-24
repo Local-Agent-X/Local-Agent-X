@@ -3,6 +3,7 @@ import type { ServerEvent } from "./types.js";
 import { redactEventCredentials } from "./security/index.js";
 import { getRuntimeConfig } from "./config.js";
 import { toolMessageStatus } from "./tool-execution/tool-message-carry.js";
+import { wrapUpOf } from "./tools/wrap-up.js";
 
 import { createLogger } from "./logger.js";
 const logger = createLogger("server-utils");
@@ -54,7 +55,19 @@ function extractText(content: unknown): string {
 }
 
 /** Extract all useful output from an agent's message history */
-export function extractAgentOutput(messages: Array<{ role: string; content?: unknown }>): string {
+/** The recap of a wrap_up call in an assistant row's tool calls, if any. */
+function wrapUpRecap(toolCalls: unknown): string {
+  if (!Array.isArray(toolCalls)) return "";
+  for (const call of toolCalls) {
+    const fn = (call as { function?: { name?: unknown; arguments?: unknown } })?.function;
+    if (fn?.name !== "wrap_up" || typeof fn.arguments !== "string") continue;
+    try { return wrapUpOf(JSON.parse(fn.arguments) as Record<string, unknown>)?.recap ?? ""; }
+    catch { return ""; } // unparseable args: wrap_up refused them, so there is no recap
+  }
+  return "";
+}
+
+export function extractAgentOutput(messages: Array<{ role: string; content?: unknown; tool_calls?: unknown }>): string {
   // Scope to the current response: everything after the last real user turn.
   // On a single-run result that's the whole array; on a borrowed multi-turn
   // session it isolates this turn so an earlier, longer answer can't win the
@@ -73,6 +86,11 @@ export function extractAgentOutput(messages: Array<{ role: string; content?: unk
     if (msg.role === "assistant") {
       const text = extractText(msg.content);
       if (text) assistantParts.push(text);
+      // A run that closed with wrap_up and no text answered in its recap;
+      // without this the fallback below reported wrap_up's own receipt
+      // ("[ok] Shown to the user as the turn's recap.") as the result.
+      const recap = wrapUpRecap(msg.tool_calls);
+      if (recap) assistantParts.push(recap);
     }
     if (msg.role === "tool") {
       const text = extractText(msg.content);

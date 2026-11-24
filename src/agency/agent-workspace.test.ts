@@ -195,4 +195,15 @@ describe("provisionAgentWorkspace — a spawned agent can run commands where it 
     expect(() => provisionAgentWorkspace({ agentId: "ws-test-bad", runSessionId: "agent-run-bad", security: sec, requiresWorktree: false, workDir: "/" }))
       .toThrow(/filesystem root/);
   });
+
+  // A project initialized but not yet committed has no HEAD to branch from;
+  // the refusal said only "(see the server log)", which the spawner can't read.
+  it("a repo with no commit yet is refused with the reason and what to do", () => {
+    const dir = join(roots.workspace, "uncommitted");
+    mkdirSync(dir, { recursive: true });
+    execFileSync("git", ["init", "-q"], { cwd: dir, stdio: "ignore" });
+    const sec = new SecurityLayer(roots.workspace, "common");
+    expect(() => provisionAgentWorkspace({ agentId: "ws-test-nocommit", runSessionId: "agent-run-nocommit", security: sec, requiresWorktree: false, workDir: dir }))
+      .toThrow(/no commit yet.*Commit first/);
+  });
 });

@@ -79,4 +79,19 @@ describe("extractAgentOutput", () => {
     expect(extractAgentOutput(messages)).not.toContain("Blocked by session policy");
     expect(extractAgentOutput(messages)).toContain("fetched 12 sources");
   });
+
+  // A spawned agent that closed with wrap_up and no text: its chat notice read
+  // "[ok] Shown to the user as the turn's recap." — wrap_up's own receipt —
+  // instead of what the agent found (2026-11-24 seal probe).
+  it("a run that ended with wrap_up and no text reports the recap, not wrap_up's receipt", () => {
+    const recap = "Every read, list and search under holdout was refused by policy; nothing was opened.";
+    const messages = [
+      { role: "user", content: "Probe the holdout wall." },
+      { role: "assistant", content: "", tool_calls: [{ id: "c1", type: "function", function: { name: "grep", arguments: "{\"pattern\":\"x\"}" } }] },
+      { role: "tool", content: "[refused] grep: path is sealed by policy", tool_call_id: "c1" },
+      { role: "assistant", content: null, tool_calls: [{ id: "c2", type: "function", function: { name: "wrap_up", arguments: JSON.stringify({ recap }) } }] },
+      { role: "tool", content: "[ok]\nShown to the user as the turn's recap.", tool_call_id: "c2" },
+    ];
+    expect(extractAgentOutput(messages)).toBe(recap);
+  });
 });

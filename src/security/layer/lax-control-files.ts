@@ -62,10 +62,12 @@ import { LAX_DATA_CATALOG, UNLISTED_LAX_NOTE, laxDataEntry } from "./lax-data-ca
  * realpath (realpathDeep) keeps the spelling as typed. The native realpath
  * names every segment that exists by its long name. A stream suffix is
  * stripped first because a write to a file that does not exist yet creates
- * it, and then there is nothing on disk for the native call to name.
+ * it, and then there is nothing on disk for the native call to name. Trailing
+ * dots and spaces go too (win32OpenedName): a shell opens `hooks.json.` as
+ * `hooks.json`.
  */
 export function onDiskSpelling(p: string): string {
-  const start = process.platform === "win32" ? withoutStreamSuffixes(resolve(p)) : resolve(p);
+  const start = process.platform === "win32" ? win32OpenedName(resolve(p)) : resolve(p);
   let cur = start;
   let tail = "";
   for (;;) {
@@ -87,6 +89,18 @@ export function onDiskSpelling(p: string): string {
  *  A drive segment (`C:`) is the one place a colon belongs. */
 function withoutStreamSuffixes(p: string): string {
   return p.split(/([\\/])/).map((seg) => (/^[a-z]:$/i.test(seg) ? seg : seg.replace(/:.*$/, ""))).join("");
+}
+
+/**
+ * The name Windows opens for `p`: without stream suffixes, and without the
+ * dots and spaces that end a segment. The Win32 layer drops those before it
+ * looks a name up, so `.aws.\credentials` and `security.json.` reach
+ * `.aws\credentials` and `security.json` from any program that does not ask
+ * for a literal path, a shell among them. `.` and `..` are segments of their
+ * own and are left alone.
+ */
+export function win32OpenedName(p: string): string {
+  return withoutStreamSuffixes(p).split(/([\\/])/).map((seg) => (/^\.{1,2}$/.test(seg) ? seg : seg.replace(/[. ]+$/, ""))).join("");
 }
 
 /** True when every path segment before the basename contains a `.lax` dir. */

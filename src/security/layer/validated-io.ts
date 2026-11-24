@@ -13,7 +13,7 @@
  * classification primitives — one-way, no cycle.
  */
 import { openSync, closeSync, lstatSync, readFileSync, writeFileSync, constants } from "node:fs";
-import { realpathDeep, matchesSensitivePath, isSanctionedWorkRootEnvFile } from "./file-access.js";
+import { realpathDeep, matchesSensitivePath, isSanctionedWorkRootEnvFile, sensitiveOnDisk } from "./file-access.js";
 
 /**
  * Policy denial from the validated-I/O gate, thrown BEFORE any byte of the
@@ -103,6 +103,12 @@ export function openValidatedRead(absPath: string, sessionId?: string): { fd: nu
 	const match = matchesSensitivePath(normalized);
 	if (match && !isSanctionedWorkRootEnvFile(sessionId, canonicalPath)) {
 		throw new FileAccessDeniedError(`Blocked: matches sensitive path pattern ${typeof match === "string" ? match : match.source}`);
+	}
+	// The same file under a name that does not spell it (an 8.3 short name, a
+	// stream suffix): judged by the name it has on disk, as the gate does.
+	const underOtherName = match ? null : sensitiveOnDisk(canonicalPath);
+	if (underOtherName) {
+		throw new FileAccessDeniedError(`Blocked: matches sensitive path pattern ${typeof underOtherName === "string" ? underOtherName : underOtherName.source}`);
 	}
 
 	// O_NOFOLLOW on the leaf: a symlink swapped in at canonicalPath between the

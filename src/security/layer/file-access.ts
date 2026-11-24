@@ -5,7 +5,7 @@ import type { FileAccessMode } from "./types.js";
 import type { PathArgSpec } from "../../tool-registry.js";
 import { classifySensitivePath, isDotenvFile } from "./sensitive-paths.js";
 import { SYSTEM_DIR_PATTERNS } from "./catastrophic-paths.js";
-import { isLaxControlFile, isAppAtRestSecretUnderLax } from "./lax-control-files.js";
+import { isLaxControlFile, isAppAtRestSecretUnderLax, onDiskSpelling } from "./lax-control-files.js";
 import { resolveAgentPathFrom, realpathDeep, sessionWorkRootOf } from "../../workspace/paths.js";
 import { getLaxDir } from "../../lax-data-dir.js";
 import { pathIsWithin } from "./path-within.js";
@@ -378,8 +378,8 @@ export function evaluateFileAccess(
   return { allowed: true, reason: "File access allowed", canonicalPath: realPath };
 }
 
-/** The sensitive-path refusal, checked against both the resolved and the real
- *  path, or null. Two reads are let through: a dotenv file's, delivered with
+/** The sensitive-path refusal, checked against the resolved path, the real
+ *  path and the name the file has on disk (sensitiveOnDisk), or null. Two reads are let through: a dotenv file's, delivered with
  *  every value masked (keys only; tool-execution/sensitive-read-taint.ts), so
  *  which credentials an app expects can be learned the one way that cannot
  *  leak them (2026-10-31: refused, the agent ran `cat .env | sed` itself and
@@ -387,15 +387,34 @@ export function evaluateFileAccess(
 function sensitivePathRefusal(resolved: string, realPath: string, action: string, sessionId: string | undefined): SecurityDecision | null {
   const normalizedResolved = process.platform === "win32" ? resolved.toLowerCase() : resolved;
   const normalizedRealPath = process.platform === "win32" ? realPath.toLowerCase() : realPath;
-  const match = matchesSensitivePath(normalizedResolved) ?? matchesSensitivePath(normalizedRealPath);
-  if (!match) return null;
-  if (action === "read" && isDotenvFile(realPath)) return null;
-  if (isSanctionedWorkRootEnvFile(sessionId, realPath)) return null;
-  return {
+  const refusal = (match: NonNullable<ReturnType<typeof matchesSensitivePath>>): SecurityDecision => ({
     allowed: false,
     reason: `Blocked: matches sensitive path pattern ${typeof match === "string" ? match : match.source}`,
     userHint: USER_HINTS.secrets,
-  };
+  });
+  const match = matchesSensitivePath(normalizedResolved) ?? matchesSensitivePath(normalizedRealPath);
+  if (match) {
+    if (action === "read" && isDotenvFile(realPath)) return null;
+    if (isSanctionedWorkRootEnvFile(sessionId, realPath)) return null;
+    return refusal(match);
+  }
+  // Neither spelling as written is sensitive; the file it reaches may be.
+  const underOtherName = sensitiveOnDisk(resolved);
+  return underOtherName ? refusal(underOtherName) : null;
+}
+
+/**
+ * The sensitive rule the file at `path` matches by the name the filesystem
+ * gives it, or null. A path can reach a credential file without spelling it:
+ * by an 8.3 short name (`AWS~1\credentials`), a stream suffix, a trailing dot
+ * a shell drops (`.aws.\credentials`), or another casing on a volume that
+ * ignores case. onDiskSpelling names the file each of those opens. No read is
+ * let through here: the two exceptions the gate makes are for a file asked for
+ * by its own name.
+ */
+export function sensitiveOnDisk(path: string): ReturnType<typeof matchesSensitivePath> {
+  const onDisk = onDiskSpelling(path);
+  return matchesSensitivePath(process.platform === "win32" ? onDisk.toLowerCase() : onDisk);
 }
 
 // The validated-inode open/read/write helpers (openValidatedRead /

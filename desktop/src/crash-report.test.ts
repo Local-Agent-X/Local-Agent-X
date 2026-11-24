@@ -13,7 +13,7 @@ vi.mock("electron", () => ({
   crashReporter: { start: vi.fn() },
 }));
 
-const { buildCrashReport, dumpsSince, noteRunStart, readRunMarker } = await import("./crash-report.js");
+import { buildCrashReport, dumpsSince, noteRunStart, readRunMarker } from "./crash-report";
 
 let root: string;
 let exitHandlers: Array<() => void>;

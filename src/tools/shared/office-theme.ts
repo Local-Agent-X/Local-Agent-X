@@ -19,6 +19,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { getLaxDir } from "../../lax-data-dir.js";
+import { OFFICE_DESIGNS, isOfficeDesignName } from "./office-designs.js";
 
 export interface OfficeTheme {
   fonts: { heading: string; body: string };
@@ -159,13 +160,22 @@ function loadUserTheme(): OfficeThemeOverride | null {
   return value;
 }
 
+/** The theme a curated design makes: the house style with the design's
+ *  palette, fonts and chart colors. Unknown names give the house style. */
+export function designTheme(design: unknown): OfficeTheme {
+  if (!isOfficeDesignName(design)) return DEFAULT_OFFICE_THEME;
+  const d = OFFICE_DESIGNS[design];
+  return { ...DEFAULT_OFFICE_THEME, fonts: { ...d.fonts }, colors: { ...d.colors }, chartPalette: [...d.chartPalette] };
+}
+
 /**
- * Resolve the effective theme: house style ← user file ← per-call override.
+ * Resolve the effective theme: house style (or the chosen curated design,
+ * office-designs.ts) ← user file ← per-call override.
  * `callOverride` may be an object or a JSON string (tool args arrive as
  * strings); a parse failure is ignored so a bad override degrades to the
  * lower layers rather than failing the document.
  */
-export function resolveOfficeTheme(callOverride?: unknown): OfficeTheme {
+export function resolveOfficeTheme(callOverride?: unknown, design?: unknown): OfficeTheme {
   let parsed: OfficeThemeOverride | null = null;
   if (typeof callOverride === "string" && callOverride.trim()) {
     try { parsed = JSON.parse(callOverride); } catch { parsed = null; }
@@ -178,7 +188,7 @@ export function resolveOfficeTheme(callOverride?: unknown): OfficeTheme {
       Object.entries(parsed.colors).map(([k, v]) => [k, typeof v === "string" ? normalizeHex(v) : v]),
     ) as Partial<OfficeTheme["colors"]>;
   }
-  return mergeTheme(mergeTheme(DEFAULT_OFFICE_THEME, loadUserTheme()), parsed);
+  return mergeTheme(mergeTheme(designTheme(design), loadUserTheme()), parsed);
 }
 
 /** Points → half-points (docx run/heading size unit). */

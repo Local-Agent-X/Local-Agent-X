@@ -50,3 +50,20 @@ describe("wrapParagraph", () => {
     expect(lines.join("").replace(/\s/g, "")).toBe("supercalifragilisticexpialidociousandmorewords");
   });
 });
+
+describe("a word is never split while a smaller size keeps it whole", () => {
+  it("shrinks a number that would otherwise break", async () => {
+    const m = await getMeasurer();
+    const w = (m.width("$113.7B", 72, style) * 0.8) / 72; // too narrow at 72pt
+    const r = fitText(m, { ...style, paragraphs: ["$113.7B"], w, h: 3, size: 72, minSize: 20 });
+    expect(r.lines).toEqual([["$113.7B"]]);
+    expect(r.size).toBeLessThan(72);
+    expect(r.overflow).toBe(false);
+  });
+
+  it("counts a word that cannot fit even at the smallest size as overflow", async () => {
+    const m = await getMeasurer();
+    const r = fitText(m, { ...style, paragraphs: ["Pneumonoultramicroscopicsilicovolcanoconiosis"], w: 1, h: 3, size: 30, minSize: 20 });
+    expect(r.overflow).toBe(true);
+  });
+});

@@ -146,7 +146,7 @@ export const LAX_DATA_CATALOG: readonly LaxDataEntry[] = [
     "language-style.json", "milestones.json", "narratives.json", "proactive-patterns.json", "schedule-profile.json",
     "shared-history.json", "topic-frequencies.json", "trust-engine.json", "unspoken-detector.json", "upcoming-events.json",
     "vulnerable-shares.json", "vulnerability-shares.json", "calendar.json", "tasks.json"),
-  ...at("card", SETTINGS, "bridge-voice-prefs.json", "office-theme.json", "tool-timeouts.json", "model-capabilities.json",
+  ...at("card", SETTINGS, "bridge-voice-prefs.json", "office-theme.json", "deck-designs.json", "tool-timeouts.json", "model-capabilities.json",
     "model-profiles", "local-context-sizing.json", "local-model-certifications.json", "session-model-pins.json", "session-worktrees.json"),
   // What agents working in parallel tell each other (agency/work-claims.ts,
   // handover-notes.ts): read back into their prompts and their write checks.

@@ -38,6 +38,15 @@ describe("presentation create shows the agent its deck", () => {
     expect(r.metadata?.slide_findings).toEqual([]);
   });
 
+  it("makes the deck in the design the agent named, and says which", async () => {
+    const r = await run({
+      action: "create", file_path: join(dir, "legal.pptx"), design: "ledger",
+      slides: JSON.stringify([{ layout: "title", title: "Compliance review" }, { layout: "closing", title: "Questions" }]),
+    });
+    expect(r.metadata?.design).toBe("ledger");
+    expect(r.content).toMatch(/Design: ledger\./);
+  });
+
   it("names the problems it found, so the agent fixes them before replying", async () => {
     const r = await run({
       action: "create", file_path: join(dir, "samey.pptx"),

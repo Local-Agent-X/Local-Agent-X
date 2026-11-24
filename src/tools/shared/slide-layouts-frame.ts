@@ -95,7 +95,7 @@ export function statementLayout(ctx: LayoutCtx, s: SlideSpec): SlidePlan {
   const words = paragraphsOf(s.body).length ? paragraphsOf(s.body) : [s.title ?? ""];
   if (s.title && paragraphsOf(s.body).length) {
     plan.elements.push(textEl(m, { x: 1.0, y: 1.2, w: SLIDE_W - 2, h: 0.55 }, [s.title.toUpperCase()], {
-      font: t.fonts.heading, color: p.highlight, size: 16, minSize: 12, bold: true, role: "kicker",
+      font: t.fonts.heading, color: p.onDarkMuted, size: 16, minSize: 12, bold: true, role: "kicker",
     }));
   }
   plan.elements.push(textEl(m, { x: 1.0, y: 1.9, w: SLIDE_W - 2.4, h: 4.3 }, words, {

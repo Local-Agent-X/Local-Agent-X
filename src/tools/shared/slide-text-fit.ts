@@ -85,8 +85,10 @@ export function bulletIndent(size: number): number {
   return Math.round(size * 1.1);
 }
 
-/** Wrap one paragraph to `maxW` points. A word wider than the line is broken. */
-export function wrapParagraph(m: Measurer, text: string, size: number, style: TextStyle, maxW: number): string[] {
+/** Wrap one paragraph to `maxW` points. A word wider than the line is broken,
+ *  and `broke` says so: the fit treats a broken word as not fitting, so a
+ *  smaller size that keeps "$113.7B" whole wins over a larger one that splits it. */
+export function wrapParagraph(m: Measurer, text: string, size: number, style: TextStyle, maxW: number, broke?: { value: boolean }): string[] {
   const lines: string[] = [];
   let line = "";
   const fits = (s: string) => m.width(s, size, style) * WIDTH_SAFETY <= maxW;
@@ -96,6 +98,7 @@ export function wrapParagraph(m: Measurer, text: string, size: number, style: Te
     if (line) lines.push(line);
     line = word;
     while (!fits(line) && line.length > 1) {
+      if (broke) broke.value = true;
       let cut = line.length - 1;
       while (cut > 1 && !fits(line.slice(0, cut))) cut--;
       lines.push(line.slice(0, cut));
@@ -106,22 +109,25 @@ export function wrapParagraph(m: Measurer, text: string, size: number, style: Te
   return lines.length ? lines : [""];
 }
 
-function layoutAt(m: Measurer, req: FitRequest, size: number): Omit<FitResult, "overflow"> {
+function layoutAt(m: Measurer, req: FitRequest, size: number): Omit<FitResult, "overflow"> & { broke: boolean } {
   const indent = req.bullets ? bulletIndent(size) : 0;
   const maxW = req.w * 72 - indent;
-  const lines = req.paragraphs.map((p) => wrapParagraph(m, p, size, req, maxW));
+  const broke = { value: false };
+  const lines = req.paragraphs.map((p) => wrapParagraph(m, p, size, req, maxW, broke));
   const lineH = size * LINE_HEIGHT_EM * (req.lineSpacing ?? 1);
   const gap = size * (req.paraGap ?? 0);
   const count = lines.reduce((n, l) => n + l.length, 0);
   const heightPts = count * lineH + Math.max(0, lines.length - 1) * gap;
-  return { size, lines, height: heightPts / 72, indent };
+  return { size, lines, height: heightPts / 72, indent, broke: broke.value };
 }
 
-/** The largest size from `size` down to `minSize` at which the text fits. */
+/** The largest size from `size` down to `minSize` at which the text fits
+ *  without splitting a word. */
 export function fitText(m: Measurer, req: FitRequest): FitResult {
   for (let size = req.size; size >= req.minSize; size -= 1) {
-    const at = layoutAt(m, req, size);
-    if (at.height <= req.h) return { ...at, overflow: false };
+    const { broke, ...at } = layoutAt(m, req, size);
+    if (at.height <= req.h && !broke) return { ...at, overflow: false };
   }
-  return { ...layoutAt(m, req, req.minSize), overflow: true };
+  const { broke, ...at } = layoutAt(m, req, req.minSize);
+  return { ...at, overflow: broke || at.height > req.h };
 }

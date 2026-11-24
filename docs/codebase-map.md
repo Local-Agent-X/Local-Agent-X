@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2133 non-test source files · 69 oversized · 263 nearing the size cap.
+**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2135 non-test source files · 69 oversized · 263 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -21,7 +21,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 191 | 32 | XL | 1 |
 | `src/security/` | 167 | 65 | XL | 2 |
-| `src/tools/` | 142 | 255 | XL | 9 |
+| `src/tools/` | 142 | 257 | XL | 9 |
 | `src/tool-execution/` | 107 | 91 | XL | 2 |
 | `src/workspace/` | 93 | 3 | M |  |
 | `src/canonical-loop/` | 92 | 297 | XL | 7 |
@@ -341,6 +341,7 @@ job. Comments are free: never cut them to fit.
 - `src/sandbox/docker-execution-runtime.ts` — 320+ code lines (cap 350)
 - `src/server/background-jobs/index.ts` — 320+ code lines (cap 350)
 - `src/tools/edit-tools.ts` — 320+ code lines (cap 350)
+- `src/tools/presentation-tools.ts` — 320+ code lines (cap 350)
 - `src/auto-build/workflow-resolver.ts` — 310+ code lines (cap 350)
 - `src/browser/manager.ts` — 310+ code lines (cap 350)
 - `src/protocols/index.ts` — 310+ code lines (cap 350)
@@ -357,7 +358,6 @@ job. Comments are free: never cut them to fit.
 - `src/local-runtimes/certification-runner.ts` — 300+ code lines (cap 350)
 - `src/memory/index-core.ts` — 300+ code lines (cap 350)
 - `src/tools/document-tools.ts` — 300+ code lines (cap 350)
-- `src/tools/presentation-tools.ts` — 300+ code lines (cap 350)
 - `src/voice/voice-session/turn-runner.ts` — 300+ code lines (cap 350)
 - `src/api-docs.ts` — 290+ code lines (cap 350)
 - `src/auth/storage.ts` — 290+ code lines (cap 350)

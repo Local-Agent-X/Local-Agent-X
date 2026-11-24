@@ -162,9 +162,14 @@ describe("shrinkToolsForTier — medium manifest size", () => {
     // keyboard page looked for another tool, then wrote its own headless test
     // (park-walk, the 2026-11-17 parity battery). ~75 tokens. The ceiling
     // moved 10,700 → 10,800.
+    //
+    // Re-measured 2026-11-23: 10,847. presentation gained `design`, the
+    // curated look a deck is made in (office-designs.ts): without it every
+    // deck a medium model made was navy on white whatever it was for. The
+    // enum is the cost, ~12 tokens. The ceiling moved 10,800 → 10,850.
     expect(before).toBeGreaterThan(12_000);
     expect(after).toBeLessThanOrEqual(before / 2);
-    expect(after).toBeLessThanOrEqual(10_800);
+    expect(after).toBeLessThanOrEqual(10_850);
   });
 
   it("shortens parameter descriptions past the cap and leaves shorter ones verbatim", () => {

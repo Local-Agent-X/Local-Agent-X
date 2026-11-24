@@ -12,7 +12,7 @@ import {
   MISSION_FILES,
   type SyncConfig,
 } from "./constants.js";
-import { engineCheckoutMarker, mirrorDir, pruneSkippedDirs } from "./mirror.js";
+import { engineCheckoutMarker, mirrorDir, pruneUnsyncedEntries } from "./mirror.js";
 import { exportFactsForSync } from "./facts-sync.js";
 import { brandTombstonePaths, tombstonePaths, writeTombstonesForDeletedApps } from "./tombstones.js";
 import { readSyncedNotes, recordSyncedNotes } from "./synced-notes.js";
@@ -95,10 +95,11 @@ export async function copyToSync(dataDir: string, syncDir: string, config: SyncC
   // Unconditional: this cleans the MIRROR, so it must not depend on the source
   // workspace still existing or on workspace sync being on. A machine whose
   // workspace folder is gone, or that syncs protocols only, would otherwise
-  // keep re-hashing excluded trees mirrored by an earlier build forever.
+  // keep re-hashing excluded trees mirrored by an earlier build forever, and
+  // keep a build's stale run record for every pull to write back.
   const mirroredWorkspace = join(syncDir, "workspace");
-  const pruned = await pruneSkippedDirs(mirroredWorkspace);
-  if (pruned.length > 0) logger.info(`[sync] pruned ${pruned.length} excluded tree(s) from the mirror: ${pruned.slice(0, 5).join(", ")}`);
+  const pruned = await pruneUnsyncedEntries(mirroredWorkspace);
+  if (pruned.length > 0) logger.info(`[sync] pruned ${pruned.length} excluded entr${pruned.length === 1 ? "y" : "ies"} from the mirror: ${pruned.slice(0, 5).join(", ")}`);
 
   if (config.syncWorkspace) {
     const workspace = workspaceRoot();

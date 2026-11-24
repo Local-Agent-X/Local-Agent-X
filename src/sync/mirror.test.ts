@@ -9,7 +9,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
-import { mirrorDir, pruneSkippedDirs, pullDir } from "./mirror.js";
+import { mirrorDir, pruneUnsyncedEntries, pullDir } from "./mirror.js";
 
 describe("mirrorDir (async, non-blocking workspace copy)", () => {
   let root: string;
@@ -125,7 +125,7 @@ describe("mirrorDir (async, non-blocking workspace copy)", () => {
 // A name added to SKIP_DIRS only stops future copying: the workspace push is
 // additive, so 16,452 files already mirrored under a venv's site-packages
 // stayed put and kept getting re-hashed by every `git add`.
-describe("pruneSkippedDirs", () => {
+describe("pruneUnsyncedEntries", () => {
   let root: string;
   afterEach(() => { if (root) rmSync(root, { recursive: true, force: true }); });
 
@@ -136,7 +136,7 @@ describe("pruneSkippedDirs", () => {
     mkdirSync(join(root, "voice", "notes"), { recursive: true });
     writeFileSync(join(root, "voice", "notes", "take.txt"), "keep me");
 
-    const removed = await pruneSkippedDirs(root);
+    const removed = await pruneUnsyncedEntries(root);
 
     expect(existsSync(join(root, "voice", "venv-x", "Lib", "site-packages"))).toBe(false);
     expect(readFileSync(join(root, "voice", "notes", "take.txt"), "utf-8")).toBe("keep me");
@@ -148,7 +148,59 @@ describe("pruneSkippedDirs", () => {
     mkdirSync(join(root, "app"), { recursive: true });
     writeFileSync(join(root, "app", "index.html"), "<p>hi</p>");
 
-    expect(await pruneSkippedDirs(root)).toEqual([]);
+    expect(await pruneUnsyncedEntries(root)).toEqual([]);
     expect(existsSync(join(root, "app", "index.html"))).toBe(true);
+  });
+});
+
+// A build's run record rode the additive workspace push while the build ran,
+// stayed in the sync repo after the build cleared it, and every startup pull
+// wrote it back: label-check's finished build read "running, chunk 10" a day
+// later (2026-11-24). The engine's own files never cross machines.
+describe("the build engine's own files are never synced", () => {
+  let root: string;
+  afterEach(() => { if (root) rmSync(root, { recursive: true, force: true }); });
+
+  function project(dir: string): void {
+    mkdirSync(join(dir, "apps", "label-check", ".skeptic", "src"), { recursive: true });
+    writeFileSync(join(dir, "apps", "label-check", ".lax-build-run.json"), '{"phase":"running"}');
+    writeFileSync(join(dir, "apps", "label-check", ".lax-build-history.json"), "{}");
+    writeFileSync(join(dir, "apps", "label-check", ".lax-preflight-echo.txt"), "x");
+    writeFileSync(join(dir, "apps", "label-check", ".primal-build-state.json"), "{}");
+    writeFileSync(join(dir, "apps", "label-check", ".skeptic", "src", "probe.ts"), "x");
+    writeFileSync(join(dir, "apps", "label-check", ".lax-launch.json"), "{}");
+    writeFileSync(join(dir, "apps", "label-check", "README.md"), "mine");
+  }
+  const engineFiles = [".lax-build-run.json", ".lax-build-history.json", ".lax-preflight-echo.txt", ".primal-build-state.json", ".skeptic"];
+
+  it("a push leaves them out of the mirror", async () => {
+    root = mkdtempSync(join(tmpdir(), "lax-engine-state-"));
+    project(join(root, "ws"));
+    await mirrorDir(join(root, "ws"), join(root, "mirror"), true);
+    const app = join(root, "mirror", "apps", "label-check");
+    for (const f of engineFiles) expect(existsSync(join(app, f)), f).toBe(false);
+    expect(existsSync(join(app, ".lax-launch.json"))).toBe(true);
+    expect(existsSync(join(app, "README.md"))).toBe(true);
+  });
+
+  it("a pull never writes one back, though the project has none and the mirror's is newer", () => {
+    root = mkdtempSync(join(tmpdir(), "lax-engine-state-"));
+    project(join(root, "mirror"));
+    const local = join(root, "ws", "apps", "label-check");
+    mkdirSync(local, { recursive: true });
+    pullDir(join(root, "mirror"), join(root, "ws"), true);
+    for (const f of engineFiles) expect(existsSync(join(local, f)), f).toBe(false);
+    expect(readFileSync(join(local, "README.md"), "utf-8")).toBe("mine");
+  });
+
+  it("copies an earlier push left in the mirror are pruned, and nothing else", async () => {
+    root = mkdtempSync(join(tmpdir(), "lax-engine-state-"));
+    project(root);
+    const removed = await pruneUnsyncedEntries(root);
+    const app = join(root, "apps", "label-check");
+    for (const f of engineFiles) expect(existsSync(join(app, f)), f).toBe(false);
+    expect(removed).toHaveLength(engineFiles.length);
+    expect(existsSync(join(app, ".lax-launch.json"))).toBe(true);
+    expect(existsSync(join(app, "README.md"))).toBe(true);
   });
 });

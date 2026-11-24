@@ -4,6 +4,7 @@ import { extname, join, relative, resolve } from "node:path";
 
 import { createLogger } from "../logger.js";
 import { MAX_FILE_SIZE, SKIP_DIRS, SYNC_EXTENSIONS } from "./constants.js";
+import { isEngineStateEntry } from "../auto-build/engine-state-files.js";
 
 const logger = createLogger("sync.mirror");
 
@@ -42,7 +43,7 @@ export async function mirrorDir(
     // container-extracted trees carry links pointing back up the tree; a
     // followed loop materializes as endless real directories in dest.
     const st = await lstat(srcPath);
-    if (st.isSymbolicLink()) continue;
+    if (st.isSymbolicLink() || isEngineStateEntry(entry, st.isDirectory())) continue;
     if (destPath.length > MAX_DEST_PATH) {
       logger.warn(`[sync] skipping ${srcPath}: dest path ${destPath.length} chars exceeds git-safe limit ${MAX_DEST_PATH}`);
       continue;
@@ -71,17 +72,6 @@ export async function mirrorDir(
 }
 
 /**
- * Drop mirrored trees that SKIP_DIRS now excludes.
- *
- * The workspace push is additive (see mirrorDir), so a name added to
- * SKIP_DIRS only stops FUTURE copying — anything already mirrored under it
- * stays forever and keeps getting re-hashed by every `git add`. A path under
- * a skipped directory can no longer be produced by the walk above, so it is
- * stale by definition rather than a deletion the tombstone system owns.
- *
- * Returns the directories removed, for the caller to log.
- */
-/**
  * The workspace root itself being a checkout of this engine. On 2026-07-22 a
  * coding session used one machine's agent workspace as its repo checkout; the
  * next day sync mirrored the checkout's src/, test/, public/ and the rest to
@@ -105,16 +95,29 @@ export function engineCheckoutMarker(dir: string): string | null {
   }
 }
 
-export async function pruneSkippedDirs(root: string): Promise<string[]> {
+/**
+ * Drop mirrored entries the mirror no longer copies: trees under SKIP_DIRS
+ * and the build engine's own state files (auto-build/engine-state-files.ts).
+ *
+ * The workspace push is additive (see mirrorDir), so excluding a name only
+ * stops FUTURE copying — anything already mirrored stays forever: a skipped
+ * tree keeps getting re-hashed by every `git add`, and a build's run record
+ * kept coming back on every pull after the build had cleared it. Neither can
+ * be produced by the walk above any more, so it is stale by definition rather
+ * than a deletion the tombstone system owns.
+ *
+ * Returns the paths removed, for the caller to log.
+ */
+export async function pruneUnsyncedEntries(root: string): Promise<string[]> {
   const removed: string[] = [];
   const walk = async (dir: string): Promise<void> => {
     for (const entry of await readdir(dir)) {
       const path = join(dir, entry);
-      if (!(await lstat(path)).isDirectory()) continue;
-      if (SKIP_DIRS.has(entry)) {
+      const st = await lstat(path);
+      if (isEngineStateEntry(entry, st.isDirectory()) || (st.isDirectory() && SKIP_DIRS.has(entry))) {
         await rm(path, { recursive: true, force: true });
         removed.push(relative(root, path));
-      } else {
+      } else if (st.isDirectory()) {
         await walk(path);
       }
     }
@@ -146,9 +149,11 @@ export function pullDir(src: string, dest: string, additiveOnly = false): void {
     const destPath = join(dest, entry);
     // Same guards as mirrorDir: never follow symlinks, never write past the
     // git-safe path limit, never import tooling state (a sync-repo poisoned
-    // by a machine running pre-guard code must not propagate junk here).
+    // by a machine running pre-guard code must not propagate junk here), and
+    // never write back a build's run record: the copy is from whenever it was
+    // last pushed, and a pull that restored it re-opened a finished build.
     const stat = lstatSync(srcPath);
-    if (stat.isSymbolicLink()) continue;
+    if (stat.isSymbolicLink() || isEngineStateEntry(entry, stat.isDirectory())) continue;
     if (destPath.length > MAX_DEST_PATH) {
       logger.warn(`[sync] skipping pull of ${srcPath}: dest path ${destPath.length} chars exceeds git-safe limit ${MAX_DEST_PATH}`);
       continue;

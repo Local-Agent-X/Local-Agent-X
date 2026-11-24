@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2170 non-test source files · 59 oversized · 274 nearing the size cap.
+**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2171 non-test source files · 59 oversized · 274 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -70,9 +70,9 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/agent-guards/` | 10 | 13 | L |  |
 | `src/calendar/` | 10 | 10 | M |  |
 | `src/codex-client/` | 10 | 7 | M |  |
+| `src/auto-build/` | 9 | 69 | XL | 1 |
 | `src/plugin-system/` | 9 | 10 | L |  |
 | `src/screen-stream/` | 9 | 12 | L |  |
-| `src/auto-build/` | 8 | 68 | XL | 1 |
 | `src/autopilot/` | 8 | 14 | L | 1 |
 | `src/bridge-voice/` | 8 | 6 | M |  |
 | `src/mcp-client/` | 8 | 11 | L | 1 |

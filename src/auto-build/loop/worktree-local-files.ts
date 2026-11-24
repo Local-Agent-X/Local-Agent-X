@@ -16,19 +16,18 @@
 import { copyFileSync, existsSync, mkdirSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { git } from "../../agency/worktree-core.js";
+import { isEngineStateEntry } from "../engine-state-files.js";
 
 /** Larger than any config: a file past this is build output or data. */
 const MAX_LOCAL_FILE_BYTES = 1024 * 1024;
 const MAX_LOCAL_FILES = 200;
-/** The build engine's own state beside the project (failure-recovery.ts and
- *  the run record): the base's, never a worktree's. */
-const ENGINE_STATE = /(^|\/)\.lax-build-[^/]*$/;
 
 /** The files `projectDir` ignores, by repo-relative path. A folder ignored
- *  whole is one entry ending in "/" and is left out. */
+ *  whole is one entry ending in "/" and is left out, and so is the build
+ *  engine's own state beside the project: the base's, never a worktree's. */
 function ignoredFiles(projectDir: string): string[] {
   return git(["ls-files", "--others", "--ignored", "--exclude-standard", "--directory"], projectDir)
-    .split("\n").map((line) => line.trim()).filter((file) => file && !file.endsWith("/") && !ENGINE_STATE.test(file));
+    .split("\n").map((line) => line.trim()).filter((file) => file && !file.endsWith("/") && !isEngineStateEntry(file.split("/").pop()!, false));
 }
 
 /**

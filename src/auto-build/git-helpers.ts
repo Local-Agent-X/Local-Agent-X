@@ -23,6 +23,7 @@ import { composeGitArgs, HARNESS_COMMIT_IDENTITY, isNoGitIdentity } from "../git
 import { awaitSandboxProof, getSandboxMode } from "../sandbox/index.js";
 import { runCaged, type CagedRunOutcome } from "../tools/caged-spawn.js";
 import { gitArgv } from "../tools/program-argv.js";
+import { ENGINE_STATE_PATTERNS } from "./engine-state-files.js";
 
 export interface GitRunOptions {
   cwd: string;
@@ -172,12 +173,7 @@ const LOOP_EXCLUDES = [
   "out/",
   "coverage/",
   "*.log",
-  ".lax-build-run.json",
-  ".lax-build-history.json",
-  ".skeptic/",
-  ".lax-preflight-*",
-  ".primal-orchestrator-state.json",
-  ".primal-build-state.json",
+  ...ENGINE_STATE_PATTERNS,
 ];
 const EXCLUDE_MARKER = "# lax-auto-build excludes";
 

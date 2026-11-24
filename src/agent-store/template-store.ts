@@ -8,7 +8,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
-import { TEMPLATES_FILE } from "./paths.js";
+import { templatesFile } from "./paths.js";
 import { ProjectRosterStore } from "../project-rosters.js";
 import { builtInTemplateDefaults, deepResearcherPromptRefresh } from "./template-defaults.js";
 import { OFFICE_KIT } from "../tools/tool-kits.js";
@@ -220,14 +220,14 @@ export class AgentTemplateStore {
 
   private load(): void {
     try {
-      if (existsSync(TEMPLATES_FILE)) {
-        this.templates = JSON.parse(readFileSync(TEMPLATES_FILE, "utf-8"));
+      if (existsSync(templatesFile())) {
+        this.templates = JSON.parse(readFileSync(templatesFile(), "utf-8"));
       }
     } catch { this.templates = []; }
   }
 
   private persist(): void {
-    writeFileSync(TEMPLATES_FILE, JSON.stringify(this.templates, null, 2), "utf-8");
+    writeFileSync(templatesFile(), JSON.stringify(this.templates, null, 2), "utf-8");
   }
 
   list(): AgentTemplate[] {

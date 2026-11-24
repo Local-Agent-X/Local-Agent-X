@@ -5,7 +5,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
-import { ISSUES_FILE } from "./paths.js";
+import { issuesFile } from "./paths.js";
 
 export type IssueStatus = "open" | "in-progress" | "blocked" | "done" | "cancelled";
 export type IssuePriority = "low" | "medium" | "high" | "urgent";
@@ -50,8 +50,8 @@ export class IssueStore {
 
   private load(): void {
     try {
-      if (existsSync(ISSUES_FILE)) {
-        this.issues = JSON.parse(readFileSync(ISSUES_FILE, "utf-8"));
+      if (existsSync(issuesFile())) {
+        this.issues = JSON.parse(readFileSync(issuesFile(), "utf-8"));
         // Derive counter from highest existing ID. Accept both legacy
         // "LAX-N" and new "LAX-N" so existing issue files continue to
         // work after the rebrand. New issues are created with LAX-.
@@ -64,7 +64,7 @@ export class IssueStore {
   }
 
   private persist(): void {
-    writeFileSync(ISSUES_FILE, JSON.stringify(this.issues, null, 2), "utf-8");
+    writeFileSync(issuesFile(), JSON.stringify(this.issues, null, 2), "utf-8");
   }
 
   create(issue: Omit<Issue, "id" | "comments" | "createdAt" | "updatedAt">): Issue {

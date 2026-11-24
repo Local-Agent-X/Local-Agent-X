@@ -25,7 +25,7 @@
  *   - state-store.ts    — read/write state, component values, action queue
  *   - events-store.ts   — read/push/consume events
  *   - rate-limiter.ts   — token bucket rate limiter
- *   - paths.ts          — APPS_DIR, per-app file paths, ensureDir
+ *   - paths.ts          — appsDir(), per-app file paths, ensureDir
  *   - registry.ts       — AppRegistry orchestrator class
  */
 

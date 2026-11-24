@@ -11,7 +11,7 @@
 import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 import { createRequire } from "node:module";
-import { MEMORY_DIR, type FactEntry } from "./types.js";
+import { memoryDir, type FactEntry } from "./types.js";
 import { getLaxDir } from "../../../lax-data-dir.js";
 import { todayDateStr } from "./utils.js";
 import { entityMentionRe } from "../../utils.js";
@@ -54,7 +54,7 @@ export function loadSqliteFacts(days: number): FactEntry[] {
 }
 
 export function loadTodayFacts(): FactEntry[] {
-  const logPath = join(MEMORY_DIR, `${todayDateStr()}.md`);
+  const logPath = join(memoryDir(), `${todayDateStr()}.md`);
   if (!existsSync(logPath)) return [];
   return parseFactsFromLog(readFileSync(logPath, "utf-8"));
 }
@@ -64,9 +64,9 @@ export function loadAllRecentFacts(days: number): FactEntry[] {
   const now = Date.now();
   const cutoff = now - days * 24 * 60 * 60 * 1000;
 
-  if (!existsSync(MEMORY_DIR)) return facts;
+  if (!existsSync(memoryDir())) return facts;
 
-  const files = readdirSync(MEMORY_DIR).filter((f) =>
+  const files = readdirSync(memoryDir()).filter((f) =>
     /^\d{4}-\d{2}-\d{2}\.md$/.test(f)
   );
 
@@ -75,7 +75,7 @@ export function loadAllRecentFacts(days: number): FactEntry[] {
     const fileDate = new Date(dateStr).getTime();
     if (fileDate < cutoff) continue;
 
-    const content = readFileSync(join(MEMORY_DIR, file), "utf-8");
+    const content = readFileSync(join(memoryDir(), file), "utf-8");
     facts.push(...parseFactsFromLog(content, fileDate));
   }
 

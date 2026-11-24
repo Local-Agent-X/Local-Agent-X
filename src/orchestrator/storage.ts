@@ -1,17 +1,17 @@
 import { existsSync, readFileSync } from "node:fs";
 import { atomicWriteFileSync } from "../util/json-store.js";
 import type { OrchestrationExample } from "./types.js";
-import { EXAMPLES_FILE, MAX_EXAMPLES } from "./types.js";
+import { examplesFile, MAX_EXAMPLES } from "./types.js";
 
 export function loadExamples(): OrchestrationExample[] {
   try {
-    if (existsSync(EXAMPLES_FILE)) return JSON.parse(readFileSync(EXAMPLES_FILE, "utf-8"));
+    if (existsSync(examplesFile())) return JSON.parse(readFileSync(examplesFile(), "utf-8"));
   } catch {}
   return [];
 }
 
 function writeExamples(examples: OrchestrationExample[]): void {
-  atomicWriteFileSync(EXAMPLES_FILE, JSON.stringify(examples, null, 2));
+  atomicWriteFileSync(examplesFile(), JSON.stringify(examples, null, 2));
 }
 
 export function saveExample(example: OrchestrationExample): void {

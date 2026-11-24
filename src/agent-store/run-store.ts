@@ -7,7 +7,7 @@
 
 import { existsSync, readFileSync, writeFileSync, readdirSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import { RUNS_DIR, ensureDirs } from "./paths.js";
+import { runsDir, ensureDirs } from "./paths.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("agent-store");
@@ -69,11 +69,11 @@ export class AgentRunStore {
 
   save(run: AgentRun): void {
     ensureDirs();
-    writeFileSync(join(RUNS_DIR, `${run.id}.json`), JSON.stringify(run, null, 2), "utf-8");
+    writeFileSync(join(runsDir(), `${run.id}.json`), JSON.stringify(run, null, 2), "utf-8");
   }
 
   get(id: string): AgentRun | null {
-    const p = join(RUNS_DIR, `${id}.json`);
+    const p = join(runsDir(), `${id}.json`);
     if (!existsSync(p)) return null;
     try { return migrateRunStatus(JSON.parse(readFileSync(p, "utf-8")) as AgentRun); }
     catch (e) {
@@ -88,12 +88,12 @@ export class AgentRunStore {
 
   list(opts?: { limit?: number; offset?: number; sessionId?: string; status?: string }): { runs: AgentRun[]; total: number } {
     ensureDirs();
-    const files = readdirSync(RUNS_DIR).filter(f => f.endsWith(".json"));
+    const files = readdirSync(runsDir()).filter(f => f.endsWith(".json"));
 
     let runs: AgentRun[] = [];
     for (const f of files) {
       try {
-        const run = JSON.parse(readFileSync(join(RUNS_DIR, f), "utf-8")) as AgentRun;
+        const run = JSON.parse(readFileSync(join(runsDir(), f), "utf-8")) as AgentRun;
         runs.push(migrateRunStatus(run));
       } catch {}
     }
@@ -128,17 +128,17 @@ export class AgentRunStore {
   }
 
   delete(id: string): boolean {
-    const p = join(RUNS_DIR, `${id}.json`);
+    const p = join(runsDir(), `${id}.json`);
     if (!existsSync(p)) return false;
     try { unlinkSync(p); return true; } catch { return false; }
   }
 
   clearAll(): number {
     ensureDirs();
-    const files = readdirSync(RUNS_DIR).filter(f => f.endsWith(".json"));
+    const files = readdirSync(runsDir()).filter(f => f.endsWith(".json"));
     let count = 0;
     for (const f of files) {
-      try { unlinkSync(join(RUNS_DIR, f)); count++; } catch {}
+      try { unlinkSync(join(runsDir(), f)); count++; } catch {}
     }
     return count;
   }

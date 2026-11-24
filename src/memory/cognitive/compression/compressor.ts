@@ -1,6 +1,6 @@
 import { join } from "node:path";
 
-import { COMPRESSED_DIR } from "./constants.js";
+import { compressedDir } from "./constants.js";
 import { MS_PER_DAY } from "../../../util/time.js";
 import {
   ensureDirs,
@@ -99,7 +99,7 @@ export class MemoryCompressor {
 
     for (const file of listStoredFiles()) {
       report.processed++;
-      const filePath = join(COMPRESSED_DIR, file);
+      const filePath = join(compressedDir(), file);
       const stored = readStoredFile(filePath);
       if (!stored) continue;
 

@@ -4,7 +4,7 @@
 
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
-import { PROJECTS_FILE } from "./paths.js";
+import { projectsFile } from "./paths.js";
 import { ProjectRosterStore, type ProjectRoster } from "../project-rosters.js";
 import { readTrashRecord, trashRecord } from "../safe-delete.js";
 import { EventBus } from "../event-bus.js";
@@ -43,8 +43,8 @@ export class ProjectStore {
 
   private load(): void {
     try {
-      if (existsSync(PROJECTS_FILE)) {
-        this.projects = JSON.parse(readFileSync(PROJECTS_FILE, "utf-8"));
+      if (existsSync(projectsFile())) {
+        this.projects = JSON.parse(readFileSync(projectsFile(), "utf-8"));
       }
     } catch { this.projects = []; }
   }
@@ -52,7 +52,7 @@ export class ProjectStore {
   /** Every write of the project list goes through here, so this is the one
    *  place that announces it. */
   private persist(): void {
-    writeFileSync(PROJECTS_FILE, JSON.stringify(this.projects, null, 2), "utf-8");
+    writeFileSync(projectsFile(), JSON.stringify(this.projects, null, 2), "utf-8");
     void EventBus.emit("projects:changed", {});
   }
 

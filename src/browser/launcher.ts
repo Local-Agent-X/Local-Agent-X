@@ -15,7 +15,7 @@ import { createLogger } from "../logger.js";
 const logger = createLogger("browser.launcher");
 const browserDownloadSessions = new WeakMap<Browser, CDPSession>();
 
-export const SHARED_BROWSER_USER_DATA_DIR = join(getLaxDir(), "chrome-profile");
+export const sharedBrowserUserDataDir = (): string => join(getLaxDir(), "chrome-profile");
 // Kept under the browser tool's wedge deadline (toolMs−1s ≈ 29s in
 // tool-timeout.ts + wedge-deadline.ts): navigate = goto(NAV_TIMEOUT) + the 5s
 // load-wait + 1s settle, so a goto allowed 30s could push the whole action past

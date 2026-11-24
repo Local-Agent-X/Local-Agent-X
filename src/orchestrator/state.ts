@@ -1,13 +1,13 @@
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { atomicWriteFileSync } from "../util/json-store.js";
 import type { OrchestratorState } from "./types.js";
-import { STATE_FILE } from "./types.js";
+import { stateFile } from "./types.js";
 import { getLaxDir } from "../lax-data-dir.js";
 
 function loadState(): OrchestratorState {
   try {
-    if (existsSync(STATE_FILE)) {
-      return JSON.parse(readFileSync(STATE_FILE, "utf-8"));
+    if (existsSync(stateFile())) {
+      return JSON.parse(readFileSync(stateFile(), "utf-8"));
     }
   } catch { /* start fresh */ }
   return {
@@ -24,7 +24,7 @@ export function saveState(state: OrchestratorState): void {
   if (!existsSync(getLaxDir())) mkdirSync(getLaxDir(), { recursive: true });
   // Cadence counters and a short error log: a save that cannot land is made
   // again by the next message, so it never fails the turn.
-  try { atomicWriteFileSync(STATE_FILE, JSON.stringify(state, null, 2)); } catch { /* next save */ }
+  try { atomicWriteFileSync(stateFile(), JSON.stringify(state, null, 2)); } catch { /* next save */ }
 }
 
 export const orchestratorState: OrchestratorState = loadState();

@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { randomBytes } from "node:crypto";
 
 import { deriveChainHash, GENESIS_PREV_HASH, signAuditEntry } from "./audit-signing.js";
-import { AUDIT_DIR, auditPath } from "./paths.js";
+import { auditDir, auditPath } from "./paths.js";
 import type { AuditEntry } from "./types.js";
 import { atomicWriteFileSync } from "../util/json-store.js";
 import { createLogger } from "../logger.js";
@@ -69,7 +69,7 @@ export function writeAuditEntry(
     : appEntries;
   try { atomicWriteFileSync(appAuditPath, JSON.stringify(trimmedApp, null, 2), { encoding: "utf-8" }); } catch { /* best effort */ }
 
-  const globalPath = join(AUDIT_DIR, "global.json");
+  const globalPath = join(auditDir(), "global.json");
   const globalEntries = loadEntries(globalPath);
   const globalSigned = buildSignedFor(base, chainPrevHash(globalEntries));
   globalEntries.push(globalSigned);
@@ -94,7 +94,7 @@ export function readAuditLog(appId: string, limit = 50): AuditEntry[] {
 }
 
 export function readGlobalAuditLog(limit = 100): AuditEntry[] {
-  const p = join(AUDIT_DIR, "global.json");
+  const p = join(auditDir(), "global.json");
   if (!existsSync(p)) return [];
   try {
     const entries: AuditEntry[] = JSON.parse(readFileSync(p, "utf-8"));

@@ -9,7 +9,7 @@ import { tombstoneAppEagerly } from "../sync/tombstones.js";
 import { readAuditLog, readGlobalAuditLog, writeAuditEntry } from "./audit.js";
 import { consumeEvents, getUnconsumedEvents, pushEvent, readEvents } from "./events-store.js";
 import { migrateFromDashboards } from "./migration.js";
-import { APPS_DIR, AUDIT_DIR, appDir, defPath, ensureDir, eventsPath, statePath } from "./paths.js";
+import { appsDir, auditDir, appDir, defPath, ensureDir, eventsPath, statePath } from "./paths.js";
 import { type AccessResult, checkAccess } from "./permissions.js";
 import { RateLimiter } from "./rate-limiter.js";
 import {
@@ -42,8 +42,8 @@ export class AppRegistry {
   private migrated = false;
 
   private constructor() {
-    ensureDir(APPS_DIR);
-    ensureDir(AUDIT_DIR);
+    ensureDir(appsDir());
+    ensureDir(auditDir());
     this.runMigration();
   }
 
@@ -240,8 +240,8 @@ export class AppRegistry {
   }
 
   list(actor?: string): AppDefinition[] {
-    ensureDir(APPS_DIR);
-    const dirs = readdirSync(APPS_DIR, { withFileTypes: true }).filter(d => d.isDirectory() && d.name !== "_audit");
+    ensureDir(appsDir());
+    const dirs = readdirSync(appsDir(), { withFileTypes: true }).filter(d => d.isDirectory() && d.name !== "_audit");
     const results: AppDefinition[] = [];
     for (const d of dirs) {
       const def = this.get(d.name);

@@ -26,7 +26,7 @@
 import { existsSync, readFileSync } from "node:fs";
 import { atomicWriteFileSync } from "../../../util/json-store.js";
 import {
-  LOG_PATH,
+  logPath,
   type ConsolidationLogEntry,
   type ConsolidationReport,
   type FactEntry,
@@ -146,8 +146,8 @@ export class MemoryConsolidator {
 
   private loadHistory(): ConsolidationLogEntry[] {
     try {
-      if (existsSync(LOG_PATH)) {
-        return JSON.parse(readFileSync(LOG_PATH, "utf-8"));
+      if (existsSync(logPath())) {
+        return JSON.parse(readFileSync(logPath(), "utf-8"));
       }
     } catch {
       // Corrupt file — start fresh
@@ -158,6 +158,6 @@ export class MemoryConsolidator {
   private saveHistory(): void {
     // Keep last 90 entries to prevent unbounded growth
     const trimmed = this.history.slice(-90);
-    atomicWriteFileSync(LOG_PATH, JSON.stringify(trimmed, null, 2));
+    atomicWriteFileSync(logPath(), JSON.stringify(trimmed, null, 2));
   }
 }

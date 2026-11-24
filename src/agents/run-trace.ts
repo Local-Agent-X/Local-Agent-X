@@ -18,7 +18,7 @@ import { createLogger } from "../logger.js";
 
 const logger = createLogger("agents.run-trace");
 
-export const TRACES_DIR = join(getLaxDir(), "run-traces");
+export const tracesDir = (): string => join(getLaxDir(), "run-traces");
 
 const DEFAULT_MAX_FIELD_BYTES = 2048;
 
@@ -56,11 +56,11 @@ export type TraceEvent =
 export type TraceEventType = TraceEvent["type"];
 
 function ensureTracesDir(): void {
-  if (!existsSync(TRACES_DIR)) mkdirSync(TRACES_DIR, { recursive: true });
+  if (!existsSync(tracesDir())) mkdirSync(tracesDir(), { recursive: true });
 }
 
 function tracePath(runId: string): string {
-  return join(TRACES_DIR, `${runId}.jsonl`);
+  return join(tracesDir(), `${runId}.jsonl`);
 }
 
 /**
@@ -109,11 +109,11 @@ export function gcTraces(opts?: { maxFiles?: number; maxAgeMs?: number; now?: nu
   const now = opts?.now ?? Date.now();
   let removed = 0;
   try {
-    if (!existsSync(TRACES_DIR)) return 0;
-    const files = readdirSync(TRACES_DIR)
+    if (!existsSync(tracesDir())) return 0;
+    const files = readdirSync(tracesDir())
       .filter((name) => name.endsWith(".jsonl"))
       .map((name) => {
-        const p = join(TRACES_DIR, name);
+        const p = join(tracesDir(), name);
         try { return { p, mtimeMs: statSync(p).mtimeMs }; }
         catch { return { p, mtimeMs: 0 }; } // raced away mid-scan — treat as oldest
       })

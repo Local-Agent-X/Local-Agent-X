@@ -1,12 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdirSync, rmSync } from "node:fs";
 
-// state-store delegates file locations to paths.ts, which snaps APPS_DIR at
-// module-load via getLaxDir(). We can't relocate that captured root per-test,
-// so instead we drive everything through the module's OWN appDir()/statePath()
+// state-store delegates file locations to paths.ts, which asks getLaxDir()
+// for the apps dir on each call. This file does not relocate it;
+// instead we drive everything through the module's OWN appDir()/statePath()
 // helpers: create exactly the directory appDir(id) returns, seed a fresh
 // state.json there, and clean that subtree afterward. This keeps the test
-// hermetic regardless of which LAX_DATA_DIR was captured at import time.
+// hermetic under whichever LAX_DATA_DIR is in force.
 import {
   queueAction,
   consumeActions,

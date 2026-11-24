@@ -8,8 +8,8 @@
  *   - updateComponentValues(actionId) must apply a replayed action exactly once,
  *     so a phone draining its offline queue on reconnect never double-applies.
  *
- * LAX_DATA_DIR is set BEFORE importing the runtime so APPS_DIR (a module-load
- * const) points at a throwaway dir, isolating these tests from ~/.lax.
+ * LAX_DATA_DIR is set for the whole file so the apps dir
+ * points at a throwaway dir, isolating these tests from ~/.lax.
  */
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";

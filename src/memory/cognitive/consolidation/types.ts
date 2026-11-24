@@ -32,5 +32,5 @@ export interface ConsolidationLogEntry {
   mergedPairs: Array<{ from: string[]; to: string }>;
 }
 
-export const MEMORY_DIR = join(getLaxDir(), "memory");
-export const LOG_PATH = join(getLaxDir(), "consolidation-log.json");
+export const memoryDir = (): string => join(getLaxDir(), "memory");
+export const logPath = (): string => join(getLaxDir(), "consolidation-log.json");

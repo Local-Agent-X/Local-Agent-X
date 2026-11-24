@@ -8,7 +8,7 @@ import { join } from "node:path";
 
 const root = mkdtempSync(join(tmpdir(), "app-audit-"));
 vi.mock("./paths.js", () => ({
-  AUDIT_DIR: join(root, "_audit"),
+  auditDir: () => join(root, "_audit"),
   auditPath: (id: string) => join(root, id, "audit.json"),
 }));
 

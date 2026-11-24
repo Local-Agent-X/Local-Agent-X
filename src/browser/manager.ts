@@ -7,7 +7,7 @@ import { installDialogHandler, handleNextDialog } from "./dialog-handler.js";
 import { installRequestGuard } from "./guards.js";
 import { wirePopupAdoption } from "./manager-popups.js";
 import { closeCdpTab, openCdpTab, type CdpTabHost } from "./manager-tabs.js";
-import { ACTION_TIMEOUT, SHARED_BROWSER_USER_DATA_DIR, type BrowserEngine } from "./launcher.js";
+import { ACTION_TIMEOUT, sharedBrowserUserDataDir, type BrowserEngine } from "./launcher.js";
 import { acquireSessionContext, forceKillSharedBrowser, releaseSessionContext } from "./runtime.js";
 import {
   formatRecentDownloads,
@@ -148,7 +148,7 @@ export class BrowserManager implements BrowserBackend {
       this.currentEngine,
       this.mode,
       this.sessionId,
-      SHARED_BROWSER_USER_DATA_DIR,
+      sharedBrowserUserDataDir(),
     );
     // Install the context-level SSRF/scheme request guard so EVERY navigation
     // this context makes (click/act/fill-induced, redirect hop, JS-redirect) is

@@ -8,6 +8,12 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadPrefs, savePrefs } from "../src/protocols/preferences.js";
 import { loadVariables, saveVariables } from "../src/protocols/variables.js";
+import { runsDir } from "../src/agent-store/paths.js";
+import { tracesDir } from "../src/agents/run-trace.js";
+import { appDir, auditDir } from "../src/app-runtime/paths.js";
+import { sharedBrowserUserDataDir } from "../src/browser/launcher.js";
+import { compressedDir } from "../src/memory/cognitive/compression/constants.js";
+import { stateFile } from "../src/orchestrator/types.js";
 import { logRetry } from "../src/retry-telemetry.js";
 import { getModelPaths } from "../src/voice/stt-model-fetch.js";
 import { getTTSModelPaths } from "../src/voice/tts-model-fetch.js";
@@ -51,6 +57,16 @@ describe("paths under the data dir are read at call time", () => {
     } finally {
       rmSync(second, { recursive: true, force: true });
     }
+  });
+
+  it("the exported path helpers answer for the current data dir", () => {
+    expect(appDir("probe")).toBe(join(dataDir, "apps", "probe"));
+    expect(auditDir()).toBe(join(dataDir, "apps", "_audit"));
+    expect(tracesDir()).toBe(join(dataDir, "run-traces"));
+    expect(runsDir()).toBe(join(dataDir, "agent-runs"));
+    expect(sharedBrowserUserDataDir()).toBe(join(dataDir, "chrome-profile"));
+    expect(compressedDir()).toBe(join(dataDir, "memory-compressed"));
+    expect(stateFile()).toBe(join(dataDir, "orchestrator-state.json"));
   });
 
   it("the voice model folders are under the current data dir", () => {

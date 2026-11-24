@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { existsSync, rmSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import {
-  TRACES_DIR,
+  tracesDir,
   appendTraceEvent,
   readTrace,
   capValue,
@@ -16,7 +16,7 @@ function freshRunId(): string {
 }
 
 function tracePath(runId: string): string {
-  return join(TRACES_DIR, `${runId}.jsonl`);
+  return join(tracesDir(), `${runId}.jsonl`);
 }
 
 function cleanup(runId: string): void {
@@ -71,7 +71,7 @@ describe("run-trace", () => {
 
   it("readTrace tolerates a malformed line without dropping the rest", () => {
     const id = freshRunId(); tracked.push(id);
-    if (!existsSync(TRACES_DIR)) mkdirSync(TRACES_DIR, { recursive: true });
+    if (!existsSync(tracesDir())) mkdirSync(tracesDir(), { recursive: true });
     const good1 = JSON.stringify({ type: "run_start", runId: id, ts: 1, role: "r", task: "t" });
     const good2 = JSON.stringify({ type: "run_end", runId: id, ts: 9, status: "failed" });
     writeFileSync(tracePath(id), good1 + "\n{not json\n" + good2 + "\n", "utf-8");

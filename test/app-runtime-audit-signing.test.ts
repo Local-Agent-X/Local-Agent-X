@@ -4,11 +4,11 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { createHash, createHmac, randomBytes } from "node:crypto";
 
-// paths.ts captures AUDIT_DIR at module-load time using getLaxDir(). The
-// end-to-end test below writes through that captured path, then cleans
+// paths.ts asks getLaxDir() for the audit dir on each call. The
+// end-to-end test below writes through that path, then cleans
 // the test's own app subdirectory afterward. The audit-key persistence
 // tests live in a per-test tempdir via LAX_DATA_DIR + cache reset and
-// are not affected by the module-load path.
+// restore it afterwards.
 
 import {
   GENESIS_PREV_HASH,
@@ -269,8 +269,8 @@ describe("hash chain", () => {
 
 describe("writeAuditEntry end-to-end", () => {
   it("writes a valid per-app chain across multiple calls", () => {
-    // paths.ts snapped AUDIT_DIR at module-load with whatever LAX_DATA_DIR
-    // was set then. Resolve where it actually points and write there;
+    // paths.ts resolves under whatever LAX_DATA_DIR is set
+    // now. Resolve where it actually points and write there;
     // clean up after.
     const appId = `chain-test-${randomBytes(4).toString("hex")}`;
     const apath = auditPath(appId);

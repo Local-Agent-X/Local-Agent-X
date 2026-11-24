@@ -1,7 +1,7 @@
 /**
  * run-trace GC tests — retention bounds for ~/.lax/run-traces.
  *
- * TRACES_DIR is bound at module-load from getLaxDir(), so each test gets its
+ * Each test gets its
  * own throwaway dir by pointing LAX_DATA_DIR at a temp path and re-importing
  * the module fresh (vi.resetModules + dynamic import). This keeps the sweep
  * from ever touching the developer's real ~/.lax/run-traces.
@@ -29,10 +29,10 @@ afterEach(() => {
   try { rmSync(dir, { recursive: true, force: true }); } catch { /* ignore */ }
 });
 
-// Write a trace file directly into TRACES_DIR with a controlled mtime.
+// Write a trace file directly into the traces dir with a controlled mtime.
 function seedTrace(runId: string, ageMs: number, now: number): string {
-  if (!existsSync(mod.TRACES_DIR)) mkdirSync(mod.TRACES_DIR, { recursive: true });
-  const p = join(mod.TRACES_DIR, `${runId}.jsonl`);
+  if (!existsSync(mod.tracesDir())) mkdirSync(mod.tracesDir(), { recursive: true });
+  const p = join(mod.tracesDir(), `${runId}.jsonl`);
   writeFileSync(p, JSON.stringify({ type: "run_end", runId, ts: now, status: "ok" }) + "\n", "utf-8");
   const t = new Date(now - ageMs);
   utimesSync(p, t, t);
@@ -86,8 +86,8 @@ describe("gcTraces — wired at run_start", () => {
 
 describe("gcTraces — resilience", () => {
   it("returns 0 and never throws when the dir does not exist", () => {
-    rmSync(mod.TRACES_DIR, { recursive: true, force: true });
-    expect(existsSync(mod.TRACES_DIR)).toBe(false);
+    rmSync(mod.tracesDir(), { recursive: true, force: true });
+    expect(existsSync(mod.tracesDir())).toBe(false);
     expect(() => mod.gcTraces()).not.toThrow();
     expect(mod.gcTraces()).toBe(0);
   });
@@ -95,12 +95,12 @@ describe("gcTraces — resilience", () => {
   it("ignores non-.jsonl files in the directory", () => {
     const now = 1_000_000_000_000;
     mod.appendTraceEvent("seed", { type: "run_start", runId: "seed", ts: now, role: "r", task: "t" });
-    const stray = join(mod.TRACES_DIR, "notes.txt");
+    const stray = join(mod.tracesDir(), "notes.txt");
     writeFileSync(stray, "not a trace", "utf-8");
 
     mod.gcTraces({ maxFiles: 1, maxAgeMs: 0, now });
     expect(existsSync(stray)).toBe(true); // untouched — only *.jsonl are swept
     // and the dir wasn't blown away
-    expect(readdirSync(mod.TRACES_DIR)).toContain("notes.txt");
+    expect(readdirSync(mod.tracesDir())).toContain("notes.txt");
   });
 });

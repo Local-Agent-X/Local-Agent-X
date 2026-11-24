@@ -99,8 +99,8 @@ export interface TriageResult {
   triggered: string[];
 }
 
-export const EXAMPLES_FILE = join(getLaxDir(), "orchestration-examples.json");
-export const STATE_FILE = join(getLaxDir(), "orchestrator-state.json");
+export const examplesFile = (): string => join(getLaxDir(), "orchestration-examples.json");
+export const stateFile = (): string => join(getLaxDir(), "orchestrator-state.json");
 export const MAX_EXAMPLES = 200;
 
 export const MAX_CONTEXT_SIGNALS = 7;

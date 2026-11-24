@@ -17,7 +17,7 @@ vi.mock("./runtime.js", async (importOriginal) => {
 });
 
 import { BrowserManager } from "./manager.js";
-import { SHARED_BROWSER_USER_DATA_DIR } from "./launcher.js";
+import { sharedBrowserUserDataDir } from "./launcher.js";
 
 beforeEach(() => vi.clearAllMocks());
 
@@ -29,7 +29,7 @@ describe("BrowserManager.getPage — profile userDataDir threading", () => {
 			"chromium",
 			"isolated",
 			"agent-run",
-			SHARED_BROWSER_USER_DATA_DIR,
+			sharedBrowserUserDataDir(),
 		);
 	});
 
@@ -40,7 +40,7 @@ describe("BrowserManager.getPage — profile userDataDir threading", () => {
 			"chromium",
 			"isolated",
 			"chat-1",
-			SHARED_BROWSER_USER_DATA_DIR,
+			sharedBrowserUserDataDir(),
 		);
 	});
 
@@ -51,7 +51,7 @@ describe("BrowserManager.getPage — profile userDataDir threading", () => {
 			"chromium",
 			"continuity",
 			"cron-nightly",
-			SHARED_BROWSER_USER_DATA_DIR,
+			sharedBrowserUserDataDir(),
 		);
 	});
 });

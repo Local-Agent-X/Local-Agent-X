@@ -331,7 +331,7 @@ export class OpenAICompatAdapter implements Adapter {
     return {
       providerState,
       terminalReason,
-      modelStop: classifyModelStop(providerStop),
+      modelStop: classifyModelStop(providerStop, pendingToolCalls.length),
       trace: buildTurnTrace({ req, thinking, result, startedAt: turnStartedAt, promptOverWindow }),
     };
   }

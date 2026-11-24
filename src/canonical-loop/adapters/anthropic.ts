@@ -228,7 +228,7 @@ export class AnthropicAdapter implements Adapter {
 
     // Real terminal signal — the model's stop_reason, normalized. decide-outcome
     // trusts this over the shape inference when present. See model-stop.ts.
-    return { providerState, terminalReason, modelStop: classifyModelStop(result.providerStop), trace: anthropicTrace(req, result, startedAt) };
+    return { providerState, terminalReason, modelStop: classifyModelStop(result.providerStop, result.toolCallIds.length), trace: anthropicTrace(req, result, startedAt) };
   }
 
   async abort(reason?: unknown): Promise<void> {

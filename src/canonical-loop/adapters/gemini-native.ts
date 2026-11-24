@@ -193,7 +193,7 @@ export class GeminiNativeAdapter implements Adapter {
 
     // Real terminal signal — Gemini's finishReason, normalized. See
     // model-stop.ts; decide-outcome trusts it over the shape inference.
-    return { providerState, terminalReason, modelStop: classifyModelStop(providerStop), trace };
+    return { providerState, terminalReason, modelStop: classifyModelStop(providerStop, toolCallIds.length), trace };
   }
 
   async abort(reason?: unknown): Promise<void> {

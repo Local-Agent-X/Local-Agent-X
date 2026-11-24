@@ -71,4 +71,19 @@ describe("CodexAdapter leaves empty and cut-off turns to the turn loop", () => {
     expect(result.terminalReason).toBe("done");
     expect(result.modelStop).toBe("ended");
   });
+
+  // The Responses API marks every finished response "completed", one that ends
+  // in a function call too; the transport maps that to end_turn. Read as the
+  // model ending, decide-outcome closed the op after its first call (a GPT turn
+  // said "I'll read the brief", read it, and stopped, 2026-11-24).
+  it("a narrated tool call the API marked completed waits for its result", async () => {
+    const { result, stopReason } = await run([
+      { type: "text", delta: "I'll read the attached brief." },
+      { type: "tool_call", id: "c1", name: "read", arguments: '{"path":"BRIEF.md"}' },
+      { type: "done", stopReason: "end_turn" },
+    ]);
+    expect(stopReason).toBe("end_turn");
+    expect(result.terminalReason).toBeUndefined();
+    expect(result.modelStop).toBe("continue");
+  });
 });

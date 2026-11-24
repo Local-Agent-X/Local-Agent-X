@@ -61,7 +61,7 @@ export function isContinuableCut(result: StreamOnceResult): boolean {
 
 /** A reply the model ended after thinking, with no answer and no tool call. */
 export function isReasoningOnlyStop(result: StreamOnceResult): boolean {
-  return classifyModelStop(result.providerStop) === "ended" && unowned(result) &&
+  return classifyModelStop(result.providerStop, result.pendingToolCalls.length) === "ended" && unowned(result) &&
     result.assembledText.length === 0 && result.assembledThinking.length > 0;
 }
 

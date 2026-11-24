@@ -55,13 +55,22 @@ export function refusalError(stop: string | undefined | null): { code: string; m
   };
 }
 
-export function classifyModelStop(stop: string | undefined | null): ModelStop | undefined {
+/**
+ * `toolCalls` is how many tool calls the response carried. A response that
+ * called a tool is waiting for its result, whatever stop string came with it:
+ * the Responses API says "completed" (mapped to end_turn), Gemini says STOP,
+ * and some OpenAI-compatible servers say "stop" beside `tool_calls`. Read as
+ * "ended", decide-outcome closed the op the moment the model narrated one line
+ * and made its first call ("I'll read the brief." → read → nothing more,
+ * GPT on the Codex lane, 2026-11-24).
+ */
+export function classifyModelStop(stop: string | undefined | null, toolCalls: number): ModelStop | undefined {
   if (!stop) return undefined;
   switch (stop.toLowerCase()) {
     case "end_turn":
     case "stop":
     case "stop_sequence":
-      return "ended";
+      return toolCalls > 0 ? "continue" : "ended";
     default:
       // tool_use / tool_calls (wants the tool result), max_tokens / length
       // (truncated mid-thought), content_filter / refusal / abort / error, and

@@ -265,7 +265,7 @@ export class CodexAdapter implements Adapter {
 
     // Real terminal signal — the model's stop_reason, normalized. See
     // model-stop.ts; decide-outcome trusts it over the shape inference.
-    return { providerState, terminalReason, modelStop: classifyModelStop(providerStop), trace };
+    return { providerState, terminalReason, modelStop: classifyModelStop(providerStop, toolCallIds.length), trace };
   }
 
   async abort(reason?: unknown): Promise<void> {

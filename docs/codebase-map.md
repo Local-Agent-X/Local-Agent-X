@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2136 non-test source files · 69 oversized · 263 nearing the size cap.
+**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2136 non-test source files · 69 oversized · 264 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -31,7 +31,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/memory/` | 65 | 163 | XL | 3 |
 | `src/data-lineage/` | 61 | 12 | L |  |
 | `src/browser/` | 55 | 95 | XL | 5 |
-| `src/agency/` | 53 | 40 | XL |  |
+| `src/agency/` | 54 | 40 | XL |  |
 | `src/chat-ws/` | 49 | 23 | L |  |
 | `src/tool-policy/` | 48 | 22 | L |  |
 | `src/local-runtimes/` | 45 | 28 | XL |  |
@@ -373,6 +373,7 @@ job. Comments are free: never cut them to fit.
 - `src/server/bootstrap-services.ts` — 290+ code lines (cap 350)
 - `src/telegram-bridge/bridge.ts` — 290+ code lines (cap 350)
 - `src/tool-execution/sensitive-read-taint.ts` — 290+ code lines (cap 350)
+- `src/agency/worktree-lifecycle.ts` — 280+ code lines (cap 350)
 - `src/browser/runtime.ts` — 280+ code lines (cap 350)
 - `src/canonical-loop/scheduler.ts` — 280+ code lines (cap 350)
 - `src/context/system-prompt-builder.ts` — 280+ code lines (cap 350)

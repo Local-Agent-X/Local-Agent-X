@@ -49,11 +49,23 @@ vi.mock("../src/ops/session-bridge.js", () => ({
   broadcastToSession: vi.fn(),
 }));
 
+// The boot sweep that keeps a crashed chunk worktree; held open by a test to
+// prove the resume waits for it.
+let sweepCalls = 0;
+let releaseSweep: () => void = () => {};
+vi.mock("../src/agency/worktree-recovery.js", async (importOriginal) => ({
+  ...(await importOriginal<object>()),
+  sweepOrphanWorktreeJunctions: () => {
+    sweepCalls++;
+    return new Promise<void>((resolve) => { releaseSweep = resolve; });
+  },
+}));
+
 vi.mock("../src/auto-build/chunk-review/judgment-hook.js", () => ({
   defaultJudgmentHook: {},
 }));
 
-import { autoResumeOrchestrations, computeResumeWindow } from "../src/auto-build/orchestrator/resume.js";
+import { autoResumeOrchestrations, computeResumeWindow, resumeOrchestrationsAtBoot } from "../src/auto-build/orchestrator/resume.js";
 import { buildPlanResumeTool } from "../src/auto-build/orchestrator/tools.js";
 import * as state from "../src/auto-build/orchestrator/state.js";
 
@@ -110,6 +122,7 @@ beforeEach(() => {
   mockActive = false;
   mockRegistry = [];
   startSpy.mockClear();
+  sweepCalls = 0;
   unregisterSpy.mockClear();
 });
 
@@ -308,5 +321,31 @@ describe("autoResumeOrchestrations — deliberate halt reporting", () => {
     expect(report.details[0]).toMatchObject({ outcome: "waiting" });
     expect(state.read(dir)?.phase).toBe("halted");
     expect(unregisterSpy).not.toHaveBeenCalled();
+  });
+});
+
+// A crashed chunk's worktree is kept by the boot sweep, and only a kept one can
+// be claimed by the resumed build. The sweep ran on its own 5 s after boot,
+// after the resume had cut that chunk a fresh worktree: the work sat unclaimed.
+describe("resumeOrchestrationsAtBoot — the worktree sweep runs first", () => {
+  it("starts no build until the sweep has finished", async () => {
+    const dir = seedProject({ totalChunks: 10, startingChunkOverride: 1, maxChunks: null, resumeAtChunk: 7 });
+    mockRegistry = [{ projectDir: dir, opId: "op_seed", sessionId: "sess_seed", registeredAt: new Date().toISOString() }];
+
+    const pending = resumeOrchestrationsAtBoot();
+    await new Promise((r) => setTimeout(r, 10));
+    expect(sweepCalls).toBe(1);
+    expect(startSpy).not.toHaveBeenCalled();
+
+    releaseSweep();
+    const report = await pending;
+    expect(report.resumed).toBe(1);
+    expect(startSpy).toHaveBeenCalledWith(expect.objectContaining({ startingChunk: 7 }));
+  });
+
+  it("does not sweep when no build is registered", async () => {
+    const report = await resumeOrchestrationsAtBoot();
+    expect(sweepCalls).toBe(0);
+    expect(report.attempted).toBe(0);
   });
 });

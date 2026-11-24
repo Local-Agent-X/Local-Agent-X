@@ -98,6 +98,34 @@ export function worktreeRemoveArgs(path: string): string[] {
   return ["-c", "core.longpaths=true", "worktree", "remove", path, "--force"];
 }
 
+/**
+ * Clear git's "modified" mark from tracked files whose content is what HEAD
+ * holds. Git records a file's size at checkout and counts a size change as a
+ * modification without reading the file, so a file rewritten with the same
+ * content in other line endings (a generated map written with LF where an
+ * autocrlf checkout wrote CRLF) reads as modified in `git status`, though
+ * `git diff` shows nothing; `update-index --refresh` keeps the mark. `git add`
+ * of such a file stages nothing and records its new size. A file whose
+ * content really changed is left exactly as it is.
+ */
+export function reRecordUnchangedFiles(cwd: string): void {
+  const listed = git(["diff-index", "--name-only", "-z", "HEAD"], cwd).split("\0").filter(Boolean);
+  if (listed.length === 0) return;
+  const real = new Set(git(["diff", "--name-only", "-z", "--no-ext-diff", "HEAD"], cwd).split("\0").filter(Boolean));
+  const unchanged = listed.filter((f) => !real.has(f));
+  if (unchanged.length > 0) git(["add", "--", ...unchanged], cwd);
+}
+
+/** The branch a request named, or the `<branch>-N` createNamedWorktree cut in
+ *  its place when an unmerged leftover held the name (resolveStaleBranchName in
+ *  worktree-lifecycle.ts): a crashed run that had side-stepped to
+ *  `autobuild/c3-14` is the same run's worktree when it asks for `autobuild/c3`
+ *  again (claimRecoveredWorktree, which still requires the run id to match). */
+export function sameBranchFamily(kept: string, requested: string): boolean {
+  if (kept === requested) return true;
+  return kept.startsWith(`${requested}-`) && /^\d+$/.test(kept.slice(requested.length + 1));
+}
+
 /** The one place a string command is split into argv, for both runners. */
 function toArgv(args: string[] | string): string[] {
   return Array.isArray(args) ? args : args.split(/\s+/).filter(Boolean);

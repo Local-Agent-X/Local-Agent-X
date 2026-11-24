@@ -15,7 +15,8 @@ import { getHeadSha } from "../git-helpers.js";
 import { applyAdditiveSpecAmendment } from "../loop-effects.js";
 import { commitInWorktree } from "../../agency/worktree.js";
 import { buildChunkWithRetry } from "./chunk-attempt.js";
-import { pickUpSetAsideWork } from "./carry-over.js";
+import { pickUpSetAsideWork, withInterruptedWork } from "./carry-over.js";
+import { git } from "../../agency/worktree-core.js";
 import { safeGet } from "./types.js";
 import type { ParallelWavesContext, DispatchedChunk, BuiltChunk } from "./parallel-waves.js";
 
@@ -29,10 +30,15 @@ export async function buildChunkInWorktree(ctx: ParallelWavesContext, d: Dispatc
   const { opts, totalChunks, emit, outcomes } = ctx;
 
   // Taken before the carried work merges: the reviewers judge the chunk's whole
-  // change, the earlier run's work included.
-  const preSha = await safeGet(() => getHeadSha(d.worktreePath));
+  // change, the earlier run's work included. A tree a restart cut off is
+  // judged from where it was cut: its branch may already hold that attempt's
+  // commit.
+  const preSha = await safeGet(async () => d.interrupted
+    ? git(["merge-base", "HEAD", d.interrupted.baseBranch], d.worktreePath)
+    : getHeadSha(d.worktreePath));
   const preShaVal = preSha.ok ? preSha.value : "";
-  const carryOver = pickUpSetAsideWork({ projectDir: opts.projectDir, tree: d.worktreePath, chunk: d.chunk, totalChunks, emit });
+  const setAside = pickUpSetAsideWork({ projectDir: opts.projectDir, tree: d.worktreePath, chunk: d.chunk, totalChunks, emit });
+  const carryOver = d.interrupted ? withInterruptedWork(setAside, { chunk: d.chunk, totalChunks, emit }) : setAside;
 
   emit({
     type: "chunk-start", chunkNumber: d.chunk.number, totalChunks,

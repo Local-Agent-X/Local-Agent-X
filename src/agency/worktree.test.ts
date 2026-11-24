@@ -13,7 +13,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from "node:
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
-import { activeWorktrees, logger, MAX_CONCURRENT_WORKTREES, WORKTREE_BASE, worktreeRemoveArgs, worktreeSlotAvailable, type WorktreeEntry } from "./worktree-core.js";
+import { activeWorktrees, logger, MAX_CONCURRENT_WORKTREES, reRecordUnchangedFiles, WORKTREE_BASE, worktreeRemoveArgs, worktreeSlotAvailable, type WorktreeEntry } from "./worktree-core.js";
 import { createWorktree, createNamedWorktree, cleanupWorktree, mergeWorktree } from "./worktree-lifecycle.js";
 import { pruneMergedAgentBranches } from "./worktree-junctions.js";
 import { getMergeDeltaDiff, getMergeDeltaFiles, securitySensitiveChangedFiles, commitInWorktree } from "./worktree-state.js";
@@ -390,6 +390,60 @@ describe("concurrent-worktree cap", () => {
       process.chdir(prevCwd);
       for (const id of ids) { try { cleanupWorktree(id); } catch { /* best-effort */ } activeWorktrees.delete(id); }
       Object.assign(process.env, env);
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  // 2026-11-23: the auto-build re-gate's structure check rewrote
+  // docs/codebase-map.md on base with LF where the autocrlf checkout had
+  // written CRLF. Same content, new size: `git status` read it as modified and
+  // a reviewed chunk's merge was refused (label-check chunk 10).
+  it("a tracked file rewritten with its same content does not block the merge-back", () => {
+    const { repo, g } = initRepo();
+    const prevCwd = process.cwd();
+    const id = `restat-${Date.now().toString(36)}`;
+    try {
+      g(["config", "core.autocrlf", "true"]);
+      writeFileSync(join(repo, "map.md"), "a\nb\n");
+      g(["add", "map.md"]);
+      g(["commit", "-qm", "map"]);
+      rmSync(join(repo, "map.md"));
+      g(["checkout", "--", "map.md"]);
+      writeFileSync(join(repo, "map.md"), "a\nb\n");
+      expect(g(["status", "--porcelain", "--untracked-files=no"])).toContain("map.md");
+
+      process.chdir(repo);
+      const wt = createWorktree(id);
+      writeFileSync(join(wt!.path, "agent.txt"), "agent change");
+      commitInWorktree(id, "agent work");
+      expect(mergeWorktree(id).merged).toBe(true);
+      expect(existsSync(join(repo, "agent.txt"))).toBe(true);
+    } finally {
+      process.chdir(prevCwd);
+      try { cleanupWorktree(id); } catch { /* best-effort */ }
+      activeWorktrees.delete(id);
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  it("re-records only files whose content is unchanged, and stages nothing", () => {
+    const { repo, g } = initRepo();
+    try {
+      g(["config", "core.autocrlf", "true"]);
+      writeFileSync(join(repo, "map.md"), "a\nb\n");
+      writeFileSync(join(repo, "real.md"), "x\n");
+      g(["add", "."]);
+      g(["commit", "-qm", "two"]);
+      rmSync(join(repo, "map.md"));
+      g(["checkout", "--", "map.md"]);
+      writeFileSync(join(repo, "map.md"), "a\nb\n");
+      writeFileSync(join(repo, "real.md"), "y\n");
+
+      reRecordUnchangedFiles(repo);
+
+      expect(g(["status", "--porcelain", "--untracked-files=no"])).toBe("M real.md");
+      expect(g(["diff", "--cached", "--name-only"])).toBe("");
+    } finally {
       rmSync(repo, { recursive: true, force: true });
     }
   });

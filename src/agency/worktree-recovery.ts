@@ -10,7 +10,7 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { atomicWriteFileSync } from "../util/json-store.js";
 import {
   activeWorktrees, git, gitAsync, logger, MAX_PENDING_RECOVERED_WORKTREES,
-  pendingRecoveredWorktrees, type WorktreeEntry, WORKTREE_BASE, worktreeRemoveArgs, worktreeSlotAvailable,
+  pendingRecoveredWorktrees, sameBranchFamily, type WorktreeEntry, WORKTREE_BASE, worktreeRemoveArgs, worktreeSlotAvailable,
 } from "./worktree-core.js";
 import { unlinkAllShallowReparsePoints } from "./worktree-junctions.js";
 import { reapAppOwnWorktrees } from "./worktree-boot-sweep.js";
@@ -65,7 +65,7 @@ function canonical(path: string): string {
  * The one git call on this path that is still SYNCHRONOUS, deliberately.
  *
  * It backs worktreeOwnershipRecordPath, so every ownership read and write runs
- * through it — readRecord, writeRecord, ownsWorktree, acquireClaimLock. Making
+ * through it â€” readRecord, writeRecord, ownsWorktree, acquireClaimLock. Making
  * it async turns all of those async, and create/merge/cleanup in
  * worktree-lifecycle plus its six calling modules with them. Bigger than that
  * cost: it would insert yield points INSIDE the check-then-act window below.
@@ -349,7 +349,7 @@ export interface RecoveredWorktreeRequest {
 export function claimRecoveredWorktree(request: RecoveredWorktreeRequest): WorktreeEntry | null {
   if (!worktreeSlotAvailable()) return null;
   const entry = pendingRecoveredWorktrees.get(request.name);
-  if (!entry || entry.branch !== request.branch || entry.runId !== request.runId
+  if (!entry || !sameBranchFamily(entry.branch, request.branch) || entry.runId !== request.runId
       || entry.baseBranch !== request.baseBranch || !sameRepository(entry.repoRoot, request.repoRoot)
       || !ownsWorktree(entry)) return null;
   pendingRecoveredWorktrees.delete(request.name);
@@ -392,7 +392,17 @@ export async function reconcileWorktreeBase(
   return results;
 }
 
-export async function sweepOrphanWorktreeJunctions(): Promise<void> {
-  if (await isSelfEditLockHeldByLiveProcess()) return;
-  await reconcileWorktreeBase();
+let bootSweep: Promise<void> | undefined;
+
+/** The boot sweep, once per process: whoever asks first runs it, and a later
+ *  caller waits on the same run. A build resumed at boot asks before cutting
+ *  its chunk worktrees, so a crashed chunk's worktree is kept and claimable
+ *  (claimRecoveredWorktree) by then, not swept 5 s after the resume had already
+ *  cut a fresh one beside it. */
+export function sweepOrphanWorktreeJunctions(): Promise<void> {
+  bootSweep ??= (async () => {
+    if (await isSelfEditLockHeldByLiveProcess()) return;
+    await reconcileWorktreeBase();
+  })();
+  return bootSweep;
 }

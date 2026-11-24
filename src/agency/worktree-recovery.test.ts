@@ -123,9 +123,32 @@ describe("durable worktree recovery", () => {
 
     const resumed = createNamedWorktree(f.name, f.branch, f.repo, f.name);
 
-    expect(resumed).toEqual({ path: f.path, branch: f.branch, baseBranch: "main" });
+    expect(resumed).toEqual({ path: f.path, branch: f.branch, baseBranch: "main", recovered: true });
     expect(activeWorktrees.get(f.name)?.recovered).toBe(false);
     expect(existsSync(join(f.path, "unfinished.txt"))).toBe(true);
+  });
+
+  // A run that had side-stepped to `<branch>-N` (an unmerged leftover held the
+  // name) asks for `<branch>` again after a crash: its kept worktree is its own.
+  it("returns a worktree kept on a side-stepped branch to the same run asking for the plain name", async () => {
+    const f = fixture("autobuild-c3", false);
+    run(f.path, ["branch", "-m", `${f.branch}-14`]);
+    registerWorktreeOwnership(f.name, { ...f.entry, branch: `${f.branch}-14` }, "build:chunk:3");
+    writeFileSync(join(f.path, "unfinished.txt"), "resume me\n");
+    await reconcileWorktreeBase(f.base, () => false);
+
+    const resumed = createNamedWorktree(f.name, f.branch, f.repo, "build:chunk:3");
+
+    expect(resumed).toEqual({ path: f.path, branch: `${f.branch}-14`, baseBranch: "main", recovered: true });
+    expect(existsSync(join(f.path, "unfinished.txt"))).toBe(true);
+  });
+
+  it("does not hand a side-stepped worktree to a branch that only shares its prefix", () => {
+    const f = fixture("autobuild-c7", true, "build:chunk:7");
+    pendingRecoveredWorktrees.set(f.name, { ...f.entry, branch: `${f.branch}0-2` });
+    expect(claimRecoveredWorktree({ name: f.name, branch: f.branch, runId: "build:chunk:7", repoRoot: f.repo, baseBranch: "main" })).toBeNull();
+    pendingRecoveredWorktrees.set(f.name, { ...f.entry, branch: `${f.branch}-x` });
+    expect(claimRecoveredWorktree({ name: f.name, branch: f.branch, runId: "build:chunk:7", repoRoot: f.repo, baseBranch: "main" })).toBeNull();
   });
 
   it("recovers a clean branch when it contains commits not on the base", async () => {

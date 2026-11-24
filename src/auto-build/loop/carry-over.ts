@@ -70,6 +70,31 @@ export function carryOverBrief(carry: CarryOver, merged: boolean): string {
   return work + found;
 }
 
+/** The opening of the worker's brief when its tree is the one a restart cut
+ *  off mid-chunk (a crash, or LAX quit): the boot sweep kept it and the
+ *  resumed build claimed it back (parallel-waves.ts, worktree-recovery.ts). */
+export const INTERRUPTED_WORK_BRIEF =
+  "LAX restarted while an earlier attempt was building this chunk, and that attempt's work is already in your tree: " +
+  "the files it wrote (the last ones may be half-written) and any commits on this branch. Read what is there first " +
+  "(git status, git diff, git log) and finish the chunk from it; do not start over. It may already be complete: then " +
+  "check it against the chunk's done-when, run its checks, and stop.";
+
+/** A chunk resuming in its interrupted tree: the restart note first, then
+ *  what a set-aside carries, if the chunk was also set aside before. */
+export function withInterruptedWork(
+  carried: { brief: string; findings: string[] } | undefined,
+  a: { chunk: ParsedChunk; totalChunks: number; emit: EmitFn },
+): { brief: string; findings: string[] } {
+  a.emit({
+    type: "review-result", chunkNumber: a.chunk.number, totalChunks: a.totalChunks,
+    message: `Chunk ${a.chunk.number} picks up the work its last attempt left in its worktree when LAX restarted.`,
+  });
+  return {
+    brief: carried ? `${INTERRUPTED_WORK_BRIEF}\n\n${carried.brief}` : INTERRUPTED_WORK_BRIEF,
+    findings: carried?.findings ?? [],
+  };
+}
+
 /**
  * Start a chunk an earlier run set aside from its kept work and findings:
  * merge the kept branch into `tree` (the chunk's worktree, or the project

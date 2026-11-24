@@ -236,6 +236,36 @@ export async function gitStatusPorcelain(cwd: string): Promise<string> {
   return r.stdout;
 }
 
+/** Tracked files git reads as changed from HEAD: those whose content changed,
+ *  and those only rewritten (a new size, the same content), which `git status`
+ *  reports as modified all the same (worktree-core.ts reRecordUnchangedFiles). */
+async function changedTrackedFiles(cwd: string): Promise<string[]> {
+  const r = await gitRun(["diff-index", "--name-only", "-z", "HEAD"], { cwd, timeoutMs: SWEEP_TIMEOUT_MS });
+  if (r.exitCode !== 0) throw new Error(gitFailText("git diff-index", r, SWEEP_TIMEOUT_MS));
+  return r.stdout.split("\0").filter(Boolean);
+}
+
+/**
+ * Run a check on the base project tree, then put back every tracked file the
+ * check rewrote, so the base is as the last merge left it. A verification run
+ * on base (the merged re-gate, phase-gate scoring) runs the project's own
+ * build, and a build may regenerate tracked files: the structure kit rewrites
+ * docs/codebase-map.md on every run. Left there, the base read as having
+ * uncommitted changes and the next reviewed chunk's merge was refused
+ * (label-check chunk 10, 2026-11-23). A file already changed before the check
+ * is left alone: it is not the check's to undo.
+ */
+export async function leavingTrackedFilesAsFound<T>(cwd: string, run: () => Promise<T>): Promise<{ value: T; restored: string[] }> {
+  const before = await changedTrackedFiles(cwd).catch(() => null);
+  const value = await run();
+  if (!before) return { value, restored: [] };
+  const restored = (await changedTrackedFiles(cwd).catch(() => [] as string[])).filter((f) => !before.includes(f));
+  if (restored.length === 0) return { value, restored };
+  const r = await gitRun(["checkout", "--", ...restored], { cwd, timeoutMs: SWEEP_TIMEOUT_MS });
+  if (r.exitCode !== 0) throw new Error(gitFailText("git checkout (restore what the check rewrote)", r, SWEEP_TIMEOUT_MS));
+  return { value, restored };
+}
+
 export async function gitAdd(cwd: string, pathSpec: string): Promise<void> {
   const r = await gitRun(["add", "--", pathSpec], { cwd, timeoutMs: SWEEP_TIMEOUT_MS });
   if (r.exitCode !== 0) throw new Error(gitFailText(`git add ${pathSpec}`, r, SWEEP_TIMEOUT_MS));

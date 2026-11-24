@@ -29,6 +29,7 @@ import { parsePlanFile } from "../plan-parser.js";
 import { DEFAULT_CHUNK_REVIEW } from "../chunk-review/default-review.js";
 import { broadcastToSession } from "../../ops/session-bridge.js";
 import { isFeatureEnabled } from "../tool.js";
+import { sweepOrphanWorktreeJunctions } from "../../agency/worktree-recovery.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("auto-build.orchestrator.resume");
@@ -45,6 +46,26 @@ export interface ResumeReport {
   /** Already live in this process — a duplicate resume was correctly skipped. */
   skipped: number;
   details: Array<{ projectDir: string; outcome: ResumeOutcome; reason: string }>;
+}
+
+/**
+ * The boot resume. The worktree sweep runs first when there is a build to
+ * resume: it keeps a crashed chunk's worktree, with the work its worker had
+ * written, for the resumed build to claim (claimRecoveredWorktree, the chunk's
+ * runId in parallel-waves.ts). Started on its own 5 s after boot, it ran after
+ * the resume had already cut that chunk a fresh worktree, and the work sat
+ * unclaimed. Never in a self_edit bind probe, which boots from inside the
+ * worktree folder the sweep walks (index.ts).
+ */
+export async function resumeOrchestrationsAtBoot(): Promise<ResumeReport> {
+  if (listAll().length > 0 && process.env.LAX_SELF_EDIT_PROBE !== "1") {
+    try {
+      await sweepOrphanWorktreeJunctions();
+    } catch (e) {
+      logger.warn(`[resume] worktree sweep before resume failed: ${(e as Error).message}`);
+    }
+  }
+  return autoResumeOrchestrations();
 }
 
 /**

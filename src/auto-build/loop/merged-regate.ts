@@ -29,6 +29,7 @@
  */
 
 import { runBuildExecGate } from "../chunk-review/gate-build-exec.js";
+import { leavingTrackedFilesAsFound } from "../git-helpers.js";
 import { installIfBehindLockfile } from "../../agency/worktree-deps.js";
 import { footprintEscapes } from "../conflict-graph.js";
 import { appendHalt } from "../failure-recovery.js";
@@ -96,7 +97,14 @@ export async function reGateMergedTree(input: ReGateInput): Promise<ReGateResult
 
   let finding: Awaited<ReturnType<typeof runBuildExecGate>> = null;
   try {
-    finding = await runBuildExecGate({ projectDir, signal });
+    const run = await leavingTrackedFilesAsFound(projectDir, () => runBuildExecGate({ projectDir, signal }));
+    finding = run.value;
+    if (run.restored.length > 0) {
+      emit({
+        type: "review-result", chunkNumber: lastChunkNumber, totalChunks,
+        message: `The re-gate's build rewrote ${run.restored.length} tracked file(s) on base (${run.restored.slice(0, 5).join(", ")}); put back as committed, so the next merge finds base clean.`,
+      });
+    }
   } catch (err) {
     // Fail OPEN but LOUD. A gate INFRA crash (a thrown exception — NOT a normal
     // build failure, which returns a finding and correctly halts above) must not

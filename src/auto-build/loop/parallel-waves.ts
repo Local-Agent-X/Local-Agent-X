@@ -96,6 +96,9 @@ export interface DispatchedChunk {
   worktreePath: string;
   /** Unique 0-based index within the concurrently-dispatched batch (S5 ports). */
   workerIndex: number;
+  /** Set when the worktree is the one a crashed run left with this chunk's
+   *  work in it (claimed back by createNamedWorktree): the base it was cut from. */
+  interrupted?: { baseBranch: string };
 }
 
 /** The result of building one dispatched chunk in its worktree. */
@@ -204,6 +207,16 @@ export async function runParallelWaves(input: ParallelWavesContext): Promise<Loo
   return { status: "complete", lastChunk, chunksCommitted, haltReason: "", outcomes, events };
 }
 
+/** The run id of a chunk's worktree: the project's build of that chunk, the
+ *  same across restarts, so a build resumed after a crash claims the chunk's
+ *  kept worktree with the work its worker had written (worktree-recovery.ts).
+ *  Keyed by the orchestrator's op id, which every resume renews, the claim
+ *  never matched and the chunk started over beside its own work. One build
+ *  runs per project at a time (orchestrator/manager.ts). */
+export function chunkWorktreeRunId(projectDir: string, chunk: number): string {
+  return `autobuild:${projectDir}:chunk:${chunk}`;
+}
+
 /** Build one batch (≤ maxConcurrentChunks disjoint chunks) concurrently, then
  *  merge them back SERIALLY. Enforces rules 1 + 2 (rule 3 re-gate is per-wave). */
 async function runBatch(ctx: RunContext, batch: ParsedChunk[], chunksCommittedIn: number): Promise<StepResult> {
@@ -221,8 +234,7 @@ async function runBatch(ctx: RunContext, batch: ParsedChunk[], chunksCommittedIn
     const branch = `autobuild/c${chunk.number}`;
     // Anchor the worktree to the USER's project repo (opts.projectDir), NOT the
     // LAX server's process.cwd() — a cwd-derived root would cut from LAX's repo.
-    const buildRunId = `${opts.parentOpId ?? opts.parentSessionId ?? opts.planPath}:chunk:${chunk.number}`;
-    const wt = createNamedWorktree(name, branch, opts.projectDir, buildRunId);
+    const wt = createNamedWorktree(name, branch, opts.projectDir, chunkWorktreeRunId(opts.projectDir, chunk.number));
     if (!wt) {
       emit({
         type: "review-result", chunkNumber: chunk.number, totalChunks,
@@ -235,7 +247,10 @@ async function runBatch(ctx: RunContext, batch: ParsedChunk[], chunksCommittedIn
     // an unmerged `autobuild/c<N>` leftover from a previous run is preserved and
     // this run side-steps to `autobuild/c<N>-2`. Git ops go by `name`, but every
     // "git checkout <branch>" recovery hint reads this field.
-    dispatched.push({ chunk, name, branch: wt.branch, worktreePath: wt.path, workerIndex: workerIndex++ });
+    dispatched.push({
+      chunk, name, branch: wt.branch, worktreePath: wt.path, workerIndex: workerIndex++,
+      ...(wt.recovered ? { interrupted: { baseBranch: wt.baseBranch } } : {}),
+    });
     // Git gave the worktree the tracked files; the project's ignored config
     // (an env file, a service config) comes across here (worktree-local-files.ts).
     const local = copyLocalFiles(opts.projectDir, wt.path);

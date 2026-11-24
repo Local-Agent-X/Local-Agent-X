@@ -21,6 +21,7 @@
 import type { ParsedChunk } from "../plan-parser.js";
 import { isPhaseGatePause, type ChunkReviewOutcome } from "../chunk-review/index.js";
 import { attemptPhaseGateScoring } from "../loop-phase-gate.js";
+import { leavingTrackedFilesAsFound } from "../git-helpers.js";
 import { appendHalt, clearOwedPhaseGate, owedPhaseGates, recordOwedPhaseGate } from "../failure-recovery.js";
 import type { EmitFn, LoopEvent, LoopOptions, LoopResult } from "./types.js";
 
@@ -78,7 +79,9 @@ export function createPhasePauseTracker(input: PhasePauseInput): PhasePauseTrack
         // The gate is reached now, whatever it says: scored, or left to a person.
         clearOwedPhaseGate(projectDir, phase);
 
-        const rec = await attemptPhaseGateScoring(scope.opts, chunk, scope.emit, scope.totalChunks);
+        // Scored on the merged base: what its run rewrites there is put back
+        // (git-helpers.ts leavingTrackedFilesAsFound), or the next merge is refused.
+        const { value: rec } = await leavingTrackedFilesAsFound(projectDir, () => attemptPhaseGateScoring(scope.opts, chunk, scope.emit, scope.totalChunks));
         if (rec.kind === "recovered") {
           const entry = scope.outcomes.find(o => o.chunkNumber === chunk.number);
           if (entry) entry.action = "proceed";

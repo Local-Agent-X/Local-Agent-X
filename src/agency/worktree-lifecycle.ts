@@ -7,7 +7,7 @@
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 
-import { activeWorktrees, git, commitWithFallbackIdentity, logger, MAX_CONCURRENT_WORKTREES, WORKTREE_BASE, worktreeRemoveArgs, worktreeSlotAvailable } from "./worktree-core.js";
+import { activeWorktrees, git, commitWithFallbackIdentity, logger, MAX_CONCURRENT_WORKTREES, reRecordUnchangedFiles, WORKTREE_BASE, worktreeRemoveArgs, worktreeSlotAvailable } from "./worktree-core.js";
 import { hasVanishedWorktreeAt, linkDirectoryInto, listCheckedOutBranches, unlinkSharedJunctions } from "./worktree-junctions.js";
 import { claimRecoveredWorktree, forgetWorktreeOwnership, ownsWorktree, registerWorktreeOwnership } from "./worktree-recovery.js";
 import { findMergeOverlaps, noteMerged, overlapSummary, type MergeOverlap } from "./merge-overlap.js";
@@ -148,6 +148,9 @@ export function mergeWorktree(
         // it), so a stray untracked file must not block: a leftover
         // .builtref at the repo root stopped every in-app update ("uncommitted
         // changes") on 2026-11-04.
+        // A file rewritten with its same content is not a change: it refused a
+        // reviewed chunk's merge (label-check, 2026-11-23; worktree-core.ts).
+        reRecordUnchangedFiles(wt.repoRoot);
         if (git(["status", "--porcelain", "--untracked-files=no"], wt.repoRoot)) {
           throw new Error("parent working tree has uncommitted changes on the base branch");
         }
@@ -372,7 +375,7 @@ export function createNamedWorktree(
   branchName: string,
   repoRoot?: string,
   runId = name,
-): { path: string; branch: string; baseBranch: string } | null {
+): { path: string; branch: string; baseBranch: string; recovered?: true } | null {
   let resolvedRoot: string;
   let baseBranch: string;
   try {
@@ -388,8 +391,10 @@ export function createNamedWorktree(
   const recovered = claimRecoveredWorktree({
     name, branch: branchName, runId, repoRoot: resolvedRoot, baseBranch,
   });
+  // `recovered`: the tree holds a crashed run's work (worktree-recovery.ts),
+  // which the caller may need to say to whoever works in it.
   if (recovered) {
-    return { path: recovered.path, branch: recovered.branch, baseBranch: recovered.baseBranch };
+    return { path: recovered.path, branch: recovered.branch, baseBranch: recovered.baseBranch, recovered: true };
   }
   if (!worktreeSlotAvailable()) {
     logger.warn(`[worktree] cap reached (${activeWorktrees.size}/${MAX_CONCURRENT_WORKTREES}) — refusing new worktree for ${name}`);

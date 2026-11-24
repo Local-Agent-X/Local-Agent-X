@@ -181,23 +181,17 @@ export interface ImportAppendix {
 }
 
 /**
- * Build the appended-imports section for `mainPath` (already read; its content
- * is passed in so the file is never read twice). Depth 1 only: imports of
- * imports are not followed. `injectionExempt` is the read tool's own carve-out
- * (agent-generated code under workspace/apps) so both bodies screen identically.
+ * Which of `content`'s imports to read: relative code imports that resolve to
+ * a file, each once, never the main file, at most MAX_IMPORT_FILES. Everything
+ * else is named in `externals` (package imports) or `skipped` (with why).
+ * Nothing is read here and nothing is checked against confinement yet.
  */
-export function buildImportAppendix(
-  mainPath: string,
-  content: string,
-  opts: { sessionId?: string; injectionExempt?: (filePath: string) => boolean } = {},
-): ImportAppendix {
+function importsToRead(mainPath: string, content: string): { resolved: string[]; externals: string[]; skipped: string[]; truncated: boolean } {
   const fromDir = dirname(mainPath);
-  const mainKey = normalizeKey(resolve(mainPath));
-  const root = importConfinementRoot(mainPath, opts.sessionId);
   const externals: string[] = [];
   const skipped: string[] = [];
   const resolved: string[] = [];
-  const seenFiles = new Set<string>([mainKey]);
+  const seenFiles = new Set<string>([normalizeKey(resolve(mainPath))]);
   let truncated = false;
 
   for (const spec of extractImportSpecifiers(content)) {
@@ -224,6 +218,23 @@ export function buildImportAppendix(
     }
     resolved.push(target);
   }
+  return { resolved, externals, skipped, truncated };
+}
+
+/**
+ * Build the appended-imports section for `mainPath` (already read; its content
+ * is passed in so the file is never read twice). Depth 1 only: imports of
+ * imports are not followed. `injectionExempt` is the read tool's own carve-out
+ * (agent-generated code under workspace/apps) so both bodies screen identically.
+ */
+export function buildImportAppendix(
+  mainPath: string,
+  content: string,
+  opts: { sessionId?: string; injectionExempt?: (filePath: string) => boolean } = {},
+): ImportAppendix {
+  const root = importConfinementRoot(mainPath, opts.sessionId);
+  const { resolved, externals, skipped, truncated: overFileCap } = importsToRead(mainPath, content);
+  let truncated = overFileCap;
 
   const sections: string[] = [];
   let lineBudget = IMPORT_TOTAL_LINE_CAP;

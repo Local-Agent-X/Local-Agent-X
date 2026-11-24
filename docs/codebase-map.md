@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2136 non-test source files · 67 oversized · 266 nearing the size cap.
+**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2136 non-test source files · 66 oversized · 267 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -21,7 +21,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 191 | 32 | XL | 1 |
 | `src/security/` | 167 | 65 | XL | 2 |
-| `src/tools/` | 142 | 258 | XL | 9 |
+| `src/tools/` | 142 | 258 | XL | 8 |
 | `src/tool-execution/` | 107 | 91 | XL | 2 |
 | `src/workspace/` | 93 | 3 | M |  |
 | `src/canonical-loop/` | 92 | 297 | XL | 6 |
@@ -309,7 +309,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/tools/http-request.ts#tool.execute`
 - `src/tools/image-tools/generate-video.ts#generateViaXaiVideo`
 - `src/tools/project-tools.ts#createProjectTools`
-- `src/tools/read-imports.ts#buildImportAppendix`
 - `src/tools/secret-tools.ts#createSecretTools`
 - `src/tools/shell-tool.ts#bashTool.execute`
 - `src/voice/voice-session/model-init.ts#initializeVoiceStack`
@@ -520,6 +519,7 @@ job. Comments are free: never cut them to fit.
 - `src/tools/image-tools/generate-image.ts#generateImageTool.execute` — 70+ own code lines (cap 100)
 - `src/tools/issue-tools/agent-whoami.ts#agentWhoAmITool.execute` — 70+ own code lines (cap 100)
 - `src/tools/pdf-tools.ts#pdfCreate.execute` — 70+ own code lines (cap 100)
+- `src/tools/read-imports.ts#buildImportAppendix` — 70+ own code lines (cap 100)
 - `src/voice/tts-model-fetch.ts#doDownload` — 70+ own code lines (cap 100)
 - `src/agency/agent-workspace.ts#provisionFolder` — 60+ own code lines (cap 100)
 - `src/agency/worktree-lifecycle.ts#mergeWorktree` — 60+ own code lines (cap 100)

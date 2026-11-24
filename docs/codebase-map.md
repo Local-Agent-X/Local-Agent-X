@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2136 non-test source files · 66 oversized · 267 nearing the size cap.
+**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2136 non-test source files · 65 oversized · 268 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -70,7 +70,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/calendar/` | 10 | 10 | M |  |
 | `src/codex-client/` | 10 | 7 | M |  |
 | `src/agent-guards/` | 9 | 13 | L |  |
-| `src/plugin-system/` | 9 | 10 | L | 1 |
+| `src/plugin-system/` | 9 | 10 | L |  |
 | `src/screen-stream/` | 9 | 12 | L |  |
 | `src/auto-build/` | 8 | 65 | XL | 1 |
 | `src/autopilot/` | 8 | 14 | L | 1 |
@@ -275,7 +275,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/ops/tools/op-submit-async.ts#opSubmitAsyncTool.execute`
 - `src/plugin-system.ts`
 - `src/plugin-system.ts#PluginManager.loadPluginAtPath`
-- `src/plugin-system/tool-schema.ts#validateSchemaNode`
 - `src/providers/adapters/openai-http.ts#OpenAIHttpAdapter.stream`
 - `src/routes/agents/templates.ts#handleAgentTemplateRoutes`
 - `src/routes/apps.ts#handleAppRoutes`
@@ -444,6 +443,7 @@ job. Comments are free: never cut them to fit.
 - `src/memory/index-search/search.ts#searchInIndex` — 80+ own code lines (cap 100)
 - `src/memory/tools/forget.ts#memory_forget.execute` — 80+ own code lines (cap 100)
 - `src/ops/tools/op-status.ts#opStatusTool.execute` — 80+ own code lines (cap 100)
+- `src/plugin-system/tool-schema.ts#validateSchemaNode` — 80+ own code lines (cap 100)
 - `src/providers/adapters/ollama-native.ts#OllamaNativeAdapter.stream` — 80+ own code lines (cap 100)
 - `src/providers/adapters/openai-http.ts#call:callback` — 80+ own code lines (cap 100)
 - `src/routes/agents/projects.ts#handleProjectRoutes` — 80+ own code lines (cap 100)

@@ -51,6 +51,37 @@ function valueMatchesType(value: unknown, type: unknown, nullable: unknown): boo
   return typeof value === type;
 }
 
+/** The size and range keywords: each a sane number, on a schema type it applies
+ *  to, with no minimum above its maximum. */
+function validateBounds(value: Record<string, unknown>, path: string): void {
+  for (const key of ["minItems", "maxItems", "minLength", "maxLength"] as const) {
+    if (value[key] !== undefined) assertNonNegativeInteger(value[key], `${path}.${key}`);
+  }
+  if ((value.minItems !== undefined || value.maxItems !== undefined) && value.type !== "array") {
+    throw new Error(`${path}.minItems and maxItems require an array schema`);
+  }
+  if ((value.minLength !== undefined || value.maxLength !== undefined) && value.type !== "string") {
+    throw new Error(`${path}.minLength and maxLength require a string schema`);
+  }
+  for (const key of ["minimum", "maximum"] as const) {
+    if (value[key] !== undefined && (typeof value[key] !== "number" || !Number.isFinite(value[key]))) {
+      throw new Error(`${path}.${key} must be a finite number`);
+    }
+  }
+  if ((value.minimum !== undefined || value.maximum !== undefined) && value.type !== "number" && value.type !== "integer") {
+    throw new Error(`${path}.minimum and maximum require a numeric schema`);
+  }
+  if (typeof value.minItems === "number" && typeof value.maxItems === "number" && value.minItems > value.maxItems) {
+    throw new Error(`${path}.minItems must not exceed maxItems`);
+  }
+  if (typeof value.minLength === "number" && typeof value.maxLength === "number" && value.minLength > value.maxLength) {
+    throw new Error(`${path}.minLength must not exceed maxLength`);
+  }
+  if (typeof value.minimum === "number" && typeof value.maximum === "number" && value.minimum > value.maximum) {
+    throw new Error(`${path}.minimum must not exceed maximum`);
+  }
+}
+
 function validateSchemaNode(
   value: unknown,
   path: string,
@@ -120,32 +151,7 @@ function validateSchemaNode(
     throw new Error(`${path}.items requires an array schema`);
   }
 
-  for (const key of ["minItems", "maxItems", "minLength", "maxLength"] as const) {
-    if (value[key] !== undefined) assertNonNegativeInteger(value[key], `${path}.${key}`);
-  }
-  if ((value.minItems !== undefined || value.maxItems !== undefined) && value.type !== "array") {
-    throw new Error(`${path}.minItems and maxItems require an array schema`);
-  }
-  if ((value.minLength !== undefined || value.maxLength !== undefined) && value.type !== "string") {
-    throw new Error(`${path}.minLength and maxLength require a string schema`);
-  }
-  for (const key of ["minimum", "maximum"] as const) {
-    if (value[key] !== undefined && (typeof value[key] !== "number" || !Number.isFinite(value[key]))) {
-      throw new Error(`${path}.${key} must be a finite number`);
-    }
-  }
-  if ((value.minimum !== undefined || value.maximum !== undefined) && value.type !== "number" && value.type !== "integer") {
-    throw new Error(`${path}.minimum and maximum require a numeric schema`);
-  }
-  if (typeof value.minItems === "number" && typeof value.maxItems === "number" && value.minItems > value.maxItems) {
-    throw new Error(`${path}.minItems must not exceed maxItems`);
-  }
-  if (typeof value.minLength === "number" && typeof value.maxLength === "number" && value.minLength > value.maxLength) {
-    throw new Error(`${path}.minLength must not exceed maxLength`);
-  }
-  if (typeof value.minimum === "number" && typeof value.maximum === "number" && value.minimum > value.maximum) {
-    throw new Error(`${path}.minimum must not exceed maximum`);
-  }
+  validateBounds(value, path);
 
   if (value.enum !== undefined) {
     if (!Array.isArray(value.enum) || value.enum.length === 0) throw new Error(`${path}.enum must be a non-empty array`);

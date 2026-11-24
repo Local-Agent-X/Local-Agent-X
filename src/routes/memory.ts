@@ -305,24 +305,16 @@ export const handleMemoryRoutes: RouteHandler = async (method, url, req, res, ct
     try { body = JSON.parse(await readBody(req)); } catch { json(400, { error: "Invalid JSON body" }); return true; }
     const path = body.path as string;
     if (!path) { json(400, { error: "path required" }); return true; }
-    // Confine the ingest root: an adversarial caller could point ingest at
-    // ~/.ssh, ~/.aws, or the app's own data dir to pull secrets into searchable
-    // memory. Canonicalize first (so a symlink can't alias a sensitive target
-    // past the check), then refuse sensitive or app-internal roots. We deny
-    // sensitive locations rather than allowlist the workspace because importing
-    // a chat export legitimately reads a user-chosen dir (~/Downloads, a USB
-    // drive) outside it. The dir is scanned non-recursively (ingest.ts), so the
-    // root is the only path that gets read.
-    const { realpathDeep, matchesSensitivePath } = await import("../security/layer/index.js");
-    const { getLaxDir } = await import("../lax-data-dir.js");
-    let realRoot: string;
-    try { realRoot = realpathDeep(path); } catch { json(400, { error: "path not accessible" }); return true; }
-    const probe = realRoot.endsWith(sep) ? realRoot : realRoot + sep;
-    const laxDir = realpathDeep(getLaxDir());
-    if (matchesSensitivePath(probe) || probe.startsWith(laxDir + sep) || realRoot === laxDir) {
-      json(403, { error: "Refusing to ingest a sensitive or app-internal directory" });
+    // The folder is refused when it holds credentials or is the app's own data
+    // dir, by whatever name the path gives it (memory-ingest-root.ts).
+    const { resolveIngestRoot } = await import("./memory-ingest-root.js");
+    const ingest = resolveIngestRoot(path);
+    if ("refused" in ingest) {
+      if (ingest.refused === "not-accessible") json(400, { error: "path not accessible" });
+      else json(403, { error: "Refusing to ingest a sensitive or app-internal directory" });
       return true;
     }
+    const realRoot = ingest.root;
     try {
       const { ingestConversations } = await import("../conversation/ingest.js");
       const result = await ingestConversations(ctx.memoryIndex, realRoot);

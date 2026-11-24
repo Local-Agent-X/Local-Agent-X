@@ -10,6 +10,10 @@ export interface FieldAgent extends AgencyAgent {
   templateId?: string;
   /** Captured at spawn time to avoid the singleton race on Handler.currentSessionId */
   parentSessionId?: string;
+  /** The run that started this one (an auto-build chunk worker's orchestrator):
+   *  the Agents panel nests the card under it, from the live agent-spawn frame
+   *  or, after a page load, from the workers snapshot. */
+  parentAgentId?: string;
   /** Borrowed/synthetic runtime session id this run's tools record taint under
    *  (the `opts.sessionId` passed to invokeDefinition — e.g. `agent-op-<id>` for
    *  operations-executor phases). Undefined when the run uses its auto-minted
@@ -42,6 +46,8 @@ export interface FieldAgentStatus {
   templateId?: string;
   /** The conversation that spawned the run, when one did. */
   parentSessionId?: string;
+  /** The run that started this one, when one did. */
+  parentAgentId?: string;
 }
 
 export interface SpawnConfig {

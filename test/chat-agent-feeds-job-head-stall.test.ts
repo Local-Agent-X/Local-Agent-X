@@ -20,10 +20,11 @@ function load() {
     "document",
     "var agentFeedsData = {}; var agentFeedsOpen = false; var agentFeedsAutoOpen = false; var setInterval = function() {};\n"
       + sources.join("\n")
-      + "\nreturn { addAgentFeed, updateAgentFeed, render: _renderAgentFeedsList, syncJobHeads, data: agentFeedsData };",
+      + "\nreturn { addAgentFeed, updateAgentFeed, reconcileAgentFeeds, render: _renderAgentFeedsList, syncJobHeads, data: agentFeedsData };",
   );
   return factory(document) as {
     addAgentFeed: (a: Rec) => void;
+    reconcileAgentFeeds: (workers: Rec[]) => void;
     updateAgentFeed: (id: string, u: Rec) => void;
     render: () => void;
     syncJobHeads: (now: number) => void;
@@ -96,6 +97,25 @@ describe("a job header's stall badge", () => {
     api.render();
     api.updateAgentFeed("field-agent-9", { totalTokens: 21_600 });
     api.syncJobHeads(Date.now());
+    expect(badge()).toBeNull();
+  });
+
+  // After a page load the panel is drawn from the workers snapshot alone. The
+  // chunk worker came without its parent, became its own card, and the
+  // orchestrator's card read STALLED by itself while the worker ran.
+  it("after a reload, nests the chunk worker under its orchestrator and keeps the header live", () => {
+    const api = load();
+    const started = new Date(Date.now() - 600_000).toISOString();
+    api.reconcileAgentFeeds([
+      { opId: "orch", sessionId: "s1", task: "Build orchestrator: label-check", status: "running", opType: "orchestrator", startedAt: started },
+      { opId: "field-agent-11", sessionId: "s1", task: "Chunk 13/13: Pharmacist card", status: "running", opType: "agent_spawn", parentOpId: "orch", startedAt: started },
+    ]);
+    api.data.orch.lastActivityMs = Date.now() - STALL - 60_000;
+    api.render();
+    api.syncJobHeads(Date.now());
+
+    expect(document.querySelectorAll(".job").length).toBe(1);
+    expect(document.querySelector('.job [data-agent-row="field-agent-11"]')).not.toBeNull();
     expect(badge()).toBeNull();
   });
 

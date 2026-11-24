@@ -241,6 +241,8 @@ function reconcileAgentFeeds(workers) {
       type: w.opType, parentOpId: w.parentOpId, totalTokens: w.totalTokens,
       startedAt: w.startedAt ? Date.parse(w.startedAt) : undefined,
       output: w.lastLine ? w.lastLine + '\n' : '', seenAt: Date.now(),
+      // Listed as running just now: a signal, so its job's stall clock starts here.
+      lastActivityMs: Date.now(),
     };
     _setAgentStatus(agentFeedsData[w.opId], w.status === 'running' ? 'working' : w.status);
   }

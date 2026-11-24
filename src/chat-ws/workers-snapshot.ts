@@ -21,8 +21,11 @@ export interface WorkersSnapshotSources {
   canonical: () => LiveWorker[];
   /** Autopilot runs keep their own registry (autopilot/loop.ts). */
   autopilot: () => { id: string; topic?: string }[];
-  /** Named agents still running (agency/handler.ts). */
-  agents: () => { id: string; name: string; task?: string; sessionId?: string; startedAt: number }[];
+  /** Named agents still running (agency/handler.ts). `parentAgentId` is the run
+   *  that started one (a chunk worker's orchestrator): without it a reloaded
+   *  page drew every chunk worker as its own card, and its orchestrator read
+   *  STALLED while the worker ran (label-check, 2026-11-23). */
+  agents: () => { id: string; name: string; task?: string; sessionId?: string; startedAt: number; parentAgentId?: string }[];
   /** Build orchestrators running in this process (auto-build/orchestrator/
    *  manager.ts). Neither a canonical op nor a named agent, so a snapshot
    *  without them ended every running build's card: label-check's orchestrator
@@ -62,6 +65,7 @@ export function buildWorkersSnapshot(sources: WorkersSnapshotSources): WorkersSn
     workers.push({
       opId: agent.id, sessionId: agent.sessionId ?? "", task: agent.task || agent.name, status: "running",
       opType: "agent_spawn", startedAt: new Date(agent.startedAt).toISOString(),
+      ...(agent.parentAgentId ? { parentOpId: agent.parentAgentId } : {}),
     });
   }
   for (const orch of sources.orchestrators?.() ?? []) {
@@ -90,7 +94,7 @@ async function defaultSources(): Promise<WorkersSnapshotSources> {
     autopilot: () => listActiveAutopilotOps().map((op) => ({ id: op.id, topic: op.autopilot?.topic })),
     agents: () => (Handler.getInstance().getAgentStatus() as FieldAgentStatus[])
       .filter((a) => a.status !== "succeeded" && a.status !== "failed")
-      .map((a) => ({ id: a.id, name: a.name, task: a.currentTask, sessionId: a.parentSessionId, startedAt: a.startedAt })),
+      .map((a) => ({ id: a.id, name: a.name, task: a.currentTask, sessionId: a.parentSessionId, startedAt: a.startedAt, parentAgentId: a.parentAgentId })),
   };
 }
 

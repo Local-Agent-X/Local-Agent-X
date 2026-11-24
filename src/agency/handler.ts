@@ -117,6 +117,7 @@ export class Handler {
       messageQueue: [],
       templateId: config.templateId,
       parentSessionId: config.parentSessionId || "",
+      ...(config.parentAgentId ? { parentAgentId: config.parentAgentId } : {}),
       runSessionId: config.runSessionId,
       toolCalls: 0,
       abortController: ac,

@@ -25,5 +25,6 @@ export function buildAgentStatus(agent: FieldAgent): FieldAgentStatus {
     tokensUsed: agent.tokensUsed,
     templateId: agent.templateId,
     ...(agent.parentSessionId ? { parentSessionId: agent.parentSessionId } : {}),
+    ...(agent.parentAgentId ? { parentAgentId: agent.parentAgentId } : {}),
   };
 }

@@ -75,6 +75,20 @@ describe("workers contract with the phone", () => {
     });
   });
 
+  // After a page load the panel is drawn from this list alone: a chunk worker
+  // without its orchestrator as parent was its own card, and the orchestrator
+  // read STALLED while the worker ran (label-check, 2026-11-23).
+  it("lists a named agent under the run that started it", () => {
+    const frame = buildWorkersSnapshot({
+      canonical: () => [],
+      autopilot: () => [],
+      agents: () => [{ id: "field-agent-11-x", name: "Chunk 13/13", task: "Chunk 13/13: Pharmacist card", sessionId: "s1", startedAt: Date.UTC(2026, 10, 23), parentAgentId: "op_orch_1" }],
+      orchestrators: () => [{ opId: "op_orch_1", projectDir: "C:/apps/label-check", sessionId: "s1", startedAt: Date.UTC(2026, 10, 23) }],
+    });
+    const parsed = parseWorkersSnapshot(JSON.parse(JSON.stringify(frame)));
+    expect(parsed?.workers.find((w) => w.opId === "field-agent-11-x")).toMatchObject({ parentOpId: "op_orch_1", opType: "agent_spawn" });
+  });
+
   it("a worker's row says what it is changing and who else is in the same files, and the phone reads it", () => {
     const frame = buildWorkersSnapshot({
       canonical: () => [{ opId: "op_1", sessionId: "s1", task: "Build", status: "running" }, { opId: "op_2", sessionId: "s1", task: "Docs", status: "running" }],

@@ -43,6 +43,16 @@ describe("Handler progress (real tool-call counter)", () => {
     expect(progressOf(agentId)).toBe(100);
   });
 
+  // The workers snapshot nests a chunk worker under its orchestrator by this
+  // (chat-ws/workers-snapshot.ts); it was passed at spawn and never kept.
+  it("keeps the run that started the agent in its status", () => {
+    const h = Handler.getInstance();
+    const { agentId } = h.attachExternalRun({ name: "t", role: "coder", task: "do x", parentAgentId: "op_orch_1" });
+    expect((h.getAgentStatus(agentId) as FieldAgentStatus).parentAgentId).toBe("op_orch_1");
+    const { agentId: root } = h.attachExternalRun({ name: "u", role: "coder", task: "do y" });
+    expect((h.getAgentStatus(root) as FieldAgentStatus).parentAgentId).toBeUndefined();
+  });
+
   it("noteAgentActivity is a no-op for an unknown agent", () => {
     expect(() => Handler.getInstance().noteAgentActivity("nope")).not.toThrow();
   });

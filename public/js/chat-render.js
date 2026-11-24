@@ -132,6 +132,7 @@ function renderMessage(msg, ctx) {
     }
     _renderAssistantToolArtifacts(lastBody || node, {
       toolEvents: msg._tools || [],
+      blocks: hasBlocks ? msg._blocks : null,
       chips: msg._chips || [],
       progressByTool: msg._progressByTool || {},
       approvals: msg._approvals || [],

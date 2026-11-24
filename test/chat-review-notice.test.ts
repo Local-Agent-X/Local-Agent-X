@@ -35,11 +35,11 @@ function loadRenderer(): (n: Notice) => HTMLElement {
 describe("the review notice on a turn", () => {
 	beforeEach(() => { document.body.innerHTML = ""; });
 
-	it("says it shipped, and lists every finding with its location and fix", () => {
+	it("says it was published, and lists every finding with its location and fix", () => {
 		const el = loadRenderer()({ id: "rn-push1", kind: "review", status: "AMBER", summary: event.summary, findings: event.findings });
 		expect(el.classList.contains("review-notice-amber")).toBe(true);
-		expect(el.textContent).toContain("Pre-publish review: AMBER — 2 findings");
-		expect(el.textContent).toContain("It shipped");
+		expect(el.textContent).toContain("Published. Its pre-publish review rated it AMBER with 2 findings");
+		expect(el.textContent).not.toContain("do not ship");
 		expect(el.querySelectorAll(".review-notice-finding")).toHaveLength(2);
 		expect(el.textContent).toContain("apps/mobile/login.tsx:140");
 		expect(el.textContent).toContain("Fix: Exempt staff by a flag.");

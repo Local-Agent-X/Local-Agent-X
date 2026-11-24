@@ -303,8 +303,10 @@ export const resolvePhase: Phase = async (ctx) => {
   ctx.approvalContext = buildApprovalContext(ctx.toolMap.get(tc.name), tc.name, ctx.args);
   // The event carries the model's arguments: the server's stamps are this
   // process's channel to the tool (a sink function among them), not plain
-  // JSON a relay or a persisted turn can carry.
-  onEvent?.({ type: "tool_start", toolName: tc.name, toolCallId: tc.id, args: withoutInternalArgs(ctx.args), riskLevel: ctx.riskLevel, context: ctx.approvalContext, requiresApproval: ctx.riskLevel === "high" });
+  // JSON a relay or a persisted turn can carry. `startedAt` lets the chat show
+  // how long a call has been running, from when it started, not from when a
+  // tab (opened or reloaded later) first heard of it.
+  onEvent?.({ type: "tool_start", toolName: tc.name, toolCallId: tc.id, args: withoutInternalArgs(ctx.args), riskLevel: ctx.riskLevel, context: ctx.approvalContext, requiresApproval: ctx.riskLevel === "high", startedAt: Date.now() });
 
   // Dry-run short-circuit. tool_start has fired so observers see the
   // chosen tool, but we never dispatch — no policy eval, no approval

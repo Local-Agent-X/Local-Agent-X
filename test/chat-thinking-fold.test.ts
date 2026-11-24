@@ -19,7 +19,9 @@ beforeAll(() => {
 	g.md = (s: string) => `<p>${s}</p>`;
 	g.esc = (s: string) => String(s).replace(/</g, "&lt;");
 	g.mdPreviewMode = true;
-	const src = readFileSync(join(here, "../public/js/chat-render-artifacts.js"), "utf8");
+	// renderTimelineBlocks asks chat-turn-flow.js which blocks start a new stretch.
+	const src = readFileSync(join(here, "../public/js/chat-turn-flow.js"), "utf8")
+		+ ";\n" + readFileSync(join(here, "../public/js/chat-render-artifacts.js"), "utf8");
 	render = (new Function(`${src}; return renderTimelineBlocks;`)() as typeof render);
 });
 
@@ -45,7 +47,9 @@ describe("thinking stretches fold into one row", () => {
 		const body = draw([think("b1", "a"), think("b2", "b"), text("b3", "Here is the plan."), think("b4", "c")]);
 		const rows = [...body.querySelectorAll(".reasoning-block")];
 		expect(rows.map((r) => r.querySelector(".reasoning-summary")?.textContent)).toEqual(["Thinking · 2 steps", "Thinking"]);
-		expect(body.children[1].className).toBe("block-text");
+		// The tool slots between stretches (chat-turn-flow.js) are not content.
+		const drawn = [...body.children].filter((c) => !c.classList.contains("tool-segment"));
+		expect(drawn[1].className).toBe("block-text");
 	});
 
 	it("an empty text block between stretches does not split them", () => {

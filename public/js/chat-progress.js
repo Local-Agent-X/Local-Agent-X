@@ -50,6 +50,17 @@ function wrapUpOf(toolEvents) {
   return w && typeof w.recap === 'string' && w.recap ? w : null;
 }
 
+// The end of a reply: its step list, the recap that closes it, and the tasks
+// it offered. Drawn under everything else the turn did (approvals, notices),
+// where the reader ends up.
+function renderReplyClose(bodyEl, toolEvents) {
+  const steps = planOf(toolEvents);
+  if (steps) bodyEl.appendChild(renderPlanList(steps));
+  const wrap = wrapUpOf(toolEvents);
+  if (wrap) bodyEl.appendChild(renderWrapUp(wrap));
+  for (const offer of sessionOffersOf(toolEvents)) bodyEl.appendChild(renderSessionOffer(offer));
+}
+
 const _STEP_MARK = { completed: '✓', in_progress: '●', failed: '✕', pending: '○' };
 
 function renderPlanList(steps) {

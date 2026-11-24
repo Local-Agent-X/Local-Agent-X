@@ -227,8 +227,11 @@ function renderReviewNotice(n) {
   el.className = 'review-notice review-notice-' + status;
   el.setAttribute('data-id', n.id || '');
   const findings = Array.isArray(n.findings) ? n.findings : [];
-  const head = 'Pre-publish review: ' + esc(n.status || '') + ' — ' + findings.length + ' finding'
-    + (findings.length === 1 ? '' : 's') + (n.summary ? ' in ' + esc(n.summary) : '') + '. It shipped; worth a look:';
+  // It already shipped: a record of what the review said, not a block. The
+  // status is a word in the sentence; a red box after an "Approved" row read
+  // as "refused" (2026-11-23).
+  const head = 'Published. Its pre-publish review rated it ' + esc(n.status || '') + ' with ' + findings.length + ' finding'
+    + (findings.length === 1 ? '' : 's') + (n.summary ? ' in ' + esc(n.summary) : '') + '. Worth a look:';
   const items = findings.map(f =>
     '<li class="review-notice-finding review-notice-' + esc(f.severity || '') + '">'
     + '<span class="review-notice-severity">' + esc(f.severity || '') + '</span> '

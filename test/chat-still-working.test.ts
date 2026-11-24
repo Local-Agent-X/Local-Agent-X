@@ -29,7 +29,9 @@ beforeEach(() => {
 	g.thinkingHTML = () => '<div class="thinking">…</div>';
 	Object.assign(g, load<object>("chat-tool-cards.js", "{ appendToolCardGrouped, attachMediaPreview, toolSummary }"));
 	Object.assign(g, load<object>("chat-declassify-action.js", "{ isKernelBlockNotice, renderKernelBlockNotice }"));
-	Object.assign(g, load<object>("chat-file-changes.js", "{ fileChangesOf, renderFileChangesCard }"));
+	Object.assign(g, load<object>("chat-file-changes.js", "{ fileChangesOf, renderFileChangesCard, changesNoticeCovers }"));
+	Object.assign(g, load<object>("chat-progress.js", "{ isProgressTool, renderReplyClose }"));
+	Object.assign(g, load<object>("chat-turn-flow.js", "{ isSegmentBreak, toolSegmentsOf, renderTurnNow, formatElapsed }"));
 	artifacts = load<Artifacts>("chat-render-artifacts.js", "{ _buildLiveAssistantInto }");
 });
 

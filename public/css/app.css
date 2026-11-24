@@ -461,6 +461,28 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
 .delete-notice.in-activity.restored{border-left-color:var(--ok)}
 .delete-notice.in-activity .delete-notice-undo{padding:1px 8px;font-size:.72rem}
 .still-working{margin:2px 0 8px;font-size:.74rem;font-style:italic;color:var(--muted)}
+/* A running reply's last line: the call in flight and how long it has run
+   (chat-turn-flow.js). */
+.turn-now{display:flex;align-items:center;gap:8px;margin:10px 0 2px;font-size:.78rem;color:var(--muted)}
+.turn-now::before{content:'';width:8px;height:8px;border-radius:50%;background:var(--accent);animation:turn-now-pulse 1.4s ease-in-out infinite;flex:none}
+.turn-now-what{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.turn-now-elapsed{font-variant-numeric:tabular-nums;flex:none}
+@keyframes turn-now-pulse{0%,100%{opacity:.35}50%{opacity:1}}
+@media (prefers-reduced-motion: reduce){.turn-now::before{animation:none}}
+/* Where a stretch's tool calls go between the text around them; empty until
+   a call lands. Empty slots must not break the spacing between two texts. */
+.tool-segment:empty{display:none}
+.tool-segment:empty+.block-text{margin-top:8px}
+/* The earlier steps of a multi-step thinking row, folded under the newest. */
+.reasoning-earlier>summary{cursor:pointer;font-size:.72rem;color:var(--muted);list-style:none;margin-bottom:6px}
+.reasoning-earlier>summary::before{content:'▸ '}
+.reasoning-earlier[open]>summary::before{content:'▾ '}
+.reasoning-earlier+.reasoning-step{margin-top:8px;padding-top:8px;border-top:1px dashed var(--border)}
+/* A changes notice folded into the "Edited N files" card: just its Undo, in
+   the card's head (the card already lists the files). */
+.changes-notice.in-file-card{display:inline-flex;margin:0 0 0 8px;padding:0;border:0;background:transparent}
+.changes-notice.in-file-card:not(.restored) .delete-notice-text{display:none}
+.changes-notice.in-file-card .delete-notice-undo{padding:2px 8px;font-size:.72rem;font-weight:400}
 .delete-notice-undo{padding:4px 12px;border-radius:6px;border:1px solid var(--border);background:var(--surface);color:var(--text);cursor:pointer;font-size:.8rem;font-weight:600}
 .delete-notice-undo:hover:not(:disabled){border-color:var(--ok);color:var(--ok)}
 .delete-notice-undo:disabled{opacity:.5;cursor:default}
@@ -471,9 +493,11 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
 .learning-notice,.handoff-notice{display:flex;align-items:center;flex-wrap:wrap;gap:8px 12px;margin:8px 0;padding:8px 12px;border-radius:8px;border:1px solid var(--accent);background:color-mix(in srgb, var(--accent) 8%, var(--surface));color:var(--text);font-size:.82rem}
 .learning-notice.settled,.handoff-notice.settled{border-color:var(--border);background:var(--surface)}
 .learning-notice-text,.handoff-notice-text{flex:1 1 240px}
-.review-notice{margin:8px 0;padding:8px 12px;border-radius:8px;border:1px solid var(--info);background:color-mix(in srgb, var(--info) 8%, var(--surface));color:var(--text);font-size:.82rem}
-.review-notice-amber{border-color:var(--warn);background:color-mix(in srgb, var(--warn) 8%, var(--surface))}
-.review-notice-red{border-color:var(--danger);background:color-mix(in srgb, var(--danger) 8%, var(--surface))}
+/* A shipped publish's review: a record, not a block, so a neutral box with the
+   verdict's colour on its edge only (a red box after "Approved" read as refused). */
+.review-notice{margin:8px 0;padding:8px 12px;border-radius:8px;border:1px solid var(--border);border-left:3px solid var(--info);background:var(--surface);color:var(--text);font-size:.82rem}
+.review-notice-amber{border-left-color:var(--warn)}
+.review-notice-red{border-left-color:var(--danger)}
 .review-notice-list{margin:6px 0 0;padding-left:18px}
 .review-notice-finding{margin:4px 0}
 .review-notice-severity{font-weight:600;text-transform:uppercase;font-size:.72rem}

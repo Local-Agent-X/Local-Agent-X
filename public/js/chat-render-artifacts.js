@@ -18,9 +18,10 @@
 //   - appendToolCardGrouped, appendToolChip, toolSummary,
 //     updateToolProgress, attachMediaPreview   (chat-tool-cards.js)
 //   - renderApproval                           (chat-render-approvals.js)
-//   - fileChangesOf, renderFileChangesCard     (chat-file-changes.js)
+//   - fileChangesOf, renderFileChangesCard, changesNoticeCovers (chat-file-changes.js)
 //   - cardsOf, renderChatCards                 (chat-cards.js)
-//   - isProgressTool, planOf, wrapUpOf, renderPlanList, renderWrapUp, sessionOffersOf, renderSessionOffer (chat-progress.js)
+//   - isProgressTool, renderReplyClose         (chat-progress.js)
+//   - isSegmentBreak, toolSegmentsOf, renderTurnNow (chat-turn-flow.js)
 
 // Build the in-flight assistant bubble from ChatStreamStore state into `parent`.
 // `parent` is either the live #messages container (renderMessages full-render)
@@ -50,12 +51,22 @@ function _makeReasoningDetails(text, open, key) {
   details.querySelector('.reasoning-summary').textContent =
     stretches.length > 1 ? 'Thinking · ' + stretches.length + ' steps' : 'Thinking';
   const body = details.querySelector('.reasoning-body');
+  const step = (stretch) => {
+    const el = document.createElement('div');
+    el.className = 'reasoning-step';
+    el.textContent = stretch;
+    return el;
+  };
   if (stretches.length === 1) body.textContent = stretches[0];
-  else for (const stretch of stretches) {
-    const step = document.createElement('div');
-    step.className = 'reasoning-step';
-    step.textContent = stretch;
-    body.appendChild(step);
+  else {
+    // Open, the run shows its newest step; the earlier ones (often the same
+    // thought restated as the agent retried) fold behind one line.
+    const earlier = document.createElement('details');
+    earlier.className = 'reasoning-earlier';
+    earlier.innerHTML = '<summary></summary>';
+    earlier.querySelector('summary').textContent = (stretches.length - 1) + ' earlier step' + (stretches.length === 2 ? '' : 's');
+    for (const stretch of stretches.slice(0, -1)) earlier.appendChild(step(stretch));
+    body.append(earlier, step(stretches[stretches.length - 1]));
   }
   details.querySelector('.reasoning-summary').addEventListener('click', () => {
     // The default toggle applies after the click handler returns; read the
@@ -82,12 +93,15 @@ function prependReasoningBlock(bodyEl, reasoning, open) {
 // draws in the activity group) fold into ONE row, "Thinking · N steps": a long
 // turn otherwise stacked a Thinking line per step. Injects render as inline
 // user bubbles at the point the user sent them; the agent's next block
-// continues beneath. Returns true when anything was rendered.
+// continues beneath. Each stretch between two of those ends with an empty
+// .tool-segment slot, where _renderAssistantToolArtifacts draws the tool calls
+// that ran there (chat-turn-flow.js). Returns true when anything was rendered.
 function renderTimelineBlocks(bodyEl, blocks, opts) {
   if (!bodyEl || !Array.isArray(blocks) || blocks.length === 0) return false;
   const live = !!(opts && opts.live);
   let rendered = false;
   let run = null; // { stretches, key, endsAt }
+  let seg = 0;
   const flush = () => {
     if (!run) return;
     // Open only while it is the part still streaming. Keyed by its first
@@ -96,6 +110,13 @@ function renderTimelineBlocks(bodyEl, blocks, opts) {
     bodyEl.appendChild(_makeReasoningDetails(run.stretches, open, run.key));
     run = null;
     rendered = true;
+  };
+  const closeSegment = () => {
+    flush();
+    const slot = document.createElement('div');
+    slot.className = 'tool-segment';
+    slot.dataset.seg = String(seg++);
+    bodyEl.appendChild(slot);
   };
   for (let i = 0; i < blocks.length; i++) {
     const b = blocks[i];
@@ -111,7 +132,7 @@ function renderTimelineBlocks(bodyEl, blocks, opts) {
       continue;
     }
     if (b.type === 'text' && !(b.text || '').trim()) continue;
-    flush();
+    if (isSegmentBreak(b)) closeSegment();
     if (b.type === 'text') {
       const div = document.createElement('div');
       div.className = 'block-text';
@@ -132,7 +153,7 @@ function renderTimelineBlocks(bodyEl, blocks, opts) {
       rendered = true;
     }
   }
-  flush();
+  closeSegment();
   return rendered;
 }
 
@@ -213,6 +234,7 @@ function _buildLiveAssistantInto(parent, store) {
   const toolEvents = store ? (store.toolEvents || []) : [];
   _renderAssistantToolArtifacts(bodyEl || div, {
     toolEvents,
+    blocks,
     chips: store ? (store.chips || []) : [],
     progressByTool: store ? (store.progressByTool || {}) : {},
     approvals: store ? (store.approvals || []) : [],
@@ -225,18 +247,22 @@ function _buildLiveAssistantInto(parent, store) {
   // needed) and finalizeLiveMessageInPlace's `.msg-body .thinking` sweep
   // removes it on the terminal paint. No double-append: contentIdle requires
   // non-empty content, and the pre-delta dots above require empty content.
-  if (bodyEl && contentIdle) bodyEl.insertAdjacentHTML('beforeend', thinkingHTML());
+  // A call in flight says so instead, with how long it has run
+  // (chat-turn-flow.js): the dots alone read as frozen over a 9-minute call.
+  const nowLine = bodyEl ? renderTurnNow(toolEvents.filter(t => !isProgressTool(t.name))) : null;
+  if (nowLine) bodyEl.appendChild(nowLine);
+  else if (bodyEl && contentIdle) bodyEl.insertAdjacentHTML('beforeend', thinkingHTML());
   return div;
 }
 
-// Roll tool status up onto the collapsed "Agent activity" header so the user
-// can tell what happened WITHOUT expanding the group — the whole point of the
-// outcome indicator. Recomputed on every render from the event list, so it
-// stays correct as the turn streams in and after a reload.
-function _updateActivityOutcome(bodyEl, toolEvents, stopNote) {
-  const group = bodyEl.querySelector('.activity-group');
+// Roll one group's tool status up onto its collapsed "Agent activity" header
+// so the user can tell what happened WITHOUT expanding it — the whole point of
+// the outcome indicator. Recomputed on every render from the group's own calls
+// (`starts`, and the `ends` paired with them), so it stays correct as the turn
+// streams in and after a reload. `live`: this is the newest group of a turn
+// still running, the only one whose last call can still be in flight.
+function _updateActivityOutcome(group, starts, ends, live) {
   if (!group) return;
-  const ends = toolEvents.filter(t => t.type === 'end');
   const failed = ends.filter(t => t.status === 'error' || t.status === 'timeout').length;
   const blocked = ends.filter(t => t.status === 'blocked').length;
   const label = group.querySelector('.activity-label');
@@ -261,7 +287,7 @@ function _updateActivityOutcome(bodyEl, toolEvents, stopNote) {
   // A stopped turn is over even though its last tool call never reported an
   // end — the user pulled the plug mid-bash. Without that, the one case where
   // starts outnumber ends forever would spin the tick forever.
-  _updateActivityLatest(group, toolEvents, ends, !stopNote);
+  _updateActivityLatest(group, starts, ends, live);
 }
 
 // The header's always-visible status line: what the agent is doing right now,
@@ -275,8 +301,7 @@ function _updateActivityOutcome(bodyEl, toolEvents, stopNote) {
 // froze mid-notch on every finished and every reloaded turn, which read as
 // work still in flight. Every value is a pure function of the replayed events,
 // so the per-WS-event bubble rebuild repaints them identically.
-function _updateActivityLatest(group, toolEvents, ends, live) {
-  const starts = toolEvents.filter(t => t.type === 'start');
+function _updateActivityLatest(group, starts, ends, live) {
   const newest = starts[starts.length - 1];
   if (!newest) return;
   const running = live && starts.length > ends.length;
@@ -304,7 +329,8 @@ function _updateActivityLatest(group, toolEvents, ends, live) {
 // let go without a card. That is a line of agent activity with an Undo, so it
 // joins the activity group (outside it only when the turn ran no other tool).
 function _renderRowNotices(bodyEl, notices) {
-  const activityBody = bodyEl.querySelector('.activity-group .activity-group-body');
+  const bodies = bodyEl.querySelectorAll('.activity-group .activity-group-body');
+  const activityBody = bodies[bodies.length - 1] || null;
   for (const n of notices) {
     try {
       if (n.kind === 'learning') bodyEl.appendChild(renderLearningNotice(n));
@@ -331,6 +357,7 @@ function _renderAssistantToolArtifacts(bodyEl, data) {
   // everything read off it skip their two bookkeeping tools (chat-progress.js).
   const allEvents = data.toolEvents || [];
   const toolEvents = allEvents.filter((t) => !isProgressTool(t.name));
+  const foldedNotices = new Set(); // drawn inside a card instead of on their own
   if (allEvents.length > 0) {
     try {
       // Pair each start with a DISTINCT end. A plain name-match via .find()
@@ -349,14 +376,17 @@ function _renderAssistantToolArtifacts(bodyEl, data) {
         endsByName.get(t.name).push(t);
       }
       const nameCursor = new Map();
+      const usedEnds = new Set();
       const startOrdinal = new Map();
+      const segments = toolSegmentsOf(data.blocks);
+      const byGroup = new Map(); // activity group → { starts, ends }
       for (const te of toolEvents) {
         if (te.type !== 'start') continue;
         // Route through appendToolCardGrouped so the swap matches the
         // per-event paint path: cards land inside the collapsible
-        // "Agent activity" group, consecutive same-tool calls collapse
-        // into a single ×N card.
-        const card = appendToolCardGrouped(bodyEl, te.name, te.args || '', te.riskLevel);
+        // "Agent activity" group of the stretch they ran in, consecutive
+        // same-tool calls collapse into a single ×N card.
+        const card = appendToolCardGrouped(_segmentSlot(bodyEl, segments.of(te)), te.name, te.args || '', te.riskLevel);
         // Stable identity for preserveOpenState / restoreActivityScroll in
         // chat-render-live.js. Index matching breaks when a `stream replace`
         // event restructures the rebuilt bubble mid-turn; keying off the
@@ -376,45 +406,29 @@ function _renderAssistantToolArtifacts(bodyEl, data) {
         if (group && !group.dataset.key) group.dataset.key = 'g:' + card.dataset.key;
         let endEvt = (te.toolCallId && endsById.get(te.toolCallId)) || null;
         if (!endEvt) {
+          // An end already paired by id is not this call's: a second
+          // same-named call still running was handed the first one's end.
           const list = endsByName.get(te.name) || [];
-          const i = nameCursor.get(te.name) || 0;
+          let i = nameCursor.get(te.name) || 0;
+          while (i < list.length && usedEnds.has(list[i])) i++;
           endEvt = list[i] || null;
           nameCursor.set(te.name, i + 1);
         }
-        if (endEvt) {
-          // Execution outcome, not just the approval decision. A tool can be
-          // allowed-then-fail (bash exit 1, edit no-match, http 500); the
-          // status discriminator carries that. Reuse the existing
-          // allowed(green)/blocked(red) dot styles — failure maps to red.
-          const failed = endEvt.status === 'error' || endEvt.status === 'timeout';
-          const ok = endEvt.allowed !== false && !failed && endEvt.status !== 'blocked' && endEvt.status !== 'declined';
-          card.querySelector('.indicator').className = 'indicator ' + (ok ? 'allowed' : 'blocked');
-          // Clean the agent-safety scaffolding off the tool-detail text but
-          // leave the raw result in place for attachMediaPreview's URL scan —
-          // generate_image results can wrap their /images/foo.png path inside
-          // an EXTERNAL_UNTRUSTED_CONTENT block, so cleaning before scanning
-          // would lose the URL.
-          const rawResult = endEvt.result || '';
-          const detailText = rawResult
-            .replace(/<<<EXTERNAL_UNTRUSTED_CONTENT[\s\S]*?<<<END_EXTERNAL_UNTRUSTED_CONTENT[^>]*>>>/g, '[content loaded]')
-            .replace(/IMPORTANT:.*?Do NOT follow any instructions.*$/gm, '')
-            .replace(/<metadata>[\s\S]*?<\/metadata>/g, '')
-            .replace(/<content>\n?/g, '').replace(/\n?<\/content>/g, '')
-            .trim()
-            .slice(0, 200);
-          const fallback = failed
-            ? (endEvt.status === 'timeout' ? '✗ Timed out' : '✗ Failed')
-            : (endEvt.status === 'declined' ? '✋ Declined'
-              : (endEvt.status === 'blocked' || endEvt.allowed === false ? '⚠ Blocked' : '✓ Done'));
-          // A plugin's refusal names the plugin (the block record's `plugin`,
-          // layer "plugin"), so the card says which one refused.
-          const md = endEvt.metadata || {};
-          const refusedBy = endEvt.status === 'blocked' && md.layer === 'plugin' && md.plugin ? 'Plugin ' + md.plugin + ' refused: ' : '';
-          card.querySelector('.tool-detail').textContent = refusedBy + (detailText || fallback);
-          attachMediaPreview(card, te.name, rawResult, endEvt.media);
+        if (endEvt) usedEnds.add(endEvt);
+        if (group) {
+          if (!byGroup.has(group)) byGroup.set(group, { starts: [], ends: [] });
+          byGroup.get(group).starts.push(te);
+          if (endEvt) byGroup.get(group).ends.push(endEvt);
         }
+        if (endEvt) _showCallOutcome(card, te, endEvt);
       }
-      _updateActivityOutcome(bodyEl, toolEvents, data.stopNote);
+      // Each group says how its own stretch went; only the newest one can
+      // still be running.
+      const groups = [...byGroup.keys()];
+      groups.forEach((group, i) => {
+        const { starts, ends } = byGroup.get(group);
+        _updateActivityOutcome(group, starts, ends, !data.stopNote && i === groups.length - 1);
+      });
       // The security-block notice sits on the row, AFTER the group and outside
       // it: a kernel quarantine's only control used to be a chip inside the
       // collapsed group, on the card of the blocked call. One notice per row,
@@ -425,20 +439,12 @@ function _renderAssistantToolArtifacts(bodyEl, data) {
         try { bodyEl.appendChild(renderKernelBlockNotice(blockEnd, (window.activeChat && activeChat.id) || '')); }
         catch (e) { console.error('[chat] block notice render error:', e); }
       }
-      // The files the turn wrote, outside the collapsed group like the notice:
-      // the one thing a coding reply most needs to show.
-      const changed = fileChangesOf(toolEvents);
-      if (changed.length > 0) bodyEl.appendChild(renderFileChangesCard(changed));
+      const folded = _drawFileChanges(bodyEl, toolEvents, data.notices || []);
+      if (folded) foldedNotices.add(folded);
       // The cards the turn showed (show_card), outside the group too: they are
       // the answer, not a step toward it.
       const cards = cardsOf(toolEvents);
       if (cards.length > 0) bodyEl.appendChild(renderChatCards(cards));
-      // The step list, then the recap that closes the reply (chat-progress.js).
-      const steps = planOf(allEvents);
-      if (steps) bodyEl.appendChild(renderPlanList(steps));
-      const wrap = wrapUpOf(allEvents);
-      if (wrap) bodyEl.appendChild(renderWrapUp(wrap));
-      for (const offer of sessionOffersOf(allEvents)) bodyEl.appendChild(renderSessionOffer(offer));
     } catch (toolRenderErr) { console.error('[chat] tool card render error:', toolRenderErr); }
   }
   // Chips attach to the last tool card matching the chip's emit time. The
@@ -470,7 +476,7 @@ function _renderAssistantToolArtifacts(bodyEl, data) {
     try { bodyEl.appendChild(renderApproval(ap)); }
     catch (approvalRenderErr) { console.error('[chat] approval card render error:', approvalRenderErr); }
   }
-  _renderRowNotices(bodyEl, data.notices || []);
+  _renderRowNotices(bodyEl, (data.notices || []).filter(n => !foldedNotices.has(n)));
   const stopNote = data.stopNote;
   if (stopNote) {
     const note = document.createElement('div');
@@ -479,4 +485,72 @@ function _renderAssistantToolArtifacts(bodyEl, data) {
     note.title = stopNote.debug || stopNote.firedBy || '';
     bodyEl.appendChild(note);
   }
+  // Last: the step list and the recap that closes the reply (chat-progress.js),
+  // under everything the turn did, where the reader ends up.
+  if (allEvents.length > 0) {
+    try { renderReplyClose(bodyEl, allEvents); }
+    catch (closeErr) { console.error('[chat] step list render error:', closeErr); }
+  }
+}
+
+// An ended call's result on its card: the dot, and the result text (or what
+// happened, when there is none).
+function _showCallOutcome(card, te, endEvt) {
+  // Execution outcome, not just the approval decision. A tool can be
+  // allowed-then-fail (bash exit 1, edit no-match, http 500); the
+  // status discriminator carries that. Reuse the existing
+  // allowed(green)/blocked(red) dot styles — failure maps to red.
+  const failed = endEvt.status === 'error' || endEvt.status === 'timeout';
+  const ok = endEvt.allowed !== false && !failed && endEvt.status !== 'blocked' && endEvt.status !== 'declined';
+  card.querySelector('.indicator').className = 'indicator ' + (ok ? 'allowed' : 'blocked');
+  // Clean the agent-safety scaffolding off the tool-detail text but
+  // leave the raw result in place for attachMediaPreview's URL scan —
+  // generate_image results can wrap their /images/foo.png path inside
+  // an EXTERNAL_UNTRUSTED_CONTENT block, so cleaning before scanning
+  // would lose the URL.
+  const rawResult = endEvt.result || '';
+  const detailText = rawResult
+    .replace(/<<<EXTERNAL_UNTRUSTED_CONTENT[\s\S]*?<<<END_EXTERNAL_UNTRUSTED_CONTENT[^>]*>>>/g, '[content loaded]')
+    .replace(/IMPORTANT:.*?Do NOT follow any instructions.*$/gm, '')
+    .replace(/<metadata>[\s\S]*?<\/metadata>/g, '')
+    .replace(/<content>\n?/g, '').replace(/\n?<\/content>/g, '')
+    .trim()
+    .slice(0, 200);
+  const fallback = failed
+    ? (endEvt.status === 'timeout' ? '✗ Timed out' : '✗ Failed')
+    : (endEvt.status === 'declined' ? '✋ Declined'
+      : (endEvt.status === 'blocked' || endEvt.allowed === false ? '⚠ Blocked' : '✓ Done'));
+  // A plugin's refusal names the plugin (the block record's `plugin`,
+  // layer "plugin"), so the card says which one refused.
+  const md = endEvt.metadata || {};
+  const refusedBy = endEvt.status === 'blocked' && md.layer === 'plugin' && md.plugin ? 'Plugin ' + md.plugin + ' refused: ' : '';
+  card.querySelector('.tool-detail').textContent = refusedBy + (detailText || fallback);
+  attachMediaPreview(card, te.name, rawResult, endEvt.media);
+}
+
+// The files the turn wrote, outside the collapsed groups like the notices:
+// the one thing a coding reply most needs to show. The request's "Changed N
+// files … Undo" notice, when it names the same files, is that card's Undo
+// rather than a second list of them. Returns that notice (drawn here, not on
+// its own), or null.
+function _drawFileChanges(bodyEl, toolEvents, notices) {
+  const changed = fileChangesOf(toolEvents);
+  if (changed.length === 0) return null;
+  const card = renderFileChangesCard(changed);
+  const undo = notices.find(n => n.kind === 'changes' && changesNoticeCovers(n, changed)) || null;
+  if (undo) {
+    const el = renderChangesNotice(undo);
+    el.classList.add('in-file-card');
+    card.querySelector('.file-changes-head').appendChild(el);
+  }
+  bodyEl.appendChild(card);
+  return undo;
+}
+
+// The slot of segment `seg` (renderTimelineBlocks), the last one when the row
+// has fewer, or the bubble body itself for a row without a block timeline.
+function _segmentSlot(bodyEl, seg) {
+  const slots = [...bodyEl.children].filter(c => c.classList.contains('tool-segment'));
+  if (slots.length === 0) return bodyEl;
+  return slots.find(s => s.dataset.seg === String(seg)) || slots[slots.length - 1];
 }

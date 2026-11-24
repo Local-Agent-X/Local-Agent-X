@@ -90,6 +90,20 @@
     if (!notices.some(n => n.id === notice.id)) notices.push(notice);
   }
 
+  // A tool_start as the turn's tool list keeps it. afterBlock: the timeline
+  // block the call came after (null: before any), so the row draws each run of
+  // calls between the text around it (chat-turn-flow.js); a replay sends its
+  // tool events after the text, so a replayed call sits at the end, as before.
+  // startedMs: when it started, for the running line's clock.
+  function toolStartEntry(e, event, now) {
+    const lastBlock = e.blocks && e.blocks.length ? e.blocks[e.blocks.length - 1] : null;
+    return {
+      type: 'start', name: event.toolName, toolCallId: event.toolCallId, args: event.args, riskLevel: event.riskLevel,
+      afterBlock: lastBlock ? lastBlock.id : null,
+      startedMs: typeof event.startedAt === 'number' ? event.startedAt : now,
+    };
+  }
+
   window._chatStreamReduce = function(e, event, now, helpers) {
     const B = window._ChatBlocks;
     switch (event.type) {
@@ -220,7 +234,7 @@
         // tool card AND a second generate_image preview, so dedupe at the
         // source of truth rather than papering over it downstream.
         if (!event.toolCallId || !e.toolEvents.some(t => t.type === 'start' && t.toolCallId === event.toolCallId)) {
-          e.toolEvents.push({ type: 'start', name: event.toolName, toolCallId: event.toolCallId, args: event.args, riskLevel: event.riskLevel });
+          e.toolEvents.push(toolStartEntry(e, event, now));
         }
         e.toolsSinceText = true;
         B.markBlockBoundary(e);

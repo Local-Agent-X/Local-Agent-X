@@ -32,6 +32,18 @@ function fileChangesOf(toolEvents) {
   return [...byPath.values()];
 }
 
+// Does a "Changed N files … Undo" notice (chat-render-notices.js) name only
+// files this card lists? Then the card carries its Undo instead of the reply
+// listing the same files twice. Paths compare case-folded with forward
+// slashes, the shorter as a tail of the longer (one side may be relative).
+function changesNoticeCovers(notice, files) {
+  const norm = (p) => String(p || '').replace(/\\/g, '/').toLowerCase();
+  const paths = files.map(f => norm(f.path));
+  const named = Array.isArray(notice && notice.files) ? notice.files.map(norm) : [];
+  const same = (a, b) => a === b || a.endsWith('/' + b) || b.endsWith('/' + a);
+  return named.length > 0 && named.every(n => paths.some(p => same(p, n)));
+}
+
 function _splitPath(path) {
   const i = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
   return { name: path.slice(i + 1), dir: i >= 0 ? path.slice(0, i) : '' };

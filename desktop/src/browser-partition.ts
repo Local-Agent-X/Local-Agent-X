@@ -363,6 +363,10 @@ function hardenSession(sess: Session, partition: string): void {
  * — view content must never see ipcRenderer. backgroundThrottling is
  * off so detached/hidden views still accept sendInputEvent (throttled
  * views silently DROP input events — verified on Electron 35.7.5).
+ * focusOnNavigation is off: by default every navigation (the agent's
+ * loadURL, a link the page follows) pulls OS focus into the view, taking the
+ * caret out of the chat box the user is typing in (Electron 43, 2026-11-23).
+ * The user's own address-bar navigate focuses the page itself (browser-ipc.ts).
  */
 export function viewWebPreferences(partition: string): WebPreferences {
 	getHardenedPartitionSession(partition); // ensure hardening precedes first use
@@ -372,5 +376,6 @@ export function viewWebPreferences(partition: string): WebPreferences {
 		contextIsolation: true,
 		sandbox: true,
 		backgroundThrottling: false,
+		focusOnNavigation: false,
 	};
 }

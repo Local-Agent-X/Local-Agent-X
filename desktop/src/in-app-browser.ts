@@ -45,6 +45,7 @@
  */
 
 import type { WebContents } from "electron";
+import { handBackMenuShortcuts } from "./browser-agent-input";
 
 /** How long a view stays "user active" after human input. Long enough to
  *  cover a human's think-type-click cadence, short enough that the agent
@@ -183,9 +184,11 @@ export function armCoDrive(viewId: string, wc: WebContents): void {
 	const state = stateFor(viewId);
 	// Fires for every WebInputEvent the renderer receives — user AND
 	// synthetic sendInputEvent traffic alike; the token accounting in
-	// noteObservedInput tells them apart (see module doc).
+	// noteObservedInput tells them apart (see module doc). The user's own
+	// input takes back the menu shortcuts the agent's typing set aside; this
+	// fires before the event's unhandled fall-through reaches the menu.
 	wc.on("input-event", (_event, input) => {
-		noteObservedInput(state, Date.now(), input.type ?? "");
+		if (noteObservedInput(state, Date.now(), input.type ?? "")) handBackMenuShortcuts(wc);
 	});
 	wc.on("did-start-navigation", (details) => {
 		if (!details.isMainFrame || details.isSameDocument || details.initiator) return;

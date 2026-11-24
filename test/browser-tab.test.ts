@@ -529,7 +529,7 @@ describe("browser IPC main-process guards (browser-ipc.ts)", () => {
   let trustedWC: { getZoomFactor(): number; send: Mock };
   let fakeWC: {
     isDestroyed(): boolean; isLoading(): boolean; getURL(): string; getTitle(): string;
-    loadURL: Mock; reload: Mock; stop: Mock; on: Mock;
+    loadURL: Mock; reload: Mock; stop: Mock; on: Mock; focus: Mock;
     findInPage: Mock; stopFindInPage: Mock; setZoomFactor: Mock; getZoomFactor(): number;
     navigationHistory: { canGoBack(): boolean; canGoForward(): boolean; goBack: Mock; goForward: Mock };
   };
@@ -551,6 +551,7 @@ describe("browser IPC main-process guards (browser-ipc.ts)", () => {
       reload: vi.fn(),
       stop: vi.fn(),
       on: vi.fn(),
+      focus: vi.fn(),
       findInPage: vi.fn(),
       stopFindInPage: vi.fn(),
       setZoomFactor: vi.fn(),
@@ -704,6 +705,17 @@ describe("browser IPC main-process guards (browser-ipc.ts)", () => {
     });
     await h.handlers.get("browser-navigate")!({ sender: trustedWC }, "https://example.com/");
     expect(fakeWC.loadURL).toHaveBeenCalledWith("https://example.com/");
+  });
+
+  it("the user's own address-bar navigate focuses the page (views never take focus on navigation themselves)", async () => {
+    await h.handlers.get("browser-navigate")!({ sender: trustedWC }, "https://example.com/");
+    expect(fakeWC.focus).toHaveBeenCalledTimes(1);
+    expect(fakeWC.focus.mock.invocationCallOrder[0]).toBeLessThan(fakeWC.loadURL.mock.invocationCallOrder[0]);
+  });
+
+  it("an untrusted sender's navigate moves no focus", async () => {
+    await h.handlers.get("browser-navigate")!({ sender: {} }, "https://example.com/");
+    expect(fakeWC.focus).not.toHaveBeenCalled();
   });
 });
 

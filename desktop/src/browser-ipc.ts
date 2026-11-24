@@ -342,6 +342,10 @@ export function setupBrowserIPC(): void {
 		// outcome either way.
 		await prepareEmbeddedChromeIdentityForNavigation(view.webContents);
 		markHumanNavigation(viewId);
+		// The user pressed Enter in the address bar: the page they asked for
+		// takes focus, as in any browser. Views no longer take it on their own
+		// navigations (viewWebPreferences' focusOnNavigation).
+		view.webContents.focus();
 		await view.webContents.loadURL(url).catch((error: unknown) => {
 			const message = error instanceof Error ? error.message : String(error);
 			if (!message.includes("ERR_ABORTED")) {

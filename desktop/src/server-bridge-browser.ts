@@ -166,8 +166,8 @@ export async function handleBrowserBridgeMessage(proc: ChildProcess, msg: Browse
 				// Bank the attribution token BEFORE dispatch so the event's own
 				// before-input-event/focus echo can't arm the user lock.
 				markAgentInput(msg.viewId);
-				// Key events follow FOCUS, mouse events follow coordinates — the
-				// routing rule lives in browser-agent-input.ts.
+				// Never moves OS focus: the user keeps typing in the chat while
+				// the agent drives. How keys still land is browser-agent-input.ts.
 				dispatchAgentInput(wc, event, (x, y) => showAgentCursor(wc, x, y));
 				return {};
 			});

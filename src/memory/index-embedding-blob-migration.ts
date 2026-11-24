@@ -18,7 +18,7 @@ import type Database from "better-sqlite3";
 
 import { createLogger } from "../logger.js";
 import { decodeEmbedding, encodeEmbedding } from "./embedding-codec.js";
-import { yieldEventLoop } from "./index-embedding-reconcile.js";
+import { yieldEventLoop } from "../util/time.js";
 
 const logger = createLogger("memory.embedding-blob-migration");
 

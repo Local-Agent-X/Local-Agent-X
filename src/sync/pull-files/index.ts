@@ -37,7 +37,7 @@ export interface PullReport {
 export async function copyFromSync(dataDir: string, syncDir: string, config: SyncConfig): Promise<PullReport> {
   pullMemoryDir(dataDir, syncDir);
   await pullSidebarPins(dataDir, syncDir);
-  const pulledSessionIds = pullSessions(dataDir, syncDir, config);
+  const pulledSessionIds = await pullSessions(dataDir, syncDir, config);
   const erasedSessionIds = config.syncSessions ? erasedLocalSessionIds(dataDir, syncDir) : [];
   pullWorkspaceOrProtocols(dataDir, syncDir, config);
   const missionProfilesDropped = pullCronJobs(dataDir, syncDir, config);

@@ -29,7 +29,7 @@ const logOf = (id: string, createdAt: number) =>
 const config = { ...DEFAULT_CONFIG, syncSessions: true };
 
 describe("an erased chat across sync", () => {
-  it("erasing drops the mirror's copy and pull never brings it back", () => {
+  it("erasing drops the mirror's copy and pull never brings it back", async () => {
     const { dataDir, syncDir } = dirs();
     writeFileSync(join(syncDir, "sessions", "s1.jsonl"), logOf("s1", 100));
     tombstoneErasedSession(syncDir, "s1", 200);
@@ -37,15 +37,15 @@ describe("an erased chat across sync", () => {
 
     // Another machine that has not pulled the tombstone yet pushes its copy back.
     writeFileSync(join(syncDir, "sessions", "s1.jsonl"), logOf("s1", 100));
-    expect(pullSessions(dataDir, syncDir, config)).toEqual([]);
+    expect(await pullSessions(dataDir, syncDir, config)).toEqual([]);
     expect(existsSync(join(dataDir, "sessions", "s1.jsonl"))).toBe(false);
   });
 
-  it("a new chat under the same id, begun after the erase, still syncs", () => {
+  it("a new chat under the same id, begun after the erase, still syncs", async () => {
     const { dataDir, syncDir } = dirs();
     tombstoneErasedSession(syncDir, "wa-1", 200);
     writeFileSync(join(syncDir, "sessions", "wa-1.jsonl"), logOf("wa-1", 300));
-    expect(pullSessions(dataDir, syncDir, config)).toEqual(["wa-1"]);
+    expect(await pullSessions(dataDir, syncDir, config)).toEqual(["wa-1"]);
   });
 
   it("push leaves a copy of an erased chat out of the mirror", async () => {

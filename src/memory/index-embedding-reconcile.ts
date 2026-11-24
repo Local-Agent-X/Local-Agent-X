@@ -9,6 +9,7 @@
  * the meta table pins the vector space; on a real provider change we wipe
  * stale vectors and let reembedMissingChunks rebuild them in the background.
  */
+import { yieldEventLoop } from "../util/time.js";
 import type Database from "better-sqlite3";
 import type { EmbeddingProvider } from "./types.js";
 import { embeddableChunksWhere } from "./embedding-reach.js";
@@ -42,10 +43,6 @@ const SIGNATURE_KEY = "embedding_signature";
 // run as one synchronous statement on the main event loop, starving every
 // concurrent awaited boot phase (measured: setupVoiceWs inflated 17-21s).
 const UPDATE_BATCH_ROWS = 4000;
-
-export function yieldEventLoop(): Promise<void> {
-  return new Promise<void>((resolve) => setImmediate(resolve));
-}
 
 // NULL chunk embeddings matching the AND-appended predicate, batched by rowid
 // with an event-loop yield between batches. Each batch UPDATE is atomic; rows

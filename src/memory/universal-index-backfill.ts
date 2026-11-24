@@ -28,7 +28,7 @@
 import { existsSync } from "node:fs";
 import { readdir } from "node:fs/promises";
 import { basename } from "node:path";
-import { yieldEventLoop } from "./index-embedding-reconcile.js";
+import { yieldEventLoop } from "../util/time.js";
 import type { CanonicalSource } from "./types.js";
 
 import { createLogger } from "../logger.js";

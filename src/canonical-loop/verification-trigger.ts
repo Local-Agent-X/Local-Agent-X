@@ -92,13 +92,16 @@ import { listTaskArtifacts } from "../data-lineage/task-artifacts.js";
 import {
 	VERIFICATION_OP_TYPE,
 	armVerificationDebounce,
+	checkBeforeDone,
 	changedDeliverables,
 	hasLiveVerifier,
 	hasPendingSubmission,
 	isDeliverablePath,
 } from "./verification-spend.js";
 import { REVIEW_PUBLISH_OP_TYPE } from "./publish-review-verdict.js";
+import { OP_TYPE } from "../ops/op-types.js";
 import type { CanonicalEvent } from "./types.js";
+import type { Op } from "../ops/types.js";
 
 import { createLogger } from "../logger.js";
 const logger = createLogger("canonical-loop.verification-trigger");
@@ -126,83 +129,108 @@ export function recordVerificationTrigger(event: CanonicalEvent, sessionOverride
 		if (((event.body ?? {}) as Record<string, unknown>).to !== "succeeded") return;
 
 		const op = readOp(event.opId);
-		// Unreadable op → type unknowable → do nothing (fail toward silence;
+		// Unreadable op -> type unknowable -> do nothing (fail toward silence;
 		// a verification pass must never be the thing that guesses).
 		if (!op?.type) return;
-		// Interactive host turns (chat_turn / voice_turn) are deliberately NOT
-		// excluded here — see CHAT TURNS in the module header. The verifier's
-		// own type is the only op type this observer skips.
-		if (op.type === VERIFICATION_OP_TYPE) {
-			logger.debug(`[verify] skip ${op.id}: verification op itself (recursion guard)`);
-			return;
-		}
-		// The pre-publish review is the pipeline's other fresh-context pass. It
-		// produces a verdict, never a deliverable, and a review of a push must
-		// not buy a deliverable verification of the session it ran for.
-		if (op.type === REVIEW_PUBLISH_OP_TYPE) {
-			logger.debug(`[verify] skip ${op.id}: pre-publish review op (recursion guard)`);
-			return;
-		}
-
 		// Same session resolution as the sibling observers: relay-projected
 		// events hand an explicit session; everything else resolves through
-		// the submit-time tracking (still bound — we run before the bridge).
+		// the submit-time tracking (still bound -- we run before the bridge).
 		const sessionId = sessionOverride ?? getSessionForOp(event.opId);
-		if (!sessionId) {
-			logger.debug(`[verify] skip ${op.id}: no session binding`);
-			return;
-		}
-		if (!hasExternalIngestion(sessionId)) {
-			logger.debug(`[verify] skip ${op.id}: session ${sessionId} ingested no external content`);
-			return;
-		}
-		const deliverables = listTaskArtifacts(sessionId).filter(isDeliverablePath);
-		if (deliverables.length === 0) {
-			logger.debug(`[verify] skip ${op.id}: no deliverable-extension artifacts in session ${sessionId}`);
-			return;
-		}
-		if (!getRuntimeConfig().verifyDeliverables) {
-			logger.debug(`[verify] skip ${op.id}: verifyDeliverables setting is off`);
-			return;
-		}
-
-		// A submission already in flight for this session — O(1), so it comes
-		// before anything that touches the filesystem.
-		if (hasPendingSubmission(sessionId)) {
-			logger.debug(`[verify] skip ${op.id}: verification submission already in flight for ${sessionId}`);
-			return;
-		}
-
-		// ARTIFACT-SET FINGERPRINT. THE per-turn exit for a chat session — a
-		// conversational turn that wrote nothing stops here, before any
-		// per-peer op read.
-		const { current, delta } = changedDeliverables(sessionId, deliverables);
-		if (current.size === 0) {
-			logger.debug(`[verify] skip ${op.id}: no deliverable currently readable on disk`);
-			return;
-		}
-		if (delta.length === 0) {
-			logger.debug(`[verify] skip ${op.id}: deliverable set unchanged since last verification`);
-			return;
-		}
-
-		// ONE LIVE VERIFIER PER SESSION — the DISK half, reached only on a real
-		// delta. A tracked running/pending verifier blocks the arm WITHOUT
-		// recording the fingerprint, so this delta survives to the next
-		// terminal.
-		if (hasLiveVerifier(sessionId, event.opId)) {
-			logger.debug(`[verify] skip ${op.id}: a verification op is already live for ${sessionId}`);
-			return;
-		}
-
+		// A finished correction changed a deliverable: this re-verifies it
+		// (the proof the correction took); that pass never corrects again.
+		const due = deliverablesToCheck(op, sessionId, { includeCorrection: true });
+		if (!due) return;
 		// Arm the quiet period rather than submitting. `current` is the map
 		// this terminal observed; it becomes the recorded fingerprint only when
 		// the window elapses and the verification actually goes out.
-		armVerificationDebounce(sessionId, op, current, delta);
+		armVerificationDebounce(due.sessionId, op, due.current, due.delta);
 	} catch (e) {
 		if (!warnedOnce) {
 			warnedOnce = true;
 			logger.warn(`[verify] event hook failed (further suppressed): ${(e as Error).message}`);
 		}
+	}
+}
+
+/** The op types whose own ending is never checked: the passes themselves. */
+const CORRECTION_OP_TYPE: string = OP_TYPE.correctDeliverable;
+const NEVER_CHECKED = new Set<string>([VERIFICATION_OP_TYPE, REVIEW_PUBLISH_OP_TYPE, CORRECTION_OP_TYPE]);
+
+/**
+ * Whether this op's ending should check its session's deliverables, and which
+ * changed: the one decision both the quiet-period trigger above and the
+ * before-done check below make, so they cannot disagree. Null when not (each
+ * reason logged); guard order cheapest first, as the module header lays out.
+ * A correction's ending re-verifies its corrected file through the quiet
+ * period (`includeCorrection`), never before its own "done": waiting there
+ * would hold the correction, and the reply waiting on it, for a second pass.
+ */
+export function deliverablesToCheck(op: Op, sessionId: string | undefined, opts: { includeCorrection?: boolean } = {}):
+	{ sessionId: string; current: Map<string, string>; delta: string[] } | null {
+	// The verifier's own type and the pre-publish review never buy a pass
+	// (recursion guard); a correction does, through the quiet period only.
+	if (NEVER_CHECKED.has(op.type) && !(opts.includeCorrection && op.type === CORRECTION_OP_TYPE)) {
+		logger.debug(`[verify] skip ${op.id}: ${op.type} is a pass of its own (recursion guard)`);
+		return null;
+	}
+	if (!sessionId) {
+		logger.debug(`[verify] skip ${op.id}: no session binding`);
+		return null;
+	}
+	if (!hasExternalIngestion(sessionId)) {
+		logger.debug(`[verify] skip ${op.id}: session ${sessionId} ingested no external content`);
+		return null;
+	}
+	const deliverables = listTaskArtifacts(sessionId).filter(isDeliverablePath);
+	if (deliverables.length === 0) {
+		logger.debug(`[verify] skip ${op.id}: no deliverable-extension artifacts in session ${sessionId}`);
+		return null;
+	}
+	if (!getRuntimeConfig().verifyDeliverables) {
+		logger.debug(`[verify] skip ${op.id}: verifyDeliverables setting is off`);
+		return null;
+	}
+	// A submission already in flight for this session -- O(1), so it comes
+	// before anything that touches the filesystem.
+	if (hasPendingSubmission(sessionId)) {
+		logger.debug(`[verify] skip ${op.id}: verification submission already in flight for ${sessionId}`);
+		return null;
+	}
+	// ARTIFACT-SET FINGERPRINT. THE per-turn exit for a chat session -- a
+	// conversational turn that wrote nothing stops here, before any
+	// per-peer op read.
+	const { current, delta } = changedDeliverables(sessionId, deliverables);
+	if (current.size === 0) {
+		logger.debug(`[verify] skip ${op.id}: no deliverable currently readable on disk`);
+		return null;
+	}
+	if (delta.length === 0) {
+		logger.debug(`[verify] skip ${op.id}: deliverable set unchanged since last verification`);
+		return null;
+	}
+	// ONE LIVE VERIFIER PER SESSION -- the DISK half, reached only on a real
+	// delta. A tracked running/pending verifier blocks WITHOUT recording the
+	// fingerprint, so this delta survives to the next terminal.
+	if (hasLiveVerifier(sessionId, op.id)) {
+		logger.debug(`[verify] skip ${op.id}: a verification op is already live for ${sessionId}`);
+		return null;
+	}
+	return { sessionId, current, delta };
+}
+
+/**
+ * The before-done check (the completion chain's figures-verify gate): when
+ * this turn's ending would check its deliverables, check them now and wait,
+ * so the reply the user reads covers the checked file. Returns what happened,
+ * or "skipped" when nothing was due.
+ */
+export async function checkFiguresBeforeDone(op: Op, signal?: AbortSignal): Promise<"checked" | "timed-out" | "not-submitted" | "skipped"> {
+	try {
+		const due = deliverablesToCheck(op, getSessionForOp(op.id));
+		if (!due) return "skipped";
+		return await checkBeforeDone(due.sessionId, op, due.current, due.delta, { signal });
+	} catch (e) {
+		logger.warn(`[verify] before-done check failed for ${op.id}: ${(e as Error).message}`);
+		return "skipped";
 	}
 }

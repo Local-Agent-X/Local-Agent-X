@@ -64,7 +64,17 @@
   //                   user has them whether or not the agent repeats them.
   //   file_changes  — files this request changed, with an Undo; ONE notice
   //                   per request, each call's files added to it.
+  //   reply_note    — the figures check run before this turn says it is done
+  //                   (chat-ws-handler-bg-ops.js routes it here while the turn
+  //                   streams); each new state replaces the last.
   function addNotice(e, event) {
+    if (event.type === 'reply_note') {
+      if (!event.note || !event.note.id) return;
+      const notices = e.notices || (e.notices = []);
+      const at = notices.findIndex(n => n.id === event.note.id);
+      if (at >= 0) notices[at] = event.note; else notices.push(event.note);
+      return;
+    }
     if (event.type === 'file_changes') {
       if (!event.opId || !event.sessionId || !Array.isArray(event.files) || !event.files.length) return;
       const notices = e.notices || (e.notices = []);
@@ -321,7 +331,7 @@
         e.lastActivityMs = now;
         break;
       case 'delete_notice': case 'file_changes':
-      case 'review_notice': case 'code_handoff':
+      case 'review_notice': case 'code_handoff': case 'reply_note':
         addNotice(e, event);
         break;
       case 'approval_timeout': {

@@ -42,6 +42,7 @@ import { recordGuardFire } from "./guard-fire.js";
 import {
   buildVerifyGate,
   designVerifyGate,
+  figuresVerifyGate,
   renderVerifyGate,
   regressionAuditGate,
   specAuditGate,
@@ -266,6 +267,10 @@ export const COMPLETION_GATES: readonly CompletionGate[] = [
   // regression-audit.ts.
   regressionAuditGate,
   designVerifyGate,
+  // Holds the "done" of a turn that built a deliverable from outside figures
+  // until they are checked (and corrected); never re-opens. Contract in
+  // decide-outcome-verify-gates.ts.
+  figuresVerifyGate,
   // A "done" whose final text still holds tool-call syntax is not a done at
   // all — the call never ran. Sits BEFORE earned-done so the retry goes to
   // reissuing the call, not to an open-steps push. Contract in tool-intent-gate.ts.

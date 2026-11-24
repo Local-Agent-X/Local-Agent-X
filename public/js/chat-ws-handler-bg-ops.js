@@ -192,19 +192,30 @@ function handleBgOpNudge(msg) {
   } catch(e) { console.warn('[bg_op_nudge] failed', e); return false; }
 }
 
-// A note landing on a reply after it ended: the figures check, "checking" then
-// its result (src/canonical-loop/figure-check-note.ts). It joins the reply it
-// belongs to, the last one at or before the note's time (the same rule the
-// server uses on reload, src/memory/reply-notes.ts), replacing its earlier
-// state. The server saved it already, so a reload shows the same.
-function attachReplyNote(messages, note) {
-  let target = -1;
+// A note on a reply: the figures check, "checking" then its result
+// (src/canonical-loop/figure-check-note.ts), replacing its earlier state. A
+// check run before its turn says it is done (`on: "next"`) belongs to the
+// reply still being written, so while that turn streams it rides the live
+// bubble (the stream store's notices, finalized with the reply). Otherwise it
+// joins a saved reply by the server's own rule (src/memory/reply-notes.ts
+// replyIndexFor). The server saved it already, so a reload shows the same.
+function replyIndexFor(messages, note) {
+  let last = -1;
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i];
     if (!m || m.role !== 'assistant') continue;
-    if (target < 0) target = i;
-    if (typeof m._at === 'number' && m._at <= note.at) { target = i; break; }
+    if (last < 0) last = i;
+    if (typeof m._at !== 'number') continue;
+    if (note.on === 'next') {
+      if (m._at >= note.at) last = i;
+      else break;
+    } else if (m._at <= note.at) return i;
   }
+  return last;
+}
+
+function attachReplyNote(messages, note) {
+  const target = replyIndexFor(messages, note);
   if (target < 0) return false;
   const m = messages[target];
   m._notices = (m._notices || []).filter(n => n.id !== note.id).concat([note]);
@@ -214,7 +225,14 @@ function attachReplyNote(messages, note) {
 function handleReplyNote(msg) {
   try {
     const note = msg.event && msg.event.note;
-    if (!note || !activeChat || activeChat.id !== msg.sessionId) return true;
+    if (!note) return true;
+    const live = note.on === 'next' && typeof ChatStreamStore !== 'undefined' && ChatStreamStore.isStreaming(msg.sessionId);
+    if (live) {
+      ChatStreamStore.applyEvent(msg.sessionId, msg.event);
+      if (typeof rerenderLiveMessage === 'function') rerenderLiveMessage(msg.sessionId);
+      return true;
+    }
+    if (!activeChat || activeChat.id !== msg.sessionId) return true;
     if (attachReplyNote(activeChat.messages || [], note) && typeof renderMessages === 'function') renderMessages();
     return true;
   } catch (e) { console.warn('[reply_note] failed', e); return false; }

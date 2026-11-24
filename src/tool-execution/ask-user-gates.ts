@@ -8,11 +8,13 @@
  * into the same folder another live agent is changing (claim-clash-gate.ts,
  * which otherwise only notes the clash on the result), and an
  * outward call made after a tool result held a planted-looking instruction
- * (injection-exposure.ts).
+ * (injection-exposure.ts), and a send attaching a deliverable whose figures
+ * check is still running or failed (figure-check-send-gate.ts).
  */
 import type { ToolCallContext } from "./context.js";
 import { currentHumanText } from "./unnamed-delete-gate.js";
 import { privateContentGate } from "./private-content-gate.js";
+import { figureCheckSendGate } from "./figure-check-send-gate.js";
 import { controlFileGate } from "./control-file-gate.js";
 import { claimClashGate } from "./claim-clash-gate.js";
 import { injectionExposureGate } from "./injection-exposure.js";
@@ -29,6 +31,7 @@ export async function toolConfirmationGate(ctx: Pick<ToolCallContext, "tool" | "
 
 export async function askUserGates(ctx: ToolCallContext): Promise<void> {
   await privateContentGate(ctx);
+  figureCheckSendGate(ctx);
   controlFileGate(ctx);
   claimClashGate(ctx);
   mcpSecretUseGate(ctx);

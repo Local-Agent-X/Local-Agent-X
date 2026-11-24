@@ -46,6 +46,13 @@ describe("joining notes onto replies", () => {
     expect((messages[1] as { _notices?: unknown[] })._notices).toBeUndefined(); // the input is not changed
   });
 
+  it("a check run before its turn said done joins the reply that ended that turn", () => {
+    // The check began at 2_000, before the turn's reply was saved at 3_000.
+    const out = attachReplyNotes(messages, [note({ at: 2_000, on: "next" })]);
+    expect((out[3] as { _notices?: unknown[] })._notices).toHaveLength(1);
+    expect((out[1] as { _notices?: unknown[] })._notices).toBeUndefined();
+  });
+
   it("with no reply times, it joins the last reply", () => {
     const out = attachReplyNotes([{ role: "user" }, { role: "assistant" }], [note()]);
     expect((out[1] as { _notices?: unknown[] })._notices).toHaveLength(1);

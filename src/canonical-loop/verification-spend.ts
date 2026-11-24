@@ -49,7 +49,7 @@ import { getRuntimeConfig } from "../config.js";
 import { readOp } from "../ops/op-store.js";
 import { listOpsForSession } from "../ops/session-bridge.js";
 import type { Op } from "../ops/types.js";
-import { figureCheckStarted, figureCheckUpdate } from "./figure-check-note.js";
+import { awaitFigureCheck, figureCheckStarted, figureCheckUpdate } from "./figure-check-note.js";
 
 import { createLogger } from "../logger.js";
 import { OP_TYPE } from "../ops/op-types.js";
@@ -241,6 +241,55 @@ function fireVerificationDebounce(sessionId: string): void {
 	} catch (e) {
 		warnOnce("debounce fire failed", e);
 	}
+}
+
+/** How long a turn's "done" waits for its figures check. Past it the reply goes
+ *  out with the "checking…" note and the check finishes after: a lane or a
+ *  local model the verifier needs may be held by the very turn waiting for it. */
+export const CHECK_BEFORE_DONE_WAIT_MS = 180_000;
+
+/**
+ * Check a turn's changed deliverables NOW, before it says it is done, and wait
+ * for the result, a correction included. The figures were checked after the
+ * reply, once the chat went quiet, so a deck could be sent before a check
+ * corrected it a minute later (2026-11-24). The quiet-period path stays for
+ * deliverables that change any other way; this records the same fingerprint,
+ * so the turn's own terminal finds nothing new, and takes over any period
+ * already armed for the session, whose changes it covers.
+ *
+ * "checked": a result landed. "timed-out": the check runs on and lands on the
+ * reply's note later. "not-submitted": no verifier could be started.
+ */
+export async function checkBeforeDone(
+	sessionId: string, parentOp: Op, current: Map<string, string>, delta: string[],
+	opts: { timeoutMs?: number; signal?: AbortSignal } = {},
+): Promise<"checked" | "timed-out" | "not-submitted"> {
+	const armed = DEBOUNCED.get(sessionId);
+	const changed = new Set(delta);
+	if (armed) {
+		clearTimeout(armed.timer);
+		DEBOUNCED.delete(sessionId);
+		for (const path of armed.changed) if (artifactSignature(path) !== null) changed.add(path);
+	}
+	const deliverables = [...changed];
+	VERIFIED_ARTIFACTS.set(sessionId, current);
+	PENDING_VERIFIER_SESSIONS.add(sessionId);
+	const result = awaitFigureCheck(sessionId, opts.timeoutMs ?? CHECK_BEFORE_DONE_WAIT_MS, opts.signal);
+	figureCheckStarted(sessionId, deliverables, true);
+	let submitted = false;
+	try {
+		submitted = await submitter()({ parentOp, sessionId, deliverables });
+	} catch (e) {
+		warnOnce("submission failed", e);
+	} finally {
+		PENDING_VERIFIER_SESSIONS.delete(sessionId);
+	}
+	if (!submitted) {
+		figureCheckUpdate(sessionId, "unchecked");
+		await result;
+		return "not-submitted";
+	}
+	return (await result) ? "checked" : "timed-out";
 }
 
 /** Drop every armed quiet period. Wired into the graceful-shutdown owner

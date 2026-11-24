@@ -1008,6 +1008,8 @@ describe("completion-gate table — single ordering source", () => {
       "spec-audit",
       "regression-audit",
       "design-verify",
+      // Holds a deliverable turn's "done" until its figures are checked.
+      "figures-verify",
       // A "done" whose final text still holds tool-call syntax — the call never
       // ran; sits before earned-done so the retry reissues the call.
       "unresolved-tool-intent",

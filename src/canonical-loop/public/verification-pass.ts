@@ -19,3 +19,5 @@ export { cancelAllVerificationDebounces } from "../verification-spend.js";
 // The chat socket wires the figures check's note on a reply to the open tabs
 // (chat-ws/bridge-wiring.ts); figure-check-note.ts is as light as the spend module.
 export { setFigureCheckBroadcaster } from "../figure-check-note.js";
+// The send guard (tool-execution/figure-check-send-gate.ts) asks a file's state.
+export { figureCheckOf } from "../figure-check-note.js";

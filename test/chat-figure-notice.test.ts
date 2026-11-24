@@ -45,6 +45,21 @@ describe("a reply_note on the open chat", () => {
     expect(renders).toBe(2);
   });
 
+  it("a check before 'done' rides the reply still streaming, not the saved one before it", () => {
+    const messages: Msg[] = [{ role: "assistant", _at: 1_000 }];
+    g.activeChat = { id: "chat-1", messages };
+    const applied: unknown[] = [];
+    let rerendered = "";
+    g.ChatStreamStore = { isStreaming: (s: string) => s === "chat-1", applyEvent: (_s: string, e: unknown) => applied.push(e) };
+    g.rerenderLiveMessage = (s: string) => { rerendered = s; };
+    const event = { type: "reply_note", note: note({ on: "next" } as Partial<Note>) };
+    bg.handleReplyNote({ sessionId: "chat-1", event });
+    expect(applied).toEqual([event]);
+    expect(rerendered).toBe("chat-1");
+    expect(messages[0]._notices).toBeUndefined();
+    delete g.ChatStreamStore;
+  });
+
   it("another chat's note leaves the open chat alone", () => {
     const messages: Msg[] = [{ role: "assistant", _at: 1_000 }];
     g.activeChat = { id: "chat-1", messages };

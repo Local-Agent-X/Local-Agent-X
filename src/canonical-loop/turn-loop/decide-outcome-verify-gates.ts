@@ -31,6 +31,7 @@ import { markSpecAudited } from "./spec-audit.js";
 import { markRegressionAudited } from "./regression-audit.js";
 import { dropFinishingChecks, finishingChecks, provenByFrontierModel } from "./finishing-checks.js";
 import { runDesignVerifyGate } from "./design-verify.js";
+import { checkFiguresBeforeDone } from "../verification-trigger.js";
 import { opEditedSourceUnverified, opEditedSourcePaths } from "../middlewares/verify-gate.js";
 import { userAuthoredRequest } from "../../slash-commands.js";
 
@@ -217,6 +218,25 @@ export const designVerifyGate: CompletionGate = {
       if (!appendNudgeAsUserMessage(op.id, turnIdx + 1, gate.nudge, gateSource("design-verify", "nudge"))) return CONTINUE;
       return { reopen: true };
     }
+    return CONTINUE;
+  },
+};
+
+/**
+ * Figures-verify. A turn that built a deliverable (a deck, a sheet, a report)
+ * from outside figures does not say it is done until those figures are
+ * checked against their sources and, if they do not match, corrected: the
+ * check used to run a minute after the reply, so a deck could be emailed
+ * before it was corrected (2026-11-24). It never sends the work back; it only
+ * holds the "done", at most CHECK_BEFORE_DONE_WAIT_MS, after which the reply
+ * goes out with the "checking…" note and the check lands on it later. What it
+ * found is the note on the reply (figure-check-note.ts), and the agent hears
+ * it in its pending notifications.
+ */
+export const figuresVerifyGate: CompletionGate = {
+  name: "figures-verify",
+  async evaluate({ op, signal }) {
+    await checkFiguresBeforeDone(op, signal);
     return CONTINUE;
   },
 };

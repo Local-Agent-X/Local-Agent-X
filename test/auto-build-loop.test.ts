@@ -159,8 +159,12 @@ describe("runBuildLoop — proceed path", () => {
 });
 
 describe("runBuildLoop — halt path", () => {
-  it("halts on STATUS: blocked and does not advance", async () => {
+  // A blocked worker is sent back once with what to do (gate-done-when.ts);
+  // blocked the same way again, the round changed nothing and the chunk does
+  // not land. Nothing else can build without it here, so the run ends.
+  it("sends a blocked worker back, and stops when the retry is blocked the same way", async () => {
     __pushReport(HALT_REPORT_BLOCKED);
+    __pushReport(HALT_REPORT_BLOCKED);            // the fix round
     __pushReport(CLEAN_REPORT("src/feature.ts")); // queued but should not be consumed
 
     const plan = parsePlanText(TWO_CHUNK_PLAN);
@@ -196,7 +200,8 @@ describe("runBuildLoop — halt path", () => {
 
   it("sets the failed chunk aside on a branch, holds back what depends on it, and builds the rest", async () => {
     __pushReport(HALT_REPORT_BLOCKED);            // chunk 1
-    __pushReport(CLEAN_REPORT("src/mock-2.ts"));  // chunk 3 (chunk 2 waits on 1)
+    __pushReport(HALT_REPORT_BLOCKED);            // chunk 1's fix round, blocked the same way
+    __pushReport(CLEAN_REPORT("src/mock-3.ts"));  // chunk 3 (chunk 2 waits on 1)
     writeFileSync(join(projectDir, "spec", "plan.md"), THREE_CHUNK_PLAN);
     git("commit -qam plan");
 
@@ -231,11 +236,12 @@ describe("runBuildLoop — halt path", () => {
       projectDir, planPath: join(projectDir, "spec", "plan.md"), plan: parsePlanText(THREE_CHUNK_PLAN), startingChunk: 1, landedChunks,
     });
     __pushReport(HALT_REPORT_BLOCKED);
-    __pushReport(CLEAN_REPORT("src/mock-2.ts"));
+    __pushReport(HALT_REPORT_BLOCKED);            // its fix round, blocked the same way
+    __pushReport(CLEAN_REPORT("src/mock-3.ts"));
     await run([]);
 
-    __pushReport(CLEAN_REPORT("src/mock-3.ts"));  // chunk 1 again
-    __pushReport(CLEAN_REPORT("src/mock-4.ts"));  // chunk 2
+    __pushReport(CLEAN_REPORT("src/mock-4.ts"));  // chunk 1 again
+    __pushReport(CLEAN_REPORT("src/mock-5.ts"));  // chunk 2
     const resumed = await run([3]);
 
     expect(resumed.status).toBe("complete");

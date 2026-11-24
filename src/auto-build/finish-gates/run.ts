@@ -114,6 +114,17 @@ function noProgress(prev: { suite: SuiteJudging; breakers: BreakerResult[] } | n
   return names(prev.suite) === names(suite) && count(breakers) >= count(prev.breakers);
 }
 
+/** Chunks that landed with a check that never ran on them: not a pass, so listed. */
+function unverifiedChunks(result: LoopResult): string[] {
+  const items: string[] = [];
+  for (const o of result.outcomes) {
+    if (o.outcome.unverified) items.push(`chunk ${o.chunkNumber} landed unverified: ${o.outcome.unverified}`);
+    const sc = o.outcome.judging?.scenarios;
+    if (sc?.status === "not-run" && /could not start the app/.test(sc.reason)) items.push(`chunk ${o.chunkNumber}'s scenarios were not judged: ${sc.reason}`);
+  }
+  return items;
+}
+
 /** Checks no engine can make: said every time, so nobody reads "complete" as "seen working". */
 function ownerItems(projectDir: string): string[] {
   const mobile = ["app.json", "app.config.ts", "app.config.js", "android"].some((f) => existsSync(join(projectDir, f)));
@@ -157,7 +168,7 @@ export async function runFinishGates(input: FinishInput): Promise<LoopResult> {
     chunksCommitted += fixRun.chunksCommitted;
     if (fixRun.status === "halted") open.push(`finish fix round ${round} did not fully land: ${fixRun.haltReason.slice(0, 400)}`);
   }
-  open.push(...ownerItems(opts.projectDir));
+  open.push(...unverifiedChunks(result), ...ownerItems(opts.projectDir));
   say(`finish checks done: ${open.length} open item(s)`);
   return { ...result, chunksCommitted, openItems: open };
 }

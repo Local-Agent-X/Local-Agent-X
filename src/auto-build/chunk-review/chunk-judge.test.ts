@@ -146,6 +146,16 @@ describe("scoreChunkScenarios", () => {
     expect(fake.scoreCalls[0].scenarioPaths.map(p => p.split(/[\\/]/).pop())).toEqual(["02-checkout.md"]);
   });
 
+  // A fix round spent on a busy port fixes nothing: the judge's own trouble
+  // starting the app is recorded, never charged to the builder.
+  it("the judge's own trouble starting the app is not held against the chunk", async () => {
+    const dirs = projectDirs(); launch(dirs.worktree);
+    fake.scoreOutcome = { kind: "error", reason: "dev server failed to start: something is already answering at http://localhost:5173", harness: true };
+    const j = await scoreChunkScenarios(input("2", dirs));
+    expect(j.status).toBe("not-run");
+    expect(j.reason).toContain("not the app's fault");
+  });
+
   it("an app that would not start counts against the chunk; a cancel does not", async () => {
     const dirs = projectDirs(); launch(dirs.worktree);
     fake.scoreOutcome = { kind: "error", reason: "dev server failed to start: EADDRINUSE" };

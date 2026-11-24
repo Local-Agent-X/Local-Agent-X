@@ -4,11 +4,13 @@
  *
  * Failure modes detected mechanically:
  *
- *  (a) STATUS != "done" → chunk explicitly didn't ship → halt, EXCEPT a
- *      block whose own words name missing third-party credentials — that is
- *      recoverable (placeholder envs + LAUNCH_READINESS deferral) and gets a
- *      push_back carrying the recovery instruction (missing-creds.ts).
- *  (b) DONE_WHEN == "unmet" or "unknown" → halt
+ *  (a) STATUS != "done" → chunk explicitly didn't ship → push_back. Missing
+ *      third-party credentials carry their recovery (placeholder envs +
+ *      LAUNCH_READINESS deferral, missing-creds.ts); a named spec gap goes to
+ *      the advisor to amend; anything else goes back with STUCK_RECOVERY.
+ *      Never a halt from here: the push-back advisor (loop/handle-push-back.ts)
+ *      is the one that stops a build, for a decision only the owner can make.
+ *  (b) DONE_WHEN == "unmet" or "unknown" → push_back, the same way
  *  (c) DONE_WHEN == "deferred-to-launch-readiness" but the chunk's
  *      plan-level done-when names an "integration test" or specific
  *      observable behavior (not a launch-time concern) → push_back: run it;
@@ -57,18 +59,22 @@ export function gateDoneWhen(chunk: ParsedChunk, report: ChunkReport): GateFindi
           `otherwise halt for a real product decision.${workerWords(report)}`,
       };
     }
+    // A worker that stopped is not a build that must stop. label-check-sol's
+    // chunk 1 worker lost the phone over ADB, reported partial, and the whole
+    // build halted for "user attention" (2026-11-24): what it needed was the
+    // instruction to defer the device run, which the push-back carries.
     return {
       gate: "done-when",
-      action: "halt",
-      reasoning: `Chunk reported STATUS=${report.status}; needs user attention before continuing.${workerWords(report)}`,
+      action: "push_back",
+      reasoning: `Chunk reported STATUS=${report.status}. ${STUCK_RECOVERY}${workerWords(report)}`,
     };
   }
 
   if (report.doneWhen === "unmet" || report.doneWhen === "unknown") {
     return {
       gate: "done-when",
-      action: "halt",
-      reasoning: `Chunk reported DONE_WHEN=${report.doneWhen}. Done-when is the chunk's correctness contract — cannot proceed.${workerWords(report)}`,
+      action: "push_back",
+      reasoning: `Chunk reported DONE_WHEN=${report.doneWhen}; done-when is the chunk's contract. ${STUCK_RECOVERY}${workerWords(report)}`,
     };
   }
 
@@ -125,6 +131,15 @@ export function gateDoneWhen(chunk: ParsedChunk, report: ChunkReport): GateFindi
 
   return null;
 }
+
+/** What a worker that stopped short is sent back to do. Whether the chunk then
+ *  needs the owner is the push-back advisor's call, never this gate's. */
+const STUCK_RECOVERY =
+  `Finish what can be done on this machine: the code, the tests, the build. What truly cannot run here ` +
+  `(a phone or emulator that is not reachable, a third-party account or credential this machine does not ` +
+  `have) goes in LAUNCH_READINESS with how to verify it, and the report says DONE_WHEN: ` +
+  `deferred-to-launch-readiness. A product or design question only the owner can answer goes in SPEC_GAPS, ` +
+  `stated as the choice to make, and you build the safest option meanwhile.`;
 
 /** What the worker is sent back to do about a deferral it was not told to make. */
 const RUN_IT_HERE =

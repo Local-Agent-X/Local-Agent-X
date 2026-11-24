@@ -62,6 +62,9 @@ export async function scoreChunkScenarios(input: ChunkJudgeInput): Promise<Scena
     // A cancel is not the chunk's fault; anything else (the app would not
     // start, scoring broke) is shown evidence against it.
     if (input.signal?.aborted) return { status: "not-run", reason: "cancelled while scoring", scores: [] };
+    // The judge's own trouble starting the app is recorded, not charged to
+    // the builder: a fix round spent on a busy port fixes nothing.
+    if (outcome.kind === "error" && outcome.harness) return { status: "not-run", reason: `the judge could not start the app (not the app's fault): ${outcome.reason}`, scores: [] };
     return { status: "error", reason: outcome.reason, scores: [] };
   }
   return {

@@ -403,12 +403,28 @@ describe("Done-when gate edge cases", () => {
     rawSection: "",
   };
 
-  it("halts on STATUS: blocked", () => {
+  // A blocked worker went straight to a halt for "user attention"; it goes
+  // back with what to do, and only the push-back advisor stops a build.
+  it("sends STATUS: blocked back to the worker, never halting the build itself", () => {
     const r = parseChunkReport(
       "STATUS: blocked\nDONE_WHEN: unmet\nCHANGED: none\nTESTS: n/a\nNEW_FAILURES: none\n" +
       "PRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\nLAUNCH_READINESS: none\nNOTE: missing creds"
     );
-    expect(gateDoneWhen(baseChunk, r)!.action).toBe("halt");
+    expect(gateDoneWhen(baseChunk, r)!.action).toBe("push_back");
+  });
+
+  // label-check-sol chunk 1 (2026-11-24): the phone dropped off ADB, the
+  // worker reported partial, and the build halted for the owner.
+  it("a worker that lost the device is told to defer the device run, not halted", () => {
+    const r = parseChunkReport(
+      "STATUS: partial\nDONE_WHEN: unmet\nCHANGED: app.config.ts\nTESTS: 13/13\nNEW_FAILURES: none\n" +
+      "PRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\nLAUNCH_READINESS: none\n" +
+      "NOTE: The release APK built and installed. On the retry after unlock, ADB no longer listed the phone."
+    );
+    const f = gateDoneWhen(baseChunk, r)!;
+    expect(f.action).toBe("push_back");
+    expect(f.reasoning).toContain("a phone or emulator that is not reachable");
+    expect(f.reasoning).toContain("ADB no longer listed the phone");
   });
 
   it("routes an explicit blocking spec gap through bounded advisor recovery", () => {
@@ -422,12 +438,12 @@ describe("Done-when gate edge cases", () => {
     expect(finding.reasoning).toMatch(/advisor/i);
   });
 
-  it("halts on DONE_WHEN: unmet", () => {
+  it("sends DONE_WHEN: unmet back to the worker", () => {
     const r = parseChunkReport(
       "STATUS: done\nDONE_WHEN: unmet\nCHANGED: x.ts\nTESTS: 0/0\nNEW_FAILURES: none\n" +
       "PRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\nLAUNCH_READINESS: none\nNOTE: ok"
     );
-    expect(gateDoneWhen(baseChunk, r)!.action).toBe("halt");
+    expect(gateDoneWhen(baseChunk, r)!.action).toBe("push_back");
   });
 
   it("sends a deferral of a mechanical contract back to the worker to run it", () => {
@@ -609,14 +625,14 @@ describe("Review reasons carry the worker's own words", () => {
     expect(f.reasoning).toContain("self-host leaflet assets");
   });
 
-  it("unmet done-when halt includes NOTE", () => {
+  it("unmet done-when push-back includes NOTE", () => {
     const r = parseChunkReport(
       "STATUS: done\nDONE_WHEN: unmet\nCHANGED: x.ts\nTESTS: 1/2\n" +
       "NEW_FAILURES: none\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\n" +
       "LAUNCH_READINESS: none\nNOTE: e2e assertion needs a running dev server"
     );
     const f = gateDoneWhen(chunkFromFixture(loadFixture("chunk-clean-proceed.json")), r)!;
-    expect(f.action).toBe("halt");
+    expect(f.action).toBe("push_back");
     expect(f.reasoning).toContain("running dev server");
   });
 });
@@ -652,12 +668,15 @@ describe("Missing-credentials recovery (the no-Supabase-keys class)", () => {
     expect(f.action).toBe("push_back");
   });
 
-  it("a non-credential block still halts", () => {
+  // Whether a decision is the owner's is the push-back advisor's call: the
+  // worker is told to name the choice and build the safest option meanwhile.
+  it("a non-credential block goes back with how to name an owner's decision", () => {
     const f = gateDoneWhen(
       chunkFromFixture(loadFixture("chunk-clean-proceed.json")),
       report("blocked", "Spec is ambiguous about whether the detail view is a modal or a page; need a decision.")
     )!;
-    expect(f.action).toBe("halt");
+    expect(f.action).toBe("push_back");
+    expect(f.reasoning).toContain("goes in SPEC_GAPS");
   });
 
   // chunk-06's done-when ("integration test against a real Google dev
@@ -872,12 +891,15 @@ describe("build-exec gate: the project's scripts run in the shell cage", () => {
     expect(finding?.reasoning).toMatch(/^`npm run build` exited 1 .*compiling\s+error TS2345/s);
   });
 
-  it("fails closed while the Windows cage proof is pending: halts, and nothing runs", async () => {
+  // Nothing runs outside the cage; and a harness that cannot run the build
+  // neither passes the chunk nor stops the whole build: it is on the record.
+  it("fails closed while the Windows cage proof is pending: nothing runs, and the chunk is recorded unverified", async () => {
     seam.proofPending = true;
-    const finding = await runBuildExecGate({ projectDir: dir });
-    expect(finding).toMatchObject({ gate: "build-exec", action: "halt" });
-    expect(finding?.reasoning).toContain("`npm run build` could not run");
-    expect(finding?.reasoning).toContain(SANDBOX_PROOF_PENDING_RETRY);
+    let unverified = "";
+    const finding = await runBuildExecGate({ projectDir: dir, onUnverified: (n) => { unverified = n; } });
+    expect(finding).toBeNull();
+    expect(unverified).toContain("`npm run build` could not run");
+    expect(unverified).toContain(SANDBOX_PROOF_PENDING_RETRY);
     expect(seam.wrapped).toEqual([]);
   });
 

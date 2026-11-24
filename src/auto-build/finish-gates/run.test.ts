@@ -102,6 +102,13 @@ describe("runFinishGates", () => {
     expect(out.openItems?.[0]).toBe("finish fix round 1 did not fully land: chunk 1011 set aside");
   });
 
+  it("lists every chunk that landed with a check that never ran on it", async () => {
+    const h = harness([{ suite: { failed: [], unjudged: [] }, found: [] }]);
+    const outcome = { action: "proceed", reasoning: "", findings: [], report: {} as never, unverified: "`npm run build` could not run (cage pending), so the chunk's code was not built or tested" };
+    const out = await run(h, opts(), done({ outcomes: [{ chunkNumber: 2, outcome: outcome as never, action: "proceed" }] }));
+    expect(out.openItems?.[0]).toBe("chunk 2 landed unverified: `npm run build` could not run (cage pending), so the chunk's code was not built or tested");
+  });
+
   it("a phone app is also owed a run on a device", async () => {
     const mobile = mkdtempSync(join(tmpdir(), "lax-finish-mobile-"));
     writeFileSync(join(mobile, "app.json"), "{}");

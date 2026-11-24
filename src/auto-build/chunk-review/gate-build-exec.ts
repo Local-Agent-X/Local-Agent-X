@@ -167,13 +167,12 @@ export const runBuildExecGate: BuildExecRunner = async (input) => {
     if (signal?.aborted) return null;
     const result = await runCommand(command, projectDir, signal);
     // Never a pass: a build that could not run (the cage refused it while its
-    // check was pending, npm missing) was not observed to work.
+    // check was pending, npm missing) was not observed to work. Nor is it the
+    // chunk's failure or a reason to stop the build: nothing ran, the chunk is
+    // recorded unverified, and the finish gates list it.
     if ("notRun" in result) {
-      return {
-        gate: "build-exec",
-        action: "halt",
-        reasoning: `\`${command}\` could not run (${truncate(result.notRun, 300)}), so the chunk's build was not verified.`,
-      };
+      input.onUnverified?.(`\`${command}\` could not run (${truncate(result.notRun, 300)}), so the chunk's code was not built or tested`);
+      return null;
     }
     if (result.outcome.kind === "abort") return null;
     if (result.outcome.kind === "timeout") {

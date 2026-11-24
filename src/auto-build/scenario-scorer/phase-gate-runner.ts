@@ -35,7 +35,13 @@ export type PhaseGateRunnerOutcome =
   | { kind: "proceed"; reports: ScoreReport[] }
   | { kind: "failures"; reports: ScoreReport[]; failedReports: ScoreReport[]; unjudgedReports: ScoreReport[] }
   | { kind: "unjudged"; reports: ScoreReport[]; unjudgedReports: ScoreReport[] }
-  | { kind: "error"; reason: string };
+  /** `harness`: the judge could not start the app for a reason outside it
+   *  (its port already taken, the shell policy or the cage refusing the start
+   *  line): not the app's failure, so never charged to its builder. */
+  | { kind: "error"; reason: string; harness?: boolean };
+
+/** Launch failures that are the machine's or the judge's, not the app's. */
+const HARNESS_LAUNCH_FAILURE = /already answering at|blocked by shell policy|sandbox|cage/i;
 
 export interface PhaseGateRunnerOptions {
   projectDir: string;
@@ -89,7 +95,8 @@ export async function scoreScenarioFiles(opts: ScoreScenarioFilesOptions): Promi
     app = await launchApp(opts.projectDir, launch, opts.signal, opts.workerIndex ?? 0);
     opts.onProgress?.(`dev server ready at ${app.url}`);
   } catch (e) {
-    return { kind: "error", reason: `dev server failed to start: ${(e as Error).message}` };
+    const message = (e as Error).message;
+    return { kind: "error", reason: `dev server failed to start: ${message}`, ...(HARNESS_LAUNCH_FAILURE.test(message) ? { harness: true } : {}) };
   }
 
   // Score against the port the server was ACTUALLY pointed at. For worker 0

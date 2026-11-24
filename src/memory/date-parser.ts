@@ -18,7 +18,6 @@ export interface DateRange {
   matched: string;     // the substring that triggered the match, for debugging
 }
 
-const MS_DAY = 86_400_000;
 const MONTHS: Record<string, number> = {
   january: 0, jan: 0,
   february: 1, feb: 1,
@@ -41,8 +40,13 @@ function startOfDay(d: Date): Date {
   return x;
 }
 
+/** d moved by whole calendar days, keeping its time of day. Adding 24 hours
+ *  instead lands an hour off across a clock change, so a day range would start
+ *  at 23:00 or 01:00 and miss or gain a day's entries. */
 function addDays(d: Date, days: number): Date {
-  return new Date(d.getTime() + days * MS_DAY);
+  const x = new Date(d);
+  x.setDate(x.getDate() + days);
+  return x;
 }
 
 /** Start of the week containing `d` (Sunday-based, local time). */

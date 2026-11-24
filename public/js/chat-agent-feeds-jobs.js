@@ -124,10 +124,27 @@ function jobRowMark(rec) {
   return '<span class="job-row-mark running"><span class="agent-status-dot"></span></span>';
 }
 
+function jobStallText(gap, now) {
+  return 'stalled ' + jobElapsedLabel(Number(now) - gap, 0, now);
+}
+
 function jobStallBadge(rec, now) {
   var gap = jobStallMs(rec, now);
   if (!gap) return '';
-  return '<span class="job-row-stall">stalled ' + jobElapsedLabel(Number(now) - gap, 0, now) + '</span>';
+  return '<span class="job-row-stall">' + jobStallText(gap, now) + '</span>';
+}
+
+// Pure: the job as its header judges a stall: the root's status, and the
+// latest signal from any agent in it. A root waiting on its workers logs
+// nothing itself (the build orchestrator is quiet the whole time a skeptic
+// runs), so its own quiet alone read as STALLED while a worker was busy.
+function jobHeadRecord(root, ids, dataMap) {
+  var last = 0;
+  for (var i = 0; i < ids.length; i++) {
+    var t = Number(((dataMap || {})[ids[i]] || {}).lastActivityMs) || 0;
+    if (t > last) last = t;
+  }
+  return { status: root.status, lastActivityMs: last };
 }
 
 // Pure: the row's Time cell — the elapsed clock, or "stalled Xm" once the op
@@ -273,7 +290,7 @@ function renderJob(node, dataMap, now, expandedMap, openMap) {
       '<div class="job-head-meta">' +
         '<span>' + totals.agents + ' agent' + (totals.agents === 1 ? '' : 's') + '</span>' +
         (totals.tokens > 0 ? '<span>' + formatTokens(totals.tokens) + ' tokens</span>' : '') +
-        (root && jobStallMs(root, now) ? jobStallBadge(root, now) : '') +
+        (root ? jobStallBadge(jobHeadRecord(root, ids, dataMap), now) : '') +
       '</div>' +
       (root && jobTaskLine(root) ? '<div class="job-head-task">' + esc(jobTaskLine(root)) + '</div>' : '') +
     '</div>' +

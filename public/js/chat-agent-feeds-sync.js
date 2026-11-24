@@ -64,7 +64,10 @@ function syncAgentCardBody(id, rec) {
   }
 }
 
-// Job headers tick too: the elapsed clock on a running job's head row.
+// Job headers tick too: the elapsed clock on a running job's head row, and its
+// stall badge, judged over every agent in the job (jobHeadRecord). The badge
+// was drawn once and never refreshed: it froze at its first value and stayed
+// after the job spoke again, until something else redrew the list.
 function syncJobHeads(now) {
   var heads = document.querySelectorAll('.job:not(.finished) .job-head[data-agent-row]');
   for (var i = 0; i < heads.length; i++) {
@@ -73,6 +76,13 @@ function syncJobHeads(now) {
     if (!rec || !el) continue;
     var t = jobElapsedLabel(rec.startedAt, 0, now);
     if (el.textContent !== t) el.textContent = t;
+    var job = heads[i].closest('.job');
+    var ids = Array.prototype.map.call(job.querySelectorAll('[data-agent-row]'), function(n) { return n.getAttribute('data-agent-row'); });
+    var gap = jobStallMs(jobHeadRecord(rec, ids, agentFeedsData), now);
+    var badge = heads[i].querySelector('.job-row-stall');
+    // A badge appearing or clearing is a rebuild, as a row's stall is.
+    if (!!badge !== gap > 0) { _renderAgentFeedsList(); return; }
+    if (badge && badge.textContent !== jobStallText(gap, now)) badge.textContent = jobStallText(gap, now);
   }
 }
 

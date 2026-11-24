@@ -106,6 +106,9 @@ function addAgentFeed(agent) {
   } else {
     agentFeedsData[agent.id] = agent;
     if (agent.status) _setAgentStatus(agent, agent.status);
+    // Starting is a signal too: a worker that never reports after it starts
+    // reads as stalled, not as having no clock at all.
+    if (!agent.lastActivityMs && !isTerminalStatus(agent.status)) agent.lastActivityMs = Date.now();
   }
   agentFeedsData[agent.id].seenAt = Date.now();
   // Honor the auto-open preference: the record lands either way, only the
@@ -148,7 +151,13 @@ function updateAgentFeed(agentId, update) {
   // the stall badge: sessionId is set-once, lastActivityMs bumps per signal.
   if (update.sessionId && !existing.sessionId) existing.sessionId = update.sessionId;
   if (update.chatId && !existing.chatId) existing.chatId = update.chatId;
+  // Any signal from the agent itself is activity: what it ran or wrote, its
+  // streamed text, its token count. Stamped here, not left to each caller: the
+  // named-agent frames (agent-output, agent-update) passed none, so a chunk
+  // worker's row never had an activity time and its job read STALLED while
+  // the worker ran (label-check, 2026-11-23).
   if (update.lastActivityMs) existing.lastActivityMs = update.lastActivityMs;
+  else if (update.output || update.streamText || update.totalTokens != null) existing.lastActivityMs = Date.now();
   if (update.parentOpId && !existing.parentOpId) existing.parentOpId = update.parentOpId;
   if (update.type && !existing.type) existing.type = update.type;
   if (update.startedAt && !existing.startedAt) existing.startedAt = update.startedAt;

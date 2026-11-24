@@ -20,10 +20,11 @@ function load() {
     "document",
     "var agentFeedsData = {}; var agentFeedsOpen = false; var agentFeedsAutoOpen = false; var setInterval = function() {};\n"
       + sources.join("\n")
-      + "\nreturn { addAgentFeed, render: _renderAgentFeedsList, syncJobHeads, data: agentFeedsData };",
+      + "\nreturn { addAgentFeed, updateAgentFeed, render: _renderAgentFeedsList, syncJobHeads, data: agentFeedsData };",
   );
   return factory(document) as {
     addAgentFeed: (a: Rec) => void;
+    updateAgentFeed: (id: string, u: Rec) => void;
     render: () => void;
     syncJobHeads: (now: number) => void;
     data: Record<string, Rec>;
@@ -69,5 +70,41 @@ describe("a job header's stall badge", () => {
     api.data.skeptic.lastActivityMs = now + 11_000;
     api.syncJobHeads(now + 12_000);
     expect(badge()).toBeNull();
+  });
+
+  // The chunk worker is a named agent: its card is fed by agent-output and
+  // agent-update frames (chat-ws-handler-misc.js), which carry no activity
+  // time. Its row had none, so its job still read STALLED while it worked.
+  it("counts a named agent's own output and token updates as activity", () => {
+    const api = load();
+    const now = Date.now();
+    api.addAgentFeed({ id: "orch", name: "Worker: Build orchestrator", type: "orchestrator", status: "working", output: "", startedAt: now - 900_000 });
+    api.data.orch.lastActivityMs = now - STALL - 194_000;
+    // As the agent-spawn frame adds it: no lastActivityMs of its own.
+    api.addAgentFeed({ id: "field-agent-9", name: "Chunk 10/13: Check pipeline", role: "implementer", status: "working", currentTask: "Chunk 10", parentOpId: "orch" });
+    api.data["field-agent-9"].lastActivityMs = now - STALL - 60_000;
+    api.render();
+    api.syncJobHeads(now);
+    expect(badge()).not.toBeNull();
+
+    api.updateAgentFeed("field-agent-9", { output: "tool: bash\n" });
+    api.syncJobHeads(Date.now());
+    expect(badge()).toBeNull();
+    expect(api.data["field-agent-9"].lastActivityMs).toBeGreaterThanOrEqual(now);
+
+    api.data["field-agent-9"].lastActivityMs = now - STALL - 60_000;
+    api.render();
+    api.updateAgentFeed("field-agent-9", { totalTokens: 21_600 });
+    api.syncJobHeads(Date.now());
+    expect(badge()).toBeNull();
+  });
+
+  it("starts a new working card's clock when it is added", () => {
+    const api = load();
+    const before = Date.now();
+    api.addAgentFeed({ id: "field-agent-10", name: "Skeptic", status: "working", parentOpId: "orch" });
+    expect(api.data["field-agent-10"].lastActivityMs).toBeGreaterThanOrEqual(before);
+    api.addAgentFeed({ id: "done-1", name: "Old", status: "completed" });
+    expect(api.data["done-1"].lastActivityMs).toBeUndefined();
   });
 });

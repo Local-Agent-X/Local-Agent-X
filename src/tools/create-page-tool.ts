@@ -6,6 +6,7 @@ import { confineToDir, writeValidatedFile } from "../security/layer/index.js";
 import { err } from "./result-helpers.js";
 import { acquireImages, IMAGES_PARAM_SCHEMA, type ImageSpec } from "./shared/image-acquire.js";
 import { selfPort } from "../security/layer/loopback-grant.js";
+import { APP_CHAT_TOOL_HINT } from "./render-builder-prompt.js";
 
 function escapeHtmlAttr(s: string): string {
   return s
@@ -32,7 +33,8 @@ export const createPageTool: ToolDefinition = {
     "Create a custom page as a workspace app: writes <workspace>/apps/<name>/index.html, served at /apps/<name>/ and listed with the user's apps. " +
     "Use this to build dashboards, tools, visualizations, or any custom UI directly inside the app. " +
     "The page automatically gets the app's theme CSS variables. Like every workspace app it does not get the user's login token; " +
-    "to show external data, define a connector (connector_create) and call /api/connectors/<name>/<path> with Authorization: 'Bearer ' + window.__LAX_CONNECTOR_TOKEN__.",
+    "to show external data, define a connector (connector_create) and call /api/connectors/<name>/<path> with Authorization: 'Bearer ' + window.__LAX_CONNECTOR_TOKEN__. " +
+    APP_CHAT_TOOL_HINT,
   parameters: {
     type: "object",
     properties: {

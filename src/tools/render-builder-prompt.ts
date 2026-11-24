@@ -23,6 +23,14 @@ const WEBSITE_NOUN_IN_PROMPT_RE =
 const APP_CHAT_RULE =
   "Need the app to talk to the user's AI agents (a chat panel, an assistant, several named agents)? Use the helper LAX injects into the page: const reply = window.lax.chat('<thread>', message, { persona: '<role of this thread>' }); for await (const e of reply) yields {type:'delta',text}, {type:'replace',text}, {type:'needs_approval'}, {type:'error',message}, then {type:'done'}; await reply.text() gives the whole reply; lax.chatHistory(thread) and lax.chatStop(thread) exist too. Each thread name (lowercase letters, digits, - _) is its own conversation: one thread and persona per agent. Never call /api/chat or the chat WebSocket from an app, and never build a proxy or a file-polling bridge for it: those are refused by design. The user approves each app once in their Local Agent X inbox; until then a call rejects with error.code 'needs_approval', so show 'Approve this app in Local Agent X, then try again' with a retry button, and handle 'denied' and 'busy'. If window.lax is undefined, say the app must be opened from Local Agent X.";
 
+/** The same, in the one sentence the app-building tools' descriptions carry
+ *  for the chat agent. Tool descriptions, not the system prompt: the prompt
+ *  has no room left on a local model's budget (context/rule-coverage.test.ts). */
+export const APP_CHAT_TOOL_HINT =
+  "An app that needs an assistant inside it (a chat panel, several named agents) talks to the user's agents through window.lax.chat('<thread>', message, { persona }), " +
+  "which LAX injects into every app page: one thread per agent, and the user approves each app once in their inbox (until then a call rejects with code 'needs_approval'). " +
+  "Never /api/chat, a proxy, a file-polling bridge or self_edit for this; tell the user that approving lets the app run turns with their full powers (docs/app-chat-security.md).";
+
 export function looksLikeWebsiteRequest(prompt: string): boolean {
   return WEBSITE_NOUN_IN_PROMPT_RE.test(prompt);
 }

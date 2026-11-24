@@ -21,41 +21,51 @@ import type { StartAutopilotRequest } from "../autopilot/types.js";
 import { createLogger } from "../logger.js";
 const logger = createLogger("routes.autopilot");
 
+/** POST /api/autopilot/start: check the request, resolve the provider and
+ *  start a session. Always answers the request. */
+async function startAutopilotRoute(
+  req: Parameters<RouteHandler>[2],
+  ctx: Parameters<RouteHandler>[4],
+  json: (status: number, data: unknown) => void,
+): Promise<true> {
+  const body = await safeParseBody(req);
+  if (!body || typeof body.topic !== "string" || !Array.isArray(body.scope)) {
+    json(400, { error: "topic (string) and scope (string[]) required" });
+    return true;
+  }
+  try {
+    const { provider, apiKey, model } = await resolveProvider(ctx.config, ctx.secretsStore, ctx.dataDir);
+    if (!apiKey) {
+      json(400, { error: "No provider API key available — check your auth setup" });
+      return true;
+    }
+    const workspaceDir = join(ctx.dataDir, "operations");
+    const result = await startAutopilot(body as unknown as StartAutopilotRequest, {
+      config: ctx.config,
+      apiKey,
+      model,
+      provider: provider as ProviderId,
+      allTools: ctx.allAgentTools,
+      workspaceDir,
+    });
+    if (!result.ok) {
+      json(result.conflict ? 409 : result.developerModeOff ? 403 : 400, result);
+      return true;
+    }
+    json(200, result);
+  } catch (e) {
+    logger.error(`[autopilot.start] ${safeErrorMessage(e)}`);
+    json(500, { error: safeErrorMessage(e) });
+  }
+  return true;
+}
+
 export const handleAutopilotRoutes: RouteHandler = async (method, url, req, res, ctx, _role) => {
   const json = (status: number, data: unknown) => jsonResponse(res, status, data, req);
 
   // POST /api/autopilot/start
   if (method === "POST" && url.pathname === "/api/autopilot/start") {
-    const body = await safeParseBody(req);
-    if (!body || typeof body.topic !== "string" || !Array.isArray(body.scope)) {
-      json(400, { error: "topic (string) and scope (string[]) required" });
-      return true;
-    }
-    try {
-      const { provider, apiKey, model } = await resolveProvider(ctx.config, ctx.secretsStore, ctx.dataDir);
-      if (!apiKey) {
-        json(400, { error: "No provider API key available — check your auth setup" });
-        return true;
-      }
-      const workspaceDir = join(ctx.dataDir, "operations");
-      const result = await startAutopilot(body as unknown as StartAutopilotRequest, {
-        config: ctx.config,
-        apiKey,
-        model,
-        provider: provider as ProviderId,
-        allTools: ctx.allAgentTools,
-        workspaceDir,
-      });
-      if (!result.ok) {
-        json(result.conflict ? 409 : result.developerModeOff ? 403 : 400, result);
-        return true;
-      }
-      json(200, result);
-    } catch (e) {
-      logger.error(`[autopilot.start] ${safeErrorMessage(e)}`);
-      json(500, { error: safeErrorMessage(e) });
-    }
-    return true;
+    return startAutopilotRoute(req, ctx, json);
   }
 
   // POST /api/autopilot/stop/:opId

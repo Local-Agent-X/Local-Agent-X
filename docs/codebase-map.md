@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2142 non-test source files · 65 oversized · 268 nearing the size cap.
+**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2142 non-test source files · 64 oversized · 269 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -59,7 +59,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/self-edit/` | 16 | 19 | L | 2 |
 | `src/anthropic-client/` | 15 | 23 | L | 2 |
 | `src/cron/` | 14 | 14 | L |  |
-| `src/routes/` | 14 | 116 | XL | 16 |
+| `src/routes/` | 14 | 116 | XL | 15 |
 | `src/app-renderer/` | 13 | 7 | M | 1 |
 | `src/agent-loop/` | 12 | 1 | S |  |
 | `src/ari-kernel/` | 12 | 12 | M |  |
@@ -278,7 +278,6 @@ Burn-down targets: find the job that grew and move it to a module named after it
 - `src/providers/adapters/openai-http.ts#OpenAIHttpAdapter.stream`
 - `src/routes/agents/templates.ts#handleAgentTemplateRoutes`
 - `src/routes/apps.ts#handleAppRoutes`
-- `src/routes/autopilot.ts#handleAutopilotRoutes`
 - `src/routes/bridges/auth/anthropic.ts#handleAnthropicAuthRoutes`
 - `src/routes/bridges/auth/core-openai.ts#handleCoreAuthRoutes`
 - `src/routes/bridges/auth/xai.ts#handleXaiAuthRoutes`
@@ -502,6 +501,7 @@ job. Comments are free: never cut them to fit.
 - `src/protocols/learned-review-drafting.ts#proposeReviewedProcedure` — 70+ own code lines (cap 100)
 - `src/protocols/stats-tools.ts#protocol_stats.execute` — 70+ own code lines (cap 100)
 - `src/providers/sanitize.ts#sanitizeHistory` — 70+ own code lines (cap 100)
+- `src/routes/autopilot.ts#handleAutopilotRoutes` — 70+ own code lines (cap 100)
 - `src/routes/chat/delegation-handoff.ts#runDelegationHandoff` — 70+ own code lines (cap 100)
 - `src/routes/issues.ts#handleIssueRoutes` — 70+ own code lines (cap 100)
 - `src/routes/mcp-servers.ts#handleMcpServerRoutes` — 70+ own code lines (cap 100)

@@ -36,6 +36,8 @@ export interface PublishMatch {
   dirArg?: string;
   /** gh pr merge: the PR it names; gh release create: the tag. */
   explicitTarget?: string;
+  /** firebase deploy --only: the targets it names (`remoteconfig`, `firestore:rules`). */
+  deployOnly?: string[];
 }
 
 /** `NAME=value` or `NAME+=value`: a shell assignment; group 1 is the name. */
@@ -283,6 +285,7 @@ function matchSubcommandTable(bin: string, words: string[], at: number): Publish
       const target = args[row.sub.length];
       return { kind: row.kind, label, ...(target ? { explicitTarget: target } : {}) };
     }
+    if (bin === "firebase") return { kind: row.kind, label, ...firebaseOnly(words, at + 1) };
     return { kind: row.kind, label };
   }
   // `eas build --auto-submit` submits the build it makes to the stores.
@@ -294,6 +297,15 @@ function matchSubcommandTable(bin: string, words: string[], at: number): Publish
     return { kind: "package-publish", label: `${bin} buildx build --push` };
   }
   return null;
+}
+
+/** `firebase deploy --only a,b`: the targets it names. Left out when the
+ *  deploy reads another config file (`--config`), whose targets the review
+ *  does not look up, so the whole working tree is reviewed. */
+function firebaseOnly(words: string[], start: number): { deployOnly?: string[] } {
+  if (hasFlag(words, start, "--config", "-c")) return {};
+  const only = flagValue(words, start, "--only")?.split(",").map((t) => t.trim()).filter(Boolean);
+  return only?.length ? { deployOnly: only } : {};
 }
 
 /** Is the argv at `at` (the real command word) a publish? */

@@ -110,12 +110,16 @@ export async function baseBeforeUnpushed(root: string, head: string): Promise<st
 
 export interface DiffResult { files: ChangedFile[]; fileDiffs: FileDiff[]; truncated: boolean; sha256: string }
 
+/** Literal pathspecs for `paths` (repository-relative): a file name is never
+ *  read as a glob. Empty means every path. */
+export const pathspecs = (paths?: readonly string[]): string[] => (paths ? ["--", ...paths.map((p) => `:(literal)${p}`)] : []);
+
 /** `git diff base [head]` — no head means the working tree (tracked files,
- *  staged and unstaged). */
-export async function diffBetween(root: string, base: string, head?: string): Promise<DiffResult> {
+ *  staged and unstaged). `paths` limits it to those files. */
+export async function diffBetween(root: string, base: string, head?: string, paths?: readonly string[]): Promise<DiffResult> {
   const revs = head ? [base, head] : [base];
-  const names = await runGit(root, ["diff", ...DIFF_FLAGS, "--name-status", ...revs]);
-  const full = await runGit(root, ["diff", ...DIFF_FLAGS, ...revs], { keepBytes: DIFF_KEEP_BYTES });
+  const names = await runGit(root, ["diff", ...DIFF_FLAGS, "--name-status", ...revs, ...pathspecs(paths)]);
+  const full = await runGit(root, ["diff", ...DIFF_FLAGS, ...revs, ...pathspecs(paths)], { keepBytes: DIFF_KEEP_BYTES });
   const files: ChangedFile[] = names.stdout.split(/\r?\n/).filter(Boolean).map((l) => {
     const parts = l.split("\t");
     return { status: parts[0], path: parts[parts.length - 1] };
@@ -135,12 +139,21 @@ export function splitDiff(text: string): FileDiff[] {
   return out;
 }
 
+/** Does git ignore any of `paths` (an untracked file .gitignore hides, which
+ *  neither a diff nor the untracked list shows)? null when git cannot say. */
+export async function anyIgnored(root: string, paths: readonly string[]): Promise<boolean | null> {
+  // Not --quiet: git accepts it with one path only.
+  const r = await runGit(root, ["check-ignore", "--", ...paths]);
+  return r.code === 0 ? true : r.code === 1 ? false : null;
+}
+
 export interface UntrackedResult { files: ChangedFile[]; fileDiffs: FileDiff[]; identity: string }
 
 /** Untracked, non-ignored files: listed, content-hashed, and rendered as new
- *  files for the brief when they are small text files. */
-export async function untrackedFiles(root: string): Promise<UntrackedResult> {
-  const r = await runGit(root, ["ls-files", "--others", "--exclude-standard", "-z"], { keepBytes: DIFF_KEEP_BYTES });
+ *  files for the brief when they are small text files. `only` limits it to
+ *  those files. */
+export async function untrackedFiles(root: string, only?: readonly string[]): Promise<UntrackedResult> {
+  const r = await runGit(root, ["ls-files", "--others", "--exclude-standard", "-z", ...pathspecs(only)], { keepBytes: DIFF_KEEP_BYTES });
   const paths = r.stdout.split("\0").filter(Boolean).sort();
   const files: ChangedFile[] = [];
   const fileDiffs: FileDiff[] = [];

@@ -64,6 +64,10 @@ export interface PublishOperation {
   gitEnv?: string[];
   /** gh pr merge: the PR it names; gh release create: the tag. */
   explicitTarget?: string;
+  /** firebase deploy --only: the targets it names. The review reads only the
+   *  files those targets upload when it can name them all
+   *  (publish-review/firebase-deploy-scope.ts). */
+  deployOnly?: string[];
 }
 
 // A LAX tool whose whole purpose is to publish or deploy says so on its row
@@ -206,6 +210,7 @@ function shellPublishes(tool: string, command: string, start: string, toolEnv: s
       ...(match.gitOptions ? { gitOptions: match.gitOptions } : {}),
       ...(gitEnv.length ? { gitEnv } : {}),
       ...(match.explicitTarget ? { explicitTarget: match.explicitTarget } : {}),
+      ...(match.deployOnly ? { deployOnly: match.deployOnly } : {}),
     });
   }
   return found;

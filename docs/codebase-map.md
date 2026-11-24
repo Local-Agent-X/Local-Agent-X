@@ -13,14 +13,14 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2142 non-test source files · 64 oversized · 269 nearing the size cap.
+**Totals:** 73 top-level dirs · 73 live · 0 with no live importer · 2144 non-test source files · 64 oversized · 269 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 191 | 32 | XL | 1 |
-| `src/security/` | 168 | 65 | XL | 2 |
+| `src/security/` | 168 | 66 | XL | 2 |
 | `src/tools/` | 142 | 258 | XL | 8 |
 | `src/tool-execution/` | 107 | 91 | XL | 2 |
 | `src/workspace/` | 93 | 3 | M |  |
@@ -79,7 +79,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/telegram-bridge/` | 8 | 6 | M |  |
 | `src/android/` | 6 | 8 | M |  |
 | `src/credentials/` | 6 | 1 | S |  |
-| `src/publish-review/` | 6 | 8 | M |  |
+| `src/publish-review/` | 6 | 9 | M |  |
 | `src/webrtc/` | 6 | 1 | S |  |
 | `src/embedding-providers/` | 4 | 8 | M |  |
 | `src/holdout/` | 4 | 3 | S |  |

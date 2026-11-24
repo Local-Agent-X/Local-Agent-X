@@ -13,7 +13,8 @@
  * holds, and several benign-but-high-entropy shapes are explicitly excluded
  * even though a real secret could (rarely) wear the same costume:
  *   - UUIDs (8-4-4-4-12) — ubiquitous IDs, not secrets.
- *   - Git SHA-1 (40 hex), MD5 (32 hex), SHA-256 (64 hex) — content hashes. Yes,
+ *   - Git SHA-1 (40 hex), MD5 (32 hex), SHA-256 (64 hex), SHA-512 (128 hex), and
+ *     integrity digests (`sha512-<base64>`, integrity-digest-spans.ts) — content hashes. Yes,
  *     a 64-hex *could* be a real secret; we skip it to keep FP near zero. That
  *     is a deliberate FN: a hex secret of exactly hash length sails through.
  *   - lowercase-only-alphanumeric runs (no uppercase) — opaque IDs like macOS
@@ -37,6 +38,7 @@
 
 import { hexWordRuns, isStdBase64Char, isUrlBase64Char, paddedClassRuns } from "./char-runs.js";
 import { encodedFileSpans } from "./encoded-file-spans.js";
+import { integrityDigestSpans } from "./integrity-digest-spans.js";
 
 export interface EntropyMatch {
   startIndex: number;
@@ -86,9 +88,10 @@ function shannonEntropy(s: string): number {
   return bits;
 }
 
-// Hash lengths we deliberately skip (git SHA-1=40, MD5=32, SHA-256=64). Listed
-// so the intent is explicit; see the FN note in the file header.
-const HASH_HEX_LENGTHS = new Set([32, 40, 64]);
+// Hash lengths we deliberately skip (git SHA-1=40, MD5=32, SHA-256=64,
+// SHA-512=128: a Yarn lockfile's `checksum:`). Listed so the intent is
+// explicit; see the FN note in the file header.
+const HASH_HEX_LENGTHS = new Set([32, 40, 64, 128]);
 
 function isExcludedHex(run: string): boolean {
   if (HASH_HEX_LENGTHS.has(run.length)) return true;
@@ -332,8 +335,9 @@ function overlapsSorted(spans: readonly EntropyMatch[], start: number, end: numb
  */
 export function detectHighEntropyTokens(text: string): EntropyMatch[] {
   const out: EntropyMatch[] = [];
-  // Made to be published (a public key) or not key material at all (a file in base64).
-  const exempt = [...publicKeySpans(text), ...encodedFileSpans(text)];
+  // Made to be published (a public key, a content digest) or not key material
+  // at all (a file in base64).
+  const exempt = [...publicKeySpans(text), ...integrityDigestSpans(text), ...encodedFileSpans(text)];
   const isExempt = (start: number, end: number) => exempt.some(([s, e]) => start < e && s < end);
 
   for (const { run, index } of hexWordRuns(text, HEX_RUN_MIN)) {

@@ -8,7 +8,9 @@
  *                     yet on any remote).
  *   deploy /          the CLI uploads the working tree, so: commits not on the
  *   package-publish   upstream (else the remote default branch) PLUS every
- *                     uncommitted and untracked change.
+ *                     uncommitted and untracked change. A deploy that names
+ *                     the files it uploads (`firebase deploy --only
+ *                     remoteconfig`) is limited to those files.
  *   release           gh release create: commits since the previous tag.
  *                     gh pr merge: the current branch's pushed commits against
  *                     the remote default branch.
@@ -32,9 +34,10 @@ import type { PublishOperation } from "../publish-operation.js";
 import type { ChangeSet, ChangeSetPart, RefUpdate } from "./change-set-types.js";
 import { pushDryRun } from "./push-dry-run.js";
 import {
-  baseBeforeUnpushed, commitOf, commitsIn, currentBranch, diffBetween, emptyTree, mergeBase,
-  pickRemote, previousTag, remoteDefaultRef, repoRootOf, untrackedFiles, upstreamOf,
+  anyIgnored, baseBeforeUnpushed, commitOf, commitsIn, currentBranch, diffBetween, emptyTree, mergeBase,
+  pathspecs, pickRemote, previousTag, remoteDefaultRef, repoRootOf, untrackedFiles, upstreamOf,
 } from "./git-queries.js";
+import { firebaseDeployPaths } from "./firebase-deploy-scope.js";
 
 type PartResult = ChangeSetPart | { reason: string; unsafe?: true };
 
@@ -43,7 +46,7 @@ export async function computeChangeSet(ops: PublishOperation[]): Promise<ChangeS
   const unknown: ChangeSet["unknown"] = [];
   const seen = new Set<string>();
   for (const op of ops) {
-    const key = JSON.stringify([op.kind, op.cwd, op.pushArgs ?? [], op.gitOptions ?? [], op.gitEnv ?? [], op.explicitTarget ?? "", op.repoChangedBefore ?? ""]);
+    const key = JSON.stringify([op.kind, op.cwd, op.pushArgs ?? [], op.gitOptions ?? [], op.gitEnv ?? [], op.explicitTarget ?? "", op.repoChangedBefore ?? "", op.deployOnly ?? []]);
     if (seen.has(key)) continue;
     seen.add(key);
     const result = await partFor(op);
@@ -126,18 +129,31 @@ async function workingTreePart(op: PublishOperation, root: string): Promise<Part
   const head = await commitOf(root, "HEAD");
   const { base, baseLabel } = await compareBase(root, head);
   const empty = await emptyTree(root);
-  const log = head ? await commitsIn(root, base ? [`${base}..${head}`] : [head, "--not", "--remotes"]) : { commits: [], truncated: false };
-  const diff = await diffBetween(root, base ?? empty);
-  const untracked = await untrackedFiles(root);
+  const scope = await uploadScope(op, root);
+  const commitRange = base ? [`${base}..${head}`] : [head ?? "", "--not", "--remotes"];
+  const log = head ? await commitsIn(root, [...commitRange, ...pathspecs(scope ?? undefined)]) : { commits: [], truncated: false };
+  const diff = await diffBetween(root, base ?? empty, undefined, scope ?? undefined);
+  const untracked = await untrackedFiles(root, scope ?? undefined);
   return {
-    kind: op.kind, label: op.label, repoRoot: root, baseLabel,
+    kind: op.kind, label: op.label, repoRoot: root,
+    baseLabel: scope ? `${baseLabel}, limited to what ${op.label} uploads (${scope.join(", ")})` : baseLabel,
     commits: log.commits, commitsTruncated: log.truncated,
     files: [...diff.files, ...untracked.files],
     fileDiffs: [...diff.fileDiffs, ...untracked.fileDiffs],
     diffTruncated: diff.truncated,
     includesWorkingTree: true,
-    identity: `tree|${root}|${head ?? "unborn"}|${base ?? "empty"}|${diff.sha256}|${untracked.identity}`,
+    identity: `tree|${root}|${head ?? "unborn"}|${base ?? "empty"}|${scope ? `only:${scope.join(",")}|` : ""}${diff.sha256}|${untracked.identity}`,
   };
+}
+
+/** The files a deploy uploads, when it names them (firebase-deploy-scope.ts);
+ *  null reviews the whole working tree. A file git ignores would ship with no
+ *  diff to show it, so that one is reviewed as the whole tree too. */
+async function uploadScope(op: PublishOperation, root: string): Promise<string[] | null> {
+  if (!op.deployOnly) return null;
+  const paths = await firebaseDeployPaths(op.cwd, root, op.deployOnly);
+  if (!paths) return null;
+  return (await anyIgnored(root, paths)) === false ? paths : null;
 }
 
 /** Does the push send the checked-out branch, and only it? `git push`,

@@ -45,6 +45,7 @@ import { waitsForShellCommand } from "../tool-registry.js";
 // mirrors the read tool blocking these in ALL file-access modes (incl.
 // unrestricted, where the upstream shell-path-guard is a no-op).
 import { matchesSensitivePath } from "../security/layer/file-access.js";
+import { win32OpenedName } from "../security/layer/lax-control-files.js";
 // argv[0] catalogs + env-name guard tables.
 import {
   SAFE_BINS,
@@ -110,6 +111,8 @@ function stripLeadingInlineAssignments(tokens: string[]): string[] {
  *  and surrounding quotes so `>~/.ssh/x` / `--out=~/.aws/credentials` are seen.
  *  Reuses the canonical matchesSensitivePath — mode-independent by design. */
 function hasSensitivePathToken(tokens: string[]): boolean {
+  // A git revision (`HEAD~1`, `main~3`) has the shape of a short name.
+  const git = tokens.some((tok) => /^(?:.*[\\/])?git(?:\.exe)?$/i.test(tok));
   for (const raw of tokens) {
     let t = raw.replace(/^['"]+|['"]+$/g, "");
     const redir = t.match(/^\d*(?:>>|>|<)(.*)$/);
@@ -122,9 +125,23 @@ function hasSensitivePathToken(tokens: string[]): boolean {
     t = t.replace(/^['"]+|['"]+$/g, "");
     if (!t) continue;
     if (matchesSensitivePath(t)) return true;
+    if (process.platform === "win32" && (matchesSensitivePath(win32OpenedName(t)) || STREAM_SUFFIX.test(t) || (!git && SHORT_NAME_SEGMENT.test(t)))) return true;
   }
   return false;
 }
+
+/**
+ * A path that does not spell the file it opens on Windows: an 8.3 short name
+ * for a segment (`AWS~1`, `SECURI~1.JSO`) or a stream suffix (`x::$DATA`).
+ * A git command is not held to the short-name rule: its revisions (`HEAD~1`)
+ * have the same shape.
+ * What such a token reaches cannot be told from the text (the command's
+ * folder is not known here), so it is never a tier-0 read. A trailing dot or
+ * space is different: Windows just drops it, so the token is judged again
+ * with those gone (win32OpenedName) and an ordinary `echo done.` stays tier 0.
+ */
+const SHORT_NAME_SEGMENT = /(?:^|[\\/])[^\\/~\s]{1,6}~\d+(?:\.[^\\/\s]{0,3})?(?=$|[\\/])/;
+const STREAM_SUFFIX = /::\$/;
 
 /** SAFE_BIN commands that are read-only EXCEPT under a write flag — `sed -i`
  *  (in-place edit) and `sort -o`/`--output` (write to file) mutate a file, so

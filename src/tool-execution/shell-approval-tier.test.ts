@@ -275,6 +275,28 @@ describe("classifyShellTier — skeptic holes (dangerous → forced tier-1)", ()
     }
   });
 
+  // Windows opens one file under several names. A read that reaches a
+  // credential file by one of them must not be tier 0 either.
+  it.skipIf(process.platform !== "win32")("a sensitive file under a trailing dot, a short name or a stream suffix is never tier-0", () => {
+    for (const cmd of [
+      "cat ~/.aws./credentials",
+      "cat ~/.ssh./config",
+      "cat .env.",
+      "cat ~/.aws/credentials.",
+      "cat ~/AWS~1/credentials",
+      "cat C:/Users/me/SSH~1/config",
+      "cat ENV~1",
+      "cat ~/.lax/SECURI~1.JSO",
+      "cat notes.txt::$DATA",
+    ]) {
+      expect(classifyShellTier(cmd, confined), cmd).toBe(1);
+    }
+    // An ordinary argument that merely ends in a dot, or holds a tilde, is unchanged.
+    for (const cmd of ["echo done.", "cat notes.txt", "ls ~/Downloads", "cat src/a~b.ts", "git log --oneline HEAD~1"]) {
+      expect(classifyShellTier(cmd, confined), cmd).toBe(0);
+    }
+  });
+
   it("HOLE 2: sensitive-path reads are never tier-0 (mode-independent)", () => {
     for (const cmd of [
       "cat ~/.ssh/id_rsa",

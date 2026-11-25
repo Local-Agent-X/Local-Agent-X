@@ -438,6 +438,18 @@ describe("Done-when gate edge cases", () => {
     expect(finding.reasoning).toMatch(/advisor/i);
   });
 
+  // label-check-sol (2026-11-24): every check run, the app seen on an
+  // emulator, and STATUS: partial only because the worker could not dispatch
+  // the skeptic the engine runs next. The review that follows decides.
+  it("a partial status with its done-when met is left to the engine's review", () => {
+    const r = parseChunkReport(
+      "STATUS: partial\nDONE_WHEN: met\nCHANGED: scripts/check-structure.mjs\nTESTS: 13/13\nNEW_FAILURES: none\n" +
+      "PRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\nLAUNCH_READINESS: none\n" +
+      "NOTE: The remaining blocker is independent review: this worker could not dispatch a skeptic."
+    );
+    expect(gateDoneWhen(baseChunk, r)).toBeNull();
+  });
+
   it("sends DONE_WHEN: unmet back to the worker", () => {
     const r = parseChunkReport(
       "STATUS: done\nDONE_WHEN: unmet\nCHANGED: x.ts\nTESTS: 0/0\nNEW_FAILURES: none\n" +
@@ -811,11 +823,19 @@ describe("build-exec gate: command + entry discovery (pure)", () => {
 
   it("runs a kit project's structure check first, package.json or not", () => {
     mkdirSync(join(dir, "scripts"));
-    writeFileSync(join(dir, "scripts", "check-structure.mjs"), "");
+    writeFileSync(join(dir, "scripts", "check-structure.mjs"), "// [--typescript <dir>]");
     expect(discoverCommands(dir)).toEqual([structureCheckCommand(dir)]);
     expect(structureCheckCommand(dir)).toMatch(/^node scripts\/check-structure\.mjs --typescript "/);
     writeFileSync(join(dir, "package.json"), JSON.stringify({ scripts: { build: "vite build" } }));
     expect(discoverCommands(dir)).toEqual([structureCheckCommand(dir), "npm run build"]);
+  });
+
+  // label-check-sol wrote its own check at the kit's path; it reads its first
+  // argument as the folder to check and was handed "--typescript" (2026-11-24).
+  it("runs a project's own structure check as written, without the kit's flag", () => {
+    mkdirSync(join(dir, "scripts"));
+    writeFileSync(join(dir, "scripts", "check-structure.mjs"), "const target = process.argv[2] ? resolve(process.argv[2]) : root;");
+    expect(structureCheckCommand(dir)).toBe("node scripts/check-structure.mjs");
   });
 
   it("returns only what exists (build without test)", () => {
@@ -875,7 +895,7 @@ describe("build-exec gate: the project's scripts run in the shell cage", () => {
   // got the quotes as part of the path and failed (label-check-sol, 2026-11-24).
   it("hands a kit project's structure check its TypeScript folder as one argument, without quotes", async () => {
     mkdirSync(join(dir, "scripts"));
-    writeFileSync(join(dir, "scripts", "check-structure.mjs"), "");
+    writeFileSync(join(dir, "scripts", "check-structure.mjs"), "// [--typescript <dir>]");
     expect(await runBuildExecGate({ projectDir: dir })).toBeNull();
     const { args } = seam.wrapped[0];
     const at = args.indexOf("--typescript");

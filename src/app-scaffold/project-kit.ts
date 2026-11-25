@@ -192,7 +192,21 @@ function wireNpmScripts(projectDir: string): boolean {
  *  current Vite templates pin) has no compiler API to parse with, and the kit
  *  would otherwise measure it without function sizes (typescript-api.mjs). */
 export function structureCheckCommand(projectDir: string): string | null {
-  if (!existsSync(join(projectDir, STRUCTURE_CHECK_SCRIPT))) return null;
+  const script = join(projectDir, STRUCTURE_CHECK_SCRIPT);
+  if (!existsSync(script)) return null;
   const typescript = ownTypeScriptDir();
-  return typescript ? `${STRUCTURE_CHECK_COMMAND} --typescript "${typescript}"` : STRUCTURE_CHECK_COMMAND;
+  return typescript && takesTypeScriptFlag(script) ? `${STRUCTURE_CHECK_COMMAND} --typescript "${typescript}"` : STRUCTURE_CHECK_COMMAND;
+}
+
+/** Whether the script at the kit's path is one that reads `--typescript`: the
+ *  kit's does. A project that wrote its own check there runs it as written:
+ *  label-check-sol's read its first argument as the folder to check, was
+ *  handed "--typescript", failed, and the chunk lost a fix round to the
+ *  harness's flag (2026-11-24). */
+function takesTypeScriptFlag(script: string): boolean {
+  try {
+    return readFileSync(script, "utf-8").includes("--typescript");
+  } catch {
+    return false;
+  }
 }

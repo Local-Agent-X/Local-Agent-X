@@ -32,7 +32,14 @@ import { CRED_TERM, mentionsMissingCreds, MISSING_CREDS_RECOVERY } from "./missi
 import type { GateFinding } from "./gates.js";
 
 export function gateDoneWhen(chunk: ParsedChunk, report: ChunkReport): GateFinding | null {
-  if (report.status === "blocked" || report.status === "partial") {
+  // A worker that met its done-when and still says partial is waiting on what
+  // the engine does next: the build check, the skeptic, the held-out judge.
+  // label-check-sol's chunk 1 worker had run the app on an emulator and passed
+  // every check, then reported partial because it could not "dispatch a
+  // skeptic"; that push-back spent the chunk's last fix round (2026-11-24).
+  // The contract is the done-when, and the review that follows judges it.
+  const metButPartial = report.status === "partial" && report.doneWhen === "met";
+  if (report.status === "blocked" || (report.status === "partial" && !metButPartial)) {
     // Missing third-party credentials are a RECOVERABLE condition, not a
     // user-attention halt: the sanctioned path is placeholder envs + a
     // LAUNCH_READINESS deferral (live failure 2026-07-02: chunk 2 halted on

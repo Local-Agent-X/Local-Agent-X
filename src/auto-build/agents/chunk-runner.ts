@@ -123,7 +123,11 @@ const DISCIPLINE_BLOCK =
   `var names), and report DONE_WHEN: deferred-to-launch-readiness instead of blocked/partial. ` +
   `Placeholders must be plain low-entropy words (placeholder-anon-key), NEVER realistic-looking ` +
   `tokens or JWTs — realistic fakes trip the secret-shape detectors and get your shell blocked.\n` +
-  `- **Don't touch \`spec/\`.** Spec amendments are the reviewer's job. Surface gaps in NOTE.\n\n` +
+  `- **Don't touch \`spec/\`.** Spec amendments are the reviewer's job. Surface gaps in NOTE.\n` +
+  `- **The independent review is the engine's, after you.** Once you report, the build engine runs the ` +
+  `build and tests, sends a separate skeptic agent at your change, and judges the held-out scenarios. Do not ` +
+  `try to run, dispatch or wait for that review, and do not report partial or blocked for it: when your ` +
+  `done-when is met, report STATUS: done.\n\n` +
   `## Report format (the review pass parses this — keep it exact)\n\n` +
   `When you finish, reply with EXACTLY this block (no other text after it). ` +
   `Your run's LAST message must be this block by itself: never end the run on a ` +

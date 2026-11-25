@@ -21,7 +21,7 @@ export const LOCAL_SERVICE_RECOVERY =
 export const LOOPBACK_WAY_OUT =
   "If the server is yours, start it with process_start and retry once it is listening (an app's own backend: app_serve_backend, so LAX restarts it with the app); a server the user runs can be added to localServicePorts in their security settings.";
 export const PRIVATE_ADDRESS_WAY_OUT =
-  "Private and LAN addresses are refused to protect the local network: reach your own server on 127.0.0.1 after starting it with process_start; for another device on the network, ask the user.";
+  "Loopback, reserved and this machine's own addresses are refused by host: reach your own server on 127.0.0.1 after starting it with process_start.";
 
 /**
  * Canonicalize a URL host for policy comparison: lowercase, remove IPv6 URL
@@ -81,14 +81,16 @@ function ipv4Value(parts: readonly number[]): number {
   return (((parts[0] * 256 + parts[1]) * 256 + parts[2]) * 256 + parts[3]) >>> 0;
 }
 
-const compiledIPv4Ranges = SPECIAL_USE_IPV4_RANGES.map(({ cidr }) => {
+function compileIPv4Range(cidr: string): { network: number; mask: number } {
   const [base, prefixText] = cidr.split("/");
   const parts = parseStrictIPv4(base);
   if (!parts) throw new Error(`Invalid internal IPv4 CIDR: ${cidr}`);
   const prefix = Number(prefixText);
   const mask = prefix === 0 ? 0 : (0xffffffff << (32 - prefix)) >>> 0;
   return { network: ipv4Value(parts) & mask, mask };
-});
+}
+
+const compiledIPv4Ranges = SPECIAL_USE_IPV4_RANGES.map(({ cidr }) => compileIPv4Range(cidr));
 
 /** True for malformed, non-global, or special-purpose IPv4 addresses. */
 export function isPrivateIPv4(ip: string): boolean {
@@ -142,12 +144,53 @@ function parseIPv6Value(ip: string): bigint | null {
   return groups.reduce((value, group) => (value << 16n) | BigInt(`0x${group}`), 0n);
 }
 
-const compiledIPv6Ranges = SPECIAL_USE_IPV6_RANGES.map(({ cidr }) => {
+function compileIPv6Range(cidr: string): { value: bigint; prefix: number } {
   const [base, prefixText] = cidr.split("/");
   const value = parseIPv6Value(base);
   if (value === null) throw new Error(`Invalid internal IPv6 CIDR: ${cidr}`);
   return { value, prefix: Number(prefixText) };
-});
+}
+
+const compiledIPv6Ranges = SPECIAL_USE_IPV6_RANGES.map(({ cidr }) => compileIPv6Range(cidr));
+
+function inIPv6Range(value: bigint, { value: base, prefix }: { value: bigint; prefix: number }): boolean {
+  const shift = BigInt(128 - prefix);
+  return (value >> shift) === (base >> shift);
+}
+
+// The ranges a device on the user's own network lives in: private use, shared
+// address space (carrier NAT, Tailscale), link local (a device with no DHCP,
+// and the cloud metadata address); IPv6 unique local and link local. Never
+// loopback, multicast, documentation or reserved space: nothing the user owns
+// lives there, so those stay refused outright.
+const LAN_IPV4_RANGES = ["10.0.0.0/8", "100.64.0.0/10", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16"].map(compileIPv4Range);
+const LAN_IPV6_RANGES = ["fc00::/7", "fe80::/10"].map(compileIPv6Range);
+
+/** Name suffixes reserved for private networks: never a public site. */
+const LOCAL_NETWORK_SUFFIXES = [".internal", ".local", ".lan", ".home.arpa"];
+
+/** A name only a private network can answer for (a router, a NAS, an mDNS device). */
+export function isLocalNetworkName(host: string): boolean {
+  return LOCAL_NETWORK_SUFFIXES.some((suffix) => host.endsWith(suffix));
+}
+
+/**
+ * Is this literal address one a device on a local network holds, the kind the
+ * user can allow one at a time (network-policy's local-network decision)? A
+ * strict-decimal IPv4 or an IPv6 literal; a name, an encoded form or a mapped
+ * address is never one.
+ */
+export function isLanAddress(host: string): boolean {
+  const h = canonicalizeHost(host);
+  const v4 = parseStrictIPv4(h);
+  if (v4) {
+    const value = ipv4Value(v4);
+    return LAN_IPV4_RANGES.some(({ network, mask }) => (value & mask) === network);
+  }
+  if (!h.includes(":")) return false;
+  const value = parseIPv6Value(h);
+  return value !== null && LAN_IPV6_RANGES.some((range) => inIPv6Range(value, range));
+}
 
 function ipv4FromBits(bits: bigint): string {
   const n = Number(bits & 0xffffffffn);
@@ -185,10 +228,7 @@ export function isPrivateIPv6(ip: string): boolean {
   const embedded = embeddedTransitionIPv4(value);
   if (embedded !== null) return isPrivateIPv4(embedded);
 
-  if (compiledIPv6Ranges.some(({ value: base, prefix }) => {
-    const shift = BigInt(128 - prefix);
-    return (value >> shift) === (base >> shift);
-  })) return true;
+  if (compiledIPv6Ranges.some((range) => inIPv6Range(value, range))) return true;
 
   // Global unicast is currently 2000::/3. Everything else fails closed.
   return (value >> 125n) !== 0b001n;

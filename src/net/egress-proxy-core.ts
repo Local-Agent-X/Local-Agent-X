@@ -3,6 +3,7 @@ import { connect as netConnect, isIP, type Server } from "node:net";
 import { timingSafeEqual } from "node:crypto";
 import type { Duplex } from "node:stream";
 import {
+  currentEgressAllowlist,
   evaluateEgressForUrl,
   resolveAndPinHost,
 } from "../security/layer/index.js";
@@ -145,7 +146,7 @@ async function resolveDialTarget(
     return { address: hostname, family: literalFamily, hostname, port };
   }
 
-  const resolved = await resolveAndPinHost(hostname);
+  const resolved = await resolveAndPinHost(hostname, currentEgressAllowlist());
   if (!resolved.ok) throw policyDeny(resolved.reason, url.href, onPolicyDeny);
   if (!resolved.pin) {
     throw policyDeny("Blocked: target did not produce a dial address", url.href, onPolicyDeny);

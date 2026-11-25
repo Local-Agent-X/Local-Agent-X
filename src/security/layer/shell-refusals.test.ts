@@ -65,7 +65,8 @@ describe("each refusal names the way that works", () => {
 
   it("network refusals carry their way out in the reason, which every path keeps", () => {
     expect(evaluateEgressForUrl("http://localhost:8080/").reason).toContain(LOOPBACK_WAY_OUT);
-    expect(evaluateEgressForUrl("http://192.168.1.20/").reason).toContain(PRIVATE_ADDRESS_WAY_OUT);
+    expect(evaluateEgressForUrl("http://127.0.0.2/").reason).toContain(PRIVATE_ADDRESS_WAY_OUT);
+    expect(evaluateEgressForUrl("http://192.168.1.20/").reason).toContain("Settings → Security → Web access");
   });
 });
 

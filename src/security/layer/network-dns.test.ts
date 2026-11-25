@@ -65,3 +65,34 @@ describe("resolveAndPinHost", () => {
     expect(lookup).not.toHaveBeenCalled();
   });
 });
+
+describe("resolveAndPinHost — a device the user allowed by name", () => {
+  afterEach(() => vi.restoreAllMocks());
+
+  it("an exact trusted name may answer with a LAN address, and is pinned to it", async () => {
+    vi.spyOn(dns, "lookup").mockResolvedValue([{ address: "192.168.1.1", family: 4 }] as never);
+    expect(await resolveAndPinHost("router.home.internal", new Set(["router.home.internal"]))).toEqual({ ok: true, pin: { address: "192.168.1.1", family: 4 } });
+  });
+
+  it("the same name untrusted, or trusted only by a wildcard, is refused and says how to allow it", async () => {
+    vi.spyOn(dns, "lookup").mockResolvedValue([{ address: "192.168.1.1", family: 4 }] as never);
+    const r = await resolveAndPinHost("router.home.internal");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toMatch(/Settings → Security → Web access/);
+    expect((await resolveAndPinHost("router.home.internal", new Set(["*.home.internal"]))).ok).toBe(false);
+  });
+
+  it("an allowed PUBLIC name never answers with a LAN address: that is DNS rebinding into the user's network", async () => {
+    vi.spyOn(dns, "lookup").mockResolvedValue([{ address: "192.168.1.1", family: 4 }] as never);
+    const r = await resolveAndPinHost("docs.example.org", new Set(["docs.example.org"]));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.reason).toMatch(/allow its address/);
+  });
+
+  it("a trusted name still never answers with loopback or reserved space", async () => {
+    vi.spyOn(dns, "lookup").mockResolvedValue([{ address: "127.0.0.1", family: 4 }] as never);
+    expect((await resolveAndPinHost("router.home.internal", new Set(["router.home.internal"]))).ok).toBe(false);
+    vi.spyOn(dns, "lookup").mockResolvedValue([{ address: "::1", family: 6 }] as never);
+    expect((await resolveAndPinHost("router.home.internal", new Set(["router.home.internal"]))).ok).toBe(false);
+  });
+});

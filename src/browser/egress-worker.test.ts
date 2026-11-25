@@ -219,7 +219,7 @@ describe("egress worker — deny-reason round trip", () => {
 		expect((await askPipe(pipe(), { url, viewId })).allowed).toBe(false);
 		// The worker posts the deny to the host asynchronously; allow it to settle.
 		await waitFor(() => peekEgressDeny(url, viewId) !== null, 5000, "deny to reach the main-thread cache");
-		expect(peekEgressDeny(url, viewId)?.reason).toContain("private/reserved IPv4 address");
+		expect(peekEgressDeny(url, viewId)?.reason).toContain("cloud metadata address");
 	});
 });
 

@@ -29,10 +29,12 @@
 const LEGACY_TAINT_LAYERS = ['data-lineage', 'tainted-shell'];
 
 /**
- * Is this block a strict web-access refusal the USER can lift by allowing the
- * site? The policy layer says so (`metadata.clearable === 'allow-host'`) and
+ * Is this block a web-access refusal the USER can lift by allowing the site or
+ * the device on their network? The policy layer says so (`metadata.clearable === 'allow-host'`) and
  * names the host; the button below posts that host to the allowlist.
  */
+const CLOUD_METADATA_ADDRESS = '169.254.169.254';
+
 function isAllowHostBlock(metadata) {
   const md = metadata || {};
   return md.clearable === 'allow-host' && typeof md.host === 'string' && md.host !== '';
@@ -73,9 +75,12 @@ function renderKernelBlockNotice(endEvt, sessionId) {
   el.className = 'kernel-block-notice';
   if (rule) el.setAttribute('data-rule', String(rule));
   let text;
-  if (isAllowHostBlock(md)) {
-    text = 'Web access: ' + md.host + ' is not on your allowed sites, so the call was refused. '
-      + 'Allowing it adds the site to Settings → Security → Web access and the agent retries.';
+  if (isAllowHostBlock(md) && md.host === CLOUD_METADATA_ADDRESS) {
+    text = 'Web access: ' + md.host + ' is the cloud metadata address. On a cloud server it hands out the machine’s credentials; '
+      + 'on a home or office network nothing answers there. Allow it only if LAX runs on a cloud server and the agent should have them.';
+  } else if (isAllowHostBlock(md)) {
+    text = 'Web access: ' + md.host + ' is not on your allowed sites and devices, so the call was refused. '
+      + 'Allowing it adds it to Settings → Security → Web access and the agent retries.';
   } else if (isDeclassifiable(md)) {
     text = 'Security block: this session is quarantined by a sensitive read, so outbound calls that could carry that data are refused'
       + (rule ? ' (kernel rule ' + rule + ')' : '') + '. Clearing it is your call.';

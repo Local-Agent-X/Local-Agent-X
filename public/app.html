@@ -1083,7 +1083,7 @@
         </div>
         <div class="section-card">
           <div class="section-title">Web access</div>
-          <div class="section-desc">Which sites the agent's web tools may reach: web_fetch, http_request, the browser, and the caged shell all follow this one policy. Private addresses, cloud metadata and loopback are guarded separately.</div>
+          <div class="section-desc">Which sites the agent's web tools may reach: web_fetch, http_request, the browser, and the caged shell all follow this one policy. A device on your own network (a router, a NAS) is reached only once you allow it here or from the chat's notice; loopback is guarded separately.</div>
           <div class="field">
             <label class="field-label">Mode</label>
             <select class="field-select" id="cfg-egress-mode" onchange="setEgressModeUI(this.value)">
@@ -1096,7 +1096,7 @@
             <label class="field-label">Allowed sites</label>
             <div id="egress-allowlist" style="margin:0 0 8px"></div>
             <div style="display:flex;gap:8px;align-items:center">
-              <input class="field-input" id="egress-allow-input" placeholder="example.com or *.example.com" onkeydown="if (event.key === 'Enter') allowEgressHostUI()"/>
+              <input class="field-input" id="egress-allow-input" placeholder="example.com, *.example.com or 192.168.1.1" onkeydown="if (event.key === 'Enter') allowEgressHostUI()"/>
               <button class="action-btn" id="egress-allow-btn" onclick="allowEgressHostUI()">Allow</button>
             </div>
             <div class="field-hint" id="egress-allow-error" style="margin-top:4px"></div>

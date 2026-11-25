@@ -329,7 +329,8 @@ describe("egress mode semantics", () => {
   it("evaluateWebFetch: non-loopback private IP + allowlisted port → still blocked", () => {
     const d = evaluateWebFetch(new Set(), false, "7007", "http://10.0.0.5:47831/health", "permissive", new Set(["47831"]));
     expect(d.allowed).toBe(false);
-    expect(d.reason).toMatch(/private\/reserved/i);
+    // A LAN device answers to the user's allow, never to a loopback port grant.
+    expect(d.action).toEqual({ kind: "allow-host", host: "10.0.0.5" });
   });
 
   // C4 root cause: localServicePorts is loaded ONCE in the constructor, so a dev

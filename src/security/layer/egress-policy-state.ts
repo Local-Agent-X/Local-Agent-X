@@ -12,6 +12,8 @@
 
 import { join } from "node:path";
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { isIP } from "node:net";
+import { isLanAddress, isPrivateIPv4, isPrivateIPv6 } from "./ip-classification.js";
 import { getLaxDir } from "../../lax-data-dir.js";
 import { atomicWriteFileSync } from "../../util/json-store.js";
 import { loadEgressAllowlist, loadEgressMode } from "./security-config.js";
@@ -38,18 +40,37 @@ export interface EgressPolicySnapshot {
 }
 
 /**
+ * An address as the allowlist stores it: a public address, or a device on a
+ * local network the user allows (local-network-grant.ts). Loopback, this
+ * machine's reserved and special-purpose space, and encoded forms are refused:
+ * their reach is never granted by host. IPv6 in the compressed form a URL's
+ * hostname carries, so the stored entry matches what the policy compares.
+ */
+function normalizeEgressAddress(s: string): string | null {
+  const bracketed = /^\[([^\]]+)\](:\d+)?$/.exec(s);
+  const address = bracketed ? bracketed[1] : (s.match(/:/g) ?? []).length >= 2 ? s : s.replace(/:\d+$/, "");
+  const family = isIP(address);
+  if (family === 0) return null;
+  const isPrivate = family === 4 ? isPrivateIPv4(address) : isPrivateIPv6(address);
+  if (isPrivate && !isLanAddress(address)) return null;
+  return family === 4 ? address : new URL(`http://[${address}]/`).hostname.slice(1, -1);
+}
+
+/**
  * A host as the allowlist stores it: lowercase, no scheme, path or port, either
- * a registrable name (`api.github.com`) or a wildcard on one (`*.github.com`).
- * Anything else is refused rather than guessed at.
+ * a registrable name (`api.github.com`), a wildcard on one (`*.github.com`), or
+ * an address (normalizeEgressAddress). Anything else is refused rather than
+ * guessed at.
  */
 export function normalizeEgressHost(raw: string): string | null {
   let s = String(raw ?? "").trim().toLowerCase();
-  s = s.replace(/^[a-z][a-z0-9+.-]*:\/\//, "").replace(/[/?#].*$/, "").replace(/:\d+$/, "");
+  s = s.replace(/^[a-z][a-z0-9+.-]*:\/\//, "").replace(/[/?#].*$/, "");
+  if (s.startsWith("[") || /^[\d.]+(:\d+)?$/.test(s) || (s.match(/:/g) ?? []).length >= 2) return normalizeEgressAddress(s);
+  s = s.replace(/:\d+$/, "");
   const wildcard = s.startsWith("*.");
   const name = wildcard ? s.slice(2) : s;
   if (!/^(?=.{1,253}$)[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?(\.[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?)+$/.test(name)) return null;
-  // A numeric last label is an IP literal, not a name; addresses follow the
-  // SSRF rules, never the allowlist.
+  // A numeric last label on a name is an encoded or partial address.
   if (/^\d+$/.test(name.slice(name.lastIndexOf(".") + 1))) return null;
   return wildcard ? `*.${name}` : name;
 }
@@ -117,7 +138,7 @@ export class EgressPolicyState {
     const normalized = new Set<string>();
     for (const h of hosts) {
       const n = normalizeEgressHost(h);
-      if (n === null) throw new Error(`"${h}" is not a host name (use example.com or *.example.com)`);
+      if (n === null) throw new Error(`"${h}" is not a host name or device address (use example.com, *.example.com or 192.168.1.1)`);
       normalized.add(n);
     }
     atomicWriteFileSync(join(getLaxDir(), "egress-allowlist.json"), JSON.stringify([...normalized].sort(), null, 2) + "\n");
@@ -127,7 +148,7 @@ export class EgressPolicyState {
 
   allow(host: string): EgressPolicySnapshot {
     const n = normalizeEgressHost(host);
-    if (n === null) throw new Error(`"${host}" is not a host name (use example.com or *.example.com)`);
+    if (n === null) throw new Error(`"${host}" is not a host name or device address (use example.com, *.example.com or 192.168.1.1)`);
     return this.setAllowlist([...this.allowlist, n]);
   }
 

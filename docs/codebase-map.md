@@ -13,14 +13,14 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2175 non-test source files · 59 oversized · 275 nearing the size cap.
+**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2176 non-test source files · 59 oversized · 275 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 191 | 32 | XL | 1 |
-| `src/security/` | 172 | 66 | XL | 2 |
+| `src/security/` | 172 | 67 | XL | 2 |
 | `src/tools/` | 147 | 267 | XL | 6 |
 | `src/tool-execution/` | 107 | 92 | XL | 2 |
 | `src/workspace/` | 98 | 3 | M |  |
@@ -507,6 +507,7 @@ job. Comments are free: never cut them to fit.
 - `src/routes/issues.ts#handleIssueRoutes` — 70+ own code lines (cap 100)
 - `src/routes/mcp-servers.ts#handleMcpServerRoutes` — 70+ own code lines (cap 100)
 - `src/screen-capture.ts#captureScreen` — 70+ own code lines (cap 100)
+- `src/security/layer/network-dns.ts#resolveAndPinHost` — 70+ own code lines (cap 100)
 - `src/security/layer/shell-nested-commands.ts#splitNestedCommands` — 70+ own code lines (cap 100)
 - `src/server/background-jobs/memory-bg.ts#makeRunMemBg:returned` — 70+ own code lines (cap 100)
 - `src/server/bootstrap-tools.ts#bootstrapTools` — 70+ own code lines (cap 100)
@@ -567,7 +568,6 @@ job. Comments are free: never cut them to fit.
 - `src/routes/health.ts#handleHealthRoutes` — 60+ own code lines (cap 100)
 - `src/routes/mcp.ts#handleMcpRoutes` — 60+ own code lines (cap 100)
 - `src/sandbox/docker-execution-runtime.ts#DockerCliExecutionRuntime.create` — 60+ own code lines (cap 100)
-- `src/security/layer/network-dns.ts#resolveAndPinHost` — 60+ own code lines (cap 100)
 - `src/server/bridge-media-forward.ts#forwardBridgeMedia` — 60+ own code lines (cap 100)
 - `src/server/workspace-app-serving.ts#serveWorkspaceApp` — 60+ own code lines (cap 100)
 - `src/sync/facts-sync.ts#db.transaction:callback` — 60+ own code lines (cap 100)

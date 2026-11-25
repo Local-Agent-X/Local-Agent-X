@@ -14,6 +14,7 @@ export {
 export { readValidatedFile, writeValidatedFile, openValidatedRead, FileAccessDeniedError } from "./validated-io.js";
 export {
 	evaluateEgressForUrl,
+	currentEgressAllowlist,
 	resolveAndPinHost,
 	matchEgressList,
 	evaluateWebFetch,

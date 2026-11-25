@@ -19,6 +19,21 @@ describe("normalizeEgressHost", () => {
       expect(normalizeEgressHost(bad), bad).toBeNull();
     }
   });
+
+  it("keeps a device address on the user's network, or a public one, as the policy compares it", () => {
+    expect(normalizeEgressHost("192.168.1.1")).toBe("192.168.1.1");
+    expect(normalizeEgressHost("http://192.168.1.1:8080/admin")).toBe("192.168.1.1");
+    expect(normalizeEgressHost("169.254.169.254")).toBe("169.254.169.254");
+    expect(normalizeEgressHost("8.8.8.8")).toBe("8.8.8.8");
+    expect(normalizeEgressHost("FD12:3456:0:0::1")).toBe("fd12:3456::1");
+    expect(normalizeEgressHost("http://[fe80::1]:80/")).toBe("fe80::1");
+  });
+
+  it("refuses loopback, reserved, encoded and wildcard addresses: their reach is never granted by host", () => {
+    for (const bad of ["127.0.0.2", "[::1]", "0.0.0.0", "224.0.0.1", "010.0.0.1", "0xc0a80101", "3232235777", "*.168.1.1", "::ffff:192.168.1.1"]) {
+      expect(normalizeEgressHost(bad), bad).toBeNull();
+    }
+  });
 });
 
 describe("EgressPolicyState", () => {

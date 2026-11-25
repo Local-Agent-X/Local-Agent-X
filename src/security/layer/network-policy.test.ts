@@ -280,10 +280,10 @@ describe("evaluateWebFetch — operator-named local runtime carve-out (C7)", () 
     expect(named("http://10.0.0.7:11434/", ["192.168.1.50:11434"]).allowed).toBe(false);
   });
 
-  it("empty set preserves the existing private-range block exactly", () => {
+  it("with no runtime named, a LAN endpoint is the user's to allow, like any device", () => {
     const d = webFetch("http://192.168.1.50:11434/");
     expect(d.allowed).toBe(false);
-    expect(d.reason).toContain("private/reserved IPv4");
+    expect(d.action).toEqual({ kind: "allow-host", host: "192.168.1.50" });
   });
 
   it("cloud metadata stays blocked even when named (link-local IP and .internal alias)", () => {
@@ -677,13 +677,62 @@ describe("evaluateWebFetch — strict mode names the way out", () => {
     expect(d.reason).not.toMatch(/egress-allowlist\.json/);
   });
 
-  it("an SSRF refusal carries no action: there is nothing for the user to allow", () => {
-    const d = evaluateWebFetch(new Set(["*"]), true, "7007", "http://169.254.169.254/latest", "strict");
-    expect(d.allowed).toBe(false);
-    expect(d.action).toBeUndefined();
+  it("an SSRF refusal with nothing to allow carries no action (encoded, loopback, reserved)", () => {
+    for (const url of ["http://0x7f000001/", "http://2130706433/", "http://127.0.0.2/", "http://224.0.0.1/", "http://[::ffff:192.168.1.1]/"]) {
+      const d = evaluateWebFetch(new Set(["*"]), true, "7007", url, "strict");
+      expect(d.allowed, url).toBe(false);
+      expect(d.action, url).toBeUndefined();
+    }
   });
 
   it("permissive mode never produces the action", () => {
     expect(evaluateWebFetch(EMPTY_ALLOWLIST, false, "7007", "https://docs.example.org/", "permissive").allowed).toBe(true);
+  });
+});
+
+describe("evaluateWebFetch — a device on the user's own network is the user's to allow", () => {
+  beforeEach(() => _setInterfaceAddressesForTests(() => ["127.0.0.1", "::1", "192.168.1.50"]));
+  afterEach(() => _setInterfaceAddressesForTests(null));
+
+  it.each([
+    ["http://192.168.1.1/", "192.168.1.1"],
+    ["http://10.0.0.8:8080/status", "10.0.0.8"],
+    ["http://100.101.102.103/", "100.101.102.103"],
+    ["http://[fd12:3456::1]/", "fd12:3456::1"],
+    ["http://router.home.internal/", "router.home.internal"],
+    ["http://nas.local:5000/", "nas.local"],
+    ["http://printer.lan/", "printer.lan"],
+    ["http://169.254.169.254/latest/meta-data/", "169.254.169.254"],
+  ])("%s is refused with the allow-host action until allowed, in both modes", (url, host) => {
+    for (const mode of ["permissive", "strict"] as const) {
+      const d = evaluateWebFetch(EMPTY_ALLOWLIST, mode === "strict", "7007", url, mode);
+      expect(d.allowed, `${mode} ${url}`).toBe(false);
+      expect(d.action, `${mode} ${url}`).toEqual({ kind: "allow-host", host });
+      expect(d.reason).toMatch(/Settings → Security → Web access/);
+      const allowed = evaluateWebFetch(new Set([host]), true, "7007", url, mode);
+      expect(allowed.allowed, `${mode} allowed ${url}`).toBe(true);
+    }
+  });
+
+  it("allowing one device allows only that device", () => {
+    const list = new Set(["192.168.1.1"]);
+    expect(evaluateWebFetch(list, true, "7007", "http://192.168.1.1/", "permissive").allowed).toBe(true);
+    expect(evaluateWebFetch(list, true, "7007", "http://192.168.1.2/", "permissive").allowed).toBe(false);
+  });
+
+  it("the metadata refusal says what the address hands out", () => {
+    expect(webFetch("http://169.254.169.254/").reason).toMatch(/credentials/);
+  });
+
+  it("this machine's own LAN address keeps its per-port grant and is never offered by host", () => {
+    const d = evaluateWebFetch(new Set(["192.168.1.50"]), true, "7007", "http://192.168.1.50:9222/", "permissive");
+    expect(d.allowed).toBe(false);
+    expect(d.action).toBeUndefined();
+  });
+
+  it("the hard-blocked metadata names stay hard-blocked", () => {
+    const d = evaluateWebFetch(new Set(["metadata.google.internal"]), true, "7007", "http://metadata.google.internal/", "permissive");
+    expect(d.allowed).toBe(false);
+    expect(d.action).toBeUndefined();
   });
 });

@@ -11,7 +11,7 @@
 
 const EGRESS_HINTS = {
   strict: 'The agent asks before it reaches a site that is not listed below: the call stops with an "Allow & retry" notice in the chat, so the list grows as you approve sites. Turned on with no list yet, the list starts with the search providers, so web search keeps working.',
-  permissive: 'The agent may reach any public site. Private addresses, cloud metadata and loopback stay guarded, what leaves is still checked for secrets and for private content headed somewhere you did not choose, and the allowed-sites list only marks sites that may receive secret-bearing requests. Choose "Ask before each new site" to approve every site yourself.'
+  permissive: 'The agent may reach any public site. Devices on your own network (a router, a NAS) and the cloud metadata address are asked about one at a time, loopback stays guarded, what leaves is still checked for secrets and for private content headed somewhere you did not choose, and the allowed list marks the sites that may receive secret-bearing requests and the devices on your network the agent may reach. Choose "Ask before each new site" to approve every site yourself.'
 };
 
 function renderWebAccess(s) {

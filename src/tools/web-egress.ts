@@ -2,7 +2,7 @@ import { Agent, fetch as undiciFetch, type FormData } from "undici";
 import type { RequestInit as UndiciRequestInit, Response as UndiciResponse } from "undici";
 import { getInternalAgentToken } from "../rbac.js";
 import { USER_HINTS, type BlockAction, type ToolResult } from "../types.js";
-import { resolveAndPinHost, evaluateEgressForUrl } from "../security/layer/index.js";
+import { resolveAndPinHost, evaluateEgressForUrl, currentEgressAllowlist } from "../security/layer/index.js";
 import { isLoopbackHost, loopbackPinFor } from "../security/layer/ip-classification.js";
 import { reservedLoopbackPorts } from "../security/layer/security-config.js";
 import { assertSendAllowed } from "../net/egress-send.js";
@@ -142,7 +142,7 @@ export async function assertLiteralIpEgressAllowed(url: string): Promise<void> {
   } catch {}
   const decision = evaluateEgressForUrl(url, selfPort);
   if (!decision.allowed) {
-    throw new EgressRedirectBlocked(url, decision.reason);
+    throw new EgressRedirectBlocked(url, decision.reason, decision.action);
   }
 }
 
@@ -212,7 +212,7 @@ export function createPinningDispatcher(): Agent {
           cb(null, [loopback]);
           return;
         }
-        resolveAndPinHost(hostname).then((r) => {
+        resolveAndPinHost(hostname, currentEgressAllowlist()).then((r) => {
           if (!r.ok) { cb(new Error(r.reason), []); return; }
           if (r.pin === null) {
             const family = hostname.includes(":") ? 6 : 4;

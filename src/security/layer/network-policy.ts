@@ -22,6 +22,7 @@ import { isAgentOriginPort } from "./agent-origin-port.js";
 import { isThisMachineHost, loopbackServiceReachable } from "./loopback-grant.js";
 import { endpointHostPort } from "../../local-runtimes/admission.js";
 import { isLocalOnlyMode, isLoopbackUrl, LOCAL_ONLY_BLOCK_MESSAGE } from "../../local-only-policy.js";
+import { localNetworkDecision } from "./local-network-grant.js";
 
 
 export type EgressMode = "permissive" | "strict";
@@ -142,6 +143,10 @@ export function evaluateWebFetch(
     return { allowed: false, reason: `Blocked: ${host} is a blocked hostname (SSRF protection)`, userHint: USER_HINTS.network, recovery: LOCAL_SERVICE_RECOVERY };
   }
 
+  // A device on the user's own network: refused until the user allows it.
+  const localNetwork = operatorNamed ? null : localNetworkDecision(host, egressAllowlist);
+  if (localNetwork) return localNetwork;
+
   // Check if it's a literal IP address
   // IPv4 — strict decimal only; octal (0177.0.0.1) and hex (0x7f.0.0.1) are blocked
   if (/^\d+\.\d+\.\d+\.\d+$/.test(host) || /^0x[0-9a-f]/i.test(host) || /^0[0-7]+\./.test(host)) {
@@ -169,8 +174,10 @@ export function evaluateWebFetch(
     }
   }
 
-  // Cloud metadata endpoints (various formats)
-  if (host === "169.254.169.254" || host.endsWith(".internal") || host.endsWith(".metadata")) {
+  // Cloud metadata. The user lifts it for the address and .internal names
+  // through the local-network decision above; a local-runtime entry naming
+  // the metadata address skips that decision and is refused here.
+  if (host === "169.254.169.254" || host.endsWith(".metadata")) {
     return { allowed: false, reason: `Blocked: ${host} is a cloud metadata endpoint`, userHint: USER_HINTS.network };
   }
 
@@ -245,6 +252,12 @@ export function loadEgressConfig(): EgressConfig {
   return { allowlist, configured, mode, localServicePorts, manualHostPorts: manualRuntimeHostPorts() };
 }
 
+/** The web-access allowlist alone, for a dialer's DNS pin (resolveAndPinHost's trusted names). */
+export function currentEgressAllowlist(): ReadonlySet<string> {
+  egressState ??= new EgressPolicyState();
+  return egressState.allowlist;
+}
+
 /**
  * Re-run the egress policy against a single URL using the current on-disk
  * config. Used by the web-tools redirect loops to re-check a cross-host
@@ -308,7 +321,7 @@ export async function validateUrlWithDns(
 
   // DNS pinning: resolve the hostname and validate the actual IP. One source of
   // truth for the resolve + private-IP check lives in resolveAndPinHost.
-  const pinned = await resolveAndPinHost(host);
+  const pinned = await resolveAndPinHost(host, egressAllowlist);
   if (!pinned.ok) {
     return { allowed: false, reason: pinned.reason, userHint: USER_HINTS.network };
   }

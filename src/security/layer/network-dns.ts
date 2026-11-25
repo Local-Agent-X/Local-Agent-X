@@ -11,7 +11,7 @@
 import { promises as dns } from "node:dns";
 import { isIP } from "node:net";
 import { createLogger } from "../../logger.js";
-import { canonicalizeHost, isPrivateIPv4, isPrivateIPv6 } from "./ip-classification.js";
+import { canonicalizeHost, isLanAddress, isLocalNetworkName, isPrivateIPv4, isPrivateIPv6 } from "./ip-classification.js";
 
 const logger = createLogger("security.network-dns");
 
@@ -54,6 +54,10 @@ async function lookupAll(host: string): Promise<Array<{ address: string; family:
  *  - Hostname: resolves every address (lookupAll); if ANY resolved address is
  *    private/reserved, blocks (DNS-rebinding protection); otherwise returns
  *    the first valid address as the pin (prefer IPv4 if present, else IPv6).
+ *    The exception: a local-network name (.local, .internal, ...) in
+ *    `trustedNames` (the web-access allowlist) may resolve to a LAN address,
+ *    the user having allowed that device by name.
+ *    A caller that passes no list gets the strict rule.
  *  - DNS failure or timeout: fail-closed (ok: false), the cause in the reason.
  *
  *  NOTE: loopback stays fail-closed here even for the `localhost` alias family,
@@ -61,7 +65,7 @@ async function lookupAll(host: string): Promise<Array<{ address: string; family:
  *  self-port / localServicePorts grant. Callers that legitimately dial a
  *  loopback alias authorize it against evaluateWebFetch (which does see the
  *  port) and skip this resolve — see web-egress.ts createPinningDispatcher. */
-export async function resolveAndPinHost(host: string): Promise<
+export async function resolveAndPinHost(host: string, trustedNames: ReadonlySet<string> = new Set()): Promise<
   | { ok: true; pin: { address: string; family: 4 | 6 } | null }
   | { ok: false; reason: string }
 > {
@@ -122,20 +126,33 @@ export async function resolveAndPinHost(host: string): Promise<
     };
   }
 
+  // A local-network name the user allowed by its exact spelling may answer
+  // with a LAN address: that is what router.home.internal or nas.local is for.
+  // Never a public name, allowed or not: a site the user allowed for the web
+  // whose DNS answers 192.168.1.1 is a rebinding into their network, and a
+  // device known by a public name is allowed by its address. Never through a
+  // wildcard either; loopback and reserved answers stay refused.
+  const userDevice = isLocalNetworkName(host) && trustedNames.has(host);
+  const refusedAnswer = (ip: string, isPrivate: (ip: string) => boolean) =>
+    isPrivate(ip) && !(userDevice && isLanAddress(ip));
+  const notAllowedYet = isLocalNetworkName(host)
+    ? ` If ${host} is a device on the user's own network, the user can allow it in Settings → Security → Web access.`
+    : ` If it is a device on the user's own network, the user can allow its address in Settings → Security → Web access.`;
+
   for (const ip of addresses) {
-    if (isPrivateIPv4(ip)) {
+    if (refusedAnswer(ip, isPrivateIPv4)) {
       return {
         ok: false,
-        reason: `Blocked: ${host} resolves to private IP ${ip} (DNS rebinding protection)`,
+        reason: `Blocked: ${host} resolves to private IP ${ip} (DNS rebinding protection).${isLanAddress(ip) ? notAllowedYet : ""}`,
       };
     }
   }
 
   for (const ip of addresses6) {
-    if (isPrivateIPv6(ip)) {
+    if (refusedAnswer(ip, isPrivateIPv6)) {
       return {
         ok: false,
-        reason: `Blocked: ${host} resolves to private IPv6 ${ip} (DNS rebinding protection)`,
+        reason: `Blocked: ${host} resolves to private IPv6 ${ip} (DNS rebinding protection).${isLanAddress(ip) ? notAllowedYet : ""}`,
       };
     }
   }

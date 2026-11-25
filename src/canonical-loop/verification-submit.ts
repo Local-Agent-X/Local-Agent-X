@@ -49,6 +49,8 @@ import { newOpId } from "../ops/op-store.js";
 import { trackOpForSession } from "../ops/session-bridge.js";
 import { delegatedToolsetForOp } from "../ops/tools/delegated-toolset.js";
 import type { Op, OpBudget, OpVisibility } from "../ops/types.js";
+import { toolsTagged } from "../tool-registry.js";
+import type { ToolDefinition } from "../types.js";
 import { buildVerificationBrief } from "./verification-brief.js";
 import { VERIFICATION_OP_TYPE, type VerificationSubmitInput } from "./verification-spend.js";
 import { armWorkerOpDeadline, configureWorkerOpRuntime } from "./worker-op-runtime.js";
@@ -66,7 +68,12 @@ const logger = createLogger("canonical-loop.verification-submit");
  *     it is an ordinary way for a multi-turn pass to end, not a fault — the
  *     meter is cumulative, so cost grows with the square of the turn count.
  *     Measured 2026-09-22: eight turns of document reads plus web fetches
- *     spent 85,419 against this 80,000.
+ *     spent 85,419 against the 80,000 this used to be. Live 2026-11-24, once
+ *     the check ran before "done": 80,000 ended a pass after six turns, before
+ *     it fetched a single source, so every deck's note said "couldn't check".
+ *     The audit's own shape sets the size: a read, two or three searches, two
+ *     or three fetches and the verdict is ~10 turns whose prompts grow from
+ *     ~12k to ~40k as the fetched pages pile up, ~250k on this meter.
  *   - maxWallTimeMs BINDS — but via THIS module's deadline timer
  *     (armVerificationDeadline → opCancel), not the worker's wall-clock
  *     timer, which arms on the interactive lane ONLY, by documented design
@@ -84,10 +91,23 @@ const logger = createLogger("canonical-loop.verification-submit");
  */
 export const VERIFICATION_OP_BUDGET: OpBudget = {
 	maxIterations: 12,
-	maxTokens: 80_000,
+	maxTokens: 300_000,
 	maxWallTimeMs: 300_000,
 	maxSelfEditCalls: 0,
 };
+
+/**
+ * The belt for a figures audit (the verifier, and the correction after it):
+ * the delegated worker's, without the step-list tools. Their brief is already
+ * a fixed procedure, and given task_create the open-steps seed told the
+ * verifier to lay one out: live 2026-11-24 it spent six of its seven calls
+ * creating and ticking off steps and ran out of budget before it fetched a
+ * source. Without the tools the seed does not fire (it needs task_create).
+ */
+export function figuresAuditBelt(tools: ToolDefinition[]): ToolDefinition[] {
+	const stepList = new Set(toolsTagged("tasks"));
+	return tools.filter((t) => !stepList.has(t.name));
+}
 
 /** What each submitted pass checked, kept for the correction that a
  *  DISCREPANCIES verdict submits (verification-correct.ts). In memory only: a
@@ -156,7 +176,7 @@ export async function buildVerificationOp(input: VerificationSubmitInput): Promi
  */
 function configureVerificationRuntime(op: Op, runtimeSessionId: string): Promise<void> {
 	return configureWorkerOpRuntime(op, runtimeSessionId, {
-		tools: delegatedToolsetForOp("background"),
+		tools: figuresAuditBelt(delegatedToolsetForOp("background")),
 		systemPrompt: DELEGATED_WORKER_PROMPT,
 		security: new SecurityLayer(getRuntimeConfig().workspace, loadFileAccessModeAtLeast("workspace")),
 	});

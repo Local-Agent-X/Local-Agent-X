@@ -31,7 +31,7 @@ import { trackOpForSession } from "../ops/session-bridge.js";
 import { delegatedToolsetForOp } from "../ops/tools/delegated-toolset.js";
 import type { Op, OpVisibility } from "../ops/types.js";
 import { setSessionWorkRoot } from "../workspace/paths.js";
-import { VERIFICATION_OP_BUDGET, verificationTargetOf } from "./verification-submit.js";
+import { VERIFICATION_OP_BUDGET, figuresAuditBelt, verificationTargetOf } from "./verification-submit.js";
 import { armWorkerOpDeadline, configureWorkerOpRuntime } from "./worker-op-runtime.js";
 import { canonicalLoopEntry } from "./index.js";
 
@@ -167,7 +167,7 @@ export async function attemptDeliverableCorrection(input: {
 		security.addAllowedPath(workRoot, op.id);
 		setSessionWorkRoot(op.id, workRoot);
 		await configureWorkerOpRuntime(op, op.id, {
-			tools: delegatedToolsetForOp("build", { workRoot }),
+			tools: figuresAuditBelt(delegatedToolsetForOp("build", { workRoot })),
 			systemPrompt: delegatedWorkerPrompt(workRoot),
 			security,
 		});

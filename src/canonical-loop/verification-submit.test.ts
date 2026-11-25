@@ -170,7 +170,7 @@ describe("buildVerificationOp — the pinned op shape", () => {
 		// the background lane, not a cap.
 		expect(VERIFICATION_OP_BUDGET).toEqual({
 			maxIterations: 12,
-			maxTokens: 80_000,
+			maxTokens: 300_000,
 			maxWallTimeMs: 300_000,
 			maxSelfEditCalls: 0,
 		});

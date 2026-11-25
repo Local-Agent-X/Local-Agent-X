@@ -10,13 +10,17 @@
 // The panel's tab belongs to each chat: switching chats turns the open panel
 // to the tab that chat last had, and a chat that never chose one gets its
 // mode's default — Preview for a code session, the panel's own default
-// (Agents) for a chat — so a chat never shows another chat's app. Remembered
-// per machine (localStorage).
+// (Agents) for a chat — so a chat never shows another chat's app. Whether the
+// panel is open belongs to each chat the same way: a chat where the panel was
+// never opened shows it closed, so a page browsed in one chat never leaves an
+// empty Browser pane standing in the next. Remembered per machine
+// (localStorage).
 
 (function() {
   // The tools whose result can change an app's files, as the App IDE refreshes on.
   const FILE_CHANGING_TOOLS = new Set(['write', 'edit', 'build_app', 'bash']);
   const TAB_BY_CHAT_KEY = 'lax_side_tab_by_chat';
+  const OPEN_BY_CHAT_KEY = 'lax_side_open_by_chat';
   const TABS_REMEMBERED = 200;
   const DEFAULT_TAB = { code: 'preview', chat: 'agents' };
   let view = 'preview';
@@ -40,14 +44,32 @@
     return typeof chatModeOf === 'function' && chatModeOf(activeChat) === 'code' ? 'code' : 'chat';
   }
 
-  function tabsByChat() {
-    try { return JSON.parse(localStorage.getItem(TAB_BY_CHAT_KEY) || '{}') || {}; } catch { return {}; }
+  function byChat(key) {
+    try { return JSON.parse(localStorage.getItem(key) || '{}') || {}; } catch { return {}; }
+  }
+
+  /** Record a value for the chat now open, keeping the most recent TABS_REMEMBERED chats. */
+  function rememberForChat(key, value) {
+    if (!activeChat || !activeChat.id) return;
+    try {
+      const map = byChat(key);
+      delete map[activeChat.id];
+      map[activeChat.id] = value;
+      const ids = Object.keys(map);
+      for (const id of ids.slice(0, Math.max(0, ids.length - TABS_REMEMBERED))) delete map[id];
+      localStorage.setItem(key, JSON.stringify(map));
+    } catch {}
   }
 
   /** The tab the chat now open should show: its own last one, else its mode's default. */
   function tabForChat() {
-    const own = activeChat && tabsByChat()[activeChat.id];
+    const own = activeChat && byChat(TAB_BY_CHAT_KEY)[activeChat.id];
     return own || DEFAULT_TAB[currentMode()];
+  }
+
+  /** Whether the chat now open had the panel open; never opened = closed. */
+  function openForChat() {
+    return !!(activeChat && byChat(OPEN_BY_CHAT_KEY)[activeChat.id]);
   }
 
   function setPicker(on) {
@@ -136,11 +158,13 @@
 
   window.laxPreviewTab = {
     onTabShown: render,
-    /** The chat now open changed: an open panel turns to that chat's tab. */
+    /** The chat now open changed: the panel opens or closes as that chat left it, on its tab. */
     onChatChanged: function() {
       // Nothing of another chat's app keeps running behind this chat's tab.
       dropForeignApp();
       const panelOpen = typeof agentFeedsOpen !== 'undefined' && agentFeedsOpen;
+      // Opening turns the panel to this chat's tab itself (toggleAgentFeeds).
+      if (panelOpen !== openForChat() && typeof toggleAgentFeeds === 'function') { toggleAgentFeeds(); return; }
       const want = tabForChat();
       if (panelOpen && typeof switchSidePanelTab === 'function' && typeof sidePanelTab !== 'undefined' && sidePanelTab !== want) {
         switchSidePanelTab(want);
@@ -149,17 +173,9 @@
       }
     },
     /** Remember the tab just chosen for the chat now open. */
-    rememberTab: function(tab) {
-      if (!activeChat || !activeChat.id) return;
-      try {
-        const byChat = tabsByChat();
-        delete byChat[activeChat.id];
-        byChat[activeChat.id] = tab;
-        const ids = Object.keys(byChat);
-        for (const id of ids.slice(0, Math.max(0, ids.length - TABS_REMEMBERED))) delete byChat[id];
-        localStorage.setItem(TAB_BY_CHAT_KEY, JSON.stringify(byChat));
-      } catch {}
-    },
+    rememberTab: function(tab) { rememberForChat(TAB_BY_CHAT_KEY, tab); },
+    /** Remember whether the panel is open for the chat now open. */
+    rememberOpen: function(open) { rememberForChat(OPEN_BY_CHAT_KEY, !!open); },
     /** The tab the panel opens on for the chat now open. */
     openingTab: tabForChat,
   };

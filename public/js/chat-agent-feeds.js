@@ -32,6 +32,8 @@ function toggleAgentFeeds() {
   var panel = document.getElementById('agent-feeds');
   if (!panel) return;
   agentFeedsOpen = !agentFeedsOpen;
+  // Open or closed belongs to the chat on screen (preview-tab.js onChatChanged).
+  if (window.laxPreviewTab && window.laxPreviewTab.rememberOpen) window.laxPreviewTab.rememberOpen(agentFeedsOpen);
   panel.style.transition = 'none';
   if (agentFeedsOpen) {
     panel.classList.remove('collapsed');

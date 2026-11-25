@@ -24,6 +24,9 @@ import { registerOwnedProcess, unregisterOwnedProcess } from "../../tools/owned-
 import { allocatePort } from "./port-alloc.js";
 import type { ProjectLaunchSpec } from "./types.js";
 
+/** How long a stop waits for the app to be gone before giving up. */
+const STOP_WAIT_MS = 10_000;
+
 export interface LaunchedApp {
   proc: ChildProcess;
   stop: () => Promise<void>;
@@ -79,11 +82,20 @@ export async function launchApp(projectDir: string, launch: ProjectLaunchSpec, s
   proc.stdout.on("data", c => { stdout.push(c.toString()); if (stdout.length > 200) stdout.shift(); });
   proc.stderr.on("data", c => { stderr.push(c.toString()); if (stderr.length > 200) stderr.shift(); });
 
+  // Resolves once the app is gone: its process exited and its URL no longer
+  // answers. The kill is asynchronous, and a stop that returned at once left
+  // the server up for the next start on the same port, which then refused to
+  // score a server it had not started (the engine's end-to-end test, 2026-11-25).
   const stop = async (): Promise<void> => {
-    if (proc.killed || proc.exitCode !== null) return;
-    // The whole tree: npm wraps the real node dev server, which killing the
-    // shell alone would orphan.
-    if (proc.pid) killProcessGroup(proc.pid, proc);
+    if (!proc.killed && proc.exitCode === null && proc.pid) {
+      // The whole tree: npm wraps the real node dev server, which killing the
+      // shell alone would orphan.
+      const exited = new Promise<void>((resolve) => proc.once("exit", () => resolve()));
+      killProcessGroup(proc.pid, proc);
+      await Promise.race([exited, new Promise((r) => setTimeout(r, STOP_WAIT_MS))]);
+    }
+    const deadline = Date.now() + STOP_WAIT_MS;
+    while (Date.now() < deadline && await ping(url)) await new Promise((r) => setTimeout(r, 100));
   };
 
   signal?.addEventListener("abort", () => { void stop(); });

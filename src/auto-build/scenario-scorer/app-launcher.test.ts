@@ -155,6 +155,9 @@ describe("launchApp", () => {
     } finally {
       await app.stop();
     }
+    // A stop returns once the app is gone: the next start on this port must
+    // not find it still answering.
+    await expect(fetch(app.url)).rejects.toThrow();
     // Its exit, before the folder it ran in is removed.
     expect(await until(() => seam.owned.length === 2)).toBe(true);
   }, 20_000);

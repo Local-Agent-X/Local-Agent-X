@@ -102,7 +102,7 @@ export async function pageMounted(page: Page): Promise<boolean> {
     (els) => {
       const nodes = els as unknown as Array<{
         tagName: string; width?: number; height?: number;
-        childElementCount: number; textContent: string | null;
+        childElementCount: number; textContent: string | null; innerText?: string;
       }>;
       for (const el of nodes) {
         const tag = el.tagName.toLowerCase();
@@ -110,8 +110,12 @@ export async function pageMounted(page: Page): Promise<boolean> {
           if ((el.width || 0) > 0 && (el.height || 0) > 0) return true;
           continue;
         }
+        // Rendered text, not textContent: a script's source is not something
+        // the page shows, and a page that shows one short heading is not blank
+        // (a body of "<h1>Pillbox</h1>" read as an empty page and its chunk
+        // could never land; the engine's end-to-end test, 2026-11-25).
         if (tag === "body") {
-          if (el.childElementCount > 1 || (el.textContent || "").trim().length > 20) return true;
+          if (el.childElementCount > 1 || (el.innerText || "").trim().length > 0) return true;
           continue;
         }
         if (el.childElementCount > 0 || (el.textContent || "").trim().length > 0) return true;

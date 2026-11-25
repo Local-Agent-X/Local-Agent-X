@@ -28,12 +28,15 @@ describe("buildEndNotice", () => {
     expect(n.summary).toBe("1/13 chunks landed. Halted at chunk 2: Chunk introduced 1 new test failure(s): src/data/data.test.ts");
     expect(n.next).toContain('build_plan_status(project_dir="C:/ws/apps/label-check")');
     expect(n.next).toContain('build_plan_resume(project_dir="C:/ws/apps/label-check")');
+    // The chat that started the build is its lead: it writes the run's ledger (2026-11-25).
+    expect(n.next).toContain("record this run in spec/ledger.md");
   });
 
   it("a finished build says so and points at what follows", () => {
     const n = buildEndNotice({ ...halted, chunksCommitted: 13, halt: undefined });
     expect(n.summary).toBe("13/13 chunks landed. The build finished.");
     expect(n.next).toMatch(/step that follows the build/);
+    expect(n.next).toContain("record this run in spec/ledger.md");
   });
 
   // label-check's chat heard only "the build finished… carry on", and asked
@@ -43,6 +46,7 @@ describe("buildEndNotice", () => {
     expect(n.summary).toBe("13/13 chunks landed. The build finished; the finish checks left 2 open item(s).");
     expect(n.next).toContain("- scenario 05-scan.md fails (3/10): no flag\n- the owner's walkthrough");
     expect(n.next).toContain("Do not call the app done while any is open.");
+    expect(n.next).toContain("record this run in spec/ledger.md");
   });
 });
 

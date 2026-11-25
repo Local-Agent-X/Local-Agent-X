@@ -12,6 +12,12 @@
  * The queue shows a notice's first 180 characters, so the notice leads with
  * what the agent must act on (how far the run got, why it stopped) and names
  * the call that has the rest.
+ *
+ * That chat is the build's lead (auto-build/advisor/lead-chat.ts): it made the
+ * build's calls, and the decisions are on record in spec/build-state.md. So
+ * it writes the run's ledger, as /greenfield ends a build with one, and tells
+ * the owner what is theirs: the checks owed to them, the questions parked for
+ * them (LEDGER_STEP).
  */
 import { basename } from "node:path";
 import { pushPendingNotification } from "../../ops/pending-notifications.js";
@@ -42,23 +48,30 @@ function oneLine(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
 
+/** What the lead does with every build's end, whatever it was. */
+export const LEDGER_STEP =
+  "As the build's lead, record this run in spec/ledger.md: what landed, what did not and why, and the " +
+  "follow-ups, checks owed to the owner and engine checks overruled that spec/build-state.md has from this run. " +
+  "Then tell the owner, in a few lines, what is theirs to do or decide.";
+
 /** The notice's two lines: what happened, and what to call next. */
 export function buildEndNotice(end: BuildEnd): { summary: string; next: string } {
   const dir = JSON.stringify(portablePath(end.projectDir));
   const landed = `${end.chunksCommitted}/${end.totalChunks} chunks landed.`;
   if (!end.halt) {
-    if (!end.openItems?.length) return { summary: `${landed} The build finished.`, next: "carry on with the step that follows the build." };
+    if (!end.openItems?.length) return { summary: `${landed} The build finished.`, next: `${LEDGER_STEP} Then carry on with the step that follows the build.` };
     return {
       summary: `${landed} The build finished; the finish checks left ${end.openItems.length} open item(s).`,
       next: `Open items:\n${end.openItems.map((i) => `- ${oneLine(i)}`).join("\n")}\n` +
-        "Fix what is yours to fix, park for the owner what is theirs, and tell the owner the rest. Do not call the app done while any is open.",
+        "Fix what is yours to fix, park for the owner what is theirs, and tell the owner the rest. Do not call the app done while any is open.\n" +
+        LEDGER_STEP,
     };
   }
   return {
     summary: `${landed} Halted at chunk ${end.halt.chunk}: ${oneLine(end.halt.reason)}`,
     next:
       `build_plan_status(project_dir=${dir}) has the full halt reason. Fix what halted it, or park it for the owner ` +
-      `if it is theirs to decide, then build_plan_resume(project_dir=${dir}).`,
+      `if it is theirs to decide, then build_plan_resume(project_dir=${dir}). Before that: ${LEDGER_STEP}`,
   };
 }
 

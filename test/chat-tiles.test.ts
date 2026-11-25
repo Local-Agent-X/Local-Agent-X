@@ -12,6 +12,8 @@ import { dirname, join } from "node:path";
 const here = dirname(fileURLToPath(import.meta.url));
 const read = (p: string) => readFileSync(join(here, "..", p), "utf8");
 const coreJs = read("public/js/chat-tiles-core.js");
+// The real app-message rule, not a stub that falls behind it.
+const appMessageApi = new Function(`${read("public/js/chat-app-message.js")}\nreturn laxAppMessage;`)();
 const viewJs = read("public/js/chat-tiles-view.js");
 const dragJs = read("public/js/chat-tiles-drag.js");
 const tilesJs = read("public/js/chat-tiles.js");
@@ -281,10 +283,14 @@ describe("the tile grid on the chat page", () => {
     expect(tiles.tiles()).toEqual(["c", "b", "a"]);
   });
 
-  it("shows a message the app sent as its one-line summary in a live view", () => {
-    (globalThis as { laxAppMessage?: unknown }).laxAppMessage = { summaryOf: (t: unknown) => (typeof t === "string" && t.startsWith("(Collab") ? "Collab: the brief for research" : null) };
+  it("shows a message the app sent as its one-line summary in a live view, and no row for a build decision", () => {
+    (globalThis as { laxAppMessage?: unknown }).laxAppMessage = appMessageApi;
     try {
-      chats[1].messages = [{ role: "user", content: "(Collab, research. Sent by the app, not typed by the user.)\n\n" + "x".repeat(9000) }, { role: "assistant", content: "My report" }];
+      chats[1].messages = [
+        { role: "user", content: "(Collab, research. Sent by the app, not typed by the user.)\n\n" + "x".repeat(9000) },
+        { role: "user", content: "(Sent by the app, not typed by the user: a build decision is waiting.)\n\nDecision bd-1: ..." },
+        { role: "assistant", content: "My report" },
+      ];
       tiles.toggle();
       const rows = [...tile("b").querySelectorAll(".chat-tile-text")].map((el) => el.textContent);
       expect(rows).toEqual(["Collab: the brief for research", "My report"]);

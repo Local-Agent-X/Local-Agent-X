@@ -164,11 +164,7 @@ function tryResumeOne(projectDir: string, sessionId: string): { outcome: ResumeO
     unregister(projectDir);
     return { outcome: "abandoned", reason: window.reason };
   }
-  if (window.kind === "complete") {
-    finalizeCompletedResume(s);
-    return { outcome: "cleared", reason: "all scoped chunks already committed — completed on resume" };
-  }
-
+  const runEnd = window.kind === "complete";
   try {
     const kick = startOrchestration({
       sessionId,
@@ -177,7 +173,7 @@ function tryResumeOne(projectDir: string, sessionId: string): { outcome: ResumeO
       plan,
       startingChunk: window.startingChunk,
       maxChunks: window.maxChunks,
-      landedChunks: s.landedChunks,
+      landedChunks: runEnd ? window.landedChunks : s.landedChunks,
       ...DEFAULT_CHUNK_REVIEW,
     });
 
@@ -186,9 +182,11 @@ function tryResumeOne(projectDir: string, sessionId: string): { outcome: ResumeO
     broadcastToSession(sessionId, {
       type: "bg_op_progress",
       opId: kick.opId,
-      line: `[auto-resume] LAX restarted mid-build. Continuing from chunk ${window.startingChunk}/${s.totalChunks}.`,
+      line: runEnd
+        ? `[auto-resume] LAX restarted after every chunk landed. Running the build's finish checks and its report.`
+        : `[auto-resume] LAX restarted mid-build. Continuing from chunk ${window.startingChunk}/${s.totalChunks}.`,
     });
-    return { outcome: "resumed", reason: `restarted at chunk ${window.startingChunk}` };
+    return { outcome: "resumed", reason: runEnd ? "every chunk landed; running the build's end" : `restarted at chunk ${window.startingChunk}` };
   } catch (e) {
     state.write(state.markAbandoned(s, `resume failed: ${(e as Error).message}`));
     unregister(projectDir);
@@ -196,16 +194,14 @@ function tryResumeOne(projectDir: string, sessionId: string): { outcome: ResumeO
   }
 }
 
-/** Finalize persisted state when a resume window has no work remaining. */
-export function finalizeCompletedResume(s: state.OrchestratorState): void {
-  state.write(state.markComplete(s));
-  state.clear(s.projectDir);
-  unregister(s.projectDir);
-}
-
 export type ResumeWindow =
   | { kind: "resume"; startingChunk: number; maxChunks: number | undefined }
-  | { kind: "complete"; startingChunk: number; maxChunks: undefined }
+  /** Every chunk in the window landed, and the run had not ended: started over
+   *  its window with every chunk landed, the loop builds none and runs the end
+   *  (split-off chunks, the finish checks, the lead's ledger, the report to the
+   *  chat). label-check-sol's server died in its finish checks and the restart
+   *  marked the build complete, with no report to its chat (2026-11-25). */
+  | { kind: "complete"; startingChunk: number; maxChunks: number | undefined; landedChunks: number[] }
   | { kind: "invalid"; reason: string };
 
 /**
@@ -262,7 +258,10 @@ export function computeResumeWindow(
   }
 
   if (committedNextIdx > windowEndIdx) {
-    return { kind: "complete", startingChunk: s.resumeAtChunk, maxChunks: undefined };
+    return {
+      kind: "complete", startingChunk: originalStart, maxChunks: s.maxChunks ?? undefined,
+      landedChunks: [...new Set([...chunks.slice(origStartIdx, windowEndIdx + 1).map((c) => c.number), ...(s.landedChunks ?? [])])],
+    };
   }
 
   const currentIdx = chunks.findIndex(c => c.number === s.currentChunk);

@@ -181,16 +181,20 @@ describe("autoResumeOrchestrations — window clamp (AB-8)", () => {
     expect(passed.maxChunks).toBe(4); // pre-fix passed 10 → would overshoot to chunk 16
   });
 
-  it("finalizes a phantom-completion run instead of starting a non-existent chunk", () => {
+  // label-check-sol's server died in its finish checks with every chunk landed;
+  // the restart marked it complete and its chat never heard (2026-11-25).
+  it("runs the build's end when every chunk landed, never a chunk past the plan", () => {
     // All 5 chunks committed; crash left resumeAtChunk=6 (past the plan).
     const dir = seedProject({ totalChunks: 5, startingChunkOverride: 1, maxChunks: null, resumeAtChunk: 6 });
     mockRegistry = [{ projectDir: dir, opId: "op_seed", sessionId: "sess_seed", registeredAt: new Date().toISOString() }];
 
     const report = autoResumeOrchestrations();
 
-    expect(startSpy).not.toHaveBeenCalled(); // pre-fix would start chunk 6 → loop halts "not found"
-    expect(report.cleared).toBe(1);
-    expect(state.read(dir)).toBeNull(); // state cleared on completion
+    expect(report.resumed).toBe(1);
+    expect(startSpy).toHaveBeenCalledTimes(1);
+    const passed = startSpy.mock.calls[0][0] as { startingChunk: number; landedChunks?: number[] };
+    expect(passed.startingChunk).toBe(1); // pre-AB-8 started chunk 6 → loop halts "not found"
+    expect(passed.landedChunks).toEqual([1, 2, 3, 4, 5]); // the loop builds none of them again
   });
 
   it("resumes the next plan index when sparse numbering makes resumeAtChunk absent", () => {
@@ -227,16 +231,16 @@ describe("build_plan_resume — window clamp (AB-8)", () => {
     expect(result.metadata?.max_chunks).toBe(4);
   });
 
-  it("recognizes an already-complete scoped window without starting a phantom chunk", async () => {
+  it("on a scoped window whose chunks all landed, runs the build's end inside that window, never a chunk past it", async () => {
     const dir = seedProject({ totalChunks: 10, startingChunkOverride: 1, maxChunks: 6, resumeAtChunk: 7 });
     mockRegistry = [{ projectDir: dir, opId: "op_seed", sessionId: "sess_seed", registeredAt: new Date().toISOString() }];
 
-    const result = await buildPlanResumeTool.execute({ project_dir: dir });
+    await buildPlanResumeTool.execute({ project_dir: dir });
 
-    expect(startSpy).not.toHaveBeenCalled();
-    expect(result.metadata?.complete).toBe(true);
-    expect(state.read(dir)).toBeNull();
-    expect(unregisterSpy).toHaveBeenCalledWith(dir);
+    expect(startSpy).toHaveBeenCalledTimes(1);
+    const passed = startSpy.mock.calls[0][0] as { startingChunk: number; maxChunks?: number; landedChunks?: number[] };
+    expect(passed).toMatchObject({ startingChunk: 1, maxChunks: 6 });
+    expect(passed.landedChunks).toEqual([1, 2, 3, 4, 5, 6]);
   });
 
   it("rejects a starting_chunk typo without altering persisted recovery state", async () => {

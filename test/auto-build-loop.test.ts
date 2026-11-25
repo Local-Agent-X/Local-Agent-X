@@ -251,6 +251,22 @@ describe("runBuildLoop — halt path", () => {
     const history = JSON.parse(readFileSync(join(projectDir, ".lax-build-history.json"), "utf-8"));
     expect(history.setAside ?? {}).toEqual({});
   });
+
+  // A restart after every chunk landed resumes with all of them landed
+  // (orchestrator/resume.ts): nothing is built again, and the run still ends
+  // complete on the plan's last chunk, which is what sends it on to the finish
+  // checks, the lead's ledger and the report (label-check-sol, 2026-11-25).
+  it("a run whose chunks all landed builds none and ends complete on the plan's last chunk", async () => {
+    writeFileSync(join(projectDir, "spec", "plan.md"), THREE_CHUNK_PLAN);
+    git("commit -qam plan");
+    const plan = parsePlanText(THREE_CHUNK_PLAN);
+    const ended = await runBuildLoop({
+      projectDir, planPath: join(projectDir, "spec", "plan.md"), plan, startingChunk: 1, landedChunks: plan.chunks.map((c) => c.number),
+    });
+    expect(ended.status).toBe("complete");
+    expect(ended.lastChunk).toBe(plan.chunks.at(-1)!.number);
+    expect(ended.events.filter((e) => e.type === "chunk-start")).toEqual([]);
+  });
 });
 
 describe("runBuildLoop — amend_spec path", () => {

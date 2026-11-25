@@ -12,7 +12,7 @@ import { parsePlanFile } from "../plan-parser.js";
 import { AUTO_BUILD_DISABLED_RECOVERY, isFeatureEnabled, FEATURE_FLAG_ENV } from "../tool.js";
 import { DEFAULT_CHUNK_REVIEW } from "../chunk-review/default-review.js";
 import { isActiveForProject, startOrchestration, listActive } from "./manager.js";
-import { computeResumeWindow, finalizeCompletedResume, readProjectState } from "./resume.js";
+import { computeResumeWindow, readProjectState } from "./resume.js";
 import { listAll as listRegistry } from "./registry.js";
 import { resolveProjectDir } from "../project-paths.js";
 
@@ -144,14 +144,6 @@ export const buildPlanResumeTool: ToolDefinition = {
     if (window.kind === "invalid") {
       return { content: window.reason, isError: true };
     }
-    if (window.kind === "complete") {
-      finalizeCompletedResume(s);
-      return {
-        content: `All chunks in the original build scope at ${projectDir} are already complete. Nothing to resume.`,
-        metadata: { project_dir: projectDir, resumed: false, complete: true },
-      };
-    }
-
     const sessionId = sessionIdOf(args) ?? s.sessionId;
 
     const kick = startOrchestration({
@@ -161,7 +153,8 @@ export const buildPlanResumeTool: ToolDefinition = {
       plan,
       startingChunk: window.startingChunk,
       maxChunks: window.maxChunks,
-      landedChunks: s.landedChunks,
+      // Every chunk landed: the loop builds none and runs the build's end (resume.ts).
+      landedChunks: window.kind === "complete" ? window.landedChunks : s.landedChunks,
       ...DEFAULT_CHUNK_REVIEW,
     });
 

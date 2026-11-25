@@ -73,6 +73,8 @@ async function decide(c: LeadCase, model: string | undefined): Promise<{ action:
     shapeHint: `{"action":"${LEAD_ACTIONS.join("|")}","reasoning":"...","instruction":"...","follow_ups":["..."],"done_when":"...","question":"...","owed_check":"...","evidence":"...","parts":[{"title":"...","done_when":"..."}]}`,
     role: "review",
     timeoutMs: 180_000,
+    // A lead's answer runs to a paragraph or two; the classifier default cuts it mid-string.
+    maxResponseChars: 8_000,
     ...(model ? { model } : {}),
   });
   if (!raw) return { action: null, reasoning: "no answer from the model" };

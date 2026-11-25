@@ -47,6 +47,18 @@ describe("planLeadRound", () => {
     }
   });
 
+  // label-check-sol's chunk 5: a native Android app the judge cannot start, and
+  // its lead's "owed" was refused as if a scenario had failed (2026-11-25).
+  it("lands a chunk whose scenarios could not be judged only with that owed, never on accept", async () => {
+    const why = ".lax-launch.json has no start and ready_url, so the judge cannot start the app";
+    const accepted = round({ action: "accept", reasoning: "fine" }, sentBack("chunk-unjudged", why));
+    expect(await accepted.run).toMatchObject({ kind: "rebuild", retryReason: expect.stringContaining(why) });
+    expect(accepted.said[1]).toContain("accept refused: the held-out scenarios were never judged");
+
+    const owed = round({ action: "owed", reasoning: "native app, no URL", owedCheck: "run the sealed scenarios on the Galaxy" }, sentBack("chunk-unjudged", why));
+    expect(await owed.run).toMatchObject({ kind: "land", outcome: { action: "proceed", unverified: "a check is owed to the owner: run the sealed scenarios on the Galaxy" } });
+  });
+
   it("narrow rebuilds against the lead's done-when, on record", async () => {
     const { run, projectDir } = round({ action: "narrow", reasoning: "no edge to it", doneWhen: "fixtures prove the size gate for src/" });
     const next = await run;

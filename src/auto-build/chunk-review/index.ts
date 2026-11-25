@@ -163,6 +163,20 @@ export async function runChunkReviewWithJudgment(
   return { ...work, action: "halt", reasoning: pause.reasoning, findings: [...work.findings, pause] };
 }
 
+/** A review that sends the chunk back before its judge ran says so: the build
+ *  lead lands that work only with the held-out scenarios owed or the stopping
+ *  check overruled (lead-rounds.ts). label-check-sol's chunk 5 landed on the
+ *  lead's "accept" after a round the review stopped at STATUS=partial, so no
+ *  judge had seen the code it landed (2026-11-25). */
+function stoppedBeforeJudge(input: ChunkReviewInput, o: ChunkReviewOutcome): ChunkReviewOutcome {
+  if (!input.chunkJudge || o.action !== "push_back") return o;
+  const finding: GateFinding = {
+    gate: "chunk-unjudged", action: "push_back",
+    reasoning: "The held-out scenarios and the skeptic did not run on this work: the review stopped at an earlier check.",
+  };
+  return { ...o, findings: [...o.findings, finding] };
+}
+
 /** The build-exec gate, the chunk judge and the spec-gap hook, over the
  *  mechanical verdict on the chunk's own work. */
 async function reviewChunkWork(
@@ -172,7 +186,7 @@ async function reviewChunkWork(
   signal: AbortSignal | undefined,
   buildExec: BuildExecRunner,
 ): Promise<ChunkReviewOutcome> {
-  if (base.action !== "proceed") return base;
+  if (base.action !== "proceed") return stoppedBeforeJudge(input, base);
 
   // Execution-grounded gate first: a build/test that actually FAILS, or an
   // artifact that loads blank, halts regardless of the LLM hook's opinion.
@@ -191,12 +205,12 @@ async function reviewChunkWork(
     unverified = `the build-and-test check crashed, so the chunk's code was not built or tested: ${(e as Error).message}`;
   }
   if (execFinding) {
-    return {
+    return stoppedBeforeJudge(input, {
       action: execFinding.action,
       reasoning: execFinding.reasoning,
       findings: [...base.findings, execFinding],
       report: base.report,
-    };
+    });
   }
   let passed: ChunkReviewOutcome = { ...base, ...(structureNote ? { structureNote } : {}), ...(unverified ? { unverified } : {}) };
 

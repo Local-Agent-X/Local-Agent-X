@@ -67,7 +67,13 @@ function scoreLine(s: ScenarioScore): string {
 /** The review finding a judging produces: push_back when a scenario failed,
  *  the app would not start for scoring, or the skeptic broke the chunk; null
  *  when nothing counts against it (not-run parts are recorded, not held, and
- *  the skeptic's follow-ups never count). */
+ *  the skeptic's follow-ups never count).
+ *
+ *  An app the judge could not start is "chunk-unjudged", not a failed scenario:
+ *  label-check-sol is a native Android app with no URL to drive, its last chunk
+ *  was held as failing scenarios no judge could ever run, and the lead's "owed"
+ *  was refused (2026-11-25). The finish checks and the wall probe already call
+ *  that unjudged. */
 export function chunkJudgingFinding(chunkNumber: number, j: ChunkJudging): GateFinding | null {
   const failed = j.scenarios.scores.filter(s => !s.passed && !s.unjudged);
   const scenariosAgainst = j.scenarios.status === "error" || failed.length > 0;
@@ -79,7 +85,7 @@ export function chunkJudgingFinding(chunkNumber: number, j: ChunkJudging): GateF
   if (failed.length > 0) parts.push(`Held-out scenarios that failed (what the judge saw):\n${failed.map(scoreLine).join("\n")}`);
   if (skepticAgainst) parts.push(`The skeptic broke it:\n${j.skeptic.finding}`);
   return {
-    gate: scenariosAgainst ? "chunk-scenarios" : "skeptic",
+    gate: failed.length > 0 ? "chunk-scenarios" : j.scenarios.status === "error" ? "chunk-unjudged" : "skeptic",
     action: "push_back",
     reasoning: parts.join("\n\n"),
   };

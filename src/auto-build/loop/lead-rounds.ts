@@ -62,6 +62,8 @@ export interface LeadRoundInput {
 
 /** Gates whose failure no decision can land a chunk past. */
 const NEVER_ACCEPTED = new Set(["build-exec", "chunk-scenarios"]);
+/** Gates a chunk lands past only with the gap on record: owed to the owner, or the check overruled. */
+const LANDS_ONLY_ON_RECORD = new Set(["chunk-unjudged"]);
 
 function workerReport(o: ChunkReviewOutcome): string {
   const r = o.report;
@@ -95,6 +97,11 @@ export async function planLeadRound(a: LeadRoundInput): Promise<LeadRoundPlan | 
     if (blocking) {
       a.emit({ type: "push-back", chunkNumber: chunk.number, totalChunks: a.totalChunks, message: `build lead's ${decision.action} refused: the ${blocking.gate} check failed, and no chunk lands past that` });
       return rebuild("The chunk cannot land while its build, tests or held-out scenarios fail. Fix what the review found.");
+    }
+    const unjudged = outcome.findings.find((f) => f.action !== "proceed" && LANDS_ONLY_ON_RECORD.has(f.gate));
+    if (unjudged && decision.action === "accept") {
+      a.emit({ type: "push-back", chunkNumber: chunk.number, totalChunks: a.totalChunks, message: `build lead's accept refused: the held-out scenarios were never judged, so the chunk lands only with that owed or the check overruled` });
+      return rebuild("The held-out scenarios have not judged this work, so it does not land as accepted. Fix what the review found.");
     }
     const left = decision.followUps ?? [];
     await record(a.projectDir, chunk, onRecord + (left.length ? `\n\nFollow-ups it left, not blocking:\n${left.map((f) => `- ${f}`).join("\n")}` : ""));

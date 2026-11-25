@@ -224,7 +224,8 @@ describe("chunkJudgingFinding", () => {
     const skeptic = { status: "broken" as const, finding: "negative quantity accepted at src/cart.ts:12" };
     expect(chunkJudgingFinding(4, judging({ skeptic }))).toMatchObject({ gate: "skeptic", action: "push_back" });
     const both = chunkJudgingFinding(4, judging({ skeptic, scenarios: { status: "error", reason: "app did not start", scores: [] } }))!;
-    expect(both.gate).toBe("chunk-scenarios");
+    // An app the judge could not start is unjudged, not a failed scenario (label-check-sol, 2026-11-25).
+    expect(both.gate).toBe("chunk-unjudged");
     expect(both.reasoning).toContain("app did not start");
     expect(both.reasoning).toContain("src/cart.ts:12");
   });
@@ -303,6 +304,22 @@ describe("the judge stage in the chunk review", () => {
     }, undefined, undefined, async () => ({ gate: "build-exec", action: "halt", reasoning: "npm test failed" }));
     expect(buildFailed.action).toBe("halt");
     expect(judge).not.toHaveBeenCalled();
+  });
+
+  // label-check-sol's chunk 5 landed on "accept" after a round stopped at
+  // STATUS=partial: no judge had seen that code (2026-11-25).
+  it("a chunk sent back before its judge ran is marked unjudged, so the lead cannot land it on accept", async () => {
+    const judge = vi.fn(async () => judging());
+    const PARTIAL = CLEAN.replace("STATUS: done", "STATUS: partial").replace("DONE_WHEN: met", "DONE_WHEN: unmet");
+    const partial = await review(PARTIAL, judge);
+    expect(partial.action).toBe("push_back");
+    expect(partial.findings.at(-1)?.gate).toBe("chunk-unjudged");
+    expect(judge).not.toHaveBeenCalled();
+    const p = plan("2");
+    const noJudge = await runChunkReviewWithJudgment({
+      chunk: p.chunks[0], allChunks: p.chunks, plan: p, rawReport: PARTIAL, projectDir: "/proj",
+    }, undefined, undefined, noBuild);
+    expect(noJudge.findings.some((f) => f.gate === "chunk-unjudged")).toBe(false);
   });
 
   it("a judge push_back outranks the spec-gap hook; a green judging still lets the hook amend", async () => {

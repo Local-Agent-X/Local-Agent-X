@@ -44,6 +44,7 @@ export interface GateFinding {
     | "spec-gap-judgment"
     | "build-exec"
     | "chunk-scenarios"
+    | "chunk-unjudged"
     | "skeptic";
   action: ReviewAction;
   /** One-sentence reasoning. Surfaced to the user on halts. */

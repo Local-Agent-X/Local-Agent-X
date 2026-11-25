@@ -42,6 +42,9 @@ export const LEAD_ROLE =
   `- What is left needs something only the owner has (a device, an account, credentials, a paid service): ` +
   `"owed", naming the check. The chunk lands unverified, the build goes on, and the owner is asked at the end. ` +
   `Never park for that, and never write "park" into a done-when.\n` +
+  `- The judge could not start the app, so its held-out scenarios were never judged: "continue" when the ` +
+  `launch file can be fixed, or "owed" when the judge cannot drive this kind of app at all (a native phone app ` +
+  `with no URL), naming the scenarios as the owner's check. Unjudged is not failed, and "accept" does not land it.\n` +
   `- A contract with no edge: "narrow" it to what has been shown, in a done-when the work already meets. ` +
   `Narrowing is for making the contract smaller, never for asking for more.\n` +
   `- Part of the chunk is done and the rest is real work of its own, not a follow-up: "split". The chunk keeps ` +

@@ -41,6 +41,7 @@ import { createPhasePauseTracker } from "./phase-gate-pause.js";
 import { createWallProbe } from "./wall-probe.js";
 import { runFinishGates } from "../finish-gates/run.js";
 import { runParallelWaves } from "./parallel-waves.js";
+import { buildSplitOffs } from "./split-chunks.js";
 
 /**
  * Resolve the effective parallel-chunk concurrency. An explicit
@@ -121,7 +122,7 @@ export async function runBuildLoop(opts: LoopOptions): Promise<LoopResult> {
   // opts.projectDir (each gets its own isolated worktree). The shared git
   // baseline + preflight probe above have already run for both paths.
   const maxConcurrentChunks = resolveMaxConcurrentChunks(opts.maxConcurrentChunks);
-  const result = maxConcurrentChunks > 1
+  const ran = maxConcurrentChunks > 1
     ? await runParallelWaves({
       opts,
       chunks: chunks.slice(startIdx, endIdx),
@@ -132,11 +133,15 @@ export async function runBuildLoop(opts: LoopOptions): Promise<LoopResult> {
       outcomes,
     })
     : await runChunksInOrder({ opts, startIdx, endIdx, emit, events, outcomes });
+  // Chunks the build lead split off this run are built next, serially (split-chunks.ts).
+  const { result, plan } = endIdx === totalChunks
+    ? await buildSplitOffs(opts, ran, (o, from) => runChunksInOrder({ opts: o, startIdx: from, endIdx: o.plan.chunks.length, emit, events, outcomes }))
+    : { result: ran, plan: opts.plan };
 
   // A run that lands the plan's last chunk goes on to the finish gates; their
   // fix chunks are built here, serially, like any chunk of the plan.
   return runFinishGates({
-    opts, result, emit,
+    opts: { ...opts, plan }, result, emit,
     buildFixes: (fixOpts) => runChunksInOrder({ opts: fixOpts, startIdx: 0, endIdx: fixOpts.plan.chunks.length, emit, events, outcomes }),
   });
 }

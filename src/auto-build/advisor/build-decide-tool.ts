@@ -20,8 +20,14 @@ export function readDecision(args: Record<string, unknown>): LeadDecision | { er
   const question = text(args.question);
   const owedCheck = text(args.owed_check);
   const evidence = text(args.evidence);
+  const parts = Array.isArray(args.parts)
+    ? args.parts.map((p) => ({ title: text((p as Record<string, unknown>)?.title), doneWhen: text((p as Record<string, unknown>)?.done_when) }))
+    : [];
   if ((action === "continue" || action === "fresh") && !instruction) return { error: `"${action}" needs \`instruction\`: what the worker must do.` };
   if (action === "narrow" && !doneWhen) return { error: `"narrow" needs \`done_when\`: the chunk's contract as it now stands.` };
+  if (action === "split" && (!doneWhen || parts.length < 1 || parts.length > 3 || parts.some((p) => !p.title || !p.doneWhen))) {
+    return { error: `"split" needs \`done_when\` (what this chunk keeps) and \`parts\`: one to three of { title, done_when }, each a new chunk.` };
+  }
   if (action === "park" && !question) return { error: `"park" needs \`question\`: what only the owner can decide.` };
   if (action === "owed" && !owedCheck) return { error: `"owed" needs \`owed_check\`: the check only the owner can run, and what it needs.` };
   if (action === "overrule" && !evidence) return { error: `"overrule" needs \`evidence\`: what shows the check's finding is wrong (output, file:line).` };
@@ -30,6 +36,7 @@ export function readDecision(args: Record<string, unknown>): LeadDecision | { er
     ...(instruction ? { instruction } : {}),
     ...(followUps.length ? { followUps } : {}),
     ...(doneWhen ? { doneWhen } : {}),
+    ...(action === "split" ? { parts } : {}),
     ...(question ? { question } : {}),
     ...(owedCheck ? { owedCheck } : {}),
     ...(evidence ? { evidence } : {}),
@@ -43,7 +50,7 @@ export const buildDecideTool: ToolDefinition = {
     "Answer a decision the build engine is waiting on, as the build's lead. The decision's id and its evidence " +
     "are in the message that asked. continue: the worker fixes what you say. fresh: a new worker, with what you " +
     "say. accept: the chunk lands; what is left goes on record as follow-ups. narrow: the chunk's done-when " +
-    "becomes yours. owed: the chunk lands unverified with a check only the owner can run, asked at the end. " +
+    "becomes yours. split: the chunk keeps the done-when you give, and each of `parts` becomes a new chunk. owed: the chunk lands unverified with a check only the owner can run, asked at the end. " +
     "overrule: a check's finding is wrong, shown by your evidence; the chunk lands and the check is recorded. " +
     "park: the chunk is set aside on a question only the owner can answer. Other decisions list what each " +
     "answer does in the message that asked.",
@@ -55,7 +62,11 @@ export const buildDecideTool: ToolDefinition = {
       reasoning: { type: "string", description: "Why, in a sentence or two." },
       instruction: { type: "string", description: "continue / fresh: exactly what the worker must do." },
       follow_ups: { type: "array", items: { type: "string" }, description: "accept / owed / overrule: what is left, one item each." },
-      done_when: { type: "string", description: "narrow: the chunk's done-when as it now stands." },
+      done_when: { type: "string", description: "narrow / split: the chunk's done-when as it now stands." },
+      parts: {
+        type: "array", description: "split: what moves out of the chunk, one to three new chunks built after the plan's.",
+        items: { type: "object", properties: { title: { type: "string" }, done_when: { type: "string" } }, required: ["title", "done_when"] },
+      },
       question: { type: "string", description: "park: the question for the owner." },
       owed_check: { type: "string", description: "owed: the check only the owner can run, and what it needs." },
       evidence: { type: "string", description: "overrule: what shows the finding is wrong (output, file:line)." },

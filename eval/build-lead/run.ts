@@ -70,7 +70,7 @@ async function decide(c: LeadCase, model: string | undefined): Promise<{ action:
     systemPrompt: "You are the lead of a software build run by an engine. Decide as the message asks.",
     userPrompt: packet,
     schema: answerSchema,
-    shapeHint: `{"action":"${LEAD_ACTIONS.join("|")}","reasoning":"...","instruction":"...","follow_ups":["..."],"done_when":"...","question":"...","owed_check":"...","evidence":"..."}`,
+    shapeHint: `{"action":"${LEAD_ACTIONS.join("|")}","reasoning":"...","instruction":"...","follow_ups":["..."],"done_when":"...","question":"...","owed_check":"...","evidence":"...","parts":[{"title":"...","done_when":"..."}]}`,
     role: "review",
     timeoutMs: 180_000,
     ...(model ? { model } : {}),

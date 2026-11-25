@@ -62,7 +62,7 @@ describe("the build lead", () => {
     leadAnswers({ action: "accept", reasoning: "done enough" });
     await askLead(ref, { ...situation, round: 8, final: true }, { answerMs: 5_000 });
     expect(messages.at(-1)!.message).toContain("This is the last decision for this chunk");
-    expect(messages.at(-1)!.message).toContain('"continue", "fresh" and "narrow" set it aside');
+    expect(messages.at(-1)!.message).toContain('"continue", "fresh", "narrow" and "split" set it aside');
   });
 
   // label-check-sol's chunk 4 (2026-11-25): parked on a device only the owner
@@ -117,6 +117,9 @@ describe("build_decide", () => {
     expect(readDecision({ action: "owed", reasoning: "r" })).toMatchObject({ error: expect.stringContaining("owed_check") });
     expect(readDecision({ action: "overrule", reasoning: "r" })).toMatchObject({ error: expect.stringContaining("evidence") });
     expect(readDecision({ action: "owed", reasoning: "r", owed_check: "live scan on a Pixel 9" })).toEqual({ action: "owed", reasoning: "r", owedCheck: "live scan on a Pixel 9" });
+    expect(readDecision({ action: "split", reasoning: "r", done_when: "manual flow" })).toMatchObject({ error: expect.stringContaining("parts") });
+    expect(readDecision({ action: "split", reasoning: "r", done_when: "manual flow", parts: [{ title: "Scan", done_when: "scan prefills" }] }))
+      .toEqual({ action: "split", reasoning: "r", doneWhen: "manual flow", parts: [{ title: "Scan", doneWhen: "scan prefills" }] });
     expect(readDecision({ action: "ship it", reasoning: "r" })).toMatchObject({ error: expect.stringContaining("one of") });
     expect(readDecision({ action: "accept", reasoning: "beyond the chunk", follow_ups: ["root build/ ", ""] }))
       .toEqual({ action: "accept", reasoning: "beyond the chunk", followUps: ["root build/"] });

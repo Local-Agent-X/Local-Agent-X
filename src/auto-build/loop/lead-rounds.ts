@@ -8,6 +8,7 @@
  *   owed              land it unverified: a check only the owner can run is owed
  *   overrule          land it over a check the lead shows is wrong, on record
  *   narrow            the chunk's done-when becomes the lead's, on record; rebuild
+ *   split             narrow, and what moved out becomes new chunks (split-chunks.ts)
  *   park              set the chunk aside on the owner's question
  *
  * Guarded: a chunk whose build or tests fail, or whose held-out scenarios
@@ -28,6 +29,7 @@ import { askLead, type LeadDecision } from "../advisor/lead-decisions.js";
 import type { BuildLeadRef } from "../advisor/lead-chat.js";
 import { applyAdditiveSpecAmendment, commitSpecAmendment } from "../loop-effects.js";
 import { safeGet, type EmitFn } from "./types.js";
+import { appendSplitChunks } from "./split-chunks.js";
 
 /** Rounds a chunk may take while its lead keeps it going: a ceiling on cost,
  *  not the rule (the lead stops it sooner, or accepts, or narrows). */
@@ -123,6 +125,15 @@ export async function planLeadRound(a: LeadRoundInput): Promise<LeadRoundPlan | 
       if (a.final) return rebuild("");
       await record(a.projectDir, chunk, `The build lead narrowed this chunk's done-when to: ${decision.doneWhen}\nWhy: ${decision.reasoning}`);
       return rebuild(`Your chunk's contract was narrowed. Done when: ${decision.doneWhen}\nMeet that; nothing beyond it is asked of this chunk.`, { ...chunk, doneWhen: decision.doneWhen! });
+    }
+    case "split": {
+      if (a.final) return rebuild("");
+      const added = appendSplitChunks(a.projectDir, chunk, decision.parts!);
+      if (!added) return rebuild(decision.reasoning);
+      await record(a.projectDir, chunk, `The build lead split this chunk. It keeps the done-when: ${decision.doneWhen}\n` +
+        `Moved to new chunks: ${decision.parts!.map((p, i) => `chunk ${added[i]} (${p.title})`).join(", ")}\nWhy: ${decision.reasoning}`);
+      a.emit({ type: "push-back", chunkNumber: chunk.number, totalChunks: a.totalChunks, message: `chunk ${chunk.number} split: chunk(s) ${added.join(", ")} added to the plan` });
+      return rebuild(`Your chunk's contract was narrowed; the rest moved to other chunks. Done when: ${decision.doneWhen}\nMeet that; nothing beyond it is asked of this chunk.`, { ...chunk, doneWhen: decision.doneWhen! });
     }
     case "continue":
     case "fresh": {

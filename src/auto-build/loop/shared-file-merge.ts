@@ -11,7 +11,8 @@
  * Those conflicts carry no decision. So they are settled by rule, and only
  * they are:
  *   - a file each chunk only ADDS to (ARCHITECTURE.md's rows, the build's own
- *     notes in spec/build-state.md) keeps both sides' lines;
+ *     notes in spec/build-state.md, the chunks a split adds to spec/plan.md,
+ *     split-chunks.ts) keeps both sides' lines;
  *   - the GENERATED map takes the base's copy and is generated again from the
  *     merged project once the batch is in (regenerateSharedFiles);
  *   - a package.json two chunks each added a package to is merged key by key,
@@ -32,7 +33,7 @@ import { nodeScriptArgv } from "../../tools/program-argv.js";
 import { gitAdd, gitCommit } from "../git-helpers.js";
 
 /** Files a chunk only adds lines to. */
-const ADD_ONLY_FILES: ReadonlySet<string> = new Set(["ARCHITECTURE.md", "spec/build-state.md"]);
+const ADD_ONLY_FILES: ReadonlySet<string> = new Set(["ARCHITECTURE.md", "spec/build-state.md", "spec/plan.md"]);
 /** The kit's generated map and the script that writes it. */
 export const GENERATED_MAP = "docs/codebase-map.md";
 export const MAP_SCRIPT = "scripts/codebase-map.mjs";

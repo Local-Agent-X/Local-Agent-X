@@ -16,7 +16,7 @@ import { randomBytes } from "node:crypto";
 import { leadChatOf, runLeadTurn, type BuildLeadRef } from "./lead-chat.js";
 import { LEAD_ROLE } from "./lead-role.js";
 
-export const LEAD_ACTIONS = ["continue", "fresh", "accept", "narrow", "owed", "overrule", "park"] as const;
+export const LEAD_ACTIONS = ["continue", "fresh", "accept", "narrow", "split", "owed", "overrule", "park"] as const;
 export type LeadAction = typeof LEAD_ACTIONS[number];
 
 /** What a chunk the review sent back may be answered with. */
@@ -30,8 +30,10 @@ export interface LeadDecision {
   instruction?: string;
   /** accept / owed / overrule: what is left, recorded as follow-ups. */
   followUps?: string[];
-  /** narrow: the chunk's done-when as the lead now holds it. */
+  /** narrow / split: the chunk's done-when as the lead now holds it. */
   doneWhen?: string;
+  /** split: what moves out of the chunk, each a new chunk of the plan. */
+  parts?: Array<{ title: string; doneWhen: string }>;
   /** park: the question only the owner can answer. */
   question?: string;
   /** owed: the check only the owner can run, and what it needs. */
@@ -109,7 +111,7 @@ export function leadPacket(id: string, s: LeadSituation, first: boolean): string
     ...(s.final ? [
       `This is the last decision for this chunk: its rounds are spent. "accept", "owed" and "overrule" land it ` +
       `(the engine still refuses one whose build, tests or held-out scenarios fail); "park" sets it aside with ` +
-      `your question; "continue", "fresh" and "narrow" set it aside, and the chunks that depend on it are not built.`,
+      `your question; "continue", "fresh", "narrow" and "split" set it aside, and the chunks that depend on it are not built.`,
     ] : []),
     `Slice: ${c.slice || "(none)"}`,
     `Done when: ${c.doneWhen || "(none)"}`,

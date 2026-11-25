@@ -3,7 +3,7 @@
 // aside after three rounds anyway, ending the build (2026-11-24): a lead can
 // keep such a chunk going, accept it with follow-ups, or narrow its contract.
 import { describe, it, expect, vi } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ChunkReviewOutcome } from "../chunk-review/index.js";
@@ -98,6 +98,19 @@ describe("planLeadRound", () => {
     });
     expect(next).toMatchObject({ kind: "rebuild", fresh: true });
     expect(said).toContainEqual(expect.stringContaining("goes to a fresh worker"));
+  });
+
+  it("split narrows the chunk to what it keeps and adds the rest to the plan as new chunks, on record", async () => {
+    const { run, projectDir, said } = round({
+      action: "split", reasoning: "the manual flow is done; scanning is its own work", doneWhen: "the manual flow checks names",
+      parts: [{ title: "Camera scan", doneWhen: "a scanned label prefills names" }],
+    });
+    writeFileSync(join(projectDir, "spec", "plan.md"), "# Plan\n## Phase A — Build\n### Chunk 1 — Android foundation\n- **Slice:** s\n- **Depends on:** —\n- **Done when:** d\n");
+    const next = await run;
+    expect(next).toMatchObject({ kind: "rebuild", chunk: { doneWhen: "the manual flow checks names" } });
+    expect(readFileSync(join(projectDir, "spec", "plan.md"), "utf-8")).toContain("### Chunk 101 — Camera scan");
+    expect(buildState(projectDir)).toContain("Moved to new chunks: chunk 101 (Camera scan)");
+    expect(said).toContainEqual("chunk 1 split: chunk(s) 101 added to the plan");
   });
 
   // The last word on a chunk whose rounds are spent (label-check-sol chunk 3,

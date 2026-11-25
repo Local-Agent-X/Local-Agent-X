@@ -91,10 +91,15 @@ function git(cwd: string, ...args: string[]): string {
 }
 
 let projectDir: string;
-const build = (planText: string) => runBuildLoop({
-  projectDir, planPath: join(projectDir, "spec", "plan.md"), plan: parsePlanText(planText), startingChunk: 1,
-  maxConcurrentChunks: 2, buildLead: { ...lead, projectDir },
-});
+function build(planText: string) {
+  // The plan the build runs is the project's spec/plan.md, as in a real build.
+  writeFileSync(join(projectDir, "spec", "plan.md"), planText);
+  git(projectDir, "commit", "-qam", "the plan");
+  return runBuildLoop({
+    projectDir, planPath: join(projectDir, "spec", "plan.md"), plan: parsePlanText(planText), startingChunk: 1,
+    maxConcurrentChunks: 2, buildLead: { ...lead, projectDir },
+  });
+}
 const worktreeNames = () => Array.from({ length: 8 }, (_, i) => `autobuild-c${i + 1}`);
 
 beforeEach(() => {
@@ -172,6 +177,18 @@ describe("build engine incidents, replayed", () => {
     const result = await build(CHAIN);
     expect(result.status).toBe("complete");
     expect(script.builds.filter((b) => b === 2)).toHaveLength(2);
+  });
+
+  // label-check-sol chunk 4 (2026-11-25): the native scan was done; the
+  // label vocabulary was the next open-ended piece of work, round after round.
+  it("split: the chunk lands on what it keeps, and the part it split off is built in the same run", async () => {
+    script.outcomes.set(4, [sentBack("skeptic", "Vitamin D3 is not in the scan vocabulary")]);
+    script.lead.set(4, [{ action: "split", reasoning: "the scan is done; the vocabulary is its own work", doneWhen: "a scan prefills listed names", parts: [{ title: "Scan vocabulary", doneWhen: "common label forms prefill" }] }]);
+    const result = await build(CHAIN);
+    expect(result.status, result.haltReason).toBe("complete");
+    expect(script.builds.filter((b) => b === 4)).toHaveLength(2);
+    expect(script.builds.indexOf(401)).toBeGreaterThan(script.builds.indexOf(5));
+    expect(git(projectDir, "show", "HEAD:spec/plan.md")).toContain("### Chunk 401 — Scan vocabulary");
   });
 
   it("park sets the chunk aside on the owner's question; what does not depend on it still builds", async () => {

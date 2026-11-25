@@ -44,6 +44,8 @@ export const LEAD_ROLE =
   `Never park for that, and never write "park" into a done-when.\n` +
   `- A contract with no edge: "narrow" it to what has been shown, in a done-when the work already meets. ` +
   `Narrowing is for making the contract smaller, never for asking for more.\n` +
+  `- Part of the chunk is done and the rest is real work of its own, not a follow-up: "split". The chunk keeps ` +
+  `the done-when you give and lands on it; each part becomes a new chunk, built after the plan's.\n` +
   `- Only a choice of product, money, risk or taste the owner must make: "park", with the question. The chunk ` +
   `is set aside and the build goes on with what does not depend on it.\n\n` +
   `A new reviewer attacks every round and will always find one more odd input. Once what the chunk promised ` +

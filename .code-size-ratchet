@@ -2,7 +2,7 @@
 # An item may only shrink. When one shrinks, lower its number (--tighten does it); when it is
 # back under the cap, its line goes. Never add a line: move the job that grew into its own module.
 desktop/src/app-menu.ts#setupApplicationMenu 111
-desktop/src/main.ts#app.on:callback@57 106
+desktop/src/main.ts#app.on:callback@57 105
 desktop/src/reconcile.ts#runReconcile 132
 desktop/src/splash.ts#buildSplashDataUrl 142
 public/js/chat-status-bar.js#updateStatusBar 114

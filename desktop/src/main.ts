@@ -70,7 +70,7 @@ app.on("ready", async () => {
 
   // One instance owns the app (single-instance.ts): a second launch quits,
   // or takes over from one stuck on the splash.
-  if (!(await acquireSingleInstance())) return;
+  if (!(await acquireSingleInstance(() => { void quitApp(); }))) return;
 
   // This instance is the app now: record the run, and if the last one never
   // quit, say so and point at its report (crash-report.ts).
@@ -263,20 +263,7 @@ app.on("ready", async () => {
     iconPath: ICON_PATH,
     onShow: showWindow,
     onToggle: toggleWindow,
-    onQuit: async () => {
-      setQuitting(true);
-      // Kill the server tree AND any in-flight reconcile build BEFORE
-      // exiting so quit can never orphan either (an orphaned `npm run
-      // build` keeps rewriting dist/ after we're gone — the next launch
-      // then races it), then app.exit — quit-event roulette (a hung
-      // native handler, a prevented close) must not be able to keep a
-      // "quit" app alive. app.exit skips will-quit, so this path kills
-      // reconcile steps itself.
-      killReconcileStepsSync();
-      await stopServer();
-      destroyTray();
-      app.exit(0);
-    },
+    onQuit: quitApp,
     onNewSession: () => {
       showWindow();
       getMainWindow()?.webContents.executeJavaScript("window.startNewSession?.()");
@@ -312,6 +299,23 @@ app.on("ready", async () => {
 
   showNotification("Local Agent X", alreadyRunning ? "Agent is online." : "Starting up…");
 });
+
+/** Quit for real: the tray's Quit, and a `LocalAgentX.exe --quit` launch
+ *  (single-instance.ts). */
+async function quitApp(): Promise<void> {
+  setQuitting(true);
+  // Kill the server tree AND any in-flight reconcile build BEFORE
+  // exiting so quit can never orphan either (an orphaned `npm run
+  // build` keeps rewriting dist/ after we're gone — the next launch
+  // then races it), then app.exit — quit-event roulette (a hung
+  // native handler, a prevented close) must not be able to keep a
+  // "quit" app alive. app.exit skips will-quit, so this path kills
+  // reconcile steps itself.
+  killReconcileStepsSync();
+  await stopServer();
+  destroyTray();
+  app.exit(0);
+}
 
 app.on("activate", () => showWindow());
 

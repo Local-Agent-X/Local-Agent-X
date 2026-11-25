@@ -14,19 +14,34 @@
 //     yield-signal AND we've been on the splash past a 10s grace
 //     period, exit so the new launch can take over. Outside the grace
 //     window or once we've navigated to the real app, just focus.
+//
+// `LocalAgentX.exe --quit` asks the running instance to quit the way the
+// tray's Quit does, then exits itself. A restart from outside (a coding agent
+// rebuilding the app) used to force-kill it, which skips every exit step and,
+// with crash reports on, reads as a crash (crash-report.ts, 2026-11-25).
 
 import { app } from "electron";
 import { setQuitting } from "./server-process";
 import { isStuckOnSplash, showWindow } from "./window";
 
 const LOCK_PAYLOAD = { tag: "shortcut-relaunch" } as const;
+const QUIT_PAYLOAD = { tag: "quit" } as const;
+const QUIT_FLAG = "--quit";
 const STUCK_GRACE_MS = 10_000;
 const LOCK_RETRY_DEADLINE_MS = 3_000;
 const LOCK_RETRY_DELAY_MS = 250;
 
 /** Take the lock, or quit this launch and return false when a healthy
- *  instance holds it. The holder then answers later launches. */
-export async function acquireSingleInstance(): Promise<boolean> {
+ *  instance holds it. The holder then answers later launches; `onQuitRequest`
+ *  is how it answers one started with --quit. A --quit launch never becomes
+ *  the app: it signals the holder, if any, and exits. */
+export async function acquireSingleInstance(onQuitRequest: () => void, argv: string[] = process.argv): Promise<boolean> {
+  if (argv.includes(QUIT_FLAG)) {
+    const nothingRunning = app.requestSingleInstanceLock(QUIT_PAYLOAD);
+    console.log(nothingRunning ? "[desktop] --quit: no running instance" : "[desktop] --quit: asked the running instance to quit");
+    app.quit();
+    return false;
+  }
   let gotLock = app.requestSingleInstanceLock(LOCK_PAYLOAD);
   if (!gotLock) {
     const retryDeadline = Date.now() + LOCK_RETRY_DEADLINE_MS;
@@ -45,6 +60,11 @@ export async function acquireSingleInstance(): Promise<boolean> {
 
   app.on("second-instance", (_event, _argv, _cwd, additionalData) => {
     const data = additionalData as { tag?: string } | undefined;
+    if (data?.tag === QUIT_PAYLOAD.tag) {
+      console.log("[desktop] a --quit launch asked this instance to quit");
+      onQuitRequest();
+      return;
+    }
     const isShortcutRelaunch = data?.tag === "shortcut-relaunch";
     if (isShortcutRelaunch && isStuckOnSplash(STUCK_GRACE_MS)) {
       console.warn(

@@ -18,8 +18,12 @@ const logger = createLogger("sync.mass-delete-guard");
 /** Untombstoned app deletions at or above this count abort the push. */
 export const ABORT_THRESHOLD = 3;
 
-/** Top-level app directories with at least one file staged for deletion. */
-function deletedAppDirs(porcelain: string): Set<string> {
+/** Top-level app directories this push deletes: a file of theirs is staged
+ *  for deletion AND the app's folder is gone from the mirror. A file removed
+ *  from an app that is still there is not the app being deleted: the push
+ *  that pruned the build engine's own files from five apps' mirrors read as
+ *  deleting all five, and every later sync push aborted (2026-11-25). */
+function deletedAppDirs(porcelain: string, syncDir: string): Set<string> {
   const names = new Set<string>();
   for (const line of porcelain.split("\n")) {
     const status = line.slice(0, 2);
@@ -27,9 +31,18 @@ function deletedAppDirs(porcelain: string): Set<string> {
     if (!path) continue;
     if (!status.includes("D")) continue;
     const m = path.match(/^workspace\/apps\/([^/]+)\//);
-    if (m) names.add(m[1]);
+    if (m && !appStillMirrored(syncDir, m[1])) names.add(m[1]);
   }
   return names;
+}
+
+/** The app's folder is in the mirror with something left in it. */
+function appStillMirrored(syncDir: string, name: string): boolean {
+  try {
+    return readdirSync(join(syncDir, "workspace", "apps", name)).length > 0;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -71,7 +84,7 @@ function tombstonedNames(syncDir: string): Set<string> {
 /** Apps this push would delete without a tombstone authorizing it. */
 export function findUnauthorizedAppDeletions(porcelain: string, syncDir: string): string[] {
   const authorized = tombstonedNames(syncDir);
-  return [...deletedAppDirs(porcelain)].filter(name => !authorized.has(name));
+  return [...deletedAppDirs(porcelain, syncDir)].filter(name => !authorized.has(name));
 }
 
 /** The abort message shown in the UI, listing at most 10 offenders. */

@@ -60,6 +60,29 @@ function deletedApp(name: string): string {
   return `D  workspace/apps/${name}/index.html\nD  workspace/apps/${name}/app.js`;
 }
 
+// 2026-11-25: sync started pruning the build engine's own files (a stale
+// .lax-build-run.json) from the mirror, a deletion inside five apps that are
+// all still there. Read as deleting the apps, it aborted every later push.
+describe("mass-delete guard — a file removed from an app that is still there", () => {
+  it("is not the app being deleted", () => {
+    const apps = ["label-check", "label-check-sol", "marketplace", "mygroomtime", "ai-video-stitch-next"];
+    for (const a of apps) {
+      mkdirSync(join(syncDir, "workspace", "apps", a), { recursive: true });
+      writeFileSync(join(syncDir, "workspace", "apps", a, "index.html"), "<p>still here</p>");
+    }
+    const porcelain = apps.map((a) => `D  workspace/apps/${a}/.lax-build-run.json`).join("\n");
+    expect(unauthorizedDeletes(porcelain, syncDir)).toEqual([]);
+    expect(aborts(porcelain, syncDir)).toBe(false);
+  });
+
+  it("while an app whose folder is gone still counts", () => {
+    mkdirSync(join(syncDir, "workspace", "apps", "kept"), { recursive: true });
+    writeFileSync(join(syncDir, "workspace", "apps", "kept", "index.html"), "x");
+    const porcelain = [deletedApp("kept"), deletedApp("gone-1"), deletedApp("gone-2"), deletedApp("gone-3")].join("\n");
+    expect(unauthorizedDeletes(porcelain, syncDir).sort()).toEqual(["gone-1", "gone-2", "gone-3"]);
+  });
+});
+
 describe("mass-delete guard — tombstone authorization is existence, not staging", () => {
   it("REGRESSION: an already-tracked tombstone (staged M) still authorizes its deletion", () => {
     // The exact live failure. Four apps deleted through the UI, each with a

@@ -64,8 +64,20 @@ function toggleAgentFeeds() {
     // animation: it only drives the top-bar toggle's open styling, which should
     // release the moment the user clicks, not 300ms later.
     document.body.classList.remove('agents-panel-open');
+    // The panel is closed the moment the user clicks; the spring only shrinks
+    // the width. Two things went wrong while "closed" waited for onDone:
+    //  - the open path leaves an inline overflow:visible, which nothing cleared,
+    //    so the zero-width panel kept spilling its contents (the browser's error
+    //    card, a sliver of text) over the chat's right edge;
+    //  - the native browser view hides on the `collapsed` class
+    //    (browser-tab.js shouldShow), and onDone runs on requestAnimationFrame,
+    //    which stalls while the window is occluded or throttled — so the web
+    //    page stayed painted over a panel the user had closed.
+    panel.classList.remove('active');
+    panel.classList.add('collapsed');
+    panel.style.overflow = 'hidden';
     // Collapse from the current width (mobile overlay = 300, else persisted).
-    Spring.animate(panel, 'width', 0, { from: agentFeedsIsMobile() ? AGENT_FEEDS_MOBILE : getAgentFeedsWidth(), preset: 'stiff', unit: 'px', onUpdate: function(v) { panel.style.minWidth = v + 'px'; }, onDone: function() { panel.classList.remove('active'); panel.classList.add('collapsed'); panel.style.transition = ''; panel.style.width = ''; panel.style.minWidth = ''; } });
+    Spring.animate(panel, 'width', 0, { from: agentFeedsIsMobile() ? AGENT_FEEDS_MOBILE : getAgentFeedsWidth(), preset: 'stiff', unit: 'px', onUpdate: function(v) { panel.style.minWidth = v + 'px'; }, onDone: function() { panel.style.transition = ''; panel.style.width = ''; panel.style.minWidth = ''; panel.style.overflow = ''; } });
     if (typeof refreshSideButtons === 'function') refreshSideButtons();
   }
 }

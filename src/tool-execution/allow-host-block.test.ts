@@ -94,6 +94,16 @@ describe("strict web access refusals carry the allow-host action", () => {
     expect(ctx.result?.metadata?.host).toBe("shop.example.net");
   });
 
+  it("the user's router in the browser is the Allow card, not a dead end", async () => {
+    await startAriKernel(join(laxDir, "ari-audit.db"), "workspace-assistant", true);
+    const ctx = makeCtx("browser", { action: "navigate", url: "http://192.168.1.254/" });
+    await enforcePolicyPhase(ctx);
+    expect(ctx.allowed).toBe(false);
+    expect(ctx.result?.metadata?.clearable).toBe("allow-host");
+    expect(ctx.result?.metadata?.host).toBe("192.168.1.254");
+    expect(blockRecordOf(ctx.result!)?.notice).toBe("allow-host-card");
+  });
+
   it("when the kernel co-denies, the aggregate still offers the host as the way out", async () => {
     // No kernel started: the required-but-inactive deny joins the security
     // blocker in one aggregate. The security probe must not drop the action.

@@ -40,3 +40,14 @@ export const ENCODED_PAYLOAD_REFUSAL =
 export const DECODE_EXEC_REFUSAL =
   "Blocked: decoded text is passed to a shell or interpreter in the same command, which hides what runs. " +
   "Decoding by itself is fine: decode to the screen or to a file, read the result, then run what you need as its own call.";
+
+/** Appended when the refused command is a network probe (ping, traceroute, a
+ *  DNS lookup): they are refused because the DNS they send leaves the cage
+ *  unfenced, but what the model wants from them, whether a device or site
+ *  answers, has a path that works. Without it a model asked to reach the
+ *  user's router ran ping, was refused, and told the user it could not
+ *  (2026-11-24), when opening the router page would have offered the user an
+ *  Allow button. */
+export const NETWORK_PROBE_WAY_OUT =
+  "To check whether a device or site answers, open it over HTTP with web_fetch or the browser tool (a router: http://192.168.1.1/ or its address). " +
+  "A device on the user's own network that they have not allowed yet comes back with an Allow button for them; tell them to click it, then retry.";

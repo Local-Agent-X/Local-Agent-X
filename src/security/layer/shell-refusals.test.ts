@@ -15,9 +15,10 @@ import { evaluateShellCommand } from "./shell-policy.js";
 import { evaluateShellCommandAndPaths } from "./shell-path-guard.js";
 import { evaluateEgressForUrl } from "./network-policy.js";
 import {
-  BACKGROUND_REFUSAL, COMPUTED_COMMAND_REFUSAL, DECODE_EXEC_REFUSAL, ENCODED_PAYLOAD_REFUSAL, NESTED_COMMAND_WAY_OUT, SEMICOLON_REFUSAL,
+  BACKGROUND_REFUSAL, COMPUTED_COMMAND_REFUSAL, DECODE_EXEC_REFUSAL, ENCODED_PAYLOAD_REFUSAL, NESTED_COMMAND_WAY_OUT, NETWORK_PROBE_WAY_OUT, SEMICOLON_REFUSAL,
 } from "./shell-refusals.js";
 import { LOOPBACK_WAY_OUT, PRIVATE_ADDRESS_WAY_OUT } from "./ip-classification.js";
+import { detectDangerousInvokeBin } from "./shell-detectors.js";
 
 // Pinned to a POSIX host with no sandbox: every rule applies.
 const unconfined = (cmd: string) => evaluateShellCommand(cmd, undefined, undefined, undefined, "linux", false);
@@ -67,6 +68,13 @@ describe("each refusal names the way that works", () => {
     expect(evaluateEgressForUrl("http://localhost:8080/").reason).toContain(LOOPBACK_WAY_OUT);
     expect(evaluateEgressForUrl("http://127.0.0.2/").reason).toContain(PRIVATE_ADDRESS_WAY_OUT);
     expect(evaluateEgressForUrl("http://192.168.1.20/").reason).toContain("Settings → Security → Web access");
+  });
+
+  it("a refused network probe names opening the address over HTTP, where a LAN device gets the Allow button", () => {
+    for (const cmd of ["ping 192.168.1.254", "traceroute 10.0.0.1", "nslookup router.lan", "Resolve-DnsName example.com"]) {
+      expect(detectDangerousInvokeBin(cmd), cmd).toContain(NETWORK_PROBE_WAY_OUT);
+    }
+    expect(detectDangerousInvokeBin("mount /dev/sdb1 /mnt")).not.toContain(NETWORK_PROBE_WAY_OUT);
   });
 });
 

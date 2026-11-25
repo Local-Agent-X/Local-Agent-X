@@ -22,7 +22,10 @@ import { commandPositions, splitRedirections, type CommandPosition } from "./she
 import { laterRunOf, outputFiles } from "./shell-file-runs.js";
 import { editsInPlace } from "./shell-in-place-edit.js";
 import type { InlineEvalPolicy } from "./types.js";
-import { DECODE_EXEC_REFUSAL, ENCODED_PAYLOAD_REFUSAL, NESTED_COMMAND_WAY_OUT } from "./shell-refusals.js";
+import { DECODE_EXEC_REFUSAL, ENCODED_PAYLOAD_REFUSAL, NESTED_COMMAND_WAY_OUT, NETWORK_PROBE_WAY_OUT } from "./shell-refusals.js";
+
+/** The refused binaries a model reaches for to see whether a host answers. */
+const NETWORK_PROBE_BINS = new Set(["ping", "traceroute", "dig", "nslookup", "host", "getent", "resolve-dnsname"]);
 
 // Re-export the lexing primitives that this module's consumers (shell-policy,
 // shell-write-detector) import from here, so the split into shell-lex.ts
@@ -315,7 +318,8 @@ export function detectDangerousInvokeBin(command: string): string | null {
     if (bin === "umount" && unmountsWorkingMount(tokens.slice(at! + 1))) continue;
     if (bin === "getent" && getentReadsLocalTable(tokens.slice(at! + 1))) continue;
     if (bin && DANGEROUS_INVOKE_BINS.has(bin)) {
-      return `Blocked: '${bin}' is a restricted network/system command. (If you only named it as an argument, rephrase — the block is on INVOKING it, not mentioning it.)`;
+      const wayOut = NETWORK_PROBE_BINS.has(bin) ? ` ${NETWORK_PROBE_WAY_OUT}` : "";
+      return `Blocked: '${bin}' is a restricted network/system command. (If you only named it as an argument, rephrase — the block is on INVOKING it, not mentioning it.)${wayOut}`;
     }
   }
   return null;

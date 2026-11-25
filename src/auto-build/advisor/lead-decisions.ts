@@ -96,7 +96,10 @@ export const LEAD_ROLE =
   `than "continue". The engine will not land a chunk whose build or tests fail, or whose held-out scenarios ` +
   `fail, whatever you decide. Read the code and run the checks yourself when the evidence is unclear.`;
 
-function packet(id: string, s: LeadSituation, first: boolean): string {
+/** The message that asks the lead for one decision: the role on the first, then
+ *  the evidence. Shared with the lead eval (eval/build-lead), so it is judged on
+ *  what the lead is actually sent. */
+export function leadPacket(id: string, s: LeadSituation, first: boolean): string {
   const c = s.chunk;
   return [
     "(Sent by the app, not typed by the user: a build decision is waiting.)",
@@ -130,7 +133,7 @@ export async function askLead(ref: BuildLeadRef, s: LeadSituation, opts: { answe
   const answered = new Promise<LeadDecision>((resolve) => pending.set(id, resolve));
   const first = !firstSent.has(sessionId);
   firstSent.add(sessionId);
-  const turn = runLeadTurn(sessionId, packet(id, s, first)).catch(() => undefined);
+  const turn = runLeadTurn(sessionId, leadPacket(id, s, first)).catch(() => undefined);
   const timeout = new Promise<null>((r) => setTimeout(() => r(null), opts.answerMs ?? LEAD_ANSWER_MS));
   const cancelled = new Promise<null>((r) => opts.signal?.addEventListener("abort", () => r(null), { once: true }));
   // A turn that ended without answering is no answer either.

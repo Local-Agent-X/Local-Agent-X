@@ -83,7 +83,8 @@ function renderChatList() {
   const tgChats = unassigned.filter(c => c.id && c.id.startsWith('tg-'));
   const regularChats = unassigned.filter(c => !c.id || (!c.id.startsWith('wa-') && !c.id.startsWith('tg-')));
   // A collab's model chats are listed under the chat it was started from (chat-collab.js).
-  const nested = window.laxCollab ? window.laxCollab.nest(regularChats) : { top: regularChats, under: {} };
+  // ...and a chat started from another (a build's lead) under the chat that started it.
+  const nested = nestUnderStarter(window.laxCollab ? window.laxCollab.nest(regularChats) : { top: regularChats, under: {} });
 
   // Sort: pinned first, then by date
   const sortWithPins = (arr) => {

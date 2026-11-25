@@ -47,6 +47,8 @@ async function syncChatsFromServer() {
         if (srv.projectId && !local.projectId) local.projectId = srv.projectId;
         // The server fixed the mode on the session's first message (src/session/mode.ts).
         if (srv.mode === 'code') local.mode = 'code';
+        // The chat it was started from: the sidebar lists it under that one.
+        if (srv.startedFrom && !local.startedFrom) local.startedFrom = srv.startedFrom;
         merged.push(local);
       } else {
         // Server is newer or session is server-only. Build a metadata stub —
@@ -67,6 +69,7 @@ async function syncChatsFromServer() {
         // unscoped project chats.
         stub.projectId = srv.projectId || (local && local.projectId) || undefined;
         if (srv.mode === 'code' || (local && local.mode === 'code')) stub.mode = 'code';
+        if (srv.startedFrom || (local && local.startedFrom)) stub.startedFrom = srv.startedFrom || local.startedFrom;
         if (local) {
           stub.compactedAt = local.compactedAt;
           if (local.archived) stub.archived = true;

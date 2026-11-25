@@ -24,7 +24,13 @@ vi.mock("../advisor/index.js", () => ({
   }),
 }));
 
+const lead = vi.hoisted(() => ({ answers: [] as unknown[], asked: 0 }));
+vi.mock("../advisor/lead-decisions.js", () => ({
+  askLead: vi.fn(async () => { lead.asked++; return lead.answers.shift() ?? null; }),
+}));
+
 const { handlePushBack, MAX_FIX_ROUNDS } = await import("./handle-push-back.js");
+const { MAX_LEAD_ROUNDS } = await import("./lead-rounds.js");
 
 const chunk = { number: 5, title: "Routing rule", dependsOn: [] } as unknown as ParsedChunk;
 const plan = { chunks: [chunk] } as unknown as ParsedPlan;
@@ -39,7 +45,7 @@ const fix = (first: ChunkReviewOutcome) => handlePushBack({
   emit: (e) => { events.push(e); },
 });
 
-beforeEach(() => { rebuilds.outcomes = []; rebuilds.reasons = []; advisor.answers = []; advisor.asked = []; events = []; });
+beforeEach(() => { rebuilds.outcomes = []; rebuilds.reasons = []; advisor.answers = []; advisor.asked = []; events = []; lead.answers = []; lead.asked = 0; });
 
 describe("handlePushBack", () => {
   it("a round that comes back clean ends it", async () => {
@@ -100,5 +106,42 @@ describe("handlePushBack", () => {
     const amend = { ...green, action: "amend_spec" } as unknown as ChunkReviewOutcome;
     rebuilds.outcomes = [amend];
     expect((await fix(pushedBack("the first hole"))).finalAction).toBe("amend_spec");
+  });
+});
+
+// label-check-sol's chunk 1 closed every finding and was set aside after three
+// rounds; with a lead, the lead decides when a chunk has had enough.
+describe("handlePushBack with a build lead", () => {
+  const ledFix = (first: ChunkReviewOutcome) => handlePushBack({
+    chunk, totalChunks: 13, planPath: "spec/plan.md", plan, projectDir: "C:/proj", preSha: "abc", outcome: first,
+    emit: (e) => { events.push(e); }, buildLead: { projectDir: "C:/proj", originSessionId: "chat-x" },
+  });
+  const keepGoing = { action: "continue", reasoning: "progress", instruction: "close it" };
+
+  it("keeps a chunk going past the fixed rounds while the lead says so, and a repeated finding is the lead's to judge", async () => {
+    rebuilds.outcomes = [pushedBack("a"), pushedBack("a"), pushedBack("b"), pushedBack("c"), green];
+    lead.answers = Array.from({ length: 5 }, () => keepGoing);
+    const result = await ledFix(pushedBack("first"));
+    expect(result.finalAction).toBe("proceed");
+    expect(rebuilds.reasons).toHaveLength(5);
+    expect(rebuilds.reasons.length).toBeGreaterThan(MAX_FIX_ROUNDS);
+    expect(advisor.asked).toHaveLength(0);
+    expect(events.some((e) => e.message.includes("found the same thing again — asking the build lead"))).toBe(true);
+  });
+
+  it("stops at the ceiling on cost however the lead answers", async () => {
+    rebuilds.outcomes = Array.from({ length: MAX_LEAD_ROUNDS }, (_, i) => pushedBack(`finding ${i}`));
+    lead.answers = Array.from({ length: MAX_LEAD_ROUNDS }, () => keepGoing);
+    const result = await ledFix(pushedBack("first"));
+    expect(result.finalAction).toBe("halt");
+    expect(rebuilds.reasons).toHaveLength(MAX_LEAD_ROUNDS);
+  });
+
+  it("a lead that does not answer leaves the round to the engine's rules", async () => {
+    rebuilds.outcomes = [green];
+    const result = await ledFix(pushedBack("first"));
+    expect(result.finalAction).toBe("proceed");
+    expect(lead.asked).toBe(1);
+    expect(advisor.asked).toEqual(["first"]);
   });
 });

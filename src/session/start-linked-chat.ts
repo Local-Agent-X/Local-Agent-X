@@ -66,23 +66,33 @@ export async function startLinkedChat(ctx: ServerContext, req: LinkedChatRequest
   const folder = req.folder ? projectFolder(req.folder) : undefined;
   const project = folder ? await codeFolderProject(folder, ctx.projectStore) : undefined;
   const code = folder !== undefined || sessionModeOf(origin) === "code";
-  const now = Date.now();
   const sessionId = `task-${randomBytes(8).toString("hex")}`;
-  await ctx.saveSession({
-    id: sessionId, title: req.title, messages: [], createdAt: now, updatedAt: now,
-    startedFrom: req.originId,
-    ...(code ? { mode: "code" as const } : {}),
-    // A new project folder is the chat's own; otherwise it works where the
-    // starting chat does: a code session's project (its folder), a chat's bound app folder.
-    ...(project ? { projectId: project.id } : origin.projectId ? { projectId: origin.projectId } : {}),
-    ...(!project && origin.folder ? { folder: origin.folder } : {}),
-  });
-  ctx.broadcastAll({ type: "chat_list_changed", at: now });
+  await saveLinkedChat(ctx, { sessionId, originId: req.originId, title: req.title, ...(project ? { projectId: project.id } : {}) });
   void runLinkedChat(ctx, {
     originId: req.originId, originTitle: origin.title, sessionId, title: req.title, brief: req.brief,
     mode: code ? "code" : sessionModeOf(origin),
   }).catch((e) => logger.warn(`[start-linked-chat] ${sessionId}: ${(e as Error).message}`));
   return { sessionId, title: req.title, ...(folder ? { folder } : {}) };
+}
+
+/**
+ * Save an empty chat started from `originId`, working where that chat works:
+ * its mode, a code session's project (its folder), a chat's bound app folder.
+ * `projectId` puts it in a project of its own instead (a new folder). Open tabs
+ * are told the chat list changed, so it shows at once, under its origin.
+ * Also how a build's lead chat is made (auto-build/advisor/lead-chat.ts).
+ */
+export async function saveLinkedChat(ctx: ServerContext, req: { sessionId: string; originId: string; title: string; projectId?: string }): Promise<void> {
+  const origin = ctx.sessionStore.load(req.originId) ?? ctx.getOrCreateSession(req.originId);
+  const now = Date.now();
+  await ctx.saveSession({
+    id: req.sessionId, title: req.title, messages: [], createdAt: now, updatedAt: now,
+    startedFrom: req.originId,
+    ...(req.projectId !== undefined || sessionModeOf(origin) === "code" ? { mode: "code" as const } : {}),
+    ...(req.projectId ? { projectId: req.projectId } : origin.projectId ? { projectId: origin.projectId } : {}),
+    ...(!req.projectId && origin.folder ? { folder: origin.folder } : {}),
+  });
+  ctx.broadcastAll({ type: "chat_list_changed", at: now });
 }
 
 export type LinkedChatStarter = (req: LinkedChatRequest) => Promise<StartedChat>;

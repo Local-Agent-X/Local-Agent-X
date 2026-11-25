@@ -115,6 +115,27 @@ function codeGroup(title, rows, addAction) {
     </div>`;
 }
 
+/** `nested.top` with each chat started from another listed chat (a build's
+ *  lead, a chat a session_start began) taken out and kept under that chat, on
+ *  top of whatever nesting `nested` already has. Shared with the chat side (app-sidebar-render.js). */
+function nestUnderStarter(nested) {
+  const listed = new Set(nested.top.map(c => c.id));
+  const top = [];
+  const under = Object.assign({}, nested.under);
+  for (const c of nested.top) {
+    if (c.startedFrom && c.startedFrom !== c.id && listed.has(c.startedFrom)) (under[c.startedFrom] = (under[c.startedFrom] || []).slice()).push(c);
+    else top.push(c);
+  }
+  return { top, under };
+}
+
+/** Rows for one group, each session started from another in the group (a
+ *  build's lead) listed under it (nestUnderStarter, app-sidebar-render.js). */
+function codeRows(list) {
+  const n = nestUnderStarter({ top: list, under: {} });
+  return n.top.flatMap(c => [codeSessionRow(c), ...(n.under[c.id] || []).map(s => codeSessionRow(s).replace('class="chat-item ', 'class="chat-item collab-sub '))]);
+}
+
 /** The code side: your project folders (each with its sessions), the apps the
  *  agent built, then sessions with no folder. */
 function renderCodeSidebar(el) {
@@ -123,12 +144,12 @@ function renderCodeSidebar(el) {
   const html = [`<div class="section-header code-folders-header"><span>Project folders</span><button class="add-btn" onclick="addProjectFolder();event.stopPropagation()" title="Add a project folder" aria-label="Add a project folder">+</button></div>`];
   if (!folders.length) html.push('<div class="code-group-empty">Add a folder to start coding in it.</div>');
   for (const p of folders) {
-    html.push(codeGroup(p.name, code.filter(c => c.projectId === p.id && !c.id.startsWith('ide-')).map(codeSessionRow), `newCodeSession('${p.id}')`));
+    html.push(codeGroup(p.name, codeRows(code.filter(c => c.projectId === p.id && !c.id.startsWith('ide-'))), `newCodeSession('${p.id}')`));
   }
   const apps = code.filter(c => c.id.startsWith('ide-'));
   if (apps.length) html.push(codeGroup('Apps', apps.map(codeSessionRow)));
   const loose = code.filter(c => !c.id.startsWith('ide-') && !folders.some(p => p.id === c.projectId));
-  if (loose.length) html.push(codeGroup('No folder', loose.map(codeSessionRow)));
+  if (loose.length) html.push(codeGroup('No folder', codeRows(loose)));
   el.innerHTML = html.join('');
 }
 

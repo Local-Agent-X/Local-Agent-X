@@ -32,6 +32,8 @@ const script = vi.hoisted(() => ({
   attempts: new Map<number, number>(),
   tasks: [] as Array<{ chunk: number; task: string }>,
   breakerFindings: "FINDINGS: none",
+  /** Chunks the skeptic breaks every time it looks: a contract with no edge. */
+  skepticBreaks: new Set<number>(),
 }));
 
 const CLEAN = (changed: string) =>
@@ -47,7 +49,12 @@ vi.mock("../src/auto-build/agents/chunk-runner.js", async () => {
     SKEPTIC_PROBE_DIR: ".skeptic",
     runChunkAgent: vi.fn(async (o: { role: string; title?: string; task: string; projectDir: string }) => {
       const done = (stdout: string) => ({ stdout, exitCode: 0, durationMs: 1 });
-      if (o.role === "chunk-skeptic") return done("VERDICT: HOLDS\nFINDING: ran the app's checks and probed the edges.\nFOLLOW_UPS: none");
+      if (o.role === "chunk-skeptic") {
+        const n = Number((o.title ?? "").match(/chunk (\d+)/i)?.[1]);
+        return done(script.skepticBreaks.has(n)
+          ? `VERDICT: BROKEN\nGROUND: spec/plan.md — "works"\nFINDING: another edge case of "works" (attempt ${script.attempts.get(n)}).\nFOLLOW_UPS: none`
+          : "VERDICT: HOLDS\nFINDING: ran the app's checks and probed the edges.\nFOLLOW_UPS: none");
+      }
       if (o.role === "finish-breaker") return done(script.breakerFindings);
       if (o.title === "Build preflight check") {
         const token = read(at(o.projectDir, ".lax-preflight-sentinel.txt"), "utf-8").trim();
@@ -73,6 +80,9 @@ const { defaultChunkJudge } = await import("../src/auto-build/chunk-review/chunk
 const { writeScenario } = await import("../src/holdout/store.js");
 const stepPlanner = await import("../src/auto-build/scenario-scorer/step-planner.js");
 const judge = await import("../src/auto-build/scenario-scorer/judge.js");
+const { setChatHandler } = await import("../src/chat-ws/chat-handler.js");
+const { setLeadChatHost } = await import("../src/auto-build/advisor/lead-chat.js");
+const { buildDecideTool } = await import("../src/auto-build/advisor/build-decide-tool.js");
 
 const chromiumAvailable = await (async () => {
   try {
@@ -150,6 +160,7 @@ beforeEach(async () => {
   script.attempts = new Map();
   script.tasks = [];
   script.breakerFindings = "FINDINGS: none";
+  script.skepticBreaks = new Set();
   projectDir = join(mkdtempSync(join(tmpdir(), "lax-engine-e2e-")), `pillbox-${Math.random().toString(36).slice(2, 8)}`);
   mkdirSync(join(projectDir, "spec"), { recursive: true });
   writeFileSync(join(projectDir, "spec", "plan.md"), PLAN);
@@ -255,6 +266,39 @@ describe.skipIf(!chromiumAvailable)("the build engine, end to end", () => {
       expect(said(events, "finish checks, round 2: 0 scenario(s) failing, 0 finding(s) to fix")).toHaveLength(1);
     } finally {
       vi.mocked(runChunkAgent).mockImplementation(scripted);
+    }
+  }, 240_000);
+
+  // label-check-sol (2026-11-24): a skeptic that finds a new edge of an
+  // open-ended contract every round set the chunk aside after three rounds,
+  // and everything after it waited. A lead accepts it with follow-ups.
+  it("a chunk the skeptic keeps breaking is accepted by the build's lead, with follow-ups on record, and the build finishes", async () => {
+    script.skepticBreaks = new Set([2]);
+    const leadChats: string[] = [];
+    setLeadChatHost({ create: async (req) => { leadChats.push(req.sessionId); }, exists: (id) => leadChats.includes(id) });
+    const asked: string[] = [];
+    setChatHandler(async (_sessionId, message) => {
+      asked.push(message);
+      const id = message.match(/build_decide\(decision_id="([^"]+)"/)?.[1];
+      if (!id) return;
+      // The lead lets one more round try, then accepts what has been shown.
+      const args = asked.length === 1
+        ? { action: "continue", reasoning: "one more look", instruction: "handle the edge case" }
+        : { action: "accept", reasoning: "every edge so far is beyond what chunk 2 is for", follow_ups: ['more edge cases of "works"'] };
+      await buildDecideTool.execute({ decision_id: id, ...args }, undefined as never);
+    });
+    try {
+      const { run, events } = build({ buildLead: { projectDir, originSessionId: "chat-origin" } });
+      const result = await run;
+      expect(result.status, events.join("\n")).toBe("complete");
+      expect(leadChats).toHaveLength(1);
+      expect(asked).toHaveLength(2);
+      expect(script.attempts.get(2)).toBe(2);
+      expect(said(events, "build lead: accept — every edge so far is beyond what chunk 2 is for")).toHaveLength(1);
+      expect(git("log --format=%s main")).toContain("chunk 2: Add medication");
+      expect(readFileSync(join(projectDir, "spec", "build-state.md"), "utf-8")).toContain('- more edge cases of "works"');
+    } finally {
+      setLeadChatHost(null);
     }
   }, 240_000);
 });

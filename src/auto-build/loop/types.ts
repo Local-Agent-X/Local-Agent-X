@@ -2,6 +2,7 @@ import type { ParsedPlan } from "../plan-parser.js";
 import type { ChunkReviewOutcome, ReviewAction } from "../chunk-review/index.js";
 import type { JudgmentHook } from "../chunk-review/judgment-hook.js";
 import type { ChunkJudge } from "../chunk-review/chunk-verdict.js";
+import type { BuildLeadRef } from "../advisor/lead-chat.js";
 
 export type LoopEventType =
   | "git-baseline"
@@ -88,6 +89,9 @@ export interface LoopOptions {
   /** The finish gates' own fix chunks: the judge was proven when the build
    *  started, so the wall probe (loop/wall-probe.ts) is not run again. */
   skipWallProbe?: boolean;
+  /** The build's lead (advisor/lead-chat.ts): it decides each fix round.
+   *  Absent, the engine's own rules decide. */
+  buildLead?: BuildLeadRef;
 }
 
 export interface LoopResult {

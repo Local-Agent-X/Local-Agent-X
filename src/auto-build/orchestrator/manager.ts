@@ -28,6 +28,7 @@ import type { JudgmentHook } from "../chunk-review/judgment-hook.js";
 import { chunkJudgingSummary, type ChunkJudge } from "../chunk-review/chunk-verdict.js";
 import { reportBuildToChat } from "./report-to-chat.js";
 import * as state from "./state.js";
+import { canHaveLead } from "../advisor/lead-chat.js";
 import type { OrchestratorState } from "./state.js";
 import * as registry from "./registry.js";
 import { createLogger } from "../../logger.js";
@@ -223,6 +224,8 @@ async function runOrchestrationLoop(orch: ActiveOrchestration, opts: StartOrches
       judgmentHook: opts.judgmentHook,
       chunkJudge: opts.chunkJudge,
       finishGates: opts.finishGates,
+      // A build started from a chat is led from a chat listed under it.
+      ...(canHaveLead(opts.sessionId) ? { buildLead: { projectDir: opts.projectDir, originSessionId: opts.sessionId } } : {}),
       subprocessTimeoutMs: opts.subprocessTimeoutMs,
       parentSessionId: opts.sessionId,
       // The orchestrator card's id in the AGENTS panel IS orch.opId (it's the

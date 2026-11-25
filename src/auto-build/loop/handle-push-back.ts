@@ -13,6 +13,12 @@
  * says the same thing again: more of the same will not help), when the advisor
  * says halt, or when a spec amendment cannot be applied. Every round's brief
  * carries the earlier rounds' findings, so a fix does not undo a previous one.
+ *
+ * A build with a lead (advisor/lead-chat.ts) asks the lead instead, every
+ * round (lead-rounds.ts): it can keep a chunk going while it makes progress,
+ * accept it with follow-ups, narrow an open-ended contract, or park it for the
+ * owner, and MAX_LEAD_ROUNDS is only a ceiling on cost. A round the lead does
+ * not answer is decided by the rules above.
  */
 import type { ParsedPlan, ParsedChunk } from "../plan-parser.js";
 import type { ChunkReviewOutcome, ReviewAction } from "../chunk-review/index.js";
@@ -24,6 +30,8 @@ import { safeGet } from "./types.js";
 import { runChunkOnce } from "./run-chunk-once.js";
 import { parsePlanFile } from "../plan-parser.js";
 import type { ChunkJudge } from "../chunk-review/chunk-verdict.js";
+import type { BuildLeadRef } from "../advisor/lead-chat.js";
+import { MAX_LEAD_ROUNDS, planLeadRound, type LeadRoundPlan } from "./lead-rounds.js";
 
 /** Rebuilds a pushed-back chunk gets after its first attempt. */
 export const MAX_FIX_ROUNDS = 3;
@@ -53,6 +61,8 @@ export interface HandlePushBackOptions {
   /** Findings from earlier runs of a set-aside chunk (carry-over.ts), kept
    *  fixed in every round like this run's own earlier rounds. */
   earlierFindings?: string[];
+  /** The build's lead, when it has one: it decides each round. */
+  buildLead?: BuildLeadRef;
 }
 
 export interface HandlePushBackResult {
@@ -140,16 +150,30 @@ async function planRound(opts: HandlePushBackOptions, round: Round): Promise<Rou
   return { kind: "rebuild", chunk, plan: round.plan, retryReason };
 }
 
+/** This round's plan: the lead's when the build has one and it answers, else the rules'. */
+async function nextRound(opts: HandlePushBackOptions, round: Round, n: number, earlier: string[], repeated: boolean): Promise<{ plan: RoundPlan | LeadRoundPlan; byLead: boolean }> {
+  if (opts.buildLead) {
+    const plan = await planLeadRound({
+      lead: opts.buildLead, chunk: round.chunk, plan: round.plan, outcome: round.outcome, totalChunks: opts.totalChunks,
+      round: n - 1, earlier, repeated, projectDir: opts.projectDir, emit: opts.emit, signal: opts.signal,
+    });
+    if (plan) return { plan, byLead: true };
+  }
+  return { plan: await planRound(opts, round), byLead: false };
+}
+
 export async function handlePushBack(opts: HandlePushBackOptions): Promise<HandlePushBackResult> {
   const { totalChunks, emit } = opts;
   let round: Round = { chunk: opts.chunk, plan: opts.plan, outcome: opts.outcome };
   const earlier: string[] = [...(opts.earlierFindings ?? [])];
+  let repeated = false;
 
   for (let n = 1; ; n++) {
-    const next = await planRound(opts, round);
+    const { plan: next, byLead } = await nextRound(opts, round, n, earlier, repeated);
     if (next.kind === "halt") {
       return { finalAction: "halt", finalOutcome: { ...round.outcome, reasoning: next.reasoning } };
     }
+    if (next.kind === "land") return { finalOutcome: next.outcome, finalAction: "proceed" };
     const rebuilt = await runChunkOnce({
       chunk: next.chunk, totalChunks, planPath: opts.planPath, plan: next.plan,
       projectDir: opts.projectDir, preSha: opts.preSha,
@@ -163,20 +187,25 @@ export async function handlePushBack(opts: HandlePushBackOptions): Promise<Handl
     if (rebuilt.action !== "push_back") return { finalOutcome: rebuilt, finalAction: rebuilt.action };
 
     const stuck = sameFinding(rebuilt, round.outcome);
-    if (stuck || n >= MAX_FIX_ROUNDS) {
+    repeated = stuck;
+    // A lead decides what a repeated finding means; the rules stop on it.
+    const ceiling = byLead ? MAX_LEAD_ROUNDS : MAX_FIX_ROUNDS;
+    if ((stuck && !byLead) || n >= ceiling) {
       // Not a "halt" event: whether the build stops or sets the chunk aside is
       // the loop's call (run.ts halts; parallel-waves.ts builds on without it).
       emit({
         type: "push-back", chunkNumber: next.chunk.number, totalChunks,
         message: stuck
           ? `Chunk ${next.chunk.number}: fix round ${n} changed nothing, the review found the same thing again — not retrying further.`
-          : `Chunk ${next.chunk.number}: still not green after ${MAX_FIX_ROUNDS} fix rounds — not retrying further.`,
+          : `Chunk ${next.chunk.number}: still not green after ${ceiling} fix rounds — not retrying further.`,
       });
       return { finalOutcome: rebuilt, finalAction: "halt" };
     }
     emit({
       type: "push-back", chunkNumber: next.chunk.number, totalChunks,
-      message: `Chunk ${next.chunk.number}: fix round ${n} closed what was found and the review found something else — fixing again (${MAX_FIX_ROUNDS - n} round(s) left).`,
+      message: stuck
+        ? `Chunk ${next.chunk.number}: fix round ${n} found the same thing again — asking the build lead.`
+        : `Chunk ${next.chunk.number}: fix round ${n} closed what was found and the review found something else — fixing again (${ceiling - n} round(s) left).`,
     });
     earlier.push(round.outcome.reasoning);
     round = { chunk: next.chunk, plan: next.plan, outcome: rebuilt };

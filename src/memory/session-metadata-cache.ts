@@ -28,6 +28,9 @@ export interface SessionMetadata {
   /** "code" for a code session (session/mode.ts); absent = chat. The sidebar
    *  lists each mode's sessions separately. */
   mode?: "code";
+  /** The chat this one was started from (a linked chat, a build lead): the
+   *  sidebar lists it under that chat. */
+  startedFrom?: string;
   /** Deleted from the chat lists by the user; the transcript is kept (session/remove.ts). */
   removedAt?: number;
 }
@@ -61,6 +64,7 @@ export function metadataOf(session: Session): SessionMetadata {
     messageCount: session.messages.length,
     projectId: session.projectId,
     ...(sessionModeOf(session) === "code" ? { mode: "code" as const } : {}),
+    ...(session.startedFrom ? { startedFrom: session.startedFrom } : {}),
     ...(session.removedAt ? { removedAt: session.removedAt } : {}),
   };
 }

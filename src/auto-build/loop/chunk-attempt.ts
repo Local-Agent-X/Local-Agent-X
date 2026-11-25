@@ -46,6 +46,7 @@ export async function buildChunkWithRetry(a: ChunkAttemptInput): Promise<ChunkAt
     judgmentHook: opts.judgmentHook, parentOpId: opts.parentOpId, parentSessionId: opts.parentSessionId,
     // The judge finds the sealed suite by the project's name, never a worktree's.
     chunkJudge: opts.chunkJudge, baseProjectDir: opts.projectDir, workerIndex: a.workerIndex,
+    buildLead: opts.buildLead,
   };
 
   const outcome = await runChunkOnce({

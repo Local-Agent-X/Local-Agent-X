@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { setupChatWebSocket } from "../chat-ws/index.js";
 import { operatorSocketPaths } from "./ws-operator-auth.js";
 import { setInboxAnswerer } from "../chat-ws/inbox-frames.js";
-import { setLinkedChatStarter, startLinkedChat } from "../session/start-linked-chat.js";
+import { saveLinkedChat, setLinkedChatStarter, startLinkedChat } from "../session/start-linked-chat.js";
+import { setLeadChatHost } from "../auto-build/advisor/lead-chat.js";
 import { actOnInbox, mutateInbox, rateFromInbox, replyFromInbox } from "../routes/inbox.js";
 import { startPhonePush } from "../phone-push/index.js";
 import { startLiveApprovalCopies } from "../inbox/live-approval.js";
@@ -101,6 +102,11 @@ export function wireWsChat(deps: {
   });
   // session_start's "start now" reaches the same chat creation a card's tap does.
   setLinkedChatStarter((req) => startLinkedChat(buildCtx(), req));
+  // A build's lead chat is a linked chat of the chat that started the build.
+  setLeadChatHost({
+    create: (req) => saveLinkedChat(buildCtx(), req),
+    exists: (id) => buildCtx().sessionStore.load(id) !== null,
+  });
   // A new inbox item also rings the phones that asked for its kind.
   startPhonePush();
   startLiveApprovalCopies();

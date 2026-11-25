@@ -147,6 +147,7 @@ demand via tool search and aren't all listed here.)
 - `holdout_seal`
 - `holdout_judge`
 - `device_check`
+- `build_decide` — Answer a build decision as the build's lead.
 
 ### Secrets
 
@@ -159,4 +160,4 @@ demand via tool search and aren't all listed here.)
 - `presentation`
 
 ---
-_79 capabilities · 54 with a description · 25 awaiting a blurb (add one to the tool's policy row)._
+_80 capabilities · 55 with a description · 25 awaiting a blurb (add one to the tool's policy row)._

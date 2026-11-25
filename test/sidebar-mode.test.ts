@@ -10,7 +10,7 @@ import { dirname, join } from "node:path";
 const here = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(join(here, "../public/js/sidebar-mode.js"), "utf8");
 
-type Chat = { id: string; title: string; mode?: string; projectId?: string; archived?: boolean };
+type Chat = { id: string; title: string; mode?: string; projectId?: string; archived?: boolean; startedFrom?: string };
 type Project = { id: string; name: string; workspace?: string; codeFolder?: boolean };
 
 /** The module over a fake DOM: elements by id, each with a class list. */
@@ -127,5 +127,22 @@ describe("sidebar-mode.js", () => {
     listeners[0].fn({ target: { closest: () => null }, preventDefault() {}, stopPropagation() { stopped = true; } });
     expect(selected).toEqual([]);
     expect(stopped).toBe(false);
+  });
+
+  // A build's lead chat is started from the chat that started the build, and
+  // is listed under it, as a collab's chats are under theirs.
+  it("lists a session started from another under it, within its folder", () => {
+    const chats: Chat[] = [
+      { id: "chat-gpt", title: "Label Check Sol", mode: "code", projectId: "p1" },
+      { id: "build-lead-1", title: "Build lead: label-check-sol", mode: "code", projectId: "p1", startedFrom: "chat-gpt" },
+      { id: "chat-other", title: "another session", mode: "code", projectId: "p1" },
+    ];
+    const { api } = load({ chats, projects: [], codeFolders: [{ id: "p1", name: "label-check-sol", codeFolder: true }] });
+    const target = { innerHTML: "" };
+    api.renderCodeSidebar(target);
+    const html = target.innerHTML;
+    const order = ["Label Check Sol", "Build lead: label-check-sol", "another session"].map((t) => html.indexOf(t));
+    expect(order).toEqual([...order].sort((a, b) => a - b));
+    expect(html).toMatch(/class="chat-item collab-sub "[^>]*>\s*<span class="chat-dot"><\/span>\s*<span class="chat-title">Build lead: label-check-sol/);
   });
 });

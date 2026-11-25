@@ -95,7 +95,8 @@ var laxChatTiles = (function () {
    *  one-line summary there too (chat-app-message.js). */
   function forView(chat) {
     if (!chat || typeof laxAppMessage === 'undefined') return chat;
-    return { messages: (chat.messages || []).slice(-3 * VIEW_ROWS).map(function (m) {
+    var shown = (chat.messages || []).filter(function (m) { return !(m && m.role === 'user' && laxAppMessage.hidden(m.content)); });
+    return { messages: shown.slice(-3 * VIEW_ROWS).map(function (m) {
       var note = m && m.role === 'user' ? laxAppMessage.summaryOf(m.content) : null;
       return note ? { role: 'user', content: note } : m;
     }) };

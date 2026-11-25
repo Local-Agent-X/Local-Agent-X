@@ -81,7 +81,6 @@ const { writeScenario } = await import("../src/holdout/store.js");
 const stepPlanner = await import("../src/auto-build/scenario-scorer/step-planner.js");
 const judge = await import("../src/auto-build/scenario-scorer/judge.js");
 const { setChatHandler } = await import("../src/chat-ws/chat-handler.js");
-const { setLeadChatHost } = await import("../src/auto-build/advisor/lead-chat.js");
 const { buildDecideTool } = await import("../src/auto-build/advisor/build-decide-tool.js");
 
 const chromiumAvailable = await (async () => {
@@ -274,10 +273,10 @@ describe.skipIf(!chromiumAvailable)("the build engine, end to end", () => {
   // and everything after it waited. A lead accepts it with follow-ups.
   it("a chunk the skeptic keeps breaking is accepted by the build's lead, with follow-ups on record, and the build finishes", async () => {
     script.skepticBreaks = new Set([2]);
-    const leadChats: string[] = [];
-    setLeadChatHost({ create: async (req) => { leadChats.push(req.sessionId); }, exists: (id) => leadChats.includes(id) });
     const asked: string[] = [];
-    setChatHandler(async (_sessionId, message) => {
+    const chats: string[] = [];
+    setChatHandler(async (sessionId, message) => {
+      chats.push(sessionId);
       asked.push(message);
       const id = message.match(/build_decide\(decision_id="([^"]+)"/)?.[1];
       if (!id) return;
@@ -291,14 +290,15 @@ describe.skipIf(!chromiumAvailable)("the build engine, end to end", () => {
       const { run, events } = build({ buildLead: { projectDir, originSessionId: "chat-origin" } });
       const result = await run;
       expect(result.status, events.join("\n")).toBe("complete");
-      expect(leadChats).toHaveLength(1);
+      // The lead is the chat that started the build.
+      expect(new Set(chats)).toEqual(new Set(["chat-origin"]));
       expect(asked).toHaveLength(2);
       expect(script.attempts.get(2)).toBe(2);
       expect(said(events, "build lead: accept — every edge so far is beyond what chunk 2 is for")).toHaveLength(1);
       expect(git("log --format=%s main")).toContain("chunk 2: Add medication");
       expect(readFileSync(join(projectDir, "spec", "build-state.md"), "utf-8")).toContain('- more edge cases of "works"');
     } finally {
-      setLeadChatHost(null);
+      setChatHandler(null as never);
     }
   }, 240_000);
 });

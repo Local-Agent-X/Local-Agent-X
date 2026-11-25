@@ -95,6 +95,8 @@ function renderMessage(msg, ctx) {
   if (typeof isAgentReportRow === 'function' && isAgentReportRow(msg)) return null;
   if (msg.role === 'user') {
     const displayText = msg.attachments ? msg.content.replace(/^Attached files:\n[\s\S]*?\n\n/, '') : msg.content;
+    // A build decision the engine posted to its lead is not drawn (chat-app-message.js).
+    if (typeof laxAppMessage !== 'undefined' && laxAppMessage.hidden(displayText)) return null;
     const userEl = addMessageEl('user', displayText, msg.attachments, msg.timestamp);
     // A message the app sent (a collab's brief) is drawn as one line (chat-app-message.js).
     const appNote = typeof laxAppMessage !== 'undefined' ? laxAppMessage.summaryOf(displayText) : null;

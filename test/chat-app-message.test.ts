@@ -13,10 +13,11 @@ import { missingDisputesMessage, researchMessage, resultMessage, claimsRepairMes
 import { opReportMessage } from "../src/ops/op-report-wake.js";
 import { resumeMessage } from "../src/tools/browser-tools/human-check-handoff.js";
 import { approvedRetryMessage } from "../src/routes/chat/run-chat-turn/slash-interceptors.js";
+import { leadPacket, buildCallPacket } from "../src/auto-build/advisor/lead-decisions.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const src = readFileSync(join(here, "../public/js/chat-app-message.js"), "utf8");
-type Api = { summaryOf: (text: unknown) => string | null; apply: (node: HTMLElement, text: string, summary: string) => HTMLElement };
+type Api = { summaryOf: (text: unknown) => string | null; hidden: (text: unknown) => boolean; apply: (node: HTMLElement, text: string, summary: string) => HTMLElement };
 const api: Api = new Function(`${src}\nreturn laxAppMessage;`)();
 
 const collab: Collab = {
@@ -66,5 +67,19 @@ describe("a message the app sent", () => {
     // The whole text is there, as text.
     expect(node.querySelector(".app-message-text")!.textContent).toBe(text);
     expect(node.querySelector(".app-message-text b")).toBeNull();
+  });
+
+  // The build lead is the chat that started the build: the owner follows the
+  // build through what the lead says, and a build posts dozens of these
+  // (2026-11-25).
+  it("is not drawn at all when it is a build decision posted to the build's lead, and nothing else is hidden", () => {
+    const situation = {
+      chunk: { number: 4, title: "Scan", slice: "s", doneWhen: "d", scenarios: "4" }, totalChunks: 5, round: 2,
+      finding: "f", workerReport: "STATUS: done", earlier: [], repeated: false, maxRounds: 8,
+    };
+    expect(api.hidden(leadPacket("bd-1", situation, true))).toBe(true);
+    expect(api.hidden(buildCallPacket("bd-2", { kind: "set-aside-cap", title: "t", evidence: "e", answers: { continue: "c" }, chunkNumber: 4, totalChunks: 5 }, false))).toBe(true);
+    expect(api.hidden(opReportMessage([{ opId: "op_1", task: "build", status: "completed" }]))).toBe(false);
+    expect(api.hidden("(a build decision is waiting) I typed this")).toBe(false);
   });
 });

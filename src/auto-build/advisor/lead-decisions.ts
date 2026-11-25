@@ -13,7 +13,7 @@
  * again in the same turn.
  */
 import { randomBytes } from "node:crypto";
-import { ensureLeadChat, runLeadTurn, type BuildLeadRef } from "./lead-chat.js";
+import { leadChatOf, runLeadTurn, type BuildLeadRef } from "./lead-chat.js";
 import { LEAD_ROLE } from "./lead-role.js";
 
 export const LEAD_ACTIONS = ["continue", "fresh", "accept", "narrow", "owed", "overrule", "park"] as const;
@@ -94,7 +94,7 @@ export function isLeadDecisionPending(id: string): boolean {
 }
 
 const HEADER = "(Sent by the app, not typed by the user: a build decision is waiting.)";
-const answerLine = (id: string) => `Answer with build_decide(decision_id="${id}", ...). One call, then end your turn.`;
+const answerLine = (id: string) => `Answer with build_decide(decision_id="${id}", ...): one call. Then, only if it changes something the owner would want to know, a line for them; then end your turn.`;
 
 /** The message that asks the lead about a chunk the review sent back: the role
  *  on the first, then the evidence. Shared with the lead eval
@@ -150,7 +150,7 @@ async function ask(
   ref: BuildLeadRef, allowed: readonly LeadAction[], render: (id: string, first: boolean) => string,
   opts: { answerMs?: number; signal?: AbortSignal },
 ): Promise<LeadDecision | null> {
-  const sessionId = await ensureLeadChat(ref).catch(() => null);
+  const sessionId = leadChatOf(ref);
   if (!sessionId || opts.signal?.aborted) return null;
   const id = `bd-${randomBytes(4).toString("hex")}`;
   const answered = new Promise<LeadDecision>((resolve) => pending.set(id, { allowed, resolve }));

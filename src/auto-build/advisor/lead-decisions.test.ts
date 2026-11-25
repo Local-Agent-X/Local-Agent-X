@@ -1,9 +1,9 @@
-// The build lead: one chat per project build, listed under the chat that
-// started it, asked what to do after each chunk the review sends back. Its
+// The build lead: the chat that started the build, asked what to do after
+// each chunk the review sends back, in messages the app posts there. Its
 // answer comes through build_decide; no answer is the engine's own rules.
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { setChatHandler } from "../../chat-ws/chat-handler.js";
-import { canHaveLead, leadSessionId, setLeadChatHost } from "./lead-chat.js";
+import { canHaveLead } from "./lead-chat.js";
 import { askLead, askLeadBuildCall, isLeadDecisionPending, type LeadSituation } from "./lead-decisions.js";
 import { LEAD_ROLE } from "./lead-role.js";
 import { buildDecideTool, readDecision } from "./build-decide-tool.js";
@@ -16,13 +16,8 @@ const situation: LeadSituation = {
 };
 const ref = { projectDir: "C:/ws/apps/label-check-sol", originSessionId: "chat-origin" };
 
-let created: Array<{ sessionId: string; originId: string; title: string }>;
 let messages: Array<{ sessionId: string; message: string }>;
-beforeEach(() => {
-  created = []; messages = [];
-  setLeadChatHost({ create: async (req) => { created.push(req); }, exists: (id) => created.some((c) => c.sessionId === id) });
-});
-afterEach(() => { setLeadChatHost(null); });
+beforeEach(() => { messages = []; });
 
 /** A lead that answers each message by calling build_decide with `args`. */
 function leadAnswers(args: Record<string, unknown> | null): void {
@@ -34,13 +29,14 @@ function leadAnswers(args: Record<string, unknown> | null): void {
 }
 
 describe("the build lead", () => {
-  it("has a chat of its own, started from the build's chat, the same one for every decision of the project", async () => {
+  // For a day the lead had a chat of its own; the owner wanted one chat, with
+  // the engine's posts hidden and the lead speaking in it (2026-11-25).
+  it("is the chat that started the build: every decision is posted there, as the app's", async () => {
     leadAnswers({ action: "continue", reasoning: "a real gap", instruction: "check root build/ too" });
     const first = await askLead(ref, situation, { answerMs: 5_000 });
     expect(first).toEqual({ action: "continue", reasoning: "a real gap", instruction: "check root build/ too" });
     await askLead(ref, situation, { answerMs: 5_000 });
-    expect(created).toEqual([{ sessionId: leadSessionId(ref.projectDir), originId: "chat-origin", title: "Build lead: label-check-sol" }]);
-    expect(new Set(messages.map((m) => m.sessionId))).toEqual(new Set([leadSessionId(ref.projectDir)]));
+    expect(new Set(messages.map((m) => m.sessionId))).toEqual(new Set(["chat-origin"]));
     // The first message says what the lead is for; each says it is the app's, with the evidence.
     expect(messages[0].message).toContain(LEAD_ROLE.slice(0, 40));
     expect(messages[1].message).not.toContain(LEAD_ROLE.slice(0, 40));
@@ -101,9 +97,12 @@ describe("the build lead", () => {
     expect(isLeadDecisionPending(id)).toBe(false);
   });
 
-  it("no lead without a way to make its chat, or for a build no chat started", async () => {
-    setLeadChatHost(null);
-    leadAnswers({ action: "accept", reasoning: "x" });
+  it("is told the owner reads the chat but not the engine's posts, and says what it decided when it matters", () => {
+    expect(LEAD_ROLE).toContain("This is the owner's chat. They do not see the engine's messages to you");
+  });
+
+  it("no lead without a chat runner, or for a build no chat started", async () => {
+    setChatHandler(null as never);
     expect(await askLead(ref, situation, { answerMs: 1_000 })).toBeNull();
     expect(canHaveLead("orchestrator-mabc")).toBe(false);
     expect(canHaveLead("chat-mwv6cxu8")).toBe(true);

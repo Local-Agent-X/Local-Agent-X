@@ -80,9 +80,8 @@ export async function startLinkedChat(ctx: ServerContext, req: LinkedChatRequest
  * its mode, a code session's project (its folder), a chat's bound app folder.
  * `projectId` puts it in a project of its own instead (a new folder). Open tabs
  * are told the chat list changed, so it shows at once, under its origin.
- * Also how a build's lead chat is made (auto-build/advisor/lead-chat.ts).
  */
-export async function saveLinkedChat(ctx: ServerContext, req: { sessionId: string; originId: string; title: string; projectId?: string }): Promise<void> {
+async function saveLinkedChat(ctx: ServerContext, req: { sessionId: string; originId: string; title: string; projectId?: string }): Promise<void> {
   const origin = ctx.sessionStore.load(req.originId) ?? ctx.getOrCreateSession(req.originId);
   const now = Date.now();
   await ctx.saveSession({

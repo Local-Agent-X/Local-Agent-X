@@ -1,81 +1,64 @@
 /**
- * The build lead's chat: one ordinary LAX chat per project build, listed in
- * the sidebar under the chat that started the build, in which the lead decides
- * what the engine does after each chunk.
+ * The build lead's chat: the chat that started the build. Its agent decides
+ * what the engine does after each chunk, between whatever else it and the
+ * owner are talking about, the way an agent running /greenfield does.
  *
  * The engine's decisions used to be fixed rules and one-shot advisor calls
  * with no memory of the build: a chunk that closed every finding it was given
  * was set aside after three rounds because the reviewer kept finding new ones,
  * and the whole build stopped behind it (label-check-sol, 2026-11-24). A lead
  * holds the build in one conversation, reads each outcome with what came
- * before, and decides the way the person running a build would: fix, accept
- * with follow-ups, narrow an open-ended contract, or ask the owner.
+ * before, and decides the way the person running a build would.
  *
- * The chat is a chat like any other: the owner can open it, read why the build
- * did what it did, and write in it. The engine's messages in it are marked as
- * the app's. Its id is fixed per project, so a resumed build keeps its lead.
+ * For one day the lead had a chat of its own, listed under the build's chat
+ * ("Build lead: <project>"). The owner read the lead's reasoning there but
+ * had a second chat to follow, and saw the engine's evidence posts as if they
+ * were messages (2026-11-25). Now the engine's posts go into the build's own
+ * chat as the app's messages, which the chat view does not draw
+ * (public/js/chat-app-message.js), and what the owner sees is the lead
+ * saying what it decided.
  *
- * A chat needs the server to create it, so the server registers how at boot
- * (server/lifecycle.ts), as it does the linked-chat starter. Without one (tests,
- * a headless run) there is no lead and the engine's own rules decide.
+ * A post waits for a turn already running (the owner's or the agent's) to end
+ * (chat-ws/app-message.ts), so the owner can keep talking while a build runs.
+ * Without a chat runner (tests, a headless run) there is no lead and the
+ * engine's own rules decide.
  */
-import { createHash } from "node:crypto";
-import { basename } from "node:path";
 import { getChatHandler } from "../../chat-ws/chat-handler.js";
+import { isUserChat, sendAppMessageWhenIdle } from "../../chat-ws/app-message.js";
 import { createLogger } from "../../logger.js";
 
 const logger = createLogger("auto-build.lead-chat");
 
-export interface LeadChatHost {
-  /** Save a new chat started from `originId`, where that chat works (mode, folder, project). */
-  create(req: { sessionId: string; originId: string; title: string }): Promise<void>;
-  exists(sessionId: string): boolean;
-}
-
-let host: LeadChatHost | null = null;
-/** The server binds the host to its ServerContext at boot. */
-export function setLeadChatHost(h: LeadChatHost | null): void { host = h; }
-
-/** Who leads a build, and from which chat it was started. */
+/** Who leads a build: the chat that started it. */
 export interface BuildLeadRef {
   projectDir: string;
-  /** The chat that started the build: the lead's chat is listed under it. */
+  /** The chat that started the build, which leads it. */
   originSessionId: string;
 }
 
 /** A build started by a tool with no chat behind it has a synthetic session id. */
 export function canHaveLead(originSessionId: string | undefined): originSessionId is string {
-  return Boolean(originSessionId) && !originSessionId!.startsWith("orchestrator-");
+  return Boolean(originSessionId) && !originSessionId!.startsWith("orchestrator-") && isUserChat(originSessionId!);
 }
 
-export function leadSessionId(projectDir: string): string {
-  return `build-lead-${createHash("sha256").update(projectDir.toLowerCase()).digest("hex").slice(0, 16)}`;
+/** The chat that leads `ref`'s build, or null when no chat can take a turn. */
+export function leadChatOf(ref: BuildLeadRef): string | null {
+  return getChatHandler() && canHaveLead(ref.originSessionId) ? ref.originSessionId : null;
 }
 
-/** The lead's chat, created on first use. Null when no host can create it. */
-export async function ensureLeadChat(ref: BuildLeadRef): Promise<string | null> {
-  if (!host) return null;
-  const sessionId = leadSessionId(ref.projectDir);
-  if (!host.exists(sessionId)) {
-    await host.create({ sessionId, originId: ref.originSessionId, title: `Build lead: ${basename(ref.projectDir)}` });
-  }
-  return sessionId;
-}
-
-/** One message per lead at a time: a chat runs one turn at a time, and parallel
+/** One post per chat at a time: a chat runs one turn at a time, and parallel
  *  chunks can reach a decision together. */
 const queues = new Map<string, Promise<unknown>>();
 
-/** Run one turn of the lead's chat with `message`, after any turn already queued. */
+/** Post `message` into the lead's chat as the app's, after any post already
+ *  queued and once no turn is running; resolves when the turn it starts ends. */
 export function runLeadTurn(sessionId: string, message: string): Promise<void> {
   const prior = queues.get(sessionId) ?? Promise.resolve();
-  const next = prior.catch(() => {}).then(async () => {
-    const handler = getChatHandler();
-    if (!handler) throw new Error("the chat runner is not up");
-    await handler(sessionId, message, [], { channel: "web" });
-  });
+  const next = prior.catch(() => {}).then(() => new Promise<void>((resolve, reject) => {
+    if (!sendAppMessageWhenIdle(sessionId, () => message, resolve)) reject(new Error("the chat runner is not up"));
+  }));
   queues.set(sessionId, next);
-  void next.catch((e) => logger.warn(`[lead] ${sessionId} turn failed: ${(e as Error).message}`)).finally(() => {
+  void next.catch((e) => logger.warn(`[lead] ${sessionId} post failed: ${(e as Error).message}`)).finally(() => {
     if (queues.get(sessionId) === next) queues.delete(sessionId);
   });
   return next;

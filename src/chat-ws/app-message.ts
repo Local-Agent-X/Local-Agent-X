@@ -25,17 +25,20 @@ export function isUserChat(sessionId: string): boolean {
 }
 
 /** Compose and send once `sessionId` has no turn running. Returns false when
- *  there is no chat handler (no server), so the caller can fall back. */
-export function sendAppMessageWhenIdle(sessionId: string, compose: () => string | null): boolean {
+ *  there is no chat handler (no server), so the caller can fall back.
+ *  `onEnded` is called when the turn the message started has ended, or at
+ *  once when nothing was sent. */
+export function sendAppMessageWhenIdle(sessionId: string, compose: () => string | null, onEnded?: () => void): boolean {
   const handler = getChatHandler();
   if (!handler) return false;
   if (hasActiveTurn(sessionId)) {
-    onTurnRelease(sessionId, () => { sendAppMessageWhenIdle(sessionId, compose); });
+    onTurnRelease(sessionId, () => { sendAppMessageWhenIdle(sessionId, compose, onEnded); });
     return true;
   }
   const message = compose();
-  if (message === null) return true;
+  if (message === null) { onEnded?.(); return true; }
   void Promise.resolve(handler(sessionId, message, [], { channel: "web" }))
-    .catch((e) => logger.warn(`app message to ${sessionId} failed: ${(e as Error).message}`));
+    .catch((e) => logger.warn(`app message to ${sessionId} failed: ${(e as Error).message}`))
+    .finally(() => onEnded?.());
   return true;
 }

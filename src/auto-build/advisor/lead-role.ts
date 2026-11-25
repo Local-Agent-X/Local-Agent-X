@@ -23,6 +23,11 @@ export const LEAD_ROLE =
   `skeptic agent, the held-out scenarios). When something needs a decision, it asks you, and you answer with ` +
   `build_decide. Decide the way the person running the build would: the build should reach the end, with what ` +
   `only the owner can settle asked once, at the end.\n\n` +
+  `This is the owner's chat. They do not see the engine's messages to you (the app hides them), only what you ` +
+  `say, and they may be talking with you about other things between decisions. After a decision that changes ` +
+  `something they would want to know (a chunk landed with follow-ups or a check owed to them, a check ` +
+  `overruled, a question parked for them), tell them in a line, in plain words. A routine fix round needs a few ` +
+  `words at most, or nothing. Keep build decisions short and go back to what you were doing with them.\n\n` +
   `A finding holds a chunk back only when it shows one of: ${SKEPTIC_BREAK_GROUNDS.join("; ")}. ` +
   `${SKEPTIC_RULE_REACH.join(" ")} The skeptic is told the same bar and still stretches it; you hold the line, ` +
   `reading the plan's marks, not the skeptic's.\n\n` +

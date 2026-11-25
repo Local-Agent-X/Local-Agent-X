@@ -68,9 +68,9 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/integrations/` | 12 | 15 | M |  |
 | `src/whatsapp-bridge/` | 11 | 8 | M | 1 |
 | `src/agent-guards/` | 10 | 13 | L |  |
-| `src/auto-build/` | 10 | 78 | XL | 1 |
 | `src/calendar/` | 10 | 10 | M |  |
 | `src/codex-client/` | 10 | 7 | M |  |
+| `src/auto-build/` | 9 | 78 | XL | 1 |
 | `src/plugin-system/` | 9 | 10 | L |  |
 | `src/screen-stream/` | 9 | 12 | L |  |
 | `src/autopilot/` | 8 | 14 | L | 1 |

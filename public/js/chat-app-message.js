@@ -13,7 +13,12 @@
 //
 // Such a row is drawn as one line saying what it is ("Collab finished: the
 // models' reports and the app's record of their claims"), labelled App, with
-// the whole text one click away. Nothing is hidden: the text is all there.
+// the whole text one click away.
+//
+// One kind is not drawn at all: a build decision the engine posts to the chat
+// that leads a build (src/auto-build/advisor/lead-decisions.ts). The owner
+// follows the build through what the lead says about it, not the evidence the
+// engine hands the lead, and a build posts dozens (2026-11-25).
 //
 // summaryOf is plain text in, text out, so the tile grid's live views use it
 // too (chat-tiles.js). The phone has the same rule (agentxos-mobile
@@ -32,6 +37,13 @@ var laxAppMessage = (function () {
     if (first.indexOf('the human check on ') !== -1) return 'Human check done: the app told the agent';
     if (first.indexOf('the user typed /approve') !== -1) return 'Approved: the app told the agent to retry';
     return 'A note from the app';
+  }
+
+  /** Whether an app-sent message is not drawn at all. */
+  function hidden(text) {
+    if (typeof text !== 'string' || text.charAt(0) !== '(') return false;
+    var first = text.split('\n')[0];
+    return first.indexOf('not typed by the user') !== -1 && first.indexOf('a build decision is waiting') !== -1;
   }
 
   /** Turn the user row `node` (from addMessageEl) into the small app row. */
@@ -55,5 +67,5 @@ var laxAppMessage = (function () {
     return node;
   }
 
-  return { summaryOf: summaryOf, apply: apply };
+  return { summaryOf: summaryOf, hidden: hidden, apply: apply };
 })();

@@ -238,8 +238,12 @@ export function computeResumeWindow(
     ? Math.min(origStartIdx + s.maxChunks - 1, chunks.length - 1)
     : chunks.length - 1;
   const committedNextIdx = origStartIdx + s.chunksCommitted;
+  // Once every chunk landed, build_plan_status reports resume-at one past the
+  // last chunk; passed back, it names the build's end, not a chunk. Refusing it
+  // left a lead with no starting_chunk that resumed (label-check-sol, 2026-11-25).
+  const endRequested = committedNextIdx > windowEndIdx && requestedStartingChunk === s.resumeAtChunk;
 
-  if (requestedStartingChunk != null) {
+  if (requestedStartingChunk != null && !endRequested) {
     const requestedIdx = chunks.findIndex(c => c.number === requestedStartingChunk);
     if (requestedIdx < 0) {
       return { kind: "invalid", reason: `starting_chunk ${requestedStartingChunk} is not in the plan` };

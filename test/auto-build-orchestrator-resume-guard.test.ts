@@ -157,6 +157,14 @@ describe("computeResumeWindow (AB-8)", () => {
     expect(computeResumeWindow(s, chunks).kind).toBe("complete");
   });
 
+  // The status tool reports resume-at 11 here; a lead passing it back means the build's end.
+  it("takes the build's own resume point past the last chunk as its end, and nothing else past it", () => {
+    const s = { startingChunkOverride: 1, maxChunks: null, currentChunk: 10, resumeAtChunk: 11, chunksCommitted: 10 } as state.OrchestratorState;
+    expect(computeResumeWindow(s, chunks, 11).kind).toBe("complete");
+    expect(computeResumeWindow(s, chunks, 999).kind).toBe("invalid");
+    expect(computeResumeWindow(s, chunks, 10).kind).toBe("invalid");
+  });
+
   it("runs to plan end when no maxChunks cap was set", () => {
     const s = { startingChunkOverride: 1, maxChunks: null, currentChunk: 3, resumeAtChunk: 4, chunksCommitted: 3 } as state.OrchestratorState;
     const w = computeResumeWindow(s, chunks);

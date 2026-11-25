@@ -113,6 +113,21 @@ describe("a run of several passes", () => {
     expect(outcome).toEqual(expect.objectContaining({ verdict: "CONFIRMED", checked: 3, coverage: { checked: 3, total: 5 } }));
   });
 
+  // Live 2026-11-25: a deck a correction had corrupted could not be listed, its
+  // one pass could not open it and wrote a table of "unverified" rows, and the
+  // note said "Checked 59 figures … they match".
+  it("a pass over an unlisted file that could not check it counts nothing and is not a match", async () => {
+    const broken = join(laxDir, "broken.pptx");
+    writeFileSync(broken, "PK not really a deck");
+    await startFigureCheck({ parentOp, sessionId: "s-broken", deliverables: [broken] });
+    const [pass] = passes.submitted;
+    expect(pass.figures).toBeUndefined();
+    const table = ["VERDICT: UNVERIFIABLE", "| value | deliverable says | source says | match? |", "|---|---|---|---|",
+      "| wind share | ? | 10.3% | unverified |", "| solar share | ? | 7% | unverified |"].join("\n");
+    const outcome = await figureBatchEnded(pass.id, table);
+    expect(outcome).toEqual(expect.objectContaining({ verdict: "UNVERIFIABLE", checked: 0, mismatched: 0 }));
+  });
+
   it("an op that is not part of a run is left to its caller", async () => {
     expect(await figureBatchEnded("op_elsewhere", "VERDICT: CONFIRMED")).toBe("not-a-run");
   });

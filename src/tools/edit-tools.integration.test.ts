@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { editTool } from "./edit-tools.js";
+import { editLinesTool, editTool, multiEditTool } from "./edit-tools.js";
 import { writeTool } from "./read-write-tools.js";
 
 
@@ -27,6 +27,35 @@ describe("editTool — writes new_string exactly as given", () => {
     const r = await editTool.execute({ path: file, old_string: "PLACEHOLDER", new_string: text });
     expect(r.isError).toBeFalsy();
     expect(readFileSync(file, "utf-8")).toBe(`-- head\n${text}\n-- tail\n`);
+  });
+});
+
+// Live 2026-11-25: a figures correction ran `edit` on a .pptx. The tools read
+// a file as UTF-8 and write it back, so every non-UTF-8 byte of the zip became
+// a replacement character; the deck kept its "PK" start and opened as corrupt.
+describe("the text edit tools refuse a binary file and leave it unchanged", () => {
+  const ZIP = Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0xff, 0xfe]), Buffer.from("<a:t>10.2%</a:t>"), Buffer.from([0x00, 0x9c, 0xc3])]);
+
+  it.each([
+    ["edit", () => editTool, (p: string) => ({ path: p, old_string: "10.2%", new_string: "10.3%" })],
+    ["edit_lines", () => editLinesTool, (p: string) => ({ path: p, start_line: 1, end_line: 1, new_string: "x" })],
+    ["multi_edit", () => multiEditTool, (p: string) => ({ path: p, edits: [{ old_string: "10.2%", new_string: "10.3%" }] })],
+  ])("%s on a deck names the presentation tool", async (_name, tool, args) => {
+    const file = join(dir, "deck.pptx");
+    writeFileSync(file, ZIP);
+    const r = await tool().execute(args(file));
+    expect(r.isError).toBe(true);
+    expect(String(r.content)).toContain("`presentation`");
+    expect(readFileSync(file).equals(ZIP)).toBe(true);
+  });
+
+  it("any file with a NUL byte is refused, whatever its name", async () => {
+    const file = join(dir, "data.bin");
+    const bytes = Buffer.concat([Buffer.from("rate 10.2%"), Buffer.from([0x00, 0xff])]);
+    writeFileSync(file, bytes);
+    const r = await editTool.execute({ path: file, old_string: "10.2%", new_string: "10.3%" });
+    expect(r.isError).toBe(true);
+    expect(readFileSync(file).equals(bytes)).toBe(true);
   });
 });
 

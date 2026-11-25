@@ -35,7 +35,7 @@ vi.mock("../security/index.js", () => ({
 vi.mock("../security/layer/index.js", () => ({ loadFileAccessModeAtLeast: () => "workspace" }));
 
 const {
-  CORRECTION_OP_TYPE, attemptDeliverableCorrection, buildCorrectionBrief, buildCorrectionOp, commonAncestorDir, correctionContextOf,
+  CORRECTION_OP_TYPE, attemptDeliverableCorrection, buildCorrectionBrief, buildCorrectionOp, commonAncestorDir, correctionContextOf, correctedCount,
 } = await import("./verification-correct.js");
 
 const TABLE = "VERDICT: DISCREPANCIES\n| value | deliverable says | independent source says | match? |\n|---|---|---|---|\n| Infineon share | 41% | 39% | no |\n| Navitas share | 18% | 18% | yes |";
@@ -78,6 +78,28 @@ describe("buildCorrectionOp", () => {
     expect(brief).toContain("| Infineon share | 41% | 39% | no |");
     expect(brief).toContain("`CORRECTED: <n> values` or `COULD NOT CORRECT: <why>`");
     expect(brief).toContain("Change nothing else");
+  });
+
+  it("the brief sends a deck to the presentation tool and forbids text edits of binary files", () => {
+    const brief = buildCorrectionBrief({ deliverables: ["C:/w/deck.pptx"], table: TABLE, parentTask: parent.task });
+    expect(brief).toContain("the `presentation` tool for decks");
+    expect(brief).toMatch(/never change one with `edit`, `write` or a shell command/);
+  });
+});
+
+// Live 2026-11-25: a correction answered COULD NOT CORRECT and was still told
+// to the user as corrected; only the first line says what it changed.
+describe("correctedCount", () => {
+  it.each([
+    ["CORRECTED: 6 values\n- a: 1 -> 2", 6],
+    ["**CORRECTED:** 2 values", 2],
+    ["\n\ncorrected: 1 value", 1],
+    ["COULD NOT CORRECT: the text edit corrupted the deck", 0],
+    ["**COULD NOT CORRECT:** no source", 0],
+    ["I fixed the numbers.", 0],
+    ["", 0],
+  ])("%j → %i", (answer, n) => {
+    expect(correctedCount(answer)).toBe(n);
   });
 });
 

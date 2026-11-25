@@ -140,6 +140,24 @@ export function binaryContainerRejection(filePath: string, content: string): str
   );
 }
 
+/**
+ * Refuse a text edit of a binary file, naming the tool that edits it. The edit
+ * tools read a file as UTF-8 and write it back, which turns every byte that is
+ * not valid UTF-8 into a replacement character: the file keeps its "PK" start
+ * (so binaryContainerRejection passes it) and opens as corrupt. Live
+ * 2026-11-25: a figures correction edited a .pptx with `edit` and the deck was
+ * lost, with nothing to restore it from. Returns null for a text file.
+ */
+export function binaryEditRejection(filePath: string, bytes: Buffer): string | null {
+  const ext = filePath.split(".").pop()?.toLowerCase() ?? "";
+  const tool = BINARY_CONTAINER_TOOLS[ext];
+  if (!tool && !bytes.includes(0)) return null;
+  const route = tool
+    ? `Use the \`${tool}\` tool to change it (read it with \`read\`, then \`${tool}\`'s edit actions).`
+    : "No text edit tool can change it; rebuild it with the tool that made it.";
+  return `Edit NOT applied — ${filePath} is a binary file, and a text edit would corrupt it. The file is UNCHANGED. ${route}`;
+}
+
 /** The message returned when a write-time edit is rejected for introducing a
  *  syntax error. Shared by every edit/write sink so the guidance can't drift. */
 export function syntaxRejectionMessage(filePath: string, issue: string): string {

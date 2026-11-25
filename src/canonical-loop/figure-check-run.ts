@@ -156,6 +156,15 @@ function recordPass(batch: Batch, summary: string): { checked: number; mismatche
   return { checked: values.length, mismatched: values.filter((ok) => !ok).length };
 }
 
+/** What a pass over an unlisted file checked: its table's rows, but only when
+ *  its verdict says it checked them. An UNVERIFIABLE pass still writes a table
+ *  (each value "unverified"), and live 2026-11-25 a pass that could not open a
+ *  corrupted deck was counted as 59 figures checked and reported "they match". */
+function unlistedCounts(report: ReturnType<typeof verificationReport>): { checked: number; mismatched: number } {
+  const checkedIt = report.verdict === "CONFIRMED" || report.verdict === "DISCREPANCIES";
+  return checkedIt ? { checked: report.checked, mismatched: report.mismatched } : { checked: 0, mismatched: 0 };
+}
+
 function outcomeOf(run: Run): FigureCheckOutcome {
   const discrepant = run.ended.filter((r) => r.mismatched > 0 || r.verdict === "DISCREPANCIES");
   const checked = run.ended.reduce((n, r) => n + r.checked, 0);
@@ -186,7 +195,7 @@ export async function figureBatchEnded(opId: string, summary: string): Promise<F
   run.live.delete(opId);
   if (batch) {
     const report = verificationReport(summary);
-    const counts = batch.listed.length ? recordPass(batch, summary) : { checked: report.checked, mismatched: report.mismatched };
+    const counts = batch.listed.length ? recordPass(batch, summary) : unlistedCounts(report);
     run.ended.push({ opId, summary, verdict: report.verdict, batch, ...counts });
   }
   while (run.live.size < PASSES_AT_ONCE && run.queue.length > 0) await launch(run);

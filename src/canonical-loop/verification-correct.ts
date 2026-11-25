@@ -30,6 +30,9 @@ import { OP_TYPE } from "../ops/op-types.js";
 import { trackOpForSession } from "../ops/session-bridge.js";
 import { delegatedToolsetForOp } from "../ops/tools/delegated-toolset.js";
 import type { Op, OpVisibility } from "../ops/types.js";
+import { OFFICE_KIT } from "../tools/tool-kits.js";
+import { unifiedRegistry } from "../tools/tool-search.js";
+import type { ToolDefinition } from "../types.js";
 import { setSessionWorkRoot } from "../workspace/paths.js";
 import { VERIFICATION_OP_BUDGET, figuresAuditBelt, verificationTargetOf } from "./verification-submit.js";
 import { armWorkerOpDeadline, configureWorkerOpRuntime } from "./worker-op-runtime.js";
@@ -70,6 +73,23 @@ export function commonAncestorDir(paths: string[]): string {
 	return common.join(sep) || dirname(paths[0]);
 }
 
+/**
+ * The correction's belt: the build worker's (write family, bash, read and
+ * web), without the step list, plus the office tools. Those are deferred
+ * everywhere, so without them here a deck or document has no right tool on
+ * the belt: live 2026-11-25 a correction reached for `edit` on a .pptx and
+ * the deck was lost.
+ */
+export function correctionBelt(workRoot: string): ToolDefinition[] {
+	const belt = figuresAuditBelt(delegatedToolsetForOp("build", { workRoot }));
+	const present = new Set(belt.map((t) => t.name));
+	const office = OFFICE_KIT
+		.filter((name) => !present.has(name))
+		.map((name) => unifiedRegistry.get(name))
+		.filter((t): t is ToolDefinition => t !== undefined);
+	return [...belt, ...office];
+}
+
 export function buildCorrectionBrief(input: { deliverables: string[]; table: string; parentTask: string }): string {
 	return [
 		"An independent re-check of a deliverable you built found figures that do not match their sources. Correct them.",
@@ -83,14 +103,28 @@ export function buildCorrectionBrief(input: { deliverables: string[]; table: str
 		input.table.trim(),
 		"",
 		"Mandate:",
-		"1. For each row whose match column says no, change the deliverable's value to the independent source's value. Use the `edit` tool for text and markdown, the `spreadsheet` tool for spreadsheets, the `document` tool for documents.",
+		"1. For each row whose match column says no, change the deliverable's value to the independent source's value. Use the `edit` tool for text and markdown, the `presentation` tool for decks (.pptx: its edit action with replace_text), the `document` tool for documents (.docx), the `spreadsheet` tool for spreadsheets (.xlsx). A deck, document or spreadsheet is a binary file: never change one with `edit`, `write` or a shell command, which corrupts it.",
 		"2. If the table does not give enough to settle a value, re-fetch the source with web_fetch and use what it states today.",
 		"3. Change nothing else: no rewording, no new sections, no reformatting.",
+		"4. A value those tools cannot reach (inside a chart, say) is not corrected: name it in your answer instead of trying another route.",
 		"",
 		"Output contract:",
 		"The FIRST line of your final answer MUST be `CORRECTED: <n> values` or `COULD NOT CORRECT: <why>`.",
 		"Then one line per value you changed: value, old, new.",
 	].join("\n");
+}
+
+/**
+ * How many values a finished correction says it changed, from the first line
+ * its brief makes it write: `CORRECTED: <n> values` or `COULD NOT CORRECT:`.
+ * 0 for a correction that changed nothing or says nothing recognizable: an op
+ * that ended "succeeded" has only stopped, and live 2026-11-25 one that
+ * answered COULD NOT CORRECT was reported to the user as corrected.
+ */
+export function correctedCount(answer: string): number {
+	const first = answer.split("\n").map((l) => l.replace(/[*_`#>]/g, "").trim()).find(Boolean) ?? "";
+	const m = /^CORRECTED:\s*(\d+)/i.exec(first);
+	return m ? Number(m[1]) : 0;
 }
 
 export async function buildCorrectionOp(input: {
@@ -170,7 +204,7 @@ export async function attemptDeliverableCorrection(input: {
 		security.addAllowedPath(workRoot, op.id);
 		setSessionWorkRoot(op.id, workRoot);
 		await configureWorkerOpRuntime(op, op.id, {
-			tools: figuresAuditBelt(delegatedToolsetForOp("build", { workRoot })),
+			tools: correctionBelt(workRoot),
 			systemPrompt: delegatedWorkerPrompt(workRoot),
 			security,
 		});

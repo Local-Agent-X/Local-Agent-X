@@ -568,6 +568,49 @@ describe("session-bridge-observer — the verification tier is internal", () => 
     cancelIdleNudge(sessionId);
   });
 
+  // Live 2026-11-25: a correction that broke the deck and answered COULD NOT
+  // CORRECT ended "succeeded", and the note told the user 6 figures were corrected.
+  it("a correction that says it could not correct is reported as not corrected, though its op succeeded", () => {
+    const sessionId = "sess-obs-correct-refused";
+    const opId = "op_correct_deliverable_refused_1";
+    makeOp(opId, "correct_deliverable");
+    appendOpMessage({
+      opId, messageId: "refused", turnIdx: 0, seqInTurn: 0,
+      role: "assistant", content: { text: "**COULD NOT CORRECT:** the deck could not be edited." }, createdAt: new Date().toISOString(),
+    });
+    vi.mocked(correctionContextOf).mockReturnValue({ parentTask: "build the deck", deliverables: ["/w/deck.pptx"], table: DISCREPANCIES, mismatched: 6, checked: 33 });
+    trackOpForSession(opId, sessionId, "Correcting figures: build the deck");
+    setSessionBroadcaster(vi.fn());
+
+    recordCanonicalEvent(stateChanged(opId, "succeeded"));
+
+    expect(pushPendingNotification).toHaveBeenCalledWith(sessionId, expect.objectContaining({
+      opId, summary: expect.stringContaining("COULD NOT CORRECT"), verification: { mismatched: 6, checked: 33, corrected: false },
+    }));
+    expect(figureCheckUpdate).toHaveBeenCalledWith(sessionId, "mismatch", 6);
+    expect(figureCheckUpdate).not.toHaveBeenCalledWith(sessionId, "corrected", expect.anything());
+    cancelIdleNudge(sessionId);
+  });
+
+  it("a correction that changed some of the values reports the rest as still not matching", () => {
+    const sessionId = "sess-obs-correct-partial";
+    const opId = "op_correct_deliverable_partial_1";
+    makeOp(opId, "correct_deliverable");
+    appendOpMessage({
+      opId, messageId: "partial", turnIdx: 0, seqInTurn: 0,
+      role: "assistant", content: { text: "CORRECTED: 4 values\n- a: 1 -> 2" }, createdAt: new Date().toISOString(),
+    });
+    vi.mocked(correctionContextOf).mockReturnValue({ parentTask: "build the deck", deliverables: ["/w/deck.pptx"], table: DISCREPANCIES, mismatched: 6, checked: 33 });
+    trackOpForSession(opId, sessionId, "Correcting figures: build the deck");
+    setSessionBroadcaster(vi.fn());
+
+    recordCanonicalEvent(stateChanged(opId, "succeeded"));
+
+    expect(figureCheckUpdate).toHaveBeenCalledWith(sessionId, "mismatch", 2);
+    expect(figureCheckUpdate).not.toHaveBeenCalledWith(sessionId, "corrected", expect.anything());
+    cancelIdleNudge(sessionId);
+  });
+
   it("a correction that did not finish falls back to the rework instruction, with the verifier's table", () => {
     const sessionId = "sess-obs-correct-failed";
     const opId = "op_correct_deliverable_failed_1";

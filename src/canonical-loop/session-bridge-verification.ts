@@ -25,7 +25,7 @@ import { pushPendingNotification } from "../ops/pending-notifications.js";
 import { figureCheckUpdate } from "./figure-check-note.js";
 import { resolveTerminalOpStatus } from "./checkpoint-stop.js";
 import { extractFinalAssistantText, verificationReport } from "./session-bridge-extractors.js";
-import { attemptDeliverableCorrection, correctionContextOf } from "./verification-correct.js";
+import { attemptDeliverableCorrection, correctedCount, correctionContextOf } from "./verification-correct.js";
 import { figureBatchEnded, type FigureCheckOutcome } from "./figure-check-run.js";
 import { followCorrection } from "./figure-check-ledger.js";
 import type { CanonicalEvent } from "./types.js";
@@ -100,6 +100,17 @@ export function recordCorrectionEvent(event: CanonicalEvent, core: boolean, sess
   }
   const summary = extractFinalAssistantText(event.opId);
   logger.info(`correction ${event.opId} finished: ${summary.split("\n")[0]?.slice(0, 120) ?? ""}`);
+  // What the correction says it changed, not that it stopped: a run that ends
+  // COULD NOT CORRECT also ends "succeeded".
+  const corrected = Math.min(correctedCount(summary), mismatched || Infinity);
+  if (corrected === 0) {
+    surfaceRework(sessionId, event.opId, task, `${summary}\n\n${context?.table ?? ""}`.trim(), mismatched, checked);
+    return;
+  }
+  if (mismatched && corrected < mismatched) {
+    surfaceRework(sessionId, event.opId, task, `${summary}\n\n${context?.table ?? ""}`.trim(), mismatched - corrected, checked);
+    return;
+  }
   // The user's record is the note on the reply; the agent's is the pending
   // notification, marked as already told so it does not announce it again.
   pushPendingNotification(sessionId, {
@@ -110,8 +121,8 @@ export function recordCorrectionEvent(event: CanonicalEvent, core: boolean, sess
   for (const path of context?.deliverables ?? []) {
     try { followCorrection(path); } catch (e) { logger.warn(`could not carry the figures record over the correction of ${path}: ${(e as Error).message}`); }
   }
-  figureCheckUpdate(sessionId, "corrected", mismatched);
-  proactiveSpeakToSession(sessionId, `Verification finished: I corrected ${mismatched} value${mismatched === 1 ? "" : "s"} that did not match their sources.`);
+  figureCheckUpdate(sessionId, "corrected", corrected);
+  proactiveSpeakToSession(sessionId, `Verification finished: I corrected ${corrected} value${corrected === 1 ? "" : "s"} that did not match their sources.`);
 }
 
 /** The agent corrects it on its next turn if asked; the note on the reply asks the user. */

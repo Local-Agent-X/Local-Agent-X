@@ -122,6 +122,9 @@ const SOURCES = [
 	{ file: join(workDir, "vendor-filings.md"), ref: "rows 2-9", note: "headline share figures" },
 ];
 const VERDICT_TEXT = "VERDICT: DISCREPANCIES\nvalue | deliverable says | independent source says | match?\nInfineon share | 41% | 37% | no";
+/** The correction's answer: its brief makes the first line say what it changed,
+ *  and only that line marks it corrected. */
+const CORRECTED_TEXT = "CORRECTED: 1 values\nInfineon share, 41%, 37%";
 
 const spreadsheetFamily = spreadsheetTools.find((t) => t.name === "spreadsheet");
 if (!spreadsheetFamily) throw new Error("spreadsheet family tool not found");
@@ -184,11 +187,12 @@ async function dispatch(name: string, args: Record<string, unknown>): Promise<st
 	return String(messages[0].content ?? "");
 }
 
-function scriptedTextAdapter(name: string, text: string): Adapter {
+function scriptedTextAdapter(name: string, text: string | ((input: TurnInput) => string)): Adapter {
 	return {
 		name, version: "1",
-		async runTurn(_input: TurnInput, report: (r: AdapterReport) => void): Promise<TurnResult> {
-			report({ kind: "message_finalized", message: { messageId: `${name}-m0`, role: "assistant", content: { text } } });
+		async runTurn(input: TurnInput, report: (r: AdapterReport) => void): Promise<TurnResult> {
+			const answer = typeof text === "string" ? text : text(input);
+			report({ kind: "message_finalized", message: { messageId: `${name}-m0`, role: "assistant", content: { text: answer } } });
 			return { providerState: { adapterName: name, adapterVersion: "1", providerPayload: null }, terminalReason: "done", modelStop: "ended" };
 		},
 		async abort(): Promise<void> { /* scripted — nothing in flight */ },
@@ -280,7 +284,7 @@ describe("verification pass — the end-to-end contract", () => {
 
 		// LEG 2 — the parent op succeeds through the real loop; the terminal
 		// projection fires the trigger → REAL submit → ONE verify op.
-		mocks.adapterFactory = () => scriptedTextAdapter("fake-verifier", VERDICT_TEXT);
+		mocks.adapterFactory = () => scriptedTextAdapter("fake-worker", (input) => (input.opId.startsWith("op_correct_deliverable") ? CORRECTED_TEXT : VERDICT_TEXT));
 		const parent = chatParentedOp(PARENT_OP_ID, PARENT_TASK);
 		trackOpForSession(parent.id, SESSION, PARENT_TASK);
 		registerAdapterForOp(parent.id, () => scriptedTextAdapter("fake-parent", "Spreadsheet built."));
@@ -429,7 +433,7 @@ describe("verification pass — the CHAT-TURN parent", () => {
 		recordTaskArtifact(CHAT_SESSION, CHAT_DELIVERABLE);
 
 		const before = verifyOpDirs();
-		mocks.adapterFactory = () => scriptedTextAdapter("fake-verifier", VERDICT_TEXT);
+		mocks.adapterFactory = () => scriptedTextAdapter("fake-worker", (input) => (input.opId.startsWith("op_correct_deliverable") ? CORRECTED_TEXT : VERDICT_TEXT));
 
 		// An op_chat_turn, the shape chat-runner/create-op.ts submits: interactive
 		// lane, task = the user's message, tracked to the chat session.

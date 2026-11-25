@@ -8,12 +8,14 @@ import type { ChunkReviewOutcome } from "../chunk-review/index.js";
 import type { ParsedChunk, ParsedPlan } from "../plan-parser.js";
 import type { LoopEvent } from "./types.js";
 
-const rebuilds = vi.hoisted(() => ({ outcomes: [] as unknown[], reasons: [] as Array<string | undefined> }));
+const rebuilds = vi.hoisted(() => ({ outcomes: [] as unknown[], reasons: [] as Array<string | undefined>, wentOnFrom: [] as unknown[] }));
 const advisor = vi.hoisted(() => ({ answers: [] as unknown[], asked: [] as string[] }));
 
 vi.mock("./run-chunk-once.js", () => ({
-  runChunkOnce: vi.fn(async (opts: { retryReason?: string }) => {
+  runChunkOnce: vi.fn(async (opts: { retryReason?: string; continueFrom?: unknown[]; onTranscript?: (m: unknown[]) => void }) => {
     rebuilds.reasons.push(opts.retryReason);
+    rebuilds.wentOnFrom.push(opts.continueFrom);
+    opts.onTranscript?.([{ role: "assistant", content: `worker of round ${rebuilds.reasons.length}` }]);
     return rebuilds.outcomes.shift();
   }),
 }));
@@ -45,7 +47,7 @@ const fix = (first: ChunkReviewOutcome) => handlePushBack({
   emit: (e) => { events.push(e); },
 });
 
-beforeEach(() => { rebuilds.outcomes = []; rebuilds.reasons = []; advisor.answers = []; advisor.asked = []; events = []; lead.answers = []; lead.asked = 0; lead.finals = 0; });
+beforeEach(() => { rebuilds.outcomes = []; rebuilds.reasons = []; rebuilds.wentOnFrom = []; advisor.answers = []; advisor.asked = []; events = []; lead.answers = []; lead.asked = 0; lead.finals = 0; });
 
 describe("handlePushBack", () => {
   it("a round that comes back clean ends it", async () => {
@@ -147,6 +149,26 @@ describe("handlePushBack with a build lead", () => {
     expect(result.finalAction).toBe("proceed");
     expect(rebuilds.reasons).toHaveLength(MAX_LEAD_ROUNDS);
     expect(lead.finals).toBe(1);
+  });
+
+  // Stage 2 of the build lead: "continue" goes back to the worker that built
+  // the last round, which knows what it tried; "fresh" starts a new one.
+  it("continue goes on with the last worker's conversation; fresh starts a new worker", async () => {
+    const first = [{ role: "assistant", content: "worker of the first attempt" }];
+    rebuilds.outcomes = [pushedBack("b"), pushedBack("c"), green];
+    lead.answers = [keepGoing, keepGoing, { action: "fresh", reasoning: "going in circles", instruction: "start over" }];
+    const result = await handlePushBack({
+      chunk, totalChunks: 13, planPath: "spec/plan.md", plan, projectDir: "C:/proj", preSha: "abc", outcome: pushedBack("a"),
+      emit: (e) => { events.push(e); }, buildLead: { projectDir: "C:/proj", originSessionId: "chat-x" }, lastTranscript: first as never,
+    });
+    expect(result.finalAction).toBe("proceed");
+    expect(rebuilds.wentOnFrom).toEqual([first, [{ role: "assistant", content: "worker of round 1" }], undefined]);
+  });
+
+  it("without a lead every round starts a new worker", async () => {
+    rebuilds.outcomes = [green];
+    await fix(pushedBack("a"));
+    expect(rebuilds.wentOnFrom).toEqual([undefined]);
   });
 
   it("a lead that does not answer leaves the round to the engine's rules", async () => {

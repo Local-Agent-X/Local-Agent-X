@@ -25,7 +25,8 @@
  * stdout is now the agent's final result message.
  */
 
-import { invokeDefinition } from "../../agents/invoke.js";
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
+import { invokeDefinition, takeRunTranscript } from "../../agents/invoke.js";
 import type { AgentDefinition } from "../../agents/types.js";
 import { EventBus } from "../../event-bus.js";
 import { Handler } from "../../agency/handler.js";
@@ -76,6 +77,11 @@ export interface ChunkAgentInvocation {
   deadlineMs?: number;
   /** Caller cancellation. Maps to the agent's abort signal via Handler. */
   signal?: AbortSignal;
+  /** The conversation of the worker that built the last round: this run is
+   *  that worker going on, `task` its next message (InvokeOpts.priorMessages). */
+  priorMessages?: ChatCompletionMessageParam[];
+  /** Return this run's conversation, so a next round can go on from it. */
+  keepTranscript?: boolean;
 }
 
 export interface ChunkAgentResult {
@@ -87,6 +93,8 @@ export interface ChunkAgentResult {
   durationMs: number;
   /** Error message when exitCode !== 0. */
   error?: string;
+  /** The run's conversation, when asked for and the run finished. */
+  transcript?: ChatCompletionMessageParam[];
 }
 
 /**
@@ -327,6 +335,8 @@ export async function runChunkAgent(opts: ChunkAgentInvocation): Promise<ChunkAg
     // user workspace-write ban and every worker write is hard-denied (live
     // failure 2026-07-22: Merchhelm preflight halt).
     harnessAuthoredTask: true,
+    ...(opts.priorMessages ? { priorMessages: opts.priorMessages } : {}),
+    ...(opts.keepTranscript ? { keepTranscript: true } : {}),
   });
   const agentId = ref.runId;
 
@@ -358,7 +368,8 @@ export async function runChunkAgent(opts: ChunkAgentInvocation): Promise<ChunkAg
       if (d.success === false) {
         finish({ stdout: d.result || "", exitCode: 1, durationMs: Date.now() - startedAt, error: d.error || d.result || "agent failed" });
       } else {
-        finish({ stdout: d.result || "", exitCode: 0, durationMs: Date.now() - startedAt });
+        const transcript = opts.keepTranscript ? takeRunTranscript(agentId) : undefined;
+        finish({ stdout: d.result || "", exitCode: 0, durationMs: Date.now() - startedAt, ...(transcript ? { transcript } : {}) });
       }
     };
 

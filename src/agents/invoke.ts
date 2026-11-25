@@ -28,6 +28,7 @@
  */
 
 import type { AgentDefinition, AgentModelPin, InvokeOpts, RunRef } from "./types.js";
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { AgentCatalog } from "./catalog.js";
 import { Handler } from "../agency/handler.js";
 import { AgentTemplateStore, ProjectStore } from "../agent-store/index.js";
@@ -149,6 +150,8 @@ export function invokeDefinition(
       touches: opts.touches,
       harnessAuthoredTask: opts.harnessAuthoredTask,
       delegation: opts.delegation,
+      priorMessages: opts.priorMessages,
+      keepTranscript: opts.keepTranscript,
     },
     abortController.signal,
   );
@@ -264,6 +267,25 @@ export async function awaitAgentRunning(
   });
 }
 
+/** Finished runs' conversations a caller asked to keep (InvokeOpts.keepTranscript),
+ *  until it takes them. Bounded: a caller that never takes one does not hold
+ *  it for the life of the process. */
+const transcripts = new Map<string, ChatCompletionMessageParam[]>();
+const MAX_KEPT_TRANSCRIPTS = 16;
+
+function keepTranscript(runId: string, messages: ChatCompletionMessageParam[]): void {
+  transcripts.set(runId, messages);
+  while (transcripts.size > MAX_KEPT_TRANSCRIPTS) transcripts.delete(transcripts.keys().next().value!);
+}
+
+/** The conversation of a finished run started with keepTranscript, once:
+ *  pass it as priorMessages to go on with the same worker. */
+export function takeRunTranscript(runId: string): ChatCompletionMessageParam[] | undefined {
+  const messages = transcripts.get(runId);
+  transcripts.delete(runId);
+  return messages;
+}
+
 async function runAgentViaDriver(req: AgentRunDriverRequest, signal: AbortSignal): Promise<void> {
   const handler = Handler.getInstance();
   let outcome: AgentRunDriverResult;
@@ -273,6 +295,8 @@ async function runAgentViaDriver(req: AgentRunDriverRequest, signal: AbortSignal
     outcome = { result: (e as Error).message || String(e), success: false };
   }
   handler.finalizeExternalRun(req.agentId, outcome);
+  // Kept before the result is announced, so a subscriber can take it at once.
+  if (outcome.transcript) keepTranscript(req.agentId, outcome.transcript);
 
   EventBus.emit("handler:agent-result", {
     agentId: req.agentId,

@@ -7,6 +7,7 @@
  * build.ts) and the worktree-cap fallback on base (parallel-waves.ts).
  */
 
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { ParsedChunk } from "../plan-parser.js";
 import type { ChunkReviewOutcome, ReviewAction } from "../chunk-review/index.js";
 import { runChunkOnce } from "./run-chunk-once.js";
@@ -49,11 +50,15 @@ export async function buildChunkWithRetry(a: ChunkAttemptInput): Promise<ChunkAt
     buildLead: opts.buildLead,
   };
 
+  // A build with a lead can send a fix round back to the worker that built the
+  // chunk (handle-push-back.ts), so its conversation is kept.
+  let transcript: ChatCompletionMessageParam[] | undefined;
   const outcome = await runChunkOnce({
     ...shared,
     retryReason: a.carryOver?.brief,
     priorOutcomes: a.priorOutcomes,
+    ...(opts.buildLead ? { onTranscript: (m: ChatCompletionMessageParam[]) => { transcript = m; } } : {}),
   });
   if (outcome.action !== "push_back") return { finalOutcome: outcome, finalAction: outcome.action };
-  return handlePushBack({ ...shared, outcome, earlierFindings: a.carryOver?.findings });
+  return handlePushBack({ ...shared, outcome, earlierFindings: a.carryOver?.findings, ...(transcript ? { lastTranscript: transcript } : {}) });
 }

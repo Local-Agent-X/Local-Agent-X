@@ -18,6 +18,7 @@ vi.mock("../../agents/invoke.js", () => ({
     invokeCalls.push({ task, opts });
     return { runId: RUN_ID, definition: {} };
   },
+  takeRunTranscript: (runId: string) => (runId === RUN_ID ? [{ role: "assistant", content: "what the worker did" }] : undefined),
 }));
 
 import { runChunkAgent, _clearChunkAgentDefCache } from "./chunk-runner.js";
@@ -99,6 +100,15 @@ describe("runChunkAgent spawn lineage", () => {
 });
 
 describe("runChunkAgent task provenance", () => {
+  it("goes on from the last worker's conversation, and hands its own back when asked", async () => {
+    const prior = [{ role: "user" as const, content: "build chunk 3" }];
+    const p = runChunkAgent({ role: "chunk-runner-trunk", task: "the review sent it back", priorMessages: prior, keepTranscript: true });
+    await EventBus.emit("handler:agent-result", { agentId: RUN_ID, success: true, result: "STATUS: done" });
+    const res = await p;
+    expect(invokeCalls[0].opts).toMatchObject({ priorMessages: prior, keepTranscript: true });
+    expect(res.transcript).toEqual([{ role: "assistant", content: "what the worker did" }]);
+  });
+
   it("marks the spawn harness-authored so the instruction ledger skips its preamble", async () => {
     // The working-directory preamble ("Never touch paths outside it") is
     // harness prose. Without this flag it extracts as a user workspace-write

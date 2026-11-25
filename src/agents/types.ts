@@ -27,6 +27,7 @@
 
 import type { ProviderId } from "../providers/provider-ids.js";
 import type { TaskDelegation } from "../ops/types.js";
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 
 /** A pinned (provider, model) pair. Used by AgentDefinition.defaultModel
  *  (template-level pin), ProjectRoster.model (per-project override), and
@@ -161,6 +162,12 @@ export interface InvokeOpts {
    *  taskProvenance="agent" and inherits those bans instead of having the
    *  parent model's paraphrase mined for constraints. */
   delegation?: TaskDelegation;
+  /** A finished run's conversation (takeRunTranscript) for this run to go on
+   *  from: the same worker, its context intact, given `task` as its next
+   *  message. Without it a run starts from nothing. */
+  priorMessages?: ChatCompletionMessageParam[];
+  /** Keep this run's conversation when it ends, for takeRunTranscript. */
+  keepTranscript?: boolean;
 }
 
 /** Handle returned from invokeAgent. Callers poll run status via

@@ -14,6 +14,7 @@
  */
 
 import type { AgentModelPin } from "./types.js";
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { TaskDelegation } from "../ops/types.js";
 import { createLogger } from "../logger.js";
 
@@ -63,6 +64,10 @@ export interface AgentRunDriverRequest {
   /** Mirrors InvokeOpts.delegation — forwarded so the op is stamped
    *  agent-authored with the delegating op's bans. */
   delegation?: TaskDelegation;
+  /** Mirrors InvokeOpts.priorMessages: the conversation the run goes on from. */
+  priorMessages?: ChatCompletionMessageParam[];
+  /** Mirrors InvokeOpts.keepTranscript: return the run's conversation. */
+  keepTranscript?: boolean;
 }
 
 /** What the driver returns when the canonical op reaches a terminal state. */
@@ -72,6 +77,8 @@ export interface AgentRunDriverResult {
   tokens?: number;
   /** The canonical op the run was, when it got as far as one. */
   opId?: string;
+  /** The run's conversation, when the request asked to keep it and the run finished. */
+  transcript?: ChatCompletionMessageParam[];
 }
 
 export type AgentRunDriver = (

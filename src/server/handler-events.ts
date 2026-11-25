@@ -72,6 +72,13 @@ function judgeFinishedRun(who: string, run: AgentTurn, agentOutput: string) {
   return { result: agentOutput, success: true, opId };
 }
 
+/** A finished run's result, with its conversation when the caller asked to keep it
+ *  (InvokeOpts.keepTranscript), less the system prompt a run that goes on from it gets anew. */
+function withTranscript<R extends { success: boolean }>(keep: boolean | undefined, messages: Session["messages"], result: R): R & { transcript?: Session["messages"] } {
+  if (!keep || !result.success) return result;
+  return { ...result, transcript: messages.filter((m) => m.role !== "system") };
+}
+
 function unmergedResult(agentId: string, hasWorktree: boolean, mergeFailure: string, agentOutput: string, opId: string | undefined) {
   const branchHint = hasWorktree ? `Run: git merge agent/${agentId}` : "File changes may be lost";
   return { result: `[Agent completed but its changes were not merged — ${mergeFailure || "merge failed"}. ${branchHint}]
@@ -166,7 +173,7 @@ export function registerHandlerEvents(deps: {
     const parentContext = parentContextBlock(parentSessionId ? sessions.get(parentSessionId) : undefined);
     const identityBlock = identityBlockFor(agentId, template, roster?.reportsTo, agentProject?.name);
 
-    const agentSession: Session = { id: `agent-${agentId}`, title: `Agent: ${role}`, messages: [], createdAt: Date.now(), updatedAt: Date.now() };
+    const agentSession: Session = { id: `agent-${agentId}`, title: `Agent: ${role}`, messages: [...(req.priorMessages ?? [])], createdAt: Date.now(), updatedAt: Date.now() };
     // Where the run works, decided BEFORE it starts: a folder that can't be
     // isolated throws here, so the spawner hears why instead of getting an
     // agent whose every command is denied.
@@ -305,7 +312,7 @@ export function registerHandlerEvents(deps: {
 
       const agentOutput = extractAgentOutput(agentSession.messages);
       const opId = agentResult.opId;
-      if (mergeSuccess) return judgeFinishedRun(`${agentId} (${role})`, agentResult, agentOutput);
+      if (mergeSuccess) return withTranscript(req.keepTranscript, agentSession.messages, judgeFinishedRun(`${agentId} (${role})`, agentResult, agentOutput));
       return unmergedResult(agentId, !!worktreeInfo, mergeFailure, agentOutput, opId);
     } catch (e) {
       // The folder the task named couldn't be isolated: say exactly why — the

@@ -1,3 +1,4 @@
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { ParsedPlan, ParsedChunk } from "../plan-parser.js";
 import { buildChunkTask, chunkAgentRole, distillSharpenedContext } from "../skill-mapper.js";
 import { runChunkAgent } from "../agents/chunk-runner.js";
@@ -51,6 +52,34 @@ export interface RunChunkOnceOptions {
   /** The project the build is for, when `projectDir` is a worktree of it: the
    *  judge finds the sealed suite by this folder's name. Defaults to projectDir. */
   baseProjectDir?: string;
+  /** The conversation of the worker that built the last round: this round is
+   *  that worker going on, told only what the review found (retryReason). */
+  continueFrom?: ChatCompletionMessageParam[];
+  /** Called with this round's worker conversation when it finished, so the
+   *  next round can go on from it. */
+  onTranscript?: (messages: ChatCompletionMessageParam[]) => void;
+}
+
+/** What the worker is told: the whole brief, or, to the worker that built the
+ *  last round, what the review found. */
+function workerTask(opts: RunChunkOnceOptions): string {
+  if (opts.continueFrom) {
+    return `The review sent your chunk back. ${opts.retryReason ?? ""}\n\n` +
+      "Fix that in the same project, keep what you already fixed, run the checks the done-when names, and end " +
+      "with the same report block as before.";
+  }
+  const sharpenedContext = opts.priorOutcomes && opts.priorOutcomes.length > 0
+    ? distillSharpenedContext(
+        opts.priorOutcomes.map(o => ({ chunkNumber: o.chunkNumber, report: o.outcome.report, structureNote: o.outcome.structureNote })),
+      )
+    : undefined;
+  return buildChunkTask({
+    chunk: opts.chunk,
+    totalChunks: opts.totalChunks,
+    planPath: opts.planPath,
+    sharpenedContext,
+    retryReason: opts.retryReason,
+  });
 }
 
 /** Minimal chunk-agent result shape this decision needs. */
@@ -95,26 +124,14 @@ export function chunkProcessFailureOutcome(
 }
 
 export async function runChunkOnce(opts: RunChunkOnceOptions): Promise<ChunkReviewOutcome> {
-  const sharpenedContext = opts.priorOutcomes && opts.priorOutcomes.length > 0
-    ? distillSharpenedContext(
-        opts.priorOutcomes.map(o => ({ chunkNumber: o.chunkNumber, report: o.outcome.report, structureNote: o.outcome.structureNote })),
-      )
-    : undefined;
-
-  const task = buildChunkTask({
-    chunk: opts.chunk,
-    totalChunks: opts.totalChunks,
-    planPath: opts.planPath,
-    sharpenedContext,
-    retryReason: opts.retryReason,
-  });
+  const task = workerTask(opts);
   const role = chunkAgentRole(opts.chunk.klass);
 
   opts.emit({
     type: "subprocess-spawned",
     chunkNumber: opts.chunk.number,
     totalChunks: opts.totalChunks,
-    message: `Invoked agent ${role}${opts.retryReason ? " — retry" : ""}`,
+    message: `Invoked agent ${role}${opts.continueFrom ? " — the same worker, going on" : opts.retryReason ? " — retry" : ""}`,
     ...(opts.workerIndex !== undefined ? { data: { workerIndex: opts.workerIndex } } : {}),
   });
 
@@ -127,7 +144,10 @@ export async function runChunkOnce(opts: RunChunkOnceOptions): Promise<ChunkRevi
     signal: opts.signal,
     parentSessionId: opts.parentSessionId,
     parentOpId: opts.parentOpId,
+    ...(opts.continueFrom ? { priorMessages: opts.continueFrom } : {}),
+    ...(opts.onTranscript ? { keepTranscript: true } : {}),
   });
+  if (subResult.transcript) opts.onTranscript?.(subResult.transcript);
 
   opts.emit({
     type: "subprocess-returned",

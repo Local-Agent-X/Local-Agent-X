@@ -20,7 +20,14 @@
  * owner, and MAX_LEAD_ROUNDS is only a ceiling on cost: at the ceiling the
  * lead still has the last word, landing or parking the chunk, or it is set
  * aside. A round the lead does not answer is decided by the rules above.
+ *
+ * When the lead says "continue", the round goes back to the worker that built
+ * the last one, its conversation intact (lastTranscript, InvokeOpts
+ * priorMessages), told only what the review found: it knows what it tried.
+ * "fresh", a finding that came back unchanged, a worker that did not finish,
+ * and every round the rules decide start a new worker from the full brief.
  */
+import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import type { ParsedPlan, ParsedChunk } from "../plan-parser.js";
 import type { ChunkReviewOutcome, ReviewAction } from "../chunk-review/index.js";
 import type { JudgmentHook } from "../chunk-review/judgment-hook.js";
@@ -64,6 +71,8 @@ export interface HandlePushBackOptions {
   earlierFindings?: string[];
   /** The build's lead, when it has one: it decides each round. */
   buildLead?: BuildLeadRef;
+  /** The conversation of the worker that built the attempt being fixed. */
+  lastTranscript?: ChatCompletionMessageParam[];
 }
 
 export interface HandlePushBackResult {
@@ -180,6 +189,7 @@ export async function handlePushBack(opts: HandlePushBackOptions): Promise<Handl
   let round: Round = { chunk: opts.chunk, plan: opts.plan, outcome: opts.outcome };
   const earlier: string[] = [...(opts.earlierFindings ?? [])];
   let repeated = false;
+  let transcript = opts.lastTranscript;
 
   for (let n = 1; ; n++) {
     const { plan: next, byLead } = await nextRound(opts, round, n, earlier, repeated);
@@ -187,6 +197,8 @@ export async function handlePushBack(opts: HandlePushBackOptions): Promise<Handl
       return { finalAction: "halt", finalOutcome: { ...round.outcome, reasoning: next.reasoning } };
     }
     if (next.kind === "land") return { finalOutcome: next.outcome, finalAction: "proceed" };
+    const goOn = byLead && !(next as { fresh?: boolean }).fresh ? transcript : undefined;
+    let latest: ChatCompletionMessageParam[] | undefined;
     const rebuilt = await runChunkOnce({
       chunk: next.chunk, totalChunks, planPath: opts.planPath, plan: next.plan,
       projectDir: opts.projectDir, preSha: opts.preSha,
@@ -196,7 +208,10 @@ export async function handlePushBack(opts: HandlePushBackOptions): Promise<Handl
       parentOpId: opts.parentOpId,
       parentSessionId: opts.parentSessionId,
       chunkJudge: opts.chunkJudge, baseProjectDir: opts.baseProjectDir, workerIndex: opts.workerIndex,
+      ...(goOn ? { continueFrom: goOn } : {}),
+      ...(opts.buildLead ? { onTranscript: (m: ChatCompletionMessageParam[]) => { latest = m; } } : {}),
     });
+    transcript = latest;
     if (rebuilt.action !== "push_back") return { finalOutcome: rebuilt, finalAction: rebuilt.action };
 
     const stuck = sameFinding(rebuilt, round.outcome);

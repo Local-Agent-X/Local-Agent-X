@@ -241,6 +241,9 @@
 				if (url) bridge.navigate(url);
 				else bridge.reload();
 			},
+			onProceed: function () {
+				if (bridge && bridge.proceedPastCertificate) bridge.proceedPastCertificate(selectedViewId);
+			},
 		});
 	}
 

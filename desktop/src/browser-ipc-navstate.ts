@@ -11,6 +11,7 @@
 
 import { type WebContents } from "electron";
 
+import { canProceedPastCertificate } from "./browser-cert-proceed";
 import { getMainWindow } from "./window";
 
 export interface BrowserNavState {
@@ -23,7 +24,7 @@ export interface BrowserNavState {
 	/** Last MAIN-frame load failure, or null. Without this the renderer's pane
 	 *  sits silently white on e.g. ERR_CONNECTION_REFUSED — the view renders a
 	 *  blank error document and nothing tells the user the server is down. */
-	loadError: { code: number; description: string; url: string } | null;
+	loadError: { code: number; description: string; url: string; canProceed?: boolean } | null;
 }
 
 export function emptyNavState(viewId: string): BrowserNavState {
@@ -35,7 +36,7 @@ export function emptyNavState(viewId: string): BrowserNavState {
 const navWired = new WeakSet<WebContents>();
 // Last main-frame load failure per webContents; cleared the moment the next
 // load starts so a retry/navigation drops the error UI immediately.
-const loadErrors = new WeakMap<WebContents, { code: number; description: string; url: string }>();
+const loadErrors = new WeakMap<WebContents, NonNullable<BrowserNavState["loadError"]>>();
 
 export function readNavState(viewId: string, wc: WebContents): BrowserNavState {
 	if (wc.isDestroyed()) return emptyNavState(viewId);
@@ -79,7 +80,9 @@ export function wireNavPushes(viewId: string, wc: WebContents): void {
 	wc.on("did-fail-load", (_e, errorCode, errorDescription, validatedURL, isMainFrame) => {
 		if (!isMainFrame || errorCode === -3) return;
 		console.error(`[browser.navstate] did-fail-load view=${viewId} code=${errorCode} error=${errorDescription} url=${validatedURL}`);
-		loadErrors.set(wc, { code: errorCode, description: errorDescription, url: validatedURL });
+		// A certificate the user may click past (browser-cert-proceed.ts) adds the card's Proceed button.
+		const canProceed = canProceedPastCertificate(wc, validatedURL);
+		loadErrors.set(wc, { code: errorCode, description: errorDescription, url: validatedURL, ...(canProceed ? { canProceed } : {}) });
 		push();
 	});
 }

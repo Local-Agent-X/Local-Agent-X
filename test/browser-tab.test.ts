@@ -41,6 +41,8 @@ vi.mock("electron", () => {
   let wcIdSeq = 100;
   return {
     shell: { openExternal: vi.fn() },
+    // browser-cert-proceed.ts listens for certificate errors at setup.
+    app: { on: vi.fn() },
     ipcMain: {
       handle: (channel: string, fn: (...args: unknown[]) => unknown) => {
         h.handlers.set(channel, fn);

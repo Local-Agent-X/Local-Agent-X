@@ -41,7 +41,32 @@
 		}).catch(function () { /* best-effort — the basic card stays */ });
 	}
 
-	// opts: { viewId, onRetry(url) }
+	// "Proceed anyway" past a certificate the browser does not trust. Main only
+	// sets canProceed for an address the user typed (browser-cert-proceed.ts),
+	// and trusts that site's exact certificate until the app quits.
+	function proceedBlock(loadError, onProceed) {
+		var host = '';
+		try { host = new URL(loadError.url).host; } catch (e) { host = loadError.url || ''; }
+		var wrap = document.createElement('div');
+		wrap.style.cssText = 'display:flex;flex-direction:column;align-items:center;gap:6px;margin-top:8px;max-width:420px';
+		var note = document.createElement('div');
+		note.style.cssText = 'font-size:.72rem;color:var(--muted)';
+		note.textContent = 'The certificate for ' + host + ' is not trusted. Devices on your own network, like a router, ' +
+			'often use one they signed themselves. Proceed only if you know this site.';
+		var proceed = document.createElement('button');
+		proceed.className = 'artifact-filter';
+		proceed.id = 'browser-load-error-proceed';
+		proceed.textContent = 'Proceed to ' + host + ' anyway';
+		proceed.addEventListener('click', function () {
+			proceed.disabled = true;
+			onProceed();
+		});
+		wrap.appendChild(note);
+		wrap.appendChild(proceed);
+		return wrap;
+	}
+
+	// opts: { viewId, onRetry(url), onProceed() }
 	function render(loadError, opts) {
 		var anchor = document.getElementById('browser-view-anchor');
 		if (!anchor) return;
@@ -81,6 +106,7 @@
 		box.appendChild(reason);
 		box.appendChild(recovery);
 		box.appendChild(btn);
+		if (loadError.canProceed && opts && opts.onProceed) box.appendChild(proceedBlock(loadError, opts.onProceed));
 		anchor.appendChild(box);
 		fetchDenyReason(loadError, opts && opts.viewId, { detail: detail, reason: reason, recovery: recovery }, renderSeq);
 	}

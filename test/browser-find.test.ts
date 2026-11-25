@@ -28,7 +28,7 @@ const h = vi.hoisted(() => ({
 }));
 
 vi.mock("electron", () => ({
-  app: { isPackaged: false },
+  app: { isPackaged: false, on: () => {} },
   ipcMain: {
     handle: (channel: string, fn: (...args: unknown[]) => unknown) => {
       h.handlers.set(channel, fn);

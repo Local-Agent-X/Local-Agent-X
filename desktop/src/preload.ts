@@ -178,16 +178,19 @@ contextBridge.exposeInMainWorld("desktop", {
     goBack: () => ipcRenderer.invoke("browser-go-back"),
     goForward: () => ipcRenderer.invoke("browser-go-forward"),
     reload: () => ipcRenderer.invoke("browser-reload"),
+    // The load-error card's "Proceed anyway" past a certificate the user typed
+    // the address for (browser-cert-proceed.ts decides who may).
+    proceedPastCertificate: (viewId: string): Promise<boolean> => ipcRenderer.invoke("browser-cert-proceed", viewId),
     // Stop the current view's in-flight load (the toolbar's ↻ flips to ✕ while
     // the selected view is loading; browser-tab.js routes the click here).
     stop: () => ipcRenderer.invoke("browser-stop"),
     getNavState: (): Promise<{
       viewId: string; url: string; title: string; canGoBack: boolean; canGoForward: boolean; loading: boolean;
-      loadError: { code: number; description: string; url: string } | null;
+      loadError: { code: number; description: string; url: string; canProceed?: boolean } | null;
     }> => ipcRenderer.invoke("browser-get-nav-state"),
     onNavState: (cb: (state: {
       viewId: string; url: string; title: string; canGoBack: boolean; canGoForward: boolean; loading: boolean;
-      loadError: { code: number; description: string; url: string } | null;
+      loadError: { code: number; description: string; url: string; canProceed?: boolean } | null;
     }) => void) => {
       ipcRenderer.on("browser-nav-state", (_e, state) => cb(state));
     },
@@ -196,7 +199,7 @@ contextBridge.exposeInMainWorld("desktop", {
     // nav-state of the view now showing, or null when the pane is not showing.
     bindChat: (sessionId: string | null): Promise<{
       viewId: string; url: string; title: string; canGoBack: boolean; canGoForward: boolean; loading: boolean;
-      loadError: { code: number; description: string; url: string } | null;
+      loadError: { code: number; description: string; url: string; canProceed?: boolean } | null;
     } | null> => ipcRenderer.invoke("browser-bind-chat", sessionId),
     // A chat was deleted: its browser views are closed and forgotten.
     closeChat: (sessionId: string): Promise<void> => ipcRenderer.invoke("browser-close-chat", sessionId),
@@ -208,7 +211,7 @@ contextBridge.exposeInMainWorld("desktop", {
     }>> => ipcRenderer.invoke("browser-list-views"),
     switchView: (viewId: string): Promise<{
       viewId: string; url: string; title: string; canGoBack: boolean; canGoForward: boolean; loading: boolean;
-      loadError: { code: number; description: string; url: string } | null;
+      loadError: { code: number; description: string; url: string; canProceed?: boolean } | null;
     } | null> => ipcRenderer.invoke("browser-switch-view", viewId),
     // Close a user tab (foreground / user-N / profile-*). Agent 🤖 views are
     // refused main-side (they're the agent's) — resolves false for those and
@@ -219,7 +222,7 @@ contextBridge.exposeInMainWorld("desktop", {
     // Returns the new view's nav-state.
     newTab: (url?: string): Promise<{
       viewId: string; url: string; title: string; canGoBack: boolean; canGoForward: boolean; loading: boolean;
-      loadError: { code: number; description: string; url: string } | null;
+      loadError: { code: number; description: string; url: string; canProceed?: boolean } | null;
     } | null> => ipcRenderer.invoke("browser-new-tab", url),
     // Downloads panel: user-routed downloads (openable) + read-only quarantined.
     listDownloads: (): Promise<{

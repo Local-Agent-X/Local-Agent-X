@@ -19,6 +19,7 @@ interface FakeBridge {
   goBack: Mock;
   goForward: Mock;
   reload: Mock;
+  proceedPastCertificate: Mock;
   getNavState: Mock;
   onNavState: Mock;
 }
@@ -31,11 +32,11 @@ let apiFail: boolean;
 
 function flush() { return new Promise<void>((r) => setTimeout(r, 0)); }
 
-function failNav(code: number, description: string, url: string) {
+function failNav(code: number, description: string, url: string, canProceed?: boolean) {
   navStateCb!({
     url, title: "", canGoBack: false, canGoForward: false, loading: false,
     viewId: "foreground",
-    loadError: { code, description, url },
+    loadError: { code, description, url, ...(canProceed ? { canProceed } : {}) },
   });
 }
 
@@ -64,6 +65,7 @@ beforeEach(() => {
     goBack: vi.fn(),
     goForward: vi.fn(),
     reload: vi.fn(),
+    proceedPastCertificate: vi.fn(),
     getNavState: vi.fn().mockResolvedValue({
       url: "", title: "", canGoBack: false, canGoForward: false, loading: false,
     }),
@@ -174,3 +176,21 @@ declare global {
     laxBrowserErrorCard: { render(loadError: unknown, opts: unknown): void };
   }
 }
+
+describe("Proceed anyway past an untrusted certificate", () => {
+  it("shows when main says the user may proceed, and clicking it asks main for this view", async () => {
+    failNav(-202, "ERR_CERT_AUTHORITY_INVALID", "https://192.168.1.254/", true);
+    await flush();
+    const btn = document.getElementById("browser-load-error-proceed") as HTMLButtonElement;
+    expect(btn.textContent).toBe("Proceed to 192.168.1.254 anyway");
+    btn.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    expect(bridge.proceedPastCertificate).toHaveBeenCalledWith("foreground");
+    expect(btn.disabled).toBe(true);
+  });
+
+  it("is absent for a certificate error main did not offer (a page the agent opened)", async () => {
+    failNav(-202, "ERR_CERT_AUTHORITY_INVALID", "https://bank-login.example.net/");
+    await flush();
+    expect(document.getElementById("browser-load-error-proceed")).toBeNull();
+  });
+});

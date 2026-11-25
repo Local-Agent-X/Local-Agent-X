@@ -26,6 +26,7 @@ import { getMainWindow } from "./window";
 import { isTrustedBrowserSender, setupBrowserPageControls, wirePageControlsForPool } from "./browser-page-controls";
 import { setupBrowserDownloadsIPC } from "./browser-downloads-ipc";
 import { setupBrowserPermissionBarIPC } from "./browser-permission-bar-ipc";
+import { noteTypedNavigation, setupBrowserCertProceed } from "./browser-cert-proceed";
 // The trusted-sender guard moved to browser-page-controls.ts in the find/zoom
 // split; re-exported so existing consumers keep importing it from here.
 export { isTrustedBrowserSender } from "./browser-page-controls";
@@ -287,6 +288,7 @@ export function setupBrowserIPC(): void {
 	setupBrowserPageControls(currentViewId);
 	setupBrowserDownloadsIPC();
 	setupBrowserPermissionBarIPC();
+	setupBrowserCertProceed();
 	startPageRestTimer();
 
 	ipcMain.handle("browser-set-bounds", (event: IpcMainInvokeEvent, rect: Rectangle) => {
@@ -342,6 +344,7 @@ export function setupBrowserIPC(): void {
 		// outcome either way.
 		await prepareEmbeddedChromeIdentityForNavigation(view.webContents);
 		markHumanNavigation(viewId);
+		noteTypedNavigation(view.webContents, url);
 		// The user pressed Enter in the address bar: the page they asked for
 		// takes focus, as in any browser. Views no longer take it on their own
 		// navigations (viewWebPreferences' focusOnNavigation).

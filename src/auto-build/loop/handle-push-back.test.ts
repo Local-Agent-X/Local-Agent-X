@@ -24,9 +24,9 @@ vi.mock("../advisor/index.js", () => ({
   }),
 }));
 
-const lead = vi.hoisted(() => ({ answers: [] as unknown[], asked: 0 }));
+const lead = vi.hoisted(() => ({ answers: [] as unknown[], asked: 0, finals: 0 }));
 vi.mock("../advisor/lead-decisions.js", () => ({
-  askLead: vi.fn(async () => { lead.asked++; return lead.answers.shift() ?? null; }),
+  askLead: vi.fn(async (_ref: unknown, s: { final?: boolean }) => { lead.asked++; if (s.final) lead.finals++; return lead.answers.shift() ?? null; }),
 }));
 
 const { handlePushBack, MAX_FIX_ROUNDS } = await import("./handle-push-back.js");
@@ -45,7 +45,7 @@ const fix = (first: ChunkReviewOutcome) => handlePushBack({
   emit: (e) => { events.push(e); },
 });
 
-beforeEach(() => { rebuilds.outcomes = []; rebuilds.reasons = []; advisor.answers = []; advisor.asked = []; events = []; lead.answers = []; lead.asked = 0; });
+beforeEach(() => { rebuilds.outcomes = []; rebuilds.reasons = []; advisor.answers = []; advisor.asked = []; events = []; lead.answers = []; lead.asked = 0; lead.finals = 0; });
 
 describe("handlePushBack", () => {
   it("a round that comes back clean ends it", async () => {
@@ -135,6 +135,18 @@ describe("handlePushBack with a build lead", () => {
     const result = await ledFix(pushedBack("first"));
     expect(result.finalAction).toBe("halt");
     expect(rebuilds.reasons).toHaveLength(MAX_LEAD_ROUNDS);
+    expect(lead.finals).toBe(1);
+  });
+
+  // label-check-sol's chunk 3 (2026-11-25) was set aside at the ceiling with
+  // two chunks behind it, the lead never asked about the last finding.
+  it("at the ceiling the lead has the last word: its accept lands the chunk with no further rebuild", async () => {
+    rebuilds.outcomes = Array.from({ length: MAX_LEAD_ROUNDS }, (_, i) => pushedBack(`edge ${i}`));
+    lead.answers = [...Array.from({ length: MAX_LEAD_ROUNDS }, () => keepGoing), { action: "accept", reasoning: "new kinds of input", followUps: ["U+2028"] }];
+    const result = await ledFix(pushedBack("first"));
+    expect(result.finalAction).toBe("proceed");
+    expect(rebuilds.reasons).toHaveLength(MAX_LEAD_ROUNDS);
+    expect(lead.finals).toBe(1);
   });
 
   it("a lead that does not answer leaves the round to the engine's rules", async () => {

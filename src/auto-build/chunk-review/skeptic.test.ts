@@ -10,6 +10,8 @@ import { SKEPTIC_BAR_BLOCK, SKEPTIC_BREAK_GROUNDS, SKEPTIC_RULE_REACH } from "./
 
 const agent = vi.hoisted(() => ({
   result: { stdout: "", exitCode: 0, durationMs: 1 } as { stdout: string; exitCode: number; durationMs: number; error?: string },
+  /** Answers for successive calls, before `result` takes over. */
+  queue: [] as Array<{ stdout: string; exitCode: number; durationMs: number; error?: string }>,
   calls: [] as Array<{ role: string; task: string; projectDir?: string }>,
   /** What the skeptic does in the project while it runs (writes a probe). */
   during: undefined as ((projectDir: string) => void) | undefined,
@@ -20,7 +22,7 @@ vi.mock("../agents/chunk-runner.js", () => ({
   runChunkAgent: vi.fn(async (opts: { role: string; task: string; projectDir?: string }) => {
     agent.calls.push(opts);
     agent.during?.(opts.projectDir!);
-    return agent.result;
+    return agent.queue.shift() ?? agent.result;
   }),
 }));
 
@@ -40,6 +42,7 @@ const chunk = parsePlanText([
 
 beforeEach(() => {
   agent.calls.length = 0;
+  agent.queue.length = 0;
   agent.result = { stdout: "", exitCode: 0, durationMs: 1 };
 });
 
@@ -175,6 +178,24 @@ describe("runChunkSkeptic", () => {
     const v = await runChunkSkeptic({ chunk, rawReport: "", preSha: "abc", projectDir: "/proj" });
     expect(v.status).toBe("not-run");
     expect(v.finding).toContain("timed out");
+    expect(agent.calls).toHaveLength(2);
+  });
+
+  // 2026-11-25: the skeptic's model stream died after a few reads and its turn
+  // ended with nothing said; read as BROKEN, it cost a fix round on nothing.
+  it("a turn that ended without a word is not-run, and the skeptic is asked again", async () => {
+    agent.queue.push({ stdout: "  \n", exitCode: 0, durationMs: 1 });
+    agent.result = { stdout: "VERDICT: HOLDS\nFINDING: ran the probes.", exitCode: 0, durationMs: 1 };
+    const v = await runChunkSkeptic({ chunk, rawReport: "", preSha: "abc", projectDir: "/proj" });
+    expect(v).toEqual({ status: "holds", finding: "ran the probes." });
+    expect(agent.calls).toHaveLength(2);
+  });
+
+  it("an answer without a verdict line is still broken, and not asked again", async () => {
+    agent.result = { stdout: "I looked around and it seems fine.", exitCode: 0, durationMs: 1 };
+    const v = await runChunkSkeptic({ chunk, rawReport: "", preSha: "abc", projectDir: "/proj" });
+    expect(v.status).toBe("broken");
+    expect(agent.calls).toHaveLength(1);
   });
 
   // Its probe tests are its own: gone when it finishes, so none reaches the

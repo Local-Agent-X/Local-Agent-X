@@ -12,6 +12,11 @@
  * fail, is never accepted, whatever the lead says; the worker is sent back.
  * Accepting and narrowing are recorded in spec/build-state.md and committed,
  * so the decision outlives the run.
+ *
+ * When the chunk's rounds are spent the lead still has the last word
+ * (`final`): accept lands it, park stops for the owner, and any answer that
+ * would build again sets it aside. The engine used to set it aside on its own
+ * at the ceiling, never asking the one agent holding the whole build.
  */
 import type { ParsedChunk, ParsedPlan } from "../plan-parser.js";
 import type { ChunkReviewOutcome } from "../chunk-review/index.js";
@@ -38,6 +43,8 @@ export interface LeadRoundInput {
   round: number;
   earlier: string[];
   repeated: boolean;
+  /** The rounds are spent: the lead lands or parks the chunk, or it is set aside. */
+  final?: boolean;
   /** The tree the chunk is built in: where the decision is recorded. */
   projectDir: string;
   emit: EmitFn;
@@ -65,15 +72,16 @@ export async function planLeadRound(a: LeadRoundInput): Promise<LeadRoundPlan | 
   const decision: LeadDecision | null = await (a.ask ?? askLead)(a.lead, {
     chunk: { number: chunk.number, title: chunk.title, slice: chunk.slice, doneWhen: chunk.doneWhen, scenarios: chunk.scenarios },
     totalChunks: a.totalChunks, round: a.round, finding: outcome.reasoning, workerReport: workerReport(outcome),
-    earlier: a.earlier, repeated: a.repeated,
+    earlier: a.earlier, repeated: a.repeated, maxRounds: MAX_LEAD_ROUNDS, ...(a.final ? { final: true } : {}),
   }, { signal: a.signal });
   if (!decision) {
     a.emit({ type: "push-back", chunkNumber: chunk.number, totalChunks: a.totalChunks, message: "build lead gave no answer in time; the engine's own rules decide this round" });
     return null;
   }
   a.emit({ type: "push-back", chunkNumber: chunk.number, totalChunks: a.totalChunks, message: `build lead: ${decision.action} — ${decision.reasoning}` });
-  const rebuild = (instruction: string, c: ParsedChunk = chunk): LeadRoundPlan =>
-    ({ kind: "rebuild", chunk: c, plan: a.plan, retryReason: `${instruction}\n\nWhat the review found:\n${outcome.reasoning}` });
+  const rebuild = (instruction: string, c: ParsedChunk = chunk): LeadRoundPlan => a.final
+    ? { kind: "halt", reasoning: `Chunk ${chunk.number} spent its ${MAX_LEAD_ROUNDS} fix rounds and the build lead did not land it: ${decision.reasoning}\n\nWhat the review found:\n${outcome.reasoning}` }
+    : { kind: "rebuild", chunk: c, plan: a.plan, retryReason: `${instruction}\n\nWhat the review found:\n${outcome.reasoning}` };
 
   switch (decision.action) {
     case "park":
@@ -90,6 +98,8 @@ export async function planLeadRound(a: LeadRoundInput): Promise<LeadRoundPlan | 
       return { kind: "land", outcome: { ...outcome, action: "proceed", reasoning: `Accepted by the build lead: ${decision.reasoning}` } };
     }
     case "narrow": {
+      // Spent rounds build nothing more, so there is no narrowed contract to record.
+      if (a.final) return rebuild("");
       await record(a.projectDir, chunk, `The build lead narrowed this chunk's done-when to: ${decision.doneWhen}\nWhy: ${decision.reasoning}`);
       return rebuild(`Your chunk's contract was narrowed. Done when: ${decision.doneWhen}\nMeet that; nothing beyond it is asked of this chunk.`, { ...chunk, doneWhen: decision.doneWhen! });
     }

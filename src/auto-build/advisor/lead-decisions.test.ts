@@ -6,11 +6,12 @@ import { setChatHandler } from "../../chat-ws/chat-handler.js";
 import { canHaveLead, leadSessionId, setLeadChatHost } from "./lead-chat.js";
 import { askLead, isLeadDecisionPending, LEAD_ROLE, type LeadSituation } from "./lead-decisions.js";
 import { buildDecideTool, readDecision } from "./build-decide-tool.js";
+import { SKEPTIC_BREAK_GROUNDS } from "../chunk-review/skeptic-bar.js";
 
 const situation: LeadSituation = {
   chunk: { number: 1, title: "Android foundation", slice: "s", doneWhen: "fixtures prove the size gate", scenarios: "—" },
   totalChunks: 5, round: 2, finding: "The skeptic broke it: the size gate skips root build/.", workerReport: "STATUS: done",
-  earlier: ["nested dist/ was skipped"], repeated: false,
+  earlier: ["nested dist/ was skipped"], repeated: false, maxRounds: 8,
 };
 const ref = { projectDir: "C:/ws/apps/label-check-sol", originSessionId: "chat-origin" };
 
@@ -45,6 +46,26 @@ describe("the build lead", () => {
     expect(messages[1].message).toContain("(Sent by the app, not typed by the user");
     expect(messages[1].message).toContain("the size gate skips root build/");
     expect(messages[1].message).toContain("- nested dist/ was skipped");
+  });
+
+  // label-check-sol's chunk 3 (2026-11-25): told to keep going while rounds
+  // closed what they were given, the lead sent back every fresh odd input to
+  // an unmarked rule until the rounds ran out.
+  it("judges by the skeptic's own bar, and knows the round budget", async () => {
+    for (const ground of SKEPTIC_BREAK_GROUNDS) expect(LEAD_ROLE).toContain(ground);
+    expect(LEAD_ROLE).toContain("A rule that is not marked is scoped.");
+    expect(LEAD_ROLE).not.toContain("Keep going while rounds close what they were given");
+    leadAnswers({ action: "accept", reasoning: "an input of a new kind" });
+    await askLead(ref, situation, { answerMs: 5_000 });
+    expect(messages.at(-1)!.message).toContain("after fix round 2 of at most 8.");
+    expect(messages.at(-1)!.message).not.toContain("last decision for this chunk");
+  });
+
+  it("the last decision says what each answer does once the rounds are spent", async () => {
+    leadAnswers({ action: "accept", reasoning: "done enough" });
+    await askLead(ref, { ...situation, round: 8, final: true }, { answerMs: 5_000 });
+    expect(messages.at(-1)!.message).toContain("This is the last decision for this chunk");
+    expect(messages.at(-1)!.message).toContain('"continue", "fresh" and "narrow" set the chunk aside');
   });
 
   it("a lead that ends its turn without deciding is no answer, and nothing is left waiting", async () => {

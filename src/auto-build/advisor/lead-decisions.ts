@@ -10,6 +10,7 @@
  */
 import { randomBytes } from "node:crypto";
 import { ensureLeadChat, runLeadTurn, type BuildLeadRef } from "./lead-chat.js";
+import { SKEPTIC_BREAK_GROUNDS, SKEPTIC_RULE_REACH } from "../chunk-review/skeptic-bar.js";
 
 export const LEAD_ACTIONS = ["continue", "fresh", "accept", "narrow", "park"] as const;
 export type LeadAction = typeof LEAD_ACTIONS[number];
@@ -41,6 +42,10 @@ export interface LeadSituation {
   earlier: string[];
   /** The review found the same thing as the round before. */
   repeated: boolean;
+  /** Rounds the chunk may take in all. */
+  maxRounds: number;
+  /** The budget is spent: a rebuild is no longer on offer, only landing or parking. */
+  final?: boolean;
 }
 
 /** How long the engine waits for the lead before deciding by its own rules. */
@@ -61,20 +66,35 @@ export function isLeadDecisionPending(id: string): boolean {
   return pending.has(id);
 }
 
-/** What the lead is told about its job, at the top of its chat. */
+/**
+ * What the lead is told about its job, at the top of its chat.
+ *
+ * It judges a finding by the skeptic's own bar (skeptic-bar.ts). Until
+ * 2026-11-25 it was told to keep going while rounds closed what they were
+ * given: label-check-sol's chunk 3 then spent all eight rounds on a fresh
+ * skeptic's next odd input to an unmarked rule (comma forms, trimmed lengths,
+ * U+2028), each closed and each followed by another, and was set aside with
+ * two chunks behind it. A fresh reviewer every round never runs out of cases.
+ */
 export const LEAD_ROLE =
   `You lead this build. The engine builds each chunk with a worker and reviews it (the build and tests, a ` +
   `skeptic agent, the held-out scenarios); when the review sends a chunk back, it asks you what to do, and you ` +
-  `answer with build_decide. Decide the way the person running the build would:\n` +
-  `- A real defect in what the chunk promised: "continue" (the worker fixes it; say exactly what) or "fresh" ` +
+  `answer with build_decide. Decide the way the person running the build would.\n\n` +
+  `A finding holds the chunk back only when it shows one of: ${SKEPTIC_BREAK_GROUNDS.join("; ")}. ` +
+  `${SKEPTIC_RULE_REACH.join(" ")} The skeptic is told the same bar and still stretches it; you hold the line, ` +
+  `reading the plan's marks, not the skeptic's.\n\n` +
+  `- A real break of what the chunk promised: "continue" (the worker fixes it; say exactly what) or "fresh" ` +
   `(a new worker, when this one is going in circles).\n` +
-  `- True but beyond the chunk's job: "accept", with what is left as follow-ups. The build goes on.\n` +
-  `- A contract with no edge (every round the reviewer finds a new case): "narrow" it to what has been shown, ` +
-  `in a done-when the work already meets or nearly meets.\n` +
-  `- Only a choice of product, money, risk or taste the owner must make: "park", with the question.\n` +
-  `Keep going while rounds close what they were given; a finding that comes back unchanged needs a different ` +
-  `move than "continue". The engine will not land a chunk whose build or tests fail, or whose held-out ` +
-  `scenarios fail, whatever you decide. Read the code and run the checks yourself when the evidence is unclear.`;
+  `- True but beyond the chunk's job, or a new kind of input to a scoped rule: "accept", with what is left as ` +
+  `follow-ups. The build goes on.\n` +
+  `- A contract with no edge: "narrow" it to what has been shown, in a done-when the work already meets. ` +
+  `Narrowing is for making the contract smaller, never for asking for more.\n` +
+  `- Only a choice of product, money, risk or taste the owner must make: "park", with the question.\n\n` +
+  `A new reviewer attacks every round and will always find one more odd input. Once what the chunk promised ` +
+  `is shown working, another edge case is a follow-up, not another round: each round costs a worker and a ` +
+  `review, and chunks that depend on this one wait. A finding that comes back unchanged needs a different move ` +
+  `than "continue". The engine will not land a chunk whose build or tests fail, or whose held-out scenarios ` +
+  `fail, whatever you decide. Read the code and run the checks yourself when the evidence is unclear.`;
 
 function packet(id: string, s: LeadSituation, first: boolean): string {
   const c = s.chunk;
@@ -82,7 +102,12 @@ function packet(id: string, s: LeadSituation, first: boolean): string {
     "(Sent by the app, not typed by the user: a build decision is waiting.)",
     ...(first ? ["", LEAD_ROLE] : []),
     "",
-    `Decision ${id}: chunk ${c.number}/${s.totalChunks}, "${c.title}", after fix round ${s.round}.`,
+    `Decision ${id}: chunk ${c.number}/${s.totalChunks}, "${c.title}", after fix round ${s.round} of at most ${s.maxRounds}.`,
+    ...(s.final ? [
+      `This is the last decision for this chunk: its rounds are spent. "accept" lands it (the engine still refuses ` +
+      `one whose build, tests or held-out scenarios fail); "park" stops for the owner; "continue", "fresh" and ` +
+      `"narrow" set the chunk aside, and the chunks that depend on it are not built.`,
+    ] : []),
     `Slice: ${c.slice || "(none)"}`,
     `Done when: ${c.doneWhen || "(none)"}`,
     `Held-out scenarios it carries: ${c.scenarios || "none"}`,

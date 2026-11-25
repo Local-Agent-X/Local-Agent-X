@@ -17,8 +17,9 @@
  * A build with a lead (advisor/lead-chat.ts) asks the lead instead, every
  * round (lead-rounds.ts): it can keep a chunk going while it makes progress,
  * accept it with follow-ups, narrow an open-ended contract, or park it for the
- * owner, and MAX_LEAD_ROUNDS is only a ceiling on cost. A round the lead does
- * not answer is decided by the rules above.
+ * owner, and MAX_LEAD_ROUNDS is only a ceiling on cost: at the ceiling the
+ * lead still has the last word, landing or parking the chunk, or it is set
+ * aside. A round the lead does not answer is decided by the rules above.
  */
 import type { ParsedPlan, ParsedChunk } from "../plan-parser.js";
 import type { ChunkReviewOutcome, ReviewAction } from "../chunk-review/index.js";
@@ -162,6 +163,18 @@ async function nextRound(opts: HandlePushBackOptions, round: Round, n: number, e
   return { plan: await planRound(opts, round), byLead: false };
 }
 
+/** The lead's last word on a chunk whose rounds are spent: landed, parked or
+ *  set aside on its answer; null when it gave none (the ceiling decides). */
+async function finalLeadSay(opts: HandlePushBackOptions, round: Round, n: number, earlier: string[], repeated: boolean): Promise<HandlePushBackResult | null> {
+  const plan = await planLeadRound({
+    lead: opts.buildLead!, chunk: round.chunk, plan: round.plan, outcome: round.outcome, totalChunks: opts.totalChunks,
+    round: n, earlier, repeated, final: true, projectDir: opts.projectDir, emit: opts.emit, signal: opts.signal,
+  });
+  if (!plan) return null;
+  if (plan.kind === "land") return { finalOutcome: plan.outcome, finalAction: "proceed" };
+  return { finalAction: "halt", finalOutcome: { ...round.outcome, reasoning: plan.kind === "halt" ? plan.reasoning : round.outcome.reasoning } };
+}
+
 export async function handlePushBack(opts: HandlePushBackOptions): Promise<HandlePushBackResult> {
   const { totalChunks, emit } = opts;
   let round: Round = { chunk: opts.chunk, plan: opts.plan, outcome: opts.outcome };
@@ -190,6 +203,10 @@ export async function handlePushBack(opts: HandlePushBackOptions): Promise<Handl
     repeated = stuck;
     // A lead decides what a repeated finding means; the rules stop on it.
     const ceiling = byLead ? MAX_LEAD_ROUNDS : MAX_FIX_ROUNDS;
+    if (byLead && n >= ceiling) {
+      const last = await finalLeadSay(opts, { chunk: next.chunk, plan: next.plan, outcome: rebuilt }, n, [...earlier, round.outcome.reasoning], stuck);
+      if (last) return last;
+    }
     if ((stuck && !byLead) || n >= ceiling) {
       // Not a "halt" event: whether the build stops or sets the chunk aside is
       // the loop's call (run.ts halts; parallel-waves.ts builds on without it).

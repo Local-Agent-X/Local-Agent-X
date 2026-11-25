@@ -17,15 +17,16 @@ const report = { status: "done", doneWhen: "met", note: "", specGaps: "" } as un
 const sentBack = (gate: string, reasoning = "the size gate skips root build/") =>
   ({ action: "push_back", reasoning, findings: [{ gate, action: "push_back", reasoning }], report }) as unknown as ChunkReviewOutcome;
 
-function round(decision: LeadDecision | null, outcome = sentBack("skeptic")) {
+function round(decision: LeadDecision | null, outcome = sentBack("skeptic"), final = false) {
   const projectDir = mkdtempSync(join(tmpdir(), "lax-lead-round-"));
   mkdirSync(join(projectDir, "spec"));
   const said: string[] = [];
+  const ask = vi.fn(async () => decision);
   const run = planLeadRound({
     lead: { projectDir, originSessionId: "chat-x" }, chunk, plan, outcome, totalChunks: 5, round: 3, earlier: [], repeated: false,
-    projectDir, emit: (e) => { said.push(e.message); }, ask: vi.fn(async () => decision),
+    projectDir, emit: (e) => { said.push(e.message); }, ask, ...(final ? { final } : {}),
   });
-  return { run, said, projectDir };
+  return { run, said, projectDir, ask };
 }
 const buildState = (dir: string) => readFileSync(join(dir, "spec", "build-state.md"), "utf-8");
 
@@ -58,6 +59,35 @@ describe("planLeadRound", () => {
       .toMatchObject({ kind: "rebuild", retryReason: expect.stringMatching(/^check root build\/ too[\s\S]*size gate skips root build/) });
     expect(await round({ action: "park", reasoning: "taste", question: "Ship without the Android check?" }).run)
       .toEqual({ kind: "halt", reasoning: "The build lead needs the owner to decide: Ship without the Android check?" });
+  });
+
+  // The last word on a chunk whose rounds are spent (label-check-sol chunk 3,
+  // 2026-11-25: the engine set it aside at the ceiling without asking).
+  describe("once the rounds are spent", () => {
+    it("the lead is told so, and its accept lands the chunk", async () => {
+      const { run, ask } = round({ action: "accept", reasoning: "the manual flow works; the rest are new kinds of input" }, sentBack("skeptic"), true);
+      expect(await run).toMatchObject({ kind: "land", outcome: { action: "proceed" } });
+      expect(ask.mock.calls[0]).toEqual([expect.anything(), expect.objectContaining({ final: true, maxRounds: 8 }), expect.anything()]);
+    });
+
+    it("an answer that would build again sets the chunk aside, and a narrowing is not recorded", async () => {
+      for (const decision of [
+        { action: "continue", reasoning: "one more edge", instruction: "fix it" },
+        { action: "fresh", reasoning: "start over", instruction: "fix it" },
+        { action: "narrow", reasoning: "smaller", doneWhen: "the manual flow" },
+      ] as LeadDecision[]) {
+        const { run, projectDir } = round(decision, sentBack("skeptic", "U+2028 splits an entry"), true);
+        const next = await run;
+        expect(next).toMatchObject({ kind: "halt", reasoning: expect.stringContaining("spent its 8 fix rounds") });
+        expect((next as { reasoning: string }).reasoning).toContain("U+2028 splits an entry");
+        expect(() => buildState(projectDir)).toThrow();
+      }
+    });
+
+    it("an accept the engine refuses sets it aside too", async () => {
+      const { run } = round({ action: "accept", reasoning: "good enough" }, sentBack("build-exec", "npm test exited 1"), true);
+      expect(await run).toMatchObject({ kind: "halt" });
+    });
   });
 
   it("no answer is no plan: the engine's rules decide", async () => {

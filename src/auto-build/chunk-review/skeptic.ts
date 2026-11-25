@@ -18,9 +18,12 @@
  *   - The skeptic answered with no parseable verdict → broken. An agent that
  *     dodged the verdict format has not shown the change holds. A BROKEN
  *     verdict that names no ground stays broken for the same reason.
- *   - The skeptic never answered (crash, timeout, cancel) → not-run. Nothing
- *     was shown either way; the caller records the chunk as unverified and the
- *     build goes on, the same rule as every other gate's infra failure.
+ *   - The skeptic never answered (crash, timeout, cancel, or a turn that
+ *     ended with nothing said, as when its model's stream died) → not-run.
+ *     Nothing was shown either way, so it is asked once more; a second
+ *     not-run is recorded as unverified and the build goes on, the same rule
+ *     as every other gate's infra failure. An empty answer read as BROKEN
+ *     once cost a fix round that changed nothing (label-check-sol, 2026-11-25).
  */
 
 import type { ParsedChunk } from "../plan-parser.js";
@@ -125,7 +128,18 @@ export function parseSkepticVerdict(raw: string): SkepticVerdict {
   return { status: verdict, finding, ...(followUps.length ? { followUps } : {}) };
 }
 
+/** Times the skeptic is asked when it does not answer. */
+const SKEPTIC_ATTEMPTS = 2;
+
 export async function runChunkSkeptic(input: SkepticInput): Promise<SkepticVerdict> {
+  let verdict = await askSkeptic(input);
+  for (let attempt = 1; attempt < SKEPTIC_ATTEMPTS && verdict.status === "not-run" && !input.signal?.aborted; attempt++) {
+    verdict = await askSkeptic(input);
+  }
+  return verdict;
+}
+
+async function askSkeptic(input: SkepticInput): Promise<SkepticVerdict> {
   // The probe folder is the skeptic's own: gone when it finishes, so no probe
   // reaches the chunk's commit or the next reviewer. A folder of that name the
   // project already had is left alone.
@@ -152,5 +166,6 @@ export async function runChunkSkeptic(input: SkepticInput): Promise<SkepticVerdi
       finding: `The skeptic did not finish (exit ${result.exitCode}${result.error ? `: ${result.error}` : ""}).`,
     };
   }
+  if (!result.stdout.trim()) return { status: "not-run", finding: "The skeptic's turn ended without a word (its model returned nothing)." };
   return parseSkepticVerdict(result.stdout);
 }

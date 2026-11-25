@@ -326,14 +326,30 @@ export function getKernelTaintSources(sessionId: string): string[] {
  *
  * Returns the number of taint entries propagated (for logging / tests).
  */
+/**
+ * The reads a session already holds, by the one thing every copy of a read
+ * shares: its fingerprints array, made once when the read is recorded and
+ * carried by reference through every propagation. A propagation skips what
+ * the target holds, so lineage moved parent→child at a spawn and child→parent
+ * at its completion does not come back as a second copy. Without it a build
+ * lead's chat doubled its entries with every worker it spawned, until the
+ * server ran out of heap mid-build (2.5 GB held by propagation, label-check-sol
+ * 2026-11-25).
+ */
+export function heldReads(entries: readonly TaintEntry[]): Set<readonly string[]> {
+  return new Set(entries.map((e) => e.fingerprints));
+}
+
 export function propagateTaint(fromSessionId: string, toSessionId: string): number {
   if (!fromSessionId || !toSessionId || fromSessionId === toSessionId) return 0;
   const fromTaints = sessionTaint.get(fromSessionId);
   if (!fromTaints || fromTaints.length === 0) return 0;
   if (!sessionTaint.has(toSessionId)) sessionTaint.set(toSessionId, []);
   const target = sessionTaint.get(toSessionId)!;
+  const held = heldReads(target);
   let count = 0;
   for (const t of fromTaints) {
+    if (held.has(t.fingerprints)) continue;
     // Preserve the child's fingerprints AND completeness so the parent's egress
     // check makes the SAME clearable/unclearable decision (an incomplete child
     // entry stays unclearable in the parent — the hole doesn't reopen across the

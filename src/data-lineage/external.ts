@@ -47,6 +47,7 @@
 import { createHash } from "node:crypto";
 import { type TaintEntry, MAX_FINGERPRINT_CONTENT, computeFingerprints, payloadFingerprints } from "./fingerprint.js";
 import { adjudicatePayload, type PayloadVerdict } from "./payload-overlap.js";
+import { heldReads } from "./taint.js";
 import { policyRowOf } from "../tool-registry.js";
 
 interface ExternalIngestState {
@@ -247,7 +248,10 @@ export function propagateExternalIngestion(fromSessionId: string, toSessionId: s
 	const from = externalIngestSessions.get(fromSessionId);
 	if (!from) return false;
 	const to = stateFor(toSessionId);
+	// An entry the target already holds is not added again (heldReads, taint.ts).
+	const held = heldReads(to.entries);
 	for (const entry of from.entries) {
+		if (held.has(entry.fingerprints)) continue;
 		to.entries.push({ ...entry, timestamp: Date.now(), runId: toSessionId });
 		to.hashes += entry.fingerprints.length;
 	}

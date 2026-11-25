@@ -382,7 +382,7 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
    unbroken token (a path, a URL, a hash) in any message would push the column
    wider than the chat pane instead of wrapping. min-width:0 lets it wrap. */
 .msg{min-width:0}
-.msg{max-width:800px;width:100%}
+.msg{max-width:var(--chat-column,800px);width:100%}
 @keyframes fadeIn{from{opacity:0;transform:translateY(6px)}to{opacity:1}}
 .msg.user{display:flex;justify-content:flex-end}
 /* Live voice transcription preview: a dimmed, still-being-recognized user
@@ -739,7 +739,7 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
 .scroll-bottom-btn:hover{border-color:var(--accent);color:var(--accent)}
 .scroll-bottom-btn svg{display:block}
 #input-area{padding:6px 20px 12px;border-top:1px solid var(--border)}
-#context-bar{display:none;max-width:800px;margin:0 auto 6px;padding:6px 12px;border-radius:8px;font-family:var(--mono);font-size:.68rem;align-items:center;gap:8px}
+#context-bar{display:none;max-width:var(--chat-column,800px);margin:0 auto 6px;padding:6px 12px;border-radius:8px;font-family:var(--mono);font-size:.68rem;align-items:center;gap:8px}
 #context-bar.visible{display:flex}
 #context-bar .ctx-dot{width:7px;height:7px;border-radius:50%;flex-shrink:0}
 #context-bar .ctx-dot.green{background:var(--accent);box-shadow:0 0 6px var(--accent-dim)}
@@ -748,7 +748,7 @@ body.platform-darwin #sidebar-agents-controls{top:3px;right:14px}
 #context-bar .ctx-text{color:var(--muted)}
 #context-bar .ctx-action{background:none;border:1px solid var(--border);color:var(--muted);font-family:var(--mono);font-size:.65rem;padding:3px 10px;border-radius:6px;cursor:pointer;margin-left:auto;transition:all .15s}
 #context-bar .ctx-action:hover{border-color:var(--accent);color:var(--accent)}
-#input-wrapper{display:flex;position:relative;max-width:800px;margin:0 auto;width:100%}
+#input-wrapper{display:flex;position:relative;max-width:var(--chat-column,800px);margin:0 auto;width:100%}
 #ide-plus-btn{width:30px;height:30px;border-radius:50%;border:1px solid var(--border);background:transparent;color:var(--muted);font-size:1.05rem;cursor:pointer;transition:all .2s;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-bottom:2px}
 #ide-plus-btn:hover{border-color:var(--muted);color:var(--text);background:var(--hover)}
 #plus-btn{font-size:1.15rem}
@@ -1342,7 +1342,7 @@ body.platform-win .settings-overlay{top:32px}
 
 /* ── Secret card (rendered inline in the chat flow) ── */
 #secret-modal-overlay{display:none}
-#secret-modal-overlay.visible{display:block;margin:8px 0 4px;width:100%;max-width:800px}
+#secret-modal-overlay.visible{display:block;margin:8px 0 4px;width:100%;max-width:var(--chat-column,800px)}
 .secret-input-wrap{position:relative}
 .secret-input-wrap .secret-input-field{padding-right:38px}
 .secret-reveal{position:absolute;right:6px;top:50%;transform:translateY(-50%);display:flex;padding:5px;background:none;border:0;border-radius:6px;color:var(--muted);cursor:pointer}
@@ -1417,7 +1417,7 @@ body.platform-win .settings-overlay{top:32px}
 /* Demoted to a read-only info strip (weak-model warning, token count, Local
    badge) — all interactive pickers live in the in-box #composer-bar now.
    No reserved min-height: an empty strip should cost no space. */
-#status-bar{display:flex;gap:8px;padding:2px 14px 0;font-family:var(--mono);font-size:.62rem;color:var(--muted);max-width:800px;margin:0 auto;width:100%;align-items:center;justify-content:flex-end}
+#status-bar{display:flex;gap:8px;padding:2px 14px 0;font-family:var(--mono);font-size:.62rem;color:var(--muted);max-width:var(--chat-column,800px);margin:0 auto;width:100%;align-items:center;justify-content:flex-end}
 #status-bar-dynamic{display:flex;align-items:center;gap:8px}
 /* Boot reveal gate. The shell paints in stages: app.css applies before first
    paint, but the platform-win class (titlebar visibility + layout) lands at the
@@ -1484,6 +1484,11 @@ body.app-ready #desktop-titlebar,body.app-ready #sidebar,body.app-ready #main,bo
    #page-chat. #slash-popup is document.body-appended and the composer popovers
    anchor to #input-wrapper, so nothing loses its containing block. */
 #chat-main{flex:1;display:flex;flex-direction:column;min-width:0;overflow:hidden;position:relative;isolation:isolate;container-type:inline-size;container-name:chat}
+/* Width of the reading column (transcript, composer, status rows). 800px on an
+   ordinary window; on a wide pane it grows with the pane (cqi resolves where the
+   var is used, against the chat container) up to a cap that keeps lines readable,
+   so an ultrawide monitor isn't left with a thin strip down the middle. */
+#chat-main{--chat-column:clamp(800px, 64cqi, 1440px)}
 
 /* ── Chat-pane responsive steps ──
    Ordered widest-first so later steps layer on earlier ones. Steps 3 and 4 have

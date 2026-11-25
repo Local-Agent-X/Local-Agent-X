@@ -47,7 +47,17 @@ describe("chat transcript layout (CSS invariants)", () => {
   });
 
   it("the secret card spans the message column, like the messages it follows", () => {
-    expect(appCss).toMatch(/#secret-modal-overlay\.visible\{[^}]*width:100%[^}]*max-width:800px/);
-    expect(appCss).toMatch(/\.msg\{max-width:800px;width:100%\}/);
+    expect(appCss).toMatch(/#secret-modal-overlay\.visible\{[^}]*width:100%[^}]*max-width:var\(--chat-column,800px\)/);
+    expect(appCss).toMatch(/\.msg\{max-width:var\(--chat-column,800px\);width:100%\}/);
+  });
+
+  it("the reading column grows with a wide chat pane, and the composer rows follow it", () => {
+    // 800px floor on an ordinary window; scales with the pane (container units)
+    // up to a cap, so an ultrawide monitor isn't left with a thin strip.
+    expect(appCss).toMatch(/#chat-main\{--chat-column:clamp\(800px,\s*\d+cqi,\s*\d+px\)\}/);
+    for (const sel of ["#context-bar", "#input-wrapper", "#status-bar"]) {
+      const body = allRules().find((r) => r.selector === sel)?.body ?? "";
+      expect(body, sel).toMatch(/max-width:var\(--chat-column,800px\)/);
+    }
   });
 });

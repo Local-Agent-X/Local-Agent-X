@@ -32,7 +32,7 @@ function updateContextBar(event) {
   if (!bar) {
     bar = document.createElement('div');
     bar.id = 'context-bar';
-    bar.style.cssText = 'display:none;max-width:800px;margin:0 auto 8px;width:100%;padding:0 14px';
+    bar.style.cssText = 'display:none;max-width:var(--chat-column,800px);margin:0 auto 8px;width:100%;padding:0 14px';
     const inputArea = document.getElementById('input-area');
     if (inputArea) inputArea.insertBefore(bar, inputArea.firstChild);
   }

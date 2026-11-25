@@ -17,7 +17,8 @@
  * build's calls, and the decisions are on record in spec/build-state.md. So
  * it writes the run's ledger, as /greenfield ends a build with one, and tells
  * the owner what is theirs: the checks owed to them, the questions parked for
- * them (LEDGER_STEP).
+ * them (LEDGER_STEP). The engine first asks it for the entry and writes it
+ * (lead-ledger.ts); the notice then only asks it to tell the owner.
  */
 import { basename } from "node:path";
 import { pushPendingNotification } from "../../ops/pending-notifications.js";
@@ -35,6 +36,15 @@ export interface BuildEnd {
   /** What the finish gates left open (finish-gates/run.ts): named to the
    *  chat, so a "complete" build is never read as checked and seen working. */
   openItems?: string[];
+  /** The lead's ledger entry for this run is already in spec/ledger.md (lead-ledger.ts). */
+  ledgerWritten?: boolean;
+}
+
+/** The ledger step, or what is left of it once the lead's entry is written. */
+function ledgerStep(end: BuildEnd): string {
+  return end.ledgerWritten
+    ? "Your ledger entry for this run is in spec/ledger.md. Tell the owner what is theirs to do or decide, if you have not."
+    : LEDGER_STEP;
 }
 
 /** A project folder spelled with forward slashes, whichever computer wrote
@@ -59,19 +69,19 @@ export function buildEndNotice(end: BuildEnd): { summary: string; next: string }
   const dir = JSON.stringify(portablePath(end.projectDir));
   const landed = `${end.chunksCommitted}/${end.totalChunks} chunks landed.`;
   if (!end.halt) {
-    if (!end.openItems?.length) return { summary: `${landed} The build finished.`, next: `${LEDGER_STEP} Then carry on with the step that follows the build.` };
+    if (!end.openItems?.length) return { summary: `${landed} The build finished.`, next: `${ledgerStep(end)} Then carry on with the step that follows the build.` };
     return {
       summary: `${landed} The build finished; the finish checks left ${end.openItems.length} open item(s).`,
       next: `Open items:\n${end.openItems.map((i) => `- ${oneLine(i)}`).join("\n")}\n` +
         "Fix what is yours to fix, park for the owner what is theirs, and tell the owner the rest. Do not call the app done while any is open.\n" +
-        LEDGER_STEP,
+        ledgerStep(end),
     };
   }
   return {
     summary: `${landed} Halted at chunk ${end.halt.chunk}: ${oneLine(end.halt.reason)}`,
     next:
       `build_plan_status(project_dir=${dir}) has the full halt reason. Fix what halted it, or park it for the owner ` +
-      `if it is theirs to decide, then build_plan_resume(project_dir=${dir}). Before that: ${LEDGER_STEP}`,
+      `if it is theirs to decide, then build_plan_resume(project_dir=${dir}). Before that: ${ledgerStep(end)}`,
   };
 }
 

@@ -27,6 +27,7 @@ import { runBuildLoop, type LoopEvent, type LoopResult } from "../loop.js";
 import type { JudgmentHook } from "../chunk-review/judgment-hook.js";
 import { chunkJudgingSummary, type ChunkJudge } from "../chunk-review/chunk-verdict.js";
 import { reportBuildToChat } from "./report-to-chat.js";
+import { writeLeadLedger } from "./lead-ledger.js";
 import * as state from "./state.js";
 import { canHaveLead } from "../advisor/lead-chat.js";
 import type { OrchestratorState } from "./state.js";
@@ -224,7 +225,7 @@ async function runOrchestrationLoop(orch: ActiveOrchestration, opts: StartOrches
       judgmentHook: opts.judgmentHook,
       chunkJudge: opts.chunkJudge,
       finishGates: opts.finishGates,
-      // A build started from a chat is led from a chat listed under it.
+      // A build started from a chat is led by that chat (advisor/lead-chat.ts).
       ...(canHaveLead(opts.sessionId) ? { buildLead: { projectDir: opts.projectDir, originSessionId: opts.sessionId } } : {}),
       subprocessTimeoutMs: opts.subprocessTimeoutMs,
       parentSessionId: opts.sessionId,
@@ -235,7 +236,7 @@ async function runOrchestrationLoop(orch: ActiveOrchestration, opts: StartOrches
       onEvent: (event) => onLoopEvent(orch, event),
     });
 
-    onLoopComplete(orch, result);
+    await onLoopComplete(orch, result);
   } catch (e) {
     onLoopCrash(orch, e as Error);
   } finally {
@@ -273,7 +274,7 @@ function onLoopEvent(orch: ActiveOrchestration, event: LoopEvent): void {
   });
 }
 
-function onLoopComplete(orch: ActiveOrchestration, result: LoopResult): void {
+async function onLoopComplete(orch: ActiveOrchestration, result: LoopResult): Promise<void> {
   const isHalted = result.status === "halted";
   if (isHalted) {
     orch.liveState = state.markHalted(orch.liveState, result.lastChunk, "loop-halt", result.haltReason);
@@ -308,8 +309,11 @@ function onLoopComplete(orch: ActiveOrchestration, result: LoopResult): void {
     filesChanged: collectChangedFiles(result),
     metadata: buildSummaryMetadata(orch.liveState, result),
   });
+  const ledgerWritten = await writeLeadLedger({
+    projectDir: orch.projectDir, originSessionId: orch.sessionId, result, landed: [...orch.landedChunks], totalChunks: orch.liveState.totalChunks,
+  });
   reportBuildToChat({
-    sessionId: orch.sessionId, opId: orch.opId, projectDir: orch.projectDir,
+    sessionId: orch.sessionId, opId: orch.opId, projectDir: orch.projectDir, ledgerWritten,
     // Every chunk on the base branch: the ones before this run's scope and the
     // ones landed in it, in whatever order (a chunk set aside leaves a gap).
     chunksCommitted: orch.scopeStartIdx + orch.landedChunks.size, totalChunks: orch.liveState.totalChunks,

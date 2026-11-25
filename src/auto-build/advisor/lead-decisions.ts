@@ -40,6 +40,8 @@ export interface LeadDecision {
   owedCheck?: string;
   /** overrule: what shows the check's finding is wrong (output, file:line). */
   evidence?: string;
+  /** The end of a run: the lead's ledger entry for it (orchestrator/lead-ledger.ts). */
+  report?: string;
 }
 
 export interface LeadSituation {
@@ -63,7 +65,7 @@ export interface LeadSituation {
 
 /** A decision about the build rather than one chunk's fix round. */
 export interface BuildCallSituation {
-  kind: "phase-gate" | "wall-probe" | "set-aside-cap" | "finish";
+  kind: "phase-gate" | "wall-probe" | "set-aside-cap" | "finish" | "report";
   /** One line naming the decision, e.g. "Phase 2's scenarios fail on the merged base". */
   title: string;
   /** What the engine found, in full. */

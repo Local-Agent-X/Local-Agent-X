@@ -37,6 +37,10 @@ describe("buildEndNotice", () => {
     expect(n.summary).toBe("13/13 chunks landed. The build finished.");
     expect(n.next).toMatch(/step that follows the build/);
     expect(n.next).toContain("record this run in spec/ledger.md");
+    // Once the engine wrote the lead's entry, the chat is only asked to tell the owner.
+    const written = buildEndNotice({ ...halted, chunksCommitted: 13, halt: undefined, ledgerWritten: true });
+    expect(written.next).toContain("Your ledger entry for this run is in spec/ledger.md");
+    expect(written.next).not.toContain("record this run in spec/ledger.md");
   });
 
   // label-check's chat heard only "the build finished… carry on", and asked

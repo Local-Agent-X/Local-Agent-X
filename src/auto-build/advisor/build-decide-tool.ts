@@ -20,6 +20,7 @@ export function readDecision(args: Record<string, unknown>): LeadDecision | { er
   const question = text(args.question);
   const owedCheck = text(args.owed_check);
   const evidence = text(args.evidence);
+  const report = text(args.report);
   const parts = Array.isArray(args.parts)
     ? args.parts.map((p) => ({ title: text((p as Record<string, unknown>)?.title), doneWhen: text((p as Record<string, unknown>)?.done_when) }))
     : [];
@@ -40,6 +41,7 @@ export function readDecision(args: Record<string, unknown>): LeadDecision | { er
     ...(question ? { question } : {}),
     ...(owedCheck ? { owedCheck } : {}),
     ...(evidence ? { evidence } : {}),
+    ...(report ? { report } : {}),
   };
 }
 
@@ -70,6 +72,7 @@ export const buildDecideTool: ToolDefinition = {
       question: { type: "string", description: "park: the question for the owner." },
       owed_check: { type: "string", description: "owed: the check only the owner can run, and what it needs." },
       evidence: { type: "string", description: "overrule: what shows the finding is wrong (output, file:line)." },
+      report: { type: "string", description: "The end of a build run: your ledger entry for it." },
     },
     required: ["decision_id", "action", "reasoning"],
   },

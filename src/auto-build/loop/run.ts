@@ -33,7 +33,7 @@ import { buildChunkWithRetry, type ChunkAttemptResult } from "./chunk-attempt.js
 import type { ParsedChunk } from "../plan-parser.js";
 import { clearSetAside } from "../failure-recovery.js";
 import { pickUpSetAsideWork } from "./carry-over.js";
-import { anythingSetAside, createSetAsideLedger, endWithSetAside, holdBackWaiting, MAX_SET_ASIDE, type SetAsideLedger } from "./set-aside.js";
+import { anythingSetAside, createSetAsideLedger, endWithSetAside, holdBackWaiting, stopForSetAside, type SetAsideLedger } from "./set-aside.js";
 import { isSetAsideCase, setChunkAsideInTree } from "./tree-set-aside.js";
 import { isPhaseGatePause } from "../chunk-review/index.js";
 import { handleAction } from "./handle-action.js";
@@ -247,7 +247,7 @@ async function runChunksInOrder(run: {
 
     if (isSetAsideCase(finalAction, isPhaseGatePause(finalOutcome), opts.signal)
       && setChunkAsideInTree({ projectDir: opts.projectDir, chunk, totalChunks, preSha: preSha.value, outcome: finalOutcome, ledger, emit })) {
-      if (ledger.setAside.length >= MAX_SET_ASIDE) return endSetAside();
+      if (await stopForSetAside(ledger, { chunkNumber: chunk.number, totalChunks, lead: opts.buildLead, signal: opts.signal, emit })) return endSetAside();
       continue;
     }
 

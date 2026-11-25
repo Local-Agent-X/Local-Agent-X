@@ -1,8 +1,8 @@
 // Which chunks wait on a chunk that was set aside, and what the build tells
 // its chat at the end.
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ParsedChunk } from "../plan-parser.js";
-import { anythingSetAside, blockedOn, createSetAsideLedger, holdBackWaiting, setAsideSummary } from "./set-aside.js";
+import { anythingSetAside, blockedOn, createSetAsideLedger, holdBackWaiting, setAsideSummary, stopForSetAside } from "./set-aside.js";
 
 const chunk = (number: number, dependsOn: number[] = []): ParsedChunk =>
   ({ number, title: `Chunk ${number}`, dependsOn }) as unknown as ParsedChunk;
@@ -52,5 +52,35 @@ describe("setAsideSummary", () => {
     ledger.setAside.push({ chunk: 1, title: "Big", reason: "x".repeat(5_000) });
     expect(setAsideSummary(ledger, []).length).toBeLessThan(1_200);
     expect(setAsideSummary(ledger, [])).toContain("Nothing landed this run.");
+  });
+});
+
+// Three set-aside chunks used to end every build; with a lead, the lead says
+// whether the rest is still worth building.
+describe("stopForSetAside", () => {
+  const lead = { projectDir: "C:/proj", originSessionId: "chat-x" };
+  const atCap = () => {
+    const ledger = createSetAsideLedger();
+    for (const n of [2, 4, 5]) ledger.setAside.push({ chunk: n, title: `Chunk ${n}`, reason: "still red" });
+    return ledger;
+  };
+  const at = { chunkNumber: 5, totalChunks: 9, lead, emit: () => {} };
+
+  it("stops at the cap with no lead, and never below it", async () => {
+    const ledger = atCap();
+    expect(await stopForSetAside(ledger, { ...at, lead: undefined })).toBe(true);
+    ledger.setAside.pop();
+    expect(await stopForSetAside(ledger, { ...at, lead: undefined })).toBe(false);
+  });
+
+  it("builds on when the lead says so, asks again only for the next one, and stops when it does not answer", async () => {
+    const ask = vi.fn(async (_lead: unknown, _s: unknown) => ({ action: "continue" as const, reasoning: "the rest is independent" }));
+    const ledger = atCap();
+    expect(await stopForSetAside(ledger, at, ask)).toBe(false);
+    expect(await stopForSetAside(ledger, at, ask)).toBe(false);
+    expect(ask).toHaveBeenCalledTimes(1);
+    expect(ask.mock.calls[0][1]).toMatchObject({ kind: "set-aside-cap", answers: { continue: expect.any(String), park: expect.any(String) } });
+    ledger.setAside.push({ chunk: 7, title: "Chunk 7", reason: "red" });
+    expect(await stopForSetAside(ledger, at, vi.fn(async () => null))).toBe(true);
   });
 });

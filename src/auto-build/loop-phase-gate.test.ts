@@ -8,14 +8,16 @@
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const { runPhaseGateScoring, runAutoFixWorker, consultAdvisor } = vi.hoisted(() => ({
+const { runPhaseGateScoring, runAutoFixWorker, consultAdvisor, askLeadBuildCall } = vi.hoisted(() => ({
   runPhaseGateScoring: vi.fn(),
   runAutoFixWorker: vi.fn(),
   consultAdvisor: vi.fn(),
+  askLeadBuildCall: vi.fn(),
 }));
 vi.mock("./scenario-scorer/phase-gate-runner.js", () => ({ runPhaseGateScoring }));
 vi.mock("./scenario-scorer/auto-fix.js", () => ({ runAutoFixWorker }));
 vi.mock("./advisor/index.js", () => ({ consultAdvisor }));
+vi.mock("./advisor/lead-decisions.js", () => ({ askLeadBuildCall }));
 
 import { attemptPhaseGateScoring } from "./loop-phase-gate.js";
 import type { ParsedChunk, ParsedPlan } from "./plan-parser.js";
@@ -94,5 +96,42 @@ describe("attemptPhaseGateScoring → runAutoFixWorker lineage", () => {
 
     expect(runAutoFixWorker.mock.calls[0][0].parentSessionId).toBeUndefined();
     expect(runAutoFixWorker.mock.calls[0][0].parentOpId).toBeUndefined();
+  });
+});
+
+// A build with a lead: the lead decides each attempt, up to four.
+describe("a phase gate in a build with a lead", () => {
+  beforeEach(() => { runPhaseGateScoring.mockReset(); runAutoFixWorker.mockReset(); consultAdvisor.mockReset(); askLeadBuildCall.mockReset(); });
+  const led = (): LoopOptions => ({ ...loopOptions(), buildLead: { projectDir: "/tmp/lax-phase-gate-project", originSessionId: "chat-session-1" } });
+  const failing = { kind: "failures", reports: [failedReport], failedReports: [failedReport] };
+
+  it("continue sends a fix worker the lead's instruction; the advisor is not asked", async () => {
+    runPhaseGateScoring.mockResolvedValueOnce(failing).mockResolvedValueOnce({ kind: "proceed", reports: [] });
+    askLeadBuildCall.mockResolvedValue({ action: "continue", reasoning: "real", instruction: "the login form posts to the wrong route" });
+    runAutoFixWorker.mockResolvedValue({ workerCompleted: true, workerReport: "STATUS: done", durationMs: 1, fixSha: null });
+    expect(await attemptPhaseGateScoring(led(), chunk, () => {}, 1)).toEqual({ kind: "recovered" });
+    expect(runAutoFixWorker.mock.calls[0][0].hint).toBe("the login form posts to the wrong route");
+    expect(askLeadBuildCall.mock.calls[0][1]).toMatchObject({ kind: "phase-gate", answers: { continue: expect.any(String), park: expect.any(String) } });
+    expect(consultAdvisor).not.toHaveBeenCalled();
+  });
+
+  it("park stops at the phase on the owner's question; past two attempts the lead still decides", async () => {
+    runPhaseGateScoring.mockResolvedValue(failing);
+    askLeadBuildCall
+      .mockResolvedValueOnce({ action: "continue", reasoning: "r", instruction: "a" })
+      .mockResolvedValueOnce({ action: "continue", reasoning: "r", instruction: "b" })
+      .mockResolvedValueOnce({ action: "park", reasoning: "r", question: "Drop social login?" });
+    runAutoFixWorker.mockResolvedValue({ workerCompleted: true, workerReport: "STATUS: done", durationMs: 1, fixSha: null });
+    expect(await attemptPhaseGateScoring(led(), chunk, () => {}, 1)).toEqual({ kind: "halt-with-context", reason: "The build lead needs the owner to decide: Drop social login?" });
+    expect(runAutoFixWorker).toHaveBeenCalledTimes(2);
+  });
+
+  it("an attempt the lead does not answer is the advisor's", async () => {
+    runPhaseGateScoring.mockResolvedValueOnce(failing).mockResolvedValueOnce({ kind: "proceed", reports: [] });
+    askLeadBuildCall.mockResolvedValue(null);
+    consultAdvisor.mockResolvedValue(null);
+    runAutoFixWorker.mockResolvedValue({ workerCompleted: true, workerReport: "STATUS: done", durationMs: 1, fixSha: null });
+    expect(await attemptPhaseGateScoring(led(), chunk, () => {}, 1)).toEqual({ kind: "recovered" });
+    expect(consultAdvisor).toHaveBeenCalledTimes(1);
   });
 });

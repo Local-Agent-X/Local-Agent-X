@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2184 non-test source files · 59 oversized · 275 nearing the size cap.
+**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2185 non-test source files · 59 oversized · 275 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -68,7 +68,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/integrations/` | 12 | 15 | M |  |
 | `src/whatsapp-bridge/` | 11 | 8 | M | 1 |
 | `src/agent-guards/` | 10 | 13 | L |  |
-| `src/auto-build/` | 10 | 77 | XL | 1 |
+| `src/auto-build/` | 10 | 78 | XL | 1 |
 | `src/calendar/` | 10 | 10 | M |  |
 | `src/codex-client/` | 10 | 7 | M |  |
 | `src/plugin-system/` | 9 | 10 | L |  |
@@ -468,7 +468,6 @@ job. Comments are free: never cut them to fit.
 - `src/anthropic-client/warm-pool/stream-prompt.ts#streamViaWarmPool` — 70+ own code lines (cap 100)
 - `src/ari-kernel/evaluate.ts#ariEvaluate` — 70+ own code lines (cap 100)
 - `src/auto-build/chunk-review/gate-done-when.ts#gateDoneWhen` — 70+ own code lines (cap 100)
-- `src/auto-build/loop-phase-gate.ts#runAdvisorDrivenRecovery` — 70+ own code lines (cap 100)
 - `src/auto-build/loop/handle-action.ts#handleAction` — 70+ own code lines (cap 100)
 - `src/autopilot/validate.ts#validateRound` — 70+ own code lines (cap 100)
 - `src/browser/in-app-resolve-scripts.ts#textSearchScript` — 70+ own code lines (cap 100)
@@ -526,6 +525,7 @@ job. Comments are free: never cut them to fit.
 - `src/agency/worktree-lifecycle.ts#mergeWorktree` — 60+ own code lines (cap 100)
 - `src/agents/invoke.ts#invokeDefinition` — 60+ own code lines (cap 100)
 - `src/auth/anthropic-login.ts#completeAnthropicCliOAuth` — 60+ own code lines (cap 100)
+- `src/auto-build/loop-phase-gate.ts#runAdvisorDrivenRecovery` — 60+ own code lines (cap 100)
 - `src/auto-build/loop/parallel-waves.ts#runBatch` — 60+ own code lines (cap 100)
 - `src/auto-build/loop/run.ts#runBuildLoop` — 60+ own code lines (cap 100)
 - `src/auto-build/orchestrator/resume.ts#computeResumeWindow` — 60+ own code lines (cap 100)

@@ -92,6 +92,40 @@ describe("runFinishGates", () => {
     expect(h.said.some((m) => m.includes("fix rounds used up"))).toBe(true);
   });
 
+  it("with a lead, the lead decides whether to fix again once the two rounds are spent, up to four", async () => {
+    const h = harness([
+      { suite: { failed: [], unjudged: [] }, found: breakers([["high", "a"]]) },
+      { suite: { failed: [], unjudged: [] }, found: breakers([["high", "b"]]) },
+      { suite: { failed: [], unjudged: [] }, found: breakers([["high", "c"]]) },
+      { suite: { failed: [], unjudged: [] }, found: breakers([["high", "d"]]) },
+      { suite: { failed: [], unjudged: [] }, found: breakers([["high", "e"]]) },
+    ]);
+    const askLead = vi.fn(async (_lead: unknown, _s: unknown) => ({ action: "continue" as const, reasoning: "still worth it" }));
+    const out = await runFinishGates({
+      opts: opts({ buildLead: { projectDir: dir, originSessionId: "chat-x" } }), result: done(), emit: h.emit,
+      buildFixes: h.buildFixes, judgeSuite: h.judgeSuite, breakers: h.runBreakers as never, askLead,
+    });
+    expect(h.buildFixes).toHaveBeenCalledTimes(4);
+    expect(askLead).toHaveBeenCalledTimes(2);
+    expect(askLead.mock.calls[0][1]).toMatchObject({ kind: "finish", evidence: expect.stringContaining("hostile [high]: c") });
+    expect(out.openItems).toContain("hostile [high]: e");
+  });
+
+  it("a lead that says accept ends at the two rounds, listing what is open", async () => {
+    const h = harness([
+      { suite: { failed: [], unjudged: [] }, found: breakers([["high", "a"]]) },
+      { suite: { failed: [], unjudged: [] }, found: breakers([["high", "b"]]) },
+      { suite: { failed: [], unjudged: [] }, found: breakers([["high", "c"]]) },
+    ]);
+    const askLead = vi.fn(async () => ({ action: "accept" as const, reasoning: "enough" }));
+    const out = await runFinishGates({
+      opts: opts({ buildLead: { projectDir: dir, originSessionId: "chat-x" } }), result: done(), emit: h.emit,
+      buildFixes: h.buildFixes, judgeSuite: h.judgeSuite, breakers: h.runBreakers as never, askLead,
+    });
+    expect(h.buildFixes).toHaveBeenCalledTimes(2);
+    expect(out.openItems).toContain("hostile [high]: c");
+  });
+
   it("a fix round that does not land is an open item, and the build still ends complete", async () => {
     const h = harness([
       { suite: { failed: [], unjudged: [] }, found: breakers([["high", "a"]]) },

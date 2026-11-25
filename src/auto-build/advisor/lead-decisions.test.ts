@@ -4,7 +4,8 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import { setChatHandler } from "../../chat-ws/chat-handler.js";
 import { canHaveLead, leadSessionId, setLeadChatHost } from "./lead-chat.js";
-import { askLead, isLeadDecisionPending, LEAD_ROLE, type LeadSituation } from "./lead-decisions.js";
+import { askLead, askLeadBuildCall, isLeadDecisionPending, type LeadSituation } from "./lead-decisions.js";
+import { LEAD_ROLE } from "./lead-role.js";
 import { buildDecideTool, readDecision } from "./build-decide-tool.js";
 import { SKEPTIC_BREAK_GROUNDS } from "../chunk-review/skeptic-bar.js";
 
@@ -65,7 +66,32 @@ describe("the build lead", () => {
     leadAnswers({ action: "accept", reasoning: "done enough" });
     await askLead(ref, { ...situation, round: 8, final: true }, { answerMs: 5_000 });
     expect(messages.at(-1)!.message).toContain("This is the last decision for this chunk");
-    expect(messages.at(-1)!.message).toContain('"continue", "fresh" and "narrow" set the chunk aside');
+    expect(messages.at(-1)!.message).toContain('"continue", "fresh" and "narrow" set it aside');
+  });
+
+  // label-check-sol's chunk 4 (2026-11-25): parked on a device only the owner
+  // has, and chunk 5 never started.
+  it("is told a check only the owner can run is owed, never a reason to park", () => {
+    expect(LEAD_ROLE).toContain('"owed"');
+    expect(LEAD_ROLE).toContain("Never park for that");
+    expect(LEAD_ROLE).toContain('"overrule"');
+  });
+
+  it("a build call takes only the answers it lists; build_decide refuses the rest and the lead can answer again", async () => {
+    const replies: string[] = [];
+    setChatHandler(async (_sessionId, message) => {
+      const id = message.match(/build_decide\(decision_id="([^"]+)"/)![1];
+      for (const args of [{ action: "accept", reasoning: "fine" }, { action: "continue", reasoning: "keep building", instruction: "go on" }]) {
+        const out = await buildDecideTool.execute({ decision_id: id, ...args }, undefined as never) as { content: string };
+        replies.push(out.content);
+      }
+    });
+    const decision = await askLeadBuildCall(ref, {
+      kind: "set-aside-cap", title: "Three chunks are set aside", evidence: "Chunks 2, 4 and 5 were set aside.",
+      answers: { continue: "keep building what does not depend on them", park: "stop the build here" }, chunkNumber: 5, totalChunks: 9,
+    }, { answerMs: 5_000 });
+    expect(replies[0]).toContain("takes one of: continue, park");
+    expect(decision).toMatchObject({ action: "continue" });
   });
 
   it("a lead that ends its turn without deciding is no answer, and nothing is left waiting", async () => {
@@ -89,6 +115,9 @@ describe("build_decide", () => {
     expect(readDecision({ action: "continue", reasoning: "r" })).toMatchObject({ error: expect.stringContaining("instruction") });
     expect(readDecision({ action: "narrow", reasoning: "r" })).toMatchObject({ error: expect.stringContaining("done_when") });
     expect(readDecision({ action: "park", reasoning: "r" })).toMatchObject({ error: expect.stringContaining("question") });
+    expect(readDecision({ action: "owed", reasoning: "r" })).toMatchObject({ error: expect.stringContaining("owed_check") });
+    expect(readDecision({ action: "overrule", reasoning: "r" })).toMatchObject({ error: expect.stringContaining("evidence") });
+    expect(readDecision({ action: "owed", reasoning: "r", owed_check: "live scan on a Pixel 9" })).toEqual({ action: "owed", reasoning: "r", owedCheck: "live scan on a Pixel 9" });
     expect(readDecision({ action: "ship it", reasoning: "r" })).toMatchObject({ error: expect.stringContaining("one of") });
     expect(readDecision({ action: "accept", reasoning: "beyond the chunk", follow_ups: ["root build/ ", ""] }))
       .toEqual({ action: "accept", reasoning: "beyond the chunk", followUps: ["root build/"] });

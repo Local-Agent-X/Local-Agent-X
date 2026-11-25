@@ -81,4 +81,21 @@ describe("the wall probe", () => {
     const out = await createWallProbe({ projectDir: dir }).afterLanding(scope().s, 1, 1);
     expect(out.kind === "halt" && out.result.haltReason).toContain("could not be judged twice: judge returned unparseable response");
   });
+
+  // label-check-sol (2026-11-25): what the judge lacked was a device and a
+  // cloud project only the owner had.
+  it("with a lead, an owed check lets the build go on, on record; a park or no answer halts", async () => {
+    const dir = project("pillbox"); launch(dir);
+    fake.outcome = { kind: "error", reason: "no device attached" };
+    const lead = { projectDir: dir, originSessionId: "chat-x" };
+    const owed = vi.fn(async () => ({ action: "owed" as const, reasoning: "only the owner has a phone", owedCheck: "judge on a Pixel with the owner's account" }));
+    const { said, s } = scope();
+    expect(await createWallProbe({ projectDir: dir, buildLead: lead }, owed).afterLanding(s, 1, 1)).toEqual({ kind: "ok" });
+    expect(said.at(-1)).toContain("judge check owed to the owner");
+    expect(fake.halts).toEqual([]);
+
+    const parked = vi.fn(async () => ({ action: "park" as const, reasoning: "r", question: "fix the launch file?" }));
+    expect((await createWallProbe({ projectDir: dir, buildLead: lead }, parked).afterLanding(scope().s, 1, 1)).kind).toBe("halt");
+    expect((await createWallProbe({ projectDir: dir, buildLead: lead }, vi.fn(async () => null)).afterLanding(scope().s, 1, 1)).kind).toBe("halt");
+  });
 });

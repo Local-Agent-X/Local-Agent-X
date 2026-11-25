@@ -13,6 +13,9 @@
  * fix chunks, and a round that finds what the one before it found ends them.
  * It never halts to ask: the build ends "complete" with its open items named,
  * and the chat is told each one (orchestrator/report-to-chat.ts).
+ *
+ * A build with a lead asks it when the rounds are used up with fixable items
+ * left: one more round (up to LEAD_FIX_ROUNDS in all), or end with them listed.
  */
 
 import { basename, join } from "node:path";
@@ -26,8 +29,11 @@ import type { ScoreReport } from "../scenario-scorer/types.js";
 import type { ParsedChunk } from "../plan-parser.js";
 import type { EmitFn, LoopOptions, LoopResult } from "../loop/types.js";
 import { runBreakers, type BreakerResult } from "./breakers.js";
+import { askLeadBuildCall } from "../advisor/lead-decisions.js";
 
 const MAX_FIX_ROUNDS = 2;
+/** The ceiling on fix rounds when the build's lead asks for more. */
+const LEAD_FIX_ROUNDS = 4;
 const MAX_FIX_CHUNKS = 5;
 /** Fix chunks are numbered past any plan's, so their branches, set-aside
  *  records and events never collide with a plan chunk's. */
@@ -44,6 +50,24 @@ export interface FinishInput {
   /** Test seams. */
   breakers?: typeof runBreakers;
   judgeSuite?: (opts: LoopOptions, say: (m: string) => void) => Promise<SuiteJudging>;
+  askLead?: typeof askLeadBuildCall;
+}
+
+/** Whether the build's lead wants another fix round for what is still open. */
+async function leadWantsAnotherRound(input: FinishInput, at: number, round: number, items: string[]): Promise<boolean> {
+  const lead = input.opts.buildLead;
+  if (!lead || round > LEAD_FIX_ROUNDS) return false;
+  const decision = await (input.askLead ?? askLeadBuildCall)(lead, {
+    kind: "finish",
+    title: `The finish checks' ${round - 1} fix round(s) are used up with items still open`,
+    evidence: `After the last chunk landed, the whole sealed suite was judged and break-it agents attacked the app. Still open:\n${items.map((i) => `- ${i}`).join("\n")}`,
+    answers: {
+      continue: `one more fix round on what is open (at most ${LEAD_FIX_ROUNDS} in all)`,
+      accept: "end the build; each item is listed as open in the report to the owner",
+    },
+    chunkNumber: at, totalChunks: input.opts.plan.chunks.length,
+  }, { signal: input.opts.signal });
+  return decision?.action === "continue";
 }
 
 /** The whole sealed suite, judged on the base. */
@@ -146,16 +170,22 @@ export async function runFinishGates(input: FinishInput): Promise<LoopResult> {
   let chunksCommitted = result.chunksCommitted;
   let prev: { suite: SuiteJudging; breakers: BreakerResult[] } | null = null;
   const open: string[] = [];
-  for (let round = 1; round <= MAX_FIX_ROUNDS + 1; round++) {
+  let fixRounds = MAX_FIX_ROUNDS;
+  for (let round = 1; round <= fixRounds + 1; round++) {
     if (opts.signal?.aborted) break;
     say(`finish checks, round ${round}: judging the whole sealed suite and sending the break-it agents at the finished app`);
     const suite = await judgeSuite(opts, say);
     const found = await breakers({ projectDir: opts.projectDir, signal: opts.signal, parentSessionId: opts.parentSessionId, parentOpId: opts.parentOpId });
     const fixes = fixChunksFor(round, suite, found);
     say(`finish checks, round ${round}: ${suite.failed.length} scenario(s) failing, ${found.reduce((n, b) => n + fixable(b).length, 0)} finding(s) to fix`);
-    if (fixes.length === 0 || round > MAX_FIX_ROUNDS || noProgress(prev, suite, found)) {
+    const stuck = noProgress(prev, suite, found);
+    if (fixes.length > 0 && round > fixRounds && !stuck && await leadWantsAnotherRound(input, at, round, openItemsOf(suite, found))) {
+      fixRounds = round;
+      say(`finish checks: the build lead asked for fix round ${round}`);
+    }
+    if (fixes.length === 0 || round > fixRounds || stuck) {
       open.push(...openItemsOf(suite, found));
-      if (fixes.length > 0) say(`finish checks: stopping with open items (${round > MAX_FIX_ROUNDS ? "fix rounds used up" : "the last round's fixes did not move them"})`);
+      if (fixes.length > 0) say(`finish checks: stopping with open items (${round > fixRounds ? "fix rounds used up" : "the last round's fixes did not move them"})`);
       break;
     }
     prev = { suite, breakers: found };

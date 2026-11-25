@@ -36,6 +36,8 @@ export interface AutoFixOptions {
    * worker's STATUS block into the chat (the preflight bug, 2026-08-30).
    */
   parentOpId?: string;
+  /** What the build's lead or the advisor says to do about the failures. */
+  hint?: string;
 }
 
 export interface AutoFixResult {
@@ -53,7 +55,7 @@ export interface AutoFixResult {
 
 export async function runAutoFixWorker(opts: AutoFixOptions): Promise<AutoFixResult> {
   const startedAt = Date.now();
-  const task = buildFixTask(opts.chunk, opts.failedReports, opts.allReports);
+  const task = buildFixTask(opts.chunk, opts.failedReports, opts.allReports, opts.hint);
 
   const result = await runChunkAgent({
     role: "scenario-fix",
@@ -100,7 +102,7 @@ export async function runAutoFixWorker(opts: AutoFixOptions): Promise<AutoFixRes
 /** What the fix worker learns: what the judge did in the app and saw, never
  *  the scenario's own words (a step's `text`), so a builder still never reads
  *  the sealed suite it is scored against (src/holdout/). */
-function buildFixTask(chunk: ParsedChunk, failed: ScoreReport[], all: ScoreReport[]): string {
+function buildFixTask(chunk: ParsedChunk, failed: ScoreReport[], all: ScoreReport[], hint?: string): string {
   const failureBlocks = failed.map(r => {
     const stepLines = r.steps.filter(s => s.status === "fail" || s.consoleErrors.length > 0 || s.networkFailures.length > 0)
       .slice(0, 6)
@@ -125,6 +127,7 @@ function buildFixTask(chunk: ParsedChunk, failed: ScoreReport[], all: ScoreRepor
     `The build is paused at a phase-verification gate; if your fix recovers the failing scenarios, ` +
     `the loop continues. If you can't recover them without violating spec/constitution, halt by ` +
     `reporting STATUS: blocked.\n\n` +
-    `## Failing scenarios\n\n${failureBlocks}${passingBlock}`
+    `## Failing scenarios\n\n${failureBlocks}${passingBlock}` +
+    (hint ? `\n\n## What to do about them\n\n${hint}` : "")
   );
 }

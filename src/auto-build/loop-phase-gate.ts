@@ -12,6 +12,12 @@
  * attempt's action (try-fix-worker / amend-spec-additively / halt). When
  * the advisor is unavailable (no API key, timeout, parse fail), we fall
  * back to try-fix-worker — the existing pre-Day-3 behavior.
+ *
+ * A build with a lead (advisor/lead-chat.ts) asks it instead, with up to
+ * LEAD_ATTEMPTS attempts: "continue" sends a fix worker its instruction,
+ * "park" stops at the phase on the owner's question. A failed scenario is
+ * never landed past, so those are its only answers. An attempt the lead does
+ * not answer is the advisor's, as above.
  */
 
 import type { ParsedChunk } from "./plan-parser.js";
@@ -21,6 +27,54 @@ import { runAutoFixWorker } from "./scenario-scorer/auto-fix.js";
 import { applyAdditiveSpecAmendment, commitSpecAmendment } from "./loop-effects.js";
 import { consultAdvisor, type AdvisorRecommendation } from "./advisor/index.js";
 import type { ScoreReport } from "./scenario-scorer/types.js";
+import { askLeadBuildCall } from "./advisor/lead-decisions.js";
+
+/** Recovery attempts a phase gets when the build's lead decides them. */
+const LEAD_ATTEMPTS = 4;
+
+/** What one recovery attempt does: a fix worker (with a hint), a spec amendment, or a halt. */
+type AttemptPlan = { action: "fix"; hint?: string } | { action: "amend"; specAddition: string; reasoning?: string } | { action: "halt"; reason: string };
+
+/** Ask the lead about this attempt; null when there is none or it did not answer. */
+async function leadAttempt(
+  opts: LoopOptions, chunk: ParsedChunk, totalChunks: number, attempt: number,
+  failedReports: ScoreReport[], allReports: ScoreReport[],
+): Promise<AttemptPlan | null> {
+  if (!opts.buildLead) return null;
+  const failing = failedReports.map((r) => `- ${r.scenarioTitle} (${r.score}/10): ${r.reasoning.replace(/\s+/g, " ").slice(0, 500)}` +
+    (r.failedCriteria.length ? `\n  Failed criteria: ${r.failedCriteria.join("; ")}` : "")).join("\n");
+  const passing = allReports.filter((r) => r.passed).map((r) => r.scenarioTitle).join(", ") || "none";
+  const decision = await askLeadBuildCall(opts.buildLead, {
+    kind: "phase-gate",
+    title: `${chunk.phase}'s held-out scenarios fail on the merged base (attempt ${attempt} of ${LEAD_ATTEMPTS})`,
+    evidence: `The phase closed with chunk ${chunk.number} (${chunk.title}), and the judge scored its scenarios on the merged base.\nFailing:\n${failing}\nPassing: ${passing}`,
+    answers: {
+      continue: "a fix worker gets your instruction with the failing scenarios' reports, then the phase is scored again",
+      park: "stop the build at this phase on a question only the owner can answer (product, money, risk or taste)",
+    },
+    chunkNumber: chunk.number, totalChunks,
+  }, { signal: opts.signal });
+  if (!decision) return null;
+  if (decision.action === "park") return { action: "halt", reason: `The build lead needs the owner to decide: ${decision.question}` };
+  return { action: "fix", hint: decision.instruction };
+}
+
+/** The advisor's plan for this attempt (try-fix-worker when it is unavailable). */
+async function advisorAttempt(
+  opts: LoopOptions, chunk: ParsedChunk, attempt: number, failedReports: ScoreReport[], allReports: ScoreReport[],
+): Promise<AttemptPlan & { said: string }> {
+  const rec: AdvisorRecommendation | null = await consultAdvisor({
+    kind: "phase-gate-scenario-failure",
+    chunk, failedReports, passedReports: allReports.filter(r => r.passed),
+    // The advisor knows two attempts; a later one (the lead did not answer) is its second.
+    projectDir: opts.projectDir, attemptNumber: attempt === 1 ? 1 : 2,
+  }, { signal: opts.signal });
+  const action = rec?.action || "try-fix-worker"; // fallback when advisor unavailable
+  const said = `advisor (attempt ${attempt}): ${action}${rec?.reasoning ? ` — ${rec.reasoning}` : " (no advisor available, falling back)"}`;
+  if (action === "halt") return { action: "halt", reason: rec?.haltReason || `advisor halted after attempt ${attempt}`, said };
+  if (action === "amend-spec-additively" && rec?.specAddition) return { action: "amend", specAddition: rec.specAddition, reasoning: rec.reasoning, said };
+  return { action: "fix", hint: rec?.fixWorkerHint, said };
+}
 
 /** `unverified`: no scenario failed, but some could not be judged even on a
  *  second try. Nothing for a fix worker to do, and not a pass either: the run
@@ -70,32 +124,25 @@ async function runAdvisorDrivenRecovery(
   let allReports = initialAllReports;
   let failedReports = initialFailedReports;
 
-  for (const attempt of [1, 2] as const) {
+  const attempts = opts.buildLead ? LEAD_ATTEMPTS : 2;
+  for (let attempt = 1; attempt <= attempts; attempt++) {
     emit({
       type: "push-back", chunkNumber: chunk.number, totalChunks,
-      message: `phase-gate attempt ${attempt}: ${failedReports.length} scenario(s) failed — consulting advisor`,
+      message: `phase-gate attempt ${attempt}: ${failedReports.length} scenario(s) failed — asking ${opts.buildLead ? "the build lead" : "the advisor"}`,
       data: { failed: failedReports.map(r => ({ title: r.scenarioTitle, score: r.score })) },
     });
 
-    const rec: AdvisorRecommendation | null = await consultAdvisor({
-      kind: "phase-gate-scenario-failure",
-      chunk, failedReports, passedReports: allReports.filter(r => r.passed),
-      projectDir: opts.projectDir, attemptNumber: attempt,
-    }, { signal: opts.signal });
+    const byLead = await leadAttempt(opts, chunk, totalChunks, attempt, failedReports, allReports);
+    const plan: AttemptPlan = byLead ?? await advisorAttempt(opts, chunk, attempt, failedReports, allReports);
+    const said = byLead
+      ? `build lead (attempt ${attempt}): ${plan.action === "halt" ? "park" : "fix"}`
+      : (plan as AttemptPlan & { said: string }).said;
+    emit({ type: "review-result", chunkNumber: chunk.number, totalChunks, message: said });
 
-    const action = rec?.action || "try-fix-worker"; // fallback when advisor unavailable
+    if (plan.action === "halt") return { kind: "halt-with-context", reason: plan.reason };
 
-    emit({
-      type: "review-result", chunkNumber: chunk.number, totalChunks,
-      message: `advisor (attempt ${attempt}): ${action}${rec?.reasoning ? ` — ${rec.reasoning}` : " (no advisor available, falling back)"}`,
-    });
-
-    if (action === "halt") {
-      return { kind: "halt-with-context", reason: rec?.haltReason || `advisor halted after attempt ${attempt}` };
-    }
-
-    if (action === "amend-spec-additively" && rec?.specAddition) {
-      const amend = await applyAdditiveSpecAmendment(opts.projectDir, chunk, rec.specAddition);
+    if (plan.action === "amend") {
+      const amend = await applyAdditiveSpecAmendment(opts.projectDir, chunk, plan.specAddition);
       if (!amend.ok) {
         return { kind: "halt-with-context", reason: `additive-diff gate rejected advisor's spec amendment: ${amend.error}` };
       }
@@ -103,7 +150,7 @@ async function runAdvisorDrivenRecovery(
       emit({
         type: "spec-amended", chunkNumber: chunk.number, totalChunks,
         message: `advisor amended spec additively${specCommit.committed ? ` (sha ${specCommit.sha.slice(0, 8)})` : ""}`,
-        data: { reasoning: rec.reasoning },
+        data: { reasoning: plan.reasoning },
       });
     } else {
       const fix = await runAutoFixWorker({
@@ -117,13 +164,14 @@ async function runAdvisorDrivenRecovery(
         // the re-score below, never injected into the user's chat.
         parentSessionId: opts.parentSessionId,
         parentOpId: opts.parentOpId,
+        ...(plan.hint ? { hint: plan.hint } : {}),
       });
       if (!fix.workerCompleted) {
         return { kind: "halt-with-context", reason: `fix worker did not complete on attempt ${attempt}: ${fix.error || "unknown"}` };
       }
       emit({
         type: "review-result", chunkNumber: chunk.number, totalChunks,
-        message: `fix-worker landed${fix.fixSha ? ` (sha ${fix.fixSha.slice(0, 8)})` : ""}${rec?.fixWorkerHint ? ` with hint: ${rec.fixWorkerHint.slice(0, 80)}…` : ""}`,
+        message: `fix-worker landed${fix.fixSha ? ` (sha ${fix.fixSha.slice(0, 8)})` : ""}${plan.hint ? ` with hint: ${plan.hint.slice(0, 80)}…` : ""}`,
       });
     }
 
@@ -142,5 +190,5 @@ async function runAdvisorDrivenRecovery(
   }
 
   const stillFailing = failedReports.map(r => `${r.scenarioTitle} (${r.score}/10)`).join("; ");
-  return { kind: "halt-with-context", reason: `phase-gate: scenarios still failing after 2 recovery attempts. Failing: ${stillFailing}` };
+  return { kind: "halt-with-context", reason: `phase-gate: scenarios still failing after ${attempts} recovery attempts. Failing: ${stillFailing}` };
 }

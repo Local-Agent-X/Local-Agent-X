@@ -31,7 +31,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 
 import { join, resolve } from "node:path";
 import { z } from "zod";
 import { classifySchema } from "../../src/classifiers/schema-output.js";
-import { leadPacket, type LeadSituation } from "../../src/auto-build/advisor/lead-decisions.js";
+import { LEAD_ACTIONS, leadPacket, type LeadSituation } from "../../src/auto-build/advisor/lead-decisions.js";
 import { readDecision } from "../../src/auto-build/advisor/build-decide-tool.js";
 import { privateHoldoutDir } from "../op-outcomes/private.mjs";
 
@@ -70,7 +70,7 @@ async function decide(c: LeadCase, model: string | undefined): Promise<{ action:
     systemPrompt: "You are the lead of a software build run by an engine. Decide as the message asks.",
     userPrompt: packet,
     schema: answerSchema,
-    shapeHint: `{"action":"continue|fresh|accept|narrow|park","reasoning":"...","instruction":"...","follow_ups":["..."],"done_when":"...","question":"..."}`,
+    shapeHint: `{"action":"${LEAD_ACTIONS.join("|")}","reasoning":"...","instruction":"...","follow_ups":["..."],"done_when":"...","question":"...","owed_check":"...","evidence":"..."}`,
     role: "review",
     timeoutMs: 180_000,
     ...(model ? { model } : {}),

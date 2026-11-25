@@ -17,9 +17,12 @@
  */
 import type { ParsedChunk } from "../plan-parser.js";
 import type { EmitFn, LoopEvent, LoopResult } from "./types.js";
+import type { BuildLeadRef } from "../advisor/lead-chat.js";
+import { askLeadBuildCall } from "../advisor/lead-decisions.js";
 
-/** Chunks set aside in one run before the build stops trying: past this it is
- *  no longer about one chunk, and each one costs its fix rounds. */
+/** Chunks set aside in one run before the build asks whether to keep trying:
+ *  past this it is no longer about one chunk, and each one costs its fix
+ *  rounds. Without a lead, the build stops here. */
 export const MAX_SET_ASIDE = 3;
 
 export interface SetAsideChunk {
@@ -41,6 +44,8 @@ export interface WaitingChunk {
 export interface SetAsideLedger {
   setAside: SetAsideChunk[];
   waiting: WaitingChunk[];
+  /** The set-aside count the build's lead said to build on past. */
+  goOnThrough?: number;
 }
 
 export function createSetAsideLedger(): SetAsideLedger {
@@ -49,6 +54,36 @@ export function createSetAsideLedger(): SetAsideLedger {
 
 export function anythingSetAside(ledger: SetAsideLedger): boolean {
   return ledger.setAside.length > 0 || ledger.waiting.length > 0;
+}
+
+/**
+ * Whether the run stops now for the chunks it set aside. Past MAX_SET_ASIDE the
+ * build's lead decides, and is asked again for each further one; a build with
+ * no lead, or a lead that does not answer, stops, as every build used to.
+ */
+export async function stopForSetAside(
+  ledger: SetAsideLedger,
+  at: { chunkNumber: number; totalChunks: number; lead?: BuildLeadRef; signal?: AbortSignal; emit: EmitFn },
+  ask: typeof askLeadBuildCall = askLeadBuildCall,
+): Promise<boolean> {
+  const n = ledger.setAside.length;
+  if (n < MAX_SET_ASIDE || n <= (ledger.goOnThrough ?? 0)) return false;
+  if (!at.lead) return true;
+  const decision = await ask(at.lead, {
+    kind: "set-aside-cap",
+    title: `${n} chunks are set aside this run`,
+    evidence: ledger.setAside.map((c) => `- chunk ${c.chunk} (${c.title}): ${oneLine(c.reason, 400)}`).join("\n") +
+      (ledger.waiting.length ? `\nWaiting on them: ${ledger.waiting.map((w) => `chunk ${w.chunk}`).join(", ")}.` : ""),
+    answers: {
+      continue: "keep building the chunks that do not depend on them; you are asked again if another is set aside",
+      park: "stop the build now; the owner is told what landed, what was set aside and why (say what they must decide in `question`)",
+    },
+    chunkNumber: at.chunkNumber, totalChunks: at.totalChunks,
+  }, { signal: at.signal });
+  if (decision?.action !== "continue") return true;
+  ledger.goOnThrough = n;
+  at.emit({ type: "push-back", chunkNumber: at.chunkNumber, totalChunks: at.totalChunks, message: `build lead: building on past ${n} set-aside chunks — ${decision.reasoning}` });
+  return false;
 }
 
 /** The chunk `chunk` depends on that is set aside or itself waiting, if any. */

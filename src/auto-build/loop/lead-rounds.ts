@@ -5,17 +5,21 @@
  *
  *   continue / fresh  rebuild with the lead's instruction and the finding
  *   accept            land the chunk; what is left goes on record as follow-ups
+ *   owed              land it unverified: a check only the owner can run is owed
+ *   overrule          land it over a check the lead shows is wrong, on record
  *   narrow            the chunk's done-when becomes the lead's, on record; rebuild
- *   park              stop the build on the owner's question
+ *   park              set the chunk aside on the owner's question
  *
  * Guarded: a chunk whose build or tests fail, or whose held-out scenarios
- * fail, is never accepted, whatever the lead says; the worker is sent back.
- * Accepting and narrowing are recorded in spec/build-state.md and committed,
- * so the decision outlives the run.
+ * fail, never lands, whatever the lead says; the worker is sent back. An
+ * unjudged scenario is not a failed one, so "owed" can land past it. A finding
+ * that came back unchanged is not answered with "continue": the round goes to
+ * a fresh worker. Every landing and narrowing is recorded in
+ * spec/build-state.md and committed, so the decision outlives the run.
  *
  * When the chunk's rounds are spent the lead still has the last word
- * (`final`): accept lands it, park stops for the owner, and any answer that
- * would build again sets it aside. The engine used to set it aside on its own
+ * (`final`): accept, owed and overrule land it, park sets it aside on the
+ * owner's question, and any answer that would build again sets it aside. The engine used to set it aside on its own
  * at the ceiling, never asking the one agent holding the whole build.
  */
 import type { ParsedChunk, ParsedPlan } from "../plan-parser.js";
@@ -30,7 +34,8 @@ import { safeGet, type EmitFn } from "./types.js";
 export const MAX_LEAD_ROUNDS = 8;
 
 export type LeadRoundPlan =
-  | { kind: "rebuild"; chunk: ParsedChunk; plan: ParsedPlan; retryReason: string }
+  /** `fresh`: a new worker, not the one that built the last round. */
+  | { kind: "rebuild"; chunk: ParsedChunk; plan: ParsedPlan; retryReason: string; fresh?: boolean }
   | { kind: "land"; outcome: ChunkReviewOutcome }
   | { kind: "halt"; reasoning: string };
 
@@ -79,23 +84,39 @@ export async function planLeadRound(a: LeadRoundInput): Promise<LeadRoundPlan | 
     return null;
   }
   a.emit({ type: "push-back", chunkNumber: chunk.number, totalChunks: a.totalChunks, message: `build lead: ${decision.action} — ${decision.reasoning}` });
-  const rebuild = (instruction: string, c: ParsedChunk = chunk): LeadRoundPlan => a.final
+  const rebuild = (instruction: string, c: ParsedChunk = chunk, fresh = false): LeadRoundPlan => a.final
     ? { kind: "halt", reasoning: `Chunk ${chunk.number} spent its ${MAX_LEAD_ROUNDS} fix rounds and the build lead did not land it: ${decision.reasoning}\n\nWhat the review found:\n${outcome.reasoning}` }
-    : { kind: "rebuild", chunk: c, plan: a.plan, retryReason: `${instruction}\n\nWhat the review found:\n${outcome.reasoning}` };
+    : { kind: "rebuild", chunk: c, plan: a.plan, retryReason: `${instruction}\n\nWhat the review found:\n${outcome.reasoning}`, ...(fresh ? { fresh } : {}) };
+  /** Land the chunk on the lead's word, unless a floor holds it back. */
+  const land = async (reasoning: string, onRecord: string, extra: Partial<ChunkReviewOutcome> = {}): Promise<LeadRoundPlan> => {
+    const blocking = outcome.findings.find((f) => f.action !== "proceed" && NEVER_ACCEPTED.has(f.gate));
+    if (blocking) {
+      a.emit({ type: "push-back", chunkNumber: chunk.number, totalChunks: a.totalChunks, message: `build lead's ${decision.action} refused: the ${blocking.gate} check failed, and no chunk lands past that` });
+      return rebuild("The chunk cannot land while its build, tests or held-out scenarios fail. Fix what the review found.");
+    }
+    const left = decision.followUps ?? [];
+    await record(a.projectDir, chunk, onRecord + (left.length ? `\n\nFollow-ups it left, not blocking:\n${left.map((f) => `- ${f}`).join("\n")}` : ""));
+    return { kind: "land", outcome: { ...outcome, ...extra, action: "proceed", reasoning } };
+  };
 
   switch (decision.action) {
     case "park":
       return { kind: "halt", reasoning: `The build lead needs the owner to decide: ${decision.question}` };
-    case "accept": {
-      const blocking = outcome.findings.find((f) => f.action !== "proceed" && NEVER_ACCEPTED.has(f.gate));
-      if (blocking) {
-        a.emit({ type: "push-back", chunkNumber: chunk.number, totalChunks: a.totalChunks, message: `build lead's accept refused: the ${blocking.gate} check failed, and no chunk lands past that` });
-        return rebuild("The chunk cannot land while its build, tests or held-out scenarios fail. Fix what the review found.");
-      }
-      const left = decision.followUps ?? [];
-      await record(a.projectDir, chunk, `Accepted by the build lead: ${decision.reasoning}` +
-        (left.length ? `\n\nFollow-ups it left, not blocking:\n${left.map((f) => `- ${f}`).join("\n")}` : ""));
-      return { kind: "land", outcome: { ...outcome, action: "proceed", reasoning: `Accepted by the build lead: ${decision.reasoning}` } };
+    case "accept":
+      return land(`Accepted by the build lead: ${decision.reasoning}`, `Accepted by the build lead: ${decision.reasoning}`);
+    case "owed":
+      return land(
+        `Landed by the build lead with a check owed to the owner: ${decision.owedCheck}`,
+        `Landed by the build lead with a check owed to the owner: ${decision.owedCheck}\nWhy: ${decision.reasoning}`,
+        { unverified: `a check is owed to the owner: ${decision.owedCheck}` },
+      );
+    case "overrule": {
+      const checks = [...new Set(outcome.findings.filter((f) => f.action !== "proceed").map((f) => f.gate))].join(", ") || "review";
+      a.emit({ type: "push-back", chunkNumber: chunk.number, totalChunks: a.totalChunks, message: `engine check overruled by the build lead (${checks}): ${decision.evidence}` });
+      return land(
+        `Landed by the build lead over the ${checks} check, which it found wrong: ${decision.evidence}`,
+        `Engine check overruled by the build lead (${checks}).\nThe check said: ${outcome.reasoning.replace(/\s+/g, " ").slice(0, 600)}\nEvidence it is wrong: ${decision.evidence}`,
+      );
     }
     case "narrow": {
       // Spent rounds build nothing more, so there is no narrowed contract to record.
@@ -104,7 +125,13 @@ export async function planLeadRound(a: LeadRoundInput): Promise<LeadRoundPlan | 
       return rebuild(`Your chunk's contract was narrowed. Done when: ${decision.doneWhen}\nMeet that; nothing beyond it is asked of this chunk.`, { ...chunk, doneWhen: decision.doneWhen! });
     }
     case "continue":
-    case "fresh":
-      return rebuild(decision.instruction!);
+    case "fresh": {
+      // A finding that came back unchanged goes to a fresh worker, whatever was asked.
+      const fresh = decision.action === "fresh" || a.repeated;
+      if (decision.action === "continue" && a.repeated) {
+        a.emit({ type: "push-back", chunkNumber: chunk.number, totalChunks: a.totalChunks, message: "the same finding came back, so this round goes to a fresh worker" });
+      }
+      return rebuild(decision.instruction!, chunk, fresh);
+    }
   }
 }

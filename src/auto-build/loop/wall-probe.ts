@@ -14,6 +14,11 @@
  * halts the build with the reason. With no launch file yet (the foundation may
  * write it later) the probe waits for the next landed chunk, and says so once.
  * A project with no sealed suite has nothing to probe.
+ *
+ * A build with a lead asks it first: when what the judge lacks is something
+ * only the owner has (a device, an account), the lead can call the check owed
+ * and the build goes on, every chunk's scenarios unjudged and said so, with
+ * the owner asked at the end. A lead that parks, or does not answer, halts.
  */
 
 import { basename, join } from "node:path";
@@ -24,15 +29,42 @@ import { appendHalt } from "../failure-recovery.js";
 import { readLaunchSpec } from "../scenario-scorer/launch-spec.js";
 import { scoreScenarioFiles } from "../scenario-scorer/phase-gate-runner.js";
 import { isUnjudged } from "../scenario-scorer/types.js";
+import { applyAdditiveSpecAmendment, commitSpecAmendment } from "../loop-effects.js";
+import { askLeadBuildCall } from "../advisor/lead-decisions.js";
 import type { PhasePauseScope, PhaseScoreResult } from "./phase-gate-pause.js";
-import type { LoopOptions } from "./types.js";
+import { safeGet, type LoopOptions } from "./types.js";
+
+type ProbeOptions = Pick<LoopOptions, "projectDir" | "signal" | "skipWallProbe" | "buildLead"> & { plan?: LoopOptions["plan"] };
+
+/** The lead's word on a judge that cannot check the app: the check owed (go
+ *  on), or null to halt. */
+async function owedByLead(opts: ProbeOptions, scope: PhasePauseScope, chunkNumber: number, why: string, ask: typeof askLeadBuildCall): Promise<string | null> {
+  if (!opts.buildLead) return null;
+  const decision = await ask(opts.buildLead, {
+    kind: "wall-probe",
+    title: "The judge cannot check this app",
+    evidence: `Before the build goes on, the judge starts the app and judges one sealed scenario, to prove every later chunk can be judged. It could not: ${why}`,
+    answers: {
+      owed: "build on: every chunk from here lands with its held-out scenarios unjudged, said so in the report, and the check is owed to the owner (say what it needs in owed_check)",
+      park: "stop the build: the owner fixes the launch file, the app's test mode or the judge's setup, then resumes (say what in question)",
+    },
+    chunkNumber, totalChunks: scope.totalChunks,
+  }, { signal: opts.signal });
+  if (decision?.action !== "owed") return null;
+  const chunk = opts.plan?.chunks.find((c) => c.number === chunkNumber);
+  if (chunk) {
+    const amended = await applyAdditiveSpecAmendment(opts.projectDir, chunk, `The judge's check is owed to the owner: ${decision.owedCheck}\nWhy the judge could not check the app: ${why}\nThe build lead's call: ${decision.reasoning}`);
+    if (amended.ok) await safeGet(() => commitSpecAmendment(opts.projectDir, chunk));
+  }
+  return decision.owedCheck!;
+}
 
 export interface WallProbe {
   /** After a chunk lands on the base: probe once, if not proven yet. */
   afterLanding(scope: PhasePauseScope, chunkNumber: number, chunksCommitted: number): Promise<PhaseScoreResult>;
 }
 
-export function createWallProbe(opts: Pick<LoopOptions, "projectDir" | "signal" | "skipWallProbe">): WallProbe {
+export function createWallProbe(opts: ProbeOptions, ask: typeof askLeadBuildCall = askLeadBuildCall): WallProbe {
   const project = basename(opts.projectDir);
   const suite = listScenarios(project);
   const dir = projectHoldoutDir(project);
@@ -61,6 +93,11 @@ export function createWallProbe(opts: Pick<LoopOptions, "projectDir" | "signal" 
       if (!why) {
         const report = outcome.kind === "proceed" || outcome.kind === "failures" ? outcome.reports[0] : undefined;
         say(`judge check passed: the judge started the app and scored ${suite[0]}${report && !isUnjudged(report) ? ` (${report.score}/10)` : ""}`);
+        return { kind: "ok" };
+      }
+      const owed = await owedByLead(opts, scope, chunkNumber, why, ask);
+      if (owed) {
+        say(`judge check owed to the owner, the build goes on with scenarios unjudged: ${owed}`);
         return { kind: "ok" };
       }
       const reason = `The judge cannot check this app, so every chunk from here would land unverified: ${why}. ` +

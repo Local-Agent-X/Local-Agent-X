@@ -66,7 +66,7 @@ import { createWallProbe } from "./wall-probe.js";
 import { isPhaseGatePause } from "../chunk-review/index.js";
 import { handleAction } from "./handle-action.js";
 import { reGateMergedTree, warnFootprintEscapes } from "./merged-regate.js";
-import { anythingSetAside, createSetAsideLedger, endWithSetAside, holdBackWaiting, MAX_SET_ASIDE, type SetAsideLedger } from "./set-aside.js";
+import { anythingSetAside, createSetAsideLedger, endWithSetAside, holdBackWaiting, stopForSetAside, type SetAsideLedger } from "./set-aside.js";
 import { createSharedFileMerge, regenerateSharedFiles, relockMergedProject, type SharedFileMerge } from "./shared-file-merge.js";
 import { buildChunkInWorktree, commitDispatchedChunk, preserveWorktreeWork } from "./parallel-chunk-build.js";
 import { copyLocalFiles } from "./worktree-local-files.js";
@@ -183,7 +183,8 @@ export async function runParallelWaves(input: ParallelWavesContext): Promise<Loo
       const step = await runBatch(ctx, buildable, chunksCommitted);
       if (step.kind === "halt") return step.result;
       chunksCommitted = step.chunksCommitted;
-      if (ctx.ledger.setAside.length >= MAX_SET_ASIDE) return endRunWithSetAside(ctx, chunksCommitted);
+      const at = { chunkNumber: buildable[buildable.length - 1].number, totalChunks, lead: opts.buildLead, signal: opts.signal, emit };
+      if (await stopForSetAside(ctx.ledger, at)) return endRunWithSetAside(ctx, chunksCommitted);
     }
 
     // S4 rule 3 — re-gate the now-fully-merged wave on base BEFORE cutting the

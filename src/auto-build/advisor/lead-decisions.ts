@@ -1,19 +1,26 @@
 /**
- * Asking the build lead (lead-chat.ts) what to do with a chunk the review sent
- * back, and waiting for its answer.
+ * Asking the build lead (lead-chat.ts) for a decision, and waiting for its
+ * answer: what to do with a chunk the review sent back, and the build's other
+ * calls (a phase whose scenarios fail, a judge that cannot check the app, the
+ * set-aside cap, the finish checks' open items).
  *
  * The engine posts the evidence into the lead's chat, marked as the app's, and
  * waits; the lead answers by calling build_decide (build-decide-tool.ts), which
  * hands the decision back here. A lead that does not answer in time, or has no
  * chat to answer in, is no answer: the caller falls back to the engine's own
- * rules, so a lead can never stall a build.
+ * rules, so a lead can never stall a build. Each decision takes only the
+ * answers it lists; build_decide refuses the others, and the lead can answer
+ * again in the same turn.
  */
 import { randomBytes } from "node:crypto";
 import { ensureLeadChat, runLeadTurn, type BuildLeadRef } from "./lead-chat.js";
-import { SKEPTIC_BREAK_GROUNDS, SKEPTIC_RULE_REACH } from "../chunk-review/skeptic-bar.js";
+import { LEAD_ROLE } from "./lead-role.js";
 
-export const LEAD_ACTIONS = ["continue", "fresh", "accept", "narrow", "park"] as const;
+export const LEAD_ACTIONS = ["continue", "fresh", "accept", "narrow", "owed", "overrule", "park"] as const;
 export type LeadAction = typeof LEAD_ACTIONS[number];
+
+/** What a chunk the review sent back may be answered with. */
+const PUSH_BACK_ACTIONS: readonly LeadAction[] = LEAD_ACTIONS;
 
 export interface LeadDecision {
   action: LeadAction;
@@ -21,12 +28,16 @@ export interface LeadDecision {
   reasoning: string;
   /** continue / fresh: what the worker is told to do. */
   instruction?: string;
-  /** accept: what is left, recorded as follow-ups. */
+  /** accept / owed / overrule: what is left, recorded as follow-ups. */
   followUps?: string[];
   /** narrow: the chunk's done-when as the lead now holds it. */
   doneWhen?: string;
   /** park: the question only the owner can answer. */
   question?: string;
+  /** owed: the check only the owner can run, and what it needs. */
+  owedCheck?: string;
+  /** overrule: what shows the check's finding is wrong (output, file:line). */
+  evidence?: string;
 }
 
 export interface LeadSituation {
@@ -48,68 +59,57 @@ export interface LeadSituation {
   final?: boolean;
 }
 
+/** A decision about the build rather than one chunk's fix round. */
+export interface BuildCallSituation {
+  kind: "phase-gate" | "wall-probe" | "set-aside-cap" | "finish";
+  /** One line naming the decision, e.g. "Phase 2's scenarios fail on the merged base". */
+  title: string;
+  /** What the engine found, in full. */
+  evidence: string;
+  /** The answers this decision takes, each with what the engine then does. */
+  answers: Partial<Record<LeadAction, string>>;
+  chunkNumber: number;
+  totalChunks: number;
+}
+
 /** How long the engine waits for the lead before deciding by its own rules. */
 export const LEAD_ANSWER_MS = 10 * 60_000;
 
-const pending = new Map<string, (d: LeadDecision) => void>();
+interface Pending { allowed: readonly LeadAction[]; resolve: (d: LeadDecision) => void }
+const pending = new Map<string, Pending>();
 
-/** build_decide's half: hand a decision to the engine. False when nothing waits under `id`. */
-export function resolveLeadDecision(id: string, decision: LeadDecision): boolean {
-  const resolve = pending.get(id);
-  if (!resolve) return false;
+/** build_decide's half: hand a decision to the engine. The reason it was not
+ *  taken, or null when it was. */
+export function resolveLeadDecision(id: string, decision: LeadDecision): string | null {
+  const p = pending.get(id);
+  if (!p) return `No build decision is waiting under "${id}": it was answered, timed out, or never asked.`;
+  if (!p.allowed.includes(decision.action)) return `Decision ${id} takes one of: ${p.allowed.join(", ")}. Answer again with one of those.`;
   pending.delete(id);
-  resolve(decision);
-  return true;
+  p.resolve(decision);
+  return null;
 }
 
 export function isLeadDecisionPending(id: string): boolean {
   return pending.has(id);
 }
 
-/**
- * What the lead is told about its job, at the top of its chat.
- *
- * It judges a finding by the skeptic's own bar (skeptic-bar.ts). Until
- * 2026-11-25 it was told to keep going while rounds closed what they were
- * given: label-check-sol's chunk 3 then spent all eight rounds on a fresh
- * skeptic's next odd input to an unmarked rule (comma forms, trimmed lengths,
- * U+2028), each closed and each followed by another, and was set aside with
- * two chunks behind it. A fresh reviewer every round never runs out of cases.
- */
-export const LEAD_ROLE =
-  `You lead this build. The engine builds each chunk with a worker and reviews it (the build and tests, a ` +
-  `skeptic agent, the held-out scenarios); when the review sends a chunk back, it asks you what to do, and you ` +
-  `answer with build_decide. Decide the way the person running the build would.\n\n` +
-  `A finding holds the chunk back only when it shows one of: ${SKEPTIC_BREAK_GROUNDS.join("; ")}. ` +
-  `${SKEPTIC_RULE_REACH.join(" ")} The skeptic is told the same bar and still stretches it; you hold the line, ` +
-  `reading the plan's marks, not the skeptic's.\n\n` +
-  `- A real break of what the chunk promised: "continue" (the worker fixes it; say exactly what) or "fresh" ` +
-  `(a new worker, when this one is going in circles).\n` +
-  `- True but beyond the chunk's job, or a new kind of input to a scoped rule: "accept", with what is left as ` +
-  `follow-ups. The build goes on.\n` +
-  `- A contract with no edge: "narrow" it to what has been shown, in a done-when the work already meets. ` +
-  `Narrowing is for making the contract smaller, never for asking for more.\n` +
-  `- Only a choice of product, money, risk or taste the owner must make: "park", with the question.\n\n` +
-  `A new reviewer attacks every round and will always find one more odd input. Once what the chunk promised ` +
-  `is shown working, another edge case is a follow-up, not another round: each round costs a worker and a ` +
-  `review, and chunks that depend on this one wait. A finding that comes back unchanged needs a different move ` +
-  `than "continue". The engine will not land a chunk whose build or tests fail, or whose held-out scenarios ` +
-  `fail, whatever you decide. Read the code and run the checks yourself when the evidence is unclear.`;
+const HEADER = "(Sent by the app, not typed by the user: a build decision is waiting.)";
+const answerLine = (id: string) => `Answer with build_decide(decision_id="${id}", ...). One call, then end your turn.`;
 
-/** The message that asks the lead for one decision: the role on the first, then
- *  the evidence. Shared with the lead eval (eval/build-lead), so it is judged on
- *  what the lead is actually sent. */
+/** The message that asks the lead about a chunk the review sent back: the role
+ *  on the first, then the evidence. Shared with the lead eval
+ *  (eval/build-lead), so it is judged on what the lead is actually sent. */
 export function leadPacket(id: string, s: LeadSituation, first: boolean): string {
   const c = s.chunk;
   return [
-    "(Sent by the app, not typed by the user: a build decision is waiting.)",
+    HEADER,
     ...(first ? ["", LEAD_ROLE] : []),
     "",
     `Decision ${id}: chunk ${c.number}/${s.totalChunks}, "${c.title}", after fix round ${s.round} of at most ${s.maxRounds}.`,
     ...(s.final ? [
-      `This is the last decision for this chunk: its rounds are spent. "accept" lands it (the engine still refuses ` +
-      `one whose build, tests or held-out scenarios fail); "park" stops for the owner; "continue", "fresh" and ` +
-      `"narrow" set the chunk aside, and the chunks that depend on it are not built.`,
+      `This is the last decision for this chunk: its rounds are spent. "accept", "owed" and "overrule" land it ` +
+      `(the engine still refuses one whose build, tests or held-out scenarios fail); "park" sets it aside with ` +
+      `your question; "continue", "fresh" and "narrow" set it aside, and the chunks that depend on it are not built.`,
     ] : []),
     `Slice: ${c.slice || "(none)"}`,
     `Done when: ${c.doneWhen || "(none)"}`,
@@ -121,19 +121,42 @@ export function leadPacket(id: string, s: LeadSituation, first: boolean): string
     `The worker's report:\n${s.workerReport}`,
     ...(s.earlier.length ? ["", `Found and fixed in earlier rounds:\n${s.earlier.map((f) => `- ${f.replace(/\s+/g, " ").slice(0, 300)}`).join("\n")}`] : []),
     "",
-    `Answer with build_decide(decision_id="${id}", ...). One call, then end your turn.`,
+    answerLine(id),
   ].join("\n");
 }
 
-/** Ask the lead; null when there is no lead or it did not answer in time. */
-export async function askLead(ref: BuildLeadRef, s: LeadSituation, opts: { answerMs?: number; signal?: AbortSignal } = {}): Promise<LeadDecision | null> {
+/** The message that asks the lead about one of the build's other calls. */
+export function buildCallPacket(id: string, s: BuildCallSituation, first: boolean): string {
+  return [
+    HEADER,
+    ...(first ? ["", LEAD_ROLE] : []),
+    "",
+    `Decision ${id}: ${s.title} (at chunk ${s.chunkNumber}/${s.totalChunks}).`,
+    "",
+    s.evidence,
+    "",
+    "Answers this decision takes:",
+    ...Object.entries(s.answers).map(([action, does]) => `- "${action}": ${does}`),
+    "",
+    answerLine(id),
+  ].join("\n");
+}
+
+const firstSent = new Set<string>();
+
+/** Post one decision into the lead's chat and wait; null when there is no lead
+ *  or it did not answer in time. */
+async function ask(
+  ref: BuildLeadRef, allowed: readonly LeadAction[], render: (id: string, first: boolean) => string,
+  opts: { answerMs?: number; signal?: AbortSignal },
+): Promise<LeadDecision | null> {
   const sessionId = await ensureLeadChat(ref).catch(() => null);
   if (!sessionId || opts.signal?.aborted) return null;
   const id = `bd-${randomBytes(4).toString("hex")}`;
-  const answered = new Promise<LeadDecision>((resolve) => pending.set(id, resolve));
+  const answered = new Promise<LeadDecision>((resolve) => pending.set(id, { allowed, resolve }));
   const first = !firstSent.has(sessionId);
   firstSent.add(sessionId);
-  const turn = runLeadTurn(sessionId, leadPacket(id, s, first)).catch(() => undefined);
+  const turn = runLeadTurn(sessionId, render(id, first)).catch(() => undefined);
   const timeout = new Promise<null>((r) => setTimeout(() => r(null), opts.answerMs ?? LEAD_ANSWER_MS));
   const cancelled = new Promise<null>((r) => opts.signal?.addEventListener("abort", () => r(null), { once: true }));
   // A turn that ended without answering is no answer either.
@@ -142,4 +165,14 @@ export async function askLead(ref: BuildLeadRef, s: LeadSituation, opts: { answe
   pending.delete(id);
   return decision;
 }
-const firstSent = new Set<string>();
+
+/** Ask the lead about a chunk the review sent back. */
+export function askLead(ref: BuildLeadRef, s: LeadSituation, opts: { answerMs?: number; signal?: AbortSignal } = {}): Promise<LeadDecision | null> {
+  return ask(ref, PUSH_BACK_ACTIONS, (id, first) => leadPacket(id, s, first), opts);
+}
+
+/** Ask the lead one of the build's other calls; only the answers it lists are taken. */
+export function askLeadBuildCall(ref: BuildLeadRef, s: BuildCallSituation, opts: { answerMs?: number; signal?: AbortSignal } = {}): Promise<LeadDecision | null> {
+  const allowed = LEAD_ACTIONS.filter((a) => a in s.answers);
+  return ask(ref, allowed, (id, first) => buildCallPacket(id, s, first), opts);
+}

@@ -61,6 +61,45 @@ describe("planLeadRound", () => {
       .toEqual({ kind: "halt", reasoning: "The build lead needs the owner to decide: Ship without the Android check?" });
   });
 
+  // label-check-sol's chunk 4 (2026-11-25): what was left needed a device and
+  // a Firebase project only the owner had; parking set it aside and chunk 5
+  // never started.
+  it("owed lands the chunk unverified, with the owner's check on record", async () => {
+    const { run, projectDir } = round({ action: "owed", reasoning: "all that runs here passes", owedCheck: "live scan on a Gemini Nano device with the owner's Firebase project" });
+    const next = await run;
+    expect(next).toMatchObject({ kind: "land", outcome: { action: "proceed", unverified: expect.stringContaining("owed to the owner: live scan") } });
+    expect(buildState(projectDir)).toContain("check owed to the owner: live scan");
+  });
+
+  it("owed and overrule are refused past failing tests or scenarios, like accept", async () => {
+    for (const decision of [
+      { action: "owed", reasoning: "r", owedCheck: "a device" },
+      { action: "overrule", reasoning: "r", evidence: "it passes for me" },
+    ] as LeadDecision[]) {
+      expect(await round(decision, sentBack("build-exec", "npm test exited 1")).run).toMatchObject({ kind: "rebuild" });
+    }
+  });
+
+  // Chunk 1's rounds were lost to a report-shape check rejecting concrete
+  // verify steps three times (2026-11-25).
+  it("overrule lands the chunk and records the check it overruled, with the evidence", async () => {
+    const { run, said, projectDir } = round({ action: "overrule", reasoning: "the check misread the item", evidence: "the item names adb install and the result to require" }, sentBack("launch-readiness", "LAUNCH_READINESS item lacks a concrete verify step"));
+    expect(await run).toMatchObject({ kind: "land", outcome: { action: "proceed" } });
+    expect(said).toContainEqual(expect.stringContaining("engine check overruled by the build lead (launch-readiness)"));
+    expect(buildState(projectDir)).toContain("Evidence it is wrong: the item names adb install");
+  });
+
+  it("a finding that came back unchanged goes to a fresh worker even when the lead says continue", async () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "lax-lead-round-"));
+    const said: string[] = [];
+    const next = await planLeadRound({
+      lead: { projectDir, originSessionId: "chat-x" }, chunk, plan, outcome: sentBack("skeptic"), totalChunks: 5, round: 3, earlier: [], repeated: true,
+      projectDir, emit: (e) => { said.push(e.message); }, ask: vi.fn(async () => ({ action: "continue", reasoning: "r", instruction: "again" }) as LeadDecision),
+    });
+    expect(next).toMatchObject({ kind: "rebuild", fresh: true });
+    expect(said).toContainEqual(expect.stringContaining("goes to a fresh worker"));
+  });
+
   // The last word on a chunk whose rounds are spent (label-check-sol chunk 3,
   // 2026-11-25: the engine set it aside at the ceiling without asking).
   describe("once the rounds are spent", () => {

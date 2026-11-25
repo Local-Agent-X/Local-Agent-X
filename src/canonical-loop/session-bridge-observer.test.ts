@@ -481,7 +481,7 @@ describe("session-bridge-observer — the verification tier is internal", () => 
       .map((event) => String(event.type));
   }
 
-  it.each(["queued", "running", "succeeded", "failed", "cancelled"] as const)("a verification op reaching %s shows the user nothing", (to) => {
+  it.each(["queued", "running", "succeeded", "failed", "cancelled"] as const)("a verification op reaching %s shows the user nothing", async (to) => {
     const sessionId = `sess-obs-verify-silent-${to}`;
     const opId = `op_verify_deliverable_silent_${to}`;
     verifyOp(opId, CONFIRMED);
@@ -497,8 +497,9 @@ describe("session-bridge-observer — the verification tier is internal", () => 
     expect(scheduleIdleNudge).not.toHaveBeenCalled();
     if (to !== "queued" && to !== "running") expect(listOpsForSession(sessionId)).toEqual([]);
     // Its one trace is the note on the reply: the figures match, or could not be checked.
-    if (to === "succeeded") expect(figureCheckUpdate).toHaveBeenCalledWith(sessionId, "confirmed");
-    else if (to === "failed" || to === "cancelled") expect(figureCheckUpdate).toHaveBeenCalledWith(sessionId, "unchecked");
+    // A pass that is not part of a listed run has no coverage to report (figure-check-run.ts).
+    if (to === "succeeded") await vi.waitFor(() => expect(figureCheckUpdate).toHaveBeenCalledWith(sessionId, "confirmed", 0, undefined));
+    else if (to === "failed" || to === "cancelled") await vi.waitFor(() => expect(figureCheckUpdate).toHaveBeenCalledWith(sessionId, "unchecked", 0, undefined));
     else expect(figureCheckUpdate).not.toHaveBeenCalled();
   });
 
@@ -534,7 +535,7 @@ describe("session-bridge-observer — the verification tier is internal", () => 
       opId, task: "Verification pass: build the sheet", summary: expect.stringContaining("| a | 1 | 2 | no |"),
       verification: { mismatched: 1, checked: 2, corrected: false }, surfacedViaNudge: true,
     }));
-    expect(figureCheckUpdate).toHaveBeenCalledWith(sessionId, "correcting", 1);
+    expect(figureCheckUpdate).toHaveBeenCalledWith(sessionId, "correcting", 1, undefined);
     expect(figureCheckUpdate).toHaveBeenLastCalledWith(sessionId, "mismatch", 1);
     expect(scheduleIdleNudge).not.toHaveBeenCalled();
     expect(bgEventsFor(broadcast, opId)).toEqual([]);

@@ -249,6 +249,8 @@ export const AUDIENCES_BY_TOOL: Record<string, Audience[]> = {
   // tools then apply it by code (tools/shared/brand-store.ts).
   brand:        ["main-chat"],
   presentation: ["main-chat", "spawned-agent", "operator"],
+  // The figures check the user asks for, from the chat they asked in.
+  figures_check: ["main-chat"],
   spreadsheet:  ["spawned-agent", "operator"],
   pdf:          ["spawned-agent", "operator"],
 

@@ -92,6 +92,7 @@ import { listTaskArtifacts } from "../data-lineage/task-artifacts.js";
 import {
 	VERIFICATION_OP_TYPE,
 	armVerificationDebounce,
+	artifactSignature,
 	checkBeforeDone,
 	changedDeliverables,
 	hasLiveVerifier,
@@ -100,6 +101,7 @@ import {
 } from "./verification-spend.js";
 import { REVIEW_PUBLISH_OP_TYPE } from "./publish-review-verdict.js";
 import { OP_TYPE } from "../ops/op-types.js";
+import { lastFigureCheckText } from "./figure-check-note.js";
 import type { CanonicalEvent } from "./types.js";
 import type { Op } from "../ops/types.js";
 
@@ -233,4 +235,29 @@ export async function checkFiguresBeforeDone(op: Op, signal?: AbortSignal): Prom
 		logger.warn(`[verify] before-done check failed for ${op.id}: ${(e as Error).message}`);
 		return "skipped";
 	}
+}
+
+/** What a check the user asked for came to, and the note it left on the reply. */
+export interface RequestedFigureCheck {
+	result: "checked" | "timed-out" | "not-submitted" | "busy" | "off" | "no-files";
+	note: string | null;
+}
+
+/**
+ * A figures check the user asked for: "check the rest" after a note said
+ * "16 of 40", or every figure from the start ("fact-check each slide"), run
+ * from the figures_check tool inside the turn. It runs like the before-done
+ * check, held to the same wait, with the scope the user asked for, and
+ * records the files as checked so the turn's own ending does not check them
+ * again. The setting still decides: off means no check, said so.
+ */
+export async function checkFiguresOnRequest(op: Op, paths: string[], scope: "rest" | "all", signal?: AbortSignal): Promise<RequestedFigureCheck> {
+	const sessionId = getSessionForOp(op.id) ?? op.sessionId;
+	if (!getRuntimeConfig().verifyDeliverables) return { result: "off", note: null };
+	const files = paths.filter((p) => artifactSignature(p) !== null);
+	if (!sessionId || files.length === 0) return { result: "no-files", note: null };
+	if (hasPendingSubmission(sessionId) || hasLiveVerifier(sessionId, null)) return { result: "busy", note: null };
+	const { current } = changedDeliverables(sessionId, files);
+	const result = await checkBeforeDone(sessionId, op, current, files, { scope, signal });
+	return { result, note: lastFigureCheckText(sessionId) };
 }

@@ -26,6 +26,8 @@ import { figureCheckUpdate } from "./figure-check-note.js";
 import { resolveTerminalOpStatus } from "./checkpoint-stop.js";
 import { extractFinalAssistantText, verificationReport } from "./session-bridge-extractors.js";
 import { attemptDeliverableCorrection, correctionContextOf } from "./verification-correct.js";
+import { figureBatchEnded, type FigureCheckOutcome } from "./figure-check-run.js";
+import { followCorrection } from "./figure-check-ledger.js";
 import type { CanonicalEvent } from "./types.js";
 
 import { createLogger } from "../logger.js";
@@ -44,18 +46,41 @@ export function recordVerificationEvent(event: CanonicalEvent, core: boolean, se
   const task = getTaskForOp(event.opId) ?? op.task;
   releaseOpFromSession(event.opId);
   const summary = to === "succeeded" ? extractFinalAssistantText(event.opId) : "";
-  const report = verificationReport(summary);
-  if (report.verdict !== "DISCREPANCIES") {
-    logger.info(`verification pass ${event.opId} ended ${to}${report.verdict ? ` (${report.verdict})` : ""}`);
-    figureCheckUpdate(sessionId, report.verdict === "CONFIRMED" ? "confirmed" : "unchecked");
+  const verdict = verificationReport(summary).verdict;
+  logger.info(`verification pass ${event.opId} ended ${to}${verdict ? ` (${verdict})` : ""}`);
+  // A pass of a run of several (figure-check-run.ts) waits for the others;
+  // the run's outcome is settled once, when the last one ends.
+  void figureBatchEnded(event.opId, summary).then((ended) => {
+    if (ended === "pending") return;
+    settleFigureCheck(sessionId, task, ended === "not-a-run" ? singlePass(event.opId, summary) : ended);
+  }).catch((e) => {
+    logger.warn(`figures check for ${sessionId} could not settle: ${(e as Error).message}`);
+    figureCheckUpdate(sessionId, "unchecked");
+  });
+}
+
+/** A pass that is not part of a run: its own verdict is the outcome. */
+function singlePass(opId: string, summary: string): FigureCheckOutcome {
+  const r = verificationReport(summary);
+  return {
+    verdict: r.verdict, table: summary, checked: r.checked, mismatched: r.mismatched,
+    ...(r.verdict === "DISCREPANCIES" ? { discrepantOpId: opId } : {}), discrepantFiles: [],
+  };
+}
+
+function settleFigureCheck(sessionId: string, task: string, o: FigureCheckOutcome): void {
+  if (o.verdict !== "DISCREPANCIES" || !o.discrepantOpId) {
+    figureCheckUpdate(sessionId, o.verdict === "CONFIRMED" ? "confirmed" : "unchecked", 0, o.coverage);
     return;
   }
-  logger.info(`verification pass ${event.opId}: discrepancies on ${report.mismatched} of ${report.checked} values — correcting`);
-  figureCheckUpdate(sessionId, "correcting", report.mismatched);
+  const opId = o.discrepantOpId;
+  logger.info(`figures check for ${sessionId}: discrepancies on ${o.mismatched} of ${o.checked} values — correcting`);
+  figureCheckUpdate(sessionId, "correcting", o.mismatched, o.coverage);
   void attemptDeliverableCorrection({
-    verificationOpId: event.opId, sessionId, verdictText: summary, mismatched: report.mismatched, checked: report.checked,
+    verificationOpId: opId, sessionId, verdictText: o.table, mismatched: o.mismatched, checked: o.checked,
+    ...(o.discrepantFiles.length ? { deliverables: o.discrepantFiles } : {}),
   }).then((submitted) => {
-    if (!submitted) surfaceRework(sessionId, event.opId, task, summary, report.mismatched, report.checked);
+    if (!submitted) surfaceRework(sessionId, opId, task, o.table, o.mismatched, o.checked);
   });
 }
 
@@ -81,6 +106,10 @@ export function recordCorrectionEvent(event: CanonicalEvent, core: boolean, sess
     opId: event.opId, status: "completed", summary, filesChanged: [], task, completedAt: Date.now(),
     verification: { mismatched, checked, corrected: true }, surfacedViaNudge: true,
   });
+  // The correction's own edit: what the check recorded per figure carries over.
+  for (const path of context?.deliverables ?? []) {
+    try { followCorrection(path); } catch (e) { logger.warn(`could not carry the figures record over the correction of ${path}: ${(e as Error).message}`); }
+  }
   figureCheckUpdate(sessionId, "corrected", mismatched);
   proactiveSpeakToSession(sessionId, `Verification finished: I corrected ${mismatched} value${mismatched === 1 ? "" : "s"} that did not match their sources.`);
 }

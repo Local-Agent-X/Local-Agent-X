@@ -80,7 +80,17 @@ export interface VerificationSubmitInput {
 	sessionId: string;
 	/** ONLY the new/changed deliverables — the brief's scope. */
 	deliverables: string[];
+	/** This pass's share of a listed check (figure-check-run.ts): the figures
+	 *  it checks, one brief line each. Absent: the verifier picks its own. */
+	figures?: string[];
+	/** How much of the files' figures the check covers. Absent: routine. */
+	scope?: FigureCheckScope;
 }
+
+/** routine: the share a finished deliverable gets (figure-inventory.ts
+ *  routineSampleSize); rest: every figure not yet confirmed; all: every
+ *  figure, whatever was checked before. */
+export type FigureCheckScope = "routine" | "rest" | "all";
 
 export type VerificationSubmitter = (input: VerificationSubmitInput) => Promise<boolean>;
 
@@ -143,7 +153,7 @@ function warnOnce(what: string, e: unknown): void {
 
 function submitter(): VerificationSubmitter {
 	return submitterOverride
-		?? (async (input) => (await import("./verification-submit.js")).submitVerificationOp(input));
+		?? (async (input) => (await import("./figure-check-run.js")).startFigureCheck(input));
 }
 
 /** Current on-disk signature for one deliverable, or null when it is gone or
@@ -262,7 +272,7 @@ export const CHECK_BEFORE_DONE_WAIT_MS = 180_000;
  */
 export async function checkBeforeDone(
 	sessionId: string, parentOp: Op, current: Map<string, string>, delta: string[],
-	opts: { timeoutMs?: number; signal?: AbortSignal } = {},
+	opts: { timeoutMs?: number; signal?: AbortSignal; scope?: FigureCheckScope } = {},
 ): Promise<"checked" | "timed-out" | "not-submitted"> {
 	const armed = DEBOUNCED.get(sessionId);
 	const changed = new Set(delta);
@@ -272,13 +282,15 @@ export async function checkBeforeDone(
 		for (const path of armed.changed) if (artifactSignature(path) !== null) changed.add(path);
 	}
 	const deliverables = [...changed];
-	VERIFIED_ARTIFACTS.set(sessionId, current);
+	// Merged, not replaced: a check of one file the user asked for must not
+	// forget that the session's other deliverables were checked.
+	VERIFIED_ARTIFACTS.set(sessionId, new Map([...(VERIFIED_ARTIFACTS.get(sessionId) ?? []), ...current]));
 	PENDING_VERIFIER_SESSIONS.add(sessionId);
 	const result = awaitFigureCheck(sessionId, opts.timeoutMs ?? CHECK_BEFORE_DONE_WAIT_MS, opts.signal);
 	figureCheckStarted(sessionId, deliverables, true);
 	let submitted = false;
 	try {
-		submitted = await submitter()({ parentOp, sessionId, deliverables });
+		submitted = await submitter()({ parentOp, sessionId, deliverables, ...(opts.scope ? { scope: opts.scope } : {}) });
 	} catch (e) {
 		warnOnce("submission failed", e);
 	} finally {

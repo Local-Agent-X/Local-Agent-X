@@ -47,7 +47,7 @@ export function resultUrlOfOp(opId: string, op: Pick<Op, "type" | "appUrl"> | nu
 
 /** Is this per-value row's `match?` cell a NO? Tolerant of the spellings
  *  models actually emit for that column. */
-function isMismatchRow(row: string): boolean {
+export function isMismatchRow(row: string): boolean {
   const cells = row.split("|").map((c) => c.replace(/[*_`]/g, "").trim()).filter(Boolean);
   const last = (cells[cells.length - 1] ?? "").toLowerCase();
   return last === "no" || last.startsWith("no ") || last === "x" || last === "\u2717" || last === "\u274c";

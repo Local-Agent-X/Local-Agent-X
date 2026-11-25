@@ -139,6 +139,7 @@ export async function buildVerificationOp(input: VerificationSubmitInput): Promi
 	const task = buildVerificationBrief({
 		deliverables: input.deliverables,
 		parentTask: input.parentOp.task,
+		figures: input.figures,
 	});
 	const contextPack = await buildContextPack({
 		description: task,
@@ -196,14 +197,17 @@ export function armVerificationDeadline(opId: string, ms: number): void {
  * Submit the verification op for a completed parent (trigger has already
  * gated on setting, dedup, and delta). Returns true when an op was actually
  * submitted. Never throws — the trigger fires this and forgets.
+ * `beforeStart` learns the op's id before it can run, so a batch of a listed
+ * check (figure-check-run.ts) is on record before its pass can end.
  */
-export async function submitVerificationOp(input: VerificationSubmitInput): Promise<boolean> {
+export async function submitVerificationOp(input: VerificationSubmitInput, beforeStart?: (opId: string) => void): Promise<boolean> {
 	try {
 		const op = await buildVerificationOp(input);
 		// Runtime before visibility (agent-runner/run.ts posture): a failed
 		// credential/endpoint/surface must not leave a ghost operation.
 		await configureVerificationRuntime(op, verificationRuntimeSessionId(op.id));
 		TARGETS.set(op.id, { deliverables: [...input.deliverables], parentOp: input.parentOp });
+		beforeStart?.(op.id);
 		canonicalLoopEntry(op, { sessionId: input.sessionId, confirmRunning: false });
 		trackOpForSession(op.id, input.sessionId, panelLabel(input.parentOp.task));
 		armVerificationDeadline(op.id, VERIFICATION_OP_BUDGET.maxWallTimeMs);

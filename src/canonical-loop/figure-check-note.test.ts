@@ -65,3 +65,22 @@ describe("the figures check's note on a reply", () => {
     expect(saved("chat-4").map((n) => n.status)).toEqual(["confirmed", "checking"]);
   });
 });
+
+describe("how much of the figures the note says were checked", () => {
+  it.each([
+    [{ checked: 16, total: 40 }, "Checked 16 of 40 figures in deck.pptx against their sources: they match. Ask me to check the rest."],
+    [{ checked: 40, total: 40 }, "Checked all 40 figures in deck.pptx against their sources: they match."],
+    [{ checked: 6, total: null }, "Checked 6 figures in deck.pptx against their sources: they match."],
+  ])("confirmed, %o", (coverage, text) => {
+    figureCheckStarted("chat-c", ["C:/work/deck.pptx"], true);
+    figureCheckUpdate("chat-c", "confirmed", 0, coverage);
+    expect(saved("chat-c").at(-1)?.text).toBe(text);
+  });
+
+  it("a correction keeps the count it started with, and says what is left", () => {
+    figureCheckStarted("chat-d", ["C:/work/deck.pptx"], true);
+    figureCheckUpdate("chat-d", "correcting", 2, { checked: 16, total: 40 });
+    figureCheckUpdate("chat-d", "corrected", 2);
+    expect(saved("chat-d").at(-1)?.text).toBe("Corrected 2 figures in deck.pptx to match their sources. 16 of 40 figures checked so far; ask me to check the rest.");
+  });
+});

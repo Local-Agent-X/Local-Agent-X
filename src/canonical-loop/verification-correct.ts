@@ -142,6 +142,9 @@ export async function attemptDeliverableCorrection(input: {
 	verdictText: string;
 	mismatched: number;
 	checked: number;
+	/** A run of several passes (figure-check-run.ts): every file one of them
+	 *  found a mismatch in. Absent: the pass's own files. */
+	deliverables?: string[];
 }): Promise<boolean> {
 	const target = verificationTargetOf(input.verificationOpId);
 	if (!target) {
@@ -157,7 +160,7 @@ export async function attemptDeliverableCorrection(input: {
 			sessionId: input.sessionId,
 			parentOp: target.parentOp,
 			verificationOpId: input.verificationOpId,
-			deliverables: target.deliverables,
+			deliverables: input.deliverables ?? target.deliverables,
 			table: input.verdictText,
 		});
 		const workRoot = op.contextPack.routing.workRoot!;
@@ -173,7 +176,7 @@ export async function attemptDeliverableCorrection(input: {
 		});
 		CONTEXTS.set(op.id, {
 			parentTask: target.parentOp.task,
-			deliverables: target.deliverables,
+			deliverables: input.deliverables ?? target.deliverables,
 			table: input.verdictText,
 			mismatched: input.mismatched,
 			checked: input.checked,

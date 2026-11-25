@@ -128,12 +128,25 @@ function renderDeliverableSection(entries: DeliverableEntry[], maxSources: numbe
 	return `Deliverables and their claimed sources:\n${blocks.join("\n")}`;
 }
 
-function assemble(parentTaskLine: string, deliverableSection: string): string {
+/** A listed check: the verifier checks exactly these figures (figure-inventory.ts),
+ *  each row of its table starting with the figure's #, so the run knows which
+ *  ones were settled (figure-check-run.ts). */
+const LISTED_PICK = "2. Check exactly the figures listed under \"Figures to check\": every one of them, and no others.";
+const LISTED_CONTRACT = [
+	"Output contract:",
+	"The FIRST line of your final answer MUST be `VERDICT: CONFIRMED | DISCREPANCIES | UNVERIFIABLE`",
+	"After the verdict line, output a table with columns: #, value, deliverable says, independent source says, match? — one row per listed figure, its # (e.g. #3) in the first column. In match? write yes, no, or unverified (no figure could be obtained for it).",
+	"Use CONFIRMED only when every listed figure matches; DISCREPANCIES when any conflicts; UNVERIFIABLE when no independent figure could be obtained for any of them.",
+].join("\n");
+
+function assemble(parentTaskLine: string, deliverableSection: string, listed: string[] = []): string {
+	if (listed.length === 0) return [MANDATE, `Parent task: ${parentTaskLine}`, deliverableSection, OUTPUT_CONTRACT].join("\n\n");
 	return [
-		MANDATE,
+		MANDATE.replace(/^2\. .*$/m, LISTED_PICK),
 		`Parent task: ${parentTaskLine}`,
 		deliverableSection,
-		OUTPUT_CONTRACT,
+		`Figures to check:\n${listed.join("\n")}`,
+		LISTED_CONTRACT,
 	].join("\n\n");
 }
 
@@ -143,7 +156,8 @@ function assemble(parentTaskLine: string, deliverableSection: string): string {
  * at most MAX_BRIEF_CHARS unless the fixed sections alone exceed the cap
  * (they are constant-plus-300-chars and never truncated, by contract).
  */
-export function buildVerificationBrief(input: { deliverables: string[]; parentTask: string }): string {
+export function buildVerificationBrief(input: { deliverables: string[]; parentTask: string; figures?: string[] }): string {
+	const listed = Array.isArray(input?.figures) ? input.figures : [];
 	const rawDeliverables = Array.isArray(input?.deliverables) ? input.deliverables : [];
 	const paths = rawDeliverables.filter((p): p is string => typeof p === "string" && p.trim().length > 0);
 	const parentRaw = typeof input?.parentTask === "string" ? input.parentTask : "";
@@ -160,15 +174,15 @@ export function buildVerificationBrief(input: { deliverables: string[]; parentTa
 	// output contract ride through every rung untouched.
 	const maxObservedSources = entries.reduce((max, entry) => Math.max(max, entry.sources.length), 0);
 	for (let k = maxObservedSources; k >= 0; k--) {
-		const brief = assemble(parentTaskLine, renderDeliverableSection(entries, k, 0));
+		const brief = assemble(parentTaskLine, renderDeliverableSection(entries, k, 0), listed);
 		if (brief.length <= MAX_BRIEF_CHARS) return brief;
 	}
 	for (let n = entries.length - 1; n >= 1; n--) {
-		const brief = assemble(parentTaskLine, renderDeliverableSection(entries.slice(0, n), 0, entries.length - n));
+		const brief = assemble(parentTaskLine, renderDeliverableSection(entries.slice(0, n), 0, entries.length - n), listed);
 		if (brief.length <= MAX_BRIEF_CHARS) return brief;
 	}
-	const skeleton = assemble(parentTaskLine, "");
+	const skeleton = assemble(parentTaskLine, "", listed);
 	const budget = Math.max(0, MAX_BRIEF_CHARS - skeleton.length);
 	const clipped = renderDeliverableSection(entries.slice(0, 1), 0, Math.max(0, entries.length - 1)).slice(0, budget);
-	return assemble(parentTaskLine, clipped);
+	return assemble(parentTaskLine, clipped, listed);
 }

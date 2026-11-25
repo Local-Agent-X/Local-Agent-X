@@ -21,3 +21,6 @@ export { cancelAllVerificationDebounces } from "../verification-spend.js";
 export { setFigureCheckBroadcaster } from "../figure-check-note.js";
 // The send guard (tool-execution/figure-check-send-gate.ts) asks a file's state.
 export { figureCheckOf } from "../figure-check-note.js";
+// The figures_check tool (tools/figures-check-tool.ts): a check the user asked
+// for, of the rest of a deliverable's figures or all of them.
+export { checkFiguresOnRequest, type RequestedFigureCheck } from "../verification-trigger.js";

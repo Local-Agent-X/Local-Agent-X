@@ -136,6 +136,13 @@ export const plugins: ToolPlugin[] = [
     },
   },
   {
+    id: "figuresCheck",
+    async register() {
+      const { figuresCheckTool } = await import("./figures-check-tool.js");
+      return [figuresCheckTool];
+    },
+  },
+  {
     id: "voiceVisual",
     async register() {
       const { createVoiceVisualTool } = await import("../voice/voice-visual-tool.js");

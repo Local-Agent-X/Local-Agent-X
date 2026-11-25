@@ -21,7 +21,7 @@ afterAll(() => {
   rmSync(laxDir, { recursive: true, force: true });
 });
 
-const { checkFiguresBeforeDone, deliverablesToCheck, _setVerificationSubmitterForTests, _resetVerificationTriggerForTests, VERIFICATION_OP_TYPE } = await import("./verification-trigger.js");
+const { checkFiguresBeforeDone, checkFiguresOnRequest, deliverablesToCheck, _setVerificationSubmitterForTests, _resetVerificationTriggerForTests, VERIFICATION_OP_TYPE } = await import("./verification-trigger.js");
 const { checkBeforeDone, armVerificationDebounce, changedDeliverables, VERIFICATION_DEBOUNCE_MS } = await import("./verification-spend.js");
 const { figureCheckUpdate, figureCheckOf, _resetFigureCheckNotesForTests } = await import("./figure-check-note.js");
 const { REVIEW_PUBLISH_OP_TYPE } = await import("./publish-review-verdict.js");
@@ -37,7 +37,7 @@ let seq = 0;
 const ops: string[] = [];
 const sessions: string[] = [];
 let work: string;
-let submitted: Array<{ sessionId: string; deliverables: string[] }>;
+let submitted: Array<{ sessionId: string; deliverables: string[]; scope?: string }>;
 
 function session(): string {
   const id = `sess-before-done-${seq++}`;
@@ -68,7 +68,7 @@ beforeEach(() => {
   _resetVerificationTriggerForTests();
   _resetFigureCheckNotesForTests();
   submitted = [];
-  _setVerificationSubmitterForTests(async (input) => { submitted.push({ sessionId: input.sessionId, deliverables: input.deliverables }); return true; });
+  _setVerificationSubmitterForTests(async (input) => { submitted.push({ sessionId: input.sessionId, deliverables: input.deliverables, ...(input.scope ? { scope: input.scope } : {}) }); return true; });
   setRuntimeConfig({ ...getRuntimeConfig(), verifyDeliverables: true });
 });
 
@@ -178,3 +178,29 @@ describe("what is never held", () => {
   });
 });
 
+describe("a check the user asked for (figures_check)", () => {
+  it("checks the named file with the scope asked for, waits, and reports the note", async () => {
+    const { sessionId, deck } = deckSession();
+    const turn = op("chat_turn", sessionId);
+    const done = checkFiguresOnRequest(turn, [deck], "all");
+    await new Promise((r) => setTimeout(r, 20));
+    expect(submitted).toEqual([{ sessionId, deliverables: [deck], scope: "all" }]);
+    figureCheckUpdate(sessionId, "confirmed", 0, { checked: 40, total: 40 });
+    expect(await done).toEqual({ result: "checked", note: expect.stringMatching(/^Checked all 40 figures in deck-\d+\.pptx/) });
+    // The turn's own ending finds the file already checked.
+    expect(deliverablesToCheck(turn, sessionId)).toBeNull();
+  });
+
+  it("says so when the setting is off, and checks nothing", async () => {
+    const { sessionId, deck } = deckSession();
+    setRuntimeConfig({ ...getRuntimeConfig(), verifyDeliverables: false });
+    expect(await checkFiguresOnRequest(op("chat_turn", sessionId), [deck], "rest")).toEqual({ result: "off", note: null });
+    expect(submitted).toEqual([]);
+  });
+
+  it("does not start a second check while one is running", async () => {
+    const { sessionId, deck } = deckSession();
+    op(VERIFICATION_OP_TYPE, sessionId);
+    expect((await checkFiguresOnRequest(op("chat_turn", sessionId), [deck], "rest")).result).toBe("busy");
+  });
+});

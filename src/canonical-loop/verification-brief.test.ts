@@ -173,3 +173,17 @@ describe("buildVerificationBrief — defensive posture", () => {
 		expect(brief).toContain("Parent task: (not provided)");
 	});
 });
+
+describe("a brief for listed figures (figure-check-run.ts)", () => {
+	it("checks exactly the listed figures, each row keyed by its #", () => {
+		const brief = buildVerificationBrief({
+			deliverables: ["C:/work/deck.pptx"],
+			parentTask: "make the deck",
+			figures: ["#1 — deck.pptx, Slide 2: 48.31 (in: \"Hawaii — 48.31\")", "#2 — deck.pptx, Slide 3: 13.25 (in: \"Nevada — 13.25\")"],
+		});
+		expect(brief).not.toContain("Pick 3-7 load-bearing values");
+		expect(brief).toContain("Check exactly the figures listed under \"Figures to check\"");
+		expect(brief).toContain("Figures to check:\n#1 — deck.pptx, Slide 2: 48.31");
+		expect(brief).toContain("its # (e.g. #3) in the first column");
+	});
+});

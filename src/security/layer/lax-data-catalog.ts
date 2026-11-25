@@ -98,6 +98,8 @@ export const LAX_DATA_CATALOG: readonly LaxDataEntry[] = [
   // Read back as instructions the app carries out on this computer.
   ...at("card", "runs commands on every tool call", "hooks.json"),
   ...at("card", "decides which MCP servers start", "mcp.json"),
+  // A figure marked checked here is skipped by the next figures check.
+  ...at("card", "records which figures in your files were fact-checked, so later checks skip them", "figure-checks.json"),
   ...at("card", "decides which MCP servers run trusted on this computer, outside the sandbox", "mcp-local-trust.json"),
   ...at("card", MCP_TRUST, "mcp-trust.json", "mcp-signed-manifests.json"),
   ...at("card", "holds plugins, whose code loads into the app when it starts", "plugins"),

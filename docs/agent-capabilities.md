@@ -158,6 +158,7 @@ demand via tool search and aren't all listed here.)
 - `document`
 - `brand`
 - `presentation`
+- `figures_check` — Fact-check a deck's or document's figures against independent sources: the rest of them, or every one. _e.g._ "check the rest of the figures in that deck"
 
 ---
-_80 capabilities · 55 with a description · 25 awaiting a blurb (add one to the tool's policy row)._
+_81 capabilities · 56 with a description · 25 awaiting a blurb (add one to the tool's policy row)._

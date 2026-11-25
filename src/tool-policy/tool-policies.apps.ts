@@ -287,4 +287,9 @@ export const TOOL_POLICIES_APPS: Record<string, ToolPolicyRow> = {
   // The thumbnail is written beside the file (<file>.preview.png); the tool
   // gates that write itself through evaluateFileAccess (preview-tools.ts).
   preview_document: { kernel: "internal", risk: "workspace-write", capabilities: [], tags: [], pathArgs: [{ arg: "file_path", action: "read" }],  rules: [{ id: "allow-preview-document", decision: "allow", reason: "Generated-file self-check (writes a sibling thumbnail)", priority: 50 }] },
+  // The figures check the user asks for (the rest of a deck's figures, or all of
+  // them). It starts verification passes and, on mismatches, a correction: worker
+  // runs with their own gated tools, which is why it is a delegation and why it
+  // waits minutes (timeoutMs 0, as op_submit). It writes nothing itself.
+  figures_check: { kernel: "internal", risk: "workspace-write", capabilities: [], tags: ["delegation"], timeoutMs: 0, reads: ["session", "operation"], pathArgs: [{ arg: "paths", action: "read" }], blurb: { say: "check the rest of the figures in that deck", does: "Fact-check a deck's or document's figures against independent sources: the rest of them, or every one." }, rules: [{ id: "allow-figures-check", decision: "allow", reason: "The figures check the user asked for", priority: 50 }] },
 };

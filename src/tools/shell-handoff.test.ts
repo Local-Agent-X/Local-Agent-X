@@ -3,7 +3,8 @@
 // (2026-11-22). The command moves to the background and keeps running; the
 // bash call returns at once so the agent's next step reads the message.
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { bashTool } from "./shell-tool.js";
@@ -12,9 +13,14 @@ import { SESSIONS, killSession } from "./process-session.js";
 import { statusOf } from "./result-helpers.js";
 
 const dirs: string[] = [];
-afterEach(() => {
-  for (const s of SESSIONS.values()) if (s.command.includes("lax-send-now-test")) { killSession(s); SESSIONS.delete(s.sessionId); }
-  for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true });
+// A killed command holds its folder until Windows lets it go: wait for it to
+// exit, then remove the folder with retries (rmSync's are ignored on Node 24),
+// or the folder's removal fails the test under a loaded full-suite run.
+afterEach(async () => {
+  const exits: Array<Promise<void>> = [];
+  for (const s of SESSIONS.values()) if (s.command.includes("lax-send-now-test")) { killSession(s); exits.push(s.exited); SESSIONS.delete(s.sessionId); }
+  await Promise.race([Promise.all(exits), new Promise((r) => setTimeout(r, 10_000))]);
+  for (const d of dirs.splice(0)) await rm(d, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
 });
 
 // Prints "first", then "second" after `gapMs`, then exits. The marker names

@@ -152,6 +152,34 @@ describe("augmentFromToolSearch delegated denylist", () => {
     expect(getToolsForOp(opId).map((t) => t.name).sort()).toEqual(["bash", ALLOWED, "write"].sort());
   });
 
+  // The worker that was refused `android` three times and drove adb through
+  // bash instead (2026-11-26): what a build reaches loads like any other tool.
+  it("a build worker with a work root loads the phone, office and API tools it searches for", () => {
+    registerAll(["android", "device_check", "http_request", "presentation", "process_start"]);
+    const opId = "op_delegated_build_reach_0001";
+    ops.push(opId);
+    persistOp(opId, "build", "C:/ws/apps/proj");
+    const toolMap = new Map<string, ToolDefinition>();
+
+    augmentFromToolSearch(toolSearchResult(["android", "device_check", "http_request", "presentation", "process_start"]), opId, toolMap, undefined, "delegated");
+
+    expect([...toolMap.keys()].sort()).toEqual(["android", "device_check", "http_request", "presentation"]);
+    expect(canCallByName("ios", opId, toolMap, "delegated")).toBe(false); // not registered here
+    expect(augmentByName("process_start", opId, toolMap, undefined, "delegated")).toBe(false);
+  });
+
+  it("a worker without a work root is still refused them", () => {
+    registerAll([ALLOWED, "android", "presentation"]);
+    const opId = "op_delegated_readonly_reach_0001";
+    ops.push(opId);
+    persistOp(opId, "background");
+    const toolMap = new Map<string, ToolDefinition>();
+
+    augmentFromToolSearch(toolSearchResult(["android", "presentation", ALLOWED]), opId, toolMap, undefined, "delegated");
+
+    expect([...toolMap.keys()]).toEqual([ALLOWED]);
+  });
+
   it("a build worker WITHOUT a work root stays read-only at augmentation time", () => {
     registerAll([ALLOWED, "write", "bash"]);
     const opId = "op_delegated_build_0002";

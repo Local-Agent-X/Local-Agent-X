@@ -11,6 +11,7 @@ import type { Audience, ToolDefinition } from "../../types.js";
 import { unifiedRegistry } from "../../tools/registry.js";
 import {
   BUILD_MUTATION_TOOLS,
+  BUILD_REACH_TOOLS,
   delegatedToolsetForOp,
   isDeniedForDelegatedWorker,
   type DelegatedOpLane,
@@ -117,6 +118,46 @@ describe("delegatedToolsetForOp", () => {
       expect(isDeniedForDelegatedWorker(name, build), name).toBe(true);
     }
     expect(isDeniedForDelegatedWorker("read", build)).toBe(false);
+  });
+
+  // A worker told to install a preview and test it on the phone was refused
+  // `android` three times and drove adb through bash instead (2026-11-26).
+  describe("what a build worker's job reaches: office files, a phone, an API", () => {
+    const build = { lane: "build" as const, workRoot: WORK_ROOT };
+
+    it("names the tools by what they are for", () => {
+      for (const name of ["android", "ios", "device_check", "http_request", "document", "spreadsheet", "presentation", "pdf"]) {
+        expect(BUILD_REACH_TOOLS, name).toContain(name);
+      }
+    });
+
+    it("a build worker with a work root may hold them, and starts with the ones its audience carries", () => {
+      for (const name of BUILD_REACH_TOOLS) expect(isDeniedForDelegatedWorker(name, build), name).toBe(false);
+      registerAll(["read", "android", "presentation"]);
+      registerAll(["device_check"], ["main-chat"]);
+
+      const names = delegatedToolsetForOp("build", { workRoot: WORK_ROOT }).map((t) => t.name);
+
+      expect(names).toEqual(expect.arrayContaining(["read", "android", "presentation"]));
+      // Not pulled in at spawn: tool_search reaches it (the denylist above lets it through).
+      expect(names).not.toContain("device_check");
+    });
+
+    it("a worker that may not write holds none of the ones that write or run commands", () => {
+      registerAll(["read", "android", "presentation", "http_request"]);
+      for (const belt of [{ lane: "build" as const }, { lane: "interactive" as const, workRoot: WORK_ROOT }, { lane: "background" as const }]) {
+        for (const name of ["android", "ios", "device_check", "http_request", "document", "spreadsheet", "presentation", "pdf"]) {
+          expect(isDeniedForDelegatedWorker(name, belt), `${belt.lane}:${name}`).toBe(true);
+        }
+        expect(delegatedToolsetForOp(belt.lane, belt).map((t) => t.name)).toEqual(["read"]);
+      }
+    });
+
+    it("opens nothing else: spawning, scheduling and the other shell spellings stay out", () => {
+      for (const name of ["op_submit_async", "agent_spawn", "mission_schedule_create", "process_start", "app_rebuild", "ari_file", "bulk_replace"]) {
+        expect(isDeniedForDelegatedWorker(name, build), name).toBe(true);
+      }
+    });
   });
 
   it("skips tools absent from the registry instead of fabricating them", () => {

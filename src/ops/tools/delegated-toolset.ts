@@ -13,7 +13,8 @@
  *
  * Lanes: interactive and background workers are read-only. A build worker is
  * submitted with a work root (ops/tools/work-root.ts) and gets the write
- * family plus bash on top; confinement is the security layer's existing
+ * family plus bash on top, and may hold what its job reaches
+ * (BUILD_REACH_TOOLS); confinement is the security layer's existing
  * delegated gate (security/layer/delegated-worktree-gate.ts): the work root
  * is its isolation, the sandbox its containment — this module grants no
  * authority of its own.
@@ -47,6 +48,21 @@ export const BUILD_MUTATION_TOOLS: readonly string[] = selectTools({
 });
 
 /**
+ * What a build worker's job reaches beyond its own files: the office file a
+ * deliverable is, the phone or emulator a build is tested on, the API a build
+ * talks to. A worker with a work root already holds write and bash, so
+ * refusing it these bought no safety and cost the job: handed "install the
+ * preview and test it on the phone", a worker was refused `android` three
+ * times, drove adb and the emulator through bash instead, and gave up
+ * (2026-11-26); the day before, a worker correcting a deck was refused
+ * `presentation`. They are not pulled into the belt at spawn: the audience map
+ * says which of them a worker starts with, and tool_search reaches the rest.
+ * Each call still passes the delegated gate, and one that needs a person is
+ * parked in the user's inbox (tool-execution/deferred-call.ts).
+ */
+export const BUILD_REACH_TOOLS: readonly string[] = selectTools({ tags: ["office-doc", "device", "http-api"] });
+
+/**
  * Tools a delegated worker must NEVER receive, regardless of what the
  * spawned-agent audience carries. Why each group:
  *
@@ -60,7 +76,8 @@ export const BUILD_MUTATION_TOOLS: readonly string[] = selectTools({
  *    src/security/layer/types.ts): a read-only worker has no worktree, so the
  *    security layer would hard-block every call. Offering tools that always
  *    fail recreates the confused-worker failure this campaign fixed. A build
- *    worker with a work root takes BUILD_MUTATION_TOOLS back out of this set.
+ *    worker with a work root takes BUILD_MUTATION_TOOLS and BUILD_REACH_TOOLS
+ *    back out of this set.
  */
 const DENIED_TOOL_NAMES: ReadonlySet<string> = new Set([...toolsTagged("delegation", "scheduling"), ...WORKTREE_REQUIRED_TOOLS]);
 
@@ -77,7 +94,7 @@ export function delegatedWorkerMayMutate(belt: DelegatedBelt): boolean {
  * answer is the read-only lane's.
  */
 export function isDeniedForDelegatedWorker(name: string, belt?: DelegatedBelt): boolean {
-  if (belt && delegatedWorkerMayMutate(belt) && BUILD_MUTATION_TOOLS.includes(name)) return false;
+  if (belt && delegatedWorkerMayMutate(belt) && (BUILD_MUTATION_TOOLS.includes(name) || BUILD_REACH_TOOLS.includes(name))) return false;
   return DENIED_TOOL_NAMES.has(name);
 }
 

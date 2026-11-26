@@ -25,7 +25,7 @@ const mocks = vi.hoisted(() => {
 	return {
 		FakeWindow,
 		openExternal: vi.fn(async (_url: string) => undefined),
-		openWorkspaceFile: vi.fn(async (_path: string) => ""),
+		openLinkedFile: vi.fn(async (_path: string) => ""),
 	};
 });
 
@@ -53,7 +53,7 @@ vi.mock("./server-process", () => ({
 	isServerRunning: () => new Promise<boolean>(() => {}),
 	isQuittingFlag: () => false,
 }));
-vi.mock("./open-workspace-file", () => ({ openWorkspaceFile: mocks.openWorkspaceFile }));
+vi.mock("./open-workspace-file", () => ({ openLinkedFile: mocks.openLinkedFile }));
 vi.mock("./window-injections", () => ({ buildAppDragStripJs: () => "" }));
 
 import { createWindow } from "./window";
@@ -72,7 +72,7 @@ beforeEach(() => {
 	vi.spyOn(console, "log").mockImplementation(() => {});
 	created.length = 0;
 	mocks.openExternal.mockClear();
-	mocks.openWorkspaceFile.mockClear();
+	mocks.openLinkedFile.mockClear();
 	createWindow();
 });
 afterEach(() => { vi.restoreAllMocks(); });
@@ -137,6 +137,6 @@ describe("the main window", () => {
 		expect(created).toHaveLength(2);
 		expect(created[1].options.webPreferences).toEqual(BRIDGELESS);
 		await new Promise((r) => setTimeout(r, 20));
-		expect(mocks.openWorkspaceFile).not.toHaveBeenCalled();
+		expect(mocks.openLinkedFile).not.toHaveBeenCalled();
 	});
 });

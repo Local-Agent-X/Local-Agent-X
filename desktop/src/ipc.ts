@@ -8,7 +8,7 @@
 import { app, BrowserWindow, clipboard, dialog, globalShortcut, ipcMain, shell, systemPreferences } from "electron";
 import { join } from "path";
 import { reloadLAXConfig, getLAXConfig, LAX_DIR } from "./config";
-import { openWorkspaceFile } from "./open-workspace-file";
+import { openLinkedFile, revealLinkedFile } from "./open-workspace-file";
 import { type DesktopSettings, getSetting, setSetting } from "./settings";
 import { bgForTheme, applyNativeTheme } from "./theme";
 import {
@@ -184,7 +184,8 @@ export function setupIPC(): void {
   });
 
   ipcMain.handle("show-about", () => app.showAboutPanel());
-  ipcMain.handle("open-file", (_e, workspacePath: string) => openWorkspaceFile(workspacePath));
+  ipcMain.handle("open-file", (_e, path: string) => openLinkedFile(path));
+  ipcMain.handle("reveal-file", (_e, path: string) => revealLinkedFile(path));
   ipcMain.handle("quit-app", async () => {
     setQuitting(true);
     await stopServer();

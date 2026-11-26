@@ -128,8 +128,10 @@ contextBridge.exposeInMainWorld("desktop", {
   openInBrowser: () => ipcRenderer.invoke("open-in-browser"),
   copyAppUrl: () => ipcRenderer.invoke("copy-app-url"),
 
-  // File operations
-  openFile: (relativePath: string) => ipcRenderer.invoke("open-file", relativePath),
+  // File operations. A path is `workspace/<path>` or a full path; the main
+  // process decides what it may open or show (open-workspace-file.ts).
+  openFile: (path: string) => ipcRenderer.invoke("open-file", path),
+  revealFile: (path: string) => ipcRenderer.invoke("reveal-file", path),
 
   // Reveal the ~/.lax/uploads folder in the OS file manager.
   openUploadsFolder: () => ipcRenderer.invoke("open-uploads-folder"),

@@ -11,6 +11,8 @@
 // the in-app browser too, an Office file in its own app. A USER tab may
 // navigate to loopback (desktop/src/browser-loopback-policy.ts).
 // Modified clicks (Ctrl/Cmd/Shift/Alt) also keep the default path.
+// A file link (.file-download) gets its own right-click menu: Open, and Show
+// in folder.
 (function () {
 	var bridge = window.desktop && window.desktop.browser;
 	if (!bridge || !bridge.newTab) return;
@@ -73,30 +75,49 @@
 		return d;
 	}
 
-	messages.addEventListener('contextmenu', function (e) {
-		var a = linkFrom(e.target);
-		if (!a) return;
-		var url = inAppUrl(a.getAttribute('href') || '');
-		if (!url) return; // loopback/file links keep the native context menu
+	// The menu at the click, its items clamped inside the window.
+	function showMenu(e, label, items) {
 		e.preventDefault();
 		dismiss();
 		menu = document.createElement('div');
 		menu.className = 'composer-pop link-menu';
 		menu.setAttribute('role', 'menu');
-		menu.setAttribute('aria-label', 'Link actions');
-		menu.appendChild(item('Open in app browser', function () { openInApp(url); }));
-		menu.appendChild(item('Open in external browser', function () {
-			// Rides the audited main-process window-open path (shell.openExternal).
-			window.open(url, '_blank', 'noopener');
-		}));
-		menu.appendChild(item('Copy link', function () {
-			if (navigator.clipboard) navigator.clipboard.writeText(url).catch(function () {});
-		}));
+		menu.setAttribute('aria-label', label);
+		items.forEach(function (el) { menu.appendChild(el); });
 		document.body.appendChild(menu);
 		// Clamp to the viewport so a menu near an edge stays fully visible.
 		var x = Math.min(e.clientX, window.innerWidth - menu.offsetWidth - 8);
 		var y = Math.min(e.clientY, window.innerHeight - menu.offsetHeight - 8);
 		menu.style.left = Math.max(8, x) + 'px';
 		menu.style.top = Math.max(8, y) + 'px';
+	}
+
+	messages.addEventListener('contextmenu', function (e) {
+		var a = linkFrom(e.target);
+		if (!a) return;
+		var url = inAppUrl(a.getAttribute('href') || '');
+		if (!url) return; // loopback links keep the native context menu
+		showMenu(e, 'Link actions', [
+			item('Open in app browser', function () { openInApp(url); }),
+			// Rides the audited main-process window-open path (shell.openExternal).
+			item('Open in external browser', function () { window.open(url, '_blank', 'noopener'); }),
+			item('Copy link', function () {
+				if (navigator.clipboard) navigator.clipboard.writeText(url).catch(function () {});
+			}),
+		]);
+	});
+
+	// A file the agent named: open it, or show it in its folder (Explorer /
+	// Finder) to find what sits beside it. The desktop decides what it may
+	// reach (desktop/src/open-workspace-file.ts) and says why when it won't.
+	messages.addEventListener('contextmenu', function (e) {
+		var a = e.target && e.target.closest ? e.target.closest('a.file-download') : null;
+		if (!a || !window.desktop.revealFile) return;
+		var path = desktopPathOf(a);
+		if (!path) return;
+		showMenu(e, 'File actions', [
+			item('Open', function () { a.click(); }),
+			item('Show in folder', function () { showInFolder(path); }),
+		]);
 	});
 })();

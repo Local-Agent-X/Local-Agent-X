@@ -3,9 +3,22 @@ document.addEventListener('click', (e) => {
   const link = e.target.closest?.('.file-download');
   if (!link) return;
   e.preventDefault();
+  // A file outside the workspace (md() draws it only in the desktop app) opens
+  // in its own program; the desktop decides whether it may.
+  const localPath = link.getAttribute('data-local-path');
+  if (localPath) { openInProgram(localPath); return; }
   const href = link.getAttribute('href');
   if (href) openFileLink(href);
 });
+
+// The path the desktop opener takes for a file link: `workspace/<path>` for a
+// /files/ link, the full path for a file outside the workspace, or null.
+function desktopPathOf(link) {
+  const localPath = link.getAttribute('data-local-path');
+  if (localPath) return localPath;
+  const path = linkPath(link.getAttribute('href') || '');
+  return path.startsWith('/files/') ? 'workspace/' + path.slice('/files/'.length) : null;
+}
 
 // Opens a /files/ link the user clicked: the one way the shell opens a
 // workspace file (chat links, the artifacts list).
@@ -23,7 +36,7 @@ function openFileLink(href) {
   const isElectron = window.desktop?.isDesktop;
 
   if (isElectron && window.desktop?.openFile && !inlineable.includes(ext)) {
-    if (path.startsWith('/files/')) openInProgram(path.slice('/files/'.length));
+    if (path.startsWith('/files/')) openInProgram('workspace/' + path.slice('/files/'.length));
   } else if (isElectron && window.desktop.browser?.newTab) {
     // A file a browser shows opens in the in-app browser, beside the chat and
     // where the agent looks at it too, not in a separate window that hides
@@ -38,20 +51,23 @@ function openFileLink(href) {
   }
 }
 
-// Hands a workspace file to its program. The opener answers "" when it opened
-// the file and a reason when it did not (no such file, no program for the
-// type); the reason is shown, since a click that only fails in the main
-// process otherwise looks like a dead link (2026-11-23).
-function openInProgram(workspaceRel) {
-  const name = workspaceRel.split('/').pop();
+// Hands a file (`workspace/<path>` or a full path) to its program, or shows it
+// in its folder. The desktop answers "" when it did and a reason when it did
+// not (no such file, no program for the type, a folder it will not reach); the
+// reason is shown, since a click that only fails in the main process otherwise
+// looks like a dead link (2026-11-23).
+function askDesktopAbout(desktopPath, action, verb) {
+  const name = desktopPath.split(/[\\/]/).pop();
   const tell = (reason) => {
-    if (typeof showControlErrorToast === 'function') showControlErrorToast(`Couldn't open ${name}: ${reason}`);
+    if (typeof showControlErrorToast === 'function') showControlErrorToast(`Couldn't ${verb} ${name}: ${reason}`);
   };
-  Promise.resolve(window.desktop.openFile('workspace/' + workspaceRel)).then(
+  Promise.resolve(action(desktopPath)).then(
     (reason) => { if (reason) tell(reason); },
     (err) => tell(err && err.message ? err.message : String(err)),
   );
 }
+function openInProgram(desktopPath) { askDesktopAbout(desktopPath, window.desktop.openFile, 'open'); }
+function showInFolder(desktopPath) { askDesktopAbout(desktopPath, window.desktop.revealFile, 'show'); }
 
 // ── Local-service links → in-app browser ──
 // Chat links to loopback URLs on a port other than LAX's own (a ComfyUI the

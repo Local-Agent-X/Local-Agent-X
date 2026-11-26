@@ -24,7 +24,7 @@ const mocks = vi.hoisted(() => {
 		FakeWindow,
 		token: "operator-secret-token",
 		openExternal: vi.fn(async (_url: string) => undefined),
-		openWorkspaceFile: vi.fn(async (_path: string) => ""),
+		openLinkedFile: vi.fn(async (_path: string) => ""),
 	};
 });
 
@@ -36,7 +36,7 @@ vi.mock("./config", () => ({
 	ICON_PATH: "",
 	getLAXConfig: () => ({ port: 4321, authToken: mocks.token }),
 }));
-vi.mock("./open-workspace-file", () => ({ openWorkspaceFile: mocks.openWorkspaceFile }));
+vi.mock("./open-workspace-file", () => ({ openLinkedFile: mocks.openLinkedFile }));
 vi.mock("./theme", () => ({
 	bgForTheme: () => "#ffffff",
 	overlayForTheme: () => ({ color: "#ffffff", symbolColor: "#000000" }),
@@ -57,7 +57,7 @@ beforeEach(() => {
 	log = vi.spyOn(console, "log").mockImplementation(() => {});
 	created.length = 0;
 	mocks.openExternal.mockClear();
-	mocks.openWorkspaceFile.mockClear();
+	mocks.openLinkedFile.mockClear();
 });
 afterEach(() => { vi.restoreAllMocks(); });
 

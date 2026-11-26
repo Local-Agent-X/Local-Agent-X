@@ -169,6 +169,32 @@ function labelProgramLinks(html) {
 }
 
 // Markdown renderer
+// The workspace folders a reply names, each with where in `text` it is named:
+// a folder (`workspace/black-friday-sale/`) or a file's own folder, written
+// short or in full (C:\…\workspace\…), as text or inside a link md() already
+// drew (a placeholder whose href is a /files/ address).
+function workspaceFoldersIn(text, placeholders) {
+  const found = [];
+  const re = /\x00PH(\d+)\x00|(?:^|[^A-Za-z0-9_-])workspace[\\/]([^\s`<>"]*)/gi;
+  let m;
+  while ((m = re.exec(text))) {
+    const drawn = m[1] === undefined ? null : (placeholders[Number(m[1])] || '').match(/href="\/files\/([^"?#]*)/);
+    const rest = m[1] === undefined ? m[2] : drawn && drawn[1];
+    if (rest === null || rest === undefined) continue;
+    const clean = rest.replace(/\\/g, '/').replace(/[.,;:!?)]+$/, '').replace(/^\/+/, '');
+    const dir = /\.[A-Za-z0-9]{1,5}$/.test(clean) ? clean.replace(/[^/]*$/, '') : (clean ? clean.replace(/\/?$/, '/') : '');
+    found.push({ at: m.index, folder: 'workspace/' + dir });
+  }
+  return found;
+}
+
+// The folder named last before position `at`, or null.
+function folderNamedBefore(folders, at) {
+  let folder = null;
+  for (const f of folders) { if (f.at < at) folder = f.folder; }
+  return folder;
+}
+
 function md(s) {
   if (!s) return '';
 
@@ -198,13 +224,29 @@ function md(s) {
   // the global click handler (shared-dom.js) intercepts to open the file
   // natively in Electron; file-link is kept for existing CSS.
   // The file types a named workspace path links to: documents, and what the
-  // agent makes for the user to look at (an image, a page). Each opens in LAX's
-  // in-app browser or its Office app (openFileLink, shared-dom.js). Live
-  // 2026-11-26: two Black Friday graphics named as `workspace/…/bf-post.png`
-  // rendered as plain code, with nothing to click.
-  const FILE_EXTS = 'docx?|xlsx?|pptx?|pdf|csv|md|markdown|txt|json|png|jpe?g|gif|webp|svg|html';
+  // agent makes for the user to look at or play (an image, a page, a video, a
+  // song, a zip). Each opens in LAX's in-app browser or in its own program
+  // (openFileLink, shared-dom.js). Never a script or program. Live 2026-11-26:
+  // two Black Friday graphics named as `workspace/…/bf-post.png` rendered as
+  // plain code, with nothing to click. The desktop opens the same types outside
+  // the workspace (VIEWABLE, desktop/src/open-workspace-file.ts).
+  const FILE_EXTS = 'docx?|xlsx?|pptx?|pdf|csv|md|markdown|txt|json|png|jpe?g|gif|webp|svg|html|mp4|webm|mov|m4v|mp3|wav|m4a|ogg|zip';
   const FILE_EXT = new RegExp('\\.(?:' + FILE_EXTS + ')$', 'i');
   const IMAGE_EXT = /\.(?:png|jpe?g|gif|webp|svg)$/i;
+  const MEDIA_EXT = /\.(?:mp4|webm|mov|m4v|mp3|wav|m4a|ogg)$/i;
+  const fileIcon = (name) => (IMAGE_EXT.test(name) ? '🖼️' : MEDIA_EXT.test(name) ? '🎬' : '📄');
+  // A full path on this machine: C:\ or C:/, Git Bash's /c/, or a Mac or Linux
+  // home (/Users/…, /home/…). Not /files/ or any other address of this app.
+  const LOCAL_PATH = /^(?:[A-Za-z]:\/|\/[A-Za-z]\/|\/(?:Users|home)\/)/;
+  // A file outside the workspace (a photo in Pictures) opens in its own program
+  // through the desktop app, which decides what it may reach. Without the
+  // desktop app there is nothing that can open it, so it stays code.
+  function localFileLink(path, label) {
+    if (!(window.desktop && window.desktop.openFile)) return null;
+    const full = path.replace(/^\/([A-Za-z])\//, (_, drive) => drive.toUpperCase() + ':/');
+    const fileName = full.split('/').pop();
+    return `<a href="#" data-local-path="${attr(full)}" class="md-link file-link file-download">${label === undefined ? fileIcon(fileName) + ' ' + esc(fileName) : esc(label)}</a>`;
+  }
   // An absolute path into the workspace (C:\…\workspace\x, /c/…/workspace/x,
   // /Users/…/workspace/x) as workspace/x, the form /files/ serves; any other
   // path unchanged. Agents name the files they make by full path as often as not.
@@ -217,8 +259,7 @@ function md(s) {
     const clean = workspaceRelative(unesc(escapedPath).replace(/^\.\//, ''));
     const ws = clean.match(/^workspace\/(.+)$/i);
     const fileName = clean.split('/').pop();
-    const icon = IMAGE_EXT.test(fileName) ? '🖼️' : '📄';
-    return `<a href="${attr(filesUrl(ws ? ws[1] : clean))}" target="_blank" rel="noopener noreferrer" class="md-link file-link file-download">${icon} ${esc(fileName)}</a>`;
+    return `<a href="${attr(filesUrl(ws ? ws[1] : clean))}" target="_blank" rel="noopener noreferrer" class="md-link file-link file-download">${fileIcon(fileName)} ${esc(fileName)}</a>`;
   }
 
   let h = s;
@@ -278,6 +319,10 @@ function md(s) {
     if (wsMatch) {
       return ph(`<a href="${attr(filesUrl(wsMatch[1]))}" target="_blank" rel="noopener noreferrer" class="md-link file-download">${esc(text)}</a>`);
     }
+    // A full path outside the workspace → the desktop opens it in its program.
+    const localPath = normalizedUrl.replace(/^file:\/\/\//i, '').replace(/\\/g, '/');
+    const local = LOCAL_PATH.test(localPath) && FILE_EXT.test(localPath) ? localFileLink(localPath, text) : null;
+    if (local) return ph(local);
     // This app's own /files/ address written out in full (a write or edit hands
     // the agent http://127.0.0.1:<port>/files/<path> to put in its reply) is the
     // same link as the bare path.
@@ -343,9 +388,17 @@ function md(s) {
   // 4. Inline formatting. A backtick-wrapped workspace path becomes a clickable
   // file link instead of plain code — agents report "written to
   // `workspace/foo.md`", and users expect to click straight through to open it.
-  h = h.replace(/`([^`]+)`/g, (_, c) => {
+  // A file named alone (`bf-post.png`) after the reply named its folder is that
+  // folder's file. Live 2026-11-26: a reply said the images were in
+  // `workspace/black-friday-sale/`, then listed six by name, none a link.
+  const folders = workspaceFoldersIn(h, placeholders);
+  h = h.replace(/`([^`]+)`/g, (_, c, at) => {
     const named = workspaceRelative(unesc(c));
     if (/^(?:\.\/)?workspace\/\S+/i.test(named) && FILE_EXT.test(named)) return ph(fileLink(c));
+    const local = LOCAL_PATH.test(named) && FILE_EXT.test(named) ? localFileLink(named) : null;
+    if (local) return ph(local);
+    const folder = /^[^\s/\\]+$/.test(named) && FILE_EXT.test(named) ? folderNamedBefore(folders, at) : null;
+    if (folder) return ph(fileLink(folder + c));
     return ph(`<code class="inline-code">${c}</code>`);
   });
   h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');

@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
 	handlers: new Map<string, (event: unknown, ...args: unknown[]) => unknown>(),
 	showMessageBox: vi.fn(),
 	openPath: vi.fn(async (_path: string) => ""),
+	showItemInFolder: vi.fn((_path: string) => undefined),
 }));
 
 vi.mock("electron", () => ({
@@ -28,7 +29,7 @@ vi.mock("electron", () => ({
 			mocks.handlers.set(channel, handler);
 		},
 	},
-	shell: { openPath: mocks.openPath, openExternal: vi.fn() },
+	shell: { openPath: mocks.openPath, showItemInFolder: mocks.showItemInFolder, openExternal: vi.fn() },
 }));
 vi.mock("./config", () => ({
 	getProjectRoot: () => mocks.root,
@@ -95,6 +96,7 @@ beforeEach(() => {
 	mocks.handlers.clear();
 	mocks.showMessageBox.mockClear();
 	mocks.openPath.mockClear();
+	mocks.showItemInFolder.mockClear();
 	setupIPC();
 });
 afterEach(() => { vi.restoreAllMocks(); });
@@ -137,9 +139,70 @@ describe("open-file IPC", () => {
 
 	it("refuses a path not written as a workspace file, so nothing else in the project opens", async () => {
 		expect(await openFile("README.md")).toBe("rejected: not a workspace file");
-		expect(await openFile(join(base, "outside.pdf"))).toBe("rejected: not a workspace file");
-		expect(await openFile(42 as unknown as string)).toBe("rejected: not a workspace file");
+		expect(await openFile(join(mocks.root, "README.md"))).toBe("rejected: not in your user folder");
+		expect(await openFile(42 as unknown as string)).toBe("rejected: not a file path");
 		expect(mocks.openPath).not.toHaveBeenCalled();
+	});
+
+	it("opens a workspace file written in full by the workspace's rules", async () => {
+		expect(await openFile(inWorkspace("run.exe"))).toBe("");
+		expect(mocks.openPath).toHaveBeenCalledWith(inWorkspace("run.exe"));
+		expect(await openFile(inWorkspace("run.cmd."))).toBe("rejected: a name ends in a dot or space");
+	});
+});
+
+// A file the agent named outside the workspace (a photo in Pictures, a PDF in
+// Downloads) opens in its own app, and any linked file can be shown in its
+// folder. Only the user's own folders, never a hidden or app-data one, and
+// outside the workspace never a program: the link opens with no prompt.
+describe("files outside the workspace", () => {
+	let home: string;
+	const savedHome = { HOME: process.env.HOME, USERPROFILE: process.env.USERPROFILE };
+	const inHome = (...parts: string[]) => join(home, ...parts);
+	const reveal = (path: unknown) => {
+		const handler = mocks.handlers.get("reveal-file");
+		if (!handler) throw new Error("reveal-file is not registered");
+		return handler({ sender: {} }, path) as string;
+	};
+
+	beforeAll(() => {
+		home = join(base, "home");
+		for (const dir of ["Pictures", "Downloads", ".ssh", "AppData"]) mkdirSync(join(home, dir), { recursive: true });
+		for (const file of ["Pictures/photo.png", "Downloads/menu.pdf", "Downloads/setup.exe", "Downloads/run.cmd.", ".ssh/id_ed25519.json", "AppData/settings.json"]) writeFileSync(join(home, file), "x");
+	});
+	beforeEach(() => { process.env.HOME = home; process.env.USERPROFILE = home; });
+	afterEach(() => { process.env.HOME = savedHome.HOME; process.env.USERPROFILE = savedHome.USERPROFILE; });
+
+	it.each(["Pictures/photo.png", "Downloads/menu.pdf"])("opens %s in its own app", async (file) => {
+		expect(await openFile(inHome(file))).toBe("");
+		expect(mocks.openPath).toHaveBeenCalledWith(inHome(file));
+	});
+
+	it("never opens a program there", async () => {
+		expect(await openFile(inHome("Downloads", "setup.exe"))).toBe("rejected: not a document or media file");
+		expect(mocks.openPath).not.toHaveBeenCalled();
+	});
+
+	it.each([".ssh/id_ed25519.json", "AppData/settings.json"])("never reaches %s, a hidden or app-data folder", async (file) => {
+		expect(await openFile(inHome(file))).toBe("rejected: a hidden or app-data folder");
+		expect(reveal(inHome(file))).toBe("rejected: a hidden or app-data folder");
+		expect(mocks.openPath).not.toHaveBeenCalled();
+	});
+
+	it("refuses a missing file, a name Win32 rewrites, and a place outside the user's folders", async () => {
+		expect(await openFile(inHome("Pictures", "gone.png"))).toBe("rejected: no such file");
+		expect(await openFile(inHome("Downloads", "run.cmd."))).toBe("rejected: a name ends in a dot or space");
+		expect(await openFile(join(base, "outside.pdf"))).toBe("rejected: not in your user folder");
+		expect(mocks.openPath).not.toHaveBeenCalled();
+	});
+
+	it("shows any linked file in its folder, a program included, since showing runs nothing", () => {
+		expect(reveal(inHome("Downloads", "setup.exe"))).toBe("");
+		expect(reveal("workspace/report.pdf")).toBe("");
+		expect(mocks.showItemInFolder).toHaveBeenCalledWith(inHome("Downloads", "setup.exe"));
+		expect(mocks.showItemInFolder).toHaveBeenCalledWith(inWorkspace("report.pdf"));
+		expect(reveal(inHome("Pictures", "gone.png"))).toBe("rejected: no such file");
+		expect(mocks.showItemInFolder).toHaveBeenCalledTimes(2);
 	});
 });
 
@@ -154,7 +217,7 @@ describe("the workspace root", () => {
 	it("before the server has said where it is, nothing opens and the click is told why", async () => {
 		vi.resetModules();
 		const fresh = await import("./open-workspace-file");
-		expect(await fresh.openWorkspaceFile("workspace/report.pdf")).toBe("the workspace location is not known yet");
+		expect(await fresh.openLinkedFile("workspace/report.pdf")).toBe("the workspace location is not known yet");
 		expect(mocks.openPath).not.toHaveBeenCalled();
 	});
 });

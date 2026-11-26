@@ -167,7 +167,22 @@ export function clearLearnedProtocolEnvelopeForOp(opId: string): void {
  * terminal — same pattern as the per-op dispatcher.
  */
 export function registerToolsForOp(opId: string, tools: ToolDescriptor[]): void {
-  opTools.set(opId, tools);
+  opTools.set(opId, oncePerName(opId, tools));
+}
+
+/** Each tool once, the first of its name kept. Every adapter sends what is
+ *  registered here, and xAI refuses a request that defines a function twice
+ *  ("Duplicate function definition provided: build_decide": a Grok chat's
+ *  every message failed, 2026-11-25), where others took the copy silently. A
+ *  duplicate is a bug upstream, so it is named in the log. */
+function oncePerName(opId: string, tools: ToolDescriptor[]): ToolDescriptor[] {
+  const seen = new Set<string>();
+  const out = tools.filter((t) => !seen.has(t.name) && seen.add(t.name));
+  if (out.length < tools.length) {
+    const twice = tools.filter((t, i) => tools.findIndex((u) => u.name === t.name) !== i).map((t) => t.name);
+    console.warn(`[canonical-loop] op=${opId.slice(0, 24)} listed ${[...new Set(twice)].join(", ")} more than once; each is sent once`);
+  }
+  return out;
 }
 
 export function unregisterToolsForOp(opId: string): void {

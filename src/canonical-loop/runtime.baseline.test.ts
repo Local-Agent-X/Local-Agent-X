@@ -73,3 +73,14 @@ describe("recovered runtime retry cleanup", () => {
 		expect(getLearnedProtocolEnvelopeForOp(opId)).toBeNull();
 	});
 });
+
+// xAI refused every message of a Grok chat whose tool list named build_decide
+// twice; other providers took the copy silently (2026-11-25).
+describe("an op's tool list", () => {
+	it("holds each tool once, whoever listed it twice", () => {
+		const tool = (name: string, description = name) => ({ name, description, inputSchema: {} });
+		registerToolsForOp("op-dup", [tool("read"), tool("build_decide", "first"), tool("bash"), tool("build_decide", "second")]);
+		expect(getToolsForOp("op-dup").map((t) => t.name)).toEqual(["read", "build_decide", "bash"]);
+		expect(getToolsForOp("op-dup")[1].description).toBe("first");
+	});
+});

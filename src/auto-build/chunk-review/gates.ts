@@ -40,7 +40,6 @@ export interface GateFinding {
     | "additive-diff"
     | "phase-gate"
     | "launch-readiness"
-    | "test-failures"
     | "spec-gap-judgment"
     | "build-exec"
     | "chunk-scenarios"
@@ -260,25 +259,6 @@ export function gateLaunchReadiness(report: ChunkReport): GateFinding | null {
   // LAUNCH_READINESS.md (chunk 7 wires that). We don't return a finding
   // here because launch-readiness with concrete steps is "proceed."
   return null;
-}
-
-/**
- * Gate 5: Test-failure escalation.
- *
- *   - NEW_FAILURES non-empty       → halt, name the failing tests
- *   - PRE_EXISTING_FAILURES only   → not a halt; loop logs as a punch-list item
- *   - both empty                   → pass
- */
-export function gateTestFailures(report: ChunkReport): GateFinding | null {
-  if (report.newFailures.length === 0) return null;
-  return {
-    gate: "test-failures",
-    action: "halt",
-    reasoning:
-      `Chunk introduced ${report.newFailures.length} new test failure(s): ` +
-      `${report.newFailures.slice(0, 5).join(", ")}` +
-      `${report.newFailures.length > 5 ? ", ..." : ""}. Halt and surface to the user.`,
-  };
 }
 
 /**

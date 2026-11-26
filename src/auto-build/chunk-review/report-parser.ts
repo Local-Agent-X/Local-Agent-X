@@ -24,7 +24,6 @@ export interface ChunkReport {
   changed: string[];
   testsPass: number | null;
   testsTotal: number | null;
-  newFailures: string[];
   preExistingFailures: string[];
   /** Free-form text after `SPEC_GAPS:`. "none" → empty string. */
   specGaps: string;
@@ -89,7 +88,6 @@ export function parseChunkReport(raw: string): ChunkReport {
   else if (doneWhenRaw === "unmet" || doneWhenRaw === "not met") doneWhen = "unmet";
 
   const changed = parseListField(get("CHANGED"));
-  const newFailures = parseListField(get("NEW_FAILURES"));
   const preExistingFailures = parseListField(get("PRE_EXISTING_FAILURES"));
   const { pass, total } = parseTestsField(get("TESTS"));
 
@@ -103,7 +101,6 @@ export function parseChunkReport(raw: string): ChunkReport {
     changed,
     testsPass: pass,
     testsTotal: total,
-    newFailures,
     preExistingFailures,
     specGaps: normalizeListText(specGapsRaw),
     launchReadiness: normalizeListText(launchReadinessRaw),

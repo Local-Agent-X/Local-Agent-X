@@ -51,8 +51,7 @@ Concrete items get appended to `LAUNCH_READINESS.md` by the loop (chunk 7 of the
 
 ### 6. Test-failure escalation
 
-- `NEW_FAILURES` non-empty → halt; name the failing tests. New regressions are not allowed to commit.
-- `PRE_EXISTING_FAILURES` only → not a halt; the loop logs a punch-list item.
+Whether the chunk's tests pass is measured: the build check (`gate-build-exec.ts`) runs the project's real build and tests and reads the exit code. The worker's own `NEW_FAILURES` / `PRE_EXISTING_FAILURES` lines hold nothing back.
 
 ### 7. Spec-gap judgment (auxiliary)
 

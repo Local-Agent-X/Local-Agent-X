@@ -93,4 +93,26 @@ describe("endStoppedRun", () => {
     expect(sent.events.at(-1)).toMatchObject({ type: "bg_op_progress", opId: "op_b", status: "paused" });
     expect(String(sent.events.at(-1)?.line)).toContain("fix round 4");
   });
+
+  it("never moves a chunk that is on record as landed, only drops the stale note", () => {
+    const dir = savedProject("running");
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: dir, encoding: "utf8" }).trim();
+    git("init", "-q");
+    writeFileSync(join(dir, ".git", "info", "exclude"), ENGINE_STATE_PATTERNS.join("\n") + "\n");
+    git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "--allow-empty", "-m", "base");
+    const preSha = git("rev-parse", "HEAD");
+    writeFileSync(join(dir, "landed.ts"), "export const landed = true;\n");
+    git("add", "-A");
+    git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "chunk 3: landed");
+    const landedSha = git("rev-parse", "HEAD");
+    const run = { opId: "op_b", sessionId: "chat-1", projectDir: dir, liveState: { ...state.read(dir)!, landedChunks: [3], inTreeChunk: { chunk: 3, title: "Feature 3", preSha, round: 0, findings: [] } } };
+
+    endStoppedRun(run, "paused");
+
+    expect(git("rev-parse", "HEAD")).toBe(landedSha);
+    expect(git("branch", "--list", "autobuild/*")).toBe("");
+    expect(state.read(dir)?.inTreeChunk).toBeUndefined();
+    expect(setAsideRecordFor(dir, 3)).toBeUndefined();
+  });
 });
+

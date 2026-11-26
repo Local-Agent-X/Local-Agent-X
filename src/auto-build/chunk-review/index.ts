@@ -20,7 +20,6 @@ import {
   gateAdditiveDiff,
   gatePhaseGate,
   gateLaunchReadiness,
-  gateTestFailures,
   gateSpecGapJudgment,
   type GateFinding,
   type ReviewAction,
@@ -96,7 +95,9 @@ export function runChunkReview(input: ChunkReviewInput): ChunkReviewOutcome {
   if (input.specDiff && input.specDiff.trim()) collect(gateAdditiveDiff(input.specDiff));
   collect(gatePhaseGate(input.chunk, input.plan, input.allChunks));
   collect(gateLaunchReadiness(report));
-  collect(gateTestFailures(report));
+  // Whether the chunk's tests pass is measured (gate-build-exec.ts), never read
+  // from the worker's NEW_FAILURES line: "none observed" read as one failing
+  // test set a fix aside before the real tests ran (label-check-sol, 2026-11-25).
   collect(gateSpecGapJudgment(report));
 
   return verdictFrom(findings, report);

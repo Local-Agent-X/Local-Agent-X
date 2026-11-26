@@ -228,6 +228,26 @@ export function markHalted(state: OrchestratorState, chunkNumber: number, gate: 
   };
 }
 
+/**
+ * A chunk landed or was set aside: it is no longer part-built in the tree, and
+ * a finish fix among the round's is done. Applied on the loop's own event, not
+ * only on its later callback: killed between the two, the state still named
+ * the landed chunk as in progress, and the next start "kept" it by moving its
+ * commit off the project (stopped-run.ts).
+ */
+export function settleChunk(state: OrchestratorState, chunkNumber: number): OrchestratorState {
+  const inTree = state.inTreeChunk?.chunk === chunkNumber;
+  const fix = state.finish?.fixes.some((c) => c.number === chunkNumber) && !state.finish.done.includes(chunkNumber);
+  if (!inTree && !fix) return state;
+  const { inTreeChunk, ...rest } = state;
+  return {
+    ...rest,
+    ...(inTreeChunk && !inTree ? { inTreeChunk } : {}),
+    ...(fix && state.finish ? { finish: { ...state.finish, done: [...state.finish.done, chunkNumber] } } : {}),
+    updatedAt: new Date().toISOString(),
+  };
+}
+
 /** Paused by the owner: nothing halted it, and it waits for Resume. */
 export function markPaused(state: OrchestratorState): OrchestratorState {
   return { ...state, phase: "paused", haltReason: "", haltGate: null, updatedAt: new Date().toISOString() };

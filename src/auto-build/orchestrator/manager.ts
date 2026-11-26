@@ -250,7 +250,7 @@ async function runOrchestrationLoop(orch: ActiveOrchestration, opts: StartOrches
       // Where the build is, kept for a pause or a restart to go on from (run-control.ts).
       ...(opts.finishProgress ? { finishProgress: opts.finishProgress } : {}),
       onChunkInTree: (inTreeChunk) => persist(orch, { ...orch.liveState, inTreeChunk }),
-      onChunkSettled: (n) => { if (orch.liveState.inTreeChunk?.chunk === n) persist(orch, { ...orch.liveState, inTreeChunk: undefined }); },
+      onChunkSettled: (n) => persist(orch, state.settleChunk(orch.liveState, n)),
       onFinishProgress: (finish) => persist(orch, { ...orch.liveState, finish }),
     });
 
@@ -272,6 +272,7 @@ function persist(orch: ActiveOrchestration, next: OrchestratorState): void {
 function onLoopEvent(orch: ActiveOrchestration, event: LoopEvent): void {
   // Update in-memory state + persist on chunk-state-changing events.
   let newState = orch.liveState;
+  if (event.type === "chunk-landed" || event.type === "chunk-set-aside") newState = state.settleChunk(newState, event.chunkNumber);
   if (event.type === "chunk-start") newState = state.markChunkStarted(newState, event.chunkNumber);
   // A finish-gate fix chunk is not one of the plan's: it is not counted as one landing.
   else if (event.type === "chunk-landed" && orch.scopeChunks.includes(event.chunkNumber)) {

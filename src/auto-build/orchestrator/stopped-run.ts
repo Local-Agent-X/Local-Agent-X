@@ -29,9 +29,11 @@ export interface StoppedRun {
  *  Returns the state without it, and a line saying what was kept. */
 export function parkStoppedChunk(s: OrchestratorState): { state: OrchestratorState; kept: string } {
   if (!s.inTreeChunk) return { state: s, kept: "" };
-  const kept = parkInTreeChunk(s.projectDir, s.inTreeChunk);
-  const { inTreeChunk: _parked, ...rest } = s;
-  return { state: rest, kept };
+  const { inTreeChunk, ...rest } = s;
+  // A chunk on record as landed is on the project: parking it would move its
+  // commit off again. The stale note is dropped and nothing is touched.
+  const landed = (s.landedChunks ?? []).includes(inTreeChunk.chunk) || (s.finish?.done ?? []).includes(inTreeChunk.chunk);
+  return { state: rest, kept: landed ? "" : parkInTreeChunk(s.projectDir, inTreeChunk) };
 }
 
 export function endStoppedRun(run: StoppedRun, stop: BuildStop): void {

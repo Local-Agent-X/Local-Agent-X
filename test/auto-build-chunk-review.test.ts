@@ -60,7 +60,6 @@ import {
   gateDoneWhen,
   gateAdditiveDiff,
   gateLaunchReadiness,
-  gateTestFailures,
   gatePhaseGate,
   gateSpecGapJudgment,
   classifyDiff,
@@ -116,7 +115,6 @@ describe("report parser", () => {
     expect(r.doneWhen).toBe("met");
     expect(r.testsPass).toBe(12);
     expect(r.testsTotal).toBe(12);
-    expect(r.newFailures).toEqual([]);
     expect(r.changed).toContain("lib/calendar/adapter.ts");
     expect(r.specGaps).toBe("");
     expect(r.launchReadiness).toBe("");
@@ -528,25 +526,19 @@ describe("Launch-readiness gate", () => {
   });
 });
 
-describe("Test-failure gate", () => {
-  it("halts on NEW_FAILURES", () => {
-    const r = parseChunkReport(
-      "STATUS: done\nDONE_WHEN: met\nCHANGED: x.ts\nTESTS: 5/8\n" +
-      "NEW_FAILURES: cancel_returns_409_when_already_cancelled, dst_fall_back\n" +
-      "PRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\nLAUNCH_READINESS: none\nNOTE: oops"
-    );
-    const f = gateTestFailures(r);
-    expect(f!.action).toBe("halt");
-    expect(f!.reasoning).toContain("cancel_returns_409");
-  });
-
-  it("does not halt when only PRE_EXISTING_FAILURES present", () => {
-    const r = parseChunkReport(
-      "STATUS: done\nDONE_WHEN: met\nCHANGED: x.ts\nTESTS: 8/10\n" +
-      "NEW_FAILURES: none\nPRE_EXISTING_FAILURES: old_flaky_test\n" +
-      "SPEC_GAPS: none\nLAUNCH_READINESS: none\nNOTE: ok"
-    );
-    expect(gateTestFailures(r)).toBeNull();
+// Whether tests pass is measured by the build check, never read from the
+// worker's own NEW_FAILURES line: "none observed" parsed as one failing test
+// and set a finish fix aside with no fix round (label-check-sol, 2026-11-25).
+describe("the worker's own failure list holds nothing back", () => {
+  it.each(["none observed", "cancel_returns_409, dst_fall_back", "none"])("NEW_FAILURES: %s", (said) => {
+    const chunk = chunkFromFixture(loadFixture("chunk-clean-proceed.json"));
+    const outcome = runChunkReview({
+      chunk, allChunks: [chunk], plan: emptyPlan(chunk),
+      rawReport: "STATUS: done\nDONE_WHEN: met\nCHANGED: x.ts\nTESTS: 5/8\n" +
+        `NEW_FAILURES: ${said}\nPRE_EXISTING_FAILURES: none\nSPEC_GAPS: none\nLAUNCH_READINESS: none\nNOTE: ok`,
+    });
+    expect(outcome.findings.filter((f) => f.action === "halt")).toEqual([]);
+    expect(outcome.report.note).toBe("ok");
   });
 });
 

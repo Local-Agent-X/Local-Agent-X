@@ -74,6 +74,9 @@ export const LAX_DATA_CATALOG: readonly LaxDataEntry[] = [
   // A build's sealed acceptance scenarios: a builder that could change (or
   // read) them would be grading its own work (holdout-seal.ts).
   ...at("blocked", "holds a build's sealed test scenarios, which only the build's judge reads", "holdout"),
+  // A build worker's kept conversation (auto-build/loop/worker-conversation.ts):
+  // the engine hands it back to that worker, and no other agent reads it.
+  ...at("blocked", "holds a build's workers' kept conversations, which only the build engine reads", "auto-build"),
   // Approve on an inbox item runs the call stored with it, as the role stored
   // with it: a forged item would run whatever it hides behind a harmless title.
   ...at("blocked", "holds the calls waiting for your yes, which run when you approve them", "inbox.json"),

@@ -197,12 +197,28 @@ function md(s) {
   // through the capability-gated /files/ route. The .file-download class is what
   // the global click handler (shared-dom.js) intercepts to open the file
   // natively in Electron; file-link is kept for existing CSS.
-  const FILE_EXT = /\.(?:docx?|xlsx?|pptx?|pdf|csv|md|markdown|txt|json)$/i;
+  // The file types a named workspace path links to: documents, and what the
+  // agent makes for the user to look at (an image, a page). Each opens in LAX's
+  // in-app browser or its Office app (openFileLink, shared-dom.js). Live
+  // 2026-11-26: two Black Friday graphics named as `workspace/…/bf-post.png`
+  // rendered as plain code, with nothing to click.
+  const FILE_EXTS = 'docx?|xlsx?|pptx?|pdf|csv|md|markdown|txt|json|png|jpe?g|gif|webp|svg|html';
+  const FILE_EXT = new RegExp('\\.(?:' + FILE_EXTS + ')$', 'i');
+  const IMAGE_EXT = /\.(?:png|jpe?g|gif|webp|svg)$/i;
+  // An absolute path into the workspace (C:\…\workspace\x, /c/…/workspace/x,
+  // /Users/…/workspace/x) as workspace/x, the form /files/ serves; any other
+  // path unchanged. Agents name the files they make by full path as often as not.
+  function workspaceRelative(path) {
+    const slashed = path.replace(/\\/g, '/');
+    const abs = slashed.match(/^(?:[A-Za-z]:\/|\/).*?\/workspace\/(.+)$/i);
+    return abs ? 'workspace/' + abs[1] : slashed;
+  }
   function fileLink(escapedPath) {
-    const clean = unesc(escapedPath).replace(/^\.\//, '').replace(/\\/g, '/');
+    const clean = workspaceRelative(unesc(escapedPath).replace(/^\.\//, ''));
     const ws = clean.match(/^workspace\/(.+)$/i);
     const fileName = clean.split('/').pop();
-    return `<a href="${attr(filesUrl(ws ? ws[1] : clean))}" target="_blank" rel="noopener noreferrer" class="md-link file-link file-download">📄 ${esc(fileName)}</a>`;
+    const icon = IMAGE_EXT.test(fileName) ? '🖼️' : '📄';
+    return `<a href="${attr(filesUrl(ws ? ws[1] : clean))}" target="_blank" rel="noopener noreferrer" class="md-link file-link file-download">${icon} ${esc(fileName)}</a>`;
   }
 
   let h = s;
@@ -320,7 +336,7 @@ function md(s) {
   h = esc(h);
 
   // 3.5. Auto-linkify bare workspace file paths (e.g., workspace/report.md)
-  h = h.replace(/(?:^|\s)((?:\.\/)?workspace\/[^\s<>"]+\.(?:docx?|xlsx?|pptx?|pdf|csv|md|markdown|txt|json))/gi, (match, filePath) => {
+  h = h.replace(new RegExp('(?:^|\\s)((?:\\./)?workspace/[^\\s<>"]+\\.(?:' + FILE_EXTS + '))', 'gi'), (match, filePath) => {
     return match.replace(filePath, ph(fileLink(filePath)));
   });
 
@@ -328,7 +344,8 @@ function md(s) {
   // file link instead of plain code — agents report "written to
   // `workspace/foo.md`", and users expect to click straight through to open it.
   h = h.replace(/`([^`]+)`/g, (_, c) => {
-    if (/^(?:\.\/)?workspace\/\S+/i.test(c) && FILE_EXT.test(c)) return ph(fileLink(c));
+    const named = workspaceRelative(unesc(c));
+    if (/^(?:\.\/)?workspace\/\S+/i.test(named) && FILE_EXT.test(named)) return ph(fileLink(c));
     return ph(`<code class="inline-code">${c}</code>`);
   });
   h = h.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');

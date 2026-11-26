@@ -166,7 +166,23 @@ describe("handlePushBack with a build lead", () => {
     expect(rebuilds.wentOnFrom).toEqual([first, [{ role: "assistant", content: "worker of round 1" }], undefined]);
   });
 
-  it("without a lead every round starts a new worker", async () => {
+  // This pinned "without a lead every round starts a new worker": each round
+  // re-read the whole chunk. The worker that built it goes on, lead or no
+  // lead, and each round's conversation is handed to whoever keeps it.
+  it("without a lead the same worker goes on too, and each round's conversation is handed on", async () => {
+    const first = [{ role: "assistant", content: "worker of the first attempt" }];
+    const handedOn: unknown[] = [];
+    rebuilds.outcomes = [pushedBack("b"), green];
+    const result = await handlePushBack({
+      chunk, totalChunks: 13, planPath: "spec/plan.md", plan, projectDir: "C:/proj", preSha: "abc", outcome: pushedBack("a"),
+      emit: (e) => { events.push(e); }, lastTranscript: first as never, onTranscript: (m) => { handedOn.push(m); },
+    });
+    expect(result.finalAction).toBe("proceed");
+    expect(rebuilds.wentOnFrom).toEqual([first, [{ role: "assistant", content: "worker of round 1" }]]);
+    expect(handedOn).toEqual([[{ role: "assistant", content: "worker of round 1" }], [{ role: "assistant", content: "worker of round 2" }]]);
+  });
+
+  it("with no conversation to go on from, the round starts a new worker", async () => {
     rebuilds.outcomes = [green];
     await fix(pushedBack("a"));
     expect(rebuilds.wentOnFrom).toEqual([undefined]);

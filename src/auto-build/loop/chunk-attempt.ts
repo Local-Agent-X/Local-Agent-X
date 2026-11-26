@@ -12,6 +12,7 @@ import type { ParsedChunk } from "../plan-parser.js";
 import type { ChunkReviewOutcome, ReviewAction } from "../chunk-review/index.js";
 import { runChunkOnce } from "./run-chunk-once.js";
 import { handlePushBack } from "./handle-push-back.js";
+import { dropWorkerConversation, loadWorkerConversation, saveWorkerConversation } from "./worker-conversation.js";
 import type { EmitFn, LoopOptions, LoopResult } from "./types.js";
 
 export interface ChunkAttemptInput {
@@ -52,20 +53,30 @@ export async function buildChunkWithRetry(a: ChunkAttemptInput): Promise<ChunkAt
     buildLead: opts.buildLead,
   };
 
-  // A build with a lead can send a fix round back to the worker that built the
-  // chunk (handle-push-back.ts), so its conversation is kept.
+  // A fix round goes back to the worker that built the chunk
+  // (handle-push-back.ts), so its conversation is kept, with or without a
+  // lead, and on disk, so a Pause or a restart of LAX does not lose it
+  // (worker-conversation.ts). A chunk paused mid-build goes on from it.
+  const kept = (m: ChatCompletionMessageParam[]): void => { transcript = m; saveWorkerConversation(opts.projectDir, chunk.number, m); };
   let transcript: ChatCompletionMessageParam[] | undefined;
+  const resumed = a.carryOver?.round != null ? loadWorkerConversation(opts.projectDir, chunk.number) : undefined;
   const outcome = await runChunkOnce({
     ...shared,
     retryReason: a.carryOver?.brief,
     priorOutcomes: a.priorOutcomes,
-    ...(opts.buildLead ? { onTranscript: (m: ChatCompletionMessageParam[]) => { transcript = m; } } : {}),
+    ...(resumed ? { continueFrom: resumed, resumed: true } : {}),
+    onTranscript: kept,
   });
-  if (outcome.action !== "push_back") return { finalOutcome: outcome, finalAction: outcome.action };
-  return handlePushBack({
-    ...shared, outcome, earlierFindings: a.carryOver?.findings, ...(transcript ? { lastTranscript: transcript } : {}),
-    // A chunk paused in a round goes on from it: this first attempt redid that round.
-    ...(a.carryOver?.round != null ? { firstRound: a.carryOver.round + 1 } : {}),
-    ...(a.onRound ? { onRound: a.onRound } : {}),
-  });
+  const result = outcome.action !== "push_back"
+    ? { finalOutcome: outcome, finalAction: outcome.action }
+    : await handlePushBack({
+      ...shared, outcome, earlierFindings: a.carryOver?.findings, ...(transcript ? { lastTranscript: transcript } : {}),
+      // A chunk paused in a round goes on from it: this first attempt redid that round.
+      ...(a.carryOver?.round != null ? { firstRound: a.carryOver.round + 1 } : {}),
+      ...(a.onRound ? { onRound: a.onRound } : {}),
+      onTranscript: kept,
+    });
+  // Landing ends the conversation; a chunk that waits keeps it for its resume.
+  if (result.finalAction === "proceed" || result.finalAction === "amend_spec") dropWorkerConversation(opts.projectDir, chunk.number);
+  return result;
 }

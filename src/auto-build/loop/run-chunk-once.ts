@@ -55,6 +55,9 @@ export interface RunChunkOnceOptions {
   /** The conversation of the worker that built the last round: this round is
    *  that worker going on, told only what the review found (retryReason). */
   continueFrom?: ChatCompletionMessageParam[];
+  /** `continueFrom` is the conversation kept across a Pause or a restart, not
+   *  a fix round: the worker is told it goes on, not that it was sent back. */
+  resumed?: boolean;
   /** Called with this round's worker conversation when it finished, so the
    *  next round can go on from it. */
   onTranscript?: (messages: ChatCompletionMessageParam[]) => void;
@@ -73,6 +76,12 @@ export function chunkLabel(opts: Pick<RunChunkOnceOptions, "chunk" | "plan" | "t
 }
 
 function workerTask(opts: RunChunkOnceOptions): string {
+  if (opts.continueFrom && opts.resumed) {
+    return `LAX was paused or restarted while you were building this chunk, and now goes on. ${opts.retryReason ?? ""}\n\n` +
+      "You are the same worker: what you read and decided is above, and your files are as you left them (the last ones " +
+      "may be half-written). Check where you were (git status, git diff), finish the chunk, run the checks the done-when " +
+      "names, and end by calling chunk_report.";
+  }
   if (opts.continueFrom) {
     return `The review sent your chunk back. ${opts.retryReason ?? ""}\n\n` +
       "Fix that in the same project, keep what you already fixed, run the checks the done-when names, and end " +

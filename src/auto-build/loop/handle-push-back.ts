@@ -75,6 +75,8 @@ export interface HandlePushBackOptions {
   buildLead?: BuildLeadRef;
   /** The conversation of the worker that built the attempt being fixed. */
   lastTranscript?: ChatCompletionMessageParam[];
+  /** Each round's conversation as it ends, for whoever keeps it (chunk-attempt.ts). */
+  onTranscript?: (messages: ChatCompletionMessageParam[]) => void;
   /** The round to count from: a chunk resumed after a pause goes on from the
    *  round it was on (orchestrator/run-control.ts). Default 1. */
   firstRound?: number;
@@ -233,7 +235,11 @@ export async function handlePushBack(opts: HandlePushBackOptions): Promise<Handl
       return { finalAction: "halt", finalOutcome: { ...round.outcome, reasoning: next.reasoning } };
     }
     if (next.kind === "land") return { finalOutcome: next.outcome, finalAction: "proceed" };
-    const goOn = byLead && !(next as { fresh?: boolean }).fresh ? transcript : undefined;
+    // The same worker goes on, unless the lead asks for a fresh one or, with
+    // no lead, the last round came back with the same finding: a worker that
+    // did not move it is not the one to try again.
+    const fresh = byLead ? (next as { fresh?: boolean }).fresh === true : repeated;
+    const goOn = fresh ? undefined : transcript;
     let latest: ChatCompletionMessageParam[] | undefined;
     const rebuilt = await runChunkOnce({
       chunk: next.chunk, totalChunks, planPath: opts.planPath, plan: next.plan,
@@ -245,7 +251,7 @@ export async function handlePushBack(opts: HandlePushBackOptions): Promise<Handl
       parentSessionId: opts.parentSessionId,
       chunkJudge: opts.chunkJudge, baseProjectDir: opts.baseProjectDir, workerIndex: opts.workerIndex,
       ...(goOn ? { continueFrom: goOn } : {}),
-      ...(opts.buildLead ? { onTranscript: (m: ChatCompletionMessageParam[]) => { latest = m; } } : {}),
+      onTranscript: (m: ChatCompletionMessageParam[]) => { latest = m; opts.onTranscript?.(m); },
     });
     transcript = latest;
     if (rebuilt.action !== "push_back") return { finalOutcome: rebuilt, finalAction: rebuilt.action };

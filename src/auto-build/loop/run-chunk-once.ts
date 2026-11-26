@@ -204,6 +204,7 @@ export async function runChunkOnce(opts: RunChunkOnceOptions): Promise<ChunkRevi
     rawReport: subResult.stdout,
     specDiff,
     projectDir: opts.projectDir,
+    ledgerDir: opts.baseProjectDir ?? opts.projectDir,
     chunkJudge: opts.chunkJudge ? {
       judge: opts.chunkJudge,
       preSha: opts.preSha,

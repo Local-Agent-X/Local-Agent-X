@@ -143,7 +143,7 @@ describe("build engine incidents, replayed", () => {
     const four = result.outcomes.find((o) => o.chunkNumber === 4)!;
     expect(four.outcome.owed?.map((o) => o.why).join()).toContain("owed to the owner: live scan");
     // On the build's ledger, where a restart and the finish report find it.
-    expect(owedChecks(projectDir)).toEqual([expect.objectContaining({ chunk: 4, check: "owed by the build lead" })]);
+    expect(owedChecks(projectDir)).toContainEqual(expect.objectContaining({ chunk: 4, check: "owed by the build lead" }));
     expect(git(projectDir, "show", "HEAD:spec/build-state.md")).toContain("check owed to the owner");
   });
 

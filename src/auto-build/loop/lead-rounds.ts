@@ -30,6 +30,8 @@ import type { BuildLeadRef } from "../advisor/lead-chat.js";
 import { applyAdditiveSpecAmendment, commitSpecAmendment } from "../loop-effects.js";
 import { safeGet, type EmitFn } from "./types.js";
 import { appendSplitChunks } from "./split-chunks.js";
+import { recordOwed } from "../failure-recovery.js";
+import { refusedCommandCheck } from "../chunk-review/chunk-verdict.js";
 
 /** Rounds a chunk may take while its lead keeps it going: a ceiling on cost,
  *  not the rule (the lead stops it sooner, or accepts, or narrows). */
@@ -43,6 +45,8 @@ export type LeadRoundPlan =
   | { kind: "halt"; reasoning: string; parked?: boolean };
 
 export interface LeadRoundInput {
+  /** The project the build's ledger is kept in, when the chunk is built in a worktree of it. */
+  ledgerDir?: string;
   lead: BuildLeadRef;
   chunk: ParsedChunk;
   plan: ParsedPlan;
@@ -64,7 +68,7 @@ export interface LeadRoundInput {
 /** Gates whose failure no decision can land a chunk past. */
 const NEVER_ACCEPTED = new Set(["build-exec", "chunk-scenarios"]);
 /** Gates a chunk lands past only with the gap on record: owed to the owner, or the check overruled. */
-const LANDS_ONLY_ON_RECORD = new Set(["chunk-unjudged"]);
+const LANDS_ONLY_ON_RECORD = new Set(["chunk-unjudged", "build-refused"]);
 
 function workerReport(o: ChunkReviewOutcome): string {
   const r = o.report;
@@ -115,6 +119,11 @@ export async function planLeadRound(a: LeadRoundInput): Promise<LeadRoundPlan | 
     case "accept":
       return land(`Accepted by the build lead: ${decision.reasoning}`, `Accepted by the build lead: ${decision.reasoning}`);
     case "owed":
+      // A build command this machine refuses goes on the owner's list once for
+      // the build, so the chunks after this one are not each asked about it.
+      for (const f of outcome.findings) {
+        if (f.refused) recordOwed(a.ledgerDir ?? a.projectDir, { check: refusedCommandCheck(f.refused.command), why: `\`${f.refused.command}\` cannot finish on this machine (${f.refused.what}): ${decision.owedCheck}` });
+      }
       return land(
         `Landed by the build lead with a check owed to the owner: ${decision.owedCheck}`,
         `Landed by the build lead with a check owed to the owner: ${decision.owedCheck}\nWhy: ${decision.reasoning}`,

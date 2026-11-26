@@ -22,7 +22,8 @@ import { listScenarios } from "../../holdout/store.js";
 import { projectHoldoutDir } from "../../holdout/paths.js";
 import type { ParsedChunk, ParsedPlan } from "../plan-parser.js";
 import { readLaunchSpec } from "./launch-spec.js";
-import { launchApp } from "./app-launcher.js";
+import { launchApp, LaunchRefused } from "./app-launcher.js";
+import { machineRefusalIn } from "../../tools/caged-failure-notice.js";
 import { parseScenarioFile } from "./parser.js";
 import { scoreScenario } from "./scorer.js";
 import { isUnjudged, type ProjectLaunchSpec, type ScoreReport } from "./types.js";
@@ -39,9 +40,6 @@ export type PhaseGateRunnerOutcome =
    *  (its port already taken, the shell policy or the cage refusing the start
    *  line): not the app's failure, so never charged to its builder. */
   | { kind: "error"; reason: string; harness?: boolean };
-
-/** Launch failures that are the machine's or the judge's, not the app's. */
-const HARNESS_LAUNCH_FAILURE = /already answering at|blocked by shell policy|sandbox|cage/i;
 
 export interface PhaseGateRunnerOptions {
   projectDir: string;
@@ -96,7 +94,10 @@ export async function scoreScenarioFiles(opts: ScoreScenarioFilesOptions): Promi
     opts.onProgress?.(`dev server ready at ${app.url}`);
   } catch (e) {
     const message = (e as Error).message;
-    return { kind: "error", reason: `dev server failed to start: ${message}`, ...(HARNESS_LAUNCH_FAILURE.test(message) ? { harness: true } : {}) };
+    // The machine's or the judge's, not the app's: refused before it started,
+    // or stopped by this machine as it started (what it printed says so).
+    const harness = e instanceof LaunchRefused || machineRefusalIn(message) !== null;
+    return { kind: "error", reason: `dev server failed to start: ${message}`, ...(harness ? { harness: true } : {}) };
   }
 
   // Score against the port the server was ACTUALLY pointed at. For worker 0

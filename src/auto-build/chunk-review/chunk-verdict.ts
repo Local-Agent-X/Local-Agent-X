@@ -61,6 +61,9 @@ export type OwedOnChunk = Omit<OwedCheck, "chunk">;
 export const BUILD_CHECK = "build and tests";
 export const SKEPTIC_CHECK = "skeptic review";
 export const SCENARIOS_CHECK = "held-out scenarios";
+/** A build command this machine refuses, put on the owner's list by the lead:
+ *  a check of the whole build, so the same refusal is not asked about again. */
+export const refusedCommandCheck = (command: string): string => `refused: ${command}`;
 
 /** What the judge could not do on a chunk it did not send back: owed, not passed. */
 export function owedFromJudging(j: ChunkJudging): OwedOnChunk[] {

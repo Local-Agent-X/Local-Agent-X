@@ -233,3 +233,35 @@ describe("handlePushBack for a finish fix out of rounds", () => {
   });
 });
 
+
+// The same build failure after two fix rounds running will not change on a
+// third: the chunk waits for the owner instead of spending the rest of its
+// rounds (label-check-sol's blocked check was retried to the ceiling, 2026-11-25).
+describe("handlePushBack on a build failure that keeps coming back", () => {
+  const buildFailed = (output: string): ChunkReviewOutcome => ({
+    action: "push_back", reasoning: `\`npm test\` exited 1. Output tail: ${output}`, report,
+    findings: [{ gate: "build-exec", action: "push_back", reasoning: `\`npm test\` exited 1. Output tail: ${output}` }],
+  }) as unknown as ChunkReviewOutcome;
+  const led = (first: ChunkReviewOutcome) => handlePushBack({
+    chunk, totalChunks: 13, planPath: "spec/plan.md", plan, projectDir: "C:/proj", preSha: "abc", outcome: first,
+    emit: (e) => { events.push(e); }, buildLead: { projectDir: "C:/proj", originSessionId: "chat-x" },
+  });
+  const keepGoing = () => ({ action: "continue", reasoning: "progress", instruction: "close it" });
+
+  it("stops after it comes back unchanged twice, whatever its timings say", async () => {
+    rebuilds.outcomes = [buildFailed("list.test.ts FAIL (48ms)"), buildFailed("list.test.ts FAIL (7ms)"), buildFailed("list.test.ts FAIL (9ms)")];
+    lead.answers = Array.from({ length: 5 }, keepGoing);
+    const result = await led(buildFailed("list.test.ts FAIL (12ms)"));
+    expect(result.finalAction).toBe("halt");
+    expect(rebuilds.reasons).toHaveLength(2);
+    expect(events.at(-1)?.message).toContain("the same build failure came back unchanged");
+  });
+
+  it("goes on while the failure changes: another test, another count", async () => {
+    rebuilds.outcomes = [buildFailed("list.test.ts FAIL: 3 of 9 failed"), buildFailed("list.test.ts FAIL: 1 of 9 failed"), buildFailed("detail.test.ts FAIL"), green];
+    lead.answers = Array.from({ length: 5 }, keepGoing);
+    const result = await led(buildFailed("list.test.ts FAIL: 5 of 9 failed"));
+    expect(result.finalAction).toBe("proceed");
+    expect(rebuilds.reasons).toHaveLength(4);
+  });
+});

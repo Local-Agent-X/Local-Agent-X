@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2193 non-test source files · 59 oversized · 274 nearing the size cap.
+**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2193 non-test source files · 59 oversized · 277 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -21,7 +21,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 |---|--:|--:|:--:|--:|
 | `src/ops/` | 194 | 32 | XL | 1 |
 | `src/security/` | 173 | 67 | XL | 2 |
-| `src/tools/` | 149 | 268 | XL | 6 |
+| `src/tools/` | 150 | 268 | XL | 6 |
 | `src/tool-execution/` | 108 | 92 | XL | 2 |
 | `src/workspace/` | 99 | 3 | M |  |
 | `src/canonical-loop/` | 95 | 302 | XL | 6 |
@@ -382,7 +382,6 @@ job. Comments are free: never cut them to fit.
 - `src/chat-ws/message-router.ts#ws.on:callback` — 100+ own code lines (cap 100)
 - `src/anthropic-client/stream-cli.ts#streamViaColdSpawn` — 90+ own code lines (cap 100)
 - `src/app-renderer/components.ts#renderComponent` — 90+ own code lines (cap 100)
-- `src/auto-build/chunk-review/gate-build-exec.ts#runBuildExecGate` — 90+ own code lines (cap 100)
 - `src/auto-build/loop/run.ts#runChunksInOrder` — 90+ own code lines (cap 100)
 - `src/auto-build/orchestrator/manager.ts#startOrchestration` — 90+ own code lines (cap 100)
 - `src/autopilot/start.ts#startAutopilot` — 90+ own code lines (cap 100)
@@ -526,7 +525,11 @@ job. Comments are free: never cut them to fit.
 - `src/agency/worktree-lifecycle.ts#mergeWorktree` — 60+ own code lines (cap 100)
 - `src/agents/invoke.ts#invokeDefinition` — 60+ own code lines (cap 100)
 - `src/auth/anthropic-login.ts#completeAnthropicCliOAuth` — 60+ own code lines (cap 100)
+- `src/auto-build/chunk-review/gate-build-exec.ts#runBuildExecGate` — 60+ own code lines (cap 100)
 - `src/auto-build/loop-phase-gate.ts#runAdvisorDrivenRecovery` — 60+ own code lines (cap 100)
+- `src/auto-build/loop/handle-push-back.ts#handlePushBack` — 60+ own code lines (cap 100)
+- `src/auto-build/loop/lead-rounds.ts#planLeadRound` — 60+ own code lines (cap 100)
+- `src/auto-build/loop/merged-regate.ts#reGateMergedTree` — 60+ own code lines (cap 100)
 - `src/auto-build/loop/parallel-waves.ts#runBatch` — 60+ own code lines (cap 100)
 - `src/auto-build/loop/run.ts#runBuildLoop` — 60+ own code lines (cap 100)
 - `src/auto-build/orchestrator/resume.ts#computeResumeWindow` — 60+ own code lines (cap 100)

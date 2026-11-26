@@ -106,6 +106,8 @@ export async function attemptPhaseGateScoring(
   });
 
   if (firstPass.kind === "no-spec") return { kind: "no-spec" };
+  // The judge could not start the app on this machine: not judged, and not the phase's failure.
+  if (firstPass.kind === "error" && firstPass.harness) return { kind: "unverified", reason: `the judge could not start the app on this machine: ${firstPass.reason}` };
   if (firstPass.kind === "error") return { kind: "halt-with-context", reason: `phase-gate scoring errored: ${firstPass.reason}` };
   if (firstPass.kind === "proceed") return { kind: "recovered" };
   if (firstPass.kind === "unjudged") return { kind: "unverified", reason: unjudgedNote(firstPass.unjudgedReports) };

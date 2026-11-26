@@ -42,6 +42,15 @@ export interface LaunchedApp {
  *   A parallel worker N>0 gets a distinct port (base + N): the port is
  *   injected as `PORT` into the child env and the rewritten url is polled.
  */
+/**
+ * The judge could not start the app for a reason that is this machine's or the
+ * judge's own, not the app's: the shell policy refused the start command,
+ * something else already holds the app's address, the cage would not spawn it.
+ * Thrown as its own type so the caller does not read it off the message: the
+ * regex that did (`/sandbox|cage/`) also matched an app's own error output.
+ */
+export class LaunchRefused extends Error {}
+
 export async function launchApp(projectDir: string, launch: ProjectLaunchSpec, signal?: AbortSignal, workerIndex = 0): Promise<LaunchedApp> {
   const stdout: string[] = [];
   const stderr: string[] = [];
@@ -50,7 +59,7 @@ export async function launchApp(projectDir: string, launch: ProjectLaunchSpec, s
   const { port, url } = allocatePort(launch.readyUrl, workerIndex);
 
   const verdict = evaluateShellCommand(launch.start, undefined, undefined, undefined, undefined, getSandboxStatus().confined);
-  if (!verdict.allowed) throw new Error(`blocked by shell policy: ${verdict.reason}`);
+  if (!verdict.allowed) throw new LaunchRefused(`blocked by shell policy: ${verdict.reason}`);
 
   // BROWSER=none stops Vite/CRA from launching a tab. The launch file's own
   // settings (its test mode) come first, so they cannot undo either.
@@ -70,10 +79,12 @@ export async function launchApp(projectDir: string, launch: ProjectLaunchSpec, s
   // had failed to bind; then it was stopped mid-suite and every scenario after
   // read "connection refused" against the app (label-check, 2026-11-24).
   if (await ping(url)) {
-    throw new Error(`something is already answering at ${url}, so the judge would score it instead of the app it starts. Stop whatever is serving there, then score again.`);
+    throw new LaunchRefused(`something is already answering at ${url}, so the judge would score it instead of the app it starts. Stop whatever is serving there, then score again.`);
   }
 
-  const proc = await spawnCaged(launch.start, { cwd: projectDir, env, detached: process.platform !== "win32", signal });
+  // spawnCaged rejects only when nothing could be started (the cage refused, its proof is pending).
+  const proc = await spawnCaged(launch.start, { cwd: projectDir, env, detached: process.platform !== "win32", signal })
+    .catch((e: Error) => { throw new LaunchRefused(`the start command could not be run on this machine: ${e.message}`); });
   // While it runs, the port the app listens on is admitted to the cage and to
   // the agent's HTTP tools, as a process_start dev server's is.
   registerOwnedProcess(proc.pid);

@@ -22,7 +22,7 @@ import type { ParsedChunk } from "../plan-parser.js";
 import { isPhaseGatePause, type ChunkReviewOutcome } from "../chunk-review/index.js";
 import { attemptPhaseGateScoring } from "../loop-phase-gate.js";
 import { leavingTrackedFilesAsFound } from "../git-helpers.js";
-import { appendHalt, clearOwedPhaseGate, owedPhaseGates, recordOwedPhaseGate } from "../failure-recovery.js";
+import { appendHalt, clearOwedPhaseGate, owedPhaseGates, recordOwed, recordOwedPhaseGate } from "../failure-recovery.js";
 import type { EmitFn, LoopEvent, LoopOptions, LoopResult } from "./types.js";
 
 export interface PhasePauseScope {
@@ -85,6 +85,7 @@ export function createPhasePauseTracker(input: PhasePauseInput): PhasePauseTrack
         if (rec.kind === "recovered" || rec.kind === "unverified") {
           const entry = scope.outcomes.find(o => o.chunkNumber === chunk.number);
           if (entry) entry.action = "proceed";
+          if (rec.kind === "unverified") recordOwed(projectDir, { check: `phase gate: ${phase}`, why: `${phase}'s scenarios were not judged at its gate: ${rec.reason}` });
           const said = rec.kind === "recovered" ? "phase-gate scoring passed on the merged base" : `phase gate unverified on the merged base: ${rec.reason}`;
           scope.emit({ type: "review-result", chunkNumber: chunk.number, totalChunks: scope.totalChunks, message: `${phase}: ${said} — continuing` });
           continue;

@@ -104,6 +104,17 @@ function sameFinding(a: ChunkReviewOutcome, b: ChunkReviewOutcome): boolean {
   return norm(a.reasoning) === norm(b.reasoning);
 }
 
+const holdsOn = (o: ChunkReviewOutcome, gate: string) => o.findings.find((f) => f.gate === gate && f.action !== "proceed");
+
+/** Whether two reviews stopped on the same build failure. A command's output
+ *  differs run to run in its timings, so those are left out; any other
+ *  difference (another test, another count) is a different failure. */
+function sameBuildFailure(a: ChunkReviewOutcome, b: ChunkReviewOutcome): boolean {
+  const failure = (o: ChunkReviewOutcome) => holdsOn(o, "build-exec")?.reasoning.replace(/\b\d+(?:\.\d+)?\s?(?:ms|s|sec|secs|seconds|m)\b/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+  const was = failure(b);
+  return was !== undefined && failure(a) === was;
+}
+
 /** The findings of earlier rounds, for the next brief: a fix must not reopen them. */
 function withEarlierFindings(reason: string, earlier: string[]): string {
   if (earlier.length === 0) return reason;
@@ -172,9 +183,14 @@ async function nextRound(opts: HandlePushBackOptions, round: Round, n: number, e
     const plan = await planLeadRound({
       lead: opts.buildLead, chunk: round.chunk, plan: round.plan, outcome: round.outcome, totalChunks: opts.totalChunks,
       round: n - 1, earlier, repeated, projectDir: opts.projectDir, emit: opts.emit, signal: opts.signal,
+      ledgerDir: opts.baseProjectDir ?? opts.projectDir,
     });
     if (plan) return { plan, byLead: true };
   }
+  // No lead to say whether this machine's refusal is owed: a worker cannot
+  // fix the machine, so the chunk waits for the owner with what was printed.
+  const refused = holdsOn(round.outcome, "build-refused");
+  if (refused) return { plan: { kind: "halt", reasoning: `This machine stopped the chunk's build check, which only the owner can settle. ${refused.reasoning}` }, byLead: false };
   return { plan: await planRound(opts, round), byLead: false };
 }
 
@@ -184,6 +200,7 @@ async function finalLeadSay(opts: HandlePushBackOptions, round: Round, n: number
   const plan = await planLeadRound({
     lead: opts.buildLead!, chunk: round.chunk, plan: round.plan, outcome: round.outcome, totalChunks: opts.totalChunks,
     round: n, earlier, repeated, final: true, projectDir: opts.projectDir, emit: opts.emit, signal: opts.signal,
+    ledgerDir: opts.baseProjectDir ?? opts.projectDir,
   });
   if (!plan) return null;
   if (plan.kind === "land") return { finalOutcome: plan.outcome, finalAction: "proceed" };
@@ -208,6 +225,7 @@ export async function handlePushBack(opts: HandlePushBackOptions): Promise<Handl
   let round: Round = { chunk: opts.chunk, plan: opts.plan, outcome: opts.outcome };
   const earlier: string[] = [...(opts.earlierFindings ?? [])];
   let repeated = false;
+  let buildRepeats = 0;
   let transcript = opts.lastTranscript;
 
   for (let n = Math.min(opts.firstRound ?? 1, opts.buildLead ? MAX_LEAD_ROUNDS : MAX_FIX_ROUNDS); ; n++) {
@@ -236,6 +254,14 @@ export async function handlePushBack(opts: HandlePushBackOptions): Promise<Handl
 
     const stuck = sameFinding(rebuilt, round.outcome);
     repeated = stuck;
+    // The same build failure after two fix rounds running: a third will not
+    // change it. The chunk waits for the owner with the output, instead of
+    // spending the rest of its rounds on it.
+    buildRepeats = sameBuildFailure(rebuilt, round.outcome) ? buildRepeats + 1 : 0;
+    if (buildRepeats >= 2) {
+      emit({ type: "push-back", chunkNumber: next.chunk.number, totalChunks, message: `Chunk ${next.chunk.number}: the same build failure came back unchanged from two fix rounds running — not retrying further.` });
+      return { finalOutcome: rebuilt, finalAction: "halt" };
+    }
     // A lead decides what a repeated finding means; the rules stop on it.
     const ceiling = byLead ? MAX_LEAD_ROUNDS : MAX_FIX_ROUNDS;
     if (byLead && n >= ceiling) {

@@ -25,7 +25,7 @@ import { basename, join } from "node:path";
 import { listScenarios } from "../../holdout/store.js";
 import { projectHoldoutDir } from "../../holdout/paths.js";
 import { leavingTrackedFilesAsFound } from "../git-helpers.js";
-import { appendHalt } from "../failure-recovery.js";
+import { appendHalt, recordOwed } from "../failure-recovery.js";
 import { readLaunchSpec } from "../scenario-scorer/launch-spec.js";
 import { scoreScenarioFiles } from "../scenario-scorer/phase-gate-runner.js";
 import { isUnjudged } from "../scenario-scorer/types.js";
@@ -95,8 +95,13 @@ export function createWallProbe(opts: ProbeOptions, ask: typeof askLeadBuildCall
         say(`judge check passed: the judge started the app and scored ${suite[0]}${report && !isUnjudged(report) ? ` (${report.score}/10)` : ""}`);
         return { kind: "ok" };
       }
-      const owed = await owedByLead(opts, scope, chunkNumber, why, ask);
+      // This machine's or the judge's own trouble starting the app is nobody's
+      // to fix in the build: owed, without stopping to ask. Anything else (the
+      // app would not start, the launch file is wrong) is the lead's call.
+      const machines = outcome.kind === "error" && outcome.harness === true;
+      const owed = machines ? `the judge could not start the app on this machine: ${why}` : await owedByLead(opts, scope, chunkNumber, why, ask);
       if (owed) {
+        recordOwed(opts.projectDir, { check: "judge check", why: `the held-out scenarios are unjudged from chunk ${chunkNumber} on: ${owed}` });
         say(`judge check owed to the owner, the build goes on with scenarios unjudged: ${owed}`);
         return { kind: "ok" };
       }

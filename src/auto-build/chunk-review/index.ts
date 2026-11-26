@@ -26,7 +26,8 @@ import {
 } from "./gates.js";
 import type { JudgmentHook } from "./judgment-hook.js";
 import { runBuildExecGate, type BuildExecRunner } from "./gate-build-exec.js";
-import { BUILD_CHECK, chunkJudgingFinding, owedFromJudging, type ChunkJudge, type ChunkJudgeInput, type ChunkJudging, type OwedOnChunk } from "./chunk-verdict.js";
+import { BUILD_CHECK, chunkJudgingFinding, owedFromJudging, refusedCommandCheck, type ChunkJudge, type ChunkJudgeInput, type ChunkJudging, type OwedOnChunk } from "./chunk-verdict.js";
+import { owedChecks } from "../failure-recovery.js";
 
 export interface ChunkReviewInput {
   /** The chunk we just ran. */
@@ -46,6 +47,9 @@ export interface ChunkReviewInput {
   /** Judge the chunk against its held-out scenarios and a skeptic once the
    *  build-exec gate passes (chunk-judge.ts). Absent → no judging. */
   chunkJudge?: ChunkJudgeRun;
+  /** The project the build's ledger is kept in (the base project when the
+   *  chunk is built in a worktree): where refusals the lead already owed are read. */
+  ledgerDir?: string;
 }
 
 /** The judge and what it needs beyond the review's own input. */
@@ -180,6 +184,13 @@ function stoppedBeforeJudge(input: ChunkReviewInput, o: ChunkReviewOutcome): Chu
   return { ...o, findings: [...o.findings, finding] };
 }
 
+/** The build commands this machine refuses that are already on the owner's list. */
+function owedRefusals(ledgerDir: string | undefined): string[] {
+  if (!ledgerDir) return [];
+  const prefix = refusedCommandCheck("");
+  return owedChecks(ledgerDir).filter((o) => o.chunk == null && o.check.startsWith(prefix)).map((o) => o.check.slice(prefix.length));
+}
+
 /** The build-exec gate, the chunk judge and the spec-gap hook, over the
  *  mechanical verdict on the chunk's own work. */
 async function reviewChunkWork(
@@ -198,7 +209,7 @@ async function reviewChunkWork(
   const owed: OwedOnChunk[] = [];
   try {
     execFinding = await buildExec({
-      projectDir: input.projectDir, signal,
+      projectDir: input.projectDir, signal, owedRefusals: owedRefusals(input.ledgerDir),
       onStructureNote: (n) => { structureNote = n; },
       onUnverified: (why) => { owed.push({ check: BUILD_CHECK, why }); },
     });

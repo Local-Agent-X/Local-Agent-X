@@ -44,11 +44,25 @@ export interface GateFinding {
     | "build-exec"
     | "chunk-scenarios"
     | "chunk-unjudged"
+    | "build-refused"
     | "skeptic";
   action: ReviewAction;
   /** One-sentence reasoning. Surfaced to the user on halts. */
   reasoning: string;
+  /** build-refused: the command this machine stopped, and what stopped it. */
+  refused?: { command: string; what: string };
 }
+
+/**
+ * What a check found. Three answers, never two: a check that could not run on
+ * this machine did not pass and did not fail, and reading it as either has
+ * cost a fix round or hidden a gap every time. `failed` is the only one that
+ * goes back to a worker; `not-run` is owed to the owner.
+ */
+export type CheckResult =
+  | { kind: "passed"; note?: string }
+  | { kind: "failed"; finding: GateFinding }
+  | { kind: "not-run"; why: string };
 
 /** Gate 0 (precondition): the report must parse to a known shape AND
  *  carry a recognized STATUS value.

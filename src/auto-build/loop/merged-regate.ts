@@ -32,7 +32,7 @@ import { runBuildExecGate } from "../chunk-review/gate-build-exec.js";
 import { leavingTrackedFilesAsFound } from "../git-helpers.js";
 import { installIfBehindLockfile } from "../../agency/worktree-deps.js";
 import { footprintEscapes } from "../conflict-graph.js";
-import { appendHalt } from "../failure-recovery.js";
+import { appendHalt, recordOwed } from "../failure-recovery.js";
 import type { ParsedChunk } from "../plan-parser.js";
 import type { EmitFn, LoopEvent, LoopResult } from "./types.js";
 
@@ -95,9 +95,11 @@ export async function reGateMergedTree(input: ReGateInput): Promise<ReGateResult
     });
   }
 
+  const check = `re-gate after wave ${waveIndex + 1}`;
+  const owe = (why: string) => recordOwed(projectDir, { check, why: `the merged project was not fully checked after wave ${waveIndex + 1}: ${why}` });
   let finding: Awaited<ReturnType<typeof runBuildExecGate>> = null;
   try {
-    const run = await leavingTrackedFilesAsFound(projectDir, () => runBuildExecGate({ projectDir, signal }));
+    const run = await leavingTrackedFilesAsFound(projectDir, () => runBuildExecGate({ projectDir, signal, onUnverified: owe }));
     finding = run.value;
     if (run.restored.length > 0) {
       emit({
@@ -124,6 +126,14 @@ export async function reGateMergedTree(input: ReGateInput): Promise<ReGateResult
         `combined result manually: a semantic break in this wave's merge would NOT have been caught.`,
       data: { regateCrashed: true, error: msg.slice(0, 200) },
     });
+    owe(`the check crashed (${msg.slice(0, 200)})`);
+    finding = null;
+  }
+  // This machine stopped a command: the chunks' own reviews met the same
+  // refusal and put it to the lead. Here it is owed, never a halt of the build.
+  if (finding?.refused) {
+    owe(`\`${finding.refused.command}\` cannot finish on this machine (${finding.refused.what})`);
+    emit({ type: "review-result", chunkNumber: lastChunkNumber, totalChunks, message: `Integration re-gate after wave ${waveIndex + 1}: \`${finding.refused.command}\` cannot finish on this machine (${finding.refused.what}). Owed to the owner; the build goes on.` });
     finding = null;
   }
   if (!finding) return { kind: "ok" };

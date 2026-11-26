@@ -45,6 +45,12 @@ export const LEAD_ROLE =
   `- What is left needs something only the owner has (a device, an account, credentials, a paid service): ` +
   `"owed", naming the check. The chunk lands unverified, the build goes on, and the owner is asked at the end. ` +
   `Never park for that, and never write "park" into a done-when.\n` +
+  `- This machine stopped the chunk's own build or test command (the finding quotes what it printed: an ` +
+  `Application Control or policy block, the shell cage refusing something, no phone connected). No worker can ` +
+  `fix the machine, so do not send it back to "run the full check". If everything else in that output passed, ` +
+  `"owed": the chunk lands, the command goes on the owner's list once for the whole build, and later chunks are ` +
+  `not asked again. If the same output shows real failures beside the refusal, "park". "continue" only with a ` +
+  `change to the project that avoids what the machine blocks (a different tool or package), never "try again".\n` +
   `- The judge could not start the app, so its held-out scenarios were never judged: "continue" when the ` +
   `launch file can be fixed, or "owed" when the judge cannot drive this kind of app at all (a native phone app ` +
   `with no URL), naming the scenarios as the owner's check. Unjudged is not failed, and "accept" does not land it.\n` +

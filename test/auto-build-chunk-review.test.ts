@@ -907,11 +907,12 @@ describe("build-exec gate: the project's scripts run in the shell cage", () => {
   // neither passes the chunk nor stops the whole build: it is on the record.
   it("fails closed while the Windows cage proof is pending: nothing runs, and the chunk is recorded unverified", async () => {
     seam.proofPending = true;
-    let unverified = "";
-    const finding = await runBuildExecGate({ projectDir: dir, onUnverified: (n) => { unverified = n; } });
+    const unverified: string[] = [];
+    const finding = await runBuildExecGate({ projectDir: dir, onUnverified: (n) => { unverified.push(n); } });
     expect(finding).toBeNull();
-    expect(unverified).toContain("`npm run build` could not run");
-    expect(unverified).toContain(SANDBOX_PROOF_PENDING_RETRY);
+    // Every command is tried and named: one that could not run does not hide the next.
+    expect(unverified[0]).toContain("`npm run build` could not run");
+    expect(unverified[0]).toContain(SANDBOX_PROOF_PENDING_RETRY);
     expect(seam.wrapped).toEqual([]);
   });
 

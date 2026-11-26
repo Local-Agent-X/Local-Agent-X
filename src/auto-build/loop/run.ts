@@ -31,7 +31,7 @@ import type { EmitFn, LoopEvent, LoopOptions, LoopResult } from "./types.js";
 import { haltedResult, safeGet } from "./types.js";
 import { buildChunkWithRetry, type ChunkAttemptResult } from "./chunk-attempt.js";
 import type { ParsedChunk } from "../plan-parser.js";
-import { recordLanded } from "../failure-recovery.js";
+import { recordLanded, recordOwed } from "../failure-recovery.js";
 import { pickUpSetAsideWork } from "./carry-over.js";
 import { pruneMergedAgentBranches } from "../../agency/worktree-junctions.js";
 import { anythingSetAside, createSetAsideLedger, endWithSetAside, holdBackWaiting, stopForSetAside, type SetAsideLedger } from "./set-aside.js";
@@ -177,6 +177,7 @@ async function scorePhaseIfPaused(a: {
     return { finalOutcome: attempt.finalOutcome, finalAction: "proceed" };
   }
   if (recovery.kind === "unverified") {
+    recordOwed(opts.projectDir, { check: `phase gate: ${chunk.phase}`, why: `${chunk.phase}'s scenarios were not judged at its gate: ${recovery.reason}` });
     emit({ type: "review-result", chunkNumber: chunk.number, totalChunks, message: `${chunk.phase}: phase gate unverified, continuing: ${recovery.reason}` });
     return { finalOutcome: attempt.finalOutcome, finalAction: "proceed" };
   }

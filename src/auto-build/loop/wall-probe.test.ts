@@ -6,12 +6,15 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const fake = vi.hoisted(() => ({ outcome: null as unknown, calls: [] as string[][], halts: [] as unknown[] }));
+const fake = vi.hoisted(() => ({ outcome: null as unknown, calls: [] as string[][], halts: [] as unknown[], owed: [] as Array<{ check: string; why: string }> }));
 vi.mock("../scenario-scorer/phase-gate-runner.js", () => ({
   scoreScenarioFiles: vi.fn(async (o: { scenarioPaths: string[] }) => { fake.calls.push(o.scenarioPaths); return fake.outcome; }),
 }));
 vi.mock("../git-helpers.js", () => ({ leavingTrackedFilesAsFound: async (_d: string, run: () => Promise<unknown>) => ({ value: await run(), restored: [] }) }));
-vi.mock("../failure-recovery.js", () => ({ appendHalt: (_d: string, r: unknown) => { fake.halts.push(r); } }));
+vi.mock("../failure-recovery.js", () => ({
+  appendHalt: (_d: string, r: unknown) => { fake.halts.push(r); },
+  recordOwed: (_d: string, o: { check: string; why: string }) => { fake.owed.push(o); },
+}));
 
 const { createWallProbe } = await import("./wall-probe.js");
 const { writeScenario } = await import("../../holdout/store.js");
@@ -27,7 +30,7 @@ afterAll(() => {
   if (prior === undefined) delete process.env.LAX_DATA_DIR; else process.env.LAX_DATA_DIR = prior;
   rmSync(DATA, { recursive: true, force: true });
 });
-beforeEach(() => { fake.outcome = null; fake.calls = []; fake.halts = []; });
+beforeEach(() => { fake.outcome = null; fake.calls = []; fake.halts = []; fake.owed = []; });
 
 function scope() {
   const said: string[] = [];
@@ -93,9 +96,26 @@ describe("the wall probe", () => {
     expect(await createWallProbe({ projectDir: dir, buildLead: lead }, owed).afterLanding(s, 1, 1)).toEqual({ kind: "ok" });
     expect(said.at(-1)).toContain("judge check owed to the owner");
     expect(fake.halts).toEqual([]);
+    // On the build's ledger, where the finish report and a restart find it.
+    expect(fake.owed).toEqual([{ check: "judge check", why: expect.stringContaining("judge on a Pixel with the owner's account") }]);
 
     const parked = vi.fn(async () => ({ action: "park" as const, reasoning: "r", question: "fix the launch file?" }));
     expect((await createWallProbe({ projectDir: dir, buildLead: lead }, parked).afterLanding(scope().s, 1, 1)).kind).toBe("halt");
     expect((await createWallProbe({ projectDir: dir, buildLead: lead }, vi.fn(async () => null)).afterLanding(scope().s, 1, 1)).kind).toBe("halt");
+  });
+
+  // What this machine stopped is nobody's to fix in the build: it used to halt
+  // a build with no lead, and ask one that had a lead a question with one answer.
+  it("the judge's own trouble starting the app on this machine is owed without asking, lead or no lead", async () => {
+    const dir = project("pillbox"); launch(dir);
+    fake.outcome = { kind: "error", reason: "dev server failed to start: something is already answering at http://127.0.0.1:5173/", harness: true };
+    const ask = vi.fn(async () => null);
+    for (const buildLead of [undefined, { projectDir: dir, originSessionId: "chat-x" }]) {
+      expect(await createWallProbe({ projectDir: dir, ...(buildLead ? { buildLead } : {}) }, ask).afterLanding(scope().s, 1, 1)).toEqual({ kind: "ok" });
+    }
+    expect(ask).not.toHaveBeenCalled();
+    expect(fake.halts).toEqual([]);
+    expect(fake.owed).toHaveLength(2);
+    expect(fake.owed[0].why).toContain("could not start the app on this machine");
   });
 });

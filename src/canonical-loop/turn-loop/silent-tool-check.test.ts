@@ -55,7 +55,9 @@ describe("stepClosedTurn", () => {
     expect(stepClosedTurn([call("review_changes")], ran(["review_changes", "ok"]))).toBe(false);
   });
 
-  it("is a row fact: wrap_up declares it, ask_user does not (a question ends the turn its own way)", () => {
-    expect(toolsWhere((row) => row.closesTurn === true)).toEqual(["wrap_up"]);
+  // A build agent's report is the last thing its run does (auto-build/agents/
+  // report-tools.ts), so a delivered report ends the run as wrap_up ends a turn.
+  it("is a row fact: wrap_up and the build agents' report tools declare it, ask_user does not (a question ends the turn its own way)", () => {
+    expect(toolsWhere((row) => row.closesTurn === true).sort()).toEqual(["breaker_findings", "chunk_report", "skeptic_verdict", "wrap_up"]);
   });
 });

@@ -134,9 +134,12 @@ describe("exempt control/terminal tools", () => {
   const exempt = toolsWhere((row) => row.runControl === true);
 
   it("exempts exactly the rows that declare runControl", () => {
+    // The build agents' report tools are here too: a worker refused its
+    // report under heap pressure ends its run with nothing delivered.
     expect([...exempt].sort()).toEqual([
-      "agent_escalate", "ask_user", "process_kill", "process_list", "process_status",
-      "send_file", "session_status", "task_create", "task_update", "update_plan", "wrap_up",
+      "agent_escalate", "ask_user", "breaker_findings", "chunk_report", "process_kill", "process_list",
+      "process_status", "send_file", "session_status", "skeptic_verdict", "task_create", "task_update",
+      "update_plan", "wrap_up",
     ]);
     for (const name of exempt) expect(isHeapGuardExempt(name)).toBe(true);
   });

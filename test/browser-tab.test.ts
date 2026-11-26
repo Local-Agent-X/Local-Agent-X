@@ -119,6 +119,13 @@ vi.mock("../desktop/src/browser-views", () => ({
   listBrowserViews: () => h.poolList,
   pingBrowserView: () => ({ ok: true }),
   hideBrowserView: () => { h.hideCalls++; },
+  // The real ones: attach only while the pane shows a view; hide what is attached.
+  showBrowserViewIfPaneShowing: () => {
+    if (h.attachedId === null) return false;
+    h.showCalls++;
+    return true;
+  },
+  hideAttachedBrowserView: () => { if (h.attachedId !== null) h.hideCalls++; },
   setBrowserChatOverlay: (...args: unknown[]) => { h.chatOverlayCalls.push(args); },
   setBrowserViewBounds: (...args: unknown[]) => { h.setBoundsCalls.push(args); },
   showBrowserView: () => { h.showCalls++; },

@@ -24,8 +24,12 @@ export const GREENFIELD = [
    "  kept outside the repo and sealed by LAX itself. A separate judge scores the"],
   ["├── scripts/              the structure checks and the holdout guard\n└── .claude/              the guard hook and the judge agent\n\n~/.holdout/<project>/     the sealed scenario suite, outside the repo",
    "├── scripts/              the structure checks\n└── .lax-launch.json      how the judge starts the app\n\nthe sealed scenario suite: kept by LAX outside the project (holdout_write)"],
+  // The folder the owner opened is the project. A fixed `workspace/apps/<name>`
+  // sent a code session opened on "Label Check 3 Grok" off to make
+  // `workspace/apps/label-check-grok`, deleting what it had begun in the owner's
+  // folder on the way (2026-11-25).
   ["Create the project folder and `git init` it, so `spec/` has history from its\nfirst file.",
-   "Create the project folder, `workspace/apps/<name>` (served, so it opens on\nthe phone), and `git init` it, so `spec/` has history from its first file."],
+   "The project folder is the one this chat works in, when it has one (a code\nsession opened on a folder): build there, whatever its name. A chat with no\nfolder creates `workspace/apps/<name>`, the name in letters, digits, `-` and\n`_`, so a web app is served at `/apps/<name>/` and opens on the phone. Never\nmove a project out of the folder the owner opened, or delete work to start\nover; if that folder cannot do what the app needs, say why and ask. `git init`\nit, so `spec/` has history from its first file."],
   ["Write the acceptance scenarios from the spec, in plain prose, into\n`~/.holdout/<project>/`. Show them to the owner. Record the index (file names\nand what each covers, nothing more) in `spec/ledger.md`. Then seal the suite:\ninstall the guard hook and the judge agent, and prove the wall by having a\nthrowaway agent try to read the suite and be refused.",
    "Write the acceptance scenarios from the spec, in plain prose, one\n`holdout_write` call each. Show them to the owner. Record the index (file names\nand what each covers, nothing more) in `spec/ledger.md`. Then seal the suite\nwith `holdout_seal`, and prove the wall by having a throwaway agent try to read\nthe suite and be refused."],
   ["Sealing usually ends the session: a hook and an agent added mid-session are\noften not live until a new one starts. If the probe is not refused, write the\nresume point to the ledger, ask the owner to open a new session in the project\nand say \"resume the greenfield build\", and stop there.\n\n",

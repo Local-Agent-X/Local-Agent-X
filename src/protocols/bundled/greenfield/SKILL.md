@@ -101,8 +101,13 @@ Output: a one-paragraph brief, inline. Confirm it before writing any file.
 
 ### 2. Constitution
 
-Create the project folder, `workspace/apps/<name>` (served, so it opens on
-the phone), and `git init` it, so `spec/` has history from its first file. Then `spec/constitution.md`: 5-12 rules the build respects no
+The project folder is the one this chat works in, when it has one (a code
+session opened on a folder): build there, whatever its name. A chat with no
+folder creates `workspace/apps/<name>`, the name in letters, digits, `-` and
+`_`, so a web app is served at `/apps/<name>/` and opens on the phone. Never
+move a project out of the folder the owner opened, or delete work to start
+over; if that folder cannot do what the app needs, say why and ask. `git init`
+it, so `spec/` has history from its first file. Then `spec/constitution.md`: 5-12 rules the build respects no
 matter what an agent thinks is clever, drawn from the owner's "never" answers
 plus sane defaults for the stack. Every chunk brief carries them.
 `references/spec.md`, section 2.

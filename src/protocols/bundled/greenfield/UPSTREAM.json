@@ -1,6 +1,6 @@
 {
   "upstream": "~/.claude/skills/greenfield/SKILL.md",
-  "sha256": "d99215fc6237bf0b2e8a9357de917a691cb8d97c3bae1f3d9f1b180a043e2066",
+  "sha256": "fca1cc291de6a00b22abc0f6a656eba2c7349b6b4e91ff9c81dccb28fabe15ca",
   "files": {
     "references/autonomous.md": "cc6a26a3aa95c08f7fe63194a8e3c3245f49f7d3e6b56c96f7c3fe2a1aaea6a3",
     "references/gates.md": "fbb9c28c5f0aace22bf40df3066f00a481ae1c1a359ea24b5b0701f6db6fd029",

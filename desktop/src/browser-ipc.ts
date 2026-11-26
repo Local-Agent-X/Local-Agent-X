@@ -35,7 +35,7 @@ import {
 	createBrowserView,
 	getAttachedViewId,
 	getBrowserView,
-	hideBrowserView,
+	hideAttachedBrowserView,
 	listBrowserViews,
 	setBrowserChatOverlay,
 	setAgentViewEvictedNotifier,
@@ -43,6 +43,7 @@ import {
 	setPaneTabOpener,
 	setPoolChangedListener,
 	showBrowserView,
+	showBrowserViewIfPaneShowing,
 } from "./browser-views";
 import {
 	type BrowserNavState,
@@ -181,9 +182,7 @@ function applyAgentSurface(viewId: string): void {
 	setCurrentViewId(viewId);
 	wireNavPushes(viewId, view.webContents);
 	if (lastBoundsDip) setBrowserViewBounds(viewId, lastBoundsDip); // negotiate BEFORE any attach
-	if (getAttachedViewId() !== null) {
-		showBrowserView(viewId);
-	}
+	showBrowserViewIfPaneShowing(viewId);
 	pushNavState(viewId, view.webContents);
 	pushAgentSurfaced(viewId);
 }
@@ -235,9 +234,7 @@ function openUserTab(openedBy?: BrowserWindowConstructorOptions): { viewId: stri
 	wireNavPushes(viewId, view.webContents);
 	setCurrentViewId(viewId);
 	if (lastBoundsDip) setBrowserViewBounds(viewId, lastBoundsDip); // negotiate BEFORE any attach
-	if (getAttachedViewId() !== null) {
-		showBrowserView(viewId);
-	}
+	showBrowserViewIfPaneShowing(viewId);
 	markHumanNavigation(viewId);
 	return { viewId, view };
 }
@@ -324,10 +321,10 @@ export function setupBrowserIPC(): void {
 		if (visible) {
 			const { viewId } = ensureCurrentView();
 			showBrowserView(viewId);
-		} else if (getBrowserView(currentViewId())) {
-			// Don't create a view just to hide it — hiding a non-existent view is a
-			// no-op, not an error.
-			hideBrowserView(currentViewId());
+		} else {
+			// Whatever is on screen, which after a retarget need not be the current
+			// view; nothing is created just to hide it.
+			hideAttachedBrowserView();
 			setBrowserChatOverlay(null, null, null);
 		}
 	});
@@ -420,20 +417,23 @@ export function setupBrowserIPC(): void {
 		sendViewsChanged();
 	});
 
-	// Flip which pool view the anchor drives + shows. The target must already
-	// exist (agent views are created over the bridge; the foreground view by the
-	// tab). showBrowserView detaches the previous view but keeps it LIVE, so its
-	// in-flight agent ops keep running while the user watches another view.
+	// Flip which pool view the anchor drives, and show it if the pane is showing.
+	// The target must already exist (agent views are created over the bridge;
+	// the foreground view by the tab). Showing detaches the previous view but
+	// keeps it LIVE, so its in-flight agent ops keep running while the user
+	// watches another view. The renderer switches on an agent's new page even
+	// with the panel closed (browser-session-bind.js), so this never attaches on
+	// its own.
 	ipcMain.handle("browser-switch-view", (event: IpcMainInvokeEvent, viewId: string): BrowserNavState | null => {
 		if (!isTrustedBrowserSender(event.sender)) return null;
 		const view = viewId === homeViewId() ? ensureHomeView().view : getBrowserView(viewId) ?? wakeRestedPage(viewId);
 		if (!view) return null; // vanished/never-existed — renderer re-lists and recovers
 		setCurrentViewId(viewId);
 		wireNavPushes(viewId, view.webContents);
-		showBrowserView(viewId);
-		// Snap the newly shown view to the anchor geometry (an agent view carries
-		// its own default pool bounds until now).
+		// Snap to the anchor geometry BEFORE any attach (an agent view carries its
+		// own default pool bounds until now).
 		if (lastBoundsDip) setBrowserViewBounds(viewId, lastBoundsDip);
+		showBrowserViewIfPaneShowing(viewId);
 		const state = readNavState(viewId, view.webContents);
 		pushNavState(viewId, view.webContents); // mirror immediately for late subscribers
 		return state;

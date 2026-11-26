@@ -336,6 +336,28 @@ export function showBrowserView(viewId: string): void {
 	if (flipped) notifyPoolChanged();
 }
 
+/**
+ * Make a view the one on screen, but only while the pane is showing (a view is
+ * attached). With the pane closed nothing attaches: the view is the pane's
+ * current one and the next set-visible(true) shows it. Every retarget (a tab
+ * switch, an agent surfacing a page, a new tab) goes through here; only the
+ * renderer's set-visible attaches from nothing. A tab switch that attached
+ * unconditionally painted an agent's page over a closed panel, at whatever
+ * size the pane last reported, until something else re-synced (2026-11-25).
+ * Returns whether it attached.
+ */
+export function showBrowserViewIfPaneShowing(viewId: string): boolean {
+	if (attachedId === null) return false;
+	showBrowserView(viewId);
+	return true;
+}
+
+/** Take whatever view is on screen off it — not "the current view", which can
+ *  differ from the attached one after a retarget. */
+export function hideAttachedBrowserView(): void {
+	if (attachedId !== null) hideBrowserView(attachedId);
+}
+
 /** Detach from the main window. The view stays live in the pool. */
 export function hideBrowserView(viewId: string): void {
 	const entry = requireEntry(viewId);

@@ -56,7 +56,7 @@ describe("planLeadRound", () => {
     expect(accepted.said[1]).toContain("accept refused: the held-out scenarios were never judged");
 
     const owed = round({ action: "owed", reasoning: "native app, no URL", owedCheck: "run the sealed scenarios on the Galaxy" }, sentBack("chunk-unjudged", why));
-    expect(await owed.run).toMatchObject({ kind: "land", outcome: { action: "proceed", unverified: "a check is owed to the owner: run the sealed scenarios on the Galaxy" } });
+    expect(await owed.run).toMatchObject({ kind: "land", outcome: { action: "proceed", owed: [{ check: "owed by the build lead", why: "a check is owed to the owner: run the sealed scenarios on the Galaxy" }] } });
   });
 
   it("narrow rebuilds against the lead's done-when, on record", async () => {
@@ -79,7 +79,7 @@ describe("planLeadRound", () => {
   it("owed lands the chunk unverified, with the owner's check on record", async () => {
     const { run, projectDir } = round({ action: "owed", reasoning: "all that runs here passes", owedCheck: "live scan on a Gemini Nano device with the owner's Firebase project" });
     const next = await run;
-    expect(next).toMatchObject({ kind: "land", outcome: { action: "proceed", unverified: expect.stringContaining("owed to the owner: live scan") } });
+    expect(next).toMatchObject({ kind: "land", outcome: { action: "proceed", owed: [{ check: "owed by the build lead", why: expect.stringContaining("owed to the owner: live scan") }] } });
     expect(buildState(projectDir)).toContain("check owed to the owner: live scan");
   });
 

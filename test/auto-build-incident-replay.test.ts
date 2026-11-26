@@ -68,6 +68,7 @@ const { parsePlanText } = await import("../src/auto-build/plan-parser.js");
 const { WORKTREE_BASE } = await import("../src/agency/worktree-core.js");
 const { cleanupWorktree } = await import("../src/agency/worktree.js");
 const { MAX_LEAD_ROUNDS } = await import("../src/auto-build/loop/lead-rounds.js");
+const { owedChecks } = await import("../src/auto-build/failure-recovery.js");
 
 /** A plan of chunks, each writing its own file, with the dependencies given. */
 function plan(chunks: Array<[number, number[]]>): string {
@@ -140,7 +141,9 @@ describe("build engine incidents, replayed", () => {
     expect(result.status).toBe("complete");
     expect(script.builds).toContain(5);
     const four = result.outcomes.find((o) => o.chunkNumber === 4)!;
-    expect(four.outcome.unverified).toContain("owed to the owner: live scan");
+    expect(four.outcome.owed?.map((o) => o.why).join()).toContain("owed to the owner: live scan");
+    // On the build's ledger, where a restart and the finish report find it.
+    expect(owedChecks(projectDir)).toEqual([expect.objectContaining({ chunk: 4, check: "owed by the build lead" })]);
     expect(git(projectDir, "show", "HEAD:spec/build-state.md")).toContain("check owed to the owner");
   });
 

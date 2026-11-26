@@ -7,7 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { git } from "../../agency/worktree-core.js";
 import { HARNESS_COMMIT_IDENTITY } from "../../git-safety.js";
-import { clearSetAside, recordSetAside, setAsideRecordFor } from "../failure-recovery.js";
+import { recordLanded, recordSetAside, setAsideRecordFor } from "../failure-recovery.js";
 import { carryOverBrief, carryOverFor, landedUnrecorded, mergeCarriedWork } from "./carry-over.js";
 
 const dirs: string[] = [];
@@ -53,7 +53,7 @@ describe("carry-over of a set-aside chunk", () => {
     });
     // The halt history the file also holds is untouched by the record, and vice versa.
     expect(JSON.parse(readFileSync(join(dir, ".lax-build-history.json"), "utf8")).haltHistory).toEqual([]);
-    clearSetAside(dir, 3);
+    recordLanded(dir, 3);
     expect(setAsideRecordFor(dir, 3)).toBeUndefined();
     expect(carryOverFor(dir, 3)).toBeNull();
   });

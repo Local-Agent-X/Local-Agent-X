@@ -5,7 +5,7 @@
  *
  *   continue / fresh  rebuild with the lead's instruction and the finding
  *   accept            land the chunk; what is left goes on record as follow-ups
- *   owed              land it unverified: a check only the owner can run is owed
+ *   owed              land it with a check only the owner can run on the ledger
  *   overrule          land it over a check the lead shows is wrong, on record
  *   narrow            the chunk's done-when becomes the lead's, on record; rebuild
  *   split             narrow, and what moved out becomes new chunks (split-chunks.ts)
@@ -118,7 +118,8 @@ export async function planLeadRound(a: LeadRoundInput): Promise<LeadRoundPlan | 
       return land(
         `Landed by the build lead with a check owed to the owner: ${decision.owedCheck}`,
         `Landed by the build lead with a check owed to the owner: ${decision.owedCheck}\nWhy: ${decision.reasoning}`,
-        { unverified: `a check is owed to the owner: ${decision.owedCheck}` },
+        // Added to what the review's own checks could not run, never in place of it.
+        { owed: [...(outcome.owed ?? []), { check: "owed by the build lead", why: `a check is owed to the owner: ${decision.owedCheck}` }] },
       );
     case "overrule": {
       const checks = [...new Set(outcome.findings.filter((f) => f.action !== "proceed").map((f) => f.gate))].join(", ") || "review";

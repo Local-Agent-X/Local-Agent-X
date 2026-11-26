@@ -23,7 +23,7 @@ export function buildSummaryText(s: OrchestratorState, result: LoopResult): stri
     lines.push(`Per-chunk verdicts:`);
     for (const o of result.outcomes) {
       const judged = o.outcome.judging ? ` — ${chunkJudgingSummary(o.outcome.judging)}` : "";
-      const unverified = o.outcome.unverified ? ` — unverified: ${o.outcome.unverified}` : "";
+      const unverified = o.outcome.owed?.length ? ` — unverified: ${o.outcome.owed.map((owed) => owed.why).join("; ")}` : "";
       lines.push(`  chunk ${o.chunkNumber}: ${o.action}${judged}${unverified}`);
     }
   }

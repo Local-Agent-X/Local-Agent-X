@@ -32,6 +32,7 @@ import { runBreakers, type BreakerResult } from "./breakers.js";
 import { askLeadBuildCall } from "../advisor/lead-decisions.js";
 import { FIX_CHUNK_PHASE, fixChunkNumber, fixChunkTitle, nextFinishRunBase, splitFromFix, type FinishProgress } from "./fix-chunk.js";
 import { parsePlanFile } from "../plan-parser.js";
+import { owedChecks } from "../failure-recovery.js";
 
 const MAX_FIX_ROUNDS = 2;
 /** The ceiling on fix rounds when the build's lead asks for more. */
@@ -142,15 +143,10 @@ function noProgress(prev: { suite: SuiteJudging; breakers: BreakerResult[] } | n
   return names(prev.suite) === names(suite) && count(breakers) >= count(prev.breakers);
 }
 
-/** Chunks that landed with a check that never ran on them: not a pass, so listed. */
-function unverifiedChunks(result: LoopResult): string[] {
-  const items: string[] = [];
-  for (const o of result.outcomes) {
-    if (o.outcome.unverified) items.push(`chunk ${o.chunkNumber} landed unverified: ${o.outcome.unverified}`);
-    const sc = o.outcome.judging?.scenarios;
-    if (sc?.status === "not-run" && /could not start the app/.test(sc.reason)) items.push(`chunk ${o.chunkNumber}'s scenarios were not judged: ${sc.reason}`);
-  }
-  return items;
+/** What landed with a check that never ran on it: not a pass, so listed. Read
+ *  from the build's ledger, so a chunk an earlier run landed is listed too. */
+function owedItems(projectDir: string): string[] {
+  return owedChecks(projectDir).map((o) => (o.chunk != null ? `chunk ${o.chunk} landed unverified: ${o.why}` : `not checked by the build: ${o.why}`));
 }
 
 /** Checks no engine can make: said every time, so nobody reads "complete" as "seen working". */
@@ -275,7 +271,7 @@ export async function runFinishGates(input: FinishInput): Promise<LoopResult> {
     chunksCommitted += built.committed;
     for (const reason of built.halted) open.push(`finish fix round ${round} did not fully land: ${reason}`);
   }
-  open.push(...unverifiedChunks(result), ...ownerItems(opts.projectDir));
+  open.push(...owedItems(opts.projectDir), ...ownerItems(opts.projectDir));
   say(`finish checks done: ${open.length} open item(s)`);
   return { ...result, chunksCommitted, openItems: open };
 }

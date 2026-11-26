@@ -336,6 +336,15 @@ describe("the judge stage in the chunk review", () => {
     const o = await review(CLEAN, async () => { throw new Error("playwright missing"); });
     expect(o.action).toBe("proceed");
     expect(o.judging?.skeptic).toEqual({ status: "not-run", finding: "the chunk judge crashed: playwright missing" });
+    // Both of the judge's checks are owed, by name: until 2026-11-26 a crashed judge left no record the owner saw.
+    expect(o.owed?.map((owed) => owed.check)).toEqual(["held-out scenarios", "skeptic review"]);
+  });
+
+  it("a skeptic that never answered is owed; nothing due is not", async () => {
+    const o = await review(CLEAN, async () => judging({ skeptic: { status: "not-run", finding: "timed out" } }));
+    expect(o.action).toBe("proceed");
+    expect(o.owed).toEqual([{ check: "skeptic review", why: "the skeptic did not review it: timed out" }]);
+    expect((await review(CLEAN, async () => judging({ scenarios: { status: "not-run", reason: "chunk 1 names no sealed scenario", scores: [] } }))).owed).toBeUndefined();
   });
 
   // The build-and-test check failed open with no record: a crash in it read
@@ -343,15 +352,15 @@ describe("the judge stage in the chunk review", () => {
   it("a build check that crashes fails open, and the chunk says it was not built or tested", async () => {
     const o = await review(CLEAN, async () => judging(), { buildExec: async () => { throw new Error("spawn EPERM"); } });
     expect(o.action).toBe("proceed");
-    expect(o.unverified).toBe("the build-and-test check crashed, so the chunk's code was not built or tested: spawn EPERM");
+    expect(o.owed).toEqual([{ check: "build and tests", why: "the build-and-test check crashed, so the chunk's code was not built or tested: spawn EPERM" }]);
   });
 
   it("a build check with nothing to run says so on the chunk", async () => {
     const o = await review(CLEAN, async () => judging(), {
       buildExec: async (input: { onUnverified?: (n: string) => void }) => { input.onUnverified?.("the project has no build or test script"); return null; },
     } as never);
-    expect(o.unverified).toBe("the project has no build or test script");
-    expect((await review(CLEAN, async () => judging())).unverified).toBeUndefined();
+    expect(o.owed).toEqual([{ check: "build and tests", why: "the project has no build or test script" }]);
+    expect((await review(CLEAN, async () => judging())).owed).toBeUndefined();
   });
 });
 

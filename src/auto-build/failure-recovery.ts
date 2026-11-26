@@ -68,12 +68,31 @@ export interface OwedPhaseGate {
   reasoning: string;
 }
 
+/**
+ * A check that should have run on what landed and could not run on this
+ * machine: owed to the owner, never a reason to send work back to a worker.
+ * One list for every check, kept here so a restart does not lose it. Until
+ * 2026-11-26 it was a string on a chunk's review outcome, which the lead's
+ * "owed" overwrote, a resume dropped, and five checks never wrote at all (a
+ * skeptic that did not run, a judge that crashed, an unscored phase gate, the
+ * wall probe, the merged re-gate).
+ */
+export interface OwedCheck {
+  /** The chunk it was owed on; absent for a check of the whole build. */
+  chunk?: number;
+  /** Which check, in a few words: "build and tests", "skeptic review". */
+  check: string;
+  /** Why it could not run, as a sentence the owner reads. */
+  why: string;
+}
+
 export interface BuildState {
   haltHistory: HaltRecord[];
   /** Keyed by chunk number. */
   setAside?: Record<string, SetAsideRecord>;
   /** Keyed by phase name. */
   owedPhaseGates?: Record<string, OwedPhaseGate>;
+  owed?: OwedCheck[];
 }
 
 const MAX_CARRIED_FINDINGS = 8;
@@ -92,7 +111,8 @@ export function readBuildState(projectDir: string): BuildState {
     const history = Array.isArray(raw.haltHistory) ? raw.haltHistory : [];
     const setAside = raw.setAside && typeof raw.setAside === "object" ? raw.setAside : undefined;
     const owedPhaseGates = raw.owedPhaseGates && typeof raw.owedPhaseGates === "object" ? raw.owedPhaseGates : undefined;
-    return { haltHistory: history.slice(-MAX_HISTORY), ...(setAside ? { setAside } : {}), ...(owedPhaseGates ? { owedPhaseGates } : {}) };
+    const owed = Array.isArray(raw.owed) ? raw.owed : undefined;
+    return { haltHistory: history.slice(-MAX_HISTORY), ...(setAside ? { setAside } : {}), ...(owedPhaseGates ? { owedPhaseGates } : {}), ...(owed ? { owed } : {}) };
   } catch {
     return { haltHistory: [] };
   }
@@ -127,13 +147,34 @@ export function setAsideRecordFor(projectDir: string, chunk: number): SetAsideRe
   return readBuildState(projectDir).setAside?.[chunk];
 }
 
-/** A chunk that landed has nothing left to carry. */
-export function clearSetAside(projectDir: string, chunk: number): void {
+/**
+ * A chunk landed: nothing of it is left to carry, and the checks that could
+ * not run on it are what the owner is owed for it now (a chunk built again
+ * replaces what an earlier landing left).
+ */
+export function recordLanded(projectDir: string, chunk: number, owed: readonly Omit<OwedCheck, "chunk">[] = []): void {
   const state = readBuildState(projectDir);
-  if (!state.setAside?.[chunk]) return;
-  const { [chunk]: _landed, ...rest } = state.setAside;
-  state.setAside = rest;
+  const had = (state.owed ?? []).some((o) => o.chunk === chunk);
+  if (!state.setAside?.[chunk] && !had && owed.length === 0) return;
+  if (state.setAside?.[chunk]) {
+    const { [chunk]: _landed, ...rest } = state.setAside;
+    state.setAside = rest;
+  }
+  state.owed = [...(state.owed ?? []).filter((o) => o.chunk !== chunk), ...owed.map((o) => ({ chunk, check: o.check, why: o.why.slice(0, CARRIED_FINDING_CHARS) }))];
   writeBuildState(projectDir, state);
+}
+
+/** A check of the whole build (a phase's gate, the judge's own check) that could not run. */
+export function recordOwed(projectDir: string, owed: OwedCheck): void {
+  const state = readBuildState(projectDir);
+  const same = (o: OwedCheck) => o.chunk === owed.chunk && o.check === owed.check;
+  state.owed = [...(state.owed ?? []).filter((o) => !same(o)), { ...owed, why: owed.why.slice(0, CARRIED_FINDING_CHARS) }];
+  writeBuildState(projectDir, state);
+}
+
+/** Every check owed to the owner on what has landed, oldest first. */
+export function owedChecks(projectDir: string): OwedCheck[] {
+  return readBuildState(projectDir).owed ?? [];
 }
 
 /** Record that `phase` still owes its gate: its closing chunk landed unscored. */

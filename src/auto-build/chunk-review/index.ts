@@ -26,7 +26,7 @@ import {
 } from "./gates.js";
 import type { JudgmentHook } from "./judgment-hook.js";
 import { runBuildExecGate, type BuildExecRunner } from "./gate-build-exec.js";
-import { chunkJudgingFinding, type ChunkJudge, type ChunkJudgeInput, type ChunkJudging } from "./chunk-verdict.js";
+import { BUILD_CHECK, chunkJudgingFinding, owedFromJudging, type ChunkJudge, type ChunkJudgeInput, type ChunkJudging, type OwedOnChunk } from "./chunk-verdict.js";
 
 export interface ChunkReviewInput {
   /** The chunk we just ran. */
@@ -63,9 +63,11 @@ export interface ChunkReviewOutcome {
    *  cap: carried into the next chunk's context, never a finding. */
   structureNote?: string;
   /** Checks that should have run on the chunk and could not (a build check
-   *  that crashed, a project with nothing to build or test). The chunk is not
-   *  held for them, and is not reported as checked either. */
-  unverified?: string;
+   *  that crashed, a project with nothing to build or test, a skeptic that
+   *  never answered). The chunk is not held for them, and is not reported as
+   *  checked either: when it lands they go on the build's ledger
+   *  (failure-recovery.ts recordLanded). */
+  owed?: OwedOnChunk[];
   /** The chunk's scenario scores and the skeptic's verdict, when it was judged. */
   judging?: ChunkJudging;
 }
@@ -193,17 +195,17 @@ async function reviewChunkWork(
   // artifact that loads blank, halts regardless of the LLM hook's opinion.
   let execFinding: GateFinding | null = null;
   let structureNote: string | undefined;
-  let unverified: string | undefined;
+  const owed: OwedOnChunk[] = [];
   try {
     execFinding = await buildExec({
       projectDir: input.projectDir, signal,
       onStructureNote: (n) => { structureNote = n; },
-      onUnverified: (n) => { unverified = n; },
+      onUnverified: (why) => { owed.push({ check: BUILD_CHECK, why }); },
     });
   } catch (e) {
     // Fail open — a gate crash must not wedge the loop — but on the record.
     execFinding = null;
-    unverified = `the build-and-test check crashed, so the chunk's code was not built or tested: ${(e as Error).message}`;
+    owed.push({ check: BUILD_CHECK, why: `the build-and-test check crashed, so the chunk's code was not built or tested: ${(e as Error).message}` });
   }
   if (execFinding) {
     return stoppedBeforeJudge(input, {
@@ -213,7 +215,7 @@ async function reviewChunkWork(
       report: base.report,
     });
   }
-  let passed: ChunkReviewOutcome = { ...base, ...(structureNote ? { structureNote } : {}), ...(unverified ? { unverified } : {}) };
+  let passed: ChunkReviewOutcome = { ...base, ...(structureNote ? { structureNote } : {}), ...(owed.length ? { owed } : {}) };
 
   // The chunk's held-out scenarios and the skeptic. Runs on a build that
   // actually built; a push_back here outranks the spec-gap hook's amend_spec.
@@ -263,10 +265,11 @@ async function judgeChunk(
     judging = await judge({ ...ctx, chunk: input.chunk, allChunks: input.allChunks, rawReport: input.rawReport, projectDir: input.projectDir, signal });
   } catch (e) {
     const why = `the chunk judge crashed: ${(e as Error).message}`;
-    judging = { scenarios: { status: "not-run", reason: why, scores: [] }, skeptic: { status: "not-run", finding: why } };
+    judging = { scenarios: { status: "not-run", reason: why, scores: [], owed: true }, skeptic: { status: "not-run", finding: why } };
   }
   const finding = chunkJudgingFinding(input.chunk.number, judging);
-  if (!finding) return { ...passed, judging };
+  const unjudged = owedFromJudging(judging);
+  if (!finding) return { ...passed, judging, ...(passed.owed || unjudged.length ? { owed: [...(passed.owed ?? []), ...unjudged] } : {}) };
   return { ...passed, action: finding.action, reasoning: finding.reasoning, findings: [...passed.findings, finding], judging };
 }
 

@@ -9,6 +9,7 @@
 import type { ParsedChunk } from "../plan-parser.js";
 import type { SkepticVerdict } from "./skeptic.js";
 import type { GateFinding } from "./gates.js";
+import type { OwedCheck } from "../failure-recovery.js";
 
 export interface ChunkJudgeInput {
   chunk: ParsedChunk;
@@ -50,6 +51,25 @@ export interface ScenarioJudging {
   status: "scored" | "error" | "not-run";
   reason: string;
   scores: ScenarioScore[];
+  /** not-run because the judge could not run here, not because nothing was
+   *  due: the scenarios are owed to the owner. */
+  owed?: boolean;
+}
+
+/** A check that could not run on a chunk (failure-recovery.ts OwedCheck, before the chunk has landed). */
+export type OwedOnChunk = Omit<OwedCheck, "chunk">;
+export const BUILD_CHECK = "build and tests";
+export const SKEPTIC_CHECK = "skeptic review";
+export const SCENARIOS_CHECK = "held-out scenarios";
+
+/** What the judge could not do on a chunk it did not send back: owed, not passed. */
+export function owedFromJudging(j: ChunkJudging): OwedOnChunk[] {
+  const owed: OwedOnChunk[] = [];
+  if (j.scenarios.status === "not-run" && j.scenarios.owed) owed.push({ check: SCENARIOS_CHECK, why: `its held-out scenarios were not judged: ${j.scenarios.reason}` });
+  const unjudged = j.scenarios.scores.filter((s) => s.unjudged);
+  if (unjudged.length) owed.push({ check: SCENARIOS_CHECK, why: `${unjudged.length} held-out scenario(s) could not be judged: ${unjudged.map((s) => `${s.file}: ${s.unjudged}`).join("; ")}` });
+  if (j.skeptic.status === "not-run") owed.push({ check: SKEPTIC_CHECK, why: `the skeptic did not review it: ${j.skeptic.finding}` });
+  return owed;
 }
 
 export interface ChunkJudging {

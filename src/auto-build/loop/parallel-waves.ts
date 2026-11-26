@@ -55,7 +55,7 @@
 
 import { planWaves } from "../conflict-graph.js";
 import { getHeadSha } from "../git-helpers.js";
-import { appendHalt, clearSetAside, recordSetAside } from "../failure-recovery.js";
+import { appendHalt, recordLanded, recordSetAside } from "../failure-recovery.js";
 import { emitLaunchReadiness } from "../loop-effects.js";
 import { createNamedWorktree, mergeWorktree, cleanupWorktree } from "../../agency/worktree.js";
 import type { ParsedChunk } from "../plan-parser.js";
@@ -313,7 +313,7 @@ async function runBatch(ctx: RunContext, batch: ParsedChunk[], chunksCommittedIn
       }
       chunksCommitted++;
       ctx.landedThisRun.push(d.chunk.number);
-      clearSetAside(opts.projectDir, d.chunk.number);
+      recordLanded(opts.projectDir, d.chunk.number, r.finalOutcome.owed);
       ctx.phasePauses.landed(r.chunk, r.finalOutcome);
       emit({ type: "commit", chunkNumber: d.chunk.number, totalChunks, message: `Merged chunk ${d.chunk.number} back to base (${res.files} file(s) from '${d.branch}').` });
       emit({
@@ -424,7 +424,7 @@ async function buildChunkOnBaseSerial(ctx: RunContext, chunk: ParsedChunk, chunk
   });
   if (handled.kind === "halt") return { kind: "halt", result: handled.result };
   ctx.landedThisRun.push(chunk.number);
-  clearSetAside(opts.projectDir, chunk.number);
+  recordLanded(opts.projectDir, chunk.number, finalOutcome.owed);
   opts.onChunkSettled?.(chunk.number);
   ctx.phasePauses.landed(chunk, finalOutcome);
   return { kind: "advance", chunksCommitted: handled.chunksCommitted };

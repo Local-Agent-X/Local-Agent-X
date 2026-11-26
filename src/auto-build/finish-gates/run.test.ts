@@ -11,7 +11,7 @@ import { runFinishGates, type SuiteJudging } from "./run.js";
 import type { BreakerResult } from "./breakers.js";
 import type { LoopOptions, LoopResult } from "../loop/types.js";
 import type { ParsedChunk } from "../plan-parser.js";
-import { recordSetAside } from "../failure-recovery.js";
+import { recordLanded, recordOwed, recordSetAside } from "../failure-recovery.js";
 import type { FinishProgress } from "./fix-chunk.js";
 
 const chunk = (n: number): ParsedChunk => ({ number: n, title: `c${n}`, phase: "Phase A", klass: "leaf", slice: "s", dependsOn: [], scenarios: "—", doneWhen: "d", rawSection: "" });
@@ -140,11 +140,18 @@ describe("runFinishGates", () => {
     expect(out.openItems?.[0]).toBe("finish fix round 1 did not fully land: chunk 1011 set aside");
   });
 
-  it("lists every chunk that landed with a check that never ran on it", async () => {
+  // Read from the build's ledger, not the run's outcomes: a chunk an earlier
+  // run landed unverified is listed too, and so is a check of the whole build.
+  it("lists every check that never ran on what landed, from this run or an earlier one", async () => {
+    const project = mkdtempSync(join(tmpdir(), "lax-finish-owed-"));
+    recordLanded(project, 2, [{ check: "build and tests", why: "`npm run build` could not run (cage pending), so the chunk's code was not built or tested" }]);
+    recordOwed(project, { check: "phase A gate", why: "phase A's scenarios could not be judged: the judge could not start the app" });
     const h = harness([{ suite: { failed: [], unjudged: [] }, found: [] }]);
-    const outcome = { action: "proceed", reasoning: "", findings: [], report: {} as never, unverified: "`npm run build` could not run (cage pending), so the chunk's code was not built or tested" };
-    const out = await run(h, opts(), done({ outcomes: [{ chunkNumber: 2, outcome: outcome as never, action: "proceed" }] }));
-    expect(out.openItems?.[0]).toBe("chunk 2 landed unverified: `npm run build` could not run (cage pending), so the chunk's code was not built or tested");
+    const out = await run(h, opts({ projectDir: project }));
+    expect(out.openItems?.slice(0, 2)).toEqual([
+      "chunk 2 landed unverified: `npm run build` could not run (cage pending), so the chunk's code was not built or tested",
+      "not checked by the build: phase A's scenarios could not be judged: the judge could not start the app",
+    ]);
   });
 
   it("a phone app is also owed a run on a device", async () => {

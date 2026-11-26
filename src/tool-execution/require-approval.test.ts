@@ -5,6 +5,8 @@ import { setSessionProfile, clearSessionProfile, inheritSessionProfile } from ".
 import { getApprovalManager } from "../approval-manager.js";
 import { classifyToolRisk } from "../autonomy/risk.js";
 import type { ServerEvent } from "../types.js";
+import { writeOp } from "../ops/op-store.js";
+import type { Op } from "../ops/types.js";
 
 // Guard: these tests assume a stable risk mapping. If the classifier changes,
 // the asserted profile tiers below must be revisited.
@@ -173,6 +175,37 @@ describe("requireApprovalPhase — unattended runs", () => {
 
     expect(outcome.kind).toBe("continue");
     expect(ctx.result).toBeUndefined();
+  });
+
+  // The owner's ruling, 2026-11-26: a build's chunk worker holds every tool
+  // its lead could. What must not come with them is the lead's autonomy to
+  // act as the owner toward the outside.
+  it("a build worker's send waits for the owner even when it inherited an Autonomous profile; its other calls do not", async () => {
+    const parent = pinned("Autonomous");
+    const child = `agent-builder-${++_sid}`;
+    sessions.push(child);
+    inheritSessionProfile(parent, child);
+    const opId = `op_build_worker_${_sid}`;
+    writeOp({
+      id: opId, type: "freeform", task: "t", lane: "agent", retryPolicy: { maxRecoveryAttempts: 0, backoffMs: [] },
+      ownerId: "local-user", visibility: "private", status: "running", createdAt: new Date().toISOString(), attemptCount: 0,
+      contextPack: {
+        task: { description: "t", successCriteria: [], constraints: [], notWhatToRedo: [] },
+        context: { recentTurns: [], referencedFiles: [], memoryHits: [], agentsRules: "" },
+        capabilities: {}, budget: { maxIterations: 1, maxTokens: 0, maxWallTimeMs: 1, maxSelfEditCalls: 0 },
+        routing: { lane: "agent", workRoot: "/work/root", buildWorker: true }, secrets: { allowed: [] },
+      },
+    } as unknown as Op);
+
+    const send = Object.assign(makeCtx({ name: "email_send", sessionId: child, callContext: "delegated", args: { to: "someone@example.com", subject: "s", body: "b" } }), { operationId: opId });
+    const outcome = await requireApprovalPhase(send);
+    expect(outcome.kind).not.toBe("continue");
+    expect(send.allowed).toBe(false);
+    expect(String(send.result?.content)).toContain("a build worker's send or publish waits for the owner");
+
+    // The same worker reading a file is not asked about.
+    const read = Object.assign(makeCtx({ name: "read", sessionId: child, callContext: "delegated", args: { path: "a.txt" } }), { operationId: opId });
+    expect((await requireApprovalPhase(read)).kind).toBe("continue");
   });
 
   it("honors a per-job Autonomous profile so ask-tier tools run unattended", async () => {

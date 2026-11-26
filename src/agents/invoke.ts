@@ -149,6 +149,7 @@ export function invokeDefinition(
       workDir: opts.workDir,
       touches: opts.touches,
       harnessAuthoredTask: opts.harnessAuthoredTask,
+      buildWorker: opts.buildWorker,
       delegation: opts.delegation,
       priorMessages: opts.priorMessages,
       keepTranscript: opts.keepTranscript,

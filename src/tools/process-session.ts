@@ -32,6 +32,8 @@ export interface ProcessSession {
   /** cwd/env the session was started with, so process_restart can reuse them. */
   cwdHint?: string;
   envHint?: Record<string, string>;
+  /** The chat or agent run whose call started it (killSessionsStartedBy). */
+  startedBy?: string;
   /** The secret_env it was started with: names only, never values — those
    *  live in the child's environment and are re-read from the vault on restart. */
   secretEnv?: SecretEnv;
@@ -202,6 +204,7 @@ export function startSession(
     command,
     cwdHint: effectiveCwd,
     envHint: env,
+    ...(callSessionId ? { startedBy: callSessionId } : {}),
     secretEnv: secrets?.names,
     pid: child.pid ?? null,
     child,
@@ -311,6 +314,22 @@ export function adoptSession(
     markExited();
   });
   return session;
+}
+
+/**
+ * End every background program a run started and left running, and say how
+ * many. A build worker's dev server or emulator is its own: left running after
+ * the worker, it sat in the worker's folder for days and Windows would not
+ * delete the folder (2026-11-26).
+ */
+export function killSessionsStartedBy(startedBy: string): number {
+  let ended = 0;
+  for (const s of SESSIONS.values()) {
+    if (s.startedBy !== startedBy || s.exitedAt !== null) continue;
+    killSession(s);
+    ended++;
+  }
+  return ended;
 }
 
 /**

@@ -61,6 +61,8 @@ export interface AgentRunDriverRequest {
   /** Mirrors InvokeOpts.harnessAuthoredTask — the driver forwards it so the
    *  op records taskProvenance="harness" and skips constraint extraction. */
   harnessAuthoredTask?: boolean;
+  /** Mirrors InvokeOpts.buildWorker. */
+  buildWorker?: boolean;
   /** Mirrors InvokeOpts.delegation — forwarded so the op is stamped
    *  agent-authored with the delegating op's bans. */
   delegation?: TaskDelegation;

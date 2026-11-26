@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2198 non-test source files · 59 oversized · 276 nearing the size cap.
+**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2198 non-test source files · 59 oversized · 277 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -365,6 +365,7 @@ job. Comments are free: never cut them to fit.
 - `src/protocols/skills-install.ts` — 290+ code lines (cap 350)
 - `src/telegram-bridge/bridge.ts` — 290+ code lines (cap 350)
 - `src/tool-execution/sensitive-read-taint.ts` — 290+ code lines (cap 350)
+- `src/tools/process-session.ts` — 290+ code lines (cap 350)
 - `src/browser/runtime.ts` — 280+ code lines (cap 350)
 - `src/canonical-loop/scheduler.ts` — 280+ code lines (cap 350)
 - `src/context/system-prompt-builder.ts` — 280+ code lines (cap 350)
@@ -519,6 +520,7 @@ job. Comments are free: never cut them to fit.
 - `src/tools/edit-tools.ts#bulkReplaceTool.execute` — 70+ own code lines (cap 100)
 - `src/tools/image-tools/generate-image.ts#generateImageTool.execute` — 70+ own code lines (cap 100)
 - `src/tools/issue-tools/agent-whoami.ts#agentWhoAmITool.execute` — 70+ own code lines (cap 100)
+- `src/tools/process-session.ts#startSession` — 70+ own code lines (cap 100)
 - `src/tools/read-imports.ts#buildImportAppendix` — 70+ own code lines (cap 100)
 - `src/voice/tts-model-fetch.ts#doDownload` — 70+ own code lines (cap 100)
 - `src/agency/worktree-lifecycle.ts#mergeWorktree` — 60+ own code lines (cap 100)
@@ -582,7 +584,6 @@ job. Comments are free: never cut them to fit.
 - `src/tools/grep-context.ts#fallbackSearch` — 60+ own code lines (cap 100)
 - `src/tools/http-request.ts#createHttpRequestTool` — 60+ own code lines (cap 100)
 - `src/tools/image-tools/edit-image.ts#editImageTool.execute` — 60+ own code lines (cap 100)
-- `src/tools/process-session.ts#startSession` — 60+ own code lines (cap 100)
 - `src/tools/process-tools-defs.ts#processRestartTool.execute` — 60+ own code lines (cap 100)
 - `src/tools/project-tools.ts#createProjectTools` — 60+ own code lines (cap 100)
 - `src/tools/telegram-tools.ts#telegramSend.execute` — 60+ own code lines (cap 100)

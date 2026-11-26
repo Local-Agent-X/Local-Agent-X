@@ -25,6 +25,7 @@
  * stdout is now the agent's final result message.
  */
 
+import { killSessionsStartedBy } from "../../tools/process-session.js";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
 import { invokeDefinition, takeRunTranscript } from "../../agents/invoke.js";
 import type { AgentDefinition } from "../../agents/types.js";
@@ -136,6 +137,10 @@ const DISCIPLINE_BLOCK =
   `- **Run the tests.** If done-when names tests, those tests must pass before you report done. ` +
   `Don't mark a check you could not make as done: list it in your report's launch_readiness with how ` +
   `to make it.\n` +
+  `- **More tools are one search away.** You start with files, the shell and the web. \`tool_search\` loads the rest ` +
+  `when the work needs it: the phone or emulator (\`android\`), a browser, an API (\`http_request\`), office files, and ` +
+  `\`process_start\` for a dev server or anything else that must keep running. Use \`process_start\`, never \`&\` in the ` +
+  `shell: what it starts is stopped for you when you finish. A send or a publish waits for the owner.\n` +
   `- **Missing third-party credentials are never blockers.** If a service key/URL isn't configured ` +
   `(Supabase, Stripe, etc.): put clearly-fake placeholder values in the framework's local env file ` +
   `(e.g. .env.local), make client construction tolerate them — build and dev boot must succeed ` +
@@ -231,17 +236,21 @@ interface RoleSpec {
   icon: string;
 }
 
+/** What a builder starts with: the kit, its report, and tool_search, which
+ *  reaches everything else a build worker may hold (buildWorker, below). */
+const BUILDER_TOOLS: string[] = [...BUILDER_KIT, "tool_search", "chunk_report"];
+
 const ROLE_SPECS: Record<ChunkAgentRole, RoleSpec> = {
   "chunk-runner-trunk": {
-    skill: "senior-engineer", discipline: DISCIPLINE_BLOCK, agentRole: "implementer", tools: [...BUILDER_KIT, "chunk_report"], report: "chunk",
+    skill: "senior-engineer", discipline: DISCIPLINE_BLOCK, agentRole: "implementer", tools: BUILDER_TOOLS, report: "chunk",
     name: "Chunk runner (trunk/mixed)", description: "Implements a trunk or mixed chunk from a build plan.", icon: "🏗️",
   },
   "chunk-runner-leaf": {
-    skill: "vibe-code", discipline: DISCIPLINE_BLOCK, agentRole: "implementer", tools: [...BUILDER_KIT, "chunk_report"], report: "chunk",
+    skill: "vibe-code", discipline: DISCIPLINE_BLOCK, agentRole: "implementer", tools: BUILDER_TOOLS, report: "chunk",
     name: "Chunk runner (leaf)", description: "Implements a leaf chunk (UI, isolated features) from a build plan.", icon: "🎨",
   },
   "scenario-fix": {
-    skill: "senior-engineer", discipline: SCENARIO_FIX_DISCIPLINE_BLOCK, agentRole: "implementer", tools: [...BUILDER_KIT, "chunk_report"], report: "chunk",
+    skill: "senior-engineer", discipline: SCENARIO_FIX_DISCIPLINE_BLOCK, agentRole: "implementer", tools: BUILDER_TOOLS, report: "chunk",
     name: "Scenario fix worker", description: "Fixes phase-gate scenario failures without violating spec/constitution.", icon: "🔧",
   },
   "chunk-skeptic": {
@@ -357,6 +366,8 @@ export async function runChunkAgent(opts: ChunkAgentInvocation): Promise<ChunkAg
     // user workspace-write ban and every worker write is hard-denied (live
     // failure 2026-07-22: Merchhelm preflight halt).
     harnessAuthoredTask: true,
+    // A builder reaches what its build's lead could; a reviewer keeps its kit.
+    ...(probesOnly(opts.role) ? {} : { buildWorker: true }),
     ...(opts.priorMessages ? { priorMessages: opts.priorMessages } : {}),
     ...(opts.keepTranscript ? { keepTranscript: true } : {}),
     ...(opts.touches?.length ? { touches: opts.touches } : {}),
@@ -387,6 +398,8 @@ export async function runChunkAgent(opts: ChunkAgentInvocation): Promise<ChunkAg
       clearTimeout(deadline);
       opts.signal?.removeEventListener("abort", abortListener);
       if (cancelRun) Handler.getInstance().cancelAgent(agentId);
+      // What the worker started in the background ends with it.
+      killSessionsStartedBy(reportSession);
       resolve({ ...result, ...deliveredReport(reportSession, reportsAs) });
     };
 

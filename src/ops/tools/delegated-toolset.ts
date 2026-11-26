@@ -35,7 +35,27 @@ export type DelegatedOpLane = Exclude<OpLane, "agent">;
 export interface DelegatedBelt {
   lane: DelegatedOpLane;
   workRoot?: string;
+  /** An auto-build chunk worker that builds (ops/types.ts routing.buildWorker). */
+  buildWorker?: boolean;
 }
+
+/**
+ * What a build's own chunk worker may never hold, on top of the list every
+ * delegated worker is refused: the build's controls and its sealed scenario
+ * suite. A worker that could start, steer or judge the build it is part of,
+ * or write the scenarios it is judged by, would undo the seal. `device_check`
+ * carries these tags too and stays reachable through BUILD_REACH_TOOLS.
+ */
+const BUILD_OWN_CONTROLS: readonly string[] = toolsTagged("app-build", "app-build-spec");
+
+/**
+ * Background programs a chunk worker may start and stop (process_start and
+ * its family). Refused, a worker that needed a dev server launched it loose
+ * from the shell with `&`, and it outlived the worker in the worktree folder,
+ * which Windows then would not delete (2026-11-26). Tracked, it is ended when
+ * the worker's run ends (auto-build/agents/chunk-runner.ts).
+ */
+const BUILD_WORKER_PROCESS_TOOLS: readonly string[] = toolsTagged("process");
 
 /** The mutation belt a build worker gets on top of the read/search base
  *  (decision D5): the write family and bash. Every member is in
@@ -95,6 +115,10 @@ export function delegatedWorkerMayMutate(belt: DelegatedBelt): boolean {
  */
 export function isDeniedForDelegatedWorker(name: string, belt?: DelegatedBelt): boolean {
   if (belt && delegatedWorkerMayMutate(belt) && (BUILD_MUTATION_TOOLS.includes(name) || BUILD_REACH_TOOLS.includes(name))) return false;
+  if (belt?.buildWorker && delegatedWorkerMayMutate(belt)) {
+    if (BUILD_OWN_CONTROLS.includes(name)) return true;
+    if (BUILD_WORKER_PROCESS_TOOLS.includes(name)) return false;
+  }
   return DENIED_TOOL_NAMES.has(name);
 }
 

@@ -157,6 +157,11 @@ export interface InvokeOpts {
    *  constraint extraction — harness directives like "Never touch paths
    *  outside it" must never be read as a user workspace-write ban. */
   harnessAuthoredTask?: boolean;
+  /** A build's chunk worker that builds (not a reviewer): it may load any
+   *  tool its build's lead chat could, less what a delegated worker never
+   *  holds (ops/tools/delegated-toolset.ts). Every other spawned agent's
+   *  tool list is its whole surface. */
+  buildWorker?: boolean;
   /** Set when another AGENT wrote `task` (the agent_spawn tool): the
    *  delegating op and the user's bans recorded on it. The op is stamped
    *  taskProvenance="agent" and inherits those bans instead of having the

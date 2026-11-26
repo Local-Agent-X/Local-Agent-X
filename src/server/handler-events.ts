@@ -263,7 +263,7 @@ export function registerHandlerEvents(deps: {
         wallClockMs: 0, workRoot: worktreeInfo?.path ?? workspace.workRoot ?? undefined,
         opType: OP_TYPE.agentSpawn,
         lane: "agent",
-        runId: agentId, harnessAuthoredTask: req.harnessAuthoredTask, delegation: req.delegation,
+        runId: agentId, harnessAuthoredTask: req.harnessAuthoredTask, buildWorker: req.buildWorker, delegation: req.delegation,
         signal,
         onEvent: (event) => {
           if (event.type === "stream" && "delta" in event && event.delta) {

@@ -85,6 +85,13 @@ export function declaredDestinations(toolName: string, args: Record<string, unkn
   return (specs as readonly ArgsNamedSpec[]).flatMap((s) => resolveSpec(s, args));
 }
 
+/** Whether this call delivers to anyone but the user: its row declares a
+ *  destination, and it is not one known to reach only them. */
+export function sendsOutward(toolName: string, args: Record<string, unknown>): boolean {
+  if (!destinationSpecsOf(toolName, args)?.length) return false;
+  return declaredDestinations(toolName, args)?.length !== 0;
+}
+
 export function describeDestination(d: Destination): string {
   switch (d.kind) {
     case "email": return d.address;

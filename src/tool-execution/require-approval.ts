@@ -36,7 +36,9 @@ import { classifyShellTier, isShellTierTool } from "./shell-approval-tier.js";
 import { getSandboxStatus } from "../sandbox/index.js";
 import { takeUnnamedDeleteDecision, UNNAMED_DELETE_DECLINED_TEXT, UNNAMED_DELETE_USE_TRASH_TEXT } from "./unnamed-delete-gate.js";
 import { secretEnvGate } from "./secret-env-approval.js";
-import { attendedRun, nobodyWatching, parkOrRefuse, takeUserGrant } from "./deferred-call.js";
+import { attendedRun, isBuildWorkerCall, nobodyWatching, parkOrRefuse, takeUserGrant } from "./deferred-call.js";
+import { addApprovalReason } from "./approval-card-text.js";
+import { sendsOutward } from "./send-destinations.js";
 import { publishOperations } from "../publish-operation.js";
 import { chatTurnOf } from "./chat-consent.js";
 import { shellTreeDeleteScope } from "./tree-delete-scope.js";
@@ -83,6 +85,13 @@ export const requireApprovalPhase: Phase = async (ctx) => {
   // both, and the stricter row wins. One lex of the command for shell calls,
   // one Set lookup for everything else.
   const publishOps = publishOperations(ctx.tc.name, ctx.args);
+  // A build's chunk worker holds every tool its lead could, so the one thing
+  // its lead's autonomy must not carry over is acting as the owner toward the
+  // outside: a send or a publish from it asks a person under every profile,
+  // which for a run nobody watches means it waits in the inbox.
+  if (isBuildWorkerCall(ctx) && (publishOps.length > 0 || sendsOutward(ctx.tc.name, ctx.args))) {
+    addApprovalReason(ctx, "a build worker's send or publish waits for the owner, whatever the chat's autonomy");
+  }
   if (publishOps.length > 0) {
     const publishDecision = getRiskDecision("publish", ctx.sessionId);
     decision = destructive ? stricterDecision(decision, publishDecision) : publishDecision;

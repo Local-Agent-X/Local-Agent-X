@@ -72,6 +72,10 @@ export interface ContextPack {
      *  and shell are confined to (ops/tools/work-root.ts). Absent on the
      *  read-only lanes. */
     workRoot?: string;
+    /** An auto-build chunk worker that builds: it widens its tools like a
+     *  build-lane worker, though it runs on the agent lane
+     *  (canonical-loop/tool-augmentation.ts reachOf). */
+    buildWorker?: boolean;
   };
   /** Content-free prompt sizing captured before dispatch and persisted with the op. */
   promptTelemetry?: PromptTelemetry;

@@ -76,7 +76,7 @@ afterEach(() => {
 
 /** A persisted delegated op record: the belt (lane + work root) augmentation
  *  reads is the op's own, durable on disk. */
-function persistOp(opId: string, lane: Op["lane"], workRoot?: string): void {
+function persistOp(opId: string, lane: Op["lane"], workRoot?: string, buildWorker = false): void {
   writeOp({
     id: opId,
     type: "freeform",
@@ -93,7 +93,7 @@ function persistOp(opId: string, lane: Op["lane"], workRoot?: string): void {
       context: { recentTurns: [], referencedFiles: [], memoryHits: [], agentsRules: "" },
       capabilities: {},
       budget: { maxIterations: 1, maxTokens: 0, maxWallTimeMs: 1, maxSelfEditCalls: 0 },
-      routing: { lane, ...(workRoot ? { workRoot } : {}) },
+      routing: { lane, ...(workRoot ? { workRoot } : {}), ...(buildWorker ? { buildWorker: true } : {}) },
       secrets: { allowed: [] },
     },
   });
@@ -190,6 +190,34 @@ describe("augmentFromToolSearch delegated denylist", () => {
     augmentFromToolSearch(toolSearchResult(["write", "bash", ALLOWED]), opId, toolMap, undefined, "delegated");
 
     expect([...toolMap.keys()]).toEqual([ALLOWED]);
+  });
+
+  // The owner's ruling, 2026-11-26: a build's chunk worker holds what its
+  // lead's chat could, except what its role rules out. Bounded to its kit, a
+  // worker told to test on the phone was refused the phone tool and drove adb
+  // through the shell, and one that needed a dev server left it running.
+  it("a build's chunk worker loads what its lead could, and is refused only what its role rules out", () => {
+    const MAY = [ALLOWED, "android", "http_request", "process_start", "process_kill", "device_check", "browser"];
+    const MAY_NOT = ["agent_spawn", "op_submit_async", "holdout_write", "holdout_judge", "build_decide", "run_build_plan", "build_plan_resume"];
+    registerAll([...MAY, ...MAY_NOT].filter((n) => !unifiedRegistry.get(n)));
+    const opId = "op_agent_builder_0001";
+    ops.push(opId);
+    persistOp(opId, "agent", "/work/root", true);
+    const toolMap = new Map<string, ToolDefinition>();
+
+    for (const name of MAY) expect(canCallByName(name, opId, toolMap, "delegated"), name).toBe(true);
+    for (const name of MAY_NOT) expect(canCallByName(name, opId, toolMap, "delegated"), name).toBe(false);
+    augmentFromToolSearch(toolSearchResult(["android", "holdout_write", "agent_spawn"]), opId, toolMap, undefined, "delegated");
+    expect([...toolMap.keys()]).toEqual(["android"]);
+  });
+
+  it("a reviewer, and any other spawned agent in a work root, stays bounded to what it was given", () => {
+    registerAll(["android"].filter((n) => !unifiedRegistry.get(n)));
+    const opId = "op_agent_reviewer_0001";
+    ops.push(opId);
+    persistOp(opId, "agent", "/work/root");
+    expect(canCallByName("android", opId, new Map(), "delegated")).toBe(false);
+    expect(canCallByName(ALLOWED, opId, new Map(), "delegated")).toBe(false);
   });
 
   // A spawned agent's allow-list is its whole surface, resolved in full when

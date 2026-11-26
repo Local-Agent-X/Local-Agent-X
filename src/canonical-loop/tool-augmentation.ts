@@ -58,8 +58,16 @@ type CallerReach =
 function reachOf(opId: string, callContext: CallContext | undefined): CallerReach {
   const op = readOp(opId);
   if (callContext !== "delegated") return { bounded: false, belt: undefined, sessionId: op?.sessionId };
-  if (op?.lane === "agent") return { bounded: true };
-  return { bounded: false, belt: op ? { lane: op.lane, workRoot: op.contextPack?.routing?.workRoot } : undefined, sessionId: op?.sessionId };
+  const routing = op?.contextPack?.routing;
+  if (op?.lane === "agent") {
+    // A build's chunk worker is the one agent-lane run that widens: it holds
+    // what a build-lane worker with its work root may, by the same denylist.
+    // Bounded to its small kit, a worker told to test on the phone was refused
+    // the phone tool and drove adb through the shell (2026-11-26).
+    if (routing?.buildWorker && routing.workRoot) return { bounded: false, belt: { lane: "build", workRoot: routing.workRoot, buildWorker: true }, sessionId: op.sessionId };
+    return { bounded: true };
+  }
+  return { bounded: false, belt: op ? { lane: op.lane, workRoot: routing?.workRoot } : undefined, sessionId: op?.sessionId };
 }
 
 /** A registered tool this caller may not load: outside a bounded run's

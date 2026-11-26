@@ -86,6 +86,11 @@ export interface CanonicalAgentOptions extends AgentOptions {
    *  chunk workers). Stamped as op.taskProvenance="harness" so the
    *  instruction-ledger middleware never extracts constraints from it. */
   harnessAuthoredTask?: boolean;
+  /** A build's chunk worker that builds (not a reviewer): it may load any
+   *  tool its build's lead chat could, less what a delegated worker never
+   *  holds (ops/tools/delegated-toolset.ts). Every other spawned agent's
+   *  tool list is its whole surface. */
+  buildWorker?: boolean;
   /** Set when another agent wrote the userMessage (agent_spawn). Stamped as
    *  op.taskProvenance="agent" with the delegating op's bans inherited. */
   delegation?: TaskDelegation;

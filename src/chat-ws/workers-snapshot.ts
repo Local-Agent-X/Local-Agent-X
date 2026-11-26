@@ -32,7 +32,7 @@ export interface WorkersSnapshotSources {
    *  without them ended every running build's card: label-check's orchestrator
    *  read "Completed" three minutes into its run (2026-11-23). Absent in a test
    *  that lists none. */
-  orchestrators?: () => { opId: string; projectDir: string; sessionId: string; startedAt: number }[];
+  orchestrators?: () => { opId: string; projectDir: string; sessionId: string; startedAt: number; paused?: boolean }[];
   /** What each agent is changing and who else is in the same files
    *  (routes/agents/work-claims.ts); absent in a test that lists none. */
   claims?: () => { sessionId: string; opId: string | null; areas: string[]; clashesWith: string[] }[];
@@ -73,7 +73,7 @@ export function buildWorkersSnapshot(sources: WorkersSnapshotSources): WorkersSn
     if (listed.has(orch.opId)) continue;
     // The task the orchestrator card was started with (manager.ts bg_op_started).
     workers.push({
-      opId: orch.opId, sessionId: orch.sessionId, task: `Build ${basename(orch.projectDir)}`, status: "running",
+      opId: orch.opId, sessionId: orch.sessionId, task: `Build ${basename(orch.projectDir)}`, status: orch.paused ? "paused" : "running",
       opType: OP_TYPE.orchestrator, startedAt: new Date(orch.startedAt).toISOString(),
     });
   }
@@ -81,17 +81,19 @@ export function buildWorkersSnapshot(sources: WorkersSnapshotSources): WorkersSn
 }
 
 async function defaultSources(): Promise<WorkersSnapshotSources> {
-  const [{ listLiveWorkers }, { listActiveAutopilotOps }, { Handler }, { workClaimRows }, { listActive: listActiveOrchestrations }] = await Promise.all([
+  const [{ listLiveWorkers }, { listActiveAutopilotOps }, { Handler }, { workClaimRows }, { listActive: listActiveOrchestrations }, { listPausedBuilds }] = await Promise.all([
     import("../canonical-loop/index.js"),
     import("../autopilot/loop.js"),
     import("../agency/handler.js"),
     import("../routes/agents/work-claims.js"),
     import("../auto-build/orchestrator/manager.js"),
+    import("../auto-build/orchestrator/run-control.js"),
   ]);
   return {
     claims: workClaimRows,
     canonical: listLiveWorkers,
-    orchestrators: listActiveOrchestrations,
+    // A paused build is on disk, not running: its card stays, reading paused, with Resume.
+    orchestrators: () => [...listActiveOrchestrations(), ...listPausedBuilds().map((b) => ({ ...b, paused: true }))],
     autopilot: () => listActiveAutopilotOps().map((op) => ({ id: op.id, topic: op.autopilot?.topic })),
     agents: () => (Handler.getInstance().getAgentStatus() as FieldAgentStatus[])
       .filter((a) => a.status !== "succeeded" && a.status !== "failed")

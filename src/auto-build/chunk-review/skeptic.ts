@@ -44,6 +44,8 @@ export interface SkepticVerdict {
   /** What it found beyond the chunk's contract: for the ledger, never a
    *  reason to send the chunk back. Absent when it listed none. */
   followUps?: string[];
+  /** BROKEN: the ground it named, as written. */
+  ground?: string;
 }
 
 export interface SkepticInput {
@@ -134,7 +136,7 @@ export function parseSkepticVerdict(raw: string): SkepticVerdict {
   const after = body.filter((_, i) => i !== groundAt).join("\n");
   const said = (after.match(/^\s*\**FINDING\**\s*:\s*([\s\S]*)$/im)?.[1] ?? after).trim() || "(no finding given)";
   const finding = verdict === "broken" && ground ? `Breaks: ${ground}\n${said}` : said;
-  return { status: verdict, finding, ...(followUps.length ? { followUps } : {}) };
+  return { status: verdict, finding, ...(followUps.length ? { followUps } : {}), ...(verdict === "broken" && ground ? { ground } : {}) };
 }
 
 /** Times the skeptic is asked when it does not answer. */

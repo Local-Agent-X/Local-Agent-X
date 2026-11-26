@@ -75,6 +75,20 @@ describe("workers contract with the phone", () => {
     });
   });
 
+  // A paused build is on disk, not running: its card stays, with Resume, on
+  // the desktop and the phone, after a reload or a restart (run-control.ts).
+  it("lists a paused build as paused", () => {
+    const frame = buildWorkersSnapshot({
+      canonical: () => [],
+      autopilot: () => [],
+      agents: () => [],
+      orchestrators: () => [{ opId: "op_orch_2", projectDir: "C:/apps/label-check-sol", sessionId: "s1", startedAt: Date.UTC(2026, 10, 25), paused: true }],
+    });
+    expect(parseWorkersSnapshot(JSON.parse(JSON.stringify(frame)))?.workers).toEqual([
+      expect.objectContaining({ opId: "op_orch_2", task: "Build label-check-sol", status: "paused" }),
+    ]);
+  });
+
   // After a page load the panel is drawn from this list alone: a chunk worker
   // without its orchestrator as parent was its own card, and the orchestrator
   // read STALLED while the worker ran (label-check, 2026-11-23).

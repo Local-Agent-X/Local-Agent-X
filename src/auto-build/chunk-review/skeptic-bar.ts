@@ -58,9 +58,23 @@ export const FINISH_FIX_BAR_BLOCK =
   `The break-it agents attacked the finished app and this chunk fixes what they found. Check the fix, not the ` +
   `whole app: the break-it agents attack the whole app again in the next finish round. The change is BROKEN ` +
   `only when you show one of:\n` +
-  FINISH_FIX_BREAK_GROUNDS.map((ground) => `- ${ground};\n`).join("") +
+  FINISH_FIX_BREAK_GROUNDS.map((ground, i) => `${i + 1}. ${ground};\n`).join("") +
   `\nEverything else is a FOLLOW-UP, including a problem that was already in the app before this chunk (it ` +
-  `reproduces at the starting commit) and is none of the above.\n\n`;
+  `reproduces at the starting commit) and is none of the above. On BROKEN, start the GROUND line with the ` +
+  `number of the ground you showed (\`GROUND: 3 — ...\`).\n\n`;
+
+/**
+ * Whether a BROKEN finish fix leaves the app no worse than before it: the
+ * skeptic's ground is 1 or 2 (a finding not fully fixed, a test that cannot
+ * fail), not 3 or 4 (the fix broke something, or a crash, lost data or a
+ * security hole). A fix out of rounds on such a ground lands what it fixed
+ * (loop/handle-push-back.ts); 1012's real fixes sat on a branch instead
+ * (label-check-sol, 2026-11-25).
+ */
+export function finishFixLeavesAppNoWorse(ground: string | undefined): boolean {
+  const n = ground?.match(/^\W*(\d)\b/)?.[1];
+  return n === "1" || n === "2";
+}
 
 /** The section of the skeptic's instructions that states the bar. */
 export const SKEPTIC_BAR_BLOCK =

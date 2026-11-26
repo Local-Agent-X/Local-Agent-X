@@ -22,6 +22,8 @@ export interface CarryOver {
   branch?: string;
   /** What earlier reviews found, oldest first. */
   findings: string[];
+  /** Paused mid-build: the fix round it was on (failure-recovery.ts). */
+  round?: number;
 }
 
 /** What an earlier run left for `chunk`, or null when it was never set aside. */
@@ -29,7 +31,7 @@ export function carryOverFor(projectDir: string, chunk: number): CarryOver | nul
   const record = setAsideRecordFor(projectDir, chunk);
   if (!record || (!record.branch && record.findings.length === 0)) return null;
   const branch = record.branch && branchExists(record.branch, projectDir) ? record.branch : undefined;
-  return { ...(branch ? { branch } : {}), findings: record.findings };
+  return { ...(branch ? { branch } : {}), findings: record.findings, ...(record.round != null ? { round: record.round } : {}) };
 }
 
 function branchExists(branch: string, cwd: string): boolean {
@@ -58,11 +60,14 @@ export function mergeCarriedWork(worktreePath: string, branch: string): { merged
 
 /** The opening of the worker's brief for a chunk an earlier run set aside. */
 export function carryOverBrief(carry: CarryOver, merged: boolean): string {
+  const before = carry.round != null
+    ? `The build was paused while this chunk was building (fix round ${carry.round}), and now goes on.`
+    : `An earlier run built this chunk and it was set aside.`;
   const work = carry.branch
     ? merged
-      ? `An earlier run built this chunk and it was set aside. Its work (branch '${carry.branch}') is already merged into your tree: keep what holds and fix what was found, do not start over.`
-      : `An earlier run built this chunk and it was set aside. Its work on branch '${carry.branch}' no longer merges with the current base, so you start fresh: read it (git show ${carry.branch}) and reuse what still applies.`
-    : `An earlier run built this chunk and it was set aside.`;
+      ? `${before} Its work (branch '${carry.branch}') is already merged into your tree: keep what holds and fix what was found, do not start over.`
+      : `${before} Its work on branch '${carry.branch}' no longer merges with the current base, so you start fresh: read it (git show ${carry.branch}) and reuse what still applies.`
+    : before;
   const found = carry.findings.length
     ? `\n\nWhat the reviews found in earlier runs. Fix each, and fix the class of input each one belongs to, not only the example given: the reviewer will try its siblings. Keep every one of them fixed:\n` +
       carry.findings.map((f) => `- ${f.replace(/\s+/g, " ").trim()}`).join("\n")
@@ -102,7 +107,7 @@ export function withInterruptedWork(
  * worker's brief and the findings its fix rounds keep fixed; undefined for a
  * chunk building for the first time.
  */
-export function pickUpSetAsideWork(a: { projectDir: string; tree: string; chunk: ParsedChunk; totalChunks: number; emit: EmitFn }): { brief: string; findings: string[] } | undefined {
+export function pickUpSetAsideWork(a: { projectDir: string; tree: string; chunk: ParsedChunk; totalChunks: number; emit: EmitFn }): { brief: string; findings: string[]; round?: number } | undefined {
   const { chunk } = a;
   const carry = carryOverFor(a.projectDir, chunk.number);
   if (!carry) return undefined;
@@ -115,5 +120,5 @@ export function pickUpSetAsideWork(a: { projectDir: string; tree: string; chunk:
         : `Chunk ${chunk.number}'s last work on '${carry.branch}' no longer merges (${merge.detail}); building fresh with ${carry.findings.length} earlier finding(s).`
       : `Chunk ${chunk.number} builds with ${carry.findings.length} finding(s) from earlier runs.`,
   });
-  return { brief: carryOverBrief(carry, merge?.merged ?? false), findings: carry.findings };
+  return { brief: carryOverBrief(carry, merge?.merged ?? false), findings: carry.findings, ...(carry.round != null ? { round: carry.round } : {}) };
 }

@@ -13,13 +13,13 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2189 non-test source files · 59 oversized · 275 nearing the size cap.
+**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2192 non-test source files · 59 oversized · 273 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
 | Directory | Importers | Files | Size | Oversized |
 |---|--:|--:|:--:|--:|
-| `src/ops/` | 193 | 32 | XL | 1 |
+| `src/ops/` | 194 | 32 | XL | 1 |
 | `src/security/` | 173 | 67 | XL | 2 |
 | `src/tools/` | 149 | 268 | XL | 6 |
 | `src/tool-execution/` | 108 | 92 | XL | 2 |
@@ -68,9 +68,9 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/integrations/` | 12 | 15 | M |  |
 | `src/whatsapp-bridge/` | 11 | 8 | M | 1 |
 | `src/agent-guards/` | 10 | 13 | L |  |
+| `src/auto-build/` | 10 | 84 | XL | 1 |
 | `src/calendar/` | 10 | 10 | M |  |
 | `src/codex-client/` | 10 | 7 | M |  |
-| `src/auto-build/` | 9 | 81 | XL | 1 |
 | `src/plugin-system/` | 9 | 10 | L |  |
 | `src/screen-stream/` | 9 | 12 | L |  |
 | `src/autopilot/` | 8 | 14 | L | 1 |
@@ -319,7 +319,6 @@ job. Comments are free: never cut them to fit.
 - `src/canonical-loop/container-execution-backend.ts` — 340+ code lines (cap 350)
 - `src/canonical-loop/provider-adapter-factory.ts` — 340+ code lines (cap 350)
 - `src/tools/presentation-tools.ts` — 340+ code lines (cap 350)
-- `src/auto-build/orchestrator/manager.ts` — 330+ code lines (cap 350)
 - `src/canonical-loop/checkpoint.ts` — 330+ code lines (cap 350)
 - `src/canonical-loop/container-runtime-projection.ts` — 330+ code lines (cap 350)
 - `src/memory/tools/facts.ts` — 330+ code lines (cap 350)
@@ -343,6 +342,7 @@ job. Comments are free: never cut them to fit.
 - `src/tool-execution/side-effect-journal.ts` — 310+ code lines (cap 350)
 - `src/tools/spreadsheet-tools.ts` — 310+ code lines (cap 350)
 - `src/whatsapp-bridge/index.ts` — 310+ code lines (cap 350)
+- `src/auto-build/orchestrator/manager.ts` — 300+ code lines (cap 350)
 - `src/autopilot/loop.ts` — 300+ code lines (cap 350)
 - `src/canonical-loop/process-execution-backend.ts` — 300+ code lines (cap 350)
 - `src/canonical-loop/process-relay-journal.ts` — 300+ code lines (cap 350)
@@ -529,8 +529,6 @@ job. Comments are free: never cut them to fit.
 - `src/auto-build/loop/parallel-waves.ts#runBatch` — 60+ own code lines (cap 100)
 - `src/auto-build/loop/run.ts#runBuildLoop` — 60+ own code lines (cap 100)
 - `src/auto-build/orchestrator/resume.ts#computeResumeWindow` — 60+ own code lines (cap 100)
-- `src/auto-build/orchestrator/resume.ts#tryResumeOne` — 60+ own code lines (cap 100)
-- `src/auto-build/orchestrator/tools.ts#buildPlanResumeTool.execute` — 60+ own code lines (cap 100)
 - `src/autopilot/round-agent.ts#runAutopilotRound` — 60+ own code lines (cap 100)
 - `src/broker-transport/vendor/voice.ts#parseVoiceEvent` — 60+ own code lines (cap 100)
 - `src/browser/actions.ts#tryResolutionChain` — 60+ own code lines (cap 100)

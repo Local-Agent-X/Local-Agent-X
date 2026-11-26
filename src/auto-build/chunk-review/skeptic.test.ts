@@ -6,7 +6,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { FINISH_FIX_BREAK_GROUNDS, SKEPTIC_BAR_BLOCK, SKEPTIC_BREAK_GROUNDS, SKEPTIC_RULE_REACH } from "./skeptic-bar.js";
+import { FINISH_FIX_BREAK_GROUNDS, SKEPTIC_BAR_BLOCK, SKEPTIC_BREAK_GROUNDS, SKEPTIC_RULE_REACH, finishFixLeavesAppNoWorse } from "./skeptic-bar.js";
 
 const agent = vi.hoisted(() => ({
   result: { stdout: "", exitCode: 0, durationMs: 1 } as { stdout: string; exitCode: number; durationMs: number; error?: string },
@@ -159,6 +159,19 @@ describe("buildSkepticTask for a finish fix", () => {
 
   it("a crash, lost data or a security hole still holds a finish fix back", () => {
     expect(FINISH_FIX_BREAK_GROUNDS).toContain(SKEPTIC_BREAK_GROUNDS[1]);
+  });
+
+  // A fix out of rounds lands what it fixed only when what is left cannot have
+  // made the app worse (loop/handle-push-back.ts); the number says which.
+  it("asks the ground's number, keeps it on the verdict, and reads 1 and 2 as no worse", () => {
+    const task = buildSkepticTask({ chunk: { ...chunk, number: 1012, phase: "Finish" }, rawReport: "STATUS: done", preSha: "abc" });
+    expect(task).toContain(`1. ${FINISH_FIX_BREAK_GROUNDS[0]}`);
+    expect(task).toContain("start the GROUND line with the number");
+    const v = parseSkepticVerdict("VERDICT: BROKEN\nGROUND: 2 — its test passes without the fix\nFINDING: x");
+    expect(v.ground).toBe("2 — its test passes without the fix");
+    expect(finishFixLeavesAppNoWorse(parseSkepticVerdict("VERDICT: BROKEN\nGROUND: **1** — still reproduces").ground)).toBe(true);
+    expect([v.ground, "1 — still reproduces", "3 — broke saving", "4 — loses data", "the fix is incomplete", undefined].map(finishFixLeavesAppNoWorse))
+      .toEqual([true, true, false, false, false, false]);
   });
 });
 

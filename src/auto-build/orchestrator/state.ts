@@ -21,6 +21,8 @@
 
 import { existsSync, readFileSync, writeFileSync, renameSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
+import type { InTreeChunk } from "../loop/types.js";
+import type { FinishProgress } from "../finish-gates/fix-chunk.js";
 
 export const ORCHESTRATOR_STATE_FILENAME = ".lax-build-run.json";
 /** Pre-rename filename — read (and cleared) for runs started before the rename. */
@@ -30,6 +32,7 @@ const STATE_FILE_VERSION = 1;
 export type OrchestratorPhase =
   | "starting"      // orchestrator just registered, no chunk has run yet
   | "running"       // mid-chunk or between chunks
+  | "paused"        // the owner paused it: its work is kept, it goes on when resumed (run-control.ts)
   | "halted"        // halted with a reason (user must intervene)
   | "complete"      // all chunks shipped + final phase gate passed
   | "abandoned";    // server restarted and we couldn't resume cleanly
@@ -75,6 +78,11 @@ export interface OrchestratorState {
    * again. Absent in a state file written before the list existed.
    */
   landedChunks?: number[];
+  /** The chunk part-built in the project tree when the run stopped, until a
+   *  pause or the next start moves its work onto a branch (run-control.ts). */
+  inTreeChunk?: InTreeChunk;
+  /** Where the finish checks have got to, so a resume goes on from there. */
+  finish?: FinishProgress;
 }
 
 export function statePath(projectDir: string): string {
@@ -151,6 +159,8 @@ export function makeInitial(opts: {
   maxChunks?: number;
   /** Chunks in scope an earlier run of this build already landed. */
   landedChunks?: number[];
+  /** The finish checks' place in an earlier run of this build. */
+  finish?: FinishProgress;
 }): OrchestratorState {
   const now = new Date().toISOString();
   return {
@@ -172,6 +182,7 @@ export function makeInitial(opts: {
     startingChunkOverride: opts.startingChunk,
     maxChunks: opts.maxChunks ?? null,
     landedChunks: [...new Set(opts.landedChunks ?? [])].sort((a, b) => a - b),
+    ...(opts.finish ? { finish: opts.finish } : {}),
   };
 }
 
@@ -215,6 +226,11 @@ export function markHalted(state: OrchestratorState, chunkNumber: number, gate: 
     haltReason: reason.length > 4000 ? reason.slice(0, 4000) + " …[truncated]" : reason,
     updatedAt: new Date().toISOString(),
   };
+}
+
+/** Paused by the owner: nothing halted it, and it waits for Resume. */
+export function markPaused(state: OrchestratorState): OrchestratorState {
+  return { ...state, phase: "paused", haltReason: "", haltGate: null, updatedAt: new Date().toISOString() };
 }
 
 export function markComplete(state: OrchestratorState): OrchestratorState {

@@ -30,7 +30,8 @@ import type { ParsedChunk } from "../plan-parser.js";
 import type { EmitFn, LoopOptions, LoopResult } from "../loop/types.js";
 import { runBreakers, type BreakerResult } from "./breakers.js";
 import { askLeadBuildCall } from "../advisor/lead-decisions.js";
-import { FIX_CHUNK_BASE, FIX_CHUNK_PHASE, fixChunkTitle } from "./fix-chunk.js";
+import { FIX_CHUNK_PHASE, fixChunkNumber, fixChunkTitle, nextFinishRunBase, splitFromFix, type FinishProgress } from "./fix-chunk.js";
+import { parsePlanFile } from "../plan-parser.js";
 
 const MAX_FIX_ROUNDS = 2;
 /** The ceiling on fix rounds when the build's lead asks for more. */
@@ -89,11 +90,11 @@ const fixable = (b: BreakerResult) => b.findings.filter((f) => f.severity !== "l
 
 /** Fix chunks for what a round found: one for the failing scenarios, one per
  *  angle with a critical, high or medium finding. */
-export function fixChunksFor(round: number, suite: SuiteJudging, breakers: BreakerResult[]): ParsedChunk[] {
+export function fixChunksFor(round: number, suite: SuiteJudging, breakers: BreakerResult[], runBase = 0): ParsedChunk[] {
   const chunks: ParsedChunk[] = [];
   const next = (title: string, slice: string, scenarios: string, doneWhen: string): void => {
     chunks.push({
-      number: FIX_CHUNK_BASE + round * 10 + chunks.length + 1, title: fixChunkTitle(round, title), phase: FIX_CHUNK_PHASE,
+      number: fixChunkNumber(runBase, round, chunks.length + 1), title: fixChunkTitle(round, title), phase: FIX_CHUNK_PHASE,
       klass: "trunk", slice, dependsOn: [], scenarios, doneWhen, rawSection: "",
     });
   };
@@ -156,45 +157,118 @@ function ownerItems(projectDir: string): string[] {
   ];
 }
 
+/** What one finish round found: its fix chunks, or nothing more to fix. */
+type RoundFinding =
+  | { kind: "stop" }
+  | { kind: "fix"; fixes: ParsedChunk[]; fixRounds: number; seen: { suite: SuiteJudging; breakers: BreakerResult[] } };
+
+function sayer(input: FinishInput): (message: string) => void {
+  const total = input.opts.plan.chunks.length;
+  return (message) => input.emit({ type: "review-result", chunkNumber: input.result.lastChunk, totalChunks: total, message });
+}
+
+/** Judge the suite, send the break-it agents, and say what this round fixes. */
+async function judgeRound(
+  input: FinishInput,
+  r: { round: number; fixRounds: number; runBase: number; prev: RoundFinding | null; open: string[] },
+): Promise<RoundFinding> {
+  const { opts } = input;
+  const say = sayer(input);
+  say(`finish checks, round ${r.round}: judging the whole sealed suite and sending the break-it agents at the finished app`);
+  const suite = await (input.judgeSuite ?? judgeWholeSuite)(opts, say);
+  const found = await (input.breakers ?? runBreakers)({ projectDir: opts.projectDir, signal: opts.signal, parentSessionId: opts.parentSessionId, parentOpId: opts.parentOpId });
+  const fixes = fixChunksFor(r.round, suite, found, r.runBase);
+  say(`finish checks, round ${r.round}: ${suite.failed.length} scenario(s) failing, ${found.reduce((n, b) => n + fixable(b).length, 0)} finding(s) to fix`);
+  const stuck = noProgress(r.prev?.kind === "fix" ? r.prev.seen : null, suite, found);
+  let fixRounds = r.fixRounds;
+  if (fixes.length > 0 && r.round > fixRounds && !stuck && await leadWantsAnotherRound(input, input.result.lastChunk, r.round, openItemsOf(suite, found))) {
+    fixRounds = r.round;
+    say(`finish checks: the build lead asked for fix round ${r.round}`);
+  }
+  if (fixes.length === 0 || r.round > fixRounds || stuck) {
+    r.open.push(...openItemsOf(suite, found));
+    if (fixes.length > 0) say(`finish checks: stopping with open items (${r.round > fixRounds ? "fix rounds used up" : "the last round's fixes did not move them"})`);
+    return { kind: "stop" };
+  }
+  // Low findings are listed, never fixed; the rest go to fix chunks.
+  r.open.push(...openItemsOf({ failed: [], unjudged: [] }, found.map((b) => ({ ...b, findings: b.findings.filter((f) => f.severity === "low") }))));
+  return { kind: "fix", fixes, fixRounds, seen: { suite, breakers: found } };
+}
+
+/** Parts the build lead split off this round's fix chunks that landed: built
+ *  in the same round, since a fix run builds no split-offs of its own. */
+function splitPartsToBuild(planPath: string, progress: FinishProgress, landed: Set<number>): ParsedChunk[] {
+  if (!existsSync(planPath)) return [];
+  const known = new Set(progress.fixes.map((c) => c.number));
+  try {
+    return parsePlanFile(planPath).chunks.filter((c) => {
+      const parent = splitFromFix(c);
+      return parent != null && known.has(parent) && (landed.has(parent) || progress.done.includes(parent)) && !known.has(c.number);
+    });
+  } catch {
+    // A plan that no longer parses grew nothing to build; the round ends on its own fixes.
+    return [];
+  }
+}
+
+/** Build the round's fix chunks not yet done, then any parts split off them. */
+async function buildRound(input: FinishInput, progress: FinishProgress): Promise<{ committed: number; halted: string[] }> {
+  const { opts } = input;
+  let committed = 0;
+  const halted: string[] = [];
+  const landed = new Set<number>();
+  let batch = progress.fixes.filter((c) => !progress.done.includes(c.number));
+  while (batch.length > 0 && !opts.signal?.aborted) {
+    const fixRun = await input.buildFixes({
+      ...opts, plan: { ...opts.plan, chunks: batch, phaseGatesRawSection: "" }, startingChunk: batch[0].number,
+      maxChunks: undefined, landedChunks: [], maxConcurrentChunks: 1, skipWallProbe: true, finishGates: false,
+      onChunkSettled: (n) => {
+        if (!progress.done.includes(n)) progress.done.push(n);
+        opts.onFinishProgress?.({ ...progress, fixes: [...progress.fixes], done: [...progress.done], open: [...progress.open] });
+        opts.onChunkSettled?.(n);
+      },
+    });
+    committed += fixRun.chunksCommitted;
+    for (const o of fixRun.outcomes) if (o.action === "proceed") landed.add(o.chunkNumber);
+    if (fixRun.status === "halted") halted.push(fixRun.haltReason.slice(0, 400));
+    batch = splitPartsToBuild(opts.planPath, progress, landed);
+    if (batch.length > 0) {
+      progress.fixes.push(...batch);
+      opts.onFinishProgress?.({ ...progress, fixes: [...progress.fixes], done: [...progress.done], open: [...progress.open] });
+    }
+  }
+  return { committed, halted };
+}
+
 export async function runFinishGates(input: FinishInput): Promise<LoopResult> {
-  const { opts, result, emit } = input;
+  const { opts, result } = input;
   const plan = opts.plan.chunks;
   if (!opts.finishGates || result.status !== "complete" || result.lastChunk !== plan[plan.length - 1]?.number) return result;
-  const at = result.lastChunk;
-  const say = (message: string) => emit({ type: "review-result", chunkNumber: at, totalChunks: plan.length, message });
-  const breakers = input.breakers ?? runBreakers;
-  const judgeSuite = input.judgeSuite ?? judgeWholeSuite;
-
+  const say = sayer(input);
+  // A pause or a restart in the finish checks goes on from the round it was in.
+  const saved = opts.finishProgress;
+  const runBase = saved?.runBase ?? nextFinishRunBase(opts.projectDir);
   let chunksCommitted = result.chunksCommitted;
-  let prev: { suite: SuiteJudging; breakers: BreakerResult[] } | null = null;
-  const open: string[] = [];
-  let fixRounds = MAX_FIX_ROUNDS;
-  for (let round = 1; round <= fixRounds + 1; round++) {
+  let prev: RoundFinding | null = null;
+  const open: string[] = [...(saved?.open ?? [])];
+  let fixRounds = saved?.fixRounds ?? MAX_FIX_ROUNDS;
+  for (let round = saved?.round ?? 1; round <= fixRounds + 1; round++) {
     if (opts.signal?.aborted) break;
-    say(`finish checks, round ${round}: judging the whole sealed suite and sending the break-it agents at the finished app`);
-    const suite = await judgeSuite(opts, say);
-    const found = await breakers({ projectDir: opts.projectDir, signal: opts.signal, parentSessionId: opts.parentSessionId, parentOpId: opts.parentOpId });
-    const fixes = fixChunksFor(round, suite, found);
-    say(`finish checks, round ${round}: ${suite.failed.length} scenario(s) failing, ${found.reduce((n, b) => n + fixable(b).length, 0)} finding(s) to fix`);
-    const stuck = noProgress(prev, suite, found);
-    if (fixes.length > 0 && round > fixRounds && !stuck && await leadWantsAnotherRound(input, at, round, openItemsOf(suite, found))) {
-      fixRounds = round;
-      say(`finish checks: the build lead asked for fix round ${round}`);
+    let progress: FinishProgress;
+    if (saved && round === saved.round) {
+      progress = { ...saved, fixes: [...saved.fixes], done: [...saved.done], open };
+      say(`finish checks, round ${round}: going on with its fix chunks (${saved.done.length} of ${saved.fixes.length} done before the build stopped)`);
+    } else {
+      const found = await judgeRound(input, { round, fixRounds, runBase, prev, open });
+      if (found.kind === "stop") break;
+      prev = found;
+      fixRounds = found.fixRounds;
+      progress = { round, fixRounds, runBase, fixes: found.fixes, done: [], open };
     }
-    if (fixes.length === 0 || round > fixRounds || stuck) {
-      open.push(...openItemsOf(suite, found));
-      if (fixes.length > 0) say(`finish checks: stopping with open items (${round > fixRounds ? "fix rounds used up" : "the last round's fixes did not move them"})`);
-      break;
-    }
-    prev = { suite, breakers: found };
-    // Low findings are listed, never fixed; the rest go to fix chunks.
-    open.push(...openItemsOf({ failed: [], unjudged: [] }, found.map((b) => ({ ...b, findings: b.findings.filter((f) => f.severity === "low") }))));
-    const fixRun = await input.buildFixes({
-      ...opts, plan: { ...opts.plan, chunks: fixes, phaseGatesRawSection: "" }, startingChunk: fixes[0].number,
-      maxChunks: undefined, landedChunks: [], maxConcurrentChunks: 1, skipWallProbe: true, finishGates: false,
-    });
-    chunksCommitted += fixRun.chunksCommitted;
-    if (fixRun.status === "halted") open.push(`finish fix round ${round} did not fully land: ${fixRun.haltReason.slice(0, 400)}`);
+    opts.onFinishProgress?.({ ...progress, fixes: [...progress.fixes], done: [...progress.done], open: [...open] });
+    const built = await buildRound(input, progress);
+    chunksCommitted += built.committed;
+    for (const reason of built.halted) open.push(`finish fix round ${round} did not fully land: ${reason}`);
   }
   open.push(...unverifiedChunks(result), ...ownerItems(opts.projectDir));
   say(`finish checks done: ${open.length} open item(s)`);

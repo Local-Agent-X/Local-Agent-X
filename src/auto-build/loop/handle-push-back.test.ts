@@ -179,3 +179,57 @@ describe("handlePushBack with a build lead", () => {
     expect(advisor.asked).toEqual(["first"]);
   });
 });
+
+// A pause stopped a chunk in fix round 6; Resume goes on from that round, not
+// from round 1 with a fresh budget (orchestrator/run-control.ts).
+describe("handlePushBack resumed after a pause", () => {
+  it("counts from the round it was on, and says each round as it starts", async () => {
+    rebuilds.outcomes = Array.from({ length: MAX_LEAD_ROUNDS }, (_, i) => pushedBack(`finding ${i}`));
+    lead.answers = Array.from({ length: MAX_LEAD_ROUNDS + 1 }, () => ({ action: "continue", reasoning: "progress", instruction: "close it" }));
+    const rounds: number[] = [];
+    const result = await handlePushBack({
+      chunk, totalChunks: 13, planPath: "spec/plan.md", plan, projectDir: "C:/proj", preSha: "abc", outcome: pushedBack("first"),
+      emit: (e) => { events.push(e); }, buildLead: { projectDir: "C:/proj", originSessionId: "chat-x" },
+      firstRound: 6, onRound: (n) => rounds.push(n),
+    });
+    expect(result.finalAction).toBe("halt");
+    expect(rounds).toEqual([6, 7, 8]);
+    expect(rebuilds.reasons).toHaveLength(3);
+  });
+});
+
+// label-check-sol's fix 1012 spent its eight rounds and was set aside: every
+// real fix it made stayed on a branch, off the app (2026-11-25).
+describe("handlePushBack for a finish fix out of rounds", () => {
+  const fixChunk = { number: 1012, title: "Finish fix 1: unlucky findings", phase: "Finish", dependsOn: [] } as unknown as ParsedChunk;
+  const brokenOn = (ground: string, extra: Array<{ gate: string }> = []): ChunkReviewOutcome => ({
+    action: "push_back", reasoning: `still: ${ground}`, report,
+    findings: [...extra.map((f) => ({ ...f, action: "push_back", reasoning: "x" })), { gate: "skeptic", action: "push_back", reasoning: ground }],
+    judging: { scenarios: { status: "none" }, skeptic: { status: "broken", finding: ground, ground } },
+  }) as unknown as ChunkReviewOutcome;
+  const capped = (last: ChunkReviewOutcome) => {
+    rebuilds.outcomes = [...Array.from({ length: MAX_FIX_ROUNDS - 1 }, (_, i) => pushedBack(`hole ${i}`)), last];
+    return handlePushBack({
+      chunk: fixChunk, totalChunks: 4, planPath: "spec/plan.md", plan, projectDir: "C:/proj", preSha: "abc", outcome: pushedBack("first"),
+      emit: (e) => { events.push(e); },
+    });
+  };
+
+  it("lands with what it fixed when what is left only says the fix is incomplete", async () => {
+    const result = await capped(brokenOn("1 — the cancel case still reproduces"));
+    expect(result.finalAction).toBe("proceed");
+    expect(result.finalOutcome.reasoning).toContain("Landed at its round cap with what it fixed");
+    expect(events.at(-1)?.message).toContain("lands with what it fixed");
+  });
+
+  it("is set aside when the fix made the app worse, or its build or tests fail", async () => {
+    expect((await capped(brokenOn("3 — the fix broke saving"))).finalAction).toBe("halt");
+    expect((await capped(brokenOn("1 — still reproduces", [{ gate: "build-exec" }]))).finalAction).toBe("halt");
+  });
+
+  it("a plan chunk out of rounds is set aside as before", async () => {
+    rebuilds.outcomes = Array.from({ length: MAX_FIX_ROUNDS }, (_, i) => brokenOn(`1 — hole ${i}`));
+    expect((await fix(pushedBack("first"))).finalAction).toBe("halt");
+  });
+});
+

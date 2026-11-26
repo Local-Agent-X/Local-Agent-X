@@ -10,6 +10,7 @@
  *
  * Failure modes that DON'T auto-resume (left for the user to handle via
  * build_plan_resume):
+ *   - state.phase === "paused" — the owner paused it; it waits for Resume
  *   - state.phase === "halted" — a real halt; user needs to read the
  *     reason and decide
  *   - state.phase === "complete" — nothing to do; remove from registry
@@ -31,6 +32,7 @@ import { broadcastToSession } from "../../ops/session-bridge.js";
 import { isFeatureEnabled } from "../tool.js";
 import { sweepOrphanWorktreeJunctions } from "../../agency/worktree-recovery.js";
 import { createLogger } from "../../logger.js";
+import { parkStoppedChunk } from "./stopped-run.js";
 
 const logger = createLogger("auto-build.orchestrator.resume");
 
@@ -130,6 +132,10 @@ function tryResumeOne(projectDir: string, sessionId: string): { outcome: ResumeO
     return { outcome: "cleared", reason: "build was already complete" };
   }
 
+  if (s.phase === "paused") {
+    return { outcome: "waiting", reason: "paused by the owner — goes on when they press Resume" };
+  }
+
   if (s.phase === "halted") {
     // Don't auto-resume halts — user needs to see the reason. Leave the
     // state + registry in place so build_plan_resume can pick it up
@@ -138,60 +144,72 @@ function tryResumeOne(projectDir: string, sessionId: string): { outcome: ResumeO
   }
 
   // phase === "starting" or "running" — try to resume from resumeAtChunk
-  const planPath = s.planPath;
-  if (!existsSync(planPath)) {
-    state.write(state.markAbandoned(s, "plan file missing after restart"));
-    unregister(projectDir);
-    return { outcome: "abandoned", reason: "plan file missing" };
-  }
-
-  let plan: ParsedPlan;
+  let started: SavedStart;
   try {
-    plan = parsePlanFile(planPath);
-  } catch (e) {
-    state.write(state.markAbandoned(s, `plan parse failed after restart: ${(e as Error).message}`));
-    unregister(projectDir);
-    return { outcome: "abandoned", reason: `plan parse failed: ${(e as Error).message}` };
-  }
-
-  // AB-8: resume must stay inside the user's original chunk window. Passing
-  // the raw maxChunks would slide the window (chunks 1-10 dying at 7 would
-  // resume as 7-16). Completion is based on committed plan indexes so sparse
-  // chunk numbers cannot turn a missing resumeAtChunk into false completion.
-  const window = computeResumeWindow(s, plan.chunks);
-  if (window.kind === "invalid") {
-    state.write(state.markAbandoned(s, window.reason));
-    unregister(projectDir);
-    return { outcome: "abandoned", reason: window.reason };
-  }
-  const runEnd = window.kind === "complete";
-  try {
-    const kick = startOrchestration({
-      sessionId,
-      projectDir,
-      planPath,
-      plan,
-      startingChunk: window.startingChunk,
-      maxChunks: window.maxChunks,
-      landedChunks: runEnd ? window.landedChunks : s.landedChunks,
-      ...DEFAULT_CHUNK_REVIEW,
-    });
-
-    // Surface a notice in the originating chat session so the user
-    // knows what happened.
-    broadcastToSession(sessionId, {
-      type: "bg_op_progress",
-      opId: kick.opId,
-      line: runEnd
-        ? `[auto-resume] LAX restarted after every chunk landed. Running the build's finish checks and its report.`
-        : `[auto-resume] LAX restarted mid-build. Continuing from chunk ${window.startingChunk}/${s.totalChunks}.`,
-    });
-    return { outcome: "resumed", reason: runEnd ? "every chunk landed; running the build's end" : `restarted at chunk ${window.startingChunk}` };
+    started = startFromSavedState(s, sessionId);
   } catch (e) {
     state.write(state.markAbandoned(s, `resume failed: ${(e as Error).message}`));
     unregister(projectDir);
     return { outcome: "abandoned", reason: `resume threw: ${(e as Error).message}` };
   }
+  if (started.kind === "invalid") {
+    state.write(state.markAbandoned(s, started.reason));
+    unregister(projectDir);
+    return { outcome: "abandoned", reason: started.reason };
+  }
+  const runEnd = started.window.kind === "complete";
+  // Surface a notice in the originating chat session so the user knows what happened.
+  broadcastToSession(sessionId, {
+    type: "bg_op_progress",
+    opId: started.opId,
+    line: (runEnd
+      ? `[auto-resume] LAX restarted after every chunk landed. Running the build's finish checks and its report.`
+      : `[auto-resume] LAX restarted mid-build. Continuing from chunk ${started.window.startingChunk}/${s.totalChunks}.`) + (started.kept ? ` ${started.kept}` : ""),
+  });
+  return { outcome: "resumed", reason: runEnd ? "every chunk landed; running the build's end" : `restarted at chunk ${started.window.startingChunk}` };
+}
+
+export type SavedStart =
+  | { kind: "started"; opId: string; initialMessage: string; window: Exclude<ResumeWindow, { kind: "invalid" }>; kept: string }
+  | { kind: "invalid"; reason: string };
+
+/**
+ * Start a build again from its saved state: the chunk it was on, a part-built
+ * chunk's kept work and round (moved onto its branch first when a quit or a
+ * crash left it in the tree), and its finish checks' place. The one start for
+ * the boot resume, build_plan_resume and the card's Resume (run-control.ts).
+ * A paused build keeps its id, so its card goes on.
+ */
+export function startFromSavedState(s: state.OrchestratorState, sessionId: string, requestedStartingChunk?: number): SavedStart {
+  if (!existsSync(s.planPath)) return { kind: "invalid", reason: "plan file missing" };
+  let plan: ParsedPlan;
+  try {
+    plan = parsePlanFile(s.planPath);
+  } catch (e) {
+    return { kind: "invalid", reason: `plan parse failed: ${(e as Error).message}` };
+  }
+  // AB-8: resume must stay inside the user's original chunk window (computeResumeWindow).
+  const window = computeResumeWindow(s, plan.chunks, requestedStartingChunk);
+  if (window.kind === "invalid") return window;
+  const { state: parked, kept } = parkStoppedChunk(s);
+  if (kept) {
+    state.write(parked);
+    logger.info(`[resume] ${s.projectDir}: ${kept}`);
+  }
+  const runEnd = window.kind === "complete";
+  const kick = startOrchestration({
+    sessionId,
+    projectDir: s.projectDir,
+    planPath: s.planPath,
+    plan,
+    startingChunk: window.startingChunk,
+    maxChunks: window.maxChunks,
+    landedChunks: runEnd ? window.landedChunks : s.landedChunks,
+    ...(runEnd && s.finish ? { finishProgress: s.finish } : {}),
+    ...(s.phase === "paused" ? { opId: s.opId } : {}),
+    ...DEFAULT_CHUNK_REVIEW,
+  });
+  return { kind: "started", opId: kick.opId, initialMessage: kick.initialMessage, window, kept };
 }
 
 export type ResumeWindow =

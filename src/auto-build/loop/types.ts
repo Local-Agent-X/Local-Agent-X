@@ -3,6 +3,7 @@ import type { ChunkReviewOutcome, ReviewAction } from "../chunk-review/index.js"
 import type { JudgmentHook } from "../chunk-review/judgment-hook.js";
 import type { ChunkJudge } from "../chunk-review/chunk-verdict.js";
 import type { BuildLeadRef } from "../advisor/lead-chat.js";
+import type { FinishProgress } from "../finish-gates/fix-chunk.js";
 
 export type LoopEventType =
   | "git-baseline"
@@ -92,6 +93,29 @@ export interface LoopOptions {
   /** The build's lead (advisor/lead-chat.ts): it decides each fix round.
    *  Absent, the engine's own rules decide. */
   buildLead?: BuildLeadRef;
+  /** Where the chunk building in the project tree has got to, each time it
+   *  moves: what a pause or a restart keeps and resumes
+   *  (orchestrator/run-control.ts). */
+  onChunkInTree?: (progress: InTreeChunk) => void;
+  /** A chunk landed or was set aside: it is no longer in progress. */
+  onChunkSettled?: (chunk: number) => void;
+  /** The finish checks' place in an earlier run of this build, to go on from. */
+  finishProgress?: FinishProgress;
+  /** The finish checks' place, each time it moves. */
+  onFinishProgress?: (progress: FinishProgress) => void;
+}
+
+/** A chunk part-built in the project tree. A worktree chunk needs none: its
+ *  worktree outlives the run (agency/worktree-recovery.ts). */
+export interface InTreeChunk {
+  chunk: number;
+  title: string;
+  /** HEAD before the chunk started: its work is everything since. */
+  preSha: string;
+  /** The fix round under way; 0 while the first build is. */
+  round: number;
+  /** What the reviews found so far, oldest first. */
+  findings: string[];
 }
 
 export interface LoopResult {

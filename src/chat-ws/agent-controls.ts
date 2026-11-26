@@ -28,13 +28,20 @@ export async function handleAgentRedirect(ws: WebSocket, agentId: string, instru
   }
 }
 
-// Route by id prefix. Three id shapes coexist in the AGENTS sidebar:
+// Route by id. Four kinds of card coexist in the AGENTS sidebar:
+//   - a build  → its own run control (auto-build/orchestrator/run-control.ts).
+//                Its id is op_* too, so it is asked first: opPause knew no such
+//                op ("pause failed: unknown_op") and Cancel did nothing.
 //   - op_ap_*  → autopilot ops (separate lifecycle, only stop is supported)
 //   - op_*     → canonical-loop ops (opCancel / opPause / opResume)
 //   - agent-*  → legacy Handler sub-agents
 export async function handleAgentControl(ws: WebSocket, agentId: string, action: string): Promise<void> {
   try {
-    if (agentId.startsWith("op_ap_")) {
+    const builds = await import("../auto-build/orchestrator/run-control.js");
+    if (builds.isBuildRun(agentId) && (action === "pause" || action === "resume" || action === "cancel")) {
+      const res = builds.controlBuild(agentId, action);
+      if (!res.ok) sendFrame(ws, { type: "error", message: `${action} failed: ${res.message}` });
+    } else if (agentId.startsWith("op_ap_")) {
       const { requestStop } = await import("../autopilot/loop.js");
       try {
         const result = requestStop(agentId);

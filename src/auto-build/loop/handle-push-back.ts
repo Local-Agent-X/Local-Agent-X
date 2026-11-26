@@ -40,6 +40,7 @@ import { parsePlanFile } from "../plan-parser.js";
 import type { ChunkJudge } from "../chunk-review/chunk-verdict.js";
 import type { BuildLeadRef } from "../advisor/lead-chat.js";
 import { MAX_LEAD_ROUNDS, planLeadRound, type LeadRoundPlan } from "./lead-rounds.js";
+import { landsWhatItFixed } from "../finish-gates/fix-chunk.js";
 
 /** Rebuilds a pushed-back chunk gets after its first attempt. */
 export const MAX_FIX_ROUNDS = 3;
@@ -73,6 +74,11 @@ export interface HandlePushBackOptions {
   buildLead?: BuildLeadRef;
   /** The conversation of the worker that built the attempt being fixed. */
   lastTranscript?: ChatCompletionMessageParam[];
+  /** The round to count from: a chunk resumed after a pause goes on from the
+   *  round it was on (orchestrator/run-control.ts). Default 1. */
+  firstRound?: number;
+  /** Each round as it starts: its number and every finding so far. */
+  onRound?: (round: number, findings: string[]) => void;
 }
 
 export interface HandlePushBackResult {
@@ -181,7 +187,20 @@ async function finalLeadSay(opts: HandlePushBackOptions, round: Round, n: number
   });
   if (!plan) return null;
   if (plan.kind === "land") return { finalOutcome: plan.outcome, finalAction: "proceed" };
+  // A finish fix the lead did not land still keeps what it fixed, unless the lead parked it for the owner.
+  if (!(plan.kind === "halt" && plan.parked) && landsWhatItFixed(round.chunk, round.outcome)) return null;
   return { finalAction: "halt", finalOutcome: { ...round.outcome, reasoning: plan.kind === "halt" ? plan.reasoning : round.outcome.reasoning } };
+}
+
+/** A finish fix out of rounds that fixed what it could without making the app
+ *  worse lands; what is left goes to the next finish round (fix-chunk.ts). */
+function landWhatItFixed(opts: HandlePushBackOptions, chunk: ParsedChunk, outcome: ChunkReviewOutcome, rounds: number): HandlePushBackResult {
+  const left = outcome.reasoning.replace(/\s+/g, " ").slice(0, 400);
+  opts.emit({
+    type: "push-back", chunkNumber: chunk.number, totalChunks: opts.totalChunks,
+    message: `Chunk ${chunk.number}: ${rounds} fix rounds spent; it lands with what it fixed (its build and tests pass, and nothing it changed made the app worse). Still open, for the next finish round: ${left}`,
+  });
+  return { finalAction: "proceed", finalOutcome: { ...outcome, action: "proceed", reasoning: `Landed at its round cap with what it fixed. Still open: ${left}` } };
 }
 
 export async function handlePushBack(opts: HandlePushBackOptions): Promise<HandlePushBackResult> {
@@ -191,7 +210,8 @@ export async function handlePushBack(opts: HandlePushBackOptions): Promise<Handl
   let repeated = false;
   let transcript = opts.lastTranscript;
 
-  for (let n = 1; ; n++) {
+  for (let n = Math.min(opts.firstRound ?? 1, opts.buildLead ? MAX_LEAD_ROUNDS : MAX_FIX_ROUNDS); ; n++) {
+    opts.onRound?.(n, [...earlier, round.outcome.reasoning]);
     const { plan: next, byLead } = await nextRound(opts, round, n, earlier, repeated);
     if (next.kind === "halt") {
       return { finalAction: "halt", finalOutcome: { ...round.outcome, reasoning: next.reasoning } };
@@ -222,6 +242,7 @@ export async function handlePushBack(opts: HandlePushBackOptions): Promise<Handl
       const last = await finalLeadSay(opts, { chunk: next.chunk, plan: next.plan, outcome: rebuilt }, n, [...earlier, round.outcome.reasoning], stuck);
       if (last) return last;
     }
+    if (n >= ceiling && landsWhatItFixed(next.chunk, rebuilt)) return landWhatItFixed(opts, next.chunk, rebuilt, n);
     if ((stuck && !byLead) || n >= ceiling) {
       // Not a "halt" event: whether the build stops or sets the chunk aside is
       // the loop's call (run.ts halts; parallel-waves.ts builds on without it).

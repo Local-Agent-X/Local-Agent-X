@@ -227,6 +227,7 @@ async function runChunksInOrder(run: {
     const [waiting] = holdBackWaiting(ledger, [chunk]).held;
     if (waiting) {
       emit({ type: "chunk-set-aside", chunkNumber: chunk.number, totalChunks, message: `Chunk ${chunk.number} not started: it depends on chunk ${waiting.on}, which did not land.` });
+      opts.onChunkSettled?.(chunk.number);
       continue;
     }
     emit({ type: "chunk-start", chunkNumber: chunk.number, totalChunks, message: `Starting chunk ${chunk.number}/${totalChunks}: ${chunk.title} (${chunk.klass})` });
@@ -242,9 +243,12 @@ async function runChunksInOrder(run: {
     // distilled learnings go into its task so the worker inherits SPEC_GAPS /
     // NOTE context instead of rediscovering the project from zero.
     const carryOver = pickUpSetAsideWork({ projectDir: opts.projectDir, tree: opts.projectDir, chunk, totalChunks, emit });
+    // Where the chunk has got to, for a pause or a restart to keep (orchestrator/run-control.ts).
+    const inTree = (round: number, findings: string[]) => opts.onChunkInTree?.({ chunk: chunk.number, title: chunk.title, preSha: preSha.value, round, findings });
+    inTree(carryOver?.round ?? 0, carryOver?.findings ?? []);
     const attempt = await buildChunkWithRetry({
       opts, chunk, totalChunks, emit, preSha: preSha.value, priorOutcomes: outcomes,
-      ...(carryOver ? { carryOver } : {}),
+      ...(carryOver ? { carryOver } : {}), onRound: inTree,
     });
     const { finalOutcome, finalAction, gateOwed } = await scorePhaseIfPaused({ opts, chunk, totalChunks, emit, ledger, attempt });
 
@@ -252,6 +256,7 @@ async function runChunksInOrder(run: {
 
     if (isSetAsideCase(finalAction, isPhaseGatePause(finalOutcome), opts.signal)
       && setChunkAsideInTree({ projectDir: opts.projectDir, chunk, totalChunks, preSha: preSha.value, outcome: finalOutcome, ledger, emit })) {
+      opts.onChunkSettled?.(chunk.number);
       if (await stopForSetAside(ledger, { chunkNumber: chunk.number, totalChunks, lead: opts.buildLead, signal: opts.signal, emit })) return endSetAside();
       continue;
     }
@@ -278,6 +283,7 @@ async function runChunksInOrder(run: {
     chunksCommitted = handled.chunksCommitted;
     landedThisRun.push(chunk.number);
     clearSetAside(opts.projectDir, chunk.number);
+    opts.onChunkSettled?.(chunk.number);
     phasePauses.landed(chunk, finalOutcome, !gateOwed);
     const phase = await phasePauses.scoreFinished({ opts, totalChunks, emit, events, outcomes }, chunksCommitted);
     if (phase.kind === "halt") return phase.result;

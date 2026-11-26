@@ -39,7 +39,8 @@ export type LeadRoundPlan =
   /** `fresh`: a new worker, not the one that built the last round. */
   | { kind: "rebuild"; chunk: ParsedChunk; plan: ParsedPlan; retryReason: string; fresh?: boolean }
   | { kind: "land"; outcome: ChunkReviewOutcome }
-  | { kind: "halt"; reasoning: string };
+  /** `parked`: held for the owner's decision, not just left unlanded. */
+  | { kind: "halt"; reasoning: string; parked?: boolean };
 
 export interface LeadRoundInput {
   lead: BuildLeadRef;
@@ -110,7 +111,7 @@ export async function planLeadRound(a: LeadRoundInput): Promise<LeadRoundPlan | 
 
   switch (decision.action) {
     case "park":
-      return { kind: "halt", reasoning: `The build lead needs the owner to decide: ${decision.question}` };
+      return { kind: "halt", reasoning: `The build lead needs the owner to decide: ${decision.question}`, parked: true };
     case "accept":
       return land(`Accepted by the build lead: ${decision.reasoning}`, `Accepted by the build lead: ${decision.reasoning}`);
     case "owed":

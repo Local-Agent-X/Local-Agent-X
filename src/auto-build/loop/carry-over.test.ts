@@ -91,4 +91,18 @@ describe("carry-over of a set-aside chunk", () => {
     recordSetAside(dir, 3, "autobuild/c3-gone", "The skeptic broke it: `(root)` takes the name's place.");
     expect(carryOverFor(dir, 3)).toEqual({ findings: ["The skeptic broke it: `(root)` takes the name's place."] });
   });
+
+  // A chunk the owner paused mid-build goes on from the round it was on, and
+  // its worker is told it was paused, not set aside (orchestrator/run-control.ts).
+  it("a paused chunk carries its round, and its brief says it was paused", () => {
+    const dir = project();
+    recordSetAside(dir, 3, "autobuild/c3-6", ["cancel loses data", "test passes without the fix"], 4);
+    const carry = carryOverFor(dir, 3)!;
+    expect(carry).toEqual({ branch: "autobuild/c3-6", findings: ["cancel loses data", "test passes without the fix"], round: 4 });
+    expect(carryOverBrief(carry, true)).toMatch(/^The build was paused while this chunk was building \(fix round 4\)/);
+    // Set aside after that, it gets a full budget again: no round on the record.
+    recordSetAside(dir, 3, undefined, "out of rounds");
+    expect(carryOverFor(dir, 3)?.round).toBeUndefined();
+  });
 });
+

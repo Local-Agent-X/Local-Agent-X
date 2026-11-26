@@ -4,13 +4,15 @@
 // at its last chunk and its chat asked the owner whether to start them
 // (2026-11-23).
 import { describe, it, expect, vi } from "vitest";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { runFinishGates, type SuiteJudging } from "./run.js";
 import type { BreakerResult } from "./breakers.js";
 import type { LoopOptions, LoopResult } from "../loop/types.js";
 import type { ParsedChunk } from "../plan-parser.js";
+import { recordSetAside } from "../failure-recovery.js";
+import type { FinishProgress } from "./fix-chunk.js";
 
 const chunk = (n: number): ParsedChunk => ({ number: n, title: `c${n}`, phase: "Phase A", klass: "leaf", slice: "s", dependsOn: [], scenarios: "—", doneWhen: "d", rawSection: "" });
 const dir = mkdtempSync(join(tmpdir(), "lax-finish-"));
@@ -149,5 +151,66 @@ describe("runFinishGates", () => {
     const h = harness([{ suite: { failed: [], unjudged: [] }, found: [] }]);
     const out = await run(h, opts({ projectDir: mobile }));
     expect(out.openItems?.[0]).toContain("has not been run on a phone or emulator");
+  });
+});
+
+// A pause, a quit or a crash in the finish checks used to start them over at
+// round 1: the break-it agents ran again, the fix chunks were numbered 1011 on,
+// and a new 1012 would have picked up the set-aside 1012's branch
+// (label-check-sol, 2026-11-25).
+describe("runFinishGates — where a stopped build left them", () => {
+  const fix = (n: number): ParsedChunk => ({ ...chunk(n), title: `Finish fix 1: f${n}`, phase: "Finish", klass: "trunk" });
+  const saved = (over: Partial<FinishProgress> = {}): FinishProgress => ({
+    round: 1, fixRounds: 2, runBase: 0, fixes: [fix(1011), fix(1012), fix(1013)], done: [1011, 1012], open: ["unlucky [low]: label clips"], ...over,
+  });
+
+  it("goes on with the round's fix chunks not yet done, without judging that round again", async () => {
+    const h = harness([{ suite: { failed: [], unjudged: [] }, found: [] }]);
+    const progress: FinishProgress[] = [];
+    const out = await run(h, opts({ finishProgress: saved(), onFinishProgress: (p) => progress.push(p) }));
+    expect(h.buildFixes.mock.calls[0][0].plan.chunks.map((c) => c.number)).toEqual([1013]);
+    // Round 1 was not judged again: the one judging is round 2's.
+    expect(h.runBreakers).toHaveBeenCalledTimes(1);
+    expect(h.said[0]).toBe("finish checks, round 1: going on with its fix chunks (2 of 3 done before the build stopped)");
+    expect(progress[0]).toMatchObject({ round: 1, done: [1011, 1012] });
+    expect(out.openItems).toContain("unlucky [low]: label clips");
+  });
+
+  it("records each fix chunk that lands or is set aside, as it does", async () => {
+    const h = harness([
+      { suite: { failed: [], unjudged: [] }, found: breakers([["high", "a"]]) },
+      { suite: { failed: [], unjudged: [] }, found: [] },
+    ]);
+    h.buildFixes.mockImplementationOnce(async (o: LoopOptions) => { o.onChunkSettled?.(1011); return { ...done(), chunksCommitted: 1 }; });
+    const progress: FinishProgress[] = [];
+    await run(h, opts({ onFinishProgress: (p) => progress.push(p) }));
+    expect(progress.map((p) => p.done)).toEqual([[], [1011]]);
+  });
+
+  it("numbers a new finish run past the fix chunks an earlier one set aside", async () => {
+    const project = mkdtempSync(join(tmpdir(), "lax-finish-runs-"));
+    recordSetAside(project, 1012, "autobuild/c1012", "still open");
+    const h = harness([
+      { suite: { failed: [], unjudged: [] }, found: breakers([["high", "a"]]) },
+      { suite: { failed: [], unjudged: [] }, found: [] },
+    ]);
+    await run(h, opts({ projectDir: project }));
+    expect(h.buildFixes.mock.calls[0][0].plan.chunks.map((c) => c.number)).toEqual([1111]);
+  });
+
+  it("builds the parts the lead split off a fix chunk that landed, in the same round", async () => {
+    const project = mkdtempSync(join(tmpdir(), "lax-finish-split-"));
+    mkdirSync(join(project, "spec"));
+    writeFileSync(join(project, "spec", "plan.md"), [
+      "# Plan", "## Split from chunk 1011 — Finish fix 1: hostile findings", "### Chunk 101101 — Stalled write",
+      "- **Class:** trunk", "- **Slice:** s", "- **Depends on:** 1011", "- **Scenarios:** —", "- **Done when:** d",
+    ].join("\n"));
+    const h = harness([
+      { suite: { failed: [], unjudged: [] }, found: breakers([["high", "a"]]) },
+      { suite: { failed: [], unjudged: [] }, found: [] },
+    ]);
+    h.buildFixes.mockImplementationOnce(async () => ({ ...done(), chunksCommitted: 1, outcomes: [{ chunkNumber: 1011, action: "proceed", outcome: {} as never }] }));
+    await run(h, opts({ projectDir: project, planPath: join(project, "spec", "plan.md") }));
+    expect(h.buildFixes.mock.calls.map((c) => c[0].plan.chunks.map((x) => x.number))).toEqual([[1011], [101101]]);
   });
 });

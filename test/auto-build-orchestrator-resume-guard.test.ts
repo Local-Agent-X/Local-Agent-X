@@ -17,6 +17,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 
 // ── Mocks: isolate resume.ts from the real loop, registry, and feature flag ──
@@ -65,7 +66,9 @@ vi.mock("../src/auto-build/chunk-review/judgment-hook.js", () => ({
   defaultJudgmentHook: {},
 }));
 
-import { autoResumeOrchestrations, computeResumeWindow, resumeOrchestrationsAtBoot } from "../src/auto-build/orchestrator/resume.js";
+import { autoResumeOrchestrations, computeResumeWindow, resumeOrchestrationsAtBoot, startFromSavedState } from "../src/auto-build/orchestrator/resume.js";
+import { setAsideRecordFor } from "../src/auto-build/failure-recovery.js";
+import { ENGINE_STATE_PATTERNS } from "../src/auto-build/engine-state-files.js";
 import { buildPlanResumeTool } from "../src/auto-build/orchestrator/tools.js";
 import * as state from "../src/auto-build/orchestrator/state.js";
 
@@ -359,5 +362,51 @@ describe("resumeOrchestrationsAtBoot — the worktree sweep runs first", () => {
     const report = await resumeOrchestrationsAtBoot();
     expect(sweepCalls).toBe(0);
     expect(report.attempted).toBe(0);
+  });
+});
+
+// A pause holds a build until the owner presses Resume, through a restart
+// too; a quit or a crash mid-chunk leaves its work for the next start to keep
+// (orchestrator/run-control.ts, 2026-11-25).
+describe("a paused or interrupted build at restart", () => {
+  const register = (dir: string) => { mockRegistry = [{ projectDir: dir, opId: "op_seed", sessionId: "sess_seed", registeredAt: new Date().toISOString() }]; };
+
+  it("a paused build waits for Resume and is not started at boot", () => {
+    const dir = seedProject({ totalChunks: 5, startingChunkOverride: 1, maxChunks: null, resumeAtChunk: 3 });
+    state.write(state.markPaused(state.read(dir)!));
+    register(dir);
+    const report = autoResumeOrchestrations();
+    expect(startSpy).not.toHaveBeenCalled();
+    expect(report.details[0]).toMatchObject({ outcome: "waiting", reason: expect.stringContaining("paused by the owner") });
+    expect(state.read(dir)?.phase).toBe("paused");
+  });
+
+  it("Resume keeps a paused build's id and goes on with its finish checks where they were", () => {
+    const dir = seedProject({ totalChunks: 5, startingChunkOverride: 1, maxChunks: null, resumeAtChunk: 6 });
+    const finish = { round: 1, fixRounds: 2, runBase: 0, fixes: [], done: [1011], open: [] };
+    state.write(state.markPaused({ ...state.read(dir)!, finish }));
+    const started = startFromSavedState(state.read(dir)!, "sess_seed");
+    expect(started.kind).toBe("started");
+    expect(startSpy.mock.calls[0][0]).toMatchObject({ opId: "op_seed", finishProgress: finish, landedChunks: [1, 2, 3, 4, 5] });
+  });
+
+  it("a chunk a crash left part-built in the tree goes onto its branch, with its round, before the build starts again", () => {
+    const dir = seedProject({ totalChunks: 5, startingChunkOverride: 1, maxChunks: null, resumeAtChunk: 3 });
+    const git = (...args: string[]) => execFileSync("git", args, { cwd: dir, encoding: "utf8" }).trim();
+    git("init", "-q");
+    // The engine keeps its own files out of the project's commits, as ensureGitBaseline does.
+    writeFileSync(join(dir, ".git", "info", "exclude"), ENGINE_STATE_PATTERNS.join("\n") + "\n");
+    git("add", "-A");
+    git("-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "base");
+    const preSha = git("rev-parse", "HEAD");
+    writeFileSync(join(dir, "half-done.ts"), "export const x = 1;\n");
+    state.write({ ...state.read(dir)!, inTreeChunk: { chunk: 3, title: "Feature 3", preSha, round: 2, findings: ["cancel loses data"] } });
+    register(dir);
+
+    expect(autoResumeOrchestrations().resumed).toBe(1);
+    expect(git("status", "--porcelain")).toBe("");
+    expect(git("show", "autobuild/c3:half-done.ts")).toBe("export const x = 1;");
+    expect(setAsideRecordFor(dir, 3)).toMatchObject({ branch: "autobuild/c3", findings: ["cancel loses data"], round: 2 });
+    expect(state.read(dir)?.inTreeChunk).toBeUndefined();
   });
 });

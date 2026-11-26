@@ -47,6 +47,10 @@ export interface HaltRecord {
 export interface SetAsideRecord {
   branch?: string;
   findings: string[];
+  /** A chunk paused mid-build (orchestrator/run-control.ts): the fix round it
+   *  was on, so it goes on from that round. Absent for a chunk set aside after
+   *  its rounds, which a later run gives a full budget. */
+  round?: number;
 }
 
 /**
@@ -103,14 +107,18 @@ function writeBuildState(projectDir: string, state: BuildState): void {
 }
 
 /** Record that `chunk` was set aside: where its work is kept and what was found. */
-export function recordSetAside(projectDir: string, chunk: number, branch: string | undefined, finding: string): void {
+export function recordSetAside(projectDir: string, chunk: number, branch: string | undefined, finding: string | string[], round?: number): void {
   const state = readBuildState(projectDir);
   const prior = state.setAside?.[chunk];
-  const text = finding.trim().slice(0, CARRIED_FINDING_CHARS);
-  const findings = (prior?.findings.includes(text) ? prior.findings : [...(prior?.findings ?? []), text]).slice(-MAX_CARRIED_FINDINGS);
+  let findings = prior?.findings ?? [];
+  for (const one of Array.isArray(finding) ? finding : [finding]) {
+    const text = one.trim().slice(0, CARRIED_FINDING_CHARS);
+    if (text && !findings.includes(text)) findings = [...findings, text];
+  }
+  findings = findings.slice(-MAX_CARRIED_FINDINGS);
   // A run that wrote nothing new keeps the branch the earlier work is on.
   const kept = branch ?? prior?.branch;
-  state.setAside = { ...state.setAside, [chunk]: { ...(kept ? { branch: kept } : {}), findings } };
+  state.setAside = { ...state.setAside, [chunk]: { ...(kept ? { branch: kept } : {}), findings, ...(round != null ? { round } : {}) } };
   writeBuildState(projectDir, state);
 }
 

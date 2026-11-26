@@ -26,7 +26,8 @@ import { basename } from "node:path";
 import type { ParsedPlan } from "../plan-parser.js";
 import { runBuildLoop, type LoopEvent, type LoopResult } from "../loop.js";
 import type { JudgmentHook } from "../chunk-review/judgment-hook.js";
-import { chunkJudgingSummary, type ChunkJudge } from "../chunk-review/chunk-verdict.js";
+import type { ChunkJudge } from "../chunk-review/chunk-verdict.js";
+import { buildSummaryMetadata, buildSummaryText, collectChangedFiles } from "./run-summary.js";
 import { reportBuildToChat } from "./report-to-chat.js";
 import { writeLeadLedger } from "./lead-ledger.js";
 import * as state from "./state.js";
@@ -37,6 +38,8 @@ import { createLogger } from "../../logger.js";
 import { broadcastToSession } from "../../ops/session-bridge.js";
 import { updateAppBuildWorkflow } from "../workflow-state.js";
 import { OP_TYPE } from "../../ops/op-types.js";
+import type { FinishProgress } from "../finish-gates/fix-chunk.js";
+import { endStoppedRun, type BuildStop } from "./stopped-run.js";
 
 const logger = createLogger("auto-build.orchestrator");
 
@@ -68,6 +71,8 @@ interface ActiveOrchestration {
   scopeStartIdx: number;
   /** Ordered run scope; durable counts may advance only across its landed prefix. */
   scopeChunks: number[];
+  /** The owner stopped it (run-control.ts): the loop's end is a pause or a cancel, not a halt. */
+  stop?: BuildStop;
 }
 
 export interface StartOrchestrationOptions {
@@ -86,6 +91,10 @@ export interface StartOrchestrationOptions {
   /** Run the finish gates once the plan's last chunk lands (loop/types.ts). */
   finishGates?: boolean;
   subprocessTimeoutMs?: number;
+  /** A paused build resumed keeps its id, so its card in the AGENTS panel goes on. */
+  opId?: string;
+  /** Where an earlier run of this build left its finish checks. */
+  finishProgress?: FinishProgress;
 }
 
 export interface StartOrchestrationResult {
@@ -114,7 +123,7 @@ export function startOrchestration(opts: StartOrchestrationOptions): StartOrches
   }
 
   const previousState = state.read(opts.projectDir);
-  const opId = "op_" + randomBytes(8).toString("hex");
+  const opId = opts.opId ?? "op_" + randomBytes(8).toString("hex");
   const initialState = state.makeInitial({
     opId,
     sessionId: opts.sessionId,
@@ -124,6 +133,7 @@ export function startOrchestration(opts: StartOrchestrationOptions): StartOrches
     startingChunk: opts.startingChunk,
     maxChunks: opts.maxChunks,
     landedChunks: opts.landedChunks,
+    finish: opts.finishProgress,
   });
   if (!state.write(initialState)) {
     throw new Error(
@@ -237,14 +247,26 @@ async function runOrchestrationLoop(orch: ActiveOrchestration, opts: StartOrches
       // the chunk workers' spawn parent so their cards nest under this card.
       parentOpId: orch.opId,
       onEvent: (event) => onLoopEvent(orch, event),
+      // Where the build is, kept for a pause or a restart to go on from (run-control.ts).
+      ...(opts.finishProgress ? { finishProgress: opts.finishProgress } : {}),
+      onChunkInTree: (inTreeChunk) => persist(orch, { ...orch.liveState, inTreeChunk }),
+      onChunkSettled: (n) => { if (orch.liveState.inTreeChunk?.chunk === n) persist(orch, { ...orch.liveState, inTreeChunk: undefined }); },
+      onFinishProgress: (finish) => persist(orch, { ...orch.liveState, finish }),
     });
 
-    await onLoopComplete(orch, result);
+    if (orch.stop) endStoppedRun(orch, orch.stop);
+    else await onLoopComplete(orch, result);
   } catch (e) {
-    onLoopCrash(orch, e as Error);
+    if (orch.stop) endStoppedRun(orch, orch.stop);
+    else onLoopCrash(orch, e as Error);
   } finally {
     active.delete(orch.opId);
   }
+}
+
+function persist(orch: ActiveOrchestration, next: OrchestratorState): void {
+  orch.liveState = next;
+  state.write(next);
 }
 
 function onLoopEvent(orch: ActiveOrchestration, event: LoopEvent): void {
@@ -356,57 +378,6 @@ function onLoopCrash(orch: ActiveOrchestration, err: Error): void {
   logger.error(`[orchestrator] ${orch.opId} crashed: ${err.message}`);
 }
 
-function buildSummaryText(s: OrchestratorState, result: LoopResult): string {
-  const lines: string[] = [];
-  lines.push(`Status: ${s.phase}`);
-  lines.push(`Chunks: ${s.chunksCommitted}/${s.totalChunks} committed (last: chunk ${s.currentChunk})`);
-  if (s.haltReason) lines.push(`Halt reason: ${s.haltReason}`);
-  if (s.phase === "halted") {
-    lines.push(`Resume with: build_plan_resume({project_dir: "${s.projectDir.replace(/\\/g, "/")}"})`);
-  } else if (s.phase === "complete") {
-    lines.push(`Build complete. Review LAUNCH_READINESS.md before deploying.`);
-    if (result.openItems?.length) lines.push(``, `Open after the finish checks:`, ...result.openItems.map((item) => `  - ${item}`));
-  }
-  if (result.outcomes.length > 0) {
-    lines.push(``);
-    lines.push(`Per-chunk verdicts:`);
-    for (const o of result.outcomes) {
-      const judged = o.outcome.judging ? ` — ${chunkJudgingSummary(o.outcome.judging)}` : "";
-      const unverified = o.outcome.unverified ? ` — unverified: ${o.outcome.unverified}` : "";
-      lines.push(`  chunk ${o.chunkNumber}: ${o.action}${judged}${unverified}`);
-    }
-  }
-  return lines.join("\n");
-}
-
-function buildSummaryMetadata(s: OrchestratorState, result: LoopResult): Record<string, unknown> {
-  return {
-    kind: "build-run-summary",
-    project_dir: s.projectDir,
-    project_name: s.projectDir.split(/[\\/]/).pop() || "project",
-    phase: s.phase,
-    chunks_committed: s.chunksCommitted,
-    total_chunks: s.totalChunks,
-    current_chunk: s.currentChunk,
-    resume_at_chunk: s.resumeAtChunk,
-    halt_gate: s.haltGate,
-    halt_reason: s.haltReason,
-    started_at: s.startedAt,
-    updated_at: s.updatedAt,
-    completed_at: s.completedAt,
-    resumable: s.phase === "halted" || s.phase === "abandoned",
-    per_chunk_verdicts: result.outcomes.map(o => ({ chunk: o.chunkNumber, action: o.action })),
-  };
-}
-
-function collectChangedFiles(result: LoopResult): string[] {
-  const set = new Set<string>();
-  for (const o of result.outcomes) {
-    for (const f of o.outcome.report.changed) set.add(f);
-  }
-  return Array.from(set);
-}
-
 // ── Public introspection ─────────────────────────────────────────────────
 
 export function getActive(opId: string): ActiveOrchestration | undefined {
@@ -434,9 +405,13 @@ export function listActive(): Array<{ opId: string; projectDir: string; sessionI
   }));
 }
 
-export function abort(opId: string): boolean {
+/** Stop a running build for the owner: a pause keeps it resumable, a cancel
+ *  ends it (run-control.ts). False when no build with this id is running. */
+export function stopRun(opId: string, stop: BuildStop): boolean {
   const o = active.get(opId);
   if (!o) return false;
+  // A cancel overrides a pause still taking effect; a pause never downgrades a cancel.
+  o.stop = stop === "cancelled" ? stop : o.stop ?? stop;
   o.abortController.abort();
   return true;
 }

@@ -70,7 +70,7 @@ describe("planLeadRound", () => {
     expect(await round({ action: "continue", reasoning: "real", instruction: "check root build/ too" }).run)
       .toMatchObject({ kind: "rebuild", retryReason: expect.stringMatching(/^check root build\/ too[\s\S]*size gate skips root build/) });
     expect(await round({ action: "park", reasoning: "taste", question: "Ship without the Android check?" }).run)
-      .toEqual({ kind: "halt", reasoning: "The build lead needs the owner to decide: Ship without the Android check?" });
+      .toEqual({ kind: "halt", reasoning: "The build lead needs the owner to decide: Ship without the Android check?", parked: true });
   });
 
   // label-check-sol's chunk 4 (2026-11-25): what was left needed a device and

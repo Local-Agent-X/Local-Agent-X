@@ -22,7 +22,7 @@ import { git, commitWithFallbackIdentity } from "../../agency/worktree-core.js";
 import { resolveStaleBranchName } from "../../agency/worktree-lifecycle.js";
 import { appendHalt, recordSetAside } from "../failure-recovery.js";
 import type { SetAsideLedger } from "./set-aside.js";
-import type { EmitFn } from "./types.js";
+import type { EmitFn, InTreeChunk } from "./types.js";
 
 /**
  * Move everything the chunk did since `preSha` onto a branch and put the tree
@@ -45,6 +45,27 @@ export function parkTreeWork(projectDir: string, chunk: Pick<ParsedChunk, "numbe
   // The branch holds the work now; only then is the base moved back off it.
   git(["reset", "--hard", preSha], projectDir);
   return branch;
+}
+
+/**
+ * Keep a chunk that a pause, a quit or a crash stopped part-built in the
+ * project tree: its work goes onto a branch and the tree back to where the
+ * chunk started, and the record says the round it was on, so the next run
+ * picks it up there (carry-over.ts). Before this the work sat uncommitted in
+ * the tree and the next chunk's commit took it in (label-check-sol's fix 1013,
+ * 2026-11-25). Returns what it did, in a line for the log.
+ */
+export function parkInTreeChunk(projectDir: string, inTree: InTreeChunk): string {
+  let branch: string | undefined;
+  let note = "";
+  try {
+    branch = parkTreeWork(projectDir, { number: inTree.chunk, title: inTree.title }, inTree.preSha);
+  } catch (e) {
+    // Its work stays in the tree, where the resumed worker finds it.
+    note = ` Its work could not be moved (${(e as Error).message.replace(/\s+/g, " ").slice(0, 200)}) and is still in the project.`;
+  }
+  recordSetAside(projectDir, inTree.chunk, branch, inTree.findings, inTree.round);
+  return `Chunk ${inTree.chunk} was stopped in fix round ${inTree.round}; ${branch ? `its work is kept on branch '${branch}'` : "it had no work to keep"}, and it goes on from there.${note}`;
 }
 
 /**

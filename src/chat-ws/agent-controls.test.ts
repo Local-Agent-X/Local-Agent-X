@@ -15,6 +15,11 @@ const control = vi.hoisted(() => ({
 vi.mock("../canonical-loop/index.js", () => control);
 const snapshot = vi.hoisted(() => ({ sendWorkersSnapshot: vi.fn(async () => {}) }));
 vi.mock("./workers-snapshot.js", () => snapshot);
+const builds = vi.hoisted(() => ({
+  isBuildRun: vi.fn((id: string) => id.startsWith("op_build")),
+  controlBuild: vi.fn((_id: string, action: string) => (action === "resume" ? { ok: false, message: "the build is halted, not paused" } : { ok: true })),
+}));
+vi.mock("../auto-build/orchestrator/run-control.js", () => builds);
 
 const { handleAgentControl } = await import("./agent-controls.js");
 
@@ -39,3 +44,18 @@ describe("handleAgentControl answers with the worker list", () => {
     expect(snapshot.sendWorkersSnapshot).toHaveBeenCalledWith(ws);
   });
 });
+
+// A build's card is op_* too, but no canonical-loop op: its Pause failed with
+// "unknown_op" and its Cancel did nothing (2026-11-25).
+describe("handleAgentControl on a build's card", () => {
+  it("sends Pause, Resume and Cancel to the build, never to the canonical loop", async () => {
+    control.opPause.mockClear();
+    const { ws, sent } = socket();
+    await handleAgentControl(ws, "op_build_1", "pause");
+    await handleAgentControl(ws, "op_build_1", "resume");
+    expect(builds.controlBuild.mock.calls).toEqual([["op_build_1", "pause"], ["op_build_1", "resume"]]);
+    expect(control.opPause).not.toHaveBeenCalled();
+    expect(sent).toEqual([expect.objectContaining({ type: "error", message: "resume failed: the build is halted, not paused" })]);
+  });
+});
+

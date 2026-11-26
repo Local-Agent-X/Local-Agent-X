@@ -8,11 +8,9 @@ import { existsSync } from "node:fs";
 import type { ToolDefinition, ToolResult } from "../../types.js";
 import { blocked } from "../../tools/result-helpers.js";
 import { sessionIdOf } from "../../tool-execution/internal-args.js";
-import { parsePlanFile } from "../plan-parser.js";
 import { AUTO_BUILD_DISABLED_RECOVERY, isFeatureEnabled, FEATURE_FLAG_ENV } from "../tool.js";
-import { DEFAULT_CHUNK_REVIEW } from "../chunk-review/default-review.js";
-import { isActiveForProject, startOrchestration, listActive } from "./manager.js";
-import { computeResumeWindow, readProjectState } from "./resume.js";
+import { isActiveForProject, listActive } from "./manager.js";
+import { readProjectState, startFromSavedState } from "./resume.js";
 import { listAll as listRegistry } from "./registry.js";
 import { resolveProjectDir } from "../project-paths.js";
 
@@ -57,6 +55,7 @@ export const buildPlanStatusTool: ToolDefinition = {
       ];
       if (s.haltReason) lines.push(`halt_gate: ${s.haltGate}`, `halt_reason: ${s.haltReason}`);
       if (s.phase === "halted") lines.push(`Resumable: call build_plan_resume({project_dir: "${s.projectDir.replace(/\\/g, "/")}"}).`);
+      if (s.phase === "paused") lines.push(`Paused by the owner, not halted: nothing failed and its work is kept. It goes on from here when they press Resume on its card, or when they ask you to resume it with build_plan_resume.`);
       if (s.phase === "complete") lines.push(`Complete: review LAUNCH_READINESS.md before deploying.`);
       if (!info.planExists) lines.push(`WARNING: plan file at ${s.planPath} is missing — resume will fail.`);
       return { content: lines.join("\n"), metadata: { phase: s.phase, op_id: s.opId, resume_at_chunk: s.resumeAtChunk } };
@@ -127,36 +126,19 @@ export const buildPlanResumeTool: ToolDefinition = {
       return { content: `Plan file missing: ${s.planPath}. Cannot resume.`, isError: true };
     }
 
-    let plan;
-    try {
-      plan = parsePlanFile(s.planPath);
-    } catch (e) {
-      return { content: `plan parse failed: ${(e as Error).message}`, isError: true };
-    }
-
     const hasOverride = args.starting_chunk != null;
     const overrideArg = Number(args.starting_chunk);
     if (hasOverride && (!Number.isInteger(overrideArg) || overrideArg <= 0)) {
       return { content: "starting_chunk must be a positive plan chunk number.", isError: true };
     }
 
-    const window = computeResumeWindow(s, plan.chunks, hasOverride ? overrideArg : undefined);
-    if (window.kind === "invalid") {
-      return { content: window.reason, isError: true };
+    // The one start from saved state (resume.ts): a part-built chunk's work and
+    // round, the finish checks' place, and a paused build's id all go on.
+    const kick = startFromSavedState(s, sessionIdOf(args) ?? s.sessionId, hasOverride ? overrideArg : undefined);
+    if (kick.kind === "invalid") {
+      return { content: kick.reason, isError: true };
     }
-    const sessionId = sessionIdOf(args) ?? s.sessionId;
-
-    const kick = startOrchestration({
-      sessionId,
-      projectDir,
-      planPath: s.planPath,
-      plan,
-      startingChunk: window.startingChunk,
-      maxChunks: window.maxChunks,
-      // Every chunk landed: the loop builds none and runs the build's end (resume.ts).
-      landedChunks: window.kind === "complete" ? window.landedChunks : s.landedChunks,
-      ...DEFAULT_CHUNK_REVIEW,
-    });
+    const window = kick.window;
 
     return {
       content: kick.initialMessage + `\nResumed from prior state — last committed: chunk ${s.chunksCommitted ? s.currentChunk : "none"}, halt reason was: ${s.haltReason || "(none)"}.`,

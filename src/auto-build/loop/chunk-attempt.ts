@@ -29,7 +29,9 @@ export interface ChunkAttemptInput {
   workerIndex?: number;
   /** A chunk an earlier run set aside (carry-over.ts): the opening of its
    *  first brief, and the findings every fix round must keep fixed. */
-  carryOver?: { brief: string; findings: string[] };
+  carryOver?: { brief: string; findings: string[]; round?: number };
+  /** Each fix round as it starts (handle-push-back.ts). */
+  onRound?: (round: number, findings: string[]) => void;
 }
 
 export interface ChunkAttemptResult {
@@ -60,5 +62,10 @@ export async function buildChunkWithRetry(a: ChunkAttemptInput): Promise<ChunkAt
     ...(opts.buildLead ? { onTranscript: (m: ChatCompletionMessageParam[]) => { transcript = m; } } : {}),
   });
   if (outcome.action !== "push_back") return { finalOutcome: outcome, finalAction: outcome.action };
-  return handlePushBack({ ...shared, outcome, earlierFindings: a.carryOver?.findings, ...(transcript ? { lastTranscript: transcript } : {}) });
+  return handlePushBack({
+    ...shared, outcome, earlierFindings: a.carryOver?.findings, ...(transcript ? { lastTranscript: transcript } : {}),
+    // A chunk paused in a round goes on from it: this first attempt redid that round.
+    ...(a.carryOver?.round != null ? { firstRound: a.carryOver.round + 1 } : {}),
+    ...(a.onRound ? { onRound: a.onRound } : {}),
+  });
 }

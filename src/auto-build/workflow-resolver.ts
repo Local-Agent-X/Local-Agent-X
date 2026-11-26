@@ -157,7 +157,7 @@ function candidateFromEvidence(
         reason: `Persisted orchestration state is ${state.phase}, but no live orchestration exists.`,
       };
     }
-    if ((state.phase === "halted" || state.phase === "abandoned") && planExists) {
+    if ((state.phase === "halted" || state.phase === "abandoned" || state.phase === "paused") && planExists) {
       return {
         action: "build_plan_resume",
         phase: state.phase,

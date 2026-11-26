@@ -44,7 +44,7 @@ import { realpathDeep, isSanctionedWorkRootEnvFile } from "../security/layer/ind
 import { isDotenvFile } from "../security/layer/sensitive-paths.js";
 import { recordPrivateReadFromResult } from "./private-read-record.js";
 import { createLogger } from "../logger.js";
-import { recordResponseTokens } from "../browser/site-provenance.js";
+import { recordLinks, recordResponseTokens } from "../browser/site-provenance.js";
 import { withMetadata } from "../tools/result-helpers.js";
 
 const logger = createLogger("tool-execution");
@@ -353,6 +353,9 @@ export function applyResultTaintPolicy(
   if (outputOf(toolName) === "http-body" && typeof result?.content === "string") {
     recordResponseTokens(sessionId ?? "", String(args.url ?? ""), result.content);
   }
+  // A whole link any result printed, after masking, vouches its ids for its
+  // own site only (site-provenance.ts says why, and what it trades).
+  if (typeof result?.content === "string") recordLinks(sessionId ?? "", result.content);
 
   // External-content ingestion mark (memory-promotion gate, NOT egress taint).
   // TOOL-CLASS keyed (D8): a successful result from an off-box-ingesting tool

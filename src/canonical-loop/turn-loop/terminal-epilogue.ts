@@ -56,7 +56,7 @@ export function applyTerminalEpilogue(
   // every subscribeOpStream consumer forwards a chunk only on a non-empty
   // `delta` or `replace:true`, so a bare `{text}` is dropped and surfaces only
   // on rehydrate.
-  const endedPartial = terminalReason === "done" && endsWithOpenSteps(op.id);
+  const endedPartial = terminalReason === "done" && endsWithOpenSteps(op);
 
   // Reconcile-on-green: the orchestrator build-verify gate ran the project's
   // build itself and it PASSED, but the model couldn't self-verify (blocked from

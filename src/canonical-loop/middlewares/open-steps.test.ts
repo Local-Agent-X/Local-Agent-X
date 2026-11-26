@@ -4,7 +4,10 @@ import type { CanonicalLoopContext } from "./types.js";
 vi.mock("../../ops/session-bridge.js", () => ({
   getSessionForOp: vi.fn(),
 }));
-vi.mock("../../tools/task-tools.js", () => ({
+// Only the list is faked: which open sets were already pushed is the module's
+// own record, shared with wrap_up.
+vi.mock("../../tools/task-tools.js", async (original) => ({
+  ...(await original<typeof import("../../tools/task-tools.js")>()),
   getOpenTasksForSession: vi.fn(),
 }));
 vi.mock("../store.js", () => ({
@@ -14,6 +17,7 @@ vi.mock("../store.js", () => ({
 import {
   openStepsMiddleware,
   endsWithOpenSteps,
+  stepListSessionOf,
   earnedDoneNudge,
   clearEarnedDoneStateForOp,
   _resetEarnedDoneState,
@@ -262,8 +266,49 @@ describe("interactive build plan-seed (reactive, afterModelCall)", () => {
   });
 });
 
+// A delegated worker's tools write its step list under its own session (the
+// op id) while the op stays bound to the chat that submitted it. Read through
+// the binding, a worker was told to finish the chat's "Test the Galaxy
+// workflows" (2026-11-26).
+describe("a delegated worker is held to its own step list, not the submitting chat's", () => {
+  const WORKER = "op_android_preview_verify_1";
+  const descriptor = { kind: "delegated-op", sessionId: WORKER, parentSessionId: "chat-parent" } as never;
+  const lists: Record<string, { id: string; description: string }[]> = {
+    "chat-parent": [{ id: "c1", description: "Test the Galaxy workflows" }],
+    [WORKER]: [{ id: "w1", description: "Submit one approved APK build" }],
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockSession.mockReturnValue("chat-parent");
+    mockOpTurns.mockReturnValue(OK_WORK_TURN);
+    mockOpenTasks.mockImplementation((sessionId: string) => lists[sessionId] ?? []);
+    _resetEarnedDoneState();
+  });
+
+  it("names the session its tools run under", () => {
+    expect(stepListSessionOf({ id: WORKER, runtimeDescriptor: descriptor })).toBe(WORKER);
+    expect(stepListSessionOf({ id: "op-chat" })).toBe("chat-parent");
+  });
+
+  it("the push at a turn's end lists the worker's steps", async () => {
+    const res = await fire(worked({ op: { id: WORKER, lane: "build", runtimeDescriptor: descriptor } }));
+    expect(res.kind).toBe("nudge");
+    expect((res as { message: string }).message).toContain("Submit one approved APK build");
+    expect((res as { message: string }).message).not.toContain("Galaxy");
+  });
+
+  it("a worker with nothing open on its own list is not pushed about the chat's", async () => {
+    lists[WORKER] = [];
+    const op = { id: WORKER, lane: "build", runtimeDescriptor: descriptor } as unknown as Op;
+    expect(earnedDoneNudge(op)).toBeNull();
+    expect(endsWithOpenSteps(op)).toBe(false);
+    lists[WORKER] = [{ id: "w1", description: "Submit one approved APK build" }];
+  });
+});
+
 describe("endsWithOpenSteps", () => {
-  const okTaskTurn = [{ toolCallSummary: [{ tool: "task_create", resultStatus: "ok" }] }] as never;
+  const okTaskTurn =[{ toolCallSummary: [{ tool: "task_create", resultStatus: "ok" }] }] as never;
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -273,25 +318,25 @@ describe("endsWithOpenSteps", () => {
   });
 
   it("is true when the op used task tools and steps remain open", () => {
-    expect(endsWithOpenSteps("op-w")).toBe(true);
+    expect(endsWithOpenSteps({ id: "op-w" })).toBe(true);
   });
 
   it("is false when this op never touched the task tools", () => {
     mockOpTurns.mockReturnValue([{ toolCallSummary: [{ tool: "read", resultStatus: "ok" }] }] as never);
-    expect(endsWithOpenSteps("op-w")).toBe(false);
+    expect(endsWithOpenSteps({ id: "op-w" })).toBe(false);
   });
 
   it("does not count failed task-tool calls as touching the list", () => {
     mockOpTurns.mockReturnValue([{ toolCallSummary: [{ tool: "task_create", resultStatus: "error" }] }] as never);
-    expect(endsWithOpenSteps("op-w")).toBe(false);
+    expect(endsWithOpenSteps({ id: "op-w" })).toBe(false);
   });
 
   it("is false with no open steps or no session", () => {
     mockOpenTasks.mockReturnValue([]);
-    expect(endsWithOpenSteps("op-w")).toBe(false);
+    expect(endsWithOpenSteps({ id: "op-w" })).toBe(false);
     mockOpenTasks.mockReturnValue([{ id: "1", description: "x" }]);
     mockSession.mockReturnValue(undefined);
-    expect(endsWithOpenSteps("op-w")).toBe(false);
+    expect(endsWithOpenSteps({ id: "op-w" })).toBe(false);
   });
 });
 
@@ -373,8 +418,8 @@ describe("instruction-ledger gating (user forbade workspace writes)", () => {
 
   it("endsWithOpenSteps is false when workspace-write is forbidden, true without", () => {
     forbidWrites("op-warn-forbid");
-    expect(endsWithOpenSteps("op-warn-forbid")).toBe(false);
-    expect(endsWithOpenSteps("op-warn-free")).toBe(true);
+    expect(endsWithOpenSteps({ id: "op-warn-forbid" })).toBe(false);
+    expect(endsWithOpenSteps({ id: "op-warn-free" })).toBe(true);
   });
 });
 

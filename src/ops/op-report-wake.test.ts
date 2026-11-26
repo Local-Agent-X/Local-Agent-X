@@ -80,9 +80,27 @@ describe("op report wake", () => {
     expect(handled).toHaveLength(0);
   });
 
-  it("asks for a short report and no new work", () => {
+  it("asks for a short report and no work the user never asked for", () => {
     const text = opReportMessage([{ opId: "o", task: "t", status: "partial" }]);
     expect(text).toContain("stopped before finishing");
-    expect(text).toContain("Do not start new work");
+    expect(text).toContain("Do not start work the user never asked for");
+  });
+
+  // The chat that handed "install it and test it" to a worker reported that
+  // the worker stopped early, then stopped itself (Label Check Sol, 2026-11-26).
+  it("tells the chat to carry on with a request the ended work was part of", () => {
+    const text = opReportMessage([{ opId: "o", task: "t", status: "completed" }]);
+    expect(text).toContain("Reporting is not finishing");
+    expect(text).not.toContain("still has these steps open");
+  });
+
+  it("names the plan steps still open, each on one clipped line", () => {
+    const text = opReportMessage(
+      [{ opId: "o", task: "t", status: "completed" }],
+      ["Obtain and install\nthe current preview APK", "x".repeat(300)],
+    );
+    expect(text).toContain("  1. Obtain and install the current preview APK");
+    expect(text).toContain(`  2. ${"x".repeat(100)}\n`);
+    expect(text.indexOf("still has these steps open")).toBeLessThan(text.indexOf("Reporting is not finishing"));
   });
 });

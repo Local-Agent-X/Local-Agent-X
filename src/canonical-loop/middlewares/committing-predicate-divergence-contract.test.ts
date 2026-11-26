@@ -49,7 +49,8 @@ const { openTasksMock, refuteClaimMock } = vi.hoisted(() => ({
 }));
 // Both mocks are COMPLETE (every runtime export of the module), so they stay
 // safe for the whole dispatch import graph, not just the middleware under test.
-vi.mock("../../tools/task-tools.js", () => ({
+vi.mock("../../tools/task-tools.js", async (original) => ({
+  ...(await original<typeof import("../../tools/task-tools.js")>()),
   taskTools: [],
   getOpenTasksForSession: openTasksMock,
 }));

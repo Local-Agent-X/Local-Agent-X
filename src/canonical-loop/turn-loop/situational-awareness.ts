@@ -43,6 +43,7 @@ import { opRequestText } from "../store.js";
 import { getSessionForOp } from "../../ops/session-bridge.js";
 import { recentActions, type LedgerAction } from "../../ops/action-ledger.js";
 import { getOpenTasksForSession } from "../../tools/task-tools.js";
+import { stepListSessionOf } from "../middlewares/open-steps.js";
 import { resolveOpModel } from "../op-model.js";
 import { classifyModel, type ModelTier } from "../../model-tiers.js";
 import { createLogger } from "../../logger.js";
@@ -118,8 +119,11 @@ export async function buildSituationalAwareness(op: Op, turnIdx: number): Promis
   // Durable plan: the open task list lives in tasks.json, so re-injecting it
   // every turn keeps the agent's place even after compaction summarizes the
   // turns where the plan was written. Shown on every turn, not just the restate
-  // ones — losing your place is most likely deep in a long task.
-  const openTasks = sessionId ? getOpenTasksForSession(sessionId) : [];
+  // ones — losing your place is most likely deep in a long task. The list is
+  // the one this op's own tools write (a delegated worker's, not the
+  // submitting chat's: open-steps.ts stepListSessionOf).
+  const stepListSession = stepListSessionOf(op);
+  const openTasks = stepListSession ? getOpenTasksForSession(stepListSession) : [];
   // The files the request names that are still not on disk, checked when the
   // goal is restated: by then the agent is deep enough in that a named output
   // never written is the thing most worth knowing (request-named-paths.ts).

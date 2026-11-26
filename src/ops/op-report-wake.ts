@@ -17,6 +17,7 @@
 import { isUserChat, sendAppMessageWhenIdle } from "../chat-ws/app-message.js";
 import { hasPendingNotification } from "./pending-notifications.js";
 import { scheduleIdleNudge } from "./idle-nudge.js";
+import { getOpenTasksForSession } from "../tools/task-tools.js";
 import { createLogger } from "../logger.js";
 
 const logger = createLogger("ops.op-report-wake");
@@ -41,14 +42,36 @@ function oneLine(text: string, max: number): string {
   return text.replace(/\s+/g, " ").trim().slice(0, max);
 }
 
-/** The message the chat receives. The op's result reaches the agent through
- *  the queue its prompt drains, so this names the ops and says what to do. */
-export function opReportMessage(ops: Ended[]): string {
+/** Enough of a step to recognise it; the chat has the full list on screen. */
+const STEP_MAX_CHARS = 100;
+
+/**
+ * The message the chat receives. The op's result reaches the agent through
+ * the queue its prompt drains, so this names the ops and says what to do.
+ *
+ * The report is not the end of the turn when the work was a step of something
+ * the user asked for. Told only "report, and start no new work", a chat that
+ * had handed "install it and test it" to a worker reported that the worker
+ * stopped early and then stopped too, with the install one command away and
+ * its own plan still showing the test step open (Label Check Sol, 2026-11-26).
+ * `openSteps` are that plan's open steps: named here because they are the
+ * request the ended work belonged to.
+ */
+export function opReportMessage(ops: Ended[], openSteps: readonly string[] = []): string {
+  const owed = openSteps.length === 0 ? [] : [
+    "Your plan for the user's request still has these steps open:",
+    ...openSteps.map((s, i) => `  ${i + 1}. ${oneLine(s, STEP_MAX_CHARS)}`),
+  ];
   return [
     "(Sent by the app, not typed by the user: background work you started has ended.)",
     ...ops.map((o) => `- "${oneLine(o.task, 120)}" ${STATUS_WORDS[o.status]}.`),
-    "Tell the user now, in a line or two each: whether it worked, and if not, what went wrong and what you suggest. " +
-      "If you already told them in your last reply, say so in one line. Do not start new work they did not ask for.",
+    "Tell the user now, in a line or two each: whether it worked, and if not, what went wrong. " +
+      "If you already told them in your last reply, say so in one line.",
+    ...owed,
+    "Then, if what the user asked for is still unfinished and its next step is one you can take yourself, take it now, " +
+      "in this same turn, and keep going until it is done or something needs the user. Reporting is not finishing. " +
+      "Stop at the report only when the request is complete, or the next step needs the user: then say exactly what you need from them. " +
+      "Do not start work the user never asked for.",
   ].join("\n");
 }
 
@@ -64,7 +87,7 @@ function flush(sessionId: string): void {
     const ops = current.ops.filter((o) => hasPendingNotification(sessionId, o.opId));
     if (ops.length === 0) return null;
     logger.info(`reporting ${ops.length} ended op(s) to ${sessionId}`);
-    return opReportMessage(ops);
+    return opReportMessage(ops, getOpenTasksForSession(sessionId).map((t) => t.description));
   });
 }
 

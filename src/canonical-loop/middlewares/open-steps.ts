@@ -20,7 +20,8 @@
 import type { CanonicalMiddleware, CanonicalLoopContext, CanonicalMiddlewareResult } from "./types.js";
 import type { Op } from "../../ops/types.js";
 import { getSessionForOp } from "../../ops/session-bridge.js";
-import { getOpenTasksForSession } from "../../tools/task-tools.js";
+import { delegatedRuntimeSessionOf } from "../delegated-session-lineage.js";
+import { getOpenTasksForSession, markOpenSetPushed, openSetAlreadyPushed } from "../../tools/task-tools.js";
 import { readOpTurns } from "../store.js";
 import { getMiddlewareState } from "./state.js";
 import { hasCapability } from "../../tool-registry.js";
@@ -30,15 +31,16 @@ import { opSourceCheckedSinceLastEdit } from "./verify-gate.js";
 import { classifyModel } from "../../model-tiers.js";
 
 /**
- * Last open-task set we already nudged about, per session. Keyed by SESSION
- * (not op) on purpose: a task left open by mistake should be pushed at most once
- * per distinct open set across the whole conversation, not re-nagged on every
- * user message. When the model makes progress the set shrinks → new signature →
- * we push again; when it stops on the *same* set, we've already said our piece,
- * so we let the turn end rather than spin to the per-op turn cap. One short
- * string per session — negligible, not worth wiring an op-terminal sweep.
+ * The session whose step list an op works: the one its own task tools write
+ * under. That is the session the op is bound to, except for a delegated
+ * worker, whose tools run under its own session while the op stays bound to
+ * the chat that submitted it. Read through the binding alone, a worker was
+ * shown the chat's plan as its own and told to finish the chat's "Test the
+ * Galaxy workflows", a step it had no entry for (2026-11-26).
  */
-const lastNudgedSignature = new Map<string, string>();
+export function stepListSessionOf(op: Pick<Op, "id" | "runtimeDescriptor">): string | undefined {
+  return delegatedRuntimeSessionOf(op) ?? getSessionForOp(op.id);
+}
 
 export const openStepsMiddleware: CanonicalMiddleware = {
   name: "open-steps",
@@ -61,7 +63,7 @@ export const openStepsMiddleware: CanonicalMiddleware = {
     if (ctx.turnIdx !== 0) return { kind: "continue" };
     if (ctx.op.lane !== "agent" && ctx.op.lane !== "background") return { kind: "continue" };
     if (!ctx.toolNames.has("task_create")) return { kind: "continue" };
-    const sessionId = getSessionForOp(ctx.op.id);
+    const sessionId = stepListSessionOf(ctx.op);
     if (!sessionId || getOpenTasksForSession(sessionId).length > 0) return { kind: "continue" };
     return {
       kind: "nudge",
@@ -80,7 +82,7 @@ export const openStepsMiddleware: CanonicalMiddleware = {
     if (ctx.toolCalls.length > 0) return { kind: "continue" };
     if (ctx.assistantContent.trim().length === 0) return { kind: "continue" };
 
-    const sessionId = getSessionForOp(ctx.op.id);
+    const sessionId = stepListSessionOf(ctx.op);
     if (!sessionId) return { kind: "continue" };
 
     const open = getOpenTasksForSession(sessionId);
@@ -100,8 +102,7 @@ export const openStepsMiddleware: CanonicalMiddleware = {
     // Read from ctx, never readOpTurns: host.ts already walked these rows.
     if (ctx.substantiveCommittingToolsThisOp.size === 0) return { kind: "continue" };
 
-    const signature = open.map((t) => t.id).sort().join(",");
-    if (lastNudgedSignature.get(sessionId) === signature) return { kind: "continue" };
+    if (openSetAlreadyPushed(sessionId, open)) return { kind: "continue" };
     // Push again only after NEW work. A model that answered the last push by
     // ticking a step off and asking the user the same question again has
     // made bookkeeping, not progress, and is waiting on them; pushing it
@@ -110,7 +111,7 @@ export const openStepsMiddleware: CanonicalMiddleware = {
     const pushed = getMiddlewareState<{ atWorkCount: number }>(ctx.op.id, "open-steps-pushed", () => ({ atWorkCount: -1 }));
     if (pushed.atWorkCount === ctx.substantiveCommitCountThisOp) return { kind: "continue" };
     pushed.atWorkCount = ctx.substantiveCommitCountThisOp;
-    lastNudgedSignature.set(sessionId, signature);
+    markOpenSetPushed(sessionId, open);
 
     const list = open.map((t, i) => `${i + 1}. ${t.description}`).join("\n");
     const message =
@@ -215,16 +216,16 @@ function opTouchedTaskLedger(opId: string): boolean {
  * that never touched the list ("thanks!") is not a partial of steps an earlier
  * op left open.
  */
-export function endsWithOpenSteps(opId: string): boolean {
+export function endsWithOpenSteps(op: Pick<Op, "id" | "runtimeDescriptor">): boolean {
   // Called from decide-outcome, not through the phase — so the `when` predicate
   // above doesn't cover it. Same suppression: an op the user forbade from doing
   // the work is not a partial for leaving it undone.
-  if (opForbidsCapability(opId, "workspace-write")) return false;
-  const sessionId = getSessionForOp(opId);
+  if (opForbidsCapability(op.id, "workspace-write")) return false;
+  const sessionId = stepListSessionOf(op);
   if (!sessionId) return false;
   if (planModeForbidsCapability(sessionId, "workspace-write")) return false;
   if (getOpenTasksForSession(sessionId).length === 0) return false;
-  return opTouchedTaskLedger(opId);
+  return opTouchedTaskLedger(op.id);
 }
 
 /**
@@ -252,7 +253,7 @@ export function earnedDoneNudge(op: Op): string | null {
   if (capabilityForbiddenForOp(op, "workspace-write")) return null;
   if (op.lane === "interactive") return null;
   if (earnedDoneFired.has(op.id)) return null;
-  const sessionId = getSessionForOp(op.id);
+  const sessionId = stepListSessionOf(op);
   if (!sessionId) return null;
   const open = getOpenTasksForSession(sessionId);
   if (open.length === 0) return null;

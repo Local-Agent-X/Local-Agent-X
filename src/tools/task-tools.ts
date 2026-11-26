@@ -293,16 +293,53 @@ const updatePlan: ToolDefinition = {
   },
 };
 
-/** wrap_up's close of the step list: the step in progress is done. A pending step stays
- *  open, so the open-steps gate still sees declared work left undone. Returns the list. */
-export function finishCurrentStep(sessionId: string): PlanStep[] {
+/**
+ * wrap_up's close of the step list: the step in progress is done. A pending step stays
+ * open, so the open-steps gate still sees declared work left undone. A step during
+ * which background work was started that is still running (`liveWorkStartedAt`, each
+ * an ISO time) is that work: it stays in progress until the work ends. Returns the list.
+ */
+export function finishCurrentStep(sessionId: string, liveWorkStartedAt: readonly string[] = []): PlanStep[] {
   if (!sessionId) return [];
   const tasks = loadTasks();
-  const current = tasks.filter((t) => t.session_id === sessionId && t.status === "in_progress");
-  if (current.length === 0) return planOf(tasks, sessionId);
-  for (const t of current) { t.status = "completed"; t.updated_at = now(); }
+  const done = tasks.filter((t) => t.session_id === sessionId && t.status === "in_progress"
+    && !liveWorkStartedAt.some((startedAt) => startedAt >= t.updated_at));
+  if (done.length === 0) return planOf(tasks, sessionId);
+  for (const t of done) { t.status = "completed"; t.updated_at = now(); }
   saveTasks(tasks);
   return planOf(tasks, sessionId);
+}
+
+/**
+ * The steps still waiting to be started on a list the session has worked since
+ * `since` (an ISO time: when the request being closed began). Empty when the
+ * list was not touched in that time: steps an earlier request left open are
+ * not this one's to finish (the same rule the open-steps gate keeps). The step
+ * in progress is not counted: closing the turn is what finishes it.
+ */
+export function pendingStepsWorkedSince(sessionId: string, since: string): { id: string; description: string }[] {
+  if (!sessionId || !since) return [];
+  const mine = loadTasks().filter((t) => t.session_id === sessionId);
+  if (!mine.some((t) => t.updated_at >= since)) return [];
+  return mine.filter((t) => t.status === "pending").map((t) => ({ id: t.id, description: t.description }));
+}
+
+/**
+ * The open steps the agent was last told about, per session: one push per
+ * distinct set, whoever makes it (the open-steps gate on a turn that ends in
+ * prose, wrap_up on a turn that ends by calling it). Progress shrinks the set,
+ * which earns another push; stopping on the same set has been answered, so the
+ * turn ends instead of spinning. One short string per session.
+ */
+const pushedOpenSet = new Map<string, string>();
+const openSetKey = (open: readonly { id: string }[]): string => open.map((t) => t.id).sort().join(",");
+
+export function openSetAlreadyPushed(sessionId: string, open: readonly { id: string }[]): boolean {
+  return pushedOpenSet.get(sessionId) === openSetKey(open);
+}
+
+export function markOpenSetPushed(sessionId: string, open: readonly { id: string }[]): void {
+  pushedOpenSet.set(sessionId, openSetKey(open));
 }
 
 export const taskTools: ToolDefinition[] = [taskCreate, taskUpdate, taskList, taskGet, updatePlan];

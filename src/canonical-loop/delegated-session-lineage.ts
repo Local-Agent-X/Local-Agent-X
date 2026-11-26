@@ -70,9 +70,18 @@ function inheritSessionProject(childSessionId: string, parentSessionId: string):
  * container's registry recorded — not by the chat that submitted the op.
  */
 export function executionSessionOf(op: Op): string {
+  return delegatedRuntimeSessionOf(op) ?? op.canonical?.sessionId ?? op.id;
+}
+
+/**
+ * A delegated worker's own session, the one its tools are stamped with (the
+ * op id): undefined for any op that is not one. What a worker's tools keep
+ * per session (its step list) is read under THIS id, not under the chat that
+ * submitted it.
+ */
+export function delegatedRuntimeSessionOf(op: Pick<Op, "runtimeDescriptor">): string | undefined {
   const descriptor = op.runtimeDescriptor as { kind?: string; sessionId?: string } | undefined;
-  if (descriptor?.kind === "delegated-op" && descriptor.sessionId) return descriptor.sessionId;
-  return op.canonical?.sessionId ?? op.id;
+  return descriptor?.kind === "delegated-op" && descriptor.sessionId ? descriptor.sessionId : undefined;
 }
 
 /**

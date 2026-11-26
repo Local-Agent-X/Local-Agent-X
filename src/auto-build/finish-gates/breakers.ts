@@ -67,6 +67,14 @@ export const PERSONAS: readonly Persona[] = [
       "two jobs, a file or function past the project's size rules, error handling that swallows failures, " +
       "unhandled promise rejections, names that mislead.",
   },
+  {
+    name: "design",
+    hunt: "Hold the look and feel to spec/design.md (and the constitution's words on it), from the code that draws " +
+      "the screens: colors, type and spacing that are hard-coded where the design names tokens, a screen that " +
+      "ignores the layout or the states the design gives (empty, loading, error), text a person cannot read or " +
+      "tap at phone size, a control with no label. You read code, you do not see the screen: say so when a " +
+      "finding needs eyes on a device to confirm. No spec/design.md: report that as the one finding.",
+  },
 ];
 
 const MAX_FINDINGS = 12;

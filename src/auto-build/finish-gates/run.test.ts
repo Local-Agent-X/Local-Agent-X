@@ -94,6 +94,15 @@ describe("runFinishGates", () => {
     expect(h.buildFixes).toHaveBeenCalledTimes(2);
     expect(out.openItems).toContain("hostile [high]: d");
     expect(h.said.some((m) => m.includes("fix rounds used up"))).toBe(true);
+    // From the second round on only critical and high are fixed: a break-it
+    // agent finds new medium things every time it looks, and fixing them all
+    // each round cost one build more than building it did (2026-11-25). The
+    // medium finding is listed for the owner, not fixed and not lost.
+    const second = h.buildFixes.mock.calls[1][0].plan.chunks.map((c: { title: string; slice: string }) => `${c.title} ${c.slice}`).join("\n");
+    expect(second).toContain("[high] b");
+    expect(second).not.toContain("[medium] c");
+    expect(second).not.toContain("unlucky findings");
+    expect(out.openItems).toContain("unlucky [medium]: c");
   });
 
   it("with a lead, the lead decides whether to fix again once the two rounds are spent, up to four", async () => {

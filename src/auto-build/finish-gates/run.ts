@@ -93,6 +93,16 @@ export async function judgeWholeSuite(opts: LoopOptions, say: (m: string) => voi
 
 const scenarioNumber = (r: ScoreReport): string => (basename(r.scenarioPath).match(/^(\d+)/) || [])[1] ?? "";
 const fixable = (b: BreakerResult) => b.findings.filter((f) => f.severity !== "low");
+/**
+ * What a round's fix chunks take on. The first round fixes everything that is
+ * not low. Later rounds fix critical and high only: a break-it agent sent at
+ * an app again finds new medium things every time, and fixing all of them
+ * every round is how one build spent far more on finish fixes than on
+ * building, with the count going from 17 to 19 (label-check-sol,
+ * 2026-11-25). What a later round finds below high is listed for the owner.
+ */
+const fixedIn = (round: number) => (f: BreakerResult["findings"][number]): boolean =>
+  round <= 1 ? f.severity !== "low" : f.severity === "critical" || f.severity === "high";
 
 /** Fix chunks for what a round found: one for the failing scenarios, one per
  *  angle with a critical, high or medium finding. */
@@ -111,7 +121,7 @@ export function fixChunksFor(round: number, suite: SuiteJudging, breakers: Break
       "Each scenario named passes when judged, and the scenarios that passed still pass.");
   }
   for (const b of breakers) {
-    const found = fixable(b);
+    const found = b.findings.filter(fixedIn(round));
     if (found.length === 0) continue;
     next(`${b.persona} findings`,
       `A break-it agent (${b.persona}) found these in the finished app:\n${found.map((f) => `- [${f.severity}] ${f.text}`).join("\n")}`,
@@ -135,7 +145,8 @@ function openItemsOf(suite: SuiteJudging, breakers: BreakerResult[], lows = true
 
 /** The same scenarios still failing, and no fewer fixable findings: the fixes
  *  did not move it. Read on the scenarios, whose names compare; findings are
- *  free text, so a round that only found new ones is left to the round cap. */
+ *  free text, so a round that only found new ones is left to the round cap,
+ *  and to fixedIn, which stops later rounds from fixing anything below high. */
 function noProgress(prev: { suite: SuiteJudging; breakers: BreakerResult[] } | null, suite: SuiteJudging, breakers: BreakerResult[]): boolean {
   if (!prev || suite.failed.length === 0) return false;
   const names = (s: SuiteJudging) => s.failed.map((r) => basename(r.scenarioPath)).sort().join(",");
@@ -191,8 +202,10 @@ async function judgeRound(
     if (fixes.length > 0) say(`finish checks: stopping with open items (${r.round > fixRounds ? "fix rounds used up" : "the last round's fixes did not move them"})`);
     return { kind: "stop" };
   }
-  // Low findings are listed, never fixed; the rest go to fix chunks.
-  r.open.push(...openItemsOf({ failed: [], unjudged: [] }, found.map((b) => ({ ...b, findings: b.findings.filter((f) => f.severity === "low") }))));
+  // What this round does not fix is listed, never lost: low findings always,
+  // and from the second round on everything below high.
+  const fixed = fixedIn(r.round);
+  r.open.push(...openItemsOf({ failed: [], unjudged: [] }, found.map((b) => ({ ...b, findings: b.findings.filter((f) => !fixed(f)) }))));
   return { kind: "fix", fixes, fixRounds, seen: { suite, breakers: found } };
 }
 

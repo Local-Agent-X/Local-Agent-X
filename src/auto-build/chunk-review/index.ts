@@ -17,6 +17,7 @@ import { chunkReportOf, renderChunkReport, type ChunkReport } from "./chunk-repo
 import type { ChunkReportCall } from "../agents/agent-report.js";
 import { gateAdditiveDiff, gatePhaseGate, type GateFinding, type ReviewAction } from "./gates.js";
 import { gateDoneWhen } from "./gate-done-when.js";
+import { gateConflictMarkers } from "./conflict-markers.js";
 import type { JudgmentHook } from "./judgment-hook.js";
 import { runBuildExecGate, type BuildExecRunner } from "./gate-build-exec.js";
 import { BUILD_CHECK, chunkJudgingFinding, owedFromJudging, refusedCommandCheck, type ChunkJudge, type ChunkJudgeInput, type ChunkJudging, type OwedOnChunk } from "./chunk-verdict.js";
@@ -186,6 +187,11 @@ async function reviewChunkWork(
   buildExec: BuildExecRunner,
 ): Promise<ChunkReviewOutcome> {
   if (base.action !== "proceed") return stoppedBeforeJudge(input, base);
+
+  // Before anything is built: a file left with conflict markers is not a
+  // build failure to puzzle over, it is a merge nobody finished.
+  const markers = gateConflictMarkers(input.projectDir, base.report.changed);
+  if (markers) return stoppedBeforeJudge(input, { action: markers.action, reasoning: markers.reasoning, findings: [...base.findings, markers], report: base.report });
 
   // Execution-grounded gate first: a build/test that actually FAILS, or an
   // artifact that loads blank, halts regardless of the LLM hook's opinion.

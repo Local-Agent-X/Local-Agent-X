@@ -9,6 +9,7 @@ import { git } from "../../agency/worktree-core.js";
 import { HARNESS_COMMIT_IDENTITY } from "../../git-safety.js";
 import { recordLanded, recordSetAside, setAsideRecordFor } from "../failure-recovery.js";
 import { carryOverBrief, carryOverFor, landedUnrecorded, mergeCarriedWork } from "./carry-over.js";
+import { gateConflictMarkers } from "../chunk-review/conflict-markers.js";
 
 const dirs: string[] = [];
 afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
@@ -73,7 +74,12 @@ describe("carry-over of a set-aside chunk", () => {
     expect(brief).toContain("fix the class of input");
   });
 
-  it("builds fresh, with the findings, when the kept work no longer merges", () => {
+  // This used to abort the merge and build the chunk from nothing ("you start
+  // fresh"). A chunk set aside BECAUSE it conflicted with a sibling was then
+  // built a second time on every resume: three reviewed chunks of one build in
+  // a day (label-check-grok, 2026-11-26). The work is in the tree, with the
+  // conflict for the worker to combine.
+  it("when the kept work conflicts with what landed since, both sides are left in the tree for the worker to combine", () => {
     const dir = project();
     writeFileSync(join(dir, "match.ts"), "export const rule = 'rewritten on main';\n");
     commit(dir, "main moved");
@@ -81,7 +87,35 @@ describe("carry-over of a set-aside chunk", () => {
     const wt = freshWorktree(dir, "c3-8");
     const merge = mergeCarriedWork(wt, "autobuild/c3-6");
     expect(merge.merged).toBe(false);
-    expect(readFileSync(join(wt, "match.ts"), "utf8")).toContain("rewritten on main");
+    expect(merge.conflicted).toEqual(["match.ts"]);
+    const text = readFileSync(join(wt, "match.ts"), "utf8");
+    expect(text).toContain("rewritten on main");
+    expect(text).toContain("ratio spacing fix");
+    expect(git(["status", "--porcelain"], wt)).toBe("UU match.ts");
+    // Until the worker has combined them, the review sends the chunk back.
+    expect(gateConflictMarkers(wt, ["match.ts"])).toMatchObject({ gate: "worktree-merge", action: "push_back" });
+
+    const brief = carryOverBrief(carryOverFor(dir, 3)!, false, merge.conflicted);
+    expect(brief).toContain("stopped on conflicts in: match.ts");
+    expect(brief).toContain("Do not abort the merge");
+    expect(brief).not.toContain("you start fresh");
+    expect(brief).toContain("`4 : 1`");
+
+    // Combined and committed, the merge is concluded and the markers are gone.
+    writeFileSync(join(wt, "match.ts"), "export const rule = 'rewritten on main'; // ratio spacing fix\n");
+    expect(gateConflictMarkers(wt, ["match.ts"])).toBeNull();
+    commit(wt, "chunk 3: combined");
+    expect(git(["status", "--porcelain"], wt)).toBe("");
+    expect(git(["log", "-1", "--format=%P"], wt).split(" ")).toHaveLength(2);
+  });
+
+  it("a kept branch that fails to merge for another reason is dropped and the chunk starts fresh", () => {
+    const dir = project();
+    recordSetAside(dir, 3, "autobuild/c3-6", "The skeptic broke it: `4 : 1`.");
+    const wt = freshWorktree(dir, "c3-9");
+    const merge = mergeCarriedWork(wt, "autobuild/no-such-branch");
+    expect(merge.merged).toBe(false);
+    expect(merge.conflicted).toBeUndefined();
     expect(git(["status", "--porcelain"], wt)).toBe("");
     expect(carryOverBrief(carryOverFor(dir, 3)!, false)).toContain("you start fresh");
   });

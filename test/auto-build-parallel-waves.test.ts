@@ -30,6 +30,8 @@ const shared = vi.hoisted(() => ({
   chunkActions: new Map<number, string>(),
   /** worktree name → mergeWorktree result (defaults to a clean merge). */
   mergeResults: new Map<string, { merged: boolean; files: number; error?: string }>(),
+  /** worktree name → results for its next mergeWorktree calls, first in first out. */
+  mergeQueue: new Map<string, Array<{ merged: boolean; files: number; error?: string; conflicted?: string[] }>>(),
   /** The options each mergeWorktree call was given. */
   mergeOptions: [] as Array<{ resolveConflicts?: unknown } | undefined>,
   /** worktree names for which createNamedWorktree returns null (cap reached). */
@@ -85,7 +87,7 @@ vi.mock("../src/agency/worktree.js", () => ({
   mergeWorktree: vi.fn((name: string, options?: { resolveConflicts?: unknown }) => {
     shared.calls.push(`merge:${name}`);
     shared.mergeOptions.push(options);
-    return shared.mergeResults.get(name) ?? { merged: true, files: 1 };
+    return shared.mergeQueue.get(name)?.shift() ?? shared.mergeResults.get(name) ?? { merged: true, files: 1 };
   }),
   cleanupWorktree: vi.fn((name: string) => {
     shared.calls.push(`cleanup:${name}`);
@@ -115,6 +117,7 @@ vi.mock("../src/auto-build/loop/run-chunk-once.js", () => ({
 const { runBuildLoop } = await import("../src/auto-build/loop.js");
 const { parsePlanText } = await import("../src/auto-build/plan-parser.js");
 const { chunkReportOf } = await import("../src/auto-build/chunk-review/chunk-report.js");
+const { setAsideRecordFor } = await import("../src/auto-build/failure-recovery.js");
 
 function makeOutcome(action: string, changed: string[] = []) {
   // "pause": an accepted chunk that closes a phase with a verification gate.
@@ -171,6 +174,7 @@ beforeEach(() => {
   shared.calls.length = 0;
   shared.chunkActions.clear();
   shared.mergeResults.clear();
+  shared.mergeQueue.clear();
   shared.nullNames.clear();
   shared.branchOverrides.clear();
   shared.workerIndices.length = 0;
@@ -267,6 +271,42 @@ describe("parallel path — rule 2: a merge conflict is never resolved here; the
     expect(shared.mergeOptions.every((o) => typeof o?.resolveConflicts === "function")).toBe(true);
   });
 
+});
+
+// label-check-grok, 2026-11-26: chunk 7 passed its review and then conflicted
+// with chunk 6 in a screen both had edited. It was set aside, the build ended
+// "as far as it could", and a resume rebuilt it from nothing. The third time
+// that day. A conflict in real code now goes back to a worker in the same run.
+describe("parallel path: a chunk that conflicts with what landed goes back to a worker at once", () => {
+  const conflict = { merged: false, files: 2, error: "Merge failed: conflicts in src/alpha.ts", conflicted: ["src/alpha.ts"] };
+
+  it("is built again from its kept branch, merged, and landed: nothing is set aside and the build completes", async () => {
+    shared.mergeQueue.set("autobuild-c1", [conflict]);
+    writeFileSync(join(projectDir, "spec", "plan.md"), TWO_WAVES);
+
+    const result = await run(TWO_WAVES, 2);
+
+    expect(result.status).toBe("complete");
+    expect(shared.calls.filter((c) => c === "build-start:1")).toHaveLength(2);
+    expect(shared.calls.filter((c) => c === "merge:autobuild-c1")).toHaveLength(2);
+    // Its sibling landed first; then it; then the chunk that depends on it.
+    expect(result.events.filter((e) => e.type === "chunk-landed").map((e) => e.chunkNumber)).toEqual([2, 1, 3]);
+    expect(result.events.filter((e) => e.type === "chunk-set-aside")).toEqual([]);
+    expect(result.events.some((e) => e.chunkNumber === 1 && e.message.includes("conflicts with what landed before it (src/alpha.ts)"))).toBe(true);
+    expect(setAsideRecordFor(projectDir, 1)).toBeFalsy();
+  });
+
+  it("once only: a second conflict sets it aside, with its branch, and the build says so", async () => {
+    shared.mergeQueue.set("autobuild-c1", [conflict, conflict]);
+    writeFileSync(join(projectDir, "spec", "plan.md"), TWO_WAVES);
+
+    const result = await run(TWO_WAVES, 2);
+
+    expect(result.status).toBe("halted");
+    expect(shared.calls.filter((c) => c === "build-start:1")).toHaveLength(2);
+    expect(result.haltReason).toContain("Set aside — chunk 1 (Alpha): It passed its review, but its work could not be merged with what landed before it.");
+    expect(result.haltReason).toContain("Landed this run: chunk 2.");
+  });
 });
 
 // One chunk failing its review used to stop the build before anything in its

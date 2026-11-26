@@ -413,11 +413,44 @@ describe("concurrent-worktree cap", () => {
       const res = mergeWorktree(ids[2]);
       expect(res.merged).toBe(false);
       expect(res.error).toMatch(/uncommitted changes to files this merge changes \(agent\.txt\)/);
+      // Refused for another reason than a conflict: no conflicted files are named.
+      expect(res.conflicted).toBeUndefined();
       expect(readFileSync(join(repo, "agent.txt"), "utf-8")).toBe("user edited a tracked file");
     } finally {
       process.chdir(prevCwd);
       for (const id of ids) { try { cleanupWorktree(id); } catch { /* best-effort */ } activeWorktrees.delete(id); }
       Object.assign(process.env, env);
+      rmSync(repo, { recursive: true, force: true });
+    }
+  });
+
+  // The error used to be the bare git command line, with no word on why it
+  // failed or where (label-check-grok chunk 7, 2026-11-26). A caller that can
+  // have the conflict reconciled needs to know it was one, and in which files.
+  it("a merge that stops on a conflict says so, names the files, and leaves the base and the branch as they were", () => {
+    const { repo, g } = initRepo();
+    const prevCwd = process.cwd();
+    const id = `conflict-${Date.now().toString(36)}`;
+    try {
+      process.chdir(repo);
+      writeFileSync(join(repo, "screen.txt"), "title\n");
+      g(["add", "-A"]); g(["commit", "-qm", "screen"]);
+      const wt = createWorktree(id);
+      writeFileSync(join(wt!.path, "screen.txt"), "title, with the chunk's badge\n");
+      commitInWorktree(id, "chunk work");
+      writeFileSync(join(repo, "screen.txt"), "title, with a sibling's disclaimer\n");
+      g(["add", "-A"]); g(["commit", "-qm", "sibling"]);
+
+      const res = mergeWorktree(id);
+      expect(res.merged).toBe(false);
+      expect(res.conflicted).toEqual(["screen.txt"]);
+      expect(res.error).toContain("conflicts in screen.txt");
+      expect(readFileSync(join(repo, "screen.txt"), "utf-8")).toBe("title, with a sibling's disclaimer\n");
+      expect(g(["log", "-1", "--format=%s", wt!.branch])).toBe("chunk work");
+    } finally {
+      process.chdir(prevCwd);
+      try { cleanupWorktree(id); } catch { /* best-effort */ }
+      activeWorktrees.delete(id);
       rmSync(repo, { recursive: true, force: true });
     }
   });

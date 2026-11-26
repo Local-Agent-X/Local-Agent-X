@@ -24,7 +24,8 @@ import { git, commitWithFallbackIdentity } from "./worktree-core.js";
  *  aborted. */
 export type MergeConflictResolver = (worktreePath: string, conflicted: string[]) => boolean;
 
-function conflictedFiles(worktreePath: string): string[] {
+/** The files a merge in progress in `worktreePath` could not combine. */
+export function conflictedFiles(worktreePath: string): string[] {
   return git(["diff", "--name-only", "--diff-filter=U"], worktreePath).split("\n").map((f) => f.trim()).filter(Boolean);
 }
 

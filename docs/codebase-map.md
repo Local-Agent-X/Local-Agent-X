@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2197 non-test source files · 59 oversized · 275 nearing the size cap.
+**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2198 non-test source files · 59 oversized · 276 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -65,7 +65,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/agent-loop/` | 12 | 1 | S |  |
 | `src/app-scaffold/` | 12 | 7 | M |  |
 | `src/ari-kernel/` | 12 | 12 | M |  |
-| `src/auto-build/` | 12 | 85 | XL | 1 |
+| `src/auto-build/` | 12 | 86 | XL | 1 |
 | `src/integrations/` | 12 | 15 | M |  |
 | `src/whatsapp-bridge/` | 11 | 8 | M | 1 |
 | `src/agent-guards/` | 10 | 13 | L |  |
@@ -342,6 +342,7 @@ job. Comments are free: never cut them to fit.
 - `src/tool-execution/side-effect-journal.ts` — 310+ code lines (cap 350)
 - `src/tools/spreadsheet-tools.ts` — 310+ code lines (cap 350)
 - `src/whatsapp-bridge/index.ts` — 310+ code lines (cap 350)
+- `src/auto-build/loop/parallel-waves.ts` — 300+ code lines (cap 350)
 - `src/autopilot/loop.ts` — 300+ code lines (cap 350)
 - `src/canonical-loop/process-execution-backend.ts` — 300+ code lines (cap 350)
 - `src/canonical-loop/process-relay-journal.ts` — 300+ code lines (cap 350)
@@ -349,9 +350,9 @@ job. Comments are free: never cut them to fit.
 - `src/local-runtimes/certification-runner.ts` — 300+ code lines (cap 350)
 - `src/memory/index-core.ts` — 300+ code lines (cap 350)
 - `src/voice/voice-session/turn-runner.ts` — 300+ code lines (cap 350)
+- `src/agency/worktree-lifecycle.ts` — 290+ code lines (cap 350)
 - `src/api-docs.ts` — 290+ code lines (cap 350)
 - `src/auth/storage.ts` — 290+ code lines (cap 350)
-- `src/auto-build/loop/parallel-waves.ts` — 290+ code lines (cap 350)
 - `src/auto-build/orchestrator/manager.ts` — 290+ code lines (cap 350)
 - `src/browser/in-app-resolve-scripts.ts` — 290+ code lines (cap 350)
 - `src/canonical-loop/turn-commit-store.ts` — 290+ code lines (cap 350)
@@ -364,7 +365,6 @@ job. Comments are free: never cut them to fit.
 - `src/protocols/skills-install.ts` — 290+ code lines (cap 350)
 - `src/telegram-bridge/bridge.ts` — 290+ code lines (cap 350)
 - `src/tool-execution/sensitive-read-taint.ts` — 290+ code lines (cap 350)
-- `src/agency/worktree-lifecycle.ts` — 280+ code lines (cap 350)
 - `src/browser/runtime.ts` — 280+ code lines (cap 350)
 - `src/canonical-loop/scheduler.ts` — 280+ code lines (cap 350)
 - `src/context/system-prompt-builder.ts` — 280+ code lines (cap 350)
@@ -423,6 +423,7 @@ job. Comments are free: never cut them to fit.
 - `src/agent-request/prepare-request/build-system-prompt.ts#buildSystemPromptWithTelemetry` — 80+ own code lines (cap 100)
 - `src/agents/tools.ts#createAgentTools` — 80+ own code lines (cap 100)
 - `src/auth/index.ts#createServer:callback` — 80+ own code lines (cap 100)
+- `src/auto-build/loop/parallel-waves.ts#runBatch` — 80+ own code lines (cap 100)
 - `src/auto-build/loop/run-chunk-once.ts#runChunkOnce` — 80+ own code lines (cap 100)
 - `src/broker-transport/vendor/chat.ts#parseEvent` — 80+ own code lines (cap 100)
 - `src/canonical-loop/adapters/canonical-to-transport.ts#canonicalToTransport` — 80+ own code lines (cap 100)
@@ -524,11 +525,11 @@ job. Comments are free: never cut them to fit.
 - `src/agents/invoke.ts#invokeDefinition` — 60+ own code lines (cap 100)
 - `src/auth/anthropic-login.ts#completeAnthropicCliOAuth` — 60+ own code lines (cap 100)
 - `src/auto-build/chunk-review/gate-build-exec.ts#runBuildExecGate` — 60+ own code lines (cap 100)
+- `src/auto-build/chunk-review/index.ts#reviewChunkWork` — 60+ own code lines (cap 100)
 - `src/auto-build/loop-phase-gate.ts#runAdvisorDrivenRecovery` — 60+ own code lines (cap 100)
 - `src/auto-build/loop/handle-push-back.ts#handlePushBack` — 60+ own code lines (cap 100)
 - `src/auto-build/loop/lead-rounds.ts#planLeadRound` — 60+ own code lines (cap 100)
 - `src/auto-build/loop/merged-regate.ts#reGateMergedTree` — 60+ own code lines (cap 100)
-- `src/auto-build/loop/parallel-waves.ts#runBatch` — 60+ own code lines (cap 100)
 - `src/auto-build/loop/run.ts#runBuildLoop` — 60+ own code lines (cap 100)
 - `src/auto-build/orchestrator/resume.ts#computeResumeWindow` — 60+ own code lines (cap 100)
 - `src/autopilot/round-agent.ts#runAutopilotRound` — 60+ own code lines (cap 100)

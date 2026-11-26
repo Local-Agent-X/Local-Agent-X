@@ -37,6 +37,8 @@ export interface GateFinding {
     | "chunk-scenarios"
     | "chunk-unjudged"
     | "build-refused"
+    /** The chunk's work conflicts with what landed, or still holds conflict markers. */
+    | "worktree-merge"
     | "skeptic";
   action: ReviewAction;
   /** One-sentence reasoning. Surfaced to the user on halts. */

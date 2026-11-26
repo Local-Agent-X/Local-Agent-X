@@ -231,9 +231,11 @@ export function chunkWorktreeRunId(projectDir: string, chunk: number): string {
 
 /** Build one batch (≤ maxConcurrentChunks disjoint chunks) concurrently, then
  *  merge them back SERIALLY. Enforces rules 1 + 2 (rule 3 re-gate is per-wave). */
-async function runBatch(ctx: RunContext, batch: ParsedChunk[], chunksCommittedIn: number): Promise<StepResult> {
+async function runBatch(ctx: RunContext, batch: ParsedChunk[], chunksCommittedIn: number, reconciling = false): Promise<StepResult> {
   const { opts, totalChunks, emit, events, outcomes } = ctx;
   let chunksCommitted = chunksCommittedIn;
+  // Chunks of this batch whose reviewed work conflicted with a sibling's.
+  const conflicted: ParsedChunk[] = [];
 
   // 1. Create one worktree per chunk. A null return (cap reached, or git refused) does
   //    NOT crash: that chunk falls back to a SERIAL build on base after this
@@ -308,6 +310,17 @@ async function runBatch(ctx: RunContext, batch: ParsedChunk[], chunksCommittedIn
         // Rule 2: never resolved here. mergeWorktree aborted the merge in the
         // chunk's worktree and kept its branch; base is as it was, so the
         // chunks after this one still merge.
+        if (res.conflicted?.length && !reconciling) {
+          // Kept on record with its branch, which is where the worker that
+          // combines the two picks the work up from (carry-over.ts).
+          recordSetAside(opts.projectDir, d.chunk.number, d.branch, `Its work conflicts with what landed before it: ${res.conflicted.join(", ")}.`);
+          emit({
+            type: "review-result", chunkNumber: d.chunk.number, totalChunks,
+            message: `Chunk ${d.chunk.number} passed its review, but its work conflicts with what landed before it (${res.conflicted.join(", ")}). A worker now combines the two, and it is reviewed and merged again.`,
+          });
+          conflicted.push(d.chunk);
+          continue;
+        }
         setAsideUnmerged(ctx, d, res.error);
         continue;
       }
@@ -333,6 +346,21 @@ async function runBatch(ctx: RunContext, batch: ParsedChunk[], chunksCommittedIn
     // entry) so the slot cap isn't leaked, then rethrow to the crash handler.
     for (const d of dispatched) cleanupWorktreeSafe(d.name);
     throw err;
+  }
+
+  // 4b. A chunk that passed its review and then conflicted with what a
+  //     sibling landed is built again at once from its kept branch, one at a
+  //     time: a fresh worktree off the new base, the branch merged in with the
+  //     conflicts left for the worker to combine (carry-over.ts), then the same
+  //     review and merge as any chunk. It used to be set aside for the owner to
+  //     resume, which rebuilt it from nothing: three reviewed chunks of one
+  //     build in a day (label-check-grok, 2026-11-26). Once only: if it
+  //     conflicts again, or its fix rounds run out, it is set aside.
+  for (const chunk of conflicted) {
+    if (opts.signal?.aborted) break;
+    const step = await runBatch(ctx, [chunk], chunksCommitted, true);
+    if (step.kind === "halt") return step;
+    chunksCommitted = step.chunksCommitted;
   }
 
   // 5. Worktree-cap fallbacks: build them SERIALLY on base now that the batch's

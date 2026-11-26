@@ -12,6 +12,7 @@
  * builds fresh, still with the findings.
  */
 import { git, gitWritingCommit } from "../../agency/worktree-core.js";
+import { conflictedFiles } from "../../agency/worktree-merge-conflicts.js";
 import { setAsideRecordFor } from "../failure-recovery.js";
 import type { ParsedChunk } from "../plan-parser.js";
 import type { EmitFn } from "./types.js";
@@ -39,14 +40,25 @@ function branchExists(branch: string, cwd: string): boolean {
 
 /**
  * Merge the kept branch into the chunk's fresh worktree. Returns whether the
- * work came along; a conflicting merge is aborted and the tree is left as cut.
+ * work came along.
+ *
+ * A merge that stops on conflicts is LEFT in the tree, with the conflicted
+ * files named: the work is there, and the chunk's worker combines the two
+ * sides (carryOverBrief). It used to be aborted and the chunk rebuilt from
+ * nothing, so a chunk set aside because it conflicted with a sibling was
+ * built a second time on every resume: three reviewed chunks of one build
+ * went that way in a day (label-check-grok, 2026-11-26). A merge that failed
+ * for any other reason is aborted and the tree is left as cut.
  */
-export function mergeCarriedWork(worktreePath: string, branch: string): { merged: boolean; detail: string } {
+export function mergeCarriedWork(worktreePath: string, branch: string): { merged: boolean; detail: string; conflicted?: string[] } {
   const merge = ["merge", "--no-edit", "--no-ff", branch];
   try {
     gitWritingCommit(merge, worktreePath);
     return { merged: true, detail: `merged '${branch}'` };
   } catch (e) {
+    let conflicted: string[] = [];
+    try { conflicted = conflictedFiles(worktreePath); } catch { /* no merge in progress */ }
+    if (conflicted.length) return { merged: false, conflicted, detail: `conflicts in ${conflicted.join(", ")}` };
     try { git(["merge", "--abort"], worktreePath); } catch { /* nothing in progress: the merge never started */ }
     return { merged: false, detail: (e as Error).message.replace(/\s+/g, " ").slice(0, 300) };
   }
@@ -81,15 +93,26 @@ export function landedUnrecorded(projectDir: string, chunks: readonly number[], 
   return found;
 }
 
+/** What a worker is told when its chunk's earlier work is in the tree with conflicts. */
+export function conflictBrief(branch: string, conflicted: readonly string[]): string {
+  return `Its work (branch '${branch}') is in your tree, merged with what has landed since, and the merge stopped on conflicts in: ${conflicted.join(", ")}. ` +
+    "Both sides are real work: the project's side is what other chunks landed, the branch's side is this chunk's. " +
+    "In each of those files, combine the two so that both still do what they were for, delete every conflict marker line, " +
+    "and run the project's checks. Do not abort the merge, do not pick one side wholesale, and do not start over. " +
+    "You do not need to commit: the build commits your tree when the chunk passes.";
+}
+
 /** The opening of the worker's brief for a chunk an earlier run set aside. */
-export function carryOverBrief(carry: CarryOver, merged: boolean): string {
+export function carryOverBrief(carry: CarryOver, merged: boolean, conflicted: readonly string[] = []): string {
   const before = carry.round != null
     ? `The build was paused while this chunk was building (fix round ${carry.round}), and now goes on.`
     : `An earlier run built this chunk and it was set aside.`;
   const work = carry.branch
     ? merged
       ? `${before} Its work (branch '${carry.branch}') is already merged into your tree: keep what holds and fix what was found, do not start over.`
-      : `${before} Its work on branch '${carry.branch}' no longer merges with the current base, so you start fresh: read it (git show ${carry.branch}) and reuse what still applies.`
+      : conflicted.length
+        ? `${before} ${conflictBrief(carry.branch, conflicted)}`
+        : `${before} Its work on branch '${carry.branch}' no longer merges with the current base, so you start fresh: read it (git show ${carry.branch}) and reuse what still applies.`
     : before;
   const found = carry.findings.length
     ? `\n\nWhat the reviews found in earlier runs. Fix each, and fix the class of input each one belongs to, not only the example given: the reviewer will try its siblings. Keep every one of them fixed:\n` +
@@ -140,8 +163,10 @@ export function pickUpSetAsideWork(a: { projectDir: string; tree: string; chunk:
     message: merge
       ? merge.merged
         ? `Chunk ${chunk.number} picks up the last run's work from '${carry.branch}', with ${carry.findings.length} earlier finding(s) to keep fixed.`
-        : `Chunk ${chunk.number}'s last work on '${carry.branch}' no longer merges (${merge.detail}); building fresh with ${carry.findings.length} earlier finding(s).`
+        : merge.conflicted?.length
+          ? `Chunk ${chunk.number}'s last work on '${carry.branch}' conflicts with what has landed since (${merge.conflicted.join(", ")}); its worker combines the two.`
+          : `Chunk ${chunk.number}'s last work on '${carry.branch}' no longer merges (${merge.detail}); building fresh with ${carry.findings.length} earlier finding(s).`
       : `Chunk ${chunk.number} builds with ${carry.findings.length} finding(s) from earlier runs.`,
   });
-  return { brief: carryOverBrief(carry, merge?.merged ?? false), findings: carry.findings, ...(carry.round != null ? { round: carry.round } : {}) };
+  return { brief: carryOverBrief(carry, merge?.merged ?? false, merge?.conflicted), findings: carry.findings, ...(carry.round != null ? { round: carry.round } : {}) };
 }

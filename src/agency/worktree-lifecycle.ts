@@ -11,7 +11,7 @@ import { activeWorktrees, git, gitWritingCommit, commitWithFallbackIdentity, log
 import { hasVanishedWorktreeAt, linkDirectoryInto, listCheckedOutBranches, unlinkSharedJunctions } from "./worktree-junctions.js";
 import { claimRecoveredWorktree, forgetWorktreeOwnership, ownsWorktree, registerWorktreeOwnership } from "./worktree-recovery.js";
 import { findMergeOverlaps, noteMerged, overlapSummary, type MergeOverlap } from "./merge-overlap.js";
-import { concludeResolvedMerge, type MergeConflictResolver } from "./worktree-merge-conflicts.js";
+import { concludeResolvedMerge, conflictedFiles, type MergeConflictResolver } from "./worktree-merge-conflicts.js";
 import { removeWorktreeFolder } from "./worktree-leftovers.js";
 
 /** Cut `branch` at HEAD and check it out at `wtPath`. When the checkout is
@@ -84,7 +84,7 @@ export function createWorktree(agentId: string, repoDir?: string): { path: strin
 export function mergeWorktree(
   agentId: string,
   opts: { resolveConflicts?: MergeConflictResolver } = {},
-): { merged: boolean; files: number; error?: string; overlaps?: MergeOverlap[]; overlapNote?: string } {
+): { merged: boolean; files: number; error?: string; overlaps?: MergeOverlap[]; overlapNote?: string; conflicted?: string[] } {
   const wt = activeWorktrees.get(agentId);
   if (!wt) return { merged: false, files: 0, error: "No worktree found" };
   if (!ownsWorktree(wt)) {
@@ -172,12 +172,16 @@ export function mergeWorktree(
       // in progress (e.g. the parent tree was dirty), `git merge --abort`
       // errors benignly — swallow it and surface the REAL reason instead of
       // letting the abort's error mask it (the "MERGE_HEAD missing" confusion).
+      // Read before the abort clears them: the caller that can reconcile a
+      // conflict needs to know it was one, and in which files.
+      let conflicted: string[] = [];
+      try { conflicted = conflictedFiles(wt.path); } catch { /* no merge in progress */ }
       try { git("merge --abort", wt.path); } catch { /* nothing in progress to abort */ }
-      const reason = (mergeErr as Error).message;
+      const reason = conflicted.length ? `conflicts in ${conflicted.join(", ")}` : (mergeErr as Error).message;
       logger.warn(`[worktree] Merge failed for ${agentId} — changes preserved on branch ${wt.branch}: ${reason}`);
       // Don't mark as merged — cleanupWorktree will preserve the branch
       cleanupWorktree(agentId);
-      return { merged: false, files: fileCount, error: `Merge failed (changes preserved on branch ${wt.branch}): ${reason}` };
+      return { merged: false, files: fileCount, error: `Merge failed (changes preserved on branch ${wt.branch}): ${reason}`, ...(conflicted.length ? { conflicted } : {}) };
     }
   } catch (e) {
     logger.warn(`[worktree] Merge failed: ${(e as Error).message}`);

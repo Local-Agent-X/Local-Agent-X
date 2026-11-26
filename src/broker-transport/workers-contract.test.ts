@@ -70,7 +70,7 @@ describe("workers contract with the phone", () => {
     expect(parseWorkersSnapshot(JSON.parse(JSON.stringify(frame)))).toEqual({
       type: "workers_snapshot",
       workers: [
-        { opId: "op_orch_1", sessionId: "s1", task: "Build orchestrator: C:/apps/label-check", status: "running", opType: "orchestrator", startedAt: "2026-11-23T00:00:00.000Z" },
+        { opId: "op_orch_1", sessionId: "s1", task: "Build label-check", status: "running", opType: "orchestrator", startedAt: "2026-11-23T00:00:00.000Z" },
       ],
     });
   });

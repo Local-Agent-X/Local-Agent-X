@@ -62,7 +62,11 @@ vi.mock("../src/auto-build/agents/chunk-runner.js", async () => {
         copyFileSync(at(o.projectDir, ".lax-preflight-echo.txt"), at(o.projectDir, ".lax-preflight-bash.txt"));
         return done(CLEAN(".lax-preflight-echo.txt").replace("NOTE: done.", `NOTE: preflight token ${token}`));
       }
-      const chunk = Number((o.title ?? "").match(/Chunk (\d+)\//)?.[1] ?? o.task.match(/Chunk (\d+)/)?.[1]);
+      // A finish fix is titled by its place in its round (run-chunk-once.ts chunkLabel):
+      // "Finish fix 1: hostile findings (1 of 4)" is chunk 1000 + 1 * 10 + 1.
+      const fix = (o.title ?? "").match(/^Finish fix (\d+): .* \((\d+) of \d+\)/);
+      const chunk = fix ? 1000 + Number(fix[1]) * 10 + Number(fix[2])
+        : Number((o.title ?? "").match(/Chunk (\d+)\//)?.[1] ?? o.task.match(/Chunk (\d+)/)?.[1]);
       const attempt = (script.attempts.get(chunk) ?? 0) + 1;
       script.attempts.set(chunk, attempt);
       script.tasks.push({ chunk, task: o.task });

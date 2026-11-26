@@ -9,8 +9,8 @@
 //
 // The panel's tab belongs to each chat: switching chats turns the open panel
 // to the tab that chat last had, and a chat that never chose one gets its
-// mode's default — Preview for a code session, the panel's own default
-// (Agents) for a chat — so a chat never shows another chat's app. Whether the
+// mode's default — Preview for a code session, Overview for a chat — so a
+// chat never shows another chat's app. Whether the
 // panel is open belongs to each chat the same way: a chat where the panel was
 // never opened shows it closed, so a page browsed in one chat never leaves an
 // empty Browser pane standing in the next. Remembered per machine
@@ -22,7 +22,7 @@
   const TAB_BY_CHAT_KEY = 'lax_side_tab_by_chat';
   const OPEN_BY_CHAT_KEY = 'lax_side_open_by_chat';
   const TABS_REMEMBERED = 200;
-  const DEFAULT_TAB = { code: 'preview', chat: 'agents' };
+  const DEFAULT_TAB = { code: 'preview', chat: 'overview' };
   let view = 'preview';
   let shownApp = null;
   let refreshTimer = null;

@@ -67,7 +67,7 @@ function click(el: Element): void {
 }
 
 const row = (sessionId: string, kind: string, displayName: string, opId: string | null) =>
-  ({ sessionId, opId, kind, displayName, task: "", state: "active", folder: "repo", areas: [], clashesWith: [] });
+  ({ sessionId, opId, kind, displayName, task: "", state: "active", folder: "repo", areas: [], clashesWith: ["another agent"] });
 const strip = (name: string) => [...document.querySelectorAll("#work-claims .work-claim-row")].find((el) => el.textContent?.includes(name))!;
 const panelOpen = () => document.getElementById("agent-feeds")!.classList.contains("active");
 

@@ -1632,10 +1632,32 @@ body.agent-feeds-resizing .agent-feeds{transition:none!important}
 .agent-feeds-autoopen.on{border-color:var(--accent);color:var(--accent);background:color-mix(in srgb, var(--accent) 8%, transparent)}
 .agent-feeds-autoopen.off{border-color:var(--border);color:var(--muted);background:transparent;text-decoration:line-through;opacity:.6}
 .agent-feeds-autoopen:hover{filter:brightness(1.2)}
-.side-panel-tab{background:none;border:none;cursor:pointer;font-family:var(--mono);font-size:.72rem;color:var(--muted);letter-spacing:2px;text-transform:uppercase;padding:2px 0;display:inline-flex;align-items:center;gap:6px;border-bottom:2px solid transparent;transition:color .15s,border-color .15s}
-.side-panel-tab:hover{color:var(--text)}
-.side-panel-tab.active{color:var(--accent);border-bottom-color:var(--accent)}
+/* The tab strip is icons, each named on hover (title + aria-label in app.html). */
+.side-panel-tab{background:none;border:none;cursor:pointer;color:var(--muted);padding:5px;border-radius:6px;display:inline-flex;align-items:center;position:relative;transition:color .15s,background .15s}
+.side-panel-tab:hover{color:var(--text);background:color-mix(in srgb, var(--text) 6%, transparent)}
+.side-panel-tab.active{color:var(--accent);background:color-mix(in srgb, var(--accent) 12%, transparent)}
+.side-tab-icon{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+.side-panel-tab .agent-count{position:absolute;top:-3px;right:-5px;font-size:.55rem;padding:0 4px;min-width:14px;line-height:14px}
 .side-panel-tab:not(.active) .agent-count{background:var(--surface-2);color:var(--muted)}
+.agent-feeds-header{gap:4px}
+/* Overview (side-overview.js) */
+.overview{overflow:auto;flex:1;min-height:0}
+.overview-section{padding:12px 16px;border-bottom:1px solid var(--border)}
+.overview-label{font-size:.68rem;color:var(--muted);margin-bottom:6px}
+.overview-now-title{font-size:.85rem;color:var(--text);font-weight:500}
+.overview-muted{font-size:.72rem;color:var(--muted);margin-top:2px}
+.overview-row{display:flex;align-items:center;gap:8px;font-size:.78rem;color:var(--text);padding:2px 0}
+.overview-row .overview-muted{margin-left:auto;margin-top:0}
+.overview-bar{height:4px;border-radius:2px;background:var(--surface-2);overflow:hidden;margin-top:6px}
+.overview-bar i{display:block;height:100%;background:var(--accent)}
+.overview-dot{width:6px;height:6px;border-radius:50%;background:var(--accent);flex-shrink:0}
+.overview-bg-title{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+[data-overview-job]{cursor:pointer}
+.overview-doc{display:block;width:100%;text-align:left;background:none;border:none;color:var(--text);font-family:var(--mono);font-size:.72rem;padding:4px 6px;border-radius:4px;cursor:pointer}
+.overview-doc:hover{background:color-mix(in srgb, var(--accent) 8%, transparent);color:var(--accent)}
+.overview-doc-head{display:flex;align-items:center;gap:8px;padding:10px 16px;border-bottom:1px solid var(--border);position:sticky;top:0;background:var(--bg)}
+.overview-doc-path{font-family:var(--mono);font-size:.7rem;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.overview-doc-body{padding:12px 16px;font-size:.82rem;line-height:1.6;color:var(--text)}
 .side-tab-body{flex:1;min-height:0;display:flex;flex-direction:column}
 .artifacts-filters{display:flex;flex-wrap:wrap;gap:6px;padding:8px;border-bottom:1px solid var(--border);flex-shrink:0}
 .artifact-filter{background:none;border:1px solid var(--border);color:var(--muted);cursor:pointer;font-family:var(--mono);font-size:.62rem;padding:3px 8px;border-radius:10px;transition:all .15s;line-height:1.4}
@@ -1984,6 +2006,8 @@ body.chat-tiles-on:not(.browser-workspace) #chat-tile-head,.chat-tile .chat-tile
 .job-table-head{color:var(--muted);font-size:.6rem;text-transform:uppercase;letter-spacing:.5px}
 .job-table-head span:first-child{grid-column:1 / span 2}
 .job-row{border-radius:4px;cursor:pointer;color:var(--text)}
+.job-row-areas{display:flex;flex-wrap:wrap;gap:4px;padding:0 4px 4px 24px}
+.job-row-areas code{font-family:var(--mono);font-size:.6rem;padding:1px 6px;border-radius:4px;background:var(--surface-2);color:var(--muted)}
 .job-row:hover{background:var(--hover)}
 .job-row.open{background:color-mix(in srgb, var(--accent) 6%, transparent)}
 .job-row-mark{display:inline-flex;align-items:center;justify-content:center;width:14px}

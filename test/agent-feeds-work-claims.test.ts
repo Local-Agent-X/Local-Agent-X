@@ -152,7 +152,9 @@ describe("the chat window's pill of the other agents in its project", () => {
 });
 
 describe("who is working on what", () => {
-  it("shows each agent's task and areas, and flags the ones in the same files", async () => {
+  // The strip listed every agent, a second row for each worker the list below
+  // already shows (2026-11-25): now only the ones in the same files.
+  it("lists only the agents in the same files, with their task and areas", async () => {
     rows = [
       { sessionId: "chat-a", kind: "chat", displayName: "Voice chat", task: "rework the pipeline", state: "active", folder: "local-agent-x", areas: ["src/voice/"], clashesWith: ["Fix STT"] },
       { sessionId: "agent-1", kind: "worker", displayName: "Fix STT", task: "swap whisper", state: "idle", folder: "wt-ab12", areas: ["src/voice/stt.ts"], clashesWith: ["Voice chat"] },
@@ -162,14 +164,19 @@ describe("who is working on what", () => {
     const host = document.getElementById("work-claims")!;
     expect(host.style.display).toBe("");
     const drawn = [...host.querySelectorAll(".work-claim-row")];
-    expect(drawn).toHaveLength(3);
+    expect(drawn).toHaveLength(2);
     expect(drawn[0].className).toContain("active");
     expect(drawn[0].textContent).toContain("Voice chat");
     expect(drawn[0].textContent).toContain("chat · working now · local-agent-x");
     expect(drawn[0].querySelector(".work-claim-areas code")?.textContent).toBe("src/voice/");
     expect(drawn[0].querySelector(".work-claim-clash")?.textContent).toContain("same files as Fix STT");
-    expect(drawn[2].querySelector(".work-claim-clash")).toBeNull();
-    expect(drawn[2].innerHTML).not.toContain("<b>");
+    expect(host.textContent).not.toContain("Docs");
+  });
+
+  it("is hidden when nobody shares files", async () => {
+    rows = [{ sessionId: "chat-c", kind: "chat", displayName: "Docs <b>", task: "", state: "idle", folder: "local-agent-x", areas: [], clashesWith: [] }];
+    await load().refreshWorkClaims();
+    expect(document.getElementById("work-claims")!.style.display).toBe("none");
   });
 
   it("hides the strip when nobody is working", async () => {
@@ -190,7 +197,7 @@ describe("who is working on what", () => {
 // on screen: itself, the agents it started and the others in its project.
 describe("the strip follows the panel's This chat / All chats switch", () => {
   const scopeJs = readFileSync(join(here, "../public/js/chat-agent-feeds-scope.js"), "utf8");
-  const row = (sessionId: string, displayName: string) => ({ sessionId, kind: "chat", displayName, task: "", state: "active", folder: "repo", areas: [], clashesWith: [] });
+  const row = (sessionId: string, displayName: string) => ({ sessionId, kind: "chat", displayName, task: "", state: "active", folder: "repo", areas: [], clashesWith: ["someone"] });
   function loadScoped(): Claims & { setAgentFeedsScope: (s: string) => void } {
     return new Function("esc", "apiFetch", "setInterval", `var agentFeedsData = {}; ${scopeJs}
 ${claimsJs}

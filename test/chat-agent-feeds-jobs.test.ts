@@ -119,11 +119,21 @@ describe("renderBackgroundTasks", () => {
   });
 
   it("a phase table is open while a worker is live and folded once all are done, unless the user chose", () => {
-    const live = { root: root(), a: worker("a") };
+    const live = { root: root(), a: worker("a"), b: worker("b") };
     expect((toEl(api.renderBackgroundTasks(live, {}, NOW)).querySelector(".job-table") as HTMLElement).style.display).toBe("block");
-    const done = { root: root(), a: worker("a", { status: "completed" }) };
+    const done = { root: root(), a: worker("a", { status: "completed" }), b: worker("b", { status: "completed" }) };
     expect((toEl(api.renderBackgroundTasks(done, {}, NOW)).querySelector(".job-table") as HTMLElement).style.display).toBe("none");
     expect((toEl(api.renderBackgroundTasks(done, { phaseOpen: { "root/": true } }, NOW)).querySelector(".job-table") as HTMLElement).style.display).toBe("block");
+  });
+
+  // One worker read as three bars: the job, a "Workers 0/1" head and a column
+  // header (label-check-sol, 2026-11-25). Now it is one row, with its files.
+  it("a job with one worker shows it as a row, with the files it is changing and no table", () => {
+    const el = toEl(api.renderBackgroundTasks({ root: root({ name: "Worker: Build label-check-sol (chunks 1-5)" }), a: worker("a") }, { areas: { a: ["src/scan/", "tests/scan/adapter.test.ts"] } }, NOW));
+    expect(el.querySelector(".job-table")).toBeNull();
+    expect(el.querySelector(".job-phase-head")).toBeNull();
+    expect(el.querySelector(".job-head-name")!.textContent).toBe("Build label-check-sol (chunks 1-5)");
+    expect([...el.querySelectorAll(".job-row-areas code")].map((c) => c.textContent)).toEqual(["src/scan/", "tests/scan/adapter.test.ts"]);
   });
 
   it("a root with no workers is a single task card", () => {

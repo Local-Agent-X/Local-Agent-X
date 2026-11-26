@@ -1,6 +1,6 @@
 // Where a chat's terminal opens: the folder on the chat's record, asked for by
 // the Terminal tab when it starts that chat's shell.
-import { mkdirSync, mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -37,6 +37,27 @@ describe("GET /api/session-folder", () => {
     expect((await ask("/api/session-folder?session=chat-unknown", {}))?.body).toEqual({ folder: null });
     expect((await ask("/api/session-folder?session=..%2F..%2Fetc", {}))?.status).toBe(400);
     expect((await ask("/api/session-folder", {}))?.status).toBe(400);
+  });
+
+  // A build wrote its spec and plan and the owner could not read them (2026-11-25).
+  it("lists the project's markdown at its root, spec/ and twins/, and reads one of them", async () => {
+    const dir = join(workspace, "apps", "docs-app");
+    mkdirSync(join(dir, "spec"), { recursive: true });
+    mkdirSync(join(dir, "src"), { recursive: true });
+    writeFileSync(join(dir, "README.md"), "# Docs app");
+    writeFileSync(join(dir, "spec", "plan.md"), "## Chunk 1");
+    writeFileSync(join(dir, "src", "notes.md"), "not a project document");
+    const sessions = { "chat-d": { folder: "apps/docs-app" } };
+    const listed = await ask("/api/session-folder/docs?session=chat-d", sessions);
+    expect((listed?.body.docs as Array<{ path: string }>).map((d) => d.path).sort()).toEqual(["README.md", "spec/plan.md"]);
+    expect((await ask("/api/session-folder/doc?session=chat-d&path=spec%2Fplan.md", sessions))?.body).toEqual({ path: "spec/plan.md", text: "## Chunk 1" });
+  });
+
+  it("reads only markdown inside the chat's own project", async () => {
+    const sessions = { "chat-d": { folder: "apps/docs-app" } };
+    expect((await ask("/api/session-folder/doc?session=chat-d&path=..%2F..%2Fsecret.md", sessions))?.status).toBe(404);
+    expect((await ask("/api/session-folder/doc?session=chat-d&path=package.json", sessions))?.status).toBe(404);
+    expect((await ask("/api/session-folder/docs?session=chat-none", {}))?.body).toEqual({ folder: null, docs: [] });
   });
 
   it("leaves every other path to the next handler", async () => {

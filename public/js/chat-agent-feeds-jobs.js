@@ -206,18 +206,33 @@ function jobDetailHtml(rec, expanded) {
 
 // Pure: one worker row. The row id mirrors the card id so the sync tick can
 // pair them: agent-row-<id> ↔ agent-card-<id>.
-function renderJobRow(rec, now, expanded) {
+// Pure: the files a live worker is changing (its work claims,
+// chat-agent-feeds-claims.js), under its row. The AGENTS tab listed them in a
+// separate "Working on" strip above, a second row for the same worker (2026-11-25).
+function jobRowAreasHtml(areas) {
+  if (!areas || !areas.length) return '';
+  return '<div class="job-row-areas">' + areas.slice(0, 6).map(function(a) { return '<code>' + esc(a) + '</code>'; }).join('') + '</div>';
+}
+
+function renderJobRow(rec, now, expanded, areas) {
   var safeId = esc(rec.id);
   var o = jobOutcome(rec.status);
   var stalled = jobStallMs(rec, now) > 0;
   return '<div class="job-row ' + o.cls + (stalled ? ' stalled' : '') + (expanded ? ' open' : '') + '" id="agent-row-' + safeId + '" data-agent-row="' + safeId + '">' +
       jobRowMark(rec) +
-      '<span class="job-row-name" title="' + esc(rec.currentTask || rec.name || rec.id) + '">' + esc(rec.name || rec.id) + '</span>' +
+      '<span class="job-row-name" title="' + esc(rec.currentTask || rec.name || rec.id) + '">' + esc(jobDisplayName(rec)) + '</span>' +
       '<span class="job-row-model">' + esc(rec.model || '') + '</span>' +
       '<span class="job-row-tokens">' + (Number(rec.totalTokens) > 0 ? formatTokens(rec.totalTokens) : '') + '</span>' +
       '<span class="job-row-time">' + jobRowTimeLabel(rec, now) + '</span>' +
     '</div>' +
+    (isTerminalStatus(rec.status) ? '' : jobRowAreasHtml(areas)) +
     jobDetailHtml(rec, expanded);
+}
+
+// A background op's card is named "Worker: <task>" (chat-ws-handler-bg-ops.js);
+// in the list, where every row is one, the prefix says nothing.
+function jobDisplayName(rec) {
+  return String(rec.name || rec.id || '').replace(/^Worker: /, '');
 }
 
 function renderPhaseDots(ids, dataMap) {
@@ -232,15 +247,18 @@ function renderPhaseDots(ids, dataMap) {
 
 // Pure: one phase: head (title, done/total, dots, chevron) + its table.
 // Open while any row is live, or when the user opened it (openMap).
-function renderJobPhase(jobId, phase, dataMap, now, expandedMap, openMap) {
+function renderJobPhase(jobId, phase, dataMap, now, expandedMap, openMap, areasMap) {
   var totals = jobTotals(phase.ids, dataMap);
   var key = jobId + '/' + phase.title;
   var open = openMap && key in openMap ? !!openMap[key] : totals.done < totals.agents;
   var rows = '';
   for (var i = 0; i < phase.ids.length; i++) {
     var rec = dataMap[phase.ids[i]];
-    if (rec) rows += renderJobRow(rec, now, !!(expandedMap && expandedMap[rec.id]));
+    if (rec) rows += renderJobRow(rec, now, !!(expandedMap && expandedMap[rec.id]), areasMap && areasMap[rec.id]);
   }
+  // One worker is one row: a "Workers 0/1" head and a column header over it
+  // read as three bars for one agent (2026-11-25).
+  if (phase.ids.length === 1 && !phase.title) return '<div class="job-phase single open" data-phase-key="' + esc(key) + '">' + rows + '</div>';
   return '<div class="job-phase' + (open ? ' open' : '') + '" data-phase-key="' + esc(key) + '">' +
       '<div class="job-phase-head" data-phase-toggle="' + esc(key) + '">' +
         '<span class="job-phase-title">' + esc(phase.title || 'Workers') + '</span>' +
@@ -261,14 +279,14 @@ function jobTaskLine(rec) {
 }
 
 // Pure: a job block — a root op (or a fan-out) with the workers under it.
-function renderJob(node, dataMap, now, expandedMap, openMap) {
+function renderJob(node, dataMap, now, expandedMap, openMap, areasMap) {
   var root = node.kind === 'card' ? dataMap[node.id] : null;
   var ids = jobCollectIds(node);
   var totals = jobTotals(ids, dataMap);
   var finished = jobIsFinished(node, dataMap);
   var jobId = root ? root.id : ('fanout-' + node.parentOpId);
   var icon = root ? iconForType(root.type || root.role) : '&#9673;';
-  var name = root ? (root.name || root.id) : 'Fan-out';
+  var name = root ? jobDisplayName(root) : 'Fan-out';
   var startedAt = root ? root.startedAt : 0;
   var endedAt = root ? root.endedAt : 0;
   if (!root) {
@@ -296,7 +314,7 @@ function renderJob(node, dataMap, now, expandedMap, openMap) {
     '</div>' +
     (root ? jobDetailHtml(root, rootExpanded) : '');
   var phases = jobPhases(node, dataMap);
-  for (var p = 0; p < phases.length; p++) html += renderJobPhase(jobId, phases[p], dataMap, now, expandedMap, openMap);
+  for (var p = 0; p < phases.length; p++) html += renderJobPhase(jobId, phases[p], dataMap, now, expandedMap, openMap, areasMap);
   return html + '</div>';
 }
 
@@ -364,7 +382,7 @@ function renderBackgroundTasks(dataMap, state, now) {
     lastChat = chat;
     running += (node.kind === 'card' && !(node.children || []).length)
       ? renderTaskCard(dataMap[node.id], now, !!(st.expanded && st.expanded[node.id]))
-      : renderJob(node, dataMap, now, st.expanded, st.phaseOpen);
+      : renderJob(node, dataMap, now, st.expanded, st.phaseOpen, st.areas);
   }
   var ambientIds = Object.keys(parts.ambient), ambientLive = '';
   for (var a = 0; a < ambientIds.length; a++) {

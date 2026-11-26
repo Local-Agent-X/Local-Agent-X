@@ -335,6 +335,7 @@ function _renderAgentFeedsList() {
   var list = document.getElementById('agent-feeds-list');
   if (!list) return;
   jobsViewState.chatLabel = typeof agentFeedChatLabel === 'function' ? agentFeedChatLabel : null;
+  jobsViewState.areas = typeof workClaimAreasByOp === 'function' ? workClaimAreasByOp() : null;
   list.innerHTML = renderBackgroundTasks(_shownAgentFeeds(), jobsViewState, Date.now());
   // Animate only jobs and tasks that are new this rebuild.
   var fresh = Array.from(list.querySelectorAll('.job, .job-task')).filter(function(el) {

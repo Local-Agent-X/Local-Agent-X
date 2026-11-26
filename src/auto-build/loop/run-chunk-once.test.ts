@@ -57,3 +57,14 @@ describe("chunkProcessFailureOutcome", () => {
     expect(o.reasoning).toContain("process exited without producing a report");
   });
 });
+
+// The AGENTS panel read "Chunk 1011/4" for a finish-check fix (2026-11-25).
+describe("chunkLabel", () => {
+  it("names a plan chunk by its number and a finish fix by its place in the round", async () => {
+    const { chunkLabel } = await import("./run-chunk-once.js");
+    const chunk = (number: number, title: string, phase: string) => ({ number, title, phase }) as never;
+    const plan = { chunks: [chunk(1011, "Finish fix 1: hostile findings", "Finish"), chunk(1012, "Finish fix 1: unlucky findings", "Finish")] } as never;
+    expect(chunkLabel({ chunk: chunk(4, "Native scan", "Phase B"), plan, totalChunks: 5 })).toBe("Chunk 4/5: Native scan");
+    expect(chunkLabel({ chunk: chunk(1012, "Finish fix 1: unlucky findings", "Finish"), plan, totalChunks: 2 })).toBe("Finish fix 1: unlucky findings (2 of 2)");
+  });
+});

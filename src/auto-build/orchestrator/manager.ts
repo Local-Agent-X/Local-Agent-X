@@ -22,6 +22,7 @@
  */
 
 import { randomBytes } from "node:crypto";
+import { basename } from "node:path";
 import type { ParsedPlan } from "../plan-parser.js";
 import { runBuildLoop, type LoopEvent, type LoopResult } from "../loop.js";
 import type { JudgmentHook } from "../chunk-review/judgment-hook.js";
@@ -187,7 +188,9 @@ export function startOrchestration(opts: StartOrchestrationOptions): StartOrches
   broadcastToSession(opts.sessionId, {
     type: "bg_op_started",
     opId,
-    task: `Build orchestrator: ${opts.projectDir} (chunks ${opts.startingChunk}-${opts.maxChunks ? opts.startingChunk + opts.maxChunks - 1 : opts.plan.chunks.length})`,
+    // The project's name, not its path: the card read "Worker: Build orchestrator:
+    // C:\Users\...\label-check-sol" (2026-11-25). workers-snapshot.ts names it the same way.
+    task: `Build ${basename(opts.projectDir)} (chunks ${opts.startingChunk}-${opts.maxChunks ? opts.startingChunk + opts.maxChunks - 1 : opts.plan.chunks.length})`,
     provider: "build-orchestrator",
     // Mark this card as the SUPERVISOR / tree root — the agents panel keys a
     // distinct hub glyph (◈) + a persistent accent border off this opType so

@@ -16,6 +16,7 @@ import type { LiveWorker } from "../canonical-loop/index.js";
 import type { FieldAgentStatus } from "../agency/handler-types.js";
 import { sendFrame } from "./frames.js";
 import { OP_TYPE } from "../ops/op-types.js";
+import { basename } from "node:path";
 
 export interface WorkersSnapshotSources {
   canonical: () => LiveWorker[];
@@ -72,7 +73,7 @@ export function buildWorkersSnapshot(sources: WorkersSnapshotSources): WorkersSn
     if (listed.has(orch.opId)) continue;
     // The task the orchestrator card was started with (manager.ts bg_op_started).
     workers.push({
-      opId: orch.opId, sessionId: orch.sessionId, task: `Build orchestrator: ${orch.projectDir}`, status: "running",
+      opId: orch.opId, sessionId: orch.sessionId, task: `Build ${basename(orch.projectDir)}`, status: "running",
       opType: OP_TYPE.orchestrator, startedAt: new Date(orch.startedAt).toISOString(),
     });
   }

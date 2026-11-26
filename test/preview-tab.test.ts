@@ -66,10 +66,11 @@ function load(chat: Chat | null, opts: { panelOpen?: boolean; openIn?: string[] 
 }
 
 describe("preview-tab.js — which tab the panel opens on", () => {
-  it("a code session opens on Preview, a chat on the panel's default", () => {
+  // A chat opens on Overview, its plan and what it is doing (side-overview.js, 2026-11-25).
+  it("a code session opens on Preview, a chat on Overview", () => {
     expect(load({ id: "ide-todo" }).tab.openingTab()).toBe("preview");
     expect(load({ id: "chat-1", mode: "code" }).tab.openingTab()).toBe("preview");
-    expect(load({ id: "chat-1" }).tab.openingTab()).toBe("agents");
+    expect(load({ id: "chat-1" }).tab.openingTab()).toBe("overview");
   });
 
   it("each chat reopens on the tab it last chose, and no other chat's choice moves it", () => {
@@ -91,7 +92,7 @@ describe("preview-tab.js — switching chats with the panel open", () => {
     page.switchSidePanelTab("preview");
     page.activeChat = { id: "chat-1" };
     tab.onChatChanged();
-    expect(switched).toEqual(["preview", "agents"]);
+    expect(switched).toEqual(["preview", "overview"]);
   });
 
   it("turns back to Preview on returning to the code session", () => {
@@ -110,7 +111,7 @@ describe("preview-tab.js — switching chats with the panel open", () => {
     expect(frame.src).toBe("/apps/glasses/index.html");
     page.activeChat = { id: "chat-1" };
     tab.onChatChanged();
-    expect(page.sidePanelTab).toBe("agents");
+    expect(page.sidePanelTab).toBe("overview");
     expect(frame.src).toBe("about:blank");
   });
 

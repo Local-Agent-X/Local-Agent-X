@@ -17,7 +17,7 @@ var artifactsFilter = 'all';
 var ARTIFACTS_TTL_MS = 15000;
 
 // Each tab is a #side-tab-<name> button and a #<name>-tab-body pane.
-var SIDE_PANEL_TABS = ['agents', 'preview', 'inbox', 'artifacts', 'changes', 'browser', 'android', 'terminal'];
+var SIDE_PANEL_TABS = ['overview', 'agents', 'preview', 'inbox', 'artifacts', 'changes', 'browser', 'android', 'terminal'];
 
 // The chat on screen changed: each tab that lists one chat's things turns to
 // that chat. Called from every place the chat on screen changes
@@ -25,6 +25,7 @@ var SIDE_PANEL_TABS = ['agents', 'preview', 'inbox', 'artifacts', 'changes', 'br
 window.laxSidePanelChat = {
   onChatChanged: function() {
     if (window.laxAgentFeedsScope) window.laxAgentFeedsScope.onChatChanged();
+    if (window.laxOverview) window.laxOverview.onChatChanged();
     if (sidePanelTab === 'artifacts') loadArtifacts(false);
     if (window.laxTerminalPanel && window.laxTerminalPanel.onChatChanged) window.laxTerminalPanel.onChatChanged();
     // The device is the same one in every chat; whose agent has it reads differently in each.
@@ -58,6 +59,10 @@ function switchSidePanelTab(tab) {
     else window.laxBrowserTab.onTabHidden();
   }
   if (tab === 'terminal' && window.laxTerminalPanel) window.laxTerminalPanel.onTabShown();
+  if (window.laxOverview) {
+    if (tab === 'overview') window.laxOverview.onTabShown();
+    else window.laxOverview.onTabHidden();
+  }
   if (window.laxPreviewTab) {
     window.laxPreviewTab.rememberTab(tab);
     if (tab === 'preview') window.laxPreviewTab.onTabShown();

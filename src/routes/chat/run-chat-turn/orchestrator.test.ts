@@ -539,3 +539,16 @@ describe("orchestrator session title", () => {
     expect(session.title).toBe("grok-4.7");
   });
 });
+
+// Every /greenfield chat was titled "**SLASH COMMAND** — The user invoked
+// `/greenfield`. Follow t..." (2026-11-25): the title came from the expansion.
+describe("titleFromFirstMessage", () => {
+  it("names a slash command's chat by what the user typed, and leaves a plain message as it is", async () => {
+    const { titleFromFirstMessage } = await import("./orchestrator.js");
+    const { expandSlashCommand } = await import("../../../slash-commands.js");
+    const expanded = expandSlashCommand("/greenfield Label Check: scan a supplement label and flag interactions")!;
+    expect(expanded.agentMessage.startsWith("**SLASH COMMAND**")).toBe(true);
+    expect(titleFromFirstMessage(expanded.agentMessage)).toBe("/greenfield Label Check: scan a supplement label and flag in...");
+    expect(titleFromFirstMessage("fix the login page")).toBe("fix the login page");
+  });
+});

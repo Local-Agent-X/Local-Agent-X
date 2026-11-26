@@ -5,6 +5,7 @@ import { runDelegationHandoff } from "../delegation-handoff.js";
 import { createRetryContext, attachRetryContext, detachRetryContext } from "../../../retry-context.js";
 import type { RunChatTurnArgs } from "./types.js";
 import { handleApproveInTurn, expandSlash } from "./slash-interceptors.js";
+import { userAuthoredRequest } from "../../../slash-commands.js";
 import {
   preparePerTurnRequest, emitContextStatus,
   filterToolsForSession, applyDiscussPrefix,
@@ -64,9 +65,12 @@ const reconnectHint = (channel: ChannelKind, label: string): string =>
  * finally-block cleanup. The only thing not owned here is HTTP-specific
  * setup (writeHead, heartbeat, res.end) — that stays at the route boundary.
  */
-/** A chat's title from its first message, when nothing else named it. */
+/** A chat's title from its first message, when nothing else named it: what
+ *  the user typed, not a slash command's expansion ("**SLASH COMMAND** — The
+ *  user invoked `/greenfield`..." named every /greenfield chat, 2026-11-25). */
 export function titleFromFirstMessage(message: string): string {
-  return message.slice(0, 60) + (message.length > 60 ? "..." : "");
+  const typed = userAuthoredRequest(message);
+  return typed.slice(0, 60) + (typed.length > 60 ? "..." : "");
 }
 
 /** The request's durable facts onto the session it addresses. */

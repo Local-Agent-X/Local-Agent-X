@@ -1,9 +1,10 @@
 // ── Agents panel: who is working on what ──
 //
-// A strip at the top of the AGENTS tab listing every agent working in a
-// project right now — chats and workers alike — with its task, the files or
-// folders it is changing, and a warning when two of them are in the same
-// files (ADR 0007 §4). Read from GET /api/work-claims
+// A strip at the top of the AGENTS tab listing the agents working in the same
+// files right now (ADR 0007 §4), and the files each live worker is changing,
+// which its row in the list below shows (workClaimAreasByOp). The strip listed
+// every agent, a second row for each worker the list already showed
+// (2026-11-25). Read from GET /api/work-claims
 // (src/routes/agents/work-claims.ts); re-read on a `work_claims_changed` frame
 // and on a timer, since a state changes with time alone (working → between
 // messages → finished, when it leaves the strip).
@@ -49,8 +50,20 @@ function workClaimRowHtml(row) {
 }
 
 function workClaimsHtml(rows) {
-  if (!rows || !rows.length) return '';
-  return '<div class="work-claims-title">WORKING ON</div>' + rows.map(workClaimRowHtml).join('');
+  var clashing = (rows || []).filter(function (r) { return (r.clashesWith || []).length > 0; });
+  if (!clashing.length) return '';
+  return '<div class="work-claims-title">SAME FILES</div>' + clashing.map(workClaimRowHtml).join('');
+}
+
+// The files each worker is changing, by its op id (the id its row in the list
+// has, chat-agent-feeds-claim-open.js), for renderBackgroundTasks.
+function workClaimAreasByOp() {
+  var out = {};
+  for (var i = 0; i < workClaimsRows.length; i++) {
+    var r = workClaimsRows[i];
+    if (r.kind === 'worker' && r.opId && (r.areas || []).length) out[r.opId] = r.areas;
+  }
+  return out;
 }
 
 // The rows the strip lists: this chat's own and the others in its project, or

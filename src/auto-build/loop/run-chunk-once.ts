@@ -62,6 +62,16 @@ export interface RunChunkOnceOptions {
 
 /** What the worker is told: the whole brief, or, to the worker that built the
  *  last round, what the review found. */
+/** What a chunk's worker is called. A finish-check fix chunk is numbered past
+ *  the plan (finish-gates/run.ts: 1000 + round * 10 + n), so it is named by its
+ *  place in its round, "Finish fix 1: hostile findings (1 of 4)", where the
+ *  AGENTS panel read "Chunk 1011/4" (2026-11-25). */
+export function chunkLabel(opts: Pick<RunChunkOnceOptions, "chunk" | "plan" | "totalChunks">): string {
+  if (opts.chunk.phase !== "Finish") return `Chunk ${opts.chunk.number}/${opts.totalChunks}: ${opts.chunk.title}`;
+  const at = opts.plan.chunks.findIndex((c) => c.number === opts.chunk.number) + 1;
+  return `${opts.chunk.title} (${at} of ${opts.totalChunks})`;
+}
+
 function workerTask(opts: RunChunkOnceOptions): string {
   if (opts.continueFrom) {
     return `The review sent your chunk back. ${opts.retryReason ?? ""}\n\n` +
@@ -138,7 +148,7 @@ export async function runChunkOnce(opts: RunChunkOnceOptions): Promise<ChunkRevi
   const subResult = await runChunkAgent({
     role,
     task,
-    title: `Chunk ${opts.chunk.number}/${opts.totalChunks}: ${opts.chunk.title}${opts.retryReason ? " (retry)" : ""}`,
+    title: `${chunkLabel(opts)}${opts.retryReason ? " (retry)" : ""}`,
     projectDir: opts.projectDir,
     silenceLimitMs: opts.subprocessTimeoutMs,
     signal: opts.signal,

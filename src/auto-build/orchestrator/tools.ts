@@ -10,6 +10,7 @@ import { blocked } from "../../tools/result-helpers.js";
 import { sessionIdOf } from "../../tool-execution/internal-args.js";
 import { AUTO_BUILD_DISABLED_RECOVERY, isFeatureEnabled, FEATURE_FLAG_ENV } from "../tool.js";
 import { isActiveForProject, listActive } from "./manager.js";
+import { leadDecisionsWaitingOn } from "../advisor/lead-decisions.js";
 import { readProjectState, startFromSavedState } from "./resume.js";
 import { listAll as listRegistry } from "./registry.js";
 import { resolveProjectDir } from "../project-paths.js";
@@ -58,6 +59,11 @@ export const buildPlanStatusTool: ToolDefinition = {
       if (s.phase === "paused") lines.push(`Paused by the owner, not halted: nothing failed and its work is kept. It goes on from here when they press Resume on its card, or when they ask you to resume it with build_plan_resume.`);
       if (s.phase === "complete") lines.push(`Complete: review LAUNCH_READINESS.md before deploying.`);
       if (!info.planExists) lines.push(`WARNING: plan file at ${s.planPath} is missing — resume will fail.`);
+      // A lead that looks at the status while a decision waits is told so
+      // here: the status is not the answer, and asking again changes nothing.
+      for (const id of leadDecisionsWaitingOn(s.sessionId)) {
+        lines.push(`A build decision is waiting on this chat: answer it with build_decide(decision_id="${id}", ...). Calling build_plan_status again does not answer it.`);
+      }
       return { content: lines.join("\n"), metadata: { phase: s.phase, op_id: s.opId, resume_at_chunk: s.resumeAtChunk } };
     }
 

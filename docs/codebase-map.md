@@ -32,7 +32,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/data-lineage/` | 62 | 12 | L |  |
 | `src/agency/` | 55 | 41 | XL |  |
 | `src/browser/` | 55 | 95 | XL | 5 |
-| `src/chat-ws/` | 52 | 24 | L |  |
+| `src/chat-ws/` | 53 | 24 | L |  |
 | `src/tool-policy/` | 48 | 22 | L |  |
 | `src/local-runtimes/` | 45 | 28 | XL |  |
 | `src/threat/` | 43 | 13 | L |  |

@@ -1,3 +1,4 @@
+import { isSentByApp } from "../../chat-ws/app-message-text.js";
 import type { ToolDefinition } from "../../types.js";
 import {
   resolveAppBuildContinuation,
@@ -105,6 +106,13 @@ export function resolveProductBuildContinuationTurn(
   sessionId: string,
   resolver: ContinuationResolver = resolveAppBuildContinuation,
 ): ProductBuildTurn | null {
+  // The wording is read to tell what the USER is asking. A message the app
+  // sent is not a request of theirs: the build's decision packet says "build"
+  // and lists "continue" among its answers, so it matched, and the turn that
+  // was asked to decide was instead directed to call build_plan_status. A Grok
+  // lead did, six to fourteen times per decision, and never decided
+  // (label-check-grok, 2026-11-26).
+  if (isSentByApp(message)) return null;
   if (!isProductBuildContinuationRequest(message)) return null;
   return continuationTurn(resolver(sessionId));
 }

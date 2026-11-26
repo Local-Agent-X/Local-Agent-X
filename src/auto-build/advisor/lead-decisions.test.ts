@@ -4,7 +4,7 @@
 import { describe, it, expect, beforeEach } from "vitest";
 import { setChatHandler } from "../../chat-ws/chat-handler.js";
 import { canHaveLead } from "./lead-chat.js";
-import { askLead, askLeadBuildCall, isLeadDecisionPending, type LeadSituation } from "./lead-decisions.js";
+import { askLead, askLeadBuildCall, isLeadDecisionPending, leadDecisionsWaitingOn, type LeadSituation } from "./lead-decisions.js";
 import { LEAD_ROLE } from "./lead-role.js";
 import { buildDecideTool, readDecision } from "./build-decide-tool.js";
 import { owedToolNamesFor } from "../../agent-request/prepare-request/session-owed-tools.js";
@@ -66,6 +66,22 @@ describe("the build lead", () => {
     expect(await askLead(ref, situation, { answerMs: 5_000 })).toBeNull();
     expect(duringTheTurn).toEqual(["build_decide"]);
     expect(owedToolNamesFor("chat-origin")).toEqual([]);
+  });
+
+  // A lead that checks the build's status in the middle of a decision is told
+  // there which decision waits (orchestrator/tools.ts build_plan_status).
+  it("the chat a decision waits on is known, by the decision's id, until it is settled", async () => {
+    let waiting: string[] = [];
+    let asked = "";
+    setChatHandler(async (sessionId, message) => {
+      waiting = leadDecisionsWaitingOn(sessionId);
+      asked = message.match(/build_decide\(decision_id="([^"]+)"/)?.[1] ?? "";
+      expect(leadDecisionsWaitingOn("some-other-chat")).toEqual([]);
+    });
+    expect(await askLead(ref, situation, { answerMs: 5_000 })).toBeNull();
+    expect(asked).toMatch(/^bd-/);
+    expect(waiting).toEqual([asked]);
+    expect(leadDecisionsWaitingOn("chat-origin")).toEqual([]);
   });
 
   // label-check-sol's chunk 3 (2026-11-25): told to keep going while rounds

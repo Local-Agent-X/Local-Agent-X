@@ -8,6 +8,7 @@ import {
 } from "./product-build-routing.js";
 import { selectTools } from "./tool-selection.js";
 import { SLASH_COMMAND_MARKER } from "../../slash-commands.js";
+import { leadPacket } from "../../auto-build/advisor/lead-decisions.js";
 
 function tool(name: string): ToolDefinition {
   return {
@@ -214,5 +215,35 @@ describe("canonical tool selection routing", () => {
     expect(result.forcedToolName).toBeUndefined();
     expect(result.productBuildTurn?.directive.match(/\?/g)).toHaveLength(1);
     expect(result.tools.map(item => item.name)).not.toContain("build_app");
+  });
+});
+
+// label-check-grok, 2026-11-26: the packet that asks the build's lead for a
+// decision says "build" and lists "continue" among its answers, so it read as
+// the user asking to continue their build. With the build running, the turn
+// was directed to call build_plan_status, and the lead called it six to
+// fourteen times per decision and never decided.
+describe("a message the app sent is not the user asking about their build", () => {
+  const running = () => resolved("build_plan_status", "running");
+  const chunkPacket = leadPacket("bd-1a2b3c4d", {
+    chunk: { number: 4, title: "Firebase AI Logic adapter", slice: "s", doneWhen: "the adapter passes its fixtures", scenarios: "6, 9" },
+    totalChunks: 8, round: 1, finding: "The skeptic broke it: the status of the app build is not shown.", workerReport: "status: done",
+    earlier: [], repeated: false, maxRounds: 8,
+  }, true);
+
+  it("the lead's decision packet gets no build directive, whatever it says and whatever the build is doing", () => {
+    expect(isProductBuildContinuationRequest(chunkPacket)).toBe(true);
+    expect(resolveProductBuildContinuationTurn(chunkPacket, "session-1", running)).toBeNull();
+  });
+
+  it("nor does any other message the app sends a chat", () => {
+    const report = ["(Sent by the app, not typed by the user: background work you started has ended.)", "The app build finished: continue from its status."].join("\n");
+    expect(isProductBuildContinuationRequest(report)).toBe(true);
+    expect(resolveProductBuildContinuationTurn(report, "session-1", running)).toBeNull();
+  });
+
+  it("the user asking the same thing still gets the directive", () => {
+    expect(resolveProductBuildContinuationTurn("what's the status of my build", "session-1", running))
+      .toMatchObject({ kind: "continuation", targetTool: "build_plan_status" });
   });
 });

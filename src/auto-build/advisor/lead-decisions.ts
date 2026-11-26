@@ -80,7 +80,7 @@ export interface BuildCallSituation {
 /** How long the engine waits for the lead before deciding by its own rules. */
 export const LEAD_ANSWER_MS = 10 * 60_000;
 
-interface Pending { allowed: readonly LeadAction[]; resolve: (d: LeadDecision) => void }
+interface Pending { allowed: readonly LeadAction[]; resolve: (d: LeadDecision) => void; sessionId: string }
 const pending = new Map<string, Pending>();
 
 /** build_decide's half: hand a decision to the engine. The reason it was not
@@ -96,6 +96,11 @@ export function resolveLeadDecision(id: string, decision: LeadDecision): string 
 
 export function isLeadDecisionPending(id: string): boolean {
   return pending.has(id);
+}
+
+/** The decisions a chat has been asked and has not answered, by id. */
+export function leadDecisionsWaitingOn(sessionId: string): string[] {
+  return [...pending].filter(([, p]) => p.sessionId === sessionId).map(([id]) => id);
 }
 
 const HEADER = "(Sent by the app, not typed by the user: a build decision is waiting.)";
@@ -158,7 +163,7 @@ async function ask(
   const sessionId = leadChatOf(ref);
   if (!sessionId || opts.signal?.aborted) return null;
   const id = `bd-${randomBytes(4).toString("hex")}`;
-  const answered = new Promise<LeadDecision>((resolve) => pending.set(id, { allowed, resolve }));
+  const answered = new Promise<LeadDecision>((resolve) => pending.set(id, { allowed, resolve, sessionId }));
   const first = !firstSent.has(sessionId);
   firstSent.add(sessionId);
   // The packet says "answer with build_decide", so the turn it lands in must

@@ -9,7 +9,7 @@
 
 import { describe, it, expect, vi } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, readFileSync, rmSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -383,12 +383,13 @@ describe("concurrent-worktree cap", () => {
 
   // 2026-11-04: an untracked .builtref left at the repo root stopped every
   // in-app update with "uncommitted changes". Untracked files never block the
-  // merge-back; uncommitted edits to tracked files still do.
-  it("an untracked stray file does not block the merge-back; a tracked edit still does", () => {
+  // merge-back, nor does an edit to a file the merge does not change
+  // (label-check-grok, 2026-11-25); an edit to one it changes still does.
+  it("an untracked stray file or an edit elsewhere does not block the merge-back; an edit to a merged file does", () => {
     const { repo, g } = initRepo();
     const prevCwd = process.cwd();
     const env = { ...process.env };
-    const ids = [`stray-${Date.now().toString(36)}`, `tracked-${Date.now().toString(36)}`];
+    const ids = [`stray-${Date.now().toString(36)}`, `tracked-${Date.now().toString(36)}`, `overlap-${Date.now().toString(36)}`];
     try {
       process.chdir(repo);
       const wt = createWorktree(ids[0]);
@@ -403,10 +404,16 @@ describe("concurrent-worktree cap", () => {
       writeFileSync(join(wt2!.path, "agent2.txt"), "second change");
       commitInWorktree(ids[1], "second work");
       writeFileSync(join(repo, "agent.txt"), "user edited a tracked file");
-      const res = mergeWorktree(ids[1]);
+      expect(mergeWorktree(ids[1]).merged).toBe(true);
+      expect(readFileSync(join(repo, "agent.txt"), "utf-8")).toBe("user edited a tracked file");
+
+      const wt3 = createWorktree(ids[2]);
+      writeFileSync(join(wt3!.path, "agent.txt"), "third change");
+      commitInWorktree(ids[2], "third work");
+      const res = mergeWorktree(ids[2]);
       expect(res.merged).toBe(false);
-      expect(res.error).toMatch(/uncommitted changes/);
-      expect(g(["show", "HEAD:agent.txt"])).toBe("agent change");
+      expect(res.error).toMatch(/uncommitted changes to files this merge changes \(agent\.txt\)/);
+      expect(readFileSync(join(repo, "agent.txt"), "utf-8")).toBe("user edited a tracked file");
     } finally {
       process.chdir(prevCwd);
       for (const id of ids) { try { cleanupWorktree(id); } catch { /* best-effort */ } activeWorktrees.delete(id); }

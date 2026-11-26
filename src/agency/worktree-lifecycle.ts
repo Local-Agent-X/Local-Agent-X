@@ -137,24 +137,24 @@ export function mergeWorktree(
 
       const parentBranch = git(["rev-parse", "--abbrev-ref", "HEAD"], wt.repoRoot);
       if (parentBranch === wt.baseBranch) {
-        // The user is sitting on the base branch. Only reflect the change into
-        // their working tree if it's clean: a --ff-only merge (no switch, no
-        // merge commit) updates just the agent's files. If they have
-        // uncommitted work, don't clobber it — leave the branch for a manual
-        // merge (the worktree merge above already made agent/<id> a clean
-        // fast-forward of base).
-        // Tracked edits only. A --ff-only merge never touches an untracked
-        // file (git refuses on its own if an incoming one would overwrite
-        // it), so a stray untracked file must not block: a leftover
-        // .builtref at the repo root stopped every in-app update ("uncommitted
-        // changes") on 2026-11-04.
-        // A file rewritten with its same content is not a change: it refused a
-        // reviewed chunk's merge (label-check, 2026-11-23; worktree-core.ts).
+        // The user is sitting on the base branch. A --ff-only merge (no
+        // switch, no merge commit) updates just the agent's files, and git
+        // refuses it on its own when one of them has an uncommitted edit, so
+        // the user's work is never clobbered. An edit to a file the merge does
+        // not touch never blocks it: requiring a clean tree set a reviewed
+        // chunk aside because the build's lead had edited its own spec
+        // mid-build (label-check-grok, 2026-11-25). Untracked files never
+        // block either (a stray .builtref stopped every in-app update,
+        // 2026-11-04), nor does a file rewritten with its same content
+        // (label-check, 2026-11-23; worktree-core.ts).
         reRecordUnchangedFiles(wt.repoRoot);
-        if (git(["status", "--porcelain", "--untracked-files=no"], wt.repoRoot)) {
-          throw new Error("parent working tree has uncommitted changes on the base branch");
+        try {
+          git(["merge", "--ff-only", wt.branch], wt.repoRoot);
+        } catch (ffErr) {
+          const dirty = git(["status", "--porcelain", "--untracked-files=no"], wt.repoRoot);
+          if (!dirty) throw ffErr;
+          throw new Error(`parent working tree has uncommitted changes to files this merge changes (${dirty.split("\n").map((l) => l.trim().replace(/^\S+\s+/, "")).join(", ")})`);
         }
-        git(["merge", "--ff-only", wt.branch], wt.repoRoot);
       } else {
         // Base branch is not checked out in the parent repo — advance its ref
         // directly. There is no working tree pointing at it to disturb.

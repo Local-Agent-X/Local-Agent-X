@@ -10,7 +10,7 @@ import { execFileSync } from "node:child_process";
 
 const live = vi.hoisted(() => ({ ids: new Set<string>(), stops: [] as Array<[string, string]> }));
 vi.mock("./manager.js", () => ({
-  getActive: (id: string) => (live.ids.has(id) ? { opId: id } : undefined),
+  getActive: (id: string) => (live.ids.has(id) ? { opId: id, stop: live.stops.find(([stopped]) => stopped === id)?.[1] } : undefined),
   stopRun: (id: string, stop: string) => { live.stops.push([id, stop]); return true; },
 }));
 const reg = vi.hoisted(() => ({ entries: [] as Array<{ projectDir: string; opId: string; sessionId: string; registeredAt: string }> }));
@@ -43,10 +43,21 @@ describe("controlBuild", () => {
   it("a running build: Pause and Cancel stop it with what was asked, Resume has nothing to do", () => {
     live.ids.add("op_live");
     expect(isBuildRun("op_live")).toBe(true);
+    expect(controlBuild("op_live", "resume")).toEqual({ ok: true });
     expect(controlBuild("op_live", "pause")).toEqual({ ok: true });
     expect(controlBuild("op_live", "cancel")).toEqual({ ok: true });
-    expect(controlBuild("op_live", "resume")).toEqual({ ok: true });
     expect(live.stops).toEqual([["op_live", "paused"], ["op_live", "cancelled"]]);
+  });
+
+  // The build takes a moment to stop. A Resume in that moment was answered
+  // "ok" and did nothing, and the build then settled as paused.
+  it("a Resume pressed while the Pause is still taking effect is refused, not swallowed", () => {
+    live.ids.add("op_live");
+    controlBuild("op_live", "pause");
+    const res = controlBuild("op_live", "resume");
+    expect(res.ok).toBe(false);
+    expect(res.ok ? "" : res.message).toMatch(/still stopping/);
+    expect(starts.calls).toEqual([]);
   });
 
   it("a paused build: Resume starts it from its saved state, under its own id", () => {

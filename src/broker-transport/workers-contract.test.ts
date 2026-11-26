@@ -92,6 +92,23 @@ describe("workers contract with the phone", () => {
   // After a page load the panel is drawn from this list alone: a chunk worker
   // without its orchestrator as parent was its own card, and the orchestrator
   // read STALLED while the worker ran (label-check, 2026-11-23).
+  // The snapshot is the reply to the Pause, sent while the build is still
+  // stopping. Read as "running", it was the only thing a phone on another chat
+  // was told, and the card never changed (2026-11-26).
+  it("a build told to pause reads paused at once, and one told to cancel is gone", () => {
+    const frame = buildWorkersSnapshot({
+      canonical: () => [],
+      autopilot: () => [],
+      agents: () => [],
+      orchestrators: () => [
+        { opId: "op_orch_3", projectDir: "C:/apps/label-check-grok", sessionId: "s1", startedAt: Date.UTC(2026, 10, 26), stopping: "paused" },
+        { opId: "op_orch_4", projectDir: "C:/apps/shop-helper", sessionId: "s2", startedAt: Date.UTC(2026, 10, 26), stopping: "cancelled" },
+      ],
+    });
+    expect(frame.workers.map((w) => [w.opId, w.status])).toEqual([["op_orch_3", "paused"]]);
+    expect(parseWorkersSnapshot(JSON.parse(JSON.stringify(frame)))?.workers[0]?.status).toBe("paused");
+  });
+
   it("lists a named agent under the run that started it", () => {
     const frame = buildWorkersSnapshot({
       canonical: () => [],

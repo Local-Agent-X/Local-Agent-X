@@ -381,12 +381,14 @@ export function isActiveForProject(projectDir: string): boolean {
   return findActiveByProjectDir(projectDir) !== undefined;
 }
 
-export function listActive(): Array<{ opId: string; projectDir: string; sessionId: string; startedAt: number }> {
+/** `stopping`: the owner has paused or cancelled it and it is still winding down. */
+export function listActive(): Array<{ opId: string; projectDir: string; sessionId: string; startedAt: number; stopping?: BuildStop }> {
   return Array.from(active.values()).map(o => ({
     opId: o.opId,
     projectDir: o.projectDir,
     sessionId: o.sessionId,
     startedAt: o.startedAt,
+    ...(o.stop ? { stopping: o.stop } : {}),
   }));
 }
 

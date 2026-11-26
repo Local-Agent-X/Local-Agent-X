@@ -18,7 +18,7 @@ import { join, resolve, sep } from "node:path";
 
 import { git, logger, WORKTREE_BASE } from "./worktree-core.js";
 import { pruneMergedAgentBranches, unlinkAllShallowReparsePoints } from "./worktree-junctions.js";
-import { removeTreeRetrying } from "../util/remove-tree.js";
+import { removeWorktreeFolder } from "./worktree-leftovers.js";
 
 /**
  * Case-normalized realpath, falling back to a plain resolve when the path is
@@ -92,7 +92,9 @@ export function reapAppOwnWorktrees(repoRoot: string | null = resolveAppRepoRoot
  * just-killed process still held stops it there, and the folder stayed for
  * good: the recovery sweep reads a folder with no `.git` as "not a verifiable
  * git worktree" and leaves it. Five such folders held 2.4 GB of app copies and
- * node_modules in Temp on 2026-11-25.
+ * node_modules in Temp on 2026-11-25. A folder that is still some program's
+ * current directory is held for as long as that program runs: what a worker
+ * left running there is ended first (worktree-leftovers.ts).
  *
  * A folder with a `.git` is a worktree, live or recoverable, and is the
  * recovery sweep's (reconcileWorktreeBase); one that is itself a link is never
@@ -114,7 +116,12 @@ export async function reapWorktreeRemnants(base = WORKTREE_BASE): Promise<string
       logger.warn(`[worktree] leftover ${path} kept: a link inside would not unlink (${stuck.join(", ")})`);
       continue;
     }
-    if (await removeTreeRetrying(path, (reason) => logger.warn(`[worktree] leftover ${path} could not be deleted: ${reason}`))) removed.push(path);
+    const gone = await removeWorktreeFolder(
+      path,
+      (reason) => logger.warn(`[worktree] leftover ${path} could not be deleted: ${reason}`),
+      (line) => logger.info(`[worktree] ${line}`),
+    );
+    if (gone) removed.push(path);
   }
   if (removed.length) logger.info(`[worktree] deleted ${removed.length} leftover folder(s) of removed worktrees: ${removed.join(", ")}`);
   return removed;

@@ -42,8 +42,13 @@ export function isBuildRun(opId: string): boolean {
 }
 
 export function controlBuild(opId: string, action: BuildAction): BuildControlResult {
-  if (getActive(opId)) {
-    if (action === "resume") return { ok: true };
+  const running = getActive(opId);
+  if (running) {
+    if (action === "resume") {
+      // A Resume pressed while the Pause is still taking effect would be lost:
+      // the build then settles as paused, having said yes to the Resume.
+      return running.stop ? { ok: false, message: "the build is still stopping: press Resume again in a moment" } : { ok: true };
+    }
     stopRun(opId, action === "pause" ? "paused" : "cancelled");
     return { ok: true };
   }

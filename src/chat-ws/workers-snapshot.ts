@@ -31,8 +31,13 @@ export interface WorkersSnapshotSources {
    *  manager.ts). Neither a canonical op nor a named agent, so a snapshot
    *  without them ended every running build's card: label-check's orchestrator
    *  read "Completed" three minutes into its run (2026-11-23). Absent in a test
-   *  that lists none. */
-  orchestrators?: () => { opId: string; projectDir: string; sessionId: string; startedAt: number; paused?: boolean }[];
+   *  that lists none. `stopping` is a build the owner has paused or cancelled
+   *  that is still winding down: it is listed as what it was told to become.
+   *  The snapshot is the answer to the Pause itself (agent-controls.ts), sent
+   *  before the build has stopped, and it read "running": on a phone showing
+   *  another chat, which never gets the build's own paused event, the card
+   *  did not change at all (2026-11-26). */
+  orchestrators?: () => { opId: string; projectDir: string; sessionId: string; startedAt: number; paused?: boolean; stopping?: "paused" | "cancelled" }[];
   /** What each agent is changing and who else is in the same files
    *  (routes/agents/work-claims.ts); absent in a test that lists none. */
   claims?: () => { sessionId: string; opId: string | null; areas: string[]; clashesWith: string[] }[];
@@ -70,10 +75,11 @@ export function buildWorkersSnapshot(sources: WorkersSnapshotSources): WorkersSn
     });
   }
   for (const orch of sources.orchestrators?.() ?? []) {
-    if (listed.has(orch.opId)) continue;
+    // A cancelled build has ended for the owner: leaving it out ends its card.
+    if (listed.has(orch.opId) || orch.stopping === "cancelled") continue;
     // The task the orchestrator card was started with (manager.ts bg_op_started).
     workers.push({
-      opId: orch.opId, sessionId: orch.sessionId, task: `Build ${basename(orch.projectDir)}`, status: orch.paused ? "paused" : "running",
+      opId: orch.opId, sessionId: orch.sessionId, task: `Build ${basename(orch.projectDir)}`, status: orch.paused || orch.stopping === "paused" ? "paused" : "running",
       opType: OP_TYPE.orchestrator, startedAt: new Date(orch.startedAt).toISOString(),
     });
   }

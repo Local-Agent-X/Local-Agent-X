@@ -550,6 +550,24 @@ describe("parallel path — S4 rule 3: re-gate the MERGED tree", () => {
   });
 });
 
+// A chunk that strays into a sibling's file is where a merge conflict comes
+// from. The chunks that overlap nobody land first, so the one that conflicts
+// is rebuilt on top of everything else.
+describe("parallel path: chunks whose changes overlap a sibling's merge last", () => {
+  it("the chunk that touched nobody else's files lands before the two that share one", async () => {
+    const THREE = TWO_WAVES.replace("- **Depends on:** 1", "- **Depends on:** —");
+    shared.chunkChanged.set(1, ["src/alpha.ts", "src/beta.ts"]);
+    shared.chunkChanged.set(2, ["src/beta.ts"]);
+    shared.chunkChanged.set(3, ["src/gamma.ts"]);
+
+    const result = await run(THREE, 3);
+
+    expect(result.status).toBe("complete");
+    const merges = shared.calls.filter((c) => c.startsWith("merge:"));
+    expect(merges).toEqual(["merge:autobuild-c3", "merge:autobuild-c1", "merge:autobuild-c2"]);
+  });
+});
+
 describe("parallel path — S4: footprint-subset diagnostic (warn, not halt)", () => {
   it("(d) warns when a chunk's changed files ESCAPE its declared footprint, but does NOT halt", async () => {
     // Chunk 1 declared src/alpha.ts but actually also touched an undeclared file.

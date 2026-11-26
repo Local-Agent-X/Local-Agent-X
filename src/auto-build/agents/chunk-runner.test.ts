@@ -110,6 +110,20 @@ describe("runChunkAgent task provenance", () => {
     expect(res.transcript).toEqual([{ role: "assistant", content: "what the worker did" }]);
   });
 
+  // Declared files were never claimed, so a sibling writing into one was told
+  // nothing until the merge conflicted (label-check-grok, 2026-11-26).
+  it("claims the files the plan gives the chunk, and claims nothing when the plan gives none", async () => {
+    const p = runChunkAgent({ role: "chunk-runner-leaf", task: "build chunk 7", touches: ["src/dsld/client.ts", "src/dsld/normalize.ts"] });
+    await EventBus.emit("handler:agent-result", { agentId: RUN_ID, success: true, result: "done" });
+    await p;
+    expect(invokeCalls[0].opts).toMatchObject({ touches: ["src/dsld/client.ts", "src/dsld/normalize.ts"] });
+
+    const q = runChunkAgent({ role: "chunk-runner-leaf", task: "build chunk 8", touches: [] });
+    await EventBus.emit("handler:agent-result", { agentId: RUN_ID, success: true, result: "done" });
+    await q;
+    expect(invokeCalls[1].opts).not.toHaveProperty("touches");
+  });
+
   it("marks the spawn harness-authored so the instruction ledger skips its preamble", async () => {
     // The working-directory preamble ("Never touch paths outside it") is
     // harness prose. Without this flag it extracts as a user workspace-write

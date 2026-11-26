@@ -58,6 +58,7 @@ import { getHeadSha } from "../git-helpers.js";
 import { appendHalt, recordLanded, recordSetAside } from "../failure-recovery.js";
 import { emitLaunchReadiness } from "../loop-effects.js";
 import { createNamedWorktree, mergeWorktree, cleanupWorktree } from "../../agency/worktree.js";
+import { repoPathsOverlap } from "../../agency/path-overlap.js";
 import type { ParsedChunk } from "../plan-parser.js";
 import type { ChunkReviewOutcome, ReviewAction } from "../chunk-review/index.js";
 import { buildChunkWithRetry } from "./chunk-attempt.js";
@@ -300,6 +301,11 @@ async function runBatch(ctx: RunContext, batch: ParsedChunk[], chunksCommittedIn
     // 4. Commit each chunk that passed inside its worktree, then MERGE BACK
     //    ONE AT A TIME (rule 1 — strictly sequential).
     for (const r of passed) await commitDispatchedChunk(ctx, r);
+    // Chunks whose measured changes overlap no sibling's land first: an
+    // overlap is where a conflict comes from, and the chunk that meets one is
+    // rebuilt on top of everything else (4b), not in the middle of it.
+    const overlapsSibling = (r: BuiltChunk) => passed.some((o) => o !== r && o.finalOutcome.report.changed.some((f) => r.finalOutcome.report.changed.some((g) => repoPathsOverlap(f, g))));
+    passed.sort((a, b) => Number(overlapsSibling(a)) - Number(overlapsSibling(b)));
 
     for (const r of passed) {                      // SERIAL merge loop — never Promise.all.
       const d = r.dispatched;

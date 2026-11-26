@@ -161,6 +161,7 @@ export async function runChunkOnce(opts: RunChunkOnceOptions): Promise<ChunkRevi
     parentOpId: opts.parentOpId,
     ...(opts.continueFrom ? { priorMessages: opts.continueFrom } : {}),
     ...(opts.onTranscript ? { keepTranscript: true } : {}),
+    ...(opts.chunk.footprint?.length ? { touches: opts.chunk.footprint } : {}),
   });
   if (subResult.transcript) opts.onTranscript?.(subResult.transcript);
 

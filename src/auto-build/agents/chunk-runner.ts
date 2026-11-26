@@ -83,6 +83,12 @@ export interface ChunkAgentInvocation {
   priorMessages?: ChatCompletionMessageParam[];
   /** Return this run's conversation, so a next round can go on from it. */
   keepTranscript?: boolean;
+  /** The files the plan gives this chunk, claimed for it from the start, so a
+   *  sibling worker that writes into one is told at once whose it is. Declared
+   *  files were never claimed: a chunk that strayed into a sibling's files
+   *  met it only as a merge conflict (label-check-grok chunks 6 and 7,
+   *  2026-11-26). */
+  touches?: string[];
 }
 
 export interface ChunkAgentResult {
@@ -353,6 +359,7 @@ export async function runChunkAgent(opts: ChunkAgentInvocation): Promise<ChunkAg
     harnessAuthoredTask: true,
     ...(opts.priorMessages ? { priorMessages: opts.priorMessages } : {}),
     ...(opts.keepTranscript ? { keepTranscript: true } : {}),
+    ...(opts.touches?.length ? { touches: opts.touches } : {}),
   });
   const agentId = ref.runId;
   // The run reports through its tool into a slot keyed by its session, opened

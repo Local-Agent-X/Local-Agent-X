@@ -236,21 +236,21 @@ interface RoleSpec {
   icon: string;
 }
 
-/** What a builder starts with: the kit, its report, and tool_search, which
+/** What a builder starts with beside its report: the kit and tool_search, which
  *  reaches everything else a build worker may hold (buildWorker, below). */
-const BUILDER_TOOLS: string[] = [...BUILDER_KIT, "tool_search", "chunk_report"];
+const BUILDER_REACH: string[] = [...BUILDER_KIT, "tool_search"];
 
 const ROLE_SPECS: Record<ChunkAgentRole, RoleSpec> = {
   "chunk-runner-trunk": {
-    skill: "senior-engineer", discipline: DISCIPLINE_BLOCK, agentRole: "implementer", tools: BUILDER_TOOLS, report: "chunk",
+    skill: "senior-engineer", discipline: DISCIPLINE_BLOCK, agentRole: "implementer", tools: [...BUILDER_REACH, "chunk_report"], report: "chunk",
     name: "Chunk runner (trunk/mixed)", description: "Implements a trunk or mixed chunk from a build plan.", icon: "🏗️",
   },
   "chunk-runner-leaf": {
-    skill: "vibe-code", discipline: DISCIPLINE_BLOCK, agentRole: "implementer", tools: BUILDER_TOOLS, report: "chunk",
+    skill: "vibe-code", discipline: DISCIPLINE_BLOCK, agentRole: "implementer", tools: [...BUILDER_REACH, "chunk_report"], report: "chunk",
     name: "Chunk runner (leaf)", description: "Implements a leaf chunk (UI, isolated features) from a build plan.", icon: "🎨",
   },
   "scenario-fix": {
-    skill: "senior-engineer", discipline: SCENARIO_FIX_DISCIPLINE_BLOCK, agentRole: "implementer", tools: BUILDER_TOOLS, report: "chunk",
+    skill: "senior-engineer", discipline: SCENARIO_FIX_DISCIPLINE_BLOCK, agentRole: "implementer", tools: [...BUILDER_REACH, "chunk_report"], report: "chunk",
     name: "Scenario fix worker", description: "Fixes phase-gate scenario failures without violating spec/constitution.", icon: "🔧",
   },
   "chunk-skeptic": {

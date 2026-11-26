@@ -21,7 +21,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 
-type Finding = { gate: string; action: string; reasoning: string };
+type Finding = { gate: string; action: string; reasoning: string; refused?: { command: string; what: string } };
 type Scripted = { action: "proceed" | "push_back"; reasoning: string; findings: Finding[] };
 
 const script = vi.hoisted(() => ({
@@ -202,6 +202,48 @@ describe("build engine incidents, replayed", () => {
     expect(result.haltReason).toContain("Which wins, line 4 or line 12?");
     expect(script.builds).toContain(2);
     expect(script.builds).not.toContain(3);
+  });
+
+  // label-check-sol finish fix 1012 (2026-11-25): Windows Application Control
+  // blocked the native parser the Kotlin check loads. Read as a failed build,
+  // it sent the worker back eight rounds for something no worker can change.
+  describe("a build command this machine refuses", () => {
+    const said = "`npm run check:kotlin` ran and failed, and this machine stopped it: an Application Control policy has blocked tree-sitter-kotlin.node";
+    const refusedBuild: Scripted = {
+      action: "push_back", reasoning: said,
+      findings: [{ gate: "build-refused", action: "push_back", reasoning: said, refused: { command: "npm run check:kotlin", what: "Windows Application Control blocked a file" } }],
+    };
+    const attempts = (n: number) => script.builds.filter((b) => b === n).length;
+
+    it("owed lands the chunk with no fix round, the refusal goes on the owner's list, and the rest builds", async () => {
+      script.outcomes.set(3, [refusedBuild]);
+      script.lead.set(3, [{ action: "owed", reasoning: "lint, types and tests pass; only the blocked parser is unshown", owedCheck: "run npm run check:kotlin on a machine that allows the parser" }]);
+      const result = await build(CHAIN);
+      expect(result.status).toBe("complete");
+      expect(attempts(3)).toBe(1);
+      expect(script.builds).toEqual(expect.arrayContaining([4, 5]));
+      expect(owedChecks(projectDir)).toContainEqual(expect.objectContaining({ check: "refused: npm run check:kotlin" }));
+      expect(owedChecks(projectDir)).toContainEqual(expect.objectContaining({ chunk: 3, check: "owed by the build lead" }));
+    });
+
+    it("the lead's accept does not land it: a refused build lands only on the record", async () => {
+      script.outcomes.set(3, [refusedBuild]);
+      script.lead.set(3, [{ action: "accept", reasoning: "looks fine" }]);
+      const result = await build(CHAIN);
+      expect(result.events.some((e) => e.message.includes("build lead's accept refused"))).toBe(true);
+      expect(attempts(3)).toBe(2);
+      expect(owedChecks(projectDir).some((o) => o.check.startsWith("refused:"))).toBe(false);
+    });
+
+    it("with no word from the lead it waits for the owner: no worker is sent back, and what does not depend on it builds", async () => {
+      script.outcomes.set(3, [refusedBuild]);
+      const result = await build(CHAIN);
+      expect(result.status).toBe("halted");
+      expect(result.haltReason).toContain("only the owner can settle");
+      expect(attempts(3)).toBe(1);
+      expect(script.builds).toContain(2);
+      expect(script.builds).not.toContain(4);
+    });
   });
 
   // Three set-aside chunks ended every build, whatever was left.

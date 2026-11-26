@@ -37,8 +37,8 @@
 <link rel="preload" href="/hero-master.png" as="image"/>
 <link rel="icon" type="image/x-icon" href="/favicon.ico"/>
 <link rel="icon" type="image/png" sizes="192x192" href="/favicon.png"/>
-<link rel="stylesheet" href="/css/app.css?v=vb58"/>
-<link rel="stylesheet" href="/css/browser-workspace.css?v=v2"/>
+<link rel="stylesheet" href="/css/app.css?v=vb59"/>
+<link rel="stylesheet" href="/css/browser-workspace.css?v=v3"/>
 <link rel="stylesheet" href="/vendor/xterm/xterm.css?v=v1"/>
 <link rel="stylesheet" href="/css/voice-sphere.css?v=vb2"/>
 <!-- Voice: Three.js (self-hosted ESM build) for the Jarvis sphere.
@@ -348,23 +348,8 @@
       <div class="agent-feeds-resize-handle" title="Drag to resize · double-click to reset"></div>
       <!-- Tabbed sidebar: AGENTS is one tab among several (chat-artifacts.js owns
            the switching). Agents keeps all its ids/behaviors; each tab's content
-           lives in its own .side-tab-body wrapper that switching shows/hides. -->
-      <div class="agent-feeds-header">
-        <!-- One icon per view, its name on hover (2026-11-25: seven uppercase words did not fit and read as clutter). -->
-        <!-- OVERVIEW: what this chat is doing, its plan and spec, its context (side-overview.js). -->
-        <button class="side-panel-tab" id="side-tab-overview" onclick="switchSidePanelTab('overview')" title="Overview" aria-label="Overview"><svg class="side-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="9" rx="1"/><rect x="13" y="4" width="7" height="5" rx="1"/><rect x="13" y="11" width="7" height="9" rx="1"/><rect x="4" y="15" width="7" height="5" rx="1"/></svg></button>
-        <button class="side-panel-tab active" id="side-tab-agents" onclick="switchSidePanelTab('agents')" title="Agents" aria-label="Agents"><svg class="side-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7"/><path d="M18 14.5c1.8.8 3 2.6 3 5.5"/></svg> <span id="agent-count" class="agent-count">0</span></button>
-        <!-- PREVIEW: a code session's app, live or as files (preview-tab.js); a code session opens the panel on it. -->
-        <button class="side-panel-tab" id="side-tab-preview" onclick="switchSidePanelTab('preview')" title="Preview" aria-label="Preview"><svg class="side-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
-        <button class="side-panel-tab" id="side-tab-inbox" onclick="switchSidePanelTab('inbox')" title="Inbox" aria-label="Inbox"><svg class="side-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13l2.5-8h11L20 13"/><path d="M4 13v6h16v-6h-5l-1 2h-4l-1-2z"/></svg> <span id="inbox-count" class="agent-count" style="display:none"></span></button>
-        <button class="side-panel-tab" id="side-tab-artifacts" onclick="switchSidePanelTab('artifacts')" title="Artifacts" aria-label="Artifacts"><svg class="side-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h6"/></svg></button>
-        <!-- CHANGES: a reply's file diffs (chat-file-changes.js); hidden until one is opened. -->
-        <button class="side-panel-tab" id="side-tab-changes" onclick="switchSidePanelTab('changes')" title="Changes" aria-label="Changes" style="display:none"><svg class="side-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 8.5V15a3 3 0 0 0 3 3h6.5"/><path d="M18 15.5V9a3 3 0 0 0-3-3H8.5"/></svg></button>
-        <button class="side-panel-tab" id="side-tab-browser" onclick="switchSidePanelTab('browser')" title="Browser" aria-label="Browser"><svg class="side-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.5 2.7 3.8 5.7 3.8 9s-1.3 6.3-3.8 9c-2.5-2.7-3.8-5.7-3.8-9S9.5 5.7 12 3z"/></svg></button>
-        <button class="side-panel-tab" id="side-tab-android" onclick="switchSidePanelTab('android')" title="Android" aria-label="Android"><svg class="side-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2"/><path d="M11 18.5h2"/></svg></button>
-        <button class="side-panel-tab" id="side-tab-terminal" onclick="switchSidePanelTab('terminal')" title="Terminal" aria-label="Terminal"><svg class="side-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3"/><path d="M12.5 15H17"/></svg></button>
-        <button id="agent-feeds-autoopen-toggle" class="agent-feeds-autoopen on" onclick="toggleAgentFeedsAutoOpen()" title="Auto-open this panel when an agent spawns. Click to toggle.">AUTO</button>
-      </div>
+           lives in its own .side-tab-body wrapper that switching shows/hides.
+           The tab icons are in the top bar (#side-tab-strip). -->
       <!-- Overview tab: rendered by side-overview.js into #overview-content. -->
       <div id="overview-tab-body" class="side-tab-body" style="display:none">
         <div id="overview-content" class="overview"></div>
@@ -376,7 +361,10 @@
         <!-- Who is working on what, chats and workers alike, and where two of
              them are in the same files (chat-agent-feeds-claims.js). -->
         <!-- This chat's agents, or every chat's (chat-agent-feeds-scope.js). -->
-        <div id="agent-feeds-scope" class="panel-scope" role="group" aria-label="This chat or all chats"></div>
+        <div class="agents-controls">
+          <div id="agent-feeds-scope" class="panel-scope" role="group" aria-label="This chat or all chats"></div>
+          <button id="agent-feeds-autoopen-toggle" class="agent-feeds-autoopen on" onclick="toggleAgentFeedsAutoOpen()" title="Auto-open this panel when an agent spawns. Click to toggle.">AUTO</button>
+        </div>
         <div id="work-claims" class="work-claims" style="display:none"></div>
         <div id="agent-feeds-list" class="agent-feeds-list"></div>
       </div>
@@ -1905,10 +1893,10 @@
 <script src="/js/chat-tiles-drag.js?v=v1"></script>
 <script src="/js/chat-collab.js?v=v3"></script>
 <script src="/js/chat-tiles.js?v=v7"></script>
-<script src="/js/chat-artifacts.js?v=v8"></script>
+<script src="/js/chat-artifacts.js?v=v9"></script>
 <script src="/js/side-overview.js?v=v1"></script>
 <script src="/js/browser-tab-strip.js?v=v5"></script>
-<script src="/js/browser-workspace.js?v=v1"></script>
+<script src="/js/browser-workspace.js?v=v2"></script>
 <script src="/js/browser-error-card.js?v=v1"></script>
 <script src="/js/browser-occlusion.js?v=v1"></script>
 <script src="/js/browser-find.js?v=v1"></script>
@@ -2082,7 +2070,7 @@
 <script src="/js/apps-ide-snapshots.js?v=v1"></script>
 <script type="module" src="/js/agents.js?v=v4"></script>
 <script src="/js/shortcuts.js"></script>
-<script src="/js/app-sidebar-toggle.js?v=v5"></script>
+<script src="/js/app-sidebar-toggle.js?v=v6"></script>
 <script src="/js/desktop-titlebar.js?v=v3"></script>
 
 <!-- ═══ Global Search Modal ═══ -->
@@ -2116,6 +2104,25 @@
      stays clickable over the macOS drag strips (same paint-order rule as
      #sidebar-controls). -->
 <div id="sidebar-agents-controls">
+  <!-- The side panel's tabs, one icon each, named on hover. They live in the top
+     bar beside the toggle of the panel they switch: placeSideTabStrip
+     (app-sidebar-toggle.js) moves this strip into the Windows titlebar, or
+     beside the left toggle when the panels are flipped. A click opens the
+     panel on that tab, or closes it when it is already showing (sidePanelTabClick). -->
+  <div id="side-tab-strip" role="group" aria-label="Side panel">
+    <!-- OVERVIEW: what this chat is doing, its plan and spec, its context (side-overview.js). -->
+    <button class="side-panel-tab" id="side-tab-overview" onclick="sidePanelTabClick('overview')" title="Overview" aria-label="Overview"><svg class="side-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="4" y="4" width="7" height="9" rx="1"/><rect x="13" y="4" width="7" height="5" rx="1"/><rect x="13" y="11" width="7" height="9" rx="1"/><rect x="4" y="15" width="7" height="5" rx="1"/></svg></button>
+    <button class="side-panel-tab active" id="side-tab-agents" onclick="sidePanelTabClick('agents')" title="Agents" aria-label="Agents"><svg class="side-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3.5"/><path d="M3 20c0-3.3 2.7-6 6-6s6 2.7 6 6"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7"/><path d="M18 14.5c1.8.8 3 2.6 3 5.5"/></svg> <span id="agent-count" class="agent-count">0</span></button>
+    <!-- PREVIEW: a code session's app, live or as files (preview-tab.js); a code session opens the panel on it. -->
+    <button class="side-panel-tab" id="side-tab-preview" onclick="sidePanelTabClick('preview')" title="Preview" aria-label="Preview"><svg class="side-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/><circle cx="12" cy="12" r="3"/></svg></button>
+    <button class="side-panel-tab" id="side-tab-inbox" onclick="sidePanelTabClick('inbox')" title="Inbox" aria-label="Inbox"><svg class="side-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 13l2.5-8h11L20 13"/><path d="M4 13v6h16v-6h-5l-1 2h-4l-1-2z"/></svg> <span id="inbox-count" class="agent-count" style="display:none"></span></button>
+    <button class="side-panel-tab" id="side-tab-artifacts" onclick="sidePanelTabClick('artifacts')" title="Artifacts" aria-label="Artifacts"><svg class="side-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h6"/></svg></button>
+    <!-- CHANGES: a reply's file diffs (chat-file-changes.js); hidden until one is opened. -->
+    <button class="side-panel-tab" id="side-tab-changes" onclick="sidePanelTabClick('changes')" title="Changes" aria-label="Changes" style="display:none"><svg class="side-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="6" r="2.5"/><circle cx="18" cy="18" r="2.5"/><path d="M6 8.5V15a3 3 0 0 0 3 3h6.5"/><path d="M18 15.5V9a3 3 0 0 0-3-3H8.5"/></svg></button>
+    <button class="side-panel-tab" id="side-tab-browser" onclick="sidePanelTabClick('browser')" title="Browser" aria-label="Browser"><svg class="side-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3c2.5 2.7 3.8 5.7 3.8 9s-1.3 6.3-3.8 9c-2.5-2.7-3.8-5.7-3.8-9S9.5 5.7 12 3z"/></svg></button>
+    <button class="side-panel-tab" id="side-tab-android" onclick="sidePanelTabClick('android')" title="Android" aria-label="Android"><svg class="side-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="7" y="2.5" width="10" height="19" rx="2"/><path d="M11 18.5h2"/></svg></button>
+    <button class="side-panel-tab" id="side-tab-terminal" onclick="sidePanelTabClick('terminal')" title="Terminal" aria-label="Terminal"><svg class="side-tab-icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M7 9l3 3-3 3"/><path d="M12.5 15H17"/></svg></button>
+  </div>
   <button id="sidebar-agents-btn" onclick="toggleSidePanel('right')" title="Show sidebar" aria-label="Toggle right sidebar">&#9704;</button>
 </div>
 

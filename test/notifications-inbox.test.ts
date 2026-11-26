@@ -243,6 +243,6 @@ describe("the inbox is a tab of the side panel", () => {
     const page = new DOMParser().parseFromString(html.slice(html.indexOf("<body"), html.lastIndexOf("</body>")), "text/html");
     expect(page.getElementById("notif-panel")).toBeNull();
     expect(page.getElementById("notif-list")!.closest("#inbox-tab-body")).not.toBeNull();
-    expect(page.getElementById("side-tab-inbox")!.closest(".agent-feeds-header")).not.toBeNull();
+    expect(page.getElementById("side-tab-inbox")!.closest("#side-tab-strip")).not.toBeNull();
   });
 });

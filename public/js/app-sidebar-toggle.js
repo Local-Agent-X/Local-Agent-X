@@ -91,6 +91,29 @@ function refreshSideButtons() {
     btn.title = (isCollapsed ? 'Show ' : 'Hide ') + name;
     btn.classList.toggle('is-open', !isCollapsed);
   });
+  placeSideTabStrip();
+}
+
+// The side panel's tab icons sit in the top bar beside the toggle of that
+// panel: the right toggle normally (the Windows titlebar's, or the window-top
+// cluster's on macOS and in a browser), the left cluster when the panels are
+// flipped. One strip, moved, so its ids stay unique.
+function placeSideTabStrip() {
+  const strip = document.getElementById('side-tab-strip');
+  if (!strip) return;
+  let host;
+  let before = null;
+  if (document.body.classList.contains('sidebar-right')) {
+    host = document.getElementById('sidebar-controls');
+  } else if (document.body.classList.contains('platform-win')) {
+    host = document.getElementById('desktop-titlebar');
+    before = document.getElementById('dtb-agents-toggle');
+  } else {
+    host = document.getElementById('sidebar-agents-controls');
+    before = document.getElementById('sidebar-agents-btn');
+  }
+  if (!host || (strip.parentElement === host && strip.nextElementSibling === before)) return;
+  host.insertBefore(strip, before);
 }
 window.refreshSideButtons = refreshSideButtons;
 

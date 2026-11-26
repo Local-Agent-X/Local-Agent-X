@@ -25,7 +25,7 @@ beforeEach(() => {
     <div id="page-chat" class="active">
       <div id="chat-main"><div id="messages"><div class="msg assistant">Latest answer</div></div><div id="input-area"></div></div>
       <div id="agent-feeds" class="active">
-        <div class="agent-feeds-header"><button id="side-tab-browser" class="active">BROWSER</button></div>
+        <button id="side-tab-browser" class="active">BROWSER</button>
         <div id="browser-tab-body"><div id="browser-address-bar"></div><div id="browser-view-anchor"></div></div>
       </div>
     </div>`;
@@ -42,6 +42,7 @@ describe("Browser full-page workspace", () => {
 
     const toggle = document.getElementById("browser-workspace-toggle") as HTMLButtonElement;
     expect(toggle).not.toBeNull();
+    expect(toggle.parentElement!.id).toBe("browser-address-bar");
     expect(toggle.getAttribute("aria-pressed")).toBe("false");
     toggle.click();
 
@@ -76,8 +77,6 @@ describe("Browser full-page workspace", () => {
     expect(CSS).toContain("body.browser-workspace #chat-main #status-bar{display:none!important}");
     expect(CSS).toContain("background:transparent;box-shadow:none");
     expect(CSS).toContain("width:min(100%,840px)");
-    expect(CSS).toContain("body.platform-win .browser-workspace-toggle{margin-right:0;transform:translateY(3px)}");
-    expect(CSS).toContain("body.browser-workspace .agent-feeds-header{padding:7px 12px}");
     expect(CSS).toContain("#stop-btn{grid-column:8");
     expect(CSS).toContain("#send-btn{grid-column:9");
     expect(CSS).toContain("browser-chat-latest-open{--browser-chat-dock-height:min(38vh,380px)}");

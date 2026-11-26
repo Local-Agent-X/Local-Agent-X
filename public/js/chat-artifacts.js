@@ -33,6 +33,15 @@ window.laxSidePanelChat = {
   },
 };
 
+// A tab icon in the top bar (#side-tab-strip): it opens a closed panel on that
+// tab, turns an open one to it, and closes the panel already showing it.
+function sidePanelTabClick(tab) {
+  var open = typeof agentFeedsOpen !== 'undefined' && agentFeedsOpen;
+  if (open && tab === sidePanelTab) { toggleAgentFeeds(); return; }
+  if (!open) toggleAgentFeeds();
+  switchSidePanelTab(tab);
+}
+
 function switchSidePanelTab(tab) {
   sidePanelTab = tab;
   SIDE_PANEL_TABS.forEach(function(name) {
@@ -41,9 +50,6 @@ function switchSidePanelTab(tab) {
     if (body) body.style.display = tab === name ? '' : 'none';
     if (button) button.classList.toggle('active', tab === name);
   });
-  var autoBtn = document.getElementById('agent-feeds-autoopen-toggle');
-  // AUTO (auto-open on agent spawn) only makes sense on the agents tab.
-  if (autoBtn) autoBtn.style.display = tab === 'agents' ? '' : 'none';
   if (tab === 'artifacts') loadArtifacts(false);
   if (tab === 'changes' && typeof renderFileChangesTab === 'function') renderFileChangesTab();
   // An item posted from an out-of-process worker has no live frame here.

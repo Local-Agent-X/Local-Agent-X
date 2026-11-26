@@ -215,8 +215,7 @@
   }
 
   function createControls() {
-    var host = document.querySelector('.agent-feeds-header') ||
-      document.getElementById('browser-address-bar');
+    var host = document.getElementById('browser-address-bar');
     if (!overlayRenderer && host && !document.getElementById('browser-workspace-toggle')) {
       fullButton = document.createElement('button');
       fullButton.id = 'browser-workspace-toggle';

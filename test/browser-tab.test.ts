@@ -209,13 +209,12 @@ function setAnchorRect(rect: { left: number; top: number; width: number; height:
 
 beforeEach(() => {
   document.body.innerHTML = `
+    <div id="side-tab-strip">
+      <button class="side-panel-tab active" id="side-tab-agents"></button>
+      <button class="side-panel-tab" id="side-tab-artifacts"></button>
+      <button class="side-panel-tab" id="side-tab-browser"></button>
+    </div>
     <div id="agent-feeds" class="agent-feeds">
-      <div class="agent-feeds-header">
-        <button class="side-panel-tab active" id="side-tab-agents"></button>
-        <button class="side-panel-tab" id="side-tab-artifacts"></button>
-        <button class="side-panel-tab" id="side-tab-browser"></button>
-        <button id="agent-feeds-autoopen-toggle"></button>
-      </div>
       <div id="agents-tab-body" class="side-tab-body"></div>
       <div id="artifacts-tab-body" class="side-tab-body" style="display:none"></div>
       <div id="browser-tab-body" class="side-tab-body" style="display:none">
@@ -274,8 +273,6 @@ describe("browser tab in the right side panel", () => {
     expect(document.getElementById("agents-tab-body")!.style.display).toBe("none");
     expect(document.getElementById("side-tab-browser")!.classList.contains("active")).toBe(true);
     expect(onTabShown).toHaveBeenCalledTimes(1);
-    // AUTO toggle belongs to the agents tab only.
-    expect(document.getElementById("agent-feeds-autoopen-toggle")!.style.display).toBe("none");
   });
 
   it("leaving the tab calls onTabHidden and hides the overlay", () => {

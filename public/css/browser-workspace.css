@@ -1,16 +1,12 @@
 /* Full-page Browser workspace. Desktop paints the compact chat in its own
    tightly bounded WebContentsView above the full-height Browser view. */
 #browser-chat-dock-bar{display:none}
-/* 38px default keeps the toggle clear of #sidebar-agents-controls, which floats
-   in the same row in a plain browser. Windows hides those controls and darwin
-   moves them up into the title drag strip, so both can hug the right edge. */
+/* The full-page toggle ends the Browser's address bar (browser-workspace.js). */
 .browser-workspace-toggle{
-  font-size:.8rem;min-width:0;margin-left:auto;margin-right:38px;
+  font-size:.8rem;min-width:0;
   border:none;border-radius:6px;padding:2px 6px;
 }
 .browser-workspace-toggle:hover{color:var(--text);background:var(--hover)}
-body.platform-win .browser-workspace-toggle{margin-right:0;transform:translateY(3px)}
-body.platform-darwin .browser-workspace-toggle{margin-right:0}
 
 body.browser-workspace{
   --browser-chat-dock-height:52px;
@@ -25,7 +21,6 @@ body.browser-workspace #agent-feeds{
 }
 body.browser-workspace #agent-feeds.collapsed{width:0!important}
 body.browser-workspace .agent-feeds-resize-handle{display:none}
-body.browser-workspace .agent-feeds-header{padding:7px 12px}
 body.browser-workspace .browser-tab-strip{min-height:30px;padding:3px 8px 0}
 body.browser-workspace .browser-strip-tab{height:27px}
 body.browser-workspace .browser-new-tab{height:26px}

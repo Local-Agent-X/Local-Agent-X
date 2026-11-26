@@ -32,6 +32,7 @@ import { isLeaseExpired } from "../canonical-loop/public/op-facts.js";
 import { locateInRepo } from "./repo-locate.js";
 import { normRepoPath, repoPathsOverlap } from "./path-overlap.js";
 import { getSessionOwner } from "../browser/session-owner-registry.js";
+import { isSentByApp } from "../chat-ws/app-message-text.js";
 
 export const CHAT_IDLE_HOLD_MS = 30 * 60_000;
 export const RECENT_MS = 2 * 60 * 60_000;
@@ -182,10 +183,15 @@ export function taskTitle(task: string): string {
   return first.slice(0, 60);
 }
 
+/** A chat turn the app started (a build decision for the build's lead, a
+ *  background op's report) names no task: the holder keeps the one the user
+ *  typed. The AGENTS card showed a build lead's chat as "(Sent by the app, not
+ *  typed by the user: a build decision is waiting.)" (label-check-sol, 2026-11-25). */
 function describeFromOp(opId: string | undefined): Pick<WorkHolder, "kind" | "task" | "parentOpId"> & { title: string } {
   const op = opId ? readOpFor(opId) : null;
-  const task = (op?.task ?? "").replace(/\s+/g, " ").trim().slice(0, 160);
-  return { kind: op && op.lane !== "interactive" ? "worker" : "chat", task, title: taskTitle(op?.task ?? ""), ...(op?.parentOpId ? { parentOpId: op.parentOpId } : {}) };
+  const raw = op?.lane === "interactive" && isSentByApp(op.task ?? "") ? "" : op?.task ?? "";
+  const task = raw.replace(/\s+/g, " ").trim().slice(0, 160);
+  return { kind: op && op.lane !== "interactive" ? "worker" : "chat", task, title: taskTitle(raw), ...(op?.parentOpId ? { parentOpId: op.parentOpId } : {}) };
 }
 
 export interface ClaimInput {

@@ -108,6 +108,17 @@ describe("claims between parallel agents", () => {
     touchHolders("chat-a", "op-2", "Voice chat");
     expect(liveHolders()[0]).toMatchObject({ state: "active", displayName: "Voice chat", task: "second" });
   });
+
+  // A build lead's card read "(Sent by the app, not typed by the user: a build
+  // decision is waiting.)" in the AGENTS panel (label-check-sol, 2026-11-25).
+  it("a turn the app started keeps the task the user typed", () => {
+    op("op-1", "interactive", "completed", "Build Label Check for the hackathon");
+    recordClaims({ sessionId: "chat-a", opId: "op-1", paths: [join(main, "x.ts")], source: "written" });
+    op("op-2", "interactive", "running", "(Sent by the app, not typed by the user: a build decision is waiting.)\n\nDecision bd-1", new Date(Date.now() + 60_000).toISOString());
+    touchHolders("chat-a", "op-2");
+    recordClaims({ sessionId: "chat-a", opId: "op-2", paths: [join(main, "y.ts")], source: "written" });
+    expect(liveHolders()[0]).toMatchObject({ state: "active", task: "Build Label Check for the hackathon" });
+  });
 });
 
 describe("a chat and the agents it started", () => {

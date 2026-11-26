@@ -33,6 +33,7 @@ import { Handler } from "../../agency/handler.js";
 import { loadSkillBody } from "../skill-bodies.js";
 import { BUILDER_KIT, REVIEW_KIT } from "../../tools/tool-kits.js";
 import { SKEPTIC_BAR_BLOCK } from "../chunk-review/skeptic-bar.js";
+import { openReportSlot, takeReport, type BreakerFindingsCall, type ChunkReportCall, type ReportKind, type SkepticVerdictCall } from "./agent-report.js";
 import { join } from "node:path";
 
 export type ChunkAgentRole = "chunk-runner-trunk" | "chunk-runner-leaf" | "scenario-fix" | "chunk-skeptic" | "finish-breaker";
@@ -95,6 +96,12 @@ export interface ChunkAgentResult {
   error?: string;
   /** The run's conversation, when asked for and the run finished. */
   transcript?: ChatCompletionMessageParam[];
+  /** What the run reported with its report tool (agent-report.ts), by role:
+   *  kept however the run ended, so a report made before a timeout or a text
+   *  guard's "failed" is not lost. Absent when it made none. */
+  chunkReport?: ChunkReportCall;
+  skepticVerdict?: SkepticVerdictCall;
+  breakerFindings?: BreakerFindingsCall;
 }
 
 /**
@@ -218,6 +225,8 @@ interface RoleSpec {
   discipline: string;
   agentRole: string;
   tools: readonly string[];
+  /** The report this role ends its run with, and so the slot the engine opens for it. */
+  report: ReportKind;
   name: string;
   description: string;
   icon: string;
@@ -225,26 +234,34 @@ interface RoleSpec {
 
 const ROLE_SPECS: Record<ChunkAgentRole, RoleSpec> = {
   "chunk-runner-trunk": {
-    skill: "senior-engineer", discipline: DISCIPLINE_BLOCK, agentRole: "implementer", tools: BUILDER_KIT,
+    skill: "senior-engineer", discipline: DISCIPLINE_BLOCK, agentRole: "implementer", tools: [...BUILDER_KIT, "chunk_report"], report: "chunk",
     name: "Chunk runner (trunk/mixed)", description: "Implements a trunk or mixed chunk from a build plan.", icon: "🏗️",
   },
   "chunk-runner-leaf": {
-    skill: "vibe-code", discipline: DISCIPLINE_BLOCK, agentRole: "implementer", tools: BUILDER_KIT,
+    skill: "vibe-code", discipline: DISCIPLINE_BLOCK, agentRole: "implementer", tools: [...BUILDER_KIT, "chunk_report"], report: "chunk",
     name: "Chunk runner (leaf)", description: "Implements a leaf chunk (UI, isolated features) from a build plan.", icon: "🎨",
   },
   "scenario-fix": {
-    skill: "senior-engineer", discipline: SCENARIO_FIX_DISCIPLINE_BLOCK, agentRole: "implementer", tools: BUILDER_KIT,
+    skill: "senior-engineer", discipline: SCENARIO_FIX_DISCIPLINE_BLOCK, agentRole: "implementer", tools: [...BUILDER_KIT, "chunk_report"], report: "chunk",
     name: "Scenario fix worker", description: "Fixes phase-gate scenario failures without violating spec/constitution.", icon: "🔧",
   },
   "chunk-skeptic": {
-    skill: null, discipline: SKEPTIC_DISCIPLINE_BLOCK, agentRole: "reviewer", tools: REVIEW_KIT,
+    skill: null, discipline: SKEPTIC_DISCIPLINE_BLOCK, agentRole: "reviewer", tools: [...REVIEW_KIT, "skeptic_verdict"], report: "skeptic",
     name: "Chunk skeptic", description: "Tries to prove a just-built chunk wrong before it counts as done.", icon: "🔍",
   },
   "finish-breaker": {
-    skill: null, discipline: FINISH_BREAKER_DISCIPLINE_BLOCK, agentRole: "reviewer", tools: REVIEW_KIT,
+    skill: null, discipline: FINISH_BREAKER_DISCIPLINE_BLOCK, agentRole: "reviewer", tools: [...REVIEW_KIT, "breaker_findings"], report: "breaker",
     name: "Break-it agent", description: "Attacks a finished app from one angle before the build reports done.", icon: "🧨",
   },
 };
+
+/** What the run delivered, under its role's field of the result. */
+function deliveredReport(session: string, kind: ReportKind): Pick<ChunkAgentResult, "chunkReport" | "skepticVerdict" | "breakerFindings"> {
+  if (kind === "chunk") { const r = takeReport(session, "chunk"); return r ? { chunkReport: r } : {}; }
+  if (kind === "skeptic") { const r = takeReport(session, "skeptic"); return r ? { skepticVerdict: r } : {}; }
+  const r = takeReport(session, "breaker");
+  return r ? { breakerFindings: r } : {};
+}
 
 const DEF_CACHE = new Map<ChunkAgentRole, AgentDefinition>();
 
@@ -339,6 +356,12 @@ export async function runChunkAgent(opts: ChunkAgentInvocation): Promise<ChunkAg
     ...(opts.keepTranscript ? { keepTranscript: true } : {}),
   });
   const agentId = ref.runId;
+  // The run reports through its tool into a slot keyed by its session, opened
+  // here before its first turn (the driver was only started above) and taken
+  // in finish(), the one way out: result, silence, deadline or abort.
+  const reportsAs = ROLE_SPECS[opts.role].report;
+  const reportSession = `agent-${agentId}`;
+  openReportSlot(reportSession, reportsAs);
 
   return await new Promise<ChunkAgentResult>((resolve) => {
     let settled = false;
@@ -358,7 +381,7 @@ export async function runChunkAgent(opts: ChunkAgentInvocation): Promise<ChunkAg
       clearTimeout(deadline);
       opts.signal?.removeEventListener("abort", abortListener);
       if (cancelRun) Handler.getInstance().cancelAgent(agentId);
-      resolve(result);
+      resolve({ ...result, ...deliveredReport(reportSession, reportsAs) });
     };
 
     const resultHandler = (data: unknown): void => {

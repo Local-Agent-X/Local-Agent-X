@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2193 non-test source files · 59 oversized · 277 nearing the size cap.
+**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2195 non-test source files · 59 oversized · 277 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -22,7 +22,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/ops/` | 194 | 32 | XL | 1 |
 | `src/security/` | 173 | 67 | XL | 2 |
 | `src/tools/` | 150 | 268 | XL | 6 |
-| `src/tool-execution/` | 108 | 92 | XL | 2 |
+| `src/tool-execution/` | 109 | 92 | XL | 2 |
 | `src/workspace/` | 99 | 3 | M |  |
 | `src/canonical-loop/` | 95 | 302 | XL | 6 |
 | `src/util/` | 88 | 5 | S |  |
@@ -66,9 +66,9 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/app-scaffold/` | 12 | 7 | M |  |
 | `src/ari-kernel/` | 12 | 12 | M |  |
 | `src/integrations/` | 12 | 15 | M |  |
+| `src/auto-build/` | 11 | 86 | XL | 1 |
 | `src/whatsapp-bridge/` | 11 | 8 | M | 1 |
 | `src/agent-guards/` | 10 | 13 | L |  |
-| `src/auto-build/` | 10 | 84 | XL | 1 |
 | `src/calendar/` | 10 | 10 | M |  |
 | `src/codex-client/` | 10 | 7 | M |  |
 | `src/plugin-system/` | 9 | 10 | L |  |

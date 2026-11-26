@@ -82,6 +82,17 @@ export const plugins: ToolPlugin[] = [
     },
   },
   {
+    // What a build agent ends its run with (auto-build/agents/agent-report.ts).
+    // Registered here, not in allTools, on purpose: the engine takes a report
+    // from a slot in this process, and a run whose every tool can be rebuilt
+    // in a worker process is moved to one, where the slot would not be.
+    id: "buildReports",
+    async register() {
+      const { REPORT_TOOLS } = await import("../auto-build/agents/report-tools.js");
+      return [...REPORT_TOOLS];
+    },
+  },
+  {
     // request_secret / request_secrets raise their card on the calling
     // session's event sink, which the dispatcher stamps on every call.
     id: "secrets",

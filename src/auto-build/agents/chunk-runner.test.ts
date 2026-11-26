@@ -14,14 +14,15 @@ vi.mock("../skill-bodies.js", () => ({ loadSkillBody: () => "SKILL BODY" }));
 const RUN_ID = "run-ab1";
 const invokeCalls: Array<{ task: string; opts: Record<string, unknown> }> = [];
 vi.mock("../../agents/invoke.js", () => ({
-  invokeDefinition: (_def: unknown, task: string, opts: Record<string, unknown>) => {
-    invokeCalls.push({ task, opts });
+  invokeDefinition: (def: unknown, task: string, opts: Record<string, unknown>) => {
+    invokeCalls.push({ task, opts, def } as never);
     return { runId: RUN_ID, definition: {} };
   },
   takeRunTranscript: (runId: string) => (runId === RUN_ID ? [{ role: "assistant", content: "what the worker did" }] : undefined),
 }));
 
 import { runChunkAgent, _clearChunkAgentDefCache } from "./chunk-runner.js";
+import { breakerFindingsTool, chunkReportTool, skepticVerdictTool } from "./report-tools.js";
 import { Handler } from "../../agency/handler.js";
 import { EventBus } from "../../event-bus.js";
 
@@ -119,5 +120,52 @@ describe("runChunkAgent task provenance", () => {
     expect(invokeCalls).toHaveLength(1);
     expect(invokeCalls[0].opts.harnessAuthoredTask).toBe(true);
     expect(invokeCalls[0].task).toContain("Never touch paths outside it");
+  });
+});
+
+// A build agent ends its run by calling its report tool; the engine takes what
+// was delivered when the run ends, however it ends (agent-report.ts).
+describe("runChunkAgent returns what the run reported", () => {
+  const session = `agent-${RUN_ID}`;
+  const done = { status: "done", done_when: "met", note: "built the list and ran its tests", _sessionId: session };
+
+  it("a worker's chunk_report comes back beside its output", async () => {
+    const p = runChunkAgent({ role: "chunk-runner-trunk", task: "do the thing", silenceLimitMs: 60_000 });
+    expect((await chunkReportTool.execute(done)).isError).toBeFalsy();
+    await EventBus.emit("handler:agent-result", { agentId: RUN_ID, success: true, result: "narration" });
+    const res = await p;
+    expect(res.chunkReport).toMatchObject({ status: "done", doneWhen: "met", note: "built the list and ran its tests" });
+    expect(res.skepticVerdict).toBeUndefined();
+  });
+
+  it("is kept when the run's text guards call it failed, and when the run is cut off after reporting", async () => {
+    const failed = runChunkAgent({ role: "chunk-skeptic", task: "review", projectDir: "C:/proj", silenceLimitMs: 60_000 });
+    await skepticVerdictTool.execute({ verdict: "holds", finding: "probed the edges", _sessionId: session });
+    await EventBus.emit("handler:agent-result", { agentId: RUN_ID, success: false, result: "[Agent did not finish]" });
+    expect((await failed).skepticVerdict).toMatchObject({ verdict: "holds" });
+
+    const cut = runChunkAgent({ role: "finish-breaker", task: "attack", projectDir: "C:/proj", silenceLimitMs: 40 });
+    await breakerFindingsTool.execute({ findings: [{ severity: "high", text: "the list drops its last item" }], _sessionId: session });
+    const res = await cut;
+    expect(res.exitCode).toBe(124);
+    expect(res.breakerFindings?.findings).toEqual([{ severity: "high", text: "the list drops its last item" }]);
+  });
+
+  it("a run that never reported returns none, and a call after it ended is refused", async () => {
+    const p = runChunkAgent({ role: "chunk-runner-leaf", task: "do the thing", silenceLimitMs: 60_000 });
+    await EventBus.emit("handler:agent-result", { agentId: RUN_ID, success: true, result: "narration" });
+    expect((await p).chunkReport).toBeUndefined();
+    const late = await chunkReportTool.execute(done);
+    expect(late.isError).toBe(true);
+    expect(late.content).toContain("No build is waiting");
+  });
+
+  it("each role is offered its own report tool, and only that one", () => {
+    const tools = (role: Parameters<typeof runChunkAgent>[0]["role"]) => { invokeCalls.length = 0; void runChunkAgent({ role, task: "t", projectDir: "C:/proj", silenceLimitMs: 1 }); return (invokeCalls[0] as unknown as { def: { allowedTools: string[] } }).def.allowedTools.filter((t) => ["chunk_report", "skeptic_verdict", "breaker_findings"].includes(t)); };
+    expect(tools("chunk-runner-trunk")).toEqual(["chunk_report"]);
+    expect(tools("chunk-runner-leaf")).toEqual(["chunk_report"]);
+    expect(tools("scenario-fix")).toEqual(["chunk_report"]);
+    expect(tools("chunk-skeptic")).toEqual(["skeptic_verdict"]);
+    expect(tools("finish-breaker")).toEqual(["breaker_findings"]);
   });
 });

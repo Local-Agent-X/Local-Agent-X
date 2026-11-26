@@ -130,6 +130,12 @@ interface ProvisionOpts {
   /** With workRoot: the folder inside it the run's file tools may write
    *  (agents/types.ts InvokeOpts.writesOnlyUnder). */
   writesOnlyUnder?: string;
+  /** With workRoot: the folder is where the run saves its work, not a limit on
+   *  what it reads. A scheduled job opens the files its task names where they
+   *  are, as far as the user's File Access setting reaches (cron-runner.ts).
+   *  Live 2026-11-25/26: told "do not read anywhere else", a job refused the
+   *  image its own task named and never tried the upload the gate allowed. */
+  readsBeyondWorkRoot?: true;
   /** The workspace a scratch folder is made under (default: the configured one). */
   workspace?: string;
   /** Files or folders the run was started to change, relative to its work
@@ -162,6 +168,16 @@ export function worktreeRefusal(repoRoot: string): string {
     : `could not create an isolated worktree of ${repoRoot}: the repository has no commit yet, so there is nothing to branch from. Commit first, then spawn the agent again.`;
 }
 
+/** The prompt block for a caller-sanctioned work root. A run that may read
+ *  beyond it is told the folder is where its work goes, and that what it can
+ *  open elsewhere is decided per call, so it tries instead of refusing itself. */
+function workRootPrompt(root: string, readsBeyond: boolean): string {
+  if (!readsBeyond) {
+    return `\n\n--- PROJECT ROOT ---\nAll your work happens under: ${root}\nRelative paths in file tools resolve against it. For bash, cd "${root}" first. Do not read or write anywhere else.\n--- END PROJECT ROOT ---\n`;
+  }
+  return `\n\n--- WORK FOLDER ---\nYour work folder: ${root}\nRelative paths in file tools resolve against it. For bash, cd "${root}" first. Save the files you make here.\nFiles the task names outside this folder (an image to upload, a document to read) you open where they are: what you may reach is decided when you make the call, so make it instead of assuming the file is off limits.\n--- END WORK FOLDER ---\n`;
+}
+
 function provisionFolder(opts: ProvisionOpts): AgentWorkspace {
   const { agentId, runSessionId, security } = opts;
   if (opts.workDir) {
@@ -192,12 +208,11 @@ function provisionFolder(opts: ProvisionOpts): AgentWorkspace {
       mkdirSync(opts.writesOnlyUnder, { recursive: true });
       security.fenceToWorktree(runSessionId, { worktree: resolve(opts.writesOnlyUnder), repoRoot: resolve(opts.workRoot), filesOnly: true });
     }
-    const workRootFwd = opts.workRoot.replace(/\\/g, "/");
     return {
       worktree: null,
       workRoot: opts.workRoot,
       ...(opts.writesOnlyUnder ? { writeFenced: true as const } : {}),
-      promptBlock: `\n\n--- PROJECT ROOT ---\nAll your work happens under: ${workRootFwd}\nRelative paths in file tools resolve against it. For bash, cd "${workRootFwd}" first. Do not read or write anywhere else.\n--- END PROJECT ROOT ---\n`,
+      promptBlock: workRootPrompt(opts.workRoot.replace(/\\/g, "/"), opts.readsBeyondWorkRoot === true),
     };
   }
   if (opts.requiresWorktree) {

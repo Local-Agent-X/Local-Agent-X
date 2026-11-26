@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2197 non-test source files · 59 oversized · 276 nearing the size cap.
+**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2197 non-test source files · 59 oversized · 275 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -520,7 +520,6 @@ job. Comments are free: never cut them to fit.
 - `src/tools/issue-tools/agent-whoami.ts#agentWhoAmITool.execute` — 70+ own code lines (cap 100)
 - `src/tools/read-imports.ts#buildImportAppendix` — 70+ own code lines (cap 100)
 - `src/voice/tts-model-fetch.ts#doDownload` — 70+ own code lines (cap 100)
-- `src/agency/agent-workspace.ts#provisionFolder` — 60+ own code lines (cap 100)
 - `src/agency/worktree-lifecycle.ts#mergeWorktree` — 60+ own code lines (cap 100)
 - `src/agents/invoke.ts#invokeDefinition` — 60+ own code lines (cap 100)
 - `src/auth/anthropic-login.ts#completeAnthropicCliOAuth` — 60+ own code lines (cap 100)

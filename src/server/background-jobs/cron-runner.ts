@@ -140,7 +140,7 @@ export function registerCronRunner(deps: CronRunnerDeps): void {
     const missionDir = missionFolder(config.workspace, jobMeta?.name, jobId);
     mkdirSync(missionDir, { recursive: true });
     const workspace = provisionAgentWorkspace({
-      agentId: `cron-${jobId}`, runSessionId: sessionId, security: cronSecurity, requiresWorktree: false, workRoot: missionDir,
+      agentId: `cron-${jobId}`, runSessionId: sessionId, security: cronSecurity, requiresWorktree: false, workRoot: missionDir, readsBeyondWorkRoot: true,
     });
     let result;
     try {

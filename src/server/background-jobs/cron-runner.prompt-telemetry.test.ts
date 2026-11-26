@@ -128,7 +128,12 @@ describe("scheduled mission prompt telemetry", () => {
     const options = calls[0][2];
     const missionDir = join(workspace, "missions", "daily-research");
     expect(options.systemPrompt.startsWith(CRON_SYSTEM_PROMPT)).toBe(true);
-    expect(options.systemPrompt).toContain(`All your work happens under: ${missionDir.replace(/\\/g, "/")}`);
+    // The job's folder is where its work goes, not a limit on what it opens:
+    // told "do not read anywhere else", a job refused the image its own task
+    // named (2026-11-25/26) though the gate would have allowed the upload.
+    expect(options.systemPrompt).toContain(`Your work folder: ${missionDir.replace(/\\/g, "/")}`);
+    expect(options.systemPrompt).toContain("Files the task names outside this folder");
+    expect(options.systemPrompt).not.toContain("Do not read or write anywhere else");
     // Only scheduling is taken away: every write and shell tool reaches the
     // run, and the worker-run gates decide each call.
     expect(options.tools.map((entry: ToolDefinition) => entry.name)).toEqual(["read", "write", "edit", "edit_lines", "bash"]);

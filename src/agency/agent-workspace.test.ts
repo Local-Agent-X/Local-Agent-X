@@ -161,6 +161,32 @@ describe("provisionAgentWorkspace — a spawned agent can run commands where it 
     expect(sec.fenceOf(session)).toBeUndefined();
   });
 
+  // A scheduled job's folder is where it saves, not a fence on what it reads:
+  // the prompt says so, and the gate agrees for a file its task names elsewhere
+  // in the workspace. Without the option a work root keeps its strict wording.
+  it("a work root the run may read beyond: told to save there and open named files where they are", () => {
+    const mission = join(roots.workspace, "missions", "insta-grid-day-5");
+    const elsewhere = join(roots.workspace, "insta-closing-grid");
+    mkdirSync(mission, { recursive: true });
+    mkdirSync(elsewhere, { recursive: true });
+    const image = join(elsewhere, "day5.png");
+    writeFileSync(image, "png");
+    const sec = new SecurityLayer(roots.workspace, "common");
+    const session = "cron-job-reads-beyond";
+    const ws = provisionAgentWorkspace({ agentId: "cron-job", runSessionId: session, security: sec, requiresWorktree: false, workRoot: mission, readsBeyondWorkRoot: true });
+    try {
+      expect(ws.promptBlock).toContain(`Your work folder: ${mission.replace(/\\/g, "/")}`);
+      expect(ws.promptBlock).toContain("Save the files you make here.");
+      expect(ws.promptBlock).not.toContain("Do not read or write anywhere else");
+      expect(sec.evaluate({ toolName: "read", args: { path: image }, sessionId: session, callContext: "cron" }).allowed).toBe(true);
+    } finally {
+      releaseAgentWorkspace(ws, sec, session);
+    }
+    const strict = provisionAgentWorkspace({ agentId: "worker", runSessionId: "agent-run-strict", security: sec, requiresWorktree: false, workRoot: mission });
+    expect(strict.promptBlock).toContain("Do not read or write anywhere else");
+    releaseAgentWorkspace(strict, sec, "agent-run-strict");
+  });
+
   it("a plain folder becomes the run's scoped work root", () => {
     const dir = join(BASE, "plain-run");
     mkdirSync(dir);

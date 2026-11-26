@@ -9,7 +9,8 @@
  * which otherwise only notes the clash on the result), and an
  * outward call made after a tool result held a planted-looking instruction
  * (injection-exposure.ts), and a send attaching a deliverable whose figures
- * check is still running or failed (figure-check-send-gate.ts).
+ * check is still running or failed (figure-check-send-gate.ts), and a send
+ * or publish made by a build's chunk worker (build-worker-send-gate.ts).
  */
 import type { ToolCallContext } from "./context.js";
 import { currentHumanText } from "./unnamed-delete-gate.js";
@@ -20,6 +21,7 @@ import { claimClashGate } from "./claim-clash-gate.js";
 import { injectionExposureGate } from "./injection-exposure.js";
 import { mcpSecretUseGate } from "../tools/mcp-admin-tools.js";
 import { addApprovalReason } from "./approval-card-text.js";
+import { buildWorkerSendGate } from "./build-worker-send-gate.js";
 
 /** Only the tool can see what a call would touch — which fact a substring
  *  selects and whose it is — so the tool says why this one needs the user. */
@@ -37,4 +39,5 @@ export async function askUserGates(ctx: ToolCallContext): Promise<void> {
   mcpSecretUseGate(ctx);
   await toolConfirmationGate(ctx);
   injectionExposureGate(ctx);
+  buildWorkerSendGate(ctx);
 }

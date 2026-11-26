@@ -60,12 +60,6 @@ export function attendedRun(ctx: Pick<ToolCallContext, "callContext" | "sessionI
   return ctx.callContext === "local" && !(ctx.sessionId && chatUnattended(ctx.sessionId));
 }
 
-/** A call made by an auto-build chunk worker that builds (ops/types.ts routing.buildWorker). */
-export function isBuildWorkerCall(ctx: Pick<ToolCallContext, "callContext" | "operationId">): boolean {
-  if (ctx.callContext !== "delegated" || !ctx.operationId) return false;
-  return readOp(ctx.operationId)?.contextPack?.routing?.buildWorker === true;
-}
-
 /** The run the card could not reach, for a refusal's wording. */
 export function nobodyWatching(ctx: Pick<ToolCallContext, "callContext">): string {
   return ctx.callContext === "local" ? "no one is attached to this chat" : `no one is watching this ${ctx.callContext} run`;

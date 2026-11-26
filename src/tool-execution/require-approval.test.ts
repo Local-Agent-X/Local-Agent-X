@@ -6,6 +6,7 @@ import { getApprovalManager } from "../approval-manager.js";
 import { classifyToolRisk } from "../autonomy/risk.js";
 import type { ServerEvent } from "../types.js";
 import { writeOp } from "../ops/op-store.js";
+import { buildWorkerSendGate } from "./build-worker-send-gate.js";
 import type { Op } from "../ops/types.js";
 
 // Guard: these tests assume a stable risk mapping. If the classifier changes,
@@ -198,6 +199,7 @@ describe("requireApprovalPhase — unattended runs", () => {
     } as unknown as Op);
 
     const send = Object.assign(makeCtx({ name: "email_send", sessionId: child, callContext: "delegated", args: { to: "someone@example.com", subject: "s", body: "b" } }), { operationId: opId });
+    buildWorkerSendGate(send);
     const outcome = await requireApprovalPhase(send);
     expect(outcome.kind).not.toBe("continue");
     expect(send.allowed).toBe(false);
@@ -205,7 +207,13 @@ describe("requireApprovalPhase — unattended runs", () => {
 
     // The same worker reading a file is not asked about.
     const read = Object.assign(makeCtx({ name: "read", sessionId: child, callContext: "delegated", args: { path: "a.txt" } }), { operationId: opId });
+    buildWorkerSendGate(read);
     expect((await requireApprovalPhase(read)).kind).toBe("continue");
+
+    // The same send from an agent that is not a build worker is not held by this rule.
+    const other = makeCtx({ name: "email_send", sessionId: child, callContext: "delegated", args: { to: "someone@example.com", subject: "s", body: "b" } });
+    buildWorkerSendGate(other);
+    expect(other.policyApprovalReason).toBeUndefined();
   });
 
   it("honors a per-job Autonomous profile so ask-tier tools run unattended", async () => {

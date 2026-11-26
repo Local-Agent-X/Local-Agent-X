@@ -33,6 +33,8 @@ import { isFeatureEnabled } from "../tool.js";
 import { sweepOrphanWorktreeJunctions } from "../../agency/worktree-recovery.js";
 import { createLogger } from "../../logger.js";
 import { parkStoppedChunk } from "./stopped-run.js";
+import { landedUnrecorded } from "../loop/carry-over.js";
+import type { FinishProgress } from "../finish-gates/fix-chunk.js";
 
 const logger = createLogger("auto-build.orchestrator.resume");
 
@@ -181,6 +183,40 @@ export type SavedStart =
  * A paused build keeps its id, so its card goes on.
  */
 export function startFromSavedState(s: state.OrchestratorState, sessionId: string, requestedStartingChunk?: number): SavedStart {
+  const saved = readSavedRun(s, requestedStartingChunk);
+  if (saved.kind === "invalid") return saved;
+  if (saved.kept) logger.info(`[resume] ${s.projectDir}: ${saved.kept}`);
+  const kick = startOrchestration({
+    sessionId,
+    projectDir: s.projectDir,
+    planPath: s.planPath,
+    plan: saved.plan,
+    ...saved.run,
+    ...(s.phase === "paused" ? { opId: s.opId } : {}),
+    ...DEFAULT_CHUNK_REVIEW,
+  });
+  return { kind: "started", opId: kick.opId, initialMessage: kick.initialMessage, window: saved.window, kept: saved.kept };
+}
+
+export type SavedRun =
+  | {
+    kind: "ready";
+    plan: ParsedPlan;
+    window: Exclude<ResumeWindow, { kind: "invalid" }>;
+    /** What a part-built chunk's work was kept as, or "" when there was none. */
+    kept: string;
+    /** Where the loop starts again. */
+    run: { startingChunk: number; maxChunks: number | undefined; landedChunks: number[] | undefined; finishProgress?: FinishProgress };
+  }
+  | { kind: "invalid"; reason: string };
+
+/**
+ * Where a saved run goes on from: its window of the plan, its landed chunks
+ * and its finish checks' place, with a part-built chunk's work moved onto its
+ * branch first. Everything startFromSavedState decides, apart from starting
+ * the run, so the kill-and-resume suite resumes exactly as the app does.
+ */
+export function readSavedRun(s: state.OrchestratorState, requestedStartingChunk?: number): SavedRun {
   if (!existsSync(s.planPath)) return { kind: "invalid", reason: "plan file missing" };
   let plan: ParsedPlan;
   try {
@@ -192,24 +228,21 @@ export function startFromSavedState(s: state.OrchestratorState, sessionId: strin
   const window = computeResumeWindow(s, plan.chunks, requestedStartingChunk);
   if (window.kind === "invalid") return window;
   const { state: parked, kept } = parkStoppedChunk(s);
-  if (kept) {
-    state.write(parked);
-    logger.info(`[resume] ${s.projectDir}: ${kept}`);
-  }
+  if (parked !== s) state.write(parked);
   const runEnd = window.kind === "complete";
-  const kick = startOrchestration({
-    sessionId,
-    projectDir: s.projectDir,
-    planPath: s.planPath,
-    plan,
-    startingChunk: window.startingChunk,
-    maxChunks: window.maxChunks,
-    landedChunks: runEnd ? window.landedChunks : s.landedChunks,
-    ...(runEnd && s.finish ? { finishProgress: s.finish } : {}),
-    ...(s.phase === "paused" ? { opId: s.opId } : {}),
-    ...DEFAULT_CHUNK_REVIEW,
-  });
-  return { kind: "started", opId: kick.opId, initialMessage: kick.initialMessage, window, kept };
+  const recorded = (runEnd ? window.landedChunks : s.landedChunks) ?? [];
+  // A chunk merged just before a kill, with no record of it yet, is not built again.
+  const merged = landedUnrecorded(s.projectDir, plan.chunks.map((c) => c.number).filter((n) => !recorded.includes(n)), s.startedAt);
+  return {
+    kind: "ready", plan, window, kept,
+    run: {
+      startingChunk: window.startingChunk,
+      maxChunks: window.maxChunks,
+      landedChunks: merged.length ? [...recorded, ...merged] : (runEnd ? window.landedChunks : s.landedChunks),
+      // The finish checks only start once every chunk landed, so a saved place means they had.
+      ...(s.finish ? { finishProgress: s.finish } : {}),
+    },
+  };
 }
 
 export type ResumeWindow =

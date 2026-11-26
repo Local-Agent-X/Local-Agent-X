@@ -35,16 +35,18 @@ function harness(rounds: Array<{ suite: SuiteJudging; found: BreakerResult[] }>,
   const runBreakers = vi.fn(async () => rounds[Math.min(round++, rounds.length - 1)].found);
   return { said, buildFixes, judgeSuite, runBreakers, emit: (e: { message: string }) => { said.push(e.message); } };
 }
-const run = (h: ReturnType<typeof harness>, o = opts(), r = done()) =>
-  runFinishGates({ opts: o, result: r, emit: h.emit, buildFixes: h.buildFixes, judgeSuite: h.judgeSuite, breakers: h.runBreakers as never });
+const run = (h: ReturnType<typeof harness>, o = opts(), r = done(), reachedPlanEnd = true) =>
+  runFinishGates({ opts: o, result: r, reachedPlanEnd, emit: h.emit, buildFixes: h.buildFixes, judgeSuite: h.judgeSuite, breakers: h.runBreakers as never });
 
 describe("runFinishGates", () => {
   it("runs only for a build that opted in and landed the plan's last chunk", async () => {
     const h = harness([{ suite: { failed: [], unjudged: [] }, found: [] }]);
     expect(await run(h, opts({ finishGates: false }))).toEqual(done());
     expect(await run(h, opts(), done({ status: "halted", haltReason: "x" }))).toMatchObject({ status: "halted" });
-    expect(await run(h, opts(), done({ lastChunk: 1 }))).toEqual(done({ lastChunk: 1 }));
+    expect(await run(h, opts(), done(), false)).toEqual(done());
     expect(h.runBreakers).not.toHaveBeenCalled();
+    // Which chunk landed last does not matter: a chunk set aside earlier lands after the plan's last.
+    expect((await run(h, opts(), done({ lastChunk: 1 }))).openItems).toBeDefined();
   });
 
   it("a clean app: one round, no fixes, and only the checks a person must make are left open", async () => {
@@ -104,7 +106,7 @@ describe("runFinishGates", () => {
     ]);
     const askLead = vi.fn(async (_lead: unknown, _s: unknown) => ({ action: "continue" as const, reasoning: "still worth it" }));
     const out = await runFinishGates({
-      opts: opts({ buildLead: { projectDir: dir, originSessionId: "chat-x" } }), result: done(), emit: h.emit,
+      reachedPlanEnd: true, opts: opts({ buildLead: { projectDir: dir, originSessionId: "chat-x" } }), result: done(), emit: h.emit,
       buildFixes: h.buildFixes, judgeSuite: h.judgeSuite, breakers: h.runBreakers as never, askLead,
     });
     expect(h.buildFixes).toHaveBeenCalledTimes(4);
@@ -121,7 +123,7 @@ describe("runFinishGates", () => {
     ]);
     const askLead = vi.fn(async () => ({ action: "accept" as const, reasoning: "enough" }));
     const out = await runFinishGates({
-      opts: opts({ buildLead: { projectDir: dir, originSessionId: "chat-x" } }), result: done(), emit: h.emit,
+      reachedPlanEnd: true, opts: opts({ buildLead: { projectDir: dir, originSessionId: "chat-x" } }), result: done(), emit: h.emit,
       buildFixes: h.buildFixes, judgeSuite: h.judgeSuite, breakers: h.runBreakers as never, askLead,
     });
     expect(h.buildFixes).toHaveBeenCalledTimes(2);

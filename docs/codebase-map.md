@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2193 non-test source files · 59 oversized · 273 nearing the size cap.
+**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2193 non-test source files · 59 oversized · 274 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -333,7 +333,6 @@ job. Comments are free: never cut them to fit.
 - `src/server/background-jobs/index.ts` — 320+ code lines (cap 350)
 - `src/tools/document-tools.ts` — 320+ code lines (cap 350)
 - `src/tools/edit-tools.ts` — 320+ code lines (cap 350)
-- `src/auto-build/orchestrator/manager.ts` — 310+ code lines (cap 350)
 - `src/auto-build/workflow-resolver.ts` — 310+ code lines (cap 350)
 - `src/browser/manager.ts` — 310+ code lines (cap 350)
 - `src/protocols/index.ts` — 310+ code lines (cap 350)
@@ -352,6 +351,8 @@ job. Comments are free: never cut them to fit.
 - `src/voice/voice-session/turn-runner.ts` — 300+ code lines (cap 350)
 - `src/api-docs.ts` — 290+ code lines (cap 350)
 - `src/auth/storage.ts` — 290+ code lines (cap 350)
+- `src/auto-build/loop/parallel-waves.ts` — 290+ code lines (cap 350)
+- `src/auto-build/orchestrator/manager.ts` — 290+ code lines (cap 350)
 - `src/browser/in-app-resolve-scripts.ts` — 290+ code lines (cap 350)
 - `src/canonical-loop/turn-commit-store.ts` — 290+ code lines (cap 350)
 - `src/mcp-client/manifest.ts` — 290+ code lines (cap 350)

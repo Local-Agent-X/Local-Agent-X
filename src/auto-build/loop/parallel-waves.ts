@@ -71,7 +71,7 @@ import { createSharedFileMerge, regenerateSharedFiles, relockMergedProject, type
 import { buildChunkInWorktree, commitDispatchedChunk, preserveWorktreeWork } from "./parallel-chunk-build.js";
 import { copyLocalFiles } from "./worktree-local-files.js";
 import { pickUpSetAsideWork } from "./carry-over.js";
-import { isSetAsideCase, setChunkAsideInTree } from "./tree-set-aside.js";
+import { isSetAsideCase, setChunkAsideInTree, stoppedMidChunk } from "./tree-set-aside.js";
 import type { EmitFn, LoopEvent, LoopOptions, LoopResult } from "./types.js";
 import { haltedResult, safeGet } from "./types.js";
 
@@ -100,6 +100,9 @@ export interface DispatchedChunk {
   /** Set when the worktree is the one a crashed run left with this chunk's
    *  work in it (claimed back by createNamedWorktree): the base it was cut from. */
   interrupted?: { baseBranch: string };
+  /** The fix round under way and what the reviews found so far, kept as the
+   *  chunk builds so a stop can record where it was (keepStoppedChunk). */
+  progress?: { round: number; findings: string[] };
 }
 
 /** The result of building one dispatched chunk in its worktree. */
@@ -183,6 +186,9 @@ export async function runParallelWaves(input: ParallelWavesContext): Promise<Loo
       const step = await runBatch(ctx, buildable, chunksCommitted);
       if (step.kind === "halt") return step.result;
       chunksCommitted = step.chunksCommitted;
+      // A stop that cut the batch short ends the run stopped, never "complete":
+      // its chunks are kept to go on from (keepStoppedChunk), not on the ledger.
+      if (opts.signal?.aborted) return haltedResult("loop aborted by signal", buildable[buildable.length - 1].number, outcomes, events);
       const at = { chunkNumber: buildable[buildable.length - 1].number, totalChunks, lead: opts.buildLead, signal: opts.signal, emit };
       if (await stopForSetAside(ctx.ledger, at)) return endRunWithSetAside(ctx, chunksCommitted);
     }
@@ -286,7 +292,8 @@ async function runBatch(ctx: RunContext, batch: ParsedChunk[], chunksCommittedIn
     //    chunks that passed merge below; the build goes on without this one.
     // A chunk paused at its phase's gate was accepted: it merges like the rest.
     const passed = built.filter(r => r.finalAction === "proceed" || r.finalAction === "amend_spec" || isPhaseGatePause(r.finalOutcome));
-    for (const r of built) if (!passed.includes(r)) setChunkAside(ctx, r);
+    // A chunk the owner's stop cut off did not fail: it is kept to go on from.
+    for (const r of built) if (!passed.includes(r)) (opts.signal?.aborted ? keepStoppedChunk(ctx, r) : setChunkAside(ctx, r));
 
     // 4. Commit each chunk that passed inside its worktree, then MERGE BACK
     //    ONE AT A TIME (rule 1 — strictly sequential).
@@ -388,18 +395,23 @@ async function buildChunkOnBaseSerial(ctx: RunContext, chunk: ParsedChunk, chunk
   }
 
   const carryOver = pickUpSetAsideWork({ projectDir: opts.projectDir, tree: opts.projectDir, chunk, totalChunks, emit });
+  // Built in the project tree, so a stop has to know where it was (run.ts does the same).
+  const inTree = (round: number, findings: string[]) => opts.onChunkInTree?.({ chunk: chunk.number, title: chunk.title, preSha: preSha.value, round, findings });
+  inTree(carryOver?.round ?? 0, carryOver?.findings ?? []);
   const { finalOutcome, finalAction } = await buildChunkWithRetry({
     opts, chunk, totalChunks, emit, preSha: preSha.value, priorOutcomes: outcomes,
-    ...(carryOver ? { carryOver } : {}),
+    ...(carryOver ? { carryOver } : {}), onRound: inTree,
   });
 
   outcomes.push({ chunkNumber: chunk.number, outcome: finalOutcome, action: finalAction });
+  if (stoppedMidChunk(finalAction, opts.signal)) return { kind: "halt", result: haltedResult("loop aborted by signal", chunk.number, outcomes, events) };
   // A phase pause lands like a proceed; the phase is scored once the wave is in.
   const paused = isPhaseGatePause(finalOutcome);
   // Still not green: set aside like a chunk built in a worktree, its work
   // moved out of the base tree onto a branch (tree-set-aside.ts).
   if (isSetAsideCase(finalAction, paused, opts.signal)
     && setChunkAsideInTree({ projectDir: opts.projectDir, chunk, totalChunks, preSha: preSha.value, outcome: finalOutcome, ledger: ctx.ledger, emit })) {
+    opts.onChunkSettled?.(chunk.number);
     return { kind: "advance", chunksCommitted };
   }
   if (finalOutcome.report.launchReadiness) {
@@ -413,8 +425,29 @@ async function buildChunkOnBaseSerial(ctx: RunContext, chunk: ParsedChunk, chunk
   if (handled.kind === "halt") return { kind: "halt", result: handled.result };
   ctx.landedThisRun.push(chunk.number);
   clearSetAside(opts.projectDir, chunk.number);
+  opts.onChunkSettled?.(chunk.number);
   ctx.phasePauses.landed(chunk, finalOutcome);
   return { kind: "advance", chunksCommitted: handled.chunksCommitted };
+}
+
+/**
+ * Keep a chunk the owner's stop (Pause, Cancel) cut off in its worktree: its
+ * work goes onto its branch with the round it was on and what the reviews had
+ * found, and the next run goes on from there (carry-over.ts). It is not set
+ * aside: it did not fail, so nothing goes on the halt history, and "the agent
+ * was cancelled" is not carried into its next brief as a finding to keep fixed.
+ */
+function keepStoppedChunk(ctx: RunContext, r: BuiltChunk): void {
+  const { opts, totalChunks, emit } = ctx;
+  const d = r.dispatched;
+  const kept = preserveWorktreeWork(ctx, d);
+  cleanupWorktreeSafe(d.name);
+  const round = d.progress?.round ?? 0;
+  recordSetAside(opts.projectDir, d.chunk.number, kept ? d.branch : undefined, d.progress?.findings ?? [], round);
+  emit({
+    type: "review-result", chunkNumber: d.chunk.number, totalChunks,
+    message: `Chunk ${d.chunk.number} was stopped in fix round ${round}; ${kept ? `its work is kept on branch '${d.branch}'` : "it had no work to keep"}, and it goes on from there.`,
+  });
 }
 
 /** Set one dispatched chunk aside: keep its work on its branch, free its

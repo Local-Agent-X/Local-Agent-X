@@ -58,6 +58,35 @@ export function mergeCarriedWork(worktreePath: string, branch: string): { merged
   }
 }
 
+/**
+ * Chunks whose work is on the project though no record says they landed: a
+ * kill after a chunk's branch merged and before the run recorded it. Read from
+ * git: one of the chunk's branches (`autobuild/c<N>`, or `-2`, `-3`, ... of it)
+ * is merged into HEAD and ends in the chunk's own landing commit, made since
+ * the killed run started. A branch that only holds preserved or set-aside
+ * work does not count, and neither does a leftover of an older build, whose
+ * chunk of the same number is a different chunk.
+ */
+export function landedUnrecorded(projectDir: string, chunks: readonly number[], runStartedAt: string): number[] {
+  const since = Date.parse(runStartedAt);
+  if (Number.isNaN(since)) return [];
+  const found: number[] = [];
+  for (const n of chunks) {
+    let branches: string[];
+    try {
+      branches = git(["branch", "--merged", "HEAD", "--list", `autobuild/c${n}`, `autobuild/c${n}-*`, "--format=%(refname:short)"], projectDir).split("\n").filter(Boolean);
+    } catch { continue; }
+    const landed = branches.some((b) => {
+      try {
+        const [at, subject] = git(["log", "-1", "--format=%cI%x09%s", b], projectDir).split("\t");
+        return subject.startsWith(`chunk ${n}: `) && Date.parse(at) >= since;
+      } catch { return false; }
+    });
+    if (landed) found.push(n);
+  }
+  return found;
+}
+
 /** The opening of the worker's brief for a chunk an earlier run set aside. */
 export function carryOverBrief(carry: CarryOver, merged: boolean): string {
   const before = carry.round != null

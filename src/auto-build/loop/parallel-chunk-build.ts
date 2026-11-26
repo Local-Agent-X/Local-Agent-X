@@ -45,6 +45,7 @@ export async function buildChunkInWorktree(ctx: ParallelWavesContext, d: Dispatc
     message: `Starting chunk ${d.chunk.number}/${totalChunks} in worktree ${d.name} (worker ${d.workerIndex}): ${d.chunk.title} (${d.chunk.klass})`,
   });
 
+  d.progress = { round: setAside?.round ?? 0, findings: carryOver?.findings ?? [] };
   const { finalOutcome, finalAction } = await buildChunkWithRetry({
     opts, chunk: d.chunk, totalChunks, emit,
     preSha: preShaVal,
@@ -52,6 +53,7 @@ export async function buildChunkInWorktree(ctx: ParallelWavesContext, d: Dispatc
     priorOutcomes: outcomes,              // learnings from already-merged chunks
     workerIndex: d.workerIndex,           // unique per concurrent build (S5 ports)
     ...(carryOver ? { carryOver } : {}),
+    onRound: (round, findings) => { d.progress = { round, findings }; },
   });
 
   return { dispatched: d, chunk: d.chunk, finalOutcome, finalAction };

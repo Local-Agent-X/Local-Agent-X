@@ -69,6 +69,16 @@ export function parkInTreeChunk(projectDir: string, inTree: InTreeChunk): string
 }
 
 /**
+ * Whether the owner's stop (Pause, Cancel) cut this chunk off before it was
+ * accepted. Such a chunk did not fail: the run ends stopped with the chunk
+ * still on record as part-built, and nothing goes on the halt history, where
+ * three stops would read as a fault that keeps recurring.
+ */
+export function stoppedMidChunk(action: ReviewAction, signal?: AbortSignal): boolean {
+  return signal?.aborted === true && action !== "proceed" && action !== "amend_spec";
+}
+
+/**
  * Whether a chunk that ended with `action` is one to set aside: not accepted
  * (a pause at its phase's gate is an accepted chunk), and not stopped by the
  * user, whose cancel leaves the tree as it is.

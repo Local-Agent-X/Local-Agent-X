@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { git } from "../../agency/worktree-core.js";
 import { HARNESS_COMMIT_IDENTITY } from "../../git-safety.js";
 import { clearSetAside, recordSetAside, setAsideRecordFor } from "../failure-recovery.js";
-import { carryOverBrief, carryOverFor, mergeCarriedWork } from "./carry-over.js";
+import { carryOverBrief, carryOverFor, landedUnrecorded, mergeCarriedWork } from "./carry-over.js";
 
 const dirs: string[] = [];
 afterAll(() => { for (const d of dirs) rmSync(d, { recursive: true, force: true }); });
@@ -106,3 +106,32 @@ describe("carry-over of a set-aside chunk", () => {
   });
 });
 
+// A kill after a chunk's branch merged and before the run recorded it: the
+// resume used to build the chunk again on a project that already had it.
+describe("landedUnrecorded", () => {
+  const land = (dir: string, branch: string, subject: string) => {
+    git(["checkout", "-q", "-b", branch], dir);
+    writeFileSync(join(dir, `${branch.replace(/\W/g, "-")}.ts`), "export {};\n");
+    git(["add", "."], dir);
+    git([...HARNESS_COMMIT_IDENTITY, "commit", "-q", "-m", subject], dir);
+    git(["checkout", "-q", "main"], dir);
+    git(["merge", "-q", "--ff-only", branch], dir);
+  };
+  const longAgo = "2020-01-01T00:00:00.000Z";
+
+  it("finds a chunk whose branch is merged and ends in its own landing commit", () => {
+    const dir = project();
+    land(dir, "autobuild/c2", "chunk 2: List");
+    land(dir, "autobuild/c4-2", "chunk 4: Detail");
+    expect(landedUnrecorded(dir, [1, 2, 3, 4], longAgo)).toEqual([2, 4]);
+  });
+
+  it("does not count kept work, an unmerged branch, or a leftover from before this run", () => {
+    const dir = project();
+    // autobuild/c3-6 is unmerged kept work (project()).
+    land(dir, "autobuild/c5", "chunk 5 (preserved on halt): Scan");
+    land(dir, "autobuild/c2", "chunk 2: List");
+    expect(landedUnrecorded(dir, [2, 3, 5], longAgo)).toEqual([2]);
+    expect(landedUnrecorded(dir, [2], new Date(Date.now() + 60_000).toISOString())).toEqual([]);
+  });
+});

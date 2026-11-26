@@ -35,7 +35,7 @@ import { clearSetAside } from "../failure-recovery.js";
 import { pickUpSetAsideWork } from "./carry-over.js";
 import { pruneMergedAgentBranches } from "../../agency/worktree-junctions.js";
 import { anythingSetAside, createSetAsideLedger, endWithSetAside, holdBackWaiting, stopForSetAside, type SetAsideLedger } from "./set-aside.js";
-import { isSetAsideCase, setChunkAsideInTree } from "./tree-set-aside.js";
+import { isSetAsideCase, setChunkAsideInTree, stoppedMidChunk } from "./tree-set-aside.js";
 import { isPhaseGatePause } from "../chunk-review/index.js";
 import { handleAction } from "./handle-action.js";
 import { createPhasePauseTracker } from "./phase-gate-pause.js";
@@ -142,7 +142,7 @@ export async function runBuildLoop(opts: LoopOptions): Promise<LoopResult> {
   // A run that lands the plan's last chunk goes on to the finish gates; their
   // fix chunks are built here, serially, like any chunk of the plan.
   return runFinishGates({
-    opts: { ...opts, plan }, result, emit,
+    opts: { ...opts, plan }, result, emit, reachedPlanEnd: endIdx === totalChunks,
     buildFixes: (fixOpts) => runChunksInOrder({ opts: fixOpts, startIdx: 0, endIdx: fixOpts.plan.chunks.length, emit, events, outcomes }),
   });
 }
@@ -254,6 +254,7 @@ async function runChunksInOrder(run: {
     const { finalOutcome, finalAction, gateOwed } = await scorePhaseIfPaused({ opts, chunk, totalChunks, emit, ledger, attempt });
 
     outcomes.push({ chunkNumber: chunk.number, outcome: finalOutcome, action: finalAction });
+    if (stoppedMidChunk(finalAction, opts.signal)) return haltedResult("loop aborted by signal", chunk.number, outcomes, events);
 
     if (isSetAsideCase(finalAction, isPhaseGatePause(finalOutcome), opts.signal)
       && setChunkAsideInTree({ projectDir: opts.projectDir, chunk, totalChunks, preSha: preSha.value, outcome: finalOutcome, ledger, emit })) {

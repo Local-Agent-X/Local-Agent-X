@@ -149,6 +149,13 @@ export function clear(projectDir: string): boolean {
   return cleared;
 }
 
+/** A run's ordered scope: the plan's chunks from `startingChunk`, `maxChunks` of them or to the plan's end. */
+export function runScopeOf(planChunks: readonly number[], startingChunk: number, maxChunks?: number | null): number[] {
+  const start = planChunks.indexOf(startingChunk);
+  if (start < 0) return [];
+  return planChunks.slice(start, maxChunks ? Math.min(start + maxChunks, planChunks.length) : planChunks.length);
+}
+
 export function makeInitial(opts: {
   opId: string;
   sessionId: string;
@@ -161,8 +168,19 @@ export function makeInitial(opts: {
   landedChunks?: number[];
   /** The finish checks' place in an earlier run of this build. */
   finish?: FinishProgress;
+  /** The plan's chunk numbers in order. With them, the chunks of this run's
+   *  scope that already landed count as committed from the start: a run
+   *  resumed with every chunk landed lands none, so its count stayed 0 and a
+   *  second restart no longer read the build as past its plan, and judged its
+   *  finish checks again. */
+  planChunks?: readonly number[];
 }): OrchestratorState {
   const now = new Date().toISOString();
+  const landed = new Set(opts.landedChunks ?? []);
+  const scope = opts.planChunks ? runScopeOf(opts.planChunks, opts.startingChunk, opts.maxChunks) : [];
+  let committed = 0;
+  while (committed < scope.length && landed.has(scope[committed])) committed++;
+  const last = committed > 0 ? scope[committed - 1] : null;
   return {
     version: STATE_FILE_VERSION,
     opId: opts.opId,
@@ -170,9 +188,9 @@ export function makeInitial(opts: {
     projectDir: opts.projectDir,
     planPath: opts.planPath,
     totalChunks: opts.totalChunks,
-    currentChunk: opts.startingChunk,
-    resumeAtChunk: opts.startingChunk,
-    chunksCommitted: 0,
+    currentChunk: last ?? opts.startingChunk,
+    resumeAtChunk: last != null ? last + 1 : opts.startingChunk,
+    chunksCommitted: committed,
     phase: "starting",
     haltReason: "",
     haltGate: null,
@@ -246,6 +264,32 @@ export function settleChunk(state: OrchestratorState, chunkNumber: number): Orch
     ...(fix && state.finish ? { finish: { ...state.finish, done: [...state.finish.done, chunkNumber] } } : {}),
     updatedAt: new Date().toISOString(),
   };
+}
+
+/**
+ * The state after one of the loop's events: the whole of what a run records
+ * as it goes, so the state file is a function of the events and the progress
+ * callbacks, and a test can drive it exactly as the manager does
+ * (test/auto-build-kill-resume.test.ts). `scopeChunks` is the run's ordered
+ * scope: the committed count advances only across its landed prefix. A
+ * finish-gate fix chunk is not one of the plan's, so it is not counted there.
+ */
+export function applyLoopEvent(
+  state: OrchestratorState,
+  event: { type: string; chunkNumber: number; message: string },
+  scopeChunks: readonly number[],
+): OrchestratorState {
+  let next = state;
+  if (event.type === "chunk-landed" || event.type === "chunk-set-aside") next = settleChunk(next, event.chunkNumber);
+  if (event.type === "chunk-start") return markChunkStarted(next, event.chunkNumber);
+  if (event.type === "halt") return markHalted(next, event.chunkNumber, "loop", event.message);
+  if (event.type !== "chunk-landed" || !scopeChunks.includes(event.chunkNumber)) return next;
+  next = noteChunkLanded(next, event.chunkNumber);
+  const landed = new Set(next.landedChunks);
+  for (let i = next.chunksCommitted; i < scopeChunks.length && landed.has(scopeChunks[i]); i++) {
+    next = markChunkLanded(next, scopeChunks[i]);
+  }
+  return next;
 }
 
 /** Paused by the owner: nothing halted it, and it waits for Resume. */

@@ -134,6 +134,7 @@ export function startOrchestration(opts: StartOrchestrationOptions): StartOrches
     maxChunks: opts.maxChunks,
     landedChunks: opts.landedChunks,
     finish: opts.finishProgress,
+    planChunks: opts.plan.chunks.map((chunk) => chunk.number),
   });
   if (!state.write(initialState)) {
     throw new Error(
@@ -162,12 +163,7 @@ export function startOrchestration(opts: StartOrchestrationOptions): StartOrches
 
   const ac = new AbortController();
   const scopeStartIdx = opts.plan.chunks.findIndex(chunk => chunk.number === opts.startingChunk);
-  const scopeEndIdx = opts.maxChunks
-    ? Math.min(scopeStartIdx + opts.maxChunks, opts.plan.chunks.length)
-    : opts.plan.chunks.length;
-  const scopeChunks = scopeStartIdx < 0
-    ? []
-    : opts.plan.chunks.slice(scopeStartIdx, scopeEndIdx).map(chunk => chunk.number);
+  const scopeChunks = state.runScopeOf(opts.plan.chunks.map((chunk) => chunk.number), opts.startingChunk, opts.maxChunks);
   const orch: ActiveOrchestration = {
     opId,
     sessionId: opts.sessionId,
@@ -271,20 +267,8 @@ function persist(orch: ActiveOrchestration, next: OrchestratorState): void {
 
 function onLoopEvent(orch: ActiveOrchestration, event: LoopEvent): void {
   // Update in-memory state + persist on chunk-state-changing events.
-  let newState = orch.liveState;
-  if (event.type === "chunk-landed" || event.type === "chunk-set-aside") newState = state.settleChunk(newState, event.chunkNumber);
-  if (event.type === "chunk-start") newState = state.markChunkStarted(newState, event.chunkNumber);
-  // A finish-gate fix chunk is not one of the plan's: it is not counted as one landing.
-  else if (event.type === "chunk-landed" && orch.scopeChunks.includes(event.chunkNumber)) {
-    orch.landedChunks.add(event.chunkNumber);
-    newState = state.noteChunkLanded(newState, event.chunkNumber);
-    let nextScopeIdx = newState.chunksCommitted;
-    while (nextScopeIdx < orch.scopeChunks.length && orch.landedChunks.has(orch.scopeChunks[nextScopeIdx])) {
-      newState = state.markChunkLanded(newState, orch.scopeChunks[nextScopeIdx]);
-      nextScopeIdx++;
-    }
-  }
-  else if (event.type === "halt") newState = state.markHalted(newState, event.chunkNumber, "loop", event.message);
+  if (event.type === "chunk-landed" && orch.scopeChunks.includes(event.chunkNumber)) orch.landedChunks.add(event.chunkNumber);
+  const newState = state.applyLoopEvent(orch.liveState, event, orch.scopeChunks);
   orch.liveState = newState;
   state.write(newState);
 

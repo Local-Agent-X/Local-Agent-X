@@ -43,6 +43,11 @@ export interface SuiteJudging { failed: ScoreReport[]; unjudged: ScoreReport[]; 
 export interface FinishInput {
   opts: LoopOptions;
   result: LoopResult;
+  /** The run's window went to the plan's last chunk, so a complete run means
+   *  every chunk of the plan is on the project. Not read off which chunk
+   *  landed last: a chunk set aside earlier lands after the ones numbered
+   *  above it, and a build that ended on it skipped these checks. */
+  reachedPlanEnd: boolean;
   emit: EmitFn;
   /** Builds fix chunks the way the serial loop builds a plan's (loop/run.ts). */
   buildFixes: (fixOpts: LoopOptions) => Promise<LoopResult>;
@@ -243,7 +248,7 @@ async function buildRound(input: FinishInput, progress: FinishProgress): Promise
 export async function runFinishGates(input: FinishInput): Promise<LoopResult> {
   const { opts, result } = input;
   const plan = opts.plan.chunks;
-  if (!opts.finishGates || result.status !== "complete" || result.lastChunk !== plan[plan.length - 1]?.number) return result;
+  if (!opts.finishGates || result.status !== "complete" || !input.reachedPlanEnd || plan.length === 0) return result;
   const say = sayer(input);
   // A pause or a restart in the finish checks goes on from the round it was in.
   const saved = opts.finishProgress;

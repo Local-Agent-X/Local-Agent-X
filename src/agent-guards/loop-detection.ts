@@ -76,6 +76,9 @@ export interface LoopState {
   // to a hard abort even interactively — six warnings is enough rope; past that
   // it's a runaway and ending the turn beats spinning (the chat survives).
   nudgeCount: number;
+  // Warnings given about the call being repeated right now; back to zero when
+  // the model makes a different call. See EXACT_REPEAT_WARNINGS.
+  exactRepeatNudges: number;
   pendingStrategyPivot: StrategyPivotPattern | null;
   // Armed by the deferred CYCLE detector: the only pivots the worker ceiling counts.
   pendingPivotFromCycle: boolean;
@@ -105,6 +108,7 @@ export function createLoopState(): LoopState {
     postCommitNudgePending: false,
     searchKeyCounts: new Map(),
     nudgeCount: 0,
+    exactRepeatNudges: 0,
     pendingStrategyPivot: null,
     pendingPivotFromCycle: false,
     cycleWindow: [],
@@ -129,6 +133,14 @@ export const NO_PROGRESS_LIMIT_WEAK = 15;
 // model being told to pivot and ignoring it. The wall-clock ceiling (up to 2h)
 // is the only other backstop, so without this a stubborn loop ran far too long.
 export const NUDGE_CEILING = 6;
+// Warnings the interactive lane gives about ONE identical call with unchanged
+// results before it ends the turn. The lifetime ceiling above is generous
+// because its nudges are about different things; a model told twice that this
+// exact call is a loop, which then makes it again, is not going to stop. A
+// build's lead asked for a decision repeated one status call 14 times on every
+// ask, each re-sending its whole context, until the lifetime ceiling ended the
+// turn (label-check-grok, 2026-11-26).
+export const EXACT_REPEAT_WARNINGS = 2;
 // SPIRALABLE_TOOLS + the exploration-waste detectors live in loop-discovery.ts;
 // re-exported so agent-guards/index.ts and tests keep their path.
 export { SPIRALABLE_TOOLS } from "./loop-discovery.js";
@@ -183,6 +195,11 @@ export function checkToolLoops(
         // before nudging again (no per-turn spam if the model keeps spinning).
         // emitNudge escalates to a hard abort once the lifetime ceiling is hit.
         state.identicalResultRepeats = 0;
+        if (state.exactRepeatNudges >= EXACT_REPEAT_WARNINGS) {
+          logRetry({ kind: "loop-abort", tool: "exact-repeat-ceiling", detail: { tool: toolCalls[0]?.name, repeats: state.sameToolCount, modelTier: opts?.modelTier } });
+          return { abort: true, nudge: `SYSTEM: ending the turn — ${toolCalls[0]?.name} was called with identical arguments ${state.sameToolCount} times, nothing changed, and two warnings did not stop it. Say what you established and what you could not do, and ask the user for what only they can supply.` };
+        }
+        state.exactRepeatNudges++;
         return emitNudge(`SYSTEM: ${toolCalls[0]?.name} called with identical arguments and unchanged results ${state.sameToolCount}× — you're looping. Stop repeating it: take a different action, call a different tool, or answer with what you already have.`);
       }
       return { abort: true, nudge: "\n\n(Detected repeated tool calls with unchanging results — stopping loop)" };
@@ -192,6 +209,7 @@ export function checkToolLoops(
     state.lastToolKey = key;
     state.identicalResultRepeats = 0;
     state.lastResultSig = null;
+    state.exactRepeatNudges = 0;
   }
 
   // Cycle detection — the multi-turn analogue of exact-repeat, which only ever

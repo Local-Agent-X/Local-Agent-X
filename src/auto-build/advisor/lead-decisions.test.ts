@@ -7,6 +7,7 @@ import { canHaveLead } from "./lead-chat.js";
 import { askLead, askLeadBuildCall, isLeadDecisionPending, type LeadSituation } from "./lead-decisions.js";
 import { LEAD_ROLE } from "./lead-role.js";
 import { buildDecideTool, readDecision } from "./build-decide-tool.js";
+import { owedToolNamesFor } from "../../agent-request/prepare-request/session-owed-tools.js";
 import { FINISH_FIX_BREAK_GROUNDS, SKEPTIC_BREAK_GROUNDS } from "../chunk-review/skeptic-bar.js";
 
 const situation: LeadSituation = {
@@ -43,6 +44,28 @@ describe("the build lead", () => {
     expect(messages[1].message).toContain("(Sent by the app, not typed by the user");
     expect(messages[1].message).toContain("the size gate skips root build/");
     expect(messages[1].message).toContain("- nested dist/ was skipped");
+  });
+
+  // label-check-grok (2026-11-26): the lead's chat was a code session whose
+  // tool set did not hold build_decide after a restart, so every decision
+  // timed out behind a loop of status calls. While an ask waits, the chat is
+  // owed the tool; when it is settled or times out, it is not.
+  it("owes its chat the decision tool for exactly as long as a decision waits", async () => {
+    let duringTheTurn: string[] = [];
+    setChatHandler(async (sessionId, message) => {
+      duringTheTurn = owedToolNamesFor(sessionId);
+      const id = message.match(/build_decide\(decision_id="([^"]+)"/)?.[1];
+      if (id) await buildDecideTool.execute({ decision_id: id, action: "accept", reasoning: "holds" }, undefined as never);
+    });
+    await askLead(ref, situation, { answerMs: 5_000 });
+    expect(duringTheTurn).toEqual(["build_decide"]);
+    expect(owedToolNamesFor("chat-origin")).toEqual([]);
+
+    // A lead that never answers: still released when the ask gives up.
+    setChatHandler(async (sessionId) => { duringTheTurn = owedToolNamesFor(sessionId); });
+    expect(await askLead(ref, situation, { answerMs: 5_000 })).toBeNull();
+    expect(duringTheTurn).toEqual(["build_decide"]);
+    expect(owedToolNamesFor("chat-origin")).toEqual([]);
   });
 
   // label-check-sol's chunk 3 (2026-11-25): told to keep going while rounds

@@ -13,7 +13,7 @@ code lines (comments and blank lines are free; tiers, not raw counts, so trivial
 *Oversized*: non-test files over 350 code lines and functions (`file#function`) over 100 of
 their own — the source-hygiene caps; each is held at its size in `.code-size-ratchet`.
 
-**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2194 non-test source files · 59 oversized · 276 nearing the size cap.
+**Totals:** 74 top-level dirs · 74 live · 0 with no live importer · 2195 non-test source files · 59 oversized · 276 nearing the size cap.
 
 ## Live directories (by how wired-in they are)
 
@@ -42,7 +42,7 @@ their own — the source-hygiene caps; each is held at its size in `.code-size-r
 | `src/broker-transport/` | 29 | 51 | XL |  |
 | `src/context-manager/` | 29 | 16 | M |  |
 | `src/context/` | 28 | 11 | M |  |
-| `src/agent-request/` | 26 | 17 | L | 3 |
+| `src/agent-request/` | 27 | 18 | L | 3 |
 | `src/app-runtime/` | 26 | 14 | L |  |
 | `src/classifiers/` | 26 | 18 | L |  |
 | `src/desktop-contract/` | 24 | 11 | M |  |
@@ -418,6 +418,7 @@ job. Comments are free: never cut them to fit.
 - `src/sync/push-files.ts#copyToSync` — 90+ own code lines (cap 100)
 - `src/tool-execution/run-sandboxed.ts#runSandboxedPhase` — 90+ own code lines (cap 100)
 - `src/tools/read-write-tools.ts#readTool.execute` — 90+ own code lines (cap 100)
+- `src/agent-guards/loop-detection.ts#checkToolLoops` — 80+ own code lines (cap 100)
 - `src/agent-guards/loop-detection.ts#noteToolResults` — 80+ own code lines (cap 100)
 - `src/agent-request/prepare-request/build-system-prompt.ts#buildSystemPromptWithTelemetry` — 80+ own code lines (cap 100)
 - `src/agents/tools.ts#createAgentTools` — 80+ own code lines (cap 100)
@@ -460,7 +461,6 @@ job. Comments are free: never cut them to fit.
 - `src/tools/web-fetch.ts#webFetchTool.execute` — 80+ own code lines (cap 100)
 - `src/update-extracted-validation.ts#validateExtractedUpdate` — 80+ own code lines (cap 100)
 - `src/voice/gpu-session.ts#createGpuSession` — 80+ own code lines (cap 100)
-- `src/agent-guards/loop-detection.ts#checkToolLoops` — 70+ own code lines (cap 100)
 - `src/agent-request/attachments.ts#processAttachments` — 70+ own code lines (cap 100)
 - `src/agents/escalation-core.ts#performEscalation` — 70+ own code lines (cap 100)
 - `src/anthropic-client/stream-cli/prompt-builder.ts#buildCliPrompt` — 70+ own code lines (cap 100)

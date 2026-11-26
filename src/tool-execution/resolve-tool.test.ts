@@ -17,7 +17,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import type { ChatCompletionMessageParam } from "openai/resources/chat/completions.js";
-import { resolvePhase } from "./resolve-tool.js";
+import { REPEATED_CALL_NOTE, resolvePhase, withoutRepeatNote } from "./resolve-tool.js";
 import { dispatchOne } from "./dispatch-one.test-helper.js";
 import { createContext } from "./context.js";
 import type { SecurityLayer } from "../security/index.js";
@@ -279,6 +279,34 @@ describe("session-repeat dedup exempts stateful tools", () => {
     expect(String(msg?.content)).toContain(PRIOR_RESULT);
     // The replay is a tool message like any other: it carries its status.
     expect((msg as { _status?: string })._status).toBe("ok");
+  });
+
+  // From the second repeat on, the newest identical call is itself a replay.
+  // Replayed as it stood, each repeat came back one note longer than the last:
+  // the model paid for it, and the loop guard, which ends a turn on "same call,
+  // same result", never saw the same result twice (56 calls, 2026-11-26).
+  it("a replay of a replay is the first result under one note, the same text every time", () => {
+    const once = `${REPEATED_CALL_NOTE}${PRIOR_RESULT}`;
+    expect(withoutRepeatNote(PRIOR_RESULT)).toBe(PRIOR_RESULT);
+    expect(withoutRepeatNote(once)).toBe(PRIOR_RESULT);
+    expect(withoutRepeatNote(`${REPEATED_CALL_NOTE}${REPEATED_CALL_NOTE}${once}`)).toBe(PRIOR_RESULT);
+    // A result that only mentions the note further in is left alone.
+    expect(withoutRepeatNote(`first line\n${once}`)).toBe(`first line\n${once}`);
+  });
+
+  it("the third identical call gets the same text as the second: one note, the first result", async () => {
+    const args = JSON.stringify({ path: "notes.txt" });
+    const call = (id: string) => ({ role: "assistant", content: null, tool_calls: [{ id, type: "function", function: { name: "read", arguments: args } }] });
+    const ctx = createContext({
+      tc: { id: "repeat-3", name: "read", arguments: args },
+      toolMap: new Map(), security: {} as SecurityLayer, sessionId: "dedup-test-session", callContext: "api",
+      priorMessages: [
+        call("first"), { role: "tool", tool_call_id: "first", content: PRIOR_RESULT },
+        call("second"), { role: "tool", tool_call_id: "second", content: `${REPEATED_CALL_NOTE}${PRIOR_RESULT}` },
+      ] as unknown as ChatCompletionMessageParam[],
+    });
+    expect((await resolvePhase(ctx)).kind).toBe("halt");
+    expect(String(ctx.msgs.at(-1)?.content)).toBe(`${REPEATED_CALL_NOTE}${PRIOR_RESULT}`);
   });
 
   // Only a success is replayed. The guard used to match the bare `[error]`

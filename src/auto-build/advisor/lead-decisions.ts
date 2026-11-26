@@ -13,6 +13,7 @@
  * again in the same turn.
  */
 import { randomBytes } from "node:crypto";
+import { oweSessionTool } from "../../agent-request/prepare-request/session-owed-tools.js";
 import { leadChatOf, runLeadTurn, type BuildLeadRef } from "./lead-chat.js";
 import { LEAD_ROLE } from "./lead-role.js";
 
@@ -160,14 +161,20 @@ async function ask(
   const answered = new Promise<LeadDecision>((resolve) => pending.set(id, { allowed, resolve }));
   const first = !firstSent.has(sessionId);
   firstSent.add(sessionId);
-  const turn = runLeadTurn(sessionId, render(id, first)).catch(() => undefined);
-  const timeout = new Promise<null>((r) => setTimeout(() => r(null), opts.answerMs ?? LEAD_ANSWER_MS));
-  const cancelled = new Promise<null>((r) => opts.signal?.addEventListener("abort", () => r(null), { once: true }));
-  // A turn that ended without answering is no answer either.
-  const unanswered = turn.then(() => new Promise<null>((r) => setTimeout(() => r(null), 1_000)));
-  const decision = await Promise.race([answered, timeout, cancelled, unanswered]);
-  pending.delete(id);
-  return decision;
+  // The packet says "answer with build_decide", so the turn it lands in must
+  // have that tool, whatever else selected its tool set.
+  const releaseTool = oweSessionTool(sessionId, "build_decide");
+  try {
+    const turn = runLeadTurn(sessionId, render(id, first)).catch(() => undefined);
+    const timeout = new Promise<null>((r) => setTimeout(() => r(null), opts.answerMs ?? LEAD_ANSWER_MS));
+    const cancelled = new Promise<null>((r) => opts.signal?.addEventListener("abort", () => r(null), { once: true }));
+    // A turn that ended without answering is no answer either.
+    const unanswered = turn.then(() => new Promise<null>((r) => setTimeout(() => r(null), 1_000)));
+    return await Promise.race([answered, timeout, cancelled, unanswered]);
+  } finally {
+    pending.delete(id);
+    releaseTool();
+  }
 }
 
 /** Ask the lead about a chunk the review sent back. */

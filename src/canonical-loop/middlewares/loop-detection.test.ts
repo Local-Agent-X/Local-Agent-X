@@ -60,10 +60,13 @@ async function spin(op: string, lane: string, turns: number, result: (i: number)
 }
 
 describe("loop-detection middleware — lane policy", () => {
-  it("interactive: nudges a same-call/same-result spin but never aborts the turn", async () => {
-    const kinds = await spin(opId(), "interactive", 6, () => "identical");
-    expect(kinds).toContain("nudge");
-    expect(kinds).not.toContain("abort");
+  // The first warnings are nudges, so a turn the user wants is not killed on
+  // one repeat; a model that makes the same call through two warnings is ended.
+  it("interactive: nudges a same-call/same-result spin twice, then ends the turn", async () => {
+    const kinds = await spin(opId(), "interactive", 12, () => "identical");
+    const end = kinds.indexOf("abort");
+    expect(end).toBeGreaterThan(0);
+    expect(kinds.slice(0, end).filter((k) => k === "nudge")).toHaveLength(2);
   });
 
   it("build (worker): arms after completed evidence and pivots before another model call", async () => {

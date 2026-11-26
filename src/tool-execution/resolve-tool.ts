@@ -81,6 +81,23 @@ function mayChangeState(call: WireCall): boolean {
 // run the tests" got the FIRST run's output back, and the model concluded its
 // fix had not worked. Same for "read → edit → read". Any call after the match
 // that is not provably read-only now voids the replay; the tool re-executes.
+/** What a replayed result opens with. */
+export const REPEATED_CALL_NOTE = "[REPEATED CALL — identical to a tool call made earlier this session. Returning the previous result without re-executing. If you need fresh data, change the arguments. Otherwise, focus on the user's current question.]\n\n";
+
+/**
+ * The result under any replay notes. The newest identical call is itself a
+ * replay from the second repeat on, so its result already opens with the
+ * note: replayed as it stood, every repeat came back one note longer than the
+ * last. The model paid for the growing text, and the loop guard, which ends a
+ * turn on "same call, same result", saw a new result each time: a chat called
+ * `build_plan_resume` 56 times and nothing stopped it (2026-11-26).
+ */
+export function withoutRepeatNote(result: string): string {
+  let rest = result;
+  while (rest.startsWith(REPEATED_CALL_NOTE)) rest = rest.slice(REPEATED_CALL_NOTE.length);
+  return rest;
+}
+
 export function findPriorIdenticalResult(
   tc: { id?: string; name: string; arguments: string },
   priorMessages: ChatCompletionMessageParam[],
@@ -258,7 +275,7 @@ export const resolvePhase: Phase = async (ctx) => {
   // user missed the first prompt.
   const dup = SESSION_REPEAT_SKIP_TOOLS.has(tc.name) ? null : findPriorIdenticalResult(tc, priorMessages || []);
   if (dup) {
-    const hint = `[REPEATED CALL — identical to a tool call made earlier this session. Returning the previous result without re-executing. If you need fresh data, change the arguments. Otherwise, focus on the user's current question.]\n\n${dup.result}`;
+    const hint = `${REPEATED_CALL_NOTE}${withoutRepeatNote(dup.result)}`;
     onEvent?.({ type: "tool_end", toolName: tc.name, toolCallId: tc.id, result: hint, allowed: true, status: "ok" });
     logRetry({ kind: "custom", sessionId, tool: tc.name, detail: { reason: "session-repeat", priorTurn: dup.turnIndex } });
     ctx.msgs.push(toolMessage(tc.id, ok(hint), hint));

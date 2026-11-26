@@ -5,7 +5,7 @@
  */
 
 import { describe, it, expect } from "vitest";
-import { checkToolLoops, hasSeenSuccessfulCommittingCall, noteToolResults, createLoopState, NO_PROGRESS_LIMIT, NUDGE_CEILING, SPIRALABLE_TOOLS, type LoopState } from "./loop-detection.js";
+import { checkToolLoops, hasSeenSuccessfulCommittingCall, noteToolResults, createLoopState, EXACT_REPEAT_WARNINGS, NO_PROGRESS_LIMIT, NUDGE_CEILING, SPIRALABLE_TOOLS, type LoopState } from "./loop-detection.js";
 import { discoveryNudge, searchKeyOf } from "./loop-discovery.js";
 import { TOOLS, toolsWhere } from "../tool-registry.js";
 
@@ -298,38 +298,41 @@ describe("checkToolLoops — interactive nudge ceiling (runaway backstop)", () =
   // converts the nudge to an abort once the model has been warned past
   // NUDGE_CEILING times and is still looping.
 
-  it("a stubborn same-call/same-result spin eventually hard-aborts in the interactive lane", () => {
+  // The lifetime ceiling counts warnings about DIFFERENT things. A model that
+  // loops on one call, is warned off it, and loops on the next gets the whole
+  // generous window; one call repeated through its own warnings does not
+  // (EXACT_REPEAT_WARNINGS, below).
+  const spinOn = (state: LoopState, call: Call) => {
+    for (let i = 0; i < 12; i++) {
+      const v = turn(state, [call], "identical-output", { modelTier: "strong", nudgeOnly: true });
+      if (v.abort || v.nudge) return v;
+    }
+    return { abort: false, nudge: null };
+  };
+  const callNo = (n: number): Call => ({ name: "bash", arguments: JSON.stringify({ cmd: `ls dir-${n}` }) });
+
+  it("a model warned off one spin after another eventually hard-aborts in the interactive lane", () => {
     const state = createLoopState();
     let nudgesBeforeAbort = 0;
     let abortVerdict: ReturnType<typeof checkToolLoops> | null = null;
-    for (let i = 0; i < 60; i++) {
-      const v = turn(state, [lsCall], "identical-output", { modelTier: "strong", nudgeOnly: true });
-      if (v.abort) { abortVerdict = v; break; }
-      if (v.nudge) nudgesBeforeAbort++;
+    for (let n = 0; n < 20 && !abortVerdict; n++) {
+      const v = spinOn(state, callNo(n));
+      if (v.abort) abortVerdict = v;
+      else if (v.nudge) nudgesBeforeAbort++;
     }
     // It must have nudged repeatedly (giving the model many chances) THEN aborted.
     expect(abortVerdict?.abort).toBe(true);
-    expect(nudgesBeforeAbort).toBeGreaterThanOrEqual(NUDGE_CEILING);
-    // The abort is the ceiling escalation, not a normal loop-abort message.
-    expect(abortVerdict?.nudge).toMatch(/ending the turn/i);
+    expect(nudgesBeforeAbort).toBe(NUDGE_CEILING);
+    expect(abortVerdict?.nudge).toMatch(/you've been told you're looping/i);
   });
 
   it("stays within the generous window: no abort before the ceiling is exceeded", () => {
     const state = createLoopState();
-    let nudges = 0;
-    let aborted = false;
-    for (let i = 0; i < 60 && !aborted; i++) {
-      const v = turn(state, [lsCall], "identical-output", { modelTier: "strong", nudgeOnly: true });
-      const v2 = v.abort;
-      if (v.nudge && !v2) nudges++;
-      if (v2) {
-        aborted = true;
-        // By the time we abort, the model has been nudged at least the ceiling
-        // number of times — the escalation never fires early.
-        expect(nudges).toBeGreaterThanOrEqual(NUDGE_CEILING);
-      }
+    for (let n = 0; n < NUDGE_CEILING; n++) {
+      const v = spinOn(state, callNo(n));
+      expect(v.abort, `spin ${n}`).toBe(false);
+      expect(v.nudge, `spin ${n}`).toBeTruthy();
     }
-    expect(aborted).toBe(true);
   });
 
   it("worker lane: the ceiling never escalates a discovery nudge (workers keep their own hard-abort path)", () => {
@@ -382,5 +385,51 @@ describe("SPIRALABLE_TOOLS fence — every discovery tool is read-only", () => {
   it("a file-tool spin is pointed at the file tools that act; any other at the answer", () => {
     expect(discoveryNudge("grep", 8)).toContain("write/edit/bash");
     expect(discoveryNudge("op_status", 8)).not.toContain("write/edit/bash");
+  });
+});
+
+// A build's lead, asked for a decision it had no tool to give, called one
+// status tool 14 times on every ask until the lifetime ceiling ended the turn,
+// re-sending its whole context each time (label-check-grok, 2026-11-26). Two
+// warnings about one exact call are enough: a third identical call ends it.
+describe("checkToolLoops — one identical call repeated through its warnings", () => {
+  const statusCall: Call = { name: "build_plan_status", arguments: JSON.stringify({ project_dir: "C:/apps/x" }) };
+  const spin = (state: LoopState, call: Call, tier: "weak" | "strong", limit = 60) => {
+    const seen: string[] = [];
+    for (let i = 0; i < limit; i++) {
+      const v = turn(state, [call], "identical-output", { modelTier: tier, nudgeOnly: true });
+      seen.push(v.abort ? "abort" : v.nudge ? "nudge" : "ok");
+      if (v.abort) return { seen, verdict: v };
+    }
+    return { seen, verdict: null };
+  };
+
+  it.each(["weak", "strong"] as const)("%s tier: warned twice, then the turn ends, long before the lifetime ceiling", (tier) => {
+    const { seen, verdict } = spin(createLoopState(), statusCall, tier);
+    expect(seen.filter((s) => s === "nudge")).toHaveLength(EXACT_REPEAT_WARNINGS);
+    expect(seen.at(-1)).toBe("abort");
+    expect(seen.length).toBeLessThanOrEqual(10);
+    expect(verdict?.nudge).toMatch(/ending the turn/);
+    expect(verdict?.nudge).toContain("build_plan_status was called with identical arguments");
+  });
+
+  it("the count is per call: a different call in between starts it again", () => {
+    const state = createLoopState();
+    const first = spin(state, statusCall, "strong", 6);
+    expect(first.seen).toContain("nudge");
+    expect(first.seen).not.toContain("abort");
+    turn(state, [lsCall], "something else", { modelTier: "strong", nudgeOnly: true });
+    const again = spin(state, statusCall, "strong", 6);
+    expect(again.seen).not.toContain("abort");
+  });
+
+  it("a poll whose result changes is never warned or ended, however often it repeats", () => {
+    const state = createLoopState();
+    for (let i = 0; i < 40; i++) {
+      const v = checkToolLoops([statusCall], state, { modelTier: "weak", nudgeOnly: true });
+      noteToolResults([statusCall], state, [{ content: `chunk ${i} building` }]);
+      expect(v.abort, `call ${i}`).toBe(false);
+      expect(v.nudge ?? "", `call ${i}`).not.toMatch(/identical arguments/);
+    }
   });
 });
